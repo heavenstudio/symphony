@@ -1,0 +1,36 @@
+{
+  "version": 4184,
+  "changes": [
+    {
+      "region": "queue",
+      "data": [
+        {
+          "slug": "mining-yield-curve",
+          "doc": "docs/game/MINING.md",
+          "doc_title": "Mining",
+          "title": "Should a rock's yield fall off with each pass of the beam, or stay flat until it is spent?",
+          "why": "design · gates 2 cards",
+          "posted": "2026-10-07 18:05"
+        }
+      ]
+    },
+    {
+      "region": "counts",
+      "data": {"waiting": 36, "docs_waiting": 9, "spot_check": 5, "answered_today": 6, "tasks": {"in_progress": 12, "in_review": 6, "agents_live": 14}}
+    },
+    {
+      "region": "progress",
+      "data": {
+        "ship_art": [
+          {"faction": "republic", "name": "Republic", "page": "docs/ships/republic.md", "approved": 22, "waiting": 3, "total": 31}
+        ],
+        "docs": 64,
+        "decisions_waiting": 40
+      }
+    },
+    {
+      "region": "client",
+      "data": {"build": "/assets/symphony-ui-dxh3f9a1c0123456789.js"}
+    }
+  ]
+}

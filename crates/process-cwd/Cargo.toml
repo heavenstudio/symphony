@@ -1,0 +1,10 @@
+[package]
+name = "process-cwd"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+# One bounded OS scan for both sweeps, without linking the board into the cargo wrapper.
+[dependencies]
+libc.workspace = true

@@ -1,0 +1,37 @@
+[package]
+name = "symphony"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+# The Symphony library: the cards and callouts the owner leaves in docs/, read and written in the shapes
+# docs/workflow/REVIEW.md sets down. `symphony status` is `just symphony-status`, `symphony reply` is
+# `just symphony-reply`, and `symphony ask` is `just symphony-ask`.
+# `symphony serve` retains the line-oriented JSON command interface.
+[dependencies]
+# The register's patterns (leftmost-first, like Python's re).
+regex = "1"
+serde = { version = "1", features = ["derive"] }
+# preserve_order: an object keeps its members in the order its file wrote them, so a schema check
+# names them in that order (`schema`).
+# arbitrary_precision: integer tokens keep their type and value beyond the machine's integer range.
+serde_json = { version = "1", features = ["preserve_order", "arbitrary_precision"] }
+# A heading's anchor folds accents the way Python-Markdown's toc does: NFKD, then ASCII.
+unicode-normalization = "0.1"
+# The local time a tidy and a verdict stamp, as Python's datetime.now() reads it (localtime_r).
+libc = "0.2"
+# The documents as data (`render`, `tree`): markdown to HTML with comrak (no syntax highlighter, no CLI),
+# the lookaround patterns of the tree and the links with fancy-regex, a section's hash and a picture's token with sha2.
+comrak.workspace = true
+fancy-regex.workspace = true
+sha2.workspace = true
+# The settings files under docs/data/ and content/ checked against their JSON Schemas (`schema`).
+jsonschema = { workspace = true, features = ["arbitrary-precision"] }
+symphony-api = { path = "../symphony-api" }
+tasks = { path = "../tasks" }
+docs-index = { path = "../../../crates/docs-index" }
+gix = { version = "0.87", default-features = false, features = ["basic", "blob-diff", "revision", "sha1"] }
+
+# The board the verdict filing's tests run on: the store's own test server (SurrealDB, in memory), a
+# database of its own per test (tests/picks/main.rs takes the store's tests' common file).

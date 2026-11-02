@@ -1,0 +1,384 @@
+//! RenderTest's card half, MessageTest, AutoApprovedRenderTest and CardAnchorTest.
+
+use super::{bare, page, page_at};
+
+const CANDIDATES: &str = "- [ ] **h** — three takes. Approve and say A, B or C in the note.\n  [2026-09-27 18:00] agent — A ![H ship A](/a.png) B ![H ship B](/b.png) C ![H ship C](/c.png)\n";
+const MOCKUPS: &str = concat!(
+    "- [ ] **s** — three ways. Pick A, B or C.\n",
+    "  [2026-10-06] agent — A ![Stat table A](/docs/art/mockups/a.html) [a.png](/artifacts/a.png)",
+    " B ![Changed stats first B](/docs/art/mockups/b.html) [b.png](/artifacts/b.png)",
+    " C ![Stats around the ship C](mockups/c.html) [c.png](/artifacts/c.png)\n",
+);
+
+#[test]
+fn decision_item_renders_as_control() {
+    let html = page_at(
+        "- [-] **hull-count-141** — 141 hulls. *If no:* art.\n  Thirty first.\n",
+        "docs/DECISIONS.md",
+    );
+    for want in [
+        "class=\"decision\"",
+        "data-slug=\"hull-count-141\"",
+        "data-state=\"rejected\"",
+        "data-line=\"1\"",
+        "<em>If no:</em>",
+        "Thirty first.",
+        "data-group=\"agent\"",
+    ] {
+        assert!(html.contains(want), "{want}: {html}");
+    }
+}
+
+#[test]
+fn history_renders_as_dated_entries_by_author() {
+    let html = page(
+        "- [x] **a** — one.\n  [2026-09-24 10:00] owner · approved — at least 21\n  [2026-09-24 11:00] agent — Recorded as a floor.\n",
+    );
+    assert!(html.contains("<li class=\"entry owner\"><time>2026-09-24 10:00</time> <b>approved</b> <span class=\"entry-text\">at least 21</span></li>"), "{html}");
+    assert!(html.contains("<li class=\"entry agent\"><time>2026-09-24 11:00</time> <span class=\"entry-text\">Recorded as a floor.</span></li>"));
+    assert!(html.contains("data-group=\"resolved\""));
+    assert!(html.contains("data-decided=\"2026-09-24 10:00\""));
+}
+
+#[test]
+fn a_card_shows_when_it_was_posted() {
+    let html = page("- [ ] **a** — new\n  [2026-09-25 10:00] agent — ![x](/x.png)\n");
+    assert!(html.contains("<div class=\"decision-text\"><code>a</code> <time class=\"posted\">2026-09-25 10:00</time>"), "{html}");
+}
+
+#[test]
+fn an_undated_card_shows_no_posting_time() {
+    assert!(!page("- [ ] **a** — new\n").contains("class=\"posted\""));
+}
+
+fn strip(html: &str) -> &str {
+    let start = html.find("<div class=\"compare\">").expect("a compare row");
+    let end = html[start..].find("</div>").unwrap() + start + 6;
+    &html[start..end]
+}
+
+#[test]
+fn a_picture_card_compares_its_candidates_in_one_labelled_row() {
+    let html = page_at(CANDIDATES, "docs/ships/x.md");
+    let row = strip(&html);
+    let at: Vec<usize> = ["/a.png", "/b.png", "/c.png"]
+        .iter()
+        .map(|s| row.find(s).unwrap())
+        .collect();
+    assert!(at.windows(2).all(|w| w[0] < w[1]), "{row}");
+    for label in ["A", "B", "C"] {
+        assert!(
+            row.contains(&format!("<figcaption>{label}</figcaption>")),
+            "{label}: {row}"
+        );
+    }
+    assert!(html.find("class=\"compare\"").unwrap() < html.find("class=\"history\"").unwrap());
+}
+
+#[test]
+fn the_base_picture_leads_the_row() {
+    let text = format!(
+        "{CANDIDATES}  [2026-09-27 19:00] agent — Base, the donor's approved picture: ![D donor](/base.png)\n"
+    );
+    let html = page_at(&text, "docs/ships/x.md");
+    let row = strip(&html);
+    assert!(
+        row.find("/base.png").unwrap() < row.find("/a.png").unwrap(),
+        "{row}"
+    );
+    assert!(row.contains("<figcaption>Base</figcaption>"));
+}
+
+#[test]
+fn an_html_candidate_in_the_row_is_a_mockup_item_not_a_broken_image() {
+    // A browser cannot draw an .html file as an <img>: the row holds it as media, for the client to frame.
+    let (_tree, render) = bare();
+    let sections = render.sections(MOCKUPS, "docs/art/UI.md");
+    let media = &sections[0].media;
+    let mut srcs: Vec<&str> = media
+        .iter()
+        .map(|m| match m {
+            symphony::render::Media::Mockup { src, .. } => src.as_str(),
+            other => panic!("{other:?}"),
+        })
+        .collect();
+    srcs.sort_unstable();
+    // each of the line's three, once in the compare row and once in the thread
+    assert_eq!(
+        srcs,
+        [
+            "/docs/art/mockups/a.html",
+            "/docs/art/mockups/a.html",
+            "/docs/art/mockups/b.html",
+            "/docs/art/mockups/b.html",
+            "/docs/art/mockups/c.html",
+            "/docs/art/mockups/c.html"
+        ]
+    );
+    let html = &sections[0].html;
+    let row = strip(html);
+    assert!(!row.contains(".html"), "{row}");
+    assert_eq!(row.matches("data-media=").count(), 3, "{row}");
+    for label in ["A", "B", "C"] {
+        assert!(
+            row.contains(&format!("<figcaption>{label}</figcaption>")),
+            "{label}: {row}"
+        );
+    }
+}
+
+#[test]
+fn a_png_base_beside_mockup_candidates_stays_a_picture() {
+    let text =
+        format!("{MOCKUPS}  [2026-10-06] agent — Base, the approved screen: ![Old](/base.png)\n");
+    let (_tree, render) = bare();
+    let sections = render.sections(&text, "docs/art/UI.md");
+    let row = strip(&sections[0].html);
+    assert!(row.contains("<img src=\"/base.png\""), "{row}");
+    assert!(row.find("/base.png").unwrap() < row.find("data-media=").unwrap());
+    assert_eq!(
+        sections[0].media.len(),
+        3 + 3,
+        "the row repeats the line's three, the line itself holds them too"
+    );
+}
+
+#[test]
+fn a_card_with_one_picture_has_no_row() {
+    let html = page_at(
+        "- [ ] **h** — one fix.\n  [2026-09-27 18:00] agent — ![H ship](/a.png)\n",
+        "docs/ships/x.md",
+    );
+    assert!(!html.contains("class=\"compare\""));
+}
+
+#[test]
+fn a_card_without_pictures_has_no_row() {
+    assert!(!page("- [ ] **h** — words.\n").contains("class=\"compare\""));
+}
+
+#[test]
+fn settled_cards_fold_into_a_one_line_summary() {
+    for (mark, state) in [("r", "resolved"), ("~", "dismissed"), ("-", "rejected")] {
+        let text = format!(
+            "- [{mark}] **a** — A long card text that goes on.\n  [2026-09-24 10:00] owner · {state}\n  [2026-09-24 11:00] agent — done\n"
+        );
+        let html = page(&text);
+        assert!(
+            html.contains("<details class=\"settled\">"),
+            "{state}: {html}"
+        );
+        assert!(
+            html.contains(&format!("<summary><code>a</code> <span class=\"settled-state\">{state}</span> A long card text that goes on.</summary>")),
+            "{state}: {html}"
+        );
+        assert!(html.contains("class=\"decision\""));
+    }
+}
+
+#[test]
+fn a_long_settled_summary_is_cut_and_markup_dropped() {
+    let text = format!(
+        "- [r] **a** — **Bold** [[PLAN|plan]] {}\n  [2026-09-24 10:00] owner · approved\n",
+        "word ".repeat(40)
+    );
+    let html = page(&text);
+    let summary = html
+        .split("<summary>")
+        .nth(1)
+        .unwrap()
+        .split("</summary>")
+        .next()
+        .unwrap();
+    assert!(summary.contains("Bold plan word"), "{summary}");
+    assert!(summary.ends_with('…'), "{summary}");
+    assert!(!summary.contains("**"));
+}
+
+#[test]
+fn open_cards_stay_unfolded() {
+    for text in [
+        "- [ ] **a** — new\n",
+        "- [-] **a** — no\n  [2026-09-24 10:00] owner · rejected — why\n",
+        "- [?] **a** — q\n  [2026-09-24 10:00] owner · question — what?\n  [2026-09-24 11:00] agent — this\n",
+    ] {
+        assert!(!page(text).contains("<details"), "{text}");
+    }
+}
+
+#[test]
+fn group_headings_show_a_live_count_of_the_cards_under_them() {
+    let html = page(
+        "<!-- register:start -->\n## Needs your decision\n\n### T\n\n- [ ] **a** — 1\n- [ ] **b** — 2\n\n## Resolved\n\n### T\n\n- [r] **c** — 3\n<!-- register:end -->\n",
+    );
+    assert!(html.contains(">Needs your decision (2)</h2>"), "{html}");
+    assert!(html.contains(">Resolved (1)</h2>"));
+}
+
+#[test]
+fn a_stale_file_is_counted_by_where_cards_belong_not_where_they_sit() {
+    let html = page(
+        "<!-- register:start -->\n## Needs your decision\n\n### T\n\n- [r] **c** — 3\n<!-- register:end -->\n",
+    );
+    assert!(html.contains(">Needs your decision (0)</h2>"), "{html}");
+}
+
+#[test]
+fn legacy_undated_lines_still_render() {
+    let html = page("- [x] **a** — one.\n  owner words\n  ↳ agent words\n");
+    assert!(
+        html.contains(
+            "<li class=\"entry owner\"><span class=\"entry-text\">owner words</span></li>"
+        ),
+        "{html}"
+    );
+    assert!(
+        html.contains(
+            "<li class=\"entry agent\"><span class=\"entry-text\">agent words</span></li>"
+        )
+    );
+}
+
+#[test]
+fn agent_entries_render_markdown_but_owner_entries_stay_text() {
+    let (tree, render) = bare();
+    tree.write("docs/factions/FACTIONS.md", "# Factions\n");
+    let html = render.html("- [?] **a** — one.\n  [2026-09-24] owner · question — <b>raw</b>\n  [2026-09-24] agent — See ![scale](/artifacts/x.svg) and [[FACTIONS#Empire]].\n", "docs/DECISIONS.md");
+    assert!(html.contains("&lt;b&gt;raw&lt;/b&gt;"), "{html}");
+    assert!(html.contains("<img src=\"/artifacts/x.svg\" alt=\"scale\""));
+    assert!(html.contains("href=\"/docs/factions/FACTIONS.md#empire\""));
+}
+
+const PNG_5X7: &[u8] = b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR\0\0\0\x05\0\0\0\x07";
+
+/// The owner attached a picture and a PDF to a verdict note: those lines are drawn as an agent's
+/// Markdown is, every other line stays literal, including a picture of a file that is not an
+/// upload. (Sizes and cache tokens are added when a read prepares the fragment.)
+#[test]
+fn an_owner_line_naming_an_upload_is_drawn_and_its_other_words_stay_text() {
+    let (tree, render) = bare();
+    let picture = symphony::uploads::store(&tree.root, "shot.png", PNG_5X7).unwrap();
+    let document = symphony::uploads::store(&tree.root, "brief.pdf", b"%PDF-1.4").unwrap();
+    let card = format!(
+        "- [?] **a** — one.\n  [2026-10-28 10:00] owner · question — <b>see</b>\n    {}\n    {}\n    ![x](/artifacts/raw.png)\n",
+        picture.markup(),
+        document.markup()
+    );
+    let html = render.html(&card, "docs/DECISIONS.md");
+    let owner = html
+        .split("<li class=\"entry owner\">")
+        .nth(1)
+        .and_then(|entry| entry.split("</li>").next())
+        .unwrap_or_else(|| panic!("no owner entry: {html}"));
+    let lines: Vec<_> = owner.split("<br>").collect();
+    assert_eq!(lines.len(), 4, "{owner}");
+    assert!(lines[0].ends_with("&lt;b&gt;see&lt;/b&gt;"), "{owner}");
+    assert_eq!(
+        lines[1],
+        format!("<img src=\"{}\" alt=\"shot.png\" />", picture.url())
+    );
+    assert_eq!(
+        lines[2],
+        format!("<a href=\"{}\">brief.pdf</a>", document.url())
+    );
+    assert!(
+        lines[3].starts_with("![x](/artifacts/raw.png)"),
+        "a picture that is not an upload stays the owner's text: {owner}"
+    );
+}
+
+/// A task thread's owner message keeps its literal words; one that attached a file also carries
+/// typed blocks, the picture among them, which the client draws instead of the bare text.
+#[test]
+fn an_owner_task_message_with_an_upload_has_picture_blocks_and_one_without_has_none() {
+    let (tree, render) = bare();
+    let picture = symphony::uploads::store(&tree.root, "shot.png", PNG_5X7).unwrap();
+    let message = |sender: &str, kind: &str, text: String| symphony_api::Message {
+        id: 1,
+        slug: "fixture/task".into(),
+        sender: sender.into(),
+        recipient: None,
+        kind: kind.into(),
+        text,
+        ts: 0.0,
+    };
+    let attached = format!("look <here>\n{}", picture.markup());
+    let entry = symphony::taskview::entry(&message("owner", "message", attached.clone()), &render);
+    assert_eq!(
+        entry.message.text, attached,
+        "the stored words are unchanged"
+    );
+    let json = serde_json::to_string(&entry.blocks).unwrap();
+    assert!(json.contains("\"type\":\"image\""), "{json}");
+    assert!(
+        json.contains(&format!("\"src\":\"{}?v=", picture.url())),
+        "{json}"
+    );
+    assert!(json.contains("\"alt\":\"shot.png\""), "{json}");
+    assert!(
+        json.contains("\"width\":\"5\"") && json.contains("\"height\":\"7\""),
+        "the picture keeps its real size: {json}"
+    );
+    assert!(json.contains("\"text\":\"look <here>\""), "{json}");
+    for (sender, kind, text) in [
+        ("owner", "message", "no file, <b>literal</b>".to_string()),
+        ("owner", "system", attached.clone()),
+    ] {
+        let entry = symphony::taskview::entry(&message(sender, kind, text), &render);
+        assert!(
+            entry.blocks.is_empty(),
+            "{sender} {kind}: {:?}",
+            entry.blocks
+        );
+    }
+}
+
+#[test]
+fn history_html_gives_each_card_its_rendered_thread() {
+    let text = "# D\n\n- [-] **one** — first.\n  [2026-09-24 10:00] owner · rejected — old note\n- [x] **two** — second.\n  [2026-09-26 09:20] agent — See **this**.\n";
+    let (_tree, render) = bare();
+    let threads = render.history(text, "docs/D.md");
+    assert_eq!(
+        threads.keys().map(String::as_str).collect::<Vec<_>>(),
+        ["one", "two"]
+    );
+    assert!(threads["one"].html.contains("old note"));
+    assert!(threads["two"].html.contains("<strong>this</strong>"));
+    assert!(threads["two"].html.contains("class=\"entry agent\""));
+}
+
+const AUTO: &str = "<!-- register:start -->\n## Auto-approved: spot-check\n\n### T\n\n- [a] **pic** — A hull. *Shows:* X · ship\n  [2026-09-27 10:00] agent — ![x](/x.png)\n  [2026-09-27 11:00] agent · auto-approved — A: bold outline\n<!-- register:end -->\n";
+
+#[test]
+fn an_auto_approved_card_renders_unfolded_with_its_state_and_group() {
+    let html = page_at(AUTO, "docs/ships/x.md");
+    assert!(html.contains("data-state=\"auto-approved\""), "{html}");
+    assert!(html.contains("data-group=\"auto\""));
+    assert!(!html.contains("<details"));
+}
+
+#[test]
+fn an_auto_approved_card_is_counted_in_its_group_heading() {
+    assert!(page_at(AUTO, "docs/ships/x.md").contains(">Auto-approved: spot-check (1)</h2>"));
+}
+
+#[test]
+fn the_auto_line_shows_its_verdict() {
+    assert!(page_at(AUTO, "docs/ships/x.md").contains("<b>auto-approved</b>"));
+}
+
+#[test]
+fn an_open_card_has_its_slug_as_id() {
+    assert!(
+        page("- [ ] **one-card** — new\n")
+            .contains("<div class=\"decision\" id=\"one-card\" data-slug=\"one-card\"")
+    );
+}
+
+#[test]
+fn a_settled_card_has_it_too() {
+    assert!(
+        page("- [r] **old** — done\n  [2026-09-24 10:00] owner · approved\n")
+            .contains("id=\"old\"")
+    );
+}

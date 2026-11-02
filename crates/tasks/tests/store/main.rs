@@ -1,0 +1,24 @@
+//! The store over a real SurrealDB server, one test binary so they share one server.
+
+mod board;
+mod callbacks;
+mod claim;
+mod common;
+mod copy;
+mod cutover;
+mod done;
+mod embeddings;
+#[path = "../../../../../tools/gate/tests/verify/script.rs"]
+mod fixture_script;
+mod health;
+mod launches;
+mod messages;
+mod next;
+mod priority;
+mod quiet_callbacks;
+mod reserve;
+mod roles;
+mod sessions;
+mod sqlite;
+mod tree;
+mod verdict;

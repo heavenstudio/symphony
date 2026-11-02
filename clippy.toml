@@ -1,0 +1,15 @@
+# How clippy reads the workspace lints (Cargo.toml, `[workspace.lints.clippy]`). Only what differs from
+# clippy's defaults is here.
+
+# Nothing here is published: a lint may ask for a change to a `pub` signature, since every caller is
+# in this tree.
+avoid-breaking-exported-api = false
+
+# A test asserts: its `unwrap()` and `panic!` are the assertion, and it may print what it saw.
+allow-unwrap-in-tests = true
+allow-panic-in-tests = true
+allow-print-in-tests = true
+
+# Names `doc_markdown` would otherwise want in backticks: the products and formats the docs name as
+# words. `..` keeps clippy's own list (JavaScript, GitHub, macOS and the rest).
+doc-valid-idents = ["SurrealDB", "SurrealKV", "SQLite", "GDScript", "CBOR", ".."]

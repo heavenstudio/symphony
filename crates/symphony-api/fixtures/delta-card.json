@@ -1,0 +1,17 @@
+{
+  "version": 4183,
+  "changes": [
+    {
+      "region": "card",
+      "data": {
+        "slug": "dock-menu-order",
+        "doc": "docs/game/STATIONS.md",
+        "doc_title": "Stations",
+        "title": "The dock menu lists repair before trade, and refuel before both.",
+        "summary": "Players who dock damaged look for repair first; trade stays one press away.",
+        "why": "design call",
+        "posted": "2026-10-06 21:10"
+      }
+    }
+  ]
+}

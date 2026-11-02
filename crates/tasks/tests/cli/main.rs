@@ -1,0 +1,141 @@
+//! The `tasks` command line over a real SurrealDB server: the store's tests' server, one per binary.
+
+#[path = "../store/common.rs"]
+#[allow(dead_code)]
+mod common;
+
+mod agents;
+mod api;
+mod attach;
+mod beat;
+// Launcher regressions use this board harness so the core gate needs no board dependency.
+#[path = "../../../../../tools/gate/tests/hooks/board_beat.rs"]
+mod board_beat;
+mod commands;
+mod launch;
+mod monitor;
+mod moved;
+mod output;
+mod priority;
+mod probes;
+mod pull;
+mod recipe;
+mod search;
+
+use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
+use tasks::Store;
+use tasks::cli::{Env, connect};
+
+/// What one run of `tasks` said: its exit code, its stdout and its stderr.
+pub struct Ran {
+    pub code: i32,
+    pub out: String,
+    pub err: String,
+}
+
+/// An environment reaching a database of its own on the tests' server, its clock at `common::NOW`.
+pub fn env() -> Env {
+    let db = common::client();
+    let vars: BTreeMap<String, String> = [
+        ("TASKS_SERVER", db.addr().to_string()),
+        ("TASKS_DATABASE", db.database().to_string()),
+        ("TASKS_NOW", common::NOW.to_string()),
+    ]
+    .into_iter()
+    .map(|(k, v)| (k.to_string(), v))
+    .collect();
+    Env {
+        vars,
+        cwd: std::env::temp_dir(),
+    }
+}
+
+/// `tasks ARGS` with `input` on stdin.
+pub fn run(env: &Env, args: &[&str], input: &str) -> Ran {
+    let args: Vec<String> = args.iter().map(|a| a.to_string()).collect();
+    let (mut out, mut err) = (Vec::new(), Vec::new());
+    let code = tasks::cli::main(&args, env, &mut input.as_bytes(), &mut out, &mut err);
+    Ran {
+        code,
+        out: String::from_utf8(out).unwrap(),
+        err: String::from_utf8(err).unwrap(),
+    }
+}
+
+/// A board of its own, and `tasks ARGS` run on it as a session.
+pub struct Case {
+    pub env: Env,
+}
+
+impl Default for Case {
+    fn default() -> Case {
+        Case { env: env() }
+    }
+}
+
+impl Case {
+    pub fn new() -> Case {
+        Case::default()
+    }
+
+    /// `tasks ARGS` as `who` (no session if it is empty), `input` on stdin.
+    pub fn run_as(&self, who: &str, args: &[&str], input: &str) -> Ran {
+        let mut env = self.env.clone();
+        if !who.is_empty() {
+            env.vars.insert("TASKS_SESSION".into(), who.into());
+        }
+        run(&env, args, input)
+    }
+
+    /// What `tasks ARGS` as `who` printed, which must have succeeded.
+    pub fn ok(&self, who: &str, args: &[&str]) -> String {
+        let ran = self.run_as(who, args, "");
+        assert_eq!(ran.code, 0, "{args:?} as {who:?}: {}", ran.err);
+        ran.out
+    }
+
+    /// A session of `kind` with `extra` flags to `register`: its handle.
+    pub fn register_with(&self, kind: &str, extra: &[&str]) -> String {
+        let mut args = vec!["register", "--kind", kind];
+        args.extend_from_slice(extra);
+        self.ok("", &args).trim().to_string()
+    }
+
+    pub fn register(&self, kind: &str) -> String {
+        self.register_with(kind, &[])
+    }
+
+    /// The board, as of the clock `TASKS_NOW` pins.
+    pub fn store(&self) -> Store {
+        connect(&self.env).unwrap()
+    }
+}
+
+/// A folder of this process's own outside any repository (the target dir is inside this one),
+/// emptied first.
+pub fn scratch(name: &str) -> PathBuf {
+    let dir = std::env::temp_dir().join(format!("tasks-cli-{}-{name}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    dir.canonicalize().unwrap()
+}
+
+/// `git ARGS` in `dir`, as a committer named `t`, which must succeed.
+pub fn git(dir: &Path, args: &[&str]) {
+    let done = std::process::Command::new("git")
+        .args(["-c", "user.email=t@t", "-c", "user.name=t", "-C"])
+        .arg(dir)
+        .args(args)
+        .output()
+        .unwrap();
+    assert!(done.status.success(), "git {args:?}: {done:?}");
+}
+
+/// A repository at `path` with one commit on `main`.
+pub fn repository(path: &Path) -> PathBuf {
+    std::fs::create_dir_all(path).unwrap();
+    git(path, &["init", "-q", "-b", "main"]);
+    git(path, &["commit", "-q", "--allow-empty", "-m", "base"]);
+    path.to_path_buf()
+}

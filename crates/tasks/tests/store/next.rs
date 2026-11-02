@@ -1,0 +1,224 @@
+//! `next`: the best work for a session.
+
+use crate::common::{Fixture, GONE, Seed, refused};
+use tasks::cli::pull::digest;
+use tasks::health::RESERVE_SECONDS;
+use tasks::{NewSession, NewTask};
+
+fn task(slug: &str, priority: i64) -> NewTask {
+    NewTask {
+        priority,
+        ..NewTask::new(slug, "Jump departure", "owner")
+    }
+}
+
+fn next(f: &Fixture, handle: &str) -> Option<String> {
+    f.store.next_for(handle).unwrap().map(|t| t.slug)
+}
+
+#[test]
+fn next_prefers_priority_then_affinity_and_skips_others_reservations() {
+    let f = Fixture::empty();
+    let a = f.session_with(NewSession {
+        affinity: vec!["view".into()],
+        ..NewSession::new("worker")
+    });
+    let b = f.session("worker");
+    f.task_with(task("sim/plain", 2));
+    f.task_with(task("view/hud", 2));
+    f.task_with(task("sim/urgent", 0));
+    f.store.reserve("sim/urgent", &b, RESERVE_SECONDS).unwrap();
+    assert_eq!(next(&f, &a).as_deref(), Some("view/hud"));
+    assert_eq!(next(&f, &b).as_deref(), Some("sim/urgent"));
+}
+
+#[test]
+fn next_prefers_the_area_a_session_already_works_in() {
+    let f = Fixture::empty();
+    let a = f.session("worker");
+    f.task("sim/one");
+    f.task("render/two");
+    f.task("render/three");
+    f.store.claim("render/two", &a).unwrap();
+    assert_eq!(next(&f, &a).as_deref(), Some("render/three"));
+}
+
+#[test]
+fn next_offers_concept_and_design_work_too() {
+    let f = Fixture::empty();
+    let a = f.session("worker");
+    f.task_with(NewTask {
+        status: "design".into(),
+        ..task("docs/hull-brief", 2)
+    });
+    f.task_with(NewTask {
+        status: "backlog".into(),
+        ..task("sim/later", 2)
+    });
+    assert_eq!(next(&f, &a).as_deref(), Some("docs/hull-brief"));
+}
+
+#[test]
+fn next_skips_claimed_work_and_work_waiting_on_another() {
+    let f = Fixture::empty();
+    let (a, b) = (f.session("worker"), f.session("worker"));
+    f.task("sim/one");
+    f.task_with(NewTask {
+        depends: vec!["sim/one".into()],
+        ..task("sim/two", 2)
+    });
+    f.store.claim("sim/one", &a).unwrap();
+    assert_eq!(next(&f, &b), None);
+}
+
+#[test]
+fn a_cancelled_dependency_blocks_with_a_reason_instead_of_disappearing_from_pull() {
+    for actor in ["owner", "amber-heron"] {
+        let mut seed = Seed::default()
+            .session("amber-heron")
+            .task("sim/prerequisite", "ready")
+            .task("sim/second-prerequisite", "ready")
+            .task("sim/old-prerequisite", "cancelled")
+            .task("sim/legacy", "ready")
+            .link("sim/legacy", "dep", "sim/old-prerequisite")
+            .task("sim/free", "ready");
+        for status in tasks::STATUSES {
+            let slug = format!("sim/{status}").replace('_', "-");
+            seed = seed
+                .task(&slug, status)
+                .link(&slug, "dep", "sim/prerequisite")
+                .link(&slug, "dep", "sim/second-prerequisite");
+        }
+        let f = Fixture::new(seed);
+        f.store
+            .move_to("sim/prerequisite", "cancelled", actor)
+            .unwrap();
+        for status in tasks::STATUSES {
+            let slug = format!("sim/{status}").replace('_', "-");
+            let terminal = matches!(status, "done" | "cancelled");
+            assert_eq!(
+                f.store.get(&slug).unwrap().status,
+                if terminal { status } else { "blocked" },
+                "{actor} cancellation, dependent was {status}"
+            );
+            if !terminal {
+                assert_eq!(
+                    f.said(&slug),
+                    ["blocked: cancelled dependencies: sim/prerequisite"]
+                );
+            }
+        }
+        f.store
+            .move_to("sim/second-prerequisite", "cancelled", actor)
+            .unwrap();
+        for status in tasks::STATUSES {
+            let slug = format!("sim/{status}").replace('_', "-");
+            let expected = if matches!(status, "done" | "cancelled") {
+                Vec::<String>::new()
+            } else {
+                vec![
+                    "blocked: cancelled dependencies: sim/prerequisite".into(),
+                    "blocked: cancelled dependencies: sim/second-prerequisite".into(),
+                ]
+            };
+            assert_eq!(f.said(&slug), expected, "{actor}, dependent was {status}");
+        }
+        let later = f.task_with(NewTask {
+            depends: vec!["sim/prerequisite".into(), "sim/old-prerequisite".into()],
+            ..task("sim/later", 0)
+        });
+        assert_eq!(later.status, "blocked");
+        assert_eq!(
+            f.said("sim/later").last().unwrap(),
+            "blocked: cancelled dependencies: sim/old-prerequisite, sim/prerequisite"
+        );
+        f.store
+            .take_role("sim/later", "amber-heron", "orchestrator")
+            .unwrap();
+        assert_eq!(
+            f.store
+                .move_to("sim/later", "ready", "amber-heron")
+                .unwrap()
+                .status,
+            "blocked",
+            "moving the task cannot satisfy its cancelled prerequisite"
+        );
+        assert_eq!(next(&f, "amber-heron").as_deref(), Some("sim/free"));
+        let pull = digest(&f.store, &[], None, f.now(), &[]).unwrap();
+        assert_eq!(
+            pull.items("ready_unstaffed")
+                .iter()
+                .map(|t| t.slug.as_str())
+                .collect::<Vec<_>>(),
+            ["sim/free"]
+        );
+        assert_eq!(pull.count("dependency_blocked"), 9);
+        assert_eq!(
+            pull.notes["sim/legacy"],
+            "cancelled dependencies: sim/old-prerequisite"
+        );
+        assert!(
+            pull.lines()
+                .iter()
+                .any(|line| line.contains("dependency_blocked p0 sim/later")
+                    && line.contains(
+                        "cancelled dependencies: sim/old-prerequisite, sim/prerequisite"
+                    ))
+        );
+        assert!(refused(f.store.claim("sim/later", "amber-heron")).contains("is blocked"));
+    }
+}
+
+#[test]
+fn next_breaks_a_tie_by_the_order_made() {
+    let f = Fixture::empty();
+    let a = f.session("worker");
+    f.task("sim/zeta");
+    f.task("sim/alpha");
+    assert_eq!(next(&f, &a).as_deref(), Some("sim/zeta"));
+}
+
+#[test]
+fn next_offers_work_whose_executor_or_reserver_is_gone() {
+    let f = Fixture::empty();
+    let (gone, other) = (f.session("worker"), f.session("worker"));
+    f.task_with(NewTask {
+        status: "design".into(),
+        ..task("sim/held", 1)
+    });
+    f.task_with(task("sim/booked", 0));
+    f.store.claim("sim/held", &gone).unwrap(); // design work keeps its stage, so it is still pullable
+    f.store.reserve("sim/booked", &gone, 10.0 * GONE).unwrap();
+    assert_eq!(next(&f, &other), None);
+    f.advance(GONE);
+    f.store.touch(&other).unwrap();
+    assert_eq!(next(&f, &other).as_deref(), Some("sim/booked"));
+    f.store.claim("sim/booked", &other).unwrap();
+    assert_eq!(next(&f, &other).as_deref(), Some("sim/held"));
+}
+
+#[test]
+fn a_subtask_made_for_a_handle_is_offered_to_it_alone() {
+    let f = Fixture::empty();
+    let (agent, other) = (f.session("worker"), f.session("worker"));
+    f.task("a");
+    f.task_with(NewTask {
+        parent: Some("a".into()),
+        assignee: Some(agent.clone()),
+        ..task("a/review", 3)
+    });
+    f.advance(RESERVE_SECONDS * 3.0);
+    f.store.touch(&agent).unwrap();
+    f.store.touch(&other).unwrap();
+    assert_eq!(next(&f, &agent).as_deref(), Some("a/review"));
+    assert_eq!(next(&f, &other).as_deref(), Some("a"));
+}
+
+#[test]
+fn next_for_an_unknown_session_is_refused() {
+    let f = Fixture::empty();
+    assert_eq!(
+        refused(f.store.next_for("ghost-owl")),
+        "no session 'ghost-owl'"
+    );
+}

@@ -1,0 +1,15 @@
+# The Symphony's wire types: the JSON apps/symphony-server sends and apps/symphony-ui reads.
+# serde only, so the server and the wasm client build the same types.
+[package]
+name = "symphony-api"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+
+[dev-dependencies]
+repository-read = { path = "../../../crates/repository-read" }
+serde_json = "1"

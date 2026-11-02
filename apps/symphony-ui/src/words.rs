@@ -1,0 +1,115 @@
+//! The board's words and times.
+
+/// A wall-clock time without a zone, as the registers write it: minutes since 1970-01-01 00:00.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct Moment(i64);
+
+impl Moment {
+    /// `YYYY-MM-DD HH:MM` or `YYYY-MM-DD`; `None` for anything else.
+    pub fn parse(text: &str) -> Option<Moment> {
+        let (date, time) = match text.split_once(' ') {
+            Some((date, time)) => (date, Some(time)),
+            None => (text, None),
+        };
+        let mut parts = date.split('-');
+        let (year, month, day) = (parts.next()?, parts.next()?, parts.next()?);
+        if parts.next().is_some() || year.len() != 4 || month.len() != 2 || day.len() != 2 {
+            return None;
+        }
+        let (hour, minute) = match time {
+            None => (0, 0),
+            Some(time) => {
+                let (hour, minute) = time.split_once(':')?;
+                if hour.len() != 2 || minute.len() != 2 {
+                    return None;
+                }
+                (hour.parse().ok()?, minute.parse().ok()?)
+            }
+        };
+        Moment::from_parts(
+            year.parse().ok()?,
+            month.parse().ok()?,
+            day.parse().ok()?,
+            hour,
+            minute,
+        )
+    }
+
+    /// A date and time of day; `None` when one is out of range.
+    pub fn from_parts(year: i64, month: u32, day: u32, hour: u32, minute: u32) -> Option<Moment> {
+        if !(1..=12).contains(&month) || !(1..=31).contains(&day) || hour > 23 || minute > 59 {
+            return None;
+        }
+        Some(Moment(
+            days_from_civil(year, month, day) * 1440 + i64::from(hour * 60 + minute),
+        ))
+    }
+
+    pub fn minutes(self) -> i64 {
+        self.0
+    }
+
+    fn hour(self) -> i64 {
+        self.0.rem_euclid(1440) / 60
+    }
+}
+
+/// Days from 1970-01-01 to a date of the proleptic Gregorian calendar (Howard Hinnant's).
+fn days_from_civil(year: i64, month: u32, day: u32) -> i64 {
+    let year = if month <= 2 { year - 1 } else { year };
+    let era = year.div_euclid(400);
+    let year_of_era = year - era * 400;
+    let month_from_march = i64::from((month + 9) % 12);
+    let day_of_year = (153 * month_from_march + 2) / 5 + i64::from(day) - 1;
+    let day_of_era = year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + day_of_year;
+    era * 146_097 + day_of_era - 719_468
+}
+
+/// "Good morning", "Good afternoon" or "Good evening".
+pub fn greeting(now: Moment) -> &'static str {
+    match now.hour() {
+        0..=11 => "Good morning",
+        12..=17 => "Good afternoon",
+        _ => "Good evening",
+    }
+}
+
+/// How long something has waited, short: "new", "3 h", "7 d"; "" without a time.
+pub fn age(posted: Option<&str>, now: Moment) -> String {
+    let Some(then) = posted.and_then(Moment::parse) else {
+        return String::new();
+    };
+    let minutes = (now.0 - then.0).max(0);
+    if minutes >= 1440 {
+        format!("{} d", minutes / 1440)
+    } else if minutes >= 60 {
+        format!("{} h", minutes / 60)
+    } else {
+        "new".to_string()
+    }
+}
+
+/// The line under the greeting.
+pub fn lead(waiting: u32, docs: u32) -> String {
+    if waiting == 0 {
+        return "Your queue is empty.".to_string();
+    }
+    format!(
+        "{waiting} {} on you across {docs} {}. Start with the one below.",
+        if waiting == 1 {
+            "card waits"
+        } else {
+            "cards wait"
+        },
+        plural(docs, "document")
+    )
+}
+
+/// `noun`, with an s unless there is one.
+pub fn plural(count: u32, noun: &str) -> String {
+    if count == 1 {
+        noun.to_string()
+    } else {
+        format!("{noun}s")
+    }
+}

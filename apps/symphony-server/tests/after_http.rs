@@ -1,0 +1,1462 @@
+//! HTTP contracts against the native router, private repositories and stores.
+
+#[expect(
+    dead_code,
+    reason = "Only the private database client is needed by this HTTP fixture"
+)]
+#[path = "../../../crates/tasks/tests/store/common.rs"]
+mod board;
+#[path = "../../../crates/symphony/tests/common/tree.rs"]
+mod tree;
+
+use serde_json::{Value, json};
+use std::collections::BTreeMap;
+use std::io::{BufRead, BufReader, Read, Write};
+use std::net::{SocketAddr, TcpStream};
+use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
+use std::sync::Arc;
+use std::time::{Duration, Instant};
+use symphony_server::front::{Shared, router};
+use symphony_server::gate::Gate;
+
+const CHILD: &str = "SF_AFTER_HTTP_CHILD";
+const LIMIT: Duration = Duration::from_secs(30);
+const DOCUMENT: &str = "/api/document?path=docs/TOPIC.md";
+const SCOPE: &str = "/@work~http";
+const PHASE: &str = "after_http phase: ";
+const DOC: &str = "# HTTP fixture\n\n[Other](OTHER.md)\n\n<!-- register:start -->\n- [ ] **one** — A question.\n<!-- register:end -->\n";
+
+fn repository(root: &Path, args: &[&str]) -> String {
+    let mut command = Command::new("git");
+    for (key, _) in std::env::vars_os() {
+        if key.to_string_lossy().starts_with("GIT_") {
+            command.env_remove(key);
+        }
+    }
+    let done = command
+        .args(args)
+        .current_dir(root)
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .output()
+        .unwrap();
+    assert!(done.status.success(), "{args:?}: {done:?}");
+    String::from_utf8(done.stdout).unwrap().trim().into()
+}
+
+fn write(root: &Path, relative: &str, bytes: impl AsRef<[u8]>) {
+    let path = root.join(relative);
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(path, bytes).unwrap();
+}
+
+fn fixture() -> tree::Tree {
+    let mut tree = tree::Tree::new();
+    tree.root = tree.root.canonicalize().unwrap();
+    let root = tree.path("repo");
+    std::fs::create_dir(&root).unwrap();
+    // HTTP persistence is observed in files/stores. Main publication belongs to restore-commit.
+    repository(&root, &["init", "-b", "http-fixture"]);
+    repository(&root, &["config", "user.name", "HTTP fixture"]);
+    repository(&root, &["config", "user.email", "http@example.invalid"]);
+    repository(&root, &["config", "core.hooksPath", "/dev/null"]);
+    write(&root, "docs/TOPIC.md", DOC);
+    write(&root, "docs/OTHER.md", "# Other\n");
+    write(
+        &root,
+        "docs/ships/HULLS.md",
+        "# Hulls\n\n<div data-hull-gallery></div>\n",
+    );
+    write(
+        &root,
+        "view/models/hulls/A.glb",
+        b"glTF fixture A".repeat(300),
+    );
+    write(&root, "artifacts/raw.svg", "<svg>private fixture</svg>");
+    write(
+        &root,
+        "artifacts/large.svg",
+        "<svg>large fixture</svg>".repeat(300),
+    );
+    write(&root, "artifacts/raw.png", b"PNG fallback fixture");
+    write(&root, "tools/static/icon.svg", "<svg>icon fixture</svg>");
+    write(&root, "data/custom.unknown", b"unknown extension download");
+    write(
+        &root,
+        "build/symphony-ui/public/index.html",
+        format!("<html><body>{}</body></html>", "Native shell. ".repeat(300)),
+    );
+    write(
+        &root,
+        "build/symphony-ui/public/assets/app-dxh123.js",
+        "console.log('fixture');\n".repeat(100),
+    );
+    repository(&root, &["add", "."]);
+    repository(&root, &["commit", "-qm", "Initial HTTP fixtures"]);
+    repository(
+        &root,
+        &[
+            "worktree",
+            "add",
+            "-qb",
+            "work/http",
+            tree.path("branch").to_str().unwrap(),
+        ],
+    );
+    write(
+        &tree.path("branch"),
+        "docs/TOPIC.md",
+        DOC.replace("HTTP fixture", "Branch fixture"),
+    );
+    write(
+        &tree.path("branch"),
+        "artifacts/raw.png",
+        b"branch PNG fallback",
+    );
+    // Links into metadata/outside each root must never become downloadable documents or media.
+    write(&root, ".git/hidden.md", "metadata secret");
+    write(&root, ".git/hidden.png", "metadata image");
+    write(&tree.root, "outside.svg", "outside secret");
+    std::os::unix::fs::symlink(tree.path("outside.svg"), root.join("artifacts/outside.svg"))
+        .unwrap();
+    std::os::unix::fs::symlink(root.join(".git/hidden.md"), root.join("docs/METADATA.md")).unwrap();
+    std::os::unix::fs::symlink(
+        root.join(".git/hidden.png"),
+        root.join("artifacts/metadata.png"),
+    )
+    .unwrap();
+    std::os::unix::fs::symlink(
+        tree.path("outside.svg"),
+        root.join("build/symphony-ui/public/assets/outside.svg"),
+    )
+    .unwrap();
+    tree
+}
+
+fn run(test: &str, exercise: fn(&Fixture)) {
+    if std::env::var_os(CHILD).is_none() {
+        let began = Instant::now();
+        let tree = fixture();
+        let client = board::client();
+        let done = Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", test, "--nocapture"])
+            .env(CHILD, &tree.root)
+            .env("TASKS_SERVER", client.addr())
+            .env("TASKS_DATABASE", client.database())
+            .env("ASKS_DB", tree.path("asks.db"))
+            .env_remove("TASKS_SESSION")
+            .env_remove("SF_SYMPHONY_UI_DIST")
+            .env_remove("GIT_DIR")
+            .env_remove("GIT_WORK_TREE")
+            .env_remove("GIT_INDEX_FILE")
+            .env_remove("GIT_COMMON_DIR")
+            .current_dir(tree.path("repo"))
+            .output()
+            .unwrap();
+        let out = String::from_utf8_lossy(&done.stdout);
+        let err = String::from_utf8_lossy(&done.stderr);
+        if std::env::var_os("SF_SYMPHONY_PROFILE").is_some() {
+            for line in err.lines().filter(|line| {
+                line.starts_with("→ native read data warmed:")
+                    || line.starts_with("· review timing: initial")
+                    || line.starts_with("· review timing: hub new:")
+            }) {
+                eprintln!("{line}");
+            }
+        }
+        assert!(done.status.success(), "{out}\n{err}");
+        assert!(
+            out.contains("1 passed"),
+            "exact child filter ran no assertions: {out}"
+        );
+        if test == "watcher_refreshes_documents_without_gallery_work_and_models_only_in_their_tree"
+        {
+            let phases: Vec<_> = err
+                .split(PHASE)
+                .skip(1)
+                .map(|phase| {
+                    (
+                        phase.lines().next().unwrap(),
+                        phase
+                            .lines()
+                            .filter(|line| line.starts_with("→ hull gallery warmed:"))
+                            .collect::<Vec<_>>(),
+                    )
+                })
+                .collect();
+            assert_eq!(
+                phases.iter().map(|(name, _)| *name).collect::<Vec<_>>(),
+                ["document", "branch model", "root model", "finished"],
+                "{err}"
+            );
+            assert!(
+                phases[0].1.is_empty(),
+                "document refresh rebuilt a gallery: {err}"
+            );
+            for (index, root) in [(1, tree.path("branch")), (2, tree.path("repo"))] {
+                assert!(
+                    !phases[index].1.is_empty(),
+                    "model edit never warmed a gallery: {err}"
+                );
+                assert!(
+                    phases[index]
+                        .1
+                        .iter()
+                        .all(|line| line.contains(&format!("{}:", root.display()))),
+                    "model refresh warmed its neighbour: {err}"
+                );
+            }
+            assert!(
+                phases[3].1.is_empty(),
+                "late gallery work escaped its phase: {err}"
+            );
+        }
+        println!(
+            "{out}\n{test} wall time {:.3}s",
+            began.elapsed().as_secs_f64()
+        );
+        return;
+    }
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_all()
+        .build()
+        .unwrap();
+    runtime.block_on(async {
+        let root = PathBuf::from(std::env::var_os(CHILD).unwrap()).join("repo");
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        assert_ne!(address.port(), 8765);
+        let shared = Shared::new(
+            i64::from(std::process::id()),
+            address.port(),
+            &root,
+            None,
+            Gate::new(
+                Arc::new(|_| panic!("loopback needs no peer lookup")),
+                Arc::new(Instant::now),
+            ),
+        );
+        let (stop, stopped) = tokio::sync::oneshot::channel();
+        let app = router(shared.clone()).into_make_service_with_connect_info::<SocketAddr>();
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app)
+                .with_graceful_shutdown(async {
+                    let _ = stopped.await;
+                })
+                .await
+                .unwrap();
+        });
+        let result = tokio::task::spawn_blocking(move || {
+            let f = Fixture { root, address };
+            // Successful root read is the readiness handshake, including tree discovery/watch setup.
+            assert_eq!(f.get(DOCUMENT).json()["title"], "HTTP fixture");
+            exercise(&f);
+        })
+        .await;
+        shared.stop();
+        stop.send(()).unwrap();
+        server.await.unwrap();
+        result.unwrap();
+    });
+}
+
+struct Fixture {
+    root: PathBuf,
+    address: SocketAddr,
+}
+
+#[derive(Debug)]
+struct Response {
+    status: u16,
+    headers: BTreeMap<String, String>,
+    body: Vec<u8>,
+}
+
+impl Response {
+    #[track_caller]
+    fn text(&self) -> &str {
+        std::str::from_utf8(&self.body).unwrap()
+    }
+    #[track_caller]
+    fn json(&self) -> Value {
+        match serde_json::from_slice(&self.body) {
+            Ok(value) => value,
+            Err(error) => panic!("{self:?}: {error}"),
+        }
+    }
+    #[track_caller]
+    fn header(&self, name: &str) -> &str {
+        match self.headers.get(name) {
+            Some(value) => value,
+            None => panic!("missing {name}: {self:?}"),
+        }
+    }
+    #[track_caller]
+    fn status(self, status: u16) -> Self {
+        assert_eq!(self.status, status, "{self:?}");
+        self
+    }
+}
+
+impl Fixture {
+    fn connect(&self) -> TcpStream {
+        let stream = TcpStream::connect_timeout(&self.address, LIMIT).unwrap();
+        stream.set_read_timeout(Some(LIMIT)).unwrap();
+        stream.set_write_timeout(Some(LIMIT)).unwrap();
+        stream
+    }
+    fn request(&self, method: &str, path: &str, headers: &[(&str, &str)], body: &[u8]) -> Response {
+        let mut stream = self.connect();
+        write!(
+            stream,
+            "{method} {path} HTTP/1.0\r\nHost: {}\r\nConnection: close\r\nContent-Length: {}\r\n",
+            self.address,
+            body.len()
+        )
+        .unwrap();
+        for (name, value) in headers {
+            write!(stream, "{name}: {value}\r\n").unwrap();
+        }
+        stream.write_all(b"\r\n").unwrap();
+        stream.write_all(body).unwrap();
+        let mut bytes = Vec::new();
+        stream.read_to_end(&mut bytes).unwrap();
+        let at = bytes.windows(4).position(|s| s == b"\r\n\r\n").unwrap();
+        let header = std::str::from_utf8(&bytes[..at]).unwrap();
+        let status = header.split_whitespace().nth(1).unwrap().parse().unwrap();
+        let headers = header
+            .lines()
+            .skip(1)
+            .map(|line| {
+                let (key, value) = line.split_once(':').unwrap();
+                (key.to_ascii_lowercase(), value.trim().to_string())
+            })
+            .collect();
+        Response {
+            status,
+            headers,
+            body: bytes[at + 4..].to_vec(),
+        }
+    }
+    fn get(&self, path: &str) -> Response {
+        self.request("GET", path, &[], &[])
+    }
+    fn post(&self, path: &str, body: &Value) -> Response {
+        self.request(
+            "POST",
+            path,
+            &[("Content-Type", "application/json")],
+            body.to_string().as_bytes(),
+        )
+    }
+    fn feed(&self, scope: &str) -> Feed {
+        let document = self
+            .get(&format!("{scope}/api/document?path=docs/ships/HULLS.md"))
+            .status(200)
+            .json();
+        let document_path: String = document["path"]
+            .as_str()
+            .unwrap()
+            .bytes()
+            .map(|byte| format!("%{byte:02X}"))
+            .collect();
+        let keys: Vec<_> = document["sections"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|s| s["key"].as_str().unwrap())
+            .collect();
+        assert!(!keys.is_empty());
+        let sections: String = serde_json::to_string(&keys)
+            .unwrap()
+            .bytes()
+            .map(|byte| format!("%{byte:02X}"))
+            .collect();
+        let version = self.get(&format!("{scope}/api/board")).status(200).json()["version"]
+            .as_u64()
+            .unwrap();
+        let mut stream = self.connect();
+        write!(
+            stream,
+            "GET {scope}/api/feed?since={version}&document={document_path}&sections={sections} HTTP/1.0\r\nHost: {}\r\n\r\n",
+            self.address
+        )
+        .unwrap();
+        let mut reader = BufReader::new(stream);
+        let mut line = String::new();
+        reader.read_line(&mut line).unwrap();
+        assert!(line.starts_with("HTTP/1.0 200 "), "{line}");
+        loop {
+            line.clear();
+            assert!(reader.read_line(&mut line).unwrap() > 0);
+            if line == "\r\n" {
+                break;
+            }
+        }
+        let mut feed = Feed(reader);
+        // Server notice is emitted only after the feed has subscribed; there is no edit/read gap.
+        feed.until("server");
+        feed
+    }
+}
+
+struct Feed(BufReader<TcpStream>);
+impl Feed {
+    fn until(&mut self, marker: &str) {
+        let began = Instant::now();
+        loop {
+            let mut line = String::new();
+            assert!(
+                self.0.read_line(&mut line).unwrap() > 0,
+                "feed closed before {marker}"
+            );
+            if line.contains(marker) {
+                return;
+            }
+            assert!(
+                began.elapsed() < LIMIT,
+                "feed never delivered {marker}: {line}"
+            );
+        }
+    }
+}
+
+#[test]
+fn native_routes_media_and_persistence() {
+    run("native_routes_media_and_persistence", contracts);
+}
+
+#[test]
+fn later_order_is_shared_without_document_writes_and_reloaded_by_a_new_server() {
+    run(
+        "later_order_is_shared_without_document_writes_and_reloaded_by_a_new_server",
+        later_order,
+    );
+}
+
+fn later_cards(f: &Fixture) -> (String, Feed) {
+    let original =
+        format!("{DOC}\n- [ ] **two** — Another question.\n- [ ] **three** — Third question.\n");
+    let mut feed = f.feed("");
+    write(&f.root, "docs/TOPIC.md", &original);
+    feed.until("three");
+    (original, feed)
+}
+
+fn later_order(f: &Fixture) {
+    let (original, mut feed) = later_cards(f);
+    let baseline = f.get("/api/board").status(200).json()["counts"]["waiting"].clone();
+    let action = json!({"path":"docs/TOPIC.md","slug":"one","action":"later"});
+    for path in ["../outside.md", "docs/METADATA.md"] {
+        f.post(
+            "/api/postpone",
+            &json!({"path":path,"slug":"one","action":"later"}),
+        )
+        .status(400);
+    }
+    f.request(
+        "POST",
+        "/api/postpone",
+        &[("Origin", "null")],
+        action.to_string().as_bytes(),
+    )
+    .status(403);
+    let reply = f.post("/api/postpone", &action).status(200).json();
+    assert_eq!(reply["next"], "/docs/TOPIC.md#two");
+    feed.until("queue-item-order");
+    let queue = f.get("/api/queue").status(200).json();
+    assert_eq!(
+        queue["waiting"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|c| c["slug"].as_str().unwrap())
+            .collect::<Vec<_>>(),
+        ["two", "three", "one"]
+    );
+    assert_eq!(queue["waiting"][2]["postponed"], true);
+    assert_eq!(
+        f.get("/api/board").status(200).json()["counts"]["waiting"],
+        baseline
+    );
+    assert_eq!(
+        std::fs::read_to_string(f.root.join("docs/TOPIC.md")).unwrap(),
+        original
+    );
+    assert!(!f.root.join("docs/DECISIONS.md").exists());
+    // A new server state reads the persisted file, with no state carried from the live hub.
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    runtime.block_on(async {
+        use axum::http::Request;
+        use tower::ServiceExt;
+        let shared = Shared::new(
+            1,
+            1234,
+            &f.root,
+            None,
+            Gate::new(Arc::new(|_| Ok(None)), Arc::new(Instant::now)),
+        );
+        let response = router(shared.clone())
+            .oneshot(
+                Request::builder()
+                    .uri("/api/queue")
+                    .header("Host", "localhost:1234")
+                    .extension(axum::extract::ConnectInfo(
+                        "127.0.0.1:1234".parse::<SocketAddr>().unwrap(),
+                    ))
+                    .body(axum::body::Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 200);
+        let bytes = axum::body::to_bytes(response.into_body(), 1_000_000)
+            .await
+            .unwrap();
+        assert_eq!(
+            serde_json::from_slice::<Value>(&bytes).unwrap()["waiting"],
+            queue["waiting"]
+        );
+        shared.stop();
+    });
+    for (slug, changed) in [("two", false), ("three", true)] {
+        let visit = f
+            .post(
+                "/api/postpone",
+                &json!({"path":"docs/TOPIC.md", "slug":slug, "action":"seen"}),
+            )
+            .status(200)
+            .json();
+        assert_eq!(visit["changed"], changed);
+        assert!(visit["next"].is_null());
+    }
+    let restored = f.get("/api/queue").status(200).json();
+    assert_eq!(restored["waiting"][0]["slug"], "one");
+    assert!(
+        restored["waiting"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|card| card["postponed"] != true)
+    );
+    assert_eq!(
+        std::fs::read_to_string(f.root.join("docs/TOPIC.md")).unwrap(),
+        original
+    );
+    assert_eq!(
+        f.post("/api/postpone", &action).status(200).json()["changed"],
+        true
+    );
+    f.post(
+        "/api/decision",
+        &json!({"path":"docs/TOPIC.md","slug":"one","state":"approved"}),
+    )
+    .status(200);
+    assert!(
+        !std::fs::read_to_string(f.root.join(symphony::postpone::FILE))
+            .unwrap()
+            .contains("one")
+    );
+    write(&f.root, symphony::postpone::FILE, "corrupt preferences");
+    f.post(
+        "/api/decision",
+        &json!({"path":"docs/TOPIC.md","slug":"two","state":"approved"}),
+    )
+    .status(200);
+    assert!(
+        std::fs::read_to_string(f.root.join("docs/TOPIC.md"))
+            .unwrap()
+            .contains("[x] **two**")
+    );
+    write(
+        &f.root,
+        "docs/ships/HULLS.md",
+        "# Hulls\n\nCorrupt preference recovery\n",
+    );
+    feed.until("Corrupt preference recovery");
+    assert_eq!(
+        f.get("/api/board").status(200).json()["counts"]["waiting"],
+        1
+    );
+    let queue = f.get("/api/queue").status(200).json();
+    assert_eq!(queue["waiting"][0]["slug"], "three");
+    assert_ne!(queue["waiting"][0]["postponed"], true);
+    f.get(DOCUMENT).status(200);
+    assert_eq!(
+        std::fs::read_to_string(f.root.join(symphony::postpone::FILE)).unwrap(),
+        "corrupt preferences"
+    );
+}
+
+#[test]
+fn later_expiry_restores_order_without_document_edits() {
+    run(
+        "later_expiry_restores_order_without_document_edits",
+        later_expiry,
+    );
+}
+
+fn later_expiry(f: &Fixture) {
+    let (original, _) = later_cards(f);
+    f.post(
+        "/api/postpone",
+        &json!({"path":"docs/TOPIC.md", "slug":"one", "action":"later"}),
+    )
+    .status(200);
+    let before = f.get("/api/queue").status(200).json();
+    assert_eq!(before["waiting"][0]["slug"], "two");
+    assert_eq!(before["waiting"][2]["postponed"], true);
+    let mut feed = f.feed("");
+    let path = f.root.join(symphony::postpone::FILE);
+    let mut order: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    order["owners"]["owner"]["one"]["until"] = json!(0);
+    std::fs::write(&path, order.to_string()).unwrap();
+    // Only the expiry timer watches this state; no document notification is sent.
+    feed.until("queue-item-order");
+    let after = f.get("/api/queue").status(200).json();
+    assert_eq!(
+        after["waiting"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|card| card["slug"].as_str().unwrap())
+            .collect::<Vec<_>>(),
+        ["one", "two", "three"]
+    );
+    assert!(
+        after["waiting"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|card| card["postponed"] != true)
+    );
+    assert_eq!(
+        f.get("/api/board").status(200).json()["counts"]["waiting"],
+        3
+    );
+    assert_eq!(
+        std::fs::read_to_string(f.root.join("docs/TOPIC.md")).unwrap(),
+        original
+    );
+    assert!(!std::fs::read_to_string(path).unwrap().contains("one"));
+}
+
+fn contracts(f: &Fixture) {
+    let shell = f.get("/").status(200);
+    assert!(shell.text().contains("Native shell."));
+    assert_eq!(shell.header("content-type"), "text/html; charset=utf-8");
+    assert_eq!(shell.header("cache-control"), "no-cache");
+    for route in [
+        "/tasks",
+        "/agents",
+        "/queue",
+        "/hulls/",
+        "/task/fixture/one",
+        "/docs/TOPIC.md",
+        "/docs",
+        "/@work~http/docs/TOPIC.md",
+    ] {
+        assert_eq!(f.get(route).status(200).body, shell.body, "{route}");
+    }
+    for (route, target) in [
+        ("/app", "/"),
+        ("/app/tasks?q=a%20b", "/tasks?q=a%20b"),
+        ("/doc/docs/TOPIC.md", "/docs/TOPIC.md"),
+        ("/history/docs/TOPIC.md", "/docs/TOPIC.md"),
+        ("/diff/abc/docs/TOPIC.md?x=1", "/docs/TOPIC.md?x=1"),
+        (
+            "/@work~http/doc/docs/A%20%25%3F.md?q=x%2By",
+            "/@work~http/docs/A%20%25%3F.md?q=x%2By",
+        ),
+    ] {
+        assert_eq!(f.get(route).status(308).header("location"), target);
+    }
+    let scoped = f.get(&format!("{SCOPE}{DOCUMENT}")).status(200);
+    assert_eq!(scoped.json()["title"], "Branch fixture");
+    assert!(
+        scoped.text().contains("/@work~http/docs/OTHER.md"),
+        "{scoped:?}"
+    );
+    assert_eq!(
+        f.get("/api/document?path=%40work~http%2Fdocs%2FTOPIC.md")
+            .status(200)
+            .json(),
+        scoped.json()
+    );
+    f.get("/@unknown/docs/TOPIC.md").status(404);
+    f.get("/@unknown/api/document?path=docs/TOPIC.md")
+        .status(404);
+    f.get("/@work~http/api/document?path=%40other%2Fdocs%2FTOPIC.md")
+        .status(400);
+    f.get("/api/hulls").status(410);
+    client_decodes_document_reads(f);
+    for route in [
+        "/",
+        DOCUMENT,
+        "/api/board",
+        "/assets/app-dxh123.js",
+        "/artifacts/raw.svg",
+        "/view/models/hulls/A.glb",
+    ] {
+        let get = f.get(route).status(200);
+        let head = f.request("HEAD", route, &[], &[]).status(200);
+        assert!(head.body.is_empty(), "{route}: {head:?}");
+        assert_eq!(head.header("content-type"), get.header("content-type"));
+        assert_eq!(
+            get.header("content-length"),
+            get.body.len().to_string(),
+            "{route}"
+        );
+        assert_eq!(
+            head.header("content-length"),
+            get.header("content-length"),
+            "{route}"
+        );
+        f.request("PUT", route, &[], &[]).status(405);
+    }
+    for route in [
+        "/",
+        "/assets/app-dxh123.js",
+        "/view/models/hulls/A.glb",
+        "/artifacts/raw.svg",
+    ] {
+        let get = f.get(route).status(200);
+        let etag = get.header("etag");
+        for method in ["GET", "HEAD"] {
+            for tag in [etag.to_string(), format!("\"other\", W/{etag}"), "*".into()] {
+                let cached = f
+                    .request(method, route, &[("If-None-Match", &tag)], &[])
+                    .status(304);
+                assert!(cached.body.is_empty());
+                assert_eq!(cached.header("etag"), etag);
+                assert_eq!(cached.header("cache-control"), get.header("cache-control"));
+            }
+            let multiple = f
+                .request(
+                    method,
+                    route,
+                    &[("If-None-Match", "\"other\""), ("If-None-Match", etag)],
+                    &[],
+                )
+                .status(304);
+            assert!(multiple.body.is_empty());
+            let fresh = f
+                .request(method, route, &[("If-None-Match", "\"stale\"")], &[])
+                .status(200);
+            assert_eq!(
+                fresh.body,
+                if method == "HEAD" {
+                    &[]
+                } else {
+                    get.body.as_slice()
+                }
+            );
+        }
+    }
+    assert_eq!(f.get("/queue").status(200).body, shell.body);
+    assert!(
+        f.request("GET", "/queue", &[("Accept", "application/json")], &[])
+            .status(200)
+            .json()
+            .is_object()
+    );
+    for encoding in ["identity", "gzip;q=0", "br", "gzip;q=0, identity;q=1"] {
+        let response = f
+            .request("GET", "/", &[("Accept-Encoding", encoding)], &[])
+            .status(200);
+        assert!(
+            !response.headers.contains_key("content-encoding"),
+            "{encoding}: {response:?}"
+        );
+        assert_eq!(response.body, shell.body);
+        let head = f
+            .request("HEAD", "/", &[("Accept-Encoding", encoding)], &[])
+            .status(200);
+        assert!(head.body.is_empty(), "{encoding}: {head:?}");
+        assert!(
+            !head.headers.contains_key("content-encoding"),
+            "{encoding}: {head:?}"
+        );
+        assert_eq!(head.header("content-length"), shell.body.len().to_string());
+        assert_eq!(head.header("vary"), response.header("vary"));
+    }
+    let compressed = f
+        .request(
+            "GET",
+            "/",
+            &[("Accept-Encoding", "br;q=1, gzip;q=0.8")],
+            &[],
+        )
+        .status(200);
+    assert_eq!(compressed.header("content-encoding"), "gzip");
+    assert!(
+        compressed
+            .header("vary")
+            .to_ascii_lowercase()
+            .contains("accept-encoding")
+    );
+    for route in [
+        "/",
+        "/assets/app-dxh123.js",
+        DOCUMENT,
+        "/api/board",
+        "/artifacts/large.svg",
+        "/view/models/hulls/A.glb",
+    ] {
+        let get = if route == "/" {
+            &compressed
+        } else {
+            &f.request(
+                "GET",
+                route,
+                &[("Accept-Encoding", "br;q=1, gzip;q=0.8")],
+                &[],
+            )
+            .status(200)
+        };
+        assert_eq!(get.header("content-encoding"), "gzip", "{route}");
+        let head = f
+            .request(
+                "HEAD",
+                route,
+                &[("Accept-Encoding", "br;q=1, gzip;q=0.8")],
+                &[],
+            )
+            .status(200);
+        assert!(head.body.is_empty(), "{route}: {head:?}");
+        for header in ["content-encoding", "vary", "content-type", "cache-control"] {
+            assert_eq!(head.header(header), get.header(header), "{route}: {header}");
+        }
+        assert_eq!(
+            head.header("content-length"),
+            get.body.len().to_string(),
+            "{route}"
+        );
+    }
+    let cached_headers = [
+        ("Accept-Encoding", "gzip"),
+        ("If-None-Match", shell.header("etag")),
+    ];
+    let cached_get = f.request("GET", "/", &cached_headers, &[]).status(304);
+    let cached = f.request("HEAD", "/", &cached_headers, &[]).status(304);
+    assert!(cached.body.is_empty());
+    assert_eq!(cached.header("etag"), shell.header("etag"));
+    assert!(!cached.headers.contains_key("content-encoding"));
+    assert_eq!(
+        cached.headers.get("content-length"),
+        cached_get.headers.get("content-length")
+    );
+    let mut decoder = Command::new("gzip")
+        .arg("-dc")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    decoder
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(&compressed.body)
+        .unwrap();
+    let decoded = decoder.wait_with_output().unwrap();
+    assert!(decoded.status.success());
+    assert_eq!(decoded.stdout, shell.body);
+    assert_eq!(
+        f.get("/assets/app-dxh123.js")
+            .status(200)
+            .header("cache-control"),
+        "public, max-age=31536000, immutable"
+    );
+    for (route, mime, body) in [
+        (
+            "/artifacts/raw.svg",
+            "image/svg+xml",
+            b"<svg>private fixture</svg>".as_slice(),
+        ),
+        (
+            "/favicon.ico",
+            "image/svg+xml",
+            b"<svg>icon fixture</svg>".as_slice(),
+        ),
+        (
+            "/data/custom.unknown",
+            "application/octet-stream",
+            b"unknown extension download".as_slice(),
+        ),
+    ] {
+        let raw = f.get(route).status(200);
+        assert_eq!(raw.body, body);
+        assert_eq!(raw.header("content-type"), mime);
+        assert_eq!(
+            raw.header("content-security-policy"),
+            "sandbox allow-scripts"
+        );
+        assert_eq!(raw.header("x-content-type-options"), "nosniff");
+        assert_eq!(raw.header("content-length"), body.len().to_string());
+        assert_eq!(raw.header("cache-control"), "no-cache");
+    }
+    let raw = f.get("/artifacts/raw.svg").status(200);
+    let version = raw.header("etag").trim_matches('"');
+    assert_eq!(
+        f.get(&format!("/artifacts/raw.svg?v={version}"))
+            .status(200)
+            .header("cache-control"),
+        "public, max-age=31536000, immutable"
+    );
+    assert_eq!(
+        f.get("/artifacts/raw.svg?v=stale")
+            .status(200)
+            .header("cache-control"),
+        "no-cache"
+    );
+    write(
+        &f.root,
+        "artifacts/raw.svg",
+        "<svg>updated and longer fixture</svg>",
+    );
+    let changed = f
+        .request(
+            "GET",
+            "/artifacts/raw.svg",
+            &[("If-None-Match", raw.header("etag"))],
+            &[],
+        )
+        .status(200);
+    assert_ne!(changed.header("etag"), raw.header("etag"));
+    assert_eq!(changed.body, b"<svg>updated and longer fixture</svg>");
+    media_refusals_and_thumbnail(f);
+    persistence(f);
+    task_pages(f);
+    // Removing the installed shell must give actionable instructions without restarting a server.
+    std::fs::remove_file(f.root.join("build/symphony-ui/public/index.html")).unwrap();
+    assert!(
+        f.get("/")
+            .status(503)
+            .text()
+            .contains("just symphony-ui-dist")
+    );
+}
+
+/// The Symphony client decodes `/api/document?view=outline` as `DocumentOutline`; a body without
+/// the `document` wrapper reaches the owner as "missing field `document`". Decode what the real
+/// router answers, for the gallery document, a plain document and a branch scope, with the
+/// client's own types.
+fn client_decodes_document_reads(f: &Fixture) {
+    for scope in ["", SCOPE] {
+        for path in ["docs/ships/HULLS.md", "docs/TOPIC.md"] {
+            let outline = f
+                .get(&format!("{scope}/api/document?path={path}&view=outline"))
+                .status(200);
+            let outline: symphony_api::DocumentOutline = serde_json::from_str(outline.text())
+                .unwrap_or_else(|why| panic!("{scope}{path} outline: {why}"));
+            assert!(
+                outline.document.path.ends_with(path),
+                "{}",
+                outline.document.path
+            );
+            let plain = f
+                .get(&format!("{scope}/api/document?path={path}"))
+                .status(200);
+            let plain: symphony_api::Document = serde_json::from_str(plain.text())
+                .unwrap_or_else(|why| panic!("{scope}{path} document: {why}"));
+            assert!(plain.path.ends_with(path), "{}", plain.path);
+            // The plain body has no wrapper, so the outline type must refuse it by name.
+            let why = serde_json::from_value::<symphony_api::DocumentOutline>(
+                f.get(&format!("{scope}/api/document?path={path}"))
+                    .status(200)
+                    .json(),
+            )
+            .unwrap_err()
+            .to_string();
+            assert!(why.contains("missing field `document`"), "{why}");
+        }
+    }
+}
+
+fn media_refusals_and_thumbnail(f: &Fixture) {
+    std::os::unix::fs::symlink(
+        f.root.parent().unwrap().join("outside.svg"),
+        f.root.join("view/models/hulls/outside.glb"),
+    )
+    .unwrap();
+    std::fs::create_dir(f.root.join("view/models/hulls/directory.glb")).unwrap();
+    for route in ["/bad%", "/bad%GG", "/bad%FF"] {
+        f.get(route).status(400);
+    }
+    for route in [
+        "/.git/hidden.md",
+        "/%2Egit/hidden.png",
+        "/artifacts/metadata.png",
+        "/artifacts/outside.svg",
+        "/assets/outside.svg",
+        "/assets/%2E%2E/index.html",
+        "/assets/missing.js",
+        "/artifacts/%2E%2E/%2E%2E/outside.svg",
+        "/artifacts/missing.svg",
+        "/data",
+        "/view/models/hulls/outside.glb",
+        "/view/models/hulls/directory.glb",
+        "/view/models/hulls/missing.glb",
+        "/view/models/hulls/%2E%2E/outside.glb",
+        "/api/document?path=docs/METADATA.md",
+        "/thumb/400/stale/artifacts/metadata.png.jpg",
+        "/thumb/400/stale/artifacts/outside.svg.jpg",
+        "/thumb/no/stale/artifacts/raw.png.jpg",
+        "/thumb/400/stale/artifacts/raw.svg.jpg",
+    ] {
+        f.get(route).status(404);
+    }
+    for route in [
+        "/api/document?path=../outside.md",
+        "/api/document?path=artifacts/raw.svg",
+        "/api/document?path=docs/TOPIC.txt",
+    ] {
+        f.get(route).status(400);
+    }
+    // Stale signature forces fallback without depending on sips or decoding an actual picture.
+    let fallback = f.get("/thumb/400/stale/artifacts/raw.png.jpg").status(200);
+    assert_eq!(fallback.body, b"PNG fallback fixture");
+    assert_eq!(fallback.header("content-type"), "image/png");
+    assert_eq!(fallback.header("cache-control"), "no-cache");
+    let branch = f
+        .get("/@work~http/thumb/400/stale/artifacts/raw.png.jpg")
+        .status(200);
+    assert_eq!(branch.body, b"branch PNG fallback");
+    assert!(
+        f.request(
+            "HEAD",
+            "/@work~http/thumb/400/stale/artifacts/raw.png.jpg",
+            &[],
+            &[]
+        )
+        .status(200)
+        .body
+        .is_empty()
+    );
+}
+
+fn persistence(f: &Fixture) {
+    let baseline = std::fs::read(f.root.join("docs/TOPIC.md")).unwrap();
+    for path in ["../outside.md", "docs/METADATA.md", "artifacts/raw.svg"] {
+        f.post("/api/comment", &json!({"path":path, "after_line":3, "kind":"question", "title":"Refused comment", "body":"Must not be written"})).status(400);
+        assert_eq!(
+            std::fs::read(f.root.join("docs/TOPIC.md")).unwrap(),
+            baseline
+        );
+        assert_eq!(
+            std::fs::read_to_string(f.root.join(".git/hidden.md")).unwrap(),
+            "metadata secret"
+        );
+    }
+    for body in [b"{".as_slice(), b"[]".as_slice()] {
+        let response = f
+            .request(
+                "POST",
+                "/api/comment",
+                &[("Content-Type", "application/json")],
+                body,
+            )
+            .status(400);
+        assert!(
+            response.json()["error"]
+                .as_str()
+                .unwrap()
+                .contains("bad JSON")
+        );
+        assert_eq!(
+            std::fs::read(f.root.join("docs/TOPIC.md")).unwrap(),
+            baseline
+        );
+    }
+    let decision = json!({"path":"docs/TOPIC.md", "slug":"one", "state":"approved", "note":"HTTP verdict persisted", "tap":"http-verdict-once"});
+    assert_eq!(
+        f.post("/api/decision", &decision).status(200).json()["ok"],
+        true
+    );
+    let decided = std::fs::read_to_string(f.root.join("docs/TOPIC.md")).unwrap();
+    assert!(decided.contains("[x] **one**"));
+    assert!(decided.contains("owner · approved — HTTP verdict persisted"));
+    assert_eq!(
+        f.post("/api/decision", &decision).status(200).json()["repeat"],
+        true
+    );
+    assert_eq!(
+        std::fs::read_to_string(f.root.join("docs/TOPIC.md")).unwrap(),
+        decided
+    );
+    let comment = f.post("/@work~http/api/comment", &json!({"path":"docs/TOPIC.md", "after_line":3, "kind":"question", "title":"HTTP comment", "body":"Branch only comment"})).status(200);
+    assert_eq!(comment.header("cache-control"), "no-store");
+    assert_eq!(comment.json()["ok"], true);
+    let branch = f.root.parent().unwrap().join("branch/docs/TOPIC.md");
+    assert!(
+        std::fs::read_to_string(branch)
+            .unwrap()
+            .contains("Branch only comment")
+    );
+    assert_eq!(
+        std::fs::read_to_string(f.root.join("docs/TOPIC.md")).unwrap(),
+        decided
+    );
+    let ask = f.post("/@work~http/api/ask", &json!({"path":"docs/TOPIC.md", "question":"HTTP question <tag>", "anchor":"one", "quote":"A question"})).status(200).json();
+    let id = ask["id"].as_i64().unwrap();
+    assert_eq!(
+        f.post(
+            "/api/ask-reply",
+            &json!({"id":id, "text":"Owner follow-up"})
+        )
+        .status(200)
+        .json()["ok"],
+        true
+    );
+    let stored = symphony::asks::AskStore::open(&f.root.parent().unwrap().join("asks.db"))
+        .unwrap()
+        .thread(id)
+        .unwrap();
+    assert_eq!(stored.path, "docs/TOPIC.md");
+    assert_eq!(stored.anchor, "one");
+    assert_eq!(stored.quote, "A question");
+    assert_eq!(
+        stored.question,
+        "HTTP question <tag>\n\n(sent from /@work~http/docs/TOPIC.md#one)"
+    );
+    assert!(stored.messages.iter().any(|m| m.text == "Owner follow-up"));
+    let store = tasks::cli::connect(&tasks::cli::Env::of_process()).unwrap();
+    let orchestrator = store
+        .register(&tasks::NewSession::new("orchestrator"))
+        .unwrap()
+        .row
+        .handle;
+    // An isolated remote callback exercises recipient selection without invoking a local agent.
+    store.client().query(
+        "UPSERT type::record('callback_state', $handle) SET handle = $handle, address = 'codex:abcdef01', host = 'http-fixture-remote' RETURN NONE;",
+        json!({"handle":orchestrator}),
+    ).unwrap();
+    let read = f.get(&format!("/api/ask?id={id}")).status(200).json();
+    assert_eq!(read["ask"]["id"], id);
+    assert_eq!(read["recipient"], orchestrator);
+    assert_eq!(read["listening"], true);
+    let asks = f.get("/api/asks?path=docs/TOPIC.md").status(200).json();
+    assert_eq!(asks["recipient"], orchestrator);
+    assert_eq!(asks["listening"], true);
+    let html = read["ask"]["messages"][0]["html"].as_str().unwrap();
+    assert!(!html.contains("<tag>"));
+    assert!(html.contains("&lt;tag&gt;"));
+    assert_eq!(
+        f.get("/api/asks?path=docs/TOPIC.md").status(200).json()["asks"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    f.get("/api/ask?id=bad").status(400);
+    f.get("/api/ask?id=999999").status(404);
+    let filed = f.post("/api/quick-task", &json!({"title":"HTTP filed task", "body":"Private board body", "page":"/docs/TOPIC.md#one", "priority":1})).status(200).json();
+    assert_eq!(filed["slug"], "inbox/http-filed-task");
+    let store = tasks::cli::connect(&tasks::cli::Env::of_process()).unwrap();
+    let task = store.get("inbox/http-filed-task").unwrap();
+    assert_eq!(task.title, "HTTP filed task");
+    assert_eq!(task.status, "concept");
+    assert_eq!(task.priority, 1);
+    assert!(task.body.contains("Private board body"));
+    assert!(
+        task.body
+            .contains("Sent from [/docs/TOPIC.md#one](/docs/TOPIC.md#one)")
+    );
+    assert!(task.links.iter().any(|link| link == "docs/TOPIC.md#one"));
+    assert_eq!(
+        f.post(
+            "/api/quick-task",
+            &json!({"title":"HTTP filed task", "page":"/docs/TOPIC.md"})
+        )
+        .status(200)
+        .json()["slug"],
+        "inbox/http-filed-task-2"
+    );
+}
+
+/// The numbers of the `mark-NNNNNN` lines `text` shows, in the order it shows them.
+fn marks(text: &str) -> Vec<usize> {
+    text.match_indices("mark-")
+        .filter_map(|(at, _)| text.get(at + 5..at + 11)?.parse().ok())
+        .collect()
+}
+
+/// A long brief's task page sends a part of it, and `/api/task-brief` the rest, a chunk at a time,
+/// all of one revision, so the owner reaches every line of it.
+fn task_pages(f: &Fixture) {
+    let store = tasks::cli::connect(&tasks::cli::Env::of_process()).unwrap();
+    let mut body = String::new();
+    let mut lines = 0;
+    while body.len() < 400_000 {
+        body.push_str(&format!("mark-{lines:06} of a long brief\n"));
+        lines += 1;
+    }
+    store
+        .create(&tasks::NewTask {
+            body: body.clone(),
+            ..tasks::NewTask::new("fixture/long-brief", "Long brief", "owner")
+        })
+        .unwrap();
+    store
+        .create(&tasks::NewTask {
+            parent: Some("fixture/long-brief".into()),
+            ..tasks::NewTask::new("fixture/long-brief-step", "A step", "owner")
+        })
+        .unwrap();
+    let page = f
+        .get("/api/task-page?slug=fixture%2Flong-brief")
+        .status(200);
+    assert_eq!(page.header("cache-control"), "no-store");
+    assert!(
+        page.body.len() < body.len(),
+        "the page of a {}-byte brief sent {} bytes",
+        body.len(),
+        page.body.len()
+    );
+    let json = page.json();
+    assert_eq!(json["children_count"], 1);
+    let revision = json["brief_revision"].as_str().unwrap().to_owned();
+    let (mut from, mut omitted) = (
+        json["brief_next"].as_u64().unwrap(),
+        json["brief_omitted"].as_u64().unwrap(),
+    );
+    assert_eq!(usize::try_from(from + omitted).unwrap(), body.len());
+    let mut shown = marks(&json["blocks"].to_string());
+    assert_eq!(shown.first(), Some(&0), "the page shows the brief's start");
+    while omitted > 0 {
+        let chunk = f
+            .get(&format!(
+                "/api/task-brief?slug=fixture%2Flong-brief&from={from}"
+            ))
+            .status(200);
+        assert_eq!(chunk.header("cache-control"), "no-store");
+        let chunk = chunk.json();
+        assert_eq!(chunk["revision"], revision.as_str());
+        let next = chunk["next"].as_u64().unwrap();
+        assert!(next > from, "a chunk from byte {from} read nothing");
+        shown.extend(marks(&chunk["blocks"].to_string()));
+        (from, omitted) = (next, chunk["omitted"].as_u64().unwrap());
+    }
+    assert_eq!(
+        shown,
+        (0..lines).collect::<Vec<_>>(),
+        "every line of the brief is reached once, in order"
+    );
+    let past = f
+        .get("/api/task-brief?slug=fixture%2Flong-brief&from=99999999")
+        .status(200)
+        .json();
+    assert_eq!((&past["blocks"], &past["omitted"]), (&json!([]), &json!(0)));
+    f.get("/api/task-brief?from=0").status(400);
+    f.get("/api/task-brief?slug=fixture%2Fno-such-task")
+        .status(404);
+}
+
+#[test]
+fn an_upload_shows_on_every_branch_and_on_the_asks_cards_and_tasks_that_name_it() {
+    run(
+        "an_upload_shows_on_every_branch_and_on_the_asks_cards_and_tasks_that_name_it",
+        uploads,
+    );
+}
+
+/// Every image the posted item shows, as (src, alt), from its typed blocks.
+fn pictures(blocks: &Value) -> Vec<(String, String)> {
+    let mut found = Vec::new();
+    let mut stack = vec![blocks];
+    while let Some(value) = stack.pop() {
+        match value {
+            Value::Object(fields) => {
+                if let Some(image) = fields.get("image") {
+                    found.push((
+                        image["src"].as_str().unwrap().to_string(),
+                        image["alt"].as_str().unwrap().to_string(),
+                    ));
+                }
+                stack.extend(fields.values());
+            }
+            Value::Array(items) => stack.extend(items),
+            _ => {}
+        }
+    }
+    found
+}
+
+fn uploads(f: &Fixture) {
+    const PNG: &[u8] = b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR\0\0\0\x04\0\0\0\x06";
+    let branch = f.root.parent().unwrap().join("branch");
+    // Sent from a branch page, stored in the server's own checkout and read from every scope.
+    let upload = f
+        .request(
+            "POST",
+            "/@work~http/api/upload?name=phone%20shot.png",
+            &[("Content-Type", "image/png")],
+            PNG,
+        )
+        .status(200)
+        .json();
+    let url = upload["url"].as_str().unwrap().to_string();
+    let markup = upload["markup"].as_str().unwrap().to_string();
+    assert_eq!(markup, format!("![phone shot.png]({url})"));
+    let file = url.trim_start_matches('/');
+    assert_eq!(std::fs::read(f.root.join(file)).unwrap(), PNG);
+    assert!(!branch.join(file).exists());
+    for scope in ["", SCOPE] {
+        let read = f.get(&format!("{scope}{url}")).status(200);
+        assert_eq!(read.body, PNG, "{scope}");
+        assert_eq!(read.header("content-type"), "image/png");
+        assert_eq!(read.header("x-content-type-options"), "nosniff");
+    }
+
+    // An ask: the owner's words stay literal, the picture is drawn at its real size.
+    let ask = f
+        .post(
+            "/api/ask",
+            &json!({"path":"docs/TOPIC.md", "question":format!("What is <this>?\n{markup}")}),
+        )
+        .status(200)
+        .json();
+    let read = f
+        .get(&format!("/api/ask?format=blocks&id={}", ask["id"]))
+        .status(200)
+        .json();
+    let question = &read["ask"]["messages"][0]["blocks"];
+    let shown = pictures(question);
+    assert_eq!(shown.len(), 1, "{question}");
+    assert!(shown[0].0.starts_with(&format!("{url}?v=")), "{shown:?}");
+    assert_eq!(shown[0].1, "phone shot.png");
+    assert!(
+        question.to_string().contains("What is <this>?"),
+        "{question}"
+    );
+    assert!(
+        question.to_string().contains("\"width\":\"4\""),
+        "{question}"
+    );
+
+    // A branch card's message keeps the line in that branch's file, and the page draws it from
+    // the branch's address, which the server answers from its own store.
+    f.post(
+        &format!("{SCOPE}/api/message"),
+        &json!({"path":"docs/TOPIC.md", "slug":"one", "text":format!("Like this\n{markup}")}),
+    )
+    .status(200);
+    let written = std::fs::read_to_string(branch.join("docs/TOPIC.md")).unwrap();
+    assert!(written.contains(&format!("    {markup}\n")), "{written}");
+    let threads = f
+        .get(&format!("{SCOPE}/api/history?path=docs/TOPIC.md"))
+        .status(200)
+        .json();
+    let shown = pictures(&threads["one"]["blocks"]);
+    assert_eq!(
+        shown,
+        [(format!("{SCOPE}{url}"), "phone shot.png".into())],
+        "{threads}"
+    );
+    assert_eq!(f.get(&shown[0].0).status(200).body, PNG);
+
+    // A new task's brief and a thread message both show the picture.
+    let filed = f
+        .post(
+            "/api/quick-task",
+            &json!({"title":"Upload task", "body":format!("The bug:\n\n{markup}"), "page":"/tasks"}),
+        )
+        .status(200)
+        .json();
+    let slug = filed["slug"].as_str().unwrap().to_string();
+    let page = f
+        .get(&format!("/api/task-page?slug={slug}"))
+        .status(200)
+        .json();
+    let shown = pictures(&page["blocks"]);
+    assert_eq!(shown.len(), 1, "{page}");
+    assert!(shown[0].0.starts_with(&format!("{url}?v=")), "{shown:?}");
+    f.post(
+        "/api/task-message",
+        &json!({"slug":slug, "text":format!("And again\n{markup}")}),
+    )
+    .status(200);
+    let history = f
+        .get(&format!("/api/task-history?slug={slug}"))
+        .status(200)
+        .json();
+    let owner = history["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|entry| entry["message"]["text"] == format!("And again\n{markup}"))
+        .unwrap_or_else(|| panic!("{history}"));
+    let shown = pictures(&owner["blocks"]);
+    assert_eq!(shown.len(), 1, "{owner}");
+    assert_eq!(shown[0].1, "phone shot.png");
+}
+
+#[test]
+fn installed_client_failure_names_stop_and_restart_from_main() {
+    let tree = fixture();
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    runtime.block_on(async {
+        use axum::http::Request;
+        use tower::ServiceExt;
+        let root = tree.path("repo");
+        let home = tree.path("installed");
+        let shared = Shared::new(1, 1234, &root, Some(&home), Gate::new(Arc::new(|_| Ok(None)), Arc::new(Instant::now)));
+        for missing_index in [false, true] {
+            if missing_index { std::fs::create_dir_all(home.join("client/public")).unwrap(); }
+            let response = router(shared.clone()).oneshot(Request::builder().uri("/").header("Host", "localhost:1234").extension(axum::extract::ConnectInfo("127.0.0.1:1234".parse::<SocketAddr>().unwrap())).body(axum::body::Body::empty()).unwrap()).await.unwrap();
+            assert_eq!(response.status(), 503);
+            let bytes = axum::body::to_bytes(response.into_body(), 10_000).await.unwrap();
+            assert_eq!(serde_json::from_slice::<Value>(&bytes).unwrap()["error"], "the Symphony client has not been built: run just symphony --stop, then just symphony from the main checkout");
+        }
+    });
+}
+
+#[test]
+fn watcher_refreshes_documents_without_gallery_work_and_models_only_in_their_tree() {
+    run(
+        "watcher_refreshes_documents_without_gallery_work_and_models_only_in_their_tree",
+        watcher,
+    );
+}
+
+fn gallery(f: &Fixture, scope: &str) -> String {
+    f.get(&format!("{scope}/api/document?path=docs/ships/HULLS.md"))
+        .status(200)
+        .text()
+        .to_string()
+}
+
+fn watcher(f: &Fixture) {
+    assert!(gallery(f, "").contains("A.glb"));
+    assert!(gallery(f, SCOPE).contains("A.glb"));
+    let mut root_feed = f.feed("");
+    let mut branch_feed = f.feed(SCOPE);
+    eprintln!("{PHASE}document");
+    write(
+        &f.root,
+        "docs/ships/HULLS.md",
+        "# Hulls\n\nDocument refresh handshake\n\n<div data-hull-gallery></div>\n",
+    );
+    root_feed.until("Document refresh handshake");
+    assert!(gallery(f, "").contains("Document refresh handshake"));
+    assert!(gallery(f, SCOPE).contains("A.glb"));
+    eprintln!("{PHASE}branch model");
+    write(
+        &f.root.parent().unwrap().join("branch"),
+        "view/models/hulls/BRANCH.glb",
+        b"branch model",
+    );
+    branch_feed.until("BRANCH.glb");
+    assert!(gallery(f, SCOPE).contains("BRANCH.glb"));
+    assert!(!gallery(f, "").contains("BRANCH.glb"));
+    // A document edit can replace section keys. Subscribe to its current viewport for this edit.
+    root_feed = f.feed("");
+    eprintln!("{PHASE}root model");
+    write(&f.root, "view/models/hulls/ROOT.glb", b"root model");
+    root_feed.until("ROOT.glb");
+    assert!(gallery(f, "").contains("ROOT.glb"));
+    assert!(!gallery(f, SCOPE).contains("ROOT.glb"));
+    eprintln!("{PHASE}finished");
+}

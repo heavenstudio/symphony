@@ -1,0 +1,336 @@
+//! Native owner writes. Validate the browser's origin before reading or dispatching its body.
+
+use crate::front::Shared;
+use axum::body::to_bytes;
+use axum::extract::Request;
+use axum::http::{HeaderMap, Method, StatusCode, header};
+use axum::response::{IntoResponse, Json, Response};
+use serde_json::{Value, json};
+use std::sync::Arc;
+
+fn error(status: StatusCode, why: impl ToString) -> Response {
+    (
+        status,
+        [(header::CACHE_CONTROL, "no-store")],
+        Json(json!({"error":why.to_string()})),
+    )
+        .into_response()
+}
+
+// Why a write was refused, as its log line says.
+const HOST_REFUSED: &str = "its Host is not this machine's";
+const ORIGIN_REFUSED: &str = "its Origin is not http:// and its Host";
+const CHECK_FAILED: &str = "its Host check did not finish";
+
+/// The server log's line for a refused write: its path, why, and its Host and Origin as sent, or
+/// `absent`. A refused write's body is never read.
+fn refusal(path: &str, why: &str, headers: &HeaderMap) -> String {
+    let sent = |name: header::HeaderName| {
+        headers
+            .get(name)
+            .map_or_else(|| "absent".to_string(), |value| format!("{value:?}"))
+    };
+    format!(
+        "· refused a write to {path}: {why}; Host {}, Origin {}",
+        sent(header::HOST),
+        sent(header::ORIGIN)
+    )
+}
+
+pub(crate) fn handles(request: &Request) -> bool {
+    let (_, route) = crate::api::scope_path(request.uri().path());
+    (symphony::save::ROUTES.contains(&route) || route == symphony_api::UPLOAD_PATH)
+        && request.method() == Method::POST
+}
+
+pub(crate) async fn answer(shared: &Arc<Shared>, request: Request) -> Response {
+    let (scope, route) = crate::api::scope_path(request.uri().path());
+    let scope = scope.to_string();
+    let route = route.to_string();
+    if let Err(why) = allowed(shared, &request).await {
+        eprintln!("{}", refusal(request.uri().path(), why, request.headers()));
+        return error(
+            StatusCode::FORBIDDEN,
+            "Forbidden: the Host or Origin header does not name this app",
+        );
+    }
+    if route == symphony_api::UPLOAD_PATH {
+        return upload(shared, request).await;
+    }
+    let bytes = match to_bytes(request.into_body(), usize::MAX).await {
+        Ok(bytes) => bytes,
+        Err(e) => return error(StatusCode::BAD_REQUEST, format!("bad JSON: {e}")),
+    };
+    let payload = if bytes.is_empty() {
+        json!({})
+    } else {
+        match serde_json::from_slice::<Value>(&bytes) {
+            Ok(payload) => payload,
+            Err(e) => return error(StatusCode::BAD_REQUEST, format!("bad JSON: {e}")),
+        }
+    };
+    let shared = shared.clone();
+    match tokio::task::spawn_blocking(move || {
+        let saves = shared
+            .saves
+            .get_or_init(|| symphony::save::Saves::start(&shared.root));
+        let result = if route == "/api/postpone" {
+            match shared
+                .api
+                .get()
+                .ok_or_else(|| "Symphony data is not ready".to_string())
+                .and_then(|hub| hub.queue_order())
+            {
+                Ok(order) => saves.post_with_order(&scope, &route, &payload, &order),
+                Err(error) => Err(symphony::save::Failure { status: 503, error }),
+            }
+        } else {
+            saves.post(&scope, &route, &payload)
+        };
+        if result.as_ref().is_ok_and(|value| value["changed"] == true)
+            && route == "/api/postpone"
+            && let Some(hub) = shared.api.get()
+            && let Err(error) = hub.refresh_order(&scope)
+        {
+            return Err(symphony::save::Failure { status: 503, error });
+        }
+        if result.is_ok() && route == "/api/task-cancel" && shared.installed_ui {
+            let root = shared.root.clone();
+            let slug = payload["slug"].as_str().unwrap_or("").to_string();
+            let worker_root = root.clone();
+            let worker_slug = slug.clone();
+            if let Err(error) = std::thread::Builder::new()
+                .name("task-cancel-cleanup".into())
+                .spawn(move || finish_cancel(&worker_root, &worker_slug))
+            {
+                cancel_failed(&root, &slug, &format!("could not start cleanup: {error}"));
+            }
+        }
+        result
+    })
+    .await
+    {
+        Ok(Ok(value)) => ([(header::CACHE_CONTROL, "no-store")], Json(value)).into_response(),
+        Ok(Err(e)) => error(
+            StatusCode::from_u16(e.status).unwrap_or(StatusCode::BAD_REQUEST),
+            e.error,
+        ),
+        Err(e) => error(StatusCode::INTERNAL_SERVER_ERROR, e),
+    }
+}
+
+/// Whether a write names this app in its Host, and a browser's write also in its Origin; when it
+/// does not, why, as its log line says. The headers are read before the check waits, so the
+/// request body is not held across it, and every write, an upload too, is checked before its
+/// body is read.
+fn allowed(
+    shared: &Arc<Shared>,
+    request: &Request,
+) -> impl Future<Output = Result<(), &'static str>> + use<> {
+    let host = request
+        .headers()
+        .get(header::HOST)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .to_string();
+    let origin = request
+        .headers()
+        .get(header::ORIGIN)
+        .map(|v| v.to_str().unwrap_or("").to_string());
+    let check = shared.clone();
+    async move {
+        tokio::task::spawn_blocking(move || {
+            if !check.allows_host(&host) {
+                return Err(HOST_REFUSED);
+            }
+            if origin
+                .as_deref()
+                .is_some_and(|o| !o.eq_ignore_ascii_case(&format!("http://{host}")))
+            {
+                return Err(ORIGIN_REFUSED);
+            }
+            Ok(())
+        })
+        .await
+        .unwrap_or(Err(CHECK_FAILED))
+    }
+}
+
+/// `POST /api/upload?name=FILE`: the file is the raw body, read to at most the cap (a larger one
+/// is refused without reading the rest), then stored by `symphony::uploads` whatever branch the page
+/// is on: the server's own checkout holds every upload.
+async fn upload(shared: &Arc<Shared>, request: Request) -> Response {
+    use futures_util::StreamExt;
+    let max = symphony::uploads::MAX_BYTES;
+    let too_large = |bytes: usize| {
+        error(
+            StatusCode::PAYLOAD_TOO_LARGE,
+            symphony::uploads::Refusal::TooLarge { bytes },
+        )
+    };
+    if let Some(length) = request
+        .headers()
+        .get(header::CONTENT_LENGTH)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.parse::<usize>().ok())
+        .filter(|length| *length > max)
+    {
+        return too_large(length);
+    }
+    let name = crate::api::query_in(request.uri(), "name").unwrap_or_default();
+    let mut body = request.into_body().into_data_stream();
+    let mut bytes = Vec::new();
+    while let Some(chunk) = body.next().await {
+        match chunk {
+            Ok(chunk) if bytes.len() + chunk.len() > max => {
+                return too_large(bytes.len() + chunk.len());
+            }
+            Ok(chunk) => bytes.extend_from_slice(&chunk),
+            Err(e) => {
+                return error(
+                    StatusCode::BAD_REQUEST,
+                    format!("the upload broke off: {e}"),
+                );
+            }
+        }
+    }
+    let root = shared.root.clone();
+    match tokio::task::spawn_blocking(move || symphony::uploads::store(&root, &name, &bytes)).await
+    {
+        Ok(Ok(stored)) => {
+            ([(header::CACHE_CONTROL, "no-store")], Json(stored.wire())).into_response()
+        }
+        Ok(Err(e)) => error(
+            StatusCode::from_u16(e.status).unwrap_or(StatusCode::BAD_REQUEST),
+            e.error,
+        ),
+        Err(e) => error(StatusCode::INTERNAL_SERVER_ERROR, e),
+    }
+}
+
+/// A preview's copied board may hold real pane identities. Only the shared installation
+/// closes sessions and triggers the same detached sweep as the CLI's finished-task path.
+fn finish_cancel(root: &std::path::Path, slug: &str) {
+    match std::process::Command::new(root.join("tools/rs-bin.sh"))
+        .args(["tasks", "finish", slug])
+        .current_dir(root)
+        .env_remove("TASKS_SESSION")
+        .env_remove("HERDR_PANE_ID")
+        .stdin(std::process::Stdio::null())
+        .output()
+    {
+        Ok(done) if done.status.success() => {
+            // `tasks finish` preserves the completed task's success even when cleanup fails;
+            // its failure is an arrow-prefixed warning on stdout, not a nonzero exit.
+            let stdout = String::from_utf8_lossy(&done.stdout);
+            if stdout.lines().any(|line| {
+                line.trim_start()
+                    .starts_with("→ could not clean up the sessions of ")
+            }) {
+                cancel_failed(root, slug, stdout.trim());
+            } else if !stdout.trim().is_empty() {
+                eprintln!("{}", stdout.trim());
+            }
+            if !done.stderr.is_empty() {
+                eprintln!("{}", String::from_utf8_lossy(&done.stderr).trim());
+            }
+        }
+        Ok(done) => cancel_failed(
+            root,
+            slug,
+            &format!(
+                "tasks finish {slug} exited with {}: {}",
+                done.status,
+                String::from_utf8_lossy(&done.stderr).trim()
+            ),
+        ),
+        Err(error) => cancel_failed(root, slug, &format!("could not run tasks finish: {error}")),
+    }
+    let mut env = tasks::cli::Env::of_process();
+    env.vars.remove("TASKS_SESSION");
+    env.vars.remove("HERDR_PANE_ID");
+    if tasks::sweep::trigger::enabled(&env)
+        && !tasks::sweep::trigger::trigger(&env, root, &format!("{slug} is cancelled"), Some(slug))
+    {
+        cancel_failed(root, slug, "could not start the cleanup sweep");
+    }
+}
+
+/// Cleanup cannot change the successful cancellation response. Keep its failure on the task's
+/// thread and in owner activity, using the app's identity rather than the starter's session.
+fn cancel_failed(root: &std::path::Path, slug: &str, why: &str) {
+    let text = format!("Task cancelled, but its cleanup failed: {why}");
+    eprintln!("· {slug}: {text}");
+    let report = || -> Result<(), String> {
+        let board = symphony::taskview::connect(root)?;
+        let actor = match board
+            .sessions()
+            .map_err(|e| e.to_string())?
+            .into_iter()
+            .find(|session| session.row.kind == "app" && session.row.left_at.is_none())
+        {
+            Some(session) => session.row.handle,
+            None => {
+                board
+                    .register(&tasks::NewSession {
+                        model: "review-app".into(),
+                        ..tasks::NewSession::new("app")
+                    })
+                    .map_err(|e| e.to_string())?
+                    .row
+                    .handle
+            }
+        };
+        board
+            .say(slug, &actor, &text, Some("owner"))
+            .map_err(|e| e.to_string())?;
+        Ok(())
+    };
+    if let Err(error) = report() {
+        eprintln!("· {slug}: could not report cancellation cleanup failure to the owner: {error}");
+    }
+}
+
+#[cfg(test)]
+mod upload_tests;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::http::HeaderValue;
+
+    fn headers(pairs: &[(header::HeaderName, &[u8])]) -> HeaderMap {
+        pairs
+            .iter()
+            .map(|(name, value)| (name.clone(), HeaderValue::from_bytes(value).unwrap()))
+            .collect()
+    }
+
+    #[test]
+    fn a_refusal_names_the_path_why_and_the_host_and_origin_as_sent() {
+        let sent = headers(&[
+            (header::HOST, b"mac.taile6311e.ts.net:8765"),
+            (header::ORIGIN, b"http://mac.taile6311e.ts.net:8765"),
+            (header::CONTENT_LENGTH, b"42"),
+        ]);
+        assert_eq!(
+            refusal("/@main/api/task-message", HOST_REFUSED, &sent),
+            "· refused a write to /@main/api/task-message: its Host is not this machine's; \
+             Host \"mac.taile6311e.ts.net:8765\", Origin \"http://mac.taile6311e.ts.net:8765\""
+        );
+    }
+
+    #[test]
+    fn a_refusal_says_absent_for_a_missing_header_and_escapes_bytes_outside_ascii() {
+        let sent = headers(&[(header::ORIGIN, b"http://caf\xc3\xa9\".example")]);
+        assert_eq!(
+            refusal("/api/comment", ORIGIN_REFUSED, &sent),
+            "· refused a write to /api/comment: its Origin is not http:// and its Host; \
+             Host absent, Origin \"http://caf\\xc3\\xa9\\\".example\""
+        );
+        assert_eq!(
+            refusal("/api/ask", CHECK_FAILED, &HeaderMap::new()),
+            "· refused a write to /api/ask: its Host check did not finish; Host absent, Origin absent"
+        );
+    }
+}

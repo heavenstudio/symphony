@@ -1,0 +1,139 @@
+# The Symphony's client: one Dioxus app, built by `dx` for the browser now and for the desktop
+# window later, from the same code. It reads the server's JSON API (crates/symphony-api) and never
+# runs server code itself: no fullstack server functions.
+[package]
+name = "symphony-ui"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "symphony-ui-dev"
+path = "src/dev.rs"
+required-features = ["devtools"]
+
+[[example]]
+name = "wasm_size"
+test = true
+
+# Size probes (probes/size.sh, `cargo symphony-ui size`): pages built as the page kinds are, to price
+# what a first visit costs without the app's code. No release bundle, lint or test builds them
+# unless asked: `size-probe` is off everywhere but `cargo symphony-ui size` and its clippy line.
+[[bin]]
+name = "floor_dioxus"
+path = "probes/floor_dioxus.rs"
+required-features = ["size-probe"]
+
+[[bin]]
+name = "floor_websys"
+path = "probes/floor_websys.rs"
+required-features = ["size-probe"]
+
+[[bin]]
+name = "entry_websys"
+path = "probes/entry_websys.rs"
+required-features = ["size-probe"]
+
+[[example]]
+name = "ssr_size"
+
+[dependencies]
+# Dioxus is the owner's choice (2026-10-08: "I want to experiment more with dioxus, so let's switch to
+# it"), pinned to one version: dx (apps/symphony-ui/tools.sh) is built at the same one. Only the parts
+# the board uses, for the phone's first visit (a 250 KB gzip budget; what it loads today is in
+# docs/engineering/analysis/review-ui-first-visit.md): `minimal`, and `asset` for
+# the style sheet. Measured on the board's build, `mounted` (onmounted) would add 26 KB and `router`
+# with `document` (the browser history it needs) 55 KB.
+dioxus = { version = "=0.7.10", default-features = false, features = ["minimal", "asset"] }
+dioxus-icons = { version = "=0.1.0", default-features = false, optional = true }
+dioxus-primitives = { git = "https://github.com/DioxusLabs/components", rev = "9a758255ea26e2b20c8cecf4c1c946feb9e71da7", version = "=0.0.1", default-features = false, optional = true }
+symphony-api = { path = "../../crates/symphony-api" }
+serde = { version = "1", features = ["derive"] }
+
+# The browser's side of the app (src/live.rs, src/platform.rs). serde-wasm-bindgen reads the JSON the
+# browser has parsed into the wire types, in place of serde_json's parser: 11 KB less on a first visit.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+futures-channel = "0.3"
+futures-util = { version = "0.3", default-features = false }
+js-sys = "0.3"
+serde = { version = "1", features = ["derive"] }
+serde-wasm-bindgen = "0.6"
+# Configure Dioxus's existing tracing dependency for the shipped browser build. Warning/error
+# diagnostics remain; trace/debug/info spans otherwise retain large VDOM debug formatters.
+tracing = { version = "0.1", default-features = false, features = ["release_max_level_warn"] }
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
+web-sys = { version = "0.3", features = [
+    "Document",
+    "AbortController",
+    "AbortSignal",
+    "Blob",
+    "ClipboardEvent",
+    "DataTransfer",
+    "DragEvent",
+    "File",
+    "FileList",
+    "History",
+    "IntersectionObserver",
+    "IntersectionObserverEntry",
+    "HtmlElement",
+    "HtmlDetailsElement",
+    "HtmlInputElement",
+    "HtmlTextAreaElement",
+    "DomRect",
+    "Element",
+    "Event",
+    "EventSource",
+    "Headers",
+    "HtmlDialogElement",
+    "HtmlHeadElement",
+    "KeyboardEvent",
+    "Location",
+    "History",
+    "MouseEvent",
+    "RequestInit",
+    "Headers",
+    "MessageEvent",
+    "MouseEvent",
+    "MutationObserver",
+    "MutationObserverInit",
+    "Node",
+    "NodeList",
+    "Notification",
+    "NotificationOptions",
+    "NotificationPermission",
+    "Performance",
+    "Response",
+    "RequestInit",
+    "ResizeObserver",
+    "ResizeObserverEntry",
+    "Selection",
+    "Storage",
+    "Url",
+    "Window",
+] }
+
+# One feature per platform: dx turns on the one it builds for. The desktop window's feature comes with
+# its slice (tools/python-zero/desktop), with its platform hooks (src/platform.rs).
+[features]
+default = ["web", "page-board", "page-tasks", "page-docs", "page-review", "page-queue", "overlays"]
+web = ["dioxus/web"]
+page-board = []
+page-tasks = []
+page-docs = []
+page-review = []
+page-queue = []
+page-panel = ["overlays"]
+overlays = ["dep:dioxus-primitives", "dep:dioxus-icons"]
+# Opt-in only: the release bundles never enable the development runtime or devtools.
+devtools = ["dioxus/devtools", "page-board", "page-tasks", "page-docs", "page-review", "page-queue", "page-panel"]
+# The size probes' bins (probes/), for `cargo symphony-ui size` only.
+size-probe = []
+
+[dev-dependencies]
+dioxus-ssr = "=0.7.10"
+flate2 = "1"
+libc.workspace = true
+serde_json = "1"
+tungstenite = { version = "0.30", default-features = false, features = ["handshake"] }

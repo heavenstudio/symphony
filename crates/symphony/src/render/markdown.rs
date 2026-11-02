@@ -1,0 +1,476 @@
+//! Markdown to HTML with comrak, set to read what Python-Markdown reads (`tables`, `fenced_code`, `toc`,
+//! `sane_lists`) and to write the ids it writes. A long text converts a part at a time
+//! ([`convert_part`]), each part rendered from one parse of the whole.
+
+use std::collections::HashSet;
+use std::fmt::{self, Write};
+use std::ops::Range;
+use std::sync::Mutex;
+
+use comrak::adapters::{HeadingAdapter, HeadingMeta};
+use comrak::nodes::{AstNode, ListType, NodeValue, Sourcepos};
+use comrak::options::Plugins;
+use comrak::{Arena, Node, Options, format_html_with_plugins, parse_document};
+
+use crate::edit::heading_anchor;
+
+/// The id the toc gave a heading that another in the same conversion already had: `_1` after it, then
+/// `_2` (Python-Markdown's `unique`), and `_1` for a heading with no letters in it.
+fn unique(id: &str, used: &mut HashSet<String>) -> String {
+    let mut id = id.to_string();
+    while used.contains(&id) || id.is_empty() {
+        let counted = id
+            .rsplit_once('_')
+            .and_then(|(stem, n)| Some((stem.to_string(), n.parse::<u64>().ok()?)));
+        id = match counted {
+            Some((stem, n)) => format!("{stem}_{}", n + 1),
+            None => format!("{id}_1"),
+        };
+    }
+    used.insert(id.clone());
+    id
+}
+
+/// Writes a heading's tags with the anchor every `[[NAME#Heading]]` and `#anchor` link spells. The ids
+/// taken so far sit behind a lock because the adapter must be `Send + Sync`; one conversion owns it.
+struct Ids(Mutex<HashSet<String>>);
+
+impl HeadingAdapter for Ids {
+    fn enter(
+        &self,
+        output: &mut dyn Write,
+        heading: &HeadingMeta,
+        _: Option<Sourcepos>,
+    ) -> fmt::Result {
+        let mut used = self.0.lock().map_err(|_| fmt::Error)?;
+        let id = unique(&heading_anchor(&heading.content), &mut used);
+        write!(output, "<h{} id=\"{id}\">", heading.level)
+    }
+
+    fn exit(&self, output: &mut dyn Write, heading: &HeadingMeta) -> fmt::Result {
+        write!(output, "</h{}>", heading.level)
+    }
+}
+
+/// Python-Markdown accepts `#Title` as an ATX heading. CommonMark requires a space. Keep those
+/// existing headings and their anchors while leaving fenced and indented code byte-for-byte alone.
+/// One pass over the lines, beside the code and HTML blocks in the order they begin.
+fn spaced_headings(text: &str, options: &Options<'_>) -> String {
+    let arena = Arena::new();
+    let document = parse_document(&arena, text, options);
+    let mut protected: Vec<_> = document
+        .descendants()
+        .filter_map(|node| {
+            let data = node.data.borrow();
+            matches!(
+                data.value,
+                NodeValue::CodeBlock(_) | NodeValue::HtmlBlock(_)
+            )
+            .then_some(data.sourcepos)
+        })
+        .collect();
+    protected.sort_by_key(|range| range.start.line);
+    let mut protected = protected.into_iter().peekable();
+    let mut out = String::with_capacity(text.len());
+    for (index, line) in text.split_inclusive('\n').enumerate() {
+        // A block that ends before this line holds none after it either.
+        while protected.next_if(|range| range.end.line <= index).is_some() {}
+        let protected = protected
+            .peek()
+            .is_some_and(|range| range.start.line <= index + 1);
+        let hashes = line.bytes().take_while(|byte| *byte == b'#').count().min(6);
+        if !protected
+            && hashes > 0
+            && line
+                .as_bytes()
+                .get(hashes)
+                .is_some_and(|byte| !byte.is_ascii_whitespace())
+        {
+            out.push_str(&line[..hashes]);
+            out.push(' ');
+            out.push_str(&line[hashes..]);
+        } else {
+            out.push_str(line);
+        }
+    }
+    out
+}
+
+/// What every conversion reads: tables, and raw HTML passed through as it was.
+fn options() -> Options<'static> {
+    let mut options = Options::default();
+    options.extension.table = true;
+    options.render.r#unsafe = true;
+    options
+}
+
+/// The document `root` as HTML, its headings numbered after the ids `taken` holds.
+fn html(root: Node<'_>, options: &Options<'_>, taken: HashSet<String>) -> String {
+    let ids = Ids(Mutex::new(taken));
+    let mut plugins = Plugins::default();
+    plugins.render.heading_adapter = Some(&ids);
+    let mut out = String::new();
+    format_html_with_plugins(root, options, &mut out, &plugins)
+        .expect("HTML written to a String, with the ids' lock held by this call alone");
+    out
+}
+
+/// `text` as HTML. Raw HTML in it passes through, as it did; the headings are numbered per call.
+pub(crate) fn convert(text: &str) -> String {
+    let options = options();
+    let arena = Arena::new();
+    let root = parse_document(&arena, &spaced_headings(text, &options), &options);
+    html(root, &options, HashSet::new())
+}
+
+/// Where each line of `text` begins, as CommonMark ends a line (a line feed, a carriage return, or
+/// both together): line `n` of a source position begins at the `n - 1`th.
+pub(crate) fn line_starts(text: &str) -> Vec<usize> {
+    let bytes = text.as_bytes();
+    let mut starts = vec![0];
+    let mut at = 0;
+    while let Some(&byte) = bytes.get(at) {
+        at += 1;
+        if byte == b'\r' && bytes.get(at) == Some(&b'\n') {
+            at += 1;
+        }
+        if byte == b'\n' || byte == b'\r' {
+            starts.push(at);
+        }
+    }
+    starts
+}
+
+/// A part of a converted text, and where the next part begins.
+pub(crate) struct Part {
+    pub(crate) html: String,
+    /// Where the next part begins: the text's end when this part reaches it.
+    pub(crate) next: usize,
+    /// Whether this part is the whole text, converted as [`convert`] converts it.
+    pub(crate) whole: bool,
+}
+
+/// The blocks of `text` from the one holding `from`, as many as `limit` holds (one at least), as
+/// HTML, and where the next part begins. One parse of the whole text decides every part: a part
+/// renders that parse's nodes, so a reference resolves wherever its definition sits, a fence of any
+/// kind holds its lines, a list keeps its numbering and spacing, and a heading the id the whole
+/// gives it. A block longer than `block` is cut between its parts ([`cut`]), never inside a line,
+/// and at the same places whatever `from` and `limit` are, so the parts of a text read with one
+/// `block` meet with no gap and no repeat. `at(n)` is where the 0-based line `n` of `text` begins
+/// in the measure of `from`, `limit`, `block` and `end`, the text's length in it: a part begins
+/// only where a line does.
+pub(crate) fn convert_part(
+    text: &str,
+    at: &dyn Fn(usize) -> usize,
+    end: usize,
+    from: usize,
+    limit: usize,
+    block: usize,
+) -> Part {
+    if from >= end && end > 0 {
+        return Part {
+            html: String::new(),
+            next: end,
+            whole: false,
+        };
+    }
+    let options = options();
+    let arena = Arena::new();
+    let root = parse_document(&arena, &spaced_headings(text, &options), &options);
+    let size = |lines: Sourcepos| {
+        at(lines.end.line).saturating_sub(at(lines.start.line.saturating_sub(1)))
+    };
+    let mut pieces = Vec::new();
+    for node in root.children() {
+        cut(node, &[], &size, block, &mut pieces);
+    }
+    // Where each part may begin, and its first piece: at the text's start, then where a piece
+    // begins past the last such place and before the end. Pieces that `at` puts together (on one
+    // line, or past the end) stay together.
+    let mut starts: Vec<(usize, usize)> = Vec::new();
+    for (index, piece) in pieces.iter().enumerate() {
+        let offset = at(piece.line.saturating_sub(1));
+        match starts.last() {
+            None => starts.push((0, index)),
+            Some(&(last, _)) if last < offset && offset < end => starts.push((offset, index)),
+            Some(_) => {}
+        }
+    }
+    let first = starts
+        .partition_point(|&(offset, _)| offset <= from)
+        .saturating_sub(1);
+    let begin = starts.get(first).map_or(0, |&(offset, _)| offset);
+    let finish = |part: usize| starts.get(part + 1).map_or(end, |&(offset, _)| offset);
+    let mut last = first;
+    while last + 1 < starts.len() && finish(last + 1) - begin <= limit {
+        last += 1;
+    }
+    if first == 0 && last + 1 >= starts.len() {
+        return Part {
+            html: html(root, &options, HashSet::new()),
+            next: end,
+            whole: true,
+        };
+    }
+    let after = starts
+        .get(last + 1)
+        .map_or(pieces.len(), |&(_, piece)| piece);
+    let shown = &pieces[starts[first].1..after];
+    let taken = shown
+        .first()
+        .map_or_else(HashSet::new, |piece| ids_before(root, piece.line));
+    Part {
+        html: html(assemble(&arena, shown), &options, taken),
+        next: finish(last),
+        whole: false,
+    }
+}
+
+/// A leaf of a cut text: a block or an inline whole, or some lines of a code or HTML block, with
+/// the containers it sits in (lists, items, quotes, and a paragraph with its emphasis and links),
+/// outermost first.
+struct Piece<'a> {
+    /// The 1-based line it begins on.
+    line: usize,
+    within: Vec<Node<'a>>,
+    what: What<'a>,
+}
+
+enum What<'a> {
+    Block(Node<'a>),
+    /// Lines of a code or HTML block: a range of the bytes of its literal.
+    Literal(Node<'a>, Range<usize>),
+}
+
+impl<'a> What<'a> {
+    fn block(&self) -> Node<'a> {
+        match *self {
+            What::Block(block) | What::Literal(block, _) => block,
+        }
+    }
+}
+
+/// The pieces of `block`, which sits in `within`, in order: the block whole when its lines take at
+/// most `longest` by `size`, else its parts, each cut the same way: a list's items, an item's or a
+/// quote's blocks, a code or HTML block's lines, and a paragraph's lines ([`inline_pieces`]). Any
+/// other block is never cut.
+fn cut<'a>(
+    block: Node<'a>,
+    within: &[Node<'a>],
+    size: &dyn Fn(Sourcepos) -> usize,
+    longest: usize,
+    out: &mut Vec<Piece<'a>>,
+) {
+    let data = block.data();
+    let lines = data.sourcepos;
+    let mut piece = |line: usize, what: What<'a>| {
+        out.push(Piece {
+            line,
+            within: within.to_vec(),
+            what,
+        });
+    };
+    if size(lines) <= longest {
+        piece(lines.start.line, What::Block(block));
+        return;
+    }
+    match &data.value {
+        NodeValue::List(_) | NodeValue::Item(_) | NodeValue::BlockQuote
+            if block.first_child().is_some() =>
+        {
+            let inner: Vec<Node<'a>> = within.iter().copied().chain([block]).collect();
+            for child in block.children() {
+                cut(child, &inner, size, longest, out);
+            }
+        }
+        NodeValue::CodeBlock(code) => {
+            let first = lines.start.line + usize::from(code.fenced);
+            literal_lines(block, &code.literal, first, lines.end.line, &mut piece);
+        }
+        NodeValue::HtmlBlock(html) => {
+            literal_lines(
+                block,
+                &html.literal,
+                lines.start.line,
+                lines.end.line,
+                &mut piece,
+            );
+        }
+        NodeValue::Paragraph if block.first_child().is_some() => {
+            let inner: Vec<Node<'a>> = within.iter().copied().chain([block]).collect();
+            let mut place = Lines {
+                line: lines.start.line,
+                last: lines.end.line,
+                broken: false,
+            };
+            inline_pieces(block, &inner, &mut place, out);
+        }
+        _ => piece(lines.start.line, What::Block(block)),
+    }
+}
+
+/// Where a paragraph's next inline begins: its line, the paragraph's last line, and whether a
+/// line break came just before it.
+struct Lines {
+    line: usize,
+    last: usize,
+    broken: bool,
+}
+
+/// A piece for each inline of `container`, a paragraph or an inline in one, that holds no line
+/// break: its text, code, breaks and pictures, each with the inline containers it sits in
+/// (emphasis, links, …). A part that begins or ends inside one of those closes and reopens it, so
+/// a paragraph is cut at its line breaks however deep in its markup they sit.
+fn inline_pieces<'a>(
+    container: Node<'a>,
+    within: &[Node<'a>],
+    lines: &mut Lines,
+    out: &mut Vec<Piece<'a>>,
+) {
+    for inline in container.children() {
+        let (start, opens) = {
+            let data = inline.data();
+            let opens =
+                inline.first_child().is_some() && !matches!(data.value, NodeValue::Image(_));
+            (data.sourcepos.start.line, opens)
+        };
+        if lines.broken {
+            lines.line = start.max(lines.line + 1).min(lines.last);
+            lines.broken = false;
+        }
+        if opens {
+            let inner: Vec<Node<'a>> = within.iter().copied().chain([inline]).collect();
+            inline_pieces(inline, &inner, lines, out);
+        } else {
+            out.push(Piece {
+                line: lines.line,
+                within: within.to_vec(),
+                what: What::Block(inline),
+            });
+            lines.broken = matches!(
+                inline.data().value,
+                NodeValue::SoftBreak | NodeValue::LineBreak
+            );
+        }
+    }
+}
+
+/// A piece for each line of the `literal` of a code or HTML block, whose first line is the text's
+/// line `first` and whose last is at most `last`.
+fn literal_lines<'a>(
+    block: Node<'a>,
+    literal: &str,
+    first: usize,
+    last: usize,
+    piece: &mut dyn FnMut(usize, What<'a>),
+) {
+    let starts = line_starts(literal);
+    for (index, &start) in starts.iter().enumerate() {
+        let end = starts.get(index + 1).copied().unwrap_or(literal.len());
+        if start < end {
+            piece((first + index).min(last), What::Literal(block, start..end));
+        }
+    }
+}
+
+/// The ids the whole text's conversion gives the headings that begin before `line`, so the
+/// headings of a part beginning there get the ids the whole gives them.
+fn ids_before(root: Node<'_>, line: usize) -> HashSet<String> {
+    let mut taken = HashSet::new();
+    for node in root.descendants() {
+        let before = {
+            let data = node.data();
+            matches!(data.value, NodeValue::Heading(_)) && data.sourcepos.start.line < line
+        };
+        if before {
+            unique(&heading_anchor(&node.collect_text()), &mut taken);
+        }
+    }
+    taken
+}
+
+/// A document of `pieces`, in their order. Each block moves out of the parse under copies of its
+/// containers, one copy for the pieces in a row that share a container, and the lines of a block
+/// cut into pieces are gathered in one copy of it. The parse is not converted whole after this.
+fn assemble<'a>(arena: &'a Arena<'a>, pieces: &[Piece<'a>]) -> Node<'a> {
+    let document: Node<'a> = arena.alloc(AstNode::from(NodeValue::Document));
+    // The containers of the last piece, each beside its copy.
+    let mut open: Vec<(Node<'a>, Node<'a>)> = Vec::new();
+    // The block the last piece held some lines of, beside its copy, and the literal taken out of it.
+    let mut lines: Option<(Node<'a>, Node<'a>)> = None;
+    let mut literal = String::new();
+    for piece in pieces {
+        let kept = open
+            .iter()
+            .zip(&piece.within)
+            .take_while(|((container, _), within)| container.same_node(within))
+            .count();
+        open.truncate(kept);
+        for (depth, &container) in piece.within.iter().enumerate().skip(kept) {
+            let held = piece
+                .within
+                .get(depth + 1)
+                .copied()
+                .unwrap_or_else(|| piece.what.block());
+            let copy: Node<'a> = arena.alloc(container_copy(container, held));
+            open.last()
+                .map_or(document, |&(_, parent)| parent)
+                .append(copy);
+            open.push((container, copy));
+        }
+        let parent = open.last().map_or(document, |&(_, copy)| copy);
+        let (block, range) = match &piece.what {
+            What::Block(block) => {
+                parent.append(block);
+                lines = None;
+                continue;
+            }
+            What::Literal(block, range) => (*block, range.clone()),
+        };
+        let copy = match lines {
+            Some((had, copy)) if had.same_node(block) => copy,
+            _ => {
+                literal = take_literal(block);
+                let copy: Node<'a> = arena.alloc(AstNode::from(block.data().value.clone()));
+                parent.append(copy);
+                lines = Some((block, copy));
+                copy
+            }
+        };
+        push_literal(copy, literal.get(range).unwrap_or_default());
+    }
+    document
+}
+
+/// A copy of `container` to hold `held`, one of its children, and those after it: an ordered list
+/// numbers from the place of `held` in it.
+fn container_copy<'a>(container: Node<'a>, held: Node<'a>) -> AstNode<'a> {
+    let mut value = container.data().value.clone();
+    if let NodeValue::List(list) = &mut value
+        && list.list_type == ListType::Ordered
+    {
+        list.start += container
+            .children()
+            .take_while(|child| !child.same_node(held))
+            .count();
+    }
+    AstNode::from(value)
+}
+
+/// The literal of a code or HTML block, taken out of it.
+fn take_literal(block: Node<'_>) -> String {
+    match &mut block.data_mut().value {
+        NodeValue::CodeBlock(code) => std::mem::take(&mut code.literal),
+        NodeValue::HtmlBlock(html) => std::mem::take(&mut html.literal),
+        _ => String::new(),
+    }
+}
+
+/// `lines` added to the literal of a code or HTML block.
+fn push_literal(block: Node<'_>, lines: &str) {
+    match &mut block.data_mut().value {
+        NodeValue::CodeBlock(code) => code.literal.push_str(lines),
+        NodeValue::HtmlBlock(html) => html.literal.push_str(lines),
+        _ => {}
+    }
+}

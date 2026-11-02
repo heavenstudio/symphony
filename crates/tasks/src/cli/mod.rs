@@ -1,0 +1,276 @@
+//! The `tasks` command line (`tools/tasks.py`'s), over the store: each command of `just tasks`
+//! ([`commands`]), read as its argparse parser read them ([`args`]), and `api`, the seam the Python
+//! readers call the board through ([`api`]).
+
+pub mod agent_send;
+pub mod agents;
+mod api;
+mod args;
+pub mod attach;
+mod beat;
+mod commands;
+mod embedding;
+pub mod probes;
+pub mod pull;
+mod search;
+mod shape;
+mod text;
+mod usage;
+
+pub(crate) use beat::{keys_folder, mark_exactly};
+
+use crate::git;
+use crate::rpc::{self, Client};
+use crate::server::Home;
+use crate::{DATABASE, NAMESPACE, Store, sys};
+use std::collections::BTreeMap;
+use std::io::{Read, Write};
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
+
+/// What a run reads from where it runs: its environment and working directory.
+#[derive(Debug, Clone, Default)]
+pub struct Env {
+    pub vars: BTreeMap<String, String>,
+    pub cwd: PathBuf,
+}
+
+impl Env {
+    /// This process's own.
+    pub fn of_process() -> Env {
+        Env {
+            vars: std::env::vars().collect(),
+            cwd: std::env::current_dir().unwrap_or_default(),
+        }
+    }
+
+    pub(crate) fn var(&self, name: &str) -> Option<&str> {
+        self.vars
+            .get(name)
+            .map(String::as_str)
+            .filter(|v| !v.is_empty())
+    }
+}
+
+/// Board-state writes, including JSON calls, act as agents. Derived-cache maintenance has no
+/// agent identity; owner saves call the store directly.
+fn check_actor(actor: &str) -> Result<(), crate::Error> {
+    if actor == "owner" {
+        return Err(crate::Error::Refused(
+            "the owner acts from the Symphony; use a registered agent handle on the command line"
+                .into(),
+        ));
+    }
+    Ok(())
+}
+
+/// `tasks ARGS`: what it says goes to `out` and `err`; the exit code is returned.
+pub fn main(
+    args: &[String],
+    env: &Env,
+    input: &mut dyn Read,
+    out: &mut dyn Write,
+    err: &mut dyn Write,
+) -> i32 {
+    // A plain-word spelling for scratch runs, also accepted before `api`. It is the exact
+    // TASKS_DATABASE override, without a shell environment prefix or a second board server.
+    if args.first().is_some_and(|arg| arg == "--database") {
+        let Some(database) = args.get(1).filter(|name| rpc::plain(name)) else {
+            let _ = writeln!(err, "--database needs a plain database name");
+            return 2;
+        };
+        let mut scratch = env.clone();
+        scratch
+            .vars
+            .insert("TASKS_DATABASE".into(), database.clone());
+        if database != DATABASE {
+            scratch.vars.insert("TASKS_SWEEP".into(), "off".into());
+        }
+        return main(&args[2..], &scratch, input, out, err);
+    }
+    if args.len() == 1 && args[0] == "api" {
+        return api::run(input, out, || connect(env));
+    }
+    if args.len() == 2 && args[0] == "api" && args[1] == "--lines" {
+        return api::serve(&mut std::io::BufReader::new(input), out, || connect(env));
+    }
+    let parsed = match args::parse(args) {
+        args::Outcome::Run(parsed) => parsed,
+        args::Outcome::Help(text) => {
+            let _ = write!(out, "{text}");
+            return 0;
+        }
+        args::Outcome::Usage(text) => {
+            let _ = write!(err, "{text}");
+            return 2;
+        }
+    };
+    if parsed.command == "beat" {
+        return beat::run(input, env);
+    }
+    // A sweep work finishing started never starts the board's server: it runs only on a board in use.
+    let start = !(parsed.command == "sweep" && parsed.flag("background"));
+    let reached = Clock::of(env).and_then(|clock| {
+        let store = open(reach(env, &env.cwd, start)?, &clock)?;
+        Ok((store, clock))
+    });
+    let (store, clock) = match reached {
+        Ok(reached) => reached,
+        Err(why) => {
+            let _ = writeln!(err, "✖ {why}");
+            return 2;
+        }
+    };
+    let mut context = commands::Context {
+        parsed: &parsed,
+        env,
+        input,
+        out,
+        err,
+        clock: &clock,
+    };
+    let (code, said) = match commands::run(&store, &mut context) {
+        Ok(()) => return 0,
+        Err(commands::Stop::NoSession) => (
+            2,
+            "no session: pass --as HANDLE or set TASKS_SESSION (get one with `just tasks-attach` or `just tasks register`)"
+                .to_string(),
+        ),
+        Err(commands::Stop::Refused(why)) => (1, why),
+        Err(commands::Stop::Board(why)) => (2, why),
+    };
+    let _ = writeln!(context.err, "✖ {said}");
+    code
+}
+
+/// The board as `env` reaches it: the server `TASKS_SERVER` names, in database `TASKS_DATABASE`, else
+/// the one in the git common dir of the working directory, started if it is not running; its clock
+/// pinned at `TASKS_NOW` if that is set.
+pub fn connect(env: &Env) -> Result<Store, String> {
+    open(reach(env, &env.cwd, true)?, &Clock::of(env)?)
+}
+
+/// The time a run reads: this machine's, or the one `TASKS_NOW` pins, which only a monitor's own waits
+/// move (each a step a test takes: see [`Clock::wait`]).
+pub enum Clock {
+    Machine,
+    Pinned(Arc<Mutex<f64>>),
+}
+
+impl Clock {
+    fn of(env: &Env) -> Result<Clock, String> {
+        let Some(text) = env.var("TASKS_NOW") else {
+            return Ok(Clock::Machine);
+        };
+        let now = text
+            .parse::<f64>()
+            .ok()
+            .filter(|now| now.is_finite())
+            .ok_or_else(|| format!("TASKS_NOW={text} is not a time in seconds"))?;
+        Ok(Clock::Pinned(Arc::new(Mutex::new(now))))
+    }
+
+    /// Wait `seconds`. A pinned clock moves on by them instead, says `STEP <now>` on `err`, and reads a
+    /// line on `input` (or its end) before going on, so a test acts between a monitor's looks.
+    pub fn wait(&self, seconds: f64, input: &mut dyn Read, err: &mut dyn Write) {
+        match self {
+            Clock::Machine => {
+                std::thread::sleep(Duration::try_from_secs_f64(seconds).unwrap_or_default())
+            }
+            Clock::Pinned(now) => {
+                let at = {
+                    let mut now = now.lock().unwrap_or_else(|held| held.into_inner());
+                    *now += seconds;
+                    *now
+                };
+                let _ = writeln!(err, "STEP {}", crate::pyjson::float(at));
+                let _ = err.flush();
+                let mut byte = [0u8; 1];
+                while matches!(input.read(&mut byte), Ok(1)) && byte[0] != b'\n' {}
+            }
+        }
+    }
+}
+
+/// The file `just tasks-cutover` writes beside the SQLite board in the git common dir once its copy into
+/// SurrealDB is checked ([`crate::cutover`]), and which stays.
+const MOVED: &str = "star-foundry-tasks.db.moved";
+
+/// The board `env` reaches, its server started if it is down, whether or not the board has moved
+/// there: what `tasks-copy --board` and `just tasks-cutover` write into.
+pub fn board_client(env: &Env) -> Result<Client, String> {
+    reach_board(env, &env.cwd, true, false)
+}
+
+/// A client of the board `env` reaches from `cwd`; a server that is not running is started if `start`,
+/// else refused.
+fn reach(env: &Env, cwd: &Path, start: bool) -> Result<Client, String> {
+    reach_board(env, cwd, start, true)
+}
+
+/// The board in `cwd`'s git common dir, refused (with `unmoved`) while the SQLite board there has not
+/// moved to it: what was written to it would be lost when the move replaces it.
+fn reach_board(env: &Env, cwd: &Path, start: bool, unmoved: bool) -> Result<Client, String> {
+    let db = env.var("TASKS_DATABASE").unwrap_or(DATABASE);
+    if !rpc::plain(db) {
+        return Err(format!(
+            "TASKS_DATABASE={db:?} is not a plain name for a database"
+        ));
+    }
+    if let Some(addr) = env.var("TASKS_SERVER") {
+        return Ok(Client::new(addr, NAMESPACE, db));
+    }
+    let common = git::common_dir(cwd).map_err(|e| e.to_string())?;
+    if unmoved && let Some(why) = not_here(&common) {
+        return Err(why);
+    }
+    let home = Home::in_common(&common, env.var("SF_SURREAL").map(Path::new));
+    let running = if start {
+        home.ensure().map_err(|e| e.to_string())?
+    } else {
+        home.recorded()
+            .ok_or_else(|| format!("no server of the board in {}", home.dir().display()))?
+    };
+    Ok(Client::new(&running.addr, NAMESPACE, db))
+}
+
+/// Why the board in `common` is not served here: the SQLite board there has not moved yet, or a move
+/// froze it and has not finished (it runs, or was cut short).
+fn not_here(common: &Path) -> Option<String> {
+    let board = common.join(crate::cutover::BOARD);
+    if !board.exists() || common.join(MOVED).exists() {
+        return None;
+    }
+    Some(if crate::cutover::frozen(&board) {
+        "the task board is frozen by a move to SurrealDB that has not finished: unless one is running, run `just tasks-cutover` again (docs/workflow/TASKS.md#the-move-to-surrealdb)".into()
+    } else {
+        "the task board has not moved to SurrealDB yet: the lander runs `just tasks-cutover` once, right after landing (docs/workflow/TASKS.md#the-move-to-surrealdb)".into()
+    })
+}
+
+/// The board on `client`, read by `clock`.
+fn open(client: Client, clock: &Clock) -> Result<Store, String> {
+    let (clock, probe, host) = parts(clock);
+    Store::with(client, clock, probe, &host).map_err(|e| e.to_string())
+}
+
+/// The board on `client`, read by `clock`, its tables taken as they are: the heartbeat's one request.
+fn open_unchecked(client: Client, clock: &Clock) -> Store {
+    let (clock, probe, host) = parts(clock);
+    Store::unchecked(client, clock, probe, &host)
+}
+
+type Probe = Box<dyn Fn(i64) -> bool + Send + Sync>;
+
+/// What a store reads the time, the process table and the host by.
+fn parts(clock: &Clock) -> (Box<dyn Fn() -> f64 + Send + Sync>, Probe, String) {
+    let read: Box<dyn Fn() -> f64 + Send + Sync> = match clock {
+        Clock::Pinned(now) => {
+            let now = Arc::clone(now);
+            Box::new(move || *now.lock().unwrap_or_else(|held| held.into_inner()))
+        }
+        Clock::Machine => Box::new(crate::store::now),
+    };
+    (read, Box::new(sys::pid_alive), sys::hostname())
+}

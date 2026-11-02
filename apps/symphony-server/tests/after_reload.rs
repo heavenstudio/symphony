@@ -1,0 +1,1439 @@
+//! Native generations over private sockets and repositories. Builds and generated-output checks
+//! rendezvous with the test; HTTP bodies hold accepted saves without a wall-time backlog.
+
+use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
+use std::convert::Infallible;
+use std::fs::{self, File};
+use std::io::{BufRead, BufReader, Read, Write};
+use std::net::{SocketAddr, TcpListener, TcpStream};
+use std::os::fd::AsRawFd;
+use std::path::{Path, PathBuf};
+use std::process::{Child, Command, Stdio};
+use std::sync::{Arc, Mutex, OnceLock, mpsc};
+use std::time::{Duration, Instant};
+use tasks::port::Start;
+
+const LIMIT: Duration = Duration::from_secs(45);
+const DOC: &str = "# Reload fixture\n\n<!-- register:start -->\n- [ ] **one** — A proposal.\n<!-- register:end -->\n";
+
+fn write(path: &Path, text: &str) {
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    fs::write(path, text).unwrap();
+}
+
+fn repository(root: &Path, args: &[&str]) -> String {
+    let mut command = Command::new("git");
+    for (key, _) in std::env::vars_os() {
+        if key.to_string_lossy().starts_with("GIT_") {
+            command.env_remove(key);
+        }
+    }
+    let done = command
+        .args(args)
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .current_dir(root)
+        .output()
+        .unwrap();
+    assert!(done.status.success(), "{args:?}: {done:?}");
+    String::from_utf8(done.stdout).unwrap().trim_end().into()
+}
+
+struct OwnedChild(Child);
+impl OwnedChild {
+    fn wait(&mut self) {
+        let began = Instant::now();
+        loop {
+            if let Some(status) = self.0.try_wait().unwrap() {
+                assert!(status.success(), "child {}: {status}", self.0.id());
+                return;
+            }
+            assert!(began.elapsed() < LIMIT, "child {} did not end", self.0.id());
+            std::thread::park_timeout(Duration::from_millis(10));
+        }
+    }
+}
+impl Drop for OwnedChild {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+
+/// Readiness and diagnostics are consumed as events. Both streams stay drained even when the
+/// caller is waiting on a build/publication socket instead of a log line.
+struct Lines {
+    receive: mpsc::Receiver<String>,
+    history: Vec<String>,
+}
+impl Lines {
+    fn of(child: &mut Child, path: &Path) -> Self {
+        let log = Arc::new(Mutex::new(File::create(path).unwrap()));
+        let (send, receive) = mpsc::channel();
+        let streams: Vec<Box<dyn Read + Send>> = vec![
+            Box::new(child.stdout.take().unwrap()),
+            Box::new(child.stderr.take().unwrap()),
+        ];
+        for stream in streams {
+            let log = log.clone();
+            let send = send.clone();
+            std::thread::spawn(move || {
+                for line in BufReader::new(stream).lines() {
+                    let line = line.unwrap();
+                    writeln!(log.lock().unwrap(), "{line}").unwrap();
+                    let _ = send.send(line);
+                }
+            });
+        }
+        Self {
+            receive,
+            history: Vec::new(),
+        }
+    }
+    fn until(&mut self, needle: &str) -> String {
+        self.until_before(needle, Instant::now() + LIMIT)
+    }
+    fn until_before(&mut self, needle: &str, deadline: Instant) -> String {
+        self.seen_before(needle, deadline)
+            .unwrap_or_else(|e| panic!("waiting for {needle}: {e}; {:?}", self.history))
+    }
+    /// The first line holding `needle` by `deadline`, or why none came: both streams closed, or
+    /// the time ran out.
+    fn seen_before(
+        &mut self,
+        needle: &str,
+        deadline: Instant,
+    ) -> Result<String, mpsc::RecvTimeoutError> {
+        loop {
+            let line = self
+                .receive
+                .recv_timeout(deadline.saturating_duration_since(Instant::now()))?;
+            self.history.push(line.clone());
+            if line.contains(needle) {
+                return Ok(line);
+            }
+        }
+    }
+    /// Everything the child said, once both its streams have closed.
+    fn said(&mut self) -> String {
+        self.closed();
+        self.history.join("\n")
+    }
+    fn closed(&mut self) {
+        let began = Instant::now();
+        loop {
+            match self
+                .receive
+                .recv_timeout(LIMIT.saturating_sub(began.elapsed()))
+            {
+                Ok(line) => self.history.push(line),
+                Err(mpsc::RecvTimeoutError::Disconnected) => return,
+                Err(e) => panic!("generation pipes stayed open: {e}; {:?}", self.history),
+            }
+        }
+    }
+}
+
+struct Gate(TcpListener);
+impl Gate {
+    fn new() -> Self {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        assert_ne!(listener.local_addr().unwrap().port(), 8765);
+        listener.set_nonblocking(true).unwrap();
+        Self(listener)
+    }
+    fn address(&self) -> String {
+        self.0.local_addr().unwrap().to_string()
+    }
+    fn entered(&self, kind: &str) -> Entry {
+        let began = Instant::now();
+        let mut stream = loop {
+            let mut fd = libc::pollfd {
+                fd: self.0.as_raw_fd(),
+                events: libc::POLLIN,
+                revents: 0,
+            };
+            let remaining = LIMIT.saturating_sub(began.elapsed());
+            let timeout = i32::try_from(remaining.as_millis()).unwrap();
+            // SAFETY: poll receives one live descriptor and a writable pollfd for this call.
+            let ready = unsafe { libc::poll(&mut fd, 1, timeout) };
+            if ready < 0 {
+                let error = std::io::Error::last_os_error();
+                if error.kind() == std::io::ErrorKind::Interrupted {
+                    continue;
+                }
+                panic!("waiting for a {kind} handshake: {error}");
+            }
+            // poll sets no error when it times out, so the last one would name an unrelated call.
+            assert!(
+                ready > 0,
+                "no {kind} handshake within {LIMIT:?}: the deadline passed"
+            );
+            match self.0.accept() {
+                Ok((stream, _)) => break stream,
+                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                    assert!(began.elapsed() < LIMIT, "no {kind} handshake");
+                }
+                Err(e) => panic!("{kind}: {e}"),
+            }
+        };
+        // macOS inherits O_NONBLOCK from the accepting listener.
+        stream.set_nonblocking(false).unwrap();
+        stream.set_read_timeout(Some(LIMIT)).unwrap();
+        let mut line = String::new();
+        BufReader::new(&mut stream).read_line(&mut line).unwrap();
+        let fields: Vec<_> = line.split_whitespace().collect();
+        assert_eq!(fields[0], kind, "{line}");
+        Entry {
+            stream,
+            pid: fields[1].parse().unwrap(),
+        }
+    }
+}
+struct Entry {
+    stream: TcpStream,
+    pid: i64,
+}
+impl Entry {
+    fn release(mut self, action: &str) {
+        writeln!(self.stream, "{action}").unwrap();
+    }
+}
+
+/// This native fixture stands at the compiler/generator boundary, never at the HTTP or persistence
+/// boundary. It executes the actual server after the startup handshake. No script files are made.
+fn driver(logs: &Path) -> &'static Path {
+    static DRIVER: OnceLock<PathBuf> = OnceLock::new();
+    DRIVER.get_or_init(|| {
+        let output = logs.join(format!("reload-driver-{}", std::process::id()));
+        let mut compiler = OwnedChild(
+            Command::new("rustc")
+                .args(["--edition=2024", "-", "-o"])
+                .arg(&output)
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .spawn()
+                .unwrap(),
+        );
+        compiler
+            .0
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(
+                DRIVER_SOURCE
+                    .replace(
+                        "__DIRTY_MAIN__",
+                        &format!("{:?}", symphony::landing::DIRTY_MAIN),
+                    )
+                    .as_bytes(),
+            )
+            .unwrap();
+        let mut diagnostic = String::new();
+        compiler
+            .0
+            .stderr
+            .take()
+            .unwrap()
+            .read_to_string(&mut diagnostic)
+            .unwrap();
+        assert!(
+            compiler.0.wait().unwrap().success(),
+            "driver compile: {diagnostic}"
+        );
+        output
+    })
+}
+
+const DRIVER_SOURCE: &str = r#"
+use std::{env, fs, io::{BufRead, BufReader, Write}, net::TcpStream, path::PathBuf, process::Command};
+use std::os::unix::process::CommandExt;
+const DIRTY_MAIN: &str = __DIRTY_MAIN__;
+fn event(kind: &str) -> String {
+    let mut s = TcpStream::connect(env::var("SF_AFTER_RELOAD_GATE").unwrap()).unwrap();
+    s.set_read_timeout(Some(std::time::Duration::from_secs(45))).unwrap();
+    writeln!(s, "{kind} {}", std::process::id()).unwrap();
+    let mut answer = String::new();
+    assert!(BufReader::new(s).read_line(&mut answer).unwrap() > 0);
+    answer.trim().into()
+}
+fn main() {
+    let args: Vec<_> = env::args().skip(1).collect();
+    match args.first().map(String::as_str) {
+        Some("-axww") => {
+            assert_eq!(args, ["-axww", "-o", "pid=,ppid=,command="]);
+            let inventory = env::var_os("SF_AFTER_RELOAD_PROCESSES").unwrap();
+            fs::write(env::var_os("SF_AFTER_RELOAD_CENSUS").unwrap(), "fixture inventory").unwrap();
+            print!("{}", fs::read_to_string(inventory).unwrap());
+        }
+        Some("symphony-ui-dist") => {
+            assert_eq!(args.len(), 2);
+            let public = PathBuf::from(&args[1]).join("public");
+            fs::create_dir_all(public.join("assets")).unwrap();
+            fs::write(public.join("index.html"), fs::read("symphony/apps/symphony-ui/src/main.rs").unwrap()).unwrap();
+            fs::write(public.join("assets/new-dxh123.js"), "new module").unwrap();
+            let action = event("client");
+            if action == "fail" { eprintln!("fixture client compiler refused source"); std::process::exit(25); }
+            if action == "empty" { fs::remove_file(public.join("index.html")).unwrap(); return; }
+            assert_eq!(action, "bundle");
+        }
+        Some("sf-slots") => {
+            assert_eq!(&args[..3], ["sf-slots", "cargo", "install"]);
+            let action = event("build");
+            if action == "fail" { eprintln!("fixture compiler refused source"); std::process::exit(23); }
+            assert_eq!(action, "install");
+            let home = PathBuf::from(args.last().unwrap());
+            let next = home.join("bin/next");
+            fs::copy(env::current_exe().unwrap(), &next).unwrap();
+            fs::rename(next, home.join("bin/symphony-server")).unwrap();
+        }
+        Some("serve") => {
+            if event("startup") == "exit" { std::process::exit(24); }
+            panic!("exec failed: {}", Command::new(env::var_os("SF_AFTER_RELOAD_SERVER").unwrap()).args(args).exec());
+        }
+        Some("content") => {
+            if fs::read_to_string("docs/TOPIC.md").unwrap().contains("[x] **one**") {
+                fs::create_dir_all("content").unwrap();
+                fs::write("content/one", "approved\n").unwrap();
+            }
+        }
+        Some("hull-atlas") => {
+            assert_eq!(args, ["hull-atlas", "build"]);
+            fs::create_dir_all("view").unwrap();
+            fs::copy("content/one", "view/hull_atlas").unwrap();
+        }
+        Some("verify") => {
+            assert_eq!(args, ["verify"]);
+            assert!(fs::read_to_string("docs/TOPIC.md").unwrap().contains("[x] **one**"));
+            assert_eq!(fs::read_to_string("content/one").unwrap(), "approved\n");
+            assert_eq!(fs::read_to_string("view/hull_atlas").unwrap(), "approved\n");
+            let actor = env::var("TASKS_SESSION").unwrap();
+            assert!(!actor.is_empty() && actor != "owner");
+            let cwd = env::current_dir().unwrap();
+            let tip = Command::new("git").args(["rev-parse", "HEAD"]).output().unwrap();
+            assert!(tip.status.success());
+            use std::fs::OpenOptions;
+            writeln!(OpenOptions::new().create(true).append(true).open(env::var_os("SF_AFTER_RELOAD_COMMANDS").unwrap()).unwrap(), "verify\t{}\t{actor}\t{}", cwd.display(), String::from_utf8(tip.stdout).unwrap().trim()).unwrap();
+            assert_eq!(event("outputs"), "publish");
+        }
+        Some("land") => {
+            assert_eq!(args.len(), 2);
+            let actor = env::var("TASKS_SESSION").unwrap();
+            assert!(!actor.is_empty() && actor != "owner");
+            let cwd = env::current_dir().unwrap();
+            let git = |args: &[&str]| {
+                let done = Command::new("git").args(args).output().unwrap();
+                assert!(done.status.success(), "{args:?}: {done:?}");
+                String::from_utf8(done.stdout).unwrap()
+            };
+            let tip = git(&["rev-parse", "HEAD"]);
+            use std::fs::OpenOptions;
+            writeln!(OpenOptions::new().create(true).append(true).open(env::var_os("SF_AFTER_RELOAD_COMMANDS").unwrap()).unwrap(), "land\t{}\t{actor}\t{}", cwd.display(), tip.trim()).unwrap();
+            assert_eq!(git(&["symbolic-ref", "--short", "HEAD"]).trim(), args[1]);
+            let main = env::var("SF_AFTER_RELOAD_ROOT").unwrap();
+            let clean = || {
+                if !git(&["-C", &main, "status", "--porcelain", "--untracked-files=no"]).is_empty() {
+                    eprintln!("main checkout {main} {DIRTY_MAIN}");
+                    std::process::exit(1);
+                }
+            };
+            clean();
+            git(&["rebase", "main"]);
+            let writes = fs::OpenOptions::new().read(true).write(true)
+                .open(PathBuf::from(&main).join(".git/sf-symphony/verdict-writes.lock")).unwrap();
+            writes.lock().unwrap();
+            clean();
+            git(&["-C", &main, "merge", "--ff-only", "-q", &args[1]]);
+            writes.unlock().unwrap();
+        }
+        Some("status") => println!("{{}}"),
+        Some("tasks") => assert_eq!(args, ["tasks", "reap"]),
+        _ => panic!("unexpected fixture command: {args:?}"),
+    }
+}
+"#;
+
+struct Fixture {
+    dir: PathBuf,
+    root: PathBuf,
+    home: PathBuf,
+    gate: Gate,
+    board: tasks::Store,
+    database: OwnedChild,
+    board_address: String,
+    generation_pids: Vec<i64>,
+    began: Instant,
+}
+impl Fixture {
+    fn new(name: &str) -> Self {
+        let logs =
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../artifacts/amber-kestrel-54");
+        fs::create_dir_all(&logs).unwrap();
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = logs.join(format!("{name}-{}-{unique}", std::process::id()));
+        fs::create_dir(&dir).unwrap();
+        let dir = dir.canonicalize().unwrap();
+        let root = dir.join("repo");
+        fs::create_dir(&root).unwrap();
+        repository(&root, &["init", "-q", "-b", "main"]);
+        repository(&root, &["config", "user.name", "Review fixture"]);
+        repository(&root, &["config", "user.email", "fixture@example.invalid"]);
+        repository(&root, &["config", "core.hooksPath", "/dev/null"]);
+        write(&root.join("docs/TOPIC.md"), DOC);
+        write(&root.join(".gitignore"), "artifacts/\n");
+        write(
+            &root.join("Cargo.toml"),
+            "[workspace]\nmembers = [\"symphony/apps/symphony-server\"]\n",
+        );
+        write(
+            &root.join("symphony/apps/symphony-server/Cargo.toml"),
+            "[package]\nname = \"symphony-server\"\n[dependencies]\nsymphony-api = { path = \"../../crates/symphony-api\" }\n",
+        );
+        write(
+            &root.join("symphony/apps/symphony-server/src/live.rs"),
+            "// initial module\n",
+        );
+        write(
+            &root.join("symphony/apps/symphony-server/src/main.rs"),
+            "fn main() {}\n",
+        );
+        write(
+            &root.join("symphony/apps/symphony-ui/Cargo.toml"),
+            "[package]\nname = \"symphony-ui\"\n[dependencies]\nsymphony-api = { path = \"../../crates/symphony-api\" }\n",
+        );
+        write(
+            &root.join("symphony/apps/symphony-ui/src/main.rs"),
+            "initial client",
+        );
+        write(
+            &root.join("symphony/apps/symphony-ui/assets/frame.css"),
+            "body {}\n",
+        );
+        write(
+            &root.join("symphony/crates/symphony-api/Cargo.toml"),
+            "[package]\nname = \"symphony-api\"\n",
+        );
+        write(
+            &root.join("symphony/crates/symphony-api/src/lib.rs"),
+            "// initial contract\n",
+        );
+        write(
+            &root.join("tools/test_budget.json"),
+            r#"{"before_verify_after_port":true}"#,
+        );
+        fs::create_dir_all(root.join("crates")).unwrap();
+        fs::create_dir_all(dir.join("bin")).unwrap();
+        let driver = driver(&logs);
+        for path in [
+            root.join("tools/rs-bin.sh"),
+            dir.join("bin/just"),
+            dir.join("bin/tailscale"),
+            dir.join("bin/ps"),
+        ] {
+            std::os::unix::fs::symlink(driver, path).unwrap();
+        }
+        // The census belongs to this fixture too: unrelated orphan servers on the host must not
+        // prepend a warning to the exact client bytes asserted below.
+        write(&dir.join("processes"), "");
+        repository(&root, &["add", "."]);
+        repository(&root, &["commit", "-qm", "Initial fixture"]);
+        let home = dir.join("installation");
+        fs::create_dir_all(home.join("bin")).unwrap();
+        fs::create_dir(dir.join("tmp")).unwrap();
+        fs::copy(
+            env!("CARGO_BIN_EXE_symphony-server"),
+            home.join("bin/symphony-server"),
+        )
+        .unwrap();
+        let fingerprint = symphony::reload::fingerprint(&root).unwrap();
+        let binary: String = Sha256::digest(fs::read(home.join("bin/symphony-server")).unwrap())
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect();
+        write(
+            &home.join("installed.json"),
+            &json!({"source":fingerprint,"binary":binary}).to_string(),
+        );
+        write(&home.join("client/public/index.html"), "initial client");
+        write(
+            &home.join("client/public/assets/old-dxh456.js"),
+            "old module",
+        );
+        write(
+            &home.join("client/public/assets/chunks/old-dxh789.js"),
+            "old chunk",
+        );
+        let mut distribution = Sha256::new();
+        // This fixture's installed files in lexical order, matching the documented stamp
+        // format. No production publication helper is used to prepare the old generation.
+        for (name, contents) in [
+            ("assets/chunks/old-dxh789.js", "old chunk"),
+            ("assets/old-dxh456.js", "old module"),
+            ("index.html", "initial client"),
+        ] {
+            distribution.update(name.len().to_le_bytes());
+            distribution.update(name.as_bytes());
+            distribution.update(contents.len().to_le_bytes());
+            distribution.update(contents.as_bytes());
+        }
+        let distribution: String = distribution
+            .finalize()
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect();
+        write(&home.join("client-installed.json"), &json!({
+            "source": symphony::reload::client_fingerprint(&root).unwrap(), "distribution": distribution
+        }).to_string());
+
+        let surreal = std::env::var_os("SF_SURREAL").map_or_else(
+            || {
+                let found = Command::new("bash")
+                    .arg(
+                        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../tools/surreal.sh"),
+                    )
+                    .env_remove("BASH_ENV")
+                    .output()
+                    .unwrap();
+                assert!(found.status.success(), "{found:?}");
+                PathBuf::from(String::from_utf8(found.stdout).unwrap().trim())
+            },
+            PathBuf::from,
+        );
+        // Surreal prints its configured address for :0, so it is told a reserved port, and started
+        // again on another when that port was taken before it bound it (tasks::port), every start
+        // within the one 30 s budget. A readiness announcement from this exact child, and its own
+        // listener on that port, are required before any fixture writes can be sent.
+        let began = Instant::now();
+        let deadline = began + Duration::from_secs(30);
+        let started =
+            tasks::port::start_on_free_port(tasks::port::ATTEMPTS, deadline, |reserved| {
+                assert_ne!(reserved.port(), 8765);
+                let board_address = reserved.to_string();
+                let mut database = OwnedChild(
+                    Command::new(&surreal)
+                        .args([
+                            "start",
+                            "--unauthenticated",
+                            "--bind",
+                            &board_address,
+                            "--log",
+                            "info",
+                            "memory",
+                        ])
+                        .env("NO_COLOR", "1")
+                        .stdout(Stdio::piped())
+                        .stderr(Stdio::piped())
+                        .spawn()
+                        .unwrap(),
+                );
+                let mut database_lines = Lines::of(&mut database.0, &dir.join("board.log"));
+                let ready = match database_lines.seen_before("Started web server on ", deadline) {
+                    Ok(ready) => ready,
+                    Err(mpsc::RecvTimeoutError::Disconnected) => {
+                        return Ok::<_, Infallible>(Start::Ended(database_lines.said()));
+                    }
+                    Err(e) => panic!(
+                        "waiting for the private database's announcement: {e}; {:?}",
+                        database_lines.history
+                    ),
+                };
+                assert!(ready.ends_with(&board_address), "{ready}");
+                // Surreal emits that line before binding. Wait for an actual response, including under
+                // instrumentation/load, before schema setup; a log message is not a listening socket,
+                // and an answer counts only once this child itself listens on the port.
+                loop {
+                    if database.0.try_wait().unwrap().is_some() {
+                        return Ok(Start::Ended(database_lines.said()));
+                    }
+                    if tasks::rpc::healthy(&board_address)
+                        && tasks::port::listens(database.0.id(), reserved).unwrap()
+                    {
+                        return Ok(Start::Up((database, database_lines, board_address)));
+                    }
+                    assert!(
+                        began.elapsed() < LIMIT,
+                        "private database never answered its health check"
+                    );
+                    let remaining = deadline.saturating_duration_since(Instant::now());
+                    assert!(
+                        !remaining.is_zero(),
+                        "private database exhausted its 30 s announcement and health budget"
+                    );
+                    std::thread::sleep(Duration::from_millis(50).min(remaining));
+                }
+            });
+        let ((database, _database_lines, board_address), _) =
+            started.unwrap_or_else(|why| panic!("private database exited before readiness: {why}"));
+        let board = tasks::Store::open(tasks::rpc::Client::new(
+            &board_address,
+            "sf",
+            "after_reload",
+        ))
+        .unwrap();
+        Self {
+            dir,
+            root,
+            home,
+            gate: Gate::new(),
+            board,
+            database,
+            board_address,
+            generation_pids: Vec::new(),
+            began: Instant::now(),
+        }
+    }
+    fn server(&self, installed: bool) -> (OwnedChild, Lines, SocketAddr) {
+        let mut command = Command::new(if installed {
+            self.home.join("bin/symphony-server")
+        } else {
+            env!("CARGO_BIN_EXE_symphony-server").into()
+        });
+        for (key, _) in std::env::vars_os() {
+            let name = key.to_string_lossy();
+            if name.starts_with("SF_")
+                || name.starts_with("TASKS_")
+                || name.starts_with("GIT_")
+                || name.starts_with("HERDR_")
+            {
+                command.env_remove(key);
+            }
+        }
+        // Keep profiler output isolated too, while allowing the instrumented generation's exec.
+        if let Some(profile) = std::env::var_os("LLVM_PROFILE_FILE") {
+            command.env("LLVM_PROFILE_FILE", profile);
+        }
+        let path = std::env::join_paths(
+            std::iter::once(self.dir.join("bin"))
+                .chain(std::env::split_paths(&std::env::var_os("PATH").unwrap())),
+        )
+        .unwrap();
+        command
+            .args(["serve", "--root"])
+            .arg(&self.root)
+            .args(["--port", "0", "--host", "127.0.0.1"])
+            .env("PATH", path)
+            .env("SF_AFTER_RELOAD_GATE", self.gate.address())
+            .env("SF_AFTER_RELOAD_PROCESSES", self.dir.join("processes"))
+            .env("SF_AFTER_RELOAD_CENSUS", self.dir.join("census-read"))
+            .env("SF_AFTER_RELOAD_COMMANDS", self.dir.join("commands.log"))
+            .env("SF_AFTER_RELOAD_ROOT", &self.root)
+            .env(
+                "SF_AFTER_RELOAD_SERVER",
+                env!("CARGO_BIN_EXE_symphony-server"),
+            )
+            .env("SF_SYMPHONY_TEST_PID", std::process::id().to_string())
+            .env("TASKS_SERVER", &self.board_address)
+            .env("TASKS_DATABASE", "after_reload")
+            .env("SF_TASKS_CLI", format!("'{}'", tasks_binary().display()))
+            .env("HERDR_BIN", "/usr/bin/false")
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env("ASKS_DB", self.dir.join("asks.db"))
+            .env("TMPDIR", self.dir.join("tmp"))
+            .current_dir(&self.root)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        if installed {
+            command.arg("--home").arg(&self.home);
+        }
+        let mut child = OwnedChild(command.spawn().unwrap());
+        let mut lines = Lines::of(&mut child.0, &self.dir.join("server.log"));
+        let line = lines.until("→ Symphony at http://127.0.0.1:");
+        let url = line
+            .split_once("→ Symphony at ")
+            .unwrap()
+            .1
+            .split_whitespace()
+            .next()
+            .unwrap();
+        let address: SocketAddr = url
+            .strip_prefix("http://")
+            .unwrap()
+            .trim_end_matches('/')
+            .parse()
+            .unwrap();
+        assert_ne!(address.port(), 8765);
+        assert_front(address, i64::from(child.0.id()));
+        (child, lines, address)
+    }
+    fn startup(&mut self) -> Entry {
+        let entry = self.gate.entered("startup");
+        self.generation_pids.push(entry.pid);
+        entry
+    }
+    fn edit(&self, file: &str, text: &str) {
+        write(
+            &self
+                .root
+                .join("symphony/apps/symphony-server/src")
+                .join(file),
+            text,
+        );
+    }
+    fn published(&self) {
+        let commands = fs::read_to_string(self.dir.join("commands.log")).unwrap();
+        let commands: Vec<Vec<_>> = commands
+            .lines()
+            .map(|line| line.split('\t').collect())
+            .collect();
+        assert_eq!(commands.len(), 2, "one verify then land: {commands:?}");
+        assert_eq!(commands[0][0], "verify");
+        assert_eq!(commands[1][0], "land");
+        assert_eq!(
+            commands[0][1..],
+            commands[1][1..],
+            "same checkout, actor and tip"
+        );
+        assert_ne!(Path::new(commands[0][1]), self.root);
+        let main = repository(&self.root, &["show", "main:docs/TOPIC.md"]);
+        assert!(main.contains("[x] **one**"), "{main}");
+        for path in ["content/one", "view/hull_atlas"] {
+            assert_eq!(
+                repository(&self.root, &["show", &format!("main:{path}")]),
+                "approved"
+            );
+        }
+        assert_eq!(
+            repository(
+                &self.root,
+                &["status", "--porcelain", "--", "docs", "content", "view"]
+            ),
+            ""
+        );
+        assert_eq!(
+            repository(&self.root, &["worktree", "list", "--porcelain"])
+                .lines()
+                .filter(|s| s.starts_with("worktree "))
+                .count(),
+            1
+        );
+        assert!(
+            self.board
+                .tasks(None)
+                .unwrap()
+                .iter()
+                .all(|t| !t.slug.starts_with("tools/review-app-verdict-"))
+        );
+    }
+    fn stop_generation(&mut self, pid: i64, lines: &mut Lines) {
+        symphony_server::sys::signal(pid, libc::SIGTERM);
+        lines.until("· Symphony server stopped");
+        // The stop message precedes runtime teardown and the reload worker's lease release.
+        // EOF on both inherited generation pipes observes actual process cleanup.
+        lines.closed();
+        self.generation_pids.retain(|p| *p != pid);
+    }
+}
+impl Drop for Fixture {
+    fn drop(&mut self) {
+        for &pid in &self.generation_pids {
+            symphony_server::sys::signal(pid, libc::SIGTERM);
+        }
+        let _ = self.database.0.kill();
+        let _ = self.database.0.wait();
+        println!(
+            "after_reload wall time {:.3}s; logs {}",
+            self.began.elapsed().as_secs_f64(),
+            self.dir.display()
+        );
+    }
+}
+
+fn connect(address: SocketAddr) -> TcpStream {
+    let stream = TcpStream::connect_timeout(&address, LIMIT).unwrap();
+    stream.set_read_timeout(Some(LIMIT)).unwrap();
+    stream.set_write_timeout(Some(LIMIT)).unwrap();
+    stream
+}
+fn response(mut stream: TcpStream) -> Value {
+    serde_json::from_str(&text_response(&mut stream)).unwrap()
+}
+fn text_response(stream: &mut TcpStream) -> String {
+    let mut text = String::new();
+    stream.read_to_string(&mut text).unwrap();
+    let (headers, body) = text
+        .split_once("\r\n\r\n")
+        .unwrap_or_else(|| panic!("{text:?}"));
+    assert!(headers.starts_with("HTTP/1.1 200 "), "{text}");
+    body.into()
+}
+fn client_page(address: SocketAddr) -> String {
+    text_get(address, "/")
+}
+fn text_get(address: SocketAddr, route: &str) -> String {
+    let mut stream = connect(address);
+    write!(
+        stream,
+        "GET {route} HTTP/1.1\r\nHost: {address}\r\nConnection: close\r\n\r\n"
+    )
+    .unwrap();
+    text_response(&mut stream)
+}
+fn get(address: SocketAddr, route: &str) -> Value {
+    let mut stream = connect(address);
+    write!(
+        stream,
+        "GET {route} HTTP/1.1\r\nHost: {address}\r\nConnection: close\r\n\r\n"
+    )
+    .unwrap();
+    response(stream)
+}
+fn assert_front(address: SocketAddr, pid: i64) {
+    let front = get(address, "/api/front");
+    assert_eq!(front["pid"], pid);
+    assert_eq!(front["port"], address.port());
+    assert_eq!(front["ready"], true);
+}
+fn await_front(address: SocketAddr, pid: i64) {
+    let began = Instant::now();
+    loop {
+        let front = get(address, "/api/front");
+        assert_eq!(front["port"], address.port());
+        assert_eq!(front["ready"], true);
+        if front["pid"] == pid {
+            return;
+        }
+        assert!(
+            began.elapsed() < LIMIT,
+            "replacement {pid} never served: {front}"
+        );
+        std::thread::yield_now();
+    }
+}
+
+/// The board CLI the generations run: the one the workspace's test run built
+/// (`SF_TEST_TASKS_BINARY`, from `sf-rust-tests`), else built once here.
+fn tasks_binary() -> &'static Path {
+    static BINARY: OnceLock<PathBuf> = OnceLock::new();
+    BINARY.get_or_init(|| {
+        if let Some(built) = std::env::var_os("SF_TEST_TASKS_BINARY").filter(|b| !b.is_empty()) {
+            return PathBuf::from(built);
+        }
+        let wrapper = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../tools/rs-bin.sh");
+        let done = Command::new(wrapper)
+            .args(["--build", "tasks"])
+            .output()
+            .unwrap();
+        assert!(done.status.success(), "tasks binary build: {done:?}");
+        PathBuf::from(String::from_utf8(done.stdout).unwrap().trim())
+    })
+}
+fn post(address: SocketAddr, route: &str, payload: &Value) -> Value {
+    let body = payload.to_string();
+    let mut stream = accepted(address, route, body.len());
+    stream.write_all(body.as_bytes()).unwrap();
+    response(stream)
+}
+fn accepted(address: SocketAddr, route: &str, size: usize) -> TcpStream {
+    let mut stream = connect(address);
+    write!(stream, "POST {route} HTTP/1.1\r\nHost: {address}\r\nContent-Type: application/json\r\nContent-Length: {size}\r\nExpect: 100-continue\r\nConnection: close\r\n\r\n").unwrap();
+    let mut reply = [0; 25];
+    stream.read_exact(&mut reply).unwrap();
+    assert_eq!(
+        &reply, b"HTTP/1.1 100 Continue\r\n\r\n",
+        "the old generation accepted this body"
+    );
+    stream
+}
+
+#[test]
+fn server_census_reads_the_fixture_inventory() {
+    let mut f = Fixture::new("private-census");
+    write(
+        &f.dir.join("processes"),
+        "1000000000 1 /fixture/symphony-server serve --root /fixture --port 7\n",
+    );
+    let (mut server, mut lines, address) = f.server(false);
+    let pid = i64::from(server.0.id());
+    let began = Instant::now();
+    loop {
+        let front = get(address, "/api/front");
+        if front["orphans"] == 1 {
+            assert_eq!(front["pid"], pid);
+            break;
+        }
+        assert!(
+            began.elapsed() < LIMIT,
+            "fixture census was not observed: {front}"
+        );
+        std::thread::yield_now();
+    }
+    assert_eq!(
+        fs::read_to_string(f.dir.join("census-read")).unwrap(),
+        "fixture inventory",
+        "the real census must have invoked the fixture's command"
+    );
+    f.stop_generation(pid, &mut lines);
+    assert!(server.0.wait().unwrap().success());
+}
+
+#[test]
+fn a_decision_lands_on_main_without_a_manual_commit() {
+    let f = Fixture::new("automatic-verdict");
+    fs::remove_file(f.root.join("tools/test_budget.json")).unwrap();
+    repository(
+        &f.root,
+        &["commit", "-qam", "fixture without the migration switch"],
+    );
+    let (mut server, mut lines, address) = f.server(false);
+    let before = repository(&f.root, &["rev-parse", "main"]);
+    assert_eq!(
+        post(
+            address,
+            "/api/decision",
+            &json!({"path":"docs/TOPIC.md","slug":"one","state":"approved","note":"Fine."})
+        )["ok"],
+        true
+    );
+    let output = f.gate.entered("outputs");
+    // The publication worker is blocked in its output check, with its verdict branch visible.
+    // Complete a real read-hub scan before releasing it, then require that publication still lands.
+    let scanned = symphony::branches::branch_cards(&f.root);
+    assert!(
+        scanned.iter().any(|card| {
+            card.tree.branch.starts_with("docs/verdict-")
+                && card.doc == "docs/TOPIC.md"
+                && card.card.slug == "one"
+                && card.card.state.as_str() == "approved"
+        }),
+        "the held publication must actually be observed by the scan"
+    );
+    assert_eq!(
+        repository(&f.root, &["rev-parse", "main"]),
+        before,
+        "verdict and outputs publish together"
+    );
+    assert_front(address, i64::from(server.0.id()));
+    symphony_server::sys::signal(i64::from(server.0.id()), libc::SIGTERM);
+    output.release("publish");
+    lines.until("· Symphony server stopped");
+    server.wait();
+    f.published();
+    assert!(
+        repository(&f.root, &["show", "main:docs/TOPIC.md"]).contains("owner · approved — Fine.")
+    );
+    assert!(!f.root.join("artifacts/docs-app.port").exists());
+}
+
+#[test]
+fn live_branch_discovery_does_not_refresh_a_writers_index() {
+    let f = Fixture::new("read-only-branch-scan");
+    let branch = f.dir.join("branch");
+    repository(
+        &f.root,
+        &[
+            "worktree",
+            "add",
+            "-qb",
+            "work/scan",
+            branch.to_str().unwrap(),
+        ],
+    );
+    let index = PathBuf::from(repository(
+        &branch,
+        &["rev-parse", "--path-format=absolute", "--git-path", "index"],
+    ));
+    assert_eq!(symphony::branches::trees(&f.root)[0].branch, "work/scan");
+    write(
+        &branch.join("docs/CARD.md"),
+        "# Branch card\n\n<!-- register:start -->\n- [ ] **scan-card** — A branch-only question.\n<!-- register:end -->\n",
+    );
+    for unmerged in [false, true] {
+        if unmerged {
+            write(&branch.join("other"), "unmerged branch\n");
+            repository(&branch, &["add", "other"]);
+            repository(&branch, &["commit", "-qm", "Branch-only work"]);
+        }
+        let before = fs::read(&index).unwrap();
+        let document = branch.join("docs/TOPIC.md");
+        let old = fs::metadata(&document).unwrap().modified().unwrap();
+        // Content is unchanged, but its cached stat data is stale. An ordinary status/diff refresh
+        // would take index.lock and rewrite it, racing the verdict worker's mandatory index writes.
+        let modified = std::time::UNIX_EPOCH + Duration::from_secs(1_000_000 + u64::from(unmerged));
+        assert_ne!(old, modified);
+        File::open(&document)
+            .unwrap()
+            .set_times(fs::FileTimes::new().set_modified(modified))
+            .unwrap();
+        assert_eq!(
+            fs::metadata(&document).unwrap().modified().unwrap(),
+            modified
+        );
+        let cards = symphony::branches::branch_cards(&f.root);
+        assert_eq!(cards.len(), 1, "discovery must actually read the branch");
+        assert_eq!(cards[0].card.slug, "scan-card");
+        assert_eq!(
+            fs::read(&index).unwrap(),
+            before,
+            "read-hub discovery must leave the writer's index alone: unmerged={unmerged}"
+        );
+    }
+}
+
+#[test]
+fn requests_accepted_before_and_during_handover_all_receive_a_status() {
+    let mut f = Fixture::new("handover-responses");
+    let (mut original, mut lines, address) = f.server(true);
+    let original_pid = i64::from(original.0.id());
+    // A POST split after P remains in Hyper's protocol detector, before HTTP/1 takes over.
+    // Sending a GET prefix would leave that window. The later 100 Continue rendezvous proves
+    // the old generation's accept loop has progressed past these sockets and the idle client.
+    let mut incomplete: Vec<_> = (0..8)
+        .map(|_| {
+            let mut stream = connect(address);
+            stream.write_all(b"P").unwrap();
+            stream
+        })
+        .collect();
+    let mut idle = connect(address);
+    let body = json!({"path":"docs/TOPIC.md","slug":"one","text":"Drain every accepted request."})
+        .to_string();
+    let mut held = accepted(address, "/api/message", body.len());
+    f.edit("live.rs", "// handover with unanswered connections\n");
+    f.gate.entered("build").release("install");
+    let startup = f.startup();
+    let replacement_pid = startup.pid;
+    assert_front(address, original_pid);
+    startup.release("exec");
+    lines.until(&format!(
+        "replacement pid {replacement_pid} ready; draining pid {original_pid}"
+    ));
+    // Fresh requests race the accept loop's shutdown too. Each is a separate request, and an
+    // empty response or transport error fails immediately; none is retried.
+    std::thread::scope(|scope| {
+        let fresh: Vec<_> = (0..8)
+            .map(|_| scope.spawn(|| {
+                let mut stream = connect(address);
+                write!(stream, "GET /api/front HTTP/1.1\r\nHost: {address}\r\nConnection: close\r\n\r\n").unwrap();
+                let mut response = String::new();
+                stream.read_to_string(&mut response).unwrap();
+                let (headers, body) = response.split_once("\r\n\r\n").unwrap_or_else(|| panic!("{response:?}"));
+                assert!(headers.starts_with("HTTP/1.1 "), "{response:?}");
+                match headers.split_whitespace().nth(1) {
+                    Some("200") => {
+                        let front: Value = serde_json::from_str(body).unwrap();
+                        assert!(front["pid"] == original_pid || front["pid"] == replacement_pid, "{front}");
+                    }
+                    Some("503") => assert!(body.is_empty(), "{response}"),
+                    _ => panic!("a handover request needs a served response or the drain's 503: {response:?}"),
+                }
+            }))
+            .collect();
+        for request in fresh {
+            request.join().unwrap();
+        }
+    });
+    assert!(
+        original.0.try_wait().unwrap().is_none(),
+        "the accepted body holds the drain"
+    );
+    held.write_all(body.as_bytes()).unwrap();
+    assert_eq!(response(held)["ok"], true);
+    lines.until("· Symphony server stopped");
+    assert!(original.0.wait().unwrap().success());
+    // No prefix client sent another byte, and the idle client neither wrote nor disconnected.
+    // The process exit above must still happen, and every socket must retain a real response.
+    for stream in incomplete.iter_mut().chain(std::iter::once(&mut idle)) {
+        let mut response = String::new();
+        stream.read_to_string(&mut response).unwrap();
+        assert_eq!(
+            response,
+            "HTTP/1.1 503 Service Unavailable\r\nConnection: close\r\nContent-Length: 0\r\n\r\n"
+        );
+    }
+    assert_front(address, replacement_pid);
+    f.stop_generation(replacement_pid, &mut lines);
+}
+
+#[test]
+fn failed_build_and_startup_keep_serving_then_module_and_main_handover_preserve_requests() {
+    let mut f = Fixture::new("generations");
+    let (mut original, mut lines, address) = f.server(true);
+    let original_pid = i64::from(original.0.id());
+    f.edit("live.rs", "// build failure\n");
+    let build = f.gate.entered("build");
+    assert_front(address, original_pid);
+    build.release("fail");
+    lines.until("fixture compiler refused source");
+    assert_front(address, original_pid);
+    let board = get(address, "/api/board");
+    let mut feed = connect(address);
+    write!(
+        feed,
+        "GET /api/feed?since={} HTTP/1.1\r\nHost: {address}\r\n\r\n",
+        board["version"]
+    )
+    .unwrap();
+    let mut feed = BufReader::new(feed);
+    loop {
+        let mut line = String::new();
+        assert!(feed.read_line(&mut line).unwrap() > 0);
+        if line.contains("previous server is still serving") {
+            break;
+        }
+    }
+    drop(feed);
+
+    f.edit(
+        "live.rs",
+        "// starts a replacement that exits before readiness\n",
+    );
+    f.gate.entered("build").release("install");
+    let failed = f.startup();
+    let failed_pid = failed.pid;
+    assert_front(address, original_pid);
+    failed.release("exit");
+    lines.until("replacement did not become ready");
+    assert!(
+        !symphony_server::sys::pid_alive(failed_pid),
+        "failed replacement was reaped"
+    );
+    f.generation_pids.retain(|p| *p != failed_pid);
+    assert_front(address, original_pid);
+    assert_eq!(
+        serde_json::from_slice::<Value>(&fs::read(f.home.join("server.json")).unwrap()).unwrap()["pid"],
+        original_pid
+    );
+
+    let body =
+        json!({"path":"docs/TOPIC.md","slug":"one","state":"approved","note":"Across handover."})
+            .to_string();
+    let mut held = accepted(address, "/api/decision", body.len());
+    f.edit("live.rs", "// module replacement\n");
+    let build = f.gate.entered("build");
+    assert_front(address, original_pid);
+    build.release("install");
+    let startup = f.startup();
+    let second_pid = startup.pid;
+    assert_front(address, original_pid);
+    startup.release("exec");
+    lines.until(&format!(
+        "replacement pid {second_pid} ready; draining pid {original_pid}"
+    ));
+    await_front(address, second_pid);
+    assert!(
+        original.0.try_wait().unwrap().is_none(),
+        "accepted save keeps the old generation draining"
+    );
+    held.write_all(body.as_bytes()).unwrap();
+    assert_eq!(
+        response(held)["ok"],
+        true,
+        "accepted request survived handover"
+    );
+    let output = f.gate.entered("outputs");
+    assert_eq!(
+        repository(&f.root, &["show", "main:docs/TOPIC.md"]),
+        DOC.trim_end()
+    );
+    assert_front(address, second_pid);
+    assert!(
+        original.0.try_wait().unwrap().is_none(),
+        "old generation waits for verdict outputs"
+    );
+    // The reload inputs represent committed app work; ordinary land correctly refuses
+    // an unrelated tracked-dirty main checkout. Commit only those fixture app inputs.
+    repository(&f.root, &["add", "--", "apps"]);
+    repository(
+        &f.root,
+        &[
+            "commit",
+            "-qm",
+            "fixture app source changes before publication",
+        ],
+    );
+    output.release("publish");
+    lines.until("· Symphony server stopped");
+    original.wait();
+    f.published();
+    assert_eq!(
+        fs::read_to_string(f.root.join("artifacts/docs-app.port"))
+            .unwrap()
+            .trim(),
+        address.port().to_string(),
+        "draining generation must leave the replacement's discovery record"
+    );
+
+    // Native main-entry changes follow the same generation contract, including a request already
+    // accepted by the outgoing generation.
+    let body =
+        json!({"path":"docs/TOPIC.md","slug":"one","text":"Main entry preserved this request."})
+            .to_string();
+    let mut held = accepted(address, "/api/message", body.len());
+    f.edit("main.rs", "fn main() { /* main entry changed */ }\n");
+    f.gate.entered("build").release("install");
+    let startup = f.startup();
+    let third_pid = startup.pid;
+    assert_front(address, second_pid);
+    startup.release("exec");
+    lines.until(&format!(
+        "replacement pid {third_pid} ready; draining pid {second_pid}"
+    ));
+    await_front(address, third_pid);
+    held.write_all(body.as_bytes()).unwrap();
+    assert_eq!(response(held)["ok"], true);
+    // The outputs already match this save. Draining must still finish its ordinary verdict commit.
+    lines.until("· Symphony server stopped");
+    f.generation_pids.retain(|p| *p != second_pid);
+    assert!(
+        repository(&f.root, &["show", "main:docs/TOPIC.md"])
+            .contains("Main entry preserved this request.")
+    );
+    f.stop_generation(third_pid, &mut lines);
+    assert!(!f.root.join("artifacts/docs-app.port").exists());
+    File::open(f.home.join("server.lock"))
+        .unwrap()
+        .try_lock()
+        .unwrap();
+}
+
+#[test]
+fn client_only_and_shared_edits_publish_once_and_failures_preserve_the_serving_bundle() {
+    let mut f = Fixture::new("client-generations");
+    let (mut original, mut lines, address) = f.server(true);
+    let original_pid = i64::from(original.0.id());
+    let old_stamp = fs::read(f.home.join("client-installed.json")).unwrap();
+    let old_binary = Sha256::digest(fs::read(f.home.join("bin/symphony-server")).unwrap());
+    assert_eq!(client_page(address), "initial client");
+
+    write(
+        &f.root.join("symphony/apps/symphony-ui/src/main.rs"),
+        "refused client",
+    );
+    let client = f.gate.entered("client");
+    assert_front(address, original_pid);
+    assert_eq!(
+        client_page(address),
+        "initial client",
+        "staged output must stay private"
+    );
+    client.release("fail");
+    lines.until("fixture client compiler refused source");
+    assert_front(address, original_pid);
+    assert_eq!(client_page(address), "initial client");
+    assert_eq!(
+        fs::read(f.home.join("client-installed.json")).unwrap(),
+        old_stamp
+    );
+    assert_eq!(
+        Sha256::digest(fs::read(f.home.join("bin/symphony-server")).unwrap()),
+        old_binary
+    );
+    assert!(
+        !f.home
+            .join(format!(".reload-client.{original_pid}"))
+            .exists()
+    );
+    assert_eq!(
+        lines
+            .history
+            .iter()
+            .filter(|line| line.contains("fixture client compiler refused source"))
+            .count(),
+        1
+    );
+
+    write(
+        &f.root.join("symphony/apps/symphony-ui/src/main.rs"),
+        "incomplete bundle",
+    );
+    f.gate.entered("client").release("empty");
+    lines.until("client build has no index.html");
+    assert_front(address, original_pid);
+    assert_eq!(client_page(address), "initial client");
+    assert_eq!(
+        fs::read(f.home.join("client-installed.json")).unwrap(),
+        old_stamp
+    );
+
+    // A successful bundle followed by a failed replacement must also restore the client.
+    write(
+        &f.root.join("symphony/apps/symphony-ui/src/main.rs"),
+        "unready client",
+    );
+    f.gate.entered("client").release("bundle");
+    let build = f.gate.entered("build");
+    assert_eq!(client_page(address), "initial client");
+    build.release("install");
+    let startup = f.startup();
+    assert_eq!(
+        client_page(address),
+        "unready client",
+        "swap precedes replacement readiness"
+    );
+    let failed_pid = startup.pid;
+    startup.release("exit");
+    lines.until("replacement did not become ready");
+    f.generation_pids.retain(|p| *p != failed_pid);
+    assert_front(address, original_pid);
+    assert_eq!(client_page(address), "initial client");
+    assert_eq!(
+        fs::read(f.home.join("client-installed.json")).unwrap(),
+        old_stamp
+    );
+
+    write(
+        &f.root.join("symphony/apps/symphony-ui/src/main.rs"),
+        "shipped client",
+    );
+    f.gate.entered("client").release("bundle");
+    f.gate.entered("build").release("install");
+    let startup = f.startup();
+    let second_pid = startup.pid;
+    assert_eq!(client_page(address), "shipped client");
+    startup.release("exec");
+    lines.until(&format!(
+        "replacement pid {second_pid} ready; draining pid {original_pid}"
+    ));
+    await_front(address, second_pid);
+    assert!(original.0.wait().unwrap().success());
+    assert_eq!(client_page(address), "shipped client");
+    assert_eq!(
+        text_get(address, "/assets/old-dxh456.js"),
+        "old module",
+        "old tabs retain their hashed modules"
+    );
+    assert_eq!(text_get(address, "/assets/new-dxh123.js"), "new module");
+    assert_eq!(
+        text_get(address, "/assets/chunks/old-dxh789.js"),
+        "old chunk"
+    );
+    let second_source = symphony::reload::client_fingerprint(&f.root).unwrap();
+    assert_eq!(
+        symphony::reload::installed_client_source(&f.home).as_deref(),
+        Some(second_source.as_str())
+    );
+    assert_ne!(
+        fs::read(f.home.join("client-installed.json")).unwrap(),
+        old_stamp
+    );
+
+    // One dependency is an input to both products: exactly one client build, one server build
+    // and one handover must cover that event, without a second reload from the new generation.
+    write(
+        &f.root.join("symphony/crates/symphony-api/src/lib.rs"),
+        "// changed shared contract\n",
+    );
+    f.gate.entered("client").release("bundle");
+    f.gate.entered("build").release("install");
+    let startup = f.startup();
+    let third_pid = startup.pid;
+    startup.release("exec");
+    lines.until(&format!(
+        "replacement pid {third_pid} ready; draining pid {second_pid}"
+    ));
+    await_front(address, third_pid);
+    let third_source = symphony::reload::client_fingerprint(&f.root).unwrap();
+    assert_ne!(second_source, third_source);
+    assert_eq!(
+        symphony::reload::installed_client_source(&f.home).as_deref(),
+        Some(third_source.as_str())
+    );
+    assert_eq!(client_page(address), "shipped client");
+    f.stop_generation(third_pid, &mut lines);
+    f.generation_pids.clear();
+    write(
+        &f.home.join("client/public/index.html"),
+        "manually replaced bundle",
+    );
+    assert!(
+        symphony::reload::installed_client_source(&f.home).is_none(),
+        "an installed stamp must identify actual output bytes"
+    );
+    write(&f.home.join("client-installed.json"), "invalid stamp");
+    assert!(symphony::reload::installed_client_source(&f.home).is_none());
+}
+
+#[test]
+fn startup_rebuilds_an_older_client_even_when_the_server_stamp_is_current() {
+    let mut f = Fixture::new("startup-client-stamp");
+    let old_source = symphony::reload::installed_client_source(&f.home).unwrap();
+    write(
+        &f.root.join("symphony/apps/symphony-ui/src/main.rs"),
+        "current client",
+    );
+    // Model a partial installation: the binary/source stamp is current, while the client
+    // stamp still correctly identifies the old bundle. Only its source identity is stale.
+    let installed_path = f.home.join("installed.json");
+    let mut installed: Value = serde_json::from_slice(&fs::read(&installed_path).unwrap()).unwrap();
+    installed["source"] = symphony::reload::fingerprint(&f.root).unwrap().into();
+    write(&installed_path, &installed.to_string());
+    let current_source = symphony::reload::client_fingerprint(&f.root).unwrap();
+    assert_ne!(old_source, current_source);
+    assert_eq!(
+        symphony::reload::installed_client_source(&f.home),
+        Some(old_source)
+    );
+
+    let (mut original, mut lines, address) = f.server(true);
+    let original_pid = i64::from(original.0.id());
+    let client = f.gate.entered("client");
+    assert_eq!(client_page(address), "initial client");
+    assert_front(address, original_pid);
+    client.release("bundle");
+    f.gate.entered("build").release("install");
+    let startup = f.startup();
+    let replacement_pid = startup.pid;
+    assert_eq!(client_page(address), "current client");
+    startup.release("exec");
+    lines.until(&format!(
+        "replacement pid {replacement_pid} ready; draining pid {original_pid}"
+    ));
+    assert!(original.0.wait().unwrap().success());
+    await_front(address, replacement_pid);
+    assert_eq!(
+        symphony::reload::installed_client_source(&f.home),
+        Some(current_source)
+    );
+    f.stop_generation(replacement_pid, &mut lines);
+}
+
+#[test]
+fn shutdown_cancels_build_or_startup_and_releases_the_lease() {
+    for phase in ["client", "build", "startup"] {
+        let mut f = Fixture::new(&format!("cancel-{phase}"));
+        let (mut server, mut lines, address) = f.server(true);
+        let pid = i64::from(server.0.id());
+        let build = if phase == "client" {
+            write(
+                &f.root.join("symphony/apps/symphony-ui/src/main.rs"),
+                "cancelled client",
+            );
+            f.gate.entered("client")
+        } else {
+            f.edit("main.rs", "fn main() { /* cancelled replacement */ }\n");
+            f.gate.entered("build")
+        };
+        let held = if phase == "startup" {
+            build.release("install");
+            f.startup()
+        } else {
+            build
+        };
+        assert_front(address, pid);
+        symphony_server::sys::signal(pid, libc::SIGTERM);
+        lines.until("· Symphony server stopped");
+        server.wait();
+        assert!(
+            !symphony_server::sys::pid_alive(held.pid),
+            "cancelled {phase} was reaped"
+        );
+        f.generation_pids.clear();
+        assert!(!f.root.join("artifacts/docs-app.port").exists());
+        for name in ["server.lock", "reload-build.lock"] {
+            File::open(f.home.join(name)).unwrap().try_lock().unwrap();
+        }
+        assert!(!f.home.join(format!(".reload-client.{pid}")).exists());
+        assert!(
+            TcpStream::connect(address).is_err(),
+            "no listener survived cancelled {phase}"
+        );
+        drop(held);
+    }
+}

@@ -1,0 +1,1308 @@
+//! The document pipeline's final fragments as a typed tree. HTML is only an internal input here;
+//! callers prepare URLs/media as usual, then send the resulting blocks to a component renderer.
+//! `Render::typed_sections`, `typed_reply` and `typed_history` retain live-component and wiki-link
+//! identity. `parse` also accepts ordinary pipeline fragments (without those optional markers).
+
+mod html;
+
+use std::collections::BTreeMap;
+
+use symphony_api::{
+    Block, CalloutKind, CardGroup, CardState, Cell, ContainerKind, Image, InlineKind, LinkTarget,
+    LiveComponent, MatrixKind, Media, Presentation, ShapePivot, ShipSize, Span, ThreadAuthor,
+    ThreadEntry, VectorKind, VectorShape, Verdict,
+};
+
+use html::Node;
+
+/// Parse a document, section, excerpt, or answer after the pipeline has prepared its local URLs.
+/// Unknown elements/attributes stay visible as data and are warned about with `doc_path`.
+pub fn parse(html: &str, media: &[Media], doc_path: &str) -> Vec<Block> {
+    parse_mode(html, media, doc_path, true)
+}
+
+fn parse_mode(html: &str, media: &[Media], doc_path: &str, semantic: bool) -> Vec<Block> {
+    let nodes = html::parse(html);
+    let parser = Parser {
+        media,
+        doc_path,
+        semantic,
+    };
+    let mut blocks = parser.blocks(&nodes);
+    parser.attributes(&nodes, &mut blocks);
+    blocks
+}
+
+/// Convenience for an unprepared pipeline fragment. URL preparation/scoping remains the caller's
+/// job, so routes can prepare/cache once and parse precisely the content they would have sent.
+pub fn fragment(fragment: &crate::render::Fragment, doc_path: &str) -> Vec<Block> {
+    let media = fragment.media.iter().map(wire_media).collect::<Vec<_>>();
+    parse(&fragment.html, &media, doc_path)
+}
+
+pub fn section(section: &crate::render::Section, doc_path: &str) -> Vec<Block> {
+    let media = section.media.iter().map(wire_media).collect::<Vec<_>>();
+    parse(&section.html, &media, doc_path)
+}
+
+pub(crate) fn wire_media(media: &crate::render::Media) -> Media {
+    match media {
+        crate::render::Media::Mockup { src, label } => Media::Mockup {
+            src: src.clone(),
+            label: label.clone(),
+        },
+        crate::render::Media::Model { src, label } => Media::Model {
+            src: src.clone(),
+            label: label.clone(),
+        },
+    }
+}
+
+struct Parser<'a> {
+    media: &'a [Media],
+    doc_path: &'a str,
+    semantic: bool,
+}
+
+impl Parser<'_> {
+    fn unknown(&self, tag: &str, text: String) -> Block {
+        if self.semantic {
+            eprintln!("blocks: {}: unsupported {tag}", self.doc_path);
+        }
+        Block::Unknown {
+            tag: tag.into(),
+            text,
+        }
+    }
+
+    fn blocks(&self, nodes: &[Node]) -> Vec<Block> {
+        let mut out = Vec::new();
+        let mut inline = Vec::new();
+        for node in nodes {
+            if node.is_inline() {
+                inline.push(node.clone());
+                continue;
+            }
+            self.flush(&mut inline, &mut out);
+            out.extend(self.block(node));
+        }
+        self.flush(&mut inline, &mut out);
+        out
+    }
+
+    fn flush(&self, inline: &mut Vec<Node>, blocks: &mut Vec<Block>) {
+        if inline
+            .iter()
+            .any(|n| !n.text.trim().is_empty() || !n.tag.is_empty())
+        {
+            blocks.push(paragraph(self.spans(inline)));
+        }
+        inline.clear();
+    }
+
+    fn block(&self, node: &Node) -> Vec<Block> {
+        let children = &node.children;
+        let one = match node.tag.as_str() {
+            "#comment" => Block::Comment {
+                text: node.text.clone(),
+            },
+            "#error" => self.unknown("malformed", node.text.clone()),
+            "p" => paragraph(self.spans(children)),
+            "h1" | "h2" | "h3" | "h4" | "h5" | "h6" => Block::Heading {
+                level: node.tag.as_bytes()[1] - b'0',
+                anchor: node.attr("id").into(),
+                spans: self.spans(children),
+            },
+            "hr" => Block::Rule,
+            "blockquote" => Block::Quote {
+                blocks: self.blocks(children),
+            },
+            "pre" => {
+                let code = children.iter().position(|c| c.tag == "code");
+                let one = Block::Code {
+                    language: code
+                        .map(|at| &children[at])
+                        .unwrap_or(node)
+                        .attr("class")
+                        .split_whitespace()
+                        .find_map(|c| c.strip_prefix("language-"))
+                        .unwrap_or("")
+                        .into(),
+                    text: node.plain(),
+                };
+                let mut unrepresented = Vec::new();
+                for (at, child) in children.iter().enumerate() {
+                    self.pre_attributes(child, code == Some(at), &mut unrepresented);
+                }
+                if unrepresented.is_empty() {
+                    one
+                } else {
+                    unrepresented.insert(0, one);
+                    Block::Group {
+                        blocks: unrepresented,
+                    }
+                }
+            }
+            "ul" | "ol" if node.class("history") => Block::Thread {
+                entries: children
+                    .iter()
+                    .filter(|n| n.tag == "li")
+                    .map(|n| self.entry(n))
+                    .collect(),
+            },
+            "li" if node.class("entry") => Block::Thread {
+                entries: vec![self.entry(node)],
+            },
+            "ul" | "ol" => Block::List {
+                ordered: node.tag == "ol",
+                start: node.attr("start").parse().unwrap_or(1),
+                items: children
+                    .iter()
+                    .filter(|n| !n.blank())
+                    .map(|n| {
+                        if n.tag == "li" {
+                            self.blocks(&n.children)
+                        } else {
+                            self.block(n)
+                        }
+                    })
+                    .collect(),
+            },
+            "table" => self.table(node),
+            "div" if node.class("decision") => self.card(node),
+            "div" | "details" if node.class("callout") => {
+                let head = children.iter().find(|n| n.class("callout-title"));
+                let name = node
+                    .attr("class")
+                    .split_whitespace()
+                    .find_map(|c| c.strip_prefix("callout-").filter(|c| *c != "done"))
+                    .unwrap_or("comment");
+                let Ok(kind) = name.parse::<CalloutKind>() else {
+                    let mut blocks = vec![self.unknown("callout-kind", name.into())];
+                    blocks.extend(self.blocks(children));
+                    return vec![Block::Group { blocks }];
+                };
+                Block::Callout {
+                    kind,
+                    title: head.map(|n| self.spans(&n.children)).unwrap_or_default(),
+                    resolved: node.class("callout-done"),
+                    blocks: self.blocks(
+                        &children
+                            .iter()
+                            .filter(|n| !n.class("callout-title"))
+                            .cloned()
+                            .collect::<Vec<_>>(),
+                    ),
+                }
+            }
+            "details" => Block::Details {
+                summary: children
+                    .iter()
+                    .find(|n| n.tag == "summary")
+                    .map(|n| self.spans(&n.children))
+                    .unwrap_or_default(),
+                open: node.attrs.contains_key("open"),
+                blocks: self.blocks(
+                    &children
+                        .iter()
+                        .filter(|n| n.tag != "summary")
+                        .cloned()
+                        .collect::<Vec<_>>(),
+                ),
+            },
+            "sf-component" => match self.component(node) {
+                Some(component) => Block::Component { component },
+                None => {
+                    return vec![
+                        self.unknown(
+                            &format!("component:{}", node.attr("data-kind")),
+                            node.plain(),
+                        ),
+                        self.container(
+                            ContainerKind::Div,
+                            Presentation::default(),
+                            self.blocks(children),
+                        ),
+                    ];
+                }
+            },
+            tag => {
+                if let Some(tag) = container(tag) {
+                    return vec![self.container(
+                        tag,
+                        presentation(node, &[]),
+                        self.blocks(children),
+                    )];
+                }
+                if node.is_inline() {
+                    return vec![Block::Paragraph {
+                        spans: self.spans(std::slice::from_ref(node)),
+                    }];
+                }
+                return vec![
+                    self.unknown(tag, node.plain()),
+                    self.container(
+                        ContainerKind::Div,
+                        Presentation::default(),
+                        self.blocks(children),
+                    ),
+                ];
+            }
+        };
+        let consumed = match node.tag.as_str() {
+            "h1" | "h2" | "h3" | "h4" | "h5" | "h6" => &["id"][..],
+            "ol" => &["start"][..],
+            "details" => &["open"][..],
+            _ => &[],
+        };
+        // Cards/callouts/components carry their own semantic presentation; ordinary Markdown
+        // retains any explicit styling via a structural wrapper.
+        let semantic = node.class("decision")
+            || node.class("callout")
+            || node.class("history")
+            || node.class("entry")
+            || node.tag == "sf-component";
+        let p = presentation(node, consumed);
+        if !semantic && p != Presentation::default() {
+            vec![self.container(ContainerKind::Div, p, vec![one])]
+        } else {
+            vec![one]
+        }
+    }
+
+    fn container(&self, tag: ContainerKind, p: Presentation, mut blocks: Vec<Block>) -> Block {
+        if self.semantic {
+            let class = |name| p.class.split_whitespace().any(|c| c == name);
+            if class("settled")
+                && promotable(&p, &["settled"], &[])
+                && blocks.len() == 1
+                && matches!(blocks[0], Block::Details { .. })
+                && let Some(Block::Details {
+                    summary,
+                    open,
+                    blocks,
+                }) = blocks.pop()
+            {
+                return Block::SettledCard {
+                    summary,
+                    open,
+                    blocks,
+                };
+            }
+            if class("pair") && promotable(&p, &["pair"], &[]) {
+                return Block::ArtSlot { figures: blocks };
+            }
+            if class("hull") && promotable(&p, &["hull"], &[]) {
+                return Block::Hull { blocks };
+            }
+            if class("compare") && promotable(&p, &["compare"], &[]) {
+                return Block::Comparison { figures: blocks };
+            }
+            if class("matrix-scale") && promotable(&p, &["matrix-scale"], &[]) {
+                return Block::MatrixNote { blocks };
+            }
+            if class("subfaction-ships") && promotable(&p, &["subfaction-ships", "muted"], &[]) {
+                return Block::EmptyRoster { blocks };
+            }
+            if class("screen") && promotable(&p, &["screen", "screen-missing"], &["data-screen"]) {
+                return Block::ScreenCapture {
+                    id: p.attributes.get("data-screen").cloned().unwrap_or_default(),
+                    missing: class("screen-missing"),
+                    blocks,
+                };
+            }
+            if class("matrix")
+                && promotable(&p, &["matrix", "shape-matrix"], &[])
+                && blocks.len() == 1
+                && matches!(blocks[0], Block::Table { .. })
+                && let Some(Block::Table { head, rows }) = blocks.pop()
+            {
+                return Block::Matrix {
+                    matrix: if class("shape-matrix") {
+                        MatrixKind::Shapes
+                    } else {
+                        MatrixKind::Ships
+                    },
+                    head,
+                    rows,
+                };
+            }
+            if p.attributes.get("style").map(String::as_str)
+                == Some("border-collapse:collapse;font-size:.92em")
+                && promotable(&p, &[], &["style"])
+                && blocks.len() == 1
+                && matches!(blocks[0], Block::Table { .. })
+                && let Some(Block::Table { head, rows }) = blocks.pop()
+            {
+                return Block::Matrix {
+                    matrix: MatrixKind::Relationships,
+                    head,
+                    rows,
+                };
+            }
+            if tag == ContainerKind::Figure && promotable(&p, &["missing"], &[]) {
+                let mut caption = Vec::new();
+                blocks.retain(|block| {
+                    if let Block::Caption { blocks } = block {
+                        caption.extend(blocks.clone());
+                        false
+                    } else {
+                        true
+                    }
+                });
+                return Block::Figure {
+                    blocks,
+                    caption,
+                    missing: class("missing"),
+                };
+            }
+            if tag == ContainerKind::Figcaption && promotable(&p, &[], &[]) {
+                return Block::Caption { blocks };
+            }
+            if tag == ContainerKind::Div && p == Presentation::default() {
+                return Block::Group { blocks };
+            }
+        }
+        Block::Container {
+            tag,
+            presentation: p,
+            blocks,
+        }
+    }
+
+    /// A preformatted block keeps plain text, not its children's element structure. Report any
+    /// child attributes that flattening cannot carry; only the first code child's language is used.
+    fn pre_attributes(&self, node: &Node, language: bool, out: &mut Vec<Block>) {
+        for (key, value) in &node.attrs {
+            if !known_attribute(&node.tag, key) {
+                continue;
+            } // The ordinary attribute scan reports it.
+            let residual = if language && key == "class" {
+                let mut consumed = false;
+                value
+                    .split_whitespace()
+                    .filter(|class| {
+                        if !consumed && class.starts_with("language-") {
+                            consumed = true;
+                            false
+                        } else {
+                            true
+                        }
+                    })
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            } else {
+                value.clone()
+            };
+            if !residual.is_empty() || value.is_empty() {
+                out.push(self.unknown(&format!("pre/{}@{key}", node.tag), residual));
+            }
+        }
+        for child in &node.children {
+            self.pre_attributes(child, false, out);
+        }
+    }
+
+    fn spans(&self, nodes: &[Node]) -> Vec<Span> {
+        nodes.iter().flat_map(|node| self.span(node)).collect()
+    }
+
+    fn span(&self, node: &Node) -> Vec<Span> {
+        let spans = || self.spans(&node.children);
+        let one = match node.tag.as_str() {
+            "" => Span::Text {
+                text: node.text.clone(),
+            },
+            "em" | "i" => Span::Emphasis { spans: spans() },
+            "strong" | "b" => Span::Strong { spans: spans() },
+            "code" => Span::Code { text: node.plain() },
+            "br" => Span::LineBreak,
+            "a" if node.attr("data-wiki") == "true" => Span::WikiLink {
+                href: node.attr("href").into(),
+                target: self.link_target(node.attr("href")),
+                spans: spans(),
+            },
+            "a" => Span::Link {
+                href: node.attr("href").into(),
+                target: (node.attr("data-card") != "true")
+                    .then(|| self.link_target(node.attr("href")))
+                    .flatten(),
+                title: node.attr("title").into(),
+                spans: spans(),
+            },
+            "img" => Span::Image {
+                image: Image {
+                    src: node.attr("src").into(),
+                    alt: node.attr("alt").into(),
+                    presentation: presentation(node, &["src", "alt"]),
+                },
+            },
+            "span" if node.class("media") => {
+                match node
+                    .attr("data-media")
+                    .parse::<usize>()
+                    .ok()
+                    .and_then(|i| self.media.get(i))
+                {
+                    Some(media) => Span::Media {
+                        media: media.clone(),
+                    },
+                    None => {
+                        let Block::Unknown { tag, text } =
+                            self.unknown("media-index", node.attr("data-media").into())
+                        else {
+                            unreachable!()
+                        };
+                        Span::Unknown { tag, text }
+                    }
+                }
+            }
+            "sf-component" => match self.component(node) {
+                Some(component) => Span::Component { component },
+                None => {
+                    let Block::Unknown { tag, text } = self.unknown(
+                        &format!("component:{}", node.attr("data-kind")),
+                        node.plain(),
+                    ) else {
+                        unreachable!()
+                    };
+                    return vec![
+                        Span::Unknown { tag, text },
+                        Span::Blocks {
+                            blocks: self.blocks(&node.children),
+                        },
+                    ];
+                }
+            },
+            "svg" => return vec![self.graphic(node)],
+            tag => {
+                if let Some(tag) = inline(tag) {
+                    return vec![Span::Styled {
+                        tag,
+                        presentation: presentation(node, &[]),
+                        spans: spans(),
+                    }];
+                }
+                if !node.is_inline() {
+                    return vec![Span::Blocks {
+                        blocks: self.block(node),
+                    }];
+                }
+                let Block::Unknown { tag, text } = self.unknown(tag, node.plain()) else {
+                    unreachable!()
+                };
+                return vec![
+                    Span::Unknown { tag, text },
+                    Span::Styled {
+                        tag: InlineKind::Span,
+                        presentation: Presentation::default(),
+                        spans: spans(),
+                    },
+                ];
+            }
+        };
+        let consumed = match node.tag.as_str() {
+            "a" => &["href", "title", "data-wiki", "data-card"][..],
+            "img" => return vec![one],
+            "sf-component" => return vec![one],
+            "span" if node.class("media") => return vec![one],
+            _ => &[],
+        };
+        let p = presentation(node, consumed);
+        if p == Presentation::default() {
+            vec![one]
+        } else {
+            vec![Span::Styled {
+                tag: InlineKind::Span,
+                presentation: p,
+                spans: vec![one],
+            }]
+        }
+    }
+
+    fn link_target(&self, href: &str) -> Option<LinkTarget> {
+        if crate::markup::is_external(href) || href.is_empty() {
+            return None;
+        }
+        let (path, anchor) = href
+            .split_once('#')
+            .map_or((href, None), |(p, a)| (p, Some(a.to_string())));
+        let path = if path.is_empty() {
+            self.doc_path.to_string()
+        } else {
+            crate::markup::target(path, self.doc_path)
+                .trim_start_matches('/')
+                .to_string()
+        };
+        Some(LinkTarget { path, anchor })
+    }
+
+    fn component(&self, node: &Node) -> Option<LiveComponent> {
+        let arg = node.attr("data-arg").trim();
+        let option = node.attr("data-option").trim();
+        let blocks = self.blocks(&node.children);
+        let size = |default: &str| {
+            if option.is_empty() {
+                default.parse::<ShipSize>().ok()
+            } else {
+                option.parse::<ShipSize>().ok()
+            }
+        };
+        let id = || arg.to_string();
+        let optional = || (!option.is_empty()).then(|| option.to_string());
+        Some(match node.attr("data-kind") {
+            "task" => LiveComponent::Task {
+                slug: id(),
+                label: optional(),
+                blocks,
+            },
+            "ship" => LiveComponent::Ship {
+                id: id(),
+                size: size("row")?,
+                blocks,
+            },
+            "ships" => LiveComponent::Ships {
+                ids: arg
+                    .split(',')
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .map(str::to_string)
+                    .collect(),
+                size: size("row")?,
+                blocks,
+            },
+            "art" => LiveComponent::Art { slot: id(), blocks },
+            "screen" => LiveComponent::Screen { id: id(), blocks },
+            "ship-matrix" => LiveComponent::ShipMatrix {
+                faction: id(),
+                blocks,
+            },
+            "shape-matrix" => LiveComponent::ShapeMatrix {
+                faction: id(),
+                pivot: if option.is_empty() {
+                    None
+                } else {
+                    Some(option.to_lowercase().parse::<ShapePivot>().ok()?)
+                },
+                blocks,
+            },
+            "subfaction-ships" => LiveComponent::SubfactionShips {
+                name: id(),
+                size: size("small")?,
+                blocks,
+            },
+            "relationships" => LiveComponent::Relationships {
+                table: arg.parse().ok()?,
+                blocks,
+            },
+            "capability" => LiveComponent::Capability {
+                id: id(),
+                named: option == "name",
+                blocks,
+            },
+            "weapon" => LiveComponent::Weapon {
+                id: id(),
+                named: option == "name",
+                blocks,
+            },
+            "gear" => LiveComponent::Gear {
+                id: id(),
+                named: option == "name",
+                blocks,
+            },
+            "status" => LiveComponent::Status {
+                id: id(),
+                named: option == "name",
+                blocks,
+            },
+            "defence" => LiveComponent::Defence {
+                id: id(),
+                named: option == "name",
+                blocks,
+            },
+            _ => return None,
+        })
+    }
+
+    fn table(&self, node: &Node) -> Block {
+        let mut head = Vec::new();
+        let mut rows = Vec::new();
+        let mut extra = Vec::new();
+        for child in &node.children {
+            let (in_head, candidates) = match child.tag.as_str() {
+                "thead" => (true, child.children.as_slice()),
+                "tbody" | "tfoot" => (false, child.children.as_slice()),
+                "tr" => (false, std::slice::from_ref(child)),
+                _ if child.blank() => continue,
+                _ => {
+                    extra.extend(self.block(child));
+                    continue;
+                }
+            };
+            for row in candidates.iter().filter(|n| !n.blank()) {
+                if row.tag != "tr" {
+                    extra.extend(self.block(row));
+                    continue;
+                }
+                let cells: Vec<_> = row
+                    .children
+                    .iter()
+                    .filter(|n| !n.blank())
+                    .map(|cell| {
+                        if cell.tag == "td" || cell.tag == "th" {
+                            Cell {
+                                header: cell.tag == "th",
+                                spans: self.spans(&cell.children),
+                                presentation: presentation(cell, &[]),
+                            }
+                        } else {
+                            Cell {
+                                header: false,
+                                spans: vec![Span::Blocks {
+                                    blocks: self.block(cell),
+                                }],
+                                presentation: Presentation::default(),
+                            }
+                        }
+                    })
+                    .collect();
+                if in_head && head.is_empty() {
+                    head = cells;
+                } else {
+                    rows.push(cells);
+                }
+            }
+        }
+        let table = Block::Table { head, rows };
+        if extra.is_empty() {
+            table
+        } else {
+            extra.insert(0, table);
+            Block::Container {
+                tag: ContainerKind::Div,
+                presentation: Presentation::default(),
+                blocks: extra,
+            }
+        }
+    }
+
+    fn card(&self, node: &Node) -> Block {
+        let mark = node.attr("data-state").parse::<CardState>();
+        let group = node.attr("data-group").parse::<CardGroup>();
+        let (Ok(mark), Ok(group)) = (mark, group) else {
+            let mut blocks = vec![self.unknown(
+                "card-state/group",
+                format!("{} / {}", node.attr("data-state"), node.attr("data-group")),
+            )];
+            blocks.extend(self.blocks(&node.children));
+            return Block::Group { blocks };
+        };
+        let content = node.children.iter().find(|n| n.class("decision-text"));
+        let body_nodes: Vec<_> = content
+            .map(|n| {
+                n.children
+                    .iter()
+                    .filter(|c| c.tag != "code" && !c.class("posted"))
+                    .cloned()
+                    .collect()
+            })
+            .unwrap_or_default();
+        let title = body_nodes
+            .iter()
+            .map(Node::plain)
+            .collect::<String>()
+            .trim()
+            .to_string();
+        let history = node.children.iter().find(|n| n.class("history"));
+        let posted = content
+            .and_then(|n| n.children.iter().find(|n| n.class("posted")))
+            .map(Node::plain);
+        let mut body = self.blocks(&body_nodes);
+        body.extend(
+            self.blocks(
+                &node
+                    .children
+                    .iter()
+                    .filter(|n| {
+                        !n.blank()
+                            && !n.class("decision-text")
+                            && !n.class("history")
+                            && !n.class("compare")
+                    })
+                    .cloned()
+                    .collect::<Vec<_>>(),
+            ),
+        );
+        Block::Card {
+            slug: node.attr("data-slug").into(),
+            mark,
+            title,
+            body,
+            verdict: Verdict {
+                group,
+                open: node.attr("data-open") == "true",
+                posted,
+                decided: (!node.attr("data-decided").is_empty())
+                    .then(|| node.attr("data-decided").to_string()),
+            },
+            thread: history
+                .map(|n| {
+                    n.children
+                        .iter()
+                        .filter(|n| n.tag == "li")
+                        .map(|n| self.entry(n))
+                        .collect()
+                })
+                .unwrap_or_default(),
+            line: node.attr("data-line").parse().ok(),
+            line_offset: node.attr("data-line-offset").parse().ok(),
+            comparison: self.blocks(
+                &node
+                    .children
+                    .iter()
+                    .filter(|n| n.class("compare"))
+                    .cloned()
+                    .collect::<Vec<_>>(),
+            ),
+        }
+    }
+
+    fn entry(&self, node: &Node) -> ThreadEntry {
+        let mut blocks = Vec::new();
+        for child in node
+            .children
+            .iter()
+            .filter(|n| !n.blank() && n.tag != "time" && n.tag != "b")
+        {
+            if child.class("entry-text") {
+                blocks.extend(self.blocks(&child.children));
+            } else {
+                blocks.extend(self.block(child));
+            }
+        }
+        let author = node
+            .attr("class")
+            .split_whitespace()
+            .find(|c| *c != "entry")
+            .unwrap_or("owner");
+        let who = author.parse::<ThreadAuthor>().unwrap_or_else(|_| {
+            blocks.insert(0, self.unknown("thread-author", author.into()));
+            ThreadAuthor::Unknown
+        });
+        ThreadEntry {
+            who,
+            timestamp: node
+                .children
+                .iter()
+                .find(|n| n.tag == "time")
+                .map(Node::plain),
+            verdict: node.children.iter().find(|n| n.tag == "b").map(Node::plain),
+            blocks,
+        }
+    }
+
+    fn graphic(&self, node: &Node) -> Span {
+        let mut shapes = Vec::new();
+        let mut unknown = Vec::new();
+        for shape in &node.children {
+            let kind = match shape.tag.as_str() {
+                "path" => VectorKind::Path,
+                "circle" => VectorKind::Circle,
+                "ellipse" => VectorKind::Ellipse,
+                "rect" => VectorKind::Rect,
+                "line" => VectorKind::Line,
+                "polyline" => VectorKind::Polyline,
+                "polygon" => VectorKind::Polygon,
+                "" if shape.text.trim().is_empty() => continue,
+                tag => {
+                    unknown.push(self.unknown(tag, shape.plain()));
+                    continue;
+                }
+            };
+            shapes.push(VectorShape {
+                kind,
+                attributes: shape
+                    .attrs
+                    .iter()
+                    .filter(|(key, _)| known_attribute(&shape.tag, key))
+                    .map(|(k, v)| (k.clone(), v.clone()))
+                    .collect(),
+            });
+        }
+        let graphic = Span::Graphic {
+            view_box: node.attr("viewbox").into(),
+            presentation: presentation(node, &["viewbox"]),
+            shapes,
+        };
+        if unknown.is_empty() {
+            graphic
+        } else {
+            Span::Styled {
+                tag: InlineKind::Span,
+                presentation: Presentation::default(),
+                spans: vec![graphic, Span::Blocks { blocks: unknown }],
+            }
+        }
+    }
+
+    fn attributes(&self, nodes: &[Node], out: &mut Vec<Block>) {
+        for node in nodes {
+            for (key, value) in &node.attrs {
+                if !known_attribute(&node.tag, key) {
+                    out.push(self.unknown(&format!("{}@{key}", node.tag), value.clone()));
+                }
+            }
+            self.attributes(&node.children, out);
+        }
+    }
+}
+
+/// A semantic variant may consume only the classes/attributes its fields represent. Otherwise
+/// retain the original explicit container, including anchor IDs and every presentation field.
+fn promotable(p: &Presentation, classes: &[&str], attributes: &[&str]) -> bool {
+    p.id.is_empty()
+        && p.title.is_empty()
+        && p.class
+            .split_whitespace()
+            .all(|class| classes.contains(&class))
+        && p.attributes
+            .keys()
+            .all(|key| attributes.contains(&key.as_str()))
+}
+
+fn paragraph(spans: Vec<Span>) -> Block {
+    let visible: Vec<_> = spans
+        .iter()
+        .filter(|s| !matches!(s, Span::Text { text } if text.trim().is_empty()))
+        .collect();
+    if let [one] = visible.as_slice() {
+        match one {
+            Span::Media { media } => {
+                return Block::Media {
+                    media: media.clone(),
+                };
+            }
+            Span::Image { image } => {
+                return Block::Image {
+                    image: image.clone(),
+                };
+            }
+            Span::Component { component } => {
+                return Block::Component {
+                    component: component.clone(),
+                };
+            }
+            _ => (),
+        }
+    }
+    Block::Paragraph { spans }
+}
+
+fn presentation(node: &Node, consumed: &[&str]) -> Presentation {
+    let get = |key| {
+        if consumed.contains(&key) {
+            String::new()
+        } else {
+            node.attr(key).into()
+        }
+    };
+    Presentation {
+        class: get("class"),
+        id: get("id"),
+        title: get("title"),
+        attributes: node
+            .attrs
+            .iter()
+            .filter(|(k, _)| {
+                !["class", "id", "title"].contains(&k.as_str())
+                    && !consumed.contains(&k.as_str())
+                    && known_attribute(&node.tag, k)
+            })
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect(),
+    }
+}
+
+fn known_attribute(tag: &str, key: &str) -> bool {
+    // The table model has cells rather than arbitrary row/group nodes. Attributes on those
+    // omitted structural elements cannot be represented and must therefore be explicit Unknown.
+    if ["thead", "tbody", "tfoot", "tr"].contains(&tag) {
+        return false;
+    }
+    if [
+        "class",
+        "id",
+        "title",
+        "style",
+        "role",
+        "tabindex",
+        "aria-label",
+        "aria-hidden",
+    ]
+    .contains(&key)
+    {
+        return true;
+    }
+    match tag {
+        "a" => [
+            "href",
+            "target",
+            "rel",
+            "download",
+            "data-task",
+            "data-wiki",
+            "data-card",
+        ]
+        .contains(&key),
+        "img" => [
+            "src",
+            "alt",
+            "width",
+            "height",
+            "loading",
+            "decoding",
+            "data-full",
+        ]
+        .contains(&key),
+        "ol" => key == "start",
+        "details" => key == "open",
+        "th" | "td" => ["scope", "align", "colspan", "rowspan"].contains(&key),
+        "div" => [
+            "data-slug",
+            "data-state",
+            "data-open",
+            "data-group",
+            "data-decided",
+            "data-line",
+            "data-line-offset",
+            "data-screen",
+        ]
+        .contains(&key),
+        "figure" => key == "data-screen",
+        "span" => ["data-media", "data-kind", "data-tip"].contains(&key),
+        "sf-component" => ["data-kind", "data-arg", "data-option"].contains(&key),
+        "svg" => [
+            "viewbox",
+            "width",
+            "height",
+            "fill",
+            "stroke",
+            "stroke-width",
+            "stroke-linecap",
+            "stroke-linejoin",
+        ]
+        .contains(&key),
+        "path" => ["d", "fill", "stroke", "stroke-width", "stroke-dasharray"].contains(&key),
+        "circle" => [
+            "cx",
+            "cy",
+            "r",
+            "fill",
+            "stroke",
+            "stroke-width",
+            "stroke-dasharray",
+        ]
+        .contains(&key),
+        "ellipse" => [
+            "cx",
+            "cy",
+            "rx",
+            "ry",
+            "fill",
+            "stroke",
+            "stroke-width",
+            "stroke-dasharray",
+        ]
+        .contains(&key),
+        "rect" => [
+            "x",
+            "y",
+            "width",
+            "height",
+            "rx",
+            "ry",
+            "fill",
+            "stroke",
+            "stroke-width",
+            "stroke-dasharray",
+        ]
+        .contains(&key),
+        "line" => [
+            "x1",
+            "x2",
+            "y1",
+            "y2",
+            "fill",
+            "stroke",
+            "stroke-width",
+            "stroke-dasharray",
+        ]
+        .contains(&key),
+        "polyline" | "polygon" => [
+            "points",
+            "fill",
+            "stroke",
+            "stroke-width",
+            "stroke-dasharray",
+        ]
+        .contains(&key),
+        _ => false,
+    }
+}
+
+fn container(tag: &str) -> Option<ContainerKind> {
+    Some(match tag {
+        "div" => ContainerKind::Div,
+        "section" => ContainerKind::Section,
+        "figure" => ContainerKind::Figure,
+        "figcaption" => ContainerKind::Figcaption,
+        "aside" => ContainerKind::Aside,
+        "header" => ContainerKind::Header,
+        "footer" => ContainerKind::Footer,
+        "address" => ContainerKind::Address,
+        "center" => ContainerKind::Center,
+        _ => return None,
+    })
+}
+
+fn inline(tag: &str) -> Option<InlineKind> {
+    Some(match tag {
+        "span" => InlineKind::Span,
+        "small" => InlineKind::Small,
+        "sub" => InlineKind::Sub,
+        "sup" => InlineKind::Sup,
+        "time" => InlineKind::Time,
+        "mark" => InlineKind::Mark,
+        "kbd" => InlineKind::Kbd,
+        "samp" => InlineKind::Samp,
+        "del" | "s" => InlineKind::Delete,
+        "ins" => InlineKind::Insert,
+        "u" => InlineKind::Underline,
+        "abbr" => InlineKind::Abbreviation,
+        _ => return None,
+    })
+}
+
+/// A real-input census: useful while the document vocabulary migrates, without a test suite.
+pub fn census(root: &std::path::Path, out: &mut dyn std::io::Write) -> Result<(), String> {
+    let started = std::time::Instant::now();
+    let render = crate::render::Render::new(root);
+    let paths = crate::render::doc_paths(root);
+    let mut counts = BTreeMap::<String, usize>::new();
+    let mut raw_containers = BTreeMap::<String, usize>::new();
+    let mut containers = BTreeMap::<String, usize>::new();
+    for kind in [
+        "heading",
+        "paragraph",
+        "list",
+        "table",
+        "code",
+        "quote",
+        "rule",
+        "callout",
+        "card",
+        "component",
+        "media",
+        "image",
+        "container",
+        "details",
+        "settled-card",
+        "thread",
+        "comment",
+        "unknown",
+        "art-slot",
+        "hull",
+        "figure",
+        "caption",
+        "comparison",
+        "matrix",
+        "matrix-note",
+        "screen-capture",
+        "empty-roster",
+        "group",
+    ] {
+        counts.insert(format!("block.{kind}"), 0);
+    }
+    let mut unknown = BTreeMap::<String, usize>::new();
+    for path in &paths {
+        let text = crate::text::read_text(&root.join(path)).map_err(|e| format!("{path}: {e}"))?;
+        for part in render.typed_sections(&text, path) {
+            let media = part.media.iter().map(wire_media).collect::<Vec<_>>();
+            census_fragment(
+                &part.html,
+                &media,
+                path,
+                &mut counts,
+                &mut unknown,
+                &mut raw_containers,
+                &mut containers,
+            )?;
+        }
+        for fragment in render.typed_history(&text, path).values() {
+            let media = fragment.media.iter().map(wire_media).collect::<Vec<_>>();
+            census_fragment(
+                &fragment.html,
+                &media,
+                path,
+                &mut counts,
+                &mut unknown,
+                &mut raw_containers,
+                &mut containers,
+            )?;
+        }
+    }
+    writeln!(out, "documents: {}", paths.len()).map_err(|e| e.to_string())?;
+    for (kind, count) in counts {
+        writeln!(out, "{kind}: {count}").map_err(|e| e.to_string())?;
+    }
+    for (label, pairs) in [
+        ("raw-container", raw_containers),
+        ("remaining-container", containers),
+    ] {
+        let mut pairs: Vec<_> = pairs.into_iter().collect();
+        pairs.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+        for (pair, count) in pairs {
+            writeln!(out, "{label}: {count} {pair}").map_err(|e| e.to_string())?;
+        }
+    }
+    writeln!(
+        out,
+        "Unknown: {} {unknown:?}",
+        unknown.values().sum::<usize>()
+    )
+    .map_err(|e| e.to_string())?;
+    writeln!(
+        out,
+        "elapsed: {:.3}s; no panic",
+        started.elapsed().as_secs_f64()
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+fn census_fragment(
+    html: &str,
+    media: &[Media],
+    path: &str,
+    counts: &mut BTreeMap<String, usize>,
+    unknown: &mut BTreeMap<String, usize>,
+    raw_containers: &mut BTreeMap<String, usize>,
+    containers: &mut BTreeMap<String, usize>,
+) -> Result<(), String> {
+    let raw =
+        serde_json::to_value(parse_mode(html, media, path, false)).map_err(|e| e.to_string())?;
+    container_pairs(&raw, raw_containers);
+    let typed = parse(html, media, path);
+    let value = serde_json::to_value(&typed).map_err(|e| e.to_string())?;
+    let restored: Vec<Block> = serde_json::from_value(value.clone())
+        .map_err(|e| format!("{path}: typed data cannot be read: {e}"))?;
+    if restored != typed {
+        return Err(format!("{path}: typed data changed during serialization"));
+    }
+    container_pairs(&value, containers);
+    count(&value, "block", counts, unknown);
+    Ok(())
+}
+
+fn container_pairs(value: &serde_json::Value, counts: &mut BTreeMap<String, usize>) {
+    match value {
+        serde_json::Value::Object(fields) => {
+            if fields.get("type").and_then(serde_json::Value::as_str) == Some("container") {
+                let tag = fields
+                    .get("tag")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("");
+                let p = fields.get("presentation").cloned().unwrap_or_default();
+                *counts.entry(format!("{tag} {p}")).or_default() += 1;
+            }
+            for value in fields.values() {
+                container_pairs(value, counts);
+            }
+        }
+        serde_json::Value::Array(values) => {
+            for value in values {
+                container_pairs(value, counts);
+            }
+        }
+        _ => (),
+    }
+}
+
+pub fn main(args: &[String], out: &mut dyn std::io::Write, err: &mut dyn std::io::Write) -> i32 {
+    const USAGE: &str = "usage: symphony blocks [--root ROOT]";
+    let parsed = match crate::cli::parse(
+        args,
+        &[crate::cli::Flag {
+            name: "--root",
+            value: true,
+        }],
+    ) {
+        Ok(parsed) if parsed.help => {
+            let _ = writeln!(
+                out,
+                "{USAGE}\n\nParse every document and its threads and print the typed-content census."
+            );
+            return 0;
+        }
+        Ok(parsed) if parsed.positionals.is_empty() => parsed,
+        Ok(_) => {
+            let _ = writeln!(err, "{USAGE}");
+            return 2;
+        }
+        Err(error) => {
+            let _ = writeln!(err, "{USAGE}\n{error}");
+            return 2;
+        }
+    };
+    match census(
+        std::path::Path::new(parsed.value("--root").unwrap_or(".")),
+        out,
+    ) {
+        Ok(()) => 0,
+        Err(error) => {
+            let _ = writeln!(err, "blocks: {error}");
+            1
+        }
+    }
+}
+
+fn count(
+    value: &serde_json::Value,
+    context: &str,
+    counts: &mut BTreeMap<String, usize>,
+    unknown: &mut BTreeMap<String, usize>,
+) {
+    match value {
+        serde_json::Value::Object(fields) => {
+            if let Some(kind) = fields.get("type").and_then(serde_json::Value::as_str) {
+                *counts.entry(format!("{context}.{kind}")).or_default() += 1;
+                if kind == "unknown" {
+                    *unknown
+                        .entry(
+                            fields
+                                .get("tag")
+                                .and_then(serde_json::Value::as_str)
+                                .unwrap_or("")
+                                .into(),
+                        )
+                        .or_default() += 1;
+                }
+            }
+            for (key, field) in fields {
+                let context = match key.as_str() {
+                    "spans" | "summary" => "span",
+                    "title" if field.is_array() => "span",
+                    "blocks" | "body" | "comparison" | "items" => "block",
+                    _ => context,
+                };
+                count(field, context, counts, unknown);
+            }
+        }
+        serde_json::Value::Array(items) => {
+            for item in items {
+                count(item, context, counts, unknown);
+            }
+        }
+        _ => (),
+    }
+}

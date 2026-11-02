@@ -1,0 +1,314 @@
+//! The Symphony's writes into a document: a callout for a comment, a mark and a dated line for a
+//! verdict, a dated line for a message or an agent's reply. Pure functions over text, each returning
+//! the whole new text; nothing lives only in the app.
+
+use std::fmt;
+use std::sync::LazyLock;
+
+use regex::Regex;
+use unicode_normalization::UnicodeNormalization;
+
+use crate::clock::stamp_minutes;
+use crate::register::{self, KINDS, State, Who, card_end, card_line, remark, sort_register};
+use crate::text::{NS, S, is_space, lstrip, repr, rstrip, splitlines, strip};
+
+/// The edit could not be applied as asked; the file is left untouched.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct EditError(pub String);
+
+impl fmt::Display for EditError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for EditError {}
+
+/// A tap sent again within this many minutes of the same verdict is a repeat, not a new decision.
+pub const REPEAT_MINUTES: i64 = 5;
+
+/// The verdicts the owner gives, in the order a refusal lists them. `resolved` (a tidy) and
+/// `auto-approved` (the triage tool) are set by agents, never by the owner.
+const OWNER_STATES: [State; 5] = [
+    State::Pending,
+    State::Approved,
+    State::Rejected,
+    State::Question,
+    State::Dismissed,
+];
+
+/// An owner verdict line as the app writes it: `  [YYYY-MM-DD HH:MM] owner · STATE[ — NOTE]`.
+static OWNER_ENTRY: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(&format!(
+        r"^  \[(\d{{4}}-\d{{2}}-\d{{2}} \d{{2}}:\d{{2}})\] owner · ({NS}+)(?: — (.*))?$"
+    ))
+    .expect("the entry")
+});
+static HEADING: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(&format!(
+        r"^(?P<hashes>#{{1,6}}){S}+(?P<title>.+?){S}*#*{S}*$"
+    ))
+    .expect("the heading")
+});
+
+/// The note's non-blank lines, stripped.
+fn written(note: &str) -> Vec<&str> {
+    splitlines(note)
+        .into_iter()
+        .map(strip)
+        .filter(|line| !line.is_empty())
+        .collect()
+}
+
+/// The index of the line that opens the card `slug`.
+fn find_card<L: AsRef<str>>(lines: &[L], slug: &str) -> Option<usize> {
+    lines
+        .iter()
+        .position(|line| card_line(line.as_ref()).is_some_and(|card| card.slug == slug))
+}
+
+fn no_card(slug: &str) -> EditError {
+    EditError(format!("no decision with slug {}", repr(slug)))
+}
+
+/// One typed message as a callout: its first non-blank line is the title, the rest the body.
+pub fn split_message(message: &str) -> Result<(String, String), EditError> {
+    let lines = splitlines(strip(message));
+    let Some(first) = lines.first() else {
+        return Err(EditError("the comment is empty".to_string()));
+    };
+    Ok((
+        strip(first).to_string(),
+        lines[1..].join("\n").trim_matches('\n').to_string(),
+    ))
+}
+
+/// A callout of `kind` after line `after_line` (1-based), blank lines around it.
+pub fn insert_comment(
+    text: &str,
+    after_line: i64,
+    kind: &str,
+    title: &str,
+    body: &str,
+) -> Result<String, EditError> {
+    if !KINDS.contains(&kind) {
+        return Err(EditError(format!(
+            "unknown comment kind {}; use one of {}",
+            repr(kind),
+            KINDS.join(", ")
+        )));
+    }
+    let lines = splitlines(text);
+    let Some(at) = usize::try_from(after_line)
+        .ok()
+        .filter(|at| (1..=lines.len()).contains(at))
+    else {
+        return Err(EditError(format!(
+            "line {after_line} is outside the document ({} lines)",
+            lines.len()
+        )));
+    };
+    let title = format!("> [!{kind}] {}", strip(title));
+    let mut callout = vec![title];
+    callout.extend(
+        splitlines(body)
+            .into_iter()
+            .filter(|line| !strip(line).is_empty())
+            .map(|line| format!("> {}", rstrip(line))),
+    );
+    let (head, tail) = lines.split_at(at);
+    let mut out: Vec<String> = head.iter().map(|line| line.to_string()).collect();
+    out.push(String::new());
+    out.extend(callout);
+    if tail.first().is_some_and(|line| !strip(line).is_empty()) {
+        out.push(String::new());
+    }
+    out.extend(tail.iter().map(|line| line.to_string()));
+    Ok(out.join("\n") + "\n")
+}
+
+/// Set a card's verdict and append a dated owner entry; regroup the register if it has one.
+pub fn set_decision(
+    text: &str,
+    slug: &str,
+    state: &str,
+    note: &str,
+    now: &str,
+) -> Result<String, EditError> {
+    let Some(state) = State::parse(state).filter(|s| OWNER_STATES.contains(s)) else {
+        let owner: Vec<&str> = OWNER_STATES.iter().map(|s| s.as_str()).collect();
+        return Err(EditError(format!(
+            "unknown decision state {}; use one of {}",
+            repr(state),
+            owner.join(", ")
+        )));
+    };
+    let lines = splitlines(text);
+    let index = find_card(&lines, slug).ok_or_else(|| no_card(slug))?;
+    let end = card_end(&lines, index);
+    let note = written(note);
+    let mut entry = format!("  [{now}] owner · {}", state.as_str());
+    if let Some(first) = note.first() {
+        entry.push_str(&format!(" — {first}"));
+    }
+    let mut out: Vec<String> = lines[..index].iter().map(|line| line.to_string()).collect();
+    out.push(remark(lines[index], state.mark()));
+    out.extend(lines[index + 1..end].iter().map(|line| line.to_string()));
+    out.push(entry);
+    out.extend(note.iter().skip(1).map(|line| format!("    {line}")));
+    out.extend(lines[end..].iter().map(|line| line.to_string()));
+    sort_register(&(out.join("\n") + "\n")).map_err(|problem| EditError(problem.0))
+}
+
+fn unreadable_time(stamp: &str) -> EditError {
+    EditError(format!(
+        "time data {} does not match format '%Y-%m-%d %H:%M'",
+        repr(stamp)
+    ))
+}
+
+/// Whether the card's newest lines are already this owner verdict, same state and note, written
+/// within [`REPEAT_MINUTES`] of `now`: a tap sent again because its answer was lost. An error when a
+/// time does not read as `%Y-%m-%d %H:%M`.
+pub fn is_repeat_decision(
+    text: &str,
+    slug: &str,
+    state: &str,
+    note: &str,
+    now: &str,
+) -> Result<bool, EditError> {
+    let lines = splitlines(text);
+    let note = written(note);
+    let tail: Vec<String> = note
+        .iter()
+        .skip(1)
+        .map(|line| format!("    {line}"))
+        .collect();
+    let Some(index) = find_card(&lines, slug) else {
+        return Ok(false);
+    };
+    let end = card_end(&lines, index);
+    let Some(start) = end
+        .checked_sub(1 + tail.len())
+        .filter(|start| *start > index)
+    else {
+        return Ok(false);
+    };
+    let Some(entry) = OWNER_ENTRY.captures(lines[start]) else {
+        return Ok(false);
+    };
+    let said = entry.get(3).map_or("", |m| m.as_str());
+    if &entry[2] != state
+        || said != note.first().copied().unwrap_or("")
+        || lines[start + 1..end] != tail[..]
+    {
+        return Ok(false);
+    }
+    let now_at = stamp_minutes(now).ok_or_else(|| unreadable_time(now))?;
+    let then = stamp_minutes(&entry[1]).ok_or_else(|| unreadable_time(&entry[1]))?;
+    Ok((0..=REPEAT_MINUTES).contains(&(now_at - then)))
+}
+
+/// Append a chat line to a card, the owner's or an agent's (no verdict, or an agent's `question`);
+/// its mark stays as it is.
+pub fn add_message(
+    text: &str,
+    slug: &str,
+    message: &str,
+    now: &str,
+    who: Who,
+    verdict: Option<&str>,
+) -> Result<String, EditError> {
+    let message = written(message);
+    let Some(first) = message.first() else {
+        return Err(EditError("a message needs some text".to_string()));
+    };
+    let lines = splitlines(text);
+    let index = find_card(&lines, slug).ok_or_else(|| no_card(slug))?;
+    let end = card_end(&lines, index);
+    let verdict = verdict
+        .filter(|v| !v.is_empty())
+        .map_or(String::new(), |v| format!(" · {v}"));
+    let mut out: Vec<String> = lines[..end].iter().map(|line| line.to_string()).collect();
+    out.push(format!("  [{now}] {}{verdict} — {first}", who.as_str()));
+    out.extend(message.iter().skip(1).map(|line| format!("    {line}")));
+    out.extend(lines[end..].iter().map(|line| line.to_string()));
+    Ok(out.join("\n") + "\n")
+}
+
+/// A post only adds: refuse, naming the card, when `after` drops a line `before` had under any card.
+pub fn check_nothing_lost(before: &str, after: &str, slug: &str) -> Result<(), EditError> {
+    register::check_nothing_lost(before, after, &format!("posting on {}", repr(slug)))
+        .map_err(|problem| EditError(problem.0))
+}
+
+/// Index of the closing `---` when the lines open with frontmatter.
+pub fn frontmatter_end<L: AsRef<str>>(lines: &[L]) -> Option<usize> {
+    if lines
+        .first()
+        .is_none_or(|first| strip(first.as_ref()) != "---")
+    {
+        return None;
+    }
+    lines
+        .iter()
+        .skip(1)
+        .position(|line| strip(line.as_ref()) == "---")
+        .map(|at| at + 1)
+}
+
+/// The id Python-Markdown's toc gives a heading (its `slugify` with `-`), so a check needs no
+/// renderer: accents folded (NFKD, then ASCII only), punctuation dropped, spaces and hyphens one `-`.
+pub fn heading_anchor(heading: &str) -> String {
+    let kept: String = heading
+        .nfkd()
+        .filter(|c| {
+            c.is_ascii() && (c.is_ascii_alphanumeric() || *c == '_' || *c == '-' || is_space(*c))
+        })
+        .collect();
+    let mut anchor = String::with_capacity(kept.len());
+    let mut joining = false;
+    for c in strip(&kept).to_ascii_lowercase().chars() {
+        if c == '-' || is_space(c) {
+            if !joining {
+                anchor.push('-');
+            }
+            joining = true;
+        } else {
+            anchor.push(c);
+            joining = false;
+        }
+    }
+    anchor
+}
+
+/// The markdown under the heading whose anchor is `anchor`, to the next heading of the same or a
+/// higher level; the whole body when `anchor` is empty; `None` when no heading has it.
+pub fn section_text(text: &str, anchor: &str) -> Option<String> {
+    let lines = splitlines(text);
+    let body = &lines[frontmatter_end(&lines).map_or(0, |end| end + 1)..];
+    let joined = |part: &[&str]| part.join("\n").trim_matches('\n').to_string() + "\n";
+    if anchor.is_empty() {
+        return Some(joined(body));
+    }
+    let (mut start, mut level, mut fenced) = (None, 0, false);
+    for (index, line) in body.iter().enumerate() {
+        if lstrip(line).starts_with("```") {
+            fenced = !fenced;
+            continue;
+        }
+        let Some(heading) = HEADING.captures(line).filter(|_| !fenced) else {
+            continue;
+        };
+        let depth = heading["hashes"].len();
+        match start {
+            None if heading_anchor(&heading["title"]) == anchor => {
+                start = Some(index);
+                level = depth;
+            }
+            Some(from) if depth <= level => return Some(joined(&body[from..index])),
+            _ => {}
+        }
+    }
+    start.map(|from| joined(&body[from..]))
+}

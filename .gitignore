@@ -1,0 +1,6 @@
+/.target/
+/build/
+/.dioxus/
+/.venv/
+*.profraw
+*.profdata

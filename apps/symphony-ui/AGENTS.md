@@ -1,0 +1,284 @@
+# apps/symphony-ui/
+
+The workspace, the cargo wrapper and the toolchain pin: [the Rust section of
+the root guide](../../AGENTS.md#rust).
+
+`apps/symphony-ui` is one Dioxus app (the owner: "I want to experiment more with
+dioxus, so let's switch to it"), the browser now and the desktop window later,
+from the same code. It reads the server's JSON API, whose wire types are
+`crates/symphony-api` (tested against its `fixtures/`), and never runs server
+code: no fullstack server functions. Dioxus is pinned `=0.7.10` and built by
+dx 0.7.10.
+
+The server sends typed data from `/api/`; the client renders it with components.
+It never requests or inserts server-rendered HTML fragments. Nothing renders or
+loads until it is near the viewport: use the shared `viewport::NearViewport`
+for sections, or `viewport::use_visibility` for media with their own reserved
+layout, plus native `loading=lazy`. Once revealed, keep content mounted to
+preserve forms and reading position. Closed panels and collapsed card bodies
+load only when opened.
+
+For a real browser run, use `tools/browser.sh`, which owns a silent headless
+Chromium session per worktree and can reach loopback servers only. For example,
+`tools/browser.sh open http://127.0.0.1:PORT/tasks`, then
+`tools/browser.sh snapshot -i`, `tools/browser.sh screenshot artifacts/tasks.png`
+or `tools/browser.sh set device "iPhone 15"`; finish with
+`tools/browser.sh close`. The first use installs its Chromium in the shared
+browser cache, with agent-browser 0.39.0 and Playwright 1.58.2 pinned privately
+there. Relative EventSource, fetch and WebSocket URLs work on loopback pages.
+It reuses only its own recorded daemon and enforces a fixed HTTP(S) loopback
+allowlist. Recording and network route overrides remain refused. Generated
+in-memory blob pages are allowed; file URLs and external hosts are blocked.
+
+- **Build.** `just symphony-ui-dist [OUT] [KIND]` (`build/symphony-ui`, the page in its
+  `public/`): cargo's subcommand `symphony-ui dist OUT` (`bin/cargo-symphony-ui`,
+  which the recipe puts on `PATH`; the browser tests run it too) runs
+  `bundle.sh OUT` through the cargo wrapper: `dx bundle --web --release
+  --debug-symbols false`, on the root manifest's `wasm-release` profile
+  (opt-level z, fat LTO, one codegen unit, abort on panic) and dx's wasm-opt at
+  `-Oz` (`Dioxus.toml`). `KIND` defaults to `all`: independently compile the
+  board, task/detail, document, review-home, queue and deferred panel modules, then
+  assemble their content-hashed assets with `package.sh`. Naming a kind rebuilds
+  it against the other kinds already in that output folder. Dioxus's native
+  splitter retained shared exports and increased the measured initial payload;
+  these builds use the page-kind fallback. Without `--debug-symbols false` dx 0.7 ships 260 KB of
+  DWARF. dx and wasm-bindgen (the lockfile's version) are built once per
+  machine into `sf-cargo/` by `tools.sh`, which bundle.sh runs when one is
+  missing. A new tree's folder starts from a seed another tree made, its
+  wasm32 builds among it. The wrapper clears workspace crates from every seeded
+  target/profile and records that cleanup for `wasm-fresh.sh`. Without a matching
+  record, that guard cleans both wasm32 profiles (`dev`, `wasm-release`); its
+  record stays inside the folder. `lint-rs` also runs clippy for
+  wasm32 over the client (`cargo symphony-ui clippy`): the host build never
+  compiles its browser half (`live.rs`, `platform::Browser`).
+- **The feed.** The client keeps `crates/symphony-api`'s feed contract. A stream
+  is lost when it errs, when it says nothing (not even the server's ping) for
+  two and a half of the board's `ping_ms` (at most 5 s, so 12.5 s: the owner
+  reads the board from a phone over the tailnet, where a stream goes silent
+  but open on every network change), or when it sends an event the client
+  cannot read. Then the client closes it, marks the page stale
+  (`main[data-feed=stale]`, a notice), waits 1 s doubling to 30 s (the waits
+  start again only after a stream held 30 s), fetches the board again (it
+  replaces the one shown whatever its version) and opens a new stream from it;
+  the board is live again once that stream opens. It never resumes by
+  `Last-Event-ID`. A board or a `client` change naming another build than the
+  page's own module script loads the page again, once per build
+  (`state::reload_for`, remembered in `sessionStorage`).
+- **Budget.** Both `/` and `/tasks` have a 250 KB first-visit gzip budget and
+  a 20 KB return-visit budget (`tests/browser/`, restored after the port;
+  the owner's, never loosened by an agent; the first-visit cap is the owner's
+  of 2026-10-29: "lets increase the cap to 250KB for now and revisit options
+  later"). Measure client plus API data; list document-content images
+  separately. Other page kinds are reported separately for review.
+  The reference home at `4aea7e4f` has 146,779 gzip bytes of static assets
+  before its HTML/API data (the recorded 149.5 KB total). The retained plain
+  action listeners, own-node form reads and owned visibility latch reduce the
+  board WASM from 199,247 to 183,713 gzip bytes, and home from 193,570
+  to 175,351, including the appearance changes merged from `61c0d93e`.
+  The canonical-entry browser case measures cold transfers of 201,176 bytes
+  on `/` and 206,758 on
+  `/tasks`, including response overhead and fixture API data; cached returns
+  are 1,784 and 2,516 bytes. Both first visits fit, 48,824 and 43,242 bytes
+  under the cap. The same
+  run reports `/agents` at 394,646, `/docs/` at 422,473, `/queue` at 208,183
+  and opening the deferred panel at another 343,362 bytes. Each kind pays
+  for its own compiled framework; later visits reuse cached imports. The
+  original home budget test remains independent of the canonical-entry test,
+  which gives every kind a fresh browser profile and reports the complete
+  published output (1,717,875 gzip bytes including the board JSON in this run).
+  Measure loaded resources, including API data, rather than summing every
+  deferred module or retained historical asset hash in the published output.
+  The 250,000 and 20,000 byte limits are the owner's; a lower first-visit
+  line needs an architectural change the owner approves, and the first-visit
+  analysis below prices those the owner left to revisit.
+  `cargo symphony-ui size OUT NAME...` (`probes/size.sh`) builds a page kind or
+  a size probe as the release does and names a copy for
+  `examples/wasm_size.rs`, which says where its bytes go
+  ([the first-visit analysis](../../../docs/engineering/analysis/review-ui-first-visit.md)).
+  Measured prices: healing a lost feed 1.4 KB, then the pings,
+  unreadable events, the build check and the backoff 0.9 KB, the `mounted` feature
+  (`onmounted`) 26 KB, `router` with the `document` it needs 55 KB, serde_json's
+  parser 11 KB. So the app has `minimal` and `asset` only, the browser parses
+  JSON and serde-wasm-bindgen reads it, and a slice that needs more pays for it
+  here first.
+- **Components.** `#[component] fn Hero(card: Option<Card>, now: Moment) ->
+  Element { rsx! { section { class: "hero", h2 { "{card.title}" } } } }`. Props
+  are `Clone + PartialEq`, and a component whose props did not change is not
+  rerun, so each region of a page is a component of its own data. In `rsx!`:
+  `for card in cards { NextCard { key: "{card.slug}", card } }`, `if waiting {
+  ... }`, attributes as format strings (`href: "/{card.doc}"`), `class: if
+  waiting { "waiting" }`.
+- **Controls and themes.** The controls under `src/components/` are copied from
+  DioxusLabs/dioxus-components at the pinned primitive revision; their README
+  records the local adaptations and stylesheet hashes. Buttons, text fields,
+  selects, picture dialogs and the conversation tabs use them. The deferred
+  panel's Appearance menu imports a shadcn/tweakcn registry JSON file's
+  `cssVars.theme`, `cssVars.light` and `cssVars.dark`, including fonts and radius.
+  `theme.rs` validates token declarations; the shell restores their saved CSS
+  before mounting a page. Status tokens such as `like`, `question` and `live`
+  keep their defaults unless the imported file sets them. UI colours use the
+  canonical shadcn token names; `dx-components-theme.css` maps those names to
+  the copied components' palette. Extend the shared controls for new fields.
+- **State.** `let mut board = use_signal(|| None::<Board>)`; read with
+  `board()` (a clone) or `board.read()`, write with `board.set(..)` or
+  `board.write()`. Signals are `Copy`: move them into closures and tasks.
+  `use_hook(|| spawn(async move { .. }))` starts a task once per mount, which
+  lives as long as the component. A browser callback (an `EventSource`
+  listener) never writes a signal: it sends on a `futures_channel` that a
+  spawned task drains. `use_effect` runs after the frame's edits are in the
+  page and again whenever a signal it read changes.
+- **Task views.** `tasks.rs` draws columns and hierarchy; `board_live.rs` owns
+  summary-only counts, columns and deltas. `task_detail.rs` and `task_live.rs`
+  own task pages and agents, compiled only into their page kind. The board fetches counts
+  first, then nearby column pages; finished work defaults to 24 hours, with
+  a week switch and older paging. Thread history, subtasks, hierarchy groups
+  and agents page separately. A reconnect catches up a loaded thread by
+  message id before following the feed again. Composer drafts are local to
+  their keyed component and saved through `Platform`, never replaced by a
+  snapshot. The optional owner offer is pinned to the patch the server showed.
+  It is fetched only near the controls, using the task's recorded branch;
+  preparing the landing tool must not hold up the brief or the message box.
+  Briefs and agent messages use the shared `block_view::BlocksView`; owner and
+  system messages remain literal text, but for an owner message naming an
+  upload, whose blocks the server sends with the words kept literal and the
+  files drawn. Task routes use `navigation.rs`, and
+  requests use `request.rs` so a stalled save times out with its draft kept.
+- **Attach.** Every owner composer (the `+` sheet, asks, a card's editor, a
+  task's message box) takes files through `attach.rs`: `use_attach(key)`, the
+  form marked `data-attach` with `Attach::zone()`, `AttachControls` inside it,
+  and `Attach::compose(text)` for the posted text, which adds the line
+  `POST /api/upload` answered for each file (docs/workflow/REVIEW.md,
+  "Attaching files"). One document listener per module takes paste, drop and
+  the picker's change for the zone holding the event's target, and sends the
+  files on that composer's channel; uploads run one at a time, and the chips
+  are saved with the draft. The module compiles into the task, document and
+  panel kinds only, and brings `assets/attach.css` inside it (the first
+  composer to mount puts it in the page): a stylesheet asset would be named in
+  the shell's manifest, which every first visit loads, so `/` and `/tasks`
+  carry no byte of either.
+- **Visibility.** `viewport::NearViewport` uses the shared visibility latch, with a CSS sentinel
+  extending 600 px around its placeholder. The latch owns an IntersectionObserver until
+  revelation or teardown, and reattaches after props replace its node. Markers include the
+  page kind so the persistent panel cannot select a page's sentinel. No `mounted` feature
+  is needed. Plain Dioxus action listeners and own-node form reads avoid retaining rich
+  browser event converters the entry controls do not use. A slot uses `content-visibility: auto` only after its
+  sentinel is gone: paint containment would clip the look-ahead. A slot that is
+  or sits in a list item never does: paint containment would clip the item's
+  marker, and layout containment would put it on a line of its own
+  (`tests/browser/look_parity/list_and_queue_spacing.rs`). Mounted rows
+  and sections keep an intrinsic size; a region keeps its children once revealed so
+  scrolling preserves forms and reading position.
+- **Queue.** `queue.rs` renders `/api/queue` at `/queue`, in its own page kind.
+  The existing feed refreshes its owner decisions, spot checks, agent work and
+  branch cards on queue-region deltas and reconnects. Branch cards share the ranked
+  owner queue. Section anchors remain `#you`, `#spot` and `#agent`; row bodies use `NearViewport`.
+  Owner decisions arrive in mixed document-folder order, also used by the home preview.
+  `queue_filter.rs` derives counts from the complete snapshot and stores the selected
+  owner category through `Platform` on this device. Chips use the shared Button;
+  an absent saved category displays All without hiding new work.
+- **Documents.** `docs_live` reads `/api/document?view=outline`: section keys,
+  source positions and anchors, with short card summaries. `viewport::NearViewport`
+  uses the shared visibility latch to mount each block once near the screen; a collapsed
+  card requests its body only when opened. Mounted blocks request their bodies
+  and threads together from `/api/section?format=blocks&keys=JSON_LIST`. Excerpts
+  request `format=blocks` too; reads without it retain the legacy HTML/media
+  response for compatible API callers. Canonical `/docs/` pages use the client;
+  old `/app/docs/` and `/doc/docs/` bookmarks redirect there.
+  Only Markdown files and folders are client routes; raw files keep normal links.
+  The feed opts into
+  one `document=PATH` and its requested `sections=JSON_LIST`; a stream without
+  a document receives no document payloads. Changing the requested keys reopens
+  the stream at its current cursor. A body response waits for that cursor and
+  never overwrites a newer document change; a reconnect invalidates outstanding
+  reads. Drafts and verdict retry ids are saved locally. Busy sections retain
+  their markup while their source positions advance; the queued markup applies
+  when the form or excerpt is free.
+  Content is `symphony_api::Block` and `Span`, drawn by
+  `block_view::BlocksView { blocks }` and `SpansView { spans }`. Server reads
+  prepare media and scoped URLs before `symphony::blocks::parse`; HTML fields
+  belong only to that internal pipeline and are excluded from JSON. Links
+  carry typed excerpt targets; SVGs are primitive data. Unsupported source
+  markup stays visible as an Unknown node with a server warning. `symphony blocks`
+  prints a real-document census and checks that the data survives serialization.
+- **The page.** `package.sh` writes the shell, whose single history adapter is
+  `assets/shell.js`. Its `html[data-navigation]` is `loading` until the shell's
+  navigation finishes, then `ready`, or `failed` if the page cannot load. It preserves
+  a scroll made after the new page mounts instead of applying its late top reset.
+  Compilation leaves `OUT/public` serving its last build;
+  packaging assembles beside it and `symphony publish-client` atomically exchanges the
+  complete directories (macOS/Linux). Failed builds leave the published client
+  intact; the next package removes abandoned staging folders. Old hashed assets
+  remain available for open pages' deferred imports. Cached page kinds retain an empty Dioxus root;
+  `module.rs` unmounts all page children and awaits cleanup before another
+  kind starts, including their feed and event subscriptions. Back and forward
+  use this same adapter. The persistent panel remains mounted once opened,
+  retaining chat, task form and conversation state across kinds. The initial
+  frame stores raw API snapshots until a deferred component needs their
+  typed data; activity and pending controls load on interaction, and new
+  activity can load the panel to show a toast. No HTML fragments cross this
+  boundary. `index.html` in the crate is dx's build template (`{app_title}`), and
+  `base_path = ""` serves the app at `/`. A style sheet is an
+  `asset!("/assets/board.css", AssetOptions::css().with_static_head(true))`:
+  dx hashes it and links it from the shell's head, if the code keeps the
+  constant (`std::hint::black_box(&STYLE)`).
+- **Routes**, when a slice pays for them: `#[derive(Routable, Clone,
+  PartialEq)] enum Route { #[route("/")] Front {} }` and `rsx! {
+  Router::<Route> {} }`, one component per variant, named as it is.
+- **Tests.** Views render on the host with dioxus-ssr
+  (`dioxus_ssr::render_element(rsx! { BoardView { board, now } })`), pure state
+  in plain Rust, and `tests/browser/` drives headless Chrome over its DevTools
+  protocol against the release build, served as the server serves it.
+- **Development.** `just symphony-ui-dev [PORT]` starts an owned loopback API and
+  dx 0.7.10 with `serve --web --open false --interactive false`.
+  PORT defaults to 0 (an available port); 8765 is refused. Use the printed front
+  door URL, which forwards APIs, saves, media and SSE to that checkout's API and
+  pages, assets and `/_dioxus` to DX. Host and Origin pass through together, so
+  saves keep the production origin check. Ctrl-C stops the API and DX's own
+  process groups and waits for their compiler descendants before returning,
+  escalating after 3 s if needed. Losing the starter also triggers cleanup.
+  DX build outputs stay in `.target/symphony-ui-dev`, isolated from check, lint,
+  release builds and shared seeds. The native launcher uses the ordinary tree
+  folder. Build tools are installed by `tools.sh` into the common directory as
+  for releases.
+  Only DX gets `CARGO_INCREMENTAL=1` (the workspace's normal dev profile disables
+  it), opt-level 1, no debug info and panic=abort on its `wasm-dev` profile.
+  The `devtools` feature is opt-in and enables every page kind in the dev binary.
+  `src/dev.rs` mounts the client library directly. RSX and CSS update in place;
+  Rust logic edits incrementally rebuild the module. Its page reload, or a
+  reconnect, waits while a form, draft or open
+  details/dialog is engaged. The API's release hash does not reload this dev
+  page. Changes to dependencies, feature sets or static initializers need a
+  restart. The release shell, hashed page-kind builds and shared server never
+  start this development runtime. Subsecond remains disabled: dx 0.7.10's
+  hot-patch parser cannot read wasm-bindgen 0.2.129's exception tags. Updating
+  the CLI to a version with [Dioxus #5843](https://github.com/DioxusLabs/dioxus/pull/5843)
+  is an owner decision; no patched CLI is installed here.
+- **Platforms.** Every platform hook goes through `platform::Platform`; the
+  desktop slice adds its implementation and a `desktop` feature.
+- **Media.** `PictureView(src, caption, thumb)` reserves a square for the board;
+  typed document images carry real dimensions and thumbnail URLs from the
+  API. The shared visibility latch defers native media shells, gallery rows, document blocks
+  and ask threads. Mount `media_live::MediaRuntime` once beside `main`: its
+  adapter sizes mounted frames and its component dialog opens
+  pictures at `data-full`. Mockups stay at 1280x800, scaled by their card's width,
+  with only `allow-scripts` in their sandbox. Never add `allow-same-origin`.
+  The vendored `/static/model-viewer.min.js` is loaded once, on the first visible
+  model, and is absent from the shell's preloads. The hulls route reads the
+  gallery document, `symphony_api::HULL_GALLERY_DOC`, through `DocumentPage`;
+  `/api/hulls` is gone. The document's `Media::Gallery` holds the selected root's
+  cached records. Its grid has only small pictures until a hull opens; one
+  selected model is mounted at a time, and closing it unmounts the viewer.
+  The server warms read snapshots before announcing its URL, and warms the
+  selected checkout's gallery cache at startup and when its `view/models/` changes. Startup
+  logs separate gallery, document and board time; requests never walk model
+  history or other checkouts to build the gallery.
+  `DocumentPicture(image: symphony_api::Image)` preserves typed document image
+  dimensions, presentation and `data-full`; `MediaView(media)` renders native
+  media from either `Block::Media` or `Span::Media`.
+  `asks::Asks(path, scope, render_blocks)` reads and posts ephemeral document
+  questions and follow-ups. Key both pages by scope and path when navigating so
+  their tasks end with the old page. Ask reads request `format=blocks`; the
+  `render_blocks: Callback<Vec<Block>, Element>` prop supplies the shared
+  document renderer for answers. No rendered HTML is sent on that path.
+  The media style is `assets/media.css`; the browser adapter uses web-sys and
+  keeps every observer and listener owned by the mounted runtime.

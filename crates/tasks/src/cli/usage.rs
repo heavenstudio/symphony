@@ -1,0 +1,553 @@
+//! What `--help` and a usage error print: argparse's own text for `tools/tasks.py`'s parser, as it
+//! lays it out 78 columns wide (a pipe, where agents run it), taken from it once when the command line
+//! moved to Rust. A flag added to a command adds itself here too.
+
+/// The usage line of `just tasks` itself.
+pub const USAGE: &str = r#"usage: just tasks [-h] [--as ACTOR]
+                  {callback,register,attach,list,search,embed,next,create,priority,claim,reserve,release,show,parent,done,role,move,verdict,say,launch,restore,cleanup,reap,staff,agents,who,inbox,leave,beat,export,finish,sweep} ...
+"#;
+
+/// `just tasks --help`.
+pub const HELP: &str = r#"usage: just tasks [-h] [--as ACTOR]
+                  {callback,register,attach,list,search,embed,next,create,priority,claim,reserve,release,show,parent,done,role,move,verdict,say,launch,restore,cleanup,reap,staff,agents,who,inbox,leave,beat,export,finish,sweep} ...
+
+The task board from the terminal — `just tasks …` and `just tasks-attach`.
+
+positional arguments:
+  {callback,register,attach,list,search,embed,next,create,priority,claim,reserve,release,show,parent,done,role,move,verdict,say,launch,restore,cleanup,reap,staff,agents,who,inbox,leave,beat,export,finish,sweep}
+    callback            register a native channel or --off for inbox fallback
+    beat               a hook: read one Claude Code tool event on stdin and
+                        beat for the subagent making it
+    finish              close the panes of a finished task's sessions
+
+options:
+  -h, --help            show this help message and exit
+  --as ACTOR            act as this session handle (default: $TASKS_SESSION)
+"#;
+
+/// Each command's usage and `--help`, in the order the top usage names them.
+pub const COMMANDS: &[(&str, &str, &str)] = &[
+    (
+        "callback",
+        "usage: just tasks callback [ADDRESS] [--chat] [--if-free] [--off] [--as HANDLE]\n",
+        "Register the session native callback: uds:/path or codex:UUID. With no address, detect the current Claude socket or Codex thread, refusing if neither exists. An address held by another registered handle is refused until it unregisters or leaves, including while idle. In-process subagents use inbox. --chat takes the chat recipient seat; --if-free only takes a vacant seat. --off unregisters and restores inbox fallback.\n",
+    ),
+    (
+        "register",
+        r#"usage: just tasks register [-h] [--as ACTOR]
+                           [--kind {orchestrator,worker,reviewer,chat,app}]
+                           [--parent PARENT] [--affinity AFFINITY]
+                           [--model MODEL]
+"#,
+        r#"usage: just tasks register [-h] [--as ACTOR]
+                           [--kind {orchestrator,worker,reviewer,chat,app}]
+                           [--parent PARENT] [--affinity AFFINITY]
+                           [--model MODEL]
+
+options:
+  -h, --help            show this help message and exit
+  --as ACTOR
+  --kind {orchestrator,worker,reviewer,chat,app}
+  --parent PARENT
+  --affinity AFFINITY   comma-separated areas, e.g. sim,view
+  --model MODEL
+"#,
+    ),
+    (
+        "attach",
+        r#"usage: just tasks attach [-h] [--as ACTOR]
+                         [--kind {orchestrator,worker,reviewer,chat,app}]
+                         [--parent PARENT] [--affinity AFFINITY]
+                         [--model MODEL] [--resume RESUME]
+                         [--interval INTERVAL] [--beat BEAT]
+"#,
+        r#"usage: just tasks attach [-h] [--as ACTOR]
+                         [--kind {orchestrator,worker,reviewer,chat,app}]
+                         [--parent PARENT] [--affinity AFFINITY]
+                         [--model MODEL] [--resume RESUME]
+                         [--interval INTERVAL] [--beat BEAT]
+
+options:
+  -h, --help            show this help message and exit
+  --as ACTOR
+  --kind {orchestrator,worker,reviewer,chat,app}
+  --parent PARENT
+  --affinity AFFINITY   comma-separated areas, e.g. sim,view
+  --model MODEL
+  --resume RESUME       take an existing handle back (a re-armed monitor)
+  --interval INTERVAL
+  --beat BEAT
+"#,
+    ),
+    (
+        "list",
+        r#"usage: just tasks list [-h] [--as ACTOR]
+                       [--status {backlog,concept,design,ready,in_progress,review,done,blocked,cancelled}]
+                       [--mine] [--json]
+"#,
+        r#"usage: just tasks list [-h] [--as ACTOR]
+                       [--status {backlog,concept,design,ready,in_progress,review,done,blocked,cancelled}]
+                       [--mine] [--json]
+
+options:
+  -h, --help            show this help message and exit
+  --as ACTOR
+  --status {backlog,concept,design,ready,in_progress,review,done,blocked,cancelled}
+  --mine
+  --json
+"#,
+    ),
+    (
+        "search",
+        r#"usage: just tasks search [-h] [--as ACTOR]
+                         [--status {backlog,concept,design,ready,in_progress,review,done,blocked,cancelled}]
+                         [--limit N] [--json] [--mode {keyword,vector,hybrid,exact}] query
+"#,
+        r#"usage: just tasks search [-h] [--as ACTOR]
+                         [--status {backlog,concept,design,ready,in_progress,review,done,blocked,cancelled}]
+                         [--limit N] [--json] [--mode {keyword,vector,hybrid,exact}] query
+
+Rank full-text matches in task titles, bodies, slugs and thread messages.
+
+positional arguments:
+  query                 at most 1024 UTF-8 bytes and 32 terms (word/number runs
+                        and punctuation/symbols, after lowercasing); longer queries
+                        are refused with exit 1
+
+options:
+  -h, --help            show this help message and exit
+  --as ACTOR
+  --status {backlog,concept,design,ready,in_progress,review,done,blocked,cancelled}
+                        filter by task status before limiting results
+  --limit N             positive maximum number of results (default: 20)
+  --json                list-compatible task records with score, snippet and snippet_source
+  --mode {keyword,vector,hybrid,exact}
+                        keyword is the default; vector uses local embeddings, hybrid fuses
+                        both rankings, exact checks vector recall; the shared server catches up
+"#,
+    ),
+    (
+        "embed",
+        "usage: just tasks embed [-h] [--as ACTOR] [--task SLUG] [--batch-size N] [--threads N] [--maintenance]\n",
+        "usage: just tasks embed [-h] [--as ACTOR] [--task SLUG] [--batch-size N] [--threads N] [--maintenance]\n\nCatch up local BGE embeddings for missing or changed title/brief and thread chunks.\nDownloads checksum-pinned model artifacts when changed sources need them. No board text is sent out.\nThe shared Symphony server runs maintenance automatically; use this command for repair.\n\noptions:\n  -h, --help       show this help message and exit\n  --as ACTOR\n  --task SLUG      catch up just this task (default: the whole board)\n  --batch-size N   CPU inference batch size, 1 to 64 (default: 8)\n  --threads N      inference threads, 1 to 64 (default: 1)\n  --maintenance   cache-only server pass; no agent session required\n",
+    ),
+    (
+        "next",
+        r#"usage: just tasks next [-h] [--as ACTOR]
+"#,
+        r#"usage: just tasks next [-h] [--as ACTOR]
+
+options:
+  -h, --help  show this help message and exit
+  --as ACTOR
+"#,
+    ),
+    (
+        "create",
+        r#"usage: just tasks create [-h] [--as ACTOR] [--body BODY]
+                         [--body-file BODY_FILE] [--priority PRIORITY]
+                         [--stage {backlog,concept,design,ready}] [--backlog]
+                         [--parent PARENT] [--for ASSIGNEE] [--instruction]
+                         [--depends DEPENDS] [--link LINK]
+                         slug title
+"#,
+        r#"usage: just tasks create [-h] [--as ACTOR] [--body BODY]
+                         [--body-file BODY_FILE] [--priority PRIORITY]
+                         [--stage {backlog,concept,design,ready}] [--backlog]
+                         [--parent PARENT] [--for ASSIGNEE] [--instruction]
+                         [--depends DEPENDS] [--link LINK]
+                         slug title
+
+positional arguments:
+  slug
+  title
+
+options:
+  -h, --help            show this help message and exit
+  --as ACTOR
+  --body BODY
+  --body-file BODY_FILE
+  --priority PRIORITY
+  --stage {backlog,concept,design,ready}
+                        where it enters the pipeline
+  --backlog             same as --stage backlog
+  --parent PARENT
+  --for ASSIGNEE        reserve it for this handle, with no lapse (nobody else
+                        is offered it)
+  --instruction         a subtask its executor closes with `done`; its slug is
+                        never a branch that lands
+  --depends DEPENDS
+  --link LINK
+"#,
+    ),
+    (
+        "priority",
+        "usage: just tasks priority [-h] [--as ACTOR] slug {0,1,2,3,4}\n",
+        r#"usage: just tasks priority [-h] [--as ACTOR] slug {0,1,2,3,4}
+
+Set an existing task's priority (0 is most urgent)
+
+positional arguments:
+  slug
+  {0,1,2,3,4}
+
+options:
+  -h, --help    show this help message and exit
+  --as ACTOR
+"#,
+    ),
+    (
+        "claim",
+        r#"usage: just tasks claim [-h] [--as ACTOR] slug
+"#,
+        r#"usage: just tasks claim [-h] [--as ACTOR] slug
+
+positional arguments:
+  slug
+
+options:
+  -h, --help  show this help message and exit
+  --as ACTOR
+"#,
+    ),
+    (
+        "reserve",
+        r#"usage: just tasks reserve [-h] [--as ACTOR] slug
+"#,
+        r#"usage: just tasks reserve [-h] [--as ACTOR] slug
+
+positional arguments:
+  slug
+
+options:
+  -h, --help  show this help message and exit
+  --as ACTOR
+"#,
+    ),
+    (
+        "release",
+        r#"usage: just tasks release [-h] [--as ACTOR]
+                          [--role {orchestrator,executor,reviewer,reserved}]
+                          slug
+"#,
+        r#"usage: just tasks release [-h] [--as ACTOR]
+                          [--role {orchestrator,executor,reviewer,reserved}]
+                          slug
+
+positional arguments:
+  slug
+
+options:
+  -h, --help            show this help message and exit
+  --as ACTOR
+  --role {orchestrator,executor,reviewer,reserved}
+"#,
+    ),
+    (
+        "show",
+        r#"usage: just tasks show [-h] [--as ACTOR] [--json] slug
+"#,
+        r#"usage: just tasks show [-h] [--as ACTOR] [--json] slug
+
+positional arguments:
+  slug
+
+options:
+  -h, --help  show this help message and exit
+  --as ACTOR
+  --json
+"#,
+    ),
+    (
+        "parent",
+        r#"usage: just tasks parent [-h] [--as ACTOR] [--none] slug [parent]
+"#,
+        r#"usage: just tasks parent [-h] [--as ACTOR] [--none] slug [parent]
+
+positional arguments:
+  slug
+  parent
+
+options:
+  -h, --help  show this help message and exit
+  --as ACTOR
+  --none      take it out from under its parent
+"#,
+    ),
+    (
+        "done",
+        r#"usage: just tasks done [-h] [--as ACTOR] slug note
+"#,
+        r#"usage: just tasks done [-h] [--as ACTOR] slug note
+
+positional arguments:
+  slug
+  note
+
+options:
+  -h, --help  show this help message and exit
+  --as ACTOR
+"#,
+    ),
+    (
+        "role",
+        r#"usage: just tasks role [-h] [--as ACTOR] slug {orchestrator,reviewer}
+"#,
+        r#"usage: just tasks role [-h] [--as ACTOR] slug {orchestrator,reviewer}
+
+positional arguments:
+  slug
+  {orchestrator,reviewer}
+
+options:
+  -h, --help            show this help message and exit
+  --as ACTOR
+"#,
+    ),
+    (
+        "move",
+        r#"usage: just tasks move [-h] [--as ACTOR]
+                       slug
+                       {backlog,concept,design,ready,in_progress,review,done,blocked,cancelled}
+"#,
+        r#"usage: just tasks move [-h] [--as ACTOR]
+                       slug
+                       {backlog,concept,design,ready,in_progress,review,done,blocked,cancelled}
+
+positional arguments:
+  slug
+  {backlog,concept,design,ready,in_progress,review,done,blocked,cancelled}
+
+options:
+  -h, --help            show this help message and exit
+  --as ACTOR
+"#,
+    ),
+    (
+        "verdict",
+        r#"usage: just tasks verdict [-h] [--as ACTOR] slug {approve,changes} [text]
+"#,
+        r#"usage: just tasks verdict [-h] [--as ACTOR] slug {approve,changes} [text]
+
+positional arguments:
+  slug
+  {approve,changes}
+  text
+
+options:
+  -h, --help         show this help message and exit
+  --as ACTOR
+"#,
+    ),
+    (
+        "say",
+        r#"usage: just tasks say [-h] [--as ACTOR] [--to TO] slug text
+"#,
+        r#"usage: just tasks say [-h] [--as ACTOR] [--to TO] slug text
+
+positional arguments:
+  slug
+  text
+
+options:
+  -h, --help  show this help message and exit
+  --as ACTOR
+  --to TO
+"#,
+    ),
+    (
+        "launch",
+        r#"usage: just tasks launch [-h] [--as ACTOR] [--model MODEL]
+                         [--kind {codex,claude,worker,reviewer}]
+                         [--role {executor,reviewer}] [--branch BRANCH |
+                         --detached] [--worktree WORKTREE] [--tab TAB]
+                         [--prompt PROMPT]
+                         slug
+"#,
+        r#"usage: just tasks launch [-h] [--as ACTOR] [--model MODEL]
+                         [--kind {codex,claude,worker,reviewer}]
+                         [--role {executor,reviewer}] [--branch BRANCH |
+                         --detached] [--worktree WORKTREE] [--tab TAB]
+                         [--prompt PROMPT]
+                         slug
+
+positional arguments:
+  slug
+
+options:
+  -h, --help            show this help message and exit
+  --as ACTOR
+  --model MODEL        default gpt-6.1-sol (sonnet for --kind claude)
+  --kind {codex,claude,worker,reviewer}
+                        agent kind, default codex; worker/reviewer retain Claude compatibility
+  --role {executor,reviewer}
+  --branch BRANCH
+  --detached
+  --worktree WORKTREE   use this worktree instead of making one under
+                        <repo>-wt/
+  --tab TAB             the herdr tab (stream) for its pane; default code for
+                        an executor, review for a reviewer
+  --prompt PROMPT       text sent after /work SLUG HANDLE
+"#,
+    ),
+    (
+        "restore",
+        r#"usage: just tasks restore [-h] [--as ACTOR] slug [handle]
+"#,
+        r#"usage: just tasks restore [-h] [--as ACTOR] slug [handle]
+
+positional arguments:
+  slug
+  handle
+
+options:
+  -h, --help  show this help message and exit
+  --as ACTOR
+"#,
+    ),
+    (
+        "cleanup",
+        r#"usage: just tasks cleanup [-h] [--as ACTOR] [--dry-run]
+"#,
+        r#"usage: just tasks cleanup [-h] [--as ACTOR] [--dry-run]
+
+options:
+  -h, --help  show this help message and exit
+  --as ACTOR
+  --dry-run
+"#,
+    ),
+    (
+        "reap",
+        r#"usage: just tasks reap [-h] [--as ACTOR] [--dry-run]
+"#,
+        r#"usage: just tasks reap [-h] [--as ACTOR] [--dry-run]
+
+options:
+  -h, --help  show this help message and exit
+  --as ACTOR
+  --dry-run   name what the next sweep closes; count nothing
+"#,
+    ),
+    (
+        "staff",
+        r#"usage: just tasks staff [-h] [--as ACTOR] [--dry-run]
+"#,
+        r#"usage: just tasks staff [-h] [--as ACTOR] [--dry-run]
+
+options:
+  -h, --help  show this help message and exit
+  --as ACTOR
+  --dry-run   preview staffing even when disabled; print only, change nothing
+"#,
+    ),
+    (
+        "agents",
+        r#"usage: just tasks agents [-h] [--as ACTOR] [--json] [--all]
+"#,
+        r#"usage: just tasks agents [-h] [--as ACTOR] [--json] [--all]
+
+options:
+  -h, --help  show this help message and exit
+  --as ACTOR
+  --json
+  --all       include sessions that have left
+"#,
+    ),
+    (
+        "who",
+        r#"usage: just tasks who [-h] [--as ACTOR] [--all] [--json]
+"#,
+        r#"usage: just tasks who [-h] [--as ACTOR] [--all] [--json]
+
+options:
+  -h, --help  show this help message and exit
+  --as ACTOR
+  --all       include sessions that have left
+  --json
+"#,
+    ),
+    (
+        "inbox",
+        r#"usage: just tasks inbox [-h] [--as ACTOR]
+"#,
+        r#"usage: just tasks inbox [-h] [--as ACTOR]
+
+options:
+  -h, --help  show this help message and exit
+  --as ACTOR
+"#,
+    ),
+    (
+        "leave",
+        r#"usage: just tasks leave [-h] [--as ACTOR]
+"#,
+        r#"usage: just tasks leave [-h] [--as ACTOR]
+
+options:
+  -h, --help  show this help message and exit
+  --as ACTOR
+"#,
+    ),
+    (
+        "beat",
+        r#"usage: just tasks beat [-h] [--as ACTOR]
+"#,
+        r#"usage: just tasks beat [-h] [--as ACTOR]
+
+options:
+  -h, --help  show this help message and exit
+  --as ACTOR
+"#,
+    ),
+    (
+        "export",
+        r#"usage: just tasks export [-h] [--as ACTOR] [--out OUT]
+"#,
+        r#"usage: just tasks export [-h] [--as ACTOR] [--out OUT]
+
+options:
+  -h, --help  show this help message and exit
+  --as ACTOR
+  --out OUT
+"#,
+    ),
+    (
+        "finish",
+        r#"usage: just tasks finish [-h] [--as ACTOR] slug
+"#,
+        r#"usage: just tasks finish [-h] [--as ACTOR] slug
+
+positional arguments:
+  slug
+
+options:
+  -h, --help  show this help message and exit
+  --as ACTOR
+"#,
+    ),
+    (
+        "sweep",
+        r#"usage: just tasks sweep [-h] [--as ACTOR] [--dry-run]
+                        [--recent-hours RECENT_HOURS] [--task TASK]
+                        [--background BACKGROUND]
+"#,
+        r#"usage: just tasks sweep [-h] [--as ACTOR] [--dry-run]
+                        [--recent-hours RECENT_HOURS] [--task TASK]
+                        [--background BACKGROUND]
+
+options:
+  -h, --help            show this help message and exit
+  --as ACTOR
+  --dry-run             say what would go, remove nothing
+  --recent-hours RECENT_HOURS
+                        keep a worktree touched within this many hours
+                        (default: $SF_SWEEP_RECENT_HOURS, else 2)
+  --task TASK           a task just done or cancelled: its closed sessions'
+                        worktrees go without the window (once per task)
+  --background BACKGROUND
+                        why work finishing started it: said first, and the
+                        board's server is never started for it
+"#,
+    ),
+];

@@ -1,0 +1,448 @@
+//! Hold a real SQLite flush at a pipe event, without sleeps or a production-only test seam.
+
+use super::*;
+use crate::testing::{Tree, board, entered, fifo, repository};
+use std::io::Write;
+use std::process::{Command, Stdio};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+const TEST: &str =
+    "front::shutdown_tests::stop_reaps_an_in_flight_ask_flush_before_repository_cleanup";
+const CHILD: &str = "SF_ASK_FLUSH_STOP_CHILD";
+
+struct Release(std::fs::File);
+
+impl Drop for Release {
+    fn drop(&mut self) {
+        let _ = self.0.write_all(b"finish\n");
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn stop_reaps_an_in_flight_ask_flush_before_repository_cleanup() {
+    if std::env::var_os(CHILD).is_none() {
+        let tree = Tree::new();
+        let root = repository(&tree);
+        let control = tree.path("control");
+        std::fs::create_dir(&control).unwrap();
+        let real_sqlite = crate::sys::which("sqlite3").unwrap();
+        let wrapper = control.join("sqlite3");
+        // Only the journal SELECT is paused, after the ask's HTTP write has finished. The child
+        // execs the actual SQLite executable; BEGIN IMMEDIATE opens its database before the event.
+        // Open the release reader before announcing entry, so even an immediate writer close
+        // cannot discard the release byte before the shell has a reader.
+        crate::fixture_script::write(
+            &wrapper,
+            r##"#!/bin/bash
+script=
+while IFS= read -r line || [ -n "$line" ]; do script="$script$line"$'\n'; done
+case "$script" in
+  *'SELECT id, text FROM callbacks ORDER BY id;'*)
+    if [ -f "$SF_FLUSH_CONTROL/armed" ]; then
+      exec "$SF_REAL_SQLITE" "$@" <<SQL
+.timeout 30000
+BEGIN IMMEDIATE;
+.shell exec 3<'$SF_FLUSH_CONTROL/release'; echo '$$' > '$SF_FLUSH_CONTROL/entered'; read -r finish <&3
+$script
+COMMIT;
+SQL
+    fi
+    ;;
+esac
+exec "$SF_REAL_SQLITE" "$@" <<< "$script"
+"##,
+            false,
+        );
+        let client = board::client();
+        tasks::Store::open(tasks::rpc::Client::new(
+            client.addr(),
+            "sf",
+            client.database(),
+        ))
+        .unwrap();
+        let path = std::env::join_paths(
+            std::iter::once(control.clone())
+                .chain(std::env::split_paths(&std::env::var_os("PATH").unwrap())),
+        )
+        .unwrap();
+        let done = Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", TEST, "--nocapture"])
+            .env(CHILD, &root)
+            .env("SF_REAL_SQLITE", real_sqlite)
+            .env("SF_FLUSH_CONTROL", control)
+            .env("ASKS_DB", root.join("asks.db"))
+            .env("TASKS_SERVER", client.addr())
+            .env("TASKS_DATABASE", client.database())
+            .env("PATH", path)
+            .env_remove("TASKS_SESSION")
+            .env_remove("SF_SYMPHONY_UI_DIST")
+            .stdin(Stdio::null())
+            .output()
+            .unwrap();
+        assert!(
+            done.status.success(),
+            "{}\n{}",
+            String::from_utf8_lossy(&done.stdout),
+            String::from_utf8_lossy(&done.stderr)
+        );
+        assert!(String::from_utf8_lossy(&done.stdout).contains("1 passed"));
+        assert!(
+            !root.exists(),
+            "no worker recreated the repository after stop"
+        );
+        return;
+    }
+
+    let root = PathBuf::from(std::env::var_os(CHILD).unwrap());
+    let control = PathBuf::from(std::env::var_os("SF_FLUSH_CONTROL").unwrap());
+    let entry = fifo(&control.join("entered"));
+    let release = Release(fifo(&control.join("release")));
+    // Journal draining belongs to a shared hub; its home is private to this fixture.
+    let home = control.join("shared-home");
+    std::fs::create_dir(&home).unwrap();
+    let shared = Shared::new(
+        i64::from(std::process::id()),
+        1,
+        &root,
+        Some(&home),
+        Gate::new(Arc::new(|_| Ok(None)), Arc::new(Instant::now)),
+    );
+    let (first, second) = tokio::join!(crate::api::warm(&shared), crate::api::warm(&shared));
+    let hub = first.unwrap();
+    assert!(
+        Arc::ptr_eq(&hub, &second.unwrap()),
+        "first requests share one worker"
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let serving = shared.clone();
+    let server = tokio::spawn(async move {
+        axum::serve(
+            listener,
+            router(serving.clone()).into_make_service_with_connect_info::<SocketAddr>(),
+        )
+        .with_graceful_shutdown(async move { serving.until_stopped().await })
+        .await
+        .unwrap();
+    });
+    let body = r#"{"path":"docs/TOPIC.md","question":"Stop with a flush in flight"}"#;
+    let mut stream = tokio::net::TcpStream::connect(address).await.unwrap();
+    stream.write_all(format!("POST /api/ask HTTP/1.1\r\nHost: {address}\r\nConnection: close\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}", body.len()).as_bytes()).await.unwrap();
+    let mut response = String::new();
+    tokio::time::timeout(
+        Duration::from_secs(15),
+        stream.read_to_string(&mut response),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert!(response.starts_with("HTTP/1.1 200 OK"), "{response}");
+    assert!(
+        response.contains("\"id\":"),
+        "the ask was saved: {response}"
+    );
+    std::fs::write(control.join("armed"), "").unwrap();
+    // A changed stamp guarantees another journal read even if the tick just cached it empty.
+    std::fs::File::open(root.join("asks.db"))
+        .unwrap()
+        .set_modified(std::time::SystemTime::now() + Duration::from_secs(1))
+        .unwrap();
+    let pid = tokio::task::spawn_blocking(move || entered(&entry))
+        .await
+        .unwrap();
+    assert!(sys::pid_alive(pid), "the flush child is actually in flight");
+    let mut stopped = shared.stopped.subscribe();
+    let (send, receive) = std::sync::mpsc::channel();
+    let stopping = shared.clone();
+    let stop = std::thread::spawn(move || {
+        stopping.stop();
+        send.send(sys::pid_alive(pid)).unwrap();
+    });
+    tokio::time::timeout(
+        Duration::from_secs(30),
+        stopped.wait_for(|stopped| *stopped),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    // The event above proves stop has entered. A bounded receive checks it cannot return while
+    // SQLite is held; this timeout is a negative assertion, never the flush's synchronization.
+    let early = tokio::task::spawn_blocking(move || {
+        let early = receive.recv_timeout(Duration::from_millis(100));
+        (early, receive)
+    })
+    .await
+    .unwrap();
+    assert!(
+        matches!(early.0, Err(std::sync::mpsc::RecvTimeoutError::Timeout)),
+        "stop returned with a child alive: {:?}",
+        early.0
+    );
+    drop(release);
+    let child_alive = early.1.recv_timeout(Duration::from_secs(30)).unwrap();
+    stop.join().unwrap();
+    assert!(
+        !child_alive,
+        "stop returned before reaping its SQLite child"
+    );
+    assert!(!sys::pid_alive(pid));
+    // This isolated server process has no other owned children. ECHILD also rejects a zombie.
+    let mut status = 0;
+    // SAFETY: waitpid writes to this owned status value; WNOHANG never blocks.
+    assert_eq!(unsafe { libc::waitpid(-1, &mut status, libc::WNOHANG) }, -1);
+    assert_eq!(
+        std::io::Error::last_os_error().raw_os_error(),
+        Some(libc::ECHILD)
+    );
+    assert!(*hub.draining.borrow());
+    shared.stop(); // repeated stop must preserve the completed join
+    assert!(
+        crate::api::warm(&shared).await.is_err(),
+        "stop cannot start another hub"
+    );
+    server.await.unwrap();
+    if let Some(saves) = shared.saves.get() {
+        saves.close();
+    }
+    std::fs::remove_dir_all(&root).unwrap();
+    assert!(
+        !root.exists(),
+        "repository cleanup follows the completed stop"
+    );
+}
+
+#[tokio::test]
+async fn stopping_a_cold_server_prevents_its_first_hub_start() {
+    let tree = Tree::new();
+    let shared = Shared::new(
+        1,
+        1,
+        &tree.root,
+        None,
+        Gate::new(Arc::new(|_| Ok(None)), Arc::new(Instant::now)),
+    );
+    shared.stop();
+    assert_eq!(
+        crate::api::warm(&shared).await.err().as_deref(),
+        Some("the Symphony server is stopping")
+    );
+    assert!(shared.api.get().is_none());
+}
+
+#[test]
+fn background_shutdown_wakes_long_timers_and_remains_sticky() {
+    let tree = Tree::new();
+    let shared = Shared::new(
+        1,
+        1,
+        &tree.root,
+        None,
+        Gate::new(Arc::new(|_| Ok(None)), Arc::new(Instant::now)),
+    );
+    let (entered, ready) = std::sync::mpsc::channel();
+    let (finished, done) = std::sync::mpsc::channel();
+    let waiting = shared.clone();
+    let worker = std::thread::spawn(move || {
+        entered.send(()).unwrap();
+        assert!(waiting.wait(Duration::from_secs(300)));
+        finished.send(()).unwrap();
+    });
+    ready.recv_timeout(Duration::from_secs(30)).unwrap();
+    let background = Background {
+        shared: shared.clone(),
+        workers: vec![worker],
+        census: None,
+    };
+    let shutdown = std::thread::spawn(move || drop(background));
+    done.recv_timeout(Duration::from_secs(30)).unwrap();
+    shutdown.join().unwrap();
+    // The same timer called after stop must return promptly as well as observe the sticky signal.
+    let (finished, done) = std::sync::mpsc::channel();
+    let sticky = std::thread::spawn(move || {
+        finished
+            .send(shared.wait(Duration::from_secs(300)))
+            .unwrap();
+    });
+    assert!(done.recv_timeout(Duration::from_secs(30)).unwrap());
+    sticky.join().unwrap();
+}
+
+/// Stop waits for the hub's tick in flight. Run from a signal, that wait must not hold a runtime
+/// worker: on a runtime with only one, a task still runs while stop is held.
+#[test]
+fn a_signalled_stop_leaves_the_runtime_worker_free_while_it_waits() {
+    let tree = Tree::new();
+    let shared = Shared::new(
+        1,
+        1,
+        &tree.root,
+        None,
+        Gate::new(Arc::new(|_| Ok(None)), Arc::new(Instant::now)),
+    );
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(1)
+        .enable_all()
+        .build()
+        .unwrap();
+    // Stop sets its flag first, then waits on this lock, as it does behind a hub's tick.
+    let tick = shared.lifecycle.lock().unwrap();
+    let (signal, signalled) = tokio::sync::oneshot::channel::<()>();
+    let signals = {
+        let _runtime = runtime.enter();
+        stop_when(&shared, async move {
+            let _ = signalled.await;
+        })
+    };
+    signal.send(()).unwrap();
+    assert!(
+        shared.wait(Duration::from_secs(30)),
+        "the signal did not start a stop"
+    );
+    let (answered, answer) = std::sync::mpsc::channel();
+    runtime.spawn(async move { answered.send(()).unwrap() });
+    // Only a worker that stop does not hold can send this answer before the tick ends.
+    let free = answer.recv_timeout(Duration::from_secs(30));
+    drop(tick);
+    runtime.block_on(signals).unwrap();
+    assert!(
+        free.is_ok(),
+        "stop held the runtime's only worker: {free:?}"
+    );
+    assert!(shared.stopping());
+}
+
+/// A started server keeps its census task and its threads, and waits for each as it returns.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_started_server_keeps_every_worker_it_owns_until_it_returns() {
+    let tree = Tree::new();
+    let root = tree.path("root");
+    let home = tree.path("home");
+    std::fs::create_dir(&home).unwrap();
+    // The shared installation's sweep runs this launcher, which answers at once.
+    let launcher = tree.path("root/tools/rs-bin.sh");
+    std::fs::create_dir_all(launcher.parent().unwrap()).unwrap();
+    crate::fixture_script::write(&launcher, "#!/bin/sh\nexit 0\n", false);
+    let started = start(
+        Serve {
+            home: Some(home),
+            root: root.clone(),
+            port: 0,
+            hosts: vec!["127.0.0.1".into()],
+        },
+        false,
+    )
+    .await
+    .unwrap();
+    let owned: std::collections::BTreeSet<String> = started
+        .background
+        .workers
+        .iter()
+        .filter_map(|worker| worker.thread().name().map(String::from))
+        .collect();
+    assert!(
+        started.background.census.is_some(),
+        "the census is not kept for the wait"
+    );
+    for name in [TAILNET_WORKER, SWEEP_WORKER, RELOAD_WORKER] {
+        assert!(
+            owned.contains(name),
+            "the {name} worker is not kept for the join: {owned:?}"
+        );
+    }
+    assert!(root.join(PORT_FILE).is_file());
+    assert_eq!(started.serve_until_stopped(std::future::ready(())).await, 0);
+    assert!(
+        !root.join(PORT_FILE).exists(),
+        "the server returned without clearing its port record"
+    );
+}
+
+/// A pending scan whose drop says so, then holds until the test releases it (or ends).
+struct HeldScan {
+    dropping: std::sync::mpsc::Sender<()>,
+    release: Arc<Mutex<std::sync::mpsc::Receiver<()>>>,
+}
+
+impl Drop for HeldScan {
+    fn drop(&mut self) {
+        let _ = self.dropping.send(());
+        let _ = self
+            .release
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .recv();
+    }
+}
+
+/// The stop is the census's one way out: a server stopped while its scan never answers drops
+/// that scan at once, and returns only once the census has ended.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_server_stopped_during_a_pending_census_drops_the_scan_and_returns_after_the_census() {
+    let root = PathBuf::from("/pending-census-stop-fixture");
+    let shared = Shared::new(
+        1,
+        1,
+        &root,
+        None,
+        Gate::new(Arc::new(|_| Ok(None)), Arc::new(Instant::now)),
+    );
+    let entered = Arc::new(tokio::sync::Notify::new());
+    let (dropping, dropped) = std::sync::mpsc::channel();
+    let (release, released) = std::sync::mpsc::channel();
+    let census = {
+        let entered = entered.clone();
+        let released = Arc::new(Mutex::new(released));
+        census_worker(shared.clone(), move || {
+            let scan = HeldScan {
+                dropping: dropping.clone(),
+                release: released.clone(),
+            };
+            let entered = entered.clone();
+            async move {
+                let _scan = scan;
+                entered.notify_one();
+                std::future::pending().await
+            }
+        })
+    };
+    entered.notified().await;
+    assert!(shared.status().census_pending);
+    let started = Started {
+        serve: Serve {
+            home: None,
+            root,
+            port: 0,
+            hosts: Vec::new(),
+        },
+        shared: shared.clone(),
+        background: Background {
+            shared: shared.clone(),
+            workers: Vec::new(),
+            census: Some(census),
+        },
+        serving: Vec::new(),
+        record: false,
+    };
+    let mut serving = tokio::spawn(started.serve_until_stopped(std::future::ready(())));
+    // A bound on a stop that would otherwise never drop the scan, which never answers.
+    let dropped =
+        tokio::task::spawn_blocking(move || dropped.recv_timeout(Duration::from_secs(30)))
+            .await
+            .unwrap();
+    assert!(dropped.is_ok(), "the stop left the pending scan running");
+    // The scan's drop holds the census. This bounded wait is a negative assertion, never the
+    // stop's synchronization: the server must not return before its census has ended.
+    let early = tokio::time::timeout(Duration::from_millis(100), &mut serving).await;
+    assert!(
+        early.is_err(),
+        "the server returned while its census was still ending: {early:?}"
+    );
+    release.send(()).unwrap();
+    let status = tokio::time::timeout(Duration::from_secs(30), serving)
+        .await
+        .expect("the server never returned after its census ended")
+        .unwrap();
+    assert_eq!(status, 0);
+    let after = shared.status();
+    assert!(after.uncounted && !after.census_pending, "{after:?}");
+}

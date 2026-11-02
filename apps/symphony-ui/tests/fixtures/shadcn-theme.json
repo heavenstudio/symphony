@@ -1,0 +1,9 @@
+{
+  "name": "Copper test",
+  "type": "registry:style",
+  "cssVars": {
+    "theme": { "radius": "1rem", "font-sans": "Georgia, serif" },
+    "light": { "background": "#f8f0e6", "foreground": "#123456", "card": "#e6f2ff", "primary": "#c95d22", "primary-foreground": "#ffffff" },
+    "dark": { "background": "#101418", "foreground": "#d9e6f2", "card": "#182028", "primary": "#ffb875", "primary-foreground": "#101418" }
+  }
+}

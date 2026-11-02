@@ -1,0 +1,776 @@
+//! Owned process environment and real listeners; no production testing seam or machine lookup.
+
+use serde_json::{Value, json};
+use std::convert::Infallible;
+use std::io::{BufRead, Read, Write};
+use std::net::{SocketAddr, TcpStream};
+use std::path::PathBuf;
+use std::process::{Child, Command, Stdio};
+use std::sync::mpsc::Receiver;
+use std::sync::{Arc, Mutex, OnceLock};
+use std::time::{Duration, Instant};
+use symphony_server::front::{Shared, router};
+use symphony_server::gate::Gate;
+use tasks::port::Start;
+
+pub struct Fixture {
+    root: PathBuf,
+    address: SocketAddr,
+    pub board: tasks::Store,
+}
+
+#[derive(Debug)]
+pub struct Response {
+    pub status: u16,
+    body: String,
+}
+
+impl Response {
+    pub fn json(&self) -> Value {
+        serde_json::from_str(&self.body).unwrap_or_else(|e| panic!("{self:?}: {e}"))
+    }
+}
+
+#[derive(Debug, PartialEq)]
+pub struct Snapshot {
+    document: String,
+    asks: String,
+    board: Value,
+    uploads: Vec<String>,
+}
+
+struct OwnedChild(Child);
+
+impl Drop for OwnedChild {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+
+/// Release a blocked stand-in even when an HTTP assertion unwinds, so no child keeps the test's
+/// runtime or scratch repository alive. An unreleased gate deliberately has no timing deadline.
+pub struct FinishRelease(std::fs::File, bool);
+
+impl FinishRelease {
+    pub fn release(&mut self, result: &str) {
+        writeln!(self.0, "{result}").unwrap();
+        self.1 = true;
+    }
+}
+
+impl Drop for FinishRelease {
+    fn drop(&mut self) {
+        if !self.1 {
+            let _ = writeln!(self.0, "ok");
+        }
+    }
+}
+
+struct ScratchRepo {
+    root: PathBuf,
+}
+
+impl ScratchRepo {
+    fn new(test: &str) -> Self {
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "sf-after-host-origin-{}-{unique}-{test}",
+            std::process::id()
+        ));
+        std::fs::create_dir(&root).unwrap();
+        // Own cleanup before any further setup can fail.
+        let mut scratch = Self { root };
+        scratch.root = scratch.root.canonicalize().unwrap();
+        let root = &scratch.root;
+        std::fs::create_dir(root.join("docs")).unwrap();
+        std::fs::write(
+            root.join("docs/TOPIC.md"),
+            "# Host Origin fixture\n\nInitial document.\n",
+        )
+        .unwrap();
+        // An independent repository outside the source tree cannot discover its worktree.
+        for args in [
+            vec!["init", "-b", "fixture"],
+            vec!["config", "user.name", "Host Origin fixture"],
+            vec!["config", "user.email", "fixture@example.invalid"],
+            vec!["config", "core.hooksPath", "/dev/null"],
+            vec!["add", "docs"],
+            vec![
+                "-c",
+                "commit.gpgsign=false",
+                "commit",
+                "-m",
+                "Initial fixture document",
+            ],
+        ] {
+            let done = Command::new("git")
+                .args(&args)
+                .current_dir(root)
+                .env_remove("GIT_DIR")
+                .env_remove("GIT_WORK_TREE")
+                .env_remove("GIT_INDEX_FILE")
+                .env_remove("GIT_COMMON_DIR")
+                .output()
+                .unwrap();
+            assert!(
+                done.status.success(),
+                "scratch repository {args:?}: {done:?}"
+            );
+        }
+        scratch
+    }
+}
+
+impl Drop for ScratchRepo {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.root);
+    }
+}
+
+#[test]
+fn scratch_repository_is_removed_after_an_early_return() {
+    fn end_early(root: &mut PathBuf) -> Result<(), &'static str> {
+        let scratch = ScratchRepo::new("early-return");
+        root.clone_from(&scratch.root);
+        assert!(root.join(".git/HEAD").is_file());
+        assert!(root.join("docs/TOPIC.md").is_file());
+        assert!(root.starts_with(std::env::temp_dir().canonicalize().unwrap()));
+        assert!(
+            !root.starts_with(
+                PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                    .join("../../..")
+                    .canonicalize()
+                    .unwrap()
+            )
+        );
+        Err("fixture ended before starting its server")
+    }
+
+    let mut root = PathBuf::new();
+    assert_eq!(
+        end_early(&mut root),
+        Err("fixture ended before starting its server")
+    );
+    assert!(
+        !root.exists(),
+        "early-return scratch repository remains: {}",
+        root.display()
+    );
+}
+
+impl Fixture {
+    pub fn run(test: &str) {
+        Self::run_kind(test, false);
+    }
+
+    pub fn run_finishing(test: &str) {
+        Self::run_kind(test, true);
+    }
+
+    fn run_kind(test: &str, finishing: bool) {
+        let started = Instant::now();
+        let scratch = ScratchRepo::new(test);
+        let root = scratch.root.clone();
+        if finishing {
+            std::fs::create_dir(root.join("tools")).unwrap();
+            let notice = root.join("finish.notice");
+            let done = Command::new("mkfifo").arg(&notice).status().unwrap();
+            assert!(done.success(), "mkfifo {}: {done}", notice.display());
+            // Each call is recorded, then noticed with a line on the FIFO (`Fixture::notices`).
+            // Opening it read-write never waits for a reader, so a stand-in outliving the case
+            // never blocks there.
+            let stub = root.join("tools/rs-bin.sh");
+            crate::fixture_script::write(
+                &stub,
+                concat!(
+                    "#!/bin/sh\nset -eu\n",
+                    "printf '%s|session=%s|pane=%s\\n' \"$*\" \"${TASKS_SESSION-unset}\" \"${HERDR_PANE_ID-unset}\" >> \"$SF_AFTER_HOST_ORIGIN_FINISH\"\n",
+                    "printf '\\n' 1<> \"$SF_AFTER_HOST_ORIGIN_NOTICE\"\n",
+                    "if [ \"$1\" = tasks ] && [ -p \"$PWD/finish.release\" ]; then\n",
+                    "  IFS= read -r result < \"$PWD/finish.release\"\n",
+                    "  case \"$result\" in\n",
+                    "    fail) printf '%s\\n' 'fixture finish failure' >&2; exit 9 ;;\n",
+                    "    reported) printf '→ could not clean up the sessions of %s: fixture Herdr unavailable\\nfixture Herdr details\\n' \"$3\" ;;\n",
+                    "    closed) printf '%s\\n' '→ closed pane fixture-pane of fixture-session (finished); restore: fixture' ;;\n",
+                    "  esac\n",
+                    "fi\n"
+                ),
+                false,
+            );
+        }
+
+        // Execute the installed shell rather than a freshly compiled helper: under load that
+        // helper can spend the entire CLI deadline starting up, before it reaches main.
+        // As in after_access/fixture.rs, bash reads its first argument as a private script.
+        let lookup = root.join("lookup");
+        std::fs::create_dir(&lookup).unwrap();
+        std::fs::write(
+            root.join("status"),
+            r#"[ "$#" -eq 1 ] && [ "$1" = --json ] || exit 2
+printf '%s\n' "$0 $*" >> "$SF_AFTER_HOST_ORIGIN_LOOKUP"
+printf '%s\n' '{"Self":{"DNSName":"review-fixture.tail.test.","TailscaleIPs":["fd7a:115c:a1e0::15"]},"TailscaleIPs":["100.83.24.15"]}'
+"#,
+        )
+        .unwrap();
+        std::os::unix::fs::symlink("/bin/bash", lookup.join("tailscale")).unwrap();
+
+        let surreal = std::env::var_os("SF_SURREAL").map_or_else(
+            || {
+                let found = Command::new("bash")
+                    .arg(
+                        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../tools/surreal.sh"),
+                    )
+                    .env_remove("BASH_ENV")
+                    .output()
+                    .unwrap();
+                assert!(found.status.success(), "SurrealDB lookup: {found:?}");
+                PathBuf::from(String::from_utf8(found.stdout).unwrap().trim())
+            },
+            PathBuf::from,
+        );
+        // SurrealDB 3.3 prints the configured address (including :0), rather than its socket's
+        // actual local address. It is told a reserved scratch board port, and started again on
+        // another when that port was taken before it bound it (tasks::port), every start within
+        // the one 30 s readiness bound. This exact child's announcement, and a health answer once
+        // it itself listens on that port, are required before creating the board. The
+        // announcement alone can precede listening under load. The Symphony listener below stays
+        // bound continuously from port-zero allocation through shutdown.
+        let log = root.join("surreal.log");
+        let errors_log = root.join("surreal-stderr.log");
+        let ready_by = Instant::now() + Duration::from_secs(30);
+        let database =
+            tasks::port::start_on_free_port(tasks::port::ATTEMPTS, ready_by, |board_address| {
+                assert_ne!(board_address.port(), 8765);
+                let mut database = OwnedChild(
+                    Command::new(&surreal)
+                        .args([
+                            "start",
+                            "--unauthenticated",
+                            "--bind",
+                            &board_address.to_string(),
+                            "--log",
+                            "info",
+                            "memory",
+                        ])
+                        .env("NO_COLOR", "1")
+                        .stdout(Stdio::piped())
+                        .stderr(Stdio::piped())
+                        .spawn()
+                        .unwrap(),
+                );
+                let (send, receive) = std::sync::mpsc::channel();
+                let reader = std::thread::spawn({
+                    let stdout = database.0.stdout.take().unwrap();
+                    let log = log.clone();
+                    move || {
+                        let mut log = std::fs::File::create(log).unwrap();
+                        for line in std::io::BufReader::new(stdout).lines() {
+                            let line = line.unwrap();
+                            writeln!(log, "{line}").unwrap();
+                            if let Some((_, address)) = line.split_once("Started web server on ") {
+                                // Read once, while its start waits; a later line has no reader.
+                                let _ = send.send(address.trim().parse::<SocketAddr>().unwrap());
+                            }
+                        }
+                    }
+                });
+                let stderr = database.0.stderr.take().unwrap();
+                let errors = std::thread::spawn({
+                    let log = errors_log.clone();
+                    move || {
+                        std::io::copy(
+                            &mut std::io::BufReader::new(stderr),
+                            &mut std::fs::File::create(log).unwrap(),
+                        )
+                        .unwrap()
+                    }
+                });
+                // Everything an ended child said, once both its streams have closed.
+                let said = |reader: std::thread::JoinHandle<()>,
+                            errors: std::thread::JoinHandle<u64>| {
+                    reader.join().unwrap();
+                    errors.join().unwrap();
+                    format!(
+                        "{}{}",
+                        std::fs::read_to_string(&log).unwrap(),
+                        std::fs::read_to_string(&errors_log).unwrap()
+                    )
+                };
+                let address = match receive
+                    .recv_timeout(ready_by.saturating_duration_since(Instant::now()))
+                {
+                    Ok(address) => address,
+                    Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                        return Ok::<_, Infallible>(Start::Ended(said(reader, errors)));
+                    }
+                    Err(e) => panic!("SurrealDB listener readiness ({log:?}): {e}"),
+                };
+                assert_ne!(address.port(), 8765);
+                assert_eq!(address, board_address);
+                loop {
+                    if database.0.try_wait().unwrap().is_some() {
+                        return Ok(Start::Ended(said(reader, errors)));
+                    }
+                    if tasks::rpc::healthy(&address.to_string())
+                        && tasks::port::listens(database.0.id(), board_address).unwrap()
+                    {
+                        return Ok(Start::Up((database, reader, errors)));
+                    }
+                    let remaining = ready_by.saturating_duration_since(Instant::now());
+                    assert!(!remaining.is_zero(), "SurrealDB health readiness ({log:?})");
+                    std::thread::sleep(Duration::from_millis(50).min(remaining));
+                }
+            });
+        let ((database, reader, errors), address) = database.unwrap_or_else(|why| {
+            panic!("SurrealDB ended before its health answer ({log:?}): {why}")
+        });
+        let address_text = address.to_string();
+        let client = tasks::rpc::Client::new(&address_text, "sf", "after_host_origin");
+        let store = tasks::Store::open(client).unwrap();
+        store
+            .create(&tasks::NewTask::new(
+                "fixture/host-origin",
+                "Private Host Origin task",
+                "owner",
+            ))
+            .unwrap();
+        let path = std::env::join_paths(
+            std::iter::once(lookup)
+                .chain(std::env::split_paths(&std::env::var_os("PATH").unwrap())),
+        )
+        .unwrap();
+        let out = std::fs::File::create(root.join("http.log")).unwrap();
+        let err = std::fs::File::create(root.join("http-stderr.log")).unwrap();
+        let mut command = Command::new(std::env::current_exe().unwrap());
+        command
+            .args(["--exact", test, "--nocapture"])
+            .env("SF_AFTER_HOST_ORIGIN_CHILD", &root)
+            .env("SF_AFTER_HOST_ORIGIN_LOOKUP", root.join("lookup.calls"))
+            .env("ASKS_DB", root.join("asks.db"))
+            .env("TASKS_SERVER", address.to_string())
+            .env("TASKS_DATABASE", "after_host_origin")
+            .env("PATH", path)
+            .env_remove("BASH_ENV")
+            .env_remove("TASKS_SESSION")
+            .env_remove("HERDR_PANE_ID")
+            .env_remove("TASKS_BIN")
+            .env_remove("SF_SYMPHONY_UI_DIST")
+            .env_remove("GIT_DIR")
+            .env_remove("GIT_WORK_TREE")
+            .env_remove("GIT_INDEX_FILE")
+            .env_remove("GIT_COMMON_DIR")
+            .current_dir(&root)
+            .stdout(out)
+            .stderr(err);
+        if finishing {
+            command
+                .env("TASKS_SESSION", "fixture-session")
+                .env("HERDR_PANE_ID", "fixture-pane")
+                .env("TASKS_SWEEP", "on")
+                .env("TASKS_BIN", root.join("tools/rs-bin.sh"))
+                .env("SF_AFTER_HOST_ORIGIN_FINISH", root.join("finish.calls"))
+                .env("SF_AFTER_HOST_ORIGIN_NOTICE", root.join("finish.notice"));
+        } else {
+            command.env("TASKS_SWEEP", "off");
+        }
+        let mut child = OwnedChild(command.spawn().unwrap());
+        let status = child.0.wait().unwrap();
+        drop(database);
+        reader.join().unwrap();
+        errors.join().unwrap();
+        let output = std::fs::read_to_string(root.join("http.log")).unwrap();
+        let error = std::fs::read_to_string(root.join("http-stderr.log")).unwrap();
+        println!(
+            "{output}\nHTTP suite wall time {:.3}s; logs {}",
+            started.elapsed().as_secs_f64(),
+            root.display()
+        );
+        assert!(
+            status.success(),
+            "private HTTP child failed: {output}\n{error}"
+        );
+        assert!(
+            output.contains("1 passed"),
+            "the exact child filter must run its assertions"
+        );
+        drop(scratch);
+        assert!(
+            !root.exists(),
+            "HTTP scratch repository remains: {}",
+            root.display()
+        );
+    }
+
+    pub fn child(address: SocketAddr) -> Self {
+        let root = PathBuf::from(std::env::var_os("SF_AFTER_HOST_ORIGIN_CHILD").unwrap());
+        let env = tasks::cli::Env::of_process();
+        let board = tasks::cli::connect(&env).unwrap();
+        Self {
+            root,
+            address,
+            board,
+        }
+    }
+
+    pub fn host(&self) -> String {
+        self.address.to_string()
+    }
+
+    pub fn feed(&self) -> Feed {
+        let board = self.request("GET", "/api/board", Some(&self.host()), None, &Value::Null);
+        assert_eq!(board.status, 200, "{board:?}");
+        let version = board.json()["version"].as_u64().unwrap();
+        let mut stream =
+            TcpStream::connect_timeout(&self.address, Duration::from_secs(10)).unwrap();
+        stream
+            .set_read_timeout(Some(Duration::from_secs(30)))
+            .unwrap();
+        write!(
+            stream,
+            "GET /api/feed?since={version} HTTP/1.0\r\nHost: {}\r\n\r\n",
+            self.host()
+        )
+        .unwrap();
+        let mut feed = Feed(std::io::BufReader::new(stream));
+        let status = feed.line();
+        assert!(status.starts_with("HTTP/1.0 200 "), "{status}");
+        feed.until("headers", |line| line == "\r\n");
+        // The notice follows the hub subscription, so no later activity event can be missed.
+        feed.until("server notice", |line| line.starts_with("event: server"));
+        feed
+    }
+    pub fn finish_calls(&self) -> Vec<String> {
+        std::fs::read_to_string(self.root.join("finish.calls"))
+            .unwrap_or_default()
+            .lines()
+            .map(str::to_string)
+            .collect()
+    }
+
+    pub fn wait_for_finish(&self) -> Vec<String> {
+        self.wait_for_finish_calls(2)
+    }
+
+    /// Wakes once the stand-in has recorded `count` calls. The FIFO is open before the first
+    /// read, so a record that read misses is noticed after it.
+    pub fn wait_for_finish_calls(&self, count: usize) -> Vec<String> {
+        let notices = self.notices().lock().unwrap();
+        let deadline = Instant::now() + Duration::from_secs(30);
+        loop {
+            let calls = self.finish_calls();
+            if calls.len() >= count {
+                return calls;
+            }
+            notices
+                .recv_timeout(deadline.saturating_duration_since(Instant::now()))
+                .unwrap_or_else(|e| {
+                    panic!("waiting for {count} finish/sweep calls: {calls:?}: {e}")
+                });
+        }
+    }
+
+    /// One wake per line the stand-in writes on `finish.notice`, from the one reader this process
+    /// holds: a second would take some of the lines. A pipe is the kernel's, where a file watcher
+    /// on macOS depends on fseventsd, whose stream under load can deliver no event at all.
+    fn notices(&self) -> &'static Mutex<Receiver<()>> {
+        static NOTICES: OnceLock<Mutex<Receiver<()>>> = OnceLock::new();
+        NOTICES.get_or_init(|| {
+            // Read-write, as the stand-in opens it: the reader never sees an end of file.
+            let fifo = std::fs::OpenOptions::new()
+                .read(true)
+                .write(true)
+                .open(self.root.join("finish.notice"))
+                .unwrap();
+            let (send, receive) = std::sync::mpsc::channel();
+            std::thread::spawn(move || {
+                for line in std::io::BufReader::new(fifo).lines() {
+                    line.unwrap();
+                    if send.send(()).is_err() {
+                        return;
+                    }
+                }
+            });
+            Mutex::new(receive)
+        })
+    }
+
+    pub fn block_finish(&self) -> FinishRelease {
+        let path = self.root.join("finish.release");
+        if !path.exists() {
+            let done = Command::new("mkfifo").arg(&path).status().unwrap();
+            assert!(done.success(), "mkfifo {}: {done}", path.display());
+        }
+        FinishRelease(
+            std::fs::OpenOptions::new()
+                .read(true)
+                .write(true)
+                .open(path)
+                .unwrap(),
+            false,
+        )
+    }
+    pub fn document_text(&self) -> String {
+        std::fs::read_to_string(self.root.join("docs/TOPIC.md")).unwrap()
+    }
+    pub fn asks(&self) -> symphony::asks::AskStore {
+        symphony::asks::AskStore::open(&self.root.join("asks.db")).unwrap()
+    }
+    pub fn comment(&self) -> Value {
+        json!({"path":"docs/TOPIC.md", "after_line":3, "kind":"question", "title":"Host Origin fixture comment", "body":"Private owner write"})
+    }
+    pub fn ask(&self) -> Value {
+        json!({"path":"docs/TOPIC.md", "question":"Host Origin fixture question"})
+    }
+    pub fn task_message(&self) -> Value {
+        json!({"slug":"fixture/host-origin", "text":"Private owner write"})
+    }
+
+    pub fn snapshot(&self) -> Snapshot {
+        Snapshot {
+            document: self.document_text(),
+            asks: serde_json::to_string(&self.asks().all().unwrap()).unwrap(),
+            board: serde_json::to_value(self.board.dump().unwrap()).unwrap(),
+            uploads: std::fs::read_dir(self.root.join(symphony::uploads::DIR))
+                .map(|dir| {
+                    let mut files: Vec<_> = dir
+                        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+                        .collect();
+                    files.sort();
+                    files
+                })
+                .unwrap_or_default(),
+        }
+    }
+    pub fn assert_unchanged(&self, baseline: &Snapshot, case: &str) {
+        assert_eq!(
+            &self.snapshot(),
+            baseline,
+            "refusal mutated scratch state: {case}"
+        );
+    }
+    pub fn document(&self, host: Option<&str>, origin: Option<&str>) {
+        let response = self.request("GET", super::DOCUMENT, host, origin, &Value::Null);
+        assert_eq!(response.status, 200, "{host:?} {origin:?}: {response:?}");
+        assert_eq!(response.json()["path"], "docs/TOPIC.md");
+        assert!(
+            response.body.contains("Host Origin fixture"),
+            "{response:?}"
+        );
+    }
+    pub fn refused_read(&self, host: Option<&str>, origin: Option<&str>, error: &str) {
+        let response = self.request("GET", super::DOCUMENT, host, origin, &Value::Null);
+        assert_eq!(response.status, 403, "{host:?} {origin:?}: {response:?}");
+        assert_eq!(response.json()["error"], error);
+    }
+    /// The write refusals the server has logged so far. It logs to this child's stderr, which the
+    /// parent sends to `http-stderr.log`.
+    pub fn refusals(&self) -> Vec<String> {
+        std::fs::read_to_string(self.root.join("http-stderr.log"))
+            .unwrap()
+            .lines()
+            .filter(|line| line.starts_with("· refused a write to "))
+            .map(str::to_string)
+            .collect()
+    }
+    /// Each write route refuses `host` and `origin`, and logs one line saying `why`, with the
+    /// headers as sent and nothing of the body.
+    pub fn refused_writes(&self, host: Option<&str>, origin: Option<&str>, why: &str) {
+        let sent =
+            |value: Option<&str>| value.map_or_else(|| "absent".into(), |v| format!("\"{v}\""));
+        for (route, body) in [
+            ("/api/comment", self.comment()),
+            ("/api/ask", self.ask()),
+            ("/api/task-message", self.task_message()),
+            (
+                "/api/task-priority",
+                json!({"slug":"fixture/host-origin", "priority":0}),
+            ),
+            ("/api/task-cancel", json!({"slug":"fixture/host-origin"})),
+            // An upload's raw body is never read either: nothing is stored.
+            ("/api/upload", json!("an owner's screenshot")),
+        ] {
+            let logged = self.refusals().len();
+            let response = self.request("POST", route, host, origin, &body);
+            assert_eq!(
+                response.status, 403,
+                "{route} {host:?} {origin:?}: {response:?}"
+            );
+            assert_eq!(
+                response.json()["error"],
+                "Forbidden: the Host or Origin header does not name this app"
+            );
+            assert_eq!(
+                self.refusals()[logged..],
+                [format!(
+                    "· refused a write to {route}: {why}; Host {}, Origin {}",
+                    sent(host),
+                    sent(origin)
+                )],
+                "{route} {host:?} {origin:?}"
+            );
+        }
+    }
+    pub fn assert_front(&self, host: Option<&str>, status: u16) {
+        let response = self.request("GET", "/api/front", host, None, &Value::Null);
+        assert_eq!(response.status, status, "front {host:?}: {response:?}");
+        if status == 200 {
+            let front = response.json();
+            assert_eq!(front["port"], self.address.port());
+            assert_eq!(front["ready"], true);
+            assert_eq!(front["root"], self.root.to_string_lossy().as_ref());
+        } else {
+            assert_eq!(
+                response.body,
+                "Forbidden: the Host header does not name this machine's loopback\n"
+            );
+        }
+    }
+    pub fn assert_lookup_used(&self) {
+        let calls = std::fs::read_to_string(self.root.join("lookup.calls")).unwrap();
+        assert!(!calls.is_empty());
+        assert!(calls.lines().all(|line| line == "status --json"), "{calls}");
+    }
+
+    pub fn request(
+        &self,
+        method: &str,
+        route: &str,
+        host: Option<&str>,
+        origin: Option<&str>,
+        body: &Value,
+    ) -> Response {
+        let body = if method == "POST" {
+            body.to_string()
+        } else {
+            String::new()
+        };
+        // HTTP/1.0 lets a missing Host reach the application, independently of HTTP/1.1 parser rules.
+        let mut request = format!(
+            "{method} {route} HTTP/1.0\r\nConnection: close\r\nContent-Type: application/json\r\nContent-Length: {}\r\n",
+            body.len()
+        );
+        for (name, value) in [("Host", host), ("Origin", origin)] {
+            if let Some(value) = value {
+                request.push_str(&format!("{name}: {value}\r\n"));
+            }
+        }
+        request.push_str(&format!("\r\n{body}"));
+        let mut stream =
+            TcpStream::connect_timeout(&self.address, Duration::from_secs(10)).unwrap();
+        stream
+            .set_read_timeout(Some(Duration::from_secs(15)))
+            .unwrap();
+        stream.write_all(request.as_bytes()).unwrap();
+        let mut response = String::new();
+        stream.read_to_string(&mut response).unwrap();
+        let (headers, body) = response.split_once("\r\n\r\n").unwrap();
+        let status = headers.split_whitespace().nth(1).unwrap().parse().unwrap();
+        Response {
+            status,
+            body: body.into(),
+        }
+    }
+}
+
+pub struct Feed(std::io::BufReader<TcpStream>);
+
+impl Feed {
+    fn line(&mut self) -> String {
+        let mut line = String::new();
+        assert!(
+            self.0.read_line(&mut line).unwrap() > 0,
+            "feed closed before its event"
+        );
+        line
+    }
+
+    fn until(&mut self, why: &str, matches: impl Fn(&str) -> bool) {
+        let started = Instant::now();
+        loop {
+            assert!(
+                started.elapsed() < Duration::from_secs(30),
+                "feed never delivered {why}"
+            );
+            let line = self.line();
+            if matches(&line) {
+                return;
+            }
+        }
+    }
+
+    pub fn activity(&mut self, id: i64) {
+        let key = format!("task#{id}");
+        self.until(&format!("activity {key}"), |line| {
+            let Some(data) = line.strip_prefix("data: ") else {
+                return false;
+            };
+            let event: Value = serde_json::from_str(data).unwrap();
+            event["changes"].as_array().is_some_and(|changes| {
+                changes.iter().any(|change| {
+                    change["region"] == "activity" && change["data"]["value"]["id"] == key
+                })
+            })
+        });
+    }
+}
+
+pub struct Server {
+    pub address: SocketAddr,
+    shared: Arc<Shared>,
+    stop: tokio::sync::oneshot::Sender<()>,
+    task: tokio::task::JoinHandle<()>,
+}
+
+impl Server {
+    pub async fn start() -> Self {
+        Self::start_kind(false).await
+    }
+
+    pub async fn start_shared() -> Self {
+        Self::start_kind(true).await
+    }
+
+    async fn start_kind(installed: bool) -> Self {
+        let root = PathBuf::from(std::env::var_os("SF_AFTER_HOST_ORIGIN_CHILD").unwrap());
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        assert_ne!(address.port(), 8765);
+        let home = root.join("installation");
+        let shared = Shared::new(
+            i64::from(std::process::id()),
+            address.port(),
+            &root,
+            installed.then_some(home.as_path()),
+            Gate::new(
+                Arc::new(|_| panic!("a loopback HTTP client needs no peer lookup")),
+                Arc::new(Instant::now),
+            ),
+        );
+        let app = router(shared.clone()).into_make_service_with_connect_info::<SocketAddr>();
+        let (stop, stopped) = tokio::sync::oneshot::channel();
+        let task = tokio::spawn(async move {
+            axum::serve(listener, app)
+                .with_graceful_shutdown(async {
+                    let _ = stopped.await;
+                })
+                .await
+                .unwrap();
+        });
+        Self {
+            address,
+            shared,
+            stop,
+            task,
+        }
+    }
+
+    pub async fn finish(self) {
+        self.shared.stop();
+        self.stop.send(()).unwrap();
+        self.task.await.unwrap();
+    }
+}

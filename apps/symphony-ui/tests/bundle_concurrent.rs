@@ -1,0 +1,239 @@
+//! Exercise the real bundle/packaging scripts without compiling: DX uses the same intermediate
+//! folder for every invocation in a tree, independently of --out-dir. A handshake holds one DX
+//! process there while another bundle starts. Each run owns its home, tools and published output.
+//!
+//! Every wait ends on something the fixture's processes do, never on a clock: a line on a
+//! bundle's stderr, or the end of that stream once bundle.sh and every child holding it have
+//! exited. The one fake DX that blocks does so after printing its line, until the test writes to
+//! its stdin, so a bundle that goes wrong ends its stream and the wait fails with its log. A
+//! bundle that never ends is bounded by the test runner's own budget (sf-rust-tests).
+
+use std::fs;
+use std::io::{BufRead, BufReader, Lines, Write};
+use std::os::unix::fs::PermissionsExt;
+use std::path::{Path, PathBuf};
+use std::process::{Child, ChildStderr, Command, Stdio};
+
+const KINDS: [&str; 6] = ["board", "tasks", "docs", "review", "queue", "panel"];
+
+struct Fixture(PathBuf);
+
+impl Fixture {
+    fn new(case: &str) -> Self {
+        let base = std::env::temp_dir().join(format!(
+            "symphony-ui-concurrent {case}-{}",
+            std::process::id()
+        ));
+        fs::create_dir(&base).unwrap();
+        let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        for name in [
+            "apps/symphony-ui/bundle.sh",
+            "apps/symphony-ui/wasm-fresh.sh",
+            "apps/symphony-ui/package.sh",
+            "apps/symphony-ui/Dioxus.toml",
+            "apps/symphony-ui/assets/shell.js",
+            "tools/check_lock.sh",
+            "Cargo.toml",
+        ] {
+            let to = base.join(name);
+            fs::create_dir_all(to.parent().unwrap()).unwrap();
+            fs::copy(source.join(name), to).unwrap();
+        }
+        // Only the pinned version is read; no cargo or tool bootstrap runs in this fixture.
+        fs::write(
+            base.join("Cargo.lock"),
+            "name = \"wasm-bindgen\"\nversion = \"fixture\"\n",
+        )
+        .unwrap();
+        executable(&base.join("cargo"), "#!/bin/bash\nexit 0\n");
+        executable(
+            &base.join("common/sf-cargo/dx-home/tools/wasm-bindgen-fixture/wasm-bindgen"),
+            "#!/bin/bash\nexit 0\n",
+        );
+        // The native atomic publisher has its own coverage. Here it receives the real package.sh
+        // assembly and moves it as-is; the outputs are distinct so publication cannot race.
+        executable(
+            &base.join("tools/rs-bin.sh"),
+            "#!/bin/bash\nset -euo pipefail\n[ \"$1 $2\" = 'symphony publish-client' ]\nmv \"$3\" \"$4\"\n",
+        );
+        executable(
+            &base.join("common/sf-cargo/dx-0.7.10/bin/dx"),
+            r#"#!/bin/bash
+set -euo pipefail
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --out-dir) out="$2"; shift 2 ;;
+        --features) kind="${2#page-}"; shift 2 ;;
+        *) shift ;;
+    esac
+done
+work="$CARGO_TARGET_DIR/dx/symphony-ui/release/web"
+mkdir -p "$work/public/assets"
+printf '%s' "$BUNDLE_ID-$kind" > "$work/owner"
+if [ "$BUNDLE_ID-$kind" = first-board ]; then
+    echo 'fixture: first DX holds its intermediate files' >&2
+    read -r release
+    [ "$release" = release ]
+    [ "$FIRST_EXIT" = 0 ] || exit "$FIRST_EXIT"
+fi
+[ "$(cat "$work/owner")" = "$BUNDLE_ID-$kind" ]
+printf '<script type="module" src="/assets/symphony-ui-%s.js"></script>\n' "$kind" > "$work/public/index.html"
+printf 'export default function init(){return Promise.resolve()} init({module_or_path:"/assets/symphony-ui_bg-%s.wasm"}).then(()=>{});/*%s*/\n' "$kind" "$BUNDLE_ID" > "$work/public/assets/symphony-ui-$kind.js"
+printf '\0asm\1\0\0\0%s-%s' "$BUNDLE_ID" "$kind" > "$work/public/assets/symphony-ui_bg-$kind.wasm"
+printf '/*%s-%s*/body{}' "$BUNDLE_ID" "$kind" > "$work/public/assets/board-$kind.css"
+mkdir -p "$out"
+cp -R "$work/public" "$out/"
+"#,
+        );
+        Self(base)
+    }
+
+    fn start(&self, id: &str, first_exit: i32) -> Bundle {
+        let home = self.0.join(format!("home-{id}"));
+        fs::create_dir(&home).unwrap();
+        let mut child = Command::new("bash")
+            .arg(self.0.join("apps/symphony-ui/bundle.sh"))
+            .arg(self.0.join(id))
+            .current_dir(&self.0)
+            .env("HOME", home)
+            .env("SF_GIT_COMMON_DIR", self.0.join("common"))
+            .env("CARGO_TARGET_DIR", self.0.join("target"))
+            .env("CARGO", self.0.join("cargo"))
+            .env("BUNDLE_ID", id)
+            .env("FIRST_EXIT", first_exit.to_string())
+            .env_remove("SF_TOOL_TEST_WAIT_HELPER")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let lines = BufReader::new(child.stderr.take().unwrap()).lines();
+        Bundle {
+            child,
+            lines,
+            log: String::new(),
+        }
+    }
+
+    fn assert_complete(&self, id: &str) {
+        let public = self.0.join(id).join("public");
+        let index = fs::read_to_string(public.join("index.html")).unwrap();
+        let shell_path = index
+            .split("src=\"")
+            .nth(1)
+            .unwrap()
+            .split('"')
+            .next()
+            .unwrap();
+        let shell = fs::read_to_string(public.join(shell_path.trim_start_matches('/'))).unwrap();
+        let manifest = shell
+            .split("const modules = ")
+            .nth(1)
+            .unwrap()
+            .split(";\n")
+            .next()
+            .unwrap();
+        let manifest: serde_json::Value = serde_json::from_str(manifest).unwrap();
+        assert_eq!(manifest.as_object().unwrap().len(), KINDS.len());
+        for kind in KINDS {
+            let read_asset =
+                |url: &str| fs::read(public.join(url.trim_start_matches('/'))).unwrap();
+            let script = read_asset(manifest[kind]["script"].as_str().unwrap());
+            assert!(
+                String::from_utf8(script)
+                    .unwrap()
+                    .contains(&format!("/*{id}*/"))
+            );
+            assert_eq!(
+                read_asset(manifest[kind]["wasm"].as_str().unwrap()),
+                [
+                    b"\0asm\x01\0\0\0".as_slice(),
+                    format!("{id}-{kind}").as_bytes()
+                ]
+                .concat()
+            );
+            let styles = manifest[kind]["styles"].as_array().unwrap();
+            assert_eq!(styles.len(), 1);
+            assert_eq!(
+                read_asset(styles[0].as_str().unwrap()),
+                format!("/*{id}-{kind}*/body{{}}").as_bytes()
+            );
+        }
+    }
+}
+
+impl Drop for Fixture {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.0);
+    }
+}
+
+fn executable(path: &Path, script: &str) {
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    fs::write(path, script).unwrap();
+    fs::set_permissions(path, fs::Permissions::from_mode(0o755)).unwrap();
+}
+
+struct Bundle {
+    child: Child,
+    lines: Lines<BufReader<ChildStderr>>,
+    log: String,
+}
+
+impl Bundle {
+    /// The bundle's next stderr line, or None once bundle.sh and every child holding its stderr
+    /// have closed it. The read blocks until one of the two happens. Neither bundle reads the
+    /// other's pipe, so the one not being read keeps running until its own pipe is full.
+    fn line(&mut self) -> Option<String> {
+        let line = self.lines.next()?.unwrap();
+        self.log.push_str(&line);
+        self.log.push('\n');
+        Some(line)
+    }
+
+    fn until(&mut self, event: &str) {
+        while let Some(line) = self.line() {
+            if line.contains(event) {
+                return;
+            }
+        }
+        panic!("bundle ended before {event}:\n{}", self.log);
+    }
+
+    fn finish(mut self, expected: i32) {
+        self.child.stdin.take();
+        while self.line().is_some() {}
+        let status = self.child.wait().unwrap();
+        assert_eq!(status.code(), Some(expected), "{}", self.log);
+    }
+}
+
+impl Drop for Bundle {
+    fn drop(&mut self) {
+        // Closing stdin also releases a blocked fake DX if an assertion fails.
+        self.child.stdin.take();
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+
+#[test]
+fn concurrent_bundles_in_one_tree_publish_complete_outputs_and_release_after_failure() {
+    for first_exit in [0, 23] {
+        let fixture = Fixture::new(&first_exit.to_string());
+        let mut first = fixture.start("first", first_exit);
+        first.until("fixture: first DX holds its intermediate files");
+        let mut second = fixture.start("second", 0);
+        second.until("waiting for the client bundle build folder");
+        assert!(!fixture.0.join("second/.modules").exists());
+        writeln!(first.child.stdin.as_mut().unwrap(), "release").unwrap();
+        first.finish(first_exit);
+        second.finish(0);
+        if first_exit == 0 {
+            fixture.assert_complete("first");
+        } else {
+            assert!(!fixture.0.join("first/public").exists());
+        }
+        fixture.assert_complete("second");
+    }
+}

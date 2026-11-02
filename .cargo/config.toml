@@ -1,0 +1,3 @@
+# Cargo and editors use the same workspace-local folder as the project's wrapper.
+[build]
+target-dir = ".target"

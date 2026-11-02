@@ -1,0 +1,365 @@
+//! `tasks::port`: a child started on a reserved loopback port, and again on another port only when
+//! it ends saying its port was taken, a bounded number of times within one deadline; and whether a
+//! process itself listens on an address. The fake children are shells that say what the case needs
+//! and end, or say they listen and run until their input closes; two cases give the pinned SurrealDB
+//! a port the test holds, one of them answering there as a healthy server.
+
+use crate::common::{exists, healthy_occupier, surreal};
+use std::convert::Infallible;
+use std::fs::File;
+use std::io::{BufRead, BufReader, Read};
+use std::net::{SocketAddr, TcpListener, TcpStream};
+use std::path::PathBuf;
+use std::process::{Child, Command, Stdio};
+use std::time::{Duration, Instant};
+use tasks::port::{ATTEMPTS, NotStarted, Start, in_use, listens, start_on_free_port};
+
+/// The deadline of a case whose starts are all quick: one it never comes near.
+fn later() -> Instant {
+    Instant::now() + Duration::from_secs(20)
+}
+
+/// What one fake child does.
+#[derive(Clone, Copy)]
+enum Fake {
+    /// Says it listens on its address, and runs until its input closes.
+    Binds,
+    /// Says on stderr that its address is taken, and ends.
+    Taken,
+    /// Says on stderr why it cannot start, and ends.
+    Fails,
+}
+
+/// Starts fake children, one per start, each doing the next thing `plan` says (the last one again
+/// once it runs out), and keeps the address each start was given.
+struct Starter {
+    plan: Vec<Fake>,
+    given: Vec<SocketAddr>,
+}
+
+impl Starter {
+    fn start(&mut self, addr: SocketAddr) -> Start<Child> {
+        let fake = self.plan[self.given.len().min(self.plan.len() - 1)];
+        self.given.push(addr);
+        let script = match fake {
+            Fake::Binds => r#"echo "listening on $1"; read -r line || :"#,
+            Fake::Taken => r#"echo "start $1: Address already in use (os error 48)" >&2; exit 1"#,
+            Fake::Fails => r#"echo "start $1: the disk is full" >&2; exit 1"#,
+        };
+        let mut child = Command::new("/bin/sh")
+            .args(["-c", script, "fake", &addr.to_string()])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let mut line = String::new();
+        BufReader::new(child.stdout.as_mut().unwrap())
+            .read_line(&mut line)
+            .unwrap();
+        if line == format!("listening on {addr}\n") {
+            return Start::Up(child);
+        }
+        let mut said = String::new();
+        child
+            .stderr
+            .take()
+            .unwrap()
+            .read_to_string(&mut said)
+            .unwrap();
+        assert_eq!(child.wait().unwrap().code(), Some(1));
+        Start::Ended(said)
+    }
+}
+
+type Started = Result<(Child, SocketAddr), NotStarted<Infallible>>;
+
+fn run(plan: &[Fake], attempts: usize, until: Instant) -> (Vec<SocketAddr>, Started) {
+    let mut starter = Starter {
+        plan: plan.to_vec(),
+        given: Vec::new(),
+    };
+    let started = start_on_free_port(attempts, until, |addr| Ok(starter.start(addr)));
+    (starter.given, started)
+}
+
+/// Lets a fake child that is up go: its input closes, so it ends, and well.
+fn stop(mut child: Child) {
+    drop(child.stdin.take());
+    assert!(child.wait().unwrap().success());
+}
+
+#[test]
+fn a_child_that_binds_at_once_is_started_once_on_the_loopback_address_it_was_given() {
+    let (given, started) = run(&[Fake::Binds], ATTEMPTS, later());
+    let (child, addr) = started.unwrap();
+    assert_eq!(given, [addr]);
+    assert!(addr.ip().is_loopback(), "{addr}");
+    assert_ne!(addr.port(), 0);
+    stop(child);
+}
+
+#[test]
+fn a_child_whose_port_was_taken_is_started_again_on_another_port() {
+    let (given, started) = run(&[Fake::Taken, Fake::Binds], ATTEMPTS, later());
+    let (child, addr) = started.unwrap();
+    assert_eq!(given.len(), 2, "{given:?}");
+    assert_eq!(given[1], addr);
+    assert_ne!(given[0].port(), addr.port());
+    stop(child);
+}
+
+#[test]
+fn a_child_whose_port_is_taken_on_every_start_is_given_up_on_with_what_the_last_said() {
+    let (given, started) = run(&[Fake::Taken], ATTEMPTS, later());
+    let Err(NotStarted::InUse { attempts, output }) = &started else {
+        panic!("a port taken each time was not given up on: {started:?}");
+    };
+    assert_eq!(*attempts, ATTEMPTS);
+    assert_eq!(given.len(), ATTEMPTS);
+    let last = given.last().unwrap();
+    assert_eq!(
+        *output,
+        format!("start {last}: Address already in use (os error 48)\n")
+    );
+    let mut ports: Vec<u16> = given.iter().map(SocketAddr::port).collect();
+    ports.sort_unstable();
+    ports.dedup();
+    assert_eq!(ports.len(), ATTEMPTS, "a port was tried twice: {given:?}");
+    assert_eq!(
+        started.unwrap_err().to_string(),
+        format!(
+            "its port was taken on each of {ATTEMPTS} starts; the last one said: \
+             start {last}: Address already in use (os error 48)\n"
+        )
+    );
+}
+
+#[test]
+fn a_child_that_ends_for_another_reason_is_not_started_again() {
+    let (given, started) = run(&[Fake::Fails, Fake::Binds], ATTEMPTS, later());
+    let Err(NotStarted::Ended(output)) = &started else {
+        panic!("a child that failed was not a failure: {started:?}");
+    };
+    assert_eq!(given.len(), 1, "{given:?}");
+    assert_eq!(*output, format!("start {}: the disk is full\n", given[0]));
+    assert_eq!(
+        started.unwrap_err().to_string(),
+        format!(
+            "it ended before it answered: start {}: the disk is full\n",
+            given[0]
+        )
+    );
+}
+
+#[test]
+fn no_attempts_still_makes_one_start() {
+    let (given, started) = run(&[Fake::Taken], 0, later());
+    assert!(
+        matches!(started, Err(NotStarted::InUse { attempts: 1, .. })),
+        "{started:?}"
+    );
+    assert_eq!(given.len(), 1);
+}
+
+#[test]
+fn no_start_is_begun_once_the_deadline_has_passed() {
+    let (given, started) = run(&[Fake::Taken, Fake::Binds], ATTEMPTS, Instant::now());
+    let Err(NotStarted::InUse { attempts, output }) = &started else {
+        panic!("a start was begun after the deadline: {started:?}");
+    };
+    assert_eq!(*attempts, 1);
+    assert_eq!(given.len(), 1, "{given:?}");
+    assert_eq!(
+        *output,
+        format!("start {}: Address already in use (os error 48)\n", given[0])
+    );
+}
+
+#[test]
+fn a_starters_own_failure_is_returned_at_once() {
+    let mut starts = 0;
+    let started = start_on_free_port(ATTEMPTS, later(), |_| {
+        starts += 1;
+        Err::<Start<()>, _>("the server could not be run")
+    });
+    assert!(
+        matches!(
+            started,
+            Err(NotStarted::Failed("the server could not be run"))
+        ),
+        "{started:?}"
+    );
+    assert_eq!(starts, 1);
+    assert_eq!(
+        started.unwrap_err().to_string(),
+        "the server could not be run"
+    );
+}
+
+#[test]
+fn a_taken_address_is_read_in_the_words_systems_and_servers_print() {
+    let held = TcpListener::bind("127.0.0.1:0").unwrap();
+    let refused = TcpListener::bind(held.local_addr().unwrap()).unwrap_err();
+    assert_eq!(refused.kind(), std::io::ErrorKind::AddrInUse);
+    for said in [
+        refused.to_string(),
+        format!("{refused:?}"),
+        format!("{:?}", std::io::Error::from(std::io::ErrorKind::AddrInUse)),
+        "ERROR surrealdb_server::cli: Address already in use (os error 48)".into(),
+        "Error: Address already in use (os error 98)".into(),
+        "listen tcp 127.0.0.1:8000: bind: address already in use".into(),
+    ] {
+        assert!(in_use(&said), "{said}");
+    }
+    for said in [
+        "",
+        "There was a problem with the datastore: the disk is full",
+        "the data folder is in use by another server",
+    ] {
+        assert!(!in_use(said), "{said}");
+    }
+}
+
+#[test]
+fn a_process_listens_on_the_address_of_its_own_listener_alone() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    assert!(listens(std::process::id(), addr).unwrap());
+    let connected = TcpStream::connect(addr).unwrap();
+    let local = connected.local_addr().unwrap();
+    assert!(
+        !listens(std::process::id(), local).unwrap(),
+        "a connected socket on {local} is no listener"
+    );
+    // Binding port zero assigns a different port; no process can listen on zero itself.
+    let free = "127.0.0.1:0".parse().unwrap();
+    assert!(!listens(std::process::id(), free).unwrap(), "{free}");
+}
+
+#[test]
+fn another_process_does_not_listen_on_this_ones_address() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    let mut other = Command::new("/bin/sh")
+        .args(["-c", "read -r line || :"])
+        .stdin(Stdio::piped())
+        .spawn()
+        .unwrap();
+    assert!(!listens(other.id(), addr).unwrap());
+    drop(other.stdin.take());
+    assert!(other.wait().unwrap().success());
+    assert!(!listens(other.id(), addr).unwrap(), "an ended process");
+}
+
+/// A server this case started, ended with it.
+struct Owned(Child);
+
+impl Drop for Owned {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+
+/// What holds the first port the pinned SurrealDB is given.
+#[derive(Clone, Copy, PartialEq)]
+enum Occupier {
+    /// A listener that closes each connection at once, so a health check of it fails at once.
+    Closes,
+    /// A listener that answers as a healthy server does; SurrealDB goes on to bind only once it has,
+    /// as a server held up before its bind would.
+    Answers,
+}
+
+/// The pinned SurrealDB told to bind a port `occupier` holds ends saying so; it is started again on
+/// another port, where it answers and listens itself, all within one deadline.
+fn surreal_on_a_port_taken_by(occupier: Occupier, name: &str) {
+    let dir =
+        PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join(format!("{name}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let probed = dir.join("probed");
+    let until = Instant::now() + Duration::from_secs(20);
+    let mut endings = Vec::new();
+    let taken = match occupier {
+        Occupier::Closes => {
+            let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+            let addr = listener.local_addr().unwrap();
+            std::thread::spawn(move || listener.incoming().for_each(drop));
+            addr
+        }
+        Occupier::Answers => healthy_occupier("127.0.0.1:0".parse().unwrap(), &probed),
+    };
+    let (server, addr) = start_on_free_port(ATTEMPTS, until, |addr| {
+        // The first child is deliberately given the occupier's already-held address.
+        let addr = if endings.is_empty() { taken } else { addr };
+        let mut command = match occupier {
+            Occupier::Closes => Command::new(surreal()),
+            Occupier::Answers => {
+                let mut held = Command::new("/bin/sh");
+                held.args([
+                    "-c",
+                    r#"while [ ! -f "$1" ]; do sleep 0.01; done; shift; exec "$@""#,
+                    "held",
+                ])
+                .arg(&probed)
+                .arg(surreal());
+                held
+            }
+        };
+        let log = dir.join(format!("surreal-{}.log", endings.len()));
+        let out = File::create(&log).unwrap();
+        let mut server = Owned(
+            command
+                .args(["start", "--unauthenticated", "--log", "error", "--bind"])
+                .arg(addr.to_string())
+                .arg("memory")
+                .stdin(Stdio::null())
+                .stdout(out.try_clone().unwrap())
+                .stderr(out)
+                .spawn()
+                .unwrap(),
+        );
+        loop {
+            if server.0.try_wait().unwrap().is_some() {
+                let said = std::fs::read_to_string(&log).unwrap();
+                endings.push(said.clone());
+                return Ok::<_, Infallible>(Start::Ended(said));
+            }
+            if tasks::rpc::healthy(&addr.to_string()) && listens(server.0.id(), addr).unwrap() {
+                return Ok(Start::Up(server));
+            }
+            assert!(
+                Instant::now() < until,
+                "SurrealDB on {addr} neither answered nor ended"
+            );
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    })
+    .unwrap_or_else(|why| panic!("SurrealDB did not come up: {why}"));
+    assert_ne!(addr, taken);
+    assert!(!endings.is_empty());
+    assert!(in_use(&endings[0]), "{}", endings[0]);
+    assert_eq!(
+        exists(&probed),
+        occupier == Occupier::Answers,
+        "the occupier was asked whether it was up"
+    );
+    assert!(tasks::rpc::healthy(&addr.to_string()));
+    assert!(listens(server.0.id(), addr).unwrap());
+    drop(server);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn surreal_on_a_port_taken_before_it_binds_is_started_again_on_another() {
+    surreal_on_a_port_taken_by(Occupier::Closes, "port-taken");
+}
+
+/// What took the port answers health checks before SurrealDB finds the port taken: that answer is
+/// not SurrealDB's, so it is started again all the same.
+#[test]
+fn surreal_on_a_port_whose_occupier_answers_is_started_again_on_another() {
+    surreal_on_a_port_taken_by(Occupier::Answers, "port-taken-answers");
+}

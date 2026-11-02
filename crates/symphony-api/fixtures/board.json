@@ -1,0 +1,83 @@
+{
+  "version": 4182,
+  "build": "/assets/symphony-ui-dxh0123456789abcdef.js",
+  "ping_ms": 5000,
+  "next": [
+    {
+      "slug": "republic-frigate-picture",
+      "doc": "docs/ships/republic.md",
+      "doc_title": "Republic ships",
+      "title": "Republic · frigate picture",
+      "summary": "Three candidates for the Lancer-class frigate, drawn from the hull outline the model now uses: a long spine, twin forward arms and the gun deck under the bridge.",
+      "why": "art · gates 4 hulls",
+      "posted": "2026-10-08 07:42",
+      "pictures": [
+        {"src": "/docs/art/ships/republic/frigate-a.png", "caption": "A", "waiting": true},
+        {"src": "/docs/art/ships/republic/frigate-b.png", "caption": "B", "waiting": true},
+        {"src": "/docs/art/ships/republic/frigate-c.png", "caption": "C", "waiting": true}
+      ]
+    },
+    {
+      "slug": "mining-yield-curve",
+      "doc": "docs/game/MINING.md",
+      "doc_title": "Mining",
+      "title": "Should a rock's yield fall off with each pass of the beam, or stay flat until it is spent?",
+      "summary": "A falling curve rewards moving between rocks; a flat one makes the first rock you find as good as any.",
+      "why": "design · gates 2 cards",
+      "posted": "2026-10-07 18:05"
+    },
+    {
+      "slug": "machine-carrier-picture",
+      "doc": "docs/ships/machine.md",
+      "doc_title": "Machine civilization ships",
+      "title": "Machine civilization · carrier picture",
+      "why": "art · gates 1 hull",
+      "posted": "2026-10-07",
+      "pictures": [
+        {"src": "/docs/art/ships/machine/carrier-a.png", "caption": "A", "waiting": true},
+        {"src": "/docs/art/ships/machine/carrier-b.png", "caption": "B", "waiting": true}
+      ]
+    },
+    {
+      "slug": "dock-menu-order",
+      "doc": "docs/game/STATIONS.md",
+      "doc_title": "Stations",
+      "title": "The dock menu lists repair before trade.",
+      "summary": "Players who dock damaged look for repair first; trade stays one press away.",
+      "why": "design call",
+      "posted": "2026-10-06 21:10"
+    },
+    {
+      "slug": "empire-hull-silhouettes",
+      "doc": "docs/factions/empire.md",
+      "doc_title": "The Empire",
+      "title": "Empire hulls keep the stepped prow across every size class.",
+      "why": "design · gates 11 hulls",
+      "posted": "2026-10-05 09:30",
+      "pictures": [
+        {"src": "/docs/art/ships/empire/corvette.png", "caption": "Corvette"},
+        {"src": "/docs/art/ships/empire/destroyer.png", "caption": "Destroyer", "waiting": true},
+        {"caption": "Cruiser"}
+      ]
+    }
+  ],
+  "counts": {
+    "waiting": 37,
+    "docs_waiting": 9,
+    "spot_check": 4,
+    "answered_today": 6,
+    "tasks": {"in_progress": 12, "in_review": 5, "agents_live": 14}
+  },
+  "progress": {
+    "ship_art": [
+      {"faction": "republic", "name": "Republic", "page": "docs/ships/republic.md", "approved": 21, "waiting": 4, "total": 31},
+      {"faction": "empire", "name": "Empire", "page": "docs/ships/empire.md", "approved": 18, "waiting": 2, "total": 29},
+      {"faction": "coalition", "name": "Alien coalition", "page": "docs/ships/coalition.md", "approved": 9, "waiting": 3, "total": 27},
+      {"faction": "machine", "name": "Machine civilization", "page": "docs/ships/machine.md", "approved": 12, "waiting": 2, "total": 26},
+      {"faction": "biological", "name": "Biological civilization", "page": "docs/ships/biological.md", "approved": 6, "waiting": 0, "total": 24},
+      {"faction": "dimensional", "name": "Dimensional civilization", "page": "docs/ships/dimensional.md", "approved": 3, "waiting": 1, "total": 24}
+    ],
+    "docs": 64,
+    "decisions_waiting": 41
+  }
+}

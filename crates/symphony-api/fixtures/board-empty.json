@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "build": "/assets/symphony-ui-dxh0123456789abcdef.js",
+  "ping_ms": 5000,
+  "next": [],
+  "counts": {
+    "waiting": 0,
+    "docs_waiting": 0,
+    "spot_check": 2,
+    "answered_today": 0,
+    "tasks": null
+  },
+  "progress": {
+    "ship_art": [],
+    "docs": 64,
+    "decisions_waiting": 0
+  }
+}

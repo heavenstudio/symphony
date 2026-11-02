@@ -1,0 +1,70 @@
+# tools/cargo_deny.sh pins the release. lint-rs fetches the locked crates, then checks them offline;
+# the nightly's `just deny` also fetches the RustSec database and checks advisories.
+[graph]
+targets = [
+    "aarch64-apple-darwin",
+    "x86_64-apple-darwin",
+    "x86_64-unknown-linux-gnu",
+    "aarch64-unknown-linux-gnu",
+    "wasm32-unknown-unknown",
+]
+all-features = true
+
+[advisories]
+yanked = "deny"
+unmaintained = "workspace"
+ignore = []
+
+[licenses]
+private = { ignore = true }
+unused-allowed-license = "allow"
+# The policy from tools/python-zero/rust-quality. A newly refused licence goes to the
+# owner on the task thread; do not add an exception to make the gate green.
+allow = [
+    "MIT",
+    # MIT No Attribution; owner, 2026-10-25: "if they are permissive licenses I don't see a problem with allowing them".
+    "MIT-0",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Zlib",
+    "0BSD",
+    "CC0-1.0",
+    "Unlicense",
+    "Unicode-3.0",
+    "Unicode-DFS-2016",
+    # Permissive data licence for webpki-roots; owner, 2026-10-25: "if they are permissive licenses I don't see a problem with allowing them".
+    "CDLA-Permissive-2.0",
+]
+confidence-threshold = 0.8
+exceptions = []
+
+[bans]
+# Upstream crates currently require incompatible major versions. Keep the warning
+# visible in the commit hook; a version-pinned skip list would make routine updates
+# fail every agent's commits (cobalt-otter, tools/python-zero/rust-quality-2).
+multiple-versions = "warn"
+wildcards = "deny"
+allow-wildcard-paths = true
+highlight = "all"
+workspace-default-features = "allow"
+external-default-features = "allow"
+deny = []
+skip = []
+skip-tree = []
+
+# Existing manifests stay untouched during migration. Enforcing inheritance and
+# removing unused root declarations is tracked on tools/python-zero/after-migration.
+[bans.workspace-dependencies]
+duplicates = "allow"
+unused = "allow"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+# The owner approved DioxusLabs' dioxus-components on studio-client-framework;
+# symphony/apps/symphony-ui pins its primitives to the copied controls' exact revision.
+allow-git = ["https://github.com/DioxusLabs/components"]
