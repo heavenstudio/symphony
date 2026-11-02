@@ -1,8 +1,16 @@
 //! Search uses the real analyzer on an isolated board, with independent expected rows and fields.
 
-use crate::Case;
+use crate::{Case, Ran};
 use serde_json::Value;
 use tasks::NewTask;
+
+/// What a run printed, for an assertion's message.
+fn said(ran: &Ran) -> String {
+    format!(
+        "exit {}\nstdout:\n{}\nstderr:\n{}",
+        ran.code, ran.out, ran.err
+    )
+}
 
 fn create(c: &Case, slug: &str, title: &str, body: &str, priority: i64) {
     let mut task = NewTask::new(slug, title, "owner");
@@ -60,10 +68,12 @@ fn embedding_maintenance_reuses_current_chunks_without_loading_a_model_or_requir
     ).unwrap();
     for _ in 0..2 {
         let ran = c.run_as("", &["embed", "--maintenance"], "");
-        assert_eq!(ran.code, 0, "{}", ran.err);
+        assert_eq!(ran.code, 0, "{}", said(&ran));
         assert!(
             ran.out
-                .contains("embedded 0 tasks, 0 changed sources, 0 chunks")
+                .contains("embedded 0 tasks, 0 changed sources, 0 chunks"),
+            "{}",
+            said(&ran)
         );
         assert!(!cache.join("tokenizer.json").exists());
     }
@@ -84,31 +94,49 @@ fn embedding_maintenance_reuses_current_chunks_without_loading_a_model_or_requir
         .unwrap();
     writer.lock().unwrap();
     let busy = c.run_as("", &["embed", "--maintenance"], "");
-    assert_eq!(busy.code, 0, "{}", busy.err);
-    assert!(busy.out.contains("an embedding pass is already running"));
+    assert_eq!(busy.code, 0, "{}", said(&busy));
+    assert!(
+        busy.out.contains("an embedding pass is already running"),
+        "{}",
+        said(&busy)
+    );
     let actor = c.register("worker");
     let refused = c.run_as(&actor, &["embed"], "");
-    assert_eq!(refused.code, 1);
+    assert_eq!(refused.code, 1, "{}", said(&refused));
     assert!(
         refused
             .err
-            .contains("another embedding pass is already running")
+            .contains("another embedding pass is already running"),
+        "{}",
+        said(&refused)
     );
+    // Unlocked, not only closed: a child another test forked shares the lock until it execs.
+    writer.unlock().unwrap();
     drop(writer);
     let owner = c.run_as("owner", &["embed", "--maintenance"], "");
-    assert_eq!(owner.code, 1);
-    assert!(owner.err.contains("the owner acts from the Symphony"));
+    assert_eq!(owner.code, 1, "{}", said(&owner));
+    assert!(
+        owner.err.contains("the owner acts from the Symphony"),
+        "{}",
+        said(&owner)
+    );
     create(&c, "new/task", "A new task", "new knowledge", 2);
     let selected = c.run_as("", &["embed", "--maintenance", "--task", "cached/task"], "");
-    assert_eq!(selected.code, 0, "{}", selected.err);
+    assert_eq!(selected.code, 0, "{}", said(&selected));
     assert!(
         selected
             .out
-            .contains("embedded 0 tasks, 0 changed sources, 0 chunks")
+            .contains("embedded 0 tasks, 0 changed sources, 0 chunks"),
+        "{}",
+        said(&selected)
     );
     let changed = c.run_as("", &["embed", "--maintenance"], "");
-    assert_eq!(changed.code, 2, "{}", changed.err);
-    assert!(changed.err.contains("SHA-256 mismatch"), "{}", changed.err);
+    assert_eq!(changed.code, 2, "{}", said(&changed));
+    assert!(
+        changed.err.contains("SHA-256 mismatch"),
+        "{}",
+        said(&changed)
+    );
     assert!(!cache.join("tokenizer.json").exists());
     std::fs::remove_dir_all(root).unwrap();
 }

@@ -243,4 +243,66 @@ mod tests {
         );
         drop((out_writer, err_writer));
     }
+
+    #[test]
+    fn startup_success_and_error_cleanup_preserve_unrelated_socket_owners() {
+        use std::io::Write;
+
+        fn round_trip(pair: &mut (UnixStream, UnixStream)) {
+            pair.0
+                .set_read_timeout(Some(Duration::from_secs(2)))
+                .unwrap();
+            pair.1
+                .set_read_timeout(Some(Duration::from_secs(2)))
+                .unwrap();
+            let mut byte = [0];
+            pair.0.write_all(b"a").unwrap();
+            pair.1.read_exact(&mut byte).unwrap();
+            assert_eq!(byte, *b"a");
+            pair.1.write_all(b"b").unwrap();
+            pair.0.read_exact(&mut byte).unwrap();
+            assert_eq!(byte, *b"b");
+        }
+
+        let mut unrelated = UnixStream::pair().unwrap();
+        for (program, args, succeeds) in [
+            ("sh", vec!["-c", "printf out; printf err >&2"], true),
+            ("/no/such/sf-startup-command", vec![], false),
+            ("sleep", vec!["60"], false),
+        ] {
+            let mut command = Command::new(program);
+            command.args(args);
+            let limit = if program == "sleep" {
+                Duration::from_millis(20)
+            } else {
+                Duration::from_secs(2)
+            };
+            let result = within(&mut command, limit, |_| Ok(()));
+            if succeeds {
+                let output = result.unwrap();
+                assert!(output.status.success());
+                assert_eq!(output.stdout, b"out");
+                assert_eq!(output.stderr, b"err");
+            } else {
+                assert!(result.is_err(), "{result:?}");
+            }
+            round_trip(&mut unrelated);
+            drop(command);
+            round_trip(&mut unrelated);
+        }
+
+        // The observer allocates sockets after Command releases its configured writer fds.
+        // Keep these new owners across child teardown and Command drop, too.
+        let mut observed = None;
+        let mut command = Command::new("sleep");
+        command.arg("60");
+        let result = within(&mut command, Duration::from_secs(2), |_| {
+            observed = Some(UnixStream::pair().unwrap());
+            Err("observer stopped startup".into())
+        });
+        assert_eq!(result.unwrap_err(), "observer stopped startup");
+        drop(command);
+        round_trip(observed.as_mut().expect("observer ran"));
+        round_trip(&mut unrelated);
+    }
 }

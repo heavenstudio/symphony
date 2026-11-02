@@ -14,6 +14,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Mutex, PoisonError};
 use std::time::Duration;
 
+mod descriptor;
+
 /// How long a request may wait on the server: a whole board's copy, on a loaded machine, is the longest.
 /// Every request waits as long, a rule's and a read's too, but the heartbeat, which a hook waits on
 /// ([`Client::waiting`]).
@@ -56,8 +58,19 @@ pub struct Client {
 #[derive(Debug)]
 struct Connection {
     stream: TcpStream,
+    descriptor: descriptor::Descriptor,
     /// Requests whose complete HTTP replies have been received on this socket.
     served: usize,
+}
+
+impl Connection {
+    fn failure(&self, mut failure: Failure) -> Failure {
+        if failure.bad_descriptor {
+            failure.why.push_str("; ");
+            failure.why.push_str(&self.descriptor.failure(&self.stream));
+        }
+        failure
+    }
 }
 
 impl Client {
@@ -149,6 +162,14 @@ impl Client {
     /// nothing, part of a reply, or nothing before the timeout is the request's failure and is never
     /// sent again: the server may have run it, and a write run twice is a message said twice.
     fn send(&self, request: &[u8]) -> Result<(u16, Vec<u8>), String> {
+        self.send_with_probe(request, open)
+    }
+
+    fn send_with_probe(
+        &self,
+        request: &[u8],
+        mut probe: impl FnMut(&TcpStream) -> Result<bool, Failure>,
+    ) -> Result<(u16, Vec<u8>), String> {
         let kept = loop {
             let kept = self
                 .kept
@@ -156,8 +177,18 @@ impl Client {
                 .unwrap_or_else(PoisonError::into_inner)
                 .pop();
             match kept {
-                Some(connection) if !open(&connection.stream) => {}
-                other => break other,
+                Some(connection) => match probe(&connection.stream) {
+                    Ok(false) => {}
+                    Ok(true) => break Some(connection),
+                    Err(failure) => {
+                        return Err(self.unanswered(
+                            true,
+                            connection.served,
+                            connection.failure(failure),
+                        ));
+                    }
+                },
+                None => break None,
             }
         };
         let pooled = kept.is_some();
@@ -171,9 +202,11 @@ impl Client {
                 .map_err(|error| connect_failed(error.to_string()))?
                 .next()
                 .ok_or_else(|| connect_failed(format!("{} names no address", self.addr)))?;
+            let stream = TcpStream::connect_timeout(&to, self.timeout)
+                .map_err(|error| connect_failed(error.to_string()))?;
             Connection {
-                stream: TcpStream::connect_timeout(&to, self.timeout)
-                    .map_err(|error| connect_failed(error.to_string()))?,
+                descriptor: descriptor::Descriptor::connected(&stream),
+                stream,
                 served: 0,
             }
         };
@@ -182,7 +215,9 @@ impl Client {
                 connection.served += 1;
                 Ok(self.keep(connection, reply))
             }
-            Err(failure) => Err(self.unanswered(pooled, connection.served, failure)),
+            Err(failure) => {
+                Err(self.unanswered(pooled, connection.served, connection.failure(failure)))
+            }
         }
     }
 
@@ -199,7 +234,9 @@ impl Client {
     fn unanswered(&self, pooled: bool, served: usize, failure: Failure) -> String {
         let origin = if pooled { "pooled" } else { "freshly opened" };
         let outcome = match failure.step {
-            Step::Connect | Step::SocketOption(_) => "the request was not sent",
+            Step::Connect | Step::SocketOption(_) | Step::PoolCheck(_) => {
+                "the request was not sent"
+            }
             Step::Write | Step::Read => "the request may have run there, so it was not sent again",
         };
         format!(
@@ -220,6 +257,7 @@ struct Reply {
 enum Step {
     Connect,
     SocketOption(&'static str),
+    PoolCheck(&'static str),
     Write,
     Read,
 }
@@ -229,6 +267,7 @@ impl fmt::Display for Step {
         match self {
             Self::Connect => f.write_str("connect"),
             Self::SocketOption(name) => write!(f, "socket option {name}"),
+            Self::PoolCheck(name) => write!(f, "pooled connection check {name}"),
             Self::Write => f.write_str("write"),
             Self::Read => f.write_str("read"),
         }
@@ -239,6 +278,7 @@ impl fmt::Display for Step {
 struct Failure {
     step: Step,
     why: String,
+    bad_descriptor: bool,
 }
 
 impl Failure {
@@ -246,6 +286,15 @@ impl Failure {
         Self {
             step,
             why: why.to_string(),
+            bad_descriptor: false,
+        }
+    }
+
+    fn io(step: Step, error: std::io::Error) -> Self {
+        Self {
+            step,
+            bad_descriptor: descriptor::bad_descriptor(&error),
+            why: error.to_string(),
         }
     }
 }
@@ -255,23 +304,23 @@ impl Failure {
 fn talk(stream: &mut TcpStream, request: &[u8], timeout: Duration) -> Result<Reply, Failure> {
     stream
         .set_nodelay(true)
-        .map_err(|error| Failure::new(Step::SocketOption("TCP_NODELAY"), error))?;
+        .map_err(|error| Failure::io(Step::SocketOption("TCP_NODELAY"), error))?;
     stream
         .set_read_timeout(Some(timeout))
-        .map_err(|error| Failure::new(Step::SocketOption("SO_RCVTIMEO"), error))?;
+        .map_err(|error| Failure::io(Step::SocketOption("SO_RCVTIMEO"), error))?;
     stream
         .set_write_timeout(Some(timeout))
-        .map_err(|error| Failure::new(Step::SocketOption("SO_SNDTIMEO"), error))?;
+        .map_err(|error| Failure::io(Step::SocketOption("SO_SNDTIMEO"), error))?;
     stream
         .write_all(request)
-        .map_err(|error| Failure::new(Step::Write, error))?;
+        .map_err(|error| Failure::io(Step::Write, error))?;
     let read_failed = |why| Failure::new(Step::Read, why);
     let mut raw = Vec::new();
     let mut chunk = [0u8; 16 * 1024];
     loop {
         let n = stream
             .read(&mut chunk)
-            .map_err(|error| read_failed(error.to_string()))?;
+            .map_err(|error| Failure::io(Step::Read, error))?;
         if n == 0 {
             if raw.is_empty() {
                 return Err(read_failed("it closed the connection".into()));
@@ -292,14 +341,43 @@ fn talk(stream: &mut TcpStream, request: &[u8], timeout: Duration) -> Result<Rep
 
 /// Whether a kept connection is still open: nothing waiting on it, and not closed by the server. A reply
 /// that came unasked, or anything the peek cannot tell, is a connection not to use.
-fn open(stream: &TcpStream) -> bool {
-    if stream.set_nonblocking(true).is_err() {
-        return false;
+trait PoolProbe {
+    fn set_nonblocking(&self, nonblocking: bool) -> std::io::Result<()>;
+    fn peek(&self, byte: &mut [u8]) -> std::io::Result<usize>;
+}
+
+impl PoolProbe for TcpStream {
+    fn set_nonblocking(&self, nonblocking: bool) -> std::io::Result<()> {
+        TcpStream::set_nonblocking(self, nonblocking)
+    }
+
+    fn peek(&self, byte: &mut [u8]) -> std::io::Result<usize> {
+        TcpStream::peek(self, byte)
+    }
+}
+
+fn open(stream: &impl PoolProbe) -> Result<bool, Failure> {
+    if let Err(error) = stream.set_nonblocking(true) {
+        return open_error("set_nonblocking(true)", error);
     }
     let mut byte = [0u8; 1];
-    let open =
-        matches!(stream.peek(&mut byte), Err(e) if e.kind() == std::io::ErrorKind::WouldBlock);
-    open && stream.set_nonblocking(false).is_ok()
+    match stream.peek(&mut byte) {
+        Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {}
+        Err(error) => return open_error("peek", error),
+        Ok(_) => return Ok(false),
+    }
+    if let Err(error) = stream.set_nonblocking(false) {
+        return open_error("set_nonblocking(false)", error);
+    }
+    Ok(true)
+}
+
+fn open_error(operation: &'static str, error: std::io::Error) -> Result<bool, Failure> {
+    if descriptor::bad_descriptor(&error) {
+        Err(Failure::io(Step::PoolCheck(operation), error))
+    } else {
+        Ok(false)
+    }
 }
 
 /// The reply `raw` holds, once it holds all of one that says how long it is; None while it is still coming
@@ -713,6 +791,171 @@ mod tests {
                     Failure::new(step, std::io::Error::from_raw_os_error(libc::EBADF))
                 ),
                 format!("the server at 127.0.0.1:1234 did not answer: {expected}")
+            );
+        }
+    }
+
+    #[test]
+    fn only_bad_descriptor_failures_add_the_connected_socket_identity() {
+        use std::os::fd::AsRawFd;
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let stream = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+        let (_peer, _) = listener.accept().unwrap();
+        let connection = Connection {
+            descriptor: descriptor::Descriptor::connected(&stream),
+            stream,
+            served: 15,
+        };
+        let failure = connection.failure(Failure::io(
+            Step::Read,
+            std::io::Error::from_raw_os_error(libc::EBADF),
+        ));
+        let text = Client::new("127.0.0.1:1234", "sf", "tasks").unanswered(true, 15, failure);
+        assert!(
+            text.contains("read failed on a pooled socket after 15 completed requests"),
+            "{text}"
+        );
+        assert!(
+            text.contains(&format!(
+                "descriptor fd={} state=",
+                connection.stream.as_raw_fd()
+            )),
+            "{text}"
+        );
+        #[cfg(target_os = "macos")]
+        assert!(text.contains("state=open-identity-unproven"), "{text}");
+        #[cfg(not(target_os = "macos"))]
+        assert!(text.contains("state=still-open-same-identity"), "{text}");
+        assert!(text.contains("at-connect=Open"), "{text}");
+        assert!(text.contains("at-failure=Open"), "{text}");
+        for failure in [
+            Failure::io(
+                Step::Read,
+                std::io::Error::from_raw_os_error(libc::ETIMEDOUT),
+            ),
+            Failure::new(Step::Read, "cut off response"),
+        ] {
+            let original = failure.why.clone();
+            assert_eq!(connection.failure(failure).why, original);
+        }
+    }
+
+    #[test]
+    fn a_bad_descriptor_in_the_kept_socket_probe_is_reported_without_sending_or_reconnecting() {
+        for operation in ["set_nonblocking(true)", "peek", "set_nonblocking(false)"] {
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            let address = listener.local_addr().unwrap();
+            let stream = TcpStream::connect(address).unwrap();
+            let (mut peer, _) = listener.accept().unwrap();
+            let client =
+                Client::new(&address.to_string(), "sf", "tasks").waiting(Duration::from_millis(20));
+            client.kept.lock().unwrap().push(Connection {
+                descriptor: descriptor::Descriptor::connected(&stream),
+                stream,
+                served: 15,
+            });
+            let mut calls = 0;
+            let error = client
+                .send_with_probe(b"must not be sent", |_| {
+                    calls += 1;
+                    open_error(operation, std::io::Error::from_raw_os_error(libc::EBADF))
+                })
+                .unwrap_err();
+            assert_eq!(calls, 1);
+            assert!(error.contains(&format!("pooled connection check {operation} failed on a pooled socket after 15 completed requests: Bad file descriptor")), "{error}");
+            assert!(error.contains("descriptor fd="), "{error}");
+            assert!(error.contains("at-connect=Open"), "{error}");
+            assert!(error.contains("at-failure=Open"), "{error}");
+            assert!(error.ends_with("the request was not sent"), "{error}");
+            peer.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+            assert_eq!(
+                peer.read(&mut [0]).unwrap(),
+                0,
+                "no request on the kept socket"
+            );
+            listener.set_nonblocking(true).unwrap();
+            assert!(
+                matches!(listener.accept(), Err(error) if error.kind() == std::io::ErrorKind::WouldBlock),
+                "no replacement connection"
+            );
+            assert!(
+                !open_error(operation, std::io::Error::from_raw_os_error(libc::ENOTCONN)).unwrap()
+            );
+        }
+    }
+
+    #[test]
+    fn pooled_open_handles_each_io_stage_and_keeps_non_ebadf_refusals() {
+        use std::cell::RefCell;
+
+        struct Probe {
+            stop: Option<(&'static str, i32)>,
+            data: Option<usize>,
+            seen: RefCell<Vec<&'static str>>,
+        }
+
+        impl Probe {
+            fn visit(&self, operation: &'static str) -> std::io::Result<()> {
+                self.seen.borrow_mut().push(operation);
+                if let Some((stage, code)) = self.stop
+                    && stage == operation
+                {
+                    Err(std::io::Error::from_raw_os_error(code))
+                } else {
+                    Ok(())
+                }
+            }
+        }
+
+        impl PoolProbe for Probe {
+            fn set_nonblocking(&self, nonblocking: bool) -> std::io::Result<()> {
+                self.visit(if nonblocking {
+                    "set_nonblocking(true)"
+                } else {
+                    "set_nonblocking(false)"
+                })
+            }
+
+            fn peek(&self, _byte: &mut [u8]) -> std::io::Result<usize> {
+                self.visit("peek")?;
+                self.data
+                    .ok_or_else(|| std::io::Error::from(std::io::ErrorKind::WouldBlock))
+            }
+        }
+
+        let operations = ["set_nonblocking(true)", "peek", "set_nonblocking(false)"];
+        for (index, operation) in operations.iter().enumerate() {
+            for code in [libc::EBADF, libc::ENOTCONN] {
+                let probe = Probe {
+                    stop: Some((operation, code)),
+                    data: None,
+                    seen: RefCell::new(Vec::new()),
+                };
+                let result = open(&probe);
+                assert_eq!(*probe.seen.borrow(), operations[..=index]);
+                if code == libc::EBADF {
+                    let failure = result.unwrap_err();
+                    assert!(matches!(failure.step, Step::PoolCheck(stage) if stage == *operation));
+                    assert!(failure.bad_descriptor);
+                    assert_eq!(
+                        failure.why,
+                        std::io::Error::from_raw_os_error(code).to_string()
+                    );
+                } else {
+                    assert!(!result.unwrap());
+                }
+            }
+        }
+        for data in [None, Some(0), Some(1)] {
+            let probe = Probe {
+                stop: None,
+                data,
+                seen: RefCell::new(Vec::new()),
+            };
+            assert_eq!(open(&probe).unwrap(), data.is_none());
+            assert_eq!(
+                *probe.seen.borrow(),
+                operations[..if data.is_none() { 3 } else { 2 }]
             );
         }
     }

@@ -4,7 +4,8 @@ use std::path::{Path, PathBuf};
 
 use serde_json::{Value, json};
 use symphony::relationships::{
-    Declaration, Settings, Tables, check_main, load, parse_effect, schema_errors, tables,
+    Declaration, Settings, Tables, check_main, load, parse_effect, render_table, schema_errors,
+    tables,
 };
 
 use crate::common::Tree;
@@ -201,6 +202,72 @@ fn each_side_carries_its_faction_and_colour() {
         ("🔷", "Consensus", "Machine", "#2a9d8f")
     );
     assert!(tables.side("XXX").is_none());
+}
+
+// The first fixture row is HOM: destroying it loses HOM and gains SYN;
+// helping it gains HOM and loses SYN. Read the real HTML cells, not the data.
+fn rendered_hom(table: &str) -> Vec<String> {
+    let html = render_table(&loaded(), table).unwrap();
+    let row = html
+        .split("<tr>")
+        .find(|row| row.contains("<small>HOM</small>"))
+        .unwrap();
+    row.split("</td>").take(3).map(str::to_string).collect()
+}
+
+#[test]
+fn rendered_gain_and_loss_have_their_own_colours_and_symbols() {
+    for (table, left, right) in [
+        (
+            "destroy",
+            ("#a3161b", "▼▼", "loss"),
+            ("#137a3c", "▲▲▲", "gain"),
+        ),
+        (
+            "help",
+            ("#137a3c", "▲▲", "gain"),
+            ("#a3161b", "▼▼▼", "loss"),
+        ),
+    ] {
+        let cells = rendered_hom(table);
+        assert_eq!(cells.len(), 3);
+        for (cell, (colour, symbol, action)) in cells[1..].iter().zip([left, right]) {
+            assert!(
+                cell.contains(&format!("color:{colour};font-weight:700")),
+                "{table}: {cell}"
+            );
+            assert!(
+                cell.contains(&format!(">{symbol}</span>")),
+                "{table}: {cell}"
+            );
+            assert!(cell.contains(&format!(" {action}")), "{table}: {cell}");
+        }
+    }
+}
+
+#[test]
+fn rendered_help_and_destroy_put_known_effects_under_the_right_headings() {
+    for (table, headings) in [
+        ("destroy", ["goes down", "goes up"]),
+        ("help", ["goes up", "goes down"]),
+    ] {
+        let html = render_table(&loaded(), table).unwrap();
+        let head = html.split("</thead>").next().unwrap();
+        assert!(
+            head.find(headings[0]).unwrap() < head.find(headings[1]).unwrap(),
+            "{head}"
+        );
+        let cells = rendered_hom(table);
+        assert_eq!(cells.len(), 3);
+        assert!(
+            cells[1].contains("⚓ HOM") && !cells[1].contains("🏴 SYN"),
+            "{table}: {cells:?}"
+        );
+        assert!(
+            cells[2].contains("🏴 SYN") && !cells[2].contains("⚓ HOM"),
+            "{table}: {cells:?}"
+        );
+    }
 }
 
 // --- the real files ---

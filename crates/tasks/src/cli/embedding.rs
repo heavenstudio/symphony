@@ -3,7 +3,7 @@ use super::commands::{Context, Stop};
 use crate::Store;
 use crate::embedding::{Bge, Chunk, Embedder, MODEL_ID, text_hash};
 use std::cell::{Cell, RefCell};
-use std::fs::{File, OpenOptions, TryLockError};
+use std::fs::{OpenOptions, TryLockError};
 use std::path::Path;
 use std::time::Instant;
 
@@ -74,7 +74,10 @@ pub(super) fn run(store: &Store, c: &mut Context) -> Result<(), Stop> {
 }
 
 /// One writer per database, while other boards and ordinary commands remain concurrent.
-fn lock(common: &Path, client: &crate::rpc::Client) -> Result<Option<File>, String> {
+fn lock(
+    common: &Path,
+    client: &crate::rpc::Client,
+) -> Result<Option<crate::sys::FileLock>, String> {
     let dir = common.join("sf-task-models");
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let key = text_hash(&format!(
@@ -92,7 +95,7 @@ fn lock(common: &Path, client: &crate::rpc::Client) -> Result<Option<File>, Stri
         .open(&path)
         .map_err(|e| format!("{}: {e}", path.display()))?;
     match file.try_lock() {
-        Ok(()) => Ok(Some(file)),
+        Ok(()) => Ok(Some(crate::sys::FileLock(file))),
         Err(TryLockError::WouldBlock) => Ok(None),
         Err(TryLockError::Error(error)) => Err(format!("{}: {error}", path.display())),
     }
@@ -214,6 +217,23 @@ mod tests {
         assert!(lock(&common, &other).unwrap().is_some());
         drop(held);
         assert!(lock(&common, &client).unwrap().is_some());
+        std::fs::remove_dir_all(common).unwrap();
+    }
+
+    #[test]
+    fn an_ended_pass_frees_its_board_while_a_forked_child_still_holds_the_descriptor() {
+        let common =
+            std::env::temp_dir().join(format!("sf-embedding-release-{}", std::process::id()));
+        std::fs::create_dir_all(&common).unwrap();
+        let client = crate::rpc::Client::new("127.0.0.1:1", crate::NAMESPACE, "one");
+        let held = lock(&common, &client).unwrap().unwrap();
+        // What fork gives a child until it execs: the same open file, so the same lock.
+        let inherited = held.0.try_clone().unwrap();
+        drop(held);
+        let next = lock(&common, &client).unwrap();
+        assert!(next.is_some(), "the ended pass still holds its board");
+        assert!(lock(&common, &client).unwrap().is_none());
+        drop((inherited, next));
         std::fs::remove_dir_all(common).unwrap();
     }
 }
