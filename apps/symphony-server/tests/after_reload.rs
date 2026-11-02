@@ -1139,7 +1139,7 @@ fn failed_build_and_startup_keep_serving_then_module_and_main_handover_preserve_
     );
     // The reload inputs represent committed app work; ordinary land correctly refuses
     // an unrelated tracked-dirty main checkout. Commit only those fixture app inputs.
-    repository(&f.root, &["add", "--", "apps"]);
+    repository(&f.root, &["add", "--", "symphony/apps"]);
     repository(
         &f.root,
         &[

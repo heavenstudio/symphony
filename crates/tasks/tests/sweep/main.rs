@@ -59,7 +59,7 @@ fn template() -> &'static Path {
         ] {
             git(&root, &["config", key, value]);
         }
-        let ignore = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../.gitignore");
+        let ignore = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../.gitignore");
         fs::copy(ignore, root.join(".gitignore")).unwrap();
         write(&root, "sim/world.gd", "extends RefCounted\n");
         git(&root, &["add", "-A"]);

@@ -323,7 +323,7 @@ fn recipe_private_starts_build_and_serve_the_current_checkout() {
             builds
                 .last()
                 .unwrap()
-                .contains("cargo build --locked -p symphony-server --bin symphony-server")
+                .contains("cargo build --locked -p symphony-host --bin symphony-server")
         );
         assert_eq!(get(actual.port, "/").unwrap().0, 200);
         private.signal(libc::SIGTERM);

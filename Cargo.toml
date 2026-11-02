@@ -8,20 +8,13 @@ edition = "2024"
 rust-version = "1.99"
 publish = false
 
-# The tests' and clippy's builds (the board's binary is a release one, tools/rs-bin.sh). A tree's first build
-# starts from a seed and builds the workspace's own crates cold (`sf-slots cargo` cleans them), and nothing reads
-# full debug info, so neither an incremental cache nor full debug info is written to each tree's folder. Line
-# tables keep a panic's backtrace on its lines. The tests' cold build at 2 jobs: 17-22 CPU-s as cargo's default,
-# 14-15 so.
+# Tests and clippy use line tables for panic backtraces without full debug info or incremental
+# caches in each tree's build folder. The board launcher builds release binaries separately.
 [profile.dev]
 debug = "line-tables-only"
 incremental = false
 
-# The regex crates the hooks' guards run on (tools/gate), optimised in dev and test builds too: each
-# hook process compiles its patterns, and the hook tests spawn the binary for every case. Timed on the
-# hook tests, three runs each, load average ~160: CPU 4.66 s user -> 2.53 s; wall 3.90 s -> 3.84 s
-# (spawning dominates it). One dev `sf-hooks kill-guard` call: 26 -> 21.5 ms wall, 20 -> 10 ms CPU.
-# The cost is a slower first dev build of these five crates; release builds are optimised anyway.
+# Optimise the regular-expression dependencies in development and test builds too.
 [profile.dev.package.fancy-regex]
 opt-level = 3
 

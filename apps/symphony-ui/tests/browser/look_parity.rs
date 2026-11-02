@@ -293,7 +293,9 @@ fn document_titles_share_the_contents_column_and_folding_returns_the_full_width(
     );
     browser.eval("document.querySelector('.doc-toc summary').click()");
     assert!(browser.wait_for("!document.querySelector('.doc-toc details').open", SHOWN));
-    assert_eq!(browser.eval("(() => { const head=document.querySelector('.doc-head').getBoundingClientRect(), body=document.querySelector('.doc-body').getBoundingClientRect(); return {head:head.x,body:body.x,width:body.width}; })()"),json!({"head":24,"body":24,"width":1232}));
+    // A vertical scrollbar consumes viewport width; folding must release the entire contents
+    // column within that viewport, keeping exactly the two 24 px page gutters.
+    assert_eq!(browser.eval("(() => { const head=document.querySelector('.doc-head').getBoundingClientRect(), body=document.querySelector('.doc-body').getBoundingClientRect(); return {head:head.x,body:body.x,gutters:document.documentElement.clientWidth-body.width}; })()"),json!({"head":24,"body":24,"gutters":48}));
     let mut plain = responses();
     plain.get_mut("/api/document").unwrap()["document"]["cards"] = json!([]);
     let paragraphs = json!([
