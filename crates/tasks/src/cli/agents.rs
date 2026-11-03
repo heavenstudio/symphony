@@ -436,7 +436,8 @@ pub fn describe_board(
     include_left: bool,
     board: &crate::Board,
 ) -> Result<View, Error> {
-    let panes = (probes.panes)().ok();
+    // A tick of the server clock asks herdr once: its pane watch's sample, when it took one.
+    let panes = store.clock_panes().unwrap_or_else(|| (probes.panes)()).ok();
     let runs = (probes.runs)().ok();
     let records = store.all_task_sessions()?;
     let bound = store.bound_agents()?;

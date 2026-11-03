@@ -104,6 +104,9 @@ delivery or due periodic check writes nothing. The clock's tick, never a write's
 watches panes (`attach::pane_watch`): while a recipient oversees a session with an open launch
 record, it lists herdr's panes once a tick and queues BLOCKED once an episode, or WATCH once while
 herdr cannot be asked; what it last said is `callback_state.pane_watch`, off the board marker.
+It looks before the tick's dispatch, and the tick's PULL view and the clock's agents view read
+its sample (`Store::clock_panes`), so a tick asks herdr once. It plans from the stored
+`pane_watch` and looks again under the lease, so two clocks on one board say an episode once.
 The legacy monitor runs the same watch on its own looks. Observation state is checkpointed
 with newly queued events, before transport. Finished tasks leave its status, role and verdict
 maps after their final diff; messages and pending events retain their durable cursors and outbox.

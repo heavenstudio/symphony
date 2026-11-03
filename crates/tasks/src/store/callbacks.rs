@@ -3,7 +3,7 @@
 
 use super::callback_peer::{self as peer, Owner};
 use super::{ACT, Error, Store, acting, logged, refused};
-use crate::cli::agents::{Probe, Probes};
+use crate::cli::agents::{Answer, Pane, Probe, Probes};
 use crate::cli::{attach, pull};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -483,15 +483,26 @@ RETURN NONE;");
     }
 
     /// The server clock reuses this sequenced snapshot for its read models after delivery. Only the
-    /// clock watches panes: a write delivers what it caused, and a pane's prompt is no write.
+    /// clock watches panes: a write delivers what it caused, and a pane's prompt is no write. The
+    /// watch looks first, so the one herdr sample it takes serves the tick's PULL view and the
+    /// clock's agents view after it ([`Store::clock_panes`]).
     pub fn dispatch_callbacks_snapshot(&self) -> Result<Option<super::Board>, Error> {
+        *self.clock_panes.lock().unwrap_or_else(|e| e.into_inner()) = None;
         let callbacks = self.callbacks()?;
         if callbacks.is_empty() {
             return Ok(None);
         }
-        let board = self.dispatch_board(&callbacks)?;
+        let (board, _) = self.callback_board()?;
         self.watch_panes(&board, &callbacks)?;
-        Ok(Some(board))
+        self.dispatch_board(&callbacks).map(Some)
+    }
+
+    /// The herdr panes this tick of the server clock sampled, when its pane watch took a sample.
+    pub(crate) fn clock_panes(&self) -> Option<Answer<Vec<Pane>>> {
+        self.clock_panes
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
     }
 
     fn dispatch_board(
@@ -555,8 +566,10 @@ RETURN NONE;");
     }
 
     /// One look of the pane watch for each recipient on this host ([`attach::pane_watch`]): herdr is
-    /// asked once, and only when some recipient oversees a session launched into an open pane. A
-    /// look that changes nothing writes nothing.
+    /// asked once a tick, and only when some recipient oversees a session launched into an open
+    /// pane. A look that changes nothing writes nothing. It plans from what the recipient's row said
+    /// and, under its lease, looks again from what the row says now: another clock on the board may
+    /// have said the same thing meanwhile.
     fn watch_panes(
         &self,
         board: &super::Board,
@@ -573,27 +586,38 @@ RETURN NONE;");
             Vec::new()
         };
         let env = crate::cli::Env::of_process();
-        let sample = std::cell::OnceCell::new();
         let panes = || {
-            sample
-                .get_or_init(|| crate::cli::probes::herdr_panes(&env))
+            self.clock_panes
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .get_or_insert_with(|| crate::cli::probes::herdr_panes(&env))
                 .clone()
         };
         for (callback, overseen) in recipients {
-            let mut lines = Vec::new();
-            let after = attach::pane_watch(
-                board,
-                &overseen,
-                &open,
-                &panes,
-                &callback.pane_watch,
-                &mut |line| lines.push(event_line(line)),
-            );
+            let look = |before: &attach::PaneWatch| {
+                let mut lines = Vec::new();
+                let after =
+                    attach::pane_watch(board, &overseen, &open, &panes, before, &mut |line| {
+                        lines.push(event_line(line))
+                    });
+                (lines, after)
+            };
+            let (lines, after) = look(&callback.pane_watch);
             if lines.is_empty() && after == callback.pane_watch {
                 continue;
             }
             let handle = callback.handle.as_str();
             self.with_callback_lease(handle, |deadline, revision| {
+                let stored: attach::PaneWatch = self.retrying(|| {
+                    self.transact(
+                        "RETURN (SELECT VALUE pane_watch FROM ONLY type::record('callback_state', $handle)) ?? {};",
+                        json!({"handle":handle}),
+                    )
+                })?;
+                let (lines, after) = look(&stored);
+                if lines.is_empty() && after == stored {
+                    return Ok(());
+                }
                 let events: Vec<Event> = lines
                     .iter()
                     .enumerate()

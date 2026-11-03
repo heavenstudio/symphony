@@ -22,8 +22,9 @@ impl Drop for Scratch {
 }
 
 /// In the parent, run the case `name` again in a child process whose PATH finds `fake-herdr` as
-/// `herdr`, in a repository of its own so no slot or branch of this one is probed; false once it
-/// passed. In that child, true: the case goes on.
+/// `herdr` (each call it answers one line of `FAKE_HERDR_LOG`), in a repository of its own so no
+/// slot or branch of this one is probed; false once it passed. In that child, true: the case goes
+/// on.
 fn in_child_with_herdr(name: &str) -> bool {
     if std::env::var_os(IN_CHILD).is_some() {
         return true;
@@ -60,6 +61,7 @@ fn in_child_with_herdr(name: &str) -> bool {
             .env_remove("FAKE_HERDR_FAIL")
             .env(IN_CHILD, "1")
             .env("FAKE_HERDR_STATE", &state)
+            .env("FAKE_HERDR_LOG", dir.join("herdr.log"))
             .env(
                 "PATH",
                 format!("{}:{}", bin.display(), std::env::var("PATH").unwrap()),
@@ -240,4 +242,70 @@ fn with_no_session_launched_into_a_pane_there_is_nothing_to_watch() {
     tick(&f);
     tick(&f);
     assert_eq!(o.drain(&f, &worker, &orch), Vec::<String>::new());
+}
+
+/// An orchestrator, and a worker it oversees launched into `w1:p2`, which waits: both handles, and
+/// the orchestrator's stream past its first PULL.
+fn waiting_worker(f: &Fixture) -> (String, String, super::callbacks::Listener) {
+    let orch = f.session("orchestrator");
+    let worker = f.session("worker");
+    f.task("tests/pane");
+    f.store
+        .take_role("tests/pane", &orch, "orchestrator")
+        .unwrap();
+    f.store.claim("tests/pane", &worker).unwrap();
+    launch(f, "tests/pane", &worker, "w1:p2");
+    panes(Some(json!([pane("w1:p2", "blocked")])));
+    let o = listen(f, &orch);
+    assert_eq!(o.text(), BUSY_PULL);
+    (orch, worker, o)
+}
+
+#[test]
+fn two_clocks_on_one_board_say_an_episode_once() {
+    if !in_child_with_herdr("blocked_panes::two_clocks_on_one_board_say_an_episode_once") {
+        return;
+    }
+    let f = Fixture::empty();
+    let (orch, worker, o) = waiting_worker(&f);
+    // The slow clock has read what its recipients were told when the other clock's whole tick runs
+    // (the shared server's beside a `just symphony --port N` one).
+    let other = f.other();
+    let slow = f.slow(move || {
+        other.dispatch_callbacks_snapshot().unwrap();
+    });
+    slow.dispatch_callbacks_snapshot().unwrap();
+    assert_eq!(
+        o.drain(&f, &worker, &orch),
+        [format!(
+            "BLOCKED {worker} tests/pane w1:p2 — its pane waits on an approval or a question"
+        )]
+    );
+}
+
+#[test]
+fn a_tick_asks_herdr_once_for_its_watch_its_pull_and_its_agents_view() {
+    if !in_child_with_herdr(
+        "blocked_panes::a_tick_asks_herdr_once_for_its_watch_its_pull_and_its_agents_view",
+    ) {
+        return;
+    }
+    let f = Fixture::empty();
+    let (orch, worker, o) = waiting_worker(&f);
+    let log = Path::new(&std::env::var("FAKE_HERDR_LOG").unwrap()).to_path_buf();
+    let asked = || std::fs::read_to_string(&log).map_or(0, |text| text.lines().count());
+    let env = tasks::cli::Env::of_process();
+    for wait in [0.0, 601.0] {
+        // The second tick also owes the orchestrator its periodic PULL, whose view reads the panes.
+        f.advance(wait);
+        let before = asked();
+        // A tick as the server runs it: its callbacks, then its agents view.
+        let board = f.store.dispatch_callbacks_snapshot().unwrap().unwrap();
+        let probes = tasks::cli::probes::machine(&env);
+        tasks::cli::agents::describe_board(&f.store, &probes, f.now(), false, &board).unwrap();
+        assert_eq!(asked() - before, 1, "after {wait} s");
+    }
+    assert!(o.drain(&f, &worker, &orch).contains(&format!(
+        "BLOCKED {worker} tests/pane w1:p2 — its pane waits on an approval or a question"
+    )));
 }
