@@ -205,13 +205,14 @@ mod tests {
         for name in ["tab\tname", "café", "literal\\t^A"] {
             let dir = root.join(name).join("inner");
             std::fs::create_dir_all(&dir).unwrap();
-            let child = Child(
+            let child = Child({
+                let _spawning = spawn::spawning();
                 std::process::Command::new("sleep")
                     .arg("60")
                     .current_dir(&dir)
                     .spawn()
-                    .unwrap(),
-            );
+                    .unwrap()
+            });
             assert_eq!(occupied(dir.parent().unwrap()), Some(true), "{name}");
             assert_eq!(occupied(&empty), Some(false));
             drop(child);
