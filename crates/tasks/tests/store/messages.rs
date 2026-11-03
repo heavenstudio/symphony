@@ -1,11 +1,11 @@
 //! Threads: saying, inboxes and acknowledging them, what reaches the owner, each sender's last word,
 //! and landings on the record.
 
-use crate::common::{Fixture, HOST, NOW, refused};
+use crate::common::{Fixture, HOST, NOW, Seed, refused};
 use std::collections::BTreeSet;
 use tasks::health::LIVE_SECONDS;
 use tasks::rpc::Client;
-use tasks::{Health, Message, NewTask, Store};
+use tasks::{Health, Message, NewLaunch, NewTask, Store};
 
 fn texts(messages: Vec<Message>) -> Vec<String> {
     messages.into_iter().map(|m| m.text).collect()
@@ -611,4 +611,203 @@ fn a_remark_after_the_landing_does_not_void_it() {
         .say("sim/a", &reviewer, "thanks, tidy up the worktree", None)
         .unwrap();
     assert_eq!(landings(&f), BTreeSet::from(["sim/a".to_string()]));
+}
+
+// -- a post its executor cannot read ------------------------------------------------------
+
+/// `sim/jump` in review, everyone seen at `NOW`: `ochre-owl` orchestrates, `amber-heron` executed
+/// it, `brisk-finch` reviews it.
+fn in_review() -> Fixture {
+    Fixture::new(
+        Seed::default()
+            .session("ochre-owl")
+            .session("amber-heron")
+            .session("brisk-finch")
+            .task("sim/jump", "review")
+            .role("sim/jump", "ochre-owl", "orchestrator")
+            .role("sim/jump", "amber-heron", "executor")
+            .role("sim/jump", "brisk-finch", "reviewer"),
+    )
+}
+
+/// What the board told `sim/jump`'s orchestrator.
+fn told(f: &Fixture) -> Vec<String> {
+    let inbox = f.store.inbox("ochre-owl").unwrap();
+    inbox
+        .into_iter()
+        .filter(|m| m.sender == "board")
+        .map(|m| m.text)
+        .collect()
+}
+
+/// `amber-heron` ran in a pane the board recorded closed.
+fn pane_closed(f: &Fixture) {
+    f.store
+        .record_launch(&NewLaunch {
+            claude_session: "sess-amber".into(),
+            pane: "w1:p7".into(),
+            ..NewLaunch::new("sim/jump", "amber-heron", "executor")
+        })
+        .unwrap();
+    f.store
+        .close_task_session(
+            "sim/jump",
+            "amber-heron",
+            "idle for two sweeps, its work finished",
+            "just tasks restore sim/jump amber-heron",
+        )
+        .unwrap();
+}
+
+#[test]
+fn a_post_its_live_executor_reads_tells_nobody_else() {
+    let f = in_review();
+    f.store
+        .say("sim/jump", "brisk-finch", "a nit", Some("@executor"))
+        .unwrap();
+    assert_eq!(told(&f), Vec::<String>::new());
+    assert_eq!(texts(f.store.inbox("amber-heron").unwrap()), ["a nit"]);
+}
+
+#[test]
+fn a_post_to_an_executor_whose_pane_was_closed_tells_the_orchestrator_how_to_restore_it() {
+    let f = in_review();
+    pane_closed(&f);
+    assert_eq!(
+        f.health("amber-heron"),
+        Health::Live,
+        "the record decides, not the last beat"
+    );
+    let sent = f
+        .store
+        .say(
+            "sim/jump",
+            "brisk-finch",
+            "the hash moved",
+            Some("@executor"),
+        )
+        .unwrap();
+    assert_eq!(
+        told(&f),
+        [format!(
+            "#{} from brisk-finch to @executor reaches no live executor: amber-heron's pane was closed (idle for two sweeps, its work finished); just tasks restore sim/jump amber-heron",
+            sent.id
+        )]
+    );
+    let notice = f.store.thread("sim/jump").unwrap().pop().unwrap();
+    assert_eq!(
+        (
+            notice.sender.as_str(),
+            notice.kind.as_str(),
+            notice.recipient.as_deref()
+        ),
+        ("board", "msg", Some("@orchestrator"))
+    );
+    assert_eq!(
+        texts(f.store.inbox("amber-heron").unwrap()),
+        ["the hash moved"],
+        "the post waits in its inbox for the restore"
+    );
+    assert_eq!(
+        texts(f.store.inbox("brisk-finch").unwrap()),
+        Vec::<String>::new()
+    );
+}
+
+#[test]
+fn a_quiet_executor_with_no_callback_is_named_by_its_health() {
+    let f = in_review();
+    f.advance(LIVE_SECONDS + 1.0);
+    f.store
+        .say(
+            "sim/jump",
+            "brisk-finch",
+            "for the reviewers",
+            Some("@reviewer"),
+        )
+        .unwrap();
+    assert_eq!(told(&f), Vec::<String>::new(), "only a post to @executor");
+    let sent = f
+        .store
+        .say(
+            "sim/jump",
+            "brisk-finch",
+            "the hash moved",
+            Some("@executor"),
+        )
+        .unwrap();
+    assert_eq!(
+        told(&f),
+        [format!(
+            "#{} from brisk-finch to @executor reaches no live executor: amber-heron is stale with no callback",
+            sent.id
+        )]
+    );
+}
+
+#[test]
+fn a_quiet_executor_with_a_native_callback_is_reached() {
+    let f = in_review();
+    f.advance(LIVE_SECONDS + 1.0);
+    // Registered on another host, so this board's dispatch never tries to deliver it.
+    f.store
+        .client()
+        .query(
+            "UPSERT type::record('callback_state', 'amber-heron') SET handle = 'amber-heron', address = 'codex:abcdef01', host = 'another-host' RETURN NONE;",
+            serde_json::json!({}),
+        )
+        .unwrap();
+    assert!(f.store.callbacks().unwrap().contains_key("amber-heron"));
+    f.store
+        .say(
+            "sim/jump",
+            "brisk-finch",
+            "the hash moved",
+            Some("@executor"),
+        )
+        .unwrap();
+    assert_eq!(told(&f), Vec::<String>::new());
+}
+
+#[test]
+fn the_orchestrator_hears_its_own_post_reached_nobody_when_no_session_executes_the_task() {
+    let f = Fixture::new(
+        Seed::default()
+            .session("ochre-owl")
+            .task("sim/jump", "in_progress")
+            .role("sim/jump", "ochre-owl", "orchestrator"),
+    );
+    let sent = f
+        .store
+        .say("sim/jump", "ochre-owl", "rebase it", Some("@executor"))
+        .unwrap();
+    assert_eq!(
+        told(&f),
+        [format!(
+            "#{} from ochre-owl to @executor reaches no live executor: no session holds the role",
+            sent.id
+        )]
+    );
+}
+
+#[test]
+fn an_orchestrator_above_the_task_is_told_too() {
+    let (f, orch) = chain();
+    let executor = f.session("worker");
+    f.store.claim("a/b/c", &executor).unwrap();
+    f.store.move_to("a/b/c", "review", &executor).unwrap();
+    f.advance(LIVE_SECONDS + 1.0);
+    let reviewer = f.session("reviewer");
+    f.store.take_role("a/b/c", &reviewer, "reviewer").unwrap();
+    f.store
+        .say("a/b/c", &reviewer, "the hash moved", Some("@executor"))
+        .unwrap();
+    let heard: Vec<(String, String)> = f
+        .store
+        .inbox(&orch)
+        .unwrap()
+        .into_iter()
+        .map(|m| (m.slug, m.sender))
+        .collect();
+    assert_eq!(heard, [("a/b/c".to_string(), "board".to_string())]);
 }

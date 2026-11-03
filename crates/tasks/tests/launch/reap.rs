@@ -10,9 +10,10 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 use tasks::cli::Env;
+use tasks::health::LIVE_SECONDS;
 use tasks::launch::herdr::Herdr;
 use tasks::launch::reap::{self, Closed, REAP_SECONDS, Reap, Sweep, lock_path, state_path};
-use tasks::launch::{LaunchError, Processes};
+use tasks::launch::{Ask, LaunchError, Processes, restore as restore_session};
 use tasks::{Error, NewLaunch, NewSession, NewTask, Store};
 
 #[test]
@@ -566,11 +567,91 @@ fn an_agent_blocked_on_anything_else_is_kept() {
 }
 
 #[test]
-fn the_executor_of_a_task_in_review_has_finished_its_part() {
+fn the_executor_of_a_task_in_review_waits_for_its_reviewers_and_closes_once_it_is_done() {
     let w = World::new();
-    let pane = w.agent(Agent::named(&w.executor_on("review", "sim/jump")));
-    w.twice(How::default());
-    assert!(!w.has_pane(&pane));
+    let handle = w.executor_on("review", "sim/jump");
+    let pane = w.agent(Agent::named(&handle));
+    w.kept(&pane, How::default());
+    let reviewer = w.f.session("reviewer");
+    w.store()
+        .take_role("sim/jump", &reviewer, "reviewer")
+        .unwrap();
+    w.store()
+        .verdict("sim/jump", &reviewer, "approve", "ok")
+        .unwrap();
+    assert_eq!(panes(&w.twice(How::default())), [pane.as_str()]);
+}
+
+#[test]
+fn a_post_to_an_executor_whose_pane_was_closed_tells_the_orchestrator_until_it_is_restored() {
+    let w = World::new();
+    w.store()
+        .take_role("sim/jump", &w.orch, "orchestrator")
+        .unwrap();
+    let s = w
+        .try_launch(&Ask {
+            kind: Some("claude".into()),
+            ..w.ask("sim/jump")
+        })
+        .unwrap()
+        .row;
+    w.store().claim("sim/jump", &s.handle).unwrap();
+    w.store().move_to("sim/jump", "review", &s.handle).unwrap();
+    // As the sweep closed it before an executor in review was kept: the pane goes, then its beat ages.
+    w.edit_panes(|panes| panes.retain(|p| p["pane_id"] != s.pane.as_str()));
+    let why = "idle for two sweeps, its work finished";
+    w.store()
+        .close_task_session("sim/jump", &s.handle, why, &restore("sim/jump", &s.handle))
+        .unwrap();
+    w.f.advance(LIVE_SECONDS + 1.0);
+    let reviewer = w.f.session("reviewer");
+    w.store()
+        .take_role("sim/jump", &reviewer, "reviewer")
+        .unwrap();
+    let told = || -> Vec<String> {
+        let inbox = w.store().inbox(&w.orch).unwrap();
+        inbox
+            .into_iter()
+            .filter(|m| m.sender == "board")
+            .map(|m| m.text)
+            .collect()
+    };
+    let first = w
+        .store()
+        .say("sim/jump", &reviewer, "the hash moved", Some("@executor"))
+        .unwrap();
+    assert_eq!(
+        told(),
+        [format!(
+            "#{} from {reviewer} to @executor reaches no live executor: {}'s pane was closed ({why}); {}",
+            first.id,
+            s.handle,
+            restore("sim/jump", &s.handle)
+        )]
+    );
+    restore_session(w.store(), &w.herdr(), &w.machine(), "sim/jump", None, None).unwrap();
+    let second = w
+        .store()
+        .say(
+            "sim/jump",
+            &reviewer,
+            "and the trace line",
+            Some("@executor"),
+        )
+        .unwrap();
+    assert_eq!(
+        told().len(),
+        1,
+        "the restored executor reads it: nobody is told"
+    );
+    let read: Vec<i64> = w
+        .store()
+        .inbox(&s.handle)
+        .unwrap()
+        .into_iter()
+        .map(|m| m.id)
+        .collect();
+    assert_eq!(read, [first.id, second.id]);
 }
 
 #[test]
@@ -873,6 +954,13 @@ fn an_unlaunched_agent_is_recorded_on_its_last_task_in_one_line() {
     w.f.advance(60.0);
     w.store().claim("sim/dock", &handle).unwrap();
     w.store().move_to("sim/dock", "review", &handle).unwrap();
+    let reviewer = w.f.session("reviewer");
+    w.store()
+        .take_role("sim/dock", &reviewer, "reviewer")
+        .unwrap();
+    w.store()
+        .verdict("sim/dock", &reviewer, "approve", "ok")
+        .unwrap();
     let pane = w.agent(Agent::named(&handle));
     let (jump, dock) = (w.f.said("sim/jump").len(), w.f.said("sim/dock").len());
     w.twice(How::default());

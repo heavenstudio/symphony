@@ -1,6 +1,7 @@
 //! `verdict`, on a task in review and on an instruction subtask.
 
 use crate::common::{Fixture, NOW, Seed, refused};
+use tasks::health::LIVE_SECONDS;
 
 /// `sim/jump` in review: `ochre-owl` orchestrates, `amber-heron` executed it, `brisk-finch` reviews it.
 fn in_review() -> Fixture {
@@ -69,6 +70,33 @@ fn changes_sends_it_back_to_the_executor() {
         ),
         ("verdict", "changes: the hash moved", Some("@executor"))
     );
+}
+
+#[test]
+fn changes_for_an_executor_gone_quiet_tell_the_orchestrator_and_an_approve_does_not() {
+    for verdict in ["approve", "changes"] {
+        let f = in_review();
+        f.advance(LIVE_SECONDS + 1.0);
+        f.store
+            .verdict("sim/jump", "brisk-finch", verdict, "the hash moved")
+            .unwrap();
+        let told: Vec<(String, Option<String>, String)> = f
+            .store
+            .thread("sim/jump")
+            .unwrap()
+            .into_iter()
+            .filter(|m| m.sender == "board")
+            .map(|m| (m.kind, m.recipient, m.text))
+            .collect();
+        let expected = (verdict == "changes").then(|| {
+            (
+                "msg".to_string(),
+                Some("@orchestrator".to_string()),
+                "the changes verdict from brisk-finch to @executor reaches no live executor: amber-heron is stale with no callback".to_string(),
+            )
+        });
+        assert_eq!(told, Vec::from_iter(expected), "{verdict}");
+    }
 }
 
 #[test]

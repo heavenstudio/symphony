@@ -656,7 +656,7 @@ impl Store {
         let said = format!("{verdict}: {}", text.trim())
             .trim_end_matches([':', ' '])
             .to_string();
-        self.rule(slug, handle, |view| {
+        let task = self.rule(slug, handle, |view| {
             view.actor(handle)?;
             let task = view.task(slug)?;
             if task.status != "review" {
@@ -675,7 +675,11 @@ impl Store {
                 }),
                 ..Change::default()
             })
-        })
+        })?;
+        if verdict == "changes" {
+            self.tell_if_unread(slug, &format!("the changes verdict from {handle}"));
+        }
+        Ok(task)
     }
 
     /// The executor of an instruction subtask closes it, the note being its result.

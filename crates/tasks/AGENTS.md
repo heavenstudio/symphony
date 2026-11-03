@@ -83,7 +83,12 @@ Unknown observations keep the heartbeat health older binaries derive in `seen`, 
 metadata restoring Unknown for newer readers. Both old and new writers must share that baseline
 past the ten-minute lost threshold, or alternating dispatchers repeat liveness notices.
 A finished idle pane still closes under the original cleanup rules, retiring its
-registration. Restore prompts re-register the resumed process's callback first.
+registration; an executor of a task in review is not finished, and keeps its pane.
+A post or changes verdict to `@executor` that no executor can read (its launch record
+closed, or no callback and no live beat) adds a `board` post to `@orchestrator` on the
+thread after the write commits (`store/messages.rs`, `tell_if_unread`); its failure is
+said on stderr, never turned into a failed write.
+Restore prompts re-register the resumed process's callback first.
 Neither channel checks nor delivery fabricate tool calls.
 Outbox rows are indexed by handle
 and delivery state, with a numeric sequence for ordering; chat retries belong
