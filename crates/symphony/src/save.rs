@@ -360,6 +360,20 @@ impl Saves {
                     return Err(problem.to_string().into());
                 }
                 store.say(slug, "owner", &format!("approved {branch} to land"), None)?;
+                // Work its stamps held blocked waiting on this approval goes back to review. A move
+                // that fails here is made by the next landing or stamp edit, which re-reads them.
+                let released = commit::land_call(
+                    &self.root,
+                    &json!({"method":"stamps_released", "branch":&branch}),
+                );
+                for held in released
+                    .iter()
+                    .flat_map(|r| r.as_array().into_iter().flatten())
+                {
+                    if let Some(held) = held.as_str() {
+                        let _ = store.move_to(held, "review", "owner");
+                    }
+                }
                 Ok(json!({"ok":true}))
             }
             "/api/ask" | "/api/ask-reply" => self.ask(scope, route, payload),

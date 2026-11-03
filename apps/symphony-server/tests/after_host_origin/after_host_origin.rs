@@ -449,6 +449,39 @@ printf '%s\n' '{"Self":{"DNSName":"review-fixture.tail.test.","TailscaleIPs":["f
         feed.until("server notice", |line| line.starts_with("event: server"));
         feed
     }
+    /// Stands in for `tools/rs-bin.sh sf-land api`: records each request in `land.calls`, accepts an
+    /// owner approval and answers the stamps' release with the JSON `released`.
+    pub fn land_stand_in(&self, released: &str) {
+        let stub = self.root.join("tools/rs-bin.sh");
+        std::fs::create_dir_all(stub.parent().unwrap()).unwrap();
+        crate::fixture_script::write(
+            &stub,
+            &format!(
+                concat!(
+                    "#!/bin/sh\nset -eu\n",
+                    "[ \"$*\" = 'sf-land api' ] || exit 91\n",
+                    "request=$(cat)\n",
+                    "printf '%s\\n' \"$request\" >> \"$PWD/land.calls\"\n",
+                    "case \"$request\" in\n",
+                    "  *record_owner_approval*) printf '\"\"\\n' ;;\n",
+                    "  *stamps_released*) printf '%s\\n' '{}' ;;\n",
+                    "  *) exit 92 ;;\n",
+                    "esac\n"
+                ),
+                released
+            ),
+            false,
+        );
+    }
+
+    pub fn land_calls(&self) -> Vec<String> {
+        std::fs::read_to_string(self.root.join("land.calls"))
+            .unwrap_or_default()
+            .lines()
+            .map(str::to_string)
+            .collect()
+    }
+
     pub fn finish_calls(&self) -> Vec<String> {
         std::fs::read_to_string(self.root.join("finish.calls"))
             .unwrap_or_default()
