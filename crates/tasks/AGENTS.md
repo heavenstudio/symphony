@@ -100,7 +100,11 @@ taking or releasing it never rewrites `seen` or `statuses` or allocates a counte
 survive retirement and pruning so a revision is never reused. A completed periodic PULL check
 records its time in that small row even when the digest adds no entry, rearming the deadline
 across fresh Stores without moving the board marker. A tick with no changed observation, due
-delivery or due periodic check writes nothing. Observation state is checkpointed
+delivery or due periodic check writes nothing. The clock's tick, never a write's dispatch, also
+watches panes (`attach::pane_watch`): while a recipient oversees a session with an open launch
+record, it lists herdr's panes once a tick and queues BLOCKED once an episode, or WATCH once while
+herdr cannot be asked; what it last said is `callback_state.pane_watch`, off the board marker.
+The legacy monitor runs the same watch on its own looks. Observation state is checkpointed
 with newly queued events, before transport. Finished tasks leave its status, role and verdict
 maps after their final diff; messages and pending events retain their durable cursors and outbox.
 Finished tasks cannot reopen through the board's transitions. A hand-edited reopen has no

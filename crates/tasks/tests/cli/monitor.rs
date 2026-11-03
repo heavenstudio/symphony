@@ -173,6 +173,21 @@ impl Monitor {
         calls
     }
 
+    /// herdr as the crate's `fake-herdr`, found on PATH as `herdr`; its panes `panes` in the file
+    /// returned, which a case rewrites between looks.
+    fn fake_herdr(&mut self, panes: Value) -> PathBuf {
+        let bin = self.dir.join("bin");
+        fs::create_dir_all(&bin).unwrap();
+        std::os::unix::fs::symlink(env!("CARGO_BIN_EXE_fake-herdr"), bin.join("herdr")).unwrap();
+        let state = self.dir.join("fake-herdr.json");
+        fs::write(&state, json!({ "panes": panes }).to_string()).unwrap();
+        let vars = &mut self.c.env.vars;
+        vars.remove("HERDR_BIN");
+        vars.insert("PATH".into(), format!("{}:/usr/bin:/bin", bin.display()));
+        vars.insert("FAKE_HERDR_STATE".into(), state.display().to_string());
+        state
+    }
+
     fn asked(calls: &PathBuf) -> usize {
         fs::read_to_string(calls).unwrap().lines().count()
     }
@@ -865,4 +880,123 @@ fn an_unlaunched_child_verifying_in_a_trial_merge_is_neither_lost_nor_orphaning_
         m.lines()
     );
     // An orphan entry would trigger a PULL; the verifying child creates no actionable gap.
+}
+
+/// `launched_child`'s pane, `w1:p1`, as herdr reports it.
+fn child_pane(status: &str) -> Value {
+    json!({"pane_id": "w1:p1", "agent": "claude", "agent_status": status,
+           "agent_session": {"value": "sess-c"}, "cwd": "/wt/child"})
+}
+
+/// The pane watch's lines.
+fn watched(m: &Monitor) -> Vec<String> {
+    m.starting(&["BLOCKED ", "WATCH "])
+}
+
+#[test]
+fn a_blocked_pane_is_said_once_until_it_is_answered_and_blocks_again() {
+    let mut m = Monitor::new("blocked-once");
+    let state = m.fake_herdr(json!([child_pane("working")]));
+    let (orch, child) = launched_child(&m);
+    let set = |status: &str| {
+        fs::write(&state, json!({ "panes": [child_pane(status)] }).to_string()).unwrap()
+    };
+    m.watch(&orch, Watch::polls(5), &|_, n| match n {
+        0 | 3 => set("blocked"),
+        2 => set("working"),
+        _ => {}
+    });
+    let blocked =
+        format!("BLOCKED {child} sim/a w1:p1 — its pane waits on an approval or a question");
+    assert_eq!(watched(&m), [blocked.clone(), blocked]);
+}
+
+#[test]
+fn only_a_blocked_sessions_orchestrators_and_parent_hear_it() {
+    let mut m = Monitor::new("blocked-who");
+    let (parent, child) = launched_child(&m);
+    let orch = m.register("orchestrator");
+    m.ok(&orch, &["role", "sim/a", "orchestrator"]);
+    let other = m.register("orchestrator");
+    // The orchestrator's own pane, and one no session holds, wait too.
+    let own = NewLaunch {
+        pane: "w1:p2".into(),
+        ..NewLaunch::new("sim/a", &orch, "reviewer")
+    };
+    m.board().record_launch(&own).unwrap();
+    let pane = |id: &str| json!({"pane_id": id, "agent": "codex", "agent_status": "blocked"});
+    m.fake_herdr(json!([child_pane("blocked"), pane("w1:p2"), pane("w1:p9")]));
+    let blocked =
+        format!("BLOCKED {child} sim/a w1:p1 — its pane waits on an approval or a question");
+    for (who, heard) in [
+        (&other, vec![]),
+        (&parent, vec![blocked.clone()]),
+        (&orch, vec![blocked]),
+    ] {
+        m.lines.borrow_mut().clear();
+        m.watch(who, Watch::polls(0), &idle);
+        assert_eq!(watched(&m), heard, "{who}");
+    }
+}
+
+#[test]
+fn herdr_absent_is_said_once() {
+    let m = Monitor::new("herdr-absent");
+    let (orch, _) = launched_child(&m);
+    m.watch(&orch, Watch::polls(5), &idle);
+    assert_eq!(
+        watched(&m),
+        [
+            "WATCH herdr unanswered: herdr pane list: No such file or directory (os error 2) — blocked panes go unreported until it answers"
+        ]
+    );
+}
+
+#[test]
+fn herdr_failing_is_said_once_and_the_block_it_hid_is_said_when_it_answers() {
+    let mut m = Monitor::new("herdr-failing");
+    let state = m.fake_herdr(json!([child_pane("blocked")]));
+    let (orch, child) = launched_child(&m);
+    let set = |text: String| fs::write(&state, text).unwrap();
+    let blocked = json!({ "panes": [child_pane("blocked")] }).to_string();
+    set("not json".into());
+    m.watch(&orch, Watch::polls(5), &|_, n| match n {
+        2 => set(blocked.clone()),
+        3 => set("not json".into()),
+        4 => set(blocked.clone()),
+        _ => {}
+    });
+    let lines = watched(&m);
+    let said: Vec<&str> = lines
+        .iter()
+        .map(|l| &l[..l.find(':').unwrap_or(l.len())])
+        .collect();
+    // Two outages, each said once; the block once, not again after the second.
+    assert_eq!(
+        said,
+        [
+            "WATCH herdr unanswered",
+            format!("BLOCKED {child} sim/a w1").as_str(),
+            "WATCH herdr unanswered"
+        ],
+        "{lines:?}"
+    );
+    assert!(
+        lines[0].starts_with("WATCH herdr unanswered: herdr pane list failed: "),
+        "{lines:?}"
+    );
+}
+
+#[test]
+fn a_poll_asks_herdr_once_for_the_view_and_the_pane_watch() {
+    let mut m = Monitor::new("herdr-once-watched");
+    let (orch, _) = launched_child(&m);
+    let calls = m.herdr();
+    let w = Watch {
+        beat: 1000.0,
+        ..Watch::past_the_lost_line()
+    };
+    m.watch(&orch, w, &idle);
+    // Every poll watches the launched child's pane; the polls it is quiet also need the view.
+    assert_eq!(Monitor::asked(&calls), GONE_STEPS + 1);
 }

@@ -356,7 +356,7 @@ fn resolve(path: &str) -> String {
 
 /// The pane that is this agent's: its recorded one, else one running its conversation, else one
 /// named for its handle.
-fn find_pane<'p>(
+pub(crate) fn find_pane<'p>(
     panes: &'p [Pane],
     record: Option<&TaskSessionRow>,
     bound: Option<&str>,
