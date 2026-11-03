@@ -13,7 +13,7 @@ use crate::markup::{dirname, join, normpath};
 use crate::register::parse_decisions;
 use crate::text::{read_text, splitlines};
 
-use super::{CardCache, Components};
+use super::CardCache;
 
 static WIKILINK: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"\[\[(?P<target>[^\]|#]+)(?:#(?P<heading>[^\]|]+))?(?:\|(?P<label>[^\]]+))?\]\]")
@@ -246,37 +246,20 @@ fn token(n: usize) -> String {
 
 /// `text` with each component reference replaced by a plain token, and the HTML each token stands for.
 /// The tokens hold no markup, so markdown (tables included) cannot break or escape a component;
-/// [`restore`] puts the HTML in after the conversion.
-pub(crate) fn expand(text: &str, components: &dyn Components) -> (String, Vec<String>) {
-    expand_for(text, components, false)
-}
-
+/// [`restore`] puts the HTML in after the conversion. `component` renders one reference.
 pub(crate) fn expand_for(
     text: &str,
-    components: &dyn Components,
-    typed: bool,
+    component: &mut dyn FnMut(&str, &str, Option<&str>) -> String,
 ) -> (String, Vec<String>) {
     let mut stash: Vec<String> = Vec::new();
     let out = outside_code(text, &mut |part| {
         REFERENCE
             .replace_all(part, |found: &Captures<'_>| {
-                let shown = components
-                    .render_one(
-                        &found["name"],
-                        &found["arg"],
-                        found.name("option").map(|m| m.as_str()),
-                    )
-                    .unwrap_or_else(|problem| {
-                        format!(
-                            "<span class=\"component-error\" title=\"component error\">⚠ {}</span>",
-                            crate::markup::escape(&problem)
-                        )
-                    });
-                stash.push(if typed {
-                    format!("<sf-component data-kind=\"{}\" data-arg=\"{}\" data-option=\"{}\">{shown}</sf-component>",
-                        crate::markup::escape(&found["name"]), crate::markup::escape(&found["arg"]),
-                        crate::markup::escape(found.name("option").map_or("", |m| m.as_str())))
-                } else { shown });
+                stash.push(component(
+                    &found["name"],
+                    &found["arg"],
+                    found.name("option").map(|m| m.as_str()),
+                ));
                 token(stash.len() - 1)
             })
             .into_owned()

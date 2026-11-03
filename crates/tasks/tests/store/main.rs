@@ -9,6 +9,7 @@ mod cutover;
 mod depends;
 mod done;
 mod embeddings;
+mod fields;
 #[path = "../../../../../tools/gate/tests/verify/script.rs"]
 mod fixture_script;
 mod health;

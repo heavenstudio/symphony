@@ -6,15 +6,12 @@ use std::path::Path;
 use std::sync::LazyLock;
 
 use regex::Regex;
-use serde::Deserialize;
+
 use symphony_api::{
-    ActivityItem, Board, Card, Counts, FactionArt, Pending, PendingItem, Picture, Progress, Queue,
-    QueueItem,
+    ActivityItem, Board, Card, Counts, Pending, PendingItem, Progress, Queue, QueueItem,
 };
 
-use crate::{
-    Decision, Doc, Group, ReviewError, State, Who, art, board, branches, clock, tree, triage,
-};
+use crate::{Decision, Doc, Group, ReviewError, State, Who, board, branches, clock, tree, triage};
 
 static TAG: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"\*(?:Shows|Replaces|Depends|After|Blocks|Gates):\*[^*]*").unwrap()
@@ -27,7 +24,6 @@ static LINK: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\[([^\]]*)\]\([^)]*
 static CUT_OFF: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"!?\[[^\]]*(?:\]\([^)]*)?$").unwrap());
 static SENTENCE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^(.+?[.!?])(?:\s|$)").unwrap());
-static HULLS: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\[\[ships?:([^\]|]+)").unwrap());
 
 pub fn plain(text: &str) -> String {
     let refs = REF.replace_all(text, |c: &regex::Captures<'_>| {
@@ -74,9 +70,9 @@ fn first_sentence(text: &str) -> &str {
 }
 
 pub fn card_title(card: &Decision) -> String {
-    art::shows(card).map_or_else(
+    crate::plugins::slot(card).map_or_else(
         || cut(first_sentence(&words(card)), 110),
-        |(sub, kind)| format!("{sub} · {kind} picture"),
+        |slot| format!("{slot} picture"),
     )
 }
 
@@ -86,7 +82,7 @@ pub fn card_summary(card: &Decision) -> String {
 
 pub fn card_rest(card: &Decision) -> String {
     let text = words(card);
-    let rest = if art::shows(card).is_some() {
+    let rest = if crate::plugins::slot(card).is_some() {
         text.as_str()
     } else {
         text.strip_prefix(first_sentence(&text))
@@ -96,160 +92,26 @@ pub fn card_rest(card: &Decision) -> String {
     cut(rest, 260)
 }
 
-#[derive(Default, Deserialize)]
-struct Roster {
-    #[serde(default)]
-    hulls: Vec<Hull>,
-    #[serde(default)]
-    factions: Vec<Faction>,
-}
-
-#[derive(Deserialize)]
-struct Hull {
-    id: String,
-    name: String,
-    faction: String,
-}
-
-#[derive(Deserialize)]
-struct Faction {
-    id: String,
-    name: String,
-}
-
-struct Pictures {
-    roster: Roster,
-    shown: BTreeMap<String, Option<(String, bool)>>,
-}
-
-impl Pictures {
-    fn load(root: &Path, docs: &[Doc]) -> Result<Self, ReviewError> {
-        let path = root.join(art::ROSTER);
-        let roster: Roster = match std::fs::read_to_string(&path) {
-            Ok(text) => serde_json::from_str(&text)
-                .map_err(|e| ReviewError(format!("{}: {e}", path.display())))?,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Roster::default(),
-            Err(e) => return Err(ReviewError(format!("{}: {e}", path.display()))),
-        };
-        let mut shown = BTreeMap::new();
-        for hull in &roster.hulls {
-            let label = format!("{} {}", hull.id, hull.name);
-            let path = format!("{}/{}.md", art::SHIP_PAGES, hull.faction);
-            let cards = docs
-                .iter()
-                .find(|doc| doc.path == path)
-                .map_or(&[][..], |doc| doc.decisions.as_slice());
-            let chosen =
-                art::choose(cards, &label, "ship").map_err(|e| ReviewError(e.to_string()))?;
-            shown.insert(hull.id.clone(), chosen);
-        }
-        Ok(Self { roster, shown })
-    }
-
-    fn card(&self, card: &Decision) -> Vec<Picture> {
-        let candidates = art::candidates(card);
-        if !candidates.is_empty() {
-            return candidates
-                .iter()
-                .take(4)
-                .map(|(alt, src)| {
-                    let letter = alt.rsplit(' ').next().unwrap_or("");
-                    let caption = if candidates.len() > 1
-                        && letter.len() == 1
-                        && letter.bytes().all(|b| b.is_ascii_uppercase())
-                    {
-                        letter
-                    } else {
-                        ""
-                    };
-                    Picture {
-                        src: Some(src.clone()),
-                        caption: caption.to_string(),
-                        waiting: false,
-                    }
-                })
-                .collect();
-        }
-        let mut seen = BTreeSet::new();
-        HULLS
-            .captures_iter(&card.text)
-            .flat_map(|c| {
-                c[1].split(',')
-                    .map(|id| id.trim().to_uppercase())
-                    .collect::<Vec<_>>()
-            })
-            .filter(|id| seen.insert(id.clone()))
-            .filter_map(|id| {
-                let hull = self.roster.hulls.iter().find(|h| h.id == id)?;
-                let shown = self.shown.get(&id).and_then(Option::as_ref);
-                Some(Picture {
-                    src: shown.map(|s| s.0.clone()),
-                    caption: format!("{} {}", hull.id, hull.name),
-                    waiting: shown.is_some_and(|s| s.1),
-                })
-            })
-            .take(6)
-            .collect()
-    }
-
-    fn progress(&self, docs: &[Doc]) -> Progress {
-        let mut order: Vec<String> = self.roster.factions.iter().map(|f| f.id.clone()).collect();
-        for hull in &self.roster.hulls {
-            if !order.contains(&hull.faction) {
-                order.push(hull.faction.clone());
-            }
-        }
-        let ship_art = order
-            .into_iter()
-            .filter_map(|faction| {
-                let hulls: Vec<_> = self
-                    .roster
-                    .hulls
-                    .iter()
-                    .filter(|h| h.faction == faction)
-                    .collect();
-                if hulls.is_empty() {
-                    return None;
-                }
-                let approved = hulls
-                    .iter()
-                    .filter(|h| self.shown[&h.id].as_ref().is_some_and(|s| !s.1))
-                    .count();
-                let waiting = hulls
-                    .iter()
-                    .filter(|h| self.shown[&h.id].as_ref().is_some_and(|s| s.1))
-                    .count();
-                let name = self
-                    .roster
-                    .factions
-                    .iter()
-                    .find(|f| f.id == faction)
-                    .map_or_else(|| faction.clone(), |f| f.name.clone());
-                Some(FactionArt {
-                    page: format!("{}/{faction}.md", art::SHIP_PAGES),
-                    faction,
-                    name,
-                    approved: count(approved),
-                    waiting: count(waiting),
-                    total: count(hulls.len()),
-                })
-            })
-            .collect();
-        let pages: Vec<_> = docs
+/// The home's progress in the checkout at `root`: its plugins' regions and the design documents.
+fn progress(root: &Path, docs: &[Doc]) -> Progress {
+    let pages: Vec<_> = docs
+        .iter()
+        .filter(|d| !d.path.ends_with("/README.md"))
+        .collect();
+    Progress {
+        regions: crate::plugins::Plugins::of(root)
+            .home_regions()
             .iter()
-            .filter(|d| !d.path.ends_with("/README.md"))
-            .collect();
-        Progress {
-            ship_art,
-            docs: count(pages.len()),
-            decisions_waiting: count(
-                pages
-                    .iter()
-                    .flat_map(|d| &d.decisions)
-                    .filter(|c| c.state == State::Pending)
-                    .count(),
-            ),
-        }
+            .filter_map(|region| region.region(root))
+            .collect(),
+        docs: count(pages.len()),
+        decisions_waiting: count(
+            pages
+                .iter()
+                .flat_map(|d| &d.decisions)
+                .filter(|c| c.state == State::Pending)
+                .count(),
+        ),
     }
 }
 
@@ -310,8 +172,7 @@ pub fn snapshot(
     build: &str,
 ) -> Result<Snapshot, ReviewError> {
     let mut docs = board::scan(root)?;
-    let pictures = Pictures::load(root, &docs)?;
-    let mut progress = pictures.progress(&docs);
+    let mut progress = progress(root, &docs);
     // Distinct proposals remain separate decisions; only main's older copy is suppressed.
     // Branch discovery already removes identical copies carried by stacked branches.
     let proposals = merge_decisions(&mut docs, branch_cards);
@@ -320,7 +181,6 @@ pub fn snapshot(
     } else {
         branches::task_names(root)
     };
-    let mut branch_pictures: BTreeMap<String, Option<Pictures>> = BTreeMap::new();
     let ranked = triage::queue(&docs, usize::MAX, "");
     let mut queue = Queue::default();
     for item in &ranked {
@@ -336,7 +196,7 @@ pub fn snapshot(
             continue;
         };
         let text = words(card);
-        let summary = if art::shows(card).is_some() {
+        let summary = if crate::plugins::slot(card).is_some() {
             text.as_str()
         } else {
             text.strip_prefix(first_sentence(&text))
@@ -359,21 +219,10 @@ pub fn snapshot(
                 .replace("design · gates nothing known", "design call"),
             posted: card.posted_at(),
             pictures: {
-                let source = if let Some(branch) = branch {
-                    branch_pictures
-                        .entry(branch.tree.branch.clone())
-                        .or_insert_with(|| {
-                            // Only visible owner decisions need their tree's picture metadata.
-                            board::scan(&branch.tree.path)
-                                .ok()
-                                .and_then(|docs| Pictures::load(&branch.tree.path, &docs).ok())
-                        })
-                        .as_ref()
-                        .unwrap_or(&pictures)
-                } else {
-                    &pictures
+                let mut found = match branch {
+                    Some(branch) => crate::plugins::pictures(&branch.tree.path, &branch.doc, card),
+                    None => crate::plugins::pictures(root, &item.doc, card),
                 };
-                let mut found = source.card(card);
                 if let Some(branch) = branch {
                     for src in found.iter_mut().filter_map(|p| p.src.as_mut()) {
                         *src = crate::docview::scoped(

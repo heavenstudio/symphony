@@ -147,10 +147,21 @@ pub(crate) async fn answer(
     if !base.starts_with(&root) {
         return StatusCode::NOT_FOUND.into_response();
     }
-    let Ok(path) = tokio::fs::canonicalize(base.join(relative)).await else {
+    contained(shared, &base, &base.join(relative), request).await
+}
+
+/// The file `wanted` as served media when it resolves inside `base` (canonical) and outside the
+/// repository's metadata, its type read from its own name; not found otherwise.
+pub(crate) async fn contained(
+    shared: &crate::front::Shared,
+    base: &Path,
+    wanted: &Path,
+    request: &axum::http::Request<()>,
+) -> Response {
+    let Ok(path) = tokio::fs::canonicalize(wanted).await else {
         return StatusCode::NOT_FOUND.into_response();
     };
-    if !path.starts_with(&base) || shared.is_metadata(&path) {
+    if !path.starts_with(base) || shared.is_metadata(&path) {
         return StatusCode::NOT_FOUND.into_response();
     }
     let Ok(file) = tokio::fs::File::open(&path).await else {
@@ -178,7 +189,7 @@ pub(crate) async fn answer(
     for (name, value) in [
         (
             header::CONTENT_TYPE,
-            mime(relative).unwrap_or("application/octet-stream"),
+            mime(&wanted.to_string_lossy()).unwrap_or("application/octet-stream"),
         ),
         (header::CONTENT_SECURITY_POLICY, "sandbox allow-scripts"),
         (header::X_CONTENT_TYPE_OPTIONS, "nosniff"),

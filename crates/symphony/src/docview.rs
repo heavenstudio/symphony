@@ -129,7 +129,6 @@ pub fn document(render: &Render, rel: &str, scope: &str) -> Result<Document, Str
         comparison: None,
     };
     for section in &mut doc.sections {
-        crate::models::expand(render.root(), &mut section.html, &mut section.media);
         prepare_fragment(
             &mut section.html,
             &mut section.media,
@@ -492,7 +491,7 @@ pub fn legacy_html(fragment: &Fragment) -> String {
     let mut html = fragment.html.clone();
     for (index, item) in fragment.media.iter().enumerate() {
         let (kind, replacement) = match item {
-            Media::Model { src, label } => (
+            Media::Model { src, label, .. } => (
                 "model",
                 format!(
                     "<span class=\"glb-viewer\"><model-viewer src=\"{0}\" alt=\"{1}\" camera-controls touch-action=\"pan-y\" environment-image=\"neutral\" shadow-intensity=\"0\" interaction-prompt=\"none\" exposure=\"1\" camera-orbit=\"-45deg 60deg auto\" loading=\"lazy\"></model-viewer><span class=\"glb-bar\"><span class=\"glb-name\">{1}</span><button type=\"button\" data-glb-view=\"tilt\" title=\"The game's top-down camera, slightly tilted\">Top-down tilt</button><button type=\"button\" data-glb-view=\"reset\">Reset</button><a href=\"{0}\" download>.glb</a></span></span>",
@@ -508,9 +507,19 @@ pub fn legacy_html(fragment: &Fragment) -> String {
                     crate::markup::escape(label)
                 ),
             ),
-            Media::Gallery { .. } => (
+            Media::Gallery { items } => (
                 "gallery",
-                "<a href=\"/hulls\">Open the hull gallery</a>".to_string(),
+                items
+                    .iter()
+                    .map(|item| {
+                        format!(
+                            "<a href=\"{}\" download>{}</a>",
+                            crate::markup::escape(&item.src),
+                            crate::markup::escape(&item.name)
+                        )
+                    })
+                    .collect::<Vec<_>>()
+                    .join(" · "),
             ),
         };
         html = html.replace(
@@ -540,10 +549,11 @@ pub fn scope_fragment(html: &mut String, media: &mut [Media], scope: &str) {
 
 fn media_urls(media: &mut Media) -> Vec<&mut String> {
     match media {
-        Media::Mockup { src, .. } | Media::Model { src, .. } => vec![src],
-        Media::Gallery { hulls } => hulls
+        Media::Mockup { src, .. } => vec![src],
+        Media::Model { src, poster, .. } => std::iter::once(src).chain(poster.iter_mut()).collect(),
+        Media::Gallery { items } => items
             .iter_mut()
-            .flat_map(|hull| std::iter::once(&mut hull.model).chain(hull.picture.iter_mut()))
+            .flat_map(|item| std::iter::once(&mut item.src).chain(item.poster.iter_mut()))
             .collect(),
     }
 }

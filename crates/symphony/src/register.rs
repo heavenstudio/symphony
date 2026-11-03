@@ -31,8 +31,6 @@ pub const REGION_END: &str = "<!-- register:end -->";
 pub const REPLY: &str = "↳";
 /// An agent line `[ts] agent · question — …` asks the owner something: the card waits for the owner.
 pub const QUESTION: &str = "question";
-/// A golden approval authorizes an executor's blessing; it stays open until the agent replies.
-pub const GOLDEN_FRAME: &str = "*Golden:* frame";
 
 fn pattern(source: &str) -> Regex {
     Regex::new(&source.replace("{S}", S).replace("{NS}", NS)).expect("a register pattern")
@@ -409,7 +407,7 @@ impl Decision {
             .collect();
         let settled = matches!(self.state, State::Resolved | State::Dismissed);
         let needs_blessing = self.state == State::Approved
-            && self.text.ends_with(GOLDEN_FRAME)
+            && crate::plugins::approval_needs_agent(self)
             && last.is_some_and(|entry| {
                 entry.who == Who::Owner && entry.verdict.as_deref() == Some("approved")
             });

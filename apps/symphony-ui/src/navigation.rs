@@ -33,10 +33,11 @@ impl Route {
         };
         let path = path.strip_prefix("doc/").unwrap_or(path);
         let path = path.strip_suffix('/').unwrap_or(path);
+        let project = crate::project::current();
         let path = match path {
-            "hulls" => "docs/ships/HULLS.md",
             "task" => "tasks",
-            path => path,
+            path => crate::project::nav_page(&project.nav, path)
+                .map_or(path, |item| item.document.as_str()),
         };
         (path.is_empty()
             || path == "tasks"

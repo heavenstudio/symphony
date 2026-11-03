@@ -147,7 +147,6 @@ fn previous(render: &Render, rel: &str, scope: &str, text: &str) -> Vec<Section>
             if let Some(slug) = &slug {
                 section.key = format!("card:{slug}");
             }
-            crate::models::expand(render.root(), &mut section.html, &mut section.media);
             super::prepare_fragment(
                 &mut section.html,
                 &mut section.media,

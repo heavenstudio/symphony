@@ -89,7 +89,7 @@ fn queue_counts_progress_and_client_each_move_their_region() {
     assert_eq!(board.next.len(), 1);
     assert_eq!(board.next[0].slug, "mining-yield-curve");
     assert_eq!(board.counts.waiting, 36);
-    assert_eq!(board.progress.ship_art[0].approved, 22);
+    assert_eq!(board.progress.regions[0].bars[0].done, 22);
     assert_eq!(
         board.build, "/assets/symphony-ui-dxh3f9a1c0123456789.js",
         "the client region names the build served now"

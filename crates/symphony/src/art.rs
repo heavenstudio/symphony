@@ -17,6 +17,7 @@ use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
 
 use regex::Regex;
+use symphony_api::{Block, ContainerKind, FigureSize, Image, Presentation, Span};
 
 use crate::register::{Decision, REGION_END, REGION_START, Who, parse_decisions};
 use crate::text::{S, is_word, read_text, strip};
@@ -67,17 +68,29 @@ static ANY_LETTER: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\b([A-Za-z])\
 
 /// The (subfaction, kind) slot a picture card fills, or `None`.
 pub fn shows(card: &Decision) -> Option<(String, String)> {
-    if let Some(found) = SHOWS_TEXT.captures(&card.text) {
+    let entries = card.entries();
+    shows_in(
+        &card.text,
+        entries
+            .iter()
+            .filter(|e| e.who == Who::Agent)
+            .map(|e| e.text.as_str()),
+    )
+}
+
+/// [`shows`] of a card whose text is `text` and whose agents wrote `agent_lines`.
+pub fn shows_in<'a>(
+    text: &str,
+    agent_lines: impl IntoIterator<Item = &'a str>,
+) -> Option<(String, String)> {
+    if let Some(found) = SHOWS_TEXT.captures(text) {
         return Some((
             strip(&found["sub"]).to_string(),
             found["kind"].to_lowercase(),
         ));
     }
-    for entry in card.entries() {
-        if entry.who != Who::Agent {
-            continue;
-        }
-        if let Some(tagged) = SHOWS_LINE.captures(&entry.text) {
+    for line in agent_lines {
+        if let Some(tagged) = SHOWS_LINE.captures(line) {
             return Some((
                 strip(&tagged["sub"]).to_string(),
                 tagged["kind"].to_lowercase(),
@@ -89,16 +102,22 @@ pub fn shows(card: &Decision) -> Option<(String, String)> {
 
 /// (alt, src) of every image in the first agent line that has one.
 pub fn candidates(card: &Decision) -> Vec<(String, String)> {
-    for entry in card.entries() {
-        if entry.who != Who::Agent {
-            continue;
-        }
-        let found = images(&entry.text);
-        if !found.is_empty() {
-            return found;
-        }
-    }
-    Vec::new()
+    let entries = card.entries();
+    candidates_in(
+        entries
+            .iter()
+            .filter(|e| e.who == Who::Agent)
+            .map(|e| e.text.as_str()),
+    )
+}
+
+/// [`candidates`] of a card whose agents wrote `agent_lines`.
+pub fn candidates_in<'a>(agent_lines: impl IntoIterator<Item = &'a str>) -> Vec<(String, String)> {
+    agent_lines
+        .into_iter()
+        .map(images)
+        .find(|found| !found.is_empty())
+        .unwrap_or_default()
 }
 
 fn images(text: &str) -> Vec<(String, String)> {
@@ -279,22 +298,41 @@ pub fn parse_slot(arg: &str) -> Result<(String, Vec<String>), ArtError> {
     Ok((strip(sub).to_string(), names))
 }
 
-/// A figure per kind, from this page's own register, with a visible pending or missing caption.
-pub fn slot_html(cards: &[Decision], sub: &str, kinds: &[String]) -> Result<String, ArtError> {
-    let mut out = vec!["<div class=\"pair\">".to_string()];
+/// A figure per kind, from this page's own register, with a visible pending or missing caption,
+/// side by side.
+pub fn slot(cards: &[Decision], sub: &str, kinds: &[String]) -> Result<Block, ArtError> {
+    let mut figures = Vec::new();
     for kind in kinds {
         let label = crate::ship_art::capitalize(kind);
-        match choose(cards, sub, kind)? {
-            None => out.push(format!("<figure class=\"missing\"><figcaption>{label}: picture coming</figcaption></figure>")),
+        let (picture, caption, href) = match choose(cards, sub, kind)? {
+            None => (None, format!("{label}: picture coming"), None),
             Some((src, waiting)) => {
-                let src = crate::markup::escape(&src);
-                let caption = if waiting { format!("{label} · waiting on your review") } else { label.clone() };
-                out.push(format!("<figure><a href=\"{src}\"><img src=\"{src}\" alt=\"{label}\"></a><figcaption>{caption}</figcaption></figure>"));
+                let caption = if waiting {
+                    format!("{label} · waiting on your review")
+                } else {
+                    label.clone()
+                };
+                let picture = Image {
+                    src: src.clone(),
+                    alt: label,
+                    presentation: Presentation::default(),
+                };
+                (Some(picture), caption, Some(src))
             }
-        }
+        };
+        figures.push(Block::Figure {
+            picture,
+            caption: vec![Span::Text { text: caption }],
+            href,
+            badge: None,
+            size: FigureSize::Slot,
+        });
     }
-    out.push("</div>".into());
-    Ok(out.join("\n"))
+    Ok(Block::Container {
+        tag: ContainerKind::Div,
+        presentation: Presentation::class("pair"),
+        blocks: figures,
+    })
 }
 
 /// One page per faction: the lowercase pages in the factions folder, not its README or a topic's

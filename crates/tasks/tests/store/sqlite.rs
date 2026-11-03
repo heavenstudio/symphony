@@ -141,6 +141,7 @@ pub fn sample() -> Dump {
                 created: T + 0.25,
                 updated: T + 100.5,
                 instruction: false,
+                fields: Default::default(),
             },
             TaskRow {
                 id: 3,
@@ -154,6 +155,7 @@ pub fn sample() -> Dump {
                 created: T + 200.125,
                 updated: T + 200.125,
                 instruction: true,
+                fields: Default::default(),
             },
         ],
         task_links: vec![

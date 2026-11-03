@@ -82,32 +82,17 @@ pub fn is_art(card: &Decision) -> bool {
     art::shows(card).is_some()
 }
 
-/// The folder of a `/`-separated path, and its last part without its extension.
-fn parent_and_stem(doc: &str) -> (&str, &str) {
-    let (parent, name) = doc.rsplit_once('/').unwrap_or(("", doc));
-    let stem = match name.rfind('.') {
-        Some(at) if at > 0 => &name[..at],
-        _ => name,
-    };
-    (parent, stem)
-}
-
 pub fn category(doc: &str, card: &Decision) -> String {
     let doc = doc
         .strip_prefix('@')
         .and_then(|p| p.split_once('/'))
         .map_or(doc, |(_, path)| path);
-    if is_model(card) {
-        return format!("hull model · {}", card.topic.to_lowercase());
-    }
-    let (parent, stem) = parent_and_stem(doc);
-    if is_art(card) && parent == art::SHIP_PAGES {
-        return format!("roster art · {stem}");
-    }
-    if is_art(card) || (parent == art::PAGES && !art::candidates(card).is_empty()) {
-        return "faction art".to_string(); // the second case: a picture card posted before cards named their slot
-    }
-    format!("design · {doc}")
+    crate::plugins::with_card(card, doc, |found| {
+        crate::plugins::card_kinds()
+            .iter()
+            .find_map(|kind| kind.triage_category(found))
+    })
+    .unwrap_or_else(|| format!("design · {doc}"))
 }
 
 pub fn is_redraw(card: &Decision) -> bool {

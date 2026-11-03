@@ -165,35 +165,24 @@ impl Drop for PrivateWorktree {
 }
 
 /// A generator run as a command in a private worktree; heavy outputs run only after an earlier
-/// generator changed something. This is also the shape the review-app port can use.
+/// generator changed something. A project names its own in `[verdicts] generators`.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Generator {
     pub name: String,
     pub outputs: String,
     pub command: Vec<String>,
+    /// Run only after an earlier generator changed something.
+    #[serde(default)]
     pub when_changed: bool,
 }
 
-pub fn default_generators() -> Vec<Generator> {
-    vec![
-        Generator {
-            name: "content".into(),
-            outputs: "content/".into(),
-            command: vec!["just".into(), "content".into()],
-            when_changed: false,
-        },
-        Generator {
-            name: "content-ids".into(),
-            outputs: "sim/content_ids.gd".into(),
-            command: vec!["just".into(), "content-ids".into()],
-            when_changed: true,
-        },
-        Generator {
-            name: "hull-atlas".into(),
-            outputs: "view/hull_atlas".into(),
-            command: vec!["just".into(), "hull-atlas".into(), "build".into()],
-            when_changed: true,
-        },
-    ]
+/// The generators of the project at `root`, in its `symphony.toml`'s order.
+pub fn generators(root: &Path) -> Vec<Generator> {
+    crate::project::Project::of(root)
+        .verdicts
+        .generators
+        .clone()
 }
 
 fn changed(root: &Path) -> Option<Vec<String>> {
@@ -229,14 +218,12 @@ fn regenerates_inner(root: &Path, branch: &str, generators: &[Generator]) -> Opt
         root,
         &["rev-parse", "--path-format=absolute", "--git-common-dir"],
     )?;
-    if !Path::new(common.trim())
-        .join("sf-land/verdicts")
-        .join(tip)
-        .exists()
-    {
+    let project = crate::project::Project::of(root);
+    let records = project.record_folder(root, Path::new(common.trim()))?;
+    if !records.join(tip).exists() {
         return Some(false);
     }
-    let base = text(root, &["merge-base", "main", tip])?;
+    let base = text(root, &["merge-base", &project.default_branch, tip])?;
     let names = git(
         root,
         &[

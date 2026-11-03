@@ -342,7 +342,9 @@ fn BoardPage(route: Memo<String>, scope: String) -> Element {
     let content = if board.read().is_some() {
         #[cfg(feature = "page-review")]
         let front = match (board(), now()) {
-            (Some(board), Some(now)) => rsx! { BoardView { board, now } },
+            (Some(board), Some(now)) => {
+                rsx! { BoardView { board, now, project: crate::project::current() } }
+            }
             _ => rsx! { p { "Loading the board…" } },
         };
         #[cfg(not(feature = "page-review"))]

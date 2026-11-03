@@ -25,6 +25,7 @@ fn model(src: &str, label: &str) -> Media {
     Media::Model {
         src: src.into(),
         label: label.into(),
+        poster: None,
     }
 }
 

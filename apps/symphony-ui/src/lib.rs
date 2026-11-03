@@ -28,6 +28,7 @@ pub mod docs;
 pub(crate) mod entry_events;
 pub mod media;
 pub mod platform;
+pub mod project;
 pub mod state;
 pub mod tasks;
 pub mod theme;

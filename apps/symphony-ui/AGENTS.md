@@ -263,15 +263,18 @@ in-memory blob pages are allowed; file URLs and external hosts are blocked.
   pictures at `data-full`. Mockups stay at 1280x800, scaled by their card's width,
   with only `allow-scripts` in their sandbox. Never add `allow-same-origin`.
   The vendored `/static/model-viewer.min.js` is loaded once, on the first visible
-  model, and is absent from the shell's preloads. The hulls route reads the
-  gallery document, `symphony_api::HULL_GALLERY_DOC`, through `DocumentPage`;
-  `/api/hulls` is gone. The document's `Media::Gallery` holds the selected root's
-  cached records. Its grid has only small pictures until a hull opens; one
+  model, and is absent from the shell's preloads. A plugin's pages are the
+  `ProjectView`'s `nav` items the served page inlines (`PROJECT_ELEMENT`): each
+  reads its document through `DocumentPage`, as Star Foundry's `/hulls` reads
+  `docs/ships/HULLS.md`; `/api/hulls` is gone. A `Media::Gallery` holds its
+  items (name, model `src`, `poster`), Star Foundry's models served under
+  `/x/hulls/`. Its grid has only small pictures until an item opens; one
   selected model is mounted at a time, and closing it unmounts the viewer.
-  The server warms read snapshots before announcing its URL, and warms the
-  selected checkout's gallery cache at startup and when its `view/models/` changes. Startup
-  logs separate gallery, document and board time; requests never walk model
-  history or other checkouts to build the gallery.
+  The server warms read snapshots before announcing its URL, and Star
+  Foundry's plugin warms the selected checkout's gallery cache at startup and
+  when its `view/models/` changes. Startup logs separate gallery, document and
+  board time; requests never walk model history or other checkouts to build
+  the gallery.
   `DocumentPicture(image: symphony_api::Image)` preserves typed document image
   dimensions, presentation and `data-full`; `MediaView(media)` renders native
   media from either `Block::Media` or `Span::Media`.

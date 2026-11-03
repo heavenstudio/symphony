@@ -1,7 +1,7 @@
-//! Native media views shared by the board, typed documents, asks and the hull gallery.
+//! Native media views shared by the board, typed documents, asks and model galleries.
 
 use dioxus::prelude::*;
-use symphony_api::{GalleryHull, Image, Media};
+use symphony_api::{GalleryItem, Image, Media};
 
 const STYLE: Asset = asset!(
     "/assets/media.css",
@@ -79,19 +79,24 @@ pub fn MockupFrame(src: String, caption: String, #[props(default)] thumb: bool) 
 }
 
 #[component]
-pub fn ModelViewer(src: String, caption: String) -> Element {
+pub fn ModelViewer(
+    src: String,
+    caption: String,
+    #[props(default)] poster: Option<String>,
+) -> Element {
     let (shown, reveal) = crate::viewport::use_visibility(false);
     use_runtime(shown);
     if !local_asset(&src) {
         return rsx! {};
     }
     let caption = label(&src, &caption).to_string();
+    let poster = poster.filter(|poster| local_asset(poster));
     rsx! {
         span { class: "model-shell",
             ..reveal,
             if shown() {
                 span { class: "glb-viewer",
-                    model-viewer { "src": src.clone(), "alt": caption.clone(), "camera-controls": "", "touch-action": "pan-y", "environment-image": "neutral", "shadow-intensity": "0", "interaction-prompt": "none", "exposure": "1", "camera-orbit": "-45deg 60deg auto", "loading": "lazy" }
+                    model-viewer { "src": src.clone(), "alt": caption.clone(), "camera-controls": "", "touch-action": "pan-y", "environment-image": "neutral", "shadow-intensity": "0", "interaction-prompt": "none", "exposure": "1", "camera-orbit": "-45deg 60deg auto", "loading": "lazy", "poster": poster }
                     span { class: "glb-bar", span { "{caption}" }
                         crate::components::button::Button { r#type: "button", "data-glb-view": "tilt", "Top-down tilt" }
                         crate::components::button::Button { r#type: "button", "data-glb-view": "reset", "Reset" }
@@ -108,8 +113,8 @@ pub fn ModelViewer(src: String, caption: String) -> Element {
 pub fn MediaView(media: Media) -> Element {
     match media {
         Media::Mockup { src, label } => rsx! { MockupFrame { src, caption: label } },
-        Media::Model { src, label } => rsx! { ModelViewer { src, caption: label } },
-        Media::Gallery { hulls } => rsx! { HullGallery { hulls } },
+        Media::Model { src, label, poster } => rsx! { ModelViewer { src, caption: label, poster } },
+        Media::Gallery { items } => rsx! { Gallery { items } },
     }
 }
 
@@ -154,36 +159,37 @@ pub fn DocumentPicture(image: Image) -> Element {
     }
 }
 
+/// Models to pick from: a card each, one open at a time.
 #[component]
-fn HullGallery(hulls: Vec<GalleryHull>) -> Element {
+fn Gallery(items: Vec<GalleryItem>) -> Element {
     let mut selected = use_signal(|| None::<String>);
     rsx! {
-        p { class: "muted", "{hulls.len()} hull models." }
-        div { class: "hull-grid",
-            for hull in hulls {
-                GalleryRow { key: "{hull.id}", open: selected().as_deref() == Some(hull.id.as_str()),
-                    on_select: move |id| selected.set(if selected().as_ref() == Some(&id) { None } else { Some(id) }), hull }
+        p { class: "muted", "{items.len()} models." }
+        div { class: "gallery-grid",
+            for item in items {
+                GalleryRow { key: "{item.name}", open: selected().as_deref() == Some(item.name.as_str()),
+                    on_select: move |name| selected.set(if selected().as_ref() == Some(&name) { None } else { Some(name) }), item }
             }
         }
     }
 }
 
 #[component]
-fn GalleryRow(hull: GalleryHull, open: bool, on_select: EventHandler<String>) -> Element {
+fn GalleryRow(item: GalleryItem, open: bool, on_select: EventHandler<String>) -> Element {
     let (shown, reveal) = crate::viewport::use_visibility(false);
-    let id = hull.id.clone();
+    let name = item.name.clone();
     rsx! {
-        article { class: if open { "hull-card hull-open" } else { "hull-card" }, "data-busy": open,
+        article { class: if open { "gallery-card gallery-open" } else { "gallery-card" }, "data-busy": open,
             ..reveal,
             if shown() {
-                crate::components::button::Button { class: "hull-pick", r#type: "button", "aria-expanded": open, "aria-controls": "hull-{hull.id}", onclick: move |_| on_select.call(id.clone()),
-                    if let Some(picture) = hull.picture {
-                        img { src: picture, width: "80", height: "80", alt: hull.id.clone(), loading: "lazy", "data-no-lightbox": "true" }
+                crate::components::button::Button { class: "gallery-pick", r#type: "button", "aria-expanded": open, "aria-controls": "model-{item.name}", onclick: move |_| on_select.call(name.clone()),
+                    if let Some(poster) = item.poster {
+                        img { src: poster, width: "80", height: "80", alt: item.name.clone(), loading: "lazy", "data-no-lightbox": "true" }
                     }
-                    span { strong { "{hull.id}" } small { if open { "Close model" } else { "Open 3D model" } } }
+                    span { strong { "{item.name}" } small { if open { "Close model" } else { "Open 3D model" } } }
                 }
                 if open {
-                    div { id: "hull-{hull.id}", ModelViewer { src: hull.model, caption: hull.id.clone() } }
+                    div { id: "model-{item.name}", ModelViewer { src: item.src, caption: item.name.clone() } }
                 }
             }
         }
@@ -218,20 +224,47 @@ mod tests {
         });
         assert!(picture.contains("<img") && picture.contains("loading=\"lazy\""));
         let media = Media::Gallery {
-            hulls: vec![GalleryHull {
-                id: "FIRST".into(),
-                model: "/first.glb".into(),
-                picture: Some("/first.png".into()),
-            }],
+            items: vec![
+                GalleryItem {
+                    name: "FIRST".into(),
+                    src: "/first.glb".into(),
+                    poster: Some("/first.png".into()),
+                },
+                GalleryItem {
+                    name: "SECOND".into(),
+                    src: "/second.glb".into(),
+                    poster: None,
+                },
+            ],
         };
         let gallery = dioxus_ssr::render_element(rsx! { MediaView { media } });
+        assert!(
+            gallery.contains("2 models.") && gallery.contains("class=\"gallery-grid\""),
+            "{gallery}"
+        );
+        assert_eq!(
+            gallery.matches("<article class=\"gallery-card\"").count(),
+            2,
+            "{gallery}"
+        );
         assert!(gallery.contains("FIRST") && gallery.contains("/first.png"));
         assert!(!gallery.contains("model-viewer") && !gallery.contains("/first.glb"));
+        let poster = Some("/m.png".to_string());
+        let with = dioxus_ssr::render_element(
+            rsx! { ModelViewer { src: "/m.glb", caption: "M", poster } },
+        );
+        let foreign = Some("https://x/m.png".to_string());
+        let without = dioxus_ssr::render_element(
+            rsx! { ModelViewer { src: "/m.glb", caption: "M", poster: foreign } },
+        );
+        assert!(with.contains("poster=\"/m.png\""), "{with}");
+        assert!(!without.contains("poster="), "{without}");
         for (media, tag) in [
             (
                 Media::Model {
                     src: "/model.glb".into(),
                     label: "Model".into(),
+                    poster: None,
                 },
                 "<model-viewer",
             ),

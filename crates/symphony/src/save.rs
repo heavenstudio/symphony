@@ -10,13 +10,14 @@ use serde_json::{Value, json};
 
 use crate::{Who, asks, branches, clock, commit, edit, register, taskview};
 
-pub const ROUTES: [&str; 12] = [
+pub const ROUTES: [&str; 13] = [
     "/api/postpone",
     "/api/decision",
     "/api/comment",
     "/api/message",
     "/api/task-message",
     "/api/task-priority",
+    "/api/task-field",
     "/api/task-cancel",
     "/api/quick-chat",
     "/api/quick-task",
@@ -326,6 +327,20 @@ impl Saves {
                 self.store()?
                     .set_priority(string(payload, "slug"), priority, "owner")?;
                 Ok(json!({"ok":true}))
+            }
+            "/api/task-field" => {
+                let actor = Some(string(payload, "actor"))
+                    .filter(|actor| !actor.is_empty())
+                    .unwrap_or("owner");
+                let (plugin, value) = taskview::set_field(
+                    &self.store()?,
+                    &crate::plugins::Plugins::of(&self.root),
+                    string(payload, "slug"),
+                    string(payload, "name"),
+                    &payload["value"],
+                    actor,
+                )?;
+                Ok(json!({"ok": true, "plugin": plugin, "value": value}))
             }
             "/api/task-cancel" => {
                 self.store()?

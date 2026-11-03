@@ -159,3 +159,15 @@ fn a_front_that_does_not_say_whether_it_has_counted_reads_as_counted() {
     assert!(with.uncounted);
     assert!(with.census_pending);
 }
+
+#[test]
+fn the_project_the_page_inlines_reads_and_writes_back_as_the_same_json() {
+    let (written, fixture) = round_trip::<symphony_api::ProjectView>("project.json");
+    assert_eq!(written, fixture);
+    let plain: symphony_api::ProjectView =
+        serde_json::from_str(r#"{"name":"Orbit","register":"notes/register.md"}"#).unwrap();
+    assert!(
+        plain.nav.is_empty(),
+        "a project without plugins has no pages of theirs"
+    );
+}

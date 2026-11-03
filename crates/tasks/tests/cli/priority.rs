@@ -99,7 +99,10 @@ fn explicit_actor_works_on_either_side_and_help_lists_the_command() {
     let history = c.store().thread("sim/jump").unwrap();
     assert_eq!(history.last().unwrap().sender, actor);
     let before = c.store().dump().unwrap();
-    assert!(c.ok("", &["--help"]).contains("create,priority,claim"));
+    assert!(
+        c.ok("", &["--help"])
+            .contains("create,priority,field,claim")
+    );
     assert!(
         c.ok("", &["priority", "--help"])
             .starts_with("usage: just tasks priority [-h] [--as ACTOR] slug {0,1,2,3,4}\n")

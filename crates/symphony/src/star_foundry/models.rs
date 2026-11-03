@@ -1,17 +1,20 @@
-//! Hull gallery content, cached per served root and invalidated by the document watcher. No
+//! The hull gallery's models, cached per served root and invalidated by the plugin's watch. No
 //! cross-worktree scan, model hashing or history walk on a request: a branch shows its own hulls.
 
 use std::collections::HashMap;
 use std::path::{Component, Path, PathBuf};
 use std::sync::{LazyLock, Mutex};
 
-use symphony_api::{GalleryHull, Media};
+use symphony_plugin::vocabulary::GalleryItem;
 
-const MARKER: &str = "<div data-hull-gallery></div>";
-const HULLS: &str = "view/models/hulls";
-const OUTLINES: &str = "docs/data/hull-outlines";
+/// The models folder, and the hull models in it.
+pub(super) const MODELS: &str = "view/models";
+pub(super) const HULLS: &str = "view/models/hulls";
+/// Where a hull's concept pictures and its outline are.
+pub(super) const CONCEPTS: &str = "artifacts/concepts";
+pub(super) const OUTLINES: &str = "docs/data/hull-outlines";
 
-static GALLERIES: LazyLock<Mutex<HashMap<PathBuf, Vec<GalleryHull>>>> =
+static GALLERIES: LazyLock<Mutex<HashMap<PathBuf, Vec<GalleryItem>>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
 pub fn invalidate(root: &Path) {
@@ -46,7 +49,7 @@ fn project_file(root: &Path, relative: &str) -> bool {
             .is_ok_and(|path| path.starts_with(root) && path.is_file())
 }
 
-fn build(root: &Path) -> Vec<GalleryHull> {
+fn build(root: &Path) -> Vec<GalleryItem> {
     let root = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
     let folder = root
         .join(HULLS)
@@ -96,30 +99,25 @@ fn build(root: &Path) -> Vec<GalleryHull> {
                     .unwrap_or_default(),
             )
         });
-        hulls.push(GalleryHull {
-            id: id.into(),
-            model: url(&format!("{HULLS}/{id}.glb")),
-            picture,
+        hulls.push(GalleryItem {
+            name: id.into(),
+            src: format!(
+                "/x/{}/{}",
+                super::HULLS_ROUTE,
+                crate::markup::quote(&format!("{id}.glb"), "")
+            ),
+            poster: picture,
         });
     }
     hulls
 }
 
-/// Expand before the normal document URL, thumbnail and version preparation.
-pub fn expand(root: &Path, html: &mut String, media: &mut Vec<Media>) {
-    if !html.contains(MARKER) {
-        return;
-    }
-    let mut cache = GALLERIES.lock().unwrap_or_else(|e| e.into_inner());
-    let gallery = cache
+/// The models of the checkout at `root`, from the cache when it holds them.
+pub fn gallery(root: &Path) -> Vec<GalleryItem> {
+    GALLERIES
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
         .entry(root.to_path_buf())
-        .or_insert_with(|| build(root));
-    let index = media.len();
-    *html = html.replace(
-        MARKER,
-        &format!("<span class=\"media\" data-media=\"{index}\" data-kind=\"gallery\"></span>"),
-    );
-    media.push(Media::Gallery {
-        hulls: gallery.clone(),
-    });
+        .or_insert_with(|| build(root))
+        .clone()
 }

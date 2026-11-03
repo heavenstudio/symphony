@@ -2,8 +2,8 @@
 
 use dioxus::prelude::*;
 use symphony_api::{
-    Block, Cell, ContainerKind, InlineKind, LinkTarget, LiveComponent, MatrixKind, Presentation,
-    Span, VectorKind, VectorShape,
+    Block, Cell, ContainerKind, FigureSize, Image, InlineKind, LinkTarget, Presentation, Span,
+    VectorKind, VectorShape,
 };
 
 use crate::doc_components as view;
@@ -80,7 +80,11 @@ fn BlockView(block: Block) -> Element {
                 }
             }
         },
-        Block::Table { head, rows } => rsx! { TableView { head, rows, class: String::new() } },
+        Block::Table {
+            head,
+            rows,
+            presentation,
+        } => rsx! { TableView { head, rows, presentation } },
         Block::Code { language, text } => rsx! { view::Code { language, text, block: true } },
         Block::Quote { blocks } => rsx! { blockquote { BlocksView { blocks } } },
         Block::Rule => rsx! { hr {} },
@@ -114,48 +118,21 @@ fn BlockView(block: Block) -> Element {
                 comparison: rsx! { BlocksView { blocks: comparison } if !thread.is_empty() { ThreadView { entries: thread } } }
             } }
         }
-        Block::Component { component } => rsx! { ComponentView { component } },
+        Block::Component { kind, blocks } => rsx! { ComponentView { kind, blocks } },
         Block::Media { media } => rsx! { crate::media::MediaView { media } },
         Block::Image { image } => rsx! { crate::media::DocumentPicture { image } },
-        Block::ArtSlot { figures } => {
-            rsx! { div { class: "pair", BlocksView { blocks: figures } } }
-        }
-        Block::Hull { blocks } => rsx! { div { class: "hull", BlocksView { blocks } } },
         Block::Figure {
-            blocks,
+            picture,
             caption,
-            missing,
-        } => rsx! {
-            figure { class: if missing { "missing" } else { "" },
-                Deferred { BlocksView { blocks } }
-                if !caption.is_empty() { figcaption { BlocksView { blocks: caption } } }
-            }
-        },
+            href,
+            badge,
+            size,
+        } => rsx! { FigureView { picture, caption, href, badge, size } },
         Block::Caption { blocks } => rsx! { figcaption { BlocksView { blocks } } },
         Block::Comparison { figures } => {
             rsx! { div { class: "compare", BlocksView { blocks: figures } } }
         }
-        Block::Matrix { matrix, head, rows } => rsx! {
-            TableView { head, rows, class: match matrix { MatrixKind::Ships => "matrix", MatrixKind::Shapes => "matrix shape-matrix", MatrixKind::Relationships => "matrix relationships" }.to_string() }
-        },
-        Block::MatrixNote { blocks } => {
-            rsx! { div { class: "matrix-note matrix-scale", BlocksView { blocks } } }
-        }
-        Block::EmptyRoster { blocks } => {
-            rsx! { div { class: "empty-roster subfaction-ships muted", BlocksView { blocks } } }
-        }
         Block::Group { blocks } => rsx! { BlocksView { blocks } },
-        Block::ScreenCapture {
-            id,
-            missing,
-            blocks,
-        } => {
-            if missing {
-                rsx! { div { class: "screen-missing", "data-screen": id, BlocksView { blocks } } }
-            } else {
-                rsx! { figure { class: "screen", "data-screen": id, BlocksView { blocks } } }
-            }
-        }
         Block::Container {
             tag,
             presentation,
@@ -207,7 +184,13 @@ fn SpanView(span: Span) -> Element {
         Span::LineBreak => rsx! { br {} },
         Span::Image { image } => rsx! { crate::media::DocumentPicture { image } },
         Span::Media { media } => rsx! { crate::media::MediaView { media } },
-        Span::Component { component } => rsx! { ComponentView { component, inline: true } },
+        Span::Component { kind, blocks } => rsx! { ComponentView { kind, blocks, inline: true } },
+        Span::Icon {
+            shape,
+            label,
+            named,
+            tip,
+        } => rsx! { IconView { shape, label, named, tip } },
         Span::Styled {
             tag,
             presentation,
@@ -244,14 +227,80 @@ fn LinkView(
     }
 }
 
+/// A plugin's component: its blocks inside a wrapper naming its kind, which lays out nothing
+/// itself and is there for a project's stylesheet to select. In a line of text, one paragraph's
+/// spans stay in that line.
 #[component]
-fn ComponentView(component: LiveComponent, #[props(default)] inline: bool) -> Element {
-    // Expanded child data is authoritative; selectors give identity and navigation, never a
-    // second implementation of the component's ship/content rules.
-    if inline && let [Block::Paragraph { spans }] = component.blocks() {
-        rsx! { SpansView { spans: spans.clone() } }
+fn ComponentView(kind: String, blocks: Vec<Block>, #[props(default)] inline: bool) -> Element {
+    if inline {
+        if let [Block::Paragraph { spans }] = blocks.as_slice() {
+            let spans = spans.clone();
+            return rsx! { span { "data-component": kind, SpansView { spans } } };
+        }
+        return rsx! { span { "data-component": kind, BlocksView { blocks } } };
+    }
+    rsx! { div { "data-component": kind, BlocksView { blocks } } }
+}
+
+/// A picture with its caption. A hull's sizes (`small`, `row`, `large`, `tile`) draw a link
+/// card, its badge standing in for a missing picture; the others draw a figure, `missing`
+/// without one.
+#[component]
+fn FigureView(
+    picture: Option<Image>,
+    caption: Vec<Span>,
+    href: Option<String>,
+    badge: Option<String>,
+    size: FigureSize,
+) -> Element {
+    let class = format!("figure figure-{}", size.as_str());
+    if matches!(
+        size,
+        FigureSize::Small | FigureSize::Row | FigureSize::Large | FigureSize::Tile
+    ) {
+        let content = rsx! {
+            if let Some(image) = picture { crate::media::DocumentPicture { image } }
+            else if let Some(badge) = badge { span { class: "figure-badge", "{badge}" } }
+            span { class: "figure-caption", SpansView { spans: caption } }
+        };
+        return match href {
+            Some(href) => rsx! { a { class, href, {content} } },
+            None => rsx! { span { class, {content} } },
+        };
+    }
+    let class = if picture.is_none() {
+        format!("{class} missing")
     } else {
-        rsx! { BlocksView { blocks: component.blocks().to_vec() } }
+        class
+    };
+    rsx! {
+        figure { class,
+            if let Some(image) = picture {
+                Deferred {
+                    if let Some(href) = href { a { href, crate::media::DocumentPicture { image } } }
+                    else { crate::media::DocumentPicture { image } }
+                }
+            } else if let Some(badge) = badge { span { class: "figure-badge", "{badge}" } }
+            if !caption.is_empty() { figcaption { SpansView { spans: caption } } }
+        }
+    }
+}
+
+/// An icon on the 24-unit stroke grid: its label is its accessible name, its tip shows on hover
+/// and focus, and `named` shows the label after it.
+#[component]
+fn IconView(shape: Vec<VectorShape>, label: String, named: bool, tip: String) -> Element {
+    let title = (!tip.is_empty()).then(|| tip.clone());
+    let tip = (!tip.is_empty()).then_some(tip);
+    rsx! {
+        span { class: "icon", "data-tip": tip, title, tabindex: "0", role: "img", "aria-label": label.clone(),
+            svg { view_box: "0 0 24 24", width: "18", height: "18", fill: "none", stroke: "currentColor",
+                stroke_width: "1.8", stroke_linecap: "round", stroke_linejoin: "round", "aria-hidden": "true",
+                for shape in &shape { ShapeView { shape: shape.clone() } }
+            }
+            if named { span { class: "icon-name", "{label}" } }
+        }
+        for shape in shape.clone() { AttributeWarnings { values: shape.attributes } }
     }
 }
 
@@ -284,7 +333,7 @@ fn InlineView(tag: InlineKind, presentation: Presentation, spans: Vec<Span>) -> 
         || presentation
             .class
             .split_whitespace()
-            .any(|class| class.starts_with("ship") || class == "tasklink" || class == "hull-link");
+            .any(|class| class == "tasklink");
     if tag == InlineKind::Span && link_attributes && spans.len() == 1 {
         match &spans[0] {
             Span::Link {
@@ -325,11 +374,15 @@ fn InlineView(tag: InlineKind, presentation: Presentation, spans: Vec<Span>) -> 
 }
 
 #[component]
-fn TableView(head: Vec<Cell>, rows: Vec<Vec<Cell>>, class: String) -> Element {
-    rsx! { table { class,
-        if !head.is_empty() { thead { tr { for cell in head { CellView { cell } } } } }
-        tbody { for (index, cells) in rows.into_iter().enumerate() { TableRow { key: "{index}", cells } } }
-    } }
+fn TableView(head: Vec<Cell>, rows: Vec<Vec<Cell>>, presentation: Presentation) -> Element {
+    let attrs = attributes(&presentation);
+    rsx! {
+        table { ..attrs,
+            if !head.is_empty() { thead { tr { for cell in head { CellView { cell } } } } }
+            tbody { for (index, cells) in rows.into_iter().enumerate() { TableRow { key: "{index}", cells } } }
+        }
+        PresentationWarnings { presentation }
+    }
 }
 
 #[component]

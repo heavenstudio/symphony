@@ -4,10 +4,11 @@
 mod tree;
 
 use serde_json::{Value, json};
-use symphony::render::{Builtin, Render};
+use symphony::render::Render;
 use symphony::{blocks, register, schema};
 use symphony_api::{
-    Block, CalloutKind, CardGroup, CardState, LiveComponent, Media, Span, ThreadAuthor,
+    Block, CalloutKind, CardGroup, CardState, ContainerKind, FigureSize, Image, Media,
+    Presentation, Span, ThreadAuthor,
 };
 use tree::Tree;
 
@@ -124,7 +125,7 @@ fn tidy_preserves_the_fenced_thread_and_reaches_the_next_register() {
 #[test]
 fn typed_sections_keep_source_keys_and_detach_the_whole_thread() {
     let tree = Tree::new();
-    let renderer = Render::new(&tree.root).with_components(Box::new(Builtin));
+    let renderer = Render::new(&tree.root);
     let source = format!(
         "# Flight\n\n{}\n## Map\n\nA chart.\n",
         fenced_card("```", true)
@@ -205,7 +206,7 @@ fn typed_sections_keep_source_keys_and_detach_the_whole_thread() {
 #[test]
 fn typed_prose_retains_inline_structure_tables_code_and_callouts() {
     let tree = Tree::new();
-    let renderer = Render::new(&tree.root).with_components(Box::new(Builtin));
+    let renderer = Render::new(&tree.root);
     let fragment = renderer.typed_reply("**Bold** and *soft* with `x < y`.\n\n3. third\n4. fourth\n\n| Key | Value |\n|---|---|\n| a | **b** |\n\n```rs\nx < y && z\n```\n\n> quote\n\n---", "docs/x.md");
     let typed = blocks::fragment(&fragment, "docs/x.md");
     assert_eq!(
@@ -235,7 +236,7 @@ fn typed_prose_retains_inline_structure_tables_code_and_callouts() {
             items: vec![vec![paragraph("third")], vec![paragraph("fourth")]]
         }
     );
-    let Block::Table { head, rows } = &typed[2] else {
+    let Block::Table { head, rows, .. } = &typed[2] else {
         panic!("{typed:?}")
     };
     assert_eq!(head.len(), 2);
@@ -296,7 +297,7 @@ fn typed_prose_retains_inline_structure_tables_code_and_callouts() {
 fn typed_links_components_and_media_retain_their_identity_and_fragment_index() {
     let tree = Tree::new();
     tree.write("docs/NAV.md", "# Navigation\n\n## Course\n");
-    let renderer = Render::new(&tree.root).with_components(Box::new(Builtin));
+    let renderer = Render::new(&tree.root);
     let source = "[[NAV#Course]] and [[task:sim/course|Set course]]\n\n![model](/artifacts/a.glb)\n\n![mockup](/artifacts/b.html)\n";
     let sections = renderer.typed_sections(source, "docs/x.md");
     let first = blocks::section(&sections[0], "docs/x.md");
@@ -307,14 +308,15 @@ fn typed_links_components_and_media_retain_their_identity_and_fragment_index() {
         matches!(&spans[0], Span::WikiLink { target: Some(target), .. } if target.path == "docs/NAV.md" && target.anchor.as_deref() == Some("course"))
     );
     assert!(
-        matches!(&spans[2], Span::Component { component: LiveComponent::Task { slug, label: Some(label), blocks } } if slug == "sim/course" && label == "Set course" && !blocks.is_empty())
+        matches!(&spans[2], Span::Component { kind, blocks } if kind == "task" && format!("{blocks:?}").contains("/task/sim/course") && format!("{blocks:?}").contains("Set course"))
     );
     assert_eq!(
         blocks::section(&sections[1], "docs/x.md"),
         [Block::Media {
             media: Media::Model {
                 src: "/artifacts/a.glb".into(),
-                label: "model".into()
+                label: "model".into(),
+                poster: None,
             }
         }]
     );
@@ -396,182 +398,96 @@ fn the_fragment_reader_preserves_entities_attributes_and_unsupported_content() {
 }
 
 #[test]
-fn typed_component_selectors_keep_options_and_their_display_content() {
-    for (name, arg, option, expected) in [
-        (
-            "ship",
-            "REP-F01",
-            "large",
-            json!({"kind":"ship","id":"REP-F01","size":"large"}),
-        ),
-        (
-            "ships",
-            " REP-F01, ,EMP-F01 ",
-            "",
-            json!({"kind":"ships","ids":["REP-F01","EMP-F01"],"size":"row"}),
-        ),
-        (
-            "art",
-            "Republic · ship",
-            "",
-            json!({"kind":"art","slot":"Republic · ship"}),
-        ),
-        (
-            "ship-matrix",
-            "republic",
-            "",
-            json!({"kind":"ship-matrix","faction":"republic"}),
-        ),
-        (
-            "shape-matrix",
-            "all",
-            "CLASS",
-            json!({"kind":"shape-matrix","faction":"all","pivot":"class"}),
-        ),
-        (
-            "subfaction-ships",
-            "Home Fleet",
-            "",
-            json!({"kind":"subfaction-ships","name":"Home Fleet","size":"small"}),
-        ),
-        (
-            "relationships",
-            "destroy",
-            "",
-            json!({"kind":"relationships","table":"destroy"}),
-        ),
-        (
-            "capability",
-            "jump",
-            "name",
-            json!({"kind":"capability","id":"jump","named":true}),
-        ),
-        (
-            "weapon",
-            "laser",
-            "",
-            json!({"kind":"weapon","id":"laser","named":false}),
-        ),
-        (
-            "gear",
-            "shield",
-            "name",
-            json!({"kind":"gear","id":"shield","named":true}),
-        ),
-        (
-            "status",
-            "burning",
-            "",
-            json!({"kind":"status","id":"burning","named":false}),
-        ),
-        (
-            "defence",
-            "armour",
-            "name",
-            json!({"kind":"defence","id":"armour","named":true}),
-        ),
+fn a_typed_component_keeps_its_kind_and_display_content_whatever_its_name() {
+    for name in [
+        "ship",
+        "shape-matrix",
+        "relationships",
+        "a-plugin-component",
     ] {
-        let html = format!(
-            "<sf-component data-kind='{name}' data-arg='{arg}' data-option='{option}'><p>Displayed</p></sf-component>"
-        );
-        let parsed = blocks::parse(&html, &[], "docs/x.md");
-        let [Block::Component { component }] = parsed.as_slice() else {
-            panic!("{parsed:?}")
-        };
-        assert_eq!(component.blocks(), &[paragraph("Displayed")]);
-        let mut selector = serde_json::to_value(component).unwrap();
-        selector.as_object_mut().unwrap().remove("blocks");
-        assert_eq!(selector, expected);
-    }
-    for (name, arg, option) in [
-        ("ship", "REP-F01", "enormous"),
-        ("shape-matrix", "all", "typo"),
-        ("relationships", "typo", ""),
-        ("unknown", "x", ""),
-    ] {
-        let html = format!(
-            "<sf-component data-kind='{name}' data-arg='{arg}' data-option='{option}'><p>Retained</p></sf-component>"
-        );
-        let parsed = blocks::parse(&html, &[], "docs/x.md");
+        let html = format!("<sf-component data-kind='{name}'><p>Displayed</p></sf-component>");
         assert_eq!(
-            parsed,
-            [
-                Block::Unknown {
-                    tag: format!("component:{name}"),
-                    text: "Retained".into()
-                },
-                Block::Group {
-                    blocks: vec![paragraph("Retained")]
-                }
-            ]
+            blocks::parse(&html, &[], "docs/x.md"),
+            [Block::Component {
+                kind: name.into(),
+                blocks: vec![paragraph("Displayed")]
+            }]
+        );
+        let inline = blocks::parse(&format!("<p>a {html} b</p>"), &[], "docs/x.md");
+        let [Block::Paragraph { spans }] = inline.as_slice() else {
+            panic!("{inline:?}")
+        };
+        assert_eq!(
+            spans[1],
+            Span::Component {
+                kind: name.into(),
+                blocks: vec![paragraph("Displayed")]
+            }
         );
     }
 }
 
 #[test]
 fn semantic_groups_keep_their_content_and_preserve_extra_presentation() {
-    for (class, expected) in [
-        (
-            "pair",
-            Block::ArtSlot {
-                figures: vec![paragraph("content")],
-            },
+    assert_eq!(
+        blocks::parse(
+            "<div class='compare'><p>content</p></div>",
+            &[],
+            "docs/x.md"
         ),
-        (
-            "hull",
-            Block::Hull {
-                blocks: vec![paragraph("content")],
-            },
-        ),
-        (
-            "compare",
-            Block::Comparison {
-                figures: vec![paragraph("content")],
-            },
-        ),
-        (
-            "matrix-scale",
-            Block::MatrixNote {
-                blocks: vec![paragraph("content")],
-            },
-        ),
-        (
-            "subfaction-ships muted",
-            Block::EmptyRoster {
-                blocks: vec![paragraph("content")],
-            },
-        ),
+        [Block::Comparison {
+            figures: vec![paragraph("content")],
+        }]
+    );
+    // An ID cannot disappear during semantic promotion: navigation still needs that anchor. A
+    // plugin's class is no wire variant: it stays a container a stylesheet selects.
+    for (class, id) in [
+        ("compare", "anchor"),
+        ("pair", ""),
+        ("matrix-scale", ""),
+        ("subfaction-ships muted", ""),
     ] {
-        assert_eq!(
-            blocks::parse(
-                &format!("<div class='{class}'><p>content</p></div>"),
-                &[],
-                "docs/x.md"
-            ),
-            [expected]
-        );
-        // An ID cannot disappear during semantic promotion: navigation still needs that anchor.
-        let with_anchor = blocks::parse(
-            &format!("<div class='{class}' id='anchor'><p>content</p></div>"),
+        let parsed = blocks::parse(
+            &format!("<div class='{class}' id='{id}'><p>content</p></div>"),
             &[],
             "docs/x.md",
         );
         assert!(
-            matches!(&with_anchor[0], Block::Container { presentation, blocks, .. } if presentation.id == "anchor" && presentation.class == class && blocks == &[paragraph("content")])
+            matches!(&parsed[0], Block::Container { tag: ContainerKind::Div, presentation, blocks } if presentation.id == id && presentation.class == class && blocks == &[paragraph("content")]),
+            "{parsed:?}"
         );
     }
     let figure = blocks::parse(
-        "<figure class='missing'><p>picture</p><figcaption>caption</figcaption></figure>",
+        "<figure data-figure='wide' data-badge='coming'><a href='/docs/A.md'><img src='/a.png' alt='A' loading='lazy'></a><figcaption>caption</figcaption></figure>",
         &[],
         "docs/x.md",
     );
     assert_eq!(
         figure,
         [Block::Figure {
-            missing: true,
-            blocks: vec![paragraph("picture")],
-            caption: vec![paragraph("caption")]
+            picture: Some(Image {
+                src: "/a.png".into(),
+                alt: "A".into(),
+                presentation: Presentation {
+                    attributes: [("loading".to_string(), "lazy".to_string())].into(),
+                    ..Presentation::default()
+                },
+            }),
+            caption: vec![text("caption")],
+            href: Some("/docs/A.md".into()),
+            badge: Some("coming".into()),
+            size: FigureSize::Wide,
         }]
+    );
+    // A size the vocabulary does not name is reported, and its content kept.
+    let unsized_figure = blocks::parse(
+        "<figure data-figure='enormous'><p>picture</p></figure>",
+        &[],
+        "docs/x.md",
+    );
+    assert!(
+        matches!(&unsized_figure[0], Block::Unknown { tag, text } if tag == "figure-size" && text == "enormous"),
+        "{unsized_figure:?}"
     );
     let settled = blocks::parse(
         "<div class='settled'><details open><summary>Done</summary><p>history</p></details></div>",
@@ -586,31 +502,26 @@ fn semantic_groups_keep_their_content_and_preserve_extra_presentation() {
             blocks: vec![paragraph("history")]
         }]
     );
-    for (class, matrix) in [
-        ("matrix", symphony_api::MatrixKind::Ships),
-        ("matrix shape-matrix", symphony_api::MatrixKind::Shapes),
-    ] {
-        let parsed = blocks::parse(
-            &format!("<div class='{class}'><table><tr><td>cell</td></tr></table></div>"),
-            &[],
-            "docs/x.md",
-        );
-        let [
-            Block::Matrix {
-                matrix: kind,
-                head,
-                rows,
-            },
-        ] = parsed.as_slice()
-        else {
-            panic!("{parsed:?}")
-        };
-        assert_eq!(*kind, matrix);
-        assert!(head.is_empty());
-        assert_eq!(rows.len(), 1);
-        assert_eq!(rows[0].len(), 1);
-        assert_eq!(rows[0][0].spans, [text("cell")]);
-    }
+    let parsed = blocks::parse(
+        "<table class='matrix shape-matrix'><tr><td>cell</td></tr></table>",
+        &[],
+        "docs/x.md",
+    );
+    let [
+        Block::Table {
+            head,
+            rows,
+            presentation,
+        },
+    ] = parsed.as_slice()
+    else {
+        panic!("{parsed:?}")
+    };
+    assert_eq!(presentation.class, "matrix shape-matrix");
+    assert!(head.is_empty());
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].len(), 1);
+    assert_eq!(rows[0][0].spans, [text("cell")]);
 }
 
 #[test]
@@ -841,7 +752,7 @@ fn wrong_type_suppresses_only_its_own_subtree_through_escaped_references() {
 
 #[test]
 fn unreadable_screen_manifest_surfaces_in_components_and_the_document_audit() {
-    let tree = Tree::new();
+    let tree = Tree::star_foundry();
     tree.write(
         "docs/data/screens.json",
         r#"{"screens":[{"id":"title","title":"Title"}]}"#,
@@ -866,7 +777,124 @@ fn unreadable_screen_manifest_surfaces_in_components_and_the_document_audit() {
     let repaired = renderer.typed_reply("[[screen:title]]", "docs/x.md");
     let typed = blocks::fragment(&repaired, "docs/x.md");
     assert!(
-        matches!(&typed[0], Block::Component { component: LiveComponent::Screen { id, blocks } } if id == "title" && matches!(&blocks[0], Block::ScreenCapture { missing: true, .. }))
+        matches!(&typed[0], Block::Component { kind, blocks } if kind == "screen" && matches!(&blocks[0], Block::Figure { picture: None, size: FigureSize::Wide, .. }))
     );
     assert!(symphony::docs_audit::audit(&tree.root).errors.is_empty());
+}
+
+/// Every generic shape a plugin renders to, as the server writes it into a section's HTML and
+/// reads it back: the same blocks, whatever plugin made them.
+#[test]
+fn the_generic_blocks_and_spans_write_and_read_back_as_themselves() {
+    use symphony_api::{Cell, GalleryItem, VectorKind, VectorShape};
+    let kite = Image {
+        src: "/x/k.png".into(),
+        alt: "Kite".into(),
+        presentation: Presentation::default(),
+    };
+    let figure =
+        |picture: Option<Image>, href: Option<&str>, badge: Option<&str>, size| Block::Figure {
+            picture,
+            caption: vec![text("REP-F01 Kite")],
+            href: href.map(str::to_string),
+            badge: badge.map(str::to_string),
+            size,
+        };
+    let icon = |named: bool, tip: &str| Span::Icon {
+        shape: vec![VectorShape {
+            kind: VectorKind::Path,
+            attributes: [("d".to_string(), "M4 4L20 20".to_string())].into(),
+        }],
+        label: "Cloning bay".into(),
+        named,
+        tip: tip.into(),
+    };
+    let cell = |header: bool, spans: Vec<Span>| Cell {
+        header,
+        spans,
+        presentation: Presentation::default(),
+    };
+    let original = vec![
+        figure(
+            Some(kite.clone()),
+            Some("/docs/ships/republic.md#rep-f01"),
+            None,
+            FigureSize::Row,
+        ),
+        figure(None, None, Some("coming"), FigureSize::Tile),
+        figure(Some(kite.clone()), None, None, FigureSize::Wide),
+        Block::Component {
+            kind: "ship-matrix".into(),
+            blocks: vec![paragraph("inside")],
+        },
+        Block::Paragraph {
+            spans: vec![
+                text("see "),
+                Span::Component {
+                    kind: "task".into(),
+                    blocks: vec![paragraph("sim/jump")],
+                },
+                text(" and "),
+                icon(true, "Cloning bay: brings a lost crew back"),
+                icon(false, ""),
+            ],
+        },
+        Block::Table {
+            head: vec![cell(true, vec![text("Hull")])],
+            rows: vec![vec![cell(
+                false,
+                vec![Span::Blocks {
+                    blocks: vec![figure(Some(kite), None, Some("concept"), FigureSize::Cell)],
+                }],
+            )]],
+            presentation: Presentation::class("matrix shape-matrix"),
+        },
+        Block::Media {
+            media: Media::Model {
+                src: "/x/hulls/REP-F01.glb".into(),
+                label: "REP-F01".into(),
+                poster: Some("/x/hulls/REP-F01.png".into()),
+            },
+        },
+        // A paragraph of one media span reads as that media, so a component's media goes in it.
+        Block::Component {
+            kind: "hull-gallery".into(),
+            blocks: vec![Block::Media {
+                media: Media::Gallery {
+                    items: vec![
+                        GalleryItem {
+                            name: "REP-F01".into(),
+                            src: "/x/hulls/REP-F01.glb".into(),
+                            poster: Some("/x/hulls/REP-F01.png".into()),
+                        },
+                        GalleryItem {
+                            name: "COA-F01".into(),
+                            src: "/x/hulls/COA-F01.glb".into(),
+                            poster: None,
+                        },
+                    ],
+                },
+            }],
+        },
+    ];
+    let mut media = Vec::new();
+    let html = blocks::write::html(&original, &mut |item| {
+        media.push(item);
+        media.len() - 1
+    });
+    assert_eq!(
+        blocks::parse(&html, &media, "docs/x.md"),
+        original,
+        "{html}"
+    );
+    let wire = serde_json::to_string(&original).unwrap();
+    assert_eq!(
+        serde_json::from_str::<Vec<Block>>(&wire).unwrap(),
+        original,
+        "{wire}"
+    );
+    assert!(
+        !wire.contains("\"tip\":\"\""),
+        "an icon without a tip sends none: {wire}"
+    );
 }

@@ -31,17 +31,10 @@ pub(crate) use cards::compare_pictures;
 pub(crate) use links::{doc_paths, find_doc};
 pub use media::{MOCKUP_NATIVE, MOCKUP_SANDBOX, is_mockup};
 
-/// What the renderer cannot draw as markup: a picture that is an `.html` file, or a `.glb` model. The
-/// fragment holds `<span class="media" data-media="N" data-kind="…">` where it goes; `N` indexes the
-/// fragment's `media`.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
-#[serde(tag = "kind", rename_all = "lowercase")]
-pub enum Media {
-    /// A page shown live in a sandboxed frame at [`MOCKUP_NATIVE`]; `src` is its URL path.
-    Mockup { src: String, label: String },
-    /// A model the viewer orbits; `src` is its URL path, percent-encoded.
-    Model { src: String, label: String },
-}
+/// What the renderer cannot draw as markup: a picture that is an `.html` file, a `.glb` model, a
+/// component's gallery. The fragment holds `<span class="media" data-media="N" data-kind="…">` where
+/// it goes; `N` indexes the fragment's `media`.
+pub use symphony_api::Media;
 
 /// A piece of rendered markup and what it points at.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -121,46 +114,6 @@ pub fn split_blocks(text: &str) -> Vec<Block> {
     blocks
 }
 
-/// Fills `[[name:arg|option]]`. A filler returns the HTML for one reference, or says why it cannot,
-/// which the page shows in its place. The default provider reads the live project data.
-pub trait Components: Send + Sync {
-    fn render_one(&self, name: &str, arg: &str, option: Option<&str>) -> Result<String, String>;
-
-    /// A provider scoped to one render, with the page whose register its art slots read.
-    fn for_page(&self, _doc_path: &str) -> Option<Box<dyn Components>> {
-        None
-    }
-
-    /// A version covering every input `render_one` reads, including files, approved pictures and
-    /// external data. Change it whenever any of those inputs changes. Without a version, documents
-    /// are rendered afresh: a provider with live data must never leave a cached picture or number.
-    fn cache_version(&self) -> Option<String> {
-        None
-    }
-}
-
-/// The components that need no data: `[[task:sim/jump|label]]`, a link to a task on the board.
-pub struct Builtin;
-
-impl Components for Builtin {
-    fn cache_version(&self) -> Option<String> {
-        Some(String::new()) // task links read only their arguments
-    }
-
-    fn render_one(&self, name: &str, arg: &str, option: Option<&str>) -> Result<String, String> {
-        match name {
-            "task" => {
-                let slug = crate::markup::escape(arg.trim());
-                let label = option.map_or_else(|| slug.clone(), crate::markup::escape);
-                Ok(format!(
-                    "<a class=\"tasklink\" data-task=\"{slug}\" href=\"/task/{slug}\">{label}</a>"
-                ))
-            }
-            other => Err(format!("unknown component {other}")),
-        }
-    }
-}
-
 /// Which document holds each card, with the path and text of every document it was read from.
 pub(crate) type CardCache = Mutex<Option<(Vec<(String, String)>, Arc<HashMap<String, String>>)>>;
 
@@ -168,8 +121,8 @@ pub(crate) type CardCache = Mutex<Option<(Vec<(String, String)>, Arc<HashMap<Str
 pub(crate) struct Ctx<'a> {
     pub(crate) root: &'a std::path::Path,
     pub(crate) doc_path: &'a str,
-    pub(crate) components: &'a dyn Components,
-    page_components: Option<Box<dyn Components>>,
+    plugins: &'a crate::plugins::Plugins,
+    page: symphony_plugin::Page<'a>,
     paths: OnceCell<Vec<String>>,
     cards: OnceCell<Arc<HashMap<String, String>>>,
     shared: &'a CardCache,
@@ -199,14 +152,32 @@ impl Ctx<'_> {
         self.media.take()
     }
 
+    /// The component `name` as the fragment holds it: its blocks written as HTML, in a typed render
+    /// inside the `<sf-component>` the parser reads back as [`symphony_api::Block::Component`].
+    fn component_html(&self, name: &str, argument: &str, option: Option<&str>) -> String {
+        let blocks = self.plugins.render(&self.page, name, argument, option);
+        let mut media = |item| self.add_media(item);
+        if self.typed {
+            crate::blocks::write::html(
+                &[symphony_api::Block::Component {
+                    kind: name.into(),
+                    blocks,
+                }],
+                &mut media,
+            )
+        } else if let [symphony_api::Block::Paragraph { spans }] = blocks.as_slice() {
+            crate::blocks::write::spans_html(spans, &mut media)
+        } else {
+            crate::blocks::write::html(&blocks, &mut media)
+        }
+    }
+
     /// `text` as the converter is handed it, components held out as tokens and document and card
     /// links written out, with the HTML each token stands for.
     fn prepared(&self, text: &str) -> (String, Vec<String>) {
-        let (expanded, stash) = links::expand_for(
-            text,
-            self.page_components.as_deref().unwrap_or(self.components),
-            self.typed,
-        );
+        let (expanded, stash) = links::expand_for(text, &mut |name, argument, option| {
+            self.component_html(name, argument, option)
+        });
         let linked = links::card_links(
             &links::wikilinks_for(&expanded, self.doc_path, self.paths(), self.typed),
             self.cards(),
@@ -286,7 +257,7 @@ fn hash(html: &str, media: &[Media]) -> String {
 /// Renders documents of the project at `root`.
 pub struct Render {
     root: PathBuf,
-    components: Box<dyn Components>,
+    plugins: crate::plugins::Plugins,
     /// Each document's last rendering and the version of its file it was made from.
     cache: Mutex<HashMap<String, (String, Arc<Document>)>>,
     /// Which document holds each card, as of the files it was read from: every render needs it, and
@@ -296,23 +267,24 @@ pub struct Render {
 
 impl Render {
     pub(crate) fn component_version(&self) -> Option<String> {
-        self.components.cache_version()
+        self.plugins
+            .cache_version(&symphony_plugin::Page::new(&self.root, ""))
     }
 
     pub fn new(root: impl Into<PathBuf>) -> Render {
         let root = root.into();
         Render {
-            components: Box::new(crate::components::Live::new(&root, "")),
+            plugins: crate::plugins::Plugins::of(&root),
             root,
             cache: Mutex::new(HashMap::new()),
             card_cache: Mutex::new(None),
         }
     }
 
-    /// The same renderer with `components` filling `[[name:arg]]`.
+    /// The same renderer with `plugins` filling `[[name:arg]]`.
     #[must_use]
-    pub fn with_components(mut self, components: Box<dyn Components>) -> Render {
-        self.components = components;
+    pub fn with_plugins(mut self, plugins: crate::plugins::Plugins) -> Render {
+        self.plugins = plugins;
         self.cache
             .get_mut()
             .unwrap_or_else(PoisonError::into_inner)
@@ -324,12 +296,31 @@ impl Render {
         &self.root
     }
 
+    /// The component `name` on the page `doc_path`, as untyped fragment HTML.
+    pub fn component(
+        &self,
+        doc_path: &str,
+        name: &str,
+        argument: &str,
+        option: Option<&str>,
+    ) -> String {
+        self.ctx(doc_path).component_html(name, argument, option)
+    }
+
+    /// `text` with its components held out as tokens, and the untyped HTML each token stands for.
+    pub fn expand_components(&self, text: &str, doc_path: &str) -> (String, Vec<String>) {
+        let ctx = self.ctx(doc_path);
+        links::expand_for(text, &mut |name, argument, option| {
+            ctx.component_html(name, argument, option)
+        })
+    }
+
     fn ctx<'a>(&'a self, doc_path: &'a str) -> Ctx<'a> {
         Ctx {
             root: &self.root,
             doc_path,
-            components: self.components.as_ref(),
-            page_components: self.components.for_page(doc_path),
+            plugins: &self.plugins,
+            page: symphony_plugin::Page::new(&self.root, doc_path),
             paths: OnceCell::new(),
             cards: OnceCell::new(),
             shared: &self.card_cache,
@@ -524,9 +515,14 @@ impl Render {
     }
 }
 
-/// Expand document components while protecting their markup through Markdown conversion.
-pub fn expand_components(text: &str, components: &dyn Components) -> (String, Vec<String>) {
-    links::expand(text, components)
+/// Each `[[name:argument|option]]` of `text` outside code, in its order.
+pub fn references(text: &str) -> Vec<(String, String, Option<String>)> {
+    let mut found = Vec::new();
+    links::expand_for(text, &mut |name, argument, option| {
+        found.push((name.into(), argument.into(), option.map(str::to_string)));
+        String::new()
+    });
+    found
 }
 
 /// How many cards belong to each register group, by where the cards belong, not where they sit.

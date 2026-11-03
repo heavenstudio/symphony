@@ -1,6 +1,6 @@
 //! Exercise notified and swept gallery changes through an owned, ephemeral listener.
 
-use super::{Hub, Sweep, gallery_root};
+use super::{Hub, Sweep, watched_root};
 use crate::backstop::Backstop;
 use crate::front::{Shared, router};
 use crate::gate::Gate;
@@ -12,11 +12,13 @@ use std::net::SocketAddr;
 use std::path::Path;
 use std::sync::{Arc, mpsc};
 use std::time::{Duration, Instant};
-use symphony_api::{Block, Document, GalleryHull, Media};
+use symphony_api::{Block, Document, GalleryItem, Media};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 const CHILD: &str = "SF_GALLERY_REFRESH_CHILD";
 const PHASE: &str = "gallery refresh phase: ";
+/// A checkout whose project uses Star Foundry's plugin, which draws the hull gallery.
+const MANIFEST: &str = "[plugins]\ncrates = [\"star-foundry-symphony\"]\n";
 const SVG: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" width="80" height="80"><path d="M0 0L80 40L0 80Z"/></svg>"#;
 
 fn deliver(hub: &Hub, event: Event) {
@@ -49,25 +51,29 @@ async fn document(address: SocketAddr) -> Document {
     serde_json::from_str(body).unwrap()
 }
 
-fn hulls(document: &Document) -> &[GalleryHull] {
+fn hulls(document: &Document) -> &[GalleryItem] {
     section_hulls(&document.sections)
 }
 
-fn section_hulls(sections: &[symphony_api::Section]) -> &[GalleryHull] {
+fn section_hulls(sections: &[symphony_api::Section]) -> &[GalleryItem] {
     sections
         .iter()
         .flat_map(|section| &section.blocks)
+        .flat_map(|block| match block {
+            Block::Component { blocks, .. } => blocks.as_slice(),
+            block => std::slice::from_ref(block),
+        })
         .find_map(|block| match block {
             Block::Media {
-                media: Media::Gallery { hulls },
-            } => Some(hulls.as_slice()),
+                media: Media::Gallery { items },
+            } => Some(items.as_slice()),
             _ => None,
         })
         .expect("the served document must contain its gallery")
 }
 
 fn picture(document: &Document) -> Option<&str> {
-    hulls(document)[0].picture.as_deref().map(|url| {
+    hulls(document)[0].poster.as_deref().map(|url| {
         let (path, version) = url.split_once("?v=").expect("a local picture is versioned");
         assert_eq!(version.len(), 12);
         assert!(version.bytes().all(|byte| byte.is_ascii_hexdigit()));
@@ -134,9 +140,10 @@ async fn watcher_refreshes_gallery_art_but_reuses_it_for_document_events() {
     // temporary directory's /var spelling is an alias for /private/var.
     tree.root = tree.root.canonicalize().unwrap();
     let root = repository(&tree);
+    tree.write("main/symphony.toml", MANIFEST);
     tree.write(
         "main/docs/ships/HULLS.md",
-        "# Hulls\n\n<div data-hull-gallery></div>\n",
+        "# Hulls\n\n[[hull-gallery:all]]\n",
     );
     tree.write("main/view/models/hulls/A.glb", "model fixture");
     tree.write(
@@ -172,13 +179,13 @@ async fn watcher_refreshes_gallery_art_but_reuses_it_for_document_events() {
 
     let initial = document(address).await;
     assert_eq!(hulls(&initial).len(), 1);
-    assert_eq!(hulls(&initial)[0].id, "A");
-    assert_eq!(hulls(&initial)[0].picture, None);
+    assert_eq!(hulls(&initial)[0].name, "A");
+    assert_eq!(hulls(&initial)[0].poster, None);
 
     eprintln!("{PHASE}document");
     let doc = tree.write(
         "main/docs/ships/HULLS.md",
-        "# Updated hulls\n\n<div data-hull-gallery></div>\n",
+        "# Updated hulls\n\n[[hull-gallery:all]]\n",
     );
     deliver(
         &hub,
@@ -217,7 +224,7 @@ async fn watcher_refreshes_gallery_art_but_reuses_it_for_document_events() {
         &hub,
         Event::new(EventKind::Remove(RemoveKind::File)).add_path(a),
     );
-    assert_eq!(hulls(&document(address).await)[0].picture, None);
+    assert_eq!(hulls(&document(address).await)[0].poster, None);
 
     eprintln!("{PHASE}outline added");
     let outline = tree.write("main/docs/data/hull-outlines/A.svg", SVG);
@@ -253,7 +260,7 @@ async fn watcher_refreshes_gallery_art_but_reuses_it_for_document_events() {
     assert_eq!(
         hulls(&document(address).await)
             .iter()
-            .map(|h| h.id.as_str())
+            .map(|h| h.name.as_str())
             .collect::<Vec<_>>(),
         ["A", "B"]
     );
@@ -328,11 +335,11 @@ async fn watcher_refreshes_gallery_art_but_reuses_it_for_document_events() {
                 .expect("the sweep's refresh must publish the document change");
             let delta: symphony_api::DocumentChange =
                 serde_json::from_value(change["data"].clone()).unwrap();
-            assert_eq!(delta.path, symphony_api::HULL_GALLERY_DOC);
+            assert_eq!(delta.path, symphony::star_foundry::HULLS_DOC);
             assert_eq!(
                 section_hulls(&delta.sections)
                     .iter()
-                    .map(|h| h.id.as_str())
+                    .map(|h| h.name.as_str())
                     .collect::<Vec<_>>(),
                 expected,
                 "{phase} must push the gallery to existing subscribers"
@@ -341,7 +348,7 @@ async fn watcher_refreshes_gallery_art_but_reuses_it_for_document_events() {
         assert_eq!(
             hulls(&document(address).await)
                 .iter()
-                .map(|h| h.id.as_str())
+                .map(|h| h.name.as_str())
                 .collect::<Vec<_>>(),
             expected,
             "{phase} must update the served gallery"
@@ -359,11 +366,11 @@ async fn watcher_refreshes_gallery_art_but_reuses_it_for_document_events() {
     mode(0o755);
     assert!(!swept, "a failed scan must retain the warm gallery");
     assert!(hub.dirty.lock().unwrap().is_empty());
-    assert!(hub.gallery_changes.lock().unwrap().is_empty());
+    assert!(hub.watch_changes.lock().unwrap().is_empty());
     assert_eq!(
         hulls(&document(address).await)
             .iter()
-            .map(|h| h.id.as_str())
+            .map(|h| h.name.as_str())
             .collect::<Vec<_>>(),
         ["D"]
     );
@@ -392,7 +399,7 @@ async fn watcher_refreshes_gallery_art_but_reuses_it_for_document_events() {
         loop {
             changes.changed().await.unwrap();
             let pages = hub.pages.read().unwrap();
-            if hulls(&pages[""].documents[symphony_api::HULL_GALLERY_DOC]).is_empty() {
+            if hulls(&pages[""].documents[symphony::star_foundry::HULLS_DOC]).is_empty() {
                 break;
             }
         }
@@ -417,8 +424,8 @@ fn a_models_link_outside_its_root_is_neither_shown_nor_swept() {
         root.join("view/models/hulls"),
     )
     .unwrap();
-    assert_eq!(symphony::models::warm(&outside), 1);
-    assert_eq!(symphony::models::warm(&root), 0);
+    assert_eq!(symphony::star_foundry::models::warm(&outside), 1);
+    assert_eq!(symphony::star_foundry::models::warm(&root), 0);
     // The link is stamped as itself, so a change behind it is none of the served root's.
     let roots = vec![(
         root.clone(),
@@ -435,9 +442,10 @@ fn a_served_models_root_replaced_by_a_link_outside_reads_as_emptied_and_its_targ
     let mut tree = Tree::new();
     tree.root = tree.root.canonicalize().unwrap();
     let root = repository(&tree);
+    tree.write("main/symphony.toml", MANIFEST);
     tree.write(
         "main/docs/ships/HULLS.md",
-        "# Hulls\n\n<div data-hull-gallery></div>\n",
+        "# Hulls\n\n[[hull-gallery:all]]\n",
     );
     git(&root, &["add", "."]);
     git(&root, &["commit", "-m", "Gallery document"]);
@@ -452,12 +460,12 @@ fn a_served_models_root_replaced_by_a_link_outside_reads_as_emptied_and_its_targ
     *hub.swept.lock().unwrap() = Sweep::new(&hub.swept_paths());
     hub.refresh_docs(None).unwrap();
     hub.ensure_page("served").unwrap();
-    hub.document("served", symphony_api::HULL_GALLERY_DOC)
+    hub.document("served", symphony::star_foundry::HULLS_DOC)
         .unwrap();
     let gallery = || -> Vec<String> {
-        hulls(&hub.pages.read().unwrap()["served"].documents[symphony_api::HULL_GALLERY_DOC])
+        hulls(&hub.pages.read().unwrap()["served"].documents[symphony::star_foundry::HULLS_DOC])
             .iter()
-            .map(|hull| hull.id.clone())
+            .map(|hull| hull.name.clone())
             .collect()
     };
     assert_eq!(gallery(), ["OLD"]);
@@ -486,7 +494,7 @@ fn a_served_models_root_replaced_by_a_link_outside_reads_as_emptied_and_its_targ
         "a models root under a linked parent is not walked"
     );
     assert!(hub.dirty.lock().unwrap().is_empty());
-    assert!(hub.gallery_changes.lock().unwrap().is_empty());
+    assert!(hub.watch_changes.lock().unwrap().is_empty());
 }
 
 #[test]
@@ -494,9 +502,10 @@ fn a_models_root_linked_to_a_folder_holding_the_same_name_reports_one_removal_an
     let mut tree = Tree::new();
     tree.root = tree.root.canonicalize().unwrap();
     let root = repository(&tree);
+    tree.write("main/symphony.toml", MANIFEST);
     tree.write(
         "main/docs/ships/HULLS.md",
-        "# Hulls\n\n<div data-hull-gallery></div>\n",
+        "# Hulls\n\n[[hull-gallery:all]]\n",
     );
     git(&root, &["add", "."]);
     git(&root, &["commit", "-m", "Gallery document"]);
@@ -514,12 +523,12 @@ fn a_models_root_linked_to_a_folder_holding_the_same_name_reports_one_removal_an
     *hub.swept.lock().unwrap() = Sweep::new(&hub.swept_paths());
     hub.refresh_docs(None).unwrap();
     hub.ensure_page("served").unwrap();
-    hub.document("served", symphony_api::HULL_GALLERY_DOC)
+    hub.document("served", symphony::star_foundry::HULLS_DOC)
         .unwrap();
     let gallery = || -> Vec<String> {
-        hulls(&hub.pages.read().unwrap()["served"].documents[symphony_api::HULL_GALLERY_DOC])
+        hulls(&hub.pages.read().unwrap()["served"].documents[symphony::star_foundry::HULLS_DOC])
             .iter()
-            .map(|hull| hull.id.clone())
+            .map(|hull| hull.name.clone())
             .collect()
     };
     assert_eq!(gallery(), ["OLD"]);
@@ -547,9 +556,10 @@ fn the_sweep_follows_only_trees_with_pages_and_a_page_that_goes_leaves_its_galle
     let mut tree = Tree::new();
     tree.root = tree.root.canonicalize().unwrap();
     let root = repository(&tree);
+    tree.write("main/symphony.toml", MANIFEST);
     tree.write(
         "main/docs/ships/HULLS.md",
-        "# Hulls\n\n<div data-hull-gallery></div>\n",
+        "# Hulls\n\n[[hull-gallery:all]]\n",
     );
     git(&root, &["add", "."]);
     git(&root, &["commit", "-m", "Gallery document"]);
@@ -564,11 +574,11 @@ fn the_sweep_follows_only_trees_with_pages_and_a_page_that_goes_leaves_its_galle
     hub.refresh_docs(None).unwrap();
     hub.ensure_page("before").unwrap();
     let initial = hub
-        .document("before", symphony_api::HULL_GALLERY_DOC)
+        .document("before", symphony::star_foundry::HULLS_DOC)
         .unwrap();
-    assert_eq!(hulls(&initial)[0].id, "Z");
+    assert_eq!(hulls(&initial)[0].name, "Z");
     assert!(!hub.sweep());
-    assert!(hub.warmed_galleries.lock().unwrap().contains_key(&branch));
+    assert!(hub.warmed_watches.lock().unwrap().contains_key(&branch));
 
     // The switch moves refs the sweep follows; its refresh drops the page and leaves the folder's
     // gallery cold.
@@ -578,17 +588,17 @@ fn the_sweep_follows_only_trees_with_pages_and_a_page_that_goes_leaves_its_galle
     assert!(!hub.pages.read().unwrap().contains_key("before"));
     assert!(!hub.pages.read().unwrap().contains_key("after"));
     assert_eq!(hub.tree("after"), Some(branch.clone()));
-    assert!(!hub.warmed_galleries.lock().unwrap().contains_key(&branch));
+    assert!(!hub.warmed_watches.lock().unwrap().contains_key(&branch));
     std::fs::remove_file(model).unwrap();
     assert!(!hub.sweep(), "a tree without a page is left to its events");
     assert!(hub.dirty.lock().unwrap().is_empty());
-    assert!(hub.gallery_changes.lock().unwrap().is_empty());
+    assert!(hub.watch_changes.lock().unwrap().is_empty());
 
     // Opening the new scope reads its models afresh; what that read saw is no change.
     hub.ensure_page("after").unwrap();
     assert!(
         hulls(
-            &hub.document("after", symphony_api::HULL_GALLERY_DOC)
+            &hub.document("after", symphony::star_foundry::HULLS_DOC)
                 .unwrap()
         )
         .is_empty()
@@ -604,8 +614,8 @@ fn the_sweep_follows_only_trees_with_pages_and_a_page_that_goes_leaves_its_galle
     refresh(&hub);
     assert!(hub.tree("after").is_none());
     assert!(!hub.pages.read().unwrap().contains_key("after"));
-    assert!(!hub.warmed_galleries.lock().unwrap().contains_key(&branch));
-    assert!(hub.gallery_changes.lock().unwrap().is_empty());
+    assert!(!hub.warmed_watches.lock().unwrap().contains_key(&branch));
+    assert!(hub.watch_changes.lock().unwrap().is_empty());
     assert!(!hub.sweep());
     assert!(hub.dirty.lock().unwrap().is_empty());
 }
@@ -621,7 +631,7 @@ fn gallery_paths_include_input_directories_and_deleted_files_but_not_neighbours(
         "docs/data/hull-outlines",
         "docs/data/hull-outlines/A.notes.json",
     ] {
-        assert_eq!(gallery_root(&root.join(relative)), Some(root), "{relative}");
+        assert_eq!(watched_root(&root.join(relative)), Some(root), "{relative}");
     }
     for relative in [
         "docs/TOPIC.md",
@@ -629,7 +639,7 @@ fn gallery_paths_include_input_directories_and_deleted_files_but_not_neighbours(
         "artifacts/concepts-other/A.png",
         "docs/data/hull-outlines-other/A.svg",
     ] {
-        assert_eq!(gallery_root(&root.join(relative)), None, "{relative}");
+        assert_eq!(watched_root(&root.join(relative)), None, "{relative}");
     }
 }
 
@@ -651,7 +661,7 @@ fn watcher_filters_access_and_metadata_and_invalidates_all_trees_on_rescan() {
     ] {
         assert!(!hub.record_event(Ok(event)));
         assert!(hub.dirty.lock().unwrap().is_empty());
-        assert!(hub.gallery_changes.lock().unwrap().is_empty());
+        assert!(hub.watch_changes.lock().unwrap().is_empty());
     }
 
     assert!(
@@ -662,13 +672,13 @@ fn watcher_filters_access_and_metadata_and_invalidates_all_trees_on_rescan() {
         .add_path(branch.join("artifacts/concepts/new.png"))))
     );
     let roots = BTreeSet::from([root.clone(), branch]);
-    assert_eq!(*hub.gallery_changes.lock().unwrap(), roots);
+    assert_eq!(*hub.watch_changes.lock().unwrap(), roots);
     for event in [
         Ok(Event::new(EventKind::Any).set_flag(Flag::Rescan)),
         Err(notify::Error::generic("watcher lost events")),
     ] {
-        hub.gallery_changes.lock().unwrap().clear();
+        hub.watch_changes.lock().unwrap().clear();
         assert!(hub.record_event(event));
-        assert_eq!(*hub.gallery_changes.lock().unwrap(), roots);
+        assert_eq!(*hub.watch_changes.lock().unwrap(), roots);
     }
 }

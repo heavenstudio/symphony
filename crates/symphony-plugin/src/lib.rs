@@ -1,0 +1,369 @@
+//! What a Symphony plugin implements. A plugin is a value implementing [`Plugin`]; a host binary
+//! compiles in the plugins it lists, and a project's `symphony.toml` names the ones it uses
+//! (`[plugins] crates`). Each seam below takes and returns plain data (paths, text and the wire
+//! types of `symphony-api`, re-exported in [`vocabulary`]), never a Symphony library type, so a
+//! sidecar adapter (a process answering a line protocol) can implement any of them later.
+//!
+//! The client holds no plugin code: a component renders to [`vocabulary::Block`]s, which every
+//! project's client draws with the same generic components.
+
+use std::any::Any;
+use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex, PoisonError};
+
+/// The block vocabulary a plugin renders to, and the data its seams return.
+pub mod vocabulary {
+    pub use symphony_api::{
+        Block, Cell, ContainerKind, FieldValue, FigureSize, GalleryItem, Image, InlineKind,
+        LinkTarget, Media, NavItem, Picture, Presentation, ProgressBar, Region, Span, TaskOffer,
+        VectorKind, VectorShape,
+    };
+}
+
+use vocabulary::{Block, FieldValue, NavItem, Picture, Region, TaskOffer};
+
+/// A plugin: its name (the one `[plugins] crates` lists) and what it adds at each seam. Every seam
+/// but the name defaults to adding nothing.
+pub trait Plugin: Send + Sync {
+    fn name(&self) -> &str;
+
+    /// `[[name:argument|option]]` components, one per name.
+    fn components(&self) -> Vec<&dyn Component> {
+        Vec::new()
+    }
+    fn card_kinds(&self) -> Vec<&dyn CardKind> {
+        Vec::new()
+    }
+    /// Answers under `/x/<path>/`.
+    fn routes(&self) -> Vec<&dyn Route> {
+        Vec::new()
+    }
+    /// Entries in the header and the home's links, after the Symphony's own.
+    fn nav(&self) -> Vec<NavItem> {
+        Vec::new()
+    }
+    fn home_regions(&self) -> Vec<&dyn HomeRegion> {
+        Vec::new()
+    }
+    fn board_actions(&self) -> Vec<&dyn BoardAction> {
+        Vec::new()
+    }
+    fn board_fields(&self) -> Vec<&dyn BoardField> {
+        Vec::new()
+    }
+    fn watches(&self) -> Vec<&dyn Watch> {
+        Vec::new()
+    }
+    fn doc_checks(&self) -> Vec<&dyn DocCheck> {
+        Vec::new()
+    }
+    fn prose_rules(&self) -> Vec<&dyn ProseRule> {
+        Vec::new()
+    }
+    fn generators(&self) -> Vec<&dyn Generator> {
+        Vec::new()
+    }
+    fn transports(&self) -> Vec<&dyn Transport> {
+        Vec::new()
+    }
+    fn theme(&self) -> Option<Theme> {
+        None
+    }
+}
+
+/// One render of one document: the project's root, the page, and what the page's components have
+/// loaded so far, so data several components read is read once per render.
+pub struct Page<'a> {
+    pub root: &'a Path,
+    /// The document being rendered, project-relative (empty outside a document).
+    pub doc_path: &'a str,
+    loaded: Mutex<BTreeMap<&'static str, Arc<dyn Any + Send + Sync>>>,
+}
+
+impl<'a> Page<'a> {
+    pub fn new(root: &'a Path, doc_path: &'a str) -> Self {
+        Self {
+            root,
+            doc_path,
+            loaded: Mutex::new(BTreeMap::new()),
+        }
+    }
+
+    /// The value loaded under `key` on this page, `load`ing it the first time it is asked for.
+    /// A key holds one type: asking for another under the same key loads that one in its place.
+    pub fn once<T: Any + Send + Sync>(
+        &self,
+        key: &'static str,
+        load: impl FnOnce() -> T,
+    ) -> Arc<T> {
+        if let Some(found) = self.cached(key) {
+            return found;
+        }
+        // Loaded outside the lock, so a loader may ask for other keys of the same page.
+        let value = Arc::new(load());
+        let erased: Arc<dyn Any + Send + Sync> = value.clone();
+        self.loaded
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(key, erased);
+        value
+    }
+
+    fn cached<T: Any + Send + Sync>(&self, key: &'static str) -> Option<Arc<T>> {
+        let loaded = self.loaded.lock().unwrap_or_else(PoisonError::into_inner);
+        loaded.get(key).cloned()?.downcast::<T>().ok()
+    }
+}
+
+/// A `[[name:argument|option]]` component.
+pub trait Component: Send + Sync {
+    fn name(&self) -> &str;
+
+    /// What the component shows for `argument` and `option` on `page`, or why it cannot.
+    fn render(
+        &self,
+        page: &Page<'_>,
+        argument: &str,
+        option: Option<&str>,
+    ) -> Result<Vec<Block>, String>;
+
+    /// Whether `argument` and `option` name something that exists, as the docs build checks a
+    /// document. Rendering and dropping the result is the default.
+    fn resolve(&self, page: &Page<'_>, argument: &str, option: Option<&str>) -> Result<(), String> {
+        self.render(page, argument, option).map(drop)
+    }
+
+    /// A version covering every input `render` reads under the page's root. Without one, a
+    /// document holding the component is rendered afresh on every read: a component with live
+    /// data must never leave a cached picture or number.
+    fn cache_version(&self, _page: &Page<'_>) -> Option<String> {
+        None
+    }
+}
+
+/// A decision card as a card kind reads it.
+#[derive(Clone, Copy, Debug)]
+pub struct Card<'a> {
+    pub slug: &'a str,
+    /// The document holding it, project-relative.
+    pub doc: &'a str,
+    /// The heading it sits under.
+    pub topic: &'a str,
+    /// Its text after the marker, without its thread.
+    pub text: &'a str,
+    /// Its thread, oldest first.
+    pub thread: &'a [ThreadLine<'a>],
+}
+
+/// One line of a card's thread.
+#[derive(Clone, Copy, Debug)]
+pub struct ThreadLine<'a> {
+    /// Whether an agent wrote it (else the owner did).
+    pub agent: bool,
+    /// The owner's verdict word it carries (`approved`), if any.
+    pub verdict: Option<&'a str>,
+    pub text: &'a str,
+}
+
+/// A kind of decision card a plugin recognises by its text.
+pub trait CardKind: Send + Sync {
+    fn name(&self) -> &str;
+    fn recognises(&self, card: &Card<'_>) -> bool;
+    /// The pictures the board shows on the card, in its order, read in the checkout at `root`: the
+    /// first kind to give some wins.
+    fn pictures(&self, _root: &Path, _card: &Card<'_>) -> Vec<Picture> {
+        Vec::new()
+    }
+    /// The slot the card fills, as a page names it.
+    fn slot(&self, _card: &Card<'_>) -> Option<String> {
+        None
+    }
+    /// The triage's category for the card (`hull model · kite`); the first kind to give one wins.
+    fn triage_category(&self, _card: &Card<'_>) -> Option<String> {
+        None
+    }
+    /// Whether an approval predicted from the owner's past verdicts may stand for the owner's.
+    fn auto_approvable(&self, _card: &Card<'_>) -> bool {
+        true
+    }
+    /// Whether the owner's approval leaves agent work: an approved card that waits for an agent
+    /// to apply it.
+    fn approval_needs_agent(&self, _card: &Card<'_>) -> bool {
+        false
+    }
+}
+
+/// What a route answers.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Reply {
+    /// A JSON document, already serialized.
+    Json(String),
+    /// A file to send as it is.
+    File(PathBuf),
+}
+
+/// An answer under `/x/<path>/`, behind the same gate as every other request.
+pub trait Route: Send + Sync {
+    /// The segment after `/x/` (`hulls`).
+    fn path(&self) -> &str;
+    /// The answer for `rest`, what follows `/x/<path>/`, in the checkout at `root`; `None` is
+    /// not found.
+    fn serve(&self, root: &Path, rest: &str) -> Option<Reply>;
+}
+
+/// A region of the home, recomputed when the board's inputs change.
+pub trait HomeRegion: Send + Sync {
+    fn id(&self) -> &str;
+    /// The region for the checkout at `root`, or `None` when it has nothing to show.
+    fn region(&self, root: &Path) -> Option<Region>;
+}
+
+/// A task as a board action reads it.
+#[derive(Clone, Copy, Debug)]
+pub struct TaskRef<'a> {
+    pub slug: &'a str,
+    pub status: &'a str,
+    /// The branch its work is on.
+    pub branch: &'a str,
+}
+
+/// A button on a task, with the server's handler behind it.
+pub trait BoardAction: Send + Sync {
+    fn name(&self) -> &str;
+    /// What the action offers on `task` in the project at `root`; an empty offer shows nothing.
+    fn offer(&self, root: &Path, task: &TaskRef<'_>) -> Result<TaskOffer, String>;
+}
+
+/// What a board field holds.
+#[derive(Clone, Debug, PartialEq)]
+pub enum FieldKind {
+    Text,
+    /// One of these words.
+    Choice(Vec<String>),
+    Number,
+    /// A URL or a project-relative path.
+    Link,
+}
+
+/// A typed value a plugin declares on every task of its project. Its value is stored in the task
+/// record's `fields` object under the plugin's name; the server asks the field to validate a
+/// value before the write's transaction.
+pub trait BoardField: Send + Sync {
+    fn name(&self) -> &str;
+    fn kind(&self) -> FieldKind;
+    fn required(&self) -> bool {
+        false
+    }
+    /// The value to store for `value`, or why it is refused. The default checks it against the
+    /// field's kind.
+    fn validate(&self, value: &FieldValue) -> Result<FieldValue, String> {
+        check_kind(&self.kind(), value)
+    }
+}
+
+/// `value` as a field of `kind` stores it: a number field takes a number or text that reads as
+/// one, the other kinds take text, a choice one of its words, a link a URL or a path.
+pub fn check_kind(kind: &FieldKind, value: &FieldValue) -> Result<FieldValue, String> {
+    let text = match value {
+        FieldValue::Text(text) => text.trim(),
+        FieldValue::Number(number) if *kind == FieldKind::Number => {
+            return finite(*number);
+        }
+        FieldValue::Number(number) => return Err(format!("{number} is a number, not text")),
+    };
+    match kind {
+        FieldKind::Number => text
+            .parse::<f64>()
+            .map_err(|_| format!("{text:?} is not a number"))
+            .and_then(finite),
+        _ if text.is_empty() => Err("the value is empty".into()),
+        FieldKind::Text => Ok(FieldValue::Text(text.into())),
+        FieldKind::Choice(words) => words
+            .iter()
+            .find(|word| word.as_str() == text)
+            .map(|word| FieldValue::Text(word.clone()))
+            .ok_or_else(|| format!("{text:?} is not one of {}", words.join(", "))),
+        FieldKind::Link => {
+            if text.contains(char::is_whitespace) {
+                Err(format!("{text:?} is not a link: it holds a space"))
+            } else {
+                Ok(FieldValue::Text(text.into()))
+            }
+        }
+    }
+}
+
+fn finite(number: f64) -> Result<FieldValue, String> {
+    if number.is_finite() {
+        Ok(FieldValue::Number(number))
+    } else {
+        Err(format!("{number} is not a finite number"))
+    }
+}
+
+/// Paths whose change invalidates a plugin's caches.
+pub trait Watch: Send + Sync {
+    /// Folders or files under a checkout, relative to it.
+    fn paths(&self) -> Vec<String>;
+    /// Called after a change below one of `paths` in the checkout at `root`, and when the server
+    /// first serves it: drop what is stale and warm it again. Returns a line for the server's log.
+    fn changed(&self, root: &Path) -> Option<String>;
+    /// Called when the server stops serving the checkout at `root`: drop what is kept for it.
+    fn forget(&self, _root: &Path) {}
+}
+
+/// A check over the project's documents and data, run by the docs build and by
+/// `symphony-status --lint`.
+pub trait DocCheck: Send + Sync {
+    fn name(&self) -> &str;
+    /// Each problem in the project at `root`, naming its file (`docs/data/screens.json: …`).
+    fn check(&self, root: &Path) -> Vec<String>;
+}
+
+/// A rule for one document's prose.
+pub trait ProseRule: Send + Sync {
+    fn name(&self) -> &str;
+    /// Each problem in the document `rel` (project-relative) whose text is `text`: its 1-based
+    /// line and what is wrong there.
+    fn check(&self, rel: &str, text: &str) -> Vec<(usize, String)>;
+}
+
+/// A command that regenerates files after the owner's edits are committed.
+pub trait Generator: Send + Sync {
+    fn name(&self) -> &str;
+    /// The path it writes, project-relative.
+    fn outputs(&self) -> &str;
+    /// The command, its program first, run at the checkout's root.
+    fn command(&self) -> Vec<String>;
+    /// Whether it runs only after an earlier generator changed something.
+    fn when_changed(&self) -> bool {
+        false
+    }
+}
+
+/// A way to reach an agent: register its address, deliver a message to it, probe whether it lives.
+pub trait Transport: Send + Sync {
+    /// The name `[agents] transports` lists (`claude-uds`).
+    fn name(&self) -> &str;
+    /// The address an agent of `handle` registers with, from what the agent's session reports.
+    fn register(&self, handle: &str, reported: &str) -> Result<String, String>;
+    fn deliver(&self, address: &str, message: &str) -> Result<(), String>;
+    fn alive(&self, address: &str) -> bool;
+}
+
+/// A project's look: a package of tokens, stylesheets, an icon and layout variants.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Theme {
+    /// The package's name, as `[theme] package` names it.
+    pub package: String,
+    /// The name shown in the header and the tab.
+    pub name: String,
+    pub icon: Option<String>,
+    /// Token names (`accent`, `bg`, `fg`, `font`, …) and their CSS values.
+    pub tokens: BTreeMap<String, String>,
+    /// Stylesheets appended after the tokens, project-relative.
+    pub stylesheets: Vec<String>,
+    /// The named layout variant chosen for each region the client offers variants of.
+    pub layouts: BTreeMap<String, String>,
+}

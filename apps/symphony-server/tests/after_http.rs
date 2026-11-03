@@ -66,8 +66,13 @@ fn fixture() -> tree::Tree {
     write(&root, "docs/OTHER.md", "# Other\n");
     write(
         &root,
+        "symphony.toml",
+        "[plugins]\ncrates = [\"star-foundry-symphony\"]\n",
+    );
+    write(
+        &root,
         "docs/ships/HULLS.md",
-        "# Hulls\n\n<div data-hull-gallery></div>\n",
+        "# Hulls\n\n[[hull-gallery:all]]\n",
     );
     write(
         &root,
@@ -648,6 +653,15 @@ fn later_expiry(f: &Fixture) {
 fn contracts(f: &Fixture) {
     let shell = f.get("/").status(200);
     assert!(shell.text().contains("Native shell."));
+    let project = format!(
+        "<html><body><script type=\"application/json\" id=\"symphony-project\">{}</script>",
+        json!({
+            "name": f.root.file_name().unwrap().to_str().unwrap(),
+            "register": "docs/DECISIONS.md",
+            "nav": [{"label": "⬡ hulls", "title": "Hull models", "href": "/hulls", "document": "docs/ships/HULLS.md"}],
+        })
+    );
+    assert!(shell.text().starts_with(&project), "{}", shell.text());
     assert_eq!(shell.header("content-type"), "text/html; charset=utf-8");
     assert_eq!(shell.header("cache-control"), "no-cache");
     for route in [
@@ -701,6 +715,7 @@ fn contracts(f: &Fixture) {
         "/assets/app-dxh123.js",
         "/artifacts/raw.svg",
         "/view/models/hulls/A.glb",
+        "/x/hulls/A.glb",
     ] {
         let get = f.get(route).status(200);
         let head = f.request("HEAD", route, &[], &[]).status(200);
@@ -722,6 +737,7 @@ fn contracts(f: &Fixture) {
         "/",
         "/assets/app-dxh123.js",
         "/view/models/hulls/A.glb",
+        "/x/hulls/A.glb",
         "/artifacts/raw.svg",
     ] {
         let get = f.get(route).status(200);
@@ -806,6 +822,7 @@ fn contracts(f: &Fixture) {
         "/api/board",
         "/artifacts/large.svg",
         "/view/models/hulls/A.glb",
+        "/x/hulls/A.glb",
     ] {
         let get = if route == "/" {
             &compressed
@@ -1000,6 +1017,12 @@ fn media_refusals_and_thumbnail(f: &Fixture) {
         "/view/models/hulls/directory.glb",
         "/view/models/hulls/missing.glb",
         "/view/models/hulls/%2E%2E/outside.glb",
+        "/x/hulls/outside.glb",
+        "/x/hulls/directory.glb",
+        "/x/hulls/missing.glb",
+        "/x/hulls/%2E%2E/outside.glb",
+        "/x/hulls/",
+        "/x/unknown/A.glb",
         "/api/document?path=docs/METADATA.md",
         "/thumb/400/stale/artifacts/metadata.png.jpg",
         "/thumb/400/stale/artifacts/outside.svg.jpg",
@@ -1437,7 +1460,7 @@ fn watcher(f: &Fixture) {
     write(
         &f.root,
         "docs/ships/HULLS.md",
-        "# Hulls\n\nDocument refresh handshake\n\n<div data-hull-gallery></div>\n",
+        "# Hulls\n\nDocument refresh handshake\n\n[[hull-gallery:all]]\n",
     );
     root_feed.until("Document refresh handshake");
     assert!(gallery(f, "").contains("Document refresh handshake"));

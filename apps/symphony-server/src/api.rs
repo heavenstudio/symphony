@@ -2,7 +2,7 @@
 
 use std::collections::VecDeque;
 use std::path::{Component, Path};
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 use std::time::Duration;
 
 use axum::body::Body;
@@ -12,6 +12,9 @@ use serde_json::json;
 
 use crate::front::Shared;
 use crate::live::Hub;
+
+/// Where a plugin's routes answer: `/x/<route>/<rest>`.
+const PLUGIN_ROUTES: &str = "/x/";
 
 const READS: &[&str] = &[
     "/api/board",
@@ -37,8 +40,6 @@ const READS: &[&str] = &[
     "/api/versions",
     "/api/diff",
     "/api/hulls",
-    "/hulls",
-    "/hulls/",
     "/api/asks",
     "/api/ask",
 ];
@@ -97,7 +98,7 @@ pub(crate) async fn answer(shared: &Arc<Shared>, request: Request) -> Option<Res
         query_scope
     };
     let thumbnail = path.starts_with("/thumb/");
-    let model_file = path.starts_with("/view/models/hulls/") && path.ends_with(".glb");
+    let plugin_route = path.starts_with(PLUGIN_ROUTES);
     let json_queue = path == "/queue"
         && request
             .headers()
@@ -110,7 +111,7 @@ pub(crate) async fn answer(shared: &Arc<Shared>, request: Request) -> Option<Res
     // behind the same canonical containment, metadata exclusion and sandbox as embedded media.
     let media_file = crate::media_files::handles(path)
         || (!static_file && !path.starts_with("/api/") && !READS.contains(&path));
-    if !static_file && !thumbnail && !model_file && !media_file && !READS.contains(&path) {
+    if !static_file && !thumbnail && !plugin_route && !media_file && !READS.contains(&path) {
         return None;
     }
     if path == "/api/ask" && request.method() != Method::GET && request.method() != Method::HEAD {
@@ -207,7 +208,7 @@ pub(crate) async fn answer(shared: &Arc<Shared>, request: Request) -> Option<Res
     if let Some(problem) = hub.problem(scope) {
         return Some(error(StatusCode::SERVICE_UNAVAILABLE, problem));
     }
-    if media_file && !model_file && !thumbnail {
+    if media_file && !plugin_route && !thumbnail {
         let root = if scope.is_empty() {
             hub.root.clone()
         } else {
@@ -215,13 +216,13 @@ pub(crate) async fn answer(shared: &Arc<Shared>, request: Request) -> Option<Res
         };
         return Some(crate::media_files::answer(shared, &root, path, &request).await);
     }
-    if model_file {
+    if plugin_route {
         let root = if scope.is_empty() {
             hub.root.clone()
         } else {
             hub.tree(scope).expect("scope was checked")
         };
-        return Some(model_response(shared, &root, path, &request).await);
+        return Some(plugin_response(shared, &root, path, &request).await);
     }
     if thumbnail
         || matches!(
@@ -895,61 +896,36 @@ fn thumbnail(shared: &Shared, root: &Path, path: &str) -> Response {
     }
 }
 
-async fn model_response(shared: &Shared, root: &Path, path: &str, request: &Request) -> Response {
-    let rel = path.trim_start_matches('/');
-    if Path::new(rel)
-        .components()
-        .any(|part| !matches!(part, Component::Normal(_)))
-    {
-        return error(StatusCode::NOT_FOUND, "no such model");
-    }
-    let Ok(folder) = tokio::fs::canonicalize(root.join("view/models/hulls")).await else {
-        return error(StatusCode::NOT_FOUND, "no such model");
+/// `/x/<route>/<rest>`: what the project's plugin route of that name answers. A file it names is
+/// served as every project file is, only from inside the checkout and outside its metadata.
+async fn plugin_response(shared: &Shared, root: &Path, path: &str, request: &Request) -> Response {
+    let Some((route, rest)) = path
+        .strip_prefix(PLUGIN_ROUTES)
+        .and_then(|routed| routed.split_once('/'))
+    else {
+        return error(StatusCode::NOT_FOUND, "no such route");
     };
-    if !root
-        .canonicalize()
-        .is_ok_and(|root| folder.starts_with(root))
-    {
-        return error(StatusCode::NOT_FOUND, "no such model");
+    let (checkout, route, rest) = (root.to_path_buf(), route.to_string(), rest.to_string());
+    let reply = tokio::task::spawn_blocking(move || {
+        symphony::plugins::Plugins::of(&checkout)
+            .route(&route)?
+            .serve(&checkout, &rest)
+    })
+    .await
+    .ok()
+    .flatten();
+    match reply {
+        None => error(StatusCode::NOT_FOUND, "no such file"),
+        Some(symphony::plugins::Reply::Json(body)) => {
+            no_store(([(header::CONTENT_TYPE, "application/json")], body))
+        }
+        Some(symphony::plugins::Reply::File(file)) => {
+            let Ok(base) = tokio::fs::canonicalize(root).await else {
+                return error(StatusCode::NOT_FOUND, "no such file");
+            };
+            crate::media_files::contained(shared, &base, &file, request).await
+        }
     }
-    let Ok(file) = tokio::fs::canonicalize(root.join(rel)).await else {
-        return error(StatusCode::NOT_FOUND, "no such model");
-    };
-    if !file.starts_with(folder) || shared.is_metadata(&file) {
-        return error(StatusCode::NOT_FOUND, "no such model");
-    }
-    let (etag, cache) =
-        symphony::assets::cache_headers(&file, request.uri().query().unwrap_or_default());
-    if matches_etag(request, &etag) {
-        return (
-            StatusCode::NOT_MODIFIED,
-            [
-                (header::ETAG, etag),
-                (header::CACHE_CONTROL, cache.to_string()),
-            ],
-        )
-            .into_response();
-    }
-    let Ok(file) = tokio::fs::File::open(file).await else {
-        return error(StatusCode::NOT_FOUND, "no such model");
-    };
-    let Ok(stat) = file.metadata().await else {
-        return error(StatusCode::NOT_FOUND, "no such model");
-    };
-    if !stat.is_file() {
-        return error(StatusCode::NOT_FOUND, "no such model");
-    }
-    let body = crate::file_body::stream(file, stat.len());
-    (
-        [
-            (header::CONTENT_TYPE, "model/gltf-binary".to_string()),
-            (header::CONTENT_LENGTH, stat.len().to_string()),
-            (header::ETAG, etag),
-            (header::CACHE_CONTROL, cache.to_string()),
-        ],
-        body,
-    )
-        .into_response()
 }
 
 fn no_store(value: impl IntoResponse) -> Response {
@@ -1310,15 +1286,23 @@ async fn static_response(shared: &Shared, path: &str, request: &Request) -> Resp
         Ok(bytes) => bytes,
         Err(e) => return error(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
     };
-    if relative == "index.html"
-        && let Some(banner) = shared.orphan_banner()
-    {
+    if relative == "index.html" {
         let shell = String::from_utf8_lossy(&bytes);
-        let at = shell
+        let body = shell
             .find("<body")
-            .and_then(|at| shell[at..].find('>').map(|end| at + end + 1))
-            .unwrap_or(0);
-        bytes = format!("{}{banner}{}", &shell[..at], &shell[at..]).into_bytes();
+            .and_then(|at| shell[at..].find('>').map(|end| at + end + 1));
+        // The project's name and navigation ride in the page's body, so the first paint asks for
+        // nothing; a shell without a body is served as it is, the client then drawing no nav.
+        let element = body.map_or_else(String::new, |_| {
+            symphony::project::Project::element(
+                &symphony::project::Project::of(&shared.root).view(),
+            )
+        });
+        let banner = shared.orphan_banner().unwrap_or_default();
+        if !element.is_empty() || !banner.is_empty() {
+            let at = body.unwrap_or(0);
+            bytes = format!("{}{element}{banner}{}", &shell[..at], &shell[at..]).into_bytes();
+        }
     }
     let extension = file.extension().and_then(|s| s.to_str()).unwrap_or("");
     let content_type = match extension {
@@ -1378,11 +1362,20 @@ fn client_unbuilt(shared: &Shared) -> Response {
     )
 }
 
+/// The client pages the compiled plugins' navigation opens (`/hulls`).
+static NAV_PAGES: LazyLock<Vec<String>> = LazyLock::new(|| {
+    symphony::plugins::compiled()
+        .into_iter()
+        .flat_map(|plugin| plugin.nav())
+        .map(|item| item.href.trim_end_matches('/').to_string())
+        .collect()
+});
+
 pub(crate) fn client_page(path: &str) -> bool {
-    matches!(
-        path.trim_end_matches('/'),
-        "" | "/tasks" | "/agents" | "/queue" | "/hulls"
-    ) || path.starts_with("/task/")
+    let page = path.trim_end_matches('/');
+    matches!(page, "" | "/tasks" | "/agents" | "/queue")
+        || NAV_PAGES.iter().any(|nav| nav == page)
+        || path.starts_with("/task/")
         || (path.trim_end_matches('/') == "/docs" || path.starts_with("/docs/"))
             && (Path::new(path.trim_end_matches('/')).extension().is_none()
                 || path.ends_with(".md"))

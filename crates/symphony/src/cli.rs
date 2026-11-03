@@ -746,20 +746,18 @@ fn dispatch(request: &Value) -> Result<Value, Failure> {
         "read_manifest" => {
             json!(screens::read_manifest(Path::new(text_arg(request, "out")?)).map_err(bad)?)
         }
-        "expand_components" => {
-            let components = crate::components::Live::new(
-                text_arg(request, "root")?,
+        "expand_components" => json!(
+            crate::render::Render::new(text_arg(request, "root")?)
+                .expand_components(text()?, text_arg(request, "doc_path")?)
+        ),
+        "component" => json!(
+            crate::render::Render::new(text_arg(request, "root")?).component(
                 text_arg(request, "doc_path")?,
-            );
-            json!(crate::render::expand_components(text()?, &components))
-        }
-        "component" => json!(crate::components::render_one(
-            Path::new(text_arg(request, "root")?),
-            text_arg(request, "doc_path")?,
-            text_arg(request, "name")?,
-            text_arg(request, "arg")?,
-            optional_text(request, "option")?
-        )),
+                text_arg(request, "name")?,
+                text_arg(request, "arg")?,
+                optional_text(request, "option")?
+            )
+        ),
         name if name.starts_with("asks_") => asks_call(name, request)?,
         other => return Err(bad(format!("unknown function {other:?}"))),
     })

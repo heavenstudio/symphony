@@ -12,7 +12,8 @@ use tasks::sys::Command;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::landing::{PrivateWorktree, default_generators, is_doc};
+use crate::landing::{PrivateWorktree, generators, is_doc};
+use crate::project::Project;
 
 type Blobs = BTreeMap<String, String>;
 
@@ -223,6 +224,15 @@ mod metadata_tests {
             assert!(!on_main(&root.join("detached")));
             assert!(write_lock(&root.join("bare")).unwrap().is_none());
             assert!(write_lock(&root.join("plain")).unwrap().is_none());
+            // A project naming no record keeps none; one naming a `.git/` folder keeps it in the
+            // common directory, from whichever checkout records it.
+            record(&root.join("linked"), "unrecorded").unwrap();
+            assert!(!expected.join("sf-land/verdicts/unrecorded").exists());
+            std::fs::write(
+                root.join("linked").join(crate::project::FILE),
+                "[verdicts]\nrecord = \".git/sf-land/verdicts\"\n",
+            )
+            .unwrap();
             record(&root.join("linked"), "fixture").unwrap();
             assert!(expected.join("sf-land/verdicts/fixture").is_file());
             // Each call reads HEAD again; there is no path-keyed metadata cache.
@@ -1226,8 +1236,12 @@ fn sync(root: &Path, rel: &str, old: &str, new: &str) -> Result<(), String> {
     problem.map_or(Ok(()), Err)
 }
 
+/// Marks `commit` as the owner's verdict where the project's landing hook reads it
+/// (`[verdicts] record`); a project without a record writes none.
 fn record(root: &Path, commit: &str) -> Result<(), String> {
-    let folder = common_dir(root)?.join("sf-land/verdicts");
+    let Some(folder) = Project::of(root).record_folder(root, &common_dir(root)?) else {
+        return Ok(());
+    };
     std::fs::create_dir_all(&folder).map_err(|e| e.to_string())?;
     std::fs::write(folder.join(commit), "Symphony verdict\n").map_err(|e| e.to_string())
 }
@@ -1363,7 +1377,7 @@ fn changed(root: &Path) -> Result<Vec<String>, String> {
 
 fn generate(root: &Path, heavy: bool) -> Result<(), String> {
     let mut wrote = false;
-    for generator in default_generators() {
+    for generator in generators(root) {
         if generator.when_changed && (!heavy || !wrote) {
             continue;
         }
@@ -1621,20 +1635,24 @@ fn output_branch(
     let tip = git(&wt.path, &["rev-parse", "HEAD"])?;
     record(root, &tip)?;
     let actor = app_actor(root)?;
-    let done = tasks::sys::output(
-        Command::new("just")
-            .arg("verify")
-            .current_dir(&wt.path)
-            .env("TASKS_SESSION", &actor),
-    )
-    .map_err(|e| e.to_string())?;
-    if !done.status.success() {
-        return Err(format!(
-            "branch {branch}: just verify failed: {}{}",
-            String::from_utf8_lossy(&done.stdout),
-            String::from_utf8_lossy(&done.stderr)
+    let check = Project::of(&wt.path).verdicts.check.clone();
+    if let Some((program, args)) = check.split_first() {
+        let done = tasks::sys::output(
+            Command::new(program)
+                .args(args)
+                .current_dir(&wt.path)
+                .env("TASKS_SESSION", &actor),
         )
-        .into());
+        .map_err(|e| e.to_string())?;
+        if !done.status.success() {
+            return Err(format!(
+                "branch {branch}: {} failed: {}{}",
+                check.join(" "),
+                String::from_utf8_lossy(&done.stdout),
+                String::from_utf8_lossy(&done.stderr)
+            )
+            .into());
+        }
     }
     Ok(Some((
         Publication {
@@ -1664,6 +1682,14 @@ fn publish(
     id: u64,
     writes: &Mutex<()>,
 ) -> Result<PublicationAttempt, String> {
+    let land = Project::of(&publication.checkout).verdicts.land.clone();
+    let Some((program, args)) = land.split_first() else {
+        return Err(format!(
+            "branch {}: {} names no [verdicts] land command",
+            publication.branch,
+            crate::project::FILE
+        ));
+    };
     let released = {
         let _commits = shared_lock(root, "verdict-commits.lock")?;
         let _held = writes.lock().unwrap_or_else(|e| e.into_inner());
@@ -1673,8 +1699,9 @@ fn publish(
     // Land may verify a moving-main candidate. Neither that work nor the branch's initial
     // verify can hold the app's write locks; land owns its publication CAS and bounded retry.
     let done = tasks::sys::output(
-        Command::new("just")
-            .args(["land", &publication.branch])
+        Command::new(program)
+            .args(args)
+            .arg(&publication.branch)
             .env("TASKS_SESSION", &publication.actor)
             .current_dir(&publication.checkout),
     );
@@ -1685,7 +1712,8 @@ fn publish(
         let _file = write_lock(root)?;
         restore(root, released, landed)?;
     }
-    let done = done.map_err(|e| format!("branch {}: just land: {e}", publication.branch))?;
+    let done =
+        done.map_err(|e| format!("branch {}: {}: {e}", publication.branch, land.join(" ")))?;
     if landed {
         return Ok(PublicationAttempt::Landed);
     }

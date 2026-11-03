@@ -402,7 +402,11 @@ fn whole(raw: &[u8]) -> Result<Option<Reply>, String> {
 }
 
 /// Send `request` to `addr` on a connection of its own and read the response to its end.
-fn exchange(addr: &str, request: &[u8], timeout: Duration) -> Result<(u16, Vec<u8>), String> {
+pub(crate) fn exchange(
+    addr: &str,
+    request: &[u8],
+    timeout: Duration,
+) -> Result<(u16, Vec<u8>), String> {
     let cannot = |e: std::io::Error| format!("cannot reach the server at {addr}: {e}");
     let to = addr
         .to_socket_addrs()

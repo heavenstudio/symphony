@@ -71,7 +71,14 @@ fn model(src: &str, label: &str, ctx: &Ctx<'_>) -> String {
     } else {
         label.to_string()
     };
-    placeholder("model", ctx.add_media(Media::Model { src: path, label }))
+    placeholder(
+        "model",
+        ctx.add_media(Media::Model {
+            src: path,
+            label,
+            poster: None,
+        }),
+    )
 }
 
 /// `body` with each image and link to a `.glb` replaced by a model item.
