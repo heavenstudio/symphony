@@ -271,7 +271,6 @@ fn owner_cancellation_grants_no_other_moves_and_refuses_missing_tasks() {
         "ready",
         "in_progress",
         "blocked",
-        "review",
         "done",
         "unknown",
     ] {
@@ -281,11 +280,55 @@ fn owner_cancellation_grants_no_other_moves_and_refuses_missing_tasks() {
         );
         assert_eq!(f.store.dump().unwrap(), before);
     }
+    // The owner's other move, back to review, starts only from blocked work.
+    assert_eq!(
+        refused(f.store.move_to("sim/jump", "review", "owner")),
+        "sim/jump cannot go from ready to review"
+    );
+    assert_eq!(f.store.dump().unwrap(), before);
     assert_eq!(
         refused(f.store.move_to("sim/missing", "cancelled", "owner")),
         "no task 'sim/missing'"
     );
     assert_eq!(f.store.dump().unwrap(), before);
+}
+
+#[test]
+fn the_owner_and_a_role_holder_return_blocked_work_to_review_but_never_an_instruction() {
+    let mut instruction = crate::common::task("sim/jump/step", "blocked");
+    instruction.id = 2;
+    instruction.parent = Some("sim/jump".into());
+    instruction.instruction = true;
+    let f = Fixture::new(
+        Seed::default()
+            .session("amber-heron")
+            .task("sim/jump", "blocked")
+            .task_row(instruction)
+            .task("sim/held", "blocked")
+            .role("sim/held", "amber-heron", "executor"),
+    );
+    let before = f.store.dump().unwrap();
+    assert_eq!(
+        refused(f.store.move_to("sim/jump/step", "review", "owner")),
+        "sim/jump/step is an instruction subtask: its executor closes it with `done`, not review"
+    );
+    assert_eq!(f.store.dump().unwrap(), before);
+    f.advance(1.0);
+    let back = f.store.move_to("sim/jump", "review", "owner").unwrap();
+    assert_eq!((back.status.as_str(), back.updated), ("review", f.now()));
+    assert_eq!(f.said("sim/jump"), ["owner moved it blocked → review"]);
+    assert_eq!(f.store.dump().unwrap().sessions, before.sessions);
+    assert_eq!(
+        f.store
+            .move_to("sim/held", "review", "amber-heron")
+            .unwrap()
+            .status,
+        "review"
+    );
+    assert_eq!(
+        f.said("sim/held"),
+        ["amber-heron moved it blocked → review"]
+    );
 }
 
 #[test]
@@ -419,6 +462,23 @@ fn landing_is_also_taken_by_the_session_that_asked_to_land_it() {
         .landed("sim/jump", &asked, "landed abc123", true)
         .unwrap();
     assert_eq!(f.store.get("sim/jump").unwrap().status, "done");
+}
+
+#[test]
+fn landing_finishes_work_its_stamps_held_blocked_but_never_work_in_progress() {
+    let (f, _, exe, _) = in_review();
+    let asked = f.session("orchestrator");
+    f.store.move_to("sim/jump", "blocked", &exe).unwrap();
+    f.store
+        .landed("sim/jump", &asked, "landed abc123", true)
+        .unwrap();
+    assert_eq!(f.store.get("sim/jump").unwrap().status, "done");
+    f.task("sim/other");
+    f.store.claim("sim/other", &exe).unwrap();
+    assert_eq!(
+        refused(f.store.landed("sim/other", &exe, "x", false)),
+        "sim/other is in_progress, not in review"
+    );
 }
 
 #[test]
