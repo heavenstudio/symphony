@@ -898,3 +898,106 @@ fn the_generic_blocks_and_spans_write_and_read_back_as_themselves() {
         "an icon without a tip sends none: {wire}"
     );
 }
+
+/// The prose a component may return, written into its section's HTML and read back: headings,
+/// lists, code, quotes, rules, containers, details, settled cards, callouts and comments, with
+/// every inline kind.
+#[test]
+fn a_components_prose_writes_and_reads_back_as_itself() {
+    use symphony_api::{InlineKind, VectorKind, VectorShape};
+    let original = vec![
+        Block::Heading {
+            level: 3,
+            anchor: "the-fleet".into(),
+            spans: vec![text("The fleet")],
+        },
+        Block::Paragraph {
+            spans: vec![
+                Span::Emphasis {
+                    spans: vec![text("soft")],
+                },
+                text(" "),
+                Span::Strong {
+                    spans: vec![text("loud")],
+                },
+                text(" "),
+                Span::Code {
+                    text: "a < b".into(),
+                },
+                Span::LineBreak,
+                Span::Styled {
+                    tag: InlineKind::Small,
+                    presentation: Presentation::class("muted"),
+                    spans: vec![text("aside")],
+                },
+                Span::Graphic {
+                    view_box: "0 0 24 24".into(),
+                    presentation: Presentation::default(),
+                    shapes: vec![VectorShape {
+                        kind: VectorKind::Circle,
+                        attributes: [
+                            ("cx".to_string(), "12".to_string()),
+                            ("cy".to_string(), "12".to_string()),
+                            ("r".to_string(), "4".to_string()),
+                        ]
+                        .into(),
+                    }],
+                },
+            ],
+        },
+        Block::List {
+            ordered: true,
+            start: 3,
+            items: vec![vec![paragraph("third")], vec![paragraph("fourth")]],
+        },
+        Block::List {
+            ordered: false,
+            start: 1,
+            items: vec![vec![paragraph("any")]],
+        },
+        Block::Code {
+            language: "rust".into(),
+            text: "let a = 1 < 2;".into(),
+        },
+        Block::Code {
+            language: String::new(),
+            text: "plain".into(),
+        },
+        Block::Quote {
+            blocks: vec![paragraph("quoted")],
+        },
+        Block::Rule,
+        Block::Container {
+            tag: ContainerKind::Section,
+            presentation: Presentation::class("ship-strip"),
+            blocks: vec![paragraph("held")],
+        },
+        Block::Details {
+            summary: vec![text("More")],
+            open: true,
+            blocks: vec![paragraph("hidden")],
+        },
+        Block::SettledCard {
+            summary: vec![text("Settled")],
+            open: false,
+            blocks: vec![paragraph("done")],
+        },
+        Block::Callout {
+            kind: CalloutKind::Question,
+            title: vec![text("Why?")],
+            resolved: false,
+            blocks: vec![paragraph("Because.")],
+        },
+        Block::Callout {
+            kind: CalloutKind::Decision,
+            title: vec![text("Done")],
+            resolved: true,
+            blocks: vec![paragraph("Decided.")],
+        },
+        Block::Comment {
+            text: " a note ".into(),
+        },
+    ];
+    let html = blocks::write::html(&original, &mut |_| unreachable!("no media"));
+    assert_eq!(blocks::parse(&html, &[], "docs/x.md"), original, "{html}");
+}
