@@ -2,9 +2,10 @@
 //! worktree holds that did not land (`land._left_behind`'s measure), an owner verdict no commit has
 //! (`docs_worktrees.owner_lines_left`), and when an agent last touched it.
 
+use crate::sys::{Command, Stdio};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output, Stdio};
+use std::process::Output;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::UNIX_EPOCH;
 use std::{fs, os::unix::fs::MetadataExt};
@@ -53,7 +54,7 @@ pub struct Listed {
 
 /// `git ARGS` in `dir`: none when git cannot be started there (the folder is gone).
 pub fn git(dir: &Path, args: &[&str]) -> Option<Output> {
-    command(dir).args(args).output().ok()
+    crate::sys::output(command(dir).args(args)).ok()
 }
 
 fn command(dir: &Path) -> Command {
@@ -80,14 +81,15 @@ fn command(dir: &Path) -> Command {
 fn stdout(dir: &Path, args: &[&str]) -> Option<String> {
     // These reads inspect other agents' trees. A diff can refresh the index even when
     // optional locks are disabled, so both settings are needed to leave the writer's index alone.
-    command(dir)
-        .env("GIT_OPTIONAL_LOCKS", "0")
-        .args(["-c", "diff.autoRefreshIndex=false"])
-        .args(args)
-        .output()
-        .ok()
-        .filter(|done| done.status.success())
-        .map(|done| String::from_utf8_lossy(&done.stdout).into_owned())
+    crate::sys::output(
+        command(dir)
+            .env("GIT_OPTIONAL_LOCKS", "0")
+            .args(["-c", "diff.autoRefreshIndex=false"])
+            .args(args),
+    )
+    .ok()
+    .filter(|done| done.status.success())
+    .map(|done| String::from_utf8_lossy(&done.stdout).into_owned())
 }
 
 /// Whether `git ARGS` succeeded.

@@ -1,18 +1,30 @@
 //! What health asks of this machine: its host name and whether a process is alive, as
 //! `gethostname` and `kill(pid, 0)` answer them; and the end of a
 //! process, for the board's server ([`crate::server`]); and the local time a line is stamped with.
+//! Also how a child is started and its input and output read ([`Command`], [`output`],
+//! [`spawn_output`], [`spawn_piped`], [`pipe`]): without a fork and through pipes no child another
+//! thread spawns can hold open, from the leaf the cwd scans share ([`process_cwd::spawn`]).
 
 use std::ffi::{c_char, c_int, c_long};
 use std::fs::File;
-use std::os::unix::process::CommandExt;
-use std::process::Command;
+
+pub use process_cwd::spawn::{
+    Child, Command, Stdio, output, pipe, set_nonblocking, spawn_output, spawn_piped, wait_output,
+};
 
 unsafe extern "C" {
     fn gethostname(name: *mut c_char, len: usize) -> c_int;
     fn kill(pid: c_int, sig: c_int) -> c_int;
-    fn setsid() -> c_int;
     fn tzset();
     fn localtime_r(time: *const i64, result: *mut Tm) -> *mut Tm;
+}
+
+impl crate::port::Lsof for Command {
+    fn lsof(args: &[&str]) -> Self {
+        let mut lsof = Command::new("lsof");
+        lsof.args(args);
+        lsof
+    }
 }
 
 /// C's `struct tm`, as macOS and glibc lay it out.
@@ -123,27 +135,13 @@ pub fn terminate(pid: i64, hard: bool) -> bool {
     unsafe { kill(pid, signal) == 0 }
 }
 
-/// `command`, run in a session of its own, away from its starter's terminal.
-pub fn new_session(command: &mut Command) -> &mut Command {
-    // SAFETY: setsid is async-signal-safe, all a child may call between fork and exec.
-    unsafe {
-        command.pre_exec(|| {
-            if setsid() == -1 {
-                Err(std::io::Error::last_os_error())
-            } else {
-                Ok(())
-            }
-        })
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn the_host_name_is_the_one_the_system_gives() {
-        let said = Command::new("hostname").output().unwrap();
+        let said = output(&mut Command::new("hostname")).unwrap();
         assert_eq!(hostname(), String::from_utf8(said.stdout).unwrap().trim());
         assert!(!hostname().is_empty());
     }
@@ -166,16 +164,11 @@ mod tests {
     fn a_local_minute_is_the_one_date_gives() {
         for seconds in [0.0_f64, 1_800_000_000.9, 1_791_362_047.125_689] {
             let whole = format!("{}", seconds.floor());
-            let bsd = Command::new("date")
-                .args(["-r", &whole, "+%Y-%m-%d %H:%M"])
-                .output()
-                .unwrap();
+            let bsd = output(Command::new("date").args(["-r", &whole, "+%Y-%m-%d %H:%M"])).unwrap();
             let date = if bsd.status.success() {
                 bsd
             } else {
-                Command::new("date")
-                    .args(["-d", &format!("@{whole}"), "+%Y-%m-%d %H:%M"])
-                    .output()
+                output(Command::new("date").args(["-d", &format!("@{whole}"), "+%Y-%m-%d %H:%M"]))
                     .unwrap()
             };
             assert_eq!(
@@ -202,7 +195,6 @@ mod tests {
             assert!(!terminate(pid, false), "{pid}");
         }
     }
-
     #[test]
     fn no_pid_outside_the_range_is_alive() {
         assert!(!pid_alive(0));

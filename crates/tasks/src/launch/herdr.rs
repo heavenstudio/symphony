@@ -4,8 +4,8 @@
 
 use super::LaunchError;
 use crate::cli::{Env, probes};
+use crate::sys::Command;
 use serde_json::{Map, Value};
-use std::process::Command;
 use std::time::{Duration, Instant};
 
 /// A JSON object herdr answered.

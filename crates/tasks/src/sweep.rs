@@ -271,7 +271,7 @@ struct Index<'a> {
 
 /// The branch name `slug` is worked on under when its last `/` is spelled `-`
 /// (`tools/python-zero-merge-risk` for `tools/python-zero/merge-risk`); none without a `/`.
-fn spelled(slug: &str) -> Option<String> {
+pub(crate) fn spelled(slug: &str) -> Option<String> {
     slug.rsplit_once('/')
         .map(|(above, last)| format!("{above}-{last}"))
 }

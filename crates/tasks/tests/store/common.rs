@@ -15,8 +15,8 @@
 use std::collections::HashSet;
 use std::convert::Infallible;
 use std::io::{BufRead, BufReader, Read};
+use std::os::fd::OwnedFd;
 use std::path::PathBuf;
-use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
@@ -24,6 +24,7 @@ use tasks::health::{LIVE_SECONDS, STALE_SECONDS};
 use tasks::port::Start;
 use tasks::rows::{Dump, LinkRow, RoleRow, SessionRow, TaskRow};
 use tasks::rpc::{self, Client, DbError};
+use tasks::sys::{Child, Command};
 use tasks::{Health, NewSession, NewTask, Store, Task};
 
 pub const NOW: f64 = 1_800_000_000.0;
@@ -128,14 +129,12 @@ pub fn surreal() -> PathBuf {
         return named.into();
     }
     let script = project_root().join("tools/surreal.sh");
-    let found = Command::new("bash")
-        .arg(&script)
-        .stderr(Stdio::inherit())
-        .output()
-        .expect("bash runs tools/surreal.sh");
+    let found =
+        tasks::sys::output(Command::new("bash").arg(&script)).expect("bash runs tools/surreal.sh");
     assert!(
         found.status.success(),
-        "tools/surreal.sh found no SurrealDB server for the tests"
+        "tools/surreal.sh found no SurrealDB server for the tests: {}",
+        String::from_utf8_lossy(&found.stderr)
     );
     PathBuf::from(String::from_utf8(found.stdout).unwrap().trim())
 }
@@ -149,6 +148,16 @@ fn project_root() -> PathBuf {
         })
         .expect("the project supplies the owned server fixture scripts")
         .to_path_buf()
+}
+
+/// `command` started with its stdin a [`tasks::sys::pipe`], kept as `child.stdin`, and its other
+/// streams as `command` sets them: what the child reads ends once the test drops that input, never
+/// later because a child another test spawned took a copy of it.
+pub fn spawn_with_input(command: &mut Command) -> std::io::Result<Child> {
+    let (input, stdin) = tasks::sys::pipe()?;
+    let mut child = command.stdin(input).spawn()?;
+    child.stdin = Some(OwnedFd::from(stdin).into());
+    Ok(child)
 }
 
 fn start() -> Server {
@@ -166,30 +175,33 @@ fn start() -> Server {
     let until = Instant::now() + Duration::from_secs(20);
     let started = tasks::port::start_on_free_port(tasks::port::ATTEMPTS, until, |reserved| {
         let addr = reserved.to_string();
-        let mut shell = Command::new("bash")
-            .arg("-c")
-            .arg(concat!(
-                r#". "$3"; fixture_close_fds; exec 3<&0; "$0" start --unauthenticated --bind "$1" --log error memory >"$2" 2>&1 3<&- & s=$!; "#,
-                r#"echo "$s"; exec >/dev/null; "#,
-                r#"(fixture_wait_eof <&3; kill $s 2>/dev/null) & c=$!; exec 3<&-; wait $s; kill $c 2>/dev/null; wait $c 2>/dev/null"#,
-            ))
-            .arg(&binary)
-            .arg(&addr)
-            .arg(&log)
-            .arg(project_root().join("tools/fixture_process.sh"))
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .spawn()
-            .expect("sh starts the server");
+        let (announced, announcer) = tasks::sys::pipe().expect("a pipe for the server's pid");
+        let mut shell = spawn_with_input(
+            Command::new("bash")
+                .arg("-c")
+                .arg(concat!(
+                    r#". "$3"; fixture_close_fds; exec 3<&0; "$0" start --unauthenticated --bind "$1" --log error memory >"$2" 2>&1 3<&- & s=$!; "#,
+                    r#"echo "$s"; exec >/dev/null; "#,
+                    r#"(fixture_wait_eof <&3; kill $s 2>/dev/null) & c=$!; exec 3<&-; wait $s; kill $c 2>/dev/null; wait $c 2>/dev/null"#,
+                ))
+                .arg(&binary)
+                .arg(&addr)
+                .arg(&log)
+                .arg(project_root().join("tools/fixture_process.sh"))
+                .stdout(announcer),
+        )
+        .expect("sh starts the server");
         let mut line = String::new();
-        let _ = BufReader::new(shell.stdout.take().unwrap()).read_line(&mut line);
+        let _ = BufReader::new(announced).read_line(&mut line);
         let server: Option<u32> = line.trim().parse().ok();
         while Instant::now() < until {
             if shell.try_wait().unwrap().is_some() {
                 return Ok::<_, Infallible>(Start::Ended(said()));
             }
             if rpc::healthy(&addr)
-                && server.is_some_and(|pid| tasks::port::listens(pid, reserved).unwrap())
+                && server.is_some_and(|pid| {
+                    tasks::port::listens(pid, reserved, tasks::sys::output).unwrap()
+                })
             {
                 return Ok(Start::Up((addr, shell)));
             }

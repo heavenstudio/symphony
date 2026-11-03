@@ -18,12 +18,12 @@ use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use tasks::cli::Env;
 use tasks::launch::herdr::{Binary, Herdr};
 use tasks::launch::{Ask, LaunchError, Machine, Started};
+use tasks::sys::Command;
 use tasks::{Error, NewTask, Store};
 
 pub const FAKE: &str = env!("CARGO_BIN_EXE_fake-herdr");
@@ -56,12 +56,13 @@ impl Drop for Folder {
 
 /// `git ARGS` in `dir`, which must succeed: its output, trimmed.
 pub fn git(dir: &Path, args: &[&str]) -> String {
-    let done = Command::new("git")
-        .args(["-c", "user.email=t@t", "-c", "user.name=t", "-C"])
-        .arg(dir)
-        .args(args)
-        .output()
-        .unwrap();
+    let done = tasks::sys::output(
+        Command::new("git")
+            .args(["-c", "user.email=t@t", "-c", "user.name=t", "-C"])
+            .arg(dir)
+            .args(args),
+    )
+    .unwrap();
     assert!(done.status.success(), "git {args:?}: {done:?}");
     String::from_utf8_lossy(&done.stdout).trim().to_string()
 }

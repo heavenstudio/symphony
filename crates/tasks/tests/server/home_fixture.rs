@@ -9,9 +9,10 @@ use crate::common::{answer_healthy, script};
 use std::io::Read;
 use std::net::{SocketAddr, TcpListener, TcpStream, UdpSocket};
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, ExitStatus, Stdio};
+use std::process::ExitStatus;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
+use tasks::sys::{Child, Command, Stdio};
 
 /// A `surreal` for `Home` whose server is up as soon as it listens: given a server's arguments
 /// (`start … --bind ADDR DATA`), it runs this test binary's `helper_healthy` on ADDR, with the data
@@ -48,23 +49,23 @@ impl Unresponsive {
     pub fn start(data: &str) -> Self {
         let events = UdpSocket::bind("127.0.0.1:0").unwrap();
         events.set_read_timeout(Some(BOUND)).unwrap();
-        let child = Command::new(std::env::current_exe().unwrap())
-            .args([
-                "--ignored",
-                "--exact",
-                "home_fixture::helper_unresponsive",
-                "--test-threads=1",
-                data,
-            ])
-            .env(
-                "SF_HOME_FIXTURE_EVENTS",
-                events.local_addr().unwrap().to_string(),
-            )
-            .stdin(Stdio::piped())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .unwrap();
+        let child = crate::store::spawn_with_input(
+            Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--ignored",
+                    "--exact",
+                    "home_fixture::helper_unresponsive",
+                    "--test-threads=1",
+                    data,
+                ])
+                .env(
+                    "SF_HOME_FIXTURE_EVENTS",
+                    events.local_addr().unwrap().to_string(),
+                )
+                .stdout(Stdio::null())
+                .stderr(Stdio::null()),
+        )
+        .unwrap();
         // Own the child before waiting: a missing ready event must still stop and reap it.
         let mut server = Self {
             child,

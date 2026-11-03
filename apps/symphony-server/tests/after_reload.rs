@@ -9,10 +9,10 @@ use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::os::fd::AsRawFd;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex, OnceLock, mpsc};
 use std::time::{Duration, Instant};
 use tasks::port::Start;
+use tasks::sys::{Child, Command};
 
 const LIMIT: Duration = Duration::from_secs(45);
 const DOC: &str = "# Reload fixture\n\n<!-- register:start -->\n- [ ] **one** — A proposal.\n<!-- register:end -->\n";
@@ -29,13 +29,14 @@ fn repository(root: &Path, args: &[&str]) -> String {
             command.env_remove(key);
         }
     }
-    let done = command
-        .args(args)
-        .env("GIT_CONFIG_GLOBAL", "/dev/null")
-        .env("GIT_CONFIG_NOSYSTEM", "1")
-        .current_dir(root)
-        .output()
-        .unwrap();
+    let done = tasks::sys::output(
+        command
+            .args(args)
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .current_dir(root),
+    )
+    .unwrap();
     assert!(done.status.success(), "{args:?}: {done:?}");
     String::from_utf8(done.stdout).unwrap().trim_end().into()
 }
@@ -207,15 +208,14 @@ fn driver(logs: &Path) -> &'static Path {
     static DRIVER: OnceLock<PathBuf> = OnceLock::new();
     DRIVER.get_or_init(|| {
         let output = logs.join(format!("reload-driver-{}", std::process::id()));
+        // rustc reads the whole source before it says anything, so the source is written first.
         let mut compiler = OwnedChild(
-            Command::new("rustc")
-                .args(["--edition=2024", "-", "-o"])
-                .arg(&output)
-                .stdin(Stdio::piped())
-                .stdout(Stdio::piped())
-                .stderr(Stdio::piped())
-                .spawn()
-                .unwrap(),
+            tasks::sys::spawn_piped(
+                Command::new("rustc")
+                    .args(["--edition=2024", "-", "-o"])
+                    .arg(&output),
+            )
+            .unwrap(),
         );
         compiler
             .0
@@ -299,6 +299,7 @@ fn main() {
                 fs::write("content/one", "approved\n").unwrap();
             }
         }
+        Some("content-ids") => assert_eq!(args, ["content-ids"]),
         Some("hull-atlas") => {
             assert_eq!(args, ["hull-atlas", "build"]);
             fs::create_dir_all("view").unwrap();
@@ -492,13 +493,15 @@ impl Fixture {
 
         let surreal = std::env::var_os("SF_SURREAL").map_or_else(
             || {
-                let found = Command::new("bash")
-                    .arg(
-                        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../tools/surreal.sh"),
-                    )
-                    .env_remove("BASH_ENV")
-                    .output()
-                    .unwrap();
+                let found = tasks::sys::output(
+                    Command::new("bash")
+                        .arg(
+                            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                                .join("../../../tools/surreal.sh"),
+                        )
+                        .env_remove("BASH_ENV"),
+                )
+                .unwrap();
                 assert!(found.status.success(), "{found:?}");
                 PathBuf::from(String::from_utf8(found.stdout).unwrap().trim())
             },
@@ -515,21 +518,20 @@ impl Fixture {
                 assert_ne!(reserved.port(), 8765);
                 let board_address = reserved.to_string();
                 let mut database = OwnedChild(
-                    Command::new(&surreal)
-                        .args([
-                            "start",
-                            "--unauthenticated",
-                            "--bind",
-                            &board_address,
-                            "--log",
-                            "info",
-                            "memory",
-                        ])
-                        .env("NO_COLOR", "1")
-                        .stdout(Stdio::piped())
-                        .stderr(Stdio::piped())
-                        .spawn()
-                        .unwrap(),
+                    tasks::sys::spawn_output(
+                        Command::new(&surreal)
+                            .args([
+                                "start",
+                                "--unauthenticated",
+                                "--bind",
+                                &board_address,
+                                "--log",
+                                "info",
+                                "memory",
+                            ])
+                            .env("NO_COLOR", "1"),
+                    )
+                    .unwrap(),
                 );
                 let mut database_lines = Lines::of(&mut database.0, &dir.join("board.log"));
                 let ready = match database_lines.seen_before("Started web server on ", deadline) {
@@ -551,7 +553,8 @@ impl Fixture {
                         return Ok(Start::Ended(database_lines.said()));
                     }
                     if tasks::rpc::healthy(&board_address)
-                        && tasks::port::listens(database.0.id(), reserved).unwrap()
+                        && tasks::port::listens(database.0.id(), reserved, tasks::sys::output)
+                            .unwrap()
                     {
                         return Ok(Start::Up((database, database_lines, board_address)));
                     }
@@ -635,14 +638,11 @@ impl Fixture {
             .env("GIT_CONFIG_NOSYSTEM", "1")
             .env("ASKS_DB", self.dir.join("asks.db"))
             .env("TMPDIR", self.dir.join("tmp"))
-            .current_dir(&self.root)
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
+            .current_dir(&self.root);
         if installed {
             command.arg("--home").arg(&self.home);
         }
-        let mut child = OwnedChild(command.spawn().unwrap());
+        let mut child = OwnedChild(tasks::sys::spawn_output(&mut command).unwrap());
         let mut lines = Lines::of(&mut child.0, &self.dir.join("server.log"));
         let line = lines.until("→ Symphony at http://127.0.0.1:");
         let url = line
@@ -816,10 +816,7 @@ fn tasks_binary() -> &'static Path {
             return PathBuf::from(built);
         }
         let wrapper = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../tools/rs-bin.sh");
-        let done = Command::new(wrapper)
-            .args(["--build", "tasks"])
-            .output()
-            .unwrap();
+        let done = tasks::sys::output(Command::new(wrapper).args(["--build", "tasks"])).unwrap();
         assert!(done.status.success(), "tasks binary build: {done:?}");
         PathBuf::from(String::from_utf8(done.stdout).unwrap().trim())
     })

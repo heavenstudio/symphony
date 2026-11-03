@@ -508,8 +508,8 @@ fn an_owner_verdict_no_commit_has_keeps_a_merged_worktree_and_says_why() {
 fn foreign_worktree_reads_preserve_stale_merged_and_unmerged_indexes() {
     use std::fs;
     use std::io::Write;
-    use std::process::{Command, Stdio};
     use std::time::Duration;
+    use tasks::sys::Command;
 
     let r = Repo::new();
     write(&r.root, "docs/OWNER.md", "# Owner\n");
@@ -526,12 +526,12 @@ fn foreign_worktree_reads_preserve_stale_merged_and_unmerged_indexes() {
         if unmerged {
             // A real stage-2 entry also checks the read with a conflicted index.
             let blob = git(&wt, &["rev-parse", "HEAD:docs/OWNER.md"]);
-            let mut child = Command::new("git")
-                .args(["update-index", "--index-info"])
-                .current_dir(&wt)
-                .stdin(Stdio::piped())
-                .spawn()
-                .unwrap();
+            let mut child = crate::common::spawn_with_input(
+                Command::new("git")
+                    .args(["update-index", "--index-info"])
+                    .current_dir(&wt),
+            )
+            .unwrap();
             writeln!(
                 child.stdin.take().unwrap(),
                 "100644 {blob} 2\tdocs/CONFLICT.md"
@@ -1335,11 +1335,12 @@ fn head_and_its_branch_stay_locked_during_the_final_process_probe_and_release_af
                     vec!["update-ref", "HEAD", &attempted],
                     vec!["symbolic-ref", "HEAD", "refs/heads/other"],
                 ] {
-                    let done = std::process::Command::new("git")
-                        .args(&args)
-                        .current_dir(path)
-                        .output()
-                        .unwrap();
+                    let done = tasks::sys::output(
+                        tasks::sys::Command::new("git")
+                            .args(&args)
+                            .current_dir(path),
+                    )
+                    .unwrap();
                     assert!(
                         !done.status.success(),
                         "writer succeeded under removal guard: {args:?}"

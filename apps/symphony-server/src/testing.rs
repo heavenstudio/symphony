@@ -11,15 +11,16 @@ mod tree;
 pub use tree::Tree;
 
 pub fn git(root: &std::path::Path, args: &[&str]) {
-    let done = std::process::Command::new("git")
-        .args(args)
-        .current_dir(root)
-        .env_remove("GIT_DIR")
-        .env_remove("GIT_WORK_TREE")
-        .env_remove("GIT_INDEX_FILE")
-        .env_remove("GIT_COMMON_DIR")
-        .output()
-        .unwrap();
+    let done = tasks::sys::output(
+        tasks::sys::Command::new("git")
+            .args(args)
+            .current_dir(root)
+            .env_remove("GIT_DIR")
+            .env_remove("GIT_WORK_TREE")
+            .env_remove("GIT_INDEX_FILE")
+            .env_remove("GIT_COMMON_DIR"),
+    )
+    .unwrap();
     assert!(
         done.status.success(),
         "{args:?}: {}",

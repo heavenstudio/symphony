@@ -2,23 +2,134 @@
 include!("common/commit_fixture.rs");
 
 #[test]
-fn watchdog_output_keeps_both_child_stages_and_non_utf8_output() {
+fn watchdog_report_keeps_the_pending_publication_stage_and_non_utf8_output() {
     let tree = common::Tree::new();
     assert!(child_output(&tree.root).is_empty());
-    std::fs::write(tree.path("child.log"), b"awaiting filing gate\n").unwrap();
+    std::fs::write(
+        tree.path("child.log"),
+        b"publication pid=17 id=2 thread=ThreadId(3)/\"worker\" stage=\"wait git pid=18 update-index\" started elapsed=0.000s\n",
+    )
+    .unwrap();
     std::fs::write(
         tree.path("filing.log"),
         b"close started\n\xffstill draining\n",
     )
     .unwrap();
-    let output = child_output(&tree.root);
+    let output = watchdog_report("queued save", &tree.root);
     assert!(
-        output.contains("--- child.log ---\nawaiting filing gate\n"),
+        output.contains("queued save watchdog: --- child.log ---\npublication pid=17 id=2 thread=ThreadId(3)/\"worker\" stage=\"wait git pid=18 update-index\" started elapsed=0.000s\n"),
         "{output}"
     );
     assert!(
         output.contains("--- filing.log ---\nclose started\n\u{fffd}still draining\n"),
         "{output}"
+    );
+}
+
+#[test]
+fn publication_relay_keeps_fast_stages_private_and_reports_each_pending_stage_once() {
+    let began = Instant::now();
+    let first = "publication pid=17 id=1 thread=ThreadId(3)/\"worker\" stage=\"wait git pid=18 update-index\"";
+    let second = "publication pid=17 id=2 thread=ThreadId(4)/\"worker\" stage=\"wait git pid=18 update-index\"";
+    let mut pending = PendingPublications::default();
+    assert!(pending.observe(&format!("{first} started elapsed=0.000s\n"), began));
+    assert!(
+        pending
+            .overdue(began + PUBLICATION_REPORT_AFTER - Duration::from_nanos(1))
+            .is_empty()
+    );
+    assert!(pending.observe(&format!("{first} finished elapsed=0.001s\n"), began));
+    assert!(pending.overdue(began + PUBLICATION_REPORT_AFTER).is_empty());
+    for key in [first, second] {
+        pending.observe(&format!("{key} started elapsed=0.000s\n"), began);
+    }
+    let report = pending.overdue(began + PUBLICATION_REPORT_AFTER);
+    assert!(
+        report.contains(first) && report.contains(second),
+        "{report}"
+    );
+    assert_eq!(report.lines().count(), 2);
+    assert!(
+        pending
+            .overdue(began + PUBLICATION_REPORT_AFTER * 2)
+            .is_empty()
+    );
+    pending.observe(&format!("{first} finished elapsed=6.000s\n"), began);
+    assert_eq!(pending.0.len(), 1);
+    pending.observe(&format!("{second} finished elapsed=6.000s\n"), began);
+    assert!(pending.0.is_empty());
+
+    let input =
+        format!("normal output\n{first} started elapsed=0.000s\n{first} finished elapsed=0.001s\n");
+    let mut bytes = input.as_bytes().to_vec();
+    bytes.extend_from_slice(b"non utf8 \xff\n");
+    let (mut saved, mut live) = (Vec::new(), Vec::new());
+    let pending = Mutex::new(PendingPublications::default());
+    relay_publication_output(bytes.as_slice(), &mut saved, &mut live, &pending).unwrap();
+    assert_eq!(saved, bytes, "the failure log retains every byte");
+    assert_eq!(live, b"normal output\nnon utf8 \xff\n");
+    assert!(pending.lock().unwrap().0.is_empty());
+    assert_eq!(quiet_publication_output(&input), "normal output\n");
+}
+
+#[test]
+fn publication_reports_include_the_last_thread_trace_and_repeat_for_a_new_quiet_period() {
+    let began = Instant::now();
+    let period = PUBLICATION_REPORT_AFTER;
+    let outer = "publication pid=17 id=1 thread=ThreadId(3)/\"worker\" stage=\"commit verdicts\"";
+    let inner = "publication pid=17 id=2 thread=ThreadId(3)/\"worker\" stage=\"wait update-ref\"";
+    let other = "publication pid=17 id=3 thread=ThreadId(4)/\"worker\" stage=\"other publication\"";
+    let mut pending = PendingPublications::default();
+    let start = format!("{outer} started elapsed=0.000s\n");
+    pending.observe(&start, began);
+    let first = pending.overdue(began + period);
+    assert!(
+        first.contains(&format!("last trace: {}", start.trim_end())),
+        "{first}"
+    );
+    assert_eq!(
+        first.lines().count(),
+        1,
+        "initial and quiet reports must not duplicate"
+    );
+    assert!(pending.overdue(began + period * 2).is_empty());
+
+    let next = began + period * 2;
+    pending.observe(&format!("{inner} started elapsed=0.000s\n"), next);
+    let finished = format!("{inner} finished elapsed=0.001s\n");
+    pending.observe(&finished, next);
+    pending.observe(
+        &format!("{other} started elapsed=0.000s\n"),
+        next + period / 2,
+    );
+    assert!(
+        pending
+            .overdue(next + period - Duration::from_nanos(1))
+            .is_empty()
+    );
+    let gap = pending.overdue(next + period);
+    assert!(gap.contains(outer), "{gap}");
+    assert!(
+        gap.contains(&format!("last trace: {}", finished.trim_end())),
+        "{gap}"
+    );
+    assert_eq!(
+        gap.lines().count(),
+        1,
+        "the other worker has not gone quiet yet"
+    );
+    assert!(pending.overdue(next + period).is_empty());
+    let other_report = pending.overdue(next + period + period / 2);
+    assert!(other_report.contains(other), "{other_report}");
+    assert!(!other_report.contains(outer), "{other_report}");
+
+    pending.observe(
+        &format!("{outer} finished elapsed=20.000s\n"),
+        next + period * 2,
+    );
+    assert!(
+        pending.overdue(next + period * 3).is_empty(),
+        "finished threads must not report an idle gap"
     );
 }
 
@@ -69,9 +180,7 @@ fn scratch_cli_build_keeps_the_main_heartbeat_link() {
     assert_eq!(Path::new(&binary), branch);
     assert_eq!(tree.read("launcher-calls"), "--build tasks\n");
     assert_eq!(std::fs::read_link(&heartbeat).unwrap(), main);
-    let done = Command::new(binary)
-        .args(["--database", "scratch"])
-        .output()
+    let done = tasks::sys::output(tasks::sys::Command::new(binary).args(["--database", "scratch"]))
         .unwrap();
     assert!(done.status.success(), "{done:?}");
     assert_eq!(tree.read("stand-in-board"), "branch");
@@ -108,7 +217,8 @@ fn child_stages_are_forwarded_before_the_child_closes_its_output() {
             Ok(())
         }
     }
-    let (mut child, reader) = std::os::unix::net::UnixStream::pair().unwrap();
+    // A pipe no git another test spawns meanwhile can keep: the relay's end comes with `child`'s.
+    let (reader, mut child) = tasks::sys::pipe().unwrap();
     let (send, receive) = std::sync::mpsc::channel();
     let forwarding = std::thread::spawn(move || {
         let mut saved = Vec::new();
@@ -805,17 +915,18 @@ fn a_clean_text_merge_cannot_resurrect_a_card_removed_on_main() {
             ] {
                 write(&root.join(name), text);
             }
-            let raw = Command::new("git")
-                .args([
-                    "merge-file",
-                    "-p",
-                    "merge-current",
-                    "merge-base",
-                    "merge-save",
-                ])
-                .current_dir(&root)
-                .output()
-                .unwrap();
+            let raw = tasks::sys::output(
+                tasks::sys::Command::new("git")
+                    .args([
+                        "merge-file",
+                        "-p",
+                        "merge-current",
+                        "merge-base",
+                        "merge-save",
+                    ])
+                    .current_dir(&root),
+            )
+            .unwrap();
             assert!(
                 raw.status.success(),
                 "fixture must reach the clean merge path: {}",
@@ -891,17 +1002,18 @@ fn clean_text_merge_of_two_group_moves_keeps_one_card_and_accepts_the_next_save(
             ] {
                 write(&root.join(name), text);
             }
-            let plain = Command::new("git")
-                .args([
-                    "merge-file",
-                    "-p",
-                    "merge-current",
-                    "merge-base",
-                    "merge-save",
-                ])
-                .current_dir(&root)
-                .output()
-                .unwrap();
+            let plain = tasks::sys::output(
+                tasks::sys::Command::new("git")
+                    .args([
+                        "merge-file",
+                        "-p",
+                        "merge-current",
+                        "merge-base",
+                        "merge-save",
+                    ])
+                    .current_dir(&root),
+            )
+            .unwrap();
             assert!(
                 plain.status.success(),
                 "fixture must reach the clean merge path: {}",
@@ -965,17 +1077,18 @@ fn clean_text_merge_of_two_group_moves_keeps_one_card_and_accepts_the_next_save(
             // fallback cannot resolve it, rather than publishing either copy.
             let edited = current.replace("Choose a framework.", "Changed framework question.");
             write(&root.join("merge-current"), &edited);
-            let plain = Command::new("git")
-                .args([
-                    "merge-file",
-                    "-p",
-                    "merge-current",
-                    "merge-base",
-                    "merge-save",
-                ])
-                .current_dir(&root)
-                .output()
-                .unwrap();
+            let plain = tasks::sys::output(
+                tasks::sys::Command::new("git")
+                    .args([
+                        "merge-file",
+                        "-p",
+                        "merge-current",
+                        "merge-base",
+                        "merge-save",
+                    ])
+                    .current_dir(&root),
+            )
+            .unwrap();
             assert!(
                 plain.status.success(),
                 "edited-card fixture must reach the clean merge path"
@@ -1692,7 +1805,7 @@ fn invalid_conflicting_and_guard_refused_edits_leave_main_unchanged() {
                 "{}",
                 conflict.error
             );
-            script(
+            prepared_script(
                 &root.join(".git/hooks/reference-transaction"),
                 "echo 'fixture guard refuses main' >&2\nexit 1",
             );
@@ -1835,12 +1948,12 @@ fn board_filing_is_asynchronous_and_close_drains_it() {
         let ready = Gate::new();
         let log_path = f.home.join("filing.log");
         let mut child = OwnedChild::logged(
-            Command::new(std::env::current_exe().unwrap())
+            tasks::sys::Command::new(std::env::current_exe().unwrap())
                 .args(["--exact", "filing_case", "--nocapture"])
                 .env("SF_TASKS_CLI", &wrapper)
                 .env("SF_AFTER_COMMIT_FILING", "1")
                 .env("SF_AFTER_COMMIT_READY", ready.address())
-                .stdin(Stdio::null()),
+                .stdin(tasks::sys::Stdio::Null),
             &log_path,
         );
         stage("filing child spawned; awaiting held board command");

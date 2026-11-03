@@ -46,6 +46,7 @@ use super::cleanup::{restore_line, session_value};
 use super::herdr::{Herdr, Object, text};
 use super::{Processes, procs};
 use crate::cli::Env;
+use crate::sys::FileLock;
 use crate::{Error, NewLaunch, Store, git};
 use serde_json::{Map, Value, json};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
@@ -127,6 +128,22 @@ pub fn lock_path(state: &Path) -> PathBuf {
     state.with_file_name(name)
 }
 
+/// The sweeps' lock beside `state`, not waited for: None while another sweep holds it.
+fn lock(state: &Path) -> std::io::Result<Option<FileLock>> {
+    if let Some(folder) = state.parent() {
+        std::fs::create_dir_all(folder)?;
+    }
+    let file = File::options()
+        .append(true)
+        .create(true)
+        .open(lock_path(state))?;
+    match file.try_lock() {
+        Ok(()) => Ok(Some(FileLock(file))),
+        Err(TryLockError::WouldBlock) => Ok(None),
+        Err(TryLockError::Error(e)) => Err(e),
+    }
+}
+
 /// One sweep (the module doc says which panes close); what it could not record goes to `warn`. None
 /// when another sweep holds the lock.
 pub fn sweep(
@@ -137,20 +154,10 @@ pub fn sweep(
 ) -> Result<Option<Sweep>, Error> {
     let io = |e: std::io::Error| Error::Db(format!("{}: {e}", how.state.display()));
     let _lock = if how.apply {
-        if let Some(folder) = how.state.parent() {
-            std::fs::create_dir_all(folder).map_err(io)?;
-        }
-        let lock = File::options()
-            .append(true)
-            .create(true)
-            .open(lock_path(&how.state))
-            .map_err(io)?;
-        match lock.try_lock() {
-            Ok(()) => {}
-            Err(TryLockError::WouldBlock) => return Ok(None),
-            Err(TryLockError::Error(e)) => return Err(io(e)),
-        }
-        Some(lock)
+        let Some(held) = lock(&how.state).map_err(io)? else {
+            return Ok(None);
+        };
+        Some(held)
     } else {
         None
     };
@@ -583,4 +590,24 @@ fn reopen(store: &Store, handle: &str, before: &HashSet<String>, pane: &str) -> 
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_ended_sweep_frees_its_lock_while_a_forked_child_still_holds_the_descriptor() {
+        let dir = std::env::temp_dir().join(format!("sf-reap-release-{}", std::process::id()));
+        let state = dir.join("reap.json");
+        let held = lock(&state).unwrap().unwrap();
+        // What fork gives a child until it execs: the same open file, so the same lock.
+        let inherited = held.0.try_clone().unwrap();
+        drop(held);
+        let next = lock(&state).unwrap();
+        assert!(next.is_some(), "the ended sweep still holds its lock");
+        assert!(lock(&state).unwrap().is_none());
+        drop((inherited, next));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
 }

@@ -7,12 +7,11 @@ use crate::home_fixture::{Unresponsive, healthy_server};
 use std::convert::Infallible;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::time::{Duration, Instant};
 use tasks::port::{ATTEMPTS, Start, in_use, listens, start_on_free_port};
 use tasks::rpc::{self, Client};
 use tasks::server::{FOLDER, Home, Running, SURREAL_VERSION, ServerError};
-use tasks::sys::pid_alive;
+use tasks::sys::{self, Command, pid_alive};
 use tasks::{NewTask, Store};
 
 fn board(running: &Running) -> Store {
@@ -146,7 +145,7 @@ fn a_server_on_this_boards_data_that_was_never_recorded_is_found() {
                 let said = std::fs::read_to_string(&log).unwrap();
                 return Ok::<_, Infallible>(Start::Ended(said));
             }
-            if rpc::healthy(&addr) && listens(orphan.id(), reserved).unwrap() {
+            if rpc::healthy(&addr) && listens(orphan.id(), reserved, sys::output).unwrap() {
                 return Ok(Start::Up(orphan));
             }
             assert!(
@@ -388,7 +387,7 @@ fn a_server_whose_taken_port_answers_is_still_started_on_another() {
     assert_ne!(running.addr, taken.to_string());
     assert!(rpc::healthy(&running.addr));
     let pid = u32::try_from(running.pid).unwrap();
-    assert!(listens(pid, running.addr.parse().unwrap()).unwrap());
+    assert!(listens(pid, running.addr.parse().unwrap(), sys::output).unwrap());
     assert!(command_of(running.pid).unwrap().contains(&s.data()));
     assert_eq!(home.recorded(), Some(running));
     let log = std::fs::read_to_string(s.dir.join("server.log")).unwrap();
@@ -479,7 +478,7 @@ impl Held {
         assert_ne!(running.addr, self.addr.to_string());
         assert!(rpc::healthy(&running.addr));
         let pid = u32::try_from(running.pid).unwrap();
-        assert!(listens(pid, running.addr.parse().unwrap()).unwrap());
+        assert!(listens(pid, running.addr.parse().unwrap(), sys::output).unwrap());
         assert!(command_of(running.pid).unwrap().contains(&s.data()));
         assert_eq!(s.home().recorded().as_ref(), Some(running));
     }
@@ -595,17 +594,18 @@ fn helper_start_and_exit() {
 fn a_server_outlives_the_process_that_started_it_and_holds_none_of_its_pipes() {
     let s = Scratch::new("outlive");
     // `output` returns only once nothing holds the child's stdout and stderr open.
-    let out = Command::new(std::env::current_exe().unwrap())
-        .args([
-            "--ignored",
-            "--exact",
-            "home::helper_start_and_exit",
-            "--test-threads=1",
-        ])
-        .env("SF_TEST_SERVER_DIR", &s.dir)
-        .env("SF_SURREAL", s.surreal())
-        .output()
-        .unwrap();
+    let out = tasks::sys::output(
+        Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--ignored",
+                "--exact",
+                "home::helper_start_and_exit",
+                "--test-threads=1",
+            ])
+            .env("SF_TEST_SERVER_DIR", &s.dir)
+            .env("SF_SURREAL", s.surreal()),
+    )
+    .unwrap();
     assert!(
         out.status.success(),
         "{}",

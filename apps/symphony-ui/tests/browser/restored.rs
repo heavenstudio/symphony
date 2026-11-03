@@ -485,6 +485,411 @@ pub(super) fn document(site: &Site, blocks: Vec<Value>) {
     site.set_json("/api/asks", &json!({"asks":[],"recipient":null}));
 }
 
+fn assert_notice_surface(browser: &mut super::chrome::Chrome, selector: &str, role: &str) {
+    let surface = browser.eval(&format!(
+        r#"(() => {{
+        const pill=document.querySelector({selector});
+        if (!pill) return null;
+        const canvas=document.createElement('canvas');
+        canvas.width=canvas.height=1;
+        const paint=canvas.getContext('2d');
+        paint.clearRect(0,0,1,1);
+        paint.fillStyle='transparent';
+        paint.fillStyle=getComputedStyle(pill).backgroundColor;
+        paint.fillRect(0,0,1,1);
+        return [pill.getAttribute('role'), paint.getImageData(0,0,1,1).data[3],
+            pill.getBoundingClientRect().height>0 && getComputedStyle(pill).opacity==='1'];
+    }})()"#,
+        selector = json!(selector)
+    ));
+    assert_eq!(
+        surface,
+        json!([role, 255, true]),
+        "{selector}: a visible notice must have its own opaque surface and announcement role"
+    );
+}
+
+#[test]
+fn server_notices_survive_loading_and_failed_document_and_folder_routes() {
+    let site = Site::start(dist(), &common::fixture("board.json"));
+    document(
+        &site,
+        vec![paragraph("A loaded document establishes the server feed.")],
+    );
+    let Some(mut browser) = chrome() else { return };
+    browser.open(&site.url("/docs/PROBE.md"));
+    assert!(browser.wait_for(
+        "document.querySelector('[data-ready=document]')?.dataset.feed==='live'",
+        SHOWN
+    ));
+    site.server_notice("Reload failed: the review server is unavailable.");
+    assert!(browser.wait_for("document.querySelector('.page-notices .server-notice')?.textContent==='Reload failed: the review server is unavailable.'", SHOWN));
+    for (path, api, loading, pending) in [
+        (
+            "/docs/UNAVAILABLE.md",
+            "/api/document",
+            "Loading document…",
+            ".document-page[data-ready=loading] > p",
+        ),
+        (
+            "/docs/unavailable/",
+            "/api/folder",
+            "Loading folder…",
+            ".document-page[data-ready=loading] > p",
+        ),
+    ] {
+        site.hold_route(api, true);
+        browser.eval(&format!(
+            "history.pushState({{}},'',{});dispatchEvent(new PopStateEvent('popstate'))",
+            json!(path)
+        ));
+        assert!(
+            browser.wait_for(
+                &format!(
+                    "document.querySelector({})?.textContent==={}",
+                    json!(pending),
+                    json!(loading)
+                ),
+                SHOWN
+            ),
+            "{path}: loading state must be reached: {}",
+            browser.eval("document.body.innerText")
+        );
+        assert_eq!(
+            browser.eval("document.querySelector('.page-notices .server-notice')?.textContent"),
+            json!("Reload failed: the review server is unavailable."),
+            "{path}: loading keeps the earlier server notice"
+        );
+        assert_notice_surface(&mut browser, ".page-notices .server-notice", "status");
+        site.fail_route(api, true);
+        site.hold_route(api, false);
+        assert!(
+            browser.wait_for(
+                "document.querySelector('.page-notices [role=alert]')?.textContent==='Board snapshot unavailable'",
+                SHOWN
+            ),
+            "{path}: the initial fetch must really fail: {}",
+            browser.eval("document.body.innerText")
+        );
+        assert_eq!(
+            browser.eval("document.querySelector('.page-notices .server-notice')?.textContent"),
+            json!("Reload failed: the review server is unavailable."),
+            "{path}: a failed initial fetch keeps the earlier server notice"
+        );
+        assert_eq!(
+            browser.eval("[...document.querySelectorAll('.document-page > p, .page-notices > p')].filter(p=>p.textContent==='Board snapshot unavailable').length"),
+            json!(1),
+            "{path}: the failed initial fetch is reported once"
+        );
+        assert_notice_surface(&mut browser, ".page-notices .server-notice", "status");
+    }
+}
+
+#[test]
+fn reconnect_pills_are_statuses_and_leave_document_reading_layout_unchanged() {
+    let site = Site::start(dist(), &common::fixture("board.json"));
+    document(
+        &site,
+        (0..100)
+            .map(|index| paragraph(&format!("Reading passage {index}. The document keeps its place while the feed reconnects.")))
+            .collect(),
+    );
+    site.set_json(
+        "/api/folder",
+        &json!({
+            "path":"docs","title":"Documents","crumbs":[],"docs":1,"entries":[],
+            "intro":{"version":4182,"path":"docs/PROBE.md","title":"Probe","waiting":[],"crumbs":[],
+            "headings":[],"sections":[],"cards":[],"threads":{},"tasks":[]}
+        }),
+    );
+    let Some(mut browser) = chrome() else { return };
+    for (path, page, ready) in [
+        ("/tasks", "main", ".kanban"),
+        ("/queue", "main", "[data-ready=queue]"),
+        (
+            "/docs/",
+            ".document-page[data-ready=folder]",
+            "[data-ready=document] [data-doc-key=intro] p",
+        ),
+        (
+            "/docs/PROBE.md",
+            ".document-page",
+            "[data-ready=document] [data-doc-key=intro] p",
+        ),
+    ] {
+        browser.open(&site.url(path));
+        assert!(browser.wait_for(
+            &format!("document.documentElement.dataset.navigation === 'ready' && document.querySelector({}) !== null && document.querySelector({})?.dataset.feed === 'live'", json!(ready), json!(page)),
+            SHOWN,
+        ), "{path}: {}", browser.eval("document.body.innerText"));
+        let reading = path.starts_with("/docs/");
+        if reading {
+            // Disable the browser aid that can conceal a reconnect notice moving the page.
+            browser.eval("document.documentElement.style.overflowAnchor='none'; scrollTo({top:1200,behavior:'instant'})");
+            browser.eval(
+                "new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))",
+            );
+            assert_eq!(
+                browser.eval("scrollY"),
+                json!(1200),
+                "setup: reading well inside the long document"
+            );
+            browser.eval("window.keptScroll=scrollY;window.keptSection=document.querySelector('[data-doc-key=intro]');window.keptBox=JSON.stringify(keptSection.getBoundingClientRect().toJSON())");
+        }
+        // Keep stale observable without racing the production reconnect backoff.
+        site.fail_feeds(usize::MAX);
+        site.drop_feeds();
+        assert!(
+            browser.wait_for(
+                &format!(
+                    "document.querySelector({})?.dataset.feed === 'stale'",
+                    json!(page)
+                ),
+                SHOWN,
+            ),
+            "{path} did not report the lost feed"
+        );
+        assert_eq!(
+            browser.eval(&format!(
+                "document.querySelector({})?.getAttribute('role')",
+                json!(format!("{page} .pill.wait"))
+            )),
+            json!("status"),
+            "{path}: reconnecting must be announced as a status",
+        );
+        assert_notice_surface(&mut browser, ".page-notices .pill.wait", "status");
+        if reading {
+            assert_eq!(
+                browser.eval("scrollY===keptScroll"),
+                json!(true),
+                "stale keeps the exact reading offset"
+            );
+            assert_eq!(browser.eval("document.querySelector('[data-doc-key=intro]')===keptSection && JSON.stringify(keptSection.getBoundingClientRect().toJSON())===keptBox"), json!(true), "stale keeps the exact section box");
+        }
+        site.fail_feeds(0);
+        assert!(browser.wait_for(
+            &format!("document.querySelector({})?.dataset.feed === 'live' && !document.querySelector({})", json!(page), json!(format!("{page} .pill.wait"))),
+            SHOWN,
+        ), "{path} did not reconnect");
+        if reading {
+            assert_eq!(
+                browser.eval("scrollY===keptScroll"),
+                json!(true),
+                "live again keeps the exact reading offset"
+            );
+            assert_eq!(browser.eval("document.querySelector('[data-doc-key=intro]')===keptSection && JSON.stringify(keptSection.getBoundingClientRect().toJSON())===keptBox"), json!(true), "live again keeps the exact section box");
+            // A removal keeps the shown document and drafts. Its warning must
+            // not insert a row above the section the owner is reading.
+            site.push(
+                4183,
+                &json!({"version":4183,"changes":[{"region":"document","data":{"path":"docs/PROBE.md","removed":true}}]}).to_string(),
+            );
+            assert!(browser.wait_for("document.querySelector('.page-notices .document-removed')?.textContent==='This document was removed. Your draft is kept on this device.'", SHOWN), "{path}: a live removal must display its alert");
+            assert_notice_surface(&mut browser, ".page-notices .document-removed", "alert");
+            assert_eq!(
+                browser.eval("scrollY"),
+                json!(1200),
+                "{path}: removal keeps the exact reading offset"
+            );
+            assert_eq!(browser.eval("document.querySelector('[data-doc-key=intro]')===keptSection && JSON.stringify(keptSection.getBoundingClientRect().toJSON())===keptBox"), json!(true), "{path}: removal keeps the exact section node and box");
+        }
+    }
+}
+
+#[test]
+fn board_fetch_and_server_notices_keep_loaded_rows_in_place_after_narrowing() {
+    let site = Site::start(dist(), &common::fixture("board.json"));
+    let statuses = [
+        "concept",
+        "design",
+        "ready",
+        "in_progress",
+        "review",
+        "done",
+    ];
+    let tasks: Vec<_> = statuses.iter().flat_map(|status| (0..3).map(move |i| json!({
+        "slug": format!("notice/{status}-{i}"),
+        "title": format!("Loaded {status} task {i} keeps its real row through an unavailable board snapshot"),
+        "body": "", "status": status, "priority":1, "parent":null, "created_by":"owner",
+        "created":0.0, "updated":4102444800.0, "links":[], "depends":[], "roles":[],
+        "instruction":false
+    }))).collect();
+    site.set_json(
+        "/api/task-board",
+        &json!({
+            "tasks":tasks, "statuses":statuses,
+            "counts":statuses.map(|s| (s,3)), "signoff":[], "next":null
+        }),
+    );
+    let Some(mut browser) = chrome() else { return };
+    browser.call(
+        "Emulation.setDeviceMetricsOverride",
+        json!({"width":1024,"height":900,"deviceScaleFactor":1,"mobile":false}),
+    );
+    browser.open(&site.url("/tasks"));
+    assert!(browser.wait_for("document.querySelector('.kanban') !== null && document.querySelector('main')?.dataset.feed==='live'", SHOWN));
+    // Reveal every real row before narrowing. The first-page placeholder is
+    // deliberately taller than a short fetched row; that loading transition
+    // must not be mistaken for a reconnect notice moving settled content.
+    for status in statuses {
+        browser.eval(&format!(
+            "document.querySelector('[data-status={status}]').scrollIntoView()"
+        ));
+        assert!(browser.wait_for(
+            &format!("document.querySelectorAll('[data-status={status}] .taskcard').length===3"),
+            SHOWN
+        ));
+    }
+    assert_eq!(
+        browser.eval("document.querySelectorAll('.taskcard').length"),
+        json!(18)
+    );
+    for width in [300, 390, 1024] {
+        browser.call(
+            "Emulation.setDeviceMetricsOverride",
+            json!({"width":width,"height":900,"deviceScaleFactor":1,"mobile":false}),
+        );
+        let narrowed = browser.eval("({height:document.documentElement.scrollHeight,rows:document.querySelectorAll('.taskcard').length})");
+        for status in statuses {
+            browser.eval(&format!("document.querySelector('[data-status={status}]').scrollIntoView();new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))"));
+        }
+        println!("board {width}px after resize {narrowed}, after revealing loaded rows {}", browser.eval("({height:document.documentElement.scrollHeight,rows:document.querySelectorAll('.taskcard').length})"));
+        browser.eval("document.documentElement.style.overflowAnchor='none';scrollTo({top:1200,behavior:'instant'});new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))");
+        browser.eval("window.keptScroll=scrollY;window.keptBoard=document.querySelector('.kanban');window.keptBox=JSON.stringify(keptBoard.getBoundingClientRect().toJSON());window.keptRows=[...document.querySelectorAll('.taskcard')];window.keptIds=keptRows.map(e=>e.dataset.slug).join(',')");
+        site.server_notice("The review server is reconnecting to its task database.");
+        assert!(browser.wait_for("document.querySelector('.page-notices .server-notice')?.textContent.includes('task database')", SHOWN));
+        assert_notice_surface(&mut browser, ".page-notices .server-notice", "status");
+        assert_eq!(browser.eval("scrollY===keptScroll && JSON.stringify(keptBoard.getBoundingClientRect().toJSON())===keptBox"), json!(true), "{width}px: server notice must leave the board box and reading offset exact");
+        site.fail_route("/api/task-board", true);
+        site.fail_feeds(usize::MAX);
+        site.drop_feeds();
+        assert!(browser.wait_for("document.querySelector('main')?.dataset.feed==='stale' && document.querySelector('.page-notices [role=alert]')?.textContent==='Board snapshot unavailable'", SHOWN), "the real board-fetch alert was not reached: {}", browser.eval("document.body.innerText"));
+        assert_notice_surface(&mut browser, ".page-notices [role=alert]", "alert");
+        assert_eq!(browser.eval("scrollY===keptScroll && JSON.stringify(keptBoard.getBoundingClientRect().toJSON())===keptBox && [...document.querySelectorAll('.taskcard')].every((e,i)=>e===keptRows[i]) && keptRows.map(e=>e.dataset.slug).join(',')===keptIds"), json!(true), "{width}px: failed snapshots must retain all eighteen row identities, the board height and reading offset");
+        browser.eval("scrollTo(0,document.documentElement.scrollHeight);new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))");
+        assert_eq!(browser.eval(r#"(() => {
+            const notice=document.querySelector('.page-notices').getBoundingClientRect();
+            const last=document.querySelector('main > button').getBoundingClientRect();
+            return last.height>0 && last.top>=0 && last.bottom<=notice.top && notice.bottom<=innerHeight;
+        })()"#), json!(true), "{width}px: the actual end control clears the whole notice stack");
+        browser.eval("window.failureHeight=document.documentElement.scrollHeight;window.failureScroll=scrollY");
+        site.fail_route("/api/task-board", false);
+        site.fail_feeds(0);
+        assert!(browser.wait_for("document.querySelector('main')?.dataset.feed==='live' && !document.querySelector('.page-notices [role=alert]')", SHOWN));
+        site.server_notice("");
+        assert!(browser.wait_for(
+            "!document.querySelector('.page-notices .server-notice')",
+            SHOWN
+        ));
+        assert_eq!(browser.eval("scrollY===failureScroll && document.documentElement.scrollHeight===failureHeight && [...document.querySelectorAll('.taskcard')].map(e=>e.dataset.slug).join(',')===keptIds"), json!(true), "{width}px: recovery must not clamp the page or lose fetched rows");
+    }
+}
+
+#[test]
+fn document_page_end_and_two_real_toasts_clear_the_reconnect_notice() {
+    let site = Site::start(dist(), &common::fixture("board.json"));
+    document(
+        &site,
+        (0..100)
+            .map(|i| {
+                paragraph(&format!(
+                    "Reading passage {i} keeps document content visible."
+                ))
+            })
+            .collect(),
+    );
+    let Some(mut browser) = chrome() else { return };
+    browser.open(&site.url("/docs/PROBE.md"));
+    assert!(browser.wait_for("document.querySelector('.document-page')?.dataset.feed==='live' && document.querySelector('[data-doc-key=intro] p')!==null && Array.isArray(window.reviewKnownIds)", SHOWN));
+    for (i, width) in [390, 1024].into_iter().enumerate() {
+        browser.call(
+            "Emulation.setDeviceMetricsOverride",
+            json!({"width":width,"height":900,"deviceScaleFactor":1,"mobile":false}),
+        );
+        browser.eval("document.documentElement.style.overflowAnchor='none';scrollTo(0,document.documentElement.scrollHeight);new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))");
+        assert!(browser.wait_for("document.querySelector('#new-ask') !== null && [...document.querySelectorAll('link[rel=stylesheet]')].every(link=>link.sheet!==null)", SHOWN));
+        browser.eval("scrollTo(0,document.documentElement.scrollHeight);new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))");
+        browser.eval(
+            "window.endScroll=scrollY;window.endHeight=document.documentElement.scrollHeight",
+        );
+        let items: Vec<_> = (0..2)
+            .map(|n| {
+                json!({
+                    "id":format!("notice-{i}-{n}"),"kind":"question","path":"docs/PROBE.md",
+                    "slug":format!("Unread notification {i}-{n}"),"ts":"2026-11-02T06:00:00Z",
+                    "text":"A real activity notification","href":"/docs/PROBE.md","answered":false
+                })
+            })
+            .collect();
+        site.set_json("/api/activity", &json!({"items":items}));
+        let version = 4183 + i as u64;
+        site.push(
+            version,
+            &format!(r#"{{"version":{version},"changes":[{{"region":"activity","data":{{}}}}]}}"#),
+        );
+        assert!(
+            browser.wait_for(
+                "document.querySelectorAll('#toasts .pop').length===2",
+                SHOWN
+            ),
+            "both real activity toasts must mount"
+        );
+        site.fail_feeds(usize::MAX);
+        site.drop_feeds();
+        assert!(browser.wait_for(
+            "document.querySelector('.document-page')?.dataset.feed==='stale'",
+            SHOWN
+        ));
+        let before_paint = browser.eval(r#"({
+            exact:scrollY===endScroll && document.documentElement.scrollHeight===endHeight,
+            notice:document.querySelector('.page-notices').getBoundingClientRect().toJSON(),
+            toasts:[...document.querySelectorAll('#toasts .pop')].map(e=>e.getBoundingClientRect().toJSON()),
+            bottom:getComputedStyle(document.documentElement).getPropertyValue('--notice-toast-bottom')
+        })"#);
+        assert_eq!(
+            before_paint["exact"],
+            json!(true),
+            "{width}px: stale immediately preserves the exact reading offset and page height: {before_paint}"
+        );
+        // ResizeObserver delivers after layout and before paint. Sample the
+        // painted stale geometry at a fixed frame boundary, never by retrying
+        // its bounds. The reading offset is asserted both before and after.
+        browser.eval(
+            "new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))",
+        );
+        let geometry = browser.eval(r#"(() => {
+            const notice=document.querySelector('.page-notices').getBoundingClientRect();
+            const last=document.querySelector('[data-doc-key=intro] p:last-child').getBoundingClientRect();
+            const ask=document.querySelector('#asks button[type=submit]').getBoundingClientRect();
+            const toasts=[...document.querySelectorAll('#toasts .pop')].map(e=>e.getBoundingClientRect());
+            const clear=b=>b.right<=notice.left || b.left>=notice.right || b.bottom<=notice.top || b.top>=notice.bottom;
+            return {checks:{exact:scrollY===endScroll && document.documentElement.scrollHeight===endHeight,
+                end:scrollY===Math.max(0,document.documentElement.scrollHeight-innerHeight),
+                content:[last,ask].every(b=>b.height>0 && b.top>=0 && b.bottom<=notice.top),
+                toasts:toasts.length===2 && toasts.every(b=>b.width>0 && b.height>0 && b.top>=0 && b.bottom<=innerHeight && clear(b))},
+                notice:notice.toJSON(),toasts:toasts.map(b=>b.toJSON()),
+                bottom:getComputedStyle(document.documentElement).getPropertyValue('--notice-toast-bottom')};
+        })()"#);
+        assert_eq!(
+            geometry["checks"],
+            json!({"exact":true,"end":true,"content":true,"toasts":true}),
+            "{width}px: end content and two real toasts must be visible and clear of the notice; before paint {before_paint}; painted {geometry}"
+        );
+        site.fail_feeds(0);
+        assert!(browser.wait_for(
+            "document.querySelector('.document-page')?.dataset.feed==='live'",
+            SHOWN
+        ));
+        assert_eq!(
+            browser
+                .eval("scrollY===endScroll && document.documentElement.scrollHeight===endHeight"),
+            json!(true),
+            "{width}px: live recovery preserves the same document reserve"
+        );
+        browser.eval("document.querySelectorAll('#toasts button').forEach(b=>b.click())");
+    }
+}
+
 #[test]
 fn restored_document_native_hash_card_uses_one_anchor_inset() {
     let site = Site::start(dist(), &common::fixture("board.json"));

@@ -3,7 +3,7 @@
 use super::*;
 use crate::testing::{Tree, board, entered, fifo, repository};
 use std::io::Write;
-use std::process::{Command, Stdio};
+use tasks::sys::Command;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 const TEST: &str =
@@ -65,20 +65,20 @@ exec "$SF_REAL_SQLITE" "$@" <<< "$script"
                 .chain(std::env::split_paths(&std::env::var_os("PATH").unwrap())),
         )
         .unwrap();
-        let done = Command::new(std::env::current_exe().unwrap())
-            .args(["--exact", TEST, "--nocapture"])
-            .env(CHILD, &root)
-            .env("SF_REAL_SQLITE", real_sqlite)
-            .env("SF_FLUSH_CONTROL", control)
-            .env("ASKS_DB", root.join("asks.db"))
-            .env("TASKS_SERVER", client.addr())
-            .env("TASKS_DATABASE", client.database())
-            .env("PATH", path)
-            .env_remove("TASKS_SESSION")
-            .env_remove("SF_SYMPHONY_UI_DIST")
-            .stdin(Stdio::null())
-            .output()
-            .unwrap();
+        let done = tasks::sys::output(
+            Command::new(std::env::current_exe().unwrap())
+                .args(["--exact", TEST, "--nocapture"])
+                .env(CHILD, &root)
+                .env("SF_REAL_SQLITE", real_sqlite)
+                .env("SF_FLUSH_CONTROL", control)
+                .env("ASKS_DB", root.join("asks.db"))
+                .env("TASKS_SERVER", client.addr())
+                .env("TASKS_DATABASE", client.database())
+                .env("PATH", path)
+                .env_remove("TASKS_SESSION")
+                .env_remove("SF_SYMPHONY_UI_DIST"),
+        )
+        .unwrap();
         assert!(
             done.status.success(),
             "{}\n{}",

@@ -5,8 +5,9 @@ use std::collections::BTreeMap;
 use std::fs::{File, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output, Stdio};
+use std::process::Output;
 use std::sync::{Arc, Mutex, mpsc};
+use tasks::sys::Command;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -27,9 +28,57 @@ const REPOSITORY_OVERRIDES: &[&str] = &[
     "GIT_CONFIG_PARAMETERS",
 ];
 
+struct PublicationStage {
+    id: u64,
+    name: String,
+    began: std::time::Instant,
+}
+
+impl PublicationStage {
+    fn start(name: std::fmt::Arguments<'_>) -> Option<Self> {
+        static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        if !*ENABLED.get_or_init(|| std::env::var_os("SF_SYMPHONY_PUBLICATION_TRACE").is_some()) {
+            return None;
+        }
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let stage = Self {
+            id: NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+            name: name.to_string(),
+            began: std::time::Instant::now(),
+        };
+        stage.report("started");
+        Some(stage)
+    }
+
+    fn line(&self, state: &str) -> String {
+        format!(
+            "publication pid={} id={} thread={:?}/{:?} stage={:?} {state} elapsed={:.3}s\n",
+            std::process::id(),
+            self.id,
+            std::thread::current().id(),
+            std::thread::current().name().unwrap_or("worker"),
+            self.name,
+            self.began.elapsed().as_secs_f64()
+        )
+    }
+
+    fn report(&self, state: &str) {
+        // Bypass libtest's capture so an outer target timeout retains the stage
+        // that started without finishing, even before the case watchdog fires.
+        let _ = std::io::stderr().write_all(self.line(state).as_bytes());
+    }
+}
+
+impl Drop for PublicationStage {
+    fn drop(&mut self) {
+        self.report("finished");
+    }
+}
+
 /// Ordinary saves read repository metadata in process. Explicit discovery or
 /// command-line configuration overrides retain Git's own interpretation.
 fn repository_metadata(root: &Path) -> Option<gix::Repository> {
+    let _stage = PublicationStage::start(format_args!("repository discovery {}", root.display()));
     if REPOSITORY_OVERRIDES
         .iter()
         .any(|key| std::env::var_os(key).is_some())
@@ -61,6 +110,24 @@ fn common_dir(root: &Path) -> Result<PathBuf, String> {
 #[cfg(test)]
 mod metadata_tests {
     use super::*;
+
+    #[test]
+    fn publication_report_names_the_pending_stage_without_multiline_log_injection() {
+        let stage = std::mem::ManuallyDrop::new(PublicationStage {
+            id: 7,
+            name: "wait git pid=17 update-index\nnext line".into(),
+            began: std::time::Instant::now(),
+        });
+        let pending = stage.line("started");
+        assert!(
+            pending.contains("stage=\"wait git pid=17 update-index\\nnext line\" started elapsed="),
+            "{pending}"
+        );
+        assert_eq!(pending.lines().count(), 1);
+        assert!(pending.starts_with(&format!("publication pid={} ", std::process::id())));
+        let finished = stage.line("finished");
+        assert!(finished.contains(" finished elapsed="), "{finished}");
+    }
 
     #[test]
     fn existing_verdict_metadata_keeps_its_counter_journals_and_shared_write_lock() {
@@ -170,13 +237,13 @@ mod metadata_tests {
             for key in REPOSITORY_OVERRIDES {
                 cmd.env_remove(key);
             }
-            let done = cmd
-                .args(args)
-                .current_dir(root)
-                .env("GIT_CONFIG_GLOBAL", "/dev/null")
-                .env("GIT_CONFIG_NOSYSTEM", "1")
-                .output()
-                .unwrap();
+            let done = tasks::sys::output(
+                cmd.args(args)
+                    .current_dir(root)
+                    .env("GIT_CONFIG_GLOBAL", "/dev/null")
+                    .env("GIT_CONFIG_NOSYSTEM", "1"),
+            )
+            .unwrap();
             assert!(done.status.success(), "{args:?}: {done:?}");
         };
         for name in ["main", "unborn", "bare", "plain"] {
@@ -238,7 +305,7 @@ mod metadata_tests {
             } else if mode == "without-git" {
                 child.env("PATH", tree.path("no-executables"));
             }
-            let done = child.output().unwrap();
+            let done = tasks::sys::output(&mut child).unwrap();
             assert!(done.status.success(), "{done:?}");
             assert!(
                 String::from_utf8_lossy(&done.stdout).contains("1 passed"),
@@ -265,6 +332,7 @@ fn home(root: &Path) -> Result<PathBuf, String> {
 /// Separate locks keep HTTP read/edit/write sections short while commit preparation may build
 /// generated content. Every serving generation opens its own descriptor in the same common dir.
 fn shared_lock(root: &Path, name: &str) -> Result<File, String> {
+    let _stage = PublicationStage::start(format_args!("lock {name}"));
     let folder = home(root)?;
     std::fs::create_dir_all(&folder).map_err(|e| e.to_string())?;
     let path = folder.join(name);
@@ -273,6 +341,7 @@ fn shared_lock(root: &Path, name: &str) -> Result<File, String> {
         .append(true)
         .open(&path)
         .map_err(|e| format!("{}: {e}", path.display()))?;
+    let _wait = PublicationStage::start(format_args!("acquire lock {name}"));
     file.lock()
         .map_err(|e| format!("{}: {e}", path.display()))?;
     Ok(file)
@@ -301,6 +370,7 @@ struct Backlog {
 
 impl Backlog {
     fn new(root: &Path) -> Result<Self, String> {
+        let _stage = PublicationStage::start(format_args!("register backlog"));
         let _sequence = shared_lock(root, "verdict-sequence.lock")?;
         let folder = home(root)?.join("verdict-backlog");
         std::fs::create_dir_all(&folder).map_err(|e| e.to_string())?;
@@ -451,17 +521,17 @@ fn run(
     index: Option<&Path>,
 ) -> Result<Output, String> {
     let mut command = Command::new("git");
-    command
-        .args(args)
-        .current_dir(root)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
+    command.args(args).current_dir(root);
     if let Some(index) = index {
         command.env("GIT_INDEX_FILE", index);
     }
-    let mut child = command.spawn().map_err(|e| e.to_string())?;
+    let child = {
+        let _stage = PublicationStage::start(format_args!("spawn git {args:?}"));
+        tasks::sys::spawn_piped(&mut command).map_err(|e| e.to_string())?
+    };
+    let mut child = child;
     if let Some(input) = input {
+        let _stage = PublicationStage::start(format_args!("write git input pid={}", child.id()));
         child
             .stdin
             .take()
@@ -469,7 +539,8 @@ fn run(
             .write_all(input.as_bytes())
             .map_err(|e| e.to_string())?;
     }
-    child.wait_with_output().map_err(|e| e.to_string())
+    let _wait = PublicationStage::start(format_args!("wait git pid={} {args:?}", child.id()));
+    tasks::sys::wait_output(child).map_err(|e| e.to_string())
 }
 
 fn checked(done: Output) -> Result<String, String> {
@@ -508,14 +579,12 @@ pub fn on_main(root: &Path) -> bool {
 
 /// Landing owns the approval rules. Call its binary to avoid a review -> gate -> review cycle.
 pub fn land_call(root: &Path, request: &Value) -> Result<Value, String> {
-    let mut child = Command::new(root.join("tools/rs-bin.sh"))
-        .args(["sf-land", "api"])
-        .current_dir(root)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|e| e.to_string())?;
+    let mut child = tasks::sys::spawn_piped(
+        Command::new(root.join("tools/rs-bin.sh"))
+            .args(["sf-land", "api"])
+            .current_dir(root),
+    )
+    .map_err(|e| e.to_string())?;
     child
         .stdin
         .take()
@@ -523,24 +592,29 @@ pub fn land_call(root: &Path, request: &Value) -> Result<Value, String> {
         .write_all(request.to_string().as_bytes())
         .map_err(|e| e.to_string())?;
     serde_json::from_str(&checked(
-        child.wait_with_output().map_err(|e| e.to_string())?,
+        tasks::sys::wait_output(child).map_err(|e| e.to_string())?,
     )?)
     .map_err(|e| e.to_string())
 }
 
 fn merge(root: &Path, current: &str, base: &str, new: &str) -> Result<String, CommitError> {
+    let _stage = PublicationStage::start(format_args!("merge saved text"));
     // A worktree also provides a unique, RAII-owned scratch directory. No checkout is needed for
     // merge-file: create the three files under an ordinary per-call directory instead.
     let scratch = Scratch::new()?;
     for (name, text) in [("current", current), ("base", base), ("new", new)] {
         std::fs::write(scratch.0.join(name), text).map_err(|e| e.to_string())?;
     }
-    let done = Command::new("git")
-        .args(["merge-file", "-p"])
-        .args(["current", "base", "new"].map(|n| scratch.0.join(n)))
-        .current_dir(root)
-        .output()
-        .map_err(|e| e.to_string())?;
+    let done = {
+        let _child = PublicationStage::start(format_args!("git merge-file"));
+        tasks::sys::output(
+            Command::new("git")
+                .args(["merge-file", "-p"])
+                .args(["current", "base", "new"].map(|n| scratch.0.join(n)))
+                .current_dir(root),
+        )
+        .map_err(|e| e.to_string())?
+    };
     if done
         .status
         .code()
@@ -1104,6 +1178,7 @@ fn apply(root: &Path, parent: &str, edits: &[Edit]) -> Result<(Blobs, Blobs), Co
 }
 
 fn main_worktrees(root: &Path) -> Result<Vec<PathBuf>, String> {
+    let _stage = PublicationStage::start(format_args!("main worktree mutex and listing"));
     let _held = crate::landing::WORKTREES
         .lock()
         .unwrap_or_else(|e| e.into_inner());
@@ -1124,6 +1199,7 @@ fn main_worktrees(root: &Path) -> Result<Vec<PathBuf>, String> {
 }
 
 fn sync(root: &Path, rel: &str, old: &str, new: &str) -> Result<(), String> {
+    let _stage = PublicationStage::start(format_args!("sync {} {rel}", root.display()));
     let file = root.join(rel);
     let current = std::fs::read_to_string(&file).ok();
     if current.as_deref() == Some(old) {
@@ -1247,6 +1323,7 @@ fn commit_inner(root: &Path, edits: &[Edit], message: &str) -> Result<Outcome, C
 
 /// Commit edits already written into `root`, then sync main checkouts without losing local edits.
 pub fn commit_verdicts(root: &Path, edits: &[Edit], message: &str) -> Outcome {
+    let _stage = PublicationStage::start(format_args!("commit verdicts {message:?}"));
     let result = (|| {
         let backlog = Backlog::new(root)?;
         retry_conflicts(root, backlog.sequence, || {
@@ -1291,11 +1368,7 @@ fn generate(root: &Path, heavy: bool) -> Result<(), String> {
             continue;
         }
         let (program, args) = generator.command.split_first().ok_or("empty generator")?;
-        let done = Command::new(program)
-            .args(args)
-            .current_dir(root)
-            .stdin(Stdio::null())
-            .output()
+        let done = tasks::sys::output(Command::new(program).args(args).current_dir(root))
             .map_err(|e| e.to_string())?;
         if !done.status.success() {
             return Err(format!(
@@ -1548,13 +1621,13 @@ fn output_branch(
     let tip = git(&wt.path, &["rev-parse", "HEAD"])?;
     record(root, &tip)?;
     let actor = app_actor(root)?;
-    let done = Command::new("just")
-        .arg("verify")
-        .current_dir(&wt.path)
-        .env("TASKS_SESSION", &actor)
-        .stdin(Stdio::null())
-        .output()
-        .map_err(|e| e.to_string())?;
+    let done = tasks::sys::output(
+        Command::new("just")
+            .arg("verify")
+            .current_dir(&wt.path)
+            .env("TASKS_SESSION", &actor),
+    )
+    .map_err(|e| e.to_string())?;
     if !done.status.success() {
         return Err(format!(
             "branch {branch}: just verify failed: {}{}",
@@ -1599,12 +1672,12 @@ fn publish(
     };
     // Land may verify a moving-main candidate. Neither that work nor the branch's initial
     // verify can hold the app's write locks; land owns its publication CAS and bounded retry.
-    let done = Command::new("just")
-        .args(["land", &publication.branch])
-        .env("TASKS_SESSION", &publication.actor)
-        .current_dir(&publication.checkout)
-        .stdin(Stdio::null())
-        .output();
+    let done = tasks::sys::output(
+        Command::new("just")
+            .args(["land", &publication.branch])
+            .env("TASKS_SESSION", &publication.actor)
+            .current_dir(&publication.checkout),
+    );
     let landed = done.as_ref().is_ok_and(|done| done.status.success());
     {
         let _commits = shared_lock(root, "verdict-commits.lock")?;
@@ -2272,11 +2345,12 @@ mod publication_tests {
     #[test]
     fn recovery_adopts_only_the_locked_inode_still_named_by_the_journal() {
         let tree = crate::test_tree::Tree::new();
-        let done = Command::new("git")
-            .args(["init", "-q", "-b", "main"])
-            .current_dir(&tree.root)
-            .output()
-            .unwrap();
+        let done = tasks::sys::output(
+            Command::new("git")
+                .args(["init", "-q", "-b", "main"])
+                .current_dir(&tree.root),
+        )
+        .unwrap();
         assert!(done.status.success(), "{done:?}");
         let path = tree.path("publication.json");
         let data = |new: &str| {

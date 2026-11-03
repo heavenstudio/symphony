@@ -2,8 +2,8 @@
 
 use super::Hub;
 use crate::testing::{Tree, board, git, repository};
-use std::process::Command;
 use std::time::{Duration, Instant};
+use tasks::sys::Command;
 
 const CHILD: &str = "SF_HUB_BACKSTOP_CHILD";
 const TEST: &str =
@@ -13,20 +13,21 @@ const TEST: &str =
 fn a_hub_whose_watcher_delivers_nothing_still_refreshes_within_a_period() {
     if std::env::var_os(CHILD).is_none() {
         let board = board::client();
-        let done = Command::new(std::env::current_exe().unwrap())
-            .args(["--exact", TEST, "--nocapture"])
-            .env(CHILD, "1")
-            .env("TASKS_SERVER", board.addr())
-            .env("TASKS_DATABASE", board.database())
-            .env_remove("ASKS_DB")
-            .env_remove("TASKS_SESSION")
-            .env_remove("SF_SYMPHONY_UI_DIST")
-            .env_remove("GIT_DIR")
-            .env_remove("GIT_WORK_TREE")
-            .env_remove("GIT_COMMON_DIR")
-            .env_remove("GIT_INDEX_FILE")
-            .output()
-            .unwrap();
+        let done = tasks::sys::output(
+            Command::new(std::env::current_exe().unwrap())
+                .args(["--exact", TEST, "--nocapture"])
+                .env(CHILD, "1")
+                .env("TASKS_SERVER", board.addr())
+                .env("TASKS_DATABASE", board.database())
+                .env_remove("ASKS_DB")
+                .env_remove("TASKS_SESSION")
+                .env_remove("SF_SYMPHONY_UI_DIST")
+                .env_remove("GIT_DIR")
+                .env_remove("GIT_WORK_TREE")
+                .env_remove("GIT_COMMON_DIR")
+                .env_remove("GIT_INDEX_FILE"),
+        )
+        .unwrap();
         let out = String::from_utf8_lossy(&done.stdout);
         let err = String::from_utf8_lossy(&done.stderr);
         assert!(done.status.success(), "{out}\n{err}");

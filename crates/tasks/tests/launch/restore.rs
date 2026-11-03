@@ -1,9 +1,10 @@
 //! `restore`: a closed session comes back in a new pane, in its worktree, resuming its conversation.
 
 use crate::common::refused;
-use crate::{World, git};
+use crate::{Hooked, World, git};
 use std::path::Path;
-use tasks::launch::{Ask, Started, restore};
+use tasks::launch::herdr::Herdr;
+use tasks::launch::{Ask, PROMPT_ENTERS, PROMPT_WAIT, Started, restore};
 use tasks::rows::TaskSessionRow;
 use tasks::{Error, NewLaunch};
 
@@ -300,4 +301,66 @@ fn a_failed_start_closes_the_new_pane_and_reopens_nothing() {
             .closed
             .is_some()
     );
+}
+
+#[test]
+fn an_unconfirmed_restore_closes_its_new_pane_and_keeps_the_record_closed() {
+    for fail in [
+        "agent list",
+        "pane read",
+        "empty pane",
+        "missing agent",
+        "pane send-keys",
+    ] {
+        let mut w = World::new();
+        let s = launched(&w).row;
+        close_pane(&w, &s);
+        w.store().leave(&s.handle).unwrap();
+        let before = w.store().task_sessions("sim/jump").unwrap();
+        w.set("FAKE_HERDR_STUCK", "1");
+        w.set("FAKE_HERDR_FAIL", fail);
+        let inner = w.herdr();
+        let herdr = Hooked {
+            instead: Box::new(move |args| {
+                if fail == "missing agent" && args == ["agent", "list"] {
+                    inner.run(args).unwrap();
+                    return Some(Ok(r#"{"result": {"agents": []}}"#.into()));
+                }
+                (fail == "empty pane" && args[..2] == ["pane", "read"]).then(|| Ok(String::new()))
+            }),
+            ..Hooked::new(&w)
+        };
+        let why = refused(restore(
+            w.store(),
+            &herdr,
+            &w.machine(),
+            "sim/jump",
+            Some(&s.handle),
+            None,
+        ));
+        let start = w.calls_of(&["agent", "start"]).pop().unwrap();
+        let pane = &start[start.iter().position(|arg| arg == "--pane").unwrap() + 1];
+        assert_eq!(
+            why,
+            format!("could not confirm that the agent in pane {pane} took its prompt"),
+            "{fail}"
+        );
+        assert_eq!(w.calls_of(&["agent", "prompt"]).len(), 2, "{fail}");
+        let looks = if fail == "pane send-keys" {
+            1
+        } else {
+            PROMPT_ENTERS + 1
+        };
+        // The original launch took one look; restore must exhaust its own observation budget.
+        assert_eq!(w.calls_of(&["agent", "list"]).len(), 1 + looks, "{fail}");
+        assert_eq!(*w.sleeps.borrow(), vec![PROMPT_WAIT; 1 + looks]);
+        assert_eq!(w.calls_of(&["pane", "close", pane]).len(), 1, "{fail}");
+        assert_eq!(w.pane_ids(), Vec::<String>::new(), "{fail}");
+        assert_eq!(
+            w.store().task_sessions("sim/jump").unwrap(),
+            before,
+            "{fail}"
+        );
+        assert_eq!(w.f.health(&s.handle).as_str(), "left", "{fail}");
+    }
 }

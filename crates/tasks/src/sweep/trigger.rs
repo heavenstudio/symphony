@@ -13,11 +13,10 @@
 use crate::cli::Env;
 use crate::git::common_dir;
 use crate::server::FOLDER;
-use crate::sys;
+use crate::sys::{self, Command, Stdio};
 use std::fs::{self, File, OpenOptions, TryLockError};
 use std::io::{Read, Seek, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 /// When the last sweep started, in seconds since the epoch, as text.
@@ -90,28 +89,24 @@ fn fresh(text: &str, now: f64) -> bool {
         .is_ok_and(|then| (now - then).abs() < HOURLY_SECONDS)
 }
 
-/// The stamp's lock, let go of by an explicit unlock when dropped. Closing the file alone does not let
-/// go while a copy of its descriptor is open, and a child another thread forked holds one until it
-/// execs: under load the next claim found the stamp locked by nobody's claim (the test of two claims
-/// below, red at a load of 260 on 16 cores). An unlock lets go however many copies there are.
-struct Claimed(File);
-
-impl Drop for Claimed {
-    fn drop(&mut self) {
-        let _ = self.0.unlock();
+/// The stamp at `path`, locked, not waited for: None while another caller holds it. Without the
+/// explicit unlock a [`sys::FileLock`] gives, the next claim under load found the stamp locked by
+/// nobody's claim (the test of two claims below, red at a load of 260 on 16 cores).
+fn lock_stamp(path: &Path) -> std::io::Result<Option<sys::FileLock>> {
+    let file = open_stamp(path)?;
+    match file.try_lock() {
+        Ok(()) => Ok(Some(sys::FileLock(file))),
+        Err(TryLockError::WouldBlock) => Ok(None),
+        Err(TryLockError::Error(problem)) => Err(problem),
     }
 }
 
 /// Write `now` into the stamp at `path` if it is not fresh, under its lock, not waited for: whether
 /// this caller did.
 fn claim(path: &Path, now: f64) -> std::io::Result<bool> {
-    let file = open_stamp(path)?;
-    match file.try_lock() {
-        Ok(()) => {}
-        Err(TryLockError::WouldBlock) => return Ok(false),
-        Err(TryLockError::Error(problem)) => return Err(problem),
-    }
-    let mut held = Claimed(file);
+    let Some(mut held) = lock_stamp(path)? else {
+        return Ok(false);
+    };
     let mut text = String::new();
     held.0.read_to_string(&mut text)?;
     if fresh(&text, now) {
@@ -252,8 +247,8 @@ fn spawn(env: &Env, common: &Path, why: &str, task: Option<&str>) -> std::io::Re
         .current_dir(root)
         .stdin(Stdio::null())
         .stdout(log.try_clone()?)
-        .stderr(log);
-    sys::new_session(&mut command);
+        .stderr(log)
+        .new_session();
     let mut child = command.spawn()?;
     std::thread::spawn(move || {
         let _ = child.wait();
@@ -350,10 +345,9 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("sf-sweep-fork-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         let stamp = dir.join(STAMP);
-        let file = open_stamp(&stamp).unwrap();
-        file.lock().unwrap();
-        let fork = file.try_clone().unwrap();
-        drop(Claimed(file));
+        let held = lock_stamp(&stamp).unwrap().unwrap();
+        let fork = held.0.try_clone().unwrap();
+        drop(held);
         assert!(
             claim(&stamp, 1000.0).unwrap(),
             "the stamp stayed locked once its claim ended, by a copy of its descriptor"

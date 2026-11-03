@@ -1,7 +1,7 @@
 //! Supply a noisy shell startup file to the fixture's caller, in an owned process.
 
 use std::path::PathBuf;
-use std::process::Command;
+use tasks::sys::Command;
 
 const CHILD: &str = "SF_SYMPHONY_FIXTURE_BASH_ENV_CHILD";
 
@@ -30,12 +30,13 @@ pub fn run(test: &str, exercise: fn()) {
     let scratch = Scratch(root);
     let startup = scratch.0.join("startup");
     std::fs::write(&startup, "printf 'unexpected BASH_ENV startup output\\n'\n").unwrap();
-    let done = Command::new(std::env::current_exe().unwrap())
-        .args(["--exact", test, "--nocapture"])
-        .env(CHILD, test)
-        .env("BASH_ENV", startup)
-        .output()
-        .unwrap();
+    let done = tasks::sys::output(
+        Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", test, "--nocapture"])
+            .env(CHILD, test)
+            .env("BASH_ENV", startup),
+    )
+    .unwrap();
     assert!(
         done.status.success(),
         "fixture with BASH_ENV: {}{}",

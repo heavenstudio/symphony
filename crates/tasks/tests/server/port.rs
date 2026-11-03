@@ -10,9 +10,10 @@ use std::fs::File;
 use std::io::{BufRead, BufReader, Read};
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::path::PathBuf;
-use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 use tasks::port::{ATTEMPTS, NotStarted, Start, in_use, listens, start_on_free_port};
+use tasks::sys;
+use tasks::sys::{Child, Command, Stdio};
 
 /// The deadline of a case whose starts are all quick: one it never comes near.
 fn later() -> Instant {
@@ -46,13 +47,13 @@ impl Starter {
             Fake::Taken => r#"echo "start $1: Address already in use (os error 48)" >&2; exit 1"#,
             Fake::Fails => r#"echo "start $1: the disk is full" >&2; exit 1"#,
         };
-        let mut child = Command::new("/bin/sh")
-            .args(["-c", script, "fake", &addr.to_string()])
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .unwrap();
+        let mut child = sys::spawn_piped(Command::new("/bin/sh").args([
+            "-c",
+            script,
+            "fake",
+            &addr.to_string(),
+        ]))
+        .unwrap();
         let mut line = String::new();
         BufReader::new(child.stdout.as_mut().unwrap())
             .read_line(&mut line)
@@ -225,31 +226,92 @@ fn a_taken_address_is_read_in_the_words_systems_and_servers_print() {
 fn a_process_listens_on_the_address_of_its_own_listener_alone() {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let addr = listener.local_addr().unwrap();
-    assert!(listens(std::process::id(), addr).unwrap());
+    assert!(listens(std::process::id(), addr, sys::output).unwrap());
     let connected = TcpStream::connect(addr).unwrap();
     let local = connected.local_addr().unwrap();
     assert!(
-        !listens(std::process::id(), local).unwrap(),
+        !listens(std::process::id(), local, sys::output).unwrap(),
         "a connected socket on {local} is no listener"
     );
     // Binding port zero assigns a different port; no process can listen on zero itself.
     let free = "127.0.0.1:0".parse().unwrap();
-    assert!(!listens(std::process::id(), free).unwrap(), "{free}");
+    assert!(
+        !listens(std::process::id(), free, sys::output).unwrap(),
+        "{free}"
+    );
+}
+
+#[test]
+fn lsof_runs_through_the_runner_it_is_handed_and_what_it_said_is_the_answer() {
+    use std::os::unix::process::ExitStatusExt;
+    use std::process::{ExitStatus, Output};
+
+    /// An lsof that ends with `code`, having printed `stdout` and `stderr`.
+    fn said(code: i32, stdout: &str, stderr: &str) -> Output {
+        Output {
+            status: ExitStatus::from_raw(code << 8),
+            stdout: stdout.into(),
+            stderr: stderr.into(),
+        }
+    }
+    let asked = |addr: &str, answer: Output| {
+        let mut runs = Vec::new();
+        let listening = listens(42, addr.parse().unwrap(), |command: &mut Command| {
+            runs.push(
+                std::iter::once(command.get_program())
+                    .chain(command.get_args())
+                    .map(|word| word.to_string_lossy().into_owned())
+                    .collect::<Vec<_>>()
+                    .join(" "),
+            );
+            Ok(answer)
+        });
+        (listening, runs)
+    };
+
+    let (listening, runs) = asked("127.0.0.1:7001", said(0, "p42\nf5\n", ""));
+    assert!(listening.unwrap());
+    assert_eq!(
+        runs,
+        ["lsof -nP -w -a -p 42 -iTCP@127.0.0.1:7001 -sTCP:LISTEN -Fp"]
+    );
+    let (listening, runs) = asked("[::1]:7001", said(0, "p42\n", ""));
+    assert!(listening.unwrap());
+    assert_eq!(
+        runs,
+        ["lsof -nP -w -a -p 42 -iTCP@[::1]:7001 -sTCP:LISTEN -Fp"]
+    );
+    // Nothing listening: lsof exits 1 and says nothing.
+    assert!(!asked("127.0.0.1:7001", said(1, "", "")).0.unwrap());
+    // Another process's listener there is not this one's.
+    assert!(!asked("127.0.0.1:7001", said(0, "p420\n", "")).0.unwrap());
+    let refused = asked("127.0.0.1:7001", said(1, "", "lsof: no such option -w\n"))
+        .0
+        .unwrap_err();
+    assert_eq!(
+        refused.to_string(),
+        "lsof could not say what pid 42 listens on: lsof: no such option -w"
+    );
+    let not_run = listens(42, "127.0.0.1:7001".parse().unwrap(), |_: &mut Command| {
+        Err(std::io::Error::from(std::io::ErrorKind::NotFound))
+    });
+    assert_eq!(not_run.unwrap_err().kind(), std::io::ErrorKind::NotFound);
 }
 
 #[test]
 fn another_process_does_not_listen_on_this_ones_address() {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let addr = listener.local_addr().unwrap();
-    let mut other = Command::new("/bin/sh")
-        .args(["-c", "read -r line || :"])
-        .stdin(Stdio::piped())
-        .spawn()
-        .unwrap();
-    assert!(!listens(other.id(), addr).unwrap());
+    let mut other =
+        crate::store::spawn_with_input(Command::new("/bin/sh").args(["-c", "read -r line || :"]))
+            .unwrap();
+    assert!(!listens(other.id(), addr, sys::output).unwrap());
     drop(other.stdin.take());
     assert!(other.wait().unwrap().success());
-    assert!(!listens(other.id(), addr).unwrap(), "an ended process");
+    assert!(
+        !listens(other.id(), addr, sys::output).unwrap(),
+        "an ended process"
+    );
 }
 
 /// A server this case started, ended with it.
@@ -327,7 +389,9 @@ fn surreal_on_a_port_taken_by(occupier: Occupier, name: &str) {
                 endings.push(said.clone());
                 return Ok::<_, Infallible>(Start::Ended(said));
             }
-            if tasks::rpc::healthy(&addr.to_string()) && listens(server.0.id(), addr).unwrap() {
+            if tasks::rpc::healthy(&addr.to_string())
+                && listens(server.0.id(), addr, sys::output).unwrap()
+            {
                 return Ok(Start::Up(server));
             }
             assert!(
@@ -347,7 +411,7 @@ fn surreal_on_a_port_taken_by(occupier: Occupier, name: &str) {
         "the occupier was asked whether it was up"
     );
     assert!(tasks::rpc::healthy(&addr.to_string()));
-    assert!(listens(server.0.id(), addr).unwrap());
+    assert!(listens(server.0.id(), addr, sys::output).unwrap());
     drop(server);
     let _ = std::fs::remove_dir_all(&dir);
 }

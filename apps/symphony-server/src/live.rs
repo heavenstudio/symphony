@@ -204,7 +204,7 @@ impl Hub {
             server_notice: watch::Sender::new(String::new()),
             invalid: RwLock::new(BTreeMap::new()),
             trees: RwLock::new(
-                branches::trees(root)
+                measured("hub branch trees", || branches::trees(root))
                     .into_iter()
                     .map(|t| (t.id(), t.path))
                     .collect(),
@@ -223,7 +223,9 @@ impl Hub {
             callbacks: Mutex::new(None),
             dirty: Mutex::new(BTreeSet::new()),
             swept: Mutex::new(Sweep::default()),
-            common: crate::repo::checkout(root).ok().map(|c| c.common),
+            common: measured("hub checkout", || crate::repo::checkout(root))
+                .ok()
+                .map(|c| c.common),
             signoff_pending: Mutex::new(None),
             task_activity: Mutex::new(None),
             worker: Mutex::new(None),

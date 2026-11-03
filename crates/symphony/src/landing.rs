@@ -3,20 +3,15 @@
 //! exactly what the commands make from its base plus its documents.
 
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
+use tasks::sys::Command;
 
 /// Retry diagnostics shared by the lander and the app that keeps verified verdicts queued.
 pub const RETRY_LAND: &str = "retry just land";
 pub const DIRTY_MAIN: &str = "has staged or tracked edits; refusing publication";
 
 fn git(root: &Path, args: &[&str]) -> Option<Vec<u8>> {
-    let done = Command::new("git")
-        .args(args)
-        .current_dir(root)
-        .stdin(Stdio::null())
-        .output()
-        .ok()?;
+    let done = tasks::sys::output(Command::new("git").args(args).current_dir(root)).ok()?;
     done.status.success().then_some(done.stdout)
 }
 
@@ -41,17 +36,17 @@ pub fn is_doc(path: &str) -> bool {
 pub fn owner_lines_left(root: &Path) -> Vec<String> {
     // This is another agent's checkout, unlike the generators' private worktrees. A diff may
     // refresh its index despite GIT_OPTIONAL_LOCKS, so disable that refresh explicitly.
-    let diff = Command::new("git")
-        .env("GIT_OPTIONAL_LOCKS", "0")
-        .args(["-c", "diff.autoRefreshIndex=false"])
-        .args(["diff", "-U0", "HEAD", "--", "docs"])
-        .current_dir(root)
-        .stdin(Stdio::null())
-        .output()
-        .ok()
-        .filter(|done| done.status.success())
-        .map(|done| String::from_utf8_lossy(&done.stdout).into_owned())
-        .unwrap_or_default();
+    let diff = tasks::sys::output(
+        Command::new("git")
+            .env("GIT_OPTIONAL_LOCKS", "0")
+            .args(["-c", "diff.autoRefreshIndex=false"])
+            .args(["diff", "-U0", "HEAD", "--", "docs"])
+            .current_dir(root),
+    )
+    .ok()
+    .filter(|done| done.status.success())
+    .map(|done| String::from_utf8_lossy(&done.stdout).into_owned())
+    .unwrap_or_default();
     let mut file = "";
     let mut left = Vec::new();
     for line in diff.lines() {
@@ -102,13 +97,14 @@ impl PrivateWorktree {
             retained: false,
         };
         let _held = WORKTREES.lock().unwrap_or_else(|e| e.into_inner());
-        let done = Command::new("git")
-            .args(["worktree", "add", "--detach"])
-            .arg(&held.path)
-            .arg(rev)
-            .current_dir(root)
-            .output()
-            .map_err(|e| e.to_string())?;
+        let done = tasks::sys::output(
+            Command::new("git")
+                .args(["worktree", "add", "--detach"])
+                .arg(&held.path)
+                .arg(rev)
+                .current_dir(root),
+        )
+        .map_err(|e| e.to_string())?;
         if !done.status.success() {
             return Err(format!(
                 "could not make a worktree of {rev}: {}",
@@ -158,11 +154,12 @@ impl Drop for PrivateWorktree {
             return;
         }
         let _held = WORKTREES.lock().unwrap_or_else(|e| e.into_inner());
-        let _ = Command::new("git")
-            .args(["worktree", "remove", "--force"])
-            .arg(&self.path)
-            .current_dir(&self.root)
-            .output();
+        let _ = tasks::sys::output(
+            Command::new("git")
+                .args(["worktree", "remove", "--force"])
+                .arg(&self.path)
+                .current_dir(&self.root),
+        );
         let _ = std::fs::remove_dir_all(&self.home);
     }
 }
@@ -183,6 +180,12 @@ pub fn default_generators() -> Vec<Generator> {
             outputs: "content/".into(),
             command: vec!["just".into(), "content".into()],
             when_changed: false,
+        },
+        Generator {
+            name: "content-ids".into(),
+            outputs: "sim/content_ids.gd".into(),
+            command: vec!["just".into(), "content-ids".into()],
+            when_changed: true,
         },
         Generator {
             name: "hull-atlas".into(),
@@ -271,11 +274,7 @@ fn regenerates_inner(root: &Path, branch: &str, generators: &[Generator]) -> Opt
             continue;
         }
         let (program, args) = generator.command.split_first()?;
-        if !Command::new(program)
-            .args(args)
-            .current_dir(&wt.path)
-            .stdin(Stdio::null())
-            .output()
+        if !tasks::sys::output(Command::new(program).args(args).current_dir(&wt.path))
             .ok()?
             .status
             .success()

@@ -261,7 +261,7 @@ fn tailscale_whois(ip: &str) -> Result<Option<String>, String> {
 /// answer.
 fn whois_by(binary: Option<std::path::PathBuf>, ip: &str) -> Result<Option<String>, String> {
     let binary = binary.ok_or("tailscale is not installed")?;
-    let mut command = std::process::Command::new(binary);
+    let mut command = tasks::sys::Command::new(binary);
     command.args(["whois", "--json", ip]);
     let out = crate::sys::output_within(command, CLI_TIMEOUT)?;
     if out.status.success() {
@@ -278,7 +278,7 @@ fn whois_by(binary: Option<std::path::PathBuf>, ip: &str) -> Result<Option<Strin
 /// does not answer within its deadline.
 fn tailscale_status() -> Result<String, String> {
     let binary = find_tailscale().ok_or("tailscale is not installed")?;
-    let mut command = std::process::Command::new(binary);
+    let mut command = tasks::sys::Command::new(binary);
     command.args(["status", "--json"]);
     let out = crate::sys::output_within(command, CLI_TIMEOUT)?;
     if out.status.success() {

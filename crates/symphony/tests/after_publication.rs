@@ -87,6 +87,14 @@ fn a_slow_land_candidate_does_not_hold_back_an_unrelated_plain_save() {
             let (_, observed) = notice.entered();
             assert_eq!(observed, later.trim_end().replace('\n', "|"));
             assert_eq!(f.main("docs/a.md"), DOC);
+            // The notice fires inside the save's main update, before it syncs main's checkout
+            // under the write lock; land's dirty-main check must not see that halfway state.
+            let writes = symphony::commit::write_lock(&root).unwrap();
+            assert!(
+                git(&root, &["status", "--porcelain", "--untracked-files=no"]).is_empty(),
+                "the plain save finished its checkout update while land was held"
+            );
+            drop(writes);
             drop(release);
             let (_, _) = notice.entered();
             committer.0.close();
@@ -500,12 +508,13 @@ fn a_completed_publication_is_not_repeated_after_restart() {
             // Use the fixture publisher, not a certificate or a fake result record.
             git(&root, &["checkout", "-q", "HEAD", "--", "docs/a.md"]);
             script(&f.home.join("publish.sh"), &publish);
-            let done = Command::new("sh")
-                .arg(f.home.join("publish.sh"))
-                .arg(record["publication"]["branch"].as_str().unwrap())
-                .current_dir(checkout)
-                .output()
-                .unwrap();
+            let done = tasks::sys::output(
+                tasks::sys::Command::new("sh")
+                    .arg(f.home.join("publish.sh"))
+                    .arg(record["publication"]["branch"].as_str().unwrap())
+                    .current_dir(checkout),
+            )
+            .unwrap();
             assert!(done.status.success(), "{done:?}");
             assert_eq!(f.main("docs/a.md"), approved);
             assert!(checkout.exists() && records[0].exists());

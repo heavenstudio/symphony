@@ -1,8 +1,9 @@
 //! Board command exit codes, body-file input and subtask operations.
 
-use crate::{Case, scratch};
+use crate::{Case, Ran, git, repository, scratch};
 use serde_json::Value;
 use std::fs;
+use std::path::{Path, PathBuf};
 
 fn json(text: &str) -> Value {
     serde_json::from_str(text).unwrap()
@@ -312,6 +313,82 @@ fn create_takes_the_worktree_of_a_dependency_that_is_done() {
     );
 }
 
+/// A board whose commands run in a repository (in scratch folder `name`) holding the data task's work in
+/// worktree `folder` (under it) on its slug's branch: the board, the data task's session and the worktree.
+fn data_task_in(name: &str, folder: &str) -> (Case, String, PathBuf) {
+    let repo = repository(&scratch(name).join("repo"));
+    git(
+        &repo,
+        &[
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            "content/roster-stretch",
+            folder,
+        ],
+    );
+    let mut c = Case::new();
+    c.env.cwd = repo.clone();
+    let a = data_task(&c);
+    (c, a, repo.join(folder))
+}
+
+/// `create art/hulls`, depending on the data task, with `body`: the run.
+fn create_depending(c: &Case, a: &str, body: &str) -> Ran {
+    c.run_as(
+        a,
+        &[
+            "create",
+            "art/hulls",
+            "Hulls",
+            "--depends",
+            "content/roster-stretch",
+            "--body",
+            body,
+        ],
+        "",
+    )
+}
+
+/// That `ran` was refused naming `worktree` as the data task's, and made no task.
+fn refused_naming(c: &Case, ran: &Ran, worktree: &Path) {
+    assert_eq!(ran.code, 1, "{}", ran.err);
+    let said = format!(
+        "the brief names {}, the worktree of content/roster-stretch",
+        worktree.display()
+    );
+    assert!(ran.err.contains(&said), "{}", ran.err);
+    assert!(c.store().get("art/hulls").is_err());
+}
+
+#[test]
+fn create_refuses_a_brief_importing_from_a_dependencys_agent_worktree() {
+    let (c, a, worktree) = data_task_in("agent-refused", ".claude/worktrees/agent-a1b2");
+    let ran = create_depending(
+        &c,
+        &a,
+        "Import content/x.json from .claude/worktrees/agent-a1b2/content/x.json.",
+    );
+    refused_naming(&c, &ran, &worktree);
+}
+
+#[test]
+fn create_refuses_a_brief_importing_from_a_dependencys_codex_worktree() {
+    let (c, a, worktree) = data_task_in("codex-refused", ".claude/worktrees/codex-roster-pilot");
+    let body = format!("Import {}/content/x.json", worktree.display());
+    let ran = create_depending(&c, &a, &body);
+    refused_naming(&c, &ran, &worktree);
+}
+
+#[test]
+fn create_takes_a_brief_naming_no_worktree_beside_a_dependencys_worktree() {
+    let (c, a, _) = data_task_in("agent-taken", ".claude/worktrees/agent-a1b2");
+    let ran = create_depending(&c, &a, "Build the hulls from main's content/x.json.");
+    assert_eq!(ran.code, 0, "{}", ran.err);
+    assert!(c.store().get("art/hulls").is_ok());
+}
+
 #[test]
 fn list_mine_shows_only_the_tasks_it_holds() {
     let c = Case::new();
@@ -592,4 +669,73 @@ fn parent_moves_a_task_and_refuses_a_cycle() {
     assert!(ran.err.contains("ancestor"), "{}", ran.err);
     c.ok(&orch, &["parent", "other", "--none"]);
     assert_eq!(c.store().get("other").unwrap().parent, None);
+}
+
+#[test]
+fn depends_points_a_cancellation_blocked_task_at_the_successor_and_unblocks_it() {
+    let c = Case::new();
+    let orch = c.register("orchestrator");
+    for slug in ["sim/old", "sim/new", "sim/other"] {
+        c.ok(&orch, &["create", slug, "Prerequisite"]);
+    }
+    c.ok(
+        &orch,
+        &["create", "sim/dep", "Dependent", "--depends", "sim/old"],
+    );
+    c.ok(&orch, &["move", "sim/old", "cancelled"]);
+    assert_eq!(c.store().get("sim/dep").unwrap().status, "blocked");
+    assert_eq!(
+        c.ok(
+            &orch,
+            &["depends", "sim/dep", "--replace", "sim/old", "sim/new"]
+        ),
+        "sim/dep depends on sim/new and is ready\n"
+    );
+    let out = c.ok("", &["show", "sim/dep"]);
+    for said in [
+        "changed its dependencies: removed sim/old; added sim/new",
+        "unblocked: no cancelled dependency left; back to ready",
+    ] {
+        assert!(out.contains(said), "{said:?} not in {out}");
+    }
+    assert_eq!(
+        c.ok(
+            &orch,
+            &[
+                "depends",
+                "sim/dep",
+                "--add",
+                "sim/other",
+                "--remove",
+                "sim/new"
+            ]
+        ),
+        "sim/dep depends on sim/other and is ready\n"
+    );
+    assert_eq!(
+        c.ok(&orch, &["depends", "sim/dep", "--remove", "sim/other"]),
+        "sim/dep depends on nothing and is ready\n"
+    );
+    for (args, code, why) in [
+        (
+            &["depends", "sim/dep", "--add", "sim/dep"][..],
+            1,
+            "sim/dep cannot wait on itself",
+        ),
+        (
+            &["depends", "sim/dep"][..],
+            1,
+            "name a dependency to add, remove or replace",
+        ),
+        (
+            &["depends", "sim/dep", "--replace", "sim/new"][..],
+            2,
+            "argument --replace: expected 2 arguments",
+        ),
+    ] {
+        let ran = c.run_as(&orch, args, "");
+        assert_eq!(ran.code, code, "{args:?}: {}", ran.err);
+        assert!(ran.err.contains(why), "{args:?}: {}", ran.err);
+    }
+    assert!(c.store().get("sim/dep").unwrap().depends.is_empty());
 }

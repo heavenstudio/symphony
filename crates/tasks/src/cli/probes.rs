@@ -4,13 +4,14 @@
 
 use super::Env;
 use super::agents::{Answer, Pane, Probes, Run};
-use crate::{git, sys};
+use crate::git;
+use crate::sys::{self, Command};
 use serde_json::Value;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::fs::{self, File, TryLockError};
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output, Stdio};
+use std::process::Output;
 use std::sync::mpsc;
 use std::time::Duration;
 
@@ -222,18 +223,14 @@ pub fn herdr_panes(env: &Env) -> Answer<Vec<Pane>> {
     }
 }
 
-/// `command`'s output, if it ends within `limit`; else it is killed.
+/// `command`'s output, if it ends within `limit`; else it is killed. Read through [`sys::pipe`]s,
+/// so a child another thread spawns meanwhile cannot hold a finished answer past `limit`.
 pub(crate) fn within(command: &mut Command, limit: Duration) -> Answer<Output> {
-    let child = command
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|e| e.to_string())?;
+    let child = sys::spawn_output(command).map_err(|e| e.to_string())?;
     let pid = i64::from(child.id());
     let (send, receive) = mpsc::channel();
     std::thread::spawn(move || {
-        let _ = send.send(child.wait_with_output());
+        let _ = send.send(sys::wait_output(child));
     });
     match receive.recv_timeout(limit) {
         Ok(done) => done.map_err(|e| e.to_string()),
@@ -307,13 +304,7 @@ pub fn split(text: &str) -> Answer<Vec<String>> {
 // -- git -------------------------------------------------------------------------------
 
 fn git(dir: &Path, args: &[&str]) -> Option<Output> {
-    Command::new("git")
-        .arg("-C")
-        .arg(dir)
-        .args(args)
-        .stdin(Stdio::null())
-        .output()
-        .ok()
+    sys::output(Command::new("git").arg("-C").arg(dir).args(args)).ok()
 }
 
 /// The branch checked out in `cwd`; "" for a detached head or a folder in no repository.

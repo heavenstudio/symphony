@@ -3,10 +3,10 @@ use std::fs::File;
 use std::io::{self, Read, Write};
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 use std::os::unix::net::UnixStream;
-use std::process::Stdio;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use tasks::sys::Stdio;
 
 pub struct Log {
     saved: [OwnedFd; 2],
@@ -178,7 +178,7 @@ fn line(out: &mut impl Write, bytes: &[u8]) -> io::Result<()> {
 }
 
 fn forward(
-    mut input: UnixStream,
+    mut input: impl Read,
     mut out: impl Write,
     mut report: impl Write,
     control: &Control,
@@ -255,7 +255,8 @@ mod tests {
                 Ok(())
             }
         }
-        let (input, mut writer) = UnixStream::pair().unwrap();
+        // A pipe no child another test spawns can keep: the reader ends when `writer` does.
+        let (input, mut writer) = tasks::sys::pipe().unwrap();
         let bytes = Arc::new(Mutex::new(Vec::new()));
         let reports = Arc::new(Mutex::new(Vec::new()));
         let (failed, failures) = std::sync::mpsc::channel();
@@ -277,7 +278,7 @@ mod tests {
                 .expect("the sink must actually fail before the next write");
         }
         // This write happens after both observed failures. A reader that exited on an error
-        // either breaks this socket or fails to forward this newly arriving record.
+        // either breaks this pipe or fails to forward this newly arriving record.
         writer.write_all(b"recovered\n").unwrap();
         drop(writer);
         reader.join().unwrap().unwrap();
@@ -326,11 +327,12 @@ mod tests {
         }
         let home = std::env::temp_dir().join(format!("sf-log-process-{}", std::process::id()));
         std::fs::create_dir_all(&home).unwrap();
-        let child = std::process::Command::new(std::env::current_exe().unwrap())
-            .args(["--exact", TEST, "--nocapture"])
-            .env(CHILD, &home)
-            .output()
-            .unwrap();
+        let child = tasks::sys::output(
+            tasks::sys::Command::new(std::env::current_exe().unwrap())
+                .args(["--exact", TEST, "--nocapture"])
+                .env(CHILD, &home),
+        )
+        .unwrap();
         assert!(
             child.status.success(),
             "{}",
@@ -362,7 +364,7 @@ mod tests {
     #[test]
     fn multiline_fragmented_output_and_an_unterminated_tail_all_get_dated() {
         let path = std::env::temp_dir().join(format!("sf-log-{}", std::process::id()));
-        let (input, mut writer) = UnixStream::pair().unwrap();
+        let (input, mut writer) = tasks::sys::pipe().unwrap();
         let sender = std::thread::spawn(move || {
             writer.write_all(b"one\n").unwrap();
             writer.write_all(&[b'x'; 9000]).unwrap();

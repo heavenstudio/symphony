@@ -80,12 +80,29 @@ fn held(requests: &DocumentRequests) -> BTreeSet<String> {
     held
 }
 
+#[derive(Clone, Copy)]
+struct FolderNotice {
+    stale: Signal<bool>,
+    removed: Signal<bool>,
+    error: Signal<String>,
+}
+
 #[component(lazy)]
 pub fn DocumentPage(path: String, scope: String, #[props(default)] embedded: bool) -> Element {
     std::hint::black_box(&STYLE);
     let state = use_signal(|| None::<DocumentState>);
     let stale = use_signal(|| true);
     let trouble = use_signal(|| None::<String>);
+    let folder_notice = try_consume_context::<FolderNotice>();
+    use_effect(move || {
+        if embedded && let Some(mut notice) = folder_notice {
+            notice.stale.set(stale());
+            notice.error.set(trouble().unwrap_or_default());
+            notice
+                .removed
+                .set(state.read().as_ref().is_some_and(|state| state.removed));
+        }
+    });
     let wanted = use_signal(BTreeSet::new);
     let loaded = use_signal(BTreeSet::new);
     let anchors = use_signal(BTreeMap::new);
@@ -146,20 +163,19 @@ pub fn DocumentPage(path: String, scope: String, #[props(default)] embedded: boo
             mark("document-ready");
         }
     });
-    match state() {
-        Some(state) => rsx! {
-            div { class: "document-page", "data-ready": if marked() { "document" } else { "outline" }, "data-feed": if stale() { "stale" } else { "live" },
-                if stale() { p { class: "pill wait", role: "status", "Reconnecting: this document may be out of date" } }
-                if let Some(why) = trouble() { p { role: "alert", "{why}" } }
-                if state.removed { p { role: "alert", "This document was removed. Your draft is kept on this device." } }
+    rsx! {
+        div { class: "document-page", "data-ready": if state.read().is_none() { "loading" } else if marked() { "document" } else { "outline" }, "data-feed": if stale() { "stale" } else { "live" },
+            if let Some(state) = state() {
                 DocumentBody { anchor_ids: anchors(), present: state.latest.sections.iter().map(|s| s.key.clone()).collect(), document: state.shown, scope: scope.clone(), embedded }
                 if !embedded {
                     crate::asks::Asks { key: "{scope}/{path}", path: path.clone(), scope: docs::scoped(&scope, ""), render_blocks }
                 }
+            } else if trouble().is_none() || (embedded && folder_notice.is_none()) {
+                p { role: "status", {trouble().unwrap_or_else(|| "Loading document…".into())} }
             }
-        },
-        None => {
-            rsx! { p { role: "status", {trouble().unwrap_or_else(|| "Loading document…".into())} } }
+            if !embedded {
+                crate::live::PageNotices { reconnecting: stale(), reconnect: "Reconnecting: this document may be out of date", error: trouble().unwrap_or_default(), document_removed: state.read().as_ref().is_some_and(|state| state.removed) }
+            }
         }
     }
 }
@@ -634,6 +650,25 @@ pub fn FolderPage(path: String, scope: String) -> Element {
     std::hint::black_box(&STYLE);
     let mut folder = use_signal(|| None::<Folder>);
     let mut error = use_signal(|| None::<String>);
+    let mut stale = use_signal(|| false);
+    let mut notice_error = use_signal(String::new);
+    let mut removed = use_signal(|| false);
+    use_context_provider(|| FolderNotice {
+        stale,
+        error: notice_error,
+        removed,
+    });
+    use_effect(move || {
+        if folder
+            .read()
+            .as_ref()
+            .is_some_and(|folder| folder.intro.is_none())
+        {
+            stale.set(false);
+            notice_error.set(String::new());
+            removed.set(false);
+        }
+    });
     let p = path.clone();
     let s = scope.clone();
     use_hook(move || {
@@ -651,8 +686,8 @@ pub fn FolderPage(path: String, scope: String) -> Element {
         });
     });
     rsx! {
-        if let Some(folder) = folder() {
-            div { class: "document-page", "data-ready": "folder",
+        div { class: "document-page", "data-ready": if folder.read().is_some() { "folder" } else { "loading" }, "data-feed": if stale() { "stale" } else { "live" },
+            if let Some(folder) = folder() {
                 div { class: "doc-head",
                     p { class: "eyebrow", {folder.path.trim_start_matches(&format!("@{scope}/"))} "/" }
                     h1 { "{folder.title}" }
@@ -676,8 +711,9 @@ pub fn FolderPage(path: String, scope: String) -> Element {
                         }
                     }
                 }
-            }
-        } else { p { role: "status", {error().unwrap_or_else(|| "Loading folder…".into())} } }
+            } else if error().is_none() { p { role: "status", "Loading folder…" } }
+            crate::live::PageNotices { reconnecting: stale(), reconnect: "Reconnecting: this document may be out of date", error: error().unwrap_or(notice_error()), document_removed: removed() }
+        }
     }
 }
 

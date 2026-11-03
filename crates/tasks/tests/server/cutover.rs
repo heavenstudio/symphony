@@ -9,10 +9,10 @@ use std::io::{Read, Write};
 use std::net::UdpSocket;
 use std::os::unix::process::ExitStatusExt;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
 use std::time::Duration;
 use tasks::cli::Env;
 use tasks::server::{FOLDER, Home, Running};
+use tasks::sys::{Child, Command, Stdio};
 
 /// A repository of its own holding the sample SQLite board in its git dir. The server a test started
 /// there is stopped when it goes, by the pid its address file records, if that process serves it;
@@ -28,11 +28,7 @@ impl Repo {
             .join(format!("cutover-home-{}-{name}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
-        let done = Command::new("git")
-            .args(["init", "-q"])
-            .arg(&dir)
-            .output()
-            .unwrap();
+        let done = tasks::sys::output(Command::new("git").args(["init", "-q"]).arg(&dir)).unwrap();
         assert!(done.status.success());
         let dir = dir.canonicalize().unwrap();
         sqlite::make(&dir.join(".git/star-foundry-tasks.db"), &sqlite::sample());
@@ -178,23 +174,23 @@ fn servers_end_when_the_fixture_process_is_killed_without_dropping_it() {
             .set_read_timeout(Some(Duration::from_secs(20)))
             .unwrap();
         let mut child = TestProcess(
-            Command::new(std::env::current_exe().unwrap())
-                .args([
-                    "--ignored",
-                    "--exact",
-                    "cutover::helper_fixture_process",
-                    "--test-threads=1",
-                ])
-                .env("SF_CUTOVER_FIXTURE_ROUTE", route)
-                .env(
-                    "SF_CUTOVER_FIXTURE_EVENTS",
-                    events.local_addr().unwrap().to_string(),
-                )
-                .stdin(Stdio::piped())
-                .stdout(Stdio::null())
-                .stderr(Stdio::inherit())
-                .spawn()
-                .unwrap(),
+            crate::store::spawn_with_input(
+                Command::new(std::env::current_exe().unwrap())
+                    .args([
+                        "--ignored",
+                        "--exact",
+                        "cutover::helper_fixture_process",
+                        "--test-threads=1",
+                    ])
+                    .env("SF_CUTOVER_FIXTURE_ROUTE", route)
+                    .env(
+                        "SF_CUTOVER_FIXTURE_EVENTS",
+                        events.local_addr().unwrap().to_string(),
+                    )
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::inherit()),
+            )
+            .unwrap(),
         );
         let mut message = [0; 8192];
         let size = events
@@ -239,24 +235,24 @@ fn fixture_descendants_release_the_slot_while_the_server_is_running() {
         .set_read_timeout(Some(Duration::from_secs(20)))
         .unwrap();
     let mut child = TestProcess(
-        Command::new(std::env::current_exe().unwrap())
-            .args([
-                "--ignored",
-                "--exact",
-                "cutover::helper_fixture_process",
-                "--test-threads=1",
-            ])
-            .env("SF_CUTOVER_FIXTURE_ROUTE", "home")
-            .env(
-                "SF_CUTOVER_FIXTURE_EVENTS",
-                events.local_addr().unwrap().to_string(),
-            )
-            .env("SF_CUTOVER_FIXTURE_SLOT", &slot)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::null())
-            .stderr(Stdio::inherit())
-            .spawn()
-            .unwrap(),
+        crate::store::spawn_with_input(
+            Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--ignored",
+                    "--exact",
+                    "cutover::helper_fixture_process",
+                    "--test-threads=1",
+                ])
+                .env("SF_CUTOVER_FIXTURE_ROUTE", "home")
+                .env(
+                    "SF_CUTOVER_FIXTURE_EVENTS",
+                    events.local_addr().unwrap().to_string(),
+                )
+                .env("SF_CUTOVER_FIXTURE_SLOT", &slot)
+                .stdout(Stdio::null())
+                .stderr(Stdio::inherit()),
+        )
+        .unwrap(),
     );
     let can_lock = || {
         fs::File::options()

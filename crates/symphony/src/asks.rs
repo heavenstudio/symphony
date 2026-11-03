@@ -14,7 +14,7 @@
 use std::collections::BTreeMap;
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use tasks::sys::Command;
 
 use serde::{Deserialize, Serialize};
 
@@ -259,18 +259,16 @@ impl AskStore {
     /// `script` through `sqlite3` on the file: what it printed (JSON arrays), or what it said failed.
     pub(crate) fn run(&self, script: &str) -> Result<String, AskError> {
         let failed = |problem: std::io::Error| AskError::Store(format!("sqlite3: {problem}"));
-        let mut child = Command::new("sqlite3")
-            .args(["-bail", "-batch", "-json"])
-            .arg(&self.path)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .map_err(failed)?;
+        let mut child = tasks::sys::spawn_piped(
+            Command::new("sqlite3")
+                .args(["-bail", "-batch", "-json"])
+                .arg(&self.path),
+        )
+        .map_err(failed)?;
         if let Some(mut input) = child.stdin.take() {
             let _ = write!(input, ".timeout {BUSY_TIMEOUT_MS}\n{script}");
         }
-        let done = child.wait_with_output().map_err(failed)?;
+        let done = tasks::sys::wait_output(child).map_err(failed)?;
         if done.status.success() {
             return Ok(String::from_utf8_lossy(&done.stdout).into_owned());
         }
@@ -511,16 +509,15 @@ pub fn default_path(root: &Path, asks_db: Option<&str>) -> PathBuf {
         return PathBuf::from(db);
     }
     let mut base = std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
-    let common = Command::new("git")
-        .arg("-C")
-        .arg(root)
-        .args(["rev-parse", "--path-format=absolute", "--git-common-dir"])
-        .stderr(Stdio::null())
-        .output()
-        .ok()
-        .filter(|done| done.status.success())
-        .map(|done| String::from_utf8_lossy(&done.stdout).trim().to_string())
-        .unwrap_or_default();
+    let common = tasks::sys::output(Command::new("git").arg("-C").arg(root).args([
+        "rev-parse",
+        "--path-format=absolute",
+        "--git-common-dir",
+    ]))
+    .ok()
+    .filter(|done| done.status.success())
+    .map(|done| String::from_utf8_lossy(&done.stdout).trim().to_string())
+    .unwrap_or_default();
     let common = PathBuf::from(common);
     if common.file_name().is_some_and(|name| name == ".git") {
         let common = std::fs::canonicalize(&common).unwrap_or(common);

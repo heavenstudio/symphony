@@ -4,8 +4,8 @@ use crate::{Ran, env, run};
 use serde_json::{Value, json};
 use std::fs;
 use std::path::PathBuf;
-use std::process::Command;
 use tasks::cli::{Env, connect};
+use tasks::sys::Command;
 use tasks::{NewLaunch, NewSession, NewTask, Store};
 
 const FAKE: &str = env!("CARGO_BIN_EXE_fake-herdr");
@@ -23,12 +23,13 @@ fn outside(name: &str) -> PathBuf {
 }
 
 fn git(dir: &PathBuf, args: &[&str]) {
-    let done = Command::new("git")
-        .args(["-c", "user.email=t@t", "-c", "user.name=t", "-C"])
-        .arg(dir)
-        .args(args)
-        .output()
-        .unwrap();
+    let done = tasks::sys::output(
+        Command::new("git")
+            .args(["-c", "user.email=t@t", "-c", "user.name=t", "-C"])
+            .arg(dir)
+            .args(args),
+    )
+    .unwrap();
     assert!(done.status.success(), "{done:?}");
 }
 
@@ -229,24 +230,44 @@ fn a_launch_hands_each_flag_to_the_launcher() {
 }
 
 #[test]
-fn a_launch_whose_prompt_stays_in_the_input_line_says_how_to_send_it() {
+fn a_launch_without_prompt_confirmation_exits_one_and_records_no_live_session() {
     let mut p = Panes::new("stuck");
     let orch = p.orchestrator();
     p.set("FAKE_HERDR_STUCK", "1");
     p.set("FAKE_HERDR_FAIL", "pane send-keys");
-    let ran = p.as_(&orch, &["launch", "sim/jump", "--model", "sonnet"]);
-    let [s] = <[_; 1]>::try_from(p.board().task_sessions("sim/jump").unwrap()).unwrap();
-    assert_eq!((ran.code, ran.err.as_str()), (0, ""));
-    let [_, stuck] = <[&str; 2]>::try_from(ran.out.lines().collect::<Vec<_>>()).unwrap();
+    let ran = p.as_(
+        &orch,
+        &[
+            "launch", "sim/jump", "--kind", "claude", "--model", "sonnet",
+        ],
+    );
+    let start = p
+        .calls()
+        .into_iter()
+        .find(|call| call.starts_with(&["agent".into(), "start".into()]))
+        .unwrap();
+    let pane = &start[start.iter().position(|arg| arg == "--pane").unwrap() + 1];
     assert_eq!(
-        stuck,
-        format!(
-            "the prompt still sits in pane {0}'s input line: `herdr pane send-keys {0} enter` sends it",
-            s.pane
+        (ran.code, ran.out.as_str(), ran.err.as_str()),
+        (
+            1,
+            "",
+            format!("✖ could not confirm that the agent in pane {pane} took its prompt\n").as_str()
         )
     );
+    assert!(p.board().task_sessions("sim/jump").unwrap().is_empty());
+    assert!(p.pane_ids().is_empty());
+    assert!(!p.dir.join("wt/sim-jump").exists());
+    let worker_health: Vec<String> = p
+        .board()
+        .sessions()
+        .unwrap()
+        .into_iter()
+        .filter(|session| session.row.kind == "worker")
+        .map(|session| session.health.as_str().to_string())
+        .collect();
+    assert_eq!(worker_health, ["left"]);
 }
-
 #[test]
 fn a_launch_without_a_session_runs_nothing() {
     let p = Panes::new("nobody");
@@ -367,6 +388,14 @@ fn a_restore_says_each_session_it_reopened() {
     board
         .close_task_session("sim/jump", &s.handle, "idle", "r")
         .unwrap();
+    // A closed session represents a pane that is gone. Keeping the old fake pane would leave
+    // its duplicate agent name receiving prompts intended for the restored pane.
+    let mut state = p.state();
+    state["panes"]
+        .as_array_mut()
+        .unwrap()
+        .retain(|pane| pane["pane_id"] != s.pane);
+    p.set_state(state);
     let ran = p.run(&["restore", "sim/jump", &s.handle]);
     assert_eq!((ran.code, ran.err.as_str()), (0, ""));
     let [again] = <[_; 1]>::try_from(board.task_sessions("sim/jump").unwrap()).unwrap();
@@ -374,6 +403,14 @@ fn a_restore_says_each_session_it_reopened() {
     assert_eq!(again.claude_session, s.claude_session);
     assert_eq!(again.worktree, s.worktree);
     assert!(again.closed.is_none());
+    let state = p.state();
+    let pane = state["panes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|pane| pane["pane_id"] == again.pane)
+        .unwrap();
+    assert_eq!(pane["agent_status"], "working");
     assert_eq!(
         (ran.code, ran.out, ran.err.as_str()),
         (
@@ -517,14 +554,15 @@ impl Panes {
     /// `tasks ARGS` as its own process, at `TASKS_NOW` `now`: the binary sweeps on one thread, so
     /// no process this test binary's other threads spawn holds a copy of its lock.
     fn binary(&self, now: f64, args: &[&str]) -> Ran {
-        let done = Command::new(TASKS)
-            .args(args)
-            .env_clear()
-            .envs(&self.env.vars)
-            .env("TASKS_NOW", now.to_string())
-            .current_dir(&self.env.cwd)
-            .output()
-            .unwrap();
+        let done = tasks::sys::output(
+            Command::new(TASKS)
+                .args(args)
+                .env_clear()
+                .envs(&self.env.vars)
+                .env("TASKS_NOW", now.to_string())
+                .current_dir(&self.env.cwd),
+        )
+        .unwrap();
         Ran {
             code: done.status.code().unwrap_or(-1),
             out: String::from_utf8(done.stdout).unwrap(),

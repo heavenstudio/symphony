@@ -25,6 +25,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 mod callback_peer;
 mod callbacks;
+mod depends;
 mod embeddings;
 mod launches;
 mod messages;

@@ -46,16 +46,23 @@ pub fn count(ps: &str, own: i64, recorded: impl Fn(&Path) -> Option<i64>) -> usi
 
 /// The count, from this machine's process table now; `None` when `ps` cannot be read.
 /// Cancelling the scan kills its owned child; Tokio reaps it without holding server shutdown.
+/// The table is written to a file ([`crate::sys::capture`]), never a pipe: a child another thread
+/// spawns meanwhile could keep a pipe's writer and hold the round open for its whole life.
 pub async fn scan() -> Option<usize> {
-    let out = tokio::process::Command::new("ps")
+    let table = crate::sys::capture().ok()?;
+    let status = tokio::process::Command::new("ps")
         .args(["-axww", "-o", "pid=,ppid=,command="])
+        .stdin(std::process::Stdio::null())
+        .stdout(table.try_clone().ok()?)
+        .stderr(std::process::Stdio::null())
         .kill_on_drop(true)
-        .output()
+        .status()
         .await
         .ok()?;
-    out.status.success().then(|| {
+    let table = crate::sys::captured(table).ok()?;
+    status.success().then(|| {
         count(
-            &String::from_utf8_lossy(&out.stdout),
+            &String::from_utf8_lossy(&table),
             i64::from(std::process::id()),
             recorded,
         )

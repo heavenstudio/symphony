@@ -5,8 +5,8 @@
 
 use super::LaunchError;
 use crate::cli::probes;
+use crate::sys::Command;
 use std::collections::HashMap;
-use std::process::Command;
 use std::time::Duration;
 
 /// How long `ps` may take.

@@ -7,8 +7,8 @@ use std::cell::RefCell;
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
-use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
+use tasks::sys::Command;
 
 use common::Tree;
 use serde_json::json;
@@ -20,19 +20,20 @@ const CHILD: &str = "SF_AFTER_WORKTREES_CHILD";
 
 fn command(root: &Path, args: &[&str], day: u8) -> String {
     let date = format!("2026-09-{day:02}T10:00:00+0000");
-    let done = Command::new("git")
-        .args(args)
-        .current_dir(root)
-        .env("GIT_CONFIG_GLOBAL", "/dev/null")
-        .env("GIT_CONFIG_SYSTEM", "/dev/null")
-        .env("GIT_AUTHOR_NAME", "Test fixture")
-        .env("GIT_AUTHOR_EMAIL", "fixture@example.com")
-        .env("GIT_COMMITTER_NAME", "Test fixture")
-        .env("GIT_COMMITTER_EMAIL", "fixture@example.com")
-        .env("GIT_AUTHOR_DATE", &date)
-        .env("GIT_COMMITTER_DATE", date)
-        .output()
-        .unwrap();
+    let done = tasks::sys::output(
+        Command::new("git")
+            .args(args)
+            .current_dir(root)
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .env("GIT_CONFIG_SYSTEM", "/dev/null")
+            .env("GIT_AUTHOR_NAME", "Test fixture")
+            .env("GIT_AUTHOR_EMAIL", "fixture@example.com")
+            .env("GIT_COMMITTER_NAME", "Test fixture")
+            .env("GIT_COMMITTER_EMAIL", "fixture@example.com")
+            .env("GIT_AUTHOR_DATE", &date)
+            .env("GIT_COMMITTER_DATE", date),
+    )
+    .unwrap();
     assert!(
         done.status.success(),
         "{args:?}: {}",
@@ -111,18 +112,19 @@ fn owner_verdict_read_preserves_stale_merged_and_unmerged_indexes() {
     for unmerged in [false, true] {
         if unmerged {
             let blob = command(&wt, &["rev-parse", "HEAD:docs/OTHER.md"], 1);
-            let mut child = Command::new("git")
-                .args(["update-index", "--index-info"])
-                .current_dir(&wt)
-                .stdin(Stdio::piped())
-                .spawn()
-                .unwrap();
+            let mut child = tasks::sys::spawn_piped(
+                Command::new("git")
+                    .args(["update-index", "--index-info"])
+                    .current_dir(&wt),
+            )
+            .unwrap();
             writeln!(
                 child.stdin.take().unwrap(),
                 "100644 {blob} 2\tdocs/CONFLICT.md"
             )
             .unwrap();
-            assert!(child.wait().unwrap().success());
+            let done = tasks::sys::wait_output(child).unwrap();
+            assert!(done.status.success(), "{done:?}");
         }
         assert_eq!(command(&wt, &["ls-files", "-u"], 1).is_empty(), !unmerged);
         fs::write(
@@ -165,17 +167,18 @@ fn isolated(name: &str, body: impl FnOnce(&Tree)) {
         return;
     }
     let start = Instant::now();
-    let done = Command::new(std::env::current_exe().unwrap())
-        .args(["--exact", name, "--nocapture"])
-        .env(CHILD, name)
-        .env("TASKS_SERVER", "127.0.0.1:1")
-        .env("SF_TASKS_CLI", "/usr/bin/false")
-        .env_remove("TASKS_SESSION")
-        .env_remove("TASKS_DATABASE")
-        .env_remove("TASKS_NOW")
-        .env_remove("ASKS_DB")
-        .output()
-        .unwrap();
+    let done = tasks::sys::output(
+        Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", name, "--nocapture"])
+            .env(CHILD, name)
+            .env("TASKS_SERVER", "127.0.0.1:1")
+            .env("SF_TASKS_CLI", "/usr/bin/false")
+            .env_remove("TASKS_SESSION")
+            .env_remove("TASKS_DATABASE")
+            .env_remove("TASKS_NOW")
+            .env_remove("ASKS_DB"),
+    )
+    .unwrap();
     assert!(
         done.status.success(),
         "{}{}",
@@ -964,7 +967,7 @@ fn scan_225_worktrees_has_bounded_commands_and_parallel_waits() {
     assert_eq!(listing.matches("worktree ").count(), 226); // 225 secondary trees plus main
     tree.write("listing", &listing);
     for fifo in ["arrived", "release"] {
-        let done = Command::new("mkfifo")
+        let done = std::process::Command::new("mkfifo")
             .arg(tree.path(fifo))
             .status()
             .unwrap();
@@ -1025,19 +1028,18 @@ exec /usr/bin/git "$@"
             .chain(std::env::split_paths(&std::env::var_os("PATH").unwrap())),
     )
     .unwrap();
-    let mut child = Command::new(std::env::current_exe().unwrap())
-        .args([
-            "--exact",
-            "scan_225_worktrees_has_bounded_commands_and_parallel_waits",
-            "--nocapture",
-        ])
-        .env(CHILD, "scan")
-        .env("SF_SCAN_ROOT", &tree.root)
-        .env("PATH", path)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .unwrap();
+    let mut child = tasks::sys::spawn_output(
+        Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "scan_225_worktrees_has_bounded_commands_and_parallel_waits",
+                "--nocapture",
+            ])
+            .env(CHILD, "scan")
+            .env("SF_SCAN_ROOT", &tree.root)
+            .env("PATH", path),
+    )
+    .unwrap();
     let mut active = std::collections::BTreeSet::new();
     for _ in 0..8 {
         match receive.recv_timeout(Duration::from_secs(30)) {
@@ -1064,7 +1066,7 @@ exec /usr/bin/git "$@"
         .write_all(b"go\ngo\ngo\ngo\ngo\ngo\ngo\ngo\ngo\ngo\n")
         .unwrap();
     reader.join().unwrap();
-    let done = child.wait_with_output().unwrap();
+    let done = tasks::sys::wait_output(child).unwrap();
     assert_eq!(active.len(), 8);
     assert!(
         done.status.success(),
@@ -1612,14 +1614,15 @@ fn apply(mut old: Document, delta: &DocumentChange) -> Document {
 }
 
 fn gzip_size(bytes: &[u8]) -> usize {
-    let mut child = Command::new("gzip")
-        .arg("-c")
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .spawn()
-        .unwrap();
-    child.stdin.take().unwrap().write_all(bytes).unwrap();
-    let done = child.wait_with_output().unwrap();
+    let mut child = tasks::sys::spawn_piped(Command::new("gzip").arg("-c")).unwrap();
+    let mut input = child.stdin.take().unwrap();
+    // Written beside the read: gzip answers while it reads, and a pipe holds only so much.
+    let done = std::thread::scope(|scope| {
+        let written = scope.spawn(move || input.write_all(bytes));
+        let done = tasks::sys::wait_output(child).unwrap();
+        written.join().unwrap().unwrap();
+        done
+    });
     assert!(done.status.success());
     done.stdout.len()
 }

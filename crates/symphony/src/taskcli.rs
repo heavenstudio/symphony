@@ -7,7 +7,8 @@
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output, Stdio};
+use std::process::Output;
+use tasks::sys::Command;
 
 use serde_json::{Value, json};
 
@@ -106,22 +107,21 @@ impl CliBoard {
             .or_else(|| std::env::var(key).ok())
     }
 
-    /// The binary with `extra`, `stdin` on its stdin (none if None), run to its end.
+    /// The binary with `extra`, `stdin` on its stdin (none if None), run to its end. Its input and
+    /// output go through [`tasks::sys`]'s pipes, which no child another thread spawns holds open.
     fn output(&self, extra: &[&str], stdin: Option<&str>) -> Result<Output, VerdictError> {
-        let mut child = Command::new(&self.cli[0])
+        let mut command = Command::new(&self.cli[0]);
+        command
             .args(&self.cli[1..])
             .args(extra)
             .envs(self.env.iter().map(|(k, v)| (k, v)))
-            .current_dir(&self.cwd)
-            .stdin(if stdin.is_some() {
-                Stdio::piped()
-            } else {
-                Stdio::null()
-            })
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .map_err(|e| VerdictError(format!("cannot run {}: {e}", self.cli.join(" "))))?;
+            .current_dir(&self.cwd);
+        let mut child = if stdin.is_some() {
+            tasks::sys::spawn_piped(&mut command)
+        } else {
+            tasks::sys::spawn_output(&mut command)
+        }
+        .map_err(|e| VerdictError(format!("cannot run {}: {e}", self.cli.join(" "))))?;
         if let Some(text) = stdin {
             let mut pipe = child.stdin.take().expect("a piped stdin");
             let text = text.to_string();
@@ -129,9 +129,7 @@ impl CliBoard {
                 let _ = pipe.write_all(text.as_bytes());
             });
         }
-        child
-            .wait_with_output()
-            .map_err(|e| VerdictError(e.to_string()))
+        tasks::sys::wait_output(child).map_err(|e| VerdictError(e.to_string()))
     }
 
     /// One of the board's commands: what it printed, or why it refused.

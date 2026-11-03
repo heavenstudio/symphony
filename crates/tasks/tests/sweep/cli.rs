@@ -73,16 +73,17 @@ fn busy_trees_with_escaped_names_are_kept_in_real_and_dry_sweeps() {
     }
     for args in [&["--dry-run"][..], &[]] {
         r.idle(&[]);
-        let done = std::process::Command::new(env!("CARGO_BIN_EXE_tasks"))
-            .arg("sweep")
-            .args(args)
-            .env_clear()
-            .envs(r.vars())
-            .env("LC_ALL", "C")
-            .env("TASKS_SWEEP", "off")
-            .current_dir(&r.root)
-            .output()
-            .unwrap();
+        let done = tasks::sys::output(
+            tasks::sys::Command::new(env!("CARGO_BIN_EXE_tasks"))
+                .arg("sweep")
+                .args(args)
+                .env_clear()
+                .envs(r.vars())
+                .env("LC_ALL", "C")
+                .env("TASKS_SWEEP", "off")
+                .current_dir(&r.root),
+        )
+        .unwrap();
         assert!(
             done.status.success(),
             "{}",
@@ -108,27 +109,28 @@ fn inherited_repository_and_index_variables_do_not_redirect_sweep_operations() {
             "extends RefCounted\n# keep my edit\n",
         );
         r.idle(&[]);
-        let done = std::process::Command::new(env!("CARGO_BIN_EXE_tasks"))
-            .arg("sweep")
-            .env_clear()
-            .envs(r.vars())
-            .env("TASKS_SWEEP", "off")
-            .env("GIT_DIR", r.root.join(".git"))
-            .env("GIT_WORK_TREE", &r.root)
-            .env("GIT_COMMON_DIR", r.root.join(".git"))
-            .env("GIT_INDEX_FILE", r.root.join(".git/index"))
-            .env(
-                "GIT_OBJECT_DIRECTORY",
-                r.dir.join("not-an-object-directory"),
-            )
-            .env(
-                "GIT_ALTERNATE_OBJECT_DIRECTORIES",
-                r.dir.join("not-an-alternate"),
-            )
-            .env("GIT_NAMESPACE", "inherited-namespace")
-            .current_dir(&r.root)
-            .output()
-            .unwrap();
+        let done = tasks::sys::output(
+            tasks::sys::Command::new(env!("CARGO_BIN_EXE_tasks"))
+                .arg("sweep")
+                .env_clear()
+                .envs(r.vars())
+                .env("TASKS_SWEEP", "off")
+                .env("GIT_DIR", r.root.join(".git"))
+                .env("GIT_WORK_TREE", &r.root)
+                .env("GIT_COMMON_DIR", r.root.join(".git"))
+                .env("GIT_INDEX_FILE", r.root.join(".git/index"))
+                .env(
+                    "GIT_OBJECT_DIRECTORY",
+                    r.dir.join("not-an-object-directory"),
+                )
+                .env(
+                    "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+                    r.dir.join("not-an-alternate"),
+                )
+                .env("GIT_NAMESPACE", "inherited-namespace")
+                .current_dir(&r.root),
+        )
+        .unwrap();
         assert!(
             done.status.success(),
             "{}",

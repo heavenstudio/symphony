@@ -32,7 +32,7 @@ pub(super) fn start(
             let result = crate::live::measured("task embedding catch-up", || {
                 // The committed-main launcher keeps branch code and a caller's session off the
                 // live board. A private preview never starts this worker.
-                let mut command = std::process::Command::new("nice");
+                let mut command = tasks::sys::Command::new("nice");
                 command
                     .args(["-n", "10", "bash"])
                     .arg(shared.root.join("tools/tasks.sh"))

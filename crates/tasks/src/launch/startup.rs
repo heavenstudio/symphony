@@ -1,9 +1,9 @@
 //! Answer only the observed Codex hooks chooser while Herdr's original startup is pending.
 
+use crate::sys::{self, Child, Command};
 use std::io::Read;
-use std::os::fd::OwnedFd;
-use std::os::unix::net::UnixStream;
-use std::process::{Child, Command, Output, Stdio};
+use std::os::fd::AsFd;
+use std::process::Output;
 use std::time::{Duration, Instant};
 
 pub(super) fn codex_pane<'a>(args: &'a [&str]) -> Option<&'a str> {
@@ -78,19 +78,12 @@ pub(super) fn within(
     limit: Duration,
     observe: impl FnMut(Duration) -> Result<(), String>,
 ) -> Result<Output, String> {
-    let (stdout, out_writer) = UnixStream::pair().map_err(|e| e.to_string())?;
-    let (stderr, err_writer) = UnixStream::pair().map_err(|e| e.to_string())?;
-    let child = command
-        .stdin(Stdio::null())
-        .stdout(Stdio::from(OwnedFd::from(out_writer)))
-        .stderr(Stdio::from(OwnedFd::from(err_writer)))
-        .spawn();
-    // Command retains configured descriptors after spawn; only the child may keep writers open.
-    command.stdout(Stdio::null()).stderr(Stdio::null());
+    let mut child = sys::spawn_output(command).map_err(|e| e.to_string())?;
+    let (stdout, stderr) = (child.stdout.take(), child.stderr.take());
     collect(
-        child.map_err(|e| e.to_string())?,
-        stdout,
-        stderr,
+        child,
+        stdout.expect("spawn_output reads stdout"),
+        stderr.expect("spawn_output reads stderr"),
         limit,
         observe,
     )
@@ -98,14 +91,14 @@ pub(super) fn within(
 
 fn collect(
     child: Child,
-    mut stdout: UnixStream,
-    mut stderr: UnixStream,
+    mut stdout: impl Read + AsFd,
+    mut stderr: impl Read + AsFd,
     limit: Duration,
     mut observe: impl FnMut(Duration) -> Result<(), String>,
 ) -> Result<Output, String> {
     let mut owned = Owned(child);
-    stdout.set_nonblocking(true).map_err(|e| e.to_string())?;
-    stderr.set_nonblocking(true).map_err(|e| e.to_string())?;
+    sys::set_nonblocking(&stdout, true).map_err(|e| e.to_string())?;
+    sys::set_nonblocking(&stderr, true).map_err(|e| e.to_string())?;
     let (mut out, mut err) = (Vec::new(), Vec::new());
     let started = Instant::now();
     let mut next_observation = Duration::from_millis(250);
@@ -137,7 +130,7 @@ fn collect(
 }
 
 /// One bounded read per iteration, so even a busy inherited writer cannot starve the deadline.
-fn drain(stream: &mut UnixStream, output: &mut Vec<u8>) -> Result<bool, String> {
+fn drain(stream: &mut impl Read, output: &mut Vec<u8>) -> Result<bool, String> {
     let mut buffer = [0; 8192];
     match stream.read(&mut buffer) {
         Ok(0) => Ok(true),
@@ -160,6 +153,7 @@ fn drain(stream: &mut UnixStream, output: &mut Vec<u8>) -> Result<bool, String> 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::os::unix::net::UnixStream;
     const SCREEN: &str = include_str!("../../tests/launch/fixtures/codex-hooks.txt");
 
     #[test]
@@ -231,8 +225,8 @@ mod tests {
 
     #[test]
     fn inherited_output_writers_cannot_hold_a_finished_start_past_its_deadline() {
-        let (stdout, out_writer) = UnixStream::pair().unwrap();
-        let (stderr, err_writer) = UnixStream::pair().unwrap();
+        let (stdout, out_writer) = sys::pipe().unwrap();
+        let (stderr, err_writer) = sys::pipe().unwrap();
         let child = Command::new("true").spawn().unwrap();
         // These owned endpoints model a wrapper descendant retaining stdout/stderr after its
         // parent exits. No EOF will arrive until this test drops them; collection must not join.

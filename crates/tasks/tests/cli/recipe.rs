@@ -6,10 +6,10 @@ use crate::beat::bash;
 use crate::{Case, Ran, run};
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
 use std::sync::OnceLock;
 use tasks::Beat;
 use tasks::cli::Env;
+use tasks::sys::Command;
 
 const FAKE: &str = env!("CARGO_BIN_EXE_fake-herdr");
 
@@ -54,7 +54,7 @@ fn process_environment_actor() {
     if std::env::var_os("SF_RECIPE_ENV_ACTOR").is_none() {
         return;
     }
-    let output = process(Path::new("/usr/bin/env")).output().unwrap();
+    let output = tasks::sys::output(&mut process(Path::new("/usr/bin/env"))).unwrap();
     assert!(output.status.success(), "{output:?}");
     let environment = String::from_utf8(output.stdout).unwrap();
     assert!(
@@ -80,16 +80,17 @@ fn process_environment_actor() {
 
 #[test]
 fn recipe_process_preserves_the_build_cache_without_inheriting_the_board() {
-    let output = Command::new(std::env::current_exe().unwrap())
-        .args(["--exact", "recipe::process_environment_actor"])
-        .env_clear()
-        .env("SF_RECIPE_ENV_ACTOR", "1")
-        .env("SF_GIT_COMMON_DIR", "/cache with spaces")
-        .env("TASKS_SESSION", "unrelated-agent")
-        .env("TASKS_DATABASE", "unrelated-board")
-        .env("TASKS_SERVER", "unrelated-server")
-        .output()
-        .unwrap();
+    let output = tasks::sys::output(
+        Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "recipe::process_environment_actor"])
+            .env_clear()
+            .env("SF_RECIPE_ENV_ACTOR", "1")
+            .env("SF_GIT_COMMON_DIR", "/cache with spaces")
+            .env("TASKS_SESSION", "unrelated-agent")
+            .env("TASKS_DATABASE", "unrelated-board")
+            .env("TASKS_SERVER", "unrelated-server"),
+    )
+    .unwrap();
     assert!(output.status.success(), "{output:?}");
     assert!(
         String::from_utf8(output.stdout)
@@ -104,10 +105,9 @@ fn recipe_process_preserves_the_build_cache_without_inheriting_the_board() {
 fn built() {
     static BUILT: OnceLock<()> = OnceLock::new();
     BUILT.get_or_init(|| {
-        let done = process(&root().join("tools/rs-bin.sh"))
-            .args(["--build", "tasks"])
-            .output()
-            .unwrap();
+        let done =
+            tasks::sys::output(process(&root().join("tools/rs-bin.sh")).args(["--build", "tasks"]))
+                .unwrap();
         assert!(done.status.success(), "{done:?}");
     });
 }
@@ -123,18 +123,15 @@ fn just(env: &Env, args: &[&str], input: &str) -> Ran {
         .arg("--working-directory")
         .arg(&root)
         .args(args)
-        .envs(&env.vars)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-    let mut child = command.spawn().unwrap();
+        .envs(&env.vars);
+    let mut child = tasks::sys::spawn_piped(&mut command).unwrap();
     child
         .stdin
         .take()
         .unwrap()
         .write_all(input.as_bytes())
         .unwrap();
-    let done = child.wait_with_output().unwrap();
+    let done = tasks::sys::wait_output(child).unwrap();
     Ran {
         code: done.status.code().unwrap_or(-1),
         out: String::from_utf8(done.stdout).unwrap(),
@@ -242,11 +239,12 @@ fn just_tasks_scratch_build_preserves_the_live_heartbeat_link() {
     let common = std::env::var_os("SF_GIT_COMMON_DIR")
         .map(PathBuf::from)
         .unwrap_or_else(|| {
-            let output = Command::new("git")
-                .args(["rev-parse", "--path-format=absolute", "--git-common-dir"])
-                .current_dir(&root)
-                .output()
-                .unwrap();
+            let output = tasks::sys::output(
+                Command::new("git")
+                    .args(["rev-parse", "--path-format=absolute", "--git-common-dir"])
+                    .current_dir(&root),
+            )
+            .unwrap();
             assert!(output.status.success(), "{output:?}");
             PathBuf::from(String::from_utf8(output.stdout).unwrap().trim())
         })
@@ -259,10 +257,9 @@ fn just_tasks_scratch_build_preserves_the_live_heartbeat_link() {
     }
     let before = std::fs::read_link(root.join(".target/bin/tasks")).ok();
     assert_eq!(just(&c.env, &["tasks", "--help"], "").code, 0);
-    let selected = process(&root.join("tools/rs-bin.sh"))
-        .args(["--where", "tasks"])
-        .output()
-        .unwrap();
+    let selected =
+        tasks::sys::output(process(&root.join("tools/rs-bin.sh")).args(["--where", "tasks"]))
+            .unwrap();
     assert!(selected.status.success(), "{selected:?}");
     let helper = PathBuf::from(String::from_utf8(selected.stdout).unwrap().trim());
     assert!(helper.starts_with(&shared_cache), "{}", helper.display());

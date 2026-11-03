@@ -372,21 +372,29 @@ fn a_flag_may_be_given_with_an_equals_sign_or_shortened() {
 /// of its input, and the test waits for it.
 fn serve_from(dir: &std::path::Path, requests: &[Value]) -> Vec<Value> {
     use std::io::Write;
-    use std::process::{Command, Stdio};
-    let mut child = Command::new(env!("CARGO_BIN_EXE_symphony"))
-        .arg("serve")
-        .current_dir(dir)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .spawn()
-        .expect("the Symphony binary");
+    use tasks::sys::Command;
+    let mut child = tasks::sys::spawn_piped(
+        Command::new(env!("CARGO_BIN_EXE_symphony"))
+            .arg("serve")
+            .current_dir(dir),
+    )
+    .expect("the Symphony binary");
     let mut input = child.stdin.take().expect("its input");
-    for request in requests {
-        writeln!(input, "{request}").expect("a request");
-    }
-    drop(input);
-    let output = child.wait_with_output().expect("its answers");
-    assert!(output.status.success(), "{:?}", output.status);
+    // Written beside the read: it answers each request as it reads it, and a pipe holds only so much.
+    let output = std::thread::scope(|scope| {
+        scope.spawn(move || {
+            for request in requests {
+                writeln!(input, "{request}").expect("a request");
+            }
+        });
+        tasks::sys::wait_output(child).expect("its answers")
+    });
+    assert!(
+        output.status.success(),
+        "{:?}: {}",
+        output.status,
+        String::from_utf8_lossy(&output.stderr)
+    );
     String::from_utf8(output.stdout)
         .unwrap()
         .lines()

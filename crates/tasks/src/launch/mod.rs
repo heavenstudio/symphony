@@ -34,6 +34,7 @@ pub use cleanup::{Closure, cleanup, finish};
 use crate::cli::{Env, probes};
 use crate::health::{FINISHED, RESERVE_SECONDS};
 use crate::rows::TaskSessionRow;
+use crate::sys::{self, Command};
 use crate::{Error, NewLaunch, NewSession, Store};
 use herdr::{Herdr, Object, text};
 use serde_json::Value;
@@ -41,7 +42,6 @@ use std::fmt;
 use std::hash::{BuildHasher, RandomState};
 use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
 
 /// At most this many panes in a stream's tab; the next goes to the stream's next tab.
 pub const MAX_PANES: usize = 4;
@@ -158,8 +158,8 @@ impl Ask {
     }
 }
 
-/// A session started in a pane: its record on the task, and whether its prompt still sat in its
-/// input line after the last enter.
+/// A session whose prompt was confirmed in a pane. The legacy `stuck` flag is false: an
+/// unconfirmed prompt returns an error instead of a live session record.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Started {
     pub row: TaskSessionRow,
@@ -306,13 +306,13 @@ pub fn launch(store: &Store, herdr: &dyn Herdr, m: &Machine, ask: &Ask) -> Resul
             }
             store.leave(&handle)?;
             if made_worktree && path.exists() {
-                let _ = Command::new("git")
-                    .arg("-C")
-                    .arg(&m.root)
-                    .args(["worktree", "remove", "--force"])
-                    .arg(&path)
-                    .stdin(Stdio::null())
-                    .output();
+                let _ = sys::output(
+                    Command::new("git")
+                        .arg("-C")
+                        .arg(&m.root)
+                        .args(["worktree", "remove", "--force"])
+                        .arg(&path),
+                );
             }
             return Err(problem.into());
         }
@@ -437,9 +437,9 @@ fn take_up(
     Ok(())
 }
 
-/// A pane for `handle` in `cwd`, claude started in it with a session id chosen here, and `text` sent:
-/// the session id, and whether the text still sat in the input line after the last enter. The pane,
-/// once there is one, is left in `pane` for the caller to close if this fails.
+/// A pane for `handle` in `cwd`, the requested agent started in it, and `text` confirmed:
+/// the session id and a false legacy stuck flag. The pane, once there is one, is left in `pane`
+/// for the caller to close if this fails.
 #[expect(
     clippy::too_many_arguments,
     reason = "one step of `launch`, named by what it reads"
@@ -464,14 +464,13 @@ fn start_in_pane(
     };
     start(herdr, handle, pane, agent, &args, &*m.sleep)?;
     herdr.call(&["agent", "prompt", handle, text])?;
-    let (taken, session) = taken(herdr, pane, text, &*m.sleep);
-    let stuck = !taken;
+    let session = confirmed(herdr, pane, text, &*m.sleep)?;
     let identity = if agent == "codex" {
         format!("codex:{session}")
     } else {
         claude_session
     };
-    Ok((identity, stuck))
+    Ok((identity, false))
 }
 
 /// Reopen every closed session of `slug` (or `handle`'s) where it was and resume its Claude
@@ -549,12 +548,12 @@ pub fn restore(
             )
         };
         let prompted = start(herdr, &s.handle, &pane, agent, &args, &*m.sleep)
-            .and_then(|()| herdr.call(&["agent", "prompt", &s.handle, &text]));
+            .and_then(|()| herdr.call(&["agent", "prompt", &s.handle, &text]))
+            .and_then(|_| confirmed(herdr, &pane, &text, &*m.sleep));
         if let Err(problem) = prompted {
             herdr.close(&pane)?;
             return Err(problem.into());
         }
-        let stuck = !taken(herdr, &pane, &text, &*m.sleep).0;
         // cleanup leaves handles that closed: the restored agent must be able to use the board
         store.revive(&s.handle)?;
         store.reopen_task_session(slug, &s.handle, &pane)?;
@@ -565,7 +564,7 @@ pub fn restore(
             .ok_or_else(|| {
                 Error::Refused(format!("{} has no recorded session on {slug}", s.handle))
             })?;
-        restored.push(Started { row, stuck });
+        restored.push(Started { row, stuck: false });
     }
     Ok(restored)
 }
@@ -762,18 +761,20 @@ fn claude_args(model: &str, handle: &str, mode: &str, identity: [&str; 2]) -> Ve
 /// seen to keep the text unsent (umber-ferret-929, 2026-10-08: twice in a day; `herdr pane send-keys
 /// PANE enter` sent it). So: wait, then look. The agent working (or done, or already asking
 /// something) took it; else, while the text's head still sits at the bottom of the pane, press enter
-/// and look again, up to [`PROMPT_ENTERS`] times. False when it is still there after the last enter;
-/// a look herdr cannot answer counts as taken, since the prompt was sent.
+/// and look again, up to [`PROMPT_ENTERS`] times. Only a positive agent status proves acceptance:
+/// missing agents, unreadable observations and absent prompt text provide no such evidence. Keep
+/// observing these ambiguous states through the remaining rounds without pressing enter: activity
+/// can lag submission, and a long prompt's head can scroll beyond the lines read.
 fn taken(herdr: &dyn Herdr, pane: &str, text: &str, sleep: &dyn Fn(f64)) -> (bool, String) {
     let head: String = text.chars().take(PROMPT_HEAD).collect();
     let mut session = String::new();
     for round in 0..=PROMPT_ENTERS {
         sleep(PROMPT_WAIT);
         let Ok(agents) = herdr.agents() else {
-            return (true, session);
+            continue;
         };
         let Some(agent) = agents.iter().find(|a| text_of(a, "pane_id") == pane) else {
-            return (true, session);
+            continue;
         };
         session = cleanup::session_value(agent);
         if matches!(
@@ -783,16 +784,33 @@ fn taken(herdr: &dyn Herdr, pane: &str, text: &str, sleep: &dyn Fn(f64)) -> (boo
             return (true, session);
         }
         let Ok(screen) = herdr.read(pane, PROMPT_LINES) else {
-            return (true, session);
+            continue;
         };
         if !screen.contains(&head) {
-            return (true, session);
+            continue;
         }
         if round == PROMPT_ENTERS || herdr.enter(pane).is_err() {
             return (false, session);
         }
     }
     (false, session)
+}
+
+/// Unconfirmed submission is a failed start; callers clean up before publishing a live session.
+fn confirmed(
+    herdr: &dyn Herdr,
+    pane: &str,
+    text: &str,
+    sleep: &dyn Fn(f64),
+) -> Result<String, LaunchError> {
+    let (taken, session) = taken(herdr, pane, text, sleep);
+    if taken {
+        Ok(session)
+    } else {
+        Err(LaunchError(format!(
+            "could not confirm that the agent in pane {pane} took its prompt"
+        )))
+    }
 }
 
 fn text_of(object: &Object, key: &str) -> String {
@@ -802,12 +820,7 @@ fn text_of(object: &Object, key: &str) -> String {
 // -- git -------------------------------------------------------------------------------------
 
 fn git(root: &Path, args: &[&str]) -> Result<String, LaunchError> {
-    let done = Command::new("git")
-        .arg("-C")
-        .arg(root)
-        .args(args)
-        .stdin(Stdio::null())
-        .output()
+    let done = sys::output(Command::new("git").arg("-C").arg(root).args(args))
         .map_err(|e| LaunchError(format!("git {}: {e}", args[..2.min(args.len())].join(" "))))?;
     if !done.status.success() {
         return Err(LaunchError(format!(
@@ -820,18 +833,13 @@ fn git(root: &Path, args: &[&str]) -> Result<String, LaunchError> {
 }
 
 fn branch_exists(root: &Path, branch: &str) -> bool {
-    Command::new("git")
-        .arg("-C")
-        .arg(root)
-        .args([
-            "rev-parse",
-            "--verify",
-            "-q",
-            &format!("refs/heads/{branch}"),
-        ])
-        .stdin(Stdio::null())
-        .output()
-        .is_ok_and(|done| done.status.success())
+    sys::output(Command::new("git").arg("-C").arg(root).args([
+        "rev-parse",
+        "--verify",
+        "-q",
+        &format!("refs/heads/{branch}"),
+    ]))
+    .is_ok_and(|done| done.status.success())
 }
 
 /// The worktree that has `branch` checked out, if any.

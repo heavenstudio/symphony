@@ -3,9 +3,9 @@
 //! idle/unavailable threads and the default configuration retain the CLI queue path.
 
 use super::DeliveryError;
+use crate::sys::{self, Child, Command, Stdio};
 use serde_json::{Value, json};
 use std::io::{BufRead, BufReader, Write};
-use std::process::{Child, Command, Stdio};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::time::{Duration, Instant};
 
@@ -18,16 +18,17 @@ struct Proxy {
 
 impl Proxy {
     fn connect() -> Result<Self, DeliveryError> {
-        let mut child = Command::new("codex")
+        // Pipes no child another thread spawns can hold, and a spawn that hands the proxy only them.
+        let (stdin, mut input) = sys::pipe().map_err(DeliveryError::retry)?;
+        let (output, stdout) = sys::pipe().map_err(DeliveryError::retry)?;
+        let child = Command::new("codex")
             .args(["app-server", "proxy"])
             .env_remove("CLAUDE_CODE_MESSAGING_TOKEN")
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
+            .stdin(stdin)
+            .stdout(stdout)
             .stderr(Stdio::null())
             .spawn()
             .map_err(DeliveryError::retry)?;
-        let mut input = child.stdin.take().expect("piped stdin");
-        let output = child.stdout.take().expect("piped stdout");
         let (send, responses) = mpsc::channel();
         let (writes, written) = mpsc::channel::<Vec<u8>>();
         let failed = send.clone();
@@ -97,10 +98,9 @@ impl Drop for Proxy {
 /// False means no input was attempted, so the caller can safely use `codex queue`.
 /// Once steering is attempted, an ambiguous failure stays retryable in the durable outbox.
 pub(super) fn steer(thread: &str, text: &str) -> Result<bool, DeliveryError> {
-    let enabled = Command::new("git")
-        .args(["config", "--bool", "--get", "sf.codexSteer"])
-        .output()
-        .is_ok_and(|output| output.status.success() && output.stdout == b"true\n");
+    let enabled =
+        sys::output(Command::new("git").args(["config", "--bool", "--get", "sf.codexSteer"]))
+            .is_ok_and(|output| output.status.success() && output.stdout == b"true\n");
     if !enabled {
         return Ok(false);
     }

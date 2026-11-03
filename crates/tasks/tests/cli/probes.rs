@@ -3,9 +3,9 @@
 
 use std::fs::{self, File};
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use tasks::cli::Env;
 use tasks::cli::probes::{branch_of, herdr_panes, landed, machine, slot_runs, split};
+use tasks::sys::Command;
 
 /// A run's fields, in `Run`'s order, for comparing several at once.
 type RunFields<'a> = (
@@ -337,12 +337,13 @@ fn repo(name: &str) -> PathBuf {
 }
 
 fn git(dir: &Path, args: &[&str]) {
-    let done = Command::new("git")
-        .args(["-c", "user.email=t@t", "-c", "user.name=t", "-C"])
-        .arg(dir)
-        .args(args)
-        .output()
-        .unwrap();
+    let done = tasks::sys::output(
+        Command::new("git")
+            .args(["-c", "user.email=t@t", "-c", "user.name=t", "-C"])
+            .arg(dir)
+            .args(args),
+    )
+    .unwrap();
     assert!(
         done.status.success(),
         "git {args:?}: {}",

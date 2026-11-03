@@ -1,10 +1,16 @@
 //! Working-directory scans shared by the board's worktree sweep and the cargo cache sweep.
 //! Unreadable scans keep trees; an empty global listing is unreadable. Partial listings remain useful.
+//! Their `lsof` starts without a fork and is read through close-on-exec pipes ([`spawn`]), the
+//! helper the board's children share, since this leaf is the one crate both sides link.
 
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output, Stdio};
+use std::process::Output;
 use std::sync::mpsc;
 use std::time::Duration;
+
+pub mod spawn;
+
+pub use spawn::Command;
 
 /// How long lsof may take to list every process's working directory.
 const LSOF_PATIENCE: Duration = Duration::from_secs(60);
@@ -76,18 +82,14 @@ fn parse_cwds(stdout: &[u8]) -> Option<Vec<PathBuf>> {
     (!found.is_empty()).then_some(found)
 }
 
-/// `command`'s output, if it starts and ends within `limit`; else it is killed, by its own pid.
+/// `command`'s output, if it starts and ends within `limit`; else it is killed, by its own pid. Read
+/// through [`spawn::pipe`]s, so a child another thread spawns meanwhile cannot hold its end.
 fn within(command: &mut Command, limit: Duration) -> Option<Output> {
-    let child = command
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .ok()?;
+    let child = spawn::spawn_output(command).ok()?;
     let pid = i64::from(child.id());
     let (send, receive) = mpsc::channel();
     std::thread::spawn(move || {
-        let _ = send.send(child.wait_with_output());
+        let _ = send.send(spawn::wait_output(child));
     });
     match receive.recv_timeout(limit) {
         Ok(done) => done.ok(),
@@ -204,7 +206,7 @@ mod tests {
             let dir = root.join(name).join("inner");
             std::fs::create_dir_all(&dir).unwrap();
             let child = Child(
-                Command::new("sleep")
+                std::process::Command::new("sleep")
                     .arg("60")
                     .current_dir(&dir)
                     .spawn()

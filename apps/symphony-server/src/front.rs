@@ -947,7 +947,7 @@ fn maintenance_worker(
             // Log before waiting on output: a hung child must still leave its actual start time.
             eprintln!("· idle-session sweep started");
             match crate::live::measured("idle-session sweep", || {
-                let mut command = std::process::Command::new(shared.root.join("tools/rs-bin.sh"));
+                let mut command = tasks::sys::Command::new(shared.root.join("tools/rs-bin.sh"));
                 command
                     .args(["tasks", "reap"])
                     .current_dir(&shared.root)

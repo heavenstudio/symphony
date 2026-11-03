@@ -8,11 +8,12 @@ use super::text::{event, export_markdown, message_line, roles_text, tree_order};
 use super::{Clock, Env, probes, shape};
 use crate::health::{FINISHED, RESERVE_SECONDS};
 use crate::pyjson::{self, Py};
-use crate::sweep::{self, trigger};
-use crate::{Error, NewSession, NewTask, Session, Store, Task, sys};
+use crate::sweep::{self, git::Listed, trigger};
+use crate::sys::{self, Command};
+use crate::{Error, NewSession, NewTask, Session, Store, Task};
 use std::collections::BTreeMap;
 use std::io::{Read, Write};
-use std::process::Command;
+use std::path::Path;
 
 /// Where `export` writes when no `--out` is given.
 const EXPORT_PATH: &str = "docs/history/tasks.md";
@@ -75,10 +76,7 @@ impl Context<'_> {
 
     /// `git ARGS` in the working directory: its output, or "" if it fails.
     fn git(&self, args: &[&str]) -> String {
-        Command::new("git")
-            .args(args)
-            .current_dir(&self.env.cwd)
-            .output()
+        sys::output(Command::new("git").args(args).current_dir(&self.env.cwd))
             .ok()
             .filter(|done| done.status.success())
             .map(|done| String::from_utf8_lossy(&done.stdout).trim().to_string())
@@ -280,6 +278,20 @@ pub fn run(store: &Store, c: &mut Context) -> Result<(), Stop> {
                 t.parent.as_deref().unwrap_or("nothing")
             ));
         }
+        "depends" => {
+            let (mut add, mut remove) = (p.all("add").to_vec(), p.all("remove").to_vec());
+            for [old, new] in p.all("replace").as_chunks::<2>().0 {
+                remove.push(old.clone());
+                add.push(new.clone());
+            }
+            let t = store.change_depends(&c.arg("slug"), &add, &remove, &c.actor()?)?;
+            let on = if t.depends.is_empty() {
+                "nothing".to_string()
+            } else {
+                t.depends.join(", ")
+            };
+            c.say(&format!("{} depends on {on} and is {}", t.slug, t.status));
+        }
         "done" => {
             let slug = c.arg("slug");
             let t = store.done(&slug, &c.actor()?, &c.arg("note"))?;
@@ -428,11 +440,15 @@ fn create(store: &Store, c: &mut Context) -> Result<(), Stop> {
             .map_err(|e| Stop::Refused(format!("cannot read the body file {file}: {e}")))?,
         None => c.arg("body"),
     };
+    // Asked once, and only for a dependency not done; outside a repository git lists none.
+    let mut listed: Option<Vec<Listed>> = None;
     for dep in p.all("depends") {
         if store.get(dep)?.status == "done" {
             continue;
         }
-        if let Some(named) = imported_worktree(&body, dep) {
+        let listed =
+            listed.get_or_insert_with(|| sweep::git::worktrees(&c.env.cwd).unwrap_or_default());
+        if let Some(named) = imported_worktree(&body, dep, listed) {
             return Err(Stop::Refused(format!(
                 "the brief names {named}, the worktree of {dep}, which has not landed; code and art build only on main \
                  (RULES.md workflow/shared-data-lands-first). Wait for that task to land, or ask on its thread"
@@ -457,18 +473,45 @@ fn create(store: &Store, c: &mut Context) -> Result<(), Stop> {
     Ok(())
 }
 
-/// Where `body` names the worktree of dependency `dep` (named for its slug with dashes) as a source of
-/// data, which only builds on main once `dep` lands: `.claude/worktrees/<name>` not followed by more of
-/// a name, nor by `/artifacts/` (evidence, not data).
-fn imported_worktree(body: &str, dep: &str) -> Option<String> {
+/// Where `body` names a worktree of dependency `dep` as a source of data, which only builds on main
+/// once `dep` lands. A worktree among `listed` on `dep`'s branch (its slug, or its slug with the last
+/// `/` spelled `-`, as the sweep ties them), whatever its folder is called (`agent-*`, `codex-*`), is
+/// named by its last two path components, so an absolute, `~/` or `../` spelling counts; its full path
+/// is returned. Else `.claude/worktrees/` and the slug with dashes, the folder a launch would make.
+fn imported_worktree(body: &str, dep: &str, listed: &[Listed]) -> Option<String> {
+    let branches: Vec<String> = [Some(dep.to_string()), sweep::spelled(dep)]
+        .into_iter()
+        .flatten()
+        .map(|b| format!("refs/heads/{b}"))
+        .collect();
+    let found = listed
+        .iter()
+        .filter(|w| w.branch.as_ref().is_some_and(|b| branches.contains(b)))
+        .find(|w| tail(&w.path).is_some_and(|tail| names_folder(body, &tail)));
+    if let Some(worktree) = found {
+        return Some(worktree.path.display().to_string());
+    }
     let needle = format!(".claude/worktrees/{}", dep.replace('/', "-"));
-    body.match_indices(&needle).find_map(|(at, _)| {
+    names_folder(body, &needle).then_some(needle)
+}
+
+/// `path`'s folder and the folder it is in (`worktrees/agent-a1b2`); none at the root.
+fn tail(path: &Path) -> Option<String> {
+    let name = path.file_name()?.to_str()?;
+    let above = path.parent()?.file_name()?.to_str()?;
+    Some(format!("{above}/{name}"))
+}
+
+/// Whether `body` names the folder `needle`: not followed by more of a name, nor by `/artifacts/`
+/// (evidence, not data).
+fn names_folder(body: &str, needle: &str) -> bool {
+    body.match_indices(needle).any(|(at, _)| {
         let rest = &body[at + needle.len()..];
         let more = rest
             .chars()
             .next()
             .is_some_and(|c| c.is_alphanumeric() || c == '_' || c == '-');
-        (!more && !rest.starts_with("/artifacts/")).then(|| needle.clone())
+        !more && !rest.starts_with("/artifacts/")
     })
 }
 
@@ -609,4 +652,134 @@ fn who(store: &Store, c: &mut Context) -> Result<(), Stop> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::imported_worktree;
+    use crate::sweep::git::Listed;
+    use std::path::PathBuf;
+
+    /// A worktree at `path` on branch `name`, detached when `name` is empty.
+    fn at(path: &str, name: &str) -> Listed {
+        Listed {
+            path: PathBuf::from(path),
+            branch: (!name.is_empty()).then(|| format!("refs/heads/{name}")),
+            ..Listed::default()
+        }
+    }
+
+    #[test]
+    fn a_slug_named_folder_counts_only_as_a_whole_name() {
+        for body in [
+            "Read .claude/worktrees/content-roster/content/x.json",
+            "Read .claude/worktrees/content-roster.",
+            "Read .claude/worktrees/content-roster now",
+            "Read .claude/worktrees/content-roster",
+        ] {
+            assert_eq!(
+                imported_worktree(body, "content/roster", &[]).as_deref(),
+                Some(".claude/worktrees/content-roster"),
+                "{body}"
+            );
+        }
+        // x-y never names x-yz, nor x-yz x-y, whichever of the two is the dependency.
+        for (body, dep) in [
+            (
+                "Read .claude/worktrees/content-roster-stretch/x.json",
+                "content/roster",
+            ),
+            (
+                "Read .claude/worktrees/content-roster_2/x.json",
+                "content/roster",
+            ),
+            (
+                "Read .claude/worktrees/content-roster2/x.json",
+                "content/roster",
+            ),
+            (
+                "Read .claude/worktrees/content-roster/x.json",
+                "content/roster-stretch",
+            ),
+        ] {
+            assert_eq!(imported_worktree(body, dep, &[]), None, "{body} for {dep}");
+        }
+    }
+
+    #[test]
+    fn a_dependency_in_an_agent_folder_is_found_by_its_branch() {
+        let listed = [
+            at("/r", "main"),
+            at("/r/.claude/worktrees/agent-a1b2", "content/roster"),
+        ];
+        let body = "Import .claude/worktrees/agent-a1b2/content/x.json.";
+        assert_eq!(
+            imported_worktree(body, "content/roster", &listed).as_deref(),
+            Some("/r/.claude/worktrees/agent-a1b2")
+        );
+        for (body, dep) in [
+            // Its boundary holds as a slug's does.
+            (
+                "Import .claude/worktrees/agent-a1b2c/content/x.json",
+                "content/roster",
+            ),
+            (
+                "See .claude/worktrees/agent-a1b2/artifacts/hull.png",
+                "content/roster",
+            ),
+            // Another dependency's branch is not on it.
+            (body, "content/other"),
+        ] {
+            assert_eq!(
+                imported_worktree(body, dep, &listed),
+                None,
+                "{body} for {dep}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_dependency_in_a_codex_folder_is_found_by_its_branch_spelled_either_way() {
+        let listed = [
+            at("/r/.claude/worktrees/codex-roster-pilot", "content/roster"),
+            at("/u/.codex/worktrees/1767/fixtures", "content-stretch"),
+        ];
+        for (body, dep, named) in [
+            (
+                "Import /r/.claude/worktrees/codex-roster-pilot/content/x.json",
+                "content/roster",
+                "/r/.claude/worktrees/codex-roster-pilot",
+            ),
+            (
+                "Import ~/.codex/worktrees/1767/fixtures/content/x.json",
+                "content/stretch",
+                "/u/.codex/worktrees/1767/fixtures",
+            ),
+        ] {
+            assert_eq!(
+                imported_worktree(body, dep, &listed).as_deref(),
+                Some(named),
+                "{body}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_brief_naming_no_worktree_names_none() {
+        let listed = [
+            at("/r", "main"),
+            at("/r/.claude/worktrees/agent-a1b2", "content/roster"),
+        ];
+        for body in [
+            "",
+            "Build the roster from content/x.json on main.",
+            "Read /r/content/x.json and the roster's thread.",
+        ] {
+            assert_eq!(
+                imported_worktree(body, "content/roster", &listed),
+                None,
+                "{body}"
+            );
+        }
+    }
 }

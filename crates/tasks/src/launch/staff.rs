@@ -5,12 +5,12 @@ use super::herdr::{Binary, Herdr};
 use super::{Ask, Machine, launch, prompt_text};
 use crate::cli::{Env, agents, probes};
 use crate::health::{EXECUTING, FINISHED};
+use crate::sys::{Command, FileLock};
 use crate::{Board, Error, Health, NewLaunch, NewTask, Store, Task, git};
 use serde::Deserialize;
 use std::collections::HashSet;
 use std::fs::{File, TryLockError};
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 /// One config for enablement, capacity and optional subtree selection. Missing means disabled.
 #[derive(Deserialize)]
@@ -59,7 +59,7 @@ fn config(env: &Env) -> Result<Config, Error> {
 }
 
 /// A held lock lives until the pass ends, including launches and their prompt confirmation.
-fn lock(env: &Env) -> Result<Option<File>, Error> {
+fn lock(env: &Env) -> Result<Option<FileLock>, Error> {
     let dir = git::common_dir(&env.cwd).map_err(refused)?.join("sf-tasks");
     std::fs::create_dir_all(&dir).map_err(refused)?;
     let file = File::options()
@@ -69,7 +69,7 @@ fn lock(env: &Env) -> Result<Option<File>, Error> {
         .open(dir.join("staff.lock"))
         .map_err(refused)?;
     match file.try_lock() {
-        Ok(()) => Ok(Some(file)),
+        Ok(()) => Ok(Some(FileLock(file))),
         Err(TryLockError::WouldBlock) => Ok(None),
         Err(TryLockError::Error(e)) => Err(refused(e)),
     }
@@ -172,7 +172,7 @@ fn eligible(task: &Task, board: &Board, config: &Config) -> bool {
 /// Available memory, including reclaimable inactive pages on macOS (MemAvailable on Linux).
 fn free_memory_gib() -> Result<f64, Error> {
     let bytes = if cfg!(target_os = "macos") {
-        let output = Command::new("vm_stat").output().map_err(refused)?;
+        let output = crate::sys::output(&mut Command::new("vm_stat")).map_err(refused)?;
         if !output.status.success() {
             return Err(refused("vm_stat failed"));
         }
@@ -559,13 +559,13 @@ fn reuse(
         ..NewLaunch::default()
     })?;
     herdr.call(&["agent", "prompt", pane, &prompt])?;
-    let stuck = !super::taken(herdr, pane, &prompt, &*machine.sleep).0;
+    let confirmed = super::taken(herdr, pane, &prompt, &*machine.sleep).0;
     Ok(format!(
         "pinged {handle} as {role}, pane {pane}, prompt {prompt}{}",
-        if stuck {
-            " (prompt still in input)"
-        } else {
+        if confirmed {
             ""
+        } else {
+            " (prompt acceptance unconfirmed)"
         }
     ))
 }
@@ -582,6 +582,7 @@ mod store_fixture;
 mod tests {
     use super::store_fixture::{Fixture, Seed};
     use super::*;
+    use std::cell::Cell;
 
     struct NoHerdr;
 
@@ -592,6 +593,131 @@ mod tests {
 
         fn workspace(&self) -> Option<String> {
             None
+        }
+    }
+
+    struct ReusedPane<'a> {
+        outcome: &'a str,
+        prompted: Cell<bool>,
+        looks: Cell<usize>,
+    }
+
+    impl Herdr for ReusedPane<'_> {
+        fn run(&self, args: &[&str]) -> Result<String, crate::launch::LaunchError> {
+            match args {
+                ["agent", "list"] => {
+                    if self.prompted.get() {
+                        self.looks.set(self.looks.get() + 1);
+                        match self.outcome {
+                            "agent list" => {
+                                return Err(crate::launch::LaunchError("failed list".into()));
+                            }
+                            "missing agent" => return Ok(r#"{"result":{"agents":[]}}"#.into()),
+                            _ => {}
+                        }
+                    }
+                    let status = if self.prompted.get() && self.outcome == "working" {
+                        "working"
+                    } else {
+                        "idle"
+                    };
+                    Ok(serde_json::json!({
+                        "result": {"agents": [{"pane_id": "w1:p1", "agent_status": status}]}
+                    })
+                    .to_string())
+                }
+                ["agent", "prompt", "w1:p1", _] => {
+                    self.prompted.set(true);
+                    Ok("{}".into())
+                }
+                ["pane", "read", "w1:p1", "--lines", "12"] => {
+                    if self.outcome == "failed read" {
+                        Err(crate::launch::LaunchError("failed read".into()))
+                    } else {
+                        Ok(String::new())
+                    }
+                }
+                _ => panic!("reuse must not send keys or close its pane: {args:?}"),
+            }
+        }
+
+        fn workspace(&self) -> Option<String> {
+            None
+        }
+    }
+
+    #[test]
+    fn reuse_reports_unconfirmed_acceptance_without_claiming_the_prompt_is_visible() {
+        for outcome in [
+            "working",
+            "absent head",
+            "failed read",
+            "agent list",
+            "missing agent",
+        ] {
+            let f = Fixture::new(
+                Seed::default()
+                    .session("amber-heron")
+                    .task("sim/jump", "ready"),
+            );
+            let machine = Machine {
+                root: PathBuf::new(),
+                wt_base: PathBuf::new(),
+                new_id: Box::new(|| panic!("reuse must not start another conversation")),
+                sleep: Box::new(|seconds| assert_eq!(seconds, super::super::PROMPT_WAIT)),
+                processes: Box::new(|_| panic!("reuse must not inspect processes")),
+                mode: "auto".into(),
+            };
+            let agent = agents::Agent {
+                handle: "amber-heron".into(),
+                kind: "worker".into(),
+                model: "gpt-6.1-sol".into(),
+                parent: None,
+                task: None,
+                role: None,
+                tasks: Vec::new(),
+                worktree: "fixture-reuse".into(),
+                branch: String::new(),
+                agent: Some("codex".into()),
+                session_id: Some("existing-conversation".into()),
+                pane: Some("w1:p1".into()),
+                callback: None,
+                chat: false,
+                state: "idle",
+                detail: None,
+                health: Health::Live,
+                last_tool_call: None,
+                last_message: None,
+            };
+            let herdr = ReusedPane {
+                outcome,
+                prompted: Cell::new(false),
+                looks: Cell::new(0),
+            };
+            let task = f.store.get("sim/jump").unwrap();
+            let line = reuse(&f.store, &herdr, &machine, &agent, &task, &task, "executor").unwrap();
+            let expected =
+                "pinged amber-heron as executor, pane w1:p1, prompt $work sim/jump amber-heron";
+            if outcome == "working" {
+                assert_eq!(line, expected);
+                assert_eq!(herdr.looks.get(), 1);
+            } else {
+                assert_eq!(
+                    line,
+                    format!("{expected} (prompt acceptance unconfirmed)"),
+                    "{outcome}"
+                );
+                assert_eq!(herdr.looks.get(), super::super::PROMPT_ENTERS + 1);
+            }
+            assert!(herdr.prompted.get());
+            let records = f.store.task_sessions("sim/jump").unwrap();
+            assert_eq!(records.len(), 1);
+            assert_eq!(records[0].pane, "w1:p1");
+            assert!(records[0].closed.is_none());
+            assert_eq!(
+                f.store.get("sim/jump").unwrap().holders("reserved"),
+                ["amber-heron"]
+            );
         }
     }
 
@@ -637,5 +763,25 @@ mod tests {
             f.said(&job.slug).last().unwrap(),
             "amber-heron moved it ready → cancelled"
         );
+    }
+
+    #[test]
+    fn an_ended_pass_frees_its_lock_while_a_forked_child_still_holds_the_descriptor() {
+        let root = std::env::temp_dir().join(format!("sf-staff-release-{}", std::process::id()));
+        // An empty `.git` folder is a common dir to `git::common_dir`, which runs no git for it.
+        std::fs::create_dir_all(root.join(".git")).unwrap();
+        let env = Env {
+            vars: std::collections::BTreeMap::new(),
+            cwd: root.clone(),
+        };
+        let held = lock(&env).unwrap().unwrap();
+        // What fork gives a child until it execs: the same open file, so the same lock.
+        let inherited = held.0.try_clone().unwrap();
+        drop(held);
+        let next = lock(&env).unwrap();
+        assert!(next.is_some(), "the ended pass still holds its lock");
+        assert!(lock(&env).unwrap().is_none());
+        drop((inherited, next));
+        std::fs::remove_dir_all(root).unwrap();
     }
 }

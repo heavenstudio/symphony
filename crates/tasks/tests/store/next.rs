@@ -104,7 +104,9 @@ fn a_cancelled_dependency_blocks_with_a_reason_instead_of_disappearing_from_pull
             if !terminal {
                 assert_eq!(
                     f.said(&slug),
-                    ["blocked: cancelled dependencies: sim/prerequisite"]
+                    [format!(
+                        "blocked: cancelled dependencies: sim/prerequisite (was {status})"
+                    )]
                 );
             }
         }
@@ -117,8 +119,8 @@ fn a_cancelled_dependency_blocks_with_a_reason_instead_of_disappearing_from_pull
                 Vec::<String>::new()
             } else {
                 vec![
-                    "blocked: cancelled dependencies: sim/prerequisite".into(),
-                    "blocked: cancelled dependencies: sim/second-prerequisite".into(),
+                    format!("blocked: cancelled dependencies: sim/prerequisite (was {status})"),
+                    "blocked: cancelled dependencies: sim/second-prerequisite (was blocked)".into(),
                 ]
             };
             assert_eq!(f.said(&slug), expected, "{actor}, dependent was {status}");
@@ -130,7 +132,7 @@ fn a_cancelled_dependency_blocks_with_a_reason_instead_of_disappearing_from_pull
         assert_eq!(later.status, "blocked");
         assert_eq!(
             f.said("sim/later").last().unwrap(),
-            "blocked: cancelled dependencies: sim/old-prerequisite, sim/prerequisite"
+            "blocked: cancelled dependencies: sim/old-prerequisite, sim/prerequisite (was ready)"
         );
         f.store
             .take_role("sim/later", "amber-heron", "orchestrator")

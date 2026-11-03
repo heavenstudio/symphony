@@ -2,9 +2,8 @@
 //! process (the kernel says, `kill(pid, 0)`; `ps -p PID` only dates it, against a reused pid).
 //! The shared `process-cwd` crate scans working directories. Any doubt keeps a worktree.
 
-use crate::sys;
+use crate::sys::{self, Command};
 use std::collections::BTreeMap;
-use std::process::{Command, Stdio};
 
 const WEEKDAYS: [&str; 7] = [
     "monday",
@@ -143,15 +142,15 @@ pub fn pid_alive(pid: i64) -> bool {
 /// writes it into a lock; none when `ps` cannot say. `vars` is the caller's environment, its zone and
 /// locale overridden: a local `ps` at -03 reads 10:10:22 where the lock says 13:10:22.
 pub fn process_start(pid: i64, vars: &BTreeMap<String, String>) -> Option<String> {
-    let done = Command::new("ps")
-        .args(["-o", "lstart=", "-p", &pid.to_string()])
-        .env_clear()
-        .envs(vars)
-        .env("LC_ALL", "C")
-        .env("TZ", "UTC")
-        .stdin(Stdio::null())
-        .output()
-        .ok()?;
+    let done = sys::output(
+        Command::new("ps")
+            .args(["-o", "lstart=", "-p", &pid.to_string()])
+            .env_clear()
+            .envs(vars)
+            .env("LC_ALL", "C")
+            .env("TZ", "UTC"),
+    )
+    .ok()?;
     let said = String::from_utf8_lossy(&done.stdout).trim().to_string();
     (done.status.success() && !said.is_empty()).then_some(said)
 }
@@ -260,12 +259,13 @@ mod tests {
         assert!(parse_start(&start).is_some(), "{start}");
         let elsewhere = process_start(me, &vars(&[("TZ", "America/Sao_Paulo")])).unwrap();
         assert_eq!(parse_start(&elsewhere), parse_start(&start));
-        let utc = Command::new("ps")
-            .args(["-o", "lstart=", "-p", &me.to_string()])
-            .env("LC_ALL", "C")
-            .env("TZ", "UTC")
-            .output()
-            .unwrap();
+        let utc = sys::output(
+            Command::new("ps")
+                .args(["-o", "lstart=", "-p", &me.to_string()])
+                .env("LC_ALL", "C")
+                .env("TZ", "UTC"),
+        )
+        .unwrap();
         assert_eq!(
             parse_start(&String::from_utf8_lossy(&utc.stdout)),
             parse_start(&start)

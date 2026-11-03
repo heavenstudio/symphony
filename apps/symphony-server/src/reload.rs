@@ -10,15 +10,13 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeSet;
 use std::fs::{self, File, OpenOptions};
-use std::io::{Read, Write};
+use std::io::{PipeReader, PipeWriter, Read, Write};
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd, RawFd};
-use std::os::unix::net::UnixStream;
-use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
 use std::sync::Arc;
 use std::sync::{Mutex, mpsc};
 use std::time::{Duration, Instant};
+use tasks::sys::{Command, Stdio};
 
 const INHERITED: &str = "SF_SYMPHONY_HANDOVER";
 const PATIENCE: Duration = Duration::from_secs(120);
@@ -88,15 +86,104 @@ struct Transfer {
     parent: i64,
     listeners: Vec<RawFd>,
     lease: RawFd,
-    control: RawFd,
+    /// The replacement's ends of the handover's two pipes: it says it is ready on `ready` and reads
+    /// the commit from `commit`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    ready: Option<RawFd>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    commit: Option<RawFd>,
+    /// What a generation from before those pipes sends instead: one socket pair for both.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    control: Option<RawFd>,
     fingerprint: String,
+}
+
+impl Transfer {
+    /// The replacement's handover descriptors: its two pipe ends, or the older generation's socket.
+    fn ends(&self) -> Result<Vec<RawFd>, String> {
+        match (self.ready, self.commit, self.control) {
+            (Some(ready), Some(commit), None) => Ok(vec![ready, commit]),
+            (None, None, Some(control)) => Ok(vec![control]),
+            _ => Err("invalid inherited server descriptors".into()),
+        }
+    }
+}
+
+/// The replacement's ends of a handover. The parent sees the end of `ready` when the replacement
+/// ends, and the replacement the end of `commit` when the parent does: each pipe is made
+/// close-on-exec ([`tasks::sys::pipe`]), so no child another thread spawns meanwhile keeps an end
+/// and masks either death until [`PATIENCE`].
+#[derive(Debug)]
+struct Control {
+    ready: PipeWriter,
+    commit: PipeReader,
+}
+
+impl Control {
+    /// The parent's ends (readiness in, commit out) and the replacement's of a new handover.
+    fn pair() -> std::io::Result<((PipeReader, PipeWriter), Self)> {
+        let (ready, replacement_ready) = tasks::sys::pipe()?;
+        let (replacement_commit, commit) = tasks::sys::pipe()?;
+        Ok((
+            (ready, commit),
+            Self {
+                ready: replacement_ready,
+                commit: replacement_commit,
+            },
+        ))
+    }
+
+    /// An older generation's one socket pair end, which answers both ways: a copy for each.
+    fn socket(socket: OwnedFd) -> std::io::Result<Self> {
+        Ok(Self {
+            ready: socket.try_clone()?.into(),
+            commit: socket.into(),
+        })
+    }
+}
+
+/// What the other generation said on a handover pipe.
+#[derive(Debug, PartialEq, Eq)]
+enum Answer {
+    Byte(u8),
+    /// The end of the pipe: the other generation is gone, since no one else holds its end.
+    Ended,
+    /// Asked to stop first.
+    Stopped,
+    /// Nothing within [`PATIENCE`].
+    Outlasted,
+}
+
+/// The first [`Answer`] on `from`, read without blocking, checking `stopping` between reads.
+fn answer(from: &PipeReader, stopping: impl Fn() -> bool) -> std::io::Result<Answer> {
+    tasks::sys::set_nonblocking(from, true)?;
+    let began = Instant::now();
+    loop {
+        if stopping() {
+            return Ok(Answer::Stopped);
+        }
+        let mut byte = [0];
+        let mut input = from;
+        match input.read(&mut byte) {
+            Ok(0) => return Ok(Answer::Ended),
+            Ok(_) => return Ok(Answer::Byte(byte[0])),
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
+            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                if began.elapsed() >= PATIENCE {
+                    return Ok(Answer::Outlasted);
+                }
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            Err(e) => return Err(e),
+        }
+    }
 }
 
 #[derive(Debug)]
 pub(crate) struct Setup {
     pub listeners: Vec<tokio::net::TcpListener>,
     pub lease: Option<File>,
-    control: Option<UnixStream>,
+    control: Option<Control>,
     fingerprint: Option<String>,
 }
 
@@ -133,11 +220,13 @@ pub(crate) fn setup(serve: &Serve) -> Result<Setup, String> {
         if serve.home.is_none() {
             return Err("socket handover requires a shared server home".into());
         }
+        let ends = transfer.ends()?;
         let all: Vec<_> = transfer
             .listeners
             .iter()
             .copied()
-            .chain([transfer.lease, transfer.control])
+            .chain([transfer.lease])
+            .chain(ends.iter().copied())
             .collect();
         let unique: std::collections::BTreeSet<_> = all.iter().copied().collect();
         if unique.len() != all.len()
@@ -151,11 +240,18 @@ pub(crate) fn setup(serve: &Serve) -> Result<Setup, String> {
         }
         // SAFETY: these unique, live descriptors were made inheritable only in our parent's
         // pre_exec; this is their first owner in this process. They close on all subsequent execs.
-        let (lease, control) = unsafe {
-            (
-                File::from_raw_fd(transfer.lease),
-                UnixStream::from_raw_fd(transfer.control),
-            )
+        let lease = unsafe { File::from_raw_fd(transfer.lease) };
+        let control = if let [ready, commit] = ends[..] {
+            // SAFETY: the same unique transfer ownership, one pipe end per descriptor.
+            unsafe {
+                Control {
+                    ready: PipeWriter::from_raw_fd(ready),
+                    commit: PipeReader::from_raw_fd(commit),
+                }
+            }
+        } else {
+            // SAFETY: the same unique transfer ownership of the older generation's one socket.
+            Control::socket(unsafe { OwnedFd::from_raw_fd(ends[0]) }).map_err(|e| e.to_string())?
         };
         let mut listeners = Vec::new();
         for fd in transfer.listeners {
@@ -205,16 +301,12 @@ impl Setup {
     /// parent's publication before watching sources, so generations cannot race to replace us.
     pub fn ready(&mut self) -> Result<(), String> {
         if let Some(mut control) = self.control.take() {
-            control
-                .set_read_timeout(Some(PATIENCE))
-                .map_err(|e| e.to_string())?;
-            control.write_all(b"R").map_err(|e| e.to_string())?;
-            let mut answer = [0];
-            match control.read_exact(&mut answer) {
-                Ok(()) if answer == *b"C" => {}
+            control.ready.write_all(b"R").map_err(|e| e.to_string())?;
+            match answer(&control.commit, || false) {
+                Ok(Answer::Byte(b'C')) => {}
                 // A parent that died after we became ready leaves us serving the sockets. The
                 // next starter can recover our record from this process's serve command line.
-                Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {}
+                Ok(Answer::Ended) => {}
                 result => return Err(format!("handover was not committed: {result:?}")),
             }
         }
@@ -242,22 +334,23 @@ fn replace(
     if let Some(client) = &mut client {
         client.publish()?;
     }
-    let (mut parent, child_end) = UnixStream::pair().map_err(|e| e.to_string())?;
-    parent
-        .set_read_timeout(Some(Duration::from_millis(100)))
-        .map_err(|e| e.to_string())?;
+    let ((ready, mut commit), replacement_ends) = Control::pair().map_err(|e| e.to_string())?;
     let transfer = Transfer {
         parent: i64::from(std::process::id()),
         listeners: sockets.iter().map(AsRawFd::as_raw_fd).collect(),
         lease: lease.as_raw_fd(),
-        control: child_end.as_raw_fd(),
+        ready: Some(replacement_ends.ready.as_raw_fd()),
+        commit: Some(replacement_ends.commit.as_raw_fd()),
+        control: None,
         fingerprint: fingerprint.into(),
     };
     let fds: Vec<_> = transfer
         .listeners
         .iter()
         .copied()
-        .chain([transfer.lease, transfer.control])
+        .chain([transfer.lease])
+        .chain(transfer.ready)
+        .chain(transfer.commit)
         .collect();
     let mut command = Command::new(exe);
     command
@@ -280,44 +373,24 @@ fn replace(
     {
         command.stdout(stdout).stderr(stderr);
     }
-    // SAFETY: only async-signal-safe descriptor flags and setsid are changed after fork. The
-    // parent's copies remain CLOEXEC, including during concurrent builds and board commands.
-    unsafe {
-        command.pre_exec(move || {
-            if libc::setsid() == -1 {
-                return Err(std::io::Error::last_os_error());
-            }
-            for &fd in &fds {
-                cloexec(fd, false)?;
-            }
-            Ok(())
-        });
+    // A session of its own, handed these descriptors at their numbers. The parent's copies stay
+    // close-on-exec, including during concurrent builds and board commands.
+    command.new_session();
+    for fd in fds {
+        command.pass_fd(fd);
     }
     let mut child = command.spawn().map_err(|e| e.to_string())?;
-    drop(child_end);
-    let mut ready = [0];
-    let began = Instant::now();
-    let result = loop {
-        if shared.stopping() {
-            break Err("reload cancelled by shutdown".into());
-        }
-        if began.elapsed() >= PATIENCE {
-            break Err("replacement did not become ready within 120 s".into());
-        }
-        match parent.read_exact(&mut ready) {
-            Ok(()) => break Ok(()),
-            Err(e)
-                if matches!(
-                    e.kind(),
-                    std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
-                ) => {}
-            Err(e) => break Err(format!("replacement did not become ready: {e}")),
-        }
+    // Only the replacement holds its ends now: their end is its death.
+    drop(replacement_ends);
+    let result = match answer(&ready, || shared.stopping()) {
+        Ok(Answer::Byte(b'R')) => Ok(()),
+        Ok(Answer::Byte(_)) => Err("replacement sent invalid readiness".into()),
+        Ok(Answer::Ended) => Err("replacement did not become ready: it ended".into()),
+        Ok(Answer::Stopped) => Err("reload cancelled by shutdown".into()),
+        Ok(Answer::Outlasted) => Err("replacement did not become ready within 120 s".into()),
+        Err(e) => Err(format!("replacement did not become ready: {e}")),
     }
     .and_then(|()| {
-        if ready != *b"R" {
-            return Err("replacement sent invalid readiness".into());
-        }
         if let Err(why) = stamp_install(home.dir(), fingerprint) {
             eprintln!("· Symphony reload: could not stamp installed binary: {why}");
         }
@@ -332,7 +405,7 @@ fn replace(
         {
             eprintln!("· Symphony reload: could not stamp installed client: {why}");
         }
-        parent.write_all(b"C").map_err(|e| e.to_string())
+        commit.write_all(b"C").map_err(|e| e.to_string())
     });
     if let Err(why) = result {
         let _ = child.kill();
@@ -949,5 +1022,180 @@ mod tests {
             &BTreeSet::new(),
             &root.join("artifacts/log.txt")
         ));
+    }
+
+    #[test]
+    fn a_spawn_racing_a_handover_never_masks_the_replacements_death() {
+        use super::{Answer, Control, answer};
+        use std::io::{ErrorKind, Read};
+        use std::os::fd::AsRawFd;
+        use std::process::{Child, Command, Stdio};
+        use std::sync::atomic::{AtomicBool, Ordering};
+
+        /// Children killed and reaped however the test ends.
+        struct Children(Vec<Child>);
+        impl Drop for Children {
+            fn drop(&mut self) {
+                for child in &mut self.0 {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                }
+            }
+        }
+
+        let spawned = AtomicBool::new(false);
+        std::thread::scope(|scope| {
+            // Children outliving every handover, spawned beside its pipes' making, as a build or a
+            // board command is spawned beside a reload.
+            let other = scope.spawn(|| {
+                let mut children = Children(Vec::new());
+                for _ in 0..32 {
+                    let child = Command::new("sleep")
+                        .arg("60")
+                        .stdin(Stdio::null())
+                        .stdout(Stdio::null())
+                        .stderr(Stdio::null())
+                        .spawn()
+                        .unwrap();
+                    children.0.push(child);
+                }
+                spawned.store(true, Ordering::Relaxed);
+                children
+            });
+            // Handovers made back to back, so the racers' spawns fall while pairs are being made.
+            // Each generation's ends go at once, as a replacement or a parent that dies does. A
+            // racer mid-spawn holds a copy until its exec closes it, no longer, so an end not yet
+            // answered is kept and asked again once every racer has started: waiting for it here
+            // would leave the spawns that start meanwhile unraced.
+            let mut handovers = 0;
+            let mut held = Vec::new();
+            while !spawned.load(Ordering::Relaxed) {
+                let ((ready, commit), ends) = Control::pair().unwrap();
+                let Control {
+                    ready: replacement_ready,
+                    commit: replacement_commit,
+                } = ends;
+                drop((replacement_ready, commit));
+                for end in [ready, replacement_commit] {
+                    tasks::sys::set_nonblocking(&end, true).unwrap();
+                    match (&end).read(&mut [0]) {
+                        Ok(0) => {}
+                        Err(e)
+                            if matches!(
+                                e.kind(),
+                                ErrorKind::WouldBlock | ErrorKind::Interrupted
+                            ) =>
+                        {
+                            held.push(end);
+                        }
+                        other => panic!("handover {handovers} answered {other:?}"),
+                    }
+                }
+                handovers += 1;
+            }
+            // An end a racer kept would have held its answer until that racer ended.
+            let mut children = other.join().unwrap();
+            for end in &held {
+                assert_eq!(answer(end, || false).unwrap(), Answer::Ended);
+            }
+            for child in &mut children.0 {
+                assert!(child.try_wait().unwrap().is_none(), "a racer ended first");
+            }
+            assert!(handovers > 0, "no handover was made beside the spawns");
+        });
+
+        // A replacement started as replace starts one, its ends kept across exec, that ends before
+        // it is ready: its death is the end of its parent's ready pipe.
+        let ((ready, _commit), ends) = Control::pair().unwrap();
+        let fds = [ends.ready.as_raw_fd(), ends.commit.as_raw_fd()];
+        let mut command = tasks::sys::Command::new("true");
+        for fd in fds {
+            command.pass_fd(fd);
+        }
+        let mut replacement = command.stdin(tasks::sys::Stdio::Null).spawn().unwrap();
+        drop(ends);
+        assert!(replacement.wait().unwrap().success());
+        assert_eq!(answer(&ready, || false).unwrap(), Answer::Ended);
+    }
+
+    #[test]
+    fn a_replacement_is_ready_once_committed_or_once_its_parent_has_gone() {
+        use super::{Answer, Control, answer};
+        use std::io::Write;
+        use std::os::unix::net::UnixStream;
+
+        let replacement = |control: Control| {
+            std::thread::spawn(move || {
+                Setup {
+                    listeners: Vec::new(),
+                    lease: None,
+                    control: Some(control),
+                    fingerprint: None,
+                }
+                .ready()
+            })
+        };
+        let ((ready, mut commit), ends) = Control::pair().unwrap();
+        let ready_thread = replacement(ends);
+        assert_eq!(answer(&ready, || false).unwrap(), Answer::Byte(b'R'));
+        commit.write_all(b"C").unwrap();
+        assert_eq!(ready_thread.join().unwrap(), Ok(()));
+
+        // A parent gone after the replacement said it was ready leaves it serving.
+        let ((ready, commit), ends) = Control::pair().unwrap();
+        let ready_thread = replacement(ends);
+        assert_eq!(answer(&ready, || false).unwrap(), Answer::Byte(b'R'));
+        drop(commit);
+        assert_eq!(ready_thread.join().unwrap(), Ok(()));
+
+        // Anything but the commit is refused.
+        let ((ready, mut commit), ends) = Control::pair().unwrap();
+        let ready_thread = replacement(ends);
+        assert_eq!(answer(&ready, || false).unwrap(), Answer::Byte(b'R'));
+        commit.write_all(b"X").unwrap();
+        assert!(ready_thread.join().unwrap().is_err());
+
+        // An older generation's one socket pair carries both.
+        let (mut parent, end) = UnixStream::pair().unwrap();
+        let ready_thread = replacement(Control::socket(end.into()).unwrap());
+        let mut said = [0];
+        std::io::Read::read_exact(&mut parent, &mut said).unwrap();
+        assert_eq!(said, *b"R");
+        parent.write_all(b"C").unwrap();
+        assert_eq!(ready_thread.join().unwrap(), Ok(()));
+
+        // Asked to stop first, the parent's wait says so.
+        let ((ready, _commit), _ends) = Control::pair().unwrap();
+        assert_eq!(answer(&ready, || true).unwrap(), Answer::Stopped);
+    }
+
+    #[test]
+    fn a_transfer_names_the_handover_pipes_or_an_older_generations_socket() {
+        use super::Transfer;
+        let ends = |fields: &str| {
+            serde_json::from_str::<Transfer>(&format!(
+                r#"{{"parent":1,"listeners":[3],"lease":4,{fields}"fingerprint":"f"}}"#
+            ))
+            .unwrap()
+            .ends()
+        };
+        assert_eq!(ends(r#""ready":5,"commit":6,"#), Ok(vec![5, 6]));
+        // A generation from before the pipes reloads into this one with its one socket.
+        assert_eq!(ends(r#""control":5,"#), Ok(vec![5]));
+        for fields in ["", r#""ready":5,"#, r#""ready":5,"commit":6,"control":7,"#] {
+            assert!(ends(fields).is_err(), "{fields}");
+        }
+        // What this generation sends names no socket: an older replacement refuses it whole.
+        let sent = serde_json::to_value(Transfer {
+            parent: 1,
+            listeners: vec![3],
+            lease: 4,
+            ready: Some(5),
+            commit: Some(6),
+            control: None,
+            fingerprint: "f".into(),
+        })
+        .unwrap();
+        assert!(sent.get("control").is_none(), "{sent}");
     }
 }

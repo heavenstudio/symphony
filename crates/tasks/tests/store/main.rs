@@ -6,6 +6,7 @@ mod claim;
 mod common;
 mod copy;
 mod cutover;
+mod depends;
 mod done;
 mod embeddings;
 #[path = "../../../../../tools/gate/tests/verify/script.rs"]

@@ -447,10 +447,11 @@ fn hold_lock(w: &World) -> File {
     sweep_lock(&w.reap_state())
 }
 
-/// Another test thread can fork while a sweep holds its file: the child retains that lock until
-/// exec, even after the sweep returns. Wait for that release in the kernel, without retrying a
-/// skipped round. Explicitly unlock our barrier so another fork cannot prolong it in turn. No
-/// other sweep runs on this world's state, so the following sweep can take the released lock.
+/// Another test thread can fork while this test holds the lock itself ([`hold_lock`], let go by
+/// closing): the child retains that lock until exec, even after the test drops it. Wait for that
+/// release in the kernel, without retrying a skipped round. Explicitly unlock our barrier so
+/// another fork cannot prolong it in turn. No other sweep runs on this world's state, so the
+/// following sweep can take the released lock.
 fn wait_for_sweep(state: &Path) {
     sweep_lock(state).unlock().unwrap();
 }

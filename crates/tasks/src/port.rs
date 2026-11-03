@@ -11,11 +11,12 @@
 //! while the child is still on its way to finding the port taken.
 //!
 //! It uses std alone, so a crate that does not link this one takes the file as a module of its own
-//! (the Symphony client's browser tests, by `#[path]`).
+//! (the Symphony client's browser tests, by `#[path]`), and [`listens`] is handed what runs its
+//! `lsof`.
 
 use std::fmt;
 use std::net::{Ipv4Addr, SocketAddr, TcpListener};
-use std::process::Command;
+use std::process::{Command, Output};
 use std::time::Instant;
 
 /// How many starts are made before a child whose address is taken each time is given up on.
@@ -71,17 +72,28 @@ pub fn in_use(output: &str) -> bool {
 /// Whether the process `pid` itself has a TCP socket listening on `addr`: what makes an answer
 /// there that process's. `lsof` is asked about that one process's listening sockets on that address
 /// (`-a -p PID -iTCP@ADDR -sTCP:LISTEN`); it exits 1 with nothing to say when there are none. An
-/// `lsof` that cannot run, or that fails saying why, is the error.
-pub fn listens(pid: u32, addr: SocketAddr) -> std::io::Result<bool> {
+/// `lsof` that cannot run, or that fails saying why, is the error. `run` runs it and reads what it
+/// printed to its end: `crate::sys::output`, which no child another thread starts meanwhile can
+/// hold open, or [`Command::output`] in a crate that does not link the board.
+pub fn listens<C: Lsof>(
+    pid: u32,
+    addr: SocketAddr,
+    run: impl FnOnce(&mut C) -> std::io::Result<Output>,
+) -> std::io::Result<bool> {
     let host = match addr {
         SocketAddr::V4(v4) => v4.ip().to_string(),
         SocketAddr::V6(v6) => format!("[{}]", v6.ip()),
     };
-    let out = Command::new("lsof")
-        .args(["-nP", "-w", "-a", "-p", &pid.to_string()])
-        .arg(format!("-iTCP@{host}:{}", addr.port()))
-        .args(["-sTCP:LISTEN", "-Fp"])
-        .output()?;
+    let out = run(&mut C::lsof(&[
+        "-nP",
+        "-w",
+        "-a",
+        "-p",
+        &pid.to_string(),
+        &format!("-iTCP@{host}:{}", addr.port()),
+        "-sTCP:LISTEN",
+        "-Fp",
+    ]))?;
     let mine = format!("p{pid}");
     if String::from_utf8_lossy(&out.stdout)
         .lines()
@@ -97,6 +109,21 @@ pub fn listens(pid: u32, addr: SocketAddr) -> std::io::Result<bool> {
         "lsof could not say what pid {pid} listens on: {}",
         said.trim()
     )))
+}
+
+/// The command [`listens`] runs `lsof` as: std's, or the board's own (`crate::sys::Command`), which
+/// starts it without a fork.
+pub trait Lsof {
+    /// `lsof` with `args`.
+    fn lsof(args: &[&str]) -> Self;
+}
+
+impl Lsof for Command {
+    fn lsof(args: &[&str]) -> Self {
+        let mut lsof = Command::new("lsof");
+        lsof.args(args);
+        lsof
+    }
 }
 
 /// A loopback address nothing was bound to as it was picked, on none of the ports in `tried`. A port

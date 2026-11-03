@@ -1,8 +1,8 @@
 //! A command fixture, selected only in an owned test process's PATH.
 
 use std::path::PathBuf;
-use std::process::Command;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use tasks::sys::Command;
 
 const ROOT: &str = "SF_AFTER_ACCESS_ROOT";
 const CASE: &str = "SF_AFTER_ACCESS_CASE";
@@ -52,15 +52,16 @@ exit {status}
 
     pub fn run(&self, test: &str, case: &str) {
         // Set PATH only on this child: concurrent tests and the machine's CLI stay untouched.
-        let done = Command::new(std::env::current_exe().unwrap())
-            .args(["--exact", test, "--nocapture"])
-            .current_dir(&self.root)
-            .env(ROOT, &self.root)
-            .env(CASE, case)
-            .env("PATH", &self.root)
-            .env_remove("BASH_ENV")
-            .output()
-            .unwrap();
+        let done = tasks::sys::output(
+            Command::new(std::env::current_exe().unwrap())
+                .args(["--exact", test, "--nocapture"])
+                .current_dir(&self.root)
+                .env(ROOT, &self.root)
+                .env(CASE, case)
+                .env("PATH", &self.root)
+                .env_remove("BASH_ENV"),
+        )
+        .unwrap();
         assert!(
             done.status.success(),
             "{case} (recorded command: {:?}): {}{}",

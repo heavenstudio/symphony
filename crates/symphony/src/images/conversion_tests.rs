@@ -115,12 +115,12 @@ fn the_system_converter_receives_sips_arguments_and_publishes_its_output() {
         "#!/bin/bash\nprintf '%s\\n' \"$@\" > \"$SF_SYMPHONY_SIPS_ARGS\"\nprintf jpeg > \"${!#}\"\n",
     );
     std::fs::set_permissions(script, std::fs::Permissions::from_mode(0o755)).unwrap();
-    let done = Command::new(std::env::current_exe().unwrap())
+    let done = tasks::sys::output(tasks::sys::Command::new(std::env::current_exe().unwrap())
         .args(["--exact", "images::conversion_tests::the_system_converter_receives_sips_arguments_and_publishes_its_output"])
         .env(CASE, &tree.root)
         .env("PATH", &tree.root)
-        .env("SF_SYMPHONY_SIPS_ARGS", tree.path("args"))
-        .output().unwrap();
+        .env("SF_SYMPHONY_SIPS_ARGS", tree.path("args")))
+        .unwrap();
     assert!(
         done.status.success(),
         "{}{}",

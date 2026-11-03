@@ -15,6 +15,8 @@ enum Takes {
     Value(Ty),
     /// One value each time, all kept (`append`).
     Append,
+    /// Two values each time, all kept in order (`nargs=2`, `append`).
+    Pair,
     /// Nothing; sets its dest to this (`store_const`).
     Const(&'static str),
 }
@@ -243,6 +245,16 @@ const COMMANDS: &[Command] = &[
         name: "parent",
         pos: &[pos("slug"), maybe("parent")],
         opts: &[AS, opt("--none", "none", Takes::Bool)],
+    },
+    Command {
+        name: "depends",
+        pos: SLUG,
+        opts: &[
+            AS,
+            opt("--add", "add", Takes::Append),
+            opt("--remove", "remove", Takes::Append),
+            opt("--replace", "replace", Takes::Pair),
+        ],
     },
     Command {
         name: "done",
@@ -684,6 +696,21 @@ fn take(
             let value = value()?;
             values.entry(found.dest.into()).or_default().push(value);
         }
+        Takes::Pair => {
+            let two = format!("argument {}: expected 2 arguments", found.flag);
+            let pair = args.get(*i..*i + 2).filter(|pair| {
+                explicit.is_none()
+                    && pair
+                        .iter()
+                        .all(|next| next != "--" && matches!(optional(next, &[]), Flag::Positional))
+            });
+            let pair = pair.ok_or(two)?;
+            *i += 2;
+            values
+                .entry(found.dest.into())
+                .or_default()
+                .extend_from_slice(pair);
+        }
         Takes::Value(ty) => {
             let value = value()?;
             let (fits, name) = match ty {
@@ -770,7 +797,7 @@ mod tests {
             .unwrap()
     }
 
-    const ALL: &str = "'callback', 'register', 'attach', 'list', 'search', 'embed', 'next', 'create', 'priority', 'claim', 'reserve', 'release', 'show', 'parent', 'done', 'role', 'move', 'verdict', 'say', 'launch', 'restore', 'cleanup', 'reap', 'staff', 'agents', 'who', 'inbox', 'leave', 'beat', 'export', 'finish', 'sweep'";
+    const ALL: &str = "'callback', 'register', 'attach', 'list', 'search', 'embed', 'next', 'create', 'priority', 'claim', 'reserve', 'release', 'show', 'parent', 'depends', 'done', 'role', 'move', 'verdict', 'say', 'launch', 'restore', 'cleanup', 'reap', 'staff', 'agents', 'who', 'inbox', 'leave', 'beat', 'export', 'finish', 'sweep'";
 
     #[test]
     fn every_command_of_the_usage_is_read_and_has_its_help() {
@@ -1035,6 +1062,42 @@ mod tests {
         assert_eq!(run(&["next", "--as="]).get("actor"), Some(""));
         assert_eq!(run(&["claim", "--", "s"]).get("slug"), Some("s"));
         assert_eq!(run(&["claim", "--as=y", "s"]).get("actor"), Some("y"));
+    }
+
+    #[test]
+    fn a_pair_flag_takes_two_values_each_time_or_is_a_usage_error() {
+        let p = run(&[
+            "depends",
+            "s",
+            "--replace",
+            "a",
+            "b",
+            "--add",
+            "c",
+            "--rep",
+            "d",
+            "e",
+        ]);
+        assert_eq!(p.all("replace"), ["a", "b", "d", "e"]);
+        assert_eq!(
+            (p.get("slug"), p.all("add")),
+            (Some("s"), &["c".to_string()][..])
+        );
+        for args in [
+            &["depends", "s", "--replace", "a"][..],
+            &["depends", "s", "--replace", "a", "--add", "b"][..],
+            &["depends", "s", "--replace", "a", "--", "b"][..],
+            &["depends", "s", "--replace=a", "b"][..],
+        ] {
+            assert_eq!(
+                refused(args),
+                format!(
+                    "{}just tasks depends: error: argument --replace: expected 2 arguments\n",
+                    usage_of("depends")
+                ),
+                "{args:?}"
+            );
+        }
     }
 
     #[test]

@@ -19,7 +19,7 @@ use wasm_bindgen::JsValue;
 
 use crate::{
     frame::FrameRefresh,
-    live::{FEED_NOTICE, Feed, Heard, sleep},
+    live::{Feed, Heard, PageNotices, sleep},
     request,
     task_live::url,
 };
@@ -101,8 +101,6 @@ pub fn TasksPage() -> Element {
         spawn(keep_live(data, refreshed, stale, frame));
     });
     rsx! { main { "data-ready": "board", "data-feed": if stale() { "stale" } else { "live" },
-        if stale() { p { class: "pill wait stale", {FEED_NOTICE} } }
-        if !data.read().error.is_empty() { p { role: "alert", "{data.read().error}" } }
         if data.read().ready {
             crate::tasks::TaskBoard {
                 tasks: data.read().tasks.clone(), counts: data.read().counts.clone(),
@@ -112,7 +110,7 @@ pub fn TasksPage() -> Element {
                 onload: move |(status, more, query, days)| { spawn(column(status, more, query, days, data)); },
             }
         } else { p { "Loading tasks…" } }
-        p { class: "pill feed-notice-space", "aria-hidden": "true", {FEED_NOTICE} }
+        PageNotices { reconnecting: stale(), error: data.read().error.clone() }
     } }
 }
 

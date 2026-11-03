@@ -208,9 +208,13 @@ fn ancestors_in(tree: &Tree, slug: &str) -> Result<Vec<String>, Error> {
     Ok(found)
 }
 
+/// What starts the line a cancelled prerequisite's block puts on its dependent's thread.
+pub(super) const BLOCK_LINE: &str = "blocked: cancelled dependencies: ";
+
 /// Cancellation does not satisfy a prerequisite. Block its unfinished dependents, or the task
 /// being created/moved if one of its prerequisites was cancelled earlier, in the same transaction.
-/// Already blocked work still needs each new cancellation's reason on its thread.
+/// Already blocked work still needs each new cancellation's reason on its thread. The line ends with
+/// the status the dependent held, `(was ready)`, which `depends` gives it back.
 pub(super) fn block_cancelled_dependencies(cancelling: bool) -> String {
     // Ordinary moves/creates use link_slug's index; only cancellation needs the reverse lookup.
     let scope = if cancelling {
@@ -226,8 +230,9 @@ pub(super) fn block_cancelled_dependencies(cancelling: bool) -> String {
             ORDER BY slug, target;
 FOR $dependent IN array::distinct($blocked_links.slug) {{
     LET $cancelled = $blocked_links.filter(|$link| $link.slug = $dependent).target;
+    LET $was = (SELECT VALUE status FROM ONLY type::record('task', $dependent));
     UPDATE type::record('task', $dependent) SET status = 'blocked', updated = $now, version += 1 RETURN NONE;
-    LET $reason = 'blocked: cancelled dependencies: ' + array::join($cancelled, ', ');
+    LET $reason = '{BLOCK_LINE}' + array::join($cancelled, ', ') + ' (was ' + $was + ')';
     {}
 }};",
         logged("$dependent", "$actor", "'system'", "$reason", "NONE")

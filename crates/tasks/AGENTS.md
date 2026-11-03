@@ -149,6 +149,29 @@ prints one); `TASKS_REAP_STATE` is where the
 idle sweep keeps what it saw; `HERDR_BIN` names a fake herdr (the crate's
 `fake-herdr` binary, its panes a JSON file `FAKE_HERDR_STATE` names).
 
+A child's input and output go through `sys::output` (or `sys::spawn_output`,
+`sys::spawn_piped` for one that reads stdin, and `sys::wait_output`), never
+`Command::output` or `Stdio::piped`, here and in the sources of `symphony`
+and `symphony-server`; but in `store/codex_delivery.rs`, whose proxy is
+answered line by line and killed, never read to its end. `port::listens` is
+handed what runs its `lsof`: `sys::output` from those sources, `Command::output`
+from `apps/symphony-ui`'s browser test, which compiles `port.rs` alone. On macOS std
+makes a pipe or socket pair and sets close-on-exec in a second call, so a
+spawn on another thread between the two keeps the writer and holds the
+reader's EOF off for that child's whole life: a herdr answer then reads as
+unanswered. `sys::pipe` opens a FIFO close-on-exec in the open itself;
+macOS's `poll` never sees a FIFO's end, so its readers are read, never polled.
+Those helpers take a `sys::Command`, std's builder by its method names plus
+`new_session` and `pass_fd`, and so does every spawn in a session of its own
+(`sys::new_session` is gone). std takes its fork path for a `pre_exec`, a
+session or a changed environment with a bare name, and that path's exec-status
+pipe has the same gap, so a racing spawn held `spawn()` itself; on macOS a
+`sys::Command` spawns with `posix_spawn` and `POSIX_SPAWN_CLOEXEC_DEFAULT`: no
+status pipe, and the child inherits only its streams and the descriptors it is
+passed. A std `Command` cannot say it cleared its environment, its group or its
+session, so it is never translated. The helpers live in the leaf
+`process_cwd::spawn`, which `sys` re-exports, so the cwd scans' `lsof` shares them.
+
 `staff` makes one staffing pass (`src/launch/staff.rs`), also called before `reap`.
 Its sole config is `tools/task_staff.json` in the calling checkout, disabled by
 default; its pass lock is in the common `sf-tasks/`. Launch defaults to Codex;

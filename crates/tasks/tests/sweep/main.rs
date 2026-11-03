@@ -75,11 +75,8 @@ fn template() -> &'static Path {
 
 /// `git ARGS` in `dir`, which must succeed: its output, trimmed.
 pub fn git(dir: &Path, args: &[&str]) -> String {
-    let done = Command::new("git")
-        .args(args)
-        .current_dir(dir)
-        .output()
-        .unwrap();
+    let done =
+        tasks::sys::output(tasks::sys::Command::new("git").args(args).current_dir(dir)).unwrap();
     assert!(
         done.status.success(),
         "git {args:?} in {}: {}",
@@ -130,12 +127,13 @@ pub fn dead_pid() -> i64 {
 /// `date`, BSD's else GNU's, with `args` for each, in zone `tz`: its output, trimmed.
 fn date(tz: &str, bsd: &[&str], gnu: &[&str]) -> String {
     for args in [bsd, gnu] {
-        let done = Command::new("date")
-            .args(args)
-            .env("TZ", tz)
-            .env("LC_ALL", "C")
-            .output()
-            .unwrap();
+        let done = tasks::sys::output(
+            tasks::sys::Command::new("date")
+                .args(args)
+                .env("TZ", tz)
+                .env("LC_ALL", "C"),
+        )
+        .unwrap();
         if done.status.success() {
             return String::from_utf8(done.stdout).unwrap().trim().to_string();
         }
@@ -147,12 +145,13 @@ fn date(tz: &str, bsd: &[&str], gnu: &[&str]) -> String {
 /// 2026`). Read from `ps` in a zone that is not UTC (-03, like the owner's machine) and converted by
 /// `date`, so the sweep's own reading of `ps` is not what a test compares with.
 pub fn started(pid: i64) -> String {
-    let local = Command::new("ps")
-        .args(["-o", "lstart=", "-p", &pid.to_string()])
-        .env("LC_ALL", "C")
-        .env("TZ", NOT_UTC)
-        .output()
-        .unwrap();
+    let local = tasks::sys::output(
+        tasks::sys::Command::new("ps")
+            .args(["-o", "lstart=", "-p", &pid.to_string()])
+            .env("LC_ALL", "C")
+            .env("TZ", NOT_UTC),
+    )
+    .unwrap();
     let local = String::from_utf8(local.stdout).unwrap();
     let local = local.split_whitespace().collect::<Vec<_>>().join(" ");
     let format = "%a %b %d %H:%M:%S %Y";

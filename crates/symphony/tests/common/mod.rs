@@ -54,10 +54,10 @@ pub fn repo() -> PathBuf {
 
 /// Build the scratch board's CLI without publishing it to the live heartbeat.
 pub fn build_tasks(root: &Path) -> String {
-    let done = std::process::Command::new(root.join("tools/rs-bin.sh"))
-        .args(["--build", "tasks"])
-        .output()
-        .unwrap();
+    let done = tasks::sys::output(
+        tasks::sys::Command::new(root.join("tools/rs-bin.sh")).args(["--build", "tasks"]),
+    )
+    .unwrap();
     assert!(
         done.status.success(),
         "rs-bin.sh --build tasks: {}",
@@ -82,11 +82,12 @@ pub fn tasks_binary() -> &'static str {
 /// Resolve a setup-built CLI by this checkout's source hash, without building inside a test.
 pub fn prebuilt_binary(root: &Path, name: &str) -> Result<PathBuf, String> {
     use std::os::unix::fs::PermissionsExt as _;
-    let done = std::process::Command::new(root.join("tools/rs-bin.sh"))
-        .args(["--where", name])
-        .current_dir(root)
-        .output()
-        .map_err(|e| e.to_string())?;
+    let done = tasks::sys::output(
+        tasks::sys::Command::new(root.join("tools/rs-bin.sh"))
+            .args(["--where", name])
+            .current_dir(root),
+    )
+    .map_err(|e| e.to_string())?;
     if !done.status.success() {
         return Err(format!(
             "rs-bin.sh --where {name}: {}",

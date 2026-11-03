@@ -5,7 +5,7 @@
 
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use tasks::sys::Command;
 
 use symphony::verdicts::{self, Board, BoardTask, VerdictError, epoch};
 
@@ -48,13 +48,14 @@ fn fixture_worker(store: &tasks::Store, root: &Path, kind: &str) -> String {
 
 /// `tasks ARGS` on the board `env` reaches, run in `cwd`, as no session: its stdout, once it succeeded.
 fn tasks(env: &[(String, String)], cwd: &Path, args: &[&str]) -> String {
-    let done = Command::new(tasks_binary())
-        .args(args)
-        .envs(env.iter().map(|(k, v)| (k, v)))
-        .env_remove("TASKS_SESSION")
-        .current_dir(cwd)
-        .output()
-        .unwrap();
+    let done = tasks::sys::output(
+        Command::new(tasks_binary())
+            .args(args)
+            .envs(env.iter().map(|(k, v)| (k, v)))
+            .env_remove("TASKS_SESSION")
+            .current_dir(cwd),
+    )
+    .unwrap();
     assert!(
         done.status.success(),
         "{args:?}: {}",
@@ -549,11 +550,7 @@ mod filing {
 }
 
 fn git(root: &Path, args: &[&str]) -> String {
-    let out = Command::new("git")
-        .args(args)
-        .current_dir(root)
-        .output()
-        .unwrap();
+    let out = tasks::sys::output(Command::new("git").args(args).current_dir(root)).unwrap();
     assert!(
         out.status.success(),
         "git {args:?}: {}",
@@ -984,14 +981,15 @@ mod real {
     use super::*;
 
     fn review(tree: &Tree, env: &[(String, String)], args: &[&str]) -> (i32, String, String) {
-        let done = Command::new(crate::review_binary())
-            .args(args)
-            .args(["--root", tree.root.to_str().unwrap()])
-            .envs(env.iter().map(|(k, v)| (k, v)))
-            .env("SF_TASKS_CLI", tasks_binary())
-            .env_remove("TASKS_SESSION")
-            .output()
-            .unwrap();
+        let done = tasks::sys::output(
+            Command::new(crate::review_binary())
+                .args(args)
+                .args(["--root", tree.root.to_str().unwrap()])
+                .envs(env.iter().map(|(k, v)| (k, v)))
+                .env("SF_TASKS_CLI", tasks_binary())
+                .env_remove("TASKS_SESSION"),
+        )
+        .unwrap();
         (
             done.status.code().unwrap(),
             String::from_utf8_lossy(&done.stdout).to_string(),
@@ -1350,14 +1348,15 @@ mod solar {
 
     /// The binary run in `cwd`, on the board `env` reaches through the `tasks` binary.
     fn run(cwd: &Path, env: &[(String, String)], args: &[&str]) -> (i32, String, String) {
-        let done = Command::new(crate::review_binary())
-            .args(args)
-            .current_dir(cwd)
-            .envs(env.iter().map(|(k, v)| (k, v)))
-            .env("SF_TASKS_CLI", tasks_binary())
-            .env_remove("TASKS_SESSION")
-            .output()
-            .unwrap();
+        let done = tasks::sys::output(
+            Command::new(crate::review_binary())
+                .args(args)
+                .current_dir(cwd)
+                .envs(env.iter().map(|(k, v)| (k, v)))
+                .env("SF_TASKS_CLI", tasks_binary())
+                .env_remove("TASKS_SESSION"),
+        )
+        .unwrap();
         (
             done.status.code().unwrap(),
             String::from_utf8_lossy(&done.stdout).to_string(),

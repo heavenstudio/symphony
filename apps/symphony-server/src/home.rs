@@ -16,11 +16,10 @@ use std::fmt;
 use std::fs::{self, File, OpenOptions};
 use std::io::{ErrorKind, Read, Seek, SeekFrom};
 use std::net::{SocketAddr, TcpStream};
-use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
+use tasks::sys::{Child, Command, Stdio};
 
 /// The one server's folder in the git common dir.
 pub const FOLDER: &str = "sf-symphony";
@@ -360,16 +359,9 @@ impl Home {
         let temp = self.root.join("artifacts/docs-tmp");
         fs::create_dir_all(&temp).map_err(io("could not make a temp directory in", &self.root))?;
         command.env("TMPDIR", temp);
-        // SAFETY: setsid is async-signal-safe. A session of its own: no terminal's hangup reaches it,
-        // and it outlives the starter, reaped by init.
-        unsafe {
-            command.pre_exec(|| {
-                if libc::setsid() == -1 {
-                    return Err(std::io::Error::last_os_error());
-                }
-                Ok(())
-            });
-        }
+        // A session of its own: no terminal's hangup reaches it, and it outlives the starter, reaped
+        // by init.
+        command.new_session();
         let mut child = crate::cli::startup("spawn detached server", || command.spawn())
             .map_err(io("could not start", &self.exe))?;
         let pid = i64::from(child.id());

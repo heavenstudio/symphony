@@ -3,11 +3,11 @@
 use std::fs::{self, File};
 use std::io::{Read, Seek};
 use std::os::unix::fs::OpenOptionsExt;
-use std::os::unix::process::CommandExt;
 use std::path::PathBuf;
-use std::process::{Child, Command, Output, Stdio};
+use std::process::Output;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant, SystemTime};
+use tasks::sys::{Child, Command, Stdio};
 
 /// The arguments of our serve process in ps's unquoted command line. The executable's path may
 /// contain spaces too, so recognize its basename before reading any argument.
@@ -110,7 +110,7 @@ impl Drop for CommandGroup {
     }
 }
 
-fn capture() -> std::io::Result<File> {
+pub(crate) fn capture() -> std::io::Result<File> {
     static NEXT: AtomicUsize = AtomicUsize::new(0);
     let path = std::env::temp_dir().join(format!(
         "sf-command-{}-{}",
@@ -127,7 +127,7 @@ fn capture() -> std::io::Result<File> {
     Ok(file)
 }
 
-fn captured(mut file: File) -> std::io::Result<Vec<u8>> {
+pub(crate) fn captured(mut file: File) -> std::io::Result<Vec<u8>> {
     let length = file.metadata()?.len();
     file.rewind()?;
     let mut bytes = Vec::new();
@@ -157,17 +157,9 @@ pub(crate) fn output_while(
 ) -> Result<Output, String> {
     let out = capture().map_err(|e| e.to_string())?;
     let err = capture().map_err(|e| e.to_string())?;
-    // SAFETY: setsid is async-signal-safe. The resulting group belongs only to this child.
-    unsafe {
-        command.pre_exec(|| {
-            if libc::setsid() == -1 {
-                Err(std::io::Error::last_os_error())
-            } else {
-                Ok(())
-            }
-        });
-    }
+    // A session of its own: the resulting group belongs only to this child.
     let child = command
+        .new_session()
         .stdin(Stdio::null())
         .stdout(out.try_clone().map_err(|e| e.to_string())?)
         .stderr(err.try_clone().map_err(|e| e.to_string())?)
@@ -258,16 +250,14 @@ mod tests {
 
     #[test]
     fn a_command_answers_when_it_ends_though_a_descendant_holds_its_output() {
+        use std::io::{ErrorKind, Write};
         use std::os::fd::AsRawFd;
-        use std::os::unix::net::UnixStream;
 
-        // The descendant reads its end of this pair, which only the test's end finishes: it holds
-        // the command's stdout and stderr until something ends it.
-        let (test_end, held) = UnixStream::pair().unwrap();
+        // The descendant reads this pipe, which only the test's end finishes: it holds the
+        // command's stdout and stderr until something ends it. A child another test spawns holds
+        // neither end (tasks::sys::pipe).
+        let (held, mut test_end) = tasks::sys::pipe().unwrap();
         let timeout = Duration::from_secs(30);
-        // Set while both ends are open: macOS refuses a socket option (EINVAL) once the other end
-        // has closed, which is what the read below waits to see.
-        test_end.set_read_timeout(Some(timeout)).unwrap();
         let fd = held.as_raw_fd();
         let mut command = Command::new("sh");
         command.args([
@@ -276,16 +266,8 @@ mod tests {
             "fixture",
             &fd.to_string(),
         ]);
-        // SAFETY: fd belongs to held, kept alive through spawn; only its CLOEXEC flag changes.
-        unsafe {
-            command.pre_exec(move || {
-                if libc::fcntl(fd, libc::F_SETFD, 0) == -1 {
-                    Err(std::io::Error::last_os_error())
-                } else {
-                    Ok(())
-                }
-            });
-        }
+        // fd belongs to held, kept alive through spawn; the child gets it at that number.
+        command.pass_fd(fd);
         let (send, answer) = std::sync::mpsc::channel();
         std::thread::spawn(move || send.send(output_within(command, timeout)));
         // The command's own deadline: past it, only the test's end closing would let the call go.
@@ -295,19 +277,28 @@ mod tests {
             .unwrap();
         assert!(out.status.success());
         assert_eq!(out.stdout, b"said");
-        // The owned group ended the descendant: the last other end closes, and this one reads EOF.
+        // The owned group ended the descendant: the last reader closes, and a write here fails.
         drop(held);
-        assert_eq!((&test_end).read(&mut [0]).unwrap(), 0);
+        let stopped = Instant::now();
+        loop {
+            match test_end.write(&[0]) {
+                Err(error) if error.kind() == ErrorKind::BrokenPipe => break,
+                Ok(_) => {
+                    assert!(stopped.elapsed() < timeout, "the descendant still reads");
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+                other => panic!("group shutdown: {other:?}"),
+            }
+        }
     }
 
     #[test]
     fn cancellation_closes_the_descriptors_of_the_entire_owned_group() {
         use std::io::ErrorKind;
         use std::os::fd::AsRawFd;
-        use std::os::unix::net::UnixStream;
 
-        let (reader, writer) = UnixStream::pair().unwrap();
-        reader.set_nonblocking(true).unwrap();
+        let (reader, writer) = tasks::sys::pipe().unwrap();
+        tasks::sys::set_nonblocking(&reader, true).unwrap();
         let fd = writer.as_raw_fd();
         let mut command = Command::new("sh");
         command.args([
@@ -316,16 +307,8 @@ mod tests {
             "fixture",
             &fd.to_string(),
         ]);
-        // SAFETY: fd belongs to writer, kept alive through spawn; only its CLOEXEC flag changes.
-        unsafe {
-            command.pre_exec(move || {
-                if libc::fcntl(fd, libc::F_SETFD, 0) == -1 {
-                    Err(std::io::Error::last_os_error())
-                } else {
-                    Ok(())
-                }
-            });
-        }
+        // fd belongs to writer, kept alive through spawn; the child gets it at that number.
+        command.pass_fd(fd);
         let mut ready = false;
         let result = output_while(
             command,
@@ -357,7 +340,7 @@ mod tests {
                 Err(error) if error.kind() == ErrorKind::WouldBlock => {
                     assert!(
                         stopped.elapsed() < Duration::from_secs(5),
-                        "a surviving descendant would hold this socket open"
+                        "a surviving descendant would hold this pipe open"
                     );
                     std::thread::sleep(Duration::from_millis(10));
                 }

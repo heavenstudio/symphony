@@ -2,9 +2,9 @@
 //! data. It is read from the `.git` files themselves, with no `git` process, as a hook that runs on
 //! every tool call needs; a layout it does not know asks git.
 
+use crate::sys::Command;
 use std::fmt;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 /// `cwd` is in no git repository.
 #[derive(Debug, Clone, PartialEq)]
@@ -49,12 +49,12 @@ fn ask_git(cwd: &Path) -> Result<PathBuf, NotARepository> {
             cwd.display()
         ))
     };
-    let out = Command::new("git")
-        .arg("-C")
-        .arg(cwd)
-        .args(["rev-parse", "--path-format=absolute", "--git-common-dir"])
-        .output()
-        .map_err(|problem| not(problem.to_string()))?;
+    let out = crate::sys::output(Command::new("git").arg("-C").arg(cwd).args([
+        "rev-parse",
+        "--path-format=absolute",
+        "--git-common-dir",
+    ]))
+    .map_err(|problem| not(problem.to_string()))?;
     if !out.status.success() {
         return Err(not(String::from_utf8_lossy(&out.stderr).trim().to_string()));
     }

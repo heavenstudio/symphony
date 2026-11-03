@@ -16,7 +16,8 @@ use std::cell::RefCell;
     feature = "page-review",
     feature = "page-queue"
 ))]
-use std::{pin::pin, rc::Rc};
+use std::pin::pin;
+use std::rc::Rc;
 
 use dioxus::prelude::*;
 use futures_channel::mpsc::UnboundedSender;
@@ -35,6 +36,8 @@ use wasm_bindgen_futures::JsFuture;
 use web_sys::{Event, EventSource, MessageEvent};
 
 pub(crate) const FEED_NOTICE: &str = "Reconnecting: the board may be out of date";
+const REMOVED_DOCUMENT_NOTICE: &str =
+    "This document was removed. Your draft is kept on this device.";
 #[cfg(any(
     feature = "page-tasks",
     feature = "page-review",
@@ -97,7 +100,7 @@ pub fn App() -> Element {
         #[cfg(feature = "page-board")]
         "tasks" => rsx! { crate::board_live::TasksPage { key: "{current.scope}" } },
         #[cfg(feature = "page-docs")]
-        path if path.starts_with("docs") => rsx! { main {
+        path if path.starts_with("docs") => rsx! { main { "data-notices": "",
             if current.path.ends_with(".md") {
                 crate::docs_live::DocumentPage { key: "{current.scope}/{current.path}", path: current.path.clone(), scope: current.scope.clone() }
             } else {
@@ -120,11 +123,8 @@ pub fn App() -> Element {
         _ => rsx! { p { "Loading page…" } },
     };
     rsx! {
-        if !SERVER_NOTICE.read().is_empty() {
-            p { role: "status", class: "server-notice", "{SERVER_NOTICE}" }
-        }
         crate::frame::Frame { route: current.clone(),
-        SuspenseBoundary { fallback: |_| rsx! { main { p { "Loading page…" } } },
+        SuspenseBoundary { fallback: |_| rsx! { main { "data-notices": "", p { "Loading page…" } PageNotices { reconnecting: false } } },
         {page}
         }
         }
@@ -142,6 +142,127 @@ fn MediaLayer() -> Element {
     }
     #[cfg(not(any(feature = "page-tasks", feature = "page-docs", feature = "page-review")))]
     rsx! {}
+}
+
+/// One out-of-flow stack for feed, fetch and server messages. Its matching end
+/// reserve cannot shrink during this mount, so clearing an error at page end
+/// cannot clamp the reader's scroll position.
+#[component]
+pub(crate) fn PageNotices(
+    reconnecting: bool,
+    #[props(default = FEED_NOTICE.to_owned())] reconnect: String,
+    #[props(default)] error: String,
+    #[props(default)] document_removed: bool,
+) -> Element {
+    let server = SERVER_NOTICE.read().clone();
+    let controller = use_hook(|| Rc::new(RefCell::new(None::<NoticeGeometry>)));
+    use_effect(move || {
+        if controller.borrow().is_none() {
+            *controller.borrow_mut() = NoticeGeometry::new();
+        }
+    });
+    let visible = reconnecting || !error.is_empty() || !server.is_empty() || document_removed;
+    rsx! {
+        div { class: "stale page-notices notice-stack", hidden: !visible,
+            if reconnecting { p { class: "pill wait", role: "status", "{reconnect}" } }
+            if !error.is_empty() { p { class: "pill wait", role: "alert", "{error}" } }
+            if document_removed { p { class: "pill wait document-removed", role: "alert", "{REMOVED_DOCUMENT_NOTICE}" } }
+            if !server.is_empty() { p { class: "pill wait server-notice", role: "status", "{server}" } }
+        }
+        div { class: "feed-notice-space page-notice-reserve notice-stack", "aria-hidden": "true",
+            p { class: "pill", "{reconnect}" }
+            if !error.is_empty() { p { class: "pill", "{error}" } }
+            if document_removed { p { class: "pill", "{REMOVED_DOCUMENT_NOTICE}" } }
+            if !server.is_empty() { p { class: "pill", "{server}" } }
+        }
+    }
+}
+
+/// Own the measurement and window listener for this page, not the persistent
+/// panel. Wrapped messages and viewport changes move toasts above the actual
+/// notice stack, rather than guessing how many text lines it occupies.
+struct NoticeGeometry {
+    observer: web_sys::ResizeObserver,
+    _resized: Closure<dyn FnMut(js_sys::Array)>,
+    window_resized: Closure<dyn FnMut(Event)>,
+    root: web_sys::HtmlElement,
+}
+
+impl NoticeGeometry {
+    fn new() -> Option<Self> {
+        let window = web_sys::window()?;
+        let document = window.document()?;
+        let notice = document.query_selector(".page-notices").ok()??;
+        let reserve = document
+            .query_selector(".page-notice-reserve")
+            .ok()??
+            .dyn_into::<web_sys::HtmlElement>()
+            .ok()?;
+        let root = document
+            .document_element()?
+            .dyn_into::<web_sys::HtmlElement>()
+            .ok()?;
+        let maximum = Cell::new(0.0_f64);
+        let (r, n, w, css) = (
+            reserve.clone(),
+            notice.clone(),
+            window.clone(),
+            root.clone(),
+        );
+        let sync: Rc<dyn Fn()> = Rc::new(move || {
+            let height = r.get_bounding_client_rect().height();
+            if height > maximum.get() {
+                maximum.set(height);
+                let _ = r.style().set_property("min-height", &format!("{height}px"));
+            }
+            let box_ = n.get_bounding_client_rect();
+            let bottom = if box_.height() > 0.0 {
+                w.inner_height()
+                    .ok()
+                    .and_then(|v| v.as_f64())
+                    .map_or(66.0, |height| height - box_.top() + 8.0)
+            } else {
+                66.0
+            };
+            let _ = css
+                .style()
+                .set_property("--notice-toast-bottom", &format!("{bottom}px"));
+        });
+        let resized = {
+            let sync = sync.clone();
+            Closure::new(move |_: js_sys::Array| sync())
+        };
+        let observer = web_sys::ResizeObserver::new(resized.as_ref().unchecked_ref()).ok()?;
+        observer.observe(&notice);
+        observer.observe(&reserve);
+        let window_resized = {
+            let sync = sync.clone();
+            Closure::new(move |_: Event| sync())
+        };
+        window
+            .add_event_listener_with_callback("resize", window_resized.as_ref().unchecked_ref())
+            .ok()?;
+        sync();
+        Some(Self {
+            observer,
+            _resized: resized,
+            window_resized,
+            root,
+        })
+    }
+}
+
+impl Drop for NoticeGeometry {
+    fn drop(&mut self) {
+        self.observer.disconnect();
+        if let Some(window) = web_sys::window() {
+            let _ = window.remove_event_listener_with_callback(
+                "resize",
+                self.window_resized.as_ref().unchecked_ref(),
+            );
+        }
+        let _ = self.root.style().remove_property("--notice-toast-bottom");
+    }
 }
 
 #[cfg(feature = "page-review")]
@@ -248,9 +369,8 @@ fn BoardPage(route: Memo<String>, scope: String) -> Element {
         rsx! { p { class: "lead", {trouble().map_or_else(|| "Loading the board…".into(), |why| format!("The board could not be loaded: {why}. Trying again."))} } }
     };
     rsx! { main { "data-ready": "board", "data-feed": if stale() { "stale" } else { "live" },
-        if stale() { p { class: "pill wait stale", {FEED_NOTICE} } }
         {content}
-        p { class: "pill feed-notice-space", "aria-hidden": "true", {FEED_NOTICE} }
+        PageNotices { reconnecting: stale() }
     } }
 }
 

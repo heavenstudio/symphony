@@ -3,8 +3,8 @@ use super::callbacks::Listener;
 use super::common::Fixture;
 use serde_json::json;
 use std::os::unix::fs::MetadataExt;
-use std::process::Command;
 use tasks::NewTask;
+use tasks::sys::Command;
 
 const EMPTY_PULL: &str = "PULL executing=0 ready_unstaffed=0 in_progress_orphaned=0 review_unreviewed=0 landed_open=0 idle=0";
 const BUSY_PULL: &str = "PULL executing=1 ready_unstaffed=0 in_progress_orphaned=0 review_unreviewed=0 landed_open=0 idle=0";
@@ -19,7 +19,7 @@ impl CommandDirectory {
             .and_then(|s| s.trim().parse::<u32>().ok());
         let _ = std::fs::remove_file(file);
         if let Some(pid) = pid.filter(|pid| *pid > 0) {
-            let _ = Command::new("/bin/kill")
+            let _ = std::process::Command::new("/bin/kill")
                 .args(["-TERM", &pid.to_string()])
                 .stdout(std::process::Stdio::null())
                 .stderr(std::process::Stdio::null())
@@ -74,14 +74,14 @@ fn a_stale_child_running_a_test_leaves_idle_callback_rows_unchanged() {
         std::fs::create_dir_all(&dir).unwrap();
         let _directory = CommandDirectory(dir.clone());
         assert!(
-            Command::new("git")
+            std::process::Command::new("git")
                 .args(["init", "-q"])
                 .arg(&dir)
                 .status()
                 .unwrap()
                 .success()
         );
-        let output = Command::new(std::env::current_exe().unwrap())
+        let output = tasks::sys::output(Command::new(std::env::current_exe().unwrap())
             .args([
                 "--exact",
                 "quiet_callbacks::a_stale_child_running_a_test_leaves_idle_callback_rows_unchanged",
@@ -93,7 +93,7 @@ fn a_stale_child_running_a_test_leaves_idle_callback_rows_unchanged() {
             .env_remove("GIT_COMMON_DIR")
             .env(CHILD, "1")
             .env("HERDR_BIN", "/usr/bin/false")
-            .output()
+            )
             .unwrap();
         assert!(output.status.success(), "{output:?}");
         assert!(String::from_utf8_lossy(&output.stdout).contains("1 passed"));
@@ -645,32 +645,33 @@ fn due_ticks_probe_once_and_idle_cursor_changes_do_not_probe() {
         )
         .unwrap();
     let dispatch = || {
-        let output = Command::new(env!("CARGO_BIN_EXE_tasks"))
-            .args([
-                "callback",
-                &format!("uds:{}", o.path.display()),
-                "--as",
-                &orch,
-            ])
-            .current_dir(&dir)
-            .env_remove("GIT_DIR")
-            .env_remove("GIT_WORK_TREE")
-            .env_remove("GIT_COMMON_DIR")
-            .env("TASKS_SERVER", f.store.client().addr())
-            .env("TASKS_DATABASE", f.store.client().database())
-            .env("TASKS_NOW", f.now().to_string())
-            .env("TASKS_SWEEP", "off")
-            .env("HERDR_BIN", &herdr)
-            .env("CODEX_THREAD_ID", "")
-            .env("CLAUDE_SESSION_ID", "")
-            .env("PROBE_LOG", &log)
-            .env("PROBE_GIT_LOG", &git_log)
-            .env(
-                "PATH",
-                format!("{}:{}", dir.display(), std::env::var("PATH").unwrap()),
-            )
-            .output()
-            .unwrap();
+        let output = tasks::sys::output(
+            Command::new(env!("CARGO_BIN_EXE_tasks"))
+                .args([
+                    "callback",
+                    &format!("uds:{}", o.path.display()),
+                    "--as",
+                    &orch,
+                ])
+                .current_dir(&dir)
+                .env_remove("GIT_DIR")
+                .env_remove("GIT_WORK_TREE")
+                .env_remove("GIT_COMMON_DIR")
+                .env("TASKS_SERVER", f.store.client().addr())
+                .env("TASKS_DATABASE", f.store.client().database())
+                .env("TASKS_NOW", f.now().to_string())
+                .env("TASKS_SWEEP", "off")
+                .env("HERDR_BIN", &herdr)
+                .env("CODEX_THREAD_ID", "")
+                .env("CLAUDE_SESSION_ID", "")
+                .env("PROBE_LOG", &log)
+                .env("PROBE_GIT_LOG", &git_log)
+                .env(
+                    "PATH",
+                    format!("{}:{}", dir.display(), std::env::var("PATH").unwrap()),
+                ),
+        )
+        .unwrap();
         assert!(output.status.success(), "{output:?}");
     };
     let probes = || std::fs::read_to_string(&log).unwrap().lines().count();
@@ -1302,17 +1303,18 @@ fn codex_steering_requires_opt_in_and_preserves_queue_and_retry_without_a_live_d
     std::fs::create_dir_all(&dir).unwrap();
     let directory = CommandDirectory(dir.clone());
     let config = |args: &[&str]| {
-        let output = Command::new("git")
-            .args(args)
-            .current_dir(&dir)
-            .env_remove("GIT_DIR")
-            .env_remove("GIT_WORK_TREE")
-            .env_remove("GIT_COMMON_DIR")
-            .env_remove("GIT_CONFIG_COUNT")
-            .env("GIT_CONFIG_GLOBAL", "/dev/null")
-            .env("GIT_CONFIG_NOSYSTEM", "true")
-            .output()
-            .unwrap();
+        let output = tasks::sys::output(
+            Command::new("git")
+                .args(args)
+                .current_dir(&dir)
+                .env_remove("GIT_DIR")
+                .env_remove("GIT_WORK_TREE")
+                .env_remove("GIT_COMMON_DIR")
+                .env_remove("GIT_CONFIG_COUNT")
+                .env("GIT_CONFIG_GLOBAL", "/dev/null")
+                .env("GIT_CONFIG_NOSYSTEM", "true"),
+        )
+        .unwrap();
         assert!(output.status.success(), "{output:?}");
     };
     config(&["init", "-q"]);
@@ -1361,11 +1363,12 @@ done
     let path = format!("{}:{}", dir.display(), std::env::var("PATH").unwrap());
     // Initialize the prepared interpreter and the fixture's jq before the transport starts;
     // every delivery below still has the production deadline and exact argument assertions.
-    let ready = Command::new(&fake)
-        .arg("--fixture-ready")
-        .env("PATH", &path)
-        .output()
-        .unwrap();
+    let ready = tasks::sys::output(
+        Command::new(&fake)
+            .arg("--fixture-ready")
+            .env("PATH", &path),
+    )
+    .unwrap();
     assert!(ready.status.success(), "{ready:?}");
     assert_eq!(ready.stdout, b"\"ready\"\n");
     let command = |state: &str, args: &[&str]| {
@@ -1398,7 +1401,7 @@ done
         command
     };
     let run = |state: &str, args: &[&str]| {
-        let output = command(state, args).output().unwrap();
+        let output = tasks::sys::output(&mut command(state, args)).unwrap();
         assert!(
             output.status.success(),
             "{}",
@@ -1487,8 +1490,8 @@ done
         "stdout-held",
         &["agent-send", &worker, "inherited stdout", "--as", &sender],
     )
-    .stdout(std::process::Stdio::null())
-    .stderr(std::process::Stdio::null())
+    .stdout(tasks::sys::Stdio::null())
+    .stderr(tasks::sys::Stdio::null())
     .spawn()
     .unwrap();
     let began = std::time::Instant::now();
@@ -1507,7 +1510,7 @@ done
     assert!(status.success());
     let pid = std::fs::read_to_string(dir.join("held-child.pid")).unwrap();
     assert!(
-        Command::new("/bin/kill")
+        std::process::Command::new("/bin/kill")
             .args(["-0", pid.trim()])
             .status()
             .unwrap()

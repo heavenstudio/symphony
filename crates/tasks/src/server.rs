@@ -10,13 +10,12 @@
 
 use crate::port::{self, NotStarted, Start};
 use crate::rpc;
-use crate::sys::{new_session, pid_alive, terminate};
+use crate::sys::{Command, output, pid_alive, terminate};
 use std::fmt;
 use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom};
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
 /// The SurrealDB the board runs on: `tools/surreal.sh`'s `VERSION`, which fetches it.
@@ -178,10 +177,7 @@ impl Home {
     /// its answer and its record): it holds the data's lock, so no other could start. Its address is the
     /// one its command line binds; its version is taken as the pinned one, which started it.
     fn unrecorded(&self) -> Option<Running> {
-        let out = Command::new("ps")
-            .args(["-ww", "-axo", "pid=,command="])
-            .output()
-            .ok()?;
+        let out = output(Command::new("ps").args(["-ww", "-axo", "pid=,command="])).ok()?;
         let data = self.data();
         String::from_utf8_lossy(&out.stdout)
             .lines()
@@ -239,9 +235,8 @@ impl Home {
         if !pid_alive(pid) {
             return false;
         }
-        let Ok(out) = Command::new("ps")
-            .args(["-ww", "-o", "command=", "-p", &pid.to_string()])
-            .output()
+        let Ok(out) =
+            output(Command::new("ps").args(["-ww", "-o", "command=", "-p", &pid.to_string()]))
         else {
             return false;
         };
@@ -297,17 +292,17 @@ impl Home {
         let started = port::start_on_free_port(port::ATTEMPTS, until, |reserved| {
             let addr = reserved.to_string();
             let from = fs::metadata(&log).map_or(0, |meta| meta.len());
-            let out = new_session(&mut Command::new("/bin/sh"))
-                .arg("-c")
-                .arg(START)
-                .arg(&self.surreal)
-                .arg(&addr)
-                .arg(self.data())
-                .arg(&log)
-                .stdin(Stdio::null())
-                .stderr(Stdio::null())
-                .output()
-                .map_err(io("could not start", &self.surreal))?;
+            let out = output(
+                Command::new("/bin/sh")
+                    .new_session()
+                    .arg("-c")
+                    .arg(START)
+                    .arg(&self.surreal)
+                    .arg(&addr)
+                    .arg(self.data())
+                    .arg(&log),
+            )
+            .map_err(io("could not start", &self.surreal))?;
             let not_started =
                 || ServerError::NotUp(format!("{} was not started", self.surreal.display()));
             let pid: i64 = String::from_utf8_lossy(&out.stdout)
@@ -317,7 +312,7 @@ impl Home {
             let child = u32::try_from(pid).map_err(|_| not_started())?;
             loop {
                 if rpc::healthy(&addr) {
-                    match port::listens(child, reserved) {
+                    match port::listens(child, reserved, output) {
                         Ok(true) => {
                             return Ok(Start::Up(Running {
                                 addr,
@@ -407,7 +402,7 @@ fn owns(running: &Running) -> Result<bool, ServerError> {
     };
     let pid = u32::try_from(running.pid).map_err(|problem| failed(&problem))?;
     let addr: SocketAddr = running.addr.parse().map_err(|problem| failed(&problem))?;
-    port::listens(pid, addr).map_err(|problem| failed(&problem))
+    port::listens(pid, addr, output).map_err(|problem| failed(&problem))
 }
 
 /// Whether `version` is older than the pinned SurrealDB, release by release (`3.10.0` after `3.9.1`); one

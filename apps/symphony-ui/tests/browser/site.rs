@@ -8,12 +8,12 @@
 //! (the stand-in pings every open stream every `ping_ms` its board names, as the server does,
 //! until it is told to fall silent).
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{Shutdown, SocketAddr, TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Condvar, Mutex};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
@@ -46,6 +46,8 @@ struct Shared {
     board_delay: Duration,
     /// How many of the next feed requests are answered 500.
     failing_feeds: usize,
+    failing_routes: BTreeSet<String>,
+    held_routes: BTreeSet<String>,
     /// Each feed stream ends as soon as it opens.
     ending_feeds: bool,
     /// The feed's pings have stopped, its streams left open.
@@ -57,6 +59,7 @@ pub struct Site {
     files: Arc<HashMap<String, Body>>,
     shared: Arc<Mutex<Shared>>,
     stop: Arc<AtomicBool>,
+    released: Arc<Condvar>,
     accept: Option<JoinHandle<()>>,
     pinger: Option<JoinHandle<()>>,
 }
@@ -125,11 +128,15 @@ impl Site {
             build: build_of(&shell),
             board_delay: Duration::ZERO,
             failing_feeds: 0,
+            failing_routes: BTreeSet::new(),
+            held_routes: BTreeSet::new(),
             ending_feeds: false,
             silent: false,
         }));
         let stop = Arc::new(AtomicBool::new(false));
+        let released = Arc::new(Condvar::new());
         let accept = {
+            let released = released.clone();
             let (files, shared, stop) = (files.clone(), shared.clone(), stop.clone());
             std::thread::spawn(move || {
                 for stream in listener.incoming() {
@@ -137,8 +144,9 @@ impl Site {
                         break;
                     }
                     let Ok(stream) = stream else { continue };
-                    let (files, shared) = (files.clone(), shared.clone());
-                    std::thread::spawn(move || serve(stream, &files, &shared));
+                    let (files, shared, released) =
+                        (files.clone(), shared.clone(), released.clone());
+                    std::thread::spawn(move || serve(stream, &files, &shared, &released));
                 }
             })
         };
@@ -151,6 +159,7 @@ impl Site {
             files,
             shared,
             stop,
+            released,
             accept: Some(accept),
             pinger: Some(pinger),
         }
@@ -242,6 +251,35 @@ impl Site {
         self.shared.lock().unwrap().failing_feeds = count;
     }
 
+    /// Fail the actual snapshot route as well as, or instead of, its event stream.
+    pub fn fail_route(&self, path: &str, fail: bool) {
+        let mut shared = self.shared.lock().unwrap();
+        if fail {
+            shared.failing_routes.insert(path.to_owned());
+        } else {
+            shared.failing_routes.remove(path);
+        }
+    }
+
+    /// Hold a real request until the test releases it, without a timing sleep.
+    pub fn hold_route(&self, path: &str, hold: bool) {
+        let mut shared = self.shared.lock().unwrap();
+        if hold {
+            shared.held_routes.insert(path.to_owned());
+        } else {
+            shared.held_routes.remove(path);
+            self.released.notify_all();
+        }
+    }
+
+    pub fn server_notice(&self, message: &str) {
+        self.send(&format!(
+            "event: {}\ndata: {}\n\n",
+            symphony_api::SERVER_EVENT,
+            serde_json::json!(message)
+        ));
+    }
+
     /// End every open feed stream, as a server that stops does.
     pub fn drop_feeds(&self) {
         for stream in self.shared.lock().unwrap().feeds.drain(..) {
@@ -277,6 +315,8 @@ impl Site {
 impl Drop for Site {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::SeqCst);
+        self.shared.lock().unwrap().held_routes.clear();
+        self.released.notify_all();
         let _ = TcpStream::connect(self.addr); // wakes the accept loop so it sees the stop
         if let Some(accept) = self.accept.take() {
             let _ = accept.join();
@@ -417,7 +457,12 @@ fn fnv1a(bytes: &[u8]) -> u64 {
 }
 
 /// Answer the requests of one connection until it closes, or hand it to the feed.
-fn serve(stream: TcpStream, files: &HashMap<String, Body>, shared: &Mutex<Shared>) {
+fn serve(
+    stream: TcpStream,
+    files: &HashMap<String, Body>,
+    shared: &Mutex<Shared>,
+    released: &Condvar,
+) {
     let mut reader = BufReader::new(match stream.try_clone() {
         Ok(stream) => stream,
         Err(_) => return,
@@ -466,6 +511,22 @@ fn serve(stream: TcpStream, files: &HashMap<String, Body>, shared: &Mutex<Shared
                     serde_json::from_slice(&bytes).expect("client JSON post"),
                 ));
             }
+        }
+        {
+            let mut pending = shared.lock().unwrap();
+            while pending.held_routes.contains(&path) {
+                pending = released.wait(pending).unwrap();
+            }
+        }
+        if shared.lock().unwrap().failing_routes.contains(&path) {
+            let error = br#"{"error":"Board snapshot unavailable"}"#;
+            let _ = write!(
+                out,
+                "HTTP/1.1 500 Internal Server Error\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                error.len()
+            );
+            let _ = out.write_all(error);
+            return;
         }
         if path == symphony_api::FEED_PATH {
             let mut shared = shared.lock().unwrap();

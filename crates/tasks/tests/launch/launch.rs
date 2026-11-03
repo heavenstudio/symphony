@@ -9,7 +9,7 @@ use std::fs;
 use std::path::Path;
 use tasks::Error;
 use tasks::launch::herdr::Herdr;
-use tasks::launch::{Ask, PROMPT_ENTERS, PROMPT_WAIT, START_TRIES};
+use tasks::launch::{Ask, LaunchError, PROMPT_ENTERS, PROMPT_WAIT, START_TRIES};
 
 fn flag_value<'a>(call: &'a [String], flag: &str) -> &'a str {
     let at = call
@@ -929,13 +929,38 @@ fn launch_through(w: &World, herdr: &Hooked<'_>) -> tasks::launch::Started {
     tasks::launch::launch(w.store(), herdr, &w.machine(), &w.ask("sim/jump")).unwrap()
 }
 
+/// A failed confirmation must undo every resource the new launch owned.
+fn refused_launch(w: &World, result: Result<tasks::launch::Started, Error>) -> String {
+    let why = refused(result);
+    let [start] = <[_; 1]>::try_from(w.calls_of(&["agent", "start"])).unwrap();
+    let pane = flag_value(&start, "--pane").to_string();
+    assert_eq!(
+        why,
+        format!("could not confirm that the agent in pane {pane} took its prompt")
+    );
+    assert!(!w.has_pane(&pane));
+    assert_eq!(w.calls_of(&["pane", "close", &pane]).len(), 1);
+    assert_eq!(w.store().task_sessions("sim/jump").unwrap(), vec![]);
+    assert!(!w.wt.join("sim-jump").exists());
+    let workers: Vec<String> = w
+        .store()
+        .sessions()
+        .unwrap()
+        .into_iter()
+        .filter(|s| s.row.kind == "worker")
+        .map(|s| s.health.as_str().to_string())
+        .collect();
+    assert_eq!(workers, ["left"]);
+    pane
+}
+
 #[test]
-fn a_prompt_still_there_after_the_last_enter_is_said_and_the_launch_stands() {
+fn a_prompt_still_there_after_the_last_enter_refuses_the_launch_and_cleans_up() {
     let mut w = World::new();
     w.set("FAKE_HERDR_STUCK", "1");
     let enters = Cell::new(0);
     let herdr = Hooked {
-        // an enter that sends nothing: the text stays where it is
+        // An enter that sends nothing: the text stays where it is.
         instead: Box::new(|args| {
             (args[..2] == ["pane", "send-keys"]).then(|| {
                 enters.set(enters.get() + 1);
@@ -944,65 +969,153 @@ fn a_prompt_still_there_after_the_last_enter_is_said_and_the_launch_stands() {
         }),
         ..Hooked::new(&w)
     };
-    let s = launch_through(&w, &herdr);
-    assert!(s.stuck);
+    let pane = refused_launch(
+        &w,
+        tasks::launch::launch(w.store(), &herdr, &w.machine(), &w.ask("sim/jump")),
+    );
     assert_eq!(enters.get(), PROMPT_ENTERS);
     assert_eq!(
-        w.calls_of(&["pane", "read", &s.row.pane]).len(),
+        w.calls_of(&["pane", "read", &pane]).len(),
         PROMPT_ENTERS + 1
     );
     assert_eq!(w.sleeps.borrow().len(), PROMPT_ENTERS + 1);
-    assert_eq!(w.store().task_sessions("sim/jump").unwrap(), vec![s.row]);
 }
-
 #[test]
-fn an_enter_herdr_refuses_leaves_the_prompt_said_to_be_there() {
+fn an_enter_herdr_refuses_fails_the_launch_without_recording_a_session() {
     let mut w = World::new();
     w.set("FAKE_HERDR_STUCK", "1");
     w.set("FAKE_HERDR_FAIL", "pane send-keys");
-    let s = w.launch("sim/jump");
-    assert!(s.stuck);
+    refused_launch(&w, w.try_launch(&w.ask("sim/jump")));
     assert_eq!(w.calls_of(&["pane", "send-keys"]).len(), 1);
 }
-
 #[test]
-fn a_missing_prompt_or_a_look_herdr_cannot_answer_counts_as_taken() {
-    for fail in ["agent list", "pane read", "empty pane"] {
-        let mut w = World::new();
-        w.set("FAKE_HERDR_STUCK", "1");
-        w.set("FAKE_HERDR_FAIL", fail);
-        let herdr = Hooked {
-            instead: Box::new(move |args| {
-                (fail == "empty pane" && args[..2] == ["pane", "read"]).then(|| Ok(String::new()))
-            }),
-            after: Box::new(|args| {
-                if args[..2] == ["agent", "prompt"] {
-                    w.edit_panes(|panes| {
-                        panes.last_mut().unwrap()["agent_session"] = serde_json::json!({
-                            "agent": "codex", "kind": "id", "value": "ready-thread"
+fn missing_prompt_text_or_unreadable_observations_cannot_confirm_either_agent() {
+    for kind in ["claude", "codex"] {
+        for fail in [
+            "agent list",
+            "pane read",
+            "empty pane",
+            "frozen pane",
+            "other input",
+        ] {
+            let mut w = World::new();
+            w.set("FAKE_HERDR_STUCK", "1");
+            w.set("FAKE_HERDR_FAIL", fail);
+            let herdr = Hooked {
+                instead: Box::new(move |args| {
+                    if args[..2] != ["pane", "read"] {
+                        return None;
+                    }
+                    let screen = match fail {
+                        "empty pane" => "",
+                        "frozen pane" => "Claude\n0 tokens\n> ",
+                        "other input" => "> unrelated text",
+                        _ => return None,
+                    };
+                    Some(Ok(screen.into()))
+                }),
+                after: Box::new(|args| {
+                    if args[..2] == ["agent", "prompt"] {
+                        // A conversation id alone is not evidence that a turn began.
+                        w.edit_panes(|panes| {
+                            panes.last_mut().unwrap()["agent_session"] = json!({
+                                "agent": kind, "kind": "id", "value": "ready-thread"
+                            });
                         });
-                    });
-                }
-            }),
-            ..Hooked::new(&w)
-        };
-        let s = launch_through(&w, &herdr);
-        assert!(!s.stuck, "{fail}");
-        assert_eq!(
-            s.row.claude_session,
-            if fail == "agent list" {
-                "codex:"
-            } else {
-                "codex:ready-thread"
-            },
-            "{fail}"
-        );
-        assert_eq!(w.calls_of(&["agent", "list"]).len(), 1, "{fail}");
-        assert_eq!(
-            w.calls_of(&["pane", "send-keys"]),
-            Vec::<Vec<String>>::new(),
-            "{fail}"
-        );
+                    }
+                }),
+                ..Hooked::new(&w)
+            };
+            let ask = Ask {
+                kind: Some(kind.into()),
+                ..w.ask("sim/jump")
+            };
+            refused_launch(
+                &w,
+                tasks::launch::launch(w.store(), &herdr, &w.machine(), &ask),
+            );
+            assert_eq!(w.calls_of(&["agent", "prompt"]).len(), 1, "{kind}: {fail}");
+            assert_eq!(
+                w.calls_of(&["agent", "list"]).len(),
+                PROMPT_ENTERS + 1,
+                "{kind}: {fail}"
+            );
+            assert_eq!(*w.sleeps.borrow(), vec![PROMPT_WAIT; PROMPT_ENTERS + 1]);
+            assert_eq!(
+                w.calls_of(&["pane", "send-keys"]),
+                Vec::<Vec<String>>::new(),
+                "{kind}: {fail}"
+            );
+        }
+    }
+}
+#[test]
+fn delayed_activity_after_ambiguous_looks_confirms_the_launch_without_another_enter() {
+    for kind in ["claude", "codex"] {
+        for (observation, ready) in [
+            ("absent head", 2),
+            ("agent list", 2),
+            ("pane read", 2),
+            ("missing agent", 2),
+            ("absent head", PROMPT_ENTERS + 1),
+        ] {
+            let w = World::new();
+            let looks = Cell::new(0);
+            let inner = w.herdr();
+            let herdr = Hooked {
+                instead: Box::new(|args| {
+                    if args == ["agent", "list"] {
+                        looks.set(looks.get() + 1);
+                        let said = inner.run(args);
+                        if looks.get() >= ready {
+                            return Some(said);
+                        }
+                        return Some(match observation {
+                            "agent list" => Err(LaunchError("transient list failure".into())),
+                            "missing agent" => Ok(r#"{"result":{"agents":[]}}"#.into()),
+                            _ => said.map(|said| {
+                                let mut said: Value = serde_json::from_str(&said).unwrap();
+                                for agent in said["result"]["agents"].as_array_mut().unwrap() {
+                                    agent["agent_status"] = if kind == "claude" {
+                                        "idle".into()
+                                    } else {
+                                        "unknown".into()
+                                    };
+                                }
+                                said.to_string()
+                            }),
+                        });
+                    }
+                    if args[..2] == ["pane", "read"] {
+                        inner.run(args).unwrap();
+                        return Some(if observation == "pane read" {
+                            Err(LaunchError("transient pane read failure".into()))
+                        } else {
+                            Ok("Claude\n0 tokens\n> ".into())
+                        });
+                    }
+                    None
+                }),
+                ..Hooked::new(&w)
+            };
+            let ask = Ask {
+                kind: Some(kind.into()),
+                role: "reviewer".into(),
+                prompt: "a long reviewer prompt that wraps beyond twelve lines ".repeat(80),
+                ..w.ask("sim/jump")
+            };
+            let started = tasks::launch::launch(w.store(), &herdr, &w.machine(), &ask)
+                .unwrap_or_else(|why| panic!("{kind}: {observation}, look {ready}: {why}"));
+            assert!(!started.stuck);
+            assert!(w.has_pane(&started.row.pane));
+            assert!(Path::new(&started.row.worktree).is_dir());
+            assert_eq!(w.store().task_sessions("sim/jump").unwrap(), [started.row]);
+            assert_eq!(w.calls_of(&["agent", "list"]).len(), ready);
+            assert_eq!(*w.sleeps.borrow(), vec![PROMPT_WAIT; ready]);
+            assert_eq!(w.calls_of(&["agent", "prompt"]).len(), 1);
+            assert!(w.calls_of(&["pane", "send-keys"]).is_empty());
+            assert!(w.calls_of(&["pane", "close"]).is_empty());
+        }
     }
 }
 
@@ -1036,15 +1149,24 @@ fn an_agent_that_is_done_or_asks_something_has_taken_its_prompt() {
 }
 
 #[test]
-fn an_agent_herdr_no_longer_lists_is_left_alone() {
+fn an_agent_herdr_no_longer_lists_cannot_leave_a_live_launch_record() {
     let mut w = World::new();
     w.set("FAKE_HERDR_STUCK", "1");
+    let inner = w.herdr();
     let herdr = Hooked {
         instead: Box::new(|args| {
-            (args == ["agent", "list"]).then(|| Ok(r#"{"result": {"agents": []}}"#.to_string()))
+            (args == ["agent", "list"]).then(|| {
+                inner.run(args).unwrap();
+                Ok(r#"{"result": {"agents": []}}"#.to_string())
+            })
         }),
         ..Hooked::new(&w)
     };
-    assert!(!launch_through(&w, &herdr).stuck);
+    refused_launch(
+        &w,
+        tasks::launch::launch(w.store(), &herdr, &w.machine(), &w.ask("sim/jump")),
+    );
+    assert_eq!(w.calls_of(&["agent", "list"]).len(), PROMPT_ENTERS + 1);
+    assert_eq!(*w.sleeps.borrow(), vec![PROMPT_WAIT; PROMPT_ENTERS + 1]);
     assert_eq!(w.calls_of(&["pane", "read"]), Vec::<Vec<String>>::new());
 }

@@ -7,12 +7,12 @@
 use std::convert::Infallible;
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
-use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, ExitStatus, Stdio};
+use std::process::ExitStatus;
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 use tasks::server::{Home, Running};
+use tasks::sys::{Child, Command, Stdio};
 
 pub fn surreal() -> PathBuf {
     static FOUND: OnceLock<PathBuf> = OnceLock::new();
@@ -36,13 +36,15 @@ impl GuardedSurreal {
             env!("CARGO_MANIFEST_DIR"),
             "/../../../tools/fixture_process.sh"
         );
-        // One reader on one anonymous pipe. Independent readers on a shared named FIFO can
-        // remain blocked on macOS after its last writer closes. Keep the watchdog owned and
-        // reap it on normal teardown; its own group survives an interrupted suite's group.
-        let watchdog = Command::new("bash")
-            .args([
-                "-c",
-                r#"
+        // One reader on one pipe (tasks::sys::pipe unlinks its FIFO once both ends are open).
+        // Independent readers on a shared named FIFO can remain blocked on macOS after its last
+        // writer closes. Keep the watchdog owned and reap it on normal teardown; its own group
+        // survives an interrupted suite's group.
+        let watchdog = crate::store::spawn_with_input(
+            Command::new("bash")
+                .args([
+                    "-c",
+                    r#"
 . "$1"
 fixture_close_fds
 fixture_wait_eof
@@ -58,16 +60,15 @@ for record in "$2"/server-*; do
 done
 exit 0
 "#,
-                "watch-surreal",
-            ])
-            .arg(helper)
-            .arg(&records)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .process_group(0)
-            .spawn()
-            .unwrap();
+                    "watch-surreal",
+                ])
+                .arg(helper)
+                .arg(&records)
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .process_group(0),
+        )
+        .unwrap();
         let binary = dir.join("guarded-surreal");
         let quote = |text: &str| format!("'{}'", text.replace('\'', "'\\''"));
         let body = format!(
@@ -124,16 +125,20 @@ impl Drop for GuardedSurreal {
 
 /// The command line of process `pid`, if it runs.
 pub fn command_of(pid: i64) -> Option<String> {
-    let out = Command::new("ps")
-        .args(["-ww", "-o", "command=", "-p", &pid.to_string()])
-        .output()
-        .ok()?;
+    let out = tasks::sys::output(Command::new("ps").args([
+        "-ww",
+        "-o",
+        "command=",
+        "-p",
+        &pid.to_string(),
+    ]))
+    .ok()?;
     let line = String::from_utf8_lossy(&out.stdout).trim().to_string();
     (out.status.success() && !line.is_empty()).then_some(line)
 }
 
 pub fn signal(pid: i64, name: &str) {
-    let _ = Command::new("kill")
+    let _ = std::process::Command::new("kill")
         .arg(format!("-{name}"))
         .arg(pid.to_string())
         .status();
@@ -223,10 +228,10 @@ pub fn script(path: &Path, body: &str) -> PathBuf {
         &format!("#!/bin/sh\n[ $# -gt 0 ] || exit 0\n{body}\n"),
         false,
     );
-    let status = Command::new(path)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
+    let status = std::process::Command::new(path)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
         .status()
         .unwrap();
     assert!(
@@ -272,11 +277,7 @@ pub fn healthy_occupier(addr: SocketAddr, probed: &Path) -> SocketAddr {
 
 #[test]
 fn one_watchdog_ends_every_server_on_eof_even_with_inherited_high_writers() {
-    use std::os::fd::AsRawFd;
-    use std::os::unix::process::CommandExt;
-    unsafe extern "C" {
-        fn fcntl(fd: std::ffi::c_int, command: std::ffi::c_int, ...) -> std::ffi::c_int;
-    }
+    use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
     struct Servers(Vec<Child>);
     impl Drop for Servers {
         fn drop(&mut self) {
@@ -326,18 +327,18 @@ fn one_watchdog_ends_every_server_on_eof_even_with_inherited_high_writers() {
                 .stderr(out);
             // A writer above fd 3 models the descriptor a helper can inherit from its native test.
             // Without fixture_close_fds the server retains it and the watchdog can never see EOF.
-            // SAFETY: F_DUPFD (0 on both supported systems) is async-signal-safe, affects only this
-            // forked child, and creates an inheritable descriptor >= 64, away from shell redirections.
-            unsafe {
-                command.pre_exec(move || {
-                    if fcntl(writer, 0, 64) == -1 {
-                        Err(std::io::Error::last_os_error())
-                    } else {
-                        Ok(())
-                    }
-                });
-            }
-            servers.0.push(command.spawn().unwrap());
+            // It is handed at 64 or above, away from shell redirections; this process's copy is
+            // close-on-exec from its making and goes once the server has started.
+            // SAFETY: F_DUPFD_CLOEXEC makes a new descriptor, which the OwnedFd alone then owns.
+            let inherited = unsafe {
+                let fd = libc::fcntl(writer, libc::F_DUPFD_CLOEXEC, 64);
+                assert_ne!(fd, -1, "{}", std::io::Error::last_os_error());
+                OwnedFd::from_raw_fd(fd)
+            };
+            servers
+                .0
+                .push(command.pass_fd(inherited.as_raw_fd()).spawn().unwrap());
+            drop(inherited);
             let server = servers.0.last_mut().unwrap();
             loop {
                 if server.try_wait().unwrap().is_some() {
@@ -346,7 +347,7 @@ fn one_watchdog_ends_every_server_on_eof_even_with_inherited_high_writers() {
                     return Ok::<_, Infallible>(tasks::port::Start::Ended(said));
                 }
                 if tasks::rpc::healthy(&addr)
-                    && tasks::port::listens(server.id(), reserved).unwrap()
+                    && tasks::port::listens(server.id(), reserved, tasks::sys::output).unwrap()
                 {
                     return Ok(tasks::port::Start::Up(()));
                 }

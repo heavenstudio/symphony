@@ -321,10 +321,21 @@ or an instruction to an agent ([Subtasks](#subtasks)).
 
 A cancelled dependency does not satisfy that requirement. Cancellation moves its
 unfinished dependents to `blocked` and records the cancelled prerequisite on their
-threads. Creating or moving a task with a cancelled dependency blocks it too.
+threads, with the status each held (`(was ready)`). Creating or moving a task with
+a cancelled dependency blocks it too.
 `next` excludes that work; PULL lists it as `dependency_blocked` with the reason,
 including older tasks still in their previous stage. Done and cancelled dependents
 keep their status. An orchestrator must replan the dependent work before it resumes.
+
+`just tasks depends SLUG --replace OLD NEW [--as HANDLE]` points a task at a
+successor; `--add DEP` and `--remove DEP` add or drop one, and each flag repeats.
+It refuses a task the board does not hold, a finished task, a cancelled
+prerequisite, a dependency already there or not there, and a cycle, and records
+the change on the task's thread. A task a cancellation blocked that then waits on
+nothing cancelled goes back to the status its block line recorded, or to `ready`
+from `in_progress` when nobody executes it; a block line written before the
+status was recorded sends it to `ready` (`in_progress` with an executor). A task
+blocked by hand stays blocked.
 
 `just tasks priority SLUG N [--as HANDLE]` changes an existing task's priority,
 from `0` to `4`, and records the actor and both values on its thread. `next`,

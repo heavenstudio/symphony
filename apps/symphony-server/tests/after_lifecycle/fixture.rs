@@ -4,9 +4,8 @@ use std::fs::{self, File};
 use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
-use std::os::unix::fs::MetadataExt;
 use std::os::unix::fs::symlink;
-use std::os::unix::net::UnixStream;
+use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
 use std::os::unix::process::{CommandExt, ExitStatusExt};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitStatus, Output, Stdio};
@@ -31,6 +30,7 @@ const SCRATCH_PREFIX: &str = "after-lifecycle-";
 /// image launch is setup; every server still has the unchanged patience for its actual startup.
 /// Keep the completed child's identity so reuse is observable without a timing threshold.
 static PREPARED_APP: OnceLock<u32> = OnceLock::new();
+static PREPARED_COMMANDS: OnceLock<[u32; 4]> = OnceLock::new();
 
 fn prepare_app(log: &Path) -> u32 {
     *PREPARED_APP.get_or_init(|| {
@@ -44,6 +44,40 @@ fn prepare_app(log: &Path) -> u32 {
             preparation.output()
         );
         preparation.child.id()
+    })
+}
+
+/// First execution of each immutable script is setup, before any measured recipe start. Scratch
+/// links keep opener/process-table observations away from the case's own observable paths.
+fn prepare_commands(repo: &Repo, folder: &Path) -> [u32; 4] {
+    *PREPARED_COMMANDS.get_or_init(|| {
+        let bin = folder.join("commands");
+        fs::create_dir_all(&bin).unwrap();
+        let environment = repo.command(&repo.main);
+        let images: [(&str, &str, &[&str]); 4] = [
+            ("bash", "bash.sh", &["-c", "true"]),
+            ("build", "build.sh", &["tasks", "reap"]),
+            ("ps", "ps.sh", &["-o", "pid="]),
+            ("open", "open.sh", &[]),
+        ];
+        images.map(|(name, source, args)| {
+            let executable = bin.join(name);
+            command_fixture(&executable, source);
+            let mut command = Command::new(executable);
+            command
+                .current_dir(&repo.main)
+                .env_clear()
+                .stdin(Stdio::null())
+                .args(args);
+            for (key, value) in environment.get_envs() {
+                if let Some(value) = value {
+                    command.env(key, value);
+                }
+            }
+            let mut preparation = Process::spawn(command, &folder.join(name));
+            preparation.success();
+            preparation.child.id()
+        })
     })
 }
 
@@ -111,21 +145,22 @@ fn command_fixture(path: &Path, name: &str) {
 }
 
 pub fn repository(root: &Path, args: &[&str]) {
-    let done = Command::new("git")
-        .args([
-            "-c",
-            "user.name=Lifecycle fixture",
-            "-c",
-            "user.email=test@example.invalid",
-        ])
-        .args(args)
-        .current_dir(root)
-        .env_remove("GIT_DIR")
-        .env_remove("GIT_WORK_TREE")
-        .env_remove("GIT_COMMON_DIR")
-        .env_remove("GIT_INDEX_FILE")
-        .output()
-        .unwrap();
+    let done = tasks::sys::output(
+        tasks::sys::Command::new("git")
+            .args([
+                "-c",
+                "user.name=Lifecycle fixture",
+                "-c",
+                "user.email=test@example.invalid",
+            ])
+            .args(args)
+            .current_dir(root)
+            .env_remove("GIT_DIR")
+            .env_remove("GIT_WORK_TREE")
+            .env_remove("GIT_COMMON_DIR")
+            .env_remove("GIT_INDEX_FILE"),
+    )
+    .unwrap();
     assert!(done.status.success(), "{args:?}: {}", said(&done));
 }
 
@@ -278,18 +313,42 @@ impl Executable {
     }
 }
 
-/// Every descendant inherits the other end. EOF proves even an orphaned fixture command has
+/// Every descendant inherits the writer. EOF proves even an orphaned fixture command has
 /// stopped using scratch, including subprocesses of a census shell cancelled by the server.
 struct Descendants {
-    reader: UnixStream,
+    reader: File,
     origin: String,
     wait_elapsed: Box<dyn FnMut(&Instant) -> Duration + Send>,
 }
 
 impl Descendants {
-    fn spawn(command: &mut Command) -> (Self, UnixStream) {
-        let (reader, writer) = UnixStream::pair().unwrap();
-        reader.set_nonblocking(true).unwrap();
+    /// Both ends of a FIFO at `at`, close-on-exec from the moment they exist: open(2) takes
+    /// O_CLOEXEC atomically and std always passes it. A socket pair cannot be on macOS, which has
+    /// no SOCK_CLOEXEC: std flags each end after socketpair, and a spawn on another test thread in
+    /// between keeps the writer for its whole life.
+    fn endpoint(at: &Path, origin: String) -> (Self, File) {
+        mkfifo(at);
+        let reader = fs::OpenOptions::new()
+            .read(true)
+            .custom_flags(libc::O_NONBLOCK)
+            .open(at)
+            .unwrap();
+        // The reader is open, so this neither blocks nor fails.
+        let writer = fs::OpenOptions::new().write(true).open(at).unwrap();
+        // Only these two descriptors ever reach the FIFO.
+        fs::remove_file(at).unwrap();
+        (
+            Self {
+                reader,
+                origin,
+                wait_elapsed: Box::new(Instant::elapsed),
+            },
+            writer,
+        )
+    }
+
+    fn spawn(command: &mut Command, at: &Path) -> (Self, File) {
+        let (descendants, writer) = Self::endpoint(at, invocation(command));
         let fd = writer.as_raw_fd();
         // SAFETY: writer lives through spawn. Only the child's descriptor flag changes, so
         // concurrent tests cannot inherit this endpoint through their unrelated commands.
@@ -302,14 +361,7 @@ impl Descendants {
                 }
             });
         }
-        (
-            Self {
-                reader,
-                origin: invocation(command),
-                wait_elapsed: Box::new(Instant::elapsed),
-            },
-            writer,
-        )
+        (descendants, writer)
     }
 
     fn started(mut self, pid: u32) -> Self {
@@ -317,7 +369,7 @@ impl Descendants {
         self
     }
 
-    fn exited(mut reader: &UnixStream) -> Result<bool, String> {
+    fn exited(mut reader: &File) -> Result<bool, String> {
         match reader.read(&mut [0]) {
             Ok(0) => Ok(true),
             Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => Ok(false),
@@ -341,7 +393,8 @@ impl Process {
         let invocation = invocation(&command);
         let stdout = log.with_extension("out");
         let stderr = log.with_extension("err");
-        let (descendants, writer) = Descendants::spawn(&mut command);
+        let (descendants, writer) =
+            Descendants::spawn(&mut command, &log.with_extension("lifetime"));
         let executable = Executable::capture(&command);
         let launching = std::time::SystemTime::now();
         let spawning = Instant::now();
@@ -512,6 +565,10 @@ impl Drop for Process {
             descendants.wait();
         }
         profile_warm(&self.output());
+        if self.command.starts_with("\"just\"") && std::env::var_os("SF_SYMPHONY_PROFILE").is_some()
+        {
+            eprintln!("{}\n{}", self.launch, self.output());
+        }
     }
 }
 
@@ -561,19 +618,17 @@ impl Repo {
         // Copy the actual recipe verbatim. Build fixtures stand in only for Cargo and bundling;
         // checkout selection, --if-up, argument filtering and exec still run in production bash.
         let recipes = include_str!("../../../../../justfile");
-        let docs = recipes
-            .split("[positional-arguments]\nsymphony *ARGS:")
-            .nth(1)
-            .unwrap()
-            .split("# for the same as data.")
+        let declaration = recipes.find("\nsymphony *ARGS:").unwrap();
+        let start = recipes[..declaration].rfind("\n\n").unwrap();
+        // Stop before the next production recipe's commentary; _symphony-build stays verbatim too.
+        let docs = recipes[start..]
+            .split("# The review board:")
             .next()
             .unwrap();
-        // Stop before the next production recipe's commentary; _symphony-build stays verbatim too.
-        let docs = docs.split("# The review board:").next().unwrap();
         write(
             &main.join("justfile"),
             &format!(
-                "[positional-arguments]\nsymphony *ARGS:{docs}\nsymphony-ui-dist OUT=\"build/symphony-ui\":\n    @tools/fixture-build ui \"{{{{OUT}}}}\"\n"
+                "{docs}\nsymphony-ui-dist OUT=\"build/symphony-ui\":\n    @tools/fixture-build ui \"{{{{OUT}}}}\"\n"
             ),
         );
         fs::create_dir_all(main.join("tools")).unwrap();
@@ -601,8 +656,9 @@ impl Repo {
         }
         // Observe the detached environment and real command lines for fixture-owned processes.
         command_fixture(&bin.join("ps"), "ps.sh");
+        command_fixture(&bin.join("bash"), "bash.sh");
         symlink("/usr/bin/false", bin.join("tailscale")).unwrap();
-        Self {
+        let repo = Self {
             builds: base.join("builds"),
             base,
             main,
@@ -614,7 +670,9 @@ impl Repo {
             descendants: Mutex::new(Vec::new()),
             next: AtomicUsize::new(0),
             _scratch: scratch,
-        }
+        };
+        prepare_commands(&repo, &repo.base.join("prepare-commands"));
+        repo
     }
 
     pub fn command(&self, dir: &Path) -> Command {
@@ -673,6 +731,11 @@ impl Repo {
             .args(["symphony"])
             .stdin(Stdio::null());
         recipe.env_clear();
+        recipe
+            .env("JUST_VERBOSE", "1")
+            .env("JUST_TIMESTAMP", "true")
+            .env("JUST_TIMESTAMP_FORMAT", "%s%.3f")
+            .env("JUST_TIME", "true");
         for (key, value) in command.get_envs() {
             if let Some(value) = value {
                 recipe.env(key, value);
@@ -709,7 +772,8 @@ impl Repo {
         let (master, slave) = terminal();
         let stdout = self.log("terminal").with_extension("out");
         let stderr = stdout.with_extension("err");
-        let (descendants, writer) = Descendants::spawn(&mut command);
+        let (descendants, writer) =
+            Descendants::spawn(&mut command, &stdout.with_extension("lifetime"));
         let executable = Executable::capture(&command);
         let launching = std::time::SystemTime::now();
         let spawning = Instant::now();
@@ -843,15 +907,19 @@ impl Drop for Repo {
 /// A FIFO at `path`, held open for reading and writing: a fixture command's read of it waits for a
 /// line this test writes, and ends at EOF once the test drops it, however the test ends.
 pub fn fifo(path: &Path) -> File {
-    use std::os::unix::ffi::OsStrExt;
-    let name = std::ffi::CString::new(path.as_os_str().as_bytes()).unwrap();
-    // SAFETY: a live, terminated path; the FIFO belongs to this case's scratch folder.
-    assert_eq!(unsafe { libc::mkfifo(name.as_ptr(), 0o600) }, 0);
+    mkfifo(path);
     fs::OpenOptions::new()
         .read(true)
         .write(true)
         .open(path)
         .unwrap()
+}
+
+fn mkfifo(path: &Path) {
+    use std::os::unix::ffi::OsStrExt;
+    let name = std::ffi::CString::new(path.as_os_str().as_bytes()).unwrap();
+    // SAFETY: a live, terminated path; the FIFO belongs to this case's scratch folder.
+    assert_eq!(unsafe { libc::mkfifo(name.as_ptr(), 0o600) }, 0);
 }
 
 /// A terminal only on stdout: no controlling terminal, focus, or real browser is involved.
@@ -870,6 +938,15 @@ pub fn terminal() -> (File, OwnedFd) {
         },
         0
     );
+    // openpty sets no close-on-exec, so every child another case spawned would keep the terminal
+    // for its whole life. No case waits for its end: the moment before the flag holds nothing back.
+    for fd in [master, slave] {
+        // SAFETY: F_SETFD changes only the flags of a descriptor openpty just returned.
+        assert_ne!(
+            unsafe { libc::fcntl(fd, libc::F_SETFD, libc::FD_CLOEXEC) },
+            -1
+        );
+    }
     // SAFETY: openpty returned this fresh descriptor and ownership is transferred once.
     let master = unsafe { File::from_raw_fd(master) };
     // SAFETY: openpty returned this other fresh descriptor, transferred once.
@@ -880,6 +957,97 @@ pub fn terminal() -> (File, OwnedFd) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_recipe_observer_uses_the_interpreter_from_the_original_path() {
+        let repo = Repo::new("recipe-interpreter");
+        let original = repo.base.join("original-path");
+        fs::create_dir(&original).unwrap();
+        // An immutable executable distinguishes PATH selection from a hard-coded /bin/bash:
+        // false exits 1, whereas bash -c true exits 0.
+        symlink("/usr/bin/false", original.join("bash")).unwrap();
+        let mut command = Command::new(repo.bin.join("bash"));
+        command
+            .env_clear()
+            .env(
+                "PATH",
+                format!(
+                    "{}:{}:/usr/bin:/bin",
+                    repo.bin.display(),
+                    original.display()
+                ),
+            )
+            .args(["-c", "true"]);
+        let mut observer = repo.run(command);
+        assert_eq!(observer.wait().code(), Some(1), "{}", observer.output());
+    }
+
+    #[test]
+    fn a_recipe_timeout_reports_runner_bash_and_the_pending_build_command() {
+        use std::os::unix::ffi::OsStrExt;
+
+        struct ReleaseLog(PathBuf);
+        impl Drop for ReleaseLog {
+            fn drop(&mut self) {
+                // An earlier assertion may unwind before the normal release. Unblock any
+                // opening writer before Repo waits on descendants, including on that path.
+                let _ = fs::OpenOptions::new().read(true).write(true).open(&self.0);
+            }
+        }
+
+        let repo = Repo::new("recipe-stage-timeout");
+        // The build's real log is a FIFO with no reader yet. Its opening writer waits here,
+        // giving the report a stable pending recipe stage without spending the wall deadline.
+        let name = std::ffi::CString::new(repo.builds.as_os_str().as_bytes()).unwrap();
+        // SAFETY: a terminated path in this test's owned scratch folder.
+        assert_eq!(unsafe { libc::mkfifo(name.as_ptr(), 0o600) }, 0);
+        let _release_on_failure = ReleaseLog(repo.builds.clone());
+        let mut starter = repo.run(repo.recipe(&repo.tree));
+        until("recipe's pending UI build", || {
+            let said = starter.output();
+            (said.contains("tools/fixture-build ui ")
+                && !said.contains("---> symphony-ui-dist completed"))
+            .then_some(())
+        });
+        starter.wait_elapsed = Box::new(|_| PATIENCE);
+        let failure = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| starter.wait()));
+        // Release the real writer, then let the same start finish and own its server normally.
+        let _release = fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(&repo.builds)
+            .unwrap();
+        starter.wait_elapsed = Box::new(Instant::elapsed);
+        starter.success();
+        repo.remember();
+        repo.check_server();
+
+        let failure = failure.expect_err("the pending build must fail the exit wait");
+        let message = failure.downcast_ref::<String>().unwrap();
+        assert!(message.contains(&starter.launch), "{message}");
+        assert!(
+            message.contains("script executable=no"),
+            "bash must read the recipe without executing a fresh temporary image: {message}"
+        );
+        for stage in [
+            "===> running recipe `symphony`...",
+            "· symphony recipe bash entered at ",
+            "+ symphony recipe ",
+            "_symphony-build",
+            "===> running recipe `symphony-ui-dist`...",
+            "tools/fixture-build ui ",
+        ] {
+            assert!(
+                message.contains(stage),
+                "missing recipe stage {stage}: {message}"
+            );
+        }
+        assert!(
+            !message.contains("---> symphony-ui-dist completed"),
+            "{message}"
+        );
+        assert!(!message.contains("start command entered at"), "{message}");
+    }
 
     #[test]
     fn ordinary_starts_and_traced_stop_and_serve_commands_have_no_startup_trace() {
@@ -944,7 +1112,7 @@ mod tests {
     }
 
     #[test]
-    fn fixture_repositories_share_one_completed_app_preparation() {
+    fn fixture_repositories_share_one_completed_app_and_command_preparation() {
         let first = Repo::new("prepared-first");
         let pid = *PREPARED_APP
             .get()
@@ -953,8 +1121,18 @@ mod tests {
         let second = Repo::new("prepared-second");
         assert_eq!(prepare_app(&first.log("unused-preparation")), pid);
         assert_eq!(prepare_app(&second.log("unused-preparation")), pid);
+        let commands = *PREPARED_COMMANDS
+            .get()
+            .expect("Repo::new prepares every fixture command image");
+        assert!(commands.iter().all(|pid| *pid > 0));
         // A second preparation would create its owned process logs at one of these paths.
         for repo in [&first, &second] {
+            let unused = repo.base.join("unused-command-preparation");
+            assert_eq!(prepare_commands(repo, &unused), commands);
+            assert!(
+                !unused.exists(),
+                "prepared command images must not launch again"
+            );
             assert!(
                 !repo.base.join("unused-preparation-0.out").exists(),
                 "a prepared image must not be launched again by later fixtures"
@@ -963,13 +1141,13 @@ mod tests {
     }
 
     #[test]
-    fn a_readiness_timeout_names_its_child_and_reports_late_startup_output() {
+    fn a_readiness_timeout_names_its_child_and_reports_late_open_stage() {
         let scratch = Scratch::new("readiness-timeout");
         let mut command = Command::new("/bin/sh");
         command
             .args([
                 "-c",
-                "read -r line; printf 'startup stdout'; printf 'startup stderr' >&2; read -r line",
+                "read -r line; printf 'startup stdout'; printf '\\n· review timing start: hub branch trees\\n' >&2; read -r line",
             ])
             .stdin(Stdio::piped());
         let mut process = Process::spawn(command, &scratch.path.join("startup"));
@@ -980,7 +1158,9 @@ mod tests {
         process.wait_elapsed = Box::new(move |_| {
             writeln!(input, "report progress").unwrap();
             until("startup output", || {
-                (output(&stdout, &stderr) == "startup stdoutstartup stderr").then_some(())
+                (output(&stdout, &stderr)
+                    == "startup stdout\n· review timing start: hub branch trees\n")
+                    .then_some(())
             });
             PATIENCE
         });
@@ -990,7 +1170,7 @@ mod tests {
         assert_eq!(
             failure.downcast_ref::<String>().unwrap(),
             &format!(
-                "timed out: native server readiness for child {pid}: startup stdoutstartup stderr"
+                "timed out: native server readiness for child {pid}: startup stdout\n· review timing start: hub branch trees\n"
             )
         );
     }
@@ -1012,6 +1192,9 @@ mod tests {
             process.descendants.as_mut().unwrap().wait();
         }));
         // The clock reaches the unchanged deadline while this exact child still holds its end.
+        // Drop kills the child and waits on these same Descendants: give them the real clock back,
+        // so an EOF trailing the reap (a concurrent fork's copy of the endpoint) is waited for.
+        process.descendants.as_mut().unwrap().wait_elapsed = Box::new(Instant::elapsed);
         drop(process);
         let failure = failure.expect_err("a live holder must fail the bounded EOF wait");
         assert_eq!(
@@ -1068,6 +1251,48 @@ mod tests {
             );
             assert!(!base.exists());
         }
+    }
+
+    /// Another case's fixture command can be spawned while this one makes its endpoint. Racing
+    /// children live on, so a writer one took would hold back that endpoint's EOF until cleanup.
+    #[test]
+    fn a_spawn_racing_endpoint_creation_does_not_inherit_the_endpoint() {
+        const RACERS: usize = 16;
+        let scratch = Scratch::new("racing-spawn");
+        let start = std::sync::Barrier::new(2);
+        std::thread::scope(|scope| {
+            let spawner = scope.spawn(|| {
+                start.wait();
+                (0..RACERS)
+                    .map(|index| {
+                        // cat waits on its input until its Process is dropped.
+                        let mut command = Command::new("/bin/cat");
+                        command.stdin(Stdio::piped());
+                        Process::spawn(command, &scratch.path.join(format!("racer-{index}")))
+                    })
+                    .collect::<Vec<_>>()
+            });
+            start.wait();
+            for made in 0.. {
+                let (mut endpoint, writer) = Descendants::endpoint(
+                    &scratch.path.join(format!("endpoint-{made}")),
+                    format!("racing endpoint {made}"),
+                );
+                drop(writer);
+                // A fork between its own fork and exec holds the writer only until that exec.
+                endpoint.wait();
+                if spawner.is_finished() {
+                    break;
+                }
+            }
+            for racer in &mut spawner.join().unwrap() {
+                assert!(
+                    racer.child.try_wait().unwrap().is_none(),
+                    "racer {} ended before every endpoint was observed",
+                    racer.child.id()
+                );
+            }
+        });
     }
 
     #[test]

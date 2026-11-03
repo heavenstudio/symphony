@@ -58,17 +58,19 @@ pub fn tree_id(top: &Path, trees: &[Worktree]) -> Option<String> {
 }
 
 /// `git ARGS` in `dir`, on the repository there whatever the environment names (a hook's GIT_DIR).
+/// Read through [`tasks::sys::output`]: a census child spawned meanwhile never holds it open.
 fn git(dir: &Path, args: &[&str]) -> Result<String, String> {
     let done = crate::cli::startup(&format!("repository {}", args.join(" ")), || {
-        std::process::Command::new("git")
-            .args(args)
-            .current_dir(dir)
-            .env_remove("GIT_DIR")
-            .env_remove("GIT_WORK_TREE")
-            .env_remove("GIT_INDEX_FILE")
-            .env_remove("GIT_COMMON_DIR")
-            .output()
-            .map_err(|e| format!("git {}: {e}", args.join(" ")))
+        tasks::sys::output(
+            tasks::sys::Command::new("git")
+                .args(args)
+                .current_dir(dir)
+                .env_remove("GIT_DIR")
+                .env_remove("GIT_WORK_TREE")
+                .env_remove("GIT_INDEX_FILE")
+                .env_remove("GIT_COMMON_DIR"),
+        )
+        .map_err(|e| format!("git {}: {e}", args.join(" ")))
     })?;
     if !done.status.success() {
         return Err(format!(

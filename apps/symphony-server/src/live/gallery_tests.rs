@@ -80,7 +80,7 @@ async fn watcher_refreshes_gallery_art_but_reuses_it_for_document_events() {
     if std::env::var_os(CHILD).is_none() {
         // Capture the existing warm log in an isolated process, without adding a production
         // counter or replacing the gallery builder. No native watcher or live board runs.
-        let done = std::process::Command::new(std::env::current_exe().unwrap())
+        let done = tasks::sys::output(tasks::sys::Command::new(std::env::current_exe().unwrap())
             .args([
                 "--exact",
                 "live::gallery_tests::watcher_refreshes_gallery_art_but_reuses_it_for_document_events",
@@ -89,8 +89,7 @@ async fn watcher_refreshes_gallery_art_but_reuses_it_for_document_events() {
             .env(CHILD, "1")
             .env("TASKS_SERVER", "http://127.0.0.1:1")
             .env("TASKS_DATABASE", "gallery-worker")
-            .env_remove("TASKS_SESSION")
-            .output()
+            .env_remove("TASKS_SESSION"))
             .unwrap();
         let stderr = String::from_utf8_lossy(&done.stderr);
         let stdout = String::from_utf8_lossy(&done.stdout);

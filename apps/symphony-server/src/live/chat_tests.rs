@@ -4,9 +4,9 @@ use crate::front::Shared;
 use crate::gate::Gate;
 use crate::testing::{Tree, board, git, repository};
 use serde_json::{Value, json};
-use std::process::Command;
 use std::sync::Arc;
 use std::time::Instant;
+use tasks::sys::Command;
 
 const CHILD: &str = "SF_CHAT_JOURNAL_TEST";
 const TEST: &str = "live::chat_tests::only_the_shared_server_drains_the_chat_journal";
@@ -51,7 +51,7 @@ fn only_the_shared_server_drains_the_chat_journal() {
             if mode.ends_with("named") {
                 child.env("ASKS_DB", tree.path("private-asks.db"));
             }
-            let done = child.output().unwrap();
+            let done = tasks::sys::output(&mut child).unwrap();
             let out = String::from_utf8_lossy(&done.stdout);
             let err = String::from_utf8_lossy(&done.stderr);
             assert!(done.status.success(), "{mode}: {out}\n{err}");
@@ -81,12 +81,13 @@ fn only_the_shared_server_drains_the_chat_journal() {
     }
     symphony::callbacks::publish(&root, MESSAGE).unwrap();
     let queued = || {
-        let done = Command::new("sqlite3")
-            .arg("-json")
-            .arg(&journal)
-            .arg("SELECT text FROM callbacks ORDER BY id;")
-            .output()
-            .unwrap();
+        let done = tasks::sys::output(
+            Command::new("sqlite3")
+                .arg("-json")
+                .arg(&journal)
+                .arg("SELECT text FROM callbacks ORDER BY id;"),
+        )
+        .unwrap();
         assert!(done.status.success(), "{done:?}");
         if done.stdout.is_empty() {
             Vec::new()

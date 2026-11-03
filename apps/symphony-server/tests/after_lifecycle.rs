@@ -706,6 +706,32 @@ fn a_census_that_never_answers_holds_neither_a_start_nor_a_graceful_stop() {
 #[test]
 fn a_profiled_server_times_each_census_round_and_a_signal_ends_a_pending_one_at_once() {
     let repo = Repo::new("profiled-census");
+    // Main holds a register and another branch's worktree adds a card to it, so the warm's branch
+    // cards read main's and the fork's register (`git cat-file --batch`) while the census is held.
+    let register = |cards: &str| {
+        format!("# Decisions\n\n<!-- register:start -->\n{cards}<!-- register:end -->\n")
+    };
+    let held_card = "- [ ] **held** — Proposal held.\n";
+    write(&repo.main.join("docs/DECISIONS.md"), &register(held_card));
+    repository(&repo.main, &["add", "docs/DECISIONS.md"]);
+    repository(&repo.main, &["commit", "-qm", "A register"]);
+    let registers = repo.base.join("registers");
+    repository(
+        &repo.main,
+        &[
+            "worktree",
+            "add",
+            "-qb",
+            "feature/registers",
+            registers.to_str().unwrap(),
+        ],
+    );
+    write(
+        &registers.join("docs/DECISIONS.md"),
+        &register(&format!(
+            "{held_card}- [ ] **branch-only** — Proposal branch-only.\n"
+        )),
+    );
     let rounds = |server: &fixture::Process| {
         server
             .output()
@@ -720,15 +746,38 @@ fn a_profiled_server_times_each_census_round_and_a_signal_ends_a_pending_one_at_
             .args(["--port", "0", "--host", "127.0.0.1"])
             .env("SF_SYMPHONY_PROFILE", "1");
         let mut server = repo.run(command);
-        server.ready();
+        let actual = server.ready();
         until("the census reading its hold", || {
             held.exists().then_some(())
         });
+        // Only the card the branch added is its own: had a register read come back empty, the
+        // card it shares with main and with its fork would be listed too.
+        let (status, queue) = get(actual.port, "/api/queue").unwrap();
+        assert_eq!(status, 200, "{queue}");
+        let queue: symphony_api::Queue = serde_json::from_str(&queue).unwrap();
+        let proposed: Vec<_> = queue
+            .waiting
+            .iter()
+            .filter(|card| card.doc.starts_with("@feature~registers/"))
+            .map(|card| card.slug.as_str())
+            .collect();
+        assert_eq!(proposed, ["branch-only"], "{:?}", queue.waiting);
         let output = server.output();
-        assert!(
-            output.contains("· review timing start: hub new"),
-            "{output}"
-        );
+        for stage in [
+            "hub new",
+            "hub branch trees",
+            "hub checkout",
+            "branch cards",
+        ] {
+            assert!(
+                output.contains(&format!("· review timing start: {stage}")),
+                "{output}"
+            );
+            assert!(
+                output.contains(&format!("· review timing: {stage}: ")),
+                "{output}"
+            );
+        }
         assert_eq!(
             output
                 .matches("· review timing start: orphan census")

@@ -129,7 +129,7 @@ impl ScratchBoard {
                 if board.child.as_mut().unwrap().try_wait().unwrap().is_some() {
                     return Ok(port::Start::Ended(board.ended()));
                 }
-                if board.healthy() && port::listens(server, expected).unwrap() {
+                if board.healthy() && port::listens(server, expected, Command::output).unwrap() {
                     return Ok::<_, Infallible>(port::Start::Up(()));
                 }
                 assert!(!remaining().is_zero(), "private board health readiness");

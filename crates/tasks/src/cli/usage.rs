@@ -4,18 +4,19 @@
 
 /// The usage line of `just tasks` itself.
 pub const USAGE: &str = r#"usage: just tasks [-h] [--as ACTOR]
-                  {callback,register,attach,list,search,embed,next,create,priority,claim,reserve,release,show,parent,done,role,move,verdict,say,launch,restore,cleanup,reap,staff,agents,who,inbox,leave,beat,export,finish,sweep} ...
+                  {callback,register,attach,list,search,embed,next,create,priority,claim,reserve,release,show,parent,depends,done,role,move,verdict,say,launch,restore,cleanup,reap,staff,agents,who,inbox,leave,beat,export,finish,sweep} ...
 "#;
 
 /// `just tasks --help`.
 pub const HELP: &str = r#"usage: just tasks [-h] [--as ACTOR]
-                  {callback,register,attach,list,search,embed,next,create,priority,claim,reserve,release,show,parent,done,role,move,verdict,say,launch,restore,cleanup,reap,staff,agents,who,inbox,leave,beat,export,finish,sweep} ...
+                  {callback,register,attach,list,search,embed,next,create,priority,claim,reserve,release,show,parent,depends,done,role,move,verdict,say,launch,restore,cleanup,reap,staff,agents,who,inbox,leave,beat,export,finish,sweep} ...
 
 The task board from the terminal — `just tasks …` and `just tasks-attach`.
 
 positional arguments:
-  {callback,register,attach,list,search,embed,next,create,priority,claim,reserve,release,show,parent,done,role,move,verdict,say,launch,restore,cleanup,reap,staff,agents,who,inbox,leave,beat,export,finish,sweep}
+  {callback,register,attach,list,search,embed,next,create,priority,claim,reserve,release,show,parent,depends,done,role,move,verdict,say,launch,restore,cleanup,reap,staff,agents,who,inbox,leave,beat,export,finish,sweep}
     callback            register a native channel or --off for inbox fallback
+    depends             change what a task waits on
     beat               a hook: read one Claude Code tool event on stdin and
                         beat for the subagent making it
     finish              close the panes of a finished task's sessions
@@ -272,6 +273,31 @@ options:
   -h, --help  show this help message and exit
   --as ACTOR
   --none      take it out from under its parent
+"#,
+    ),
+    (
+        "depends",
+        r#"usage: just tasks depends [-h] [--as ACTOR] [--add ADD] [--remove REMOVE]
+                          [--replace OLD NEW]
+                          slug
+"#,
+        r#"usage: just tasks depends [-h] [--as ACTOR] [--add ADD] [--remove REMOVE]
+                          [--replace OLD NEW]
+                          slug
+
+Change what a task waits on, on its thread. A task a cancelled prerequisite
+blocked goes back to the status its block line recorded once nothing it waits
+on is cancelled.
+
+positional arguments:
+  slug
+
+options:
+  -h, --help         show this help message and exit
+  --as ACTOR
+  --add ADD          wait on this task too (repeatable)
+  --remove REMOVE    stop waiting on this task (repeatable)
+  --replace OLD NEW  wait on NEW instead of OLD (repeatable)
 "#,
     ),
     (

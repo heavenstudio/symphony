@@ -4,12 +4,11 @@
 
 use std::io::{BufRead, BufReader, Read};
 use std::net::{Ipv4Addr, SocketAddr};
-use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
+use tasks::sys::{Child, Command};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 
@@ -118,13 +117,11 @@ fn start_child(
         }
         let mut launch = command(addr);
         let program = launch.get_program().to_string_lossy().into_owned();
-        let mut child = launch
-            .process_group(0)
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
+        // Its output is read to the end after it exits: no child another thread spawns may hold it.
+        let mut child = tasks::sys::spawn_output(launch.process_group(0))
             .map_err(|e| format!("start {program} on {addr}: {e}"))?;
+        #[cfg(test)]
+        tests::SPAWNED.set(Some(child.id()));
         let output = Arc::new(Mutex::new(Some(String::new())));
         let readers = [
             capture(child.stdout.take().expect("piped stdout"), output.clone()),
@@ -148,7 +145,9 @@ fn start_child(
                         .expect("startup output"),
                 ));
             }
-            if tasks::port::listens(owned.0[0].id(), addr).map_err(|e| e.to_string())? {
+            if tasks::port::listens(owned.0[0].id(), addr, tasks::sys::output)
+                .map_err(|e| e.to_string())?
+            {
                 // Continue showing output during development, without retaining an unbounded log.
                 output.lock().expect("child output mutex").take();
                 return Ok(tasks::port::Start::Up(owned.0.remove(0)));
@@ -386,60 +385,26 @@ async fn forward(mut stream: TcpStream, api: u16, web: u16) -> Result<(), String
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::fs::File;
-    use std::os::fd::AsRawFd;
-    use std::os::unix::fs::FileExt;
-    use std::sync::atomic::AtomicUsize;
+    use std::cell::Cell;
 
-    struct ChildPid(File);
+    thread_local! {
+        /// The child [`start_child`] last spawned on this thread, recorded as it is spawned, before
+        /// any deadline is looked at.
+        pub(super) static SPAWNED: Cell<Option<u32>> = const { Cell::new(None) };
+    }
+
+    /// The child [`start_child`] spawns next on this thread, its group killed and reaped if a
+    /// failing assertion left it.
+    struct ChildPid;
 
     impl ChildPid {
         fn new() -> Self {
-            static NEXT: AtomicUsize = AtomicUsize::new(0);
-            let path = std::env::temp_dir().join(format!(
-                "sf-dev-child-{}-{}-{}.pid",
-                std::process::id(),
-                std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
-                    .as_nanos(),
-                NEXT.fetch_add(1, Ordering::Relaxed),
-            ));
-            let file = File::options()
-                .read(true)
-                .write(true)
-                .create_new(true)
-                .open(&path)
-                .unwrap();
-            std::fs::remove_file(path).unwrap();
-            Self(file)
-        }
-
-        fn record(&self, command: &mut Command) {
-            let fd = self.0.as_raw_fd();
-            let record = move || {
-                // SAFETY: getpid is async-signal-safe and cannot fail.
-                let pid = unsafe { libc::getpid() };
-                let bytes = pid.to_ne_bytes();
-                // SAFETY: the file stays open throughout start_child, and bytes is a live
-                // buffer. write is async-signal-safe.
-                let written = unsafe { libc::write(fd, bytes.as_ptr().cast(), bytes.len()) };
-                if written != bytes.len() as isize {
-                    return Err(std::io::Error::last_os_error());
-                }
-                Ok(())
-            };
-            // SAFETY: the callback uses only async-signal-safe syscalls and stack values.
-            // Recording before exec also works with an already-expired startup deadline.
-            unsafe {
-                command.pre_exec(record);
-            }
+            SPAWNED.set(None);
+            Self
         }
 
         fn pid(&self) -> Option<i64> {
-            let mut bytes = [0; std::mem::size_of::<libc::pid_t>()];
-            (self.0.read_at(&mut bytes, 0).ok()? == bytes.len())
-                .then(|| i64::from(libc::pid_t::from_ne_bytes(bytes)))
+            SPAWNED.get().map(i64::from)
         }
 
         fn assert_stopped(&self) {
@@ -508,9 +473,6 @@ mod tests {
                         "fake-child",
                         message,
                     ]);
-                    if expired {
-                        pid.record(&mut command);
-                    }
                     command
                 },
             );
@@ -543,9 +505,6 @@ mod tests {
                     starts += 1;
                     let mut command = Command::new(executable);
                     command.args(["-c", "exec sleep 30"]);
-                    if executable == "/bin/sh" {
-                        pid.record(&mut command);
-                    }
                     command
                 },
             );
@@ -588,7 +547,6 @@ mod tests {
                     cancelled.store(true, Ordering::Relaxed);
                     let mut command = Command::new("/bin/sh");
                     command.args(["-c", "exec sleep 30"]);
-                    pid.record(&mut command);
                     command
                 },
             );
@@ -612,7 +570,14 @@ mod tests {
         let child_addr = std::env::var("SF_DEV_FAKE_LISTENER").ok();
         let listener =
             std::net::TcpListener::bind(child_addr.as_deref().unwrap_or("127.0.0.1:0")).unwrap();
-        assert!(tasks::port::listens(std::process::id(), listener.local_addr().unwrap()).unwrap());
+        assert!(
+            tasks::port::listens(
+                std::process::id(),
+                listener.local_addr().unwrap(),
+                tasks::sys::output
+            )
+            .unwrap()
+        );
         if child_addr.is_some() {
             loop {
                 std::thread::park();
@@ -655,7 +620,7 @@ mod tests {
         // reservation is handled by the same bound.
         assert!((2..=tasks::port::ATTEMPTS).contains(&starts));
         assert_ne!(addr, tried[0]);
-        assert!(tasks::port::listens(owned.0[0].id(), addr).unwrap());
+        assert!(tasks::port::listens(owned.0[0].id(), addr, tasks::sys::output).unwrap());
         assert!(std::net::TcpStream::connect(addr).is_ok());
         let pid = owned.0[0].id();
         owned.stop().unwrap();

@@ -123,12 +123,13 @@ pub fn scratch(name: &str) -> PathBuf {
 
 /// `git ARGS` in `dir`, as a committer named `t`, which must succeed.
 pub fn git(dir: &Path, args: &[&str]) {
-    let done = std::process::Command::new("git")
-        .args(["-c", "user.email=t@t", "-c", "user.name=t", "-C"])
-        .arg(dir)
-        .args(args)
-        .output()
-        .unwrap();
+    let done = tasks::sys::output(
+        tasks::sys::Command::new("git")
+            .args(["-c", "user.email=t@t", "-c", "user.name=t", "-C"])
+            .arg(dir)
+            .args(args),
+    )
+    .unwrap();
     assert!(done.status.success(), "git {args:?}: {done:?}");
 }
 

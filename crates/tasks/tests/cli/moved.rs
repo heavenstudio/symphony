@@ -7,8 +7,8 @@ use crate::run;
 use serde_json::{Value, json};
 use std::fs;
 use std::path::PathBuf;
-use std::process::Command;
 use tasks::cli::Env;
+use tasks::sys::Command;
 
 const REFUSED: &str = "the task board has not moved to SurrealDB yet: the lander runs `just tasks-cutover` once, right after landing (docs/workflow/TASKS.md#the-move-to-surrealdb)";
 const UNFINISHED: &str = "the task board is frozen by a move to SurrealDB that has not finished: unless one is running, run `just tasks-cutover` again (docs/workflow/TASKS.md#the-move-to-surrealdb)";
@@ -21,11 +21,7 @@ fn unmoved(name: &str) -> (PathBuf, Env) {
         .join(format!("moved-{}-{name}", std::process::id()));
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(&dir).unwrap();
-    let done = Command::new("git")
-        .args(["init", "-q"])
-        .arg(&dir)
-        .output()
-        .unwrap();
+    let done = tasks::sys::output(Command::new("git").args(["init", "-q"]).arg(&dir)).unwrap();
     assert!(done.status.success());
     fs::write(dir.join(".git/star-foundry-tasks.db"), b"").unwrap();
     let surreal = dir.join("no-surreal").display().to_string();

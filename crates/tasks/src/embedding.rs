@@ -1,11 +1,11 @@
 //! Local BGE inference and tokenizer-aware chunks. Only explicit embedding/search commands load
 //! this runtime; the board's write path has no inference or network work.
 
+use crate::sys::Command;
 use sha2::{Digest, Sha256};
 use std::fmt::Write as _;
 use std::fs::{self, OpenOptions};
 use std::path::Path;
-use std::process::Command;
 use tokenizers::Tokenizer;
 use tract_linalg::multithread::{Executor, multithread_tract_scope};
 use tract_onnx::prelude::*;
@@ -101,15 +101,7 @@ impl Bge {
         }
         let dir = common.join("sf-task-models").join(REVISION);
         fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
-        let lock = OpenOptions::new()
-            .create(true)
-            .read(true)
-            .write(true)
-            .truncate(false)
-            .open(dir.join("download.lock"))
-            .map_err(|e| format!("model download lock: {e}"))?;
-        lock.lock()
-            .map_err(|e| format!("model download lock: {e}"))?;
+        let lock = download_lock(&dir)?;
         for (remote, local, sha) in [
             ("onnx/model.onnx", "model.onnx", WEIGHTS_SHA),
             ("tokenizer.json", "tokenizer.json", TOKENIZER_SHA),
@@ -260,6 +252,20 @@ fn normalize(vector: &mut [f32]) -> Result<(), String> {
     Ok(())
 }
 
+/// The model folder `dir`'s download lock, waited for: one fetch of its artifacts at a time.
+fn download_lock(dir: &Path) -> Result<crate::sys::FileLock, String> {
+    let file = OpenOptions::new()
+        .create(true)
+        .read(true)
+        .write(true)
+        .truncate(false)
+        .open(dir.join("download.lock"))
+        .map_err(|e| format!("model download lock: {e}"))?;
+    file.lock()
+        .map_err(|e| format!("model download lock: {e}"))?;
+    Ok(crate::sys::FileLock(file))
+}
+
 fn fetch(path: &Path, remote: &str, sha: &str) -> Result<(), String> {
     if path.exists() {
         let bytes = fs::read(path).map_err(|e| format!("{}: {e}", path.display()))?;
@@ -273,21 +279,22 @@ fn fetch(path: &Path, remote: &str, sha: &str) -> Result<(), String> {
     }
     let temp = path.with_extension(format!("part-{}", std::process::id()));
     let url = format!("https://huggingface.co/BAAI/bge-small-en-v1.5/resolve/{REVISION}/{remote}");
-    let result = Command::new("curl")
-        .args([
-            "-fsSL",
-            "--retry",
-            "2",
-            "--connect-timeout",
-            "15",
-            "--max-time",
-            "600",
-            "--output",
-        ])
-        .arg(&temp)
-        .arg(&url)
-        .output()
-        .map_err(|e| format!("download {url}: {e}"))?;
+    let result = crate::sys::output(
+        Command::new("curl")
+            .args([
+                "-fsSL",
+                "--retry",
+                "2",
+                "--connect-timeout",
+                "15",
+                "--max-time",
+                "600",
+                "--output",
+            ])
+            .arg(&temp)
+            .arg(&url),
+    )
+    .map_err(|e| format!("download {url}: {e}"))?;
     let checked = (|| {
         if !result.status.success() {
             return Err(format!(
@@ -330,6 +337,27 @@ mod tests {
                 .unwrap();
             assert_eq!(error, "inference threads must be between 1 and 64");
         }
+    }
+
+    #[test]
+    fn an_ended_load_frees_the_download_while_a_forked_child_still_holds_the_descriptor() {
+        let dir = std::env::temp_dir().join(format!("sf-model-download-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let held = download_lock(&dir).unwrap();
+        // What fork gives a child until it execs: the same open file, so the same lock.
+        let inherited = held.0.try_clone().unwrap();
+        drop(held);
+        // Not waited for, so a lock still held fails here rather than hanging the test.
+        let next = OpenOptions::new()
+            .write(true)
+            .open(dir.join("download.lock"))
+            .unwrap();
+        assert!(
+            next.try_lock().is_ok(),
+            "the ended load still holds the download"
+        );
+        drop((inherited, next));
+        fs::remove_dir_all(dir).unwrap();
     }
 
     fn tokenizer() -> Tokenizer {

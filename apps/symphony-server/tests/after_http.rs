@@ -14,11 +14,11 @@ use std::collections::BTreeMap;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{SocketAddr, TcpStream};
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use symphony_server::front::{Shared, router};
 use symphony_server::gate::Gate;
+use tasks::sys::Command;
 
 const CHILD: &str = "SF_AFTER_HTTP_CHILD";
 const LIMIT: Duration = Duration::from_secs(30);
@@ -34,13 +34,14 @@ fn repository(root: &Path, args: &[&str]) -> String {
             command.env_remove(key);
         }
     }
-    let done = command
-        .args(args)
-        .current_dir(root)
-        .env("GIT_CONFIG_GLOBAL", "/dev/null")
-        .env("GIT_CONFIG_NOSYSTEM", "1")
-        .output()
-        .unwrap();
+    let done = tasks::sys::output(
+        command
+            .args(args)
+            .current_dir(root)
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .env("GIT_CONFIG_NOSYSTEM", "1"),
+    )
+    .unwrap();
     assert!(done.status.success(), "{args:?}: {done:?}");
     String::from_utf8(done.stdout).unwrap().trim().into()
 }
@@ -139,21 +140,22 @@ fn run(test: &str, exercise: fn(&Fixture)) {
         let began = Instant::now();
         let tree = fixture();
         let client = board::client();
-        let done = Command::new(std::env::current_exe().unwrap())
-            .args(["--exact", test, "--nocapture"])
-            .env(CHILD, &tree.root)
-            .env("TASKS_SERVER", client.addr())
-            .env("TASKS_DATABASE", client.database())
-            .env("ASKS_DB", tree.path("asks.db"))
-            .env_remove("TASKS_SESSION")
-            .env_remove("SF_SYMPHONY_UI_DIST")
-            .env_remove("GIT_DIR")
-            .env_remove("GIT_WORK_TREE")
-            .env_remove("GIT_INDEX_FILE")
-            .env_remove("GIT_COMMON_DIR")
-            .current_dir(tree.path("repo"))
-            .output()
-            .unwrap();
+        let done = tasks::sys::output(
+            Command::new(std::env::current_exe().unwrap())
+                .args(["--exact", test, "--nocapture"])
+                .env(CHILD, &tree.root)
+                .env("TASKS_SERVER", client.addr())
+                .env("TASKS_DATABASE", client.database())
+                .env("ASKS_DB", tree.path("asks.db"))
+                .env_remove("TASKS_SESSION")
+                .env_remove("SF_SYMPHONY_UI_DIST")
+                .env_remove("GIT_DIR")
+                .env_remove("GIT_WORK_TREE")
+                .env_remove("GIT_INDEX_FILE")
+                .env_remove("GIT_COMMON_DIR")
+                .current_dir(tree.path("repo")),
+        )
+        .unwrap();
         let out = String::from_utf8_lossy(&done.stdout);
         let err = String::from_utf8_lossy(&done.stderr);
         if std::env::var_os("SF_SYMPHONY_PROFILE").is_some() {
@@ -848,19 +850,17 @@ fn contracts(f: &Fixture) {
         cached.headers.get("content-length"),
         cached_get.headers.get("content-length")
     );
-    let mut decoder = Command::new("gzip")
-        .arg("-dc")
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .spawn()
-        .unwrap();
-    decoder
-        .stdin
-        .take()
-        .unwrap()
-        .write_all(&compressed.body)
-        .unwrap();
-    let decoded = decoder.wait_with_output().unwrap();
+    let mut decoder = tasks::sys::spawn_piped(Command::new("gzip").arg("-dc")).unwrap();
+    let mut input = decoder.stdin.take().unwrap();
+    let body = &compressed.body;
+    // Written beside the read: gzip answers while it reads, and a pipe holds only so much. The
+    // writer moves into its thread, so gzip reads its end when the write is done.
+    let decoded = std::thread::scope(|scope| {
+        let written = scope.spawn(move || input.write_all(body));
+        let decoded = tasks::sys::wait_output(decoder).unwrap();
+        written.join().unwrap().unwrap();
+        decoded
+    });
     assert!(decoded.status.success());
     assert_eq!(decoded.stdout, shell.body);
     assert_eq!(

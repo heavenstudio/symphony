@@ -62,15 +62,16 @@ impl Drop for BuildProcess {
 }
 
 fn git(root: &Path, args: &[&str]) -> Result<String, String> {
-    let done = Command::new("git")
-        .args(args)
-        .current_dir(root)
-        .env_remove("GIT_DIR")
-        .env_remove("GIT_WORK_TREE")
-        .env_remove("GIT_INDEX_FILE")
-        .env_remove("GIT_COMMON_DIR")
-        .output()
-        .map_err(|e| e.to_string())?;
+    let done = tasks::sys::output(
+        tasks::sys::Command::new("git")
+            .args(args)
+            .current_dir(root)
+            .env_remove("GIT_DIR")
+            .env_remove("GIT_WORK_TREE")
+            .env_remove("GIT_INDEX_FILE")
+            .env_remove("GIT_COMMON_DIR"),
+    )
+    .map_err(|e| e.to_string())?;
     if !done.status.success() {
         return Err(String::from_utf8_lossy(&done.stderr).trim().into());
     }
@@ -431,16 +432,22 @@ fn run_build(
     product: &str,
     stopping: impl Fn() -> bool,
 ) -> Result<(), String> {
+    // Read to its end once the build has ended: a child another thread spawns meanwhile must not
+    // hold its writer, so it is made close-on-exec (tasks::sys::pipe) and only the build gets it.
+    let (mut stderr, writer) =
+        tasks::sys::pipe().map_err(|e| format!("could not build {product}: {e}"))?;
     let child = command
         .current_dir(root)
         .env_remove("TASKS_SESSION")
         .env_remove("SF_CONTENT_DIR")
         .stdin(Stdio::null())
         .stdout(Stdio::null())
-        .stderr(Stdio::piped())
+        .stderr(writer)
         .process_group(0)
-        .spawn()
-        .map_err(|e| format!("could not build {product}: {e}"))?;
+        .spawn();
+    // Command keeps the descriptors it was given after spawn.
+    command.stderr(Stdio::null());
+    let child = child.map_err(|e| format!("could not build {product}: {e}"))?;
     let mut process = BuildProcess {
         child,
         reaped: false,
@@ -449,7 +456,6 @@ fn run_build(
         "· Symphony reload: {product} build pid {} started",
         process.child.id()
     );
-    let mut stderr = process.child.stderr.take().ok_or("no build stderr")?;
     // Drain concurrently: compiler diagnostics can exceed a pipe's capacity while we wait.
     let reader = std::thread::spawn(move || {
         let mut bytes = Vec::new();

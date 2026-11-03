@@ -5,13 +5,13 @@ use std::convert::Infallible;
 use std::io::{BufRead, Read, Write};
 use std::net::{SocketAddr, TcpStream};
 use std::path::PathBuf;
-use std::process::{Child, Command, Stdio};
 use std::sync::mpsc::Receiver;
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 use symphony_server::front::{Shared, router};
 use symphony_server::gate::Gate;
 use tasks::port::Start;
+use tasks::sys::{Child, Command};
 
 pub struct Fixture {
     root: PathBuf,
@@ -107,15 +107,16 @@ impl ScratchRepo {
                 "Initial fixture document",
             ],
         ] {
-            let done = Command::new("git")
-                .args(&args)
-                .current_dir(root)
-                .env_remove("GIT_DIR")
-                .env_remove("GIT_WORK_TREE")
-                .env_remove("GIT_INDEX_FILE")
-                .env_remove("GIT_COMMON_DIR")
-                .output()
-                .unwrap();
+            let done = tasks::sys::output(
+                Command::new("git")
+                    .args(&args)
+                    .current_dir(root)
+                    .env_remove("GIT_DIR")
+                    .env_remove("GIT_WORK_TREE")
+                    .env_remove("GIT_INDEX_FILE")
+                    .env_remove("GIT_COMMON_DIR"),
+            )
+            .unwrap();
             assert!(
                 done.status.success(),
                 "scratch repository {args:?}: {done:?}"
@@ -178,7 +179,10 @@ impl Fixture {
         if finishing {
             std::fs::create_dir(root.join("tools")).unwrap();
             let notice = root.join("finish.notice");
-            let done = Command::new("mkfifo").arg(&notice).status().unwrap();
+            let done = std::process::Command::new("mkfifo")
+                .arg(&notice)
+                .status()
+                .unwrap();
             assert!(done.success(), "mkfifo {}: {done}", notice.display());
             // Each call is recorded, then noticed with a line on the FIFO (`Fixture::notices`).
             // Opening it read-write never waits for a reader, so a stand-in outliving the case
@@ -220,13 +224,15 @@ printf '%s\n' '{"Self":{"DNSName":"review-fixture.tail.test.","TailscaleIPs":["f
 
         let surreal = std::env::var_os("SF_SURREAL").map_or_else(
             || {
-                let found = Command::new("bash")
-                    .arg(
-                        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../tools/surreal.sh"),
-                    )
-                    .env_remove("BASH_ENV")
-                    .output()
-                    .unwrap();
+                let found = tasks::sys::output(
+                    Command::new("bash")
+                        .arg(
+                            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                                .join("../../../tools/surreal.sh"),
+                        )
+                        .env_remove("BASH_ENV"),
+                )
+                .unwrap();
                 assert!(found.status.success(), "SurrealDB lookup: {found:?}");
                 PathBuf::from(String::from_utf8(found.stdout).unwrap().trim())
             },
@@ -246,21 +252,20 @@ printf '%s\n' '{"Self":{"DNSName":"review-fixture.tail.test.","TailscaleIPs":["f
             tasks::port::start_on_free_port(tasks::port::ATTEMPTS, ready_by, |board_address| {
                 assert_ne!(board_address.port(), 8765);
                 let mut database = OwnedChild(
-                    Command::new(&surreal)
-                        .args([
-                            "start",
-                            "--unauthenticated",
-                            "--bind",
-                            &board_address.to_string(),
-                            "--log",
-                            "info",
-                            "memory",
-                        ])
-                        .env("NO_COLOR", "1")
-                        .stdout(Stdio::piped())
-                        .stderr(Stdio::piped())
-                        .spawn()
-                        .unwrap(),
+                    tasks::sys::spawn_output(
+                        Command::new(&surreal)
+                            .args([
+                                "start",
+                                "--unauthenticated",
+                                "--bind",
+                                &board_address.to_string(),
+                                "--log",
+                                "info",
+                                "memory",
+                            ])
+                            .env("NO_COLOR", "1"),
+                    )
+                    .unwrap(),
                 );
                 let (send, receive) = std::sync::mpsc::channel();
                 let reader = std::thread::spawn({
@@ -316,7 +321,8 @@ printf '%s\n' '{"Self":{"DNSName":"review-fixture.tail.test.","TailscaleIPs":["f
                         return Ok(Start::Ended(said(reader, errors)));
                     }
                     if tasks::rpc::healthy(&address.to_string())
-                        && tasks::port::listens(database.0.id(), board_address).unwrap()
+                        && tasks::port::listens(database.0.id(), board_address, tasks::sys::output)
+                            .unwrap()
                     {
                         return Ok(Start::Up((database, reader, errors)));
                     }
@@ -501,7 +507,10 @@ printf '%s\n' '{"Self":{"DNSName":"review-fixture.tail.test.","TailscaleIPs":["f
     pub fn block_finish(&self) -> FinishRelease {
         let path = self.root.join("finish.release");
         if !path.exists() {
-            let done = Command::new("mkfifo").arg(&path).status().unwrap();
+            let done = std::process::Command::new("mkfifo")
+                .arg(&path)
+                .status()
+                .unwrap();
             assert!(done.success(), "mkfifo {}: {done}", path.display());
         }
         FinishRelease(

@@ -13,9 +13,9 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, LazyLock, Mutex};
+use tasks::sys::Command;
 
 use crate::register::{DOCS_DIR, Decision, REGION_START, parse_decisions};
 use crate::text::{rstrip, splitlines};
@@ -92,16 +92,19 @@ struct Shape {
 
 type Shapes = HashMap<String, HashSet<Shape>>;
 
+/// Read through [`tasks::sys::output`]: a child another thread spawns meanwhile (the server's
+/// census) never holds the answer open.
 fn git(at: &Path, args: &[&str]) -> Option<String> {
-    let done = Command::new("git")
-        .args(["-c", "diff.autoRefreshIndex=false"])
-        .args(args)
-        // A live scan can inspect a verdict worktree while its worker stages/commits it.
-        // Read-only discovery must not refresh that index or contend with its writer.
-        .env("GIT_OPTIONAL_LOCKS", "0")
-        .current_dir(at)
-        .output()
-        .ok()?;
+    let done = tasks::sys::output(
+        Command::new("git")
+            .args(["-c", "diff.autoRefreshIndex=false"])
+            .args(args)
+            // A live scan can inspect a verdict worktree while its worker stages/commits it.
+            // Read-only discovery must not refresh that index or contend with its writer.
+            .env("GIT_OPTIONAL_LOCKS", "0")
+            .current_dir(at),
+    )
+    .ok()?;
     done.status
         .success()
         .then(|| String::from_utf8_lossy(&done.stdout).to_string())
@@ -162,19 +165,18 @@ fn registers(at: &Path, rev: &str) -> Vec<String> {
 }
 
 /// The text at each `<rev>:<path>`, "" where there is none: one `git cat-file --batch` for all of them.
+/// Its input and output go through [`tasks::sys::spawn_piped`]: it runs before readiness, and a
+/// child another thread spawns meanwhile (the census) must hold neither end open.
 fn blobs(at: &Path, specs: &[String]) -> Vec<String> {
     let none = || vec![String::new(); specs.len()];
     if specs.is_empty() {
         return Vec::new();
     }
-    let Ok(mut child) = Command::new("git")
-        .args(["cat-file", "--batch"])
-        .current_dir(at)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()
-    else {
+    let Ok(mut child) = tasks::sys::spawn_piped(
+        Command::new("git")
+            .args(["cat-file", "--batch"])
+            .current_dir(at),
+    ) else {
         return none();
     };
     let input: String = specs.iter().map(|s| format!("{s}\n")).collect();
@@ -182,7 +184,7 @@ fn blobs(at: &Path, specs: &[String]) -> Vec<String> {
     let writer = std::thread::spawn(move || {
         let _ = stdin.write_all(input.as_bytes());
     });
-    let Ok(done) = child.wait_with_output() else {
+    let Ok(done) = tasks::sys::wait_output(child) else {
         return none();
     };
     let _ = writer.join();

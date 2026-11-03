@@ -2,8 +2,8 @@
 //! temporary folder is inside it).
 
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use tasks::git::common_dir;
+use tasks::sys::Command;
 
 struct Temp(PathBuf);
 
@@ -35,11 +35,12 @@ impl Make for PathBuf {
 }
 
 fn git(args: &[&str]) {
-    let done = Command::new("git")
-        .args(["-c", "user.email=t@t", "-c", "user.name=t"])
-        .args(args)
-        .output()
-        .unwrap();
+    let done = tasks::sys::output(
+        Command::new("git")
+            .args(["-c", "user.email=t@t", "-c", "user.name=t"])
+            .args(args),
+    )
+    .unwrap();
     assert!(
         done.status.success(),
         "{}",

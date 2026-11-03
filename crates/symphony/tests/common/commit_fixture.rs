@@ -69,6 +69,11 @@ fn child_output(home: &Path) -> String {
 }
 
 #[allow(dead_code)]
+fn watchdog_report(name: &str, home: &Path) -> String {
+    format!("{name} watchdog: {}", child_output(home))
+}
+
+#[allow(dead_code)]
 fn commit_verdicts(root: &Path, edits: &[Edit], message: &str) -> symphony::commit::Outcome {
     stage(format_args!("publication start: {message}"));
     let outcome = symphony::commit::commit_verdicts(root, edits, message);
@@ -82,10 +87,10 @@ fn commit_verdicts(root: &Path, edits: &[Edit], message: &str) -> symphony::comm
 #[allow(dead_code)]
 fn git(root: &Path, args: &[&str]) -> String {
     stage(format_args!("git start {args:?}"));
-    let done = Command::new("git")
+    let done = tasks::sys::output(tasks::sys::Command::new("git")
         .args(args)
         .current_dir(root)
-        .output()
+        )
         .unwrap();
     stage(format_args!("git finished {args:?}: {}", done.status));
     assert!(
@@ -142,25 +147,139 @@ fn relay_output(
     }
 }
 
+// Reporting only: the existing watchdog and target budgets remain unchanged.
+const PUBLICATION_REPORT_AFTER: Duration = Duration::from_secs(5);
+
 #[allow(dead_code)]
-struct OwnedChild(Child, Vec<std::thread::JoinHandle<std::io::Result<()>>>);
+struct PublicationProgress {
+    line: String,
+    began: Instant,
+    reported: bool,
+}
+
+#[allow(dead_code)]
+#[derive(Default)]
+struct PendingPublications(
+    std::collections::BTreeMap<String, (Instant, String, bool)>,
+    std::collections::BTreeMap<String, PublicationProgress>,
+);
+
+#[allow(dead_code)]
+impl PendingPublications {
+    fn thread_key(line: &str) -> String {
+        let header = line.split_once(" stage=").map_or(line, |(header, _)| header);
+        let (process, rest) = header.split_once(" id=").unwrap_or((header, ""));
+        let thread = rest.split_once(" thread=").map_or("", |(_, thread)| thread);
+        format!("{process} thread={thread}")
+    }
+
+    fn observe(&mut self, line: &str, now: Instant) -> bool {
+        if !line.starts_with("publication pid=") {
+            return false;
+        }
+        let key = if let Some((key, _)) = line.rsplit_once(" started elapsed=") {
+            self.0.insert(key.into(), (now, line.into(), false));
+            key
+        } else if let Some((key, _)) = line.rsplit_once(" finished elapsed=") {
+            self.0.remove(key);
+            key
+        } else {
+            return true;
+        };
+        self.1.insert(Self::thread_key(key), PublicationProgress {
+            line: line.into(),
+            began: now,
+            reported: false,
+        });
+        true
+    }
+
+    fn report(began: Instant, line: &str, last: &str, now: Instant) -> String {
+        format!(
+            "after_commit publication still open after {:.3}s: {} | last trace: {}\n",
+            now.duration_since(began).as_secs_f64(),
+            line.trim_end(),
+            last.trim_end()
+        )
+    }
+
+    fn overdue(&mut self, now: Instant) -> String {
+        let mut output = String::new();
+        let mut just_reported = std::collections::BTreeSet::new();
+        for (began, line, reported) in self.0.values_mut() {
+            if !*reported && now.duration_since(*began) >= PUBLICATION_REPORT_AFTER {
+                *reported = true;
+                let thread = Self::thread_key(line);
+                output.push_str(&Self::report(*began, line, &self.1[&thread].line, now));
+                just_reported.insert(thread);
+            }
+        }
+        // A new trace line starts a new quiet period, even when an enclosing
+        // publication has already been reported. Preserve the last finished
+        // stage so a gap between stages is located before the target timeout.
+        for (thread, progress) in &mut self.1 {
+            if !progress.reported && now.duration_since(progress.began) >= PUBLICATION_REPORT_AFTER {
+                progress.reported = true;
+                if !just_reported.contains(thread) {
+                    for (began, line, _) in self.0.values() {
+                        if Self::thread_key(line) == *thread {
+                            output.push_str(&Self::report(*began, line, &progress.line, now));
+                        }
+                    }
+                }
+            }
+        }
+        output
+    }
+}
+
+#[allow(dead_code)]
+fn relay_publication_output(
+    reader: impl Read,
+    mut saved: impl Write,
+    mut live: impl Write,
+    pending: &Mutex<PendingPublications>,
+) -> std::io::Result<()> {
+    let mut reader = BufReader::new(reader);
+    let mut line = Vec::new();
+    loop {
+        line.clear();
+        if reader.read_until(b'\n', &mut line)? == 0 {
+            return Ok(());
+        }
+        saved.write_all(&line)?;
+        let trace = pending.lock().unwrap().observe(&String::from_utf8_lossy(&line), Instant::now());
+        if !trace {
+            live.write_all(&line)?;
+        }
+    }
+}
+
+#[allow(dead_code)]
+fn quiet_publication_output(output: &str) -> String {
+    output.split_inclusive('\n').filter(|line| !line.starts_with("publication pid=")).collect()
+}
+
+#[allow(dead_code)]
+struct OwnedChild(tasks::sys::Child, Vec<std::thread::JoinHandle<std::io::Result<()>>>, Arc<Mutex<PendingPublications>>);
 impl OwnedChild {
-    fn logged(command: &mut Command, path: &Path) -> Self {
+    fn logged(command: &mut tasks::sys::Command, path: &Path) -> Self {
         let log = std::fs::File::create(path).unwrap();
         let saved = log.try_clone().unwrap();
-        let mut child = command
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .unwrap();
+        // The relays end with the case's output, never later because another case's child kept it.
+        let mut child = tasks::sys::spawn_output(command).unwrap();
         let error = child.stderr.take().unwrap();
         let output = child.stdout.take().unwrap();
+        let pending = Arc::new(Mutex::new(PendingPublications::default()));
+        let out_pending = Arc::clone(&pending);
+        let err_pending = Arc::clone(&pending);
         Self(
             child,
             vec![
-                std::thread::spawn(move || relay_output(output, saved, std::io::stderr())),
-                std::thread::spawn(move || relay_output(error, log, std::io::stderr())),
+                std::thread::spawn(move || relay_publication_output(output, saved, std::io::stderr(), &out_pending)),
+                std::thread::spawn(move || relay_publication_output(error, log, std::io::stderr(), &err_pending)),
             ],
+            pending,
         )
     }
 
@@ -181,7 +300,7 @@ impl Drop for OwnedChild {
 #[allow(dead_code)]
 fn isolated(name: &str, run: impl FnOnce(&Fixture)) {
     if let Some(output) = isolated_output(name, run) {
-        eprint!("{output}");
+        eprint!("{}", quiet_publication_output(&output));
     }
 }
 
@@ -208,7 +327,7 @@ fn isolated_output(name: &str, run: impl FnOnce(&Fixture)) -> Option<String> {
         .map(|path| path.join("just"))
         .find(|path| path.is_file())
         .expect("just is installed");
-    let mut child = Command::new(std::env::current_exe().unwrap());
+    let mut child = tasks::sys::Command::new(std::env::current_exe().unwrap());
     // Drop inherited board, callback, index and repository overrides. This process may only
     // reach this fixture; its CLI children receive the same private environment.
     for (key, _) in std::env::vars() {
@@ -219,6 +338,7 @@ fn isolated_output(name: &str, run: impl FnOnce(&Fixture)) -> Option<String> {
     child
         .args(["--exact", name, "--nocapture", "--test-threads=1"])
         .env(CHILD, &tree.root)
+        .env("SF_SYMPHONY_PUBLICATION_TRACE", "1")
         .env("TASKS_SERVER", db.addr())
         .env("TASKS_DATABASE", db.database())
         .env("ASKS_DB", tree.path("asks.db"))
@@ -235,18 +355,22 @@ fn isolated_output(name: &str, run: impl FnOnce(&Fixture)) -> Option<String> {
         .env("GIT_CONFIG_GLOBAL", "/dev/null")
         .env("GIT_CONFIG_NOSYSTEM", "1")
         .current_dir(&tree.root)
-        .stdin(Stdio::null());
+        .stdin(tasks::sys::Stdio::Null);
     let mut child = OwnedChild::logged(&mut child, &output);
     stage(format_args!("case child spawned: {name}"));
     let began = Instant::now();
     let status = loop {
+        // Full detail stays in child.log; an open stage reaches the live stream
+        // before the target timeout, without flooding successful suite output.
+        let pending = child.2.lock().unwrap().overdue(Instant::now());
+        let _ = std::io::stderr().write_all(pending.as_bytes());
         if let Some(status) = child.0.try_wait().unwrap() {
             break status;
         }
         assert!(
             began.elapsed() < DEADLINE,
-            "{name} watchdog: {}",
-            child_output(&tree.root)
+            "{}",
+            watchdog_report(name, &tree.root)
         );
         // Only the outer watchdog polls process completion. All ordering assertions below use
         // sockets or worker joins, with no elapsed-time or sleep-based success criterion.
@@ -296,7 +420,7 @@ impl Fixture {
         write(
             &root.join("justfile"),
             &format!(
-                "content:\n    @sh {}\n\nhull-atlas action:\n    @mkdir -p view\n    @cp content/one view/hull_atlas\n\ncheck:\n    @sh {}\n\nverify:\n    @sh {}\n\nland branch:\n    @sh {} {{{{branch}}}}\n",
+                "content:\n    @sh {}\n\ncontent-ids:\n    @true\n\nhull-atlas action:\n    @mkdir -p view\n    @cp content/one view/hull_atlas\n\ncheck:\n    @sh {}\n\nverify:\n    @sh {}\n\nland branch:\n    @sh {} {{{{branch}}}}\n",
                 quote(&self.home.join("generate.sh")),
                 quote(&self.home.join("check.sh")),
                 quote(&self.home.join("check.sh")),
@@ -362,7 +486,7 @@ impl Fixture {
         );
     }
     fn main_notice(&self, notice: &Gate) {
-        script(
+        prepared_script(
             &self.root().join(".git/hooks/reference-transaction"),
             &format!(
                 "[ \"$1\" = committed ] || exit 0\nSF_AFTER_COMMIT_NOTICE={} exec {} --exact main_notice --nocapture",

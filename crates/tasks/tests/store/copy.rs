@@ -3,12 +3,12 @@
 //! order of its key.
 
 use crate::common::{Fixture, NOW, Seed, client, server_addr, session, task};
-use std::process::{Command, Stdio};
 use tasks::Store;
 use tasks::rows::{
     BarredKeyRow, DeliveryRow, Dump, LinkRow, MessageRow, RoleRow, SessionRow, TaskRow,
     TaskSessionRow,
 };
+use tasks::sys::Command;
 
 /// One row of every table, each optional column both set and not, in key order.
 fn everything() -> Dump {
@@ -300,20 +300,18 @@ fn the_copy_command_refuses_a_column_or_a_table_it_does_not_know_by_name() {
 #[test]
 fn the_copy_binary_is_the_command() {
     let db = client();
-    let mut child = Command::new(env!("CARGO_BIN_EXE_tasks-copy"))
-        .args([server_addr(), db.database().to_string()])
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .unwrap();
+    // The copy reads the whole dump before it says anything, so the dump is written first.
+    let mut child = tasks::sys::spawn_piped(
+        Command::new(env!("CARGO_BIN_EXE_tasks-copy"))
+            .args([server_addr(), db.database().to_string()]),
+    )
+    .unwrap();
     std::io::Write::write_all(
         child.stdin.as_mut().unwrap(),
         &serde_json::to_vec(&everything()).unwrap(),
     )
     .unwrap();
-    drop(child.stdin.take());
-    let done = child.wait_with_output().unwrap();
+    let done = tasks::sys::wait_output(child).unwrap();
     assert!(
         done.status.success(),
         "{}",
@@ -324,10 +322,7 @@ fn the_copy_binary_is_the_command() {
             .unwrap()
             .starts_with("tasks-copy: 2 tasks")
     );
-    let refused = Command::new(env!("CARGO_BIN_EXE_tasks-copy"))
-        .stderr(Stdio::piped())
-        .output()
-        .unwrap();
+    let refused = tasks::sys::output(&mut Command::new(env!("CARGO_BIN_EXE_tasks-copy"))).unwrap();
     assert_eq!(refused.status.code(), Some(2));
 }
 
