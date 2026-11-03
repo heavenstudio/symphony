@@ -352,6 +352,21 @@ moves it on when the concept or design is done. The card shows what waits in
 each document the task links ("N waiting" undecided cards), for information
 only: nothing waits on it.
 
+**Review waiting on nobody is blocked.** The owner, 2026-11-03: "the task was
+in review, but actually waiting for some approval. So it should had been
+blocked instead in regards to the status, since no work was happening." A task
+in review whose branch has every stamp it needs to land but ones nobody is
+producing (the owner's approval, a dependency only that approval collects, a
+hold its orchestrator names: [MERGING](../../docs/workflow/MERGING.md#stamps))
+goes to `blocked`, with a line on its thread naming them. `just land`, `just
+land-approve` and `just land-stamps` make that move when they find it, and move
+the task back to `review` once one arrives: the owner's approval (the
+Symphony's approve-to-land button, or relayed), a waiver, or a stamp someone
+produces going missing. A role holder may move blocked work back to review, and
+so may the owner; a command run by a session with no role on the task says the
+move it could not make, and leaves it to the next run by a role holder. A
+landing finishes work still held blocked as it does work in review.
+
 A task that has posted a card for the owner is lifted out of its column into
 a **Waiting for your sign-off** lane above the board. That needs all of:
 

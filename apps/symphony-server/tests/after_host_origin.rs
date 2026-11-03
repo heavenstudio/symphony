@@ -51,6 +51,79 @@ fn owner_changes_priority_and_cancels_only_open_tasks() {
 }
 
 #[test]
+fn owner_approval_returns_the_work_its_stamps_held_blocked_to_review() {
+    run(
+        "owner_approval_returns_the_work_its_stamps_held_blocked_to_review",
+        exercise_land_approve,
+    );
+}
+
+fn exercise_land_approve(address: std::net::SocketAddr) {
+    let f = Fixture::child(address);
+    let host = f.host();
+    let origin = format!("http://{host}");
+    let slug = "review/change/held";
+    f.board
+        .create(&tasks::NewTask::new(slug, "Review change/held", "owner"))
+        .unwrap();
+    // Seed it blocked through the board's copy boundary, as land holds it while it waits on the owner.
+    let mut dump = f.board.dump().unwrap();
+    dump.tasks
+        .iter_mut()
+        .find(|task| task.slug == slug)
+        .unwrap()
+        .status = "blocked".into();
+    f.board.copy(&dump).unwrap();
+    f.land_stand_in(&format!("[\"{slug}\"]"));
+    let approve = || {
+        f.request(
+            "POST",
+            "/api/land-approve",
+            Some(&host),
+            Some(&origin),
+            &json!({"slug":slug, "patch":"fixture-patch", "note":""}),
+        )
+    };
+    let response = approve();
+    assert_eq!(response.status, 200, "{response:?}");
+    assert_eq!(response.json()["ok"], true);
+    assert_eq!(f.board.get(slug).unwrap().status, "review");
+    let said: Vec<String> = (f.board.thread(slug).unwrap().into_iter())
+        .map(|message| format!("{}: {}", message.sender, message.text))
+        .collect();
+    assert_eq!(
+        said[said.len() - 2..],
+        [
+            "owner: approved change/held to land",
+            "owner: owner moved it blocked → review"
+        ]
+    );
+    let calls = f.land_calls();
+    assert_eq!(calls.len(), 2, "{calls:?}");
+    assert!(calls[0].contains("\"record_owner_approval\""), "{calls:?}");
+    assert!(
+        calls[1].contains("\"stamps_released\"") && calls[1].contains("\"change/held\""),
+        "{calls:?}"
+    );
+    // A move the board refuses (the work is in review already) leaves the approval standing.
+    let response = approve();
+    assert_eq!(response.status, 200, "{response:?}");
+    assert_eq!(f.board.get(slug).unwrap().status, "review");
+    // A release land cannot answer leaves the work blocked, and the approval standing.
+    let mut dump = f.board.dump().unwrap();
+    dump.tasks
+        .iter_mut()
+        .find(|task| task.slug == slug)
+        .unwrap()
+        .status = "blocked".into();
+    f.board.copy(&dump).unwrap();
+    f.land_stand_in("not json");
+    let response = approve();
+    assert_eq!(response.status, 200, "{response:?}");
+    assert_eq!(f.board.get(slug).unwrap().status, "blocked");
+}
+
+#[test]
 fn owner_cancel_finishes_only_from_the_shared_installation() {
     let test = "owner_cancel_finishes_only_from_the_shared_installation";
     if std::env::var_os("SF_AFTER_HOST_ORIGIN_CHILD").is_none() {
