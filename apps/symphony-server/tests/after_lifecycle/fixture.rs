@@ -1,17 +1,21 @@
 //! Owned processes, scratch repositories and build/opener fixtures for the lifecycle boundary.
+//! Every child starts through the board's forkless `tasks::sys::Command`: a child std forks
+//! holds every descriptor this process has until its exec, a sibling case's pipes among them.
 
+use std::ffi::OsString;
 use std::fs::{self, File};
 use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 use std::os::unix::fs::symlink;
 use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
-use std::os::unix::process::{CommandExt, ExitStatusExt};
+use std::os::unix::process::ExitStatusExt;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, ExitStatus, Output, Stdio};
+use std::process::{ExitStatus, Output};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Mutex, Once, OnceLock};
 use std::time::{Duration, Instant};
+use tasks::sys::{Child, Command, Stdio};
 
 #[path = "../../../../../tools/gate/tests/gate/scratch.rs"]
 mod scratch;
@@ -53,7 +57,6 @@ fn prepare_commands(repo: &Repo, folder: &Path) -> [u32; 4] {
     *PREPARED_COMMANDS.get_or_init(|| {
         let bin = folder.join("commands");
         fs::create_dir_all(&bin).unwrap();
-        let environment = repo.command(&repo.main);
         let images: [(&str, &str, &[&str]); 4] = [
             ("bash", "bash.sh", &["-c", "true"]),
             ("build", "build.sh", &["tasks", "reap"]),
@@ -67,13 +70,9 @@ fn prepare_commands(repo: &Repo, folder: &Path) -> [u32; 4] {
             command
                 .current_dir(&repo.main)
                 .env_clear()
+                .envs(repo.environment())
                 .stdin(Stdio::null())
                 .args(args);
-            for (key, value) in environment.get_envs() {
-                if let Some(value) = value {
-                    command.env(key, value);
-                }
-            }
             let mut preparation = Process::spawn(command, &folder.join(name));
             preparation.success();
             preparation.child.id()
@@ -349,18 +348,10 @@ impl Descendants {
 
     fn spawn(command: &mut Command, at: &Path) -> (Self, File) {
         let (descendants, writer) = Self::endpoint(at, invocation(command));
-        let fd = writer.as_raw_fd();
-        // SAFETY: writer lives through spawn. Only the child's descriptor flag changes, so
-        // concurrent tests cannot inherit this endpoint through their unrelated commands.
-        unsafe {
-            command.pre_exec(move || {
-                if libc::fcntl(fd, libc::F_SETFD, 0) == -1 {
-                    Err(std::io::Error::last_os_error())
-                } else {
-                    Ok(())
-                }
-            });
-        }
+        // The writer lives through spawn, which hands it to the child alone under its own number.
+        // This process's copy stays close-on-exec, so concurrent tests' unrelated commands
+        // cannot inherit this endpoint.
+        command.pass_fd(writer.as_raw_fd());
         (descendants, writer)
     }
 
@@ -675,38 +666,53 @@ impl Repo {
         repo
     }
 
+    /// The isolated environment, and all of it, that every fixture command runs in.
+    pub fn environment(&self) -> Vec<(&'static str, OsString)> {
+        let mut vars: Vec<(&'static str, OsString)> = vec![
+            ("HOME", self.base.clone().into()),
+            ("USER", "lifecycle-fixture".into()),
+            ("LANG", "C".into()),
+            (
+                "PATH",
+                format!(
+                    "{}:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin",
+                    self.bin.display()
+                )
+                .into(),
+            ),
+            (
+                "SF_SYMPHONY_PORT",
+                self.port.unwrap_or(0).to_string().into(),
+            ),
+            (
+                "SF_SYMPHONY_TEST_PID",
+                std::process::id().to_string().into(),
+            ),
+            // SF_SYMPHONY_STARTUP_TRACE=1 keeps starter stages in timeout reports. Stop and
+            // serving commands stay quiet even when the same fixture environment asks for it.
+            ("SF_SYMPHONY_STARTUP_TRACE", "1".into()),
+            // Foreground previews must not discover any surrounding repository's live data.
+            // An invalid database name is refused before connecting or starting a board engine.
+            ("TASKS_DATABASE", "lifecycle fixture has no board".into()),
+            ("ASKS_DB", self.base.join("private-asks.db").into()),
+            ("SF_LIFECYCLE_BINARY", APP.into()),
+            ("SF_LIFECYCLE_LOG", self.builds.clone().into()),
+        ];
+        // Keep the coverage collector on foreground children. Home must still exercise its real
+        // environment filter; its detached child writes LLVM's default profile in the scratch cwd.
+        if let Some(profile) = std::env::var_os("LLVM_PROFILE_FILE") {
+            vars.push(("LLVM_PROFILE_FILE", profile));
+        }
+        vars
+    }
+
     pub fn command(&self, dir: &Path) -> Command {
         let mut command = Command::new(APP);
         command
             .current_dir(dir)
             .env_clear()
-            .env("HOME", &self.base)
-            .env("USER", "lifecycle-fixture")
-            .env("LANG", "C")
-            .env(
-                "PATH",
-                format!(
-                    "{}:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin",
-                    self.bin.display()
-                ),
-            )
-            .env("SF_SYMPHONY_PORT", self.port.unwrap_or(0).to_string())
-            .env("SF_SYMPHONY_TEST_PID", std::process::id().to_string())
-            // SF_SYMPHONY_STARTUP_TRACE=1 keeps starter stages in timeout reports. Stop and
-            // serving commands stay quiet even when the same fixture environment asks for it.
-            .env("SF_SYMPHONY_STARTUP_TRACE", "1")
-            // Foreground previews must not discover any surrounding repository's live data.
-            // An invalid database name is refused before connecting or starting a board engine.
-            .env("TASKS_DATABASE", "lifecycle fixture has no board")
-            .env("ASKS_DB", self.base.join("private-asks.db"))
-            .env("SF_LIFECYCLE_BINARY", APP)
-            .env("SF_LIFECYCLE_LOG", &self.builds)
+            .envs(self.environment())
             .stdin(Stdio::null());
-        // Keep the coverage collector on foreground children. Home must still exercise its real
-        // environment filter; its detached child writes LLVM's default profile in the scratch cwd.
-        if let Some(profile) = std::env::var_os("LLVM_PROFILE_FILE") {
-            command.env("LLVM_PROFILE_FILE", profile);
-        }
         command
     }
 
@@ -722,25 +728,19 @@ impl Repo {
         root
     }
 
+    /// `just symphony` in the same isolated environment as [`Repo::command`], with each stage timed.
     pub fn recipe(&self, dir: &Path) -> Command {
-        let command = self.command(dir);
-        // Command cannot replace its program: apply the same isolated environment explicitly.
         let mut recipe = Command::new("just");
         recipe
             .current_dir(dir)
             .args(["symphony"])
-            .stdin(Stdio::null());
-        recipe.env_clear();
-        recipe
+            .stdin(Stdio::null())
+            .env_clear()
             .env("JUST_VERBOSE", "1")
             .env("JUST_TIMESTAMP", "true")
             .env("JUST_TIMESTAMP_FORMAT", "%s%.3f")
-            .env("JUST_TIME", "true");
-        for (key, value) in command.get_envs() {
-            if let Some(value) = value {
-                recipe.env(key, value);
-            }
-        }
+            .env("JUST_TIME", "true")
+            .envs(self.environment());
         recipe
     }
 
@@ -957,6 +957,50 @@ pub fn terminal() -> (File, OwnedFd) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A child std forks keeps every end this process holds until its exec, a sibling case's
+    /// readiness pipe or lifetime endpoint among them, and no wait can shorten that.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn no_fixture_child_forks() {
+        use std::cell::Cell;
+        thread_local! {
+            /// The forks this thread made, counted by the handler `fork` runs before it forks.
+            static FORKS: Cell<u32> = const { Cell::new(0) };
+        }
+        extern "C" fn prepare() {
+            FORKS.set(FORKS.get() + 1);
+        }
+        static HANDLER: Once = Once::new();
+        HANDLER.call_once(|| {
+            // SAFETY: the handler only bumps the forking thread's count; it is registered once.
+            let registered = unsafe { libc::pthread_atfork(Some(prepare), None, None) };
+            assert_eq!(registered, 0);
+        });
+        {
+            // The repository's setup, a recipe's start (a bare `just` in a cleared environment),
+            // a piped child, a terminal's, and the drop's stop and descendant waits.
+            let repo = Repo::new("forkless");
+            repo.start(&repo.tree, true);
+            let mut command = Command::new("/bin/cat");
+            command.stdin(Stdio::piped());
+            let mut piped = repo.run(command);
+            piped
+                .child
+                .stdin
+                .take()
+                .unwrap()
+                .write_all(b"echo")
+                .unwrap();
+            piped.success();
+            assert_eq!(piped.output(), "echo");
+            let mut command = Command::new("/bin/sh");
+            command.args(["-c", "test -t 1"]);
+            let (mut terminal, _master) = repo.run_terminal(command);
+            terminal.success();
+        }
+        assert_eq!(FORKS.get(), 0, "a fixture child forked");
+    }
 
     #[test]
     fn the_recipe_observer_uses_the_interpreter_from_the_original_path() {
