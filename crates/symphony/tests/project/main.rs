@@ -12,5 +12,6 @@ mod board;
 mod fields;
 mod manifest;
 mod seams;
+mod star_foundry;
 
 use common::Tree;
