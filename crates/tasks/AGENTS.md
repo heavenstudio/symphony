@@ -103,6 +103,7 @@ A reviewer launched on an instruction child resumes that child's recorded conver
 unanswered post is on its parent; a departed reviewer explicitly named by handle still receives it.
 An unanswered post keeps a pane immediately, including through descendant sessions. A reviewer
 whose changes verdict returned the task to `in_progress` keeps its pane for re-review too.
+That includes landing changes posted as a message to the executor before it moves the task back.
 A post or changes verdict to `@executor`, or a post to the executor by handle, that no
 executor can read (no callback, and its launch record closed or no live beat) adds a
 `board` post to `@orchestrator` on the

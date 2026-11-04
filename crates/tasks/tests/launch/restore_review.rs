@@ -151,6 +151,8 @@ fn an_unanswered_review_post_resumes_its_instruction_conversation() {
             (true, true, "sim/jump"),
             (false, false, "sim/other"),
             (false, true, "sim/other"),
+            (true, false, "sim/other"),
+            (true, true, "sim/other"),
         ] {
             let w = World::new();
             let executor = w.f.session("worker");

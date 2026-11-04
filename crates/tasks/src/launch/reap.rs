@@ -28,7 +28,8 @@
 //!   reviewer role on a task in `review`: an executor in review waits on its reviewers, whose
 //!   changes must reach its pane, and [`super::finish`] closes it once the task is done;
 //! - neither it nor a descendant has an unanswered addressed post, or a reviewer role awaiting
-//!   re-review on an `in_progress` task after its changes verdict;
+//!   re-review on an `in_progress` task after its changes verdict (a board verdict or landing
+//!   message);
 //! - nothing runs under its claude process but what is known to be harmless
 //!   ([`procs::reap_busy_reason`]): MCP helpers, caffeinate, a board command or monitor (`just
 //!   tasks…`, the `tasks` binary). Anything else, whatever it is, is work. A pane whose processes

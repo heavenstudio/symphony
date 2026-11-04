@@ -3,6 +3,36 @@
 use super::*;
 
 #[test]
+fn a_landing_changes_message_keeps_the_reviewer_until_the_fix_is_reviewed() {
+    let w = World::new();
+    let executor = w.executor_on("review", "sim/jump");
+    let reviewer = w.f.session("reviewer");
+    w.store()
+        .take_role("sim/jump", &reviewer, "reviewer")
+        .unwrap();
+    // land-approve writes changes through Store::say, without changing the task's status.
+    w.store()
+        .say(
+            "sim/jump",
+            &reviewer,
+            &format!("{reviewer} asks for changes on sim/jump at tip 012345abcdef: fix the edge"),
+            Some("@executor"),
+        )
+        .unwrap();
+    assert_eq!(w.store().get("sim/jump").unwrap().status, "review");
+    w.store()
+        .move_to("sim/jump", "in_progress", &executor)
+        .unwrap();
+    let pane = w.agent(Agent::named(&reviewer));
+    w.kept(&pane, How::default());
+    w.store().move_to("sim/jump", "review", &executor).unwrap();
+    w.store()
+        .verdict("sim/jump", &reviewer, "approve", "fixed")
+        .unwrap();
+    assert_eq!(panes(&w.twice(How::default())), [pane.as_str()]);
+}
+
+#[test]
 fn a_status_answer_does_not_keep_a_finished_agents_pane() {
     let w = World::new();
     let handle = w.executor_on("in_progress", "sim/jump");
