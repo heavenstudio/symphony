@@ -185,6 +185,22 @@ pub fn run(plugins: &'static [&'static dyn symphony_plugin::Plugin], args: &[Str
     code
 }
 
+/// Run `exe`, this server, with `args` against its own board `database` and asks file `asks`, in this
+/// process's folder and on its streams: the server's exit code, or 2 when it could not start or ended
+/// on a signal.
+fn scratch(exe: &Path, args: &[String], database: &str, asks: &Path) -> i32 {
+    symphony_board::sys::Command::new(exe)
+        .args(args)
+        .env("TASKS_DATABASE", database)
+        .env("ASKS_DB", asks)
+        .env("TASKS_SWEEP", "off")
+        .spawn()
+        .and_then(|mut server| server.wait())
+        .ok()
+        .and_then(|status| status.code())
+        .unwrap_or(2)
+}
+
 /// The whole of `symphony-server`: the exit code.
 pub fn main(args: &[String]) -> i32 {
     // Keep scratch runs explicit and self-contained without mutating the process environment
@@ -208,15 +224,7 @@ pub fn main(args: &[String]) -> i32 {
             .join("artifacts")
             .join(format!("callbacks-{database}"))
             .join("asks.db");
-        return std::process::Command::new(exe)
-            .args(&args[2..])
-            .env("TASKS_DATABASE", database)
-            .env("ASKS_DB", asks)
-            .env("TASKS_SWEEP", "off")
-            .status()
-            .ok()
-            .and_then(|status| status.code())
-            .unwrap_or(2);
+        return scratch(&exe, &args[2..], database, &asks);
     }
     match parse(args) {
         Ok(Action::Help) => {
@@ -462,6 +470,78 @@ mod tests {
 
     fn args(text: &str) -> Vec<String> {
         text.split_whitespace().map(str::to_string).collect()
+    }
+
+    /// Set in this test binary's own child, run by the case below: the server a scratch run starts.
+    const SCRATCH_SERVER: &str = "SF_SCRATCH_RUN_SERVER";
+
+    /// Only in that child: a scratch run on the streams and folder the case gave it, ending with its code.
+    #[test]
+    fn scratch_run_in_a_child() {
+        if let Some(server) = std::env::var_os(SCRATCH_SERVER) {
+            let args = ["--port".to_owned(), "an argument".to_owned()];
+            let code = scratch(
+                Path::new(&server),
+                &args,
+                "scratchdb",
+                Path::new("/asks.db"),
+            );
+            std::process::exit(code);
+        }
+    }
+
+    /// A scratch run starts the server with its arguments, its own board and this process's
+    /// environment, folder and streams, and ends with its code; one that cannot start or ends on a
+    /// signal is 2.
+    #[test]
+    fn a_scratch_run_keeps_its_arguments_board_folder_streams_and_exit() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!("scratch-run-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let dir = dir.canonicalize().unwrap();
+        let script = |name: &str, body: &str| {
+            let path = dir.join(name);
+            std::fs::write(&path, format!("#!/bin/sh\n{body}")).unwrap();
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+            path
+        };
+        let server = script(
+            "server",
+            "IFS= read -r line\n\
+             printf '%s\\n' \"$line\" \"$PWD\" \"$TASKS_DATABASE\" \"$ASKS_DB\" \"$TASKS_SWEEP\" \"$KEPT\" \"$@\"\n\
+             printf 'diagnostic\\n' >&2\nexit 7\n",
+        );
+        let killed = script("killed", "kill -TERM $$\n");
+        std::fs::write(dir.join("input"), "request\n").unwrap();
+        let run = |server: &Path| {
+            let file = |name: &str| std::fs::File::create(dir.join(name)).unwrap();
+            let status = symphony_board::sys::Command::new(std::env::current_exe().unwrap())
+                .args(["--exact", "cli::tests::scratch_run_in_a_child"])
+                .args(["--nocapture", "--test-threads=1"])
+                .env(SCRATCH_SERVER, server)
+                .env("KEPT", "inherited")
+                .current_dir(&dir)
+                .stdin(std::fs::File::open(dir.join("input")).unwrap())
+                .stdout(file("out"))
+                .stderr(file("err"))
+                .spawn()
+                .unwrap()
+                .wait()
+                .unwrap();
+            let read = |name: &str| std::fs::read_to_string(dir.join(name)).unwrap();
+            (status.code(), read("out"), read("err"))
+        };
+        let (code, out, err) = run(&server);
+        let said = format!(
+            "request\n{}\nscratchdb\n/asks.db\noff\ninherited\n--port\nan argument\n",
+            dir.display()
+        );
+        assert_eq!(code, Some(7), "{out}{err}");
+        assert!(out.ends_with(&said), "{out}");
+        assert!(err.ends_with("diagnostic\n"), "{err}");
+        assert_eq!(run(&dir.join("missing")).0, Some(2));
+        assert_eq!(run(&killed).0, Some(2));
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

@@ -8,7 +8,7 @@ use std::io::{BufRead, BufReader, Write};
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 use std::time::{Duration, Instant};
-use symphony_board::sys::Command;
+use symphony_board::sys::{Command, Spawning as _};
 
 use common::Tree;
 use serde_json::json;
@@ -1060,7 +1060,7 @@ fn scan_225_worktrees_has_bounded_commands_and_parallel_waits() {
     for fifo in ["arrived", "release"] {
         let done = std::process::Command::new("mkfifo")
             .arg(tree.path(fifo))
-            .status()
+            .status_locked()
             .unwrap();
         assert!(done.success());
     }

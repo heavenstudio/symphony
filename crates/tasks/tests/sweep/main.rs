@@ -24,6 +24,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, SystemTime};
 use symphony_board::cli::Env;
 use symphony_board::sweep::{Options, Sweep, sweep};
+use symphony_board::sys::Spawning as _;
 use symphony_board::{NewSession, NewTask};
 
 /// Past the sweep's two-hour window of recent activity.
@@ -123,7 +124,7 @@ impl Drop for HeldCwd {
 
 /// The pid of a process that has exited and been reaped.
 pub fn dead_pid() -> i64 {
-    let mut child = Command::new("true").spawn().unwrap();
+    let mut child = Command::new("true").spawn_locked().unwrap();
     child.wait().unwrap();
     i64::from(child.id())
 }
@@ -211,7 +212,7 @@ impl Repo {
             .arg("-R")
             .arg(template())
             .arg(&root)
-            .status()
+            .status_locked()
             .unwrap();
         assert!(copied.success(), "cp -R of the template repository");
         Repo {
