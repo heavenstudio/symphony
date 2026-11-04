@@ -19,37 +19,24 @@ fn text(root: &Path, args: &[&str]) -> Option<String> {
     git(root, args).map(|out| String::from_utf8_lossy(&out).into_owned())
 }
 
-/// `docs/**/*.md`, with no hidden or dot path component, as the verdict exemption admits it.
-pub fn is_doc(path: &str) -> bool {
-    is_doc_in("docs", path)
-}
-
-/// [`is_doc`] under the documents folder `docs`, whatever the project calls it: what the app
-/// commits for the owner.
-pub fn is_doc_in(docs: &str, path: &str) -> bool {
-    let Some(rest) = path
-        .strip_prefix(docs)
-        .and_then(|rest| rest.strip_prefix('/'))
-    else {
-        return false;
-    };
-    let parts: Vec<_> = rest.split('/').collect();
-    parts
-        .last()
-        .is_some_and(|name| name.len() > 3 && name.ends_with(".md"))
-        && parts.iter().all(|p| !p.is_empty() && !p.starts_with('.'))
+/// A document page of `project` (Markdown an entrypoint shows, with no hidden or dot path
+/// component), as the verdict exemption admits it and the app commits it for the owner.
+pub fn is_doc(project: &crate::project::Project, path: &str) -> bool {
+    project.is_page(path)
 }
 
 /// Documents holding an owner answer no commit has. An unreadable checkout is kept by the caller's
 /// status check; disappearing checkouts are skipped, never allowed to crash the sweep.
 pub fn owner_lines_left(root: &Path) -> Vec<String> {
+    let project = crate::project::Project::of(root);
     // This is another agent's checkout, unlike the generators' private worktrees. A diff may
     // refresh its index despite GIT_OPTIONAL_LOCKS, so disable that refresh explicitly.
     let diff = tasks::sys::output(
         Command::new("git")
             .env("GIT_OPTIONAL_LOCKS", "0")
             .args(["-c", "diff.autoRefreshIndex=false"])
-            .args(["diff", "-U0", "HEAD", "--", "docs"])
+            .args(["diff", "-U0", "HEAD", "--"])
+            .args(project.pathspecs())
             .current_dir(root),
     )
     .ok()
@@ -64,6 +51,7 @@ pub fn owner_lines_left(root: &Path) -> Vec<String> {
         } else if line.starts_with('+')
             && !line.starts_with("+++")
             && line.split('—').next().unwrap_or("").contains("] owner")
+            && project.holding(file).is_some()
             && !left.iter().any(|name| name == file)
         {
             left.push(file.to_string());
@@ -270,7 +258,8 @@ fn regenerates_inner(root: &Path, branch: &str, generators: &[Generator]) -> Opt
         .filter(|n| !n.is_empty())
         .map(|n| String::from_utf8_lossy(n).to_string())
         .collect();
-    let (docs, mut outputs): (Vec<_>, Vec<_>) = names.into_iter().partition(|name| is_doc(name));
+    let (docs, mut outputs): (Vec<_>, Vec<_>) =
+        names.into_iter().partition(|name| is_doc(&project, name));
     if outputs.is_empty()
         || outputs
             .iter()

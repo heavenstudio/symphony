@@ -44,8 +44,7 @@ impl Route {
             || path == "queue"
             || path == "agents"
             || path.starts_with("task/")
-            || (path == "docs" || path.starts_with("docs/"))
-                && (std::path::Path::new(path).extension().is_none() || path.ends_with(".md")))
+            || project.is_document_route(path))
         .then(|| Self {
             path: path.into(),
             scope,

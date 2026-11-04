@@ -170,4 +170,52 @@ fn the_project_the_page_inlines_reads_and_writes_back_as_the_same_json() {
         plain.nav.is_empty(),
         "a project without plugins has no pages of theirs"
     );
+    assert_eq!(plain.entrypoints(), ["docs"], "none sent is the convention");
+}
+
+#[test]
+fn a_route_is_a_document_page_under_an_entrypoint_unless_the_symphony_answers_it() {
+    let star_foundry: symphony_api::ProjectView =
+        serde_json::from_str(&fixture("project.json")).unwrap();
+    for (path, page) in [
+        ("docs", true),
+        ("docs/game", true),
+        ("docs/game/SPEC.md", true),
+        ("docs/art/a.png", false),
+        ("docsx/A.md", false),
+        ("", false),
+        ("tasks", false),
+        ("hulls", false),
+        ("README.md", false),
+    ] {
+        assert_eq!(star_foundry.is_document_route(path), page, "{path}");
+    }
+    assert_eq!(star_foundry.documents_href(), "/docs/");
+    assert_eq!(star_foundry.readme_route(), "docs/README.md");
+    let spec = symphony_api::ProjectView {
+        entrypoints: vec![String::new(), "notes".into()],
+        ..star_foundry
+    };
+    for (path, page) in [
+        ("", true),
+        ("index.md", true),
+        ("guide", true),
+        ("guide/START.md", true),
+        ("notes/A.md", true),
+        ("artifacts/A.md", true),
+        ("art/a.png", false),
+        ("tasks", false),
+        ("task/a/b", false),
+        ("agents", false),
+        ("queue", false),
+        ("api/docs", false),
+        ("artifacts/uploads/a.md", false),
+        ("favicon.ico", false),
+        ("hulls", false),
+        ("hullsx", true),
+    ] {
+        assert_eq!(spec.is_document_route(path), page, "{path}");
+    }
+    assert_eq!(spec.documents_href(), "/");
+    assert_eq!(spec.readme_route(), "README.md");
 }

@@ -203,7 +203,7 @@ fn DocumentBody(
                     h1 { "{document.title}" }
                     nav { class: "doc-tools", "aria-label": "Document tools",
                         a { href: "/", "Board" }
-                        a { href: docs::scoped(&scope, "/docs/"), "All docs" }
+                        a { href: docs::scoped(&scope, &crate::project::current().documents_href()), "All docs" }
                         Versions { path: path.clone(), scope: scope.clone() }
                     }
                 }

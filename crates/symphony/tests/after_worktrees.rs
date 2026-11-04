@@ -377,7 +377,7 @@ fn a_branch_card_in_a_projects_own_folder_is_linked_read_and_saved_by_its_route(
             // is spelled as a person may write it
             tree.write(
                 "symphony.toml",
-                "[project]\ndocs = \"./manual\"\n[plugins]\ncrates = [\"star-foundry-symphony\"]\n",
+                "[[entrypoints]]\nurl = \"/docs/\"\nfolder = \"./manual\"\n[plugins]\ncrates = [\"star-foundry-symphony\"]\n",
             );
             tree.write(file, &register(&card("alpha")));
             commit(&tree.root, "base", 1);

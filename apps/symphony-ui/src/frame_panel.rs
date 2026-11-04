@@ -528,7 +528,7 @@ fn QuickPanel(route: Route, mut draft: Signal<Draft>) -> Element {
                     (route.path.clone(), attach.compose(&d.text))
                 } else {
                     (
-                        "docs/README.md".into(),
+                        crate::project::current().readme_route(),
                         attach.compose(&format!("{}\n\n(sent from {page})", d.text)),
                     )
                 };

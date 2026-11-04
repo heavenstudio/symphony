@@ -1,7 +1,7 @@
 //! The docs as a tree: a folder is summarised by its README (its heading
 //! names the folder, its first paragraph says what is in it), a document by its first heading and first
-//! paragraph. Only folders under `docs/` are pages, and only markdown and the folders that hold some are
-//! listed.
+//! paragraph. Only an entrypoint's folder and the folders in it are pages, and only the files it
+//! shows and the folders that hold some are listed.
 
 use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
@@ -12,11 +12,12 @@ use serde::Serialize;
 
 use crate::clock::now_stamp;
 use crate::edit::{frontmatter_end, heading_anchor};
+use crate::entrypoint::join;
 use crate::markup::normpath;
+use crate::project::{Entrypoint, Project};
 use crate::register::{Group, REGION_END, REGION_START, State, parse_decisions, supersede};
 use crate::text::{read_text, splitlines, strip};
 
-pub const ROOT: &str = "docs";
 pub const SUMMARY_CHARS: usize = 220;
 /// Fewer headings than this and a contents list is only noise.
 pub const TOC_MIN: usize = 3;
@@ -133,31 +134,121 @@ pub(crate) fn plain(text: &str) -> String {
     strip(&out).to_string()
 }
 
-/// The documents under a folder; a README is its navigation, not a document.
-pub(crate) fn count_docs(folder: &Path) -> usize {
-    markdown_under(folder)
-        .iter()
-        .filter(|p| file_name(p) != "README.md")
-        .count()
+/// A folder of an entrypoint: the project, the entrypoint and the folder's path inside it, which
+/// is what a folder page lists.
+pub(crate) struct Place<'a> {
+    pub root: &'a Path,
+    pub project: &'a Project,
+    pub entry: &'a Entrypoint,
+    pub inside: String,
 }
 
-fn markdown_under(folder: &Path) -> Vec<PathBuf> {
-    let mut found = Vec::new();
-    if let Ok(entries) = std::fs::read_dir(folder) {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.is_dir() {
-                found.extend(markdown_under(&path));
-            } else if file_name(&path).ends_with(".md") {
-                found.push(path);
-            }
+impl Place<'_> {
+    /// The folder page at the route `rel`, when an entrypoint serves it as a folder: the folder
+    /// lies in its folder once `..` is resolved, and no exclude pattern or dot name passes it over.
+    pub(crate) fn of<'a>(root: &'a Path, project: &'a Project, rel: &str) -> Option<Place<'a>> {
+        let (entry, inside) = project.serving(rel.trim_matches('/'))?;
+        let passed_over = !inside.is_empty()
+            && (inside.split('/').any(|name| name.starts_with('.'))
+                || entry
+                    .exclude
+                    .iter()
+                    .any(|p| crate::entrypoint::matches(p, inside)));
+        let base = root.join(&entry.folder).canonicalize().ok()?;
+        let target = root.join(entry.file(inside)).canonicalize().ok()?;
+        (!passed_over
+            && target.is_dir()
+            && target.starts_with(&base)
+            && base.starts_with(root.canonicalize().ok()?))
+        .then(|| Place {
+            root,
+            project,
+            entry,
+            inside: inside.to_string(),
+        })
+    }
+
+    pub(crate) fn path(&self) -> PathBuf {
+        self.root.join(self.entry.file(&self.inside))
+    }
+
+    pub(crate) fn route(&self) -> String {
+        self.entry.route(&self.inside)
+    }
+
+    /// The folder `name` in this one.
+    pub(crate) fn sub(&self, name: &str) -> Place<'_> {
+        Place {
+            inside: join(&self.inside, name),
+            ..*self
         }
     }
-    found
-}
 
-pub(crate) fn holds_docs(folder: &Path) -> bool {
-    !markdown_under(folder).is_empty()
+    /// The paths inside the entrypoint of the files it shows under this folder.
+    fn shown(&self) -> Vec<String> {
+        let mut found = Vec::new();
+        self.project
+            .walk(self.root, self.entry, &self.inside, &mut |inside| {
+                if self.entry.shows(inside) {
+                    found.push(inside.to_string());
+                }
+            });
+        found
+    }
+
+    /// The documents under it; a README is its navigation, not a document.
+    pub(crate) fn count_docs(&self) -> usize {
+        self.shown()
+            .iter()
+            .filter(|inside| self.entry.page(inside) && file_name(Path::new(inside)) != "README.md")
+            .count()
+    }
+
+    /// The subfolders that hold a file the entrypoint shows, by lowercase name.
+    pub(crate) fn subfolders(&self) -> Vec<String> {
+        let mut subs: Vec<String> = Vec::new();
+        self.project
+            .walk_folders(self.root, self.entry, &self.inside, &mut |name| {
+                subs.push(name.to_string());
+            });
+        subs.retain(|name| !self.sub(name).shown().is_empty());
+        subs.sort_by_key(|name| name.to_lowercase());
+        subs
+    }
+
+    /// The folder's own files the entrypoint shows with `renderer`, by name.
+    fn files(&self, renderer: crate::entrypoint::Renderer) -> Vec<String> {
+        let mut found: Vec<String> = std::fs::read_dir(self.path())
+            .map(|entries| {
+                entries
+                    .flatten()
+                    .filter(|e| e.path().is_file())
+                    .map(|e| e.file_name().to_string_lossy().into_owned())
+                    .filter(|name| self.entry.renderer(&join(&self.inside, name)) == Some(renderer))
+                    .collect()
+            })
+            .unwrap_or_default();
+        found.sort();
+        found
+    }
+
+    /// The folder's own documents but the README, by lowercase title.
+    pub(crate) fn documents(&self) -> Vec<String> {
+        let mut docs: Vec<String> = self
+            .files(crate::entrypoint::MARKDOWN)
+            .into_iter()
+            .filter(|name| name != "README.md")
+            .collect();
+        docs.sort_by_cached_key(|name| title(&self.path().join(name)).to_lowercase());
+        docs
+    }
+
+    /// The folder's own media files, by lowercase name.
+    pub(crate) fn media(&self) -> Vec<String> {
+        let mut media = self.files(crate::entrypoint::MEDIA);
+        media.sort_by_key(|name| name.to_lowercase());
+        media
+    }
 }
 
 /// The first paragraph of prose, as plain text, cut to [`SUMMARY_CHARS`].
@@ -194,100 +285,66 @@ pub fn summary(path: &Path) -> String {
     format!("{words}…")
 }
 
-fn lowercase_name(path: &Path) -> String {
-    file_name(path).to_lowercase()
-}
-
-/// The subfolders that hold documents, by lowercase name.
-pub(crate) fn subfolders(folder: &Path) -> Vec<PathBuf> {
-    let mut subs: Vec<PathBuf> = std::fs::read_dir(folder)
-        .map(|entries| {
-            entries
-                .flatten()
-                .map(|e| e.path())
-                .filter(|p| p.is_dir() && holds_docs(p))
-                .collect()
-        })
-        .unwrap_or_default();
-    subs.sort_by_key(|p| lowercase_name(p));
-    subs
-}
-
-/// The folder's own documents but the README, by lowercase title.
-pub(crate) fn documents(folder: &Path) -> Vec<PathBuf> {
-    let mut docs: Vec<PathBuf> = std::fs::read_dir(folder)
-        .map(|entries| {
-            entries
-                .flatten()
-                .map(|e| e.path())
-                .filter(|p| {
-                    p.is_file() && file_name(p).ends_with(".md") && file_name(p) != "README.md"
-                })
-                .collect()
-        })
-        .unwrap_or_default();
-    docs.sort_by_cached_key(|p| title(p).to_lowercase());
-    docs
-}
-
-/// The file or folder under `root` the document name `rel` (`docs/…`) stands for.
-fn file(root: &Path, rel: &str) -> PathBuf {
-    root.join(crate::project::Project::of(root).file(rel))
-}
-
-/// A folder page: `docs/` or a folder under it, once `..` is resolved, in the project's documents
-/// folder.
+/// A folder page: an entrypoint's folder or a folder in it, once `..` is resolved, that the
+/// entrypoint serving the route `rel` lists.
 pub fn is_folder(root: &Path, rel: &str) -> bool {
-    let Ok(docs) = file(root, ROOT).canonicalize() else {
-        return false;
-    };
-    let Ok(target) = file(root, rel.trim_matches('/')).canonicalize() else {
-        return false;
-    };
-    target.is_dir() && target.starts_with(&docs)
+    Place::of(root, &Project::of(root), rel).is_some()
 }
 
-/// Every document under the folder named `rel` in the order the folder pages list them, by name: the
-/// README, then each subfolder (by lowercase name) in turn, then the folder's documents by
-/// lowercase title.
+/// Every document under the folder page `rel` in the order the folder pages list them, by route:
+/// the README, then each subfolder (by lowercase name) in turn, then the folder's documents by
+/// lowercase title. A route that is no folder page holds none.
 pub fn index_order(root: &Path, rel: &str) -> Vec<String> {
-    let folder = file(root, rel);
+    let project = Project::of(root);
+    let Some(place) = Place::of(root, &project, rel) else {
+        return Vec::new();
+    };
     let mut found = Vec::new();
-    if folder.join("README.md").is_file() {
-        found.push(format!("{rel}/README.md"));
-    }
-    for sub in subfolders(&folder) {
-        found.extend(index_order(root, &format!("{rel}/{}", file_name(&sub))));
-    }
-    found.extend(
-        documents(&folder)
-            .iter()
-            .map(|doc| format!("{rel}/{}", file_name(doc))),
-    );
+    order(&place, &mut found);
     found
 }
 
-/// `docs › Ships › old › notes`: every folder above the page links to its folder page; the page itself is plain.
-pub fn crumbs(root: &Path, rel: &str) -> Vec<Crumb> {
-    let parts: Vec<&str> = rel
-        .trim_matches('/')
-        .split('/')
-        .filter(|p| !p.is_empty())
-        .collect();
-    if parts.first() != Some(&ROOT) {
-        return Vec::new();
+fn order(place: &Place<'_>, found: &mut Vec<String>) {
+    let readme = join(&place.inside, "README.md");
+    if place.entry.page(&readme) && place.root.join(place.entry.file(&readme)).is_file() {
+        found.push(place.entry.route(&readme));
     }
-    (0..parts.len())
-        .map(|i| {
-            let here = parts[..=i].join("/");
-            let name = if i == 0 {
-                ROOT.to_string()
-            } else {
-                title(&file(root, &normpath(&here)))
-            };
-            let href = (i + 1 < parts.len()).then(|| format!("/{here}/"));
-            Crumb { name, href }
-        })
+    for sub in place.subfolders() {
+        order(&place.sub(&sub), found);
+    }
+    found.extend(
+        place
+            .documents()
+            .iter()
+            .map(|doc| place.entry.route(&join(&place.inside, doc))),
+    );
+}
+
+/// `docs › Ships › old › notes`: the entrypoint's own route first, then every folder above the page,
+/// each linking to its folder page; the page itself is plain. An entrypoint at `/` is named by its
+/// folder's title.
+pub fn crumbs(root: &Path, rel: &str) -> Vec<Crumb> {
+    let project = Project::of(root);
+    let Some((entry, inside)) = project.serving(rel.trim_matches('/')) else {
+        return Vec::new();
+    };
+    let parts: Vec<&str> = inside.split('/').filter(|p| !p.is_empty()).collect();
+    let top = Crumb {
+        name: if entry.url.is_empty() {
+            title(&root.join(&entry.folder))
+        } else {
+            entry.url.clone()
+        },
+        href: (!parts.is_empty()).then(|| entry.label()),
+    };
+    std::iter::once(top)
+        .chain((0..parts.len()).map(|i| {
+            let here = normpath(&parts[..=i].join("/"));
+            Crumb {
+                name: title(&root.join(entry.file(&here))),
+                href: (i + 1 < parts.len()).then(|| format!("/{}/", entry.route(&here))),
+            }
+        }))
         .collect()
 }
 

@@ -276,7 +276,7 @@ async fn run(root: PathBuf, dx: PathBuf, port: u16) -> Result<(), String> {
         front.local_addr().map_err(|e| e.to_string())?,
         std::process::id()
     );
-    let nav = std::sync::Arc::new(crate::api::nav_pages(&root));
+    let nav = std::sync::Arc::new(crate::api::project_view(&root));
     let mut tick = tokio::time::interval(Duration::from_millis(200));
     let outcome = 'serving: loop {
         tokio::select! {
@@ -309,7 +309,12 @@ async fn run(root: PathBuf, dx: PathBuf, port: u16) -> Result<(), String> {
     outcome
 }
 
-async fn forward(mut stream: TcpStream, api: u16, web: u16, nav: &[String]) -> Result<(), String> {
+async fn forward(
+    mut stream: TcpStream,
+    api: u16,
+    web: u16,
+    nav: &symphony_api::ProjectView,
+) -> Result<(), String> {
     // One request per upstream connection. Force HTTP/1.1 close for ordinary requests so a
     // keep-alive connection cannot send its next API request to the page server (or vice versa).
     // Upgrade connections keep their headers: WebSocket frames and SSE are streamed untouched.

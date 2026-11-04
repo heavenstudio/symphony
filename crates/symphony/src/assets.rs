@@ -76,7 +76,7 @@ fn resolve(page: &str, reference: &str) -> Option<String> {
 }
 
 /// The file of the project (or of the app's own scripts, under `/static/`) that `url`, on the page at
-/// `page`, loads, or `None`. A route (`/docs/…`) names a file in the project's documents folder.
+/// `page`, loads, or `None`. A route (`/docs/…`) names a file in the folder of the entrypoint serving it.
 pub fn local_file(url: &str, root: &Path, static_dir: &Path, page: &str) -> Option<PathBuf> {
     let path = unquote(&resolve(page, url)?);
     if path.starts_with(THUMB_ROUTE) {

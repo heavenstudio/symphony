@@ -31,6 +31,7 @@ pub mod dashboard;
 pub mod docs_audit;
 pub mod docview;
 pub mod edit;
+pub mod entrypoint;
 pub mod images;
 pub mod landing;
 pub mod lint;

@@ -30,7 +30,7 @@ pub fn BoardView(board: Board, now: Moment, #[props(default)] project: ProjectVi
                 }
                 p { class: "dash-links",
                     a { class: "pill", href: "/queue", "Full queue" }
-                    a { class: "pill", href: "/docs/", "All docs" }
+                    a { class: "pill", href: project.documents_href(), "All docs" }
                     for item in project.nav.iter() {
                         a { key: "{item.href}", class: "pill", href: "{item.href}", "{item.title}" }
                     }
@@ -46,7 +46,7 @@ pub fn BoardView(board: Board, now: Moment, #[props(default)] project: ProjectVi
             }
             Tiles { counts: counts.clone() }
             div { class: "dash-grid",
-                ProgressPanel { progress: board.progress.clone() }
+                ProgressPanel { progress: board.progress.clone(), docs: project.documents_href() }
             }
         }
     }
@@ -210,7 +210,7 @@ fn Tile(
 
 /// The plugins' progress regions, and the design documents.
 #[component]
-fn ProgressPanel(progress: Progress) -> Element {
+fn ProgressPanel(progress: Progress, docs: String) -> Element {
     let waiting = progress.decisions_waiting;
     rsx! {
         section { class: "progress panel card",
@@ -220,7 +220,7 @@ fn ProgressPanel(progress: Progress) -> Element {
             div { class: "docsummary",
                 h3 {
                     "Design docs "
-                    a { class: "subtle", href: "/docs/", "browse all {progress.docs} →" }
+                    a { class: "subtle", href: "{docs}", "browse all {progress.docs} →" }
                 }
                 p { "{waiting} {plural(waiting, \"decision\")} waiting" }
             }

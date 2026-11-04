@@ -123,7 +123,11 @@ fn undrawn_cards(text: &str, rel: &str, result: &mut Result) {
 }
 
 fn artifacts(root: &Path, rel: &str, text: &str, result: &mut Result) {
-    if rel.starts_with("docs/history/") {
+    let project = crate::project::Project::of(root);
+    if project
+        .serving(rel)
+        .is_some_and(|(entry, inside)| entry.in_history(inside))
+    {
         return;
     }
     let mut absent = Vec::new();
@@ -156,7 +160,8 @@ fn artifacts(root: &Path, rel: &str, text: &str, result: &mut Result) {
             } else {
                 join(dirname(rel), path)
             });
-            if resolved.starts_with("artifacts/") && !root.join(&resolved).exists() {
+            let file = project.file(&resolved);
+            if file.starts_with(&format!("{}/", project.artifacts)) && !root.join(&file).exists() {
                 absent.push((index + 1, target.to_string()));
             }
         }
@@ -178,16 +183,15 @@ pub fn audit(root: &Path) -> Result {
     let renderer = Render::new(root);
     let mut docs = doc_paths(root);
     docs.sort();
-    let mut folders = vec!["docs".to_string()];
+    let project = crate::project::Project::of(root);
+    let mut folders: Vec<String> = project.entrypoints.iter().map(|e| e.url.clone()).collect();
     for rel in &docs {
-        let mut folder = Path::new(rel).parent();
-        while let Some(path) = folder.filter(|p| p.starts_with("docs") && *p != Path::new("docs")) {
-            if !path
-                .components()
-                .any(|c| c.as_os_str().to_string_lossy().starts_with('.'))
-            {
-                folders.push(path.to_string_lossy().into_owned());
-            }
+        let Some((entry, inside)) = project.serving(rel) else {
+            continue;
+        };
+        let mut folder = Path::new(inside).parent();
+        while let Some(path) = folder.filter(|p| !p.as_os_str().is_empty()) {
+            folders.push(entry.route(&path.to_string_lossy()));
             folder = path.parent();
         }
     }
@@ -212,7 +216,7 @@ pub fn audit(root: &Path) -> Result {
         }
     }
     for rel in &docs {
-        let text = match read_text(&root.join(rel)) {
+        let text = match read_text(&root.join(project.file(rel))) {
             Ok(text) => text,
             Err(error) => {
                 result
@@ -221,7 +225,10 @@ pub fn audit(root: &Path) -> Result {
                 continue;
             }
         };
-        if !rel.ends_with("/README.md") || !folders.iter().any(|folder| *folder == dirname(rel)) {
+        let readme = Path::new(rel)
+            .file_name()
+            .is_some_and(|name| name == "README.md");
+        if !readme || !folders.iter().any(|folder| *folder == dirname(rel)) {
             match renderer.document(rel) {
                 Ok(page) => {
                     for section in &page.sections {
