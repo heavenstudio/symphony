@@ -7,10 +7,16 @@
 //! exited. The one fake DX that blocks does so after printing its line, until the test writes to
 //! its stdin, so a bundle that goes wrong ends its stream and the wait fails with its log. A
 //! bundle that never ends is bounded by the test runner's own budget (sf-rust-tests).
+//!
+//! No freshly written file is executed: macOS assesses each new executable on its first run in
+//! one machine-wide queue, seconds apiece under load. The stand-ins link to the project's
+//! prepared fixture script, which reads each one's body as data.
+
+#[path = "../../../../tools/gate/tests/verify/script.rs"]
+mod fixture_script;
 
 use std::fs;
 use std::io::{BufRead, BufReader, Lines, Write};
-use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStderr, Command, Stdio};
 
@@ -170,8 +176,7 @@ impl Drop for Fixture {
 
 fn executable(path: &Path, script: &str) {
     fs::create_dir_all(path.parent().unwrap()).unwrap();
-    fs::write(path, script).unwrap();
-    fs::set_permissions(path, fs::Permissions::from_mode(0o755)).unwrap();
+    fixture_script::write(path, script, false);
 }
 
 struct Bundle {
