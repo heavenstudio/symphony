@@ -6,5 +6,4 @@ mod common;
 mod cache;
 mod mixed;
 mod postpone;
-mod schema;
 mod serve;

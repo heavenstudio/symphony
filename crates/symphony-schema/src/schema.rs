@@ -1,4 +1,4 @@
-//! Draft 2020-12 JSON Schema checks for docs/data and content settings.
+//! Draft 2020-12 JSON Schema checks for document settings.
 //! Files name local schemas with $schema; jsonschema has no default features.
 //! References resolve within that schema: nothing is fetched or read externally.
 //!
