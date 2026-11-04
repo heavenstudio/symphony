@@ -32,7 +32,7 @@ const LATE_SWEEP: Duration = Duration::from_secs(30);
 /// Existing connection-shutdown grace, also used to bound a rejected socket's read-side drain.
 const SHUTDOWN_GRACE: Duration = Duration::from_secs(5);
 /// The server's address for local tools that link to the app.
-const PORT_FILE: &str = "artifacts/docs-app.port";
+pub(crate) const PORT_FILE: &str = "artifacts/docs-app.port";
 /// Names the test process that started this server, which then ends with it, however it ends: a test
 /// killed by a signal runs no cleanup, and a started server is in a session of its own, out of the
 /// runner's process group (`tests/app.rs` sets it on everything it runs).
@@ -696,6 +696,14 @@ async fn start(mut serve: Serve, open: bool) -> Result<Started, i32> {
         }
     }
     serve.port = port;
+    // The bound port is discoverable during warmup. A private preview on main leaves the shared
+    // server's hint alone.
+    let record = serve.home.is_some()
+        || crate::repo::checkout(&serve.root)
+            .map_or(true, |checkout| checkout.top != checkout.main);
+    if record {
+        record_port(&serve.root, port);
+    }
     let shared = Shared::new(
         i64::from(std::process::id()),
         port,
@@ -749,13 +757,6 @@ async fn start(mut serve: Serve, open: bool) -> Result<Started, i32> {
         if reload.is_replacement() {
             return Err(2);
         }
-    }
-    // A private server on the main checkout must not replace the shared app's discovery record.
-    let record = serve.home.is_some()
-        || crate::repo::checkout(&serve.root)
-            .map_or(true, |checkout| checkout.top != checkout.main);
-    if record {
-        record_port(&serve.root, port);
     }
     // Keep copies before moving listeners into axum. The watcher starts only after the replacement
     // has committed its own handover, below.
@@ -813,6 +814,9 @@ async fn start(mut serve: Serve, open: bool) -> Result<Started, i32> {
     ));
     let url = format!("http://127.0.0.1:{port}/");
     println!("→ Symphony at {url}  (pid {})", shared.pid);
+    if let Some(hub) = shared.api.get() {
+        hub.start_initial_board();
+    }
     if open {
         crate::cli::open(&url);
     }

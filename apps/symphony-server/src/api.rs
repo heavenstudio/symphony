@@ -78,6 +78,7 @@ pub(crate) async fn start(shared: &Arc<Shared>) -> Result<Arc<Hub>, String> {
 /// A complete first read for data routes and replacement handover.
 pub(crate) async fn warm(shared: &Arc<Shared>) -> Result<Arc<Hub>, String> {
     let hub = start(shared).await?;
+    hub.start_initial_board();
     hub.wait_initial_board().await?;
     Ok(hub)
 }

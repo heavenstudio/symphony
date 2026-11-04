@@ -121,6 +121,7 @@ pub(crate) struct Hub {
     pub draining: watch::Sender<bool>,
     pub server_notice: watch::Sender<String>,
     initial_board: watch::Sender<bool>,
+    initial_start: Mutex<Option<mpsc::Sender<()>>>,
     invalid: RwLock<BTreeMap<String, String>>,
     trees: RwLock<BTreeMap<String, PathBuf>>,
     tasks: Mutex<TaskState>,
@@ -204,6 +205,7 @@ impl Hub {
             draining: watch::Sender::new(false),
             server_notice: watch::Sender::new(String::new()),
             initial_board: watch::Sender::new(true),
+            initial_start: Mutex::new(None),
             invalid: RwLock::new(BTreeMap::new()),
             trees: RwLock::new(
                 measured("hub branch trees", || branches::trees(root))
@@ -244,7 +246,8 @@ impl Hub {
         )
     }
 
-    /// [`Self::start`] with watcher `W`, sweeping the watched files on its own every `period`.
+    /// Install watcher `W` and documents. The owned worker starts its board read when activated,
+    /// then sweeps the watched files on its own every `period`.
     fn start_watching<W: Watcher + Send + 'static>(
         root: &Path,
         ui_dist: &Path,
@@ -261,6 +264,10 @@ impl Hub {
         } else {
             eprintln!("→ chat journal: left untouched by this private server");
         }
+        let (start, starting) = mpsc::channel();
+        *hub.initial_start
+            .get_mut()
+            .unwrap_or_else(|e| e.into_inner()) = Some(start);
         let hub = Arc::new(hub);
         hub.initial_board.send_replace(false);
         // Install watches before the first read, so an edit during that read is queued too.
@@ -288,6 +295,9 @@ impl Hub {
         let backstop = crate::backstop::Backstop::new(period);
         *hub.worker.lock().unwrap_or_else(|e| e.into_inner()) =
             Some(std::thread::spawn(move || {
+                if starting.recv().is_err() {
+                    return;
+                }
                 let Some(hub) = weak.upgrade() else { return };
                 if *hub.draining.borrow() {
                     return;
@@ -316,6 +326,18 @@ impl Hub {
         Ok(hub)
     }
 
+    /// Activate the owned read once, after announcement or when a data caller needs it.
+    pub(crate) fn start_initial_board(&self) {
+        if let Some(start) = self
+            .initial_start
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .take()
+        {
+            let _ = start.send(());
+        }
+    }
+
     /// Data requests wait for the first board attempt; shutdown releases them with an error.
     pub(crate) async fn wait_initial_board(&self) -> Result<(), String> {
         let mut ready = self.initial_board.subscribe();
@@ -330,6 +352,10 @@ impl Hub {
     /// Finish the current refresh (including its children), then release the watcher and board.
     pub fn stop(&self) {
         self.draining.send_replace(true);
+        self.initial_start
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .take();
         let mut worker = self.worker.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(worker) = worker.take()
             && worker.join().is_err()

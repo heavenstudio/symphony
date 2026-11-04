@@ -357,6 +357,47 @@ fn if_up_never_starts_a_server_and_stop_never_requires_a_build() {
 #[test]
 fn missing_malformed_stale_and_lying_records_recover_the_same_running_server() {
     let repo = Repo::new("record recovery");
+    repo.start(&repo.tree, false);
+    let running = repo.record().unwrap();
+    let mut dead = Command::new("/usr/bin/true").spawn().unwrap();
+    let stale_pid = dead.id();
+    dead.wait().unwrap();
+    let record = |pid, port, root: &str| {
+        serde_json::json!({"pid": pid, "port": port, "root": root}).to_string()
+    };
+    for contents in [
+        None,
+        Some(String::new()),
+        Some("{malformed".into()),
+        Some(record(i64::from(stale_pid), running.port, &running.root)),
+        Some(record(running.pid, 0, &running.root)),
+        Some(record(running.pid, running.port, "/wrong root")),
+        Some(record(
+            i64::from(std::process::id()),
+            running.port,
+            &running.root,
+        )),
+    ] {
+        let address = repo.home.join("server.json");
+        fs::remove_file(&address).unwrap();
+        if let Some(contents) = contents {
+            fs::write(&address, contents).unwrap();
+        }
+        repo.start(&repo.tree, false);
+        assert_eq!(repo.record(), Some(running.clone()));
+        assert_eq!(repo.check_server().pid, running.pid);
+    }
+    let log = fs::read_to_string(repo.home.join("server.log")).unwrap();
+    assert_eq!(
+        log.matches("→ Symphony at ").count(),
+        1,
+        "recovery restarted the server: {log}"
+    );
+}
+
+#[test]
+fn cold_auto_port_starts_skip_census_but_live_announcements_survive_bad_hints() {
+    let repo = Repo::new("discovery port hints");
     let started = repo.start(&repo.tree, false);
     assert!(
         !repo
@@ -402,6 +443,22 @@ fn missing_malformed_stale_and_lying_records_recover_the_same_running_server() {
         assert_eq!(repo.record(), Some(running.clone()));
         assert_eq!(repo.check_server().pid, running.pid);
     }
+    // A misleading port hint cannot hide the live server named in its owned log.
+    let listening = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+    let connected = TcpStream::connect(listening.local_addr().unwrap()).unwrap();
+    let free = connected.local_addr().unwrap().port();
+    let refused =
+        TcpStream::connect_timeout(&([127, 0, 0, 1], free).into(), Duration::from_millis(200))
+            .unwrap_err();
+    assert_eq!(refused.kind(), std::io::ErrorKind::ConnectionRefused);
+    fs::remove_file(repo.home.join("server.json")).unwrap();
+    write(
+        &repo.main.join("artifacts/docs-app.port"),
+        &free.to_string(),
+    );
+    repo.start(&repo.tree, false);
+    assert_eq!(repo.record(), Some(running.clone()));
+    assert_eq!(repo.check_server().pid, running.pid);
     let log = fs::read_to_string(repo.home.join("server.log")).unwrap();
     assert_eq!(
         log.matches("→ Symphony at ").count(),
@@ -494,6 +551,14 @@ fn a_record_naming_an_unrelated_owned_process_never_makes_cleanup_signal_it() {
 fn a_killed_shared_server_is_replaced_by_one_that_answers() {
     let repo = Repo::new("killed-shared");
     let check_progress = |process: fixture::Process| {
+        assert!(
+            !repo
+                .base
+                .join(format!("env.{}", process.child.id()))
+                .exists(),
+            "a start on an unheld known port read the process table: {}",
+            process.output()
+        );
         let said = process.output();
         for stage in [
             "start command entered at ",

@@ -16,6 +16,7 @@ use std::fmt;
 use std::fs::{self, File, OpenOptions};
 use std::io::{ErrorKind, Read, Seek, SeekFrom};
 use std::net::{SocketAddr, TcpStream};
+use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
@@ -38,6 +39,8 @@ const GRACE: Duration = Duration::from_secs(20);
 const LOOK: Duration = Duration::from_secs(2);
 /// How long one read of the process table may take; a `ps` that does not end is killed.
 const CENSUS: Duration = Duration::from_secs(30);
+const PORT_HINT_BYTES: u64 = 16;
+const DISCOVERY_LOG_BYTES: u64 = 16 * 1024;
 /// The starter's environment the one server and its app keep: whichever checkout, agent or test
 /// starts it, it serves every one, so it is no one's (an agent's `TASKS_SESSION` would sign the
 /// owner's board writes). The test's pid, which a test's server ends with, is kept.
@@ -224,23 +227,63 @@ impl Home {
         self.parse(pid, String::from_utf8_lossy(&out.stdout).trim())
     }
 
-    /// A server of this folder that the record does not name (its starter was killed between its
-    /// answer and its record, or the record was lost): it holds the port, so no other could start.
-    /// The process table is read only while a known port is held, or an auto-port home's log can
-    /// identify a previous server. A cold auto-port home has no such server to recover.
+    /// Port hints select a lookup; only the process command and its health identify this server.
+    /// Unreadable or unannounced startup history retains the census recovery path.
+    fn discovery_ports(&self) -> (Vec<u16>, bool) {
+        let mut ports = vec![self.port];
+        ports.extend(self.recorded().map(|running| running.port));
+        let mut unknown = false;
+        if ports.contains(&0) {
+            for dir in std::iter::once(self.dir.as_path()).chain(self.legacy.as_deref()) {
+                match read_tail(&dir.join(LOG), DISCOVERY_LOG_BYTES) {
+                    Ok((_, said)) => {
+                        let port = said
+                            .lines()
+                            .rev()
+                            .find(|line| line.contains("→ Symphony at http://127.0.0.1:"))
+                            .and_then(|line| {
+                                let pid = line
+                                    .trim_end()
+                                    .rsplit_once("(pid ")?
+                                    .1
+                                    .strip_suffix(')')?
+                                    .parse()
+                                    .ok()?;
+                                announced_port(line, pid).filter(|&port| port != 0)
+                            });
+                        if let Some(port) = port {
+                            ports.push(port);
+                        } else {
+                            unknown = true;
+                        }
+                    }
+                    Err(error) if error.kind() == ErrorKind::NotFound => {}
+                    Err(_) => unknown = true,
+                }
+            }
+            // A bound listener publishes this hint before warming or writing its announcement.
+            match read_tail(&self.root.join(crate::front::PORT_FILE), PORT_HINT_BYTES) {
+                Ok((length, said)) if length <= PORT_HINT_BYTES => {
+                    match said.trim().parse::<u16>() {
+                        Ok(port) if port != 0 => ports.push(port),
+                        _ => unknown = true,
+                    }
+                }
+                Err(error) if error.kind() == ErrorKind::NotFound => {}
+                _ => unknown = true,
+            }
+        }
+        ports.retain(|&port| port != 0);
+        ports.sort_unstable();
+        ports.dedup();
+        (ports, unknown)
+    }
+
+    /// A server this folder's record does not name. Known free ports need no process table read;
+    /// unknown startup history keeps the recovery scan rather than guessing a server is absent.
     fn unrecorded(&self) -> Option<Running> {
-        let ports = [Some(self.port), self.recorded().map(|running| running.port)];
-        let auto_history = ports.contains(&Some(0))
-            && std::iter::once(self.dir.as_path())
-                .chain(self.legacy.as_deref())
-                .any(|dir| dir.join(LOG).try_exists().unwrap_or(true));
-        if !auto_history
-            && !ports
-                .into_iter()
-                .flatten()
-                .filter(|&port| port != 0)
-                .any(held)
-        {
+        let (ports, unknown) = self.discovery_ports();
+        if !unknown && !ports.into_iter().any(held) {
             return None;
         }
         let mut ps = Command::new("ps");
@@ -504,6 +547,26 @@ fn announced_port(said: &str, pid: i64) -> Option<u16> {
         .next_back()
 }
 
+/// An owned regular file's bounded snapshot tail, preserving damaged or split UTF-8 lossily.
+fn read_tail(path: &Path, limit: u64) -> std::io::Result<(u64, String)> {
+    let mut file = OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NONBLOCK | libc::O_NOFOLLOW)
+        .open(path)?;
+    let metadata = file.metadata()?;
+    if !metadata.is_file() {
+        return Err(std::io::Error::new(
+            ErrorKind::InvalidInput,
+            "not a regular file",
+        ));
+    }
+    let from = metadata.len().saturating_sub(limit);
+    file.seek(SeekFrom::Start(from))?;
+    let mut bytes = Vec::new();
+    file.take(metadata.len() - from).read_to_end(&mut bytes)?;
+    Ok((metadata.len(), String::from_utf8_lossy(&bytes).into_owned()))
+}
+
 /// What the log says from byte `from` on.
 fn since(log: &Path, from: u64) -> String {
     let mut said = String::new();
@@ -518,6 +581,112 @@ fn since(log: &Path, from: u64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn discovery_hints_include_the_owned_announcement_when_the_port_hint_lies() {
+        let tree = crate::testing::Tree::new();
+        let root = tree.path("root");
+        let home = Home::new(
+            &tree.path(FOLDER),
+            Path::new("/bin/symphony-server"),
+            &root,
+            0,
+            vec![],
+        );
+        assert_eq!(home.discovery_ports(), (vec![], false));
+        for (bytes, expected) in [
+            (b"41001\n".to_vec(), (vec![41001], false)),
+            (b"0\n".to_vec(), (vec![], true)),
+            (b"not a port".to_vec(), (vec![], true)),
+            (b"\xff41001".to_vec(), (vec![], true)),
+            (
+                [vec![b'x'; 128 * 1024], b"41001".to_vec()].concat(),
+                (vec![], true),
+            ),
+        ] {
+            tree.write("root/artifacts/docs-app.port", "");
+            fs::write(root.join(crate::front::PORT_FILE), bytes).unwrap();
+            assert_eq!(home.discovery_ports(), expected);
+        }
+        tree.write("root/artifacts/docs-app.port", "41001\n");
+        tree.write(&format!("{FOLDER}/{LOG}"), "→ Symphony at http://127.0.0.1:41002/  (pid 41)\n→ Symphony at http://127.0.0.1:41003/  (pid 42)\n");
+        tree.write(
+            &format!("{LEGACY_FOLDER}/{LOG}"),
+            "→ Symphony at http://127.0.0.1:41004/  (pid 43)\n",
+        );
+        assert_eq!(home.discovery_ports(), (vec![41001, 41003, 41004], false));
+        tree.write(&format!("{FOLDER}/{LOG}"), "→ Symphony at http://127.0.0.1:41003/  (pid 42)\n→ Symphony at http://127.0.0.1:broken/  (pid 44)\n");
+        assert_eq!(home.discovery_ports(), (vec![41001, 41004], true));
+    }
+
+    #[test]
+    fn discovery_log_reads_are_bounded_lossy_and_keep_unknown_history_for_recovery() {
+        let tree = crate::testing::Tree::new();
+        let home = Home::new(
+            &tree.path(FOLDER),
+            Path::new("/bin/symphony-server"),
+            &tree.path("root"),
+            0,
+            vec![],
+        );
+        let path = tree.path(&format!("{FOLDER}/{LOG}"));
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let mut bytes = vec![b'x'; 128 * 1024];
+        bytes.extend_from_slice(b"\n\xff\n");
+        bytes.extend_from_slice("→ Symphony at http://127.0.0.1:41011/  (pid 41)\n".as_bytes());
+        fs::write(&path, &bytes).unwrap();
+        let (length, tail) = read_tail(&path, DISCOVERY_LOG_BYTES).unwrap();
+        assert_eq!(length, bytes.len() as u64);
+        assert_eq!(tail.len(), 16386, "one invalid byte is decoded lossily");
+        assert_eq!(home.discovery_ports(), (vec![41011], false));
+        tree.write(
+            &format!("{FOLDER}/{LOG}"),
+            &format!(
+                "→ Symphony at http://127.0.0.1:41011/  (pid 41)\n{}",
+                "x".repeat(16384)
+            ),
+        );
+        assert_eq!(home.discovery_ports(), (vec![], true));
+    }
+
+    #[test]
+    fn discovery_nonregular_logs_preserve_recovery_without_waiting_for_a_writer() {
+        for kind in ["directory", "fifo", "symlink"] {
+            let tree = crate::testing::Tree::new();
+            let path = tree.path(&format!("{FOLDER}/{LOG}"));
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            match kind {
+                "directory" => fs::create_dir(&path).unwrap(),
+                "fifo" => drop(crate::testing::fifo(&path)),
+                "symlink" => {
+                    tree.write(
+                        "real.log",
+                        "→ Symphony at http://127.0.0.1:41001/  (pid 41)\n",
+                    );
+                    std::os::unix::fs::symlink(tree.path("real.log"), &path).unwrap();
+                }
+                _ => unreachable!(),
+            }
+            assert!(read_tail(&path, DISCOVERY_LOG_BYTES).is_err(), "{kind}");
+            let home = Home::new(
+                &tree.path(FOLDER),
+                Path::new("/bin/symphony-server"),
+                &tree.path("root"),
+                0,
+                vec![],
+            );
+            assert_eq!(home.discovery_ports(), (vec![], true), "{kind}");
+            let hint = tree.path("root/artifacts/docs-app.port");
+            fs::create_dir_all(hint.parent().unwrap()).unwrap();
+            fs::rename(&path, &hint).unwrap();
+            assert!(
+                !path.exists(),
+                "the log must not supply the recovery evidence"
+            );
+            assert!(read_tail(&hint, PORT_HINT_BYTES).is_err(), "{kind}");
+            assert_eq!(home.discovery_ports(), (vec![], true), "{kind} port hint");
+        }
+    }
 
     #[test]
     fn server_records_prefer_the_symphony_home_and_read_the_predecessor_once() {

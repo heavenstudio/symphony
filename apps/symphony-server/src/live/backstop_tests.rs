@@ -57,6 +57,7 @@ fn a_hub_whose_watcher_delivers_nothing_still_refreshes_within_a_period() {
         symphony::taskview::connect,
     )
     .unwrap();
+    hub.start_initial_board();
     hub.ensure_page("served").unwrap();
     for scope in ["", "served"] {
         hub.document(scope, "docs/TOPIC.md").unwrap();

@@ -17,11 +17,22 @@ use tower::ServiceExt;
 struct Held {
     hub: Arc<Hub>,
     release: Option<mpsc::Sender<()>>,
+    entering: Option<tokio::sync::oneshot::Receiver<()>>,
     _tree: Arc<Tree>,
 }
 
 impl Held {
     async fn new(succeeds: bool) -> Self {
+        let mut held = Self::published(succeeds).await;
+        held.hub.start_initial_board();
+        tokio::time::timeout(Duration::from_secs(30), held.entering.take().unwrap())
+            .await
+            .expect("initial board I/O did not start")
+            .unwrap();
+        held
+    }
+
+    async fn published(succeeds: bool) -> Self {
         let tree = Arc::new(Tree::new());
         let root = repository(&tree);
         let mut store = succeeds
@@ -56,13 +67,10 @@ impl Held {
             .expect("hub publication waited on the held board I/O")
             .unwrap()
             .unwrap();
-        tokio::time::timeout(Duration::from_secs(30), entering)
-            .await
-            .expect("initial board I/O did not start")
-            .unwrap();
         Self {
             hub,
             release: Some(release),
+            entering: Some(entering),
             _tree: tree,
         }
     }
@@ -87,8 +95,31 @@ impl Held {
 impl Drop for Held {
     fn drop(&mut self) {
         self.release.take();
+        self.hub.start_initial_board();
         self.hub.stop();
     }
+}
+
+#[tokio::test]
+async fn a_published_hub_stops_and_joins_without_opening_its_unactivated_board() {
+    let mut held = Held::published(false).await;
+    assert!(held.hub.worker.lock().unwrap().is_some());
+    assert!(matches!(
+        held.entering.as_mut().unwrap().try_recv(),
+        Err(tokio::sync::oneshot::error::TryRecvError::Empty)
+    ));
+    held.release();
+    let stopping = held.hub.clone();
+    let stopped = tokio::task::spawn_blocking(move || stopping.stop());
+    tokio::time::timeout(Duration::from_secs(30), stopped)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(matches!(
+        held.entering.as_mut().unwrap().try_recv(),
+        Err(tokio::sync::oneshot::error::TryRecvError::Closed)
+    ));
+    assert!(held.hub.worker.lock().unwrap().is_none());
 }
 
 fn request(path: &str) -> Request<Body> {
