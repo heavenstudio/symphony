@@ -3,6 +3,7 @@
 
 use super::work::{OWNER, ROLES, Tree, above, no_task};
 use super::{ACT, Error, Message, REFUSED, Store, acting, logged, message, refused, repr};
+use crate::health::Health;
 use crate::rows::MessageRow;
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -10,6 +11,10 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 /// The kinds of message that reach an inbox; `system` is the record only.
 pub const DELIVERED: [&str; 2] = ["msg", "verdict"];
+
+/// The sender of the board's own addressed posts: no session's, so no recipient takes one for its
+/// own and leaves it out of its inbox.
+pub const BOARD: &str = "board";
 
 /// What an inbox is worked out from: the session's roles, the tree, and the messages since it
 /// connected that are not its own, that it has not acknowledged, and that could reach it (not
@@ -69,6 +74,11 @@ RETURN [$sid, $ts];",
             }),
         );
         let (id, ts): (i64, f64) = self.retrying(|| self.transact(&body, vars.clone()))?;
+        if role == Some("executor") {
+            self.tell_if_unread(slug, None, &format!("#{id} from {sender} to @executor"));
+        } else if let Some(to) = handle {
+            self.tell_if_unread(slug, Some(to), &format!("#{id} from {sender} to {to}"));
+        }
         Ok(Message {
             id,
             slug: slug.into(),
@@ -78,6 +88,63 @@ RETURN [$sid, $ts];",
             text: text.into(),
             ts,
         })
+    }
+
+    /// `what` (a post or a changes verdict to `slug`'s executor, or to `only` when that handle
+    /// executes it) has no executor to read it now: none has a native callback, and each has its
+    /// pane recorded closed or no live beat. The task's orchestrators hear it at once on the
+    /// thread, with the restore line of each executor whose pane was closed. A post to a handle
+    /// that does not execute `slug` is left alone. Never fails the write it follows: what went
+    /// wrong goes to stderr.
+    pub(super) fn tell_if_unread(&self, slug: &str, only: Option<&str>, what: &str) {
+        if let Err(problem) = self.unread(slug, only, what) {
+            eprintln!("could not tell @orchestrator that no executor reads {what}: {problem}");
+        }
+    }
+
+    fn unread(&self, slug: &str, only: Option<&str>, what: &str) -> Result<(), Error> {
+        let task = self.get(slug)?;
+        let executors: Vec<_> = task
+            .roles
+            .iter()
+            .filter(|r| r.role == "executor" && only.is_none_or(|h| r.handle == h))
+            .collect();
+        if only.is_some() && executors.is_empty() {
+            return Ok(());
+        }
+        let callbacks = self.callbacks()?;
+        let launched = self.task_sessions(slug)?;
+        let mut gone = Vec::new();
+        for executor in executors {
+            let handle = executor.handle.as_str();
+            let mine: Vec<_> = launched.iter().filter(|s| s.handle == handle).collect();
+            let closed = mine
+                .last()
+                .filter(|_| mine.iter().all(|s| s.closed.is_some()));
+            if callbacks.contains_key(handle)
+                || (executor.health == Health::Live && closed.is_none())
+            {
+                return Ok(());
+            }
+            gone.push(match closed {
+                Some(s) => format!(
+                    "{handle}'s pane was closed ({}); just tasks restore {slug} {handle}",
+                    s.closed_why
+                ),
+                None => format!("{handle} is {} with no callback", executor.health.as_str()),
+            });
+        }
+        if gone.is_empty() {
+            gone.push("no session holds the role".into());
+        }
+        let text = format!("{what} reaches no live executor: {}", gone.join("; "));
+        let body = format!(
+            "{}\nRETURN NONE;",
+            logged("$slug", "$sender", "'msg'", "$text", "$to")
+        );
+        let vars = json!({"slug": slug, "sender": BOARD, "text": text, "to": "@orchestrator", "now": (self.clock)()});
+        self.retrying(|| self.transact::<Value>(&body, vars.clone()))
+            .map(|_| ())
     }
 
     /// Unread addressed messages, owner messages on its tasks, and verdicts for the executor and
