@@ -93,6 +93,8 @@ its role, without a later message, status move or verdict by it on the same thre
 role also puts the predecessor's posts before the new holder's work, even at the same clock time.
 Role aliases bind to the holders in the thread prefix at each post; a later departure or
 replacement cannot transfer that request to another recorded conversation.
+Handle-addressed requests retain the recipient's role from that history even without a launch
+record. A deliberate role release answers older requests; an automatic departure does not.
 Reading an inbox does not answer it. The periodic reap command reserves one durable recovery
 attempt per handle/post and resumes the recorded conversation only after the pane inventory
 confirms its absence; it never starts a fresh conversation. An unsuccessful attempt remains

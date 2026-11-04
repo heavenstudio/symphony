@@ -64,7 +64,10 @@ fn change(post: &Message) -> Option<Change> {
 
 /// Empty roles still address their last holders, so a request can reach a departed agent. The
 /// next acquisition replaces that fallback. Snapshots of earlier posts retain their recipients.
-pub(super) fn resolve(thread: &[Message], current: &[Role]) -> BTreeMap<i64, BTreeSet<String>> {
+pub(super) fn resolve(
+    thread: &[Message],
+    current: &[Role],
+) -> BTreeMap<i64, BTreeMap<String, String>> {
     let acquired: BTreeSet<_> = thread
         .iter()
         .filter_map(|post| match change(post) {
@@ -81,13 +84,17 @@ pub(super) fn resolve(thread: &[Message], current: &[Role]) -> BTreeMap<i64, BTr
     let mut ordered: Vec<_> = thread.iter().collect();
     ordered.sort_by_key(|post| post.id);
     let mut roles: BTreeMap<&str, Holders> = BTreeMap::new();
+    let mut last_role: BTreeMap<&str, &str> = BTreeMap::new();
     let mut resolved = BTreeMap::new();
     for post in ordered {
         match change(post) {
-            Some(Change::Acquire(role)) => roles
-                .entry(role)
-                .or_default()
-                .acquire(&post.sender, role == "executor"),
+            Some(Change::Acquire(role)) => {
+                roles
+                    .entry(role)
+                    .or_default()
+                    .acquire(&post.sender, role == "executor");
+                last_role.insert(&post.sender, role);
+            }
             Some(Change::Release(role)) => {
                 for (held, holders) in &mut roles {
                     if role.is_none_or(|released| released == *held) {
@@ -97,23 +104,42 @@ pub(super) fn resolve(thread: &[Message], current: &[Role]) -> BTreeMap<i64, BTr
             }
             None => {}
         }
-        let Some(role @ ("executor" | "reviewer")) = post
-            .recipient
-            .as_deref()
-            .and_then(|to| to.strip_prefix('@'))
-        else {
+        let Some(to) = post.recipient.as_deref() else {
             continue;
         };
-        let mut recipients = roles
-            .get(role)
-            .map_or_else(BTreeSet::new, Holders::recipients);
-        recipients.extend(
-            imported
-                .iter()
-                .filter(|held| held.role == role && held.since <= post.ts)
-                .map(|held| held.handle.clone()),
-        );
-        resolved.insert(post.id, recipients);
+        if let Some(role @ ("executor" | "reviewer")) = to.strip_prefix('@') {
+            let mut recipients = roles
+                .get(role)
+                .map_or_else(BTreeSet::new, Holders::recipients);
+            recipients.extend(
+                imported
+                    .iter()
+                    .filter(|held| held.role == role && held.since <= post.ts)
+                    .map(|held| held.handle.clone()),
+            );
+            resolved.insert(
+                post.id,
+                recipients
+                    .into_iter()
+                    .map(|handle| (handle, role.into()))
+                    .collect(),
+            );
+        } else if !to.starts_with('@') {
+            let role = last_role.get(to).copied().or_else(|| {
+                imported
+                    .iter()
+                    .filter(|held| {
+                        held.handle == to
+                            && held.since <= post.ts
+                            && matches!(held.role.as_str(), "executor" | "reviewer")
+                    })
+                    .max_by(|left, right| left.since.total_cmp(&right.since))
+                    .map(|held| held.role.as_str())
+            });
+            if let Some(role) = role {
+                resolved.insert(post.id, BTreeMap::from([(to.into(), role.into())]));
+            }
+        }
     }
     resolved
 }
@@ -121,6 +147,13 @@ pub(super) fn resolve(thread: &[Message], current: &[Role]) -> BTreeMap<i64, BTr
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn assigned(handles: &[&str], role: &str) -> BTreeMap<String, String> {
+        handles
+            .iter()
+            .map(|handle| ((*handle).into(), role.into()))
+            .collect()
+    }
 
     fn post(id: i64, sender: &str, text: &str, to: Option<&str>) -> Message {
         Message {
@@ -148,9 +181,9 @@ mod tests {
         ];
         thread.reverse(); // Equal clocks and database row ordering cannot replace sequence ids.
         let resolved = resolve(&thread, &[]);
-        assert_eq!(resolved[&4], BTreeSet::from(["b".into()]));
-        assert_eq!(resolved[&6], BTreeSet::from(["b".into()]));
-        assert_eq!(resolved[&8], BTreeSet::from(["c".into()]));
+        assert_eq!(resolved[&4], assigned(&["b"], "reviewer"));
+        assert_eq!(resolved[&6], assigned(&["b"], "reviewer"));
+        assert_eq!(resolved[&8], assigned(&["c"], "reviewer"));
     }
 
     #[test]
@@ -164,8 +197,8 @@ mod tests {
             post(6, "b", "b released every role (left)", None),
         ];
         let resolved = resolve(&thread, &[]);
-        assert_eq!(resolved[&3], BTreeSet::from(["a".into(), "b".into()]));
-        assert_eq!(resolved[&5], BTreeSet::from(["b".into()]));
+        assert_eq!(resolved[&3], assigned(&["a", "b"], "reviewer"));
+        assert_eq!(resolved[&5], assigned(&["b"], "reviewer"));
     }
 
     #[test]
@@ -184,13 +217,36 @@ mod tests {
             health: super::super::super::Health::Live,
         }];
         let resolved = resolve(&thread, &roles);
-        assert_eq!(resolved[&3], BTreeSet::from(["b".into()]));
+        assert_eq!(resolved[&3], assigned(&["b"], "executor"));
         assert!(resolved[&4].is_empty());
         let mut later = thread[3].clone();
         later.ts = 2.0;
         assert_eq!(
             resolve(&[later], &roles)[&4],
-            BTreeSet::from(["imported".into()])
+            assigned(&["imported"], "reviewer")
         );
+        let mut direct = post(5, "owner", "direct", Some("imported"));
+        assert!(!resolve(&[direct.clone()], &roles).contains_key(&5));
+        direct.ts = 2.0;
+        assert_eq!(
+            resolve(&[direct], &roles)[&5],
+            assigned(&["imported"], "reviewer")
+        );
+    }
+
+    #[test]
+    fn direct_requests_retain_the_recipients_role_after_departure_and_replacement() {
+        let thread = [
+            post(1, "a", "a joined as reviewer", None),
+            post(2, "owner", "finish", Some("a")),
+            post(3, "a", "a released every role (left)", None),
+            post(4, "b", "b joined as reviewer", None),
+            post(5, "owner", "old context", Some("a")),
+            post(6, "owner", "unknown", Some("unassigned")),
+        ];
+        let resolved = resolve(&thread, &[]);
+        assert_eq!(resolved[&2], assigned(&["a"], "reviewer"));
+        assert_eq!(resolved[&5], assigned(&["a"], "reviewer"));
+        assert!(!resolved.contains_key(&6));
     }
 }

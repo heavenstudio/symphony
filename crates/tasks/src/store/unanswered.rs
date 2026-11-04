@@ -11,11 +11,12 @@ mod recipients;
 
 const UNANSWERED_SECONDS: f64 = 30.0 * 60.0;
 
-// Actor-authored state changes answer work too. Other system records (launch, delivery, release)
-// do not. Role acquisition also puts older role-addressed posts before the new holder's work.
+// Deliberate state changes answer work too. Automatic departure, launch and delivery records do
+// not. Role acquisition also puts older role-addressed posts before the new holder's work.
 const ANSWER_SQL: &str = "(kind IN ['msg', 'verdict'] OR (kind = 'system' AND
     (string::starts_with(text, sender + ' moved it ')
     OR string::starts_with(text, sender + ' claimed it')
+    OR (string::starts_with(text, sender + ' released ') AND string::contains(text, ' (released)'))
     OR text = sender + ' joined as reviewer'
     OR text = sender + ' joined as executor')))";
 
@@ -109,11 +110,6 @@ impl Store {
     /// agents. A later release or replacement cannot assign an old post to another conversation.
     pub(crate) fn pending_posts(&self, tasks: &[Task]) -> Result<Vec<Pending>, Error> {
         let launches = self.all_task_sessions()?;
-        let recorded_reviewers: BTreeSet<_> = launches
-            .iter()
-            .filter(|launch| launch.role == "reviewer")
-            .map(|launch| launch.handle.as_str())
-            .collect();
         let confirmed = self.confirmed_callbacks()?;
         let board = self.board()?;
         let by_slug: BTreeMap<_, _> = board.tasks.iter().map(|t| (t.slug.as_str(), t)).collect();
@@ -149,7 +145,8 @@ OR (kind = 'system' AND string::starts_with(text, sender + ' released '))));"
             let recipients = recipients::resolve(&thread, &task.roles);
             for post in &mut thread {
                 if post.kind == "system"
-                    && !post.text.starts_with(&format!("{} released ", post.sender))
+                    && (!post.text.starts_with(&format!("{} released ", post.sender))
+                        || post.text.contains(" (released)"))
                 {
                     post.kind = "activity".into();
                 }
@@ -165,20 +162,13 @@ OR (kind = 'system' AND string::starts_with(text, sender + ' released '))));"
                     holders.insert((launch.handle.clone(), role.into()));
                 }
             }
-            // A named review target may differ from the instruction's parent. Its role history
-            // still binds the post after departure, when today's role rows have disappeared.
-            for post in thread
-                .iter()
-                .filter(|post| post.recipient.as_deref() == Some("@reviewer"))
-            {
-                if let Some(handles) = recipients.get(&post.id) {
-                    holders.extend(
-                        handles
-                            .iter()
-                            .filter(|h| recorded_reviewers.contains(h.as_str()))
-                            .map(|handle| (handle.clone(), "reviewer".into())),
-                    );
-                }
+            // Role history remains evidence after departure even without a launch to restore.
+            for receivers in recipients.values() {
+                holders.extend(
+                    receivers
+                        .iter()
+                        .map(|(handle, role)| (handle.clone(), role.clone())),
+                );
             }
             for to in thread.iter().filter_map(|m| m.recipient.as_ref()) {
                 if sessions.contains_key(to) && !holders.iter().any(|(h, _)| h == to) {
@@ -201,14 +191,11 @@ OR (kind = 'system' AND string::starts_with(text, sender + ' released '))));"
                     .max_by_key(|post| post.id)
                     .cloned();
                 for post in &thread {
-                    let alias = if recipients
-                        .get(&post.id)
-                        .is_some_and(|to| to.contains(&handle))
-                    {
-                        role.as_str()
-                    } else {
-                        ""
-                    };
+                    let addressed_role = recipients.get(&post.id).and_then(|to| to.get(&handle));
+                    if addressed_role.is_some_and(|assigned| assigned != &role) {
+                        continue;
+                    }
+                    let alias = addressed_role.map_or("", String::as_str);
                     if unanswered_post(post, last_reply.as_slice(), &handle, alias, since)
                         && seen.insert((handle.clone(), post.id))
                     {

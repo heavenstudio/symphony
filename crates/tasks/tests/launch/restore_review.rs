@@ -3,6 +3,58 @@
 use super::*;
 
 #[test]
+fn a_departed_reviewer_without_a_launch_is_flagged_but_never_started_automatically() {
+    for by_role in [false, true] {
+        let w = World::new();
+        let executor = w.f.session("worker");
+        w.store().claim("sim/jump", &executor).unwrap();
+        w.store().move_to("sim/jump", "review", &executor).unwrap();
+        let reviewer = w.f.session("reviewer");
+        w.store()
+            .take_role("sim/jump", &reviewer, "reviewer")
+            .unwrap();
+        let post = w
+            .store()
+            .say(
+                "sim/jump",
+                "owner",
+                "finish review",
+                Some(if by_role { "@reviewer" } else { &reviewer }),
+            )
+            .unwrap();
+        w.store().leave(&reviewer).unwrap();
+        assert!(w.store().task_sessions("sim/jump").unwrap().is_empty());
+        assert!(
+            w.store()
+                .get("sim/jump")
+                .unwrap()
+                .holders("reviewer")
+                .is_empty()
+        );
+        w.f.advance(29.0 * 60.0);
+        let digest = || tasks::cli::pull::digest(w.store(), &[], None, w.f.now(), &[]).unwrap();
+        assert_eq!(digest().count("unanswered"), 0);
+        w.f.advance(2.0 * 60.0);
+        let d = digest();
+        let lines = d.lines().join("\n");
+        assert_eq!(d.count("unanswered"), 1, "{lines}");
+        assert!(lines.contains(&format!("post #{}", post.id)), "{lines}");
+        assert!(
+            lines.contains("just tasks launch sim/jump --role reviewer"),
+            "{lines}"
+        );
+        let mut warnings = Vec::new();
+        assert!(
+            restore_unanswered(w.store(), &w.herdr(), &w.machine(), &mut warnings)
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(w.calls_of(&["agent", "start"]).len(), 0);
+        assert!(warnings.is_empty(), "{warnings:?}");
+    }
+}
+
+#[test]
 fn a_departed_replacement_keeps_its_role_posts_without_reviving_its_predecessor() {
     for parent in ["sim/jump", "sim/other"] {
         for before_departure in [false, true] {
