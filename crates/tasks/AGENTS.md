@@ -172,8 +172,11 @@ from `apps/symphony-ui`'s browser test, which compiles `port.rs` alone. On macOS
 makes a pipe or socket pair and sets close-on-exec in a second call, so a
 spawn on another thread between the two keeps the writer and holds the
 reader's EOF off for that child's whole life: a herdr answer then reads as
-unanswered. `sys::pipe` opens a FIFO close-on-exec in the open itself;
-macOS's `poll` never sees a FIFO's end, so its readers are read, never polled.
+unanswered. `sys::pipe` is a real pipe, its ends reopened close-on-exec and
+close-on-fork under `sys::spawning()`, so no spawn under that lock copies them;
+an end reaches a child only through a `sys::Command` (a std spawn handed one
+cannot start). Not a FIFO, which macOS opens close-on-exec in one call: a read
+already blocked on one can miss its end there, and `poll` never sees it.
 Those helpers take a `sys::Command`, std's builder by its method names plus
 `new_session` and `pass_fd`, and so does every spawn in a session of its own
 (`sys::new_session` is gone). std takes its fork path for a `pre_exec`, a

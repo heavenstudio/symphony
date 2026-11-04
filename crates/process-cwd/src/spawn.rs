@@ -14,15 +14,16 @@
 //! Close-on-exec is not enough on macOS: every spawn and fork copies each descriptor not
 //! close-on-fork into the child it makes until that child's exec, and a spawn that fails leaves its
 //! child holding them after it returns, until the kernel tears it down (milliseconds, measured).
-//! So the pipes the helpers make for their own children are close-on-fork, which no spawn copies;
-//! the copies a child is handed exist only under [`spawning`]; and a bare name is looked up before
-//! it is spawned, so a start leaves no failed child behind. [`pipe`]'s ends stay copyable, as
-//! callers hand them to std's spawns too. A TCP socket kept across spawns is close-on-fork from the
-//! moment it exists when [`connect`] makes it.
+//! So every [`pipe`]'s ends are close-on-fork, which no spawn copies; the copies a child is handed
+//! exist only under [`spawning`]; and a bare name is looked up before it is spawned, so a start
+//! leaves no failed child behind. An end reaches a child only through [`Command`], never through
+//! a std spawn, which cannot be handed one. A TCP socket kept across spawns is close-on-fork once
+//! [`connect`] has made it, and close-on-exec from just after it exists.
 //!
-//! [`pipe`] is a FIFO there, and macOS can lose a FIFO's end: a read already blocked on one when
-//! its last writer goes may wait for good, while a nonblocking read on it answers EOF (measured,
-//! about once in a few hundred thousand reads under load). The helpers' own pipes are real ones.
+//! [`pipe`] is a real pipe, not a FIFO, though a FIFO opens close-on-exec in one call: macOS can
+//! lose a FIFO's end, and a read already blocked on one when its last writer goes may wait for
+//! good, while a nonblocking read on it answers EOF (measured, about once in a few hundred
+//! thousand reads under load).
 
 use std::collections::BTreeMap;
 use std::ffi::{OsStr, OsString};
@@ -46,10 +47,10 @@ const O_CLOFORK: libc::c_int = 0x0800_0000;
 static SPAWNING: Mutex<()> = Mutex::new(());
 
 /// Held while this process holds a descriptor for a child that any spawn would copy: the copies
-/// [`Command::spawn`] hands its child, and a helper's pipe or [`connect`]'s socket until its
-/// descriptors are close-on-fork. Every helper spawn holds it, and a std spawn in a binary that uses
-/// the helpers takes it around its `spawn()`, so that it never copies one (a std child keeps each
-/// descriptor not close-on-exec for its life).
+/// [`Command::spawn`] hands its child, and a [`pipe`] or [`connect`]'s socket until its descriptors
+/// are close-on-fork. Every helper spawn holds it, and a std spawn in a binary that uses the helpers
+/// takes it around its `spawn()`, so that it never copies one (a std child keeps each descriptor not
+/// close-on-exec for its life).
 /// Never held across a helper's spawn, pipe or [`connect`]: they take it themselves.
 pub fn spawning() -> MutexGuard<'static, ()> {
     SPAWNING.lock().unwrap_or_else(PoisonError::into_inner)
@@ -303,18 +304,17 @@ impl Command {
     }
 }
 
-/// What the child's stream is handed, and for a piped one the end this process keeps: the writer
-/// of an [`input_pipe`] for the child's `input`, the reader of an [`own_pipe`] for an output. The
-/// child's end goes with the spawn, so only the child ever holds it.
+/// What the child's stream is handed, and for a piped one the end this process keeps of a [`pipe`]:
+/// the writer for the child's `input`, the reader for an output. The child's end goes with the
+/// spawn, so only the child ever holds it.
 fn handed(io: Stdio, input: bool) -> io::Result<(Stdio, Option<OwnedFd>)> {
     let Stdio::Piped = io else {
         return Ok((io, None));
     };
+    let (reader, writer) = pipe()?;
     Ok(if input {
-        let (reader, writer) = input_pipe()?;
         (reader.into(), Some(writer.into()))
     } else {
-        let (reader, writer) = own_pipe()?;
         (writer.into(), Some(reader.into()))
     })
 }
@@ -351,91 +351,46 @@ impl Child {
     }
 }
 
-/// A pipe whose two ends are close-on-exec from the moment they exist, so a child another thread
-/// spawns meanwhile never keeps one and the reader's EOF comes when the writers handed out end.
-/// macOS has no `pipe2` or `SOCK_CLOEXEC`: std's pipe (behind `Stdio::piped`) and
-/// `UnixStream::pair` set the flag in a second call, and a spawn between the two inherits both ends
-/// for the child's whole life. A FIFO opened with `O_CLOEXEC`, then unlinked, is atomic there;
-/// elsewhere std's own pipe is. macOS's `poll` never reports a FIFO's end, and a read already
-/// blocked on one can miss it for good while a nonblocking read finds it, so the helpers read and
-/// feed their own children through real pipes of their own. Its ends are not close-on-fork, so
-/// any spawn, std's too, can hand one to its child.
+/// A real pipe whose two ends no spawn or fork copies, so the reader's EOF comes when the writers
+/// handed out end, and a read already blocked on it sees that end. macOS has no `pipe2` before
+/// macOS 27: `pipe()` makes inheritable ends and only `open` makes one close-on-fork, so under
+/// [`spawning`] each end is [`reopened`] close-on-exec and close-on-fork, and the first ends are
+/// closed before the lock goes. No spawn under [`spawning`] copies them, and no spawn or fork at
+/// all copies the ends returned, even until its exec; a std spawn that skips the lock can keep the
+/// first ends for its child's life. An end reaches a child only through [`Command`], which hands it
+/// a copy made under [`spawning`]: a std spawn, given one, cannot start.
 #[cfg(target_vendor = "apple")]
 pub fn pipe() -> io::Result<(PipeReader, PipeWriter)> {
-    use std::os::unix::fs::OpenOptionsExt;
-    use std::sync::atomic::{AtomicU64, Ordering};
-    static PIPES: AtomicU64 = AtomicU64::new(0);
-    loop {
-        let path = std::env::temp_dir().join(format!(
-            "sf-pipe-{}-{}",
-            std::process::id(),
-            PIPES.fetch_add(1, Ordering::Relaxed)
-        ));
-        let named = std::ffi::CString::new(path.as_os_str().as_bytes())?;
-        // SAFETY: the path is NUL-terminated and outlives the call.
-        if unsafe { libc::mkfifo(named.as_ptr(), 0o600) } != 0 {
-            let why = io::Error::last_os_error();
-            if why.kind() == io::ErrorKind::AlreadyExists {
-                continue; // an earlier process with this pid left the name
-            }
-            return Err(why);
-        }
-        // std opens every file close-on-exec in the open call itself. The reader opens without
-        // waiting for a writer (O_NONBLOCK), so the writer's open then finds it and returns.
-        let ends = File::options()
-            .read(true)
-            .custom_flags(libc::O_NONBLOCK)
-            .open(&path)
-            .and_then(|reader| Ok((reader, File::options().write(true).open(&path)?)));
-        let unlinked = std::fs::remove_file(&path);
-        let (reader, writer) = ends?;
-        unlinked?;
-        set_nonblocking(&reader, false)?;
-        return Ok((OwnedFd::from(reader).into(), OwnedFd::from(writer).into()));
-    }
-}
-
-/// [`pipe`] for the helpers' own children: a real pipe, whose end a read already blocked on it
-/// sees. `pipe()` makes inheritable ends there and only `open` makes one close-on-fork, so under
-/// [`spawning`] each end is reopened through `/dev/fd` close-on-exec and close-on-fork, and the
-/// first ends are closed before the lock goes. No spawn under [`spawning`] copies them, and no
-/// spawn or fork at all copies the ends returned, even until its exec; a std spawn that skips the
-/// lock can keep the first ends for its child's life. Only a helper spawn can hand one over,
-/// through a copy made under [`spawning`].
-#[cfg(target_vendor = "apple")]
-fn own_pipe() -> io::Result<(PipeReader, PipeWriter)> {
-    use std::os::unix::fs::OpenOptionsExt;
     let _spawning = spawning();
     let made = io::pipe()?;
-    let reopen = |end: RawFd, write: bool| {
-        File::options()
-            .read(!write)
-            .write(write)
-            .custom_flags(O_CLOFORK)
-            .open(format!("/dev/fd/{end}"))
-    };
-    let reader = reopen(made.0.as_raw_fd(), false)?;
-    let writer = reopen(made.1.as_raw_fd(), true)?;
+    let reader = reopened(made.0.as_fd(), true, false)?;
+    let writer = reopened(made.1.as_fd(), false, true)?;
     drop(made);
     Ok((OwnedFd::from(reader).into(), OwnedFd::from(writer).into()))
 }
 
-/// A pipe whose two ends are close-on-exec from the moment they exist: std's (`pipe2`).
+/// A new descriptor of `fd`'s open file (a [`pipe`]'s end, [`connect`]'s socket), close-on-exec and
+/// close-on-fork, opened to read, write or both as `fd` allows. macOS opens `/dev/fd/N` as `dup`
+/// copies N, sharing its open file, and only `open` can set close-on-fork. A pipe stays whole when
+/// the first descriptor closes while another process reads it (`lsof`): its drain marks it ended
+/// only with its open file's last descriptor. A socket's drain has no such check, so that close is
+/// the one moment an `lsof` could still mark it draining. Called under [`spawning`], so no spawn
+/// copies `fd` meanwhile.
+#[cfg(target_vendor = "apple")]
+fn reopened(fd: std::os::fd::BorrowedFd<'_>, read: bool, write: bool) -> io::Result<File> {
+    use std::os::unix::fs::OpenOptionsExt;
+    File::options()
+        .read(read)
+        .write(write)
+        .custom_flags(O_CLOFORK)
+        .open(format!("/dev/fd/{}", fd.as_raw_fd()))
+}
+
+/// A pipe whose two ends are close-on-exec from the moment they exist: std's (`pipe2`), as nothing
+/// is close-on-fork here.
 #[cfg(not(target_vendor = "apple"))]
 pub fn pipe() -> io::Result<(PipeReader, PipeWriter)> {
     io::pipe()
-}
-
-/// [`pipe`] for the helpers' own children: std's, as nothing is close-on-fork here.
-#[cfg(not(target_vendor = "apple"))]
-fn own_pipe() -> io::Result<(PipeReader, PipeWriter)> {
-    pipe()
-}
-
-/// A pipe for a child's stdin, which the child may poll for its end (node never sees a FIFO's
-/// end on macOS): [`own_pipe`], a real one.
-fn input_pipe() -> io::Result<(PipeReader, PipeWriter)> {
-    own_pipe()
 }
 
 /// A TCP connection to `to`, waited for at most `timeout`, as std's `TcpStream::connect_timeout`
@@ -445,8 +400,8 @@ fn input_pipe() -> io::Result<(PipeReader, PipeWriter)> {
 /// draining when one of its descriptors is closed while another process reads that descriptor
 /// (`lsof`), and a draining socket fails every later wait for data with EBADF: a child's exec
 /// closing its copy did that to the board's connections. So the socket is made under [`spawning`]
-/// and reopened through `/dev/fd` close-on-exec and close-on-fork, as [`own_pipe`] reopens its
-/// ends, its first descriptor closed before the lock goes; it connects after.
+/// and [`reopened`] close-on-exec and close-on-fork, as [`pipe`]'s ends are, its first descriptor
+/// closed before the lock goes; it connects after.
 #[cfg(target_vendor = "apple")]
 pub fn connect(to: &SocketAddr, timeout: Duration) -> io::Result<TcpStream> {
     if timeout.is_zero() {
@@ -490,17 +445,26 @@ pub fn connect(to: &SocketAddr, timeout: Duration) -> io::Result<TcpStream> {
 }
 
 /// A TCP socket of `to`'s family, not yet connected, close-on-exec and close-on-fork: made and
-/// reopened under [`spawning`], so no helper spawn copies even its first descriptor.
+/// [`reopened`] under [`spawning`], so no helper spawn copies even its first descriptor.
 #[cfg(target_vendor = "apple")]
 fn own_socket(to: &SocketAddr) -> io::Result<OwnedFd> {
-    use std::os::fd::FromRawFd;
-    use std::os::unix::fs::OpenOptionsExt;
     let family = if to.is_ipv4() {
         libc::AF_INET
     } else {
         libc::AF_INET6
     };
     let _spawning = spawning();
+    let made = new_socket(family)?;
+    let own = reopened(made.as_fd(), true, true)?;
+    drop(made);
+    Ok(own.into())
+}
+
+/// A new TCP socket of `family`, close-on-exec at once, as std makes one: a std spawn that skips
+/// [`spawning`] keeps it past its exec only if it starts between these two calls.
+#[cfg(target_vendor = "apple")]
+fn new_socket(family: libc::c_int) -> io::Result<OwnedFd> {
+    use std::os::fd::FromRawFd;
     // SAFETY: socket has no pointer arguments; a descriptor it returns is owned exactly once below.
     let made = unsafe { libc::socket(family, libc::SOCK_STREAM, 0) };
     if made == -1 {
@@ -508,13 +472,11 @@ fn own_socket(to: &SocketAddr) -> io::Result<OwnedFd> {
     }
     // SAFETY: made is the new socket's descriptor, which nothing else owns.
     let made = unsafe { OwnedFd::from_raw_fd(made) };
-    let own = File::options()
-        .read(true)
-        .write(true)
-        .custom_flags(O_CLOFORK)
-        .open(format!("/dev/fd/{}", made.as_raw_fd()))?;
-    drop(made);
-    Ok(own.into())
+    // SAFETY: F_SETFD sets the descriptor flags of the one made, from an int.
+    if unsafe { libc::fcntl(made.as_raw_fd(), libc::F_SETFD, libc::FD_CLOEXEC) } == -1 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(made)
 }
 
 /// `socket`'s connect to `to`, started: done, in progress (EINPROGRESS), or refused.
@@ -638,14 +600,14 @@ pub fn spawn_output(command: &mut Command) -> io::Result<Child> {
 }
 
 /// [`spawn_output`] with the child's stdin [`Stdio::piped`] too: what is written to `stdin`
-/// reaches the child, which sees its end once `stdin` is dropped, whether it reads or polls: a
-/// real pipe, close-on-fork on macOS.
+/// reaches the child, which sees its end once `stdin` is dropped, whether it reads or polls (node
+/// never sees a FIFO's end on macOS): a [`pipe`], a real one.
 pub fn spawn_piped(command: &mut Command) -> io::Result<Child> {
     spawn_reading(command, Stdio::Piped)
 }
 
-/// `command` started with `stdin` and both outputs [`Stdio::piped`], each read through a
-/// close-on-fork [`own_pipe`] of its own. Only the child holds the writers: [`Command::spawn`]
+/// `command` started with `stdin` and both outputs [`Stdio::piped`], each read through a [`pipe`]
+/// of its own, which no other spawn copies. Only the child holds the writers: [`Command::spawn`]
 /// hands its streams over.
 fn spawn_reading(command: &mut Command, stdin: Stdio) -> io::Result<Child> {
     command
@@ -1509,23 +1471,31 @@ mod tests {
         assert_eq!(said, "answer");
     }
 
+    /// A pipe's end reaches a child through [`Command`], which hands it a copy; on macOS, where no
+    /// spawn copies the end itself, a std spawn handed one cannot start.
     #[test]
-    fn a_pipes_end_can_be_handed_to_a_child_std_spawns() {
-        use std::os::unix::process::CommandExt;
+    fn a_pipes_end_reaches_a_child_through_the_helpers_spawn_only() {
         let (mut reader, writer) = pipe().unwrap();
-        let mut child = {
-            let _spawning = spawning();
-            std::process::Command::new("/bin/sh")
-                .args(["-c", "printf handed >&2"])
-                .stderr(writer)
-                .process_group(0)
-                .spawn()
-                .unwrap()
-        };
+        let mut child = Command::new("/bin/sh")
+            .args(["-c", "printf handed >&2"])
+            .stderr(writer)
+            .spawn()
+            .unwrap();
         assert!(child.wait().unwrap().success());
         let mut said = String::new();
         reader.read_to_string(&mut said).unwrap();
         assert_eq!(said, "handed");
+        #[cfg(target_vendor = "apple")]
+        {
+            let (_reader, writer) = pipe().unwrap();
+            let _spawning = spawning();
+            let refused = std::process::Command::new("/bin/sh")
+                .args(["-c", "printf handed >&2"])
+                .stderr(writer)
+                .spawn()
+                .unwrap_err();
+            assert_eq!(refused.raw_os_error(), Some(libc::EBADF), "{refused}");
+        }
     }
 
     #[test]
@@ -1577,24 +1547,27 @@ mod tests {
     }
 
     /// A child std forks holds each descriptor not close-on-fork until its exec, close-on-exec ones
-    /// too, as [`pipe`]'s ends; the pipes the helpers make for their own children never reach it.
+    /// too, as std's pipe's ends; a [`pipe`]'s ends, the helpers' children's streams among them,
+    /// never reach it.
     #[cfg(target_vendor = "apple")]
     #[test]
-    fn the_helpers_own_pipe_ends_never_reach_a_forked_child_even_before_its_exec() {
-        let (reader, writer) = own_pipe().unwrap();
-        let (input, stdin) = input_pipe().unwrap();
+    fn a_pipes_ends_never_reach_a_forked_child_even_before_its_exec() {
+        let (reader, writer) = pipe().unwrap();
+        let child = spawn_piped(&mut Command::new("cat")).unwrap();
         for (end, fd) in [
-            ("output reader", reader.as_raw_fd()),
-            ("output writer", writer.as_raw_fd()),
-            ("stdin reader", input.as_raw_fd()),
-            ("stdin writer", stdin.as_raw_fd()),
+            ("reader", reader.as_raw_fd()),
+            ("writer", writer.as_raw_fd()),
+            ("child's stdin", child.stdin.as_ref().unwrap().as_raw_fd()),
+            ("child's stdout", child.stdout.as_ref().unwrap().as_raw_fd()),
+            ("child's stderr", child.stderr.as_ref().unwrap().as_raw_fd()),
         ] {
             assert!(!found(fd), "the {end} reached a forked child");
         }
-        let (reader, writer) = pipe().unwrap();
+        let (reader, writer) = io::pipe().unwrap();
         for end in [reader.as_raw_fd(), writer.as_raw_fd()] {
-            assert!(found(end), "a std spawn can hand pipe()'s ends over");
+            assert!(found(end), "std's pipe's end reaches a forked child");
         }
+        assert!(wait_output(child).unwrap().status.success());
     }
 
     /// What libproc says each of process `pid`'s descriptors is (`sys/proc_info.h`): a real pipe
@@ -1627,29 +1600,31 @@ mod tests {
             .collect()
     }
 
-    /// macOS can lose a FIFO's end for a read already blocked on it, so what the helpers read their
-    /// children through, and feed them through, is a real pipe. [`pipe`] stays a FIFO.
+    /// macOS can lose a FIFO's end for a read already blocked on it, so a [`pipe`], and what the
+    /// helpers read their children through and feed them through, is a real pipe, not a vnode.
     #[cfg(target_vendor = "apple")]
     #[test]
-    fn the_helpers_read_and_feed_their_children_through_real_pipes() {
+    fn pipes_and_the_helpers_streams_are_real_pipes() {
         let child = spawn_piped(&mut Command::new("cat")).unwrap();
-        let (fifo, _writer) = pipe().unwrap();
+        let (reader, writer) = pipe().unwrap();
         let ends = [
             ("stdin", child.stdin.as_ref().unwrap().as_raw_fd()),
             ("stdout", child.stdout.as_ref().unwrap().as_raw_fd()),
             ("stderr", child.stderr.as_ref().unwrap().as_raw_fd()),
-            ("pipe()", fifo.as_raw_fd()),
+            ("reader", reader.as_raw_fd()),
+            ("writer", writer.as_raw_fd()),
         ];
         let kinds = kinds(std::process::id().try_into().unwrap());
         let found = ends.map(|(end, fd)| (end, kinds.get(&fd).copied()));
-        let (pipe, vnode) = (libc::PROX_FDTYPE_PIPE, libc::PROX_FDTYPE_VNODE);
+        let pipe = Some(libc::PROX_FDTYPE_PIPE);
         assert_eq!(
             found,
             [
-                ("stdin", Some(pipe)),
-                ("stdout", Some(pipe)),
-                ("stderr", Some(pipe)),
-                ("pipe()", Some(vnode)),
+                ("stdin", pipe),
+                ("stdout", pipe),
+                ("stderr", pipe),
+                ("reader", pipe),
+                ("writer", pipe),
             ]
         );
         assert!(wait_output(child).unwrap().status.success());
@@ -1732,6 +1707,45 @@ mod tests {
         let socket = connect(&six.local_addr().unwrap(), Duration::from_secs(5)).unwrap();
         assert!(!found(socket.as_raw_fd()));
         assert_eq!(socket.peer_addr().unwrap(), six.local_addr().unwrap());
+    }
+
+    /// A board socket's first descriptor is close-on-exec as soon as it exists, as std's are, so a
+    /// std spawn that skips the lock drops its copy at its exec: a stream socket of either family.
+    /// A family no socket has is refused.
+    #[cfg(target_vendor = "apple")]
+    #[test]
+    fn a_new_socket_is_close_on_exec_from_its_first_descriptor() {
+        for family in [libc::AF_INET, libc::AF_INET6] {
+            let made = new_socket(family).unwrap();
+            // SAFETY: F_GETFD reads the flags of a descriptor made keeps open.
+            let flags = unsafe { libc::fcntl(made.as_raw_fd(), libc::F_GETFD) };
+            assert_eq!(flags & libc::FD_CLOEXEC, libc::FD_CLOEXEC, "{family}");
+            let kinds = kinds(std::process::id().try_into().unwrap());
+            assert_eq!(
+                kinds.get(&made.as_raw_fd()),
+                Some(&libc::PROX_FDTYPE_SOCKET),
+                "{family}"
+            );
+            let mut kind: libc::c_int = 0;
+            let mut length = libc::socklen_t::try_from(size_of_val(&kind)).unwrap();
+            // SAFETY: kind is writable for length bytes and made owns the descriptor.
+            let got = unsafe {
+                libc::getsockopt(
+                    made.as_raw_fd(),
+                    libc::SOL_SOCKET,
+                    libc::SO_TYPE,
+                    (&raw mut kind).cast(),
+                    &raw mut length,
+                )
+            };
+            assert_eq!((got, kind), (0, libc::SOCK_STREAM), "{family}");
+        }
+        let refused = new_socket(-1).unwrap_err();
+        assert_eq!(
+            refused.raw_os_error(),
+            Some(libc::EAFNOSUPPORT),
+            "{refused}"
+        );
     }
 
     /// connect fails as std's does: a port nobody listens on, an address no socket can reach, and
@@ -1892,7 +1906,8 @@ mod tests {
                 let (mut reader, writer) = pipe().unwrap();
                 set_nonblocking(&reader, true).unwrap();
                 drop(writer);
-                // A child forked by another test holds the writer until its exec, no longer.
+                // No child holds the writer: no spawn or fork copies a pipe's ends, and a racer
+                // spawned under the lock never sees its first ones.
                 let made = Instant::now();
                 loop {
                     match reader.read(&mut [0]) {
@@ -1913,8 +1928,8 @@ mod tests {
         });
     }
 
-    /// A std child keeps each descriptor not close-on-exec at its spawn for its life, and a helper's
-    /// pipe is one until it is reopened: a racer spawned under [`spawning`], as [`racing`]'s, keeps
+    /// A std child keeps each descriptor not close-on-exec at its spawn for its life, and a
+    /// [`pipe`] is one until it is reopened: a racer spawned under [`spawning`], as [`racing`]'s, keeps
     /// no pipe of the answers made beside it but what this process hands every child, so each
     /// answer ends with its own child while every racer still lives.
     #[cfg(target_vendor = "apple")]
