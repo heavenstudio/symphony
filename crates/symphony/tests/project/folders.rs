@@ -227,3 +227,22 @@ fn a_documents_card_links_and_pictures_resolve_in_the_projects_folder() {
     );
     assert!(made.is_some_and(|(file, _)| file.is_file()));
 }
+
+#[test]
+fn a_folder_spelled_with_dot_slash_names_its_documents_and_cards_as_any_other() {
+    let tree = manual();
+    tree.write(
+        "symphony.toml",
+        &MANUAL
+            .replace("\"manual\"", "\"./manual/\"")
+            .replace("\"manual/", "\"./manual/"),
+    );
+    let docs = scan(&tree.root).unwrap();
+    assert_eq!(
+        docs.iter().map(|doc| doc.path.as_str()).collect::<Vec<_>>(),
+        ["docs/DECISIONS.md", "docs/guide/START.md"]
+    );
+    assert_eq!(Project::of(&tree.root).view().register, "docs/DECISIONS.md");
+    let render = Render::new(&tree.root);
+    assert!(docview::document(&render, "docs/DECISIONS.md", "").is_ok());
+}

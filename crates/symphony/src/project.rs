@@ -442,16 +442,23 @@ fn under(rel: &str, folder: &str) -> bool {
             .is_some_and(|rest| rest.starts_with('/'))
 }
 
-/// `path` when it is relative and stays inside the project; else an error naming `key`.
+/// `path` when it is relative and names something inside the project, spelled as the repository
+/// names its files (`./docs/` is `docs`), so every comparison with a listed file holds; else an
+/// error naming `key`.
 fn inside(key: &str, path: String) -> Result<String, String> {
-    let trimmed = path.trim_end_matches('/').to_string();
-    let escapes = Path::new(&trimmed)
-        .components()
-        .any(|c| !matches!(c, Component::Normal(_) | Component::CurDir));
-    if trimmed.is_empty() || escapes {
-        return Err(format!("{key} {path:?} must be a path inside the project"));
+    let refused = || format!("{key} {path:?} must be a path inside the project");
+    let mut parts = Vec::new();
+    for part in Path::new(&path).components() {
+        match part {
+            Component::Normal(name) => parts.push(name.to_string_lossy()),
+            Component::CurDir => {}
+            _ => return Err(refused()),
+        }
     }
-    Ok(trimmed)
+    if parts.is_empty() {
+        return Err(refused());
+    }
+    Ok(parts.join("/"))
 }
 
 /// A name as an id: lowercase letters and digits, each other run a single dash.

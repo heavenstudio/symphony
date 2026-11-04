@@ -143,6 +143,8 @@ fn a_path_must_stay_inside_the_project() {
         ("[project] docs", "[project]\ndocs = \"../docs\"\n"),
         ("[project] docs", "[project]\ndocs = \"/srv/docs\"\n"),
         ("[project] docs", "[project]\ndocs = \"\"\n"),
+        // the project itself is not a folder inside it
+        ("[project] docs", "[project]\ndocs = \"./\"\n"),
         (
             "[project] history",
             "[project]\nhistory = [\"docs/../../old\"]\n",
@@ -169,8 +171,18 @@ fn a_path_must_stay_inside_the_project() {
     }
     let project =
         parsed("[project]\ndocs = \"./docs\"\n[verdicts]\nrecord = \".git/records\"\n").unwrap();
-    assert_eq!(project.docs, "./docs");
+    assert_eq!(project.docs, "docs");
     assert_eq!(project.verdicts.record.as_deref(), Some(".git/records"));
+    // each spelling of a folder is kept as the repository names its files
+    for spelling in ["./manual", "manual/", "./manual/./", "manual//"] {
+        let project = parsed(&format!("[project]\ndocs = \"{spelling}\"\n")).unwrap();
+        assert_eq!(
+            (project.docs.as_str(), project.register.as_str()),
+            ("manual", "manual/DECISIONS.md"),
+            "{spelling}"
+        );
+        assert_eq!(project.history, ["manual/history"], "{spelling}");
+    }
 }
 
 #[test]
