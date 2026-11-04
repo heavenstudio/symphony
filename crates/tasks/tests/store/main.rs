@@ -23,5 +23,6 @@ mod reserve;
 mod roles;
 mod sessions;
 mod sqlite;
+mod start;
 mod tree;
 mod verdict;
