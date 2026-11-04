@@ -21,6 +21,10 @@ mod descriptor;
 /// ([`Client::waiting`]).
 const TIMEOUT: Duration = Duration::from_secs(300);
 
+/// How long a connection's check waits for data that should not come ([`check`]): a wait at all,
+/// since only a wait meets a drained socket's refusal, and the shortest the socket takes.
+const CHECK_WAIT: Duration = Duration::from_micros(1);
+
 /// Why a query did not give its results.
 #[derive(Debug, Clone, PartialEq)]
 pub enum DbError {
@@ -70,6 +74,16 @@ impl Connection {
             failure.why.push_str(&self.descriptor.failure(&self.stream));
         }
         failure
+    }
+
+    /// A check's EBADF on a number that still holds this connection's socket, the same ends both
+    /// ways: a drained socket ([`crate::sys::unshared`]), its evidence. A number that no
+    /// longer holds it was closed by code that does not own it: the failure, with what it holds now.
+    fn drained(&self, mut failure: Failure) -> Result<String, Failure> {
+        let (same, seen) = self.descriptor.recheck(&self.stream);
+        failure.why.push_str("; ");
+        failure.why.push_str(&seen);
+        if same { Ok(failure.why) } else { Err(failure) }
     }
 }
 
@@ -157,18 +171,19 @@ impl Client {
 
 impl Client {
     /// `request` on a connection the server kept open, else on a new one: the reply's status and body.
-    /// A kept connection the server has closed while it sat idle is seen to be closed before anything is
-    /// written on it, and left for a new one. A request written on a connection that then gave back
-    /// nothing, part of a reply, or nothing before the timeout is the request's failure and is never
-    /// sent again: the server may have run it, and a write run twice is a message said twice.
+    /// Each connection is checked ([`check`]) before anything is written on it, every kind of request
+    /// alike: a kept one the server has closed, or that is drained, is dropped for another, and the
+    /// request was not sent on it. A request written on a connection that then gave back nothing, part
+    /// of a reply, or nothing before the timeout is the request's failure and is never sent again,
+    /// whatever it says: the server may have run it, and a write run twice is a message said twice.
     fn send(&self, request: &[u8]) -> Result<(u16, Vec<u8>), String> {
-        self.send_with_probe(request, open)
+        self.send_checked(request, check)
     }
 
-    fn send_with_probe(
+    fn send_checked(
         &self,
         request: &[u8],
-        mut probe: impl FnMut(&TcpStream) -> Result<bool, Failure>,
+        mut check: impl FnMut(&TcpStream) -> Result<(), Failure>,
     ) -> Result<(u16, Vec<u8>), String> {
         let kept = loop {
             let kept = self
@@ -176,39 +191,32 @@ impl Client {
                 .lock()
                 .unwrap_or_else(PoisonError::into_inner)
                 .pop();
-            match kept {
-                Some(connection) => match probe(&connection.stream) {
-                    Ok(false) => {}
-                    Ok(true) => break Some(connection),
+            let Some(connection) = kept else {
+                break None;
+            };
+            match check(&connection.stream) {
+                Ok(()) => break Some(connection),
+                Err(failure) if !failure.bad_descriptor => {}
+                Err(failure) => match connection.drained(failure) {
+                    Ok(evidence) => eprintln!(
+                        "the server at {}: a pooled socket after {} completed requests was drained, so it was dropped before the request was written: {evidence}",
+                        self.addr, connection.served
+                    ),
                     Err(failure) => {
-                        return Err(self.unanswered(
-                            true,
-                            connection.served,
-                            connection.failure(failure),
-                        ));
+                        return Err(self.unanswered(true, connection.served, failure));
                     }
                 },
-                None => break None,
             }
         };
         let pooled = kept.is_some();
         let mut connection = if let Some(connection) = kept {
             connection
         } else {
-            let connect_failed = |why| self.unanswered(false, 0, Failure::new(Step::Connect, why));
-            let to = self
-                .addr
-                .to_socket_addrs()
-                .map_err(|error| connect_failed(error.to_string()))?
-                .next()
-                .ok_or_else(|| connect_failed(format!("{} names no address", self.addr)))?;
-            let stream = TcpStream::connect_timeout(&to, self.timeout)
-                .map_err(|error| connect_failed(error.to_string()))?;
-            Connection {
-                descriptor: descriptor::Descriptor::connected(&stream),
-                stream,
-                served: 0,
+            let connection = self.connect()?;
+            if let Err(failure) = check(&connection.stream) {
+                return Err(self.unanswered(false, 0, connection.failure(failure)));
             }
+            connection
         };
         match talk(&mut connection.stream, request, self.timeout) {
             Ok(reply) => {
@@ -219,6 +227,31 @@ impl Client {
                 Err(self.unanswered(pooled, connection.served, connection.failure(failure)))
             }
         }
+    }
+
+    /// A new connection to the server, its socket's one descriptor close-on-fork
+    /// ([`crate::sys::unshared`]). The diagnostic copy of it is made and closed under
+    /// [`crate::sys::spawning`], so no child holds that either.
+    fn connect(&self) -> Result<Connection, String> {
+        let connect_failed = |why| self.unanswered(false, 0, Failure::new(Step::Connect, why));
+        let to = self
+            .addr
+            .to_socket_addrs()
+            .map_err(|error| connect_failed(error.to_string()))?
+            .next()
+            .ok_or_else(|| connect_failed(format!("{} names no address", self.addr)))?;
+        let stream = TcpStream::connect_timeout(&to, self.timeout)
+            .and_then(crate::sys::unshared)
+            .map_err(|error| connect_failed(error.to_string()))?;
+        let descriptor = {
+            let _spawning = crate::sys::spawning();
+            descriptor::Descriptor::connected(&stream)
+        };
+        Ok(Connection {
+            descriptor,
+            stream,
+            served: 0,
+        })
     }
 
     fn keep(&self, connection: Connection, reply: Reply) -> (u16, Vec<u8>) {
@@ -234,9 +267,7 @@ impl Client {
     fn unanswered(&self, pooled: bool, served: usize, failure: Failure) -> String {
         let origin = if pooled { "pooled" } else { "freshly opened" };
         let outcome = match failure.step {
-            Step::Connect | Step::SocketOption(_) | Step::PoolCheck(_) => {
-                "the request was not sent"
-            }
+            Step::Connect | Step::SocketOption(_) | Step::Check(_) => "the request was not sent",
             Step::Write | Step::Read => "the request may have run there, so it was not sent again",
         };
         format!(
@@ -257,7 +288,7 @@ struct Reply {
 enum Step {
     Connect,
     SocketOption(&'static str),
-    PoolCheck(&'static str),
+    Check(&'static str),
     Write,
     Read,
 }
@@ -267,7 +298,7 @@ impl fmt::Display for Step {
         match self {
             Self::Connect => f.write_str("connect"),
             Self::SocketOption(name) => write!(f, "socket option {name}"),
-            Self::PoolCheck(name) => write!(f, "pooled connection check {name}"),
+            Self::Check(name) => write!(f, "connection check {name}"),
             Self::Write => f.write_str("write"),
             Self::Read => f.write_str("read"),
         }
@@ -339,16 +370,15 @@ fn talk(stream: &mut TcpStream, request: &[u8], timeout: Duration) -> Result<Rep
     }
 }
 
-/// Whether a kept connection is still open: nothing waiting on it, and not closed by the server. A reply
-/// that came unasked, or anything the peek cannot tell, is a connection not to use.
-trait PoolProbe {
-    fn set_nonblocking(&self, nonblocking: bool) -> std::io::Result<()>;
+/// What [`check`] asks of a socket.
+trait Probe {
+    fn set_read_timeout(&self, timeout: Option<Duration>) -> std::io::Result<()>;
     fn peek(&self, byte: &mut [u8]) -> std::io::Result<usize>;
 }
 
-impl PoolProbe for TcpStream {
-    fn set_nonblocking(&self, nonblocking: bool) -> std::io::Result<()> {
-        TcpStream::set_nonblocking(self, nonblocking)
+impl Probe for TcpStream {
+    fn set_read_timeout(&self, timeout: Option<Duration>) -> std::io::Result<()> {
+        TcpStream::set_read_timeout(self, timeout)
     }
 
     fn peek(&self, byte: &mut [u8]) -> std::io::Result<usize> {
@@ -356,27 +386,27 @@ impl PoolProbe for TcpStream {
     }
 }
 
-fn open(stream: &impl PoolProbe) -> Result<bool, Failure> {
-    if let Err(error) = stream.set_nonblocking(true) {
-        return open_error("set_nonblocking(true)", error);
-    }
-    let mut byte = [0u8; 1];
-    match stream.peek(&mut byte) {
-        Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {}
-        Err(error) => return open_error("peek", error),
-        Ok(_) => return Ok(false),
-    }
-    if let Err(error) = stream.set_nonblocking(false) {
-        return open_error("set_nonblocking(false)", error);
-    }
-    Ok(true)
-}
-
-fn open_error(operation: &'static str, error: std::io::Error) -> Result<bool, Failure> {
-    if descriptor::bad_descriptor(&error) {
-        Err(Failure::io(Step::PoolCheck(operation), error))
-    } else {
-        Ok(false)
+/// Whether a connection may carry a request: nothing waiting on it, not closed by the server, and a
+/// wait for data taken. A drained socket refuses any wait at once with EBADF, and only a wait sees
+/// that, so the peek blocks, for [`CHECK_WAIT`]; a live idle socket answers that its time ran out.
+/// An end, a reply that came unasked, or any other answer is a connection not to use.
+fn check(stream: &impl Probe) -> Result<(), Failure> {
+    stream
+        .set_read_timeout(Some(CHECK_WAIT))
+        .map_err(|error| Failure::io(Step::Check("SO_RCVTIMEO"), error))?;
+    let peeked = |why: &str| Err(Failure::new(Step::Check("peek"), why));
+    match stream.peek(&mut [0u8; 1]) {
+        Err(error)
+            if matches!(
+                error.kind(),
+                std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+            ) =>
+        {
+            Ok(())
+        }
+        Err(error) => Err(Failure::io(Step::Check("peek"), error)),
+        Ok(0) => peeked("it closed the connection"),
+        Ok(_) => peeked("it sent a reply nobody asked for"),
     }
 }
 
@@ -840,124 +870,269 @@ mod tests {
         }
     }
 
-    #[test]
-    fn a_bad_descriptor_in_the_kept_socket_probe_is_reported_without_sending_or_reconnecting() {
-        for operation in ["set_nonblocking(true)", "peek", "set_nonblocking(false)"] {
-            let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-            let address = listener.local_addr().unwrap();
-            let stream = TcpStream::connect(address).unwrap();
-            let (mut peer, _) = listener.accept().unwrap();
-            let client =
-                Client::new(&address.to_string(), "sf", "tasks").waiting(Duration::from_millis(20));
-            client.kept.lock().unwrap().push(Connection {
-                descriptor: descriptor::Descriptor::connected(&stream),
-                stream,
-                served: 15,
-            });
-            let mut calls = 0;
-            let error = client
-                .send_with_probe(b"must not be sent", |_| {
-                    calls += 1;
-                    open_error(operation, std::io::Error::from_raw_os_error(libc::EBADF))
-                })
-                .unwrap_err();
-            assert_eq!(calls, 1);
-            assert!(error.contains(&format!("pooled connection check {operation} failed on a pooled socket after 15 completed requests: Bad file descriptor")), "{error}");
-            assert!(error.contains("descriptor fd="), "{error}");
-            assert!(error.contains("at-connect=Open"), "{error}");
-            assert!(error.contains("at-failure=Open"), "{error}");
-            assert!(error.ends_with("the request was not sent"), "{error}");
-            peer.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
-            assert_eq!(
-                peer.read(&mut [0]).unwrap(),
-                0,
-                "no request on the kept socket"
-            );
-            listener.set_nonblocking(true).unwrap();
-            assert!(
-                matches!(listener.accept(), Err(error) if error.kind() == std::io::ErrorKind::WouldBlock),
-                "no replacement connection"
-            );
-            assert!(
-                !open_error(operation, std::io::Error::from_raw_os_error(libc::ENOTCONN)).unwrap()
-            );
-        }
+    /// A kept connection to `listener`'s server that has carried `served` requests, and the server's
+    /// end of it.
+    fn kept_connection(
+        listener: &std::net::TcpListener,
+        served: usize,
+    ) -> (Connection, std::net::TcpStream) {
+        let stream = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+        let (peer, _) = listener.accept().unwrap();
+        let connection = Connection {
+            descriptor: descriptor::Descriptor::connected(&stream),
+            stream,
+            served,
+        };
+        (connection, peer)
     }
 
+    fn bad_descriptor_at_peek() -> Failure {
+        Failure::io(
+            Step::Check("peek"),
+            std::io::Error::from_raw_os_error(libc::EBADF),
+        )
+    }
+
+    /// The split of a check's EBADF, drained side: the number still holds the kept socket, so it
+    /// was drained, and the request goes once on a new connection, nothing written on the drained one.
     #[test]
-    fn pooled_open_handles_each_io_stage_and_keeps_non_ebadf_refusals() {
-        use std::cell::RefCell;
-
-        struct Probe {
-            stop: Option<(&'static str, i32)>,
-            data: Option<usize>,
-            seen: RefCell<Vec<&'static str>>,
-        }
-
-        impl Probe {
-            fn visit(&self, operation: &'static str) -> std::io::Result<()> {
-                self.seen.borrow_mut().push(operation);
-                if let Some((stage, code)) = self.stop
-                    && stage == operation
-                {
-                    Err(std::io::Error::from_raw_os_error(code))
+    fn a_drained_kept_connection_is_dropped_and_the_request_goes_once_on_a_new_one() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap().to_string();
+        let client = Client::new(&addr, "sf", "t").waiting(Duration::from_secs(5));
+        let (drained, mut kept_peer) = kept_connection(&listener, 14);
+        client.kept.lock().unwrap().push(drained);
+        let served = std::thread::spawn(move || {
+            let (mut fresh, _) = listener.accept().unwrap();
+            read_request(&mut fresh);
+            fresh.write_all(SEVEN).unwrap();
+            fresh
+        });
+        let mut checks = 0;
+        let answer =
+            client.send_checked(b"POST /rpc HTTP/1.1\r\nContent-Length: 0\r\n\r\n", |_| {
+                checks += 1;
+                if checks == 1 {
+                    Err(bad_descriptor_at_peek())
                 } else {
                     Ok(())
                 }
-            }
-        }
+            });
+        assert_eq!(answer.map(|(status, _)| status), Ok(200));
+        assert_eq!(checks, 2, "the drained one, then the new one");
+        let _fresh = served.join().unwrap();
+        kept_peer
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .unwrap();
+        assert_eq!(
+            kept_peer.read(&mut [0]).unwrap(),
+            0,
+            "nothing on the drained socket, which is closed"
+        );
+        let kept = client.kept.lock().unwrap();
+        assert_eq!(kept.len(), 1, "only the new connection is kept");
+        assert_eq!(kept[0].served, 1);
+    }
 
-        impl PoolProbe for Probe {
-            fn set_nonblocking(&self, nonblocking: bool) -> std::io::Result<()> {
-                self.visit(if nonblocking {
-                    "set_nonblocking(true)"
-                } else {
-                    "set_nonblocking(false)"
-                })
-            }
+    /// The split of a check's EBADF, the other side: the number no longer holds the socket it
+    /// connected (here it holds another one), so code that does not own it closed it. The request fails
+    /// with that evidence, unsent, and no other connection is made.
+    #[test]
+    fn a_kept_number_that_no_longer_holds_its_socket_fails_the_request_unsent_with_the_evidence() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let client =
+            Client::new(&address.to_string(), "sf", "tasks").waiting(Duration::from_millis(20));
+        let (mut connection, mut peer) = kept_connection(&listener, 15);
+        let (other, _other_peer) = kept_connection(&listener, 0);
+        connection.descriptor = other.descriptor;
+        client.kept.lock().unwrap().push(connection);
+        let mut checks = 0;
+        let error = client
+            .send_checked(b"must not be sent", |_| {
+                checks += 1;
+                Err(bad_descriptor_at_peek())
+            })
+            .unwrap_err();
+        assert_eq!(checks, 1);
+        assert!(error.contains("connection check peek failed on a pooled socket after 15 completed requests: Bad file descriptor"), "{error}");
+        assert!(error.contains("state=replaced"), "{error}");
+        assert!(error.contains("at-connect=Open"), "{error}");
+        assert!(error.contains("at-failure=Open"), "{error}");
+        assert!(error.ends_with("the request was not sent"), "{error}");
+        peer.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+        assert_eq!(
+            peer.read(&mut [0]).unwrap(),
+            0,
+            "no request on the kept socket"
+        );
+        listener.set_nonblocking(true).unwrap();
+        assert!(
+            matches!(listener.accept(), Err(error) if error.kind() == std::io::ErrorKind::WouldBlock),
+            "no replacement connection"
+        );
+    }
 
-            fn peek(&self, _byte: &mut [u8]) -> std::io::Result<usize> {
-                self.visit("peek")?;
-                self.data
-                    .ok_or_else(|| std::io::Error::from(std::io::ErrorKind::WouldBlock))
-            }
-        }
+    /// A fresh connection is checked before its first request too, and one that fails its check
+    /// fails the request, unsent, with what its number holds.
+    #[test]
+    fn a_fresh_connection_that_fails_its_check_fails_the_request_unsent() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap().to_string();
+        let client = Client::new(&addr, "sf", "t").waiting(Duration::from_secs(5));
+        let error = client
+            .send_checked(b"must not be sent", |_| Err(bad_descriptor_at_peek()))
+            .unwrap_err();
+        assert!(error.starts_with(&format!("the server at {addr} did not answer: connection check peek failed on a freshly opened socket after 0 completed requests: Bad file descriptor")), "{error}");
+        assert!(error.contains("descriptor fd="), "{error}");
+        assert!(error.ends_with("the request was not sent"), "{error}");
+        let (mut peer, _) = listener.accept().unwrap();
+        peer.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+        assert_eq!(peer.read(&mut [0]).unwrap(), 0, "nothing was written");
+        assert!(client.kept.lock().unwrap().is_empty());
+    }
 
-        let operations = ["set_nonblocking(true)", "peek", "set_nonblocking(false)"];
-        for (index, operation) in operations.iter().enumerate() {
-            for code in [libc::EBADF, libc::ENOTCONN] {
-                let probe = Probe {
-                    stop: Some((operation, code)),
-                    data: None,
-                    seen: RefCell::new(Vec::new()),
-                };
-                let result = open(&probe);
-                assert_eq!(*probe.seen.borrow(), operations[..=index]);
-                if code == libc::EBADF {
-                    let failure = result.unwrap_err();
-                    assert!(matches!(failure.step, Step::PoolCheck(stage) if stage == *operation));
-                    assert!(failure.bad_descriptor);
-                    assert_eq!(
-                        failure.why,
-                        std::io::Error::from_raw_os_error(code).to_string()
-                    );
-                } else {
-                    assert!(!result.unwrap());
+    /// A child forked while a board connection is kept holds no copy of it, even before its exec, as
+    /// its own descriptor table says; std's socket, as a control, reaches one.
+    #[cfg(target_vendor = "apple")]
+    #[test]
+    fn a_child_forked_beside_a_kept_connection_holds_no_copy_of_it() {
+        use std::os::fd::{AsRawFd, RawFd};
+        use std::os::unix::process::CommandExt;
+        let found = |fd: RawFd| {
+            let mut command = std::process::Command::new("/usr/bin/true");
+            // SAFETY: fcntl is async-signal-safe and reads only the forked child's own table.
+            unsafe {
+                command.pre_exec(move || {
+                    if libc::fcntl(fd, libc::F_GETFD) == -1 {
+                        Ok(())
+                    } else {
+                        Err(std::io::Error::from_raw_os_error(libc::EEXIST))
+                    }
+                });
+            }
+            let _spawning = crate::sys::spawning();
+            match command.status() {
+                Ok(status) => {
+                    assert!(status.success(), "{status}");
+                    false
                 }
+                Err(e) if e.raw_os_error() == Some(libc::EEXIST) => true,
+                Err(e) => panic!("{e}"),
+            }
+        };
+        let (addr, served) = serving(vec![(vec![SEVEN], false)]);
+        let client = Client::new(&addr, "sf", "t").waiting(Duration::from_secs(5));
+        sevens(&client, 1);
+        let kept = client.kept.lock().unwrap()[0].stream.as_raw_fd();
+        assert!(!found(kept), "a forked child holds the kept connection");
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let (plain, _peer) = kept_connection(&listener, 0);
+        assert!(found(plain.stream.as_raw_fd()), "std's socket reaches it");
+        drop(client);
+        assert_eq!(served.join().unwrap(), vec![1]);
+    }
+
+    /// Each answer the check can get, in order, through the socket trait: only a wait that ran out
+    /// passes; an EBADF anywhere is a bad descriptor for the split; anything else drops the connection.
+    #[test]
+    fn the_check_passes_only_a_wait_that_ran_out_and_marks_a_bad_descriptor() {
+        use std::cell::RefCell;
+        use std::io::{Error, ErrorKind};
+
+        struct Fake {
+            timeout: Option<i32>,
+            peek: fn() -> std::io::Result<usize>,
+            seen: RefCell<Vec<String>>,
+        }
+
+        impl Probe for Fake {
+            fn set_read_timeout(&self, timeout: Option<Duration>) -> std::io::Result<()> {
+                self.seen.borrow_mut().push(format!("timeout {timeout:?}"));
+                self.timeout
+                    .map_or(Ok(()), |code| Err(Error::from_raw_os_error(code)))
+            }
+
+            fn peek(&self, byte: &mut [u8]) -> std::io::Result<usize> {
+                self.seen.borrow_mut().push(format!("peek {}", byte.len()));
+                (self.peek)()
             }
         }
-        for data in [None, Some(0), Some(1)] {
-            let probe = Probe {
-                stop: None,
-                data,
-                seen: RefCell::new(Vec::new()),
+
+        let both = vec!["timeout Some(1µs)".to_string(), "peek 1".into()];
+        let passed = |peek| {
+            let fake = Fake {
+                timeout: None,
+                peek,
+                seen: RefCell::default(),
             };
-            assert_eq!(open(&probe).unwrap(), data.is_none());
-            assert_eq!(
-                *probe.seen.borrow(),
-                operations[..if data.is_none() { 3 } else { 2 }]
-            );
+            let checked = check(&fake);
+            assert_eq!(*fake.seen.borrow(), both);
+            checked
+        };
+        assert!(passed(|| Err(ErrorKind::WouldBlock.into())).is_ok());
+        assert!(passed(|| Err(ErrorKind::TimedOut.into())).is_ok());
+        for (peek, why, bad) in [
+            (
+                (|| Err(Error::from_raw_os_error(libc::EBADF))) as fn() -> _,
+                Error::from_raw_os_error(libc::EBADF).to_string(),
+                true,
+            ),
+            (
+                || Err(Error::from_raw_os_error(libc::ENOTCONN)),
+                Error::from_raw_os_error(libc::ENOTCONN).to_string(),
+                false,
+            ),
+            (|| Ok(0), "it closed the connection".into(), false),
+            (|| Ok(1), "it sent a reply nobody asked for".into(), false),
+        ] {
+            let failure = passed(peek).unwrap_err();
+            assert!(matches!(failure.step, Step::Check("peek")));
+            assert_eq!((failure.why, failure.bad_descriptor), (why, bad));
         }
+        for (code, bad) in [(libc::EBADF, true), (libc::EINVAL, false)] {
+            let fake = Fake {
+                timeout: Some(code),
+                peek: || Ok(0),
+                seen: RefCell::default(),
+            };
+            let failure = check(&fake).unwrap_err();
+            assert_eq!(*fake.seen.borrow(), both[..1]);
+            assert!(matches!(failure.step, Step::Check("SO_RCVTIMEO")));
+            assert_eq!(failure.bad_descriptor, bad);
+        }
+    }
+
+    /// The check on real sockets: a live idle one passes after its short wait, one the server
+    /// closed or spoke on does not, and none of them loses the byte that came.
+    #[test]
+    fn the_check_on_real_sockets_passes_only_an_idle_live_one() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let (idle, _idle_peer) = kept_connection(&listener, 0);
+        assert!(check(&idle.stream).is_ok());
+        assert!(
+            check(&idle.stream).is_ok(),
+            "a check leaves it fit for the next"
+        );
+        let (spoken, mut spoken_peer) = kept_connection(&listener, 0);
+        spoken_peer.write_all(b"x").unwrap();
+        spoken
+            .stream
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .unwrap();
+        assert_eq!(spoken.stream.peek(&mut [0]).unwrap(), 1);
+        let failure = check(&spoken.stream).unwrap_err();
+        assert_eq!(failure.why, "it sent a reply nobody asked for");
+        let (closed, closed_peer) = kept_connection(&listener, 0);
+        drop(closed_peer);
+        closed
+            .stream
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .unwrap();
+        assert_eq!(closed.stream.peek(&mut [0]).unwrap(), 0);
+        let failure = check(&closed.stream).unwrap_err();
+        assert_eq!(failure.why, "it closed the connection");
+        assert!(!failure.bad_descriptor);
     }
 
     #[test]

@@ -17,12 +17,14 @@
 //! So the pipes the helpers make for their own children are close-on-fork, which no spawn copies;
 //! the copies a child is handed exist only under [`spawning`]; and a bare name is looked up before
 //! it is spawned, so a start leaves no failed child behind. [`pipe`]'s ends stay copyable, as
-//! callers hand them to std's spawns too.
+//! callers hand them to std's spawns too. A socket kept across spawns is made close-on-fork by
+//! [`unshared`].
 
 use std::collections::BTreeMap;
 use std::ffi::{OsStr, OsString};
 use std::fs::File;
 use std::io::{self, PipeReader, PipeWriter, Read};
+use std::net::TcpStream;
 use std::os::fd::{AsFd, AsRawFd, OwnedFd, RawFd};
 use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
@@ -40,7 +42,7 @@ static SPAWNING: Mutex<()> = Mutex::new(());
 /// [`Command::spawn`] hands its child, and a stdin pipe until it is close-on-fork. Every helper
 /// spawn holds it, and a std spawn in a binary that uses the helpers takes it around its `spawn()`,
 /// so that it never copies one (a std child keeps each descriptor not close-on-exec for its life).
-/// Never held across a helper's spawn or pipe: they take it themselves.
+/// Never held across a helper's spawn, pipe or [`unshared`]: they take it themselves.
 pub fn spawning() -> MutexGuard<'static, ()> {
     SPAWNING.lock().unwrap_or_else(PoisonError::into_inner)
 }
@@ -414,6 +416,34 @@ fn input_pipe() -> io::Result<(PipeReader, PipeWriter)> {
 #[cfg(not(target_vendor = "apple"))]
 fn input_pipe() -> io::Result<(PipeReader, PipeWriter)> {
     pipe()
+}
+
+/// `stream` as the one descriptor of its socket, close-on-exec and close-on-fork: no spawn or fork
+/// copies it from here on. std's sockets are close-on-exec only, so each spawn until now copied it
+/// into its child until that child's exec, and a helper spawn returns after that exec under
+/// [`spawning`]: once this holds the lock, no such copy is left. Like [`input_pipe`]'s ends, it is
+/// reopened through `/dev/fd`, which keeps the socket, and the first descriptor is closed before the
+/// lock is let go. macOS marks a socket draining when one of its descriptors is closed while another
+/// process reads that descriptor (`lsof`), and a draining socket fails every later wait for data
+/// with EBADF: a child's exec closing its copy did that to the board's connections.
+#[cfg(target_vendor = "apple")]
+pub fn unshared(stream: TcpStream) -> io::Result<TcpStream> {
+    use std::os::unix::fs::OpenOptionsExt;
+    let _spawning = spawning();
+    let own = File::options()
+        .read(true)
+        .write(true)
+        .custom_flags(O_CLOFORK)
+        .open(format!("/dev/fd/{}", stream.as_raw_fd()))?;
+    drop(stream);
+    Ok(OwnedFd::from(own).into())
+}
+
+/// `stream`: nothing is close-on-fork here, and closing another process's copy of a socket leaves it
+/// as it was.
+#[cfg(not(target_vendor = "apple"))]
+pub fn unshared(stream: TcpStream) -> io::Result<TcpStream> {
+    Ok(stream)
 }
 
 /// `fd` made to read and write without blocking, or to block again.
@@ -1359,34 +1389,37 @@ mod tests {
         assert_eq!(flags(&reader, libc::F_GETFL) & libc::O_NONBLOCK, 0);
     }
 
+    /// Whether a child std forks holds `fd` before its exec, as its own descriptor table says.
+    #[cfg(target_vendor = "apple")]
+    fn found(fd: RawFd) -> bool {
+        use std::os::unix::process::CommandExt;
+        let mut command = std::process::Command::new("/usr/bin/true");
+        // SAFETY: fcntl is async-signal-safe and reads only the forked child's own table.
+        unsafe {
+            command.pre_exec(move || {
+                if libc::fcntl(fd, libc::F_GETFD) == -1 {
+                    Ok(())
+                } else {
+                    Err(io::Error::from_raw_os_error(libc::EEXIST))
+                }
+            });
+        }
+        let _spawning = spawning();
+        match command.status() {
+            Ok(status) => {
+                assert!(status.success(), "{status}");
+                false
+            }
+            Err(e) if e.raw_os_error() == Some(libc::EEXIST) => true,
+            Err(e) => panic!("{e}"),
+        }
+    }
+
     /// A child std forks holds each descriptor not close-on-fork until its exec, close-on-exec ones
     /// too, as [`pipe`]'s ends; the pipes the helpers make for their own children never reach it.
     #[cfg(target_vendor = "apple")]
     #[test]
     fn the_helpers_own_pipe_ends_never_reach_a_forked_child_even_before_its_exec() {
-        use std::os::unix::process::CommandExt;
-        let found = |fd: RawFd| {
-            let mut command = std::process::Command::new("/usr/bin/true");
-            // SAFETY: fcntl is async-signal-safe and reads only the forked child's own table.
-            unsafe {
-                command.pre_exec(move || {
-                    if libc::fcntl(fd, libc::F_GETFD) == -1 {
-                        Ok(())
-                    } else {
-                        Err(io::Error::from_raw_os_error(libc::EEXIST))
-                    }
-                });
-            }
-            let _spawning = spawning();
-            match command.status() {
-                Ok(status) => {
-                    assert!(status.success(), "{status}");
-                    false
-                }
-                Err(e) if e.raw_os_error() == Some(libc::EEXIST) => true,
-                Err(e) => panic!("{e}"),
-            }
-        };
         let (reader, writer) = own_pipe().unwrap();
         let (input, stdin) = input_pipe().unwrap();
         for (end, fd) in [
@@ -1401,6 +1434,40 @@ mod tests {
         for end in [reader.as_raw_fd(), writer.as_raw_fd()] {
             assert!(found(end), "a std spawn can hand pipe()'s ends over");
         }
+    }
+
+    /// std's socket reaches a forked child until its exec; once unshared it never does, and it is
+    /// still the same connection, both ways, close-on-exec.
+    #[cfg(target_vendor = "apple")]
+    #[test]
+    fn an_unshared_socket_never_reaches_a_forked_child_and_stays_its_connection() {
+        use std::net::TcpListener;
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let socket = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+        let (mut peer, _) = listener.accept().unwrap();
+        assert!(
+            found(socket.as_raw_fd()),
+            "std's socket reaches a forked child"
+        );
+        let ends = (socket.local_addr().unwrap(), socket.peer_addr().unwrap());
+        let mut socket = unshared(socket).unwrap();
+        assert!(
+            !found(socket.as_raw_fd()),
+            "the unshared socket reached a forked child"
+        );
+        assert_eq!(
+            (socket.local_addr().unwrap(), socket.peer_addr().unwrap()),
+            ends
+        );
+        // SAFETY: F_GETFD reads the flags of a descriptor the stream keeps open.
+        let flags = unsafe { libc::fcntl(socket.as_raw_fd(), libc::F_GETFD) };
+        assert_eq!(flags & libc::FD_CLOEXEC, libc::FD_CLOEXEC);
+        socket.write_all(b"a").unwrap();
+        let mut byte = [0];
+        peer.read_exact(&mut byte).unwrap();
+        peer.write_all(b"b").unwrap();
+        socket.read_exact(&mut byte).unwrap();
+        assert_eq!(byte, *b"b");
     }
 
     #[test]

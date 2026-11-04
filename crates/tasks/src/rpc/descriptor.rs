@@ -63,7 +63,37 @@ impl Descriptor {
     }
 
     pub(super) fn failure(&self, stream: &TcpStream) -> String {
-        self.describe(inspect(stream.as_fd()))
+        self.recheck(stream).1
+    }
+
+    /// Whether `stream`'s number holds the socket it held at connect, as read now, and the evidence.
+    pub(super) fn recheck(&self, stream: &TcpStream) -> (bool, String) {
+        let current = inspect(stream.as_fd());
+        (self.same_socket(&current), self.describe(current))
+    }
+
+    /// The same socket: open, a socket, the same stat, and both ends read and unchanged. A peer
+    /// that no longer reads as one, or any end that cannot be read, is not proof of it.
+    fn same_socket(&self, current: &Observation) -> bool {
+        matches!(
+            (&self.connected, current),
+            (
+                Observation::Open {
+                    device,
+                    inode,
+                    socket: true,
+                    local: Ok(local),
+                    peer: Ok(peer),
+                },
+                Observation::Open {
+                    device: now_device,
+                    inode: now_inode,
+                    socket: true,
+                    local: Ok(now_local),
+                    peer: Ok(now_peer),
+                },
+            ) if (device, inode, local, peer) == (now_device, now_inode, now_local, now_peer)
+        )
     }
 
     fn describe(&self, current: Observation) -> String {
@@ -167,6 +197,8 @@ mod tests {
             (socket.local_addr().unwrap(), socket.peer_addr().unwrap()),
             (other.local_addr().unwrap(), other.peer_addr().unwrap())
         );
+        assert!(evidence.recheck(&socket).0, "the same socket");
+        assert!(!evidence.recheck(&other).0, "another socket");
         let replaced = evidence.failure(&other);
         assert!(replaced.contains("state=replaced"), "{replaced}");
         assert!(replaced.contains("local: Ok"), "{replaced}");
@@ -236,6 +268,7 @@ mod tests {
                 ..
             }
         ));
+        assert!(!evidence.same_socket(&observed));
         let text = evidence.describe(observed);
         assert!(text.contains("state=replaced"), "{text}");
         assert!(
@@ -248,6 +281,10 @@ mod tests {
             panic!("socket must be open");
         };
         *peer = Err("peer lookup unavailable".into());
+        assert!(
+            !evidence.same_socket(&unavailable),
+            "an unread end proves nothing"
+        );
         let text = evidence.describe(unavailable);
         assert!(text.contains("state=identity-unknown"), "{text}");
         assert!(text.contains("peer lookup unavailable"), "{text}");
