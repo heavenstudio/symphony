@@ -4,13 +4,13 @@
 use symphony::board::{scan, tidy};
 use symphony::docview;
 use symphony::lint::history_in_prose;
-use symphony::project::{Project, ROUTE};
+use symphony::project::Project;
 use symphony::render::Render;
 
 use super::Tree;
 
-const MANUAL: &str = "[project]\ndocs = \"manual\"\nhistory = [\"manual/past\"]\n\
-                      register = \"manual/DECISIONS.md\"\nartifacts = \"output\"\n";
+const MANUAL: &str = "[project]\nregister = \"manual/DECISIONS.md\"\nartifacts = \"output\"\n\
+                      [[entrypoints]]\nurl = \"/docs/\"\nfolder = \"manual\"\nhistory = [\"past\"]\n";
 
 /// The project on `manual/`, with a stray `docs/` folder its walks must not read.
 fn manual() -> Tree {
@@ -40,12 +40,12 @@ fn a_document_is_named_by_its_route_and_its_route_by_the_projects_folder() {
         project.route("manual/guide/START.md").as_deref(),
         Some("docs/guide/START.md")
     );
-    assert_eq!(project.route("manual").as_deref(), Some(ROUTE));
+    assert_eq!(project.route("manual").as_deref(), Some("docs"));
     for outside in ["docs/STRAY.md", "manualx/A.md", "view/manual/A.md"] {
         assert_eq!(project.route(outside), None, "{outside}");
     }
     assert_eq!(project.file("docs/guide/START.md"), "manual/guide/START.md");
-    assert_eq!(project.file(ROUTE), "manual");
+    assert_eq!(project.file("docs"), "manual");
     for other in ["view/models/A.glb", "docsx/A.md", "artifacts/a.png"] {
         assert_eq!(project.file(other), other);
     }
@@ -103,7 +103,7 @@ fn a_tidy_files_answered_callouts_in_the_first_history_folder() {
     );
     assert!(!tree.path("docs/history").exists());
     // a project with no history folder keeps its callouts where they are
-    tree.write("symphony.toml", &MANUAL.replace("[\"manual/past\"]", "[]"));
+    tree.write("symphony.toml", &MANUAL.replace("[\"past\"]", "[]"));
     tree.write(
         "manual/MORE.md",
         "# M\n\n> [!comment] Odd\n> > [!resolved] Fixed.\n",
@@ -186,7 +186,7 @@ fn a_document_and_its_folder_open_by_their_route_from_the_projects_folder() {
     );
     assert!(docview::folder(&render, "manual/guide", "").is_err());
     assert_eq!(
-        symphony::tree::index_order(&tree.root, ROUTE),
+        symphony::tree::index_order(&tree.root, "docs"),
         [
             "docs/guide/README.md",
             "docs/guide/START.md",

@@ -1,5 +1,5 @@
-//! The board over every document of the project (`docs/` unless its `symphony.toml` says another
-//! folder): `just symphony-status`, its `--json`, and `--tidy`.
+//! The board over every document of the project, the Markdown its entrypoints show outside their
+//! history folders: `just symphony-status`, its `--json`, and `--tidy`.
 
 use std::collections::BTreeMap;
 use std::io::Write;
@@ -28,50 +28,33 @@ const LEDGER_HEAD: &str = "# Review ledger\n\n\
 /// One document's callouts and cards.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Doc {
-    /// Relative to the root, under the project's documents folder.
+    /// The document's route (`docs/…` by the convention).
     pub path: String,
     pub comments: Vec<Comment>,
     pub decisions: Vec<Decision>,
 }
 
-/// The markdown files under `dir` in the order Python's `os.walk` gives them with its folders sorted:
-/// a folder's own files (sorted), then each folder under it. Dot folders and the folders in `skip`
-/// are passed over, and so is a link to a folder; a folder that cannot be listed is passed over.
-pub(crate) fn markdown_files(dir: &Path, skip: &[PathBuf]) -> Vec<PathBuf> {
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return Vec::new();
-    };
-    let (mut files, mut dirs) = (Vec::new(), Vec::new());
-    for entry in entries.flatten() {
-        let path = entry.path();
-        let name = entry.file_name().to_string_lossy().to_string();
-        if path.is_dir() {
-            let linked = entry.file_type().is_ok_and(|kind| kind.is_symlink());
-            if !linked && !name.starts_with('.') && !skip.contains(&path) {
-                dirs.push((name, path));
+/// The project's documents in the checkout at `root`: the Markdown each entrypoint shows outside
+/// its history folders, entrypoint by entrypoint in the order [`Project::walk`] gives them.
+pub(crate) fn document_files(root: &Path, project: &Project) -> Vec<PathBuf> {
+    let mut found = Vec::new();
+    for entry in &project.entrypoints {
+        project.walk(root, entry, "", &mut |inside| {
+            if entry.document(inside) {
+                found.push(root.join(entry.file(inside)));
             }
-        } else if name.ends_with(".md") {
-            files.push((name, path));
-        }
-    }
-    files.sort();
-    dirs.sort();
-    let mut found: Vec<PathBuf> = files.into_iter().map(|(_, path)| path).collect();
-    for (_, path) in dirs {
-        found.extend(markdown_files(&path, skip));
+        });
     }
     found
 }
 
-/// The project's documents in the checkout at `root`: the markdown files under its documents
-/// folder, its history folders passed over.
-pub(crate) fn document_files(root: &Path, project: &Project) -> Vec<PathBuf> {
-    let skip: Vec<PathBuf> = project
-        .history
+/// The first entrypoint's folder when the checkout at `root` holds no entrypoint's folder at all.
+fn missing_documents<'a>(root: &Path, project: &'a Project) -> Option<&'a str> {
+    (!project
+        .entrypoints
         .iter()
-        .map(|folder| root.join(folder))
-        .collect();
-    markdown_files(&root.join(&project.docs), &skip)
+        .any(|entry| root.join(&entry.folder).is_dir()))
+    .then(|| project.entrypoints[0].folder.as_str())
 }
 
 /// `path` relative to `root`, with forward slashes.
@@ -87,10 +70,9 @@ pub fn scan(root: &Path) -> Result<Vec<Doc>, ReviewError> {
     static PARSED: LazyLock<Mutex<BTreeMap<PathBuf, (FileStamp, Doc)>>> =
         LazyLock::new(|| Mutex::new(BTreeMap::new()));
     let project = Project::of(root);
-    if !root.join(&project.docs).is_dir() {
+    if let Some(folder) = missing_documents(root, &project) {
         return Err(ReviewError(format!(
-            "no {}/ directory under {}",
-            project.docs,
+            "no {folder}/ directory under {}",
             root.display()
         )));
     }
@@ -385,11 +367,10 @@ pub fn tidy_with(
     err: &mut dyn Write,
 ) -> i32 {
     let project = Project::of(root);
-    if !root.join(&project.docs).is_dir() {
+    if let Some(folder) = missing_documents(root, &project) {
         let _ = writeln!(
             err,
-            "✖ no {}/ directory under {}",
-            project.docs,
+            "✖ no {folder}/ directory under {}",
             path_str(&root.to_string_lossy())
         );
         return 2;
@@ -440,7 +421,7 @@ pub fn tidy_with(
 /// pages.
 fn archive(root: &Path, stamp: &str, out: &mut dyn Write) -> Result<(), ReviewError> {
     let project = Project::of(root);
-    let Some(history) = project.history.first() else {
+    let Some(history) = project.history().into_iter().next() else {
         return Ok(());
     };
     let fail = |e: std::io::Error, path: &Path| ReviewError(os_error(&e, path));

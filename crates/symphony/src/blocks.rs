@@ -1020,8 +1020,10 @@ pub fn census(root: &std::path::Path, out: &mut dyn std::io::Write) -> Result<()
         counts.insert(format!("block.{kind}"), 0);
     }
     let mut unknown = BTreeMap::<String, usize>::new();
+    let project = crate::project::Project::of(root);
     for path in &paths {
-        let text = crate::text::read_text(&root.join(path)).map_err(|e| format!("{path}: {e}"))?;
+        let text = crate::text::read_text(&root.join(project.file(path)))
+            .map_err(|e| format!("{path}: {e}"))?;
         for part in render.typed_sections(&text, path) {
             census_fragment(
                 &part.html,

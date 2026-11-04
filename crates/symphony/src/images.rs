@@ -91,7 +91,7 @@ pub fn file_size(path: &Path) -> Option<(u32, u32)> {
 }
 
 /// The file a root-relative `src` names, if it is one under `root`: a document's neighbour named by
-/// its route (`/docs/…`) is in the project's documents folder.
+/// its route (`/docs/…`) is in the folder of the entrypoint serving it.
 fn local(root: &Path, src: &str) -> Option<PathBuf> {
     let src = src.replace("&amp;", "&");
     let path = src.split(['?', '#']).next().unwrap_or("");

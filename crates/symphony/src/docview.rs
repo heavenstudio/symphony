@@ -16,33 +16,25 @@ use crate::render::Render;
 
 mod comparison;
 
-/// Resolve only document names (`docs/…`) whose canonical file remains under the project's
-/// documents folder, whatever that folder is called ([`crate::project::Project::file`]).
+/// Resolve only routes an entrypoint serves (`docs/…`) to the file the entrypoint's walk would
+/// list there, links resolved ([`crate::project::Project::serving`],
+/// [`crate::project::Project::reachable`]), whatever its folder is called; a `document` is a Markdown
+/// file the entrypoint shows.
 pub fn target(root: &Path, rel: &str, document: bool) -> Result<PathBuf, String> {
-    let route = crate::project::ROUTE;
-    if !rel.starts_with(&format!("{route}/")) && rel != route
-        || Path::new(rel)
-            .components()
-            .any(|p| !matches!(p, Component::Normal(_)))
+    let not_found = || format!("not found: {rel}");
+    if Path::new(rel)
+        .components()
+        .any(|p| !matches!(p, Component::Normal(_)))
     {
-        return Err(format!("not found: {rel}"));
+        return Err(not_found());
     }
     let project = crate::project::Project::of(root);
-    let docs = root
-        .join(&project.docs)
-        .canonicalize()
-        .map_err(|e| e.to_string())?;
-    if !docs.starts_with(root.canonicalize().map_err(|e| e.to_string())?) {
-        return Err(format!("not found: {rel}"));
-    }
-    let path = root
-        .join(project.file(rel))
-        .canonicalize()
-        .map_err(|_| format!("not found: {rel}"))?;
-    if !path.starts_with(docs)
-        || (document && (!path.is_file() || path.extension().is_none_or(|e| e != "md")))
-    {
-        return Err(format!("not found: {rel}"));
+    let (entry, inside) = project.serving(rel).ok_or_else(not_found)?;
+    let path = project
+        .reachable(root, entry, inside)
+        .ok_or_else(not_found)?;
+    if document && (!path.is_file() || !entry.page(inside)) {
+        return Err(not_found());
     }
     Ok(path)
 }
