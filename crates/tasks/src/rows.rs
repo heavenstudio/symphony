@@ -87,6 +87,10 @@ pub struct TaskRow {
     /// An instruction subtask: SQLite keeps it as 0 or 1.
     #[serde(default, deserialize_with = "flag")]
     pub instruction: bool,
+    /// The plugins' board fields: plugin, then field, then its value; absent until one is set.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub fields:
+        std::collections::BTreeMap<String, std::collections::BTreeMap<String, serde_json::Value>>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]

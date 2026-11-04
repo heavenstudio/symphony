@@ -50,7 +50,7 @@ pub(super) fn responses() -> BTreeMap<String, Value> {
         json!({"start":1,"end":3,"key":"intro","hash":"intro","part":0,"blocks":[paragraph("A quiet document block."),{"type":"table","head":[{"header":true,"spans":[{"type":"text","text":"Hull"}],"presentation":{}}],"rows":[[{"header":false,"spans":[{"type":"text","text":"Example"}],"presentation":{}}]]}]}),
         json!({"start":5,"end":8,"key":"callout","hash":"callout","part":0,"blocks":[{"type":"callout","kind":"question","title":[{"type":"text","text":"A question"}],"resolved":false,"blocks":[paragraph("Keep the question colour.")]}]}),
         json!({"start":10,"end":20,"key":"card:palette","hash":"palette","part":1,"blocks":[{"type":"card","slug":"palette","mark":"approved","title":"Palette","body":[paragraph("Compare the verdict controls.")],"verdict":{"group":"confirm","open":true,"posted":null,"decided":null},"thread":[],"line":10,"line_offset":null,"comparison":[]}]}),
-        json!({"start":30,"end":32,"key":"gallery","hash":"gallery","part":2,"blocks":[{"type":"media","media":{"kind":"gallery","hulls":[{"id":"REP-F01","model":"/model.glb","picture":PICTURE}]}}]}),
+        json!({"start":30,"end":32,"key":"gallery","hash":"gallery","part":2,"blocks":[{"type":"media","media":{"kind":"gallery","items":[{"name":"REP-F01","src":"/model.glb","poster":PICTURE}]}}]}),
     ];
     let document = json!({"version":4182,"path":DOC,"title":"Look parity","waiting":[],"crumbs":[],"headings":[{"level":2,"anchor":"L1","text":"Introduction"},{"level":2,"anchor":"L10","text":"Decisions"},{"level":2,"anchor":"L30","text":"Hulls"}],"sections":sections,"cards":[{"slug":"palette","state":"approved","text":"Palette","group":"confirm","open":true}],"threads":{},"tasks":[]});
     let statuses = [
@@ -467,8 +467,7 @@ fn document_surfaces_and_component_fields_keep_the_approved_radius_scale() {
         .clone();
     let table = original[0]["blocks"][1].clone();
     let mut matrix = table.clone();
-    matrix["type"] = json!("matrix");
-    matrix["matrix"] = json!("relationships");
+    matrix["presentation"] = json!({"class":"matrix relationships"});
     let mut intro = original[0].clone();
     intro["blocks"] = json!([{"type":"heading","level":2,"anchor":"introduction","spans":[{"type":"text","text":"Introduction"}]}]);
     let tables =
@@ -624,7 +623,13 @@ impl ParitySite {
                             "css" => "text/css",
                             _ => "text/html",
                         };
-                        (std::fs::read(file).unwrap(), mime)
+                        let bytes = std::fs::read(&file).unwrap();
+                        if file == root.join("index.html") {
+                            let shell = String::from_utf8(bytes).unwrap();
+                            (crate::common::served_shell(&shell).into_bytes(), mime)
+                        } else {
+                            (bytes, mime)
+                        }
                     };
                     let head = format!(
                         "HTTP/1.1 200 OK\r\nContent-Type: {mime}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
@@ -735,7 +740,7 @@ fn history_pictures_keep_their_original_caps_outside_the_inner_decision() {
         let image = json!({"type":"image","image":{"src":PICTURE,"alt":"History picture","presentation":{"attributes":{"width":"600","height":"900"}}}});
         let thread = json!({"palette":{"blocks":[{"type":"thread","entries":[{"who":"agent","timestamp":"2026-10-26","verdict":"auto-approved","blocks":[paragraph("An earlier version."),image]}]}]}});
         if comparison {
-            let compare = json!([{"type":"comparison","figures":[{"type":"figure","blocks":[paragraph("Current version")],"caption":[],"missing":false}]}]);
+            let compare = json!([{"type":"comparison","figures":[{"type":"container","tag":"figure","presentation":{},"blocks":[paragraph("Current version")]}]}]);
             data.get_mut("/api/document").unwrap()["document"]["sections"][2]["blocks"][0]["comparison"] =
                 compare.clone();
             data.get_mut("/api/section").unwrap()["change"]["sections"][2]["blocks"][0]["comparison"] =
@@ -1021,27 +1026,27 @@ fn the_hull_picker_has_one_card_border_and_a_visible_keyboard_focus_ring() {
     let Some(mut browser) = chrome() else { return };
     track_styles(&mut browser);
     browser.open(&site.url(&format!("/{DOC}#L30")));
-    assert!(browser.wait_for("document.querySelector('.hull-pick') !== null", SHOWN));
+    assert!(browser.wait_for("document.querySelector('.gallery-pick') !== null", SHOWN));
     assert!(browser.wait_for(
-        "document.querySelector('.hull-pick img')?.naturalWidth === 600",
+        "document.querySelector('.gallery-pick img')?.naturalWidth === 600",
         SHOWN
     ));
     painted_layout(&mut browser);
     assert_eq!(
-        browser.eval("document.querySelector('.hull-pick img').getAttribute('src')"),
+        browser.eval("document.querySelector('.gallery-pick img').getAttribute('src')"),
         json!(PICTURE),
         "use the supplied art thumbnail"
     );
     assert_eq!(
-        browser.eval("getComputedStyle(document.querySelector('.hull-card')).borderTopWidth"),
+        browser.eval("getComputedStyle(document.querySelector('.gallery-card')).borderTopWidth"),
         json!("1px")
     );
     assert_eq!(
-        browser.eval("getComputedStyle(document.querySelector('.hull-card')).borderRadius"),
+        browser.eval("getComputedStyle(document.querySelector('.gallery-card')).borderRadius"),
         json!("14px")
     );
     assert_eq!(
-        browser.eval("getComputedStyle(document.querySelector('.hull-pick')).borderTopWidth"),
+        browser.eval("getComputedStyle(document.querySelector('.gallery-pick')).borderTopWidth"),
         json!("0px")
     );
     for mode in ["light", "dark"] {
@@ -1050,11 +1055,11 @@ fn the_hull_picker_has_one_card_border_and_a_visible_keyboard_focus_ring() {
             json!({"features":[{"name":"prefers-color-scheme","value":mode}]}),
         );
         painted_layout(&mut browser);
-        assert_eq!(browser.eval("(() => {const pick=document.querySelector('.hull-pick'), style=getComputedStyle(pick), card=getComputedStyle(pick.parentElement), image=pick.querySelector('img').getBoundingClientRect(), outer=pick.parentElement.getBoundingClientRect();return style.borderTopWidth === '0px' && style.boxShadow === 'none' && Math.abs(image.left-outer.left-parseFloat(card.borderLeftWidth)-parseFloat(card.paddingLeft)) <= 1 && image.width === 80 && image.height === 80;})()"), json!(true), "{mode}: the thumbnail stays left aligned inside the card's single border");
+        assert_eq!(browser.eval("(() => {const pick=document.querySelector('.gallery-pick'), style=getComputedStyle(pick), card=getComputedStyle(pick.parentElement), image=pick.querySelector('img').getBoundingClientRect(), outer=pick.parentElement.getBoundingClientRect();return style.borderTopWidth === '0px' && style.boxShadow === 'none' && Math.abs(image.left-outer.left-parseFloat(card.borderLeftWidth)-parseFloat(card.paddingLeft)) <= 1 && image.width === 80 && image.height === 80;})()"), json!(true), "{mode}: the thumbnail stays left aligned inside the card's single border");
     }
-    browser.eval("document.querySelector('.hull-pick').focus()");
+    browser.eval("document.querySelector('.gallery-pick').focus()");
     assert_eq!(
-        browser.eval("getComputedStyle(document.querySelector('.hull-pick')).outlineWidth"),
+        browser.eval("getComputedStyle(document.querySelector('.gallery-pick')).outlineWidth"),
         json!("2px")
     );
     report_styles(&mut browser, "hull picker and keyboard focus");

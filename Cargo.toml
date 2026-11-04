@@ -1,7 +1,7 @@
-# Symphony's workspace: server, client, review library, wire types, board and OS scanner.
+# Symphony's workspace: server, client, review library, wire types, plugin seams, board and OS scanner.
 [workspace]
 resolver = "3"
-members = ["apps/symphony-server", "apps/symphony-ui", "crates/process-cwd", "crates/symphony", "crates/symphony-api", "crates/tasks"]
+members = ["apps/symphony-server", "apps/symphony-ui", "crates/process-cwd", "crates/symphony", "crates/symphony-api", "crates/symphony-plugin", "crates/tasks"]
 
 [workspace.package]
 edition = "2024"

@@ -16,24 +16,27 @@ use crate::render::Render;
 
 mod comparison;
 
-/// Resolve only project-relative paths whose canonical target remains under docs/.
+/// Resolve only document names (`docs/…`) whose canonical file remains under the project's
+/// documents folder, whatever that folder is called ([`crate::project::Project::file`]).
 pub fn target(root: &Path, rel: &str, document: bool) -> Result<PathBuf, String> {
-    if !rel.starts_with("docs/") && rel != "docs"
+    let route = crate::project::ROUTE;
+    if !rel.starts_with(&format!("{route}/")) && rel != route
         || Path::new(rel)
             .components()
             .any(|p| !matches!(p, Component::Normal(_)))
     {
         return Err(format!("not found: {rel}"));
     }
+    let project = crate::project::Project::of(root);
     let docs = root
-        .join("docs")
+        .join(&project.docs)
         .canonicalize()
         .map_err(|e| e.to_string())?;
     if !docs.starts_with(root.canonicalize().map_err(|e| e.to_string())?) {
         return Err(format!("not found: {rel}"));
     }
     let path = root
-        .join(rel)
+        .join(project.file(rel))
         .canonicalize()
         .map_err(|_| format!("not found: {rel}"))?;
     if !path.starts_with(docs)
@@ -51,6 +54,7 @@ fn wire<T: Serialize, U: DeserializeOwned>(value: T) -> U {
 
 fn tasks(root: &Path, rel: &str) -> Vec<DocumentTask> {
     let paths = crate::render::doc_paths(root);
+    let project = crate::project::Project::of(root);
     crate::taskview::connect(root)
         .and_then(|store| {
             store
@@ -64,7 +68,7 @@ fn tasks(root: &Path, rel: &str) -> Vec<DocumentTask> {
             task.links.iter().any(|link| {
                 let path = link.split('#').next().unwrap_or_default();
                 path == rel
-                    || (!root.join(path).is_file()
+                    || (!root.join(project.file(path)).is_file()
                         && Path::new(path)
                             .file_name()
                             .and_then(|name| name.to_str())
@@ -100,7 +104,7 @@ pub fn document(render: &Render, rel: &str, scope: &str) -> Result<Document, Str
     let cards = crate::register::parse_decisions(&crate::text::splitlines(&text))
         .into_iter()
         .map(|card| {
-            let thread = card.thread();
+            let thread = card.thread(render.plugins());
             symphony_api::DocumentCard {
                 slug: card.slug.clone(),
                 state: card.state.as_str().into(),
@@ -129,7 +133,6 @@ pub fn document(render: &Render, rel: &str, scope: &str) -> Result<Document, Str
         comparison: None,
     };
     for section in &mut doc.sections {
-        crate::models::expand(render.root(), &mut section.html, &mut section.media);
         prepare_fragment(
             &mut section.html,
             &mut section.media,
@@ -492,7 +495,7 @@ pub fn legacy_html(fragment: &Fragment) -> String {
     let mut html = fragment.html.clone();
     for (index, item) in fragment.media.iter().enumerate() {
         let (kind, replacement) = match item {
-            Media::Model { src, label } => (
+            Media::Model { src, label, .. } => (
                 "model",
                 format!(
                     "<span class=\"glb-viewer\"><model-viewer src=\"{0}\" alt=\"{1}\" camera-controls touch-action=\"pan-y\" environment-image=\"neutral\" shadow-intensity=\"0\" interaction-prompt=\"none\" exposure=\"1\" camera-orbit=\"-45deg 60deg auto\" loading=\"lazy\"></model-viewer><span class=\"glb-bar\"><span class=\"glb-name\">{1}</span><button type=\"button\" data-glb-view=\"tilt\" title=\"The game's top-down camera, slightly tilted\">Top-down tilt</button><button type=\"button\" data-glb-view=\"reset\">Reset</button><a href=\"{0}\" download>.glb</a></span></span>",
@@ -508,9 +511,19 @@ pub fn legacy_html(fragment: &Fragment) -> String {
                     crate::markup::escape(label)
                 ),
             ),
-            Media::Gallery { .. } => (
+            Media::Gallery { items } => (
                 "gallery",
-                "<a href=\"/hulls\">Open the hull gallery</a>".to_string(),
+                items
+                    .iter()
+                    .map(|item| {
+                        format!(
+                            "<a href=\"{}\" download>{}</a>",
+                            crate::markup::escape(&item.src),
+                            crate::markup::escape(&item.name)
+                        )
+                    })
+                    .collect::<Vec<_>>()
+                    .join(" · "),
             ),
         };
         html = html.replace(
@@ -540,10 +553,11 @@ pub fn scope_fragment(html: &mut String, media: &mut [Media], scope: &str) {
 
 fn media_urls(media: &mut Media) -> Vec<&mut String> {
     match media {
-        Media::Mockup { src, .. } | Media::Model { src, .. } => vec![src],
-        Media::Gallery { hulls } => hulls
+        Media::Mockup { src, .. } => vec![src],
+        Media::Model { src, poster, .. } => std::iter::once(src).chain(poster.iter_mut()).collect(),
+        Media::Gallery { items } => items
             .iter_mut()
-            .flat_map(|hull| std::iter::once(&mut hull.model).chain(hull.picture.iter_mut()))
+            .flat_map(|item| std::iter::once(&mut item.src).chain(item.poster.iter_mut()))
             .collect(),
     }
 }

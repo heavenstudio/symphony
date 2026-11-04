@@ -29,6 +29,9 @@ sha2.workspace = true
 # The settings files under docs/data/ and content/ checked against their JSON Schemas (`schema`).
 jsonschema = { workspace = true, features = ["arbitrary-precision"] }
 symphony-api = { path = "../symphony-api" }
+# The plugin seams the game modules implement, and the project file (symphony.toml) they are chosen by.
+symphony-plugin = { path = "../symphony-plugin" }
+toml.workspace = true
 tasks = { path = "../tasks" }
 docs-index = { path = "../../../crates/docs-index" }
 gix = { version = "0.87", default-features = false, features = ["basic", "blob-diff", "revision", "sha1"] }

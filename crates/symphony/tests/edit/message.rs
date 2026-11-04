@@ -4,7 +4,7 @@
 use symphony::edit::add_message;
 use symphony::register::{State, Who, parse_decisions};
 
-use crate::common::Tree;
+use crate::common::{Tree, plain};
 use crate::lines;
 
 const TEXT: &str = "# D\n\n- [-] **one** — first.\n  [2026-09-24 10:00] owner · rejected — old note\n- [x] **two** — second.\n";
@@ -46,7 +46,7 @@ fn the_message_is_waiting_for_an_agent_answer() {
     assert_eq!(card.state, State::Approved);
     assert_eq!(card.entries().last().unwrap().verdict, None);
     assert_eq!(card.unanswered(), vec!["Why this one?"]);
-    assert!(card.open());
+    assert!(card.open(&plain()));
 }
 
 #[test]

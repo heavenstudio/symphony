@@ -13,7 +13,7 @@ use crate::markup::{dirname, join, normpath};
 use crate::register::parse_decisions;
 use crate::text::{read_text, splitlines};
 
-use super::{CardCache, Components};
+use super::CardCache;
 
 static WIKILINK: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"\[\[(?P<target>[^\]|#]+)(?:#(?P<heading>[^\]|]+))?(?:\|(?P<label>[^\]]+))?\]\]")
@@ -84,7 +84,8 @@ pub(crate) fn outside_code(text: &str, swap: &mut dyn FnMut(&str) -> String) -> 
     out
 }
 
-/// Every document under `docs/`, project-relative, live ones before those in `history/`.
+/// Every document of the project, named by its route (`docs/…`), live ones before those in its
+/// history folders.
 pub(crate) fn doc_paths(root: &Path) -> Vec<String> {
     fn walk(base: &Path, rel: &str, found: &mut Vec<String>) {
         let Ok(entries) = std::fs::read_dir(base.join(rel)) else {
@@ -100,12 +101,21 @@ pub(crate) fn doc_paths(root: &Path) -> Vec<String> {
             }
         }
     }
+    let project = crate::project::Project::of(root);
     let mut found = Vec::new();
-    walk(root, "docs", &mut found);
-    found.sort();
-    let (history, live): (Vec<String>, Vec<String>) =
-        found.into_iter().partition(|p| p.contains("/history/"));
-    live.into_iter().chain(history).collect()
+    walk(root, &project.docs, &mut found);
+    let (live, history): (Vec<String>, Vec<String>) = found
+        .into_iter()
+        .partition(|file| project.is_document_path(file));
+    let named = |files: Vec<String>| {
+        let mut names: Vec<String> = files
+            .into_iter()
+            .filter_map(|file| project.route(&file))
+            .collect();
+        names.sort();
+        names
+    };
+    named(live).into_iter().chain(named(history)).collect()
 }
 
 /// The document a wikilink names: the path it spells from the linking page if that exists, else the one
@@ -170,16 +180,18 @@ pub(crate) fn card_docs(
     paths: &[String],
     cache: &CardCache,
 ) -> Arc<HashMap<String, String>> {
-    let live: Vec<&String> = paths
+    let project = crate::project::Project::of(root);
+    let live: Vec<(&String, String)> = paths
         .iter()
-        .filter(|rel| !rel.contains("/history/"))
+        .map(|rel| (rel, project.file(rel)))
+        .filter(|(_, file)| project.is_document_path(file))
         .collect();
     let stamp: Vec<(String, String)> = live
         .iter()
-        .map(|rel| {
+        .map(|(rel, file)| {
             (
                 (*rel).clone(),
-                read_text(&root.join(rel)).unwrap_or_default(),
+                read_text(&root.join(file)).unwrap_or_default(),
             )
         })
         .collect();
@@ -246,37 +258,20 @@ fn token(n: usize) -> String {
 
 /// `text` with each component reference replaced by a plain token, and the HTML each token stands for.
 /// The tokens hold no markup, so markdown (tables included) cannot break or escape a component;
-/// [`restore`] puts the HTML in after the conversion.
-pub(crate) fn expand(text: &str, components: &dyn Components) -> (String, Vec<String>) {
-    expand_for(text, components, false)
-}
-
+/// [`restore`] puts the HTML in after the conversion. `component` renders one reference.
 pub(crate) fn expand_for(
     text: &str,
-    components: &dyn Components,
-    typed: bool,
+    component: &mut dyn FnMut(&str, &str, Option<&str>) -> String,
 ) -> (String, Vec<String>) {
     let mut stash: Vec<String> = Vec::new();
     let out = outside_code(text, &mut |part| {
         REFERENCE
             .replace_all(part, |found: &Captures<'_>| {
-                let shown = components
-                    .render_one(
-                        &found["name"],
-                        &found["arg"],
-                        found.name("option").map(|m| m.as_str()),
-                    )
-                    .unwrap_or_else(|problem| {
-                        format!(
-                            "<span class=\"component-error\" title=\"component error\">⚠ {}</span>",
-                            crate::markup::escape(&problem)
-                        )
-                    });
-                stash.push(if typed {
-                    format!("<sf-component data-kind=\"{}\" data-arg=\"{}\" data-option=\"{}\">{shown}</sf-component>",
-                        crate::markup::escape(&found["name"]), crate::markup::escape(&found["arg"]),
-                        crate::markup::escape(found.name("option").map_or("", |m| m.as_str())))
-                } else { shown });
+                stash.push(component(
+                    &found["name"],
+                    &found["arg"],
+                    found.name("option").map(|m| m.as_str()),
+                ));
                 token(stash.len() - 1)
             })
             .into_owned()

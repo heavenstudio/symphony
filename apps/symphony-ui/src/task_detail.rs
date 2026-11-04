@@ -32,7 +32,7 @@ pub fn TaskDetail(
 ) -> Element {
     let task = &page.task;
     let approval = offer
-        .filter(|(_, revision)| task.status == "review" && *revision == task.updated)
+        .filter(|(_, revision)| *revision == task.updated)
         .map(|(offer, _)| offer);
     rsx! { article { class: "task", "data-slug": "{task.slug}",
         div { class: "task-head card",
@@ -64,7 +64,7 @@ pub fn TaskDetail(
             }
         }
         Near { id: "composer-{task.slug}", height: 200,
-            if task.status == "review" { OfferLoader { key: "offer-{task.slug}-{task.updated}", onoffer } }
+            OfferLoader { key: "offer-{task.slug}-{task.updated}", onoffer }
             Composer { slug: task.slug.clone(), roles: task.roles.clone(), approval }
         }
     } }
@@ -242,18 +242,21 @@ fn Composer(slug: String, roles: Vec<Role>, approval: Option<symphony_api::TaskO
                     .chain(["@executor", "@reviewer", "@orchestrator"].map(|role| (role.to_string(), role.to_string())))
                     .chain(roles.into_iter().map(|role| (role.handle.clone(), role.handle))).collect::<Vec<_>>(),
             } } crate::components::button::Button { r#type: "submit", disabled: busy() || attach.busy(), "Send" }
-            if let Some(symphony_api::TaskOffer { patch: Some(patch), branch }) = approval {
+            if let Some(symphony_api::TaskOffer { action, label, branch, payload: Some(payload) }) = approval {
                 code { class: "approval-branch", "{branch}" }
                 crate::components::button::Button { r#type: "button", disabled: busy(), onclick: move |_| {
-                busy.set(true); let slug = slug.clone(); let patch = patch.clone();
+                busy.set(true); let slug = slug.clone(); let action = action.clone(); let payload = payload.clone();
                 spawn(async move {
                     #[cfg(target_arch = "wasm32")]
-                    result.set(match crate::task_live::post("/api/land-approve", &[("slug", &slug), ("patch", &patch)]).await { Ok(_) => "Approved to land".into(), Err(err) => err });
+                    result.set(match crate::task_live::post(symphony_api::TASK_ACTION_ROUTE, &[("slug", &slug), ("action", &action), ("payload", &payload)]).await {
+                        Ok(done) => js_sys::Reflect::get(&done, &"said".into()).ok().and_then(|said| said.as_string()).unwrap_or_default(),
+                        Err(err) => err,
+                    });
                     #[cfg(not(target_arch = "wasm32"))]
-                    { let _ = (slug, patch, &mut result); }
+                    { let _ = (slug, action, payload, &mut result); }
                     busy.set(false);
                 });
-            }, "✓ Approve to land" } }
+            }, "✓ {label}" } }
             }
             p { role: "status", "{result}" }
         }

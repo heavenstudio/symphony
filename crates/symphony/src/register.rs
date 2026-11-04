@@ -23,16 +23,12 @@ use crate::text::{NS, S, lstrip, prefix_chars, repr, splitlines, strip};
 /// stay open until an agent nests a `[!resolved]` under them.
 pub const KINDS: [&str; 5] = ["comment", "like", "dislike", "question", "decision"];
 pub const RESOLVED: &str = "resolved";
-pub const DOCS_DIR: &str = "docs";
-pub const SKIP_DIRS: [&str; 1] = ["history"];
 pub const REGION_START: &str = "<!-- register:start -->";
 pub const REGION_END: &str = "<!-- register:end -->";
 /// An agent answers a decision with an indented line starting with this marker (the undated form).
 pub const REPLY: &str = "↳";
 /// An agent line `[ts] agent · question — …` asks the owner something: the card waits for the owner.
 pub const QUESTION: &str = "question";
-/// A golden approval authorizes an executor's blessing; it stays open until the agent replies.
-pub const GOLDEN_FRAME: &str = "*Golden:* frame";
 
 fn pattern(source: &str) -> Regex {
     Regex::new(&source.replace("{S}", S).replace("{NS}", NS)).expect("a register pattern")
@@ -365,8 +361,14 @@ impl Decision {
         found
     }
 
-    /// Everything the card's thread says, from one read of its entries.
-    pub fn thread(&self) -> Thread {
+    /// Everything the card's thread says, from one read of its entries. The project's card kinds
+    /// say whether an approval waits for an agent to apply it.
+    pub fn thread(&self, plugins: &crate::plugins::Plugins) -> Thread {
+        self.read(self.state == State::Approved && plugins.approval_needs_agent(self))
+    }
+
+    /// The thread, an approval waiting for an agent when `needs_agent`.
+    fn read(&self, needs_agent: bool) -> Thread {
         let entries = self.entries();
         let last = entries.last();
         let reply = last
@@ -409,7 +411,7 @@ impl Decision {
             .collect();
         let settled = matches!(self.state, State::Resolved | State::Dismissed);
         let needs_blessing = self.state == State::Approved
-            && self.text.ends_with(GOLDEN_FRAME)
+            && needs_agent
             && last.is_some_and(|entry| {
                 entry.who == Who::Owner && entry.verdict.as_deref() == Some("approved")
             });
@@ -469,42 +471,43 @@ impl Decision {
 
     /// The agent's answer, when it is the last thing said under the card.
     pub fn reply(&self) -> Option<String> {
-        self.thread().reply
+        self.read(false).reply
     }
 
     /// When the card went up: its first dated line.
     pub fn posted_at(&self) -> Option<String> {
-        self.thread().posted_at
+        self.read(false).posted_at
     }
 
     /// When the owner last gave a verdict on it.
     pub fn decided_at(&self) -> Option<String> {
-        self.thread().decided_at
+        self.read(false).decided_at
     }
 
     /// Owner comments with no agent reply after them, oldest first.
     pub fn unanswered(&self) -> Vec<String> {
-        self.thread().unanswered
+        self.read(false).unanswered
     }
 
-    /// Agent work: unanswered words, a rejection/question, or an unapplied golden approval.
-    pub fn open(&self) -> bool {
-        self.thread().open
+    /// Agent work: unanswered words, a rejection/question, or an approval the project's card kinds
+    /// say waits for an agent.
+    pub fn open(&self, plugins: &crate::plugins::Plugins) -> bool {
+        self.thread(plugins).open
     }
 
     /// The last thing under the card is an agent's question to the owner.
     pub fn asks_owner(&self) -> bool {
-        self.thread().asks_owner
+        self.read(false).asks_owner
     }
 
     /// An approval with nothing left to answer: plain, given again, or its note answered.
-    pub fn resolvable(&self) -> bool {
-        self.thread().resolvable
+    pub fn resolvable(&self, plugins: &crate::plugins::Plugins) -> bool {
+        self.thread(plugins).resolvable
     }
 
     /// Where the card sits in its register.
-    pub fn group(&self) -> Group {
-        self.thread().group
+    pub fn group(&self, plugins: &crate::plugins::Plugins) -> Group {
+        self.thread(plugins).group
     }
 }
 
@@ -594,15 +597,16 @@ fn region(lines: &[&str]) -> Option<(usize, usize)> {
     Some((start, end))
 }
 
-/// Rewrite the register region grouped owner-first, topics and histories kept.
-pub fn sort_register(text: &str) -> Result<String, ReviewError> {
+/// Rewrite the register region grouped owner-first, topics and histories kept, each card grouped as
+/// the project's card kinds read it.
+pub fn sort_register(text: &str, plugins: &crate::plugins::Plugins) -> Result<String, ReviewError> {
     let lines = splitlines(text);
     let Some((start, end)) = region(&lines) else {
         return Ok(text.to_string());
     };
     if lines[end + 1..].contains(&REGION_START) {
-        return Ok(sort_register(&(lines[..=end].join("\n") + "\n"))?
-            + &sort_register(&(lines[end + 1..].join("\n") + "\n"))?);
+        return Ok(sort_register(&(lines[..=end].join("\n") + "\n"), plugins)?
+            + &sort_register(&(lines[end + 1..].join("\n") + "\n"), plugins)?);
     }
     let body = &lines[start + 1..end];
     let cards = parse_decisions(body);
@@ -638,7 +642,7 @@ pub fn sort_register(text: &str) -> Result<String, ReviewError> {
             &body[first..(first + 1 + card.raw.len()).min(body.len())]
         })
         .collect();
-    let groups: Vec<Group> = cards.iter().map(Decision::group).collect();
+    let groups: Vec<Group> = cards.iter().map(|card| card.group(plugins)).collect();
     let mut out: Vec<String> = Vec::new();
     for group in Group::ALL {
         let mut members: Vec<usize> = (0..cards.len()).filter(|&i| groups[i] == group).collect();
@@ -778,12 +782,13 @@ fn insert(lines: &mut Vec<String>, at: usize, line: String) {
     lines.insert(at, line);
 }
 
-/// Mark every resolvable card resolved, recording when. The text and the slugs changed.
-pub fn resolve(text: &str, now: &str) -> (String, Vec<String>) {
+/// Mark every card resolved that is resolvable as the project's card kinds read it, recording when.
+/// The text and the slugs changed.
+pub fn resolve(text: &str, now: &str, plugins: &crate::plugins::Plugins) -> (String, Vec<String>) {
     let mut lines: Vec<String> = splitlines(text).into_iter().map(str::to_string).collect();
     let cards = parse_decisions(&lines);
     let mut changed = Vec::new();
-    for card in cards.iter().filter(|card| card.resolvable()).rev() {
+    for card in cards.iter().filter(|card| card.resolvable(plugins)).rev() {
         let index = card.line - 1;
         lines[index] = remark(&lines[index], 'r');
         insert(

@@ -3,10 +3,11 @@
 
 use symphony::board::tidy_with;
 use symphony::edit::set_decision;
+use symphony::plugins::Plugins;
 use symphony::register::{ReviewError, sort_register, supersede};
 
 use crate::cards;
-use crate::common::{Tree, status_ok};
+use crate::common::{Tree, plain, status_ok};
 
 const NOW: &str = "2026-10-08 12:00";
 
@@ -53,7 +54,12 @@ fn a_blank_line_before_a_card_is_not_the_cards() {
 fn a_verdict_on_the_card_after_a_blank_keeps_the_next_card_where_it_was() {
     let wrong: Vec<_> = [ONE_BLANK, TWO_BLANKS]
         .into_iter()
-        .map(|register| (register, set_decision(register, "b", "approved", "", NOW)))
+        .map(|register| {
+            (
+                register,
+                set_decision(register, "b", "approved", "", NOW, &plain()),
+            )
+        })
         .filter(|(_, written)| *written != Ok(B_APPROVED.to_string()))
         .collect();
     assert_eq!(wrong, vec![]);
@@ -64,8 +70,12 @@ fn the_write_after_that_verdict_still_lands() {
     let wrong: Vec<_> = [ONE_BLANK, TWO_BLANKS]
         .into_iter()
         .map(|register| {
-            let once = set_decision(register, "b", "approved", "", NOW).unwrap_or_default();
-            (register, set_decision(&once, "c", "rejected", "", NOW))
+            let once =
+                set_decision(register, "b", "approved", "", NOW, &plain()).unwrap_or_default();
+            (
+                register,
+                set_decision(&once, "c", "rejected", "", NOW, &plain()),
+            )
         })
         .filter(|(_, next)| next.is_err())
         .collect();
@@ -121,15 +131,15 @@ fn supersede_dismisses_under_the_card_it_dismisses() {
 fn a_regroup_refuses_rather_than_writes_a_card_twice() {
     // b approved, its owner line under it, not yet regrouped: what a verdict hands the sort
     let given = "<!-- register:start -->\n### T\n\n- [ ] **a** — A.\n\n- [x] **b** — B.\n  [2026-10-08 12:00] owner · approved\n- [ ] **c** — C.\n<!-- register:end -->\n";
-    match sort_register(given) {
+    match sort_register(given, &plain()) {
         Ok(sorted) => assert_eq!(sorted.matches("**c**").count(), 1, "{sorted}"),
         Err(problem) => assert!(problem.0.contains("would repeat card(s) 'c'"), "{problem}"),
     }
 }
 
 /// A regroup that writes card c twice.
-fn copy_c(text: &str) -> Result<String, ReviewError> {
-    sort_register(text)
+fn copy_c(text: &str, plugins: &Plugins) -> Result<String, ReviewError> {
+    sort_register(text, plugins)
         .map(|sorted| sorted.replace("- [ ] **c** — C.\n", "- [ ] **c** — C.\n- [ ] **c** — C.\n"))
 }
 

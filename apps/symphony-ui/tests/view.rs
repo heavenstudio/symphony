@@ -244,3 +244,117 @@ fn comparisons_label_each_kind_and_link_the_task() {
 }
 #[path = "view/queue.rs"]
 mod queue;
+
+fn region_of(id: &str, totals: &[u32]) -> symphony_api::Region {
+    symphony_api::Region {
+        id: id.into(),
+        title: format!("{id} title"),
+        note: format!("{id} note"),
+        bars: totals
+            .iter()
+            .enumerate()
+            .map(|(index, &total)| symphony_api::ProgressBar {
+                key: format!("{id}-{index}"),
+                name: format!("bar {index}"),
+                page: format!("docs/{id}.md"),
+                title: String::new(),
+                done: total / 2,
+                waiting: 0,
+                total,
+            })
+            .collect(),
+        legend: ["done".into(), "waiting".into(), "left".into()],
+    }
+}
+
+#[test]
+fn each_plugin_region_draws_in_its_order_and_one_with_nothing_to_count_is_left_out() {
+    let mut regions = board("board.json");
+    regions.progress.regions = vec![
+        region_of("art", &[4, 2]),
+        region_of("empty", &[0, 0]),
+        region_of("bare", &[]),
+        region_of("audio", &[10]),
+    ];
+    let html = render(regions);
+    let progress = region(&html, r#"class="progress panel card""#);
+    assert_eq!(count(progress, "data-region="), 2, "{progress}");
+    let art = progress
+        .find(r#"data-region="art""#)
+        .expect("the art region");
+    let audio = progress
+        .find(r#"data-region="audio""#)
+        .expect("the audio region");
+    assert!(art < audio, "{progress}");
+    assert!(
+        !progress.contains("empty title") && !progress.contains("bare title"),
+        "{progress}"
+    );
+    assert!(progress.contains("<h2>art title</h2>"), "{progress}");
+    assert!(
+        progress.contains("50%<small>audio note</small>"),
+        "{progress}"
+    );
+    assert!(progress.contains(r#"href="/docs/art.md""#), "{progress}");
+    let mut none = board("board.json");
+    none.progress.regions.clear();
+    let html = render(none);
+    assert_eq!(count(&html, "data-region="), 0, "{html}");
+    assert!(
+        html.contains("browse all 64"),
+        "the docs summary stays: {html}"
+    );
+}
+
+/// The home's row of page links.
+fn links(html: &str) -> &str {
+    let start = html.find(r#"class="dash-links""#).expect("the links");
+    let rest = &html[start..];
+    &rest[..rest.find("</p>").expect("their end")]
+}
+
+#[test]
+fn the_home_links_the_projects_own_pages_and_its_register() {
+    let html = render(board("board.json"));
+    let links = links(&html);
+    assert!(
+        !links.contains("/hulls"),
+        "a plain project adds no page: {links}"
+    );
+    assert!(links.contains(r#"href="/docs/DECISIONS.md""#), "{links}");
+    let now = Moment::parse("2026-10-08 10:12").unwrap();
+    let project = symphony_api::ProjectView {
+        name: "Orbit".into(),
+        register: "notes/register.md".into(),
+        nav: vec![
+            symphony_api::NavItem {
+                label: "⬡ hulls".into(),
+                title: "Hull models".into(),
+                href: "/hulls".into(),
+                document: "docs/ships/HULLS.md".into(),
+            },
+            symphony_api::NavItem {
+                label: "♪ cues".into(),
+                title: "Audio cues".into(),
+                href: "/cues".into(),
+                document: "docs/audio/CUES.md".into(),
+            },
+        ],
+    };
+    let board = board("board.json");
+    let html = dioxus_ssr::render_element(rsx! { BoardView { board, now, project } });
+    let links = self::links(&html);
+    let hulls = links
+        .find(r#"<a class="pill" href="/hulls">Hull models</a>"#)
+        .expect("the hulls pill");
+    let cues = links
+        .find(r#"<a class="pill" href="/cues">Audio cues</a>"#)
+        .expect("the cues pill");
+    let register = links
+        .find(r#"<a class="pill" href="/notes/register.md">Decision register</a>"#)
+        .expect("the register pill");
+    assert!(
+        links.find("All docs").unwrap() < hulls && hulls < cues && cues < register,
+        "{links}"
+    );
+}

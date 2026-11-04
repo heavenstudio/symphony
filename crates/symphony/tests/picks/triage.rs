@@ -5,7 +5,7 @@ use symphony::board::{Doc, scan};
 use symphony::triage::{self, Bucket};
 
 use super::card;
-use super::common::Tree;
+use super::common::{Tree, plain, star_foundry};
 
 fn register(lines: &[&str]) -> String {
     format!(
@@ -82,21 +82,30 @@ mod category {
             "docs/ships/republic.md",
             "@design~policy/docs/ships/republic.md",
         ] {
-            assert_eq!(triage::category(path, &c), "roster art · republic");
+            assert_eq!(
+                triage::category(&star_foundry(), path, &c),
+                "roster art · republic"
+            );
         }
     }
 
     #[test]
     fn a_faction_page_picture_is_faction_art() {
         let c = card(&["- [ ] **a** — x *Shows:* Folk · people"]);
-        assert_eq!(triage::category("docs/factions/folk.md", &c), "faction art");
+        assert_eq!(
+            triage::category(&star_foundry(), "docs/factions/folk.md", &c),
+            "faction art"
+        );
     }
 
     #[test]
     fn any_other_card_is_design_for_its_doc() {
         let c = card(&["- [ ] **a** — a rule"]);
         for path in ["docs/WEAPONS.md", "@design~policy/docs/WEAPONS.md"] {
-            assert_eq!(triage::category(path, &c), "design · docs/WEAPONS.md");
+            assert_eq!(
+                triage::category(&star_foundry(), path, &c),
+                "design · docs/WEAPONS.md"
+            );
         }
     }
 
@@ -107,26 +116,27 @@ mod category {
             "  [2026-09-24 10:00] agent — ![r](/r.png)",
         ]);
         assert_eq!(
-            triage::category("docs/factions/empire.md", &pic),
+            triage::category(&star_foundry(), "docs/factions/empire.md", &pic),
             "faction art"
         );
         let rule = card(&["- [r] **a** — a trait"]);
         assert_eq!(
-            triage::category("docs/factions/empire.md", &rule),
+            triage::category(&star_foundry(), "docs/factions/empire.md", &rule),
             "design · docs/factions/empire.md"
         );
     }
 
     #[test]
     fn a_card_is_art_only_when_it_fills_a_picture_slot() {
-        assert!(triage::is_art(&card(&[
-            "- [ ] **a** — x *Shows:* R · ship"
-        ])));
+        assert!(triage::is_art(
+            &star_foundry(),
+            &card(&["- [ ] **a** — x *Shows:* R · ship"])
+        ));
         let gun = card(&[
             "- [ ] **a** — a picture of a gun",
             "  [2026-09-26 10:00] agent — ![g](/g.png)",
         ]);
-        assert!(!triage::is_art(&gun));
+        assert!(!triage::is_art(&star_foundry(), &gun));
     }
 
     #[test]
@@ -140,11 +150,11 @@ mod category {
         ];
         let under = symphony::register::parse_decisions(&lines);
         assert_eq!(
-            triage::category("docs/art/HULL_MODELS.md", &under[0]),
+            triage::category(&star_foundry(), "docs/art/HULL_MODELS.md", &under[0]),
             "hull model · republic"
         );
         assert_eq!(
-            triage::category("docs/art/HULL_MODELS.md", &c),
+            triage::category(&star_foundry(), "docs/art/HULL_MODELS.md", &c),
             "hull model · general"
         );
     }
@@ -237,7 +247,7 @@ mod stats {
 
     #[test]
     fn first_pass_approval_rate_per_category() {
-        let found = triage::stats(&docs(&tree())).unwrap();
+        let found = triage::stats(&star_foundry(), &docs(&tree())).unwrap();
         assert_eq!(found.categories["roster art · republic"], bucket(3, 2));
         assert_eq!(found.categories["faction art"], bucket(1, 0));
         assert_eq!(found.categories["design · docs/WEAPONS.md"], bucket(2, 1));
@@ -245,7 +255,7 @@ mod stats {
 
     #[test]
     fn redraws_against_first_posts() {
-        let found = triage::stats(&docs(&tree())).unwrap();
+        let found = triage::stats(&star_foundry(), &docs(&tree())).unwrap();
         assert_eq!(found.redraw, bucket(1, 1));
         assert_eq!(found.first_post, bucket(5, 2));
     }
@@ -253,13 +263,13 @@ mod stats {
     #[test]
     fn how_often_an_approval_carries_a_note() {
         // rep-a-art's note is work; rep-b-art-v2's "A" and picked's "B" only name a letter
-        let found = triage::stats(&docs(&tree())).unwrap();
+        let found = triage::stats(&star_foundry(), &docs(&tree())).unwrap();
         assert_eq!((found.approvals, found.with_note), (3, 1));
     }
 
     #[test]
     fn the_letters_the_owner_picked() {
-        let found = triage::stats(&docs(&tree())).unwrap();
+        let found = triage::stats(&star_foundry(), &docs(&tree())).unwrap();
         assert_eq!(
             found.art_letters.into_iter().collect::<Vec<_>>(),
             [("A".to_string(), 1), ("B".to_string(), 1)]
@@ -272,13 +282,13 @@ mod stats {
 
     #[test]
     fn the_share_answered_with_a_question() {
-        let found = triage::stats(&docs(&tree())).unwrap();
+        let found = triage::stats(&star_foundry(), &docs(&tree())).unwrap();
         assert_eq!((found.decided, found.asked), (6, 1));
     }
 
     #[test]
     fn the_report_prints_each_part() {
-        let text = triage::render_stats(&triage::stats(&docs(&tree())).unwrap());
+        let text = triage::render_stats(&triage::stats(&star_foundry(), &docs(&tree())).unwrap());
         let row = |name: &str| {
             text.lines()
                 .find(|l| l.contains(name))
@@ -300,7 +310,7 @@ mod stats {
 
     #[test]
     fn the_report_is_laid_out_as_python_laid_it() {
-        let text = triage::render_stats(&triage::stats(&docs(&tree())).unwrap());
+        let text = triage::render_stats(&triage::stats(&star_foundry(), &docs(&tree())).unwrap());
         let expected = "\
 FIRST-PASS APPROVAL (the owner's first verdict was an approval)
   design · docs/WEAPONS.md  1/2      50%
@@ -319,7 +329,7 @@ answered with a question: 1/6 17%";
 
     #[test]
     fn a_rate_over_nothing_is_a_dash_and_halves_round_to_even() {
-        let text = triage::render_stats(&triage::stats(&[]).unwrap());
+        let text = triage::render_stats(&triage::stats(&star_foundry(), &[]).unwrap());
         assert!(text.contains("first post"));
         assert!(text.contains("0/0        -"), "{text}");
         assert!(text.contains("art letters: none"), "{text}");
@@ -341,7 +351,9 @@ answered with a question: 1/6 17%";
         );
         let tree = Tree::new();
         tree.write("docs/X.md", &one_in_eight);
-        let text = triage::render_stats(&triage::stats(&scan(&tree.root).unwrap()).unwrap());
+        let text = triage::render_stats(
+            &triage::stats(&star_foundry(), &scan(&tree.root).unwrap()).unwrap(),
+        );
         assert!(text.contains("1/8      12%"), "{text}");
     }
 }
@@ -357,7 +369,7 @@ mod queue {
 
     #[test]
     fn design_cards_come_first_ranked_by_what_they_gate() {
-        let items = triage::queue(&docs(&tree()), 10, APP);
+        let items = triage::queue(&star_foundry(), &docs(&tree()), 10, APP);
         assert_eq!(
             slugs(&items[..3]),
             ["weapon-kinds", "after-kinds", "small-thing"]
@@ -367,8 +379,39 @@ mod queue {
     }
 
     #[test]
+    fn a_design_card_names_every_count_once_it_gates_anything_zero_included() {
+        let tree = tree();
+        tree.write(
+            "docs/WEAPONS.md",
+            &design().replace(
+                "*Depends:* weapon-kinds",
+                "*Depends:* weapon-kinds *Blocks:* small-thing",
+            ),
+        );
+        let items = triage::queue(&star_foundry(), &docs(&tree), 10, APP);
+        let reason = |slug: &str| {
+            items
+                .iter()
+                .find(|i| i.slug == slug)
+                .map(|i| i.reason.clone())
+        };
+        assert_eq!(
+            reason("weapon-kinds").as_deref(),
+            Some("design · gates 3 hulls and 1 card")
+        );
+        assert_eq!(
+            reason("after-kinds").as_deref(),
+            Some("design · gates 0 hulls and 1 card")
+        );
+        assert_eq!(
+            reason("small-thing").as_deref(),
+            Some("design · gates nothing known")
+        );
+    }
+
+    #[test]
     fn then_answered_questions_then_undecided_art() {
-        let items = triage::queue(&docs(&tree()), 10, APP);
+        let items = triage::queue(&star_foundry(), &docs(&tree()), 10, APP);
         assert_eq!(slugs(&items[3..]), ["folk-people", "rep-c-art"]);
     }
 
@@ -379,7 +422,7 @@ mod queue {
             .read("docs/ships/republic.md")
             .replace("- [ ] **rep-c-art**", "- [a] **rep-c-art**");
         tree.write("docs/ships/republic.md", &text);
-        let items = triage::queue(&docs(&tree), 10, APP);
+        let items = triage::queue(&star_foundry(), &docs(&tree), 10, APP);
         assert!(!slugs(&items).contains(&"rep-c-art"));
         assert!(!slugs(&items).contains(&"picked"));
     }
@@ -398,7 +441,7 @@ mod queue {
             "docs/WEAPONS.md",
             &format!("{rule}\n- [x] **asked-design** — A rule.{ask}"),
         );
-        let items = triage::queue(&docs(&tree), 20, APP);
+        let items = triage::queue(&star_foundry(), &docs(&tree), 20, APP);
         let reason = |slug: &str| {
             items
                 .iter()
@@ -415,12 +458,15 @@ mod queue {
 
     #[test]
     fn it_stops_at_n() {
-        assert_eq!(triage::queue(&docs(&tree()), 2, APP).len(), 2);
+        assert_eq!(
+            triage::queue(&star_foundry(), &docs(&tree()), 2, APP).len(),
+            2
+        );
     }
 
     #[test]
     fn each_item_names_its_doc_and_the_link_that_scrolls_to_the_card() {
-        let item = triage::queue(&docs(&tree()), 1, APP).remove(0);
+        let item = triage::queue(&star_foundry(), &docs(&tree()), 1, APP).remove(0);
         assert_eq!(item.doc, "docs/WEAPONS.md");
         assert_eq!(
             item.link,
@@ -430,7 +476,7 @@ mod queue {
 
     #[test]
     fn the_report_prints_slug_doc_reason_and_link() {
-        let text = triage::render_queue(&triage::queue(&docs(&tree()), 2, APP));
+        let text = triage::render_queue(&triage::queue(&star_foundry(), &docs(&tree()), 2, APP));
         let lines: Vec<&str> = text.lines().collect();
         assert!(
             lines[0].starts_with(" 1. weapon-kinds  docs/WEAPONS.md"),
@@ -453,7 +499,7 @@ mod queue {
             &register(&["- [ ] **rep-f02-model-v1** — Kite. *Model:* REP-F02 v1"])
                 .replace("### T", "### Republic"),
         );
-        let items = triage::queue(&docs(&tree), 5, "http://app");
+        let items = triage::queue(&star_foundry(), &docs(&tree), 5, "http://app");
         let found: Vec<(&str, &str)> = items
             .iter()
             .map(|i| (i.slug.as_str(), i.reason.as_str()))
@@ -478,11 +524,175 @@ mod queue {
             .iter()
             .find(|(_, c)| c.slug == "weapon-kinds")
             .unwrap();
-        assert_eq!(triage::gates(&kinds.1, &cards), (3, 1));
+        let sf = &star_foundry();
+        let hulls = |n: usize| vec![(n, "hull".to_string())];
+        assert_eq!(triage::gates(sf, &kinds.0, &kinds.1, &cards), (hulls(3), 1));
         let small = cards.iter().find(|(_, c)| c.slug == "small-thing").unwrap();
-        assert_eq!(triage::gates(&small.1, &cards), (0, 0));
+        assert_eq!(triage::gates(sf, &small.0, &small.1, &cards), (hulls(0), 0));
         let blocker = card(&["- [ ] **b** — Holds others. *Blocks:* x, y, b"]);
-        assert_eq!(triage::gates(&blocker, &[]), (0, 2));
+        assert_eq!(triage::gates(sf, "docs/X.md", &blocker, &[]), (hulls(0), 2));
+        // a project without the hull kind counts only the cards waiting
+        assert_eq!(
+            triage::gates(&plain(), &kinds.0, &kinds.1, &cards),
+            (vec![], 1)
+        );
+    }
+
+    #[test]
+    fn a_plain_project_ranks_every_open_card_as_design_and_names_no_art() {
+        let plain = &plain();
+        let docs = docs(&tree());
+        let items = triage::queue(plain, &docs, 20, APP);
+        assert_eq!(
+            slugs(&items),
+            [
+                "weapon-kinds",
+                "after-kinds",
+                "small-thing",
+                "rep-c-art",
+                "folk-people"
+            ]
+        );
+        assert_eq!(items[0].reason, "design · gates 1 card");
+        assert_eq!(items[3].reason, "design · gates nothing known");
+        assert!(items.iter().all(|i| !i.reason.contains("art")), "{items:?}");
+        let found = triage::stats(plain, &docs).unwrap();
+        assert!(
+            found.categories.keys().all(|c| c.starts_with("design · ")),
+            "{:?}",
+            found.categories
+        );
+        assert!(found.art_letters.is_empty());
+        let ship = card(&["- [ ] **a** — x *Shows:* R · ship"]);
+        assert!(!triage::is_art(plain, &ship));
+        assert_eq!(
+            triage::category(plain, "docs/ships/republic.md", &ship),
+            "design · docs/ships/republic.md"
+        );
+    }
+}
+
+/// The triage asks only the project's card kinds: a fixture kind decides each lane.
+mod dispatch {
+    use super::*;
+    use symphony::plugins::Plugins;
+    use symphony_plugin::{Card, CardKind, Plugin};
+
+    /// A desk's kinds: a sketch fills a `*Slot:*`, a `*Signed:*` card is the owner's alone, an
+    /// `*Apply:*` approval waits for an agent, and a card gates the pages it links.
+    struct Desk;
+
+    impl Plugin for Desk {
+        fn name(&self) -> &str {
+            "desk"
+        }
+        fn card_kinds(&self) -> Vec<&dyn CardKind> {
+            vec![self]
+        }
+    }
+
+    impl CardKind for Desk {
+        fn name(&self) -> &str {
+            "desk"
+        }
+        fn recognises(&self, _: &Card<'_>) -> bool {
+            true
+        }
+        fn slot(&self, card: &Card<'_>) -> Option<String> {
+            card.text
+                .split_once("*Slot:* ")
+                .map(|(_, slot)| slot.trim().to_string())
+        }
+        fn triage_category(&self, card: &Card<'_>) -> Option<String> {
+            self.slot(card).map(|slot| format!("sketch · {slot}"))
+        }
+        fn auto_approvable(&self, card: &Card<'_>) -> bool {
+            !card.text.contains("*Signed:*")
+        }
+        fn gates(&self, card: &Card<'_>) -> Option<(usize, String)> {
+            Some((card.text.matches("[[page:").count(), "page".into()))
+        }
+        fn approval_needs_agent(&self, card: &Card<'_>) -> bool {
+            card.text.contains("*Apply:*")
+        }
+    }
+
+    static DESK: Desk = Desk;
+
+    fn desk() -> Tree {
+        let tree = Tree::new();
+        tree.write(
+            "docs/DESK.md",
+            &register(&[
+                "- [ ] **sketch** — A cover. *Slot:* cover",
+                "- [ ] **signed** — A contract. *Signed:*",
+                "- [ ] **rule** — A rule. [[page:a]] [[page:b]]",
+                "- [ ] **other** — Another rule.",
+                "  [2026-09-26 08:00] agent — posted",
+            ]),
+        );
+        tree
+    }
+
+    #[test]
+    fn each_lane_is_the_kinds_answer_and_a_plain_project_has_one_lane() {
+        let tree = desk();
+        let found = |plugins: &Plugins| -> Vec<(String, String)> {
+            triage::queue(plugins, &docs(&tree), 10, "http://app")
+                .into_iter()
+                .map(|item| (item.slug, item.reason))
+                .collect()
+        };
+        let pair = |slug: &str, reason: &str| (slug.to_string(), reason.to_string());
+        assert_eq!(
+            found(&Plugins::new(vec![&DESK])),
+            [
+                pair("rule", "design · gates 2 pages and 0 cards"),
+                pair("other", "design · gates nothing known"),
+                pair("signed", "design · docs/DESK.md · only you sign it off"),
+                pair("sketch", "sketch · cover · the triage left it for you"),
+            ]
+        );
+        assert_eq!(
+            found(&plain()),
+            [
+                pair("sketch", "design · gates nothing known"),
+                pair("signed", "design · gates nothing known"),
+                pair("rule", "design · gates nothing known"),
+                pair("other", "design · gates nothing known"),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_sign_off_an_agent_asks_the_owner_about_says_so() {
+        let tree = Tree::new();
+        tree.write(
+            "docs/DESK.md",
+            &register(&[
+                "- [x] **signed** — A contract. *Signed:*",
+                "  [2026-10-03 08:02] owner · approved — C",
+                "  [2026-10-03 08:21] agent · question — Which C?",
+            ]),
+        );
+        let items = triage::queue(&Plugins::new(vec![&DESK]), &docs(&tree), 5, "http://app");
+        assert_eq!(
+            items.iter().map(|i| i.reason.as_str()).collect::<Vec<_>>(),
+            ["design · docs/DESK.md · an agent asks you"]
+        );
+    }
+
+    #[test]
+    fn an_approval_waits_for_an_agent_only_where_a_kind_says_so() {
+        let approved = card(&[
+            "- [x] **apply** — Apply this. *Apply:*",
+            "  [2026-09-26 08:00] owner · approved",
+        ]);
+        let desk = Plugins::new(vec![&DESK]);
+        assert_eq!(approved.group(&desk), symphony::Group::Agent);
+        assert!(approved.open(&desk));
+        assert_eq!(approved.group(&plain()), symphony::Group::Resolved);
+        assert!(!approved.open(&plain()));
     }
 }
 

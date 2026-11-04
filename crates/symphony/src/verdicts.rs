@@ -253,16 +253,17 @@ fn open(path: &str, card: &Decision, branch: &str) -> OpenCard {
 /// is never one of them: main may have answered it since.
 pub fn open_cards(root: &Path) -> Result<Vec<OpenCard>, VerdictError> {
     let docs = scan(root).map_err(|e| VerdictError(e.0))?;
+    let plugins = crate::plugins::Plugins::of(root);
     let mut found: Vec<OpenCard> = docs
         .iter()
         .flat_map(|doc| doc.decisions.iter().map(move |card| (doc, card)))
-        .filter(|(_, card)| card.open())
+        .filter(|(_, card)| card.open(&plugins))
         .map(|(doc, card)| open(&doc.path, card, ""))
         .collect();
     found.extend(
         branch_cards(root)
             .iter()
-            .filter(|b| b.card.open())
+            .filter(|b| b.card.open(&plugins))
             .map(|b| open(&b.path(), &b.card, &b.tree.branch)),
     );
     Ok(found)

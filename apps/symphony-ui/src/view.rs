@@ -4,7 +4,7 @@
 //! that card's component again and nothing else: Dioxus skips a component whose props are equal.
 
 use dioxus::prelude::*;
-use symphony_api::{Board, Card, Counts, FactionArt, Picture, Progress};
+use symphony_api::{Board, Card, Counts, Picture, Progress, ProgressBar, ProjectView, Region};
 
 use crate::media::PictureView;
 use crate::words::{Moment, age, greeting, lead, plural};
@@ -14,8 +14,13 @@ const HERO_PICTURES: usize = 6;
 
 /// The body of `/`.
 #[component(lazy)]
-pub fn BoardView(board: Board, now: Moment) -> Element {
+pub fn BoardView(board: Board, now: Moment, #[props(default)] project: ProjectView) -> Element {
     let counts = &board.counts;
+    let register = if project.register.is_empty() {
+        "docs/DECISIONS.md".to_string()
+    } else {
+        project.register.clone()
+    };
     rsx! {
         div { class: "dash",
             div { class: "dash-head page-head",
@@ -26,8 +31,10 @@ pub fn BoardView(board: Board, now: Moment) -> Element {
                 p { class: "dash-links",
                     a { class: "pill", href: "/queue", "Full queue" }
                     a { class: "pill", href: "/docs/", "All docs" }
-                    a { class: "pill", href: "/hulls", "Hull models" }
-                    a { class: "pill", href: "/docs/DECISIONS.md", "Decision register" }
+                    for item in project.nav.iter() {
+                        a { key: "{item.href}", class: "pill", href: "{item.href}", "{item.title}" }
+                    }
+                    a { class: "pill", href: "/{register}", "Decision register" }
                     a { class: "pill", href: "/docs/workflow/REVIEW.md", "How review works" }
                 }
             }
@@ -201,41 +208,14 @@ fn Tile(
     }
 }
 
-/// Ship art per faction, and the design documents.
+/// The plugins' progress regions, and the design documents.
 #[component]
 fn ProgressPanel(progress: Progress) -> Element {
-    let approved: u32 = progress
-        .ship_art
-        .iter()
-        .map(|faction| faction.approved)
-        .sum();
-    let total: u32 = progress.ship_art.iter().map(|faction| faction.total).sum();
     let waiting = progress.decisions_waiting;
     rsx! {
         section { class: "progress panel card",
-            if total > 0 {
-                div { class: "art",
-                    div { class: "headline",
-                        h2 { "Ship art" }
-                        p { class: "big",
-                            "{percent(approved, total):.0}%"
-                            small { "{approved} of {total} hulls approved" }
-                        }
-                    }
-                    div { class: "bars",
-                        for faction in progress.ship_art.iter() {
-                            FactionBar { key: "{faction.faction}", faction: faction.clone() }
-                        }
-                    }
-                    p { class: "legend",
-                        span { class: "dot ok" }
-                        "approved "
-                        span { class: "dot wait" }
-                        "waiting on you "
-                        span { class: "dot empty" }
-                        "not drawn"
-                    }
-                }
+            for region in progress.regions.iter() {
+                RegionView { key: "{region.id}", region: region.clone() }
             }
             div { class: "docsummary",
                 h3 {
@@ -248,24 +228,57 @@ fn ProgressPanel(progress: Progress) -> Element {
     }
 }
 
+/// A region of bars, done and waiting out of a total each, with its headline percentage and its
+/// legend's three words. A region with nothing to count is not shown.
 #[component]
-fn FactionBar(faction: FactionArt) -> Element {
-    let undrawn = faction
-        .total
-        .saturating_sub(faction.approved + faction.waiting);
+fn RegionView(region: Region) -> Element {
+    let done: u32 = region.bars.iter().map(|bar| bar.done).sum();
+    let total: u32 = region.bars.iter().map(|bar| bar.total).sum();
+    if total == 0 {
+        return rsx! {};
+    }
+    let [ok, wait, empty] = region.legend.clone();
+    rsx! {
+        div { class: "region", "data-region": "{region.id}",
+            div { class: "headline",
+                h2 { "{region.title}" }
+                p { class: "big",
+                    "{percent(done, total):.0}%"
+                    small { "{region.note}" }
+                }
+            }
+            div { class: "bars",
+                for bar in region.bars.iter() {
+                    BarView { key: "{bar.key}", bar: bar.clone() }
+                }
+            }
+            p { class: "legend",
+                span { class: "dot ok" }
+                "{ok} "
+                span { class: "dot wait" }
+                "{wait} "
+                span { class: "dot empty" }
+                "{empty}"
+            }
+        }
+    }
+}
+
+#[component]
+fn BarView(bar: ProgressBar) -> Element {
     rsx! {
         a {
             class: "bar",
-            href: "/{faction.page}",
-            title: "{faction.approved} approved, {faction.waiting} waiting on review, {undrawn} not drawn yet",
-            span { class: "bar-name", "{faction.name}" }
+            href: "/{bar.page}",
+            title: "{bar.title}",
+            span { class: "bar-name", "{bar.name}" }
             span { class: "track",
-                i { class: "ok", style: "width: {percent(faction.approved, faction.total):.1}%" }
-                i { class: "wait", style: "width: {percent(faction.waiting, faction.total):.1}%" }
+                i { class: "ok", style: "width: {percent(bar.done, bar.total):.1}%" }
+                i { class: "wait", style: "width: {percent(bar.waiting, bar.total):.1}%" }
             }
             span { class: "bar-num",
-                "{faction.approved}"
-                small { "/{faction.total}" }
+                "{bar.done}"
+                small { "/{bar.total}" }
             }
         }
     }

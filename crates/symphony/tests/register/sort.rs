@@ -2,6 +2,7 @@
 
 use symphony::register::sort_register;
 
+use crate::common::plain;
 use crate::lines;
 
 const REGISTER: &str = "# Decision register
@@ -36,7 +37,7 @@ fn order(text: &str) -> Vec<String> {
 }
 
 fn sorted(text: &str) -> String {
-    sort_register(text).unwrap()
+    sort_register(text, &plain()).unwrap()
 }
 
 // NewestFirstTest: Needs your decision reads newest first: topics by their newest card, cards newest first.
@@ -164,7 +165,8 @@ fn card_without_topic_gets_general() {
 fn prose_inside_the_region_is_refused_rather_than_dropped() {
     assert!(
         sort_register(
-            "<!-- register:start -->\n### T\nsome prose\n- [ ] **a** — 1\n<!-- register:end -->\n"
+            "<!-- register:start -->\n### T\nsome prose\n- [ ] **a** — 1\n<!-- register:end -->\n",
+            &plain()
         )
         .is_err()
     );
@@ -179,7 +181,8 @@ fn no_region_leaves_text_alone() {
 fn duplicate_slug_is_refused() {
     assert!(
         sort_register(
-            "<!-- register:start -->\n- [ ] **a** — 1\n- [x] **a** — 2\n<!-- register:end -->\n"
+            "<!-- register:start -->\n- [ ] **a** — 1\n- [x] **a** — 2\n<!-- register:end -->\n",
+            &plain()
         )
         .is_err()
     );

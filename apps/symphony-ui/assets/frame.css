@@ -59,3 +59,5 @@
   .app-header > a { padding:4px 8px; }
   .app-header .crumbs { order:10; flex-basis:100%; margin:4px 0 0; padding:0; border:0; }
 }
+/* A plugin component's wrapper names its kind for a project stylesheet and lays out nothing. */
+[data-component] { display:contents; }
