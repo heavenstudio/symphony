@@ -1926,7 +1926,19 @@ fn saves_persist_verdicts_comments_asks_and_callbacks_across_restart() {
                 "/api/ask-reply",
                 json!({"id":id, "text":"And its radius?"}),
             );
-            saves.0.close();
+            // The close names each wait as it begins, the publications only once a save queued one.
+            let said = std::cell::RefCell::new(Vec::new());
+            saves
+                .0
+                .close_saying(|stage| said.borrow_mut().push(stage.to_owned()));
+            assert_eq!(
+                said.take(),
+                [
+                    "the save in flight",
+                    "the queued verdict publications",
+                    "the verdict filing"
+                ]
+            );
             let text = std::fs::read_to_string(root.join("docs/a.md")).unwrap();
             for words in [
                 "[x] **one**",
@@ -1956,7 +1968,10 @@ fn saves_persist_verdicts_comments_asks_and_callbacks_across_restart() {
                 ["Why this hull?", "And its radius?"]
             );
             let restarted = ClosingSaves::start(&root);
-            restarted.0.close();
+            restarted
+                .0
+                .close_saying(|stage| said.borrow_mut().push(stage.to_owned()));
+            assert_eq!(said.take(), ["the save in flight", "the verdict filing"]);
             assert_eq!(git(&root, &["rev-parse", "main"]), tip);
             let mut flusher = symphony::callbacks::Flusher::new(&root);
             flusher.flush(&root).unwrap();

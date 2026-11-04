@@ -311,7 +311,17 @@ fn a_signalled_stop_leaves_the_runtime_worker_free_while_it_waits() {
     assert!(shared.stopping());
 }
 
-/// A started server keeps its census task and its threads, and waits for each as it returns.
+/// [`Stages`] that send each stage the stop names, in order, to the receiver.
+fn told() -> (Stages, std::sync::mpsc::Receiver<String>) {
+    let (send, said) = std::sync::mpsc::channel();
+    let stages: Stages = Arc::new(move |stage: &str| {
+        let _ = send.send(stage.to_owned());
+    });
+    (stages, said)
+}
+
+/// A started server keeps its census task and its threads, and waits for each as it returns,
+/// naming each wait, its saves' too, before it begins.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_started_server_keeps_every_worker_it_owns_until_it_returns() {
     let tree = Tree::new();
@@ -322,7 +332,7 @@ async fn a_started_server_keeps_every_worker_it_owns_until_it_returns() {
     let launcher = tree.path("root/tools/rs-bin.sh");
     std::fs::create_dir_all(launcher.parent().unwrap()).unwrap();
     crate::fixture_script::write(&launcher, "#!/bin/sh\nexit 0\n", false);
-    let started = start(
+    let mut started = start(
         Serve {
             home: Some(home),
             root: root.clone(),
@@ -333,6 +343,25 @@ async fn a_started_server_keeps_every_worker_it_owns_until_it_returns() {
     )
     .await
     .unwrap();
+    let (stages, said) = told();
+    started.stages = stages;
+    started
+        .shared
+        .saves
+        .get_or_init(|| symphony::save::Saves::start(&root));
+    let mut waits: Vec<String> = [
+        "the orphan census",
+        "the open requests",
+        "the save in flight",
+        "the verdict filing",
+        "the data refresh",
+    ]
+    .map(String::from)
+    .into();
+    waits.extend(started.background.workers.iter().map(|worker| {
+        let name = worker.thread().name().unwrap_or("review background");
+        format!("the {name} worker")
+    }));
     let owned: std::collections::BTreeSet<String> = started
         .background
         .workers
@@ -355,6 +384,7 @@ async fn a_started_server_keeps_every_worker_it_owns_until_it_returns() {
         !root.join(PORT_FILE).exists(),
         "the server returned without clearing its port record"
     );
+    assert_eq!(said.try_iter().collect::<Vec<_>>(), waits);
 }
 
 /// A pending scan whose drop says so, then holds until the test releases it (or ends).
@@ -407,6 +437,7 @@ async fn a_server_stopped_during_a_pending_census_drops_the_scan_and_returns_aft
     };
     entered.notified().await;
     assert!(shared.status().census_pending);
+    let (stages, said) = told();
     let started = Started {
         serve: Serve {
             home: None,
@@ -422,6 +453,7 @@ async fn a_server_stopped_during_a_pending_census_drops_the_scan_and_returns_aft
         },
         serving: Vec::new(),
         record: false,
+        stages,
     };
     let mut serving = tokio::spawn(started.serve_until_stopped(std::future::ready(())));
     // A bound on a stop that would otherwise never drop the scan, which never answers.
@@ -437,6 +469,12 @@ async fn a_server_stopped_during_a_pending_census_drops_the_scan_and_returns_aft
         early.is_err(),
         "the server returned while its census was still ending: {early:?}"
     );
+    // Before the release, the census still holds the stop, which has named it as its wait.
+    let (named, said) =
+        tokio::task::spawn_blocking(move || (said.recv_timeout(Duration::from_secs(30)), said))
+            .await
+            .unwrap();
+    assert_eq!(named.as_deref(), Ok("the orphan census"));
     release.send(()).unwrap();
     let status = tokio::time::timeout(Duration::from_secs(30), serving)
         .await
@@ -445,4 +483,8 @@ async fn a_server_stopped_during_a_pending_census_drops_the_scan_and_returns_aft
     assert_eq!(status, 0);
     let after = shared.status();
     assert!(after.uncounted && !after.census_pending, "{after:?}");
+    assert_eq!(
+        said.try_iter().collect::<Vec<_>>(),
+        ["the open requests", "the data refresh"]
+    );
 }

@@ -82,26 +82,36 @@ pub struct Saves {
 
 impl Saves {
     pub fn close(&self) {
+        self.close_saying(|_| {});
+    }
+
+    /// Close, naming each wait through `stage` as it begins: the save in flight, the queued
+    /// verdict publications, then the verdict filing. A close that never ends names its wait.
+    pub fn close_saying(&self, stage: impl Fn(&str)) {
+        stage("the save in flight");
         let committer = {
             let _held = self.writes.lock().unwrap_or_else(|e| e.into_inner());
             self.closed.store(true, Ordering::Release);
             self.committer.get()
         };
         if let Some(committer) = committer {
+            stage("the queued verdict publications");
             committer.close();
         }
         self.filer.lock().unwrap_or_else(|e| e.into_inner()).take();
-        if let Some(worker) = self
+        let filing = self
             .filing_worker
             .lock()
             .unwrap_or_else(|e| e.into_inner())
-            .take()
-            && worker.join().is_err()
-        {
-            let _ = std::io::Write::write_all(
-                &mut std::io::stderr(),
-                b"Symphony: verdict filing worker panicked while closing\n",
-            );
+            .take();
+        if let Some(worker) = filing {
+            stage("the verdict filing");
+            if worker.join().is_err() {
+                let _ = std::io::Write::write_all(
+                    &mut std::io::stderr(),
+                    b"Symphony: verdict filing worker panicked while closing\n",
+                );
+            }
         }
     }
     pub fn start(root: &Path) -> Self {
