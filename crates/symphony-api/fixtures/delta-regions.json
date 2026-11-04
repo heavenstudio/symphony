@@ -21,8 +21,8 @@
     {
       "region": "progress",
       "data": {
-        "ship_art": [
-          {"faction": "republic", "name": "Republic", "page": "docs/ships/republic.md", "approved": 22, "waiting": 3, "total": 31}
+        "regions": [
+          {"id":"ship-art","title":"Ship art","note":"22 of 31 hulls approved","bars":[{"key":"republic","name":"Republic","page":"docs/ships/republic.md","title":"22 approved, 3 waiting on review, 6 not drawn yet","done":22,"waiting":3,"total":31}],"legend":["approved","waiting on you","not drawn"]}
         ],
         "docs": 64,
         "decisions_waiting": 40

@@ -100,13 +100,20 @@ mod page {
                 &lead(board.counts.waiting, board.counts.docs_waiting),
             );
             let links = self.el(&head, "p", "dash-links", "");
-            for (href, text) in [
-                ("/queue", "Full queue"),
-                ("/docs/", "All docs"),
-                ("/hulls", "Hull models"),
-                ("/docs/DECISIONS.md", "Decision register"),
-                ("/docs/workflow/REVIEW.md", "How review works"),
-            ] {
+            let project = symphony_ui::project::current();
+            let mut pills = vec![
+                ("/queue".to_string(), "Full queue".to_string()),
+                ("/docs/".into(), "All docs".into()),
+            ];
+            pills.extend(
+                project
+                    .nav
+                    .iter()
+                    .map(|item| (item.href.clone(), item.title.clone())),
+            );
+            pills.push((format!("/{}", project.register), "Decision register".into()));
+            pills.push(("/docs/workflow/REVIEW.md".into(), "How review works".into()));
+            for (href, text) in &pills {
                 self.link(&links, "pill", href, text);
             }
             let top = self.el(&dash, "div", "dash-top", "");
@@ -204,38 +211,36 @@ mod page {
             }
             let progress = &board.progress;
             let panel = self.el(&dash, "section", "progress panel card", "");
-            let approved: u32 = progress.ship_art.iter().map(|f| f.approved).sum();
-            let total: u32 = progress.ship_art.iter().map(|f| f.total).sum();
-            if total > 0 {
-                let art = self.el(&panel, "div", "art", "");
-                self.el(&art, "h2", "", "Ship art");
+            for region in &progress.regions {
+                let done: u32 = region.bars.iter().map(|bar| bar.done).sum();
+                let total: u32 = region.bars.iter().map(|bar| bar.total).sum();
+                if total == 0 {
+                    continue;
+                }
+                let shown = self.el(&panel, "div", "region", "");
+                self.el(&shown, "h2", "", &region.title);
                 let big = self.el(
-                    &art,
+                    &shown,
                     "p",
                     "big",
-                    &format!("{:.0}%", 100.0 * f64::from(approved) / f64::from(total)),
+                    &format!("{:.0}%", 100.0 * f64::from(done) / f64::from(total)),
                 );
-                self.el(
-                    &big,
-                    "small",
-                    "",
-                    &format!("{approved} of {total} hulls approved"),
-                );
-                let bars = self.el(&art, "div", "bars", "");
-                for faction in &progress.ship_art {
-                    let bar = self.link(&bars, "bar", &format!("/{}", faction.page), "");
-                    self.el(&bar, "span", "bar-name", &faction.name);
+                self.el(&big, "small", "", &region.note);
+                let bars = self.el(&shown, "div", "bars", "");
+                for each in &region.bars {
+                    let bar = self.link(&bars, "bar", &format!("/{}", each.page), "");
+                    self.el(&bar, "span", "bar-name", &each.name);
                     let track = self.el(&bar, "span", "track", "");
-                    for (class, part) in [("ok", faction.approved), ("wait", faction.waiting)] {
+                    for (class, part) in [("ok", each.done), ("wait", each.waiting)] {
                         let fill = self.el(&track, "i", class, "");
-                        let share = 100.0 * f64::from(part) / f64::from(faction.total.max(1));
+                        let share = 100.0 * f64::from(part) / f64::from(each.total.max(1));
                         let _ = fill.set_attribute("style", &format!("width: {share:.1}%"));
                     }
                     self.el(
                         &bar,
                         "span",
                         "bar-num",
-                        &format!("{}/{}", faction.approved, faction.total),
+                        &format!("{}/{}", each.done, each.total),
                     );
                 }
             }

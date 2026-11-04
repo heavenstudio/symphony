@@ -2,6 +2,7 @@
 
 use serde_json::Value;
 use symphony::board::{scan, tidy_with};
+use symphony::plugins::Plugins;
 use symphony::register::ReviewError;
 
 use crate::common::{Tree, after_open, matches, rest, status, status_ok};
@@ -202,7 +203,7 @@ fn tidy_resolves_and_sorts_the_register_in_place() {
     );
 }
 
-fn drop_the_table(text: &str) -> Result<String, ReviewError> {
+fn drop_the_table(text: &str, _: &Plugins) -> Result<String, ReviewError> {
     Ok(text.replace("    | t |\n", ""))
 }
 

@@ -6,7 +6,7 @@ mod common;
 
 use serde_json::{Value, json};
 
-use common::Tree;
+use common::{Tree, plain};
 
 fn call(request: Value) -> Value {
     symphony::cli::call(&request)
@@ -118,8 +118,15 @@ fn the_writes_answer_as_the_library_does() {
             json!({"fn": "set_decision", "text": text, "slug": "one", "state": "approved", "note": "Fine.", "now": "2026-10-06 09:00"})
         ),
         json!(
-            symphony::edit::set_decision(text, "one", "approved", "Fine.", "2026-10-06 09:00")
-                .unwrap()
+            symphony::edit::set_decision(
+                text,
+                "one",
+                "approved",
+                "Fine.",
+                "2026-10-06 09:00",
+                &plain()
+            )
+            .unwrap()
         )
     );
     assert_eq!(

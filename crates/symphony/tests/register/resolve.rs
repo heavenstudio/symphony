@@ -3,7 +3,7 @@
 use symphony::register::resolve as resolve_text;
 use symphony::register::{Group, State, supersede};
 
-use crate::common::{Tree, status_ok};
+use crate::common::{Tree, plain, status_ok};
 use crate::{card, lines};
 
 // ResolveTest
@@ -12,7 +12,7 @@ use crate::{card, lines};
 fn marks_resolvable_cards_and_records_when() {
     let text = "<!-- register:start -->\n### T\n\n- [x] **plain** — 1\n- [x] **noted** — 2\n\
                 \x20 [2026-09-24] owner · approved — tweak\n<!-- register:end -->\n";
-    let (out, slugs) = resolve_text(text, "2026-09-26 08:00");
+    let (out, slugs) = resolve_text(text, "2026-09-26 08:00", &plain());
     assert_eq!(slugs, vec!["plain"]);
     assert!(
         out.contains("- [r] **plain** — 1\n  [2026-09-26 08:00] agent · resolved\n"),
@@ -28,16 +28,16 @@ fn marks_resolvable_cards_and_records_when() {
 fn tidy_leaves_a_dismissed_card_alone() {
     let text = "- [~] **a** — 1\n  [2026-09-25 15:40] owner · dismissed\n";
     assert_eq!(
-        resolve_text(text, "2026-09-26 08:00"),
+        resolve_text(text, "2026-09-26 08:00", &plain()),
         (text.to_string(), vec![])
     );
 }
 
 #[test]
 fn resolving_twice_changes_nothing() {
-    let (once, _) = resolve_text("- [x] **a** — 1\n", "2026-09-26 08:00");
+    let (once, _) = resolve_text("- [x] **a** — 1\n", "2026-09-26 08:00", &plain());
     assert_eq!(
-        resolve_text(&once, "2026-09-27 08:00"),
+        resolve_text(&once, "2026-09-27 08:00", &plain()),
         (once.clone(), vec![])
     );
 }
@@ -71,7 +71,7 @@ fn an_answered_question_card_is_dismissed_too() {
         "{out}"
     );
     assert_eq!(
-        card(&lines(&out).iter().map(String::as_str).collect::<Vec<_>>()).group(),
+        card(&lines(&out).iter().map(String::as_str).collect::<Vec<_>>()).group(&plain()),
         Group::Resolved
     );
 }
@@ -112,7 +112,7 @@ fn superseded_card_is_resolved_on_the_board() {
     );
     let found = card(&lines(&out).iter().map(String::as_str).collect::<Vec<_>>());
     assert_eq!(
-        (found.state, found.group()),
+        (found.state, found.group(&plain())),
         (State::Dismissed, Group::Resolved)
     );
 }

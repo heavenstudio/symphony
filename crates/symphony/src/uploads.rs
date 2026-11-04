@@ -1,7 +1,7 @@
 //! The owner's attachments: a screenshot or a document added to an ask, a card line, a comment, a
 //! new task or a task thread message.
 //!
-//! Each file is stored once, under its content's SHA-256, in [`DIR`] of the server's checkout (the
+//! Each file is stored once, under its content's SHA-256, in [`dir`] of the server's checkout (the
 //! main checkout for the shared app, so every branch's pages read the same file), and is never
 //! removed with the post that named it: an ask goes after a day, its pictures stay. The post keeps
 //! the file as one Markdown line of its text, [`Stored::markup`]: `![name](/artifacts/uploads/<sha>.png)`
@@ -24,10 +24,17 @@ use sha2::{Digest, Sha256};
 
 use crate::markup::escape;
 
-/// Where uploads live, under the server's checkout. Gitignored, like every picture a card shows.
-pub const DIR: &str = "artifacts/uploads";
-/// The address of a stored file, followed by `<sha256>.<ext>`.
+/// The folder uploads live in, under the project's artifacts folder (gitignored, like every picture
+/// a card shows).
+pub const DIR: &str = "uploads";
+/// The address of a stored file, followed by `<sha256>.<ext>`: a route, whatever the project's
+/// artifacts folder is called.
 pub const ROUTE: &str = "/artifacts/uploads/";
+/// Where the uploads of the checkout at `root` live: [`DIR`] in its project's artifacts folder.
+pub fn dir(root: &Path) -> PathBuf {
+    root.join(crate::project::Project::of(root).artifact(DIR))
+}
+
 /// The largest upload, in bytes.
 pub const MAX_BYTES: usize = symphony_api::UPLOAD_MAX_BYTES;
 /// The longest file name a reference keeps, in characters.
@@ -405,7 +412,7 @@ fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
-/// Store `bytes`, named `name` by the owner, under `root`'s [`DIR`]: once per content, written
+/// Store `bytes`, named `name` by the owner, under `root`'s [`dir`]: once per content, written
 /// to a temporary file and renamed into place, so a reader never sees half a file and two posts of
 /// the same picture share it.
 pub fn store(root: &Path, name: &str, bytes: &[u8]) -> Result<Stored, Failure> {
@@ -421,16 +428,16 @@ pub fn store(root: &Path, name: &str, bytes: &[u8]) -> Result<Stored, Failure> {
         status: 500,
         error: format!("could not store the upload: {e}"),
     };
-    let dir = root.join(DIR);
-    std::fs::create_dir_all(&dir).map_err(failed)?;
-    let path = dir.join(format!("{}.{}", stored.sha, kind.ext));
+    let folder = dir(root);
+    std::fs::create_dir_all(&folder).map_err(failed)?;
+    let path = folder.join(format!("{}.{}", stored.sha, kind.ext));
     if path
         .metadata()
         .is_ok_and(|meta| meta.is_file() && meta.len() == bytes.len() as u64)
     {
         return Ok(stored);
     }
-    let temp = dir.join(format!(
+    let temp = folder.join(format!(
         ".{}.{}.{}.part",
         stored.sha,
         std::process::id(),
@@ -455,6 +462,11 @@ pub fn store(root: &Path, name: &str, bytes: &[u8]) -> Result<Stored, Failure> {
 /// The stored file `file` (`<sha256>.<ext>`, as [`ROUTE`] is followed) names under `root`, and
 /// its kind. Nothing else under the folder is ever served from it.
 pub fn path(root: &Path, file: &str) -> Option<(PathBuf, Kind)> {
+    stored_kind(file).map(|kind| (dir(root).join(file), kind))
+}
+
+/// The kind of `file` when it names a stored file (`<sha256>.<ext>`), wherever the folder is.
+fn stored_kind(file: &str) -> Option<Kind> {
     let (sha, ext) = file.split_once('.')?;
     if sha.len() != 64
         || !sha
@@ -463,8 +475,7 @@ pub fn path(root: &Path, file: &str) -> Option<(PathBuf, Kind)> {
     {
         return None;
     }
-    let kind = kind_of(ext)?;
-    Some((root.join(DIR).join(file), kind))
+    kind_of(ext)
 }
 
 /// An upload a line names.
@@ -496,7 +507,7 @@ pub fn reference(line: &str) -> Option<Reference> {
     if name.trim().is_empty() || clean(name.trim()) != name.trim() {
         return None;
     }
-    let (_, kind) = path(Path::new(""), url.strip_prefix(ROUTE)?)?;
+    let kind = stored_kind(url.strip_prefix(ROUTE)?)?;
     if picture && !kind.picture {
         return None;
     }
@@ -809,7 +820,7 @@ mod tests {
         let again = store(&root, "copy.png", PNG).unwrap();
         assert_eq!(again.sha, first.sha);
         assert_eq!(again.name, "copy.png");
-        let entries: Vec<_> = std::fs::read_dir(root.join(DIR))
+        let entries: Vec<_> = std::fs::read_dir(dir(&root))
             .unwrap()
             .map(|e| e.unwrap().file_name().into_string().unwrap())
             .collect();
@@ -831,7 +842,7 @@ mod tests {
         );
         let refused = store(&root, "page.html", b"<html>").unwrap_err();
         assert_eq!(refused.status, 415);
-        assert_eq!(std::fs::read_dir(root.join(DIR)).unwrap().count(), 2);
+        assert_eq!(std::fs::read_dir(dir(&root)).unwrap().count(), 2);
         std::fs::remove_dir_all(root).unwrap();
     }
 
@@ -863,7 +874,7 @@ mod tests {
     fn a_file_that_cannot_take_its_place_is_reported_and_leaves_no_part_behind() {
         let root = scratch("blocked");
         let sha = hex(&Sha256::digest(PNG));
-        let folder = root.join(DIR);
+        let folder = dir(&root);
         // Something that is not the stored file holds its name, so the rename fails.
         std::fs::create_dir_all(folder.join(format!("{sha}.png")).join("inside")).unwrap();
         let failed = store(&root, "a.png", PNG).unwrap_err();
@@ -889,7 +900,7 @@ mod tests {
         let root = Path::new("/root");
         assert_eq!(
             path(root, &format!("{SHA}.pdf")).map(|(p, k)| (p, k.ext)),
-            Some((root.join(DIR).join(format!("{SHA}.pdf")), "pdf"))
+            Some((dir(root).join(format!("{SHA}.pdf")), "pdf"))
         );
         for file in [
             format!("{SHA}.svg"),
@@ -967,7 +978,7 @@ mod tests {
         assert!(!has_reference("no files here"));
         assert_eq!(
             named_files(Path::new("/main"), &text),
-            [Path::new("/main").join(DIR).join(format!("{SHA}.png"))]
+            [dir(Path::new("/main")).join(format!("{SHA}.png"))]
         );
     }
 }

@@ -10,12 +10,15 @@ use crate::render::Render;
 
 fn baselines(root: &std::path::Path, rel: &str) -> Option<(String, String)> {
     let repo = gix::discover(root).ok()?;
-    let main = repo.rev_parse_single("refs/heads/main").ok()?;
+    let project = crate::project::Project::of(root);
+    let main_ref = format!("refs/heads/{}", project.default_branch);
+    let file = project.file(rel);
+    let main = repo.rev_parse_single(main_ref.as_str()).ok()?;
     let head = repo.head_id().ok()?;
     let base = repo.merge_base(main, head).ok()?;
     let text = |id: gix::Id<'_>| {
         let tree = id.object().ok()?.peel_to_tree().ok()?;
-        let Some(id) = crate::versions::entry(&tree, rel) else {
+        let Some(id) = crate::versions::entry(&tree, &file) else {
             return Some(String::new());
         };
         String::from_utf8(repo.find_blob(id).ok()?.take_data()).ok()
@@ -147,7 +150,6 @@ fn previous(render: &Render, rel: &str, scope: &str, text: &str) -> Vec<Section>
             if let Some(slug) = &slug {
                 section.key = format!("card:{slug}");
             }
-            crate::models::expand(render.root(), &mut section.html, &mut section.media);
             super::prepare_fragment(
                 &mut section.html,
                 &mut section.media,

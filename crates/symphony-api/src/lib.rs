@@ -207,27 +207,72 @@ pub struct TaskCounts {
     pub agents_live: u32,
 }
 
-/// Ship art and document progress.
+/// The home's progress: the project's plugin regions and the document progress.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Progress {
-    /// Ship art per faction, in the roster's order.
-    pub ship_art: Vec<FactionArt>,
+    /// The regions the project's plugins add to the home, in the order they are registered.
+    #[serde(default)]
+    pub regions: Vec<Region>,
     /// The design documents (a folder's README is navigation, not one).
     pub docs: u32,
     /// The decisions waiting across them.
     pub decisions_waiting: u32,
 }
 
-/// One faction's ship art: how many of its hulls are approved, waiting on review, or not drawn.
+/// A region of the home a plugin adds: a headline over bars of done, waiting and remaining work.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct FactionArt {
-    pub faction: String,
+pub struct Region {
+    /// The region's id among the project's regions, stable across snapshots.
+    pub id: String,
+    pub title: String,
+    /// The line under the headline's percentage (`21 of 31 hulls approved`).
+    pub note: String,
+    pub bars: Vec<ProgressBar>,
+    /// The legend's words for done, waiting and remaining, in that order.
+    pub legend: [String; 3],
+}
+
+/// One bar of a home region: how much of `total` is done, waiting, and (the rest) remaining.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProgressBar {
+    pub key: String,
     pub name: String,
-    /// The faction's ship page, `docs/ships/<faction>.md`.
+    /// Where the bar links: a project-relative path.
     pub page: String,
-    pub approved: u32,
+    /// What the bar says on hover.
+    pub title: String,
+    pub done: u32,
     pub waiting: u32,
     pub total: u32,
+}
+
+/// The project as the client's header and home read it, inlined in the page the server serves
+/// (the script element whose id is [`PROJECT_ELEMENT`]), so the first paint needs no request.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProjectView {
+    pub name: String,
+    /// The decision register as a link names it: `docs/DECISIONS.md` when the documents folder
+    /// holds it, whatever that folder is called, else its project-relative path.
+    pub register: String,
+    /// The plugins' navigation entries, after the Symphony's own.
+    #[serde(default)]
+    pub nav: Vec<NavItem>,
+}
+
+/// The id of the element holding a [`ProjectView`] in the served page.
+pub const PROJECT_ELEMENT: &str = "symphony-project";
+
+/// A plugin's entry in the header and in the home's links.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NavItem {
+    /// The header's word (`⬡ hulls`), also the last crumb on its page.
+    pub label: String,
+    /// The home's link text (`Hull models`).
+    pub title: String,
+    /// The path it opens (`/hulls`), a client page.
+    pub href: String,
+    /// The document that page shows, a project-relative path.
+    pub document: String,
 }
 
 /// One event of the feed: what changed since the version before.
@@ -412,6 +457,17 @@ pub struct Task {
     pub depends: Vec<String>,
     pub roles: Vec<Role>,
     pub instruction: bool,
+    /// The plugins' board fields: plugin name, then field name, then its value.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub fields: std::collections::BTreeMap<String, std::collections::BTreeMap<String, FieldValue>>,
+}
+
+/// A board field's value: a number, or text (a text, a choice or a link).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum FieldValue {
+    Number(f64),
+    Text(String),
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -502,12 +558,21 @@ pub struct TaskBrief {
     pub revision: String,
 }
 
-/// The resolved landing target and the exact patch the owner is offered for approval.
+/// What a project's board action offers the owner on a task: a button named `label` beside the
+/// task's `branch`, shown while there is a `payload`, which the button sends back to the action
+/// `action` as it came (approve to land: the exact patch to land).
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TaskOffer {
+    /// The board action's name.
+    pub action: String,
+    pub label: String,
     pub branch: String,
-    pub patch: Option<String>,
+    pub payload: Option<String>,
 }
+
+/// The route the owner's answer to a [`TaskOffer`] is posted to: `slug`, `action`, `payload` and
+/// `note`.
+pub const TASK_ACTION_ROUTE: &str = "/api/task-action";
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct TaskEntry {
@@ -585,17 +650,30 @@ pub struct Heading {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "lowercase")]
 pub enum Media {
-    Mockup { src: String, label: String },
-    Model { src: String, label: String },
-    Gallery { hulls: Vec<GalleryHull> },
+    Mockup {
+        src: String,
+        label: String,
+    },
+    /// A 3D model (`.glb`), drawn by the vendored viewer under its caption; `poster` is a picture
+    /// shown before it loads.
+    Model {
+        src: String,
+        label: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        poster: Option<String>,
+    },
+    /// Models to pick from, one open at a time.
+    Gallery {
+        items: Vec<GalleryItem>,
+    },
 }
 
-/// One hull in the selected checkout's gallery document. Picture URLs already name a small copy.
+/// One model of a gallery. The poster URL already names a small copy.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct GalleryHull {
-    pub id: String,
-    pub model: String,
-    pub picture: Option<String>,
+pub struct GalleryItem {
+    pub name: String,
+    pub src: String,
+    pub poster: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -733,9 +811,6 @@ pub struct DocumentDiff {
     pub subject: String,
     pub diff: String,
 }
-
-/// Hulls are a document in the selected checkout, not a cross-worktree API scan.
-pub const HULL_GALLERY_DOC: &str = "docs/ships/HULLS.md";
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Ask {

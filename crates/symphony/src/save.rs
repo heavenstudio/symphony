@@ -2,7 +2,7 @@
 //! reads, edits and writes, including checkout synchronization by the verdict committer.
 
 use std::collections::{BTreeMap, VecDeque};
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, mpsc};
 
@@ -10,19 +10,20 @@ use serde_json::{Value, json};
 
 use crate::{Who, asks, branches, clock, commit, edit, register, taskview};
 
-pub const ROUTES: [&str; 12] = [
+pub const ROUTES: [&str; 13] = [
     "/api/postpone",
     "/api/decision",
     "/api/comment",
     "/api/message",
     "/api/task-message",
     "/api/task-priority",
+    "/api/task-field",
     "/api/task-cancel",
     "/api/quick-chat",
     "/api/quick-task",
     "/api/ask",
     "/api/ask-reply",
-    "/api/land-approve",
+    symphony_api::TASK_ACTION_ROUTE,
 ];
 
 pub struct Failure {
@@ -168,23 +169,11 @@ impl Saves {
         Ok((root, rel.to_string()))
     }
 
+    /// The file the document name `rel` (`docs/…`) stands for in the project's documents folder,
+    /// as the document view reads it ([`crate::docview::target`]).
     fn target(root: &Path, rel: &str) -> Result<PathBuf, Failure> {
-        let refuse = || Failure::from("path must be a markdown file under docs/".to_string());
-        if Path::new(rel)
-            .components()
-            .any(|c| !matches!(c, Component::Normal(_)))
-        {
-            return Err(refuse());
-        }
-        let docs = root.join("docs").canonicalize().map_err(|_| refuse())?;
-        let target = root.join(rel).canonicalize().map_err(|_| refuse())?;
-        if !target.starts_with(docs)
-            || target.extension().is_none_or(|s| s != "md")
-            || !target.is_file()
-        {
-            return Err(refuse());
-        }
-        Ok(target)
+        crate::docview::target(root, rel, true)
+            .map_err(|_| Failure::from("path must be a markdown file under docs/".to_string()))
     }
 
     fn page(&self, root: &Path, rel: &str, anchor: &str) -> Result<String, Failure> {
@@ -327,39 +316,59 @@ impl Saves {
                     .set_priority(string(payload, "slug"), priority, "owner")?;
                 Ok(json!({"ok":true}))
             }
+            "/api/task-field" => {
+                let actor = Some(string(payload, "actor"))
+                    .filter(|actor| !actor.is_empty())
+                    .unwrap_or("owner");
+                let (plugin, value) = taskview::set_field(
+                    &self.store()?,
+                    &crate::plugins::Plugins::of(&self.root),
+                    string(payload, "slug"),
+                    string(payload, "name"),
+                    &payload["value"],
+                    actor,
+                )?;
+                Ok(json!({"ok": true, "plugin": plugin, "value": value}))
+            }
             "/api/task-cancel" => {
                 self.store()?
                     .move_to(string(payload, "slug"), "cancelled", "owner")?;
                 Ok(json!({"ok":true}))
             }
-            "/api/land-approve" => {
+            symphony_api::TASK_ACTION_ROUTE => {
                 let slug = string(payload, "slug");
                 let store = self.store()?;
                 let task = store.get(slug)?;
                 let branch = crate::taskview::approval_branch(&store, &task)?;
-                let problem = commit::land_call(
+                let plugins = crate::plugins::Plugins::of(&self.root);
+                let actions = plugins.board_actions();
+                // The board action that made the offer, by the name the offer gave.
+                let named = string(payload, "action");
+                let Some(action) = actions.iter().find(|action| action.name() == named) else {
+                    return Err(Failure {
+                        status: 404,
+                        error: "no such board action".into(),
+                    });
+                };
+                let done = action.submit(
                     &self.root,
-                    &json!({"method":"record_owner_approval", "branch":&branch, "patch":string(payload,"patch"), "note":string(payload,"note")}),
+                    &symphony_plugin::TaskRef {
+                        slug,
+                        status: &task.status,
+                        branch: &branch,
+                    },
+                    &symphony_plugin::Submission {
+                        payload: string(payload, "payload").into(),
+                        note: string(payload, "note").into(),
+                    },
                 )?;
-                if let Some(problem) = problem.as_str().filter(|s| !s.is_empty()) {
-                    return Err(problem.to_string().into());
+                store.say(slug, "owner", &done.said, None)?;
+                // The work it releases goes back to review. A move that fails here is made by the
+                // next landing or stamp edit, which re-reads them.
+                for held in &done.released {
+                    let _ = store.move_to(held, "review", "owner");
                 }
-                store.say(slug, "owner", &format!("approved {branch} to land"), None)?;
-                // Work its stamps held blocked waiting on this approval goes back to review. A move
-                // that fails here is made by the next landing or stamp edit, which re-reads them.
-                let released = commit::land_call(
-                    &self.root,
-                    &json!({"method":"stamps_released", "branch":&branch}),
-                );
-                for held in released
-                    .iter()
-                    .flat_map(|r| r.as_array().into_iter().flatten())
-                {
-                    if let Some(held) = held.as_str() {
-                        let _ = store.move_to(held, "review", "owner");
-                    }
-                }
-                Ok(json!({"ok":true}))
+                Ok(json!({"ok":true, "said": done.said}))
             }
             "/api/ask" | "/api/ask-reply" => self.ask(scope, route, payload),
             "/api/quick-chat" | "/api/quick-task" => self.quick(scope, route, payload),
@@ -372,7 +381,8 @@ impl Saves {
             let notify = matches!(
                 route,
                 "/api/ask" | "/api/ask-reply" | "/api/quick-chat" | "/api/message" | "/api/comment"
-            ) || (matches!(route, "/api/decision" | "/api/land-approve")
+            ) || ((route == "/api/decision"
+                || route == symphony_api::TASK_ACTION_ROUTE)
                 && !string(payload, "note").trim().is_empty());
             if notify && value["repeat"] != true {
                 let id = value["id"].as_i64();
@@ -459,6 +469,7 @@ impl Saves {
                     string(payload, "state"),
                     string(payload, "note"),
                     &now,
+                    &crate::plugins::Plugins::of(&self.root),
                 )?
             }
         };
@@ -486,7 +497,7 @@ impl Saves {
             self.committer
                 .get_or_init(|| commit::Committer::start(&self.root, self.writes.clone()))
                 .submit(commit::Edit {
-                    rel,
+                    rel: crate::project::Project::of(&root).file(&rel),
                     base: original,
                     new: text,
                 })?;

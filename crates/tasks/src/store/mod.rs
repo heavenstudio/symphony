@@ -27,6 +27,7 @@ mod callback_peer;
 mod callbacks;
 mod depends;
 mod embeddings;
+mod fields;
 mod launches;
 mod messages;
 pub(crate) mod search;
@@ -101,6 +102,8 @@ pub struct Task {
     pub roles: Vec<Role>,
     /// An instruction subtask: its executor closes it with `done`.
     pub instruction: bool,
+    /// The plugins' board fields: plugin, then field, then its value.
+    pub fields: std::collections::BTreeMap<String, std::collections::BTreeMap<String, Value>>,
 }
 
 impl Task {
@@ -659,7 +662,7 @@ impl Store {
         let said = format!("{verdict}: {}", text.trim())
             .trim_end_matches([':', ' '])
             .to_string();
-        self.rule(slug, handle, |view| {
+        let task = self.rule(slug, handle, |view| {
             view.actor(handle)?;
             let task = view.task(slug)?;
             if task.status != "review" {
@@ -678,7 +681,15 @@ impl Store {
                 }),
                 ..Change::default()
             })
-        })
+        })?;
+        if verdict == "changes" {
+            self.tell_if_unread(
+                slug,
+                None,
+                &format!("the changes verdict from {handle} to @executor"),
+            );
+        }
+        Ok(task)
     }
 
     /// The executor of an instruction subtask closes it, the note being its result.
@@ -1248,6 +1259,7 @@ impl View {
                     })
                     .collect(),
                 instruction: row.instruction,
+                fields: row.fields.clone(),
             })
             .collect()
     }

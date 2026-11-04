@@ -55,13 +55,14 @@ pub fn spawning() -> MutexGuard<'static, ()> {
     SPAWNING.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
-/// Where a child's standard stream goes: this process's own, `/dev/null`, or a descriptor handed
-/// to the child alone.
+/// Where a child's standard stream goes: this process's own, `/dev/null`, a descriptor handed
+/// to the child alone, or a pipe whose other end [`Child`] keeps.
 #[derive(Debug)]
 pub enum Stdio {
     Inherit,
     Null,
     Fd(OwnedFd),
+    Piped,
 }
 
 impl Stdio {
@@ -71,6 +72,13 @@ impl Stdio {
 
     pub fn inherit() -> Self {
         Self::Inherit
+    }
+
+    /// The stream through a real pipe of its own, as std's `Stdio::piped` makes it, which no other
+    /// spawn copies: the child gets one end, and the other is the matching `stdin`, `stdout` or
+    /// `stderr` of its [`Child`].
+    pub fn piped() -> Self {
+        Self::Piped
     }
 }
 
@@ -235,18 +243,22 @@ impl Command {
     /// Start the child, its standard streams this process's own unless set. One that cannot start
     /// fails with the error std's spawn gives it.
     pub fn spawn(&mut self) -> io::Result<Child> {
-        let streams = [self.stdin.take(), self.stdout.take(), self.stderr.take()]
+        let [stdin, stdout, stderr] = [self.stdin.take(), self.stdout.take(), self.stderr.take()]
             .map(|io| io.unwrap_or(Stdio::Inherit));
+        // Before the lock: a pipe's making takes it itself.
+        let (stdin, input) = handed(stdin, true)?;
+        let (stdout, out) = handed(stdout, false)?;
+        let (stderr, err) = handed(stderr, false)?;
         // The copies handed to the child live inside native::spawn alone.
         let process = {
             let _spawning = spawning();
-            native::spawn(self, streams)?
+            native::spawn(self, [stdin, stdout, stderr])?
         };
         Ok(Child {
             process,
-            stdin: None,
-            stdout: None,
-            stderr: None,
+            stdin: input.map(ChildStdin::from),
+            stdout: out.map(ChildStdout::from),
+            stderr: err.map(ChildStderr::from),
         })
     }
 
@@ -291,9 +303,25 @@ impl Command {
     }
 }
 
+/// What the child's stream is handed, and for a piped one the end this process keeps: the writer
+/// of an [`input_pipe`] for the child's `input`, the reader of an [`own_pipe`] for an output. The
+/// child's end goes with the spawn, so only the child ever holds it.
+fn handed(io: Stdio, input: bool) -> io::Result<(Stdio, Option<OwnedFd>)> {
+    let Stdio::Piped = io else {
+        return Ok((io, None));
+    };
+    Ok(if input {
+        let (reader, writer) = input_pipe()?;
+        (reader.into(), Some(writer.into()))
+    } else {
+        let (reader, writer) = own_pipe()?;
+        (writer.into(), Some(reader.into()))
+    })
+}
+
 /// A started child, as std's `Child` is used: its id, an end asked or waited for, and the pipes
-/// [`spawn_output`] and [`spawn_piped`] read and write it through. Dropping it neither stops nor
-/// reaps the child.
+/// its [`Stdio::piped`] streams are read and written through. Dropping it neither stops nor reaps
+/// the child.
 #[derive(Debug)]
 pub struct Child {
     process: native::Process,
@@ -609,29 +637,22 @@ pub fn spawn_output(command: &mut Command) -> io::Result<Child> {
     spawn_reading(command, Stdio::Null)
 }
 
-/// [`spawn_output`] with the child's stdin a pipe too, as `Stdio::piped` makes it: what is
-/// written to `stdin` reaches the child, which sees its end once `stdin` is dropped, whether it
-/// reads or polls: a real pipe, close-on-fork on macOS.
+/// [`spawn_output`] with the child's stdin [`Stdio::piped`] too: what is written to `stdin`
+/// reaches the child, which sees its end once `stdin` is dropped, whether it reads or polls: a
+/// real pipe, close-on-fork on macOS.
 pub fn spawn_piped(command: &mut Command) -> io::Result<Child> {
-    let (input, stdin) = input_pipe()?;
-    let mut child = spawn_reading(command, input.into())?;
-    child.stdin = Some(ChildStdin::from(OwnedFd::from(stdin)));
-    Ok(child)
+    spawn_reading(command, Stdio::Piped)
 }
 
-/// `command` started with `stdin` and both outputs read through a close-on-fork [`own_pipe`] of
-/// their own. Only the child holds the writers: [`Command::spawn`] hands its streams over.
+/// `command` started with `stdin` and both outputs [`Stdio::piped`], each read through a
+/// close-on-fork [`own_pipe`] of its own. Only the child holds the writers: [`Command::spawn`]
+/// hands its streams over.
 fn spawn_reading(command: &mut Command, stdin: Stdio) -> io::Result<Child> {
-    let (stdout, out_writer) = own_pipe()?;
-    let (stderr, err_writer) = own_pipe()?;
-    let mut child = command
+    command
         .stdin(stdin)
-        .stdout(out_writer)
-        .stderr(err_writer)
-        .spawn()?;
-    child.stdout = Some(ChildStdout::from(OwnedFd::from(stdout)));
-    child.stderr = Some(ChildStderr::from(OwnedFd::from(stderr)));
-    Ok(child)
+        .stdout(Stdio::Piped)
+        .stderr(Stdio::Piped)
+        .spawn()
 }
 
 /// What std's `Child::wait_with_output` answers for a child [`spawn_output`] or [`spawn_piped`]
@@ -792,6 +813,7 @@ mod native {
                 above_stdio(null.as_raw_fd()).map(Some)
             }
             Stdio::Fd(fd) => above_stdio(fd.as_raw_fd()).map(Some),
+            Stdio::Piped => unreachable!("Command::spawn hands a piped stream its pipe's end"),
         }
     }
 
@@ -1094,6 +1116,7 @@ mod native {
             Stdio::Inherit => std::process::Stdio::inherit(),
             Stdio::Null => std::process::Stdio::null(),
             Stdio::Fd(fd) => fd.into(),
+            Stdio::Piped => unreachable!("Command::spawn hands a piped stream its pipe's end"),
         }
     }
 
@@ -1749,6 +1772,49 @@ mod tests {
         assert_eq!(output(&mut command).unwrap().status.code(), Some(3));
         assert_eq!(output(&mut Command::new("cat")).unwrap().stdout, b"");
         assert!(output(&mut Command::new("/no/such/sf-output-command")).is_err());
+    }
+
+    #[test]
+    fn a_piped_stream_alone_or_with_others_is_read_and_written_through_its_childs_pipe() {
+        fn read(end: Option<impl Read>) -> Option<String> {
+            end.map(|mut end| {
+                let mut said = String::new();
+                end.read_to_string(&mut said).unwrap();
+                said
+            })
+        }
+        let each = [true, false, false];
+        for piped in [each, [false, true, false], [false, false, true], [true; 3]] {
+            // What reaches stdin is copied to stderr after stdout says its word.
+            let mut command = Command::new("/bin/sh");
+            command.args(["-c", "printf out; cat >&2"]);
+            let [stdin, stdout, stderr] =
+                piped.map(|piped| if piped { Stdio::piped() } else { Stdio::null() });
+            let mut child = command
+                .stdin(stdin)
+                .stdout(stdout)
+                .stderr(stderr)
+                .spawn()
+                .unwrap();
+            let ends = [
+                child.stdin.is_some(),
+                child.stdout.is_some(),
+                child.stderr.is_some(),
+            ];
+            assert_eq!(ends, piped, "only a piped stream has an end here");
+            if let Some(mut input) = child.stdin.take() {
+                input.write_all(b"in").unwrap();
+            }
+            // The command is still here: had it kept a writer, neither read would end.
+            let said = (read(child.stdout.take()), read(child.stderr.take()));
+            assert!(child.wait().unwrap().success());
+            let input = if piped[0] { "in" } else { "" };
+            let expected = (
+                piped[1].then(|| "out".into()),
+                piped[2].then(|| input.into()),
+            );
+            assert_eq!(said, expected, "{piped:?}");
+        }
     }
 
     #[test]

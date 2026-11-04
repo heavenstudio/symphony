@@ -163,9 +163,12 @@ fn open(root: &Path) -> Option<gix::Repository> {
     Some(repo)
 }
 
+/// The versions of the document named `rel` (`docs/…`): its file's history in the
+/// project's documents folder. `limit` 0 keeps them all.
 pub fn versions(root: &Path, rel: &str, limit: usize) -> Vec<Version> {
+    let file = crate::project::Project::of(root).file(rel);
     let mut rows = open(root)
-        .and_then(|repo| records(&repo, rel))
+        .and_then(|repo| records(&repo, &file))
         .unwrap_or_default();
     if limit != 0 {
         rows.truncate(limit);
@@ -218,7 +221,7 @@ pub fn diff(root: &Path, rel: &str, sha: &str) -> Option<DocumentDiff> {
     }
     let repo = open(root)?;
     let resolved = repo.rev_parse_single(sha).ok()?.detach();
-    let record = records(&repo, rel)?
+    let record = records(&repo, &crate::project::Project::of(root).file(rel))?
         .into_iter()
         .find(|record| record.id == resolved)?;
     let data = |id: Option<gix::ObjectId>| -> Option<Vec<u8>> {

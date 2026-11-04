@@ -46,8 +46,13 @@ impl Native {
         )
         .unwrap();
         std::fs::write(
+            root.join("symphony.toml"),
+            "[plugins]\ncrates = [\"star-foundry-symphony\"]\n",
+        )
+        .unwrap();
+        std::fs::write(
             root.join("docs/ships/HULLS.md"),
-            "# Hulls\n\n<div data-hull-gallery></div>\n",
+            "# Hulls\n\n[[hull-gallery:all]]\n",
         )
         .unwrap();
         std::fs::write(root.join("ui/probe.html"), r#"<!doctype html><h1>Probe</h1><script>
@@ -389,25 +394,31 @@ fn restored_mockups_keep_opaque_origins_in_frames_full_size_and_svg_hops() {
         );
     }
     browser.open(&site.url("/hulls"));
-    assert!(browser.wait_for("document.querySelectorAll('.hull-pick').length===1", SHOWN));
-    assert_eq!(texts(&mut browser, ".hull-pick strong"), ["FIRST"]);
+    assert!(browser.wait_for(
+        "document.querySelectorAll('.gallery-pick').length===1",
+        SHOWN
+    ));
+    assert_eq!(texts(&mut browser, ".gallery-pick strong"), ["FIRST"]);
     std::fs::write(
         site.root.join("view/models/hulls/SECOND.glb"),
         "new gallery record",
     )
     .unwrap();
     assert!(
-        browser.wait_for("document.querySelectorAll('.hull-pick').length===2", SHOWN),
+        browser.wait_for(
+            "document.querySelectorAll('.gallery-pick').length===2",
+            SHOWN
+        ),
         "watcher did not invalidate the warm gallery: {}",
         std::fs::read_to_string(site.root.join("artifacts/server.log")).unwrap()
     );
     assert_eq!(
-        texts(&mut browser, ".hull-pick strong"),
+        texts(&mut browser, ".gallery-pick strong"),
         ["FIRST", "SECOND"]
     );
     std::fs::remove_file(site.root.join("view/models/hulls/FIRST.glb")).unwrap();
     assert!(
-        browser.wait_for("document.querySelectorAll('.hull-pick').length===1 && document.querySelector('.hull-pick strong')?.textContent==='SECOND'", SHOWN),
+        browser.wait_for("document.querySelectorAll('.gallery-pick').length===1 && document.querySelector('.gallery-pick strong')?.textContent==='SECOND'", SHOWN),
         "removed hull remains: page={}; server={}; log={}",
         browser.eval("document.body.innerHTML"),
         browser.eval("fetch('/api/document?path=docs/ships/HULLS.md').then(r=>r.json())"),
@@ -1033,7 +1044,7 @@ fn restored_gallery_loads_only_the_selected_model_and_lightbox_uses_originals_an
         vec![
             image("first"),
             image("second"),
-            json!({"type":"media","media":{"kind":"gallery","hulls":[{"id":"FIRST","model":"/first.glb?v=one","picture":"/first-thumb.svg"},{"id":"SECOND","model":"/second.glb?v=one","picture":"/second-thumb.svg"}]}}),
+            json!({"type":"media","media":{"kind":"gallery","items":[{"name":"FIRST","src":"/first.glb?v=one","poster":"/first-thumb.svg"},{"name":"SECOND","src":"/second.glb?v=one","poster":"/second-thumb.svg"}]}}),
         ],
     );
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../..");
@@ -1053,7 +1064,7 @@ fn restored_gallery_loads_only_the_selected_model_and_lightbox_uses_originals_an
     }
     let Some(mut browser) = chrome() else { return };
     browser.open(&site.url("/docs/PROBE.md"));
-    assert!(browser.wait_for("document.querySelectorAll('.hull-pick').length===2 && document.querySelector('.doc-body img[data-zoom-ready]')?.naturalWidth===200",SHOWN),"{}; {:?}",browser.eval("document.body.innerText"),site.targets());
+    assert!(browser.wait_for("document.querySelectorAll('.gallery-pick').length===2 && document.querySelector('.doc-body img[data-zoom-ready]')?.naturalWidth===200",SHOWN),"{}; {:?}",browser.eval("document.body.innerText"),site.targets());
     assert_eq!(
         browser.eval("document.querySelectorAll('model-viewer,#review-model-viewer').length"),
         json!(0)
@@ -1091,7 +1102,7 @@ fn restored_gallery_loads_only_the_selected_model_and_lightbox_uses_originals_an
         "document.activeElement === document.querySelector('.doc-body img')",
         SHOWN
     ));
-    browser.eval("document.querySelector('.hull-pick').scrollIntoView({block:'center'});document.querySelector('.hull-pick img').click()");
+    browser.eval("document.querySelector('.gallery-pick').scrollIntoView({block:'center'});document.querySelector('.gallery-pick img').click()");
     assert!(
         browser.wait_for(
             "document.querySelector('model-viewer')?.loaded === true",
@@ -1106,7 +1117,7 @@ fn restored_gallery_loads_only_the_selected_model_and_lightbox_uses_originals_an
         json!(false)
     );
     assert!(!site.requests().contains(&"/second.glb".into()));
-    browser.eval("document.querySelectorAll('.hull-pick')[1].scrollIntoView({block:'center'});document.querySelectorAll('.hull-pick')[1].click()");
+    browser.eval("document.querySelectorAll('.gallery-pick')[1].scrollIntoView({block:'center'});document.querySelectorAll('.gallery-pick')[1].click()");
     assert!(browser.wait_for("document.querySelectorAll('model-viewer').length===1 && document.querySelector('model-viewer')?.getAttribute('src')==='/second.glb?v=one' && document.querySelector('model-viewer').loaded===true",SHOWN));
     assert!(site.requests().contains(&"/second.glb".into()));
     assert_eq!(
@@ -1130,7 +1141,7 @@ fn restored_gallery_loads_only_the_selected_model_and_lightbox_uses_originals_an
         browser.eval("document.querySelector('model-viewer').getAttribute('field-of-view')"),
         json!("auto")
     );
-    browser.eval("document.querySelectorAll('.hull-pick')[1].click()");
+    browser.eval("document.querySelectorAll('.gallery-pick')[1].click()");
     assert!(browser.wait_for(
         "document.querySelectorAll('model-viewer').length===0",
         SHOWN

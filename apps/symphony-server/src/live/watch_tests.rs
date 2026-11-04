@@ -4,6 +4,9 @@ use super::*;
 use crate::testing::{Tree, repository};
 use notify::{Config, EventHandler, PathsMut, WatcherKind};
 
+/// A project using the plugin that watches the hull models.
+const MANIFEST: &str = "[plugins]\ncrates = [\"star-foundry-symphony\"]\n";
+
 #[derive(Default)]
 struct Watch {
     active: BTreeMap<PathBuf, RecursiveMode>,
@@ -67,6 +70,7 @@ impl PathsMut for Update<'_> {
 fn watches_are_batched_and_unchanged_inputs_do_not_restart_the_stream() {
     let tree = Tree::new();
     let root = repository(&tree);
+    tree.write("main/symphony.toml", MANIFEST);
     let hub = Hub::new(&root, &root.join("build/client"));
     let mut watcher = Watch::default();
     let mut watched = BTreeSet::new();
@@ -99,6 +103,7 @@ fn watches_are_batched_and_unchanged_inputs_do_not_restart_the_stream() {
 fn failed_adds_are_retried_and_a_failed_commit_is_not_marked_watched() {
     let tree = Tree::new();
     let root = repository(&tree);
+    tree.write("main/symphony.toml", MANIFEST);
     let hub = Hub::new(&root, &root.join("build/client"));
     let docs = root.join("docs");
     let mut watcher = Watch {

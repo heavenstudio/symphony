@@ -6,11 +6,10 @@ use sha2::{Digest, Sha256};
 use std::collections::BTreeSet;
 use std::fs::{self, File, OpenOptions, TryLockError};
 use std::io::Read;
-use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
 use std::sync::LazyLock;
 use std::time::Duration;
+use tasks::sys::{Child, Command, Stdio};
 
 const POLL: Duration = Duration::from_millis(50);
 const BUILD_GRACE: Duration = Duration::from_secs(2);
@@ -63,7 +62,7 @@ impl Drop for BuildProcess {
 
 fn git(root: &Path, args: &[&str]) -> Result<String, String> {
     let done = tasks::sys::output(
-        tasks::sys::Command::new("git")
+        Command::new("git")
             .args(args)
             .current_dir(root)
             .env_remove("GIT_DIR")
@@ -86,7 +85,8 @@ pub fn main_only(root: &Path) -> Result<(), String> {
         .next()
         .and_then(|s| s.strip_prefix("worktree "));
     if main.map(Path::new).and_then(|p| p.canonicalize().ok()) != root.canonicalize().ok()
-        || git(root, &["symbolic-ref", "--quiet", "--short", "HEAD"])? != "main"
+        || git(root, &["symbolic-ref", "--quiet", "--short", "HEAD"])?
+            != crate::project::Project::of(root).default_branch
     {
         return Err(format!(
             "{} is not the main checkout on main",
@@ -394,14 +394,30 @@ pub fn build(
             &home.join("client/public/assets"),
             &client.stage.join("public/assets"),
         )?;
-        let mut command = Command::new("just");
-        command.arg("symphony-ui-dist").arg(&client.stage);
-        run_build(command, root, "Symphony client", &stopping)?;
+        run_build(
+            client_build(&client.stage),
+            root,
+            "Symphony client",
+            &stopping,
+        )?;
         client.stamp.distribution = distribution(&client.stage.join("public"))?;
         Some(client)
     } else {
         None
     };
+    run_build(server_build(root, home), root, "symphony-server", stopping)?;
+    Ok(client)
+}
+
+/// The client's release bundle, written under `stage` by main's recipe.
+fn client_build(stage: &Path) -> Command {
+    let mut command = Command::new("just");
+    command.arg("symphony-ui-dist").arg(stage);
+    command
+}
+
+/// The server binary, installed under `home` by main's cargo wrapper.
+fn server_build(root: &Path, home: &Path) -> Command {
     let mut command = Command::new(root.join("tools/rs-bin.sh"));
     command
         .args([
@@ -422,10 +438,13 @@ pub fn build(
             "--root",
         ])
         .arg(home);
-    run_build(command, root, "symphony-server", stopping)?;
-    Ok(client)
+    command
 }
 
+/// Run one build from `root` in a process group of its own, its diagnostics the error when it fails.
+/// It starts without a fork and inherits only its streams (tasks::sys::Command): macOS's accept
+/// marks a connection close-on-exec in a second call, and a build started between the two would
+/// hold that client's connection open for its whole run.
 fn run_build(
     mut command: Command,
     root: &Path,
@@ -444,10 +463,8 @@ fn run_build(
         .stdout(Stdio::null())
         .stderr(writer)
         .process_group(0)
-        .spawn();
-    // Command keeps the descriptors it was given after spawn.
-    command.stderr(Stdio::null());
-    let child = child.map_err(|e| format!("could not build {product}: {e}"))?;
+        .spawn()
+        .map_err(|e| format!("could not build {product}: {e}"))?;
     let mut process = BuildProcess {
         child,
         reaped: false,
@@ -498,3 +515,7 @@ fn run_build(
     }
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "reload/build_tests.rs"]
+mod build_tests;

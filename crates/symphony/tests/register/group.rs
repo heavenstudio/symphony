@@ -3,13 +3,14 @@
 use symphony::register::{Group, resolve};
 
 use crate::card;
+use crate::common::{plain, star_foundry};
 
 fn group(lines: &[&str]) -> Group {
-    card(lines).group()
+    card(lines).group(&plain())
 }
 
 fn resolvable(lines: &[&str]) -> bool {
-    card(lines).resolvable()
+    card(lines).resolvable(&plain())
 }
 
 const QUESTION: [&str; 3] = [
@@ -85,8 +86,8 @@ fn owner_words_wait_on_an_agent() {
 #[test]
 fn a_dismissed_card_is_resolved_and_asks_nothing_of_an_agent() {
     let found = card(&["- [~] **a** — 1", "  [2026-09-25 15:40] owner · dismissed"]);
-    assert_eq!(found.group(), Group::Resolved);
-    assert!(!found.open());
+    assert_eq!(found.group(&plain()), Group::Resolved);
+    assert!(!found.open(&plain()));
 }
 
 #[test]
@@ -95,8 +96,8 @@ fn a_dismissal_with_a_comment_still_waits_for_a_reply() {
         "- [~] **a** — 1",
         "  [2026-09-25 15:40] owner · dismissed — duplicate of b",
     ]);
-    assert!(found.open());
-    assert_eq!(found.group(), Group::Agent);
+    assert!(found.open(&plain()));
+    assert_eq!(found.group(&plain()), Group::Agent);
 }
 
 #[test]
@@ -138,11 +139,12 @@ fn golden_approvals_wait_for_application_and_survive_tidy() {
     let head = "- [x] **golden-change** — Review the captured frame. *Golden:* frame";
     let approved = "  [2026-10-28 12:00] owner · approved";
     let lines = [head, approved];
+    let sf = &star_foundry();
     let found = card(&lines);
-    assert_eq!(found.group(), Group::Agent);
-    assert!(found.open());
-    assert!(!found.resolvable());
-    let (tidied, changed) = resolve(&(lines.join("\n") + "\n"), "2026-10-28 12:05");
+    assert_eq!(found.group(sf), Group::Agent);
+    assert!(found.open(sf));
+    assert!(!found.resolvable(sf));
+    let (tidied, changed) = resolve(&(lines.join("\n") + "\n"), "2026-10-28 12:05", sf);
     assert!(changed.is_empty());
     assert!(tidied.contains("- [x] **golden-change**"));
     let applied = card(&[
@@ -150,9 +152,9 @@ fn golden_approvals_wait_for_application_and_survive_tidy() {
         approved,
         "  [2026-10-28 12:10] agent — Blessed the reviewed frame.",
     ]);
-    assert_eq!(applied.group(), Group::Resolved);
-    assert!(!applied.open());
-    assert!(applied.resolvable());
+    assert_eq!(applied.group(sf), Group::Resolved);
+    assert!(!applied.open(sf));
+    assert!(applied.resolvable(sf));
     for (mark, verdict, group) in [
         ("-", "rejected", Group::Agent),
         ("?", "question", Group::Agent),
@@ -161,15 +163,30 @@ fn golden_approvals_wait_for_application_and_survive_tidy() {
     ] {
         let head = format!("- [{mark}] **golden-change** — Frame. *Golden:* frame");
         let owner = format!("  [2026-10-28 12:00] owner · {verdict}");
-        assert_eq!(card(&[&head, &owner]).group(), group, "{verdict}");
+        assert_eq!(card(&[&head, &owner]).group(sf), group, "{verdict}");
     }
+}
+
+#[test]
+fn a_project_without_the_golden_frame_kind_settles_an_approved_golden_card() {
+    let lines = [
+        "- [x] **golden-change** — Review the captured frame. *Golden:* frame",
+        "  [2026-10-28 12:00] owner · approved",
+    ];
+    let found = card(&lines);
+    assert_eq!(found.group(&plain()), Group::Resolved);
+    assert!(!found.open(&plain()));
+    assert!(found.resolvable(&plain()));
+    let (tidied, changed) = resolve(&(lines.join("\n") + "\n"), "2026-10-28 12:05", &plain());
+    assert_eq!(changed, ["golden-change"]);
+    assert!(tidied.contains("- [r] **golden-change**"), "{tidied}");
 }
 
 #[test]
 fn an_agent_question_under_an_approval_keeps_the_card_open_for_the_owner() {
     let found = card(&QUESTION);
-    assert!(!found.resolvable());
-    assert_eq!(found.group(), Group::Decide);
+    assert!(!found.resolvable(&plain()));
+    assert_eq!(found.group(&plain()), Group::Decide);
     assert_eq!(
         found.entries().last().unwrap().verdict.as_deref(),
         Some("question")
@@ -178,7 +195,7 @@ fn an_agent_question_under_an_approval_keeps_the_card_open_for_the_owner() {
 
 #[test]
 fn an_agent_question_is_not_tidied() {
-    let (text, changed) = resolve(&(QUESTION.join("\n") + "\n"), "2026-10-03 09:00");
+    let (text, changed) = resolve(&(QUESTION.join("\n") + "\n"), "2026-10-03 09:00", &plain());
     assert!(changed.is_empty());
     assert!(text.contains("- [x] **a**"), "{text}");
     assert!(!text.contains("resolved"), "{text}");
@@ -192,10 +209,10 @@ fn a_plain_agent_line_still_resolves_an_approval() {
         "  [2026-10-03 08:21] agent — Done, the base one is C.",
     ];
     let found = card(&lines);
-    assert!(found.resolvable());
-    assert_eq!(found.group(), Group::Resolved);
+    assert!(found.resolvable(&plain()));
+    assert_eq!(found.group(&plain()), Group::Resolved);
     assert_eq!(
-        resolve(&(lines.join("\n") + "\n"), "2026-10-03 09:00").1,
+        resolve(&(lines.join("\n") + "\n"), "2026-10-03 09:00", &plain()).1,
         vec!["a"]
     );
 }
@@ -208,8 +225,8 @@ fn a_plain_agent_line_ending_in_a_question_mark_is_still_an_answer() {
         "  [2026-10-03 08:21] agent — Recorded as C, is that what you meant?",
     ]);
     assert!(!found.asks_owner());
-    assert!(found.resolvable());
-    assert_eq!(found.group(), Group::Resolved);
+    assert!(found.resolvable(&plain()));
+    assert_eq!(found.group(&plain()), Group::Resolved);
 }
 
 #[test]
@@ -218,8 +235,8 @@ fn a_later_plain_agent_line_withdraws_the_question() {
         "  [2026-10-03 08:40] agent — Found it myself: C.",
     ]));
     assert!(!found.asks_owner());
-    assert!(found.resolvable());
-    assert_eq!(found.group(), Group::Resolved);
+    assert!(found.resolvable(&plain()));
+    assert_eq!(found.group(&plain()), Group::Resolved);
 }
 
 #[test]
@@ -231,11 +248,11 @@ fn a_later_resolved_line_does_not_withdraw_it() {
 fn the_owner_answering_the_question_reopens_it_for_the_agent_then_resolves() {
     let answered = question_and(&["  [2026-10-03 09:00] owner — C"]);
     let found = card(&answered);
-    assert!(!found.resolvable());
-    assert_eq!(found.group(), Group::Agent);
+    assert!(!found.resolvable(&plain()));
+    assert_eq!(found.group(&plain()), Group::Agent);
     let mut done = answered.clone();
     done.push("  [2026-10-03 09:05] agent — Recorded C.");
-    assert!(card(&done).resolvable());
+    assert!(card(&done).resolvable(&plain()));
 }
 
 #[test]
@@ -304,9 +321,9 @@ fn a_comment_nobody_answered_blocks_resolving_even_after_a_plain_reapproval() {
         "  [2026-09-24 10:00] owner · approved — at least 21",
         "  [2026-09-24 10:05] owner · approved",
     ]);
-    assert!(!found.resolvable());
-    assert!(found.open());
-    assert_eq!(found.group(), Group::Agent);
+    assert!(!found.resolvable(&plain()));
+    assert!(found.open(&plain()));
+    assert_eq!(found.group(&plain()), Group::Agent);
     assert_eq!(found.unanswered(), vec!["at least 21"]);
 }
 
@@ -318,7 +335,7 @@ fn a_comment_answered_then_reapproved_resolves() {
         "  [2026-09-24 11:00] agent — done",
         "  [2026-09-24 12:00] owner · approved",
     ]);
-    assert!(found.resolvable());
+    assert!(found.resolvable(&plain()));
     assert!(found.unanswered().is_empty());
 }
 
@@ -332,7 +349,7 @@ fn open_means_agent_work() {
         "  [2026-09-24] agent — reply",
     ]);
     assert_eq!(
-        found.iter().map(|c| c.open()).collect::<Vec<_>>(),
+        found.iter().map(|c| c.open(&plain())).collect::<Vec<_>>(),
         vec![true, false]
     );
 }

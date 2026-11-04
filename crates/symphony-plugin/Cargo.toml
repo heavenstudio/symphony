@@ -1,0 +1,11 @@
+# What a Symphony plugin implements: the traits of each seam, and the block vocabulary of symphony-api
+# it renders to. Data in, data out, so a sidecar adapter can implement a trait later.
+[package]
+name = "symphony-plugin"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+symphony-api = { path = "../symphony-api" }

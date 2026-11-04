@@ -127,8 +127,8 @@ pub(crate) struct Hub {
     latest_message: Mutex<Option<i64>>,
     pub task_signoff: Mutex<Vec<String>>,
     branches: Mutex<Vec<branches::BranchCard>>,
-    gallery_changes: Mutex<BTreeSet<PathBuf>>,
-    warmed_galleries: Mutex<BTreeMap<PathBuf, Sweep>>,
+    watch_changes: Mutex<BTreeSet<PathBuf>>,
+    warmed_watches: Mutex<BTreeMap<PathBuf, Sweep>>,
     callbacks: Mutex<Option<symphony::callbacks::Flusher>>,
     dirty: Mutex<BTreeSet<PathBuf>>,
     /// What the backstop last saw of main and the served trees.
@@ -218,8 +218,8 @@ impl Hub {
             latest_message: Mutex::new(None),
             task_signoff: Mutex::new(Vec::new()),
             branches: Mutex::new(Vec::new()),
-            gallery_changes: Mutex::new(BTreeSet::new()),
-            warmed_galleries: Mutex::new(BTreeMap::new()),
+            watch_changes: Mutex::new(BTreeSet::new()),
+            warmed_watches: Mutex::new(BTreeMap::new()),
             callbacks: Mutex::new(None),
             dirty: Mutex::new(BTreeSet::new()),
             swept: Mutex::new(Sweep::default()),
@@ -317,7 +317,7 @@ impl Hub {
         }
     }
 
-    /// Queue one watcher notification, retaining gallery invalidation until its tree is refreshed.
+    /// Queue one watcher notification, retaining a watched input's change until its tree is refreshed.
     fn record_event(&self, event: notify::Result<notify::Event>) -> bool {
         if event
             .as_ref()
@@ -341,12 +341,18 @@ impl Hub {
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .extend(paths.iter().cloned());
-        let mut dirty = self
-            .gallery_changes
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
+        let roots: Vec<PathBuf> = std::iter::once(self.root.clone())
+            .chain(
+                self.trees
+                    .read()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .values()
+                    .cloned(),
+            )
+            .collect();
+        let mut dirty = self.watch_changes.lock().unwrap_or_else(|e| e.into_inner());
         for path in paths {
-            if let Some(root) = gallery_root(&path) {
+            if let Some(root) = watched_root(&roots, &path) {
                 dirty.insert(root.to_path_buf());
             }
         }
@@ -396,9 +402,9 @@ impl Hub {
         })?;
         // Stamped before the read, so the sweep that first covers this tree reports only what
         // changed after it.
-        let roots: Vec<_> = TREE_INPUTS
-            .iter()
-            .map(|&(below, mode)| (root.clone(), below, mode))
+        let roots: Vec<_> = tree_inputs(&root)
+            .into_iter()
+            .map(|(below, mode)| (root.clone(), below, mode))
             .collect();
         self.swept
             .lock()
@@ -513,18 +519,20 @@ impl Hub {
         // clear their comparisons without touching a single file in the branch checkout.
         let baseline_changed = self.common.as_ref().is_some_and(|common| {
             dirty.is_none_or(|paths| {
-                paths.contains(&common.join("refs/heads/main"))
-                    || paths.contains(&common.join("packed-refs"))
+                paths.contains(&common.join(format!(
+                    "refs/heads/{}",
+                    symphony::project::Project::of(&self.root).default_branch
+                ))) || paths.contains(&common.join("packed-refs"))
             })
         });
         for scope in scopes {
             let root = self.tree(&scope);
             // A page that goes, or follows its tree to another folder, leaves that folder's
-            // gallery cold, so serving the folder again reads its models afresh.
+            // watched inputs cold, so serving the folder again reads them afresh.
             if let Some(left) = previous.get(&scope)
                 && root.as_ref() != Some(left)
             {
-                self.forget_gallery(left);
+                self.forget_watched(left);
             }
             if let Some(root) = root {
                 let documents_changed = baseline_changed
@@ -551,17 +559,19 @@ impl Hub {
         main
     }
 
-    /// Drop `root`'s warm gallery, so its next read builds it afresh.
-    fn forget_gallery(&self, root: &Path) {
-        self.warmed_galleries
+    /// Drop what the plugins' watches keep for `root`, so its next read builds it afresh.
+    fn forget_watched(&self, root: &Path) {
+        self.warmed_watches
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .remove(root);
-        self.gallery_changes
+        self.watch_changes
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .remove(root);
-        symphony::models::invalidate(root);
+        for watch in symphony::plugins::Plugins::of(root).watches() {
+            watch.forget(root);
+        }
     }
 
     pub fn queue_order(&self) -> Result<Arc<symphony::postpone::View>, String> {
@@ -620,39 +630,42 @@ impl Hub {
         root: &Path,
         documents_changed: bool,
     ) -> Result<(), String> {
-        let gallery_changed = self
-            .gallery_changes
+        let watched_changed = self
+            .watch_changes
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .remove(root);
-        let mut galleries = self
-            .warmed_galleries
+        let mut warmed = self
+            .warmed_watches
             .lock()
             .unwrap_or_else(|e| e.into_inner());
-        let inputs =
-            GALLERY_INPUTS.map(|below| (root.to_path_buf(), below, RecursiveMode::Recursive));
+        let inputs: Vec<_> = watched(root)
+            .into_iter()
+            .map(|below| (root.to_path_buf(), below, RecursiveMode::Recursive))
+            .collect();
         // A native notification can arrive after the read that already included its edit.
         // Compare with the inputs stamped before that read, retaining edits made during it.
-        let rebuild = match galleries.entry(root.to_path_buf()) {
+        let rebuild = match warmed.entry(root.to_path_buf()) {
             std::collections::btree_map::Entry::Vacant(entry) => {
                 entry.insert(Sweep::new(&inputs));
                 true
             }
             std::collections::btree_map::Entry::Occupied(mut entry) => {
-                gallery_changed && !entry.get_mut().next(&inputs).is_empty()
+                watched_changed && !entry.get_mut().next(&inputs).is_empty()
             }
         };
         if rebuild {
-            symphony::models::invalidate(root);
-            let gallery_started = Instant::now();
-            let hulls = symphony::models::warm(root);
-            eprintln!(
-                "→ hull gallery warmed: {}: {hulls} models in {:.1} ms",
-                root.display(),
-                gallery_started.elapsed().as_secs_f64() * 1000.0
-            );
+            for watch in symphony::plugins::Plugins::of(root).watches() {
+                let started = Instant::now();
+                if let Some(line) = watch.changed(root) {
+                    eprintln!(
+                        "→ {line} in {:.1} ms",
+                        started.elapsed().as_secs_f64() * 1000.0
+                    );
+                }
+            }
         }
-        drop(galleries);
+        drop(warmed);
         let snapshot = measured("dashboard", || {
             if scope.is_empty() {
                 let cards = self.branches.lock().unwrap_or_else(|e| e.into_inner());
@@ -1090,7 +1103,7 @@ impl Hub {
             .collect();
         self.inputs(&trees)
             .into_iter()
-            .map(|(base, below, mode)| (crate::backstop::joined(&base, below), mode))
+            .map(|(base, below, mode)| (crate::backstop::joined(&base, &below), mode))
             .collect()
     }
 
@@ -1127,21 +1140,21 @@ impl Hub {
 
     /// Each input as the folder it belongs to (main, a tree, the client build, the common folder)
     /// and its path below that folder.
-    fn inputs(&self, trees: &[PathBuf]) -> Vec<(PathBuf, &'static str, RecursiveMode)> {
-        let mut paths: Vec<_> = TREE_INPUTS
-            .iter()
-            .chain(&[("build", RecursiveMode::NonRecursive)])
-            .map(|&(below, mode)| (self.root.clone(), below, mode))
+    fn inputs(&self, trees: &[PathBuf]) -> Vec<crate::backstop::Root> {
+        let mut paths: Vec<_> = tree_inputs(&self.root)
+            .into_iter()
+            .chain([("build".to_string(), RecursiveMode::NonRecursive)])
+            .map(|(below, mode)| (self.root.clone(), below, mode))
             .collect();
         paths.push((
             self.ui_dist.parent().unwrap_or(&self.root).to_path_buf(),
-            "",
+            String::new(),
             RecursiveMode::Recursive,
         ));
         paths.extend(trees.iter().flat_map(|root| {
-            TREE_INPUTS
-                .iter()
-                .map(|&(below, mode)| (root.clone(), below, mode))
+            tree_inputs(root)
+                .into_iter()
+                .map(|(below, mode)| (root.clone(), below, mode))
         }));
         if let Some(common) = &self.common {
             paths.extend(
@@ -1150,7 +1163,7 @@ impl Hub {
                     ("refs", RecursiveMode::Recursive),
                     ("worktrees", RecursiveMode::Recursive),
                 ]
-                .map(|(below, mode)| (common.clone(), below, mode)),
+                .map(|(below, mode)| (common.clone(), below.to_string(), mode)),
             );
         }
         paths
@@ -1196,22 +1209,31 @@ impl Hub {
     }
 }
 
-fn gallery_root(path: &Path) -> Option<&Path> {
-    for input in GALLERY_INPUTS {
-        if let Some(folder) = path.ancestors().find(|p| p.ends_with(input)) {
-            return folder
-                .ancestors()
-                .nth(Path::new(input).components().count());
-        }
-    }
-    None
+/// Of `roots`, the checkout a changed path belongs to when it is below a path its project's plugins
+/// watch; the deepest, as a worktree may sit inside another checkout.
+fn watched_root<'a>(roots: &'a [PathBuf], path: &Path) -> Option<&'a Path> {
+    roots
+        .iter()
+        .filter(|root| {
+            watched(root)
+                .iter()
+                .any(|input| path.starts_with(root.join(input)))
+        })
+        .max_by_key(|root| root.components().count())
+        .map(PathBuf::as_path)
 }
 
-const GALLERY_INPUTS: [&str; 3] = [
-    "view/models",
-    "artifacts/concepts",
-    "docs/data/hull-outlines",
-];
+/// The paths below the checkout at `root` its project's plugins' watches read.
+fn watched(root: &Path) -> Vec<String> {
+    let mut paths: Vec<String> = symphony::plugins::Plugins::of(root)
+        .watches()
+        .into_iter()
+        .flat_map(|watch| watch.paths())
+        .collect();
+    paths.sort();
+    paths.dedup();
+    paths
+}
 
 fn scope_affected(
     previous: Option<&Path>,
@@ -1249,12 +1271,19 @@ fn relevant(common: Option<&Path>, path: &Path) -> bool {
     }
 }
 
-/// What each checkout adds to the watched and swept paths: its documents, models and concepts.
-const TREE_INPUTS: [(&str, RecursiveMode); 3] = [
-    ("docs", RecursiveMode::Recursive),
-    ("view/models", RecursiveMode::Recursive),
-    ("artifacts/concepts", RecursiveMode::Recursive),
-];
+/// What the checkout at `root` adds to the watched and swept paths: its project's documents and
+/// what its plugins watch outside them.
+fn tree_inputs(root: &Path) -> Vec<(String, RecursiveMode)> {
+    let docs = symphony::project::Project::of(root).docs.clone();
+    let outside: Vec<String> = watched(root)
+        .into_iter()
+        .filter(|path| !Path::new(path).starts_with(&docs))
+        .collect();
+    std::iter::once(docs)
+        .chain(outside)
+        .map(|below| (below, RecursiveMode::Recursive))
+        .collect()
+}
 
 fn document_change(
     page: &mut Page,
@@ -2071,7 +2100,7 @@ mod tests {
         let swept: BTreeSet<_> = hub
             .swept_paths()
             .into_iter()
-            .map(|(base, below, _)| crate::backstop::joined(&base, below))
+            .map(|(base, below, _)| crate::backstop::joined(&base, &below))
             .collect();
         for path in [root.join("docs"), tree.path("served/docs")] {
             assert!(swept.contains(&path), "{}", path.display());

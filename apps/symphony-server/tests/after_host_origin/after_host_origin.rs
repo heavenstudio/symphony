@@ -449,9 +449,24 @@ printf '%s\n' '{"Self":{"DNSName":"review-fixture.tail.test.","TailscaleIPs":["f
         feed.until("server notice", |line| line.starts_with("event: server"));
         feed
     }
-    /// Stands in for `tools/rs-bin.sh sf-land api`: records each request in `land.calls`, accepts an
-    /// owner approval and answers the stamps' release with the JSON `released`.
+    /// Stands in for `tools/rs-bin.sh sf-land api`: records each request in `land.calls`, offers the
+    /// patch `fixture-patch`, accepts an owner approval and answers the stamps' release with the
+    /// JSON `released`. The checkout's
+    /// project file names the Star Foundry plugin, whose approve-to-land calls it.
     pub fn land_stand_in(&self, released: &str) {
+        self.land_answering("", released);
+    }
+
+    /// [`Self::land_stand_in`], answering an owner approval with `refusal` (none when empty).
+    pub fn land_answering(&self, refusal: &str, released: &str) {
+        std::fs::write(
+            self.root.join(symphony::project::FILE),
+            format!(
+                "[plugins]\ncrates = [\"{}\"]\n",
+                symphony::star_foundry::NAME
+            ),
+        )
+        .unwrap();
         let stub = self.root.join("tools/rs-bin.sh");
         std::fs::create_dir_all(stub.parent().unwrap()).unwrap();
         crate::fixture_script::write(
@@ -463,12 +478,13 @@ printf '%s\n' '{"Self":{"DNSName":"review-fixture.tail.test.","TailscaleIPs":["f
                     "request=$(cat)\n",
                     "printf '%s\\n' \"$request\" >> \"$PWD/land.calls\"\n",
                     "case \"$request\" in\n",
-                    "  *record_owner_approval*) printf '\"\"\\n' ;;\n",
+                    "  *owner_offer*) printf '%s\\n' '\"fixture-patch\"' ;;\n",
+                    "  *record_owner_approval*) printf '%s\\n' '\"{}\"' ;;\n",
                     "  *stamps_released*) printf '%s\\n' '{}' ;;\n",
                     "  *) exit 92 ;;\n",
                     "esac\n"
                 ),
-                released
+                refusal, released
             ),
             false,
         );
@@ -576,7 +592,7 @@ printf '%s\n' '{"Self":{"DNSName":"review-fixture.tail.test.","TailscaleIPs":["f
             document: self.document_text(),
             asks: serde_json::to_string(&self.asks().all().unwrap()).unwrap(),
             board: serde_json::to_value(self.board.dump().unwrap()).unwrap(),
-            uploads: std::fs::read_dir(self.root.join(symphony::uploads::DIR))
+            uploads: std::fs::read_dir(symphony::uploads::dir(&self.root))
                 .map(|dir| {
                     let mut files: Vec<_> = dir
                         .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())

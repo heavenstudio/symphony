@@ -14,9 +14,9 @@ use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::Path;
-use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 use symphony_server::home::{Home, ServerError};
+use tasks::sys::{Command, Stdio};
 
 #[test]
 fn symphony_recipes_find_and_stop_a_live_predecessor_record_on_a_private_port() {
@@ -976,13 +976,8 @@ fn a_private_server_ends_when_its_exact_starter_process_dies() {
     let log = repo.base.join("orphan-server");
     // The shell owns the child, writes its pid, then waits. It is killed only after the native
     // server acknowledges readiness, so the parent monitor is certainly armed first.
-    let mut command = repo.command(&repo.tree);
-    let env: Vec<_> = command
-        .get_envs()
-        .filter_map(|(k, v)| v.map(|v| (k.to_owned(), v.to_owned())))
-        .collect();
-    command = Command::new("/bin/bash");
-    command.env_clear().envs(env).current_dir(&repo.tree).stdin(Stdio::null())
+    let mut command = Command::new("/bin/bash");
+    command.env_clear().envs(repo.environment()).current_dir(&repo.tree).stdin(Stdio::null())
         .args(["-c", "\"$1\" --port 0 --host 127.0.0.1 >\"$2.out\" 2>\"$2.err\" & child=$!; printf '%s\\n' \"$child\" >\"$3\"; wait \"$child\"", "lifecycle-parent", fixture::APP, log.to_str().unwrap(), pid_file.to_str().unwrap()]);
     let mut parent = repo.run(command);
     let pid: i64 = until("owned child pid", || {

@@ -463,9 +463,14 @@ fn whole(raw: &[u8]) -> Result<Option<Reply>, String> {
 }
 
 /// Send `request` to `addr` on a connection of its own and read the response to its end. Its socket
-/// is the client's kind ([`crate::sys::connect`]): a copy a spawn took during the probe would
-/// drain it, and its read's EBADF would say a live server is not healthy.
-fn exchange(addr: &str, request: &[u8], timeout: Duration) -> Result<(u16, Vec<u8>), String> {
+/// is the client's kind ([`crate::sys::connect`]): a copy a spawn took during the exchange would
+/// drain it, and its read's EBADF would fail a live server's answer (a health probe would say it
+/// is not healthy).
+pub(crate) fn exchange(
+    addr: &str,
+    request: &[u8],
+    timeout: Duration,
+) -> Result<(u16, Vec<u8>), String> {
     let cannot = |e: std::io::Error| format!("cannot reach the server at {addr}: {e}");
     let to = addr
         .to_socket_addrs()

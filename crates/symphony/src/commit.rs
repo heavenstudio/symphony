@@ -12,7 +12,9 @@ use tasks::sys::Command;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::landing::{PrivateWorktree, default_generators, is_doc};
+use crate::landing::{PrivateWorktree, generators, is_doc_in};
+use crate::plugins::Plugins;
+use crate::project::Project;
 
 type Blobs = BTreeMap<String, String>;
 
@@ -223,6 +225,15 @@ mod metadata_tests {
             assert!(!on_main(&root.join("detached")));
             assert!(write_lock(&root.join("bare")).unwrap().is_none());
             assert!(write_lock(&root.join("plain")).unwrap().is_none());
+            // A project naming no record keeps none; one naming a `.git/` folder keeps it in the
+            // common directory, from whichever checkout records it.
+            record(&root.join("linked"), "unrecorded").unwrap();
+            assert!(!expected.join("sf-land/verdicts/unrecorded").exists());
+            std::fs::write(
+                root.join("linked").join(crate::project::FILE),
+                "[verdicts]\nrecord = \".git/sf-land/verdicts\"\n",
+            )
+            .unwrap();
             record(&root.join("linked"), "fixture").unwrap();
             assert!(expected.join("sf-land/verdicts/fixture").is_file());
             // Each call reads HEAD again; there is no path-keyed metadata cache.
@@ -479,7 +490,7 @@ fn retry_conflicts<T>(
             Ok(done) => return Ok(done),
             Err(CommitError::Failed(message)) => return Err(message),
             Err(CommitError::Retry(message)) => {
-                let main = git(root, &["rev-parse", "refs/heads/main"])?;
+                let main = git(root, &["rev-parse", &main_ref(root)])?;
                 if !older_backlogs(root, sequence)?
                     && previous_main.as_deref() == Some(main.as_str())
                 {
@@ -560,6 +571,13 @@ fn git(root: &Path, args: &[&str]) -> Result<String, String> {
     checked(run(root, args, None, None)?).map(|s| s.trim_end_matches('\n').to_string())
 }
 
+/// The ref of the default branch of the project at `root` (`refs/heads/main`), where verdicts are
+/// committed.
+fn main_ref(root: &Path) -> String {
+    format!("refs/heads/{}", Project::of(root).default_branch)
+}
+
+/// Whether the checkout at `root` is on its project's default branch.
 pub fn on_main(root: &Path) -> bool {
     if let Some(repo) = repository_metadata(root)
         && let Ok(head) = repo.head()
@@ -571,10 +589,10 @@ pub fn on_main(root: &Path) -> bool {
         if !chained {
             return head
                 .referent_name()
-                .is_some_and(|name| name.as_bstr() == "refs/heads/main");
+                .is_some_and(|name| name.as_bstr() == main_ref(root).as_str());
         }
     }
-    git(root, &["symbolic-ref", "--quiet", "HEAD"]).is_ok_and(|branch| branch == "refs/heads/main")
+    git(root, &["symbolic-ref", "--quiet", "HEAD"]).is_ok_and(|branch| branch == main_ref(root))
 }
 
 /// Landing owns the approval rules. Call its binary to avoid a review -> gate -> review cycle.
@@ -598,6 +616,7 @@ pub fn land_call(root: &Path, request: &Value) -> Result<Value, String> {
 }
 
 fn merge(root: &Path, current: &str, base: &str, new: &str) -> Result<String, CommitError> {
+    let plugins = &Plugins::of(root);
     let _stage = PublicationStage::start(format_args!("merge saved text"));
     // A worktree also provides a unique, RAII-owned scratch directory. No checkout is needed for
     // merge-file: create the three files under an ordinary per-call directory instead.
@@ -620,8 +639,8 @@ fn merge(root: &Path, current: &str, base: &str, new: &str) -> Result<String, Co
         .code()
         .is_some_and(|code| (1..=127).contains(&code))
     {
-        if let Some(merged) = merge_history(current, base, new) {
-            return mark_unseen_replies(current, new, &merged);
+        if let Some(merged) = merge_history(current, base, new, plugins) {
+            return mark_unseen_replies(current, new, &merged, plugins);
         }
         return Err(CommitError::Retry(checked(done).unwrap_err()));
     }
@@ -629,14 +648,14 @@ fn merge(root: &Path, current: &str, base: &str, new: &str) -> Result<String, Co
     // A clean line merge must keep the three-way choice of each slug's count. This admits
     // independent additions and removals, but catches duplicated moves and resurrected cards.
     match card_count_mismatch(current, base, new, &merged) {
-        Some(false) => mark_unseen_replies(current, new, &merged),
-        Some(true) => merge_history(current, base, new)
+        Some(false) => mark_unseen_replies(current, new, &merged, plugins),
+        Some(true) => merge_history(current, base, new, plugins)
             .ok_or_else(|| {
                 CommitError::Retry(
                     "the text merge disagrees with the three-way decision card counts".into(),
                 )
             })
-            .and_then(|merged| mark_unseen_replies(current, new, &merged)),
+            .and_then(|merged| mark_unseen_replies(current, new, &merged, plugins)),
         None => Err(CommitError::Retry(
             "the decision card counts conflict".into(),
         )),
@@ -645,7 +664,12 @@ fn merge(root: &Path, current: &str, base: &str, new: &str) -> Result<String, Co
 
 /// A reply already on main cannot answer an owner entry absent from that version of the card.
 /// Store that relation on the card, outside its immutable, chronologically ordered posts.
-fn mark_unseen_replies(current: &str, new: &str, merged: &str) -> Result<String, CommitError> {
+fn mark_unseen_replies(
+    current: &str,
+    new: &str,
+    merged: &str,
+    plugins: &Plugins,
+) -> Result<String, CommitError> {
     use crate::register::{Who, entry_keys, parse_decisions, unseen_marker, unseen_reply};
     use std::collections::BTreeSet;
 
@@ -714,7 +738,8 @@ fn mark_unseen_replies(current: &str, new: &str, merged: &str) -> Result<String,
         }
         result.push_str(line);
     }
-    crate::register::sort_register(&result).map_err(|error| CommitError::Failed(error.to_string()))
+    crate::register::sort_register(&result, plugins)
+        .map_err(|error| CommitError::Failed(error.to_string()))
 }
 
 fn card_counts(text: &str) -> BTreeMap<String, usize> {
@@ -856,7 +881,11 @@ fn same_skeleton(
 /// Group headings, spacing between cards and card order in a register are generated. A
 /// shared order keyed by slug exposes changes to card text, topic or membership independently
 /// of regrouping. Everything outside the marked region remains byte-for-byte significant.
-fn canonical_register(text: &str, order: &BTreeMap<String, usize>) -> Option<String> {
+fn canonical_register(
+    text: &str,
+    order: &BTreeMap<String, usize>,
+    plugins: &Plugins,
+) -> Option<String> {
     use crate::register::{REGION_END, REGION_START, parse_decisions, sort_register};
 
     let lines: Vec<_> = text.split_inclusive('\n').collect();
@@ -883,7 +912,11 @@ fn canonical_register(text: &str, order: &BTreeMap<String, usize>) -> Option<Str
                 return None;
             }
             result.push_str(&lines[after..start].concat());
-            result.push_str(&canonical_register(&lines[start..=end].concat(), order)?);
+            result.push_str(&canonical_register(
+                &lines[start..=end].concat(),
+                order,
+                plugins,
+            )?);
             after = end + 1;
         }
         result.push_str(&lines[after..].concat());
@@ -896,7 +929,7 @@ fn canonical_register(text: &str, order: &BTreeMap<String, usize>) -> Option<Str
         return None;
     }
     // Validate the region with the same parser and loss checks as the app's regrouping.
-    sort_register(text).ok()?;
+    sort_register(text, plugins).ok()?;
     let body = &lines[start + 1..*end];
     let plain: Vec<_> = body
         .iter()
@@ -1007,7 +1040,7 @@ impl<'a> Histories<'a> {
 /// Resolve append-only histories by slug, allowing generated register regrouping. Existing
 /// entries retain their order, even when their timestamps do not. New events are inserted by
 /// time within saved order; equal-minute additions follow entries already present on main.
-fn merge_history(current: &str, base: &str, new: &str) -> Option<String> {
+fn merge_history(current: &str, base: &str, new: &str, plugins: &Plugins) -> Option<String> {
     // Preserve main's stable order among cards that end up in the same generated group.
     let current_lines: Vec<_> = current.lines().collect();
     let order = crate::register::parse_decisions(&current_lines)
@@ -1015,9 +1048,9 @@ fn merge_history(current: &str, base: &str, new: &str) -> Option<String> {
         .enumerate()
         .map(|(index, card)| (card.slug, index))
         .collect();
-    let current_text = canonical_register(current, &order)?;
-    let base_text = canonical_register(base, &order)?;
-    let new_text = canonical_register(new, &order)?;
+    let current_text = canonical_register(current, &order, plugins)?;
+    let base_text = canonical_register(base, &order, plugins)?;
+    let new_text = canonical_register(new, &order, plugins)?;
     let current = Histories::read(&current_text)?;
     let base = Histories::read(&base_text)?;
     let new = Histories::read(&new_text)?;
@@ -1113,7 +1146,7 @@ fn merge_history(current: &str, base: &str, new: &str) -> Option<String> {
             merged.push_str(raw);
         }
     }
-    crate::register::sort_register(&merged).ok()
+    crate::register::sort_register(&merged, plugins).ok()
 }
 
 struct Scratch(PathBuf);
@@ -1143,10 +1176,11 @@ impl Drop for Scratch {
 fn apply(root: &Path, parent: &str, edits: &[Edit]) -> Result<(Blobs, Blobs), CommitError> {
     let mut blobs = BTreeMap::new();
     let mut before = BTreeMap::new();
+    let docs = Project::of(root).docs.clone();
     for edit in edits {
-        if !is_doc(&edit.rel) {
+        if !is_doc_in(&docs, &edit.rel) {
             return Err(format!(
-                "{} is not a design document under docs/*.md: the app commits only those",
+                "{} is not a design document under {docs}/*.md: the app commits only those",
                 edit.rel
             )
             .into());
@@ -1183,13 +1217,14 @@ fn main_worktrees(root: &Path) -> Result<Vec<PathBuf>, String> {
         .lock()
         .unwrap_or_else(|e| e.into_inner());
     let listing = git(root, &["worktree", "list", "--porcelain"])?;
+    let main = main_ref(root);
     let mut path = None;
     let mut found = Vec::new();
     for line in listing.lines() {
         if let Some(p) = line.strip_prefix("worktree ") {
             path = Some(PathBuf::from(p));
         }
-        if line == "branch refs/heads/main"
+        if line.strip_prefix("branch ") == Some(main.as_str())
             && let Some(p) = &path
         {
             found.push(p.clone());
@@ -1226,8 +1261,12 @@ fn sync(root: &Path, rel: &str, old: &str, new: &str) -> Result<(), String> {
     problem.map_or(Ok(()), Err)
 }
 
+/// Marks `commit` as the owner's verdict where the project's landing hook reads it
+/// (`[verdicts] record`); a project without a record writes none.
 fn record(root: &Path, commit: &str) -> Result<(), String> {
-    let folder = common_dir(root)?.join("sf-land/verdicts");
+    let Some(folder) = Project::of(root).record_folder(root, &common_dir(root)?) else {
+        return Ok(());
+    };
     std::fs::create_dir_all(&folder).map_err(|e| e.to_string())?;
     std::fs::write(folder.join(commit), "Symphony verdict\n").map_err(|e| e.to_string())
 }
@@ -1236,7 +1275,7 @@ fn commit_inner(root: &Path, edits: &[Edit], message: &str) -> Result<Outcome, C
     let source = root.canonicalize().map_err(|e| e.to_string())?;
     let mut last = String::new();
     for _ in 0..5 {
-        let parent = git(root, &["rev-parse", "--verify", "-q", "refs/heads/main"])?;
+        let parent = git(root, &["rev-parse", "--verify", "-q", &main_ref(root)])?;
         let (blobs, before) = apply(root, &parent, edits)?;
         let scratch = Scratch::new()?;
         let index = scratch.0.join("index");
@@ -1275,7 +1314,7 @@ fn commit_inner(root: &Path, edits: &[Edit], message: &str) -> Result<Outcome, C
                 "update-ref",
                 "-m",
                 message,
-                "refs/heads/main",
+                &main_ref(root),
                 &commit,
                 &parent,
             ],
@@ -1284,7 +1323,7 @@ fn commit_inner(root: &Path, edits: &[Edit], message: &str) -> Result<Outcome, C
         )?;
         if !moved.status.success() {
             last = String::from_utf8_lossy(&moved.stderr).trim().to_string();
-            if git(root, &["rev-parse", "refs/heads/main"])? == parent {
+            if git(root, &["rev-parse", &main_ref(root)])? == parent {
                 return Err(format!("git refused to move main: {last}").into());
             }
             continue;
@@ -1363,7 +1402,7 @@ fn changed(root: &Path) -> Result<Vec<String>, String> {
 
 fn generate(root: &Path, heavy: bool) -> Result<(), String> {
     let mut wrote = false;
-    for generator in default_generators() {
+    for generator in generators(root) {
         if generator.when_changed && (!heavy || !wrote) {
             continue;
         }
@@ -1389,7 +1428,7 @@ fn prepared(
     edits: &[Edit],
     heavy: bool,
 ) -> Result<(PrivateWorktree, Vec<String>), CommitError> {
-    let parent = git(root, &["rev-parse", "refs/heads/main"])?;
+    let parent = git(root, &["rev-parse", &main_ref(root)])?;
     let (blobs, _) = apply(root, &parent, edits)?;
     let wt = PrivateWorktree::new(root, &parent)?;
     for (rel, text) in &blobs {
@@ -1459,14 +1498,15 @@ fn release(
 ) -> Result<Vec<Released>, String> {
     use std::collections::BTreeSet;
     let source = root.canonicalize().map_err(|e| e.to_string())?;
-    let base = git(root, &["merge-base", "main", branch])?;
+    let project = Project::of(root);
+    let base = git(root, &["merge-base", &project.default_branch, branch])?;
     let names = git(
         root,
         &["diff", "--no-renames", "--name-only", &base, branch],
     )?;
     let branch_pages: BTreeSet<String> = names
         .lines()
-        .filter(|name| is_doc(name))
+        .filter(|name| is_doc_in(&project.docs, name))
         .map(str::to_owned)
         .collect();
     let pending = waiting.lock().unwrap_or_else(|e| e.into_inner()).clone();
@@ -1475,7 +1515,9 @@ fn release(
     pages.extend(
         pending
             .values()
-            .filter(|edit| is_doc(&edit.rel) && output_pages.contains_key(&edit.rel))
+            .filter(|edit| {
+                is_doc_in(&project.docs, &edit.rel) && output_pages.contains_key(&edit.rel)
+            })
             .map(|edit| edit.rel.clone()),
     );
     let mut released = Vec::new();
@@ -1621,20 +1663,24 @@ fn output_branch(
     let tip = git(&wt.path, &["rev-parse", "HEAD"])?;
     record(root, &tip)?;
     let actor = app_actor(root)?;
-    let done = tasks::sys::output(
-        Command::new("just")
-            .arg("verify")
-            .current_dir(&wt.path)
-            .env("TASKS_SESSION", &actor),
-    )
-    .map_err(|e| e.to_string())?;
-    if !done.status.success() {
-        return Err(format!(
-            "branch {branch}: just verify failed: {}{}",
-            String::from_utf8_lossy(&done.stdout),
-            String::from_utf8_lossy(&done.stderr)
+    let check = Project::of(&wt.path).verdicts.check.clone();
+    if let Some((program, args)) = check.split_first() {
+        let done = tasks::sys::output(
+            Command::new(program)
+                .args(args)
+                .current_dir(&wt.path)
+                .env("TASKS_SESSION", &actor),
         )
-        .into());
+        .map_err(|e| e.to_string())?;
+        if !done.status.success() {
+            return Err(format!(
+                "branch {branch}: {} failed: {}{}",
+                check.join(" "),
+                String::from_utf8_lossy(&done.stdout),
+                String::from_utf8_lossy(&done.stderr)
+            )
+            .into());
+        }
     }
     Ok(Some((
         Publication {
@@ -1664,6 +1710,14 @@ fn publish(
     id: u64,
     writes: &Mutex<()>,
 ) -> Result<PublicationAttempt, String> {
+    let land = Project::of(&publication.checkout).verdicts.land.clone();
+    let Some((program, args)) = land.split_first() else {
+        return Err(format!(
+            "branch {}: {} names no [verdicts] land command",
+            publication.branch,
+            crate::project::FILE
+        ));
+    };
     let released = {
         let _commits = shared_lock(root, "verdict-commits.lock")?;
         let _held = writes.lock().unwrap_or_else(|e| e.into_inner());
@@ -1673,8 +1727,9 @@ fn publish(
     // Land may verify a moving-main candidate. Neither that work nor the branch's initial
     // verify can hold the app's write locks; land owns its publication CAS and bounded retry.
     let done = tasks::sys::output(
-        Command::new("just")
-            .args(["land", &publication.branch])
+        Command::new(program)
+            .args(args)
+            .arg(&publication.branch)
             .env("TASKS_SESSION", &publication.actor)
             .current_dir(&publication.checkout),
     );
@@ -1685,7 +1740,8 @@ fn publish(
         let _file = write_lock(root)?;
         restore(root, released, landed)?;
     }
-    let done = done.map_err(|e| format!("branch {}: just land: {e}", publication.branch))?;
+    let done =
+        done.map_err(|e| format!("branch {}: {}: {e}", publication.branch, land.join(" ")))?;
     if landed {
         return Ok(PublicationAttempt::Landed);
     }
@@ -1855,7 +1911,12 @@ impl OutputJob {
         if let Some(publication) = &saved.publication {
             if run(
                 root,
-                &["merge-base", "--is-ancestor", &publication.tip, "main"],
+                &[
+                    "merge-base",
+                    "--is-ancestor",
+                    &publication.tip,
+                    &Project::of(root).default_branch,
+                ],
                 None,
                 None,
             )?
@@ -2398,7 +2459,12 @@ mod publication_tests {
 
 #[cfg(test)]
 mod history_tests {
-    use super::{card_count_mismatch, merge_history};
+    use super::card_count_mismatch;
+
+    /// The merge of a project without plugins: no card kind reads these cards.
+    fn merge_history(current: &str, base: &str, new: &str) -> Option<String> {
+        super::merge_history(current, base, new, &super::Plugins::default())
+    }
 
     #[test]
     fn card_occurrences_are_compared_per_slug_and_fenced_examples_do_not_count() {

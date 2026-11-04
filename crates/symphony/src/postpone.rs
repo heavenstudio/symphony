@@ -8,6 +8,7 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 use symphony_api::Card;
 
+use crate::plugins::Plugins;
 use crate::{Doc, Group, ReviewError, Who};
 
 pub const FILE: &str = "artifacts/review-order/postponed.json";
@@ -82,9 +83,9 @@ pub struct View {
 }
 
 impl View {
-    pub(crate) fn new(docs: &[Doc], waiting: &[Card]) -> Self {
+    pub(crate) fn new(plugins: &Plugins, docs: &[Doc], waiting: &[Card]) -> Self {
         Self {
-            cards: eligible(docs),
+            cards: eligible(docs, plugins),
             waiting: waiting.to_vec(),
         }
     }
@@ -155,11 +156,11 @@ pub(crate) fn mixed(mut waiting: Vec<Card>) -> Vec<Card> {
     mixed
 }
 
-fn eligible(docs: &[Doc]) -> BTreeMap<String, Entry> {
+fn eligible(docs: &[Doc], plugins: &Plugins) -> BTreeMap<String, Entry> {
     docs.iter()
         .flat_map(|doc| {
             doc.decisions.iter().filter_map(|card| {
-                let group = card.group();
+                let group = card.group(plugins);
                 matches!(group, Group::Decide | Group::Confirm).then(|| {
                     (
                         key(&doc.path, &card.slug),
@@ -211,7 +212,8 @@ pub fn apply(
     waiting: &mut [Card],
     now: u64,
 ) -> Result<(), ReviewError> {
-    apply_cards(root, owner, &eligible(docs), waiting, now).map(|_| ())
+    let cards = eligible(docs, &Plugins::of(root));
+    apply_cards(root, owner, &cards, waiting, now).map(|_| ())
 }
 
 fn apply_cards(
@@ -282,7 +284,8 @@ pub fn act(
     if action == "later" {
         let mut docs = crate::board::scan(root)?;
         crate::dashboard::merge_decisions(&mut docs, &crate::branches::branch_cards(root));
-        act_with_cards(root, owner, path, slug, action, now, Some(&eligible(&docs)))
+        let cards = eligible(&docs, &Plugins::of(root));
+        act_with_cards(root, owner, path, slug, action, now, Some(&cards))
     } else {
         act_with_cards(root, owner, path, slug, action, now, None)
     }

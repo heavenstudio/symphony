@@ -21,9 +21,6 @@ pub struct Worktree {
     pub branch: Option<String>,
 }
 
-/// The branch the app serves at `/`.
-const MAIN: &str = "main";
-
 /// The entries of `git worktree list --porcelain`, the main checkout first.
 pub fn parse_worktrees(porcelain: &str) -> Vec<Worktree> {
     porcelain
@@ -47,14 +44,15 @@ pub fn parse_worktrees(porcelain: &str) -> Vec<Worktree> {
 }
 
 /// The tree id of the worktree at `top` among `trees`: none for the main checkout, a detached
-/// worktree or one on main, which the app serves at `/`.
+/// worktree or one on its project's default branch (main), which the app serves at `/`.
 pub fn tree_id(top: &Path, trees: &[Worktree]) -> Option<String> {
     let (main, others) = trees.split_first()?;
     if main.path == top {
         return None;
     }
     let branch = others.iter().find(|t| t.path == top)?.branch.as_deref()?;
-    (branch != MAIN).then(|| branch.replace('/', "~"))
+    (branch != symphony::project::Project::of(&main.path).default_branch)
+        .then(|| branch.replace('/', "~"))
 }
 
 /// `git ARGS` in `dir`, on the repository there whatever the environment names (a hook's GIT_DIR).

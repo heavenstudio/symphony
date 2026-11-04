@@ -19,13 +19,13 @@ use std::fs::OpenOptions;
 use std::io::Read;
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{LazyLock, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
 use regex::{Captures, Regex};
 use sha2::{Digest, Sha256};
+use tasks::sys::{Command, Stdio};
 
 use crate::markup::{normpath, quote, unquote};
 
@@ -90,7 +90,8 @@ pub fn file_size(path: &Path) -> Option<(u32, u32)> {
     size
 }
 
-/// The file a root-relative `src` names, if it is one under `root`.
+/// The file a root-relative `src` names, if it is one under `root`: a document's neighbour named by
+/// its route (`/docs/…`) is in the project's documents folder.
 fn local(root: &Path, src: &str) -> Option<PathBuf> {
     let src = src.replace("&amp;", "&");
     let path = src.split(['?', '#']).next().unwrap_or("");
@@ -98,7 +99,8 @@ fn local(root: &Path, src: &str) -> Option<PathBuf> {
         return None; // a scheme, a host or a relative path is not a file of the project's
     }
     let base = root.canonicalize().ok()?;
-    let joined = base.join(unquote(path).trim_start_matches('/'));
+    let file = crate::project::Project::of(root).file(unquote(path).trim_start_matches('/'));
+    let joined = base.join(file);
     let found = PathBuf::from(normpath(&joined.to_string_lossy()));
     let found = found.canonicalize().unwrap_or(found);
     (found != base && found.starts_with(&base)).then_some(found)
@@ -143,6 +145,8 @@ fn part_file(dest: &Path) -> std::io::Result<PathBuf> {
 }
 
 /// Run the converter, publish only a complete output, and reap it when it exceeds its time budget.
+/// It starts without a fork and inherits only its streams (tasks::sys::Command), so a connection
+/// the server has accepted but not yet marked close-on-exec stays out of it.
 fn convert(mut command: Command, dest: &Path, timeout: Duration) -> bool {
     let Ok(part) = part_file(dest) else {
         return false;
