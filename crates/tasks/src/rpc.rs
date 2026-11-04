@@ -1514,20 +1514,20 @@ mod tests {
         ] {
             let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
             let addr = listener.local_addr().unwrap().to_string();
+            let client = Client::new(&addr, "sf", "t").waiting(Duration::from_millis(300));
+            let mut connection = client.connect().unwrap();
+            let (mut kept, _) = listener.accept().unwrap();
+            // Pool history is fixture state; this case sends only the uncertain RPC.
+            connection.served = 15;
+            client.requests.store(15, Ordering::SeqCst);
+            client.kept.lock().unwrap().push(connection);
             let served = std::thread::spawn(move || {
-                let (mut kept, _) = listener.accept().unwrap();
-                for _ in 0..15 {
-                    read_request(&mut kept);
-                    kept.write_all(SEVEN).unwrap();
-                }
                 let request = read_request(&mut kept);
                 kept.write_all(partial).unwrap();
                 assert_eq!(kept.read(&mut [0]).unwrap(), 0, "no repeated request");
                 assert!(none_waiting(&listener), "no replacement connection");
                 request
             });
-            let client = Client::new(&addr, "sf", "t").waiting(Duration::from_millis(300));
-            sevens(&client, 15);
             let sql = "CREATE ONLY task:once SET title = $title;";
             let vars = json!({"title": "one owner write"});
             let called_at = format!("{}:{}", file!(), line!() + 1);
