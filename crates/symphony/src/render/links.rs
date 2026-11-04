@@ -84,38 +84,24 @@ pub(crate) fn outside_code(text: &str, swap: &mut dyn FnMut(&str) -> String) -> 
     out
 }
 
-/// Every document of the project, named by its route (`docs/…`), live ones before those in its
-/// history folders.
+/// Every document page of the project's entrypoints, named by its route (`docs/…`), live ones
+/// before those in their history folders.
 pub(crate) fn doc_paths(root: &Path) -> Vec<String> {
-    fn walk(base: &Path, rel: &str, found: &mut Vec<String>) {
-        let Ok(entries) = std::fs::read_dir(base.join(rel)) else {
-            return;
+    let project = crate::project::Project::of(root);
+    let (mut live, mut history): (Vec<String>, Vec<String>) = (Vec::new(), Vec::new());
+    for (entry, file) in project.shown(root) {
+        let Some(inside) = entry.inside_folder(&file) else {
+            continue;
         };
-        for entry in entries.flatten() {
-            let name = entry.file_name().to_string_lossy().to_string();
-            let path = format!("{rel}/{name}");
-            if entry.path().is_dir() {
-                walk(base, &path, found);
-            } else if name.ends_with(".md") {
-                found.push(path);
-            }
+        if entry.document(inside) {
+            live.push(entry.route(inside));
+        } else if entry.page(inside) {
+            history.push(entry.route(inside));
         }
     }
-    let project = crate::project::Project::of(root);
-    let mut found = Vec::new();
-    walk(root, &project.docs, &mut found);
-    let (live, history): (Vec<String>, Vec<String>) = found
-        .into_iter()
-        .partition(|file| project.is_document_path(file));
-    let named = |files: Vec<String>| {
-        let mut names: Vec<String> = files
-            .into_iter()
-            .filter_map(|file| project.route(&file))
-            .collect();
-        names.sort();
-        names
-    };
-    named(live).into_iter().chain(named(history)).collect()
+    live.sort();
+    history.sort();
+    live.into_iter().chain(history).collect()
 }
 
 /// The document a wikilink names: the path it spells from the linking page if that exists, else the one
@@ -129,8 +115,12 @@ pub(crate) fn find_doc(target: &str, doc_path: &str, paths: &[String]) -> Option
     if paths.contains(&direct) {
         return Some(direct);
     }
+    // A route's first name counts too: at an entrypoint on `/`, `index.md` is a whole route.
     let tail = format!("/{}", name.trim_start_matches('/'));
-    paths.iter().find(|p| p.ends_with(&tail)).cloned()
+    paths
+        .iter()
+        .find(|p| format!("/{p}").ends_with(&tail))
+        .cloned()
 }
 
 fn resolve_wikilink(target: &str, doc_path: &str, paths: &[String]) -> String {

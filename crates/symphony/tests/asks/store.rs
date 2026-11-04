@@ -171,19 +171,23 @@ fn prune_takes_a_max_age_and_says_how_many_went() {
 }
 
 #[test]
-fn a_path_outside_docs_is_refused() {
+fn a_path_that_is_no_relative_markdown_route_is_refused() {
     let f = fixture();
     for path in [
-        "secret.md",
         "docs/../secret.md",
         "/docs/A.md",
         "docs/A.txt",
         "",
         "docs/sub/../../x.md",
+        "docs//A.md",
+        "./A.md",
     ] {
         assert!(refused(f.store.ask(path, "hi", "", "")), "{path:?}");
     }
     assert!(f.store.all().unwrap().is_empty());
+    // which entrypoint serves a route is the project's to say: at one on `/`, `index.md` is a page
+    f.store.ask("index.md", "hi", "", "").unwrap();
+    assert_eq!(f.store.all().unwrap().len(), 1);
 }
 
 #[test]

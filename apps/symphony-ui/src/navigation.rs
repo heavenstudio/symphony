@@ -11,6 +11,12 @@ use web_sys::Event;
 pub struct Route {
     pub path: String,
     pub scope: String,
+    /// Whether it is a document or folder page of an entrypoint
+    /// ([`symphony_api::ProjectView::is_document_route`]).
+    pub document: bool,
+    /// Whether that page is a folder's rather than a document's
+    /// ([`symphony_api::ProjectView::is_folder_route`]).
+    pub folder: bool,
 }
 
 impl Route {
@@ -31,25 +37,33 @@ impl Route {
         } else {
             (String::new(), path)
         };
-        let path = path.strip_prefix("doc/").unwrap_or(path);
-        let path = path.strip_suffix('/').unwrap_or(path);
+        let slashed = path.strip_prefix("doc/").unwrap_or(path);
+        let path = slashed.strip_suffix('/').unwrap_or(slashed);
         let project = crate::project::current();
-        let path = match path {
-            "task" => "tasks",
-            path => crate::project::nav_page(&project.nav, path)
-                .map_or(path, |item| item.document.as_str()),
+        // the route as the server answers it: a trailing slash names a folder page, whatever its
+        // name holds
+        let named = match crate::project::nav_page(&project.nav, path) {
+            Some(item) => item.document.as_str(),
+            None if path == "task" => "tasks",
+            None => slashed,
         };
+        let (document, folder) = (
+            project.is_document_route(named),
+            project.is_folder_route(named),
+        );
+        let path = named.strip_suffix('/').unwrap_or(named);
         (path.is_empty()
             || path == "tasks"
             || path == "queue"
             || path == "agents"
             || path.starts_with("task/")
-            || (path == "docs" || path.starts_with("docs/"))
-                && (std::path::Path::new(path).extension().is_none() || path.ends_with(".md")))
-        .then(|| Self {
-            path: path.into(),
-            scope,
-        })
+            || document)
+            .then(|| Self {
+                path: path.into(),
+                scope,
+                document,
+                folder,
+            })
     }
     pub fn current() -> Self {
         web_sys::window()

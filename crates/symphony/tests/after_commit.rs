@@ -2007,7 +2007,7 @@ fn an_owner_save_in_a_projects_own_folder_commits_that_file_on_main() {
             git(&root, &["mv", "docs", "manual"]);
             write(
                 &root.join(symphony::project::FILE),
-                &format!("[project]\ndocs = \"manual\"\n\n{VERDICTS}"),
+                &format!("[[entrypoints]]\nurl = \"/docs/\"\nfolder = \"manual\"\n\n{VERDICTS}"),
             );
             git(&root, &["commit", "-qam", "the documents move to manual"]);
             let saves = ClosingSaves::start(&root);

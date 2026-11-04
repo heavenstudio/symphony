@@ -1,6 +1,7 @@
-//! The project the page belongs to: its name, its register and its plugins' navigation, which
-//! the server inlines in the page it serves (`symphony_api::PROJECT_ELEMENT`), so the first paint
-//! asks for nothing. A page without it is a plain project with no plugin pages.
+//! The project the page belongs to: its name, its register, its plugins' navigation and its
+//! entrypoints, which the server inlines in the page it serves (`symphony_api::PROJECT_ELEMENT`),
+//! so the first paint asks for nothing. A page without it is a plain project with no plugin pages
+//! and the convention's one entrypoint.
 
 use symphony_api::{NavItem, ProjectView};
 
@@ -92,5 +93,17 @@ mod tests {
         );
         assert_eq!(nav_for_document(&nav, "docs/OTHER.md"), None);
         assert_eq!(current(), ProjectView::default());
+    }
+
+    #[test]
+    fn the_shell_yields_the_same_routes_to_the_symphony_as_the_server() {
+        let shell = include_str!("../assets/shell.js");
+        let list = shell
+            .lines()
+            .find_map(|line| line.strip_prefix("const SYMPHONY_ROUTES = "))
+            .and_then(|rest| rest.strip_suffix(';'))
+            .expect("shell.js names the Symphony's routes");
+        let routes: Vec<String> = serde_json::from_str(list).unwrap();
+        assert_eq!(routes, symphony_api::SYMPHONY_ROUTES);
     }
 }

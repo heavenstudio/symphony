@@ -666,8 +666,8 @@ fn gallery_paths_include_input_directories_and_deleted_files_but_not_neighbours(
 #[test]
 fn a_tree_watches_its_projects_documents_folder_and_what_its_plugins_watch_outside_it() {
     let tree = Tree::new();
-    let manual = "[project]\ndocs = \"manual\"\nhistory = [\"manual/past\"]\n\
-                  register = \"manual/DECISIONS.md\"\nartifacts = \"output\"\n";
+    let manual = "[project]\nregister = \"manual/DECISIONS.md\"\nartifacts = \"output\"\n\
+                  [[entrypoints]]\nurl = \"/docs/\"\nfolder = \"manual\"\nhistory = [\"past\"]\n";
     tree.write("plain/symphony.toml", manual);
     let below =
         |root: &str| -> Vec<(String, notify::RecursiveMode)> { tree_inputs(&tree.path(root)) };

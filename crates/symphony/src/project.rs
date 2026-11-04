@@ -1,10 +1,13 @@
 //! A project: a root folder holding a committed `symphony.toml`. The file names what the Symphony
 //! would otherwise assume, and every value it leaves out is the Symphony's generic default, never a
 //! game's: no plugins, no generators, no check, the folder's name as the project's name and its
-//! slug as the id (`project` when the folder's has no letter or digit), `docs/` with `docs/history`
-//! skipped, `docs/DECISIONS.md`, `artifacts/`, `main`, the Symphony's own theme, every built-in
-//! transport and no panes. An empty file, or none, is a plain project. An unknown table or key is refused by name, so a misspelt setting never passes
-//! for its default.
+//! slug as the id (`project` when the folder's has no letter or digit), one entrypoint serving
+//! `docs/` at `/docs/` with `docs/history` skipped, the register `DECISIONS.md` in the first
+//! entrypoint's folder, `artifacts/`, `main`, the Symphony's own theme, every built-in transport
+//! and no panes. An empty file, or none, is a plain project. An unknown table, key or renderer, a
+//! path outside the project (an entrypoint's folder leading out of it through a link too), and an
+//! entrypoint or a file of one on a route another answers are refused by name, so a misspelt
+//! setting never passes for its default and no file is hidden.
 
 use std::collections::BTreeMap;
 use std::path::{Component, Path, PathBuf};
@@ -12,6 +15,9 @@ use std::sync::{Arc, LazyLock, Mutex, PoisonError};
 use std::time::SystemTime;
 
 use serde::Deserialize;
+
+pub use crate::entrypoint::Entrypoint;
+use crate::entrypoint::{RENDERERS, SYMPHONY_ROUTES, below, join};
 
 /// The project file at a project's root.
 pub const FILE: &str = "symphony.toml";
@@ -21,9 +27,6 @@ pub const FILE: &str = "symphony.toml";
 pub const TRANSPORTS: [&str; 3] = ["claude-uds", "codex-queue", "inbox"];
 /// The multiplexers agents' panes may run in; `none` for a project without one.
 pub const PANES: [&str; 2] = ["herdr", "none"];
-/// What the Symphony calls the documents folder in a document's name and URL, whatever the
-/// project's folder is called.
-pub const ROUTE: &str = "docs";
 /// The id of a project whose folder's name has no letter or digit to make one of.
 pub const DEFAULT_ID: &str = "project";
 /// The prefix naming a path in the repository's common git folder.
@@ -35,10 +38,8 @@ pub struct Project {
     pub name: String,
     /// The URL segment and the data folder.
     pub id: String,
-    /// The documents, project-relative.
-    pub docs: String,
-    /// Folders under the documents that are never read as documents.
-    pub history: Vec<String>,
+    /// Where the documents are served and read from, in the file's order; never empty.
+    pub entrypoints: Vec<Entrypoint>,
     /// The decision register.
     pub register: String,
     /// Served files and the Symphony's private files.
@@ -106,6 +107,7 @@ pub struct Board {
 #[serde(deny_unknown_fields, default)]
 struct File {
     project: FileProject,
+    entrypoints: Option<Vec<FileEntrypoint>>,
     plugins: FilePlugins,
     theme: FileTheme,
     agents: FileAgents,
@@ -118,11 +120,25 @@ struct File {
 struct FileProject {
     name: Option<String>,
     id: Option<String>,
-    docs: Option<String>,
-    history: Option<Vec<String>>,
     register: Option<String>,
     artifacts: Option<String>,
     default_branch: Option<String>,
+}
+
+/// One `[[entrypoints]]` table: its URL and folder named, the rest defaulted.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct FileEntrypoint {
+    url: String,
+    folder: String,
+    #[serde(default)]
+    include: Option<Vec<String>>,
+    #[serde(default)]
+    exclude: Vec<String>,
+    #[serde(default)]
+    types: Option<Vec<String>>,
+    #[serde(default)]
+    history: Vec<String>,
 }
 
 #[derive(Default, Deserialize)]
@@ -179,9 +195,19 @@ impl Project {
     }
 
     /// The project at `root`: its `symphony.toml` over the defaults, or the plain project without
-    /// one. A file that does not parse, or names a key or value the Symphony does not know, is an
-    /// error naming the file and what is wrong.
+    /// one. A file that does not parse, names a key or value the Symphony does not know, or leaves
+    /// an entrypoint a file on a route another answers is an error naming the file and what is
+    /// wrong.
     pub fn load(root: &Path) -> Result<Project, String> {
+        let project = Self::read(root)?;
+        project
+            .check_files(root, &mut Vec::new())
+            .map_err(|e| format!("{FILE}: {e}"))?;
+        Ok(project)
+    }
+
+    /// The file as [`Project::load`] reads it, before its entrypoints' files are looked at.
+    fn read(root: &Path) -> Result<Project, String> {
         let path = root.join(FILE);
         match std::fs::read_to_string(&path) {
             Ok(text) => Self::parse(root, &text),
@@ -190,41 +216,59 @@ impl Project {
         }
     }
 
-    /// `text` as the `symphony.toml` of the project at `root`.
+    /// `text` as the `symphony.toml` of the project at `root`. The files its entrypoints hold are
+    /// [`Project::load`]'s to look at.
     pub fn parse(root: &Path, text: &str) -> Result<Project, String> {
         let file: File =
             toml::from_str(text).map_err(|e| format!("{FILE}: {}", e.to_string().trim_end()))?;
         Self::resolve(root, file).map_err(|e| format!("{FILE}: {e}"))
     }
 
-    /// The project at `root` as [`Project::load`] reads it, cached until its file changes. A file
-    /// that does not load leaves the plain project in its place and is reported once per version
-    /// on stderr; `symphony-status --lint` refuses it ([`crate::lint::project_problems`]).
+    /// The project at `root` as [`Project::load`] reads it, cached until its file changes, or an
+    /// entry appears, goes or is replaced in a folder whose entries the load looked at: an
+    /// entrypoint's folder, or one where a file of an entrypoint would meet another route, or any
+    /// folder under that. A project that does not load leaves the plain project in its place and
+    /// is reported once per version on stderr; `symphony-status --lint` refuses it
+    /// ([`crate::lint::project_problems`]).
     pub fn of(root: &Path) -> Arc<Project> {
-        type Seen = BTreeMap<PathBuf, (Stamp, Arc<Project>)>;
+        type Seen = BTreeMap<PathBuf, (Vec<(PathBuf, Stamp)>, Arc<Project>)>;
         static SEEN: LazyLock<Mutex<Seen>> = LazyLock::new(|| Mutex::new(BTreeMap::new()));
-        let stamp = Stamp::of(&root.join(FILE));
-        if let Some((held, project)) = SEEN
+        if let Some((stamps, project)) = SEEN
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .get(root)
-            && *held == stamp
+            && stamps.iter().all(|(path, held)| *held == Stamp::of(path))
         {
             return project.clone();
         }
-        let project = Arc::new(Self::load(root).unwrap_or_else(|problem| {
+        let stamped = |path: PathBuf| {
+            let stamp = Stamp::of(&path);
+            (path, stamp)
+        };
+        let mut stamps = vec![stamped(root.join(FILE))];
+        let loaded = Self::read(root).and_then(|project| {
+            let mut read = Vec::new();
+            let checked = project.check_files(root, &mut read);
+            read.sort();
+            read.dedup();
+            stamps.extend(read.into_iter().map(|path| stamped(root.join(path))));
+            checked
+                .map(|()| project)
+                .map_err(|e| format!("{FILE}: {e}"))
+        });
+        let project = Arc::new(loaded.unwrap_or_else(|problem| {
             eprintln!("{}: {problem}; using the defaults", root.display());
             Self::plain(root)
         }));
         SEEN.lock()
             .unwrap_or_else(PoisonError::into_inner)
-            .insert(root.to_path_buf(), (stamp, project.clone()));
+            .insert(root.to_path_buf(), (stamps, project.clone()));
         project
     }
 
-    /// The project as the client's header and home read it: its name, its register (by its
-    /// document name when the documents folder holds it, as every link names a document) and its
-    /// plugins' navigation.
+    /// The project as the client's header and home read it: its name, its register (by its route
+    /// when an entrypoint holds it, as every link names a document), its plugins' navigation and
+    /// its entrypoints' URLs.
     pub fn view(&self) -> symphony_api::ProjectView {
         symphony_api::ProjectView {
             name: self.name.clone(),
@@ -232,6 +276,7 @@ impl Project {
                 .route(&self.register)
                 .unwrap_or_else(|| self.register.clone()),
             nav: crate::plugins::Plugins::for_project(self).nav(),
+            entrypoints: self.entrypoints.iter().map(|e| e.url.clone()).collect(),
         }
     }
 
@@ -272,16 +317,11 @@ impl Project {
                 "[project] id {id:?} is not a slug (lowercase letters, digits and dashes)"
             ));
         }
-        let docs = inside("[project] docs", p.docs.unwrap_or_else(|| "docs".into()))?;
-        let history = p
-            .history
-            .unwrap_or_else(|| vec![format!("{docs}/history")])
-            .into_iter()
-            .map(|path| inside("[project] history", path))
-            .collect::<Result<_, _>>()?;
+        let entrypoints = entrypoints(file.entrypoints)?;
         let register = inside(
             "[project] register",
-            p.register.unwrap_or_else(|| format!("{docs}/DECISIONS.md")),
+            p.register
+                .unwrap_or_else(|| join(&entrypoints[0].folder, "DECISIONS.md")),
         )?;
         let artifacts = inside(
             "[project] artifacts",
@@ -325,9 +365,17 @@ impl Project {
                 effort: a.launch.effort,
             },
         };
-        let v = file.verdicts;
-        for generator in &v.generators {
-            inside("[verdicts] generators outputs", generator.outputs.clone())?;
+        let mut v = file.verdicts;
+        for generator in &mut v.generators {
+            // Outputs are prefixes of changed names: a folder keeps its slash, so `content/`
+            // never matches `content-x/`.
+            let slash = if generator.outputs.ends_with('/') {
+                "/"
+            } else {
+                ""
+            };
+            generator.outputs =
+                inside("[verdicts] generators outputs", generator.outputs.clone())? + slash;
             if generator.command.is_empty() {
                 return Err(format!(
                     "[verdicts] generator {} has no command",
@@ -359,11 +407,10 @@ impl Project {
                 .transpose()?,
             disposable: file.board.disposable,
         };
-        Ok(Project {
+        let project = Project {
             name,
             id,
-            docs,
-            history,
+            entrypoints,
             register,
             artifacts,
             default_branch,
@@ -372,50 +419,434 @@ impl Project {
             agents,
             verdicts,
             board,
-        })
+        };
+        let reserved = project.reserved();
+        let uploads = project.artifact(crate::uploads::DIR);
+        for entry in &project.entrypoints {
+            if below(&uploads, &entry.folder).is_some() {
+                return Err(format!(
+                    "[[entrypoints]] {} reads {}, the Symphony's uploads, which no entrypoint shows",
+                    entry.label(),
+                    entry.folder
+                ));
+            }
+            if let Some(route) = reserved
+                .iter()
+                .find(|route| below(route, &entry.url).is_some())
+            {
+                return Err(format!(
+                    "[[entrypoints]] {} lies on /{route}, a route the Symphony answers",
+                    entry.label()
+                ));
+            }
+        }
+        Ok(project)
     }
 
-    /// Whether the project-relative `rel` is a document: under the documents, and not under one of
-    /// the history folders.
-    pub fn is_document_path(&self, rel: &str) -> bool {
-        under(rel, &self.docs) && !self.history.iter().any(|folder| under(rel, folder))
+    /// The routes the Symphony and the project's plugins answer, each with everything under it.
+    pub fn reserved(&self) -> Vec<String> {
+        SYMPHONY_ROUTES
+            .iter()
+            .map(|route| (*route).to_string())
+            .chain(
+                crate::plugins::Plugins::for_project(self)
+                    .nav()
+                    .into_iter()
+                    .map(|item| item.href.trim_matches('/').to_string())
+                    .filter(|page| !page.is_empty()),
+            )
+            .collect()
     }
 
-    /// The name the Symphony gives the document at the project-relative `file`: [`ROUTE`] and its
-    /// path inside the documents folder, whatever the folder is called. `None` outside it.
+    /// Each place a route another answers falls inside an entrypoint's URL: the entrypoint, the
+    /// path inside its folder a file there would be served from, and who answers instead. Another
+    /// entrypoint's own folder is not a meeting: that entrypoint serves it. The uploads folder on
+    /// the uploads route holds nothing an entrypoint shows ([`Project::holding`]).
+    fn meetings(&self) -> Vec<(&Entrypoint, String, String)> {
+        let mut found = Vec::new();
+        let reserved = self.reserved();
+        for entry in &self.entrypoints {
+            for route in &reserved {
+                if let Some(inside) = below(&entry.url, route).filter(|inside| !inside.is_empty()) {
+                    found.push((
+                        entry,
+                        inside.to_string(),
+                        "a route the Symphony answers".to_string(),
+                    ));
+                }
+            }
+            for other in &self.entrypoints {
+                if let Some(inside) = below(&entry.url, &other.url)
+                    .filter(|inside| !inside.is_empty() && entry.file(inside) != other.folder)
+                {
+                    found.push((
+                        entry,
+                        inside.to_string(),
+                        format!(
+                            "the entrypoint over {} answers",
+                            folder_label(&other.folder)
+                        ),
+                    ));
+                }
+            }
+        }
+        found
+    }
+
+    /// The first problem with what the entrypoints read in the checkout at `root`: a folder that
+    /// lies outside the project once its links are resolved, or a file an entrypoint's patterns
+    /// include where a route another answers falls, named with that route (the other's pages win,
+    /// so the file would never be served). `read` gets the project-relative path of every folder
+    /// whose entries it looked at.
+    fn check_files(&self, root: &Path, read: &mut Vec<String>) -> Result<(), String> {
+        for entry in &self.entrypoints {
+            read.push(entry.folder.clone());
+            if root.join(&entry.folder).exists() && self.bounds(root, entry).is_none() {
+                return Err(format!(
+                    "[[entrypoints]] {} folder {} lies outside the project once its links are \
+                     resolved",
+                    entry.label(),
+                    folder_label(&entry.folder)
+                ));
+            }
+        }
+        for (entry, inside, who) in self.meetings() {
+            if let Some(found) = self.first_included(root, entry, &inside, read) {
+                return Err(format!(
+                    "[[entrypoints]] {} would serve {} at /{}, where {who}; move or exclude it",
+                    entry.label(),
+                    entry.file(&found),
+                    entry.route(&found)
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    /// The entrypoint with the longest URL above `route`, and the route's path inside it; none on
+    /// a route the Symphony or a plugin answers, whose pages win.
+    fn by_url<'a>(&self, route: &'a str) -> Option<(&Entrypoint, &'a str)> {
+        self.entrypoints
+            .iter()
+            .filter_map(|entry| entry.inside_url(route).map(|inside| (entry, inside)))
+            .max_by_key(|(entry, _)| entry.url.len())
+            .filter(|_| {
+                !self
+                    .reserved()
+                    .iter()
+                    .any(|reserved| below(reserved, route).is_some())
+            })
+    }
+
+    /// The entrypoint serving `route` and the route's path inside it: the one with the longest URL
+    /// above it, when no other entrypoint holds the file it maps to (that file has its own route).
+    pub fn serving<'a>(&self, route: &'a str) -> Option<(&Entrypoint, &'a str)> {
+        let (entry, inside) = self.by_url(route)?;
+        let file = entry.file(inside);
+        let (holder, _) = self.holding(&file)?;
+        std::ptr::eq(holder, entry).then_some((entry, inside))
+    }
+
+    /// The entrypoint holding the project-relative `file`, the one with the longest folder above
+    /// it, and the file's path inside that folder. None holds the uploads folder: it is the
+    /// Symphony's store of pasted files, never documents, listed or read by no walk.
+    pub fn holding<'a>(&self, file: &'a str) -> Option<(&Entrypoint, &'a str)> {
+        if below(&self.artifact(crate::uploads::DIR), file).is_some() {
+            return None;
+        }
+        self.entrypoints
+            .iter()
+            .filter_map(|entry| entry.inside_folder(file).map(|inside| (entry, inside)))
+            .max_by_key(|(entry, _)| entry.folder.len())
+    }
+
+    /// The route of the project-relative `file`, a document, folder or any file an entrypoint's
+    /// folder holds: that entrypoint's URL and the file's path in its folder. `None` outside every
+    /// entrypoint.
     pub fn route(&self, file: &str) -> Option<String> {
-        let inside = file.strip_prefix(&self.docs)?;
-        if inside.is_empty() {
-            return Some(ROUTE.into());
-        }
-        inside
-            .strip_prefix('/')
-            .map(|inside| format!("{ROUTE}/{inside}"))
+        self.holding(file)
+            .map(|(entry, inside)| entry.route(inside))
     }
 
-    /// The project-relative file a document's name (`docs/…`) stands for; any other path is
-    /// itself.
+    /// The project-relative file `route` stands for, through the entrypoint with the longest URL
+    /// above it; a route no entrypoint is above is itself.
     pub fn file(&self, route: &str) -> String {
-        if route == ROUTE {
-            return self.docs.clone();
-        }
-        match route
-            .strip_prefix(ROUTE)
-            .and_then(|rest| rest.strip_prefix('/'))
-        {
-            Some(inside) => format!("{}/{inside}", self.docs),
+        match self.by_url(route) {
+            Some((entry, inside)) => entry.file(inside),
             None => route.into(),
         }
     }
 
-    /// The history folders, relative to the documents folder (`history`), for walks that start
-    /// there.
-    pub fn history_in_docs(&self) -> Vec<String> {
-        self.history
+    /// Whether the project-relative `file` is a document page: Markdown an entrypoint shows, its
+    /// history folders included, as the owner's saves and the verdict exemption admit it.
+    pub fn is_page(&self, file: &str) -> bool {
+        self.holding(file)
+            .is_some_and(|(entry, inside)| entry.page(inside))
+    }
+
+    /// The refusal of a path that names no document page: `path must be a markdown file under
+    /// docs/`, naming each entrypoint.
+    pub fn not_a_document(&self) -> String {
+        let under: Vec<String> = self
+            .entrypoints
             .iter()
-            .filter_map(|folder| folder.strip_prefix(&format!("{}/", self.docs)))
-            .map(str::to_string)
+            .map(|entry| entry.label().trim_start_matches('/').to_string())
+            .map(|label| if label.is_empty() { "/".into() } else { label })
+            .collect();
+        format!("path must be a markdown file under {}", under.join(" or "))
+    }
+
+    /// Whether the project-relative `file` is read as a document: Markdown an entrypoint shows,
+    /// outside its history folders.
+    pub fn is_document_path(&self, file: &str) -> bool {
+        self.holding(file)
+            .is_some_and(|(entry, inside)| entry.document(inside))
+    }
+
+    /// The pathspecs naming every entrypoint's folder, `.` for one at the project's root.
+    pub fn pathspecs(&self) -> Vec<String> {
+        self.entrypoints
+            .iter()
+            .map(|entry| folder_label(&entry.folder).to_string())
             .collect()
+    }
+
+    /// Every entrypoint's history folders, project-relative, in the file's order.
+    pub fn history(&self) -> Vec<String> {
+        self.entrypoints
+            .iter()
+            .flat_map(|entry| entry.history.iter().map(|folder| entry.file(folder)))
+            .collect()
+    }
+
+    /// Every file the entrypoints show in the checkout at `root`, project-relative and sorted,
+    /// each with the entrypoint showing it. A folder another entrypoint reads is that one's; a
+    /// name starting with a dot, and a folder an exclude pattern matches, are passed over whole.
+    pub fn shown(&self, root: &Path) -> Vec<(&Entrypoint, String)> {
+        let mut found = Vec::new();
+        for entry in &self.entrypoints {
+            self.walk(root, entry, "", &mut |inside| {
+                if entry.shows(inside) {
+                    found.push((entry, entry.file(inside)));
+                }
+            });
+        }
+        found.sort_by(|a, b| a.1.cmp(&b.1));
+        found
+    }
+
+    /// Calls `each` with every file under the path `inside` `entry`'s folder that the entrypoint
+    /// holds, by its path inside the folder, as [`Project::shown`] passes folders over: a folder's
+    /// own files by name, then each folder in it by name, as Python's `os.walk` gives them.
+    /// Once links are resolved, no folder outside the entrypoint's and no file outside the project
+    /// is listed.
+    pub fn walk(&self, root: &Path, entry: &Entrypoint, inside: &str, each: &mut dyn FnMut(&str)) {
+        if let Some(bounds) = self.bounds(root, entry) {
+            self.walk_in(root, &bounds, entry, inside, each);
+        }
+    }
+
+    fn walk_in(
+        &self,
+        root: &Path,
+        bounds: &Bounds,
+        entry: &Entrypoint,
+        inside: &str,
+        each: &mut dyn FnMut(&str),
+    ) {
+        let (folders, files): (Vec<_>, Vec<_>) = self
+            .children(root, bounds, entry, inside)
+            .into_iter()
+            .partition(|(_, folder)| *folder);
+        for (name, _) in files {
+            each(&join(inside, &name));
+        }
+        for (name, _) in folders {
+            self.walk_in(root, bounds, entry, &join(inside, &name), each);
+        }
+    }
+
+    /// Calls `each` with the name of every folder directly in the path `inside` `entry`'s folder
+    /// that [`Project::walk`] goes into, in name order.
+    pub fn walk_folders(
+        &self,
+        root: &Path,
+        entry: &Entrypoint,
+        inside: &str,
+        each: &mut dyn FnMut(&str),
+    ) {
+        let Some(bounds) = self.bounds(root, entry) else {
+            return;
+        };
+        for (name, _) in self
+            .children(root, &bounds, entry, inside)
+            .into_iter()
+            .filter(|(_, folder)| *folder)
+        {
+            each(&name);
+        }
+    }
+
+    /// Calls `each` with the name of every file directly in the path `inside` `entry`'s folder
+    /// that [`Project::walk`] lists, in name order.
+    pub fn walk_files(
+        &self,
+        root: &Path,
+        entry: &Entrypoint,
+        inside: &str,
+        each: &mut dyn FnMut(&str),
+    ) {
+        let Some(bounds) = self.bounds(root, entry) else {
+            return;
+        };
+        for (name, _) in self
+            .children(root, &bounds, entry, inside)
+            .into_iter()
+            .filter(|(_, folder)| !*folder)
+        {
+            each(&name);
+        }
+    }
+
+    /// The file or folder at the path `inside` `entry`'s folder in the checkout at `root`, links
+    /// resolved, when the entrypoint's walk reaches it: what a folder page lists, the document view
+    /// opens, and nothing else.
+    pub fn reachable(&self, root: &Path, entry: &Entrypoint, inside: &str) -> Option<PathBuf> {
+        let bounds = self.bounds(root, entry)?;
+        self.reach(root, &bounds, entry, inside, &mut Vec::new())?;
+        root.join(entry.file(inside)).canonicalize().ok()
+    }
+
+    /// Whether the walk from `entry`'s folder reaches the path `inside` it, and as a folder: name by
+    /// name, each one listed by [`Project::children`] in the folder before it. `read` gets every
+    /// folder whose entries it looked at.
+    fn reach(
+        &self,
+        root: &Path,
+        bounds: &Bounds,
+        entry: &Entrypoint,
+        inside: &str,
+        read: &mut Vec<String>,
+    ) -> Option<bool> {
+        let mut at = String::new();
+        let mut folder = true;
+        for name in inside.split('/').filter(|name| !name.is_empty()) {
+            read.push(entry.file(&at));
+            (_, folder) = self
+                .children(root, bounds, entry, &at)
+                .into_iter()
+                .find(|(listed, _)| listed == name)?;
+            at = join(&at, name);
+        }
+        Some(folder)
+    }
+
+    /// The first file at or under the path `inside` `entry`'s folder that the entrypoint's walk
+    /// reaches and its patterns include, by its path in the folder. `read` gets every folder whose
+    /// entries it looked at, from the entrypoint's folder down.
+    fn first_included(
+        &self,
+        root: &Path,
+        entry: &Entrypoint,
+        inside: &str,
+        read: &mut Vec<String>,
+    ) -> Option<String> {
+        let bounds = self.bounds(root, entry)?;
+        if !self.reach(root, &bounds, entry, inside, read)? {
+            return entry.includes(inside).then(|| inside.to_string());
+        }
+        self.first_in(root, &bounds, entry, inside, read)
+    }
+
+    /// The files and folders in the path `inside` `entry`'s folder, each with whether it is a
+    /// folder, in name order: no name starting with a dot, no link to a folder or to a file
+    /// [`Bounds::admits`] refuses, no folder an exclude pattern matches or another entrypoint
+    /// reads. A folder outside the entrypoint's, once links are resolved, lists nothing.
+    fn children(
+        &self,
+        root: &Path,
+        bounds: &Bounds,
+        entry: &Entrypoint,
+        inside: &str,
+    ) -> Vec<(String, bool)> {
+        let folder = root.join(entry.file(inside));
+        if !folder
+            .canonicalize()
+            .is_ok_and(|path| path.starts_with(&bounds.folder))
+        {
+            return Vec::new();
+        }
+        let Ok(entries) = std::fs::read_dir(folder) else {
+            return Vec::new();
+        };
+        let mut names: Vec<(String, bool)> = entries
+            .flatten()
+            .filter_map(|e| {
+                let path = e.path();
+                let folder = path.is_dir();
+                let listed = if e.file_type().is_ok_and(|kind| kind.is_symlink()) {
+                    path.is_file()
+                        && path
+                            .canonicalize()
+                            .is_ok_and(|target| bounds.admits(&target))
+                } else {
+                    folder || path.is_file()
+                };
+                listed.then(|| (e.file_name().to_string_lossy().into_owned(), folder))
+            })
+            .filter(|(name, folder)| {
+                let path = join(inside, name);
+                !name.starts_with('.')
+                    && (!*folder
+                        || !entry.excluded(&path)
+                            && self
+                                .holding(&entry.file(&path))
+                                .is_some_and(|(holder, _)| std::ptr::eq(holder, entry)))
+            })
+            .collect();
+        names.sort();
+        names
+    }
+
+    /// The bounds of `entry` in the checkout at `root`; `None` when its folder is missing or leads
+    /// out of the checkout.
+    fn bounds(&self, root: &Path, entry: &Entrypoint) -> Option<Bounds> {
+        let project = root.canonicalize().ok()?;
+        let folder = root.join(&entry.folder).canonicalize().ok()?;
+        let uploads = root
+            .join(self.artifact(crate::uploads::DIR))
+            .canonicalize()
+            .ok();
+        folder.starts_with(&project).then_some(Bounds {
+            project,
+            folder,
+            uploads,
+        })
+    }
+
+    /// [`Project::first_included`] under the folder `inside` the walk reached.
+    fn first_in(
+        &self,
+        root: &Path,
+        bounds: &Bounds,
+        entry: &Entrypoint,
+        inside: &str,
+        read: &mut Vec<String>,
+    ) -> Option<String> {
+        read.push(entry.file(inside));
+        let (folders, files): (Vec<_>, Vec<_>) = self
+            .children(root, bounds, entry, inside)
+            .into_iter()
+            .partition(|(_, folder)| *folder);
+        files
+            .into_iter()
+            .map(|(name, _)| join(inside, &name))
+            .find(|file| entry.includes(file))
+            .or_else(|| {
+                folders.into_iter().find_map(|(name, _)| {
+                    self.first_in(root, bounds, entry, &join(inside, &name), read)
+                })
+            })
     }
 
     /// `rel` under the project's artifacts folder.
@@ -434,18 +865,144 @@ impl Project {
     }
 }
 
-/// Whether `rel` is `folder` or lies under it.
-fn under(rel: &str, folder: &str) -> bool {
-    rel == folder
-        || rel
-            .strip_prefix(folder)
-            .is_some_and(|rest| rest.starts_with('/'))
+/// The `[[entrypoints]]` tables checked, or the convention when there are none.
+fn entrypoints(written: Option<Vec<FileEntrypoint>>) -> Result<Vec<Entrypoint>, String> {
+    let Some(written) = written else {
+        return Ok(vec![Entrypoint::convention()]);
+    };
+    if written.is_empty() {
+        return Err(
+            "[[entrypoints]] is empty: leave it out for the convention, docs/ at /docs/".into(),
+        );
+    }
+    let mut found: Vec<Entrypoint> = Vec::new();
+    for table in written {
+        let mut entry = Entrypoint {
+            url: url(&table.url)?,
+            folder: String::new(),
+            include: table.include.unwrap_or_else(|| vec!["**".into()]),
+            exclude: table.exclude,
+            types: table
+                .types
+                .unwrap_or_else(|| vec![crate::entrypoint::MARKDOWN.name.into()]),
+            history: Vec::new(),
+        };
+        let label = entry.label();
+        entry.folder = path_in(
+            &format!("[[entrypoints]] {label} folder"),
+            table.folder,
+            true,
+        )?;
+        let history = table
+            .history
+            .into_iter()
+            .map(|folder| path_in(&format!("[[entrypoints]] {label} history"), folder, false))
+            .collect::<Result<_, _>>()?;
+        if entry.include.is_empty() {
+            return Err(format!(
+                "[[entrypoints]] {label} include is empty: it would show nothing"
+            ));
+        }
+        if entry.types.is_empty() {
+            return Err(format!(
+                "[[entrypoints]] {label} types is empty: it would show nothing"
+            ));
+        }
+        if let Some(unknown) = entry
+            .types
+            .iter()
+            .find(|name| !RENDERERS.iter().any(|r| r.name == name.as_str()))
+        {
+            return Err(format!(
+                "[[entrypoints]] {label} type {unknown:?}: no renderer handles it (the renderers \
+                 are {})",
+                RENDERERS.map(|r| r.name).join(", ")
+            ));
+        }
+        if let Some(other) = found.iter().find(|other| other.url == entry.url) {
+            return Err(format!(
+                "[[entrypoints]] {label} is named twice, over {} and {}",
+                folder_label(&other.folder),
+                folder_label(&entry.folder)
+            ));
+        }
+        if let Some(other) = found.iter().find(|other| other.folder == entry.folder) {
+            return Err(format!(
+                "[[entrypoints]] {label} reads {}, which {} already serves",
+                folder_label(&entry.folder),
+                other.label()
+            ));
+        }
+        found.push(Entrypoint { history, ..entry });
+    }
+    Ok(found)
+}
+
+/// An entrypoint's URL as its route: no slashes around it, empty at the root; refused when it
+/// climbs, names a dot folder or a branch's `@` scope, or holds what a URL path escapes.
+fn url(written: &str) -> Result<String, String> {
+    let refused =
+        || format!("[[entrypoints]] url {written:?} must be a path such as \"/\" or \"/docs/\"");
+    let parts: Vec<&str> = written.split('/').filter(|part| !part.is_empty()).collect();
+    if !written.starts_with('/')
+        || parts.iter().any(|part| {
+            part.starts_with('.')
+                || part.starts_with('@')
+                || part
+                    .chars()
+                    .any(|c| c.is_whitespace() || "?#%\\".contains(c))
+        })
+    {
+        return Err(refused());
+    }
+    Ok(parts.join("/"))
+}
+
+/// A folder as a message names it: `.` for the project's root.
+fn folder_label(folder: &str) -> &str {
+    if folder.is_empty() { "." } else { folder }
+}
+
+/// What a walk of an entrypoint stays in, links resolved: the checkout, which a linked file must
+/// lie in, and the entrypoint's folder in it, which every folder listed lies in; never the
+/// uploads folder, when there is one.
+struct Bounds {
+    project: PathBuf,
+    folder: PathBuf,
+    uploads: Option<PathBuf>,
+}
+
+impl Bounds {
+    /// Whether a file resolving to `target` (links resolved) may be listed and read: in the
+    /// checkout under no name starting with a dot (counted from the entrypoint's folder inside it,
+    /// as the walk counts them), and never in the uploads folder, whose files no document
+    /// replaces.
+    fn admits(&self, target: &Path) -> bool {
+        let shown = |rest: &Path| {
+            !rest
+                .components()
+                .any(|name| name.as_os_str().to_string_lossy().starts_with('.'))
+        };
+        !self
+            .uploads
+            .as_ref()
+            .is_some_and(|uploads| target.starts_with(uploads))
+            && match target.strip_prefix(&self.folder) {
+                Ok(rest) => shown(rest),
+                Err(_) => target.strip_prefix(&self.project).is_ok_and(shown),
+            }
+    }
 }
 
 /// `path` when it is relative and names something inside the project, spelled as the repository
 /// names its files (`./docs/` is `docs`), so every comparison with a listed file holds; else an
 /// error naming `key`.
 fn inside(key: &str, path: String) -> Result<String, String> {
+    path_in(key, path, false)
+}
+
+/// [`inside`], the project's root itself (`.`, written as the empty path) allowed when `root` is.
+fn path_in(key: &str, path: String, root: bool) -> Result<String, String> {
     let refused = || format!("{key} {path:?} must be a path inside the project");
     let mut parts = Vec::new();
     for part in Path::new(&path).components() {
@@ -455,7 +1012,7 @@ fn inside(key: &str, path: String) -> Result<String, String> {
             _ => return Err(refused()),
         }
     }
-    if parts.is_empty() {
+    if parts.is_empty() && (!root || path.is_empty()) {
         return Err(refused());
     }
     Ok(parts.join("/"))
@@ -474,16 +1031,17 @@ pub fn slug(name: &str) -> String {
     out.trim_end_matches('-').to_string()
 }
 
-/// A file's length and modification time, or nothing when it is absent.
+/// A path's length and modification time, its own and then what it leads to (which differ for a
+/// link), each nothing when it is absent.
 #[derive(Clone, Copy, PartialEq, Eq)]
-struct Stamp(Option<(u64, SystemTime)>);
+struct Stamp([Option<(u64, SystemTime)>; 2]);
 
 impl Stamp {
     fn of(path: &Path) -> Self {
-        Self(
-            std::fs::metadata(path)
-                .ok()
-                .map(|m| (m.len(), m.modified().unwrap_or(SystemTime::UNIX_EPOCH))),
-        )
+        let held = |m: std::fs::Metadata| (m.len(), m.modified().unwrap_or(SystemTime::UNIX_EPOCH));
+        Self([
+            std::fs::symlink_metadata(path).ok().map(held),
+            std::fs::metadata(path).ok().map(held),
+        ])
     }
 }

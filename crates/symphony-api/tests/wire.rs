@@ -170,4 +170,88 @@ fn the_project_the_page_inlines_reads_and_writes_back_as_the_same_json() {
         plain.nav.is_empty(),
         "a project without plugins has no pages of theirs"
     );
+    assert_eq!(plain.entrypoints(), ["docs"], "none sent is the convention");
+}
+
+#[test]
+fn a_route_is_a_document_page_under_an_entrypoint_unless_the_symphony_answers_it() {
+    let star_foundry: symphony_api::ProjectView =
+        serde_json::from_str(&fixture("project.json")).unwrap();
+    for (path, page) in [
+        ("docs", true),
+        ("docs/", true),
+        ("docs/game", true),
+        ("docs/game/SPEC.md", true),
+        ("docs/art/a.png", false),
+        ("docs/v1.0", false),
+        ("docs/v1.0/", true),
+        ("docs/art/a.png/", true),
+        ("docsx/A.md", false),
+        ("", false),
+        ("tasks", false),
+        ("tasks/", false),
+        ("hulls", false),
+        ("README.md", false),
+    ] {
+        assert_eq!(star_foundry.is_document_route(path), page, "{path}");
+    }
+    let dotted = symphony_api::ProjectView {
+        entrypoints: vec!["v1.0".into()],
+        ..star_foundry.clone()
+    };
+    for (path, page) in [
+        ("v1.0", true),
+        ("v1.0/", true),
+        ("v1.0/A.md", true),
+        ("v1.0/a.png", false),
+        ("v1.0x", false),
+    ] {
+        assert_eq!(dotted.is_document_route(path), page, "{path}");
+    }
+    // a page keeps its kind: a folder whatever its name, a document only as Markdown with no slash
+    let markdown_named = symphony_api::ProjectView {
+        entrypoints: vec!["guide.md".into(), "docs".into()],
+        ..star_foundry.clone()
+    };
+    for (path, folder) in [
+        ("guide.md", true),
+        ("guide.md/", true),
+        ("guide.md/A.md", false),
+        ("guide.md/old.md/", true),
+        ("docs", true),
+        ("docs/game", true),
+        ("docs/game/SPEC.md", false),
+        ("docs/a.png", false),
+        ("tasks/", false),
+    ] {
+        assert_eq!(markdown_named.is_folder_route(path), folder, "{path}");
+    }
+    assert_eq!(star_foundry.documents_href(), "/docs/");
+    assert_eq!(star_foundry.readme_route(), "docs/README.md");
+    let spec = symphony_api::ProjectView {
+        entrypoints: vec![String::new(), "notes".into()],
+        ..star_foundry
+    };
+    for (path, page) in [
+        ("", true),
+        ("index.md", true),
+        ("guide", true),
+        ("guide/START.md", true),
+        ("notes/A.md", true),
+        ("artifacts/A.md", true),
+        ("art/a.png", false),
+        ("tasks", false),
+        ("task/a/b", false),
+        ("agents", false),
+        ("queue", false),
+        ("api/docs", false),
+        ("artifacts/uploads/a.md", false),
+        ("favicon.ico", false),
+        ("hulls", false),
+        ("hullsx", true),
+    ] {
+        assert_eq!(spec.is_document_route(path), page, "{path}");
+    }
+    assert_eq!(spec.documents_href(), "/");
+    assert_eq!(spec.readme_route(), "README.md");
 }
