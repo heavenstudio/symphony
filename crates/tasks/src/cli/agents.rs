@@ -356,7 +356,7 @@ fn resolve(path: &str) -> String {
 
 /// The pane that is this agent's: its recorded one, else one running its conversation, else one
 /// named for its handle.
-fn find_pane<'p>(
+pub(crate) fn find_pane<'p>(
     panes: &'p [Pane],
     record: Option<&TaskSessionRow>,
     bound: Option<&str>,
@@ -436,7 +436,8 @@ pub fn describe_board(
     include_left: bool,
     board: &crate::Board,
 ) -> Result<View, Error> {
-    let panes = (probes.panes)().ok();
+    // A tick of the server clock asks herdr once: its pane watch's sample, when it took one.
+    let panes = store.clock_panes().unwrap_or_else(|| (probes.panes)()).ok();
     let runs = (probes.runs)().ok();
     let records = store.all_task_sessions()?;
     let bound = store.bound_agents()?;

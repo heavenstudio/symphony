@@ -118,9 +118,17 @@ const TRANSITIONS: [(&str, &[&str]); 7] = [
     ),
     ("in_progress", &["ready", "review", "blocked", "cancelled"]),
     ("review", &["in_progress", "blocked", "cancelled"]),
+    // Back to review: work held only for stamps nobody was producing (`just land-stamps`).
     (
         "blocked",
-        &["concept", "design", "ready", "in_progress", "cancelled"],
+        &[
+            "concept",
+            "design",
+            "ready",
+            "in_progress",
+            "review",
+            "cancelled",
+        ],
     ),
 ];
 
@@ -499,10 +507,11 @@ LET $said = $actor + ' changed priority p' + <string>$task.priority + ' → p' +
     }
 
     /// Move a task along (`can_transition`). Work started, or held by an executor, is moved only by a
-    /// session holding a role on it, except that the owner may cancel any open task.
+    /// session holding a role on it, except that the owner may cancel any open task and return
+    /// blocked work to review.
     pub fn move_to(&self, slug: &str, status: &str, handle: &str) -> Result<Task, Error> {
-        if handle == OWNER && status == "cancelled" {
-            return self.cancel_as_owner(slug);
+        if handle == OWNER && matches!(status, "cancelled" | "review") {
+            return self.move_as_owner(slug, status);
         }
         self.rule(slug, handle, |view| {
             view.actor(handle)?;
@@ -532,42 +541,53 @@ LET $said = $actor + ' changed priority p' + <string>$task.priority + ' → p' +
         })
     }
 
-    fn cancel_as_owner(&self, slug: &str) -> Result<Task, Error> {
-        let open: Vec<_> = TRANSITIONS
-            .iter()
-            .filter(|(_, targets)| targets.contains(&"cancelled"))
-            .map(|(source, _)| *source)
-            .collect();
+    /// The owner's two moves: any open task to `cancelled`, a blocked one (never an instruction
+    /// subtask) back to `review`.
+    fn move_as_owner(&self, slug: &str, status: &str) -> Result<Task, Error> {
+        let cancelling = status == "cancelled";
+        let from: Vec<_> = if cancelling {
+            TRANSITIONS
+                .iter()
+                .filter(|(_, targets)| targets.contains(&"cancelled"))
+                .map(|(source, _)| *source)
+                .collect()
+        } else {
+            vec!["blocked"]
+        };
         // As in set_priority, status validation, the update and history share one transaction.
         // A concurrent edit conflicts and retries without extending the shared agent write path.
         let body = format!(
-            "LET $task = (SELECT status FROM ONLY type::record('task', $slug));
+            "LET $task = (SELECT status, instruction FROM ONLY type::record('task', $slug));
 IF $task = NONE {{ THROW $missing }};
-IF $task.status NOT IN $open {{
-    LET $refusal = $cannot + $task.status + ' to cancelled';
+IF $task.status NOT IN $from {{
+    LET $refusal = $cannot + $task.status + ' to ' + $status;
     THROW $refusal;
 }};
-UPDATE type::record('task', $slug) SET status = 'cancelled', updated = $now, version += 1 RETURN NONE;
-LET $said = $actor + ' moved it ' + $task.status + ' → cancelled';
+IF $status = 'review' AND $task.instruction {{ THROW $instruction }};
+UPDATE type::record('task', $slug) SET status = $status, updated = $now, version += 1 RETURN NONE;
+LET $said = $actor + ' moved it ' + $task.status + ' → ' + $status;
 {}\n{}",
             logged("$slug", "$actor", "'system'", "$said", "NONE"),
-            block_cancelled_dependencies(true)
+            block_cancelled_dependencies(cancelling)
         );
         self.retrying(|| {
             let vars = acting(
                 OWNER,
                 (self.clock)(),
                 json!({
-                    "slug": slug, "open": open,
+                    "slug": slug, "status": status, "from": from,
                     "missing": format!("{REFUSED}{}", no_task(slug)),
                     "cannot": format!("{REFUSED}{slug} cannot go from "),
+                    "instruction": format!("{REFUSED}{slug} is an instruction subtask: its executor closes it with `done`, not review"),
                 }),
             );
             self.written(&body, vars, slug)
         })
     }
 
-    /// A task in review whose branch `just land` put on main is done: the landing is its verdict.
+    /// A task in review whose branch `just land` put on main is done: the landing is its verdict. So is
+    /// one blocked, which land held there while its stamps waited on nobody (`just land-stamps`) and
+    /// could not move back.
     ///
     /// Taken by a session holding a role on the task, or one that asked to land its branch
     /// (`requested`: `land-request` keeps that record, off the board), so the approval recorded with
@@ -582,7 +602,7 @@ LET $said = $actor + ' moved it ' + $task.status + ' → cancelled';
         self.rule(slug, handle, |view| {
             view.actor(handle)?;
             let task = view.task(slug)?;
-            if task.status != "review" {
+            if !matches!(task.status.as_str(), "review" | "blocked") {
                 return Err(refused(format!("{slug} is {}, not in review", task.status)));
             }
             if !requested && !view.snap.roles.iter().any(|r| r.handle == handle) {
@@ -688,6 +708,8 @@ mod tests {
             ("review", "in_progress"),
             ("blocked", "ready"),
             ("in_progress", "blocked"),
+            ("review", "blocked"),
+            ("blocked", "review"),
         ] {
             assert!(can_transition(a, b), "{a} -> {b}");
         }
@@ -757,6 +779,6 @@ mod tests {
             .flat_map(|a| STATUSES.iter().map(move |b| (*a, *b)))
             .filter(|(a, b)| can_transition(a, b))
             .collect();
-        assert_eq!(allowed.len(), 32, "{allowed:?}");
+        assert_eq!(allowed.len(), 33, "{allowed:?}");
     }
 }
