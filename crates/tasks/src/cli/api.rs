@@ -13,6 +13,17 @@ use serde::de::DeserializeOwned;
 use serde_json::{Map, Value};
 use std::io::{BufRead, Read, Write};
 
+/// What a caller of these methods may rely on beyond the schema and the server's RPC: one more each
+/// time a method takes or does something an earlier build refused or did otherwise (1: `landed`'s
+/// `from`, before which a build declares none). The live launcher (`tools/tasks.sh`) serves an
+/// earlier main build only while this matches main's, so no caller reaches a build without what it
+/// relies on.
+#[expect(
+    dead_code,
+    reason = "tools/tasks.sh reads it from the committed source; no Rust code compares builds"
+)]
+pub const VERSION: i64 = 1;
+
 /// Why a call has no result.
 enum Fail {
     Refused(String),
@@ -410,9 +421,16 @@ fn dispatch<F: FnOnce() -> Result<Store, String>>(
             shape::task(&board.get()?.done(&slug, &handle, &note)?)
         }
         "landed" => {
-            args!(slug: need, handle: actor, text: need, requested: or(false));
-            let (slug, handle, text): (String, String, String) = (slug, handle, text);
-            shape::task(&board.get()?.landed(&slug, &handle, &text, requested)?)
+            let closes = ["review", "blocked"].map(String::from).to_vec();
+            args!(slug: need, handle: actor, text: need, requested: or(false), from: or(closes));
+            let (slug, handle, text, from): (String, String, String, Vec<String>) =
+                (slug, handle, text, from);
+            let from: Vec<&str> = from.iter().map(String::as_str).collect();
+            shape::landed(
+                &board
+                    .get()?
+                    .landed(&slug, &handle, &text, requested, &from)?,
+            )
         }
         "ever_executed" => {
             args!(slug: need);
