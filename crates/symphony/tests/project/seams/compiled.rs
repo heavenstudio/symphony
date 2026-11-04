@@ -81,6 +81,28 @@ fn a_process_keeps_the_plugins_it_was_given_and_refuses_another_list() {
                 .into()
         )
     );
+    // The same names, but a first that answers otherwise: another value, refused.
+    static IMPOSTOR: super::Fixture = super::Fixture {
+        plugin: "first",
+        word: "else",
+        versioned: false,
+        markers: &[],
+    };
+    static SAME_NAMES: &[&dyn Plugin] = &[&IMPOSTOR, &SECOND, &Bare];
+    assert_eq!(
+        symphony::plugins::install(SAME_NAMES),
+        Err(
+            "this process already holds the plugins [first, second, bare]; another value of the same names cannot replace them"
+                .into()
+        )
+    );
+    // Another list of the very same values is the same plugins.
+    static AGAIN: &[&dyn Plugin] = &[&FIRST, &SECOND, &Bare];
+    assert!(symphony::plugins::install(AGAIN).is_ok());
+    assert!(std::ptr::eq(
+        symphony::plugins::compiled()[0],
+        &FIRST as &dyn Plugin
+    ));
 }
 
 #[test]

@@ -20,8 +20,8 @@ use crate::register::{Decision, Who};
 static COMPILED: OnceLock<&'static [&'static dyn Plugin]> = OnceLock::new();
 
 /// Makes `plugins` the ones this process holds, for good: a host installs its list before it reads
-/// a project. Installing a list of the same plugins again changes nothing; another list is refused,
-/// naming the plugins already held.
+/// a project. Installing the same plugin values again changes nothing; another list is refused,
+/// naming the plugins already held, and so is another value under a name already held.
 pub fn install(plugins: &'static [&'static dyn Plugin]) -> Result<(), String> {
     let held = COMPILED.get_or_init(|| plugins);
     let names = |list: &[&dyn Plugin]| {
@@ -29,8 +29,21 @@ pub fn install(plugins: &'static [&'static dyn Plugin]) -> Result<(), String> {
             .map(|p| p.name().to_string())
             .collect::<Vec<_>>()
     };
-    if names(held) == names(plugins) {
+    // A value is its place and its type's table of methods: a plugin with no fields has no place of
+    // its own, so its table tells it from another. The same list read twice holds the same pointers.
+    let same = std::ptr::eq(*held, plugins)
+        || (held.len() == plugins.len()
+            && held
+                .iter()
+                .zip(plugins)
+                .all(|(held, given)| std::ptr::eq(*held, *given)));
+    if same {
         Ok(())
+    } else if names(held) == names(plugins) {
+        Err(format!(
+            "this process already holds the plugins [{}]; another value of the same names cannot replace them",
+            names(held).join(", ")
+        ))
     } else {
         Err(format!(
             "this process already holds the plugins [{}]; it cannot hold [{}] instead",
