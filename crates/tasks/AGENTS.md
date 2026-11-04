@@ -217,6 +217,28 @@ old SQLite board into it once, one way, reading SQLite through `rusqlite`
 engine a transaction that big costs more than linearly (the board at the move:
 39 server CPU-s, against 1.5 on `surrealkv://`).
 
+Every server `server::Home` starts gets `server::Storage` as its environment
+(`SURREAL_SURREALKV_VLOG_THRESHOLD`, `SURREAL_SURREALKV_MAX_MEMTABLE_SIZE`).
+Each value stays beside its key in the sstables, where compaction drops the
+versions a rewrite leaves, and the write-ahead log holds at most 256 MiB.
+SurrealKV's own threshold, 4 KiB, sent large values to a value log. It deletes a
+value-log file only once no sstable points into it, so a row rewritten in place
+kept every version: 102 GiB for a 0.5 GiB board (tools/tasks-db-space). Never
+set `SURREAL_SURREALKV_ENABLE_VLOG=false`: a store with values in its log then
+cannot read them. `tasks-reclaim` (`just tasks-reclaim`, the owner's) is
+`Home::reclaim`. Under the starters' lock it ends the board's server and starts
+an unrecorded one on the store. It exports every namespace's every database with
+`surreal export` and imports them into `reclaim/data` under `Storage`. Then it
+re-exports, compares each file byte for byte along with the root's and
+namespaces' users and accesses, swaps the stores, starts the board's server and
+removes the old store; the exports stay. A failure before the swap restarts the
+old store untouched. A start refuses while the store sits in `reclaim/old`
+without a successor, and the next reclaim puts it back before starting over.
+Without arguments it reclaims the board of the repository it runs in; `--dir
+FOLDER` reclaims a board folder elsewhere, as its tests and a rehearsal on a
+clone do (an APFS clone of `sf-tasks/data`: 102.8 GiB to 1.5 GiB, the server
+down 8 min).
+
 `tasks search` keeps keyword ranking by default, including exact slugs. `--mode
 vector` uses BGE chunk neighbours; `--mode hybrid` offers reciprocal rank fusion;
 `--mode exact` checks HNSW recall with exact cosine. Output and JSON keep the same
@@ -244,8 +266,9 @@ become visible after a completed pass, rather than synchronously with writes.
 explicitly supplied identity is still validated. A nonblocking per-database
 file lock admits one embed writer. Unchanged maintenance passes read only the message counter,
 task update stamps and model id against the last successful whole-board checkpoint, never source
-text, chunk manifests, model loading or downloads. A changed board scans hashes and part counts
-and embeds only changed sources. Explicit catch-up also repairs derived cache damage without a
+text, chunk manifests, model loading or downloads. The checkpoint is the server's SHA-256 of those
+stamps, never the stamps: kept whole, they were a 165 KB row rewritten by each changed pass. A
+changed board scans hashes and part counts and embeds only changed sources. Explicit catch-up also repairs derived cache damage without a
 board write. Manual bulk catch-up uses
 one thread too; `--threads 1..64` explicitly overrides it for bulk work.
 Short search queries always use one inference thread.

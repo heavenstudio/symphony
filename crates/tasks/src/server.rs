@@ -7,14 +7,20 @@
 //! the caller. That is also the restart: a server that was killed is started again on the same data. A
 //! recorded server older than the pinned SurrealDB is replaced; a newer one, a tree ahead of this one,
 //! is used as it is.
+//!
+//! Every server it starts keeps the board's values in its sstables ([`Storage`]), where compaction
+//! reclaims what a rewrite leaves, and [`Home::reclaim`] rebuilds a store that grew before it did.
 
 use crate::port::{self, NotStarted, Start};
 use crate::rpc;
 use crate::sys::{Command, output, pid_alive, terminate};
+use serde_json::{Value, json};
+use std::collections::BTreeMap;
 use std::fmt;
 use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom};
 use std::net::SocketAddr;
+use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
@@ -28,6 +34,11 @@ const ADDRESS: &str = "server.json";
 const LOCK: &str = "lock";
 const LOG: &str = "server.log";
 const DATA: &str = "data";
+/// In the board's folder, where a reclaim works ([`Home::reclaim`]): the `exports/` it keeps, the new
+/// store it builds in `data/`, the exports of that store it checks in `check/`, and the old store,
+/// `old/`, from the swap to its removal.
+const RECLAIM: &str = "reclaim";
+const OLD: &str = "old";
 /// How long a server is waited for to come up or to answer, on a machine as loaded as this one gets.
 const PATIENCE: Duration = Duration::from_secs(60);
 /// How long a server asked to end is given before it is made to.
@@ -46,6 +57,9 @@ pub enum ServerError {
     NotUp(String),
     /// The board's folder could not be read or written.
     Io(String),
+    /// A reclaim stopped before its swap ([`Home::reclaim`]): what failed. The board's server runs on
+    /// the old store again, untouched.
+    Reclaim(String),
 }
 
 impl fmt::Display for ServerError {
@@ -58,8 +72,72 @@ impl fmt::Display for ServerError {
                 path.display()
             ),
             ServerError::NotUp(why) | ServerError::Io(why) => f.write_str(why),
+            ServerError::Reclaim(why) => write!(
+                f,
+                "the reclaim stopped and the board runs on its old store, untouched: {why}"
+            ),
         }
     }
+}
+
+/// How the board's SurrealKV keeps what it is given, as the environment of every server this module
+/// starts: SurrealDB 3.3 reads `SURREAL_SURREALKV_*` for its storage engine.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Storage {
+    /// A value of more bytes than this goes apart from its key, to the value log. SurrealKV deletes a
+    /// value-log file only once no sstable points into it, so every version of a row rewritten in
+    /// place stays there for as long as one older value in that file is live: 102 GiB of log held
+    /// a board of 0.5 GiB (tools/tasks-db-space). Kept beside their keys, in the sstables, the
+    /// versions a rewrite leaves are dropped by compaction. A store with values already in the log
+    /// still reads them.
+    pub value_log_threshold: u64,
+    /// How many bytes are written before they go to an sstable: the most the write-ahead log holds.
+    /// One transaction must fit in it.
+    pub memtable: u64,
+}
+
+impl Storage {
+    /// The board's. Its largest value, a task's brief, is 1.7 MB, far below 64 MiB, and its export's
+    /// largest statement 1.8 MB; SurrealKV's own memtable on a 64 GiB machine is 4 GiB.
+    pub const BOARD: Storage = Storage {
+        value_log_threshold: 64 << 20,
+        memtable: 256 << 20,
+    };
+
+    fn environment(self) -> [(&'static str, String); 2] {
+        [
+            (
+                "SURREAL_SURREALKV_VLOG_THRESHOLD",
+                self.value_log_threshold.to_string(),
+            ),
+            (
+                "SURREAL_SURREALKV_MAX_MEMTABLE_SIZE",
+                self.memtable.to_string(),
+            ),
+        ]
+    }
+}
+
+/// What [`Home::reclaim`] did.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Reclaimed {
+    /// The bytes the board's store took on disk before, and takes now.
+    pub before: u64,
+    pub after: u64,
+    /// Every database carried, as `namespace/database`.
+    pub databases: Vec<String>,
+    /// Where the exports stay, one SurrealQL file a database.
+    pub exports: PathBuf,
+    /// The board's server, on the new store.
+    pub running: Running,
+}
+
+/// A store's databases, and the users and accesses of its root and of each namespace, which a
+/// database's export does not hold.
+#[derive(Debug, PartialEq)]
+struct Layout {
+    databases: Vec<(String, String)>,
+    definitions: BTreeMap<String, Value>,
 }
 
 fn io(what: &str, path: &Path) -> impl Fn(std::io::Error) -> ServerError {
@@ -80,6 +158,7 @@ pub struct Home {
     dir: PathBuf,
     surreal: PathBuf,
     patience: Duration,
+    storage: Storage,
 }
 
 impl Home {
@@ -89,6 +168,7 @@ impl Home {
             dir: dir.into(),
             surreal: surreal.into(),
             patience: PATIENCE,
+            storage: Storage::BOARD,
         }
     }
 
@@ -110,6 +190,12 @@ impl Home {
     /// How long a server that is starting, or that runs and does not answer, is waited for.
     pub fn patience(self, patience: Duration) -> Home {
         Home { patience, ..self }
+    }
+
+    /// How the servers this board starts keep their data: [`Storage::BOARD`] unless a test asks
+    /// for a memtable small enough to flush, or for the storage a store grew under.
+    pub fn storage(self, storage: Storage) -> Home {
+        Home { storage, ..self }
     }
 
     pub fn dir(&self) -> &Path {
@@ -211,6 +297,198 @@ impl Home {
         Ok(Some(running))
     }
 
+    /// Rebuild the board's store from an export of itself, which holds only what is live. Under the
+    /// starters' lock: end the board's server, recorded or not; start one on the store that is
+    /// recorded nowhere, and export every database it holds with SurrealDB's own `export`; import
+    /// them into a new store, started with this board's [`Storage`]; export that one again and
+    /// compare each export byte for byte, and the root's and every namespace's users and accesses;
+    /// then swap the stores, start the board's server on the new one, and remove the old. Until the
+    /// swap the old store is untouched, and a failure starts the board's server on it again. The
+    /// exports stay in `reclaim/exports/`, until the next reclaim.
+    pub fn reclaim(&self) -> Result<Reclaimed, ServerError> {
+        if !self.surreal.is_file() {
+            return Err(ServerError::NoSurreal(self.surreal.clone()));
+        }
+        let _held = self.lock()?;
+        let work = self.dir.join(RECLAIM);
+        let data = self.dir.join(DATA);
+        self.finish_swap()?;
+        self.halt()?;
+        let before = bytes(&data);
+        if work.exists() {
+            fs::remove_dir_all(&work).map_err(io("could not remove", &work))?;
+        }
+        let (exports, check, fresh) = (work.join("exports"), work.join("check"), work.join(DATA));
+        for folder in [&exports, &check] {
+            fs::create_dir_all(folder).map_err(io("could not make", folder))?;
+        }
+        let databases = match self.rebuild(&data, &fresh, &exports, &check) {
+            Ok(databases) => databases,
+            Err(problem) => {
+                let _ = fs::remove_dir_all(&fresh);
+                self.start()?;
+                return Err(problem);
+            }
+        };
+        let old = work.join(OLD);
+        fs::rename(&data, &old).map_err(io("could not move", &data))?;
+        let running = match fs::rename(&fresh, &data)
+            .map_err(io("could not move", &fresh))
+            .and_then(|()| self.start())
+        {
+            Ok(running) => running,
+            Err(problem) => {
+                if data.exists() {
+                    fs::rename(&data, &fresh).map_err(io("could not move", &data))?;
+                }
+                fs::rename(&old, &data).map_err(io("could not move", &old))?;
+                self.start()?;
+                return Err(ServerError::Reclaim(problem.to_string()));
+            }
+        };
+        fs::remove_dir_all(&old).map_err(io("could not remove", &old))?;
+        fs::remove_dir_all(&check).map_err(io("could not remove", &check))?;
+        Ok(Reclaimed {
+            before,
+            after: bytes(&data),
+            databases,
+            exports,
+            running,
+        })
+    }
+
+    /// What a reclaim cut short between its two moves left: the old store put back where the new
+    /// one never arrived. One cut later leaves the old store beside the new, in the work folder the
+    /// reclaim removes next. Under the lock.
+    fn finish_swap(&self) -> Result<(), ServerError> {
+        let (old, data) = (self.dir.join(RECLAIM).join(OLD), self.dir.join(DATA));
+        if old.exists() && !data.exists() {
+            fs::rename(&old, &data).map_err(io("could not move", &old))?;
+        }
+        Ok(())
+    }
+
+    /// End the board's server, recorded or found on its data, and forget its address. Under the lock.
+    fn halt(&self) -> Result<(), ServerError> {
+        if let Some(running) = self.recorded() {
+            if self.serves(running.pid) {
+                self.end(running.pid)?;
+            }
+            let address = self.dir.join(ADDRESS);
+            fs::remove_file(&address).map_err(io("could not remove", &address))?;
+        }
+        if let Some(running) = self.unrecorded() {
+            self.end(running.pid)?;
+        }
+        Ok(())
+    }
+
+    /// Export every database of the store at `data` into `exports`, import each into a new store at
+    /// `fresh`, and export that one into `check`: the databases, once every pair of exports and the
+    /// two stores' layouts are the same. Each server is ended before this returns.
+    fn rebuild(
+        &self,
+        data: &Path,
+        fresh: &Path,
+        exports: &Path,
+        check: &Path,
+    ) -> Result<Vec<String>, ServerError> {
+        let file = |ns: &str, db: &str| format!("{ns}.{db}.surql");
+        let old = self.spawn(&store(data))?;
+        let read = layout(&old).and_then(|held| {
+            for (ns, db) in &held.databases {
+                self.transfer("export", &old, ns, db, &exports.join(file(ns, db)))?;
+            }
+            Ok(held)
+        });
+        self.end(old.pid)?;
+        let held = read?;
+        let new = self.spawn(&store(fresh))?;
+        let built = (|| {
+            for (ns, db) in &held.databases {
+                self.transfer("import", &new, ns, db, &exports.join(file(ns, db)))?;
+            }
+            for (ns, db) in &held.databases {
+                let (first, again) = (exports.join(file(ns, db)), check.join(file(ns, db)));
+                self.transfer("export", &new, ns, db, &again)?;
+                let read = |path: &Path| fs::read(path).map_err(io("could not read", path));
+                if read(&first)? != read(&again)? {
+                    return Err(ServerError::Reclaim(format!(
+                        "{ns}/{db} exported from the new store is not its export from the old: {} against {}",
+                        again.display(),
+                        first.display()
+                    )));
+                }
+            }
+            let rebuilt = layout(&new)?;
+            let missing: Vec<String> = held
+                .databases
+                .iter()
+                .filter(|pair| !rebuilt.databases.contains(pair))
+                .map(|(ns, db)| format!("{ns}/{db}"))
+                .collect();
+            if !missing.is_empty() {
+                return Err(ServerError::Reclaim(format!(
+                    "the new store lacks {}",
+                    missing.join(", ")
+                )));
+            }
+            for (scope, defined) in &held.definitions {
+                if rebuilt.definitions.get(scope) != Some(defined) {
+                    return Err(ServerError::Reclaim(format!(
+                        "the users and accesses of {} differ in the new store: {defined} against {}",
+                        if scope.is_empty() { "the root" } else { scope },
+                        rebuilt.definitions.get(scope).unwrap_or(&Value::Null)
+                    )));
+                }
+            }
+            Ok(())
+        })();
+        self.end(new.pid)?;
+        built.map(|()| {
+            held.databases
+                .iter()
+                .map(|(ns, db)| format!("{ns}/{db}"))
+                .collect()
+        })
+    }
+
+    /// SurrealDB's own `export` or `import` (`verb`) of database `ns`/`db` on `running`, to or from
+    /// `file`.
+    fn transfer(
+        &self,
+        verb: &str,
+        running: &Running,
+        ns: &str,
+        db: &str,
+        file: &Path,
+    ) -> Result<(), ServerError> {
+        let endpoint = format!("http://{}", running.addr);
+        let out = output(
+            Command::new(&self.surreal)
+                .args([
+                    verb,
+                    "--endpoint",
+                    &endpoint,
+                    "--namespace",
+                    ns,
+                    "--database",
+                    db,
+                ])
+                .arg(file),
+        )
+        .map_err(io(&format!("could not run {verb} with"), &self.surreal))?;
+        if out.status.success() {
+            return Ok(());
+        }
+        Err(ServerError::Reclaim(format!(
+            "{verb} of {ns}/{db} at {} ({}) failed: {}",
+            running.addr,
+            file.display(),
+            String::from_utf8_lossy(&out.stderr).trim()
+        )))
+    }
+
     /// Every starter and stopper of this board, one at a time.
     fn lock(&self) -> Result<crate::sys::FileLock, ServerError> {
         fs::create_dir_all(&self.dir).map_err(io("could not make", &self.dir))?;
@@ -226,7 +504,7 @@ impl Home {
 
     /// The data a server of this board is started on, as its command line names it.
     fn data(&self) -> String {
-        format!("surrealkv://{}", self.dir.join(DATA).display())
+        store(&self.dir.join(DATA))
     }
 
     /// Whether `pid` is this board's server: running, and on this board's data. A pid recorded once
@@ -278,12 +556,28 @@ impl Home {
         )))
     }
 
-    /// Start a server on a free port, wait until it answers, and record it. Under the lock. SurrealDB
-    /// is told a reserved port to bind; one that ends saying the port was taken meanwhile is started
-    /// again on another ([`port`]), every start within the one patience. It is up once it answers and
-    /// holds the port's listener itself ([`port::listens`]): a process that took its port answers
-    /// too, while this server is still on its way to ending.
+    /// Start the board's server ([`Home::spawn`]) and record it. Under the lock. A store a reclaim
+    /// moved aside and never replaced is refused, never started anew and empty in its place.
     fn start(&self) -> Result<Running, ServerError> {
+        let old = self.dir.join(RECLAIM).join(OLD);
+        if !self.dir.join(DATA).exists() && old.exists() {
+            return Err(ServerError::Io(format!(
+                "the board's store is at {}: a reclaim moved it there and stopped; \
+                 `just tasks-reclaim` puts it back",
+                old.display()
+            )));
+        }
+        let running = self.spawn(&self.data())?;
+        self.record(&running)?;
+        Ok(running)
+    }
+
+    /// Start a server on `data` on a free port, with this board's [`Storage`], and wait until it
+    /// answers. SurrealDB is told a reserved port to bind; one that ends saying the port was taken
+    /// meanwhile is started again on another ([`port`]), every start within the one patience. It is
+    /// up once it answers and holds the port's listener itself ([`port::listens`]): a process that
+    /// took its port answers too, while this server is still on its way to ending.
+    fn spawn(&self, data: &str) -> Result<Running, ServerError> {
         if !self.surreal.is_file() {
             return Err(ServerError::NoSurreal(self.surreal.clone()));
         }
@@ -295,11 +589,12 @@ impl Home {
             let out = output(
                 Command::new("/bin/sh")
                     .new_session()
+                    .envs(self.storage.environment())
                     .arg("-c")
                     .arg(START)
                     .arg(&self.surreal)
                     .arg(&addr)
-                    .arg(self.data())
+                    .arg(data)
                     .arg(&log),
             )
             .map_err(io("could not start", &self.surreal))?;
@@ -353,10 +648,7 @@ impl Home {
             ))
         };
         match started {
-            Ok((running, _)) => {
-                self.record(&running)?;
-                Ok(running)
-            }
+            Ok((running, _)) => Ok(running),
             Err(NotStarted::Failed(error)) => Err(error),
             Err(NotStarted::NoPort(problem)) => {
                 Err(io("found no free port beside", &self.dir)(problem))
@@ -403,6 +695,73 @@ fn owns(running: &Running) -> Result<bool, ServerError> {
     let pid = u32::try_from(running.pid).map_err(|problem| failed(&problem))?;
     let addr: SocketAddr = running.addr.parse().map_err(|problem| failed(&problem))?;
     port::listens(pid, addr, output).map_err(|problem| failed(&problem))
+}
+
+/// A store at `path`, as a server's command line names it.
+fn store(path: &Path) -> String {
+    format!("surrealkv://{}", path.display())
+}
+
+/// The bytes `path` takes on disk, every file in it counted by the blocks it holds, as `du` counts
+/// them: what a reclaim frees, measured. A clone's shared blocks count in each copy.
+pub fn bytes(path: &Path) -> u64 {
+    let Ok(meta) = fs::symlink_metadata(path) else {
+        return 0;
+    };
+    let own = meta.blocks() * 512;
+    if !meta.is_dir() {
+        return own;
+    }
+    fs::read_dir(path).map_or(own, |entries| {
+        own + entries
+            .filter_map(Result::ok)
+            .map(|entry| bytes(&entry.path()))
+            .sum::<u64>()
+    })
+}
+
+/// The databases the server `running` holds, sorted, with the users and accesses of its root (the
+/// empty scope) and of each namespace. A name the board's RPC could not say is refused.
+fn layout(running: &Running) -> Result<Layout, ServerError> {
+    let client = rpc::Client::new(&running.addr, crate::NAMESPACE, crate::DATABASE);
+    let ask = |sql: &str| {
+        client.unscoped(sql, json!({})).map_err(|problem| {
+            ServerError::Reclaim(format!(
+                "could not read {sql:?} at {}: {problem}",
+                running.addr
+            ))
+        })
+    };
+    let names = |info: &Value, field: &str| -> Result<Vec<String>, ServerError> {
+        let names: Vec<String> = info[field]
+            .as_object()
+            .map(|named| named.keys().cloned().collect())
+            .unwrap_or_default();
+        match names.iter().find(|name| !rpc::plain(name)) {
+            Some(name) => Err(ServerError::Reclaim(format!(
+                "{name:?} at {} is not a plain name for a namespace or database",
+                running.addr
+            ))),
+            None => Ok(names),
+        }
+    };
+    let defined = |info: &Value| json!({"users": info["users"], "accesses": info["accesses"]});
+    let root = ask("INFO FOR ROOT;")?.pop().unwrap_or(Value::Null);
+    let mut layout = Layout {
+        databases: Vec::new(),
+        definitions: BTreeMap::from([(String::new(), defined(&root))]),
+    };
+    for ns in names(&root, "namespaces")? {
+        let info = ask(&format!("USE NS {ns}; INFO FOR NS;"))?
+            .pop()
+            .unwrap_or(Value::Null);
+        for db in names(&info, "databases")? {
+            layout.databases.push((ns.clone(), db));
+        }
+        layout.definitions.insert(ns, defined(&info));
+    }
+    layout.databases.sort();
+    Ok(layout)
 }
 
 /// Whether `version` is older than the pinned SurrealDB, release by release (`3.10.0` after `3.9.1`); one

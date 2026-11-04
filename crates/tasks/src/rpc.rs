@@ -117,6 +117,12 @@ impl Client {
         self.call(sql, vars, true)
     }
 
+    /// `sql` in no namespace or database: a statement about the server itself (`INFO FOR ROOT`), or
+    /// one that enters its own with `USE`. Each statement's result, in order.
+    pub fn unscoped(&self, sql: &str, vars: Value) -> Result<Vec<Value>, DbError> {
+        self.call(sql, vars, false)
+    }
+
     /// The namespace and the database, made if they are not there yet, then `sql` in them, in one
     /// request: each statement's result, the four that make and enter them first.
     pub fn define_then(&self, sql: &str, vars: Value) -> Result<Vec<Value>, DbError> {
