@@ -120,6 +120,7 @@ pub(crate) struct Hub {
     pub changed: watch::Sender<u64>,
     pub draining: watch::Sender<bool>,
     pub server_notice: watch::Sender<String>,
+    initial_board: watch::Sender<bool>,
     invalid: RwLock<BTreeMap<String, String>>,
     trees: RwLock<BTreeMap<String, PathBuf>>,
     tasks: Mutex<TaskState>,
@@ -202,6 +203,7 @@ impl Hub {
             changed: watch::Sender::new(0),
             draining: watch::Sender::new(false),
             server_notice: watch::Sender::new(String::new()),
+            initial_board: watch::Sender::new(true),
             invalid: RwLock::new(BTreeMap::new()),
             trees: RwLock::new(
                 measured("hub branch trees", || branches::trees(root))
@@ -238,6 +240,7 @@ impl Hub {
             ui_dist,
             drain_chat,
             crate::backstop::PERIOD,
+            taskview::connect,
         )
     }
 
@@ -247,6 +250,7 @@ impl Hub {
         ui_dist: &Path,
         drain_chat: bool,
         period: Duration,
+        mut connect: impl FnMut(&Path) -> Result<tasks::Store, String> + Send + 'static,
     ) -> Result<Arc<Self>, String> {
         let started = Instant::now();
         let mut hub = measured("hub new", || Self::new(root, ui_dist));
@@ -258,6 +262,7 @@ impl Hub {
             eprintln!("→ chat journal: left untouched by this private server");
         }
         let hub = Arc::new(hub);
+        hub.initial_board.send_replace(false);
         // Install watches before the first read, so an edit during that read is queued too.
         let (send, recv) = mpsc::sync_channel(1);
         let changed_hub = Arc::downgrade(&hub);
@@ -279,31 +284,47 @@ impl Hub {
             measured("initial sweep", || Sweep::new(&hub.swept_paths()));
         measured("initial documents", || hub.refresh_docs(None))?;
         let docs_ready = started.elapsed();
-        let board_started = Instant::now();
-        let board = taskview::connect(&hub.root).and_then(|store| {
-            hub.board_read(&store)?;
-            Ok(store)
-        });
-        let board = match board {
-            Ok(store) => Some(store),
-            Err(e) => {
-                hub.board_error(e);
-                None
-            }
-        };
         let weak = Arc::downgrade(&hub);
-        eprintln!(
-            "→ native read data warmed: documents {:.1} ms, board {:.1} ms, total {:.1} ms",
-            docs_ready.as_secs_f64() * 1000.0,
-            board_started.elapsed().as_secs_f64() * 1000.0,
-            started.elapsed().as_secs_f64() * 1000.0
-        );
         let backstop = crate::backstop::Backstop::new(period);
         *hub.worker.lock().unwrap_or_else(|e| e.into_inner()) =
             Some(std::thread::spawn(move || {
-                run(weak, recv, watcher, watched, backstop, board)
+                let Some(hub) = weak.upgrade() else { return };
+                if *hub.draining.borrow() {
+                    return;
+                }
+                let board_started = Instant::now();
+                let board = match connect(&hub.root).and_then(|store| {
+                    hub.board_read(&store)?;
+                    Ok(store)
+                }) {
+                    Ok(store) => Some(store),
+                    Err(error) => {
+                        hub.board_error(error);
+                        None
+                    }
+                };
+                hub.initial_board.send_replace(true);
+                eprintln!(
+                    "→ native read data warmed: documents {:.1} ms, board {:.1} ms, total {:.1} ms",
+                    docs_ready.as_secs_f64() * 1000.0,
+                    board_started.elapsed().as_secs_f64() * 1000.0,
+                    started.elapsed().as_secs_f64() * 1000.0
+                );
+                drop(hub);
+                run(weak, recv, watcher, watched, backstop, board, connect)
             }));
         Ok(hub)
+    }
+
+    /// Data requests wait for the first board attempt; shutdown releases them with an error.
+    pub(crate) async fn wait_initial_board(&self) -> Result<(), String> {
+        let mut ready = self.initial_board.subscribe();
+        let mut draining = self.draining.subscribe();
+        tokio::select! {
+            biased;
+            _ = draining.wait_for(|stopping| *stopping) => Err("the Symphony server is stopping".into()),
+            _ = ready.wait_for(|ready| *ready) => Ok(()),
+        }
     }
 
     /// Finish the current refresh (including its children), then release the watcher and board.
@@ -1354,6 +1375,7 @@ fn run(
     mut watched: BTreeSet<PathBuf>,
     mut backstop: Backstop,
     mut board: Option<tasks::Store>,
+    mut connect: impl FnMut(&Path) -> Result<tasks::Store, String>,
 ) {
     let mut last_board = Instant::now() - BOARD_INTERVAL;
     let mut expiry = OrderExpiry::default();
@@ -1370,7 +1392,7 @@ fn run(
                 hub.refresh_order("")
             });
             if board.is_none() {
-                board = taskview::connect(&hub.root).ok();
+                board = connect(&hub.root).ok();
             }
             if let Some(store) = &board
                 && let Err(e) = measured("board tick", || hub.board_read(store))
@@ -1537,6 +1559,9 @@ mod chat_tests;
 
 #[cfg(test)]
 mod backstop_tests;
+
+#[cfg(test)]
+mod startup_tests;
 
 #[cfg(test)]
 mod tests {

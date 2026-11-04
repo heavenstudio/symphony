@@ -46,7 +46,8 @@ const READS: &[&str] = &[
 
 type Request = axum::http::Request<()>;
 
-pub(crate) async fn warm(shared: &Arc<Shared>) -> Result<Arc<Hub>, String> {
+/// Publish the document hub; its owned worker completes the first board read separately.
+pub(crate) async fn start(shared: &Arc<Shared>) -> Result<Arc<Hub>, String> {
     if !shared.stopping()
         && let Some(hub) = shared.api.get()
     {
@@ -72,6 +73,13 @@ pub(crate) async fn warm(shared: &Arc<Shared>) -> Result<Arc<Hub>, String> {
     })
     .await
     .map_err(|e| e.to_string())?
+}
+
+/// A complete first read for data routes and replacement handover.
+pub(crate) async fn warm(shared: &Arc<Shared>) -> Result<Arc<Hub>, String> {
+    let hub = start(shared).await?;
+    hub.wait_initial_board().await?;
+    Ok(hub)
 }
 
 pub(crate) async fn answer(shared: &Arc<Shared>, request: Request) -> Option<Response> {

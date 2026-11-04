@@ -357,7 +357,15 @@ fn if_up_never_starts_a_server_and_stop_never_requires_a_build() {
 #[test]
 fn missing_malformed_stale_and_lying_records_recover_the_same_running_server() {
     let repo = Repo::new("record recovery");
-    repo.start(&repo.tree, false);
+    let started = repo.start(&repo.tree, false);
+    assert!(
+        !repo
+            .base
+            .join(format!("env.{}", started.child.id()))
+            .exists(),
+        "a cold auto-port start read the process table: {}",
+        started.output()
+    );
     let running = repo.record().unwrap();
     let mut dead = Command::new("/usr/bin/true").spawn().unwrap();
     let stale_pid = dead.id();
@@ -383,7 +391,14 @@ fn missing_malformed_stale_and_lying_records_recover_the_same_running_server() {
         if let Some(contents) = contents {
             fs::write(&address, contents).unwrap();
         }
-        repo.start(&repo.tree, false);
+        let recovered = repo.start(&repo.tree, false);
+        assert!(
+            repo.base
+                .join(format!("env.{}", recovered.child.id()))
+                .exists(),
+            "a live server's record was recovered without checking its process: {}",
+            recovered.output()
+        );
         assert_eq!(repo.record(), Some(running.clone()));
         assert_eq!(repo.check_server().pid, running.pid);
     }
@@ -408,7 +423,15 @@ fn malformed_and_dead_records_without_a_server_are_replaced() {
             serde_json::json!({"pid": pid, "port": 1, "root": "/gone"}).to_string()
         };
         write(&repo.home.join("server.json"), &text);
-        repo.start(&repo.main, false);
+        let started = repo.start(&repo.main, false);
+        assert!(
+            !repo
+                .base
+                .join(format!("env.{}", started.child.id()))
+                .exists(),
+            "a dead record without startup history read the process table: {}",
+            started.output()
+        );
         assert_ne!(repo.check_server().pid, i64::from(pid));
     }
 }

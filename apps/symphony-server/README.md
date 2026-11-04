@@ -139,6 +139,13 @@ starter's environment but `HOME`, `PATH`, `USER`, `LANG` and `SF_SYMPHONY_TEST_P
 census logs one line per round, as its scan answers or as the server's stop ends it, so a
 `ps` that never answers still shows how long it was pending. The callback clock's
 sequenced board snapshot also supplies the board and agents views. Unchanged raw records reuse their wire snapshot and version hash.
+
+A cold server publishes its document hub and URL while the first board read runs
+in the hub's owned worker. Data reads await that first result; an unavailable board
+keeps its existing error response, and shutdown releases waiting reads before
+joining the worker. A reload replacement awaits the first board result before
+acknowledging handover. Cold auto-port homes with no owned startup log skip process
+discovery; homes with startup history retain lost-record recovery.
 On macOS, notify filters nonrecursive watches from a recursive FSEvents stream,
 so writes below a watched root still cost event filtering. Foreground preview
 measurements exclude the shared server's source watcher.

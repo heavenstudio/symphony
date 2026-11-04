@@ -383,7 +383,15 @@ async fn watcher_refreshes_gallery_art_but_reuses_it_for_document_events() {
     let weak = Arc::downgrade(&hub);
     let backstop = Backstop::new(Duration::from_millis(500));
     *hub.worker.lock().unwrap() = Some(std::thread::spawn(move || {
-        super::run(weak, recv, watcher, BTreeSet::new(), backstop, None);
+        super::run(
+            weak,
+            recv,
+            watcher,
+            BTreeSet::new(),
+            backstop,
+            None,
+            symphony::taskview::connect,
+        );
     }));
     struct StopWorker(Arc<Hub>);
     impl Drop for StopWorker {

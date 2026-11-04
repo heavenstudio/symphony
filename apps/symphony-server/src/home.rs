@@ -226,11 +226,21 @@ impl Home {
 
     /// A server of this folder that the record does not name (its starter was killed between its
     /// answer and its record, or the record was lost): it holds the port, so no other could start.
-    /// The process table is read only while something holds this folder's port or the record's, or
-    /// when the port is the server's own pick; a start or a stop on a free port reads none.
+    /// The process table is read only while a known port is held, or an auto-port home's log can
+    /// identify a previous server. A cold auto-port home has no such server to recover.
     fn unrecorded(&self) -> Option<Running> {
         let ports = [Some(self.port), self.recorded().map(|running| running.port)];
-        if !ports.contains(&Some(0)) && !ports.into_iter().flatten().any(held) {
+        let auto_history = ports.contains(&Some(0))
+            && std::iter::once(self.dir.as_path())
+                .chain(self.legacy.as_deref())
+                .any(|dir| dir.join(LOG).try_exists().unwrap_or(true));
+        if !auto_history
+            && !ports
+                .into_iter()
+                .flatten()
+                .filter(|&port| port != 0)
+                .any(held)
+        {
             return None;
         }
         let mut ps = Command::new("ps");

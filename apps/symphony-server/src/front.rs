@@ -737,9 +737,14 @@ async fn start(mut serve: Serve, open: bool) -> Result<Started, i32> {
             move || !sys::pid_alive(test),
         ));
     }
-    // Make the document/board snapshots and gallery content ready before printing or opening
-    // the URL: the first visitor must not pay the read hub's initialization cost.
-    if let Err(why) = crate::api::warm(&shared).await {
+    // Documents are ready before the URL. The first board read runs in the hub's owned worker;
+    // data requests await it, and a replacement keeps the same barrier before handover.
+    let warm = if reload.is_replacement() {
+        crate::api::warm(&shared).await
+    } else {
+        crate::api::start(&shared).await
+    };
+    if let Err(why) = warm {
         eprintln!("· native read data could not be warmed: {why}");
         if reload.is_replacement() {
             return Err(2);
