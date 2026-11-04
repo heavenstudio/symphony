@@ -366,3 +366,33 @@ fn batches_and_streams_keep_serving_agents_and_owner_recipients_after_refusals()
         assert!(thread.iter().all(|m| m.sender != "owner"));
     }
 }
+
+/// `landed` closes from review or held blocked unless the call names `from`, and answers with the
+/// status it found: land closes work taken back to in progress only when it says so.
+#[test]
+fn landed_closes_only_from_what_the_call_names_and_answers_what_it_found() {
+    let c = Case::new();
+    let actor = c.register("worker");
+    c.ok(&actor, &["create", "sim/a", "A"]);
+    c.ok(&actor, &["claim", "sim/a"]);
+    let call = |from: Option<Value>| {
+        let mut args = json!({"slug": "sim/a", "handle": actor, "text": "landed sim/a on main at 3e0c66192471", "requested": true});
+        if let Some(from) = from {
+            args["from"] = from;
+        }
+        json!({"method": "landed", "args": args})
+    };
+    assert_eq!(
+        answer(&c.env, call(None)),
+        json!({"refused": "sim/a is in_progress, which this landing does not close"})
+    );
+    assert_eq!(
+        answer(&c.env, call(Some(json!(["review", "ready"])))),
+        json!({"refused": "a landing closes a task in review, blocked or in_progress, not ready"})
+    );
+    let landed = &answer(&c.env, call(Some(json!(["review", "in_progress"]))))["ok"];
+    assert_eq!(
+        (&landed["slug"], &landed["status"], &landed["from"]),
+        (&json!("sim/a"), &json!("done"), &json!("in_progress"))
+    );
+}
