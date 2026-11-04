@@ -6,6 +6,7 @@ use std::fs;
 use std::path::PathBuf;
 use std::time::Instant;
 use tasks::embedding::{Bge, Embedder, MODEL_ID, fuse};
+use tasks::sys::Spawning as _;
 use tasks::{DATABASE, cli, rows::Dump, rpc};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -174,7 +175,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 fn load() -> String {
     std::process::Command::new("uptime")
-        .output()
+        .output_locked()
         .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
         .unwrap_or_else(|e| e.to_string())
 }
