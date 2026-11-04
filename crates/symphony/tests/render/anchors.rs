@@ -6,10 +6,10 @@ use super::page;
 
 const HEADINGS: [&str; 6] = [
     "Confirmed direction",
-    "Coralline Accord art · Third pass: less animal, aboard their ships",
+    "Harbor Guild picture · Third pass: less brass, round their lamps",
     "Capture, intrusion, and false identities",
     "Café — naïve  spacing",
-    "REP-F01 Kite",
+    "NOR-L01 Kite",
     "x_y 2.5",
 ];
 

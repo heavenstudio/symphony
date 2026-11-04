@@ -8,7 +8,7 @@ use std::io::{BufRead, BufReader, Write};
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 use std::time::{Duration, Instant};
-use tasks::sys::Command;
+use symphony_board::sys::Command;
 
 use common::Tree;
 use serde_json::json;
@@ -20,7 +20,7 @@ const CHILD: &str = "SF_AFTER_WORKTREES_CHILD";
 
 fn command(root: &Path, args: &[&str], day: u8) -> String {
     let date = format!("2026-09-{day:02}T10:00:00+0000");
-    let done = tasks::sys::output(
+    let done = symphony_board::sys::output(
         Command::new("git")
             .args(args)
             .current_dir(root)
@@ -112,7 +112,7 @@ fn owner_verdict_read_preserves_stale_merged_and_unmerged_indexes() {
     for unmerged in [false, true] {
         if unmerged {
             let blob = command(&wt, &["rev-parse", "HEAD:docs/OTHER.md"], 1);
-            let mut child = tasks::sys::spawn_piped(
+            let mut child = symphony_board::sys::spawn_piped(
                 Command::new("git")
                     .args(["update-index", "--index-info"])
                     .current_dir(&wt),
@@ -123,7 +123,7 @@ fn owner_verdict_read_preserves_stale_merged_and_unmerged_indexes() {
                 "100644 {blob} 2\tdocs/CONFLICT.md"
             )
             .unwrap();
-            let done = tasks::sys::wait_output(child).unwrap();
+            let done = symphony_board::sys::wait_output(child).unwrap();
             assert!(done.status.success(), "{done:?}");
         }
         assert_eq!(command(&wt, &["ls-files", "-u"], 1).is_empty(), !unmerged);
@@ -167,7 +167,7 @@ fn isolated(name: &str, body: impl FnOnce(&Tree)) {
         return;
     }
     let start = Instant::now();
-    let done = tasks::sys::output(
+    let done = symphony_board::sys::output(
         Command::new(std::env::current_exe().unwrap())
             .args(["--exact", name, "--nocapture"])
             .env(CHILD, name)
@@ -209,11 +209,8 @@ fn branch_decisions_share_ranking_counts_and_navigation_with_main() {
         "branch_decisions_share_ranking_counts_and_navigation_with_main",
         |_| {
             let tree = repository();
-            // the candidates a card shows are drawn by Star Foundry's picture kind
-            tree.write(
-                "symphony.toml",
-                "[plugins]\ncrates = [\"star-foundry-symphony\"]\n",
-            );
+            // the candidates a card shows are drawn by the project's card kind
+            tree.write("symphony.toml", &common::candidates::candidates(""));
             tree.write(DOC, &register(&(card("alpha") + &card("behind"))));
             commit(&tree.root, "base", 1);
             let wt = branch(&tree, "design/policy", "policy");
@@ -267,10 +264,10 @@ fn branch_decisions_share_ranking_counts_and_navigation_with_main() {
                 proposed.pictures[1].src.as_deref(),
                 Some("/@design~policy/docs/proposal.png")
             );
-            tree.write("policy/docs/data/ship-roster.v2.json", "{unfinished");
-            let with_unfinished_roster =
+            tree.write("policy/docs/data/items.json", "{unfinished");
+            let with_unfinished_data =
                 symphony::dashboard::snapshot(&tree.root, &cards, "test").unwrap();
-            assert_eq!(with_unfinished_roster.queue.waiting, snapshot.queue.waiting);
+            assert_eq!(with_unfinished_data.queue.waiting, snapshot.queue.waiting);
             assert_eq!(snapshot.pending.items.len(), 2);
             assert!(
                 snapshot
@@ -373,11 +370,13 @@ fn a_branch_card_in_a_projects_own_folder_is_linked_read_and_saved_by_its_route(
         |_| {
             let tree = repository();
             let file = "manual/DECISIONS.md";
-            // the candidates a card shows are drawn by Star Foundry's picture kind; the folder
-            // is spelled as a person may write it
+            // the candidates a card shows are drawn by the project's card kind; the folder is
+            // spelled as a person may write it
             tree.write(
                 "symphony.toml",
-                "[[entrypoints]]\nurl = \"/docs/\"\nfolder = \"./manual\"\n[plugins]\ncrates = [\"star-foundry-symphony\"]\n",
+                &common::candidates::candidates(
+                    "[[entrypoints]]\nurl = \"/docs/\"\nfolder = \"./manual\"\n",
+                ),
             );
             tree.write(file, &register(&card("alpha")));
             commit(&tree.root, "base", 1);
@@ -1120,7 +1119,7 @@ exec /usr/bin/git "$@"
             .chain(std::env::split_paths(&std::env::var_os("PATH").unwrap())),
     )
     .unwrap();
-    let mut child = tasks::sys::spawn_output(
+    let mut child = symphony_board::sys::spawn_output(
         Command::new(std::env::current_exe().unwrap())
             .args([
                 "--exact",
@@ -1158,7 +1157,7 @@ exec /usr/bin/git "$@"
         .write_all(b"go\ngo\ngo\ngo\ngo\ngo\ngo\ngo\ngo\ngo\n")
         .unwrap();
     reader.join().unwrap();
-    let done = tasks::sys::wait_output(child).unwrap();
+    let done = symphony_board::sys::wait_output(child).unwrap();
     assert_eq!(active.len(), 8);
     assert!(
         done.status.success(),
@@ -1326,7 +1325,7 @@ fn branch_verdict_saves_its_file_and_files_its_card_not_mains_answered_copy() {
             let gamma = "- [-] **gamma** — Old proposal.\n  [2026-09-01 10:00] owner · rejected — Turrets inward.\n";
             tree.write(DOC, &register(&(card("alpha") + gamma)));
             commit(&tree.root, "base", 1);
-            let path = branch(&tree, "art/fid", "fid");
+            let path = branch(&tree, "pictures/fid", "fid");
             std::fs::write(
                 path.join(DOC),
                 register(&(card("alpha") + gamma + &card("beta"))),
@@ -1337,7 +1336,7 @@ fn branch_verdict_saves_its_file_and_files_its_card_not_mains_answered_copy() {
                 &register(
                     &(card("alpha")
                         + gamma
-                        + "  [2026-09-02 10:00] agent — Redrawn on **art/gamma**.\n"),
+                        + "  [2026-09-02 10:00] agent — Redrawn on **pictures/gamma**.\n"),
                 ),
             );
             commit(&tree.root, "main answered gamma", 3);
@@ -1349,7 +1348,7 @@ fn branch_verdict_saves_its_file_and_files_its_card_not_mains_answered_copy() {
                     &saves,
                     "",
                     "/api/decision",
-                    json!({"path":"@art~fid/docs/DECISIONS.md", "slug":"beta", "state":"rejected", "note":"too dark"})
+                    json!({"path":"@pictures~fid/docs/DECISIONS.md", "slug":"beta", "state":"rejected", "note":"too dark"})
                 ),
                 json!({"ok":true})
             );
@@ -1364,7 +1363,7 @@ fn branch_verdict_saves_its_file_and_files_its_card_not_mains_answered_copy() {
             assert_eq!(open.len(), 1);
             assert_eq!(
                 (open[0].slug.as_str(), open[0].path.as_str()),
-                ("beta", "@art~fid/docs/DECISIONS.md")
+                ("beta", "@pictures~fid/docs/DECISIONS.md")
             );
             assert_eq!(open[0].quotes, ["too dark"]);
             assert!(
@@ -1377,7 +1376,7 @@ fn branch_verdict_saves_its_file_and_files_its_card_not_mains_answered_copy() {
             assert!(rows[0].body.contains("**beta**"));
             assert!(rows[0].body.contains("too dark"));
             assert!(!rows[0].body.contains("gamma"));
-            assert_eq!(*board.links.borrow(), ["@art~fid/docs/DECISIONS.md"]);
+            assert_eq!(*board.links.borrow(), ["@pictures~fid/docs/DECISIONS.md"]);
             drop(rows);
             assert_eq!(
                 symphony::verdicts::file(&tree.root, &board, "test-app").unwrap(),
@@ -1707,12 +1706,12 @@ fn apply(mut old: Document, delta: &DocumentChange) -> Document {
 }
 
 fn gzip_size(bytes: &[u8]) -> usize {
-    let mut child = tasks::sys::spawn_piped(Command::new("gzip").arg("-c")).unwrap();
+    let mut child = symphony_board::sys::spawn_piped(Command::new("gzip").arg("-c")).unwrap();
     let mut input = child.stdin.take().unwrap();
     // Written beside the read: gzip answers while it reads, and a pipe holds only so much.
     let done = std::thread::scope(|scope| {
         let written = scope.spawn(move || input.write_all(bytes));
-        let done = tasks::sys::wait_output(child).unwrap();
+        let done = symphony_board::sys::wait_output(child).unwrap();
         written.join().unwrap().unwrap();
         done
     });

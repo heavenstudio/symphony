@@ -5,8 +5,8 @@
 use crate::common::{GONE, Seed};
 use crate::{Repo, git, text, write};
 use std::path::Path;
-use tasks::sweep::Finished;
-use tasks::{NewLaunch, NewTask};
+use symphony_board::sweep::Finished;
+use symphony_board::{NewLaunch, NewTask};
 
 /// `handle` launched on `slug` in `wt` as `role`, its pane closed if `closed`.
 fn launched(r: &Repo, slug: &str, handle: &str, role: &str, wt: &Path, closed: bool) {

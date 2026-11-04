@@ -178,15 +178,15 @@ fn create_can_start_at_a_stage() {
     let a = c.register("worker");
     c.ok(
         &a,
-        &["create", "docs/hulls", "Hull briefs", "--stage", "concept"],
+        &["create", "docs/lamps", "Lamp briefs", "--stage", "concept"],
     );
-    assert_eq!(c.store().get("docs/hulls").unwrap().status, "concept");
+    assert_eq!(c.store().get("docs/lamps").unwrap().status, "concept");
 }
 
-/// A session and the data task `content/roster-stretch` it made: the session's handle.
+/// A session and the data task `content/lineup-stretch` it made: the session's handle.
 fn data_task(c: &Case) -> String {
     let a = c.register("worker");
-    c.ok(&a, &["create", "content/roster-stretch", "Roster"]);
+    c.ok(&a, &["create", "content/lineup-stretch", "Lineup"]);
     a
 }
 
@@ -198,12 +198,12 @@ fn create_refuses_a_brief_importing_from_the_worktree_of_a_dependency_not_done()
         &a,
         &[
             "create",
-            "art/hulls",
-            "Hulls",
+            "pictures/lamps",
+            "Lamps",
             "--depends",
-            "content/roster-stretch",
+            "content/lineup-stretch",
             "--body",
-            "Import content/x.json from .claude/worktrees/content-roster-stretch/content/x.json.",
+            "Import content/x.json from .claude/worktrees/content-lineup-stretch/content/x.json.",
         ],
         "",
     );
@@ -214,7 +214,7 @@ fn create_refuses_a_brief_importing_from_the_worktree_of_a_dependency_not_done()
         ran.err
     );
     assert!(
-        ran.err.contains(".claude/worktrees/content-roster-stretch"),
+        ran.err.contains(".claude/worktrees/content-lineup-stretch"),
         "{}",
         ran.err
     );
@@ -231,7 +231,7 @@ fn create_refuses_a_brief_importing_from_the_worktree_of_a_dependency_not_done()
         "the worktree is named with its sentence's stop: {}",
         ran.err
     );
-    assert!(c.store().get("art/hulls").is_err());
+    assert!(c.store().get("pictures/lamps").is_err());
 }
 
 #[test]
@@ -245,19 +245,19 @@ fn create_takes_a_review_or_a_cwd_brief_naming_a_worktree_it_does_not_depend_on(
             "review/x",
             "Review",
             "--body",
-            "Read the diff in /r/.claude/worktrees/content-roster-stretch.",
+            "Read the diff in /r/.claude/worktrees/content-lineup-stretch.",
         ],
     );
     c.ok(
         &a,
         &[
             "create",
-            "art/other",
+            "pictures/other",
             "Other",
             "--depends",
-            "content/roster-stretch",
+            "content/lineup-stretch",
             "--body",
-            "Work in .claude/worktrees/art-other, on main's data.",
+            "Work in .claude/worktrees/picture-other, on main's data.",
         ],
     );
 }
@@ -270,12 +270,12 @@ fn create_takes_artifact_overlays_under_a_dependencys_worktree() {
         &a,
         &[
             "create",
-            "art/hulls",
-            "Hulls",
+            "pictures/lamps",
+            "Lamps",
             "--depends",
-            "content/roster-stretch",
+            "content/lineup-stretch",
             "--body",
-            "See .claude/worktrees/content-roster-stretch/artifacts/hull.png",
+            "See .claude/worktrees/content-lineup-stretch/artifacts/lamp.png",
         ],
     );
 }
@@ -289,26 +289,26 @@ fn create_takes_the_worktree_of_a_dependency_that_is_done() {
         &a,
         &[
             "create",
-            "content/roster-stretch",
-            "Roster",
+            "content/lineup-stretch",
+            "Lineup",
             "--parent",
             "content/parent",
             "--instruction",
         ],
     );
     let store = c.store();
-    store.claim("content/roster-stretch", &a).unwrap();
-    store.done("content/roster-stretch", &a, "landed").unwrap();
+    store.claim("content/lineup-stretch", &a).unwrap();
+    store.done("content/lineup-stretch", &a, "landed").unwrap();
     c.ok(
         &a,
         &[
             "create",
-            "art/hulls",
-            "Hulls",
+            "pictures/lamps",
+            "Lamps",
             "--depends",
-            "content/roster-stretch",
+            "content/lineup-stretch",
             "--body",
-            "Old notes in .claude/worktrees/content-roster-stretch/notes.md",
+            "Old notes in .claude/worktrees/content-lineup-stretch/notes.md",
         ],
     );
 }
@@ -324,7 +324,7 @@ fn data_task_in(name: &str, folder: &str) -> (Case, String, PathBuf) {
             "add",
             "-q",
             "-b",
-            "content/roster-stretch",
+            "content/lineup-stretch",
             folder,
         ],
     );
@@ -334,16 +334,16 @@ fn data_task_in(name: &str, folder: &str) -> (Case, String, PathBuf) {
     (c, a, repo.join(folder))
 }
 
-/// `create art/hulls`, depending on the data task, with `body`: the run.
+/// `create pictures/lamps`, depending on the data task, with `body`: the run.
 fn create_depending(c: &Case, a: &str, body: &str) -> Ran {
     c.run_as(
         a,
         &[
             "create",
-            "art/hulls",
-            "Hulls",
+            "pictures/lamps",
+            "Lamps",
             "--depends",
-            "content/roster-stretch",
+            "content/lineup-stretch",
             "--body",
             body,
         ],
@@ -355,11 +355,11 @@ fn create_depending(c: &Case, a: &str, body: &str) -> Ran {
 fn refused_naming(c: &Case, ran: &Ran, worktree: &Path) {
     assert_eq!(ran.code, 1, "{}", ran.err);
     let said = format!(
-        "the brief names {}, the worktree of content/roster-stretch",
+        "the brief names {}, the worktree of content/lineup-stretch",
         worktree.display()
     );
     assert!(ran.err.contains(&said), "{}", ran.err);
-    assert!(c.store().get("art/hulls").is_err());
+    assert!(c.store().get("pictures/lamps").is_err());
 }
 
 #[test]
@@ -375,7 +375,7 @@ fn create_refuses_a_brief_importing_from_a_dependencys_agent_worktree() {
 
 #[test]
 fn create_refuses_a_brief_importing_from_a_dependencys_codex_worktree() {
-    let (c, a, worktree) = data_task_in("codex-refused", ".claude/worktrees/codex-roster-pilot");
+    let (c, a, worktree) = data_task_in("codex-refused", ".claude/worktrees/codex-lineup-pilot");
     let body = format!("Import {}/content/x.json", worktree.display());
     let ran = create_depending(&c, &a, &body);
     refused_naming(&c, &ran, &worktree);
@@ -384,9 +384,9 @@ fn create_refuses_a_brief_importing_from_a_dependencys_codex_worktree() {
 #[test]
 fn create_takes_a_brief_naming_no_worktree_beside_a_dependencys_worktree() {
     let (c, a, _) = data_task_in("agent-taken", ".claude/worktrees/agent-a1b2");
-    let ran = create_depending(&c, &a, "Build the hulls from main's content/x.json.");
+    let ran = create_depending(&c, &a, "Build the lamps from main's content/x.json.");
     assert_eq!(ran.code, 0, "{}", ran.err);
-    assert!(c.store().get("art/hulls").is_ok());
+    assert!(c.store().get("pictures/lamps").is_ok());
 }
 
 #[test]

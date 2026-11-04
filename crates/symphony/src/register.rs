@@ -1,7 +1,7 @@
 //! Decision cards: a task item with a bold slug, its verdict in the mark, its history under it.
 //!
 //! ```text
-//! - [-] **hull-count-141** — 141 hulls.
+//! - [-] **lamp-count-141** — 141 lamps.
 //!   [2026-09-24 14:02] owner · rejected — needs better names
 //!   [2026-09-24 15:10] agent — Options are in **alien-people-names**.
 //! ```

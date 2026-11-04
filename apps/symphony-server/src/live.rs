@@ -141,7 +141,7 @@ pub(crate) struct Hub {
 
 struct TaskState {
     last: Option<Tasks>,
-    raw: Option<tasks::Board>,
+    raw: Option<symphony_board::Board>,
     error: Option<String>,
 }
 
@@ -850,7 +850,7 @@ impl Hub {
         self.changed.send_modify(|version| *version += 1);
     }
 
-    fn board_read(&self, store: &tasks::Store) -> Result<(), String> {
+    fn board_read(&self, store: &symphony_board::Store) -> Result<(), String> {
         if let Some(callbacks) = self
             .callbacks
             .lock()
@@ -881,8 +881,8 @@ impl Hub {
     /// Apply one board observation after the journal, callback delivery and machine probes finish.
     fn update_board(
         &self,
-        store: &tasks::Store,
-        snapshot: tasks::Board,
+        store: &symphony_board::Store,
+        snapshot: symphony_board::Board,
         agents: symphony_api::Agents,
     ) -> Result<(), String> {
         let (next, latest) = {
@@ -966,7 +966,7 @@ impl Hub {
             task_changes(&mut changed, &old.tasks, &next.tasks);
             if old.tasks != next.tasks {
                 let mut counts = BTreeMap::<&str, usize>::new();
-                for status in tasks::STATUSES {
+                for status in symphony_board::STATUSES {
                     counts.insert(status, 0);
                 }
                 for task in &next.tasks {
@@ -1353,7 +1353,7 @@ fn run(
     mut watcher: impl Watcher,
     mut watched: BTreeSet<PathBuf>,
     mut backstop: Backstop,
-    mut board: Option<tasks::Store>,
+    mut board: Option<symphony_board::Store>,
 ) {
     let mut last_board = Instant::now() - BOARD_INTERVAL;
     let mut expiry = OrderExpiry::default();
@@ -1571,7 +1571,7 @@ mod tests {
         assert!(cpu.parse::<f64>().unwrap() >= 0.0, "{line}");
     }
 
-    fn observe(hub: &Hub, store: &tasks::Store) {
+    fn observe(hub: &Hub, store: &symphony_board::Store) {
         hub.update_board(
             store,
             store.board().unwrap(),
@@ -2040,7 +2040,7 @@ mod tests {
         assert_eq!(counts["ready"], 0);
         assert_eq!(counts["cancelled"], 1);
         assert_eq!(counts["done"], 0);
-        assert_eq!(counts.len(), tasks::STATUSES.len());
+        assert_eq!(counts.len(), symphony_board::STATUSES.len());
         assert_eq!(counts.values().sum::<usize>(), 1);
     }
 
@@ -2109,7 +2109,7 @@ mod tests {
                 ],
             );
         }
-        tree.write("served/view/models/hulls/A.glb", "model fixture");
+        tree.write("served/view/models/lamps/A.glb", "model fixture");
         let hub = Hub::new(&root, &root.join("build/client"));
         *hub.swept.lock().unwrap() = Sweep::new(&hub.swept_paths());
         hub.refresh_docs(None).unwrap();

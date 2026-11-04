@@ -6,7 +6,7 @@ use std::os::unix::net::UnixStream;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use tasks::sys::Stdio;
+use symphony_board::sys::Stdio;
 
 pub struct Log {
     saved: [OwnedFd; 2],
@@ -256,7 +256,7 @@ mod tests {
             }
         }
         // A pipe no child another test spawns can keep: the reader ends when `writer` does.
-        let (input, mut writer) = tasks::sys::pipe().unwrap();
+        let (input, mut writer) = symphony_board::sys::pipe().unwrap();
         let bytes = Arc::new(Mutex::new(Vec::new()));
         let reports = Arc::new(Mutex::new(Vec::new()));
         let (failed, failures) = std::sync::mpsc::channel();
@@ -327,8 +327,8 @@ mod tests {
         }
         let home = std::env::temp_dir().join(format!("sf-log-process-{}", std::process::id()));
         std::fs::create_dir_all(&home).unwrap();
-        let child = tasks::sys::output(
-            tasks::sys::Command::new(std::env::current_exe().unwrap())
+        let child = symphony_board::sys::output(
+            symphony_board::sys::Command::new(std::env::current_exe().unwrap())
                 .args(["--exact", TEST, "--nocapture"])
                 .env(CHILD, &home),
         )
@@ -364,7 +364,7 @@ mod tests {
     #[test]
     fn multiline_fragmented_output_and_an_unterminated_tail_all_get_dated() {
         let path = std::env::temp_dir().join(format!("sf-log-{}", std::process::id()));
-        let (input, mut writer) = tasks::sys::pipe().unwrap();
+        let (input, mut writer) = symphony_board::sys::pipe().unwrap();
         let sender = std::thread::spawn(move || {
             writer.write_all(b"one\n").unwrap();
             writer.write_all(&[b'x'; 9000]).unwrap();

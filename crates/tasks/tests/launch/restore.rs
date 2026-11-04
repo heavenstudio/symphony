@@ -3,10 +3,10 @@
 use crate::common::refused;
 use crate::{Hooked, World, git};
 use std::path::Path;
-use tasks::launch::herdr::Herdr;
-use tasks::launch::{Ask, PROMPT_ENTERS, PROMPT_WAIT, Started, restore};
-use tasks::rows::TaskSessionRow;
-use tasks::{Error, NewLaunch};
+use symphony_board::launch::herdr::Herdr;
+use symphony_board::launch::{Ask, PROMPT_ENTERS, PROMPT_WAIT, Started, restore};
+use symphony_board::rows::TaskSessionRow;
+use symphony_board::{Error, NewLaunch};
 
 /// The fake discovers the id requested by Claude; Codex ids are supplied in its resume case.
 fn launched(w: &World) -> Started {

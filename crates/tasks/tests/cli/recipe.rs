@@ -7,9 +7,9 @@ use crate::{Case, Ran, run};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
-use tasks::Beat;
-use tasks::cli::Env;
-use tasks::sys::Command;
+use symphony_board::Beat;
+use symphony_board::cli::Env;
+use symphony_board::sys::Command;
 
 const FAKE: &str = env!("CARGO_BIN_EXE_fake-herdr");
 
@@ -54,7 +54,7 @@ fn process_environment_actor() {
     if std::env::var_os("SF_RECIPE_ENV_ACTOR").is_none() {
         return;
     }
-    let output = tasks::sys::output(&mut process(Path::new("/usr/bin/env"))).unwrap();
+    let output = symphony_board::sys::output(&mut process(Path::new("/usr/bin/env"))).unwrap();
     assert!(output.status.success(), "{output:?}");
     let environment = String::from_utf8(output.stdout).unwrap();
     assert!(
@@ -80,7 +80,7 @@ fn process_environment_actor() {
 
 #[test]
 fn recipe_process_preserves_the_build_cache_without_inheriting_the_board() {
-    let output = tasks::sys::output(
+    let output = symphony_board::sys::output(
         Command::new(std::env::current_exe().unwrap())
             .args(["--exact", "recipe::process_environment_actor"])
             .env_clear()
@@ -105,9 +105,10 @@ fn recipe_process_preserves_the_build_cache_without_inheriting_the_board() {
 fn built() {
     static BUILT: OnceLock<()> = OnceLock::new();
     BUILT.get_or_init(|| {
-        let done =
-            tasks::sys::output(process(&root().join("tools/rs-bin.sh")).args(["--build", "tasks"]))
-                .unwrap();
+        let done = symphony_board::sys::output(
+            process(&root().join("tools/rs-bin.sh")).args(["--build", "tasks"]),
+        )
+        .unwrap();
         assert!(done.status.success(), "{done:?}");
     });
 }
@@ -124,14 +125,14 @@ fn just(env: &Env, args: &[&str], input: &str) -> Ran {
         .arg(&root)
         .args(args)
         .envs(&env.vars);
-    let mut child = tasks::sys::spawn_piped(&mut command).unwrap();
+    let mut child = symphony_board::sys::spawn_piped(&mut command).unwrap();
     child
         .stdin
         .take()
         .unwrap()
         .write_all(input.as_bytes())
         .unwrap();
-    let done = tasks::sys::wait_output(child).unwrap();
+    let done = symphony_board::sys::wait_output(child).unwrap();
     Ran {
         code: done.status.code().unwrap_or(-1),
         out: String::from_utf8(done.stdout).unwrap(),
@@ -239,7 +240,7 @@ fn just_tasks_scratch_build_preserves_the_live_heartbeat_link() {
     let common = std::env::var_os("SF_GIT_COMMON_DIR")
         .map(PathBuf::from)
         .unwrap_or_else(|| {
-            let output = tasks::sys::output(
+            let output = symphony_board::sys::output(
                 Command::new("git")
                     .args(["rev-parse", "--path-format=absolute", "--git-common-dir"])
                     .current_dir(&root),
@@ -257,9 +258,10 @@ fn just_tasks_scratch_build_preserves_the_live_heartbeat_link() {
     }
     let before = std::fs::read_link(root.join(".target/bin/tasks")).ok();
     assert_eq!(just(&c.env, &["tasks", "--help"], "").code, 0);
-    let selected =
-        tasks::sys::output(process(&root.join("tools/rs-bin.sh")).args(["--where", "tasks"]))
-            .unwrap();
+    let selected = symphony_board::sys::output(
+        process(&root.join("tools/rs-bin.sh")).args(["--where", "tasks"]),
+    )
+    .unwrap();
     assert!(selected.status.success(), "{selected:?}");
     let helper = PathBuf::from(String::from_utf8(selected.stdout).unwrap().trim());
     assert!(helper.starts_with(&shared_cache), "{}", helper.display());

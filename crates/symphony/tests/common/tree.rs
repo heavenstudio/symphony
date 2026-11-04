@@ -19,17 +19,6 @@ impl Tree {
         Tree { root }
     }
 
-    /// A tree whose `symphony.toml` names Star Foundry's plugin, for what the game's components,
-    /// regions and rules draw.
-    pub fn star_foundry() -> Tree {
-        let tree = Tree::new();
-        tree.write(
-            "symphony.toml",
-            "[plugins]\ncrates = [\"star-foundry-symphony\"]\n",
-        );
-        tree
-    }
-
     pub fn path(&self, rel: &str) -> PathBuf {
         self.root.join(rel)
     }

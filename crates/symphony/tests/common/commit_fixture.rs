@@ -32,7 +32,7 @@ use serde_json::{Value, json};
 const DOC: &str = "# A\n\nfirst paragraph\n\n<!-- register:start -->\n- [ ] **one** — proposal.\n<!-- register:end -->\n\nlast paragraph\n";
 const TWO: &str =
     "# B\n\n<!-- register:start -->\n- [ ] **two** — second proposal.\n<!-- register:end -->\n";
-/// How the fixture's project commits verdicts: Star Foundry's commands, which its justfile stands
+/// How the fixture's project commits verdicts: a project's commands, which its justfile stands
 /// in for.
 const VERDICTS: &str = r#"[verdicts]
 check = ["just", "verify"]
@@ -40,7 +40,7 @@ land = ["just", "land"]
 generators = [
   { name = "content", outputs = "content/", command = ["just", "content"] },
   { name = "content-ids", outputs = "sim/content_ids.gd", command = ["just", "content-ids"], when_changed = true },
-  { name = "hull-atlas", outputs = "view/hull_atlas", command = ["just", "hull-atlas", "build"], when_changed = true },
+  { name = "lamp-atlas", outputs = "view/lamp_atlas", command = ["just", "lamp-atlas", "build"], when_changed = true },
 ]
 record = ".git/sf-land/verdicts"
 "#;
@@ -99,7 +99,7 @@ fn commit_verdicts(root: &Path, edits: &[Edit], message: &str) -> symphony::comm
 #[allow(dead_code)]
 fn git(root: &Path, args: &[&str]) -> String {
     stage(format_args!("git start {args:?}"));
-    let done = tasks::sys::output(tasks::sys::Command::new("git")
+    let done = symphony_board::sys::output(symphony_board::sys::Command::new("git")
         .args(args)
         .current_dir(root)
         )
@@ -273,13 +273,13 @@ fn quiet_publication_output(output: &str) -> String {
 }
 
 #[allow(dead_code)]
-struct OwnedChild(tasks::sys::Child, Vec<std::thread::JoinHandle<std::io::Result<()>>>, Arc<Mutex<PendingPublications>>);
+struct OwnedChild(symphony_board::sys::Child, Vec<std::thread::JoinHandle<std::io::Result<()>>>, Arc<Mutex<PendingPublications>>);
 impl OwnedChild {
-    fn logged(command: &mut tasks::sys::Command, path: &Path) -> Self {
+    fn logged(command: &mut symphony_board::sys::Command, path: &Path) -> Self {
         let log = std::fs::File::create(path).unwrap();
         let saved = log.try_clone().unwrap();
         // The relays end with the case's output, never later because another case's child kept it.
-        let mut child = tasks::sys::spawn_output(command).unwrap();
+        let mut child = symphony_board::sys::spawn_output(command).unwrap();
         let error = child.stderr.take().unwrap();
         let output = child.stdout.take().unwrap();
         let pending = Arc::new(Mutex::new(PendingPublications::default()));
@@ -339,7 +339,7 @@ fn isolated_output(name: &str, run: impl FnOnce(&Fixture)) -> Option<String> {
         .map(|path| path.join("just"))
         .find(|path| path.is_file())
         .expect("just is installed");
-    let mut child = tasks::sys::Command::new(std::env::current_exe().unwrap());
+    let mut child = symphony_board::sys::Command::new(std::env::current_exe().unwrap());
     // Drop inherited board, callback, index and repository overrides. This process may only
     // reach this fixture; its CLI children receive the same private environment.
     for (key, _) in std::env::vars() {
@@ -367,7 +367,7 @@ fn isolated_output(name: &str, run: impl FnOnce(&Fixture)) -> Option<String> {
         .env("GIT_CONFIG_GLOBAL", "/dev/null")
         .env("GIT_CONFIG_NOSYSTEM", "1")
         .current_dir(&tree.root)
-        .stdin(tasks::sys::Stdio::Null);
+        .stdin(symphony_board::sys::Stdio::Null);
     let mut child = OwnedChild::logged(&mut child, &output);
     stage(format_args!("case child spawned: {name}"));
     let began = Instant::now();
@@ -433,7 +433,7 @@ impl Fixture {
         write(
             &root.join("justfile"),
             &format!(
-                "content:\n    @sh {}\n\ncontent-ids:\n    @true\n\nhull-atlas action:\n    @mkdir -p view\n    @cp content/one view/hull_atlas\n\ncheck:\n    @sh {}\n\nverify:\n    @sh {}\n\nland branch:\n    @sh {} {{{{branch}}}}\n",
+                "content:\n    @sh {}\n\ncontent-ids:\n    @true\n\nlamp-atlas action:\n    @mkdir -p view\n    @cp content/one view/lamp_atlas\n\ncheck:\n    @sh {}\n\nverify:\n    @sh {}\n\nland branch:\n    @sh {} {{{{branch}}}}\n",
                 quote(&self.home.join("generate.sh")),
                 quote(&self.home.join("check.sh")),
                 quote(&self.home.join("check.sh")),
@@ -475,7 +475,7 @@ impl Fixture {
     fn main(&self, rel: &str) -> String {
         git(&self.root(), &["show", &format!("main:{rel}")]) + "\n"
     }
-    fn store(&self) -> tasks::Store {
+    fn store(&self) -> symphony_board::Store {
         stage("connecting to private board");
         let store = symphony::taskview::connect(&self.root()).unwrap();
         stage("connected to private board");

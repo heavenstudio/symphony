@@ -15,7 +15,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, LazyLock, Mutex};
-use tasks::sys::Command;
+use symphony_board::sys::Command;
 
 use crate::project::Project;
 use crate::register::{Decision, REGION_START, parse_decisions};
@@ -93,10 +93,10 @@ struct Shape {
 
 type Shapes = HashMap<String, HashSet<Shape>>;
 
-/// Read through [`tasks::sys::output`]: a child another thread spawns meanwhile (the server's
+/// Read through [`symphony_board::sys::output`]: a child another thread spawns meanwhile (the server's
 /// census) never holds the answer open.
 fn git(at: &Path, args: &[&str]) -> Option<String> {
-    let done = tasks::sys::output(
+    let done = symphony_board::sys::output(
         Command::new("git")
             .args(["-c", "diff.autoRefreshIndex=false"])
             .args(args)
@@ -172,14 +172,14 @@ fn registers(at: &Path, rev: &str, project: &Project) -> Vec<String> {
 }
 
 /// The text at each `<rev>:<path>`, "" where there is none: one `git cat-file --batch` for all of them.
-/// Its input and output go through [`tasks::sys::spawn_piped`]: it runs before readiness, and a
+/// Its input and output go through [`symphony_board::sys::spawn_piped`]: it runs before readiness, and a
 /// child another thread spawns meanwhile (the census) must hold neither end open.
 fn blobs(at: &Path, specs: &[String]) -> Vec<String> {
     let none = || vec![String::new(); specs.len()];
     if specs.is_empty() {
         return Vec::new();
     }
-    let Ok(mut child) = tasks::sys::spawn_piped(
+    let Ok(mut child) = symphony_board::sys::spawn_piped(
         Command::new("git")
             .args(["cat-file", "--batch"])
             .current_dir(at),
@@ -191,7 +191,7 @@ fn blobs(at: &Path, specs: &[String]) -> Vec<String> {
     let writer = std::thread::spawn(move || {
         let _ = stdin.write_all(input.as_bytes());
     });
-    let Ok(done) = tasks::sys::wait_output(child) else {
+    let Ok(done) = symphony_board::sys::wait_output(child) else {
         return none();
     };
     let _ = writer.join();

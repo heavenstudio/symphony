@@ -401,7 +401,7 @@ fn the_fragment_reader_preserves_entities_attributes_and_unsupported_content() {
 #[test]
 fn a_typed_component_keeps_its_kind_and_display_content_whatever_its_name() {
     for name in [
-        "ship",
+        "lamp",
         "shape-matrix",
         "relationships",
         "a-plugin-component",
@@ -446,7 +446,7 @@ fn semantic_groups_keep_their_content_and_preserve_extra_presentation() {
         ("compare", "anchor"),
         ("pair", ""),
         ("matrix-scale", ""),
-        ("subfaction-ships muted", ""),
+        ("workshop-lamps muted", ""),
     ] {
         let parsed = blocks::parse(
             &format!("<div class='{class}' id='{id}'><p>content</p></div>"),
@@ -600,56 +600,6 @@ fn schema_diagnostics_follow_file_order_including_duplicate_keys_and_cached_sche
 }
 
 #[test]
-fn relationship_duplicate_keys_keep_their_first_place_and_last_effect() {
-    use symphony::relationships::{Declaration, Settings, load};
-
-    let declaration: Declaration = serde_json::from_value(json!({"factions":[{
-        "name":"Pilots", "colour":"#123456", "subfactions":[
-            {"code":"A", "name":"Alpha", "icon":"a"},
-            {"code":"B", "name":"Beta", "icon":"b"},
-            {"code":"C", "name":"Gamma", "icon":"c"},
-            {"code":"D", "name":"Delta", "icon":"d"}
-        ]
-    }]}))
-    .unwrap();
-    let settings = Settings::parse(
-        r#"{
-        "self":{"destroy":"down strong","help":"up strong"},
-        "destroy":{"D":{},"C":{},"B":{},"A":{
-            "C":"up small","B":"up small","C":"down slight",
-            "others":{"effect":"up medium"}
-        }},
-        "help":{"D":{},"C":{},"B":{},"A":{}}
-    }"#,
-    )
-    .unwrap();
-    let tables = load(&declaration, &settings).unwrap();
-    assert_eq!(
-        tables
-            .destroy
-            .iter()
-            .map(|r| r.code.as_str())
-            .collect::<Vec<_>>(),
-        ["A", "B", "C", "D"]
-    );
-    let row = tables.row("destroy", "A").unwrap();
-    assert_eq!(
-        row.effects,
-        [
-            ("A".into(), -2.0),
-            ("C".into(), -0.25),
-            ("B".into(), 0.5),
-            ("D".into(), 1.0)
-        ]
-    );
-    assert_eq!(row.others.as_ref().unwrap().members, ["D"]);
-    assert_eq!(
-        tables.to_json()["rows"]["destroy"]["A"],
-        json!([["A", -2.0], ["C", -0.25], ["B", 0.5], ["D", 1.0]])
-    );
-}
-
-#[test]
 fn integer_tokens_preserve_precision_and_negative_zero_keeps_its_integer_type() {
     let schema = schema::Schema::compile(&json!({"type":"integer"})).unwrap();
     for token in [
@@ -751,38 +701,6 @@ fn wrong_type_suppresses_only_its_own_subtree_through_escaped_references() {
     );
 }
 
-#[test]
-fn unreadable_screen_manifest_surfaces_in_components_and_the_document_audit() {
-    let tree = Tree::star_foundry();
-    tree.write(
-        "docs/data/screens.json",
-        r#"{"screens":[{"id":"title","title":"Title"}]}"#,
-    );
-    tree.write("docs/x.md", "# Screen\n\n[[screen:title]]\n");
-    // A directory is unreadable as a manifest on every supported platform, without permission races.
-    std::fs::create_dir_all(tree.path("artifacts/screens/manifest.json")).unwrap();
-    let renderer = Render::new(&tree.root);
-    let fragment = renderer.typed_reply("[[screen:title]]", "docs/x.md");
-    let typed = format!("{:?}", blocks::fragment(&fragment, "docs/x.md"));
-    assert!(typed.contains("manifest.json"), "{typed}");
-    assert!(!typed.contains("not captured yet"), "{typed}");
-    let audit = symphony::docs_audit::audit(&tree.root);
-    assert_eq!(audit.errors.len(), 1, "{:?}", audit.errors);
-    assert!(
-        audit.errors[0].starts_with("docs/x.md: does not render cleanly:")
-            && audit.errors[0].contains("manifest.json"),
-        "{:?}",
-        audit.errors
-    );
-    std::fs::remove_dir(tree.path("artifacts/screens/manifest.json")).unwrap();
-    let repaired = renderer.typed_reply("[[screen:title]]", "docs/x.md");
-    let typed = blocks::fragment(&repaired, "docs/x.md");
-    assert!(
-        matches!(&typed[0], Block::Component { kind, blocks } if kind == "screen" && matches!(&blocks[0], Block::Figure { picture: None, size: FigureSize::Wide, .. }))
-    );
-    assert!(symphony::docs_audit::audit(&tree.root).errors.is_empty());
-}
-
 /// Every generic shape a plugin renders to, as the server writes it into a section's HTML and
 /// reads it back: the same blocks, whatever plugin made them.
 #[test]
@@ -796,7 +714,7 @@ fn the_generic_blocks_and_spans_write_and_read_back_as_themselves() {
     let figure =
         |picture: Option<Image>, href: Option<&str>, badge: Option<&str>, size| Block::Figure {
             picture,
-            caption: vec![text("REP-F01 Kite")],
+            caption: vec![text("NOR-L01 Kite")],
             href: href.map(str::to_string),
             badge: badge.map(str::to_string),
             size,
@@ -818,14 +736,14 @@ fn the_generic_blocks_and_spans_write_and_read_back_as_themselves() {
     let original = vec![
         figure(
             Some(kite.clone()),
-            Some("/docs/ships/republic.md#rep-f01"),
+            Some("/docs/lamps/north.md#nor-l01"),
             None,
             FigureSize::Row,
         ),
         figure(None, None, Some("coming"), FigureSize::Tile),
         figure(Some(kite.clone()), None, None, FigureSize::Wide),
         Block::Component {
-            kind: "ship-matrix".into(),
+            kind: "lamp-matrix".into(),
             blocks: vec![paragraph("inside")],
         },
         Block::Paragraph {
@@ -841,7 +759,7 @@ fn the_generic_blocks_and_spans_write_and_read_back_as_themselves() {
             ],
         },
         Block::Table {
-            head: vec![cell(true, vec![text("Hull")])],
+            head: vec![cell(true, vec![text("Lamp")])],
             rows: vec![vec![cell(
                 false,
                 vec![Span::Blocks {
@@ -852,25 +770,25 @@ fn the_generic_blocks_and_spans_write_and_read_back_as_themselves() {
         },
         Block::Media {
             media: Media::Model {
-                src: "/x/hulls/REP-F01.glb".into(),
-                label: "REP-F01".into(),
-                poster: Some("/x/hulls/REP-F01.png".into()),
+                src: "/x/lamps/NOR-L01.glb".into(),
+                label: "NOR-L01".into(),
+                poster: Some("/x/lamps/NOR-L01.png".into()),
             },
         },
         // A paragraph of one media span reads as that media, so a component's media goes in it.
         Block::Component {
-            kind: "hull-gallery".into(),
+            kind: "lamp-gallery".into(),
             blocks: vec![Block::Media {
                 media: Media::Gallery {
                     items: vec![
                         GalleryItem {
-                            name: "REP-F01".into(),
-                            src: "/x/hulls/REP-F01.glb".into(),
-                            poster: Some("/x/hulls/REP-F01.png".into()),
+                            name: "NOR-L01".into(),
+                            src: "/x/lamps/NOR-L01.glb".into(),
+                            poster: Some("/x/lamps/NOR-L01.png".into()),
                         },
                         GalleryItem {
-                            name: "COA-F01".into(),
-                            src: "/x/hulls/COA-F01.glb".into(),
+                            name: "SOU-L03".into(),
+                            src: "/x/lamps/SOU-L03.glb".into(),
                             poster: None,
                         },
                     ],
@@ -970,7 +888,7 @@ fn a_components_prose_writes_and_reads_back_as_itself() {
         Block::Rule,
         Block::Container {
             tag: ContainerKind::Section,
-            presentation: Presentation::class("ship-strip"),
+            presentation: Presentation::class("lamp-strip"),
             blocks: vec![paragraph("held")],
         },
         Block::Details {

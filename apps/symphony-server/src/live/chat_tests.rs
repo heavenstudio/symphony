@@ -6,7 +6,7 @@ use crate::testing::{Tree, board, git, repository};
 use serde_json::{Value, json};
 use std::sync::Arc;
 use std::time::Instant;
-use tasks::sys::Command;
+use symphony_board::sys::Command;
 
 const CHILD: &str = "SF_CHAT_JOURNAL_TEST";
 const TEST: &str = "live::chat_tests::only_the_shared_server_drains_the_chat_journal";
@@ -51,7 +51,7 @@ fn only_the_shared_server_drains_the_chat_journal() {
             if mode.ends_with("named") {
                 child.env("ASKS_DB", tree.path("private-asks.db"));
             }
-            let done = tasks::sys::output(&mut child).unwrap();
+            let done = symphony_board::sys::output(&mut child).unwrap();
             let out = String::from_utf8_lossy(&done.stdout);
             let err = String::from_utf8_lossy(&done.stderr);
             assert!(done.status.success(), "{mode}: {out}\n{err}");
@@ -81,7 +81,7 @@ fn only_the_shared_server_drains_the_chat_journal() {
     }
     symphony::callbacks::publish(&root, MESSAGE).unwrap();
     let queued = || {
-        let done = tasks::sys::output(
+        let done = symphony_board::sys::output(
             Command::new("sqlite3")
                 .arg("-json")
                 .arg(&journal)
@@ -97,7 +97,7 @@ fn only_the_shared_server_drains_the_chat_journal() {
     };
     assert_eq!(queued(), [json!({"text": MESSAGE})]);
     let store = symphony::taskview::connect(&root).unwrap();
-    let board = tasks::rpc::Client::new(
+    let board = symphony_board::rpc::Client::new(
         &std::env::var("TASKS_SERVER").unwrap(),
         "sf",
         &std::env::var("TASKS_DATABASE").unwrap(),

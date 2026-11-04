@@ -89,7 +89,7 @@ fn editing_a_readme_refreshes_child_breadcrumbs() {
     );
 }
 
-/// `[[ship:…]]` as the text of the file at `path`, with that text as its cache version when
+/// `[[lamp:…]]` as the text of the file at `path`, with that text as its cache version when
 /// `versioned`.
 struct Live {
     path: PathBuf,
@@ -98,7 +98,7 @@ struct Live {
 
 impl Component for Live {
     fn name(&self) -> &str {
-        "ship"
+        "lamp"
     }
 
     fn render(&self, _: &Page<'_>, _: &str, _: Option<&str>) -> Result<Vec<Block>, String> {
@@ -134,7 +134,7 @@ fn plugins(component: impl Component + 'static) -> Plugins {
 fn component_update(path: &str, before: &str, after: &str) {
     for versioned in [false, true] {
         let tree = Tree::new();
-        tree.write("docs/A.md", "# A\n\n[[ship:REP-F01]]\n");
+        tree.write("docs/A.md", "# A\n\n[[lamp:NOR-L01]]\n");
         let path = tree.write(path, before);
         let live = Live {
             path: path.clone(),
@@ -163,12 +163,12 @@ fn component_data_refreshes_without_editing_the_document() {
     component_update("docs/data/stats", "stat one", "stat two");
 }
 
-/// `[[ship:…]]` as fixed words, with one cache version whatever the words.
+/// `[[lamp:…]]` as fixed words, with one cache version whatever the words.
 struct Fixed(&'static str);
 
 impl Component for Fixed {
     fn name(&self) -> &str {
-        "ship"
+        "lamp"
     }
 
     fn render(&self, _: &Page<'_>, _: &str, _: Option<&str>) -> Result<Vec<Block>, String> {
@@ -187,7 +187,7 @@ impl Component for Fixed {
 #[test]
 fn replacing_the_plugins_clears_their_previous_cached_documents() {
     let tree = Tree::new();
-    tree.write("docs/A.md", "[[ship:REP-F01]]\n");
+    tree.write("docs/A.md", "[[lamp:NOR-L01]]\n");
     let render = Render::new(&tree.root).with_plugins(plugins(Fixed("old provider")));
     let first = render.document("docs/A.md").unwrap();
     assert!(html(&first).contains("old provider"));

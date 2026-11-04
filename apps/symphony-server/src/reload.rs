@@ -16,7 +16,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::{Mutex, mpsc};
 use std::time::{Duration, Instant};
-use tasks::sys::{Command, Stdio};
+use symphony_board::sys::{self, Command, Stdio};
 
 const INHERITED: &str = "SF_SYMPHONY_HANDOVER";
 const PATIENCE: Duration = Duration::from_secs(120);
@@ -111,7 +111,7 @@ impl Transfer {
 
 /// The replacement's ends of a handover. The parent sees the end of `ready` when the replacement
 /// ends, and the replacement the end of `commit` when the parent does: each pipe is made
-/// close-on-exec ([`tasks::sys::pipe`]), so no child another thread spawns meanwhile keeps an end
+/// close-on-exec ([`sys::pipe`]), so no child another thread spawns meanwhile keeps an end
 /// and masks either death until [`PATIENCE`].
 #[derive(Debug)]
 struct Control {
@@ -122,8 +122,8 @@ struct Control {
 impl Control {
     /// The parent's ends (readiness in, commit out) and the replacement's of a new handover.
     fn pair() -> std::io::Result<((PipeReader, PipeWriter), Self)> {
-        let (ready, replacement_ready) = tasks::sys::pipe()?;
-        let (replacement_commit, commit) = tasks::sys::pipe()?;
+        let (ready, replacement_ready) = sys::pipe()?;
+        let (replacement_commit, commit) = sys::pipe()?;
         Ok((
             (ready, commit),
             Self {
@@ -156,7 +156,7 @@ enum Answer {
 
 /// The first [`Answer`] on `from`, read without blocking, checking `stopping` between reads.
 fn answer(from: &PipeReader, stopping: impl Fn() -> bool) -> std::io::Result<Answer> {
-    tasks::sys::set_nonblocking(from, true)?;
+    sys::set_nonblocking(from, true)?;
     let began = Instant::now();
     loop {
         if stopping() {
@@ -1030,7 +1030,7 @@ mod tests {
         use std::io::{ErrorKind, Read};
         use std::os::fd::AsRawFd;
         use std::sync::atomic::{AtomicBool, Ordering};
-        use tasks::sys::{Child, Command, Stdio};
+        use symphony_board::sys::{self, Child, Command, Stdio};
 
         /// Children killed and reaped however the test ends.
         struct Children(Vec<Child>);
@@ -1078,7 +1078,7 @@ mod tests {
                 } = ends;
                 drop((replacement_ready, commit));
                 for end in [ready, replacement_commit] {
-                    tasks::sys::set_nonblocking(&end, true).unwrap();
+                    sys::set_nonblocking(&end, true).unwrap();
                     match (&end).read(&mut [0]) {
                         Ok(0) => {}
                         Err(e)
@@ -1109,11 +1109,11 @@ mod tests {
         // it is ready: its death is the end of its parent's ready pipe.
         let ((ready, _commit), ends) = Control::pair().unwrap();
         let fds = [ends.ready.as_raw_fd(), ends.commit.as_raw_fd()];
-        let mut command = tasks::sys::Command::new("true");
+        let mut command = sys::Command::new("true");
         for fd in fds {
             command.pass_fd(fd);
         }
-        let mut replacement = command.stdin(tasks::sys::Stdio::Null).spawn().unwrap();
+        let mut replacement = command.stdin(sys::Stdio::Null).spawn().unwrap();
         drop(ends);
         assert!(replacement.wait().unwrap().success());
         assert_eq!(answer(&ready, || false).unwrap(), Answer::Ended);

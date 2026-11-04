@@ -152,15 +152,47 @@ fn port(word: &str) -> Result<u16, String> {
         .map_err(|_| format!("{word:?} is not a port (0 to 65535)"))
 }
 
+/// A `symphony-server` binary holding `plugins`: they are installed, the server log runs while it
+/// serves a checkout, and [`main`] does the rest. The exit code.
+pub fn run(plugins: &'static [&'static dyn symphony_plugin::Plugin], args: &[String]) -> i32 {
+    if let Err(problem) = symphony::plugins::install(plugins) {
+        eprintln!("{problem}");
+        return 2;
+    }
+    let logging = if args.first().is_some_and(|arg| arg == "serve") {
+        match args
+            .windows(2)
+            .find(|pair| pair[0] == "--home")
+            .map(|_| crate::log::Log::start())
+            .transpose()
+        {
+            Ok(logging) => logging,
+            Err(e) => {
+                eprintln!("cannot start server log: {e}");
+                return 1;
+            }
+        }
+    } else {
+        None
+    };
+    let code = main(args);
+    if let Some(log) = logging
+        && let Err(e) = log.finish()
+    {
+        eprintln!("cannot finish server log: {e}");
+        return 1;
+    }
+    code
+}
+
 /// The whole of `symphony-server`: the exit code.
 pub fn main(args: &[String]) -> i32 {
     // Keep scratch runs explicit and self-contained without mutating the process environment
     // after threads exist. The child serves normally against its own board and asks file.
     if args.first().is_some_and(|arg| arg == "--scratch") {
-        let Some(database) = args
-            .get(1)
-            .filter(|database| tasks::rpc::plain(database) && database.as_str() != tasks::DATABASE)
-        else {
+        let Some(database) = args.get(1).filter(|database| {
+            symphony_board::rpc::plain(database) && database.as_str() != symphony_board::DATABASE
+        }) else {
             eprintln!("--scratch needs a database name other than tasks");
             return 2;
         };
@@ -410,17 +442,17 @@ pub(crate) fn open(url: &str) {
 /// The system's opener for `url`, its streams null. A server of its own opens its page too
 /// (front::start), once it accepts: the opener starts without a fork and inherits only its
 /// streams, never a connection not yet close-on-exec.
-fn opener(url: &str) -> tasks::sys::Command {
-    let mut command = tasks::sys::Command::new(if cfg!(target_os = "macos") {
+fn opener(url: &str) -> symphony_board::sys::Command {
+    let mut command = symphony_board::sys::Command::new(if cfg!(target_os = "macos") {
         "open"
     } else {
         "xdg-open"
     });
     command
         .arg(url)
-        .stdin(tasks::sys::Stdio::null())
-        .stdout(tasks::sys::Stdio::null())
-        .stderr(tasks::sys::Stdio::null());
+        .stdin(symphony_board::sys::Stdio::null())
+        .stdout(symphony_board::sys::Stdio::null())
+        .stderr(symphony_board::sys::Stdio::null());
     command
 }
 

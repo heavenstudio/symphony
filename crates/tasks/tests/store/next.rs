@@ -1,9 +1,9 @@
 //! `next`: the best work for a session.
 
 use crate::common::{Fixture, GONE, Seed, refused};
-use tasks::cli::pull::digest;
-use tasks::health::RESERVE_SECONDS;
-use tasks::{NewSession, NewTask};
+use symphony_board::cli::pull::digest;
+use symphony_board::health::RESERVE_SECONDS;
+use symphony_board::{NewSession, NewTask};
 
 fn task(slug: &str, priority: i64) -> NewTask {
     NewTask {
@@ -49,13 +49,13 @@ fn next_offers_concept_and_design_work_too() {
     let a = f.session("worker");
     f.task_with(NewTask {
         status: "design".into(),
-        ..task("docs/hull-brief", 2)
+        ..task("docs/lamp-brief", 2)
     });
     f.task_with(NewTask {
         status: "backlog".into(),
         ..task("sim/later", 2)
     });
-    assert_eq!(next(&f, &a).as_deref(), Some("docs/hull-brief"));
+    assert_eq!(next(&f, &a).as_deref(), Some("docs/lamp-brief"));
 }
 
 #[test]
@@ -82,7 +82,7 @@ fn a_cancelled_dependency_blocks_with_a_reason_instead_of_disappearing_from_pull
             .task("sim/legacy", "ready")
             .link("sim/legacy", "dep", "sim/old-prerequisite")
             .task("sim/free", "ready");
-        for status in tasks::STATUSES {
+        for status in symphony_board::STATUSES {
             let slug = format!("sim/{status}").replace('_', "-");
             seed = seed
                 .task(&slug, status)
@@ -93,7 +93,7 @@ fn a_cancelled_dependency_blocks_with_a_reason_instead_of_disappearing_from_pull
         f.store
             .move_to("sim/prerequisite", "cancelled", actor)
             .unwrap();
-        for status in tasks::STATUSES {
+        for status in symphony_board::STATUSES {
             let slug = format!("sim/{status}").replace('_', "-");
             let terminal = matches!(status, "done" | "cancelled");
             assert_eq!(
@@ -113,7 +113,7 @@ fn a_cancelled_dependency_blocks_with_a_reason_instead_of_disappearing_from_pull
         f.store
             .move_to("sim/second-prerequisite", "cancelled", actor)
             .unwrap();
-        for status in tasks::STATUSES {
+        for status in symphony_board::STATUSES {
             let slug = format!("sim/{status}").replace('_', "-");
             let expected = if matches!(status, "done" | "cancelled") {
                 Vec::<String>::new()

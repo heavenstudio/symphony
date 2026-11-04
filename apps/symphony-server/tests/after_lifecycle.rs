@@ -15,8 +15,8 @@ use std::net::{TcpListener, TcpStream};
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::Path;
 use std::time::{Duration, Instant};
+use symphony_board::sys::{Command, Stdio};
 use symphony_server::home::{Home, ServerError};
-use tasks::sys::{Command, Stdio};
 
 #[test]
 fn symphony_recipes_find_and_stop_a_live_predecessor_record_on_a_private_port() {

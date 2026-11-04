@@ -8,7 +8,7 @@
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Output;
-use tasks::sys::Command;
+use symphony_board::sys::Command;
 
 use serde_json::{Value, json};
 
@@ -108,7 +108,7 @@ impl CliBoard {
     }
 
     /// The binary with `extra`, `stdin` on its stdin (none if None), run to its end. Its input and
-    /// output go through [`tasks::sys`]'s pipes, which no child another thread spawns holds open.
+    /// output go through [`symphony_board::sys`]'s pipes, which no child another thread spawns holds open.
     fn output(&self, extra: &[&str], stdin: Option<&str>) -> Result<Output, VerdictError> {
         let mut command = Command::new(&self.cli[0]);
         command
@@ -117,9 +117,9 @@ impl CliBoard {
             .envs(self.env.iter().map(|(k, v)| (k, v)))
             .current_dir(&self.cwd);
         let mut child = if stdin.is_some() {
-            tasks::sys::spawn_piped(&mut command)
+            symphony_board::sys::spawn_piped(&mut command)
         } else {
-            tasks::sys::spawn_output(&mut command)
+            symphony_board::sys::spawn_output(&mut command)
         }
         .map_err(|e| VerdictError(format!("cannot run {}: {e}", self.cli.join(" "))))?;
         if let Some(text) = stdin {
@@ -129,7 +129,7 @@ impl CliBoard {
                 let _ = pipe.write_all(text.as_bytes());
             });
         }
-        tasks::sys::wait_output(child).map_err(|e| VerdictError(e.to_string()))
+        symphony_board::sys::wait_output(child).map_err(|e| VerdictError(e.to_string()))
     }
 
     /// One of the board's commands: what it printed, or why it refused.

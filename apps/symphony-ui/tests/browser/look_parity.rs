@@ -47,12 +47,12 @@ fn folder_responses() -> BTreeMap<String, Value> {
 
 pub(super) fn responses() -> BTreeMap<String, Value> {
     let sections = vec![
-        json!({"start":1,"end":3,"key":"intro","hash":"intro","part":0,"blocks":[paragraph("A quiet document block."),{"type":"table","head":[{"header":true,"spans":[{"type":"text","text":"Hull"}],"presentation":{}}],"rows":[[{"header":false,"spans":[{"type":"text","text":"Example"}],"presentation":{}}]]}]}),
+        json!({"start":1,"end":3,"key":"intro","hash":"intro","part":0,"blocks":[paragraph("A quiet document block."),{"type":"table","head":[{"header":true,"spans":[{"type":"text","text":"Lamp"}],"presentation":{}}],"rows":[[{"header":false,"spans":[{"type":"text","text":"Example"}],"presentation":{}}]]}]}),
         json!({"start":5,"end":8,"key":"callout","hash":"callout","part":0,"blocks":[{"type":"callout","kind":"question","title":[{"type":"text","text":"A question"}],"resolved":false,"blocks":[paragraph("Keep the question colour.")]}]}),
         json!({"start":10,"end":20,"key":"card:palette","hash":"palette","part":1,"blocks":[{"type":"card","slug":"palette","mark":"approved","title":"Palette","body":[paragraph("Compare the verdict controls.")],"verdict":{"group":"confirm","open":true,"posted":null,"decided":null},"thread":[],"line":10,"line_offset":null,"comparison":[]}]}),
-        json!({"start":30,"end":32,"key":"gallery","hash":"gallery","part":2,"blocks":[{"type":"media","media":{"kind":"gallery","items":[{"name":"REP-F01","src":"/model.glb","poster":PICTURE}]}}]}),
+        json!({"start":30,"end":32,"key":"gallery","hash":"gallery","part":2,"blocks":[{"type":"media","media":{"kind":"gallery","items":[{"name":"NOR-L01","src":"/model.glb","poster":PICTURE}]}}]}),
     ];
-    let document = json!({"version":4182,"path":DOC,"title":"Look parity","waiting":[],"crumbs":[],"headings":[{"level":2,"anchor":"L1","text":"Introduction"},{"level":2,"anchor":"L10","text":"Decisions"},{"level":2,"anchor":"L30","text":"Hulls"}],"sections":sections,"cards":[{"slug":"palette","state":"approved","text":"Palette","group":"confirm","open":true}],"threads":{},"tasks":[]});
+    let document = json!({"version":4182,"path":DOC,"title":"Look parity","waiting":[],"crumbs":[],"headings":[{"level":2,"anchor":"L1","text":"Introduction"},{"level":2,"anchor":"L10","text":"Decisions"},{"level":2,"anchor":"L30","text":"Lamps"}],"sections":sections,"cards":[{"slug":"palette","state":"approved","text":"Palette","group":"confirm","open":true}],"threads":{},"tasks":[]});
     let statuses = [
         "backlog",
         "concept",
@@ -89,7 +89,7 @@ pub(super) fn responses() -> BTreeMap<String, Value> {
         ),
         (
             "/api/folder".into(),
-            json!({"path":"docs","title":"Documents","crumbs":[],"docs":1,"intro":null,"entries":[{"kind":"folder","path":"docs/ships","title":"Ships","docs":1,"waiting":0,"summary":"Hull references"}]}),
+            json!({"path":"docs","title":"Documents","crumbs":[],"docs":1,"intro":null,"entries":[{"kind":"folder","path":"docs/lamps","title":"Lamps","docs":1,"waiting":0,"summary":"Lamp references"}]}),
         ),
         ("/api/activity".into(), json!({"items":[]})),
         ("/api/pending".into(), json!({"items":[],"docs":[]})),
@@ -226,7 +226,7 @@ fn the_docs_index_keeps_one_heading_and_the_original_intro_and_folder_spacing() 
             {"start":1,"end":1,"key":"title","hash":"title","part":0,"blocks":[{"type":"heading","level":1,"anchor":"documents","spans":[{"type":"text","text":"Documents"}]}]},
             {"start":3,"end":3,"key":"intro","hash":"intro","part":0,"blocks":[paragraph("Design references for the Symphony.")]},
             {"start":8,"end":8,"key":"folders","hash":"folders","part":1,"blocks":[{"type":"heading","level":2,"anchor":"folders","spans":[{"type":"text","text":"Folders"}]}]},
-            {"start":10,"end":11,"key":"folder-list","hash":"folder-list","part":1,"blocks":[{"type":"list","ordered":ordered,"start":1,"items":[[paragraph("game/ — what the game is and where it goes.")],[paragraph("combat/ — weapons, defences, gear and hull capabilities.")]]}]},
+            {"start":10,"end":11,"key":"folder-list","hash":"folder-list","part":1,"blocks":[{"type":"list","ordered":ordered,"start":1,"items":[[paragraph("game/ — what the game is and where it goes.")],[paragraph("combat/ — weapons, defences, gear and lamp capabilities.")]]}]},
             {"start":13,"end":13,"key":"naming","hash":"naming","part":2,"blocks":[{"type":"heading","level":2,"anchor":"naming","spans":[{"type":"text","text":"Naming"}]}]},
             {"start":15,"end":16,"key":"naming-list","hash":"naming-list","part":2,"blocks":[{"type":"list","ordered":ordered,"start":1,"items":[[paragraph("UPPERCASE.md is one current topic, kept true to today.")],[paragraph("lowercase.md is one page per entity inside a topic folder.")]]}]},
             {"start":18,"end":18,"key":"links","hash":"links","part":2,"blocks":[paragraph("A document link finds its document by file name wherever it lives.")]}
@@ -1021,7 +1021,7 @@ fn task_columns_keep_status_tones_priority_edges_health_dots_and_the_phone_pipel
 }
 
 #[test]
-fn the_hull_picker_has_one_card_border_and_a_visible_keyboard_focus_ring() {
+fn the_lamp_picker_has_one_card_border_and_a_visible_keyboard_focus_ring() {
     let site = ParitySite::start();
     let Some(mut browser) = chrome() else { return };
     track_styles(&mut browser);
@@ -1035,7 +1035,7 @@ fn the_hull_picker_has_one_card_border_and_a_visible_keyboard_focus_ring() {
     assert_eq!(
         browser.eval("document.querySelector('.gallery-pick img').getAttribute('src')"),
         json!(PICTURE),
-        "use the supplied art thumbnail"
+        "use the supplied picture thumbnail"
     );
     assert_eq!(
         browser.eval("getComputedStyle(document.querySelector('.gallery-card')).borderTopWidth"),
@@ -1062,7 +1062,7 @@ fn the_hull_picker_has_one_card_border_and_a_visible_keyboard_focus_ring() {
         browser.eval("getComputedStyle(document.querySelector('.gallery-pick')).outlineWidth"),
         json!("2px")
     );
-    report_styles(&mut browser, "hull picker and keyboard focus");
+    report_styles(&mut browser, "lamp picker and keyboard focus");
 }
 
 #[test]

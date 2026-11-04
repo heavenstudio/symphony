@@ -3,12 +3,12 @@
 //! order of its key.
 
 use crate::common::{Fixture, NOW, Seed, client, server_addr, session, task};
-use tasks::Store;
-use tasks::rows::{
+use symphony_board::rows::{
     BarredKeyRow, DeliveryRow, Dump, LinkRow, MessageRow, RoleRow, SessionRow, TaskRow,
     TaskSessionRow,
 };
-use tasks::sys::Command;
+use symphony_board::sys::{self, Command};
+use symphony_board::{Error, Store, cli, copy_main};
 
 /// One row of every table, each optional column both set and not, in key order.
 fn everything() -> Dump {
@@ -113,14 +113,14 @@ fn everything() -> Dump {
 }
 
 /// An environment that names no board: the commands given an address read nothing from it.
-fn no_env() -> tasks::cli::Env {
-    tasks::cli::Env::default()
+fn no_env() -> cli::Env {
+    cli::Env::default()
 }
 
 /// The environment of a run that reaches `db` on the tests' server, as `TASKS_SERVER` and
 /// `TASKS_DATABASE` point a run at a board.
-fn board_env(db: &tasks::rpc::Client) -> tasks::cli::Env {
-    tasks::cli::Env {
+fn board_env(db: &symphony_board::rpc::Client) -> cli::Env {
+    cli::Env {
         vars: [
             ("TASKS_SERVER".to_string(), server_addr()),
             ("TASKS_DATABASE".to_string(), db.database().to_string()),
@@ -165,7 +165,7 @@ fn a_dump_the_board_would_refuse_leaves_the_board_as_it_was() {
         ..Default::default()
     });
     match f.store.copy(&bad) {
-        Err(tasks::Error::Db(why)) => assert!(why.contains("shout"), "{why}"),
+        Err(Error::Db(why)) => assert!(why.contains("shout"), "{why}"),
         other => panic!("expected the server to refuse the copy, got {other:?}"),
     }
     assert_eq!(f.store.dump().unwrap(), everything());
@@ -184,7 +184,7 @@ fn the_copy_command_reads_a_dump_and_says_what_it_copied() {
     let dump = serde_json::to_vec(&everything()).unwrap();
     let (mut out, mut err) = (Vec::new(), Vec::new());
     let args = [server_addr(), db.database().to_string()];
-    let code = tasks::copy_main(&args, &no_env(), &mut dump.as_slice(), &mut out, &mut err);
+    let code = copy_main(&args, &no_env(), &mut dump.as_slice(), &mut out, &mut err);
     assert_eq!((code, String::from_utf8(err).unwrap()), (0, String::new()));
     assert_eq!(
         String::from_utf8(out).unwrap(),
@@ -205,7 +205,7 @@ fn the_copy_command_takes_a_board_written_before_the_added_columns() {
         "sessions": [{"handle": "h", "kind": "worker", "parent": null, "worktree": "", "branch": "", "model": "",
         "pid": null, "host": "", "affinity": "", "connected": 1.0, "last_seen": 1.0, "left_at": null}]}"#;
     let args = [server_addr(), db.database().to_string()];
-    let code = tasks::copy_main(
+    let code = copy_main(
         &args,
         &no_env(),
         &mut old.as_slice(),
@@ -222,7 +222,7 @@ fn the_copy_command_takes_a_board_written_before_the_added_columns() {
 fn the_copy_command_refuses_in_one_line() {
     let refusal = |args: &[String], input: &[u8]| {
         let (mut out, mut err) = (Vec::new(), Vec::new());
-        let code = tasks::copy_main(args, &no_env(), &mut &input[..], &mut out, &mut err);
+        let code = copy_main(args, &no_env(), &mut &input[..], &mut out, &mut err);
         assert!(out.is_empty());
         (code, String::from_utf8(err).unwrap())
     };
@@ -271,7 +271,7 @@ fn the_copy_command_refuses_a_column_or_a_table_it_does_not_know_by_name() {
     let refusal = |dump: &serde_json::Value| {
         let (mut out, mut err) = (Vec::new(), Vec::new());
         let input = serde_json::to_vec(dump).unwrap();
-        let code = tasks::copy_main(&args, &no_env(), &mut input.as_slice(), &mut out, &mut err);
+        let code = copy_main(&args, &no_env(), &mut input.as_slice(), &mut out, &mut err);
         assert!(out.is_empty());
         (code, String::from_utf8(err).unwrap())
     };
@@ -301,7 +301,7 @@ fn the_copy_command_refuses_a_column_or_a_table_it_does_not_know_by_name() {
 fn the_copy_binary_is_the_command() {
     let db = client();
     // The copy reads the whole dump before it says anything, so the dump is written first.
-    let mut child = tasks::sys::spawn_piped(
+    let mut child = sys::spawn_piped(
         Command::new(env!("CARGO_BIN_EXE_tasks-copy"))
             .args([server_addr(), db.database().to_string()]),
     )
@@ -311,7 +311,7 @@ fn the_copy_binary_is_the_command() {
         &serde_json::to_vec(&everything()).unwrap(),
     )
     .unwrap();
-    let done = tasks::sys::wait_output(child).unwrap();
+    let done = sys::wait_output(child).unwrap();
     assert!(
         done.status.success(),
         "{}",
@@ -322,7 +322,7 @@ fn the_copy_binary_is_the_command() {
             .unwrap()
             .starts_with("tasks-copy: 2 tasks")
     );
-    let refused = tasks::sys::output(&mut Command::new(env!("CARGO_BIN_EXE_tasks-copy"))).unwrap();
+    let refused = sys::output(&mut Command::new(env!("CARGO_BIN_EXE_tasks-copy"))).unwrap();
     assert_eq!(refused.status.code(), Some(2));
 }
 
@@ -416,7 +416,7 @@ fn copy_replaces_derived_vectors_only_when_the_board_swap_commits() {
     let f = Fixture::new(Seed { dump: everything() });
     f.store.client().query(
         "CREATE task_chunk SET slug = 'sim/jump', source = 'brief', source_hash = 'old', text_hash = 'old', model = 'fake', text = 'cached board text', embedding = $vector; CREATE task_embedding_source SET slug = 'sim/jump', source = 'brief', source_hash = 'old', model = 'fake', parts = 1; CREATE task_embedding_checkpoint:board SET snapshot = {model: 'fake'};",
-        serde_json::json!({"vector":vec![1.0_f32; tasks::embedding::DIMENSIONS]}),
+        serde_json::json!({"vector":vec![1.0_f32; symphony_board::embedding::DIMENSIONS]}),
     ).unwrap();
     let counts = || {
         f.store.client().query(
@@ -427,7 +427,7 @@ fn copy_replaces_derived_vectors_only_when_the_board_swap_commits() {
     assert_eq!(counts(), vec![serde_json::json!(1); 3]);
     let mut bad = everything();
     bad.messages[0].kind = "shout".into();
-    assert!(matches!(f.store.copy(&bad), Err(tasks::Error::Db(_))));
+    assert!(matches!(f.store.copy(&bad), Err(Error::Db(_))));
     assert_eq!(f.store.dump().unwrap(), everything());
     assert_eq!(counts(), vec![serde_json::json!(1); 3]);
     f.store.copy(&Dump::default()).unwrap();
@@ -528,7 +528,7 @@ fn a_big_dump_refused_late_leaves_the_board_and_nothing_else() {
     let f = Fixture::new(Seed { dump: everything() });
     let mut bad = a_big_board();
     bad.messages.last_mut().unwrap().kind = "shout".into();
-    assert!(matches!(f.store.copy(&bad), Err(tasks::Error::Db(_))));
+    assert!(matches!(f.store.copy(&bad), Err(Error::Db(_))));
     assert_eq!(f.store.dump().unwrap(), everything());
     assert_eq!(tables(&f), BOARD_TABLES);
 }
@@ -539,7 +539,7 @@ fn board_copies_into_the_board_the_environment_reaches() {
     let dump = serde_json::to_vec(&everything()).unwrap();
     let (mut out, mut err) = (Vec::new(), Vec::new());
     let args = ["--board".to_string()];
-    let code = tasks::copy_main(
+    let code = copy_main(
         &args,
         &board_env(&db),
         &mut dump.as_slice(),
@@ -565,7 +565,7 @@ fn board_out_writes_the_boards_dump_as_the_copy_reads_it_on_one_line() {
     let f = Fixture::new(Seed { dump: everything() });
     let (mut out, mut err) = (Vec::new(), Vec::new());
     let args = ["--board".to_string(), "--out".to_string()];
-    let code = tasks::copy_main(
+    let code = copy_main(
         &args,
         &board_env(&f.other_client()),
         &mut &b""[..],
@@ -597,7 +597,7 @@ fn board_takes_no_address_and_out_needs_board() {
         ],
     ] {
         let (mut out, mut err) = (Vec::new(), Vec::new());
-        let code = tasks::copy_main(&args, &no_env(), &mut &b"{}"[..], &mut out, &mut err);
+        let code = copy_main(&args, &no_env(), &mut &b"{}"[..], &mut out, &mut err);
         assert_eq!(
             (code, String::from_utf8(err).unwrap().as_str()),
             (2, usage),

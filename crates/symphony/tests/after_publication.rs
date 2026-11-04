@@ -39,7 +39,7 @@ fn a_slow_publish_does_not_hold_back_the_next_verdict() {
         assert_eq!(f.main("docs/a.md"), verdict);
         assert_eq!(f.main("docs/b.md"), second);
         assert_eq!(f.main("content/one"), "approved\n");
-        assert_eq!(f.main("view/hull_atlas"), "approved\n");
+        assert_eq!(f.main("view/lamp_atlas"), "approved\n");
         assert_linear_main(&root, &base, 2);
         assert!(git(&root, &["status", "--porcelain"]).is_empty());
         assert!(
@@ -319,7 +319,7 @@ fn a_land_retry_is_picked_up_by_the_next_save_without_reverification() {
             assert_eq!(f.main("docs/a.md"), approved);
             assert_eq!(f.main("docs/b.md"), second);
             assert_eq!(f.main("content/one"), "approved\n");
-            assert_eq!(f.main("view/hull_atlas"), "approved\n");
+            assert_eq!(f.main("view/lamp_atlas"), "approved\n");
             assert_linear_main(&root, &base, 2);
             assert!(!Path::new(&checkout).exists());
             f.clean_publication_state();
@@ -508,8 +508,8 @@ fn a_completed_publication_is_not_repeated_after_restart() {
             // Use the fixture publisher, not a certificate or a fake result record.
             git(&root, &["checkout", "-q", "HEAD", "--", "docs/a.md"]);
             script(&f.home.join("publish.sh"), &publish);
-            let done = tasks::sys::output(
-                tasks::sys::Command::new("sh")
+            let done = symphony_board::sys::output(
+                symphony_board::sys::Command::new("sh")
                     .arg(f.home.join("publish.sh"))
                     .arg(record["publication"]["branch"].as_str().unwrap())
                     .current_dir(checkout),

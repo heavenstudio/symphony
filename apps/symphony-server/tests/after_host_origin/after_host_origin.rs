@@ -1,5 +1,8 @@
 //! Owned process environment and real listeners; no production testing seam or machine lookup.
 
+#[path = "approving.rs"]
+pub mod approving;
+
 use serde_json::{Value, json};
 use std::convert::Infallible;
 use std::io::{BufRead, Read, Write};
@@ -8,15 +11,15 @@ use std::path::PathBuf;
 use std::sync::mpsc::Receiver;
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
+use symphony_board::port::Start;
+use symphony_board::sys::{Child, Command};
 use symphony_server::front::{Shared, router};
 use symphony_server::gate::Gate;
-use tasks::port::Start;
-use tasks::sys::{Child, Command};
 
 pub struct Fixture {
     root: PathBuf,
     address: SocketAddr,
-    pub board: tasks::Store,
+    pub board: symphony_board::Store,
 }
 
 #[derive(Debug)]
@@ -107,7 +110,7 @@ impl ScratchRepo {
                 "Initial fixture document",
             ],
         ] {
-            let done = tasks::sys::output(
+            let done = symphony_board::sys::output(
                 Command::new("git")
                     .args(&args)
                     .current_dir(root)
@@ -224,7 +227,7 @@ printf '%s\n' '{"Self":{"DNSName":"review-fixture.tail.test.","TailscaleIPs":["f
 
         let surreal = std::env::var_os("SF_SURREAL").map_or_else(
             || {
-                let found = tasks::sys::output(
+                let found = symphony_board::sys::output(
                     Command::new("bash")
                         .arg(
                             PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -240,7 +243,7 @@ printf '%s\n' '{"Self":{"DNSName":"review-fixture.tail.test.","TailscaleIPs":["f
         );
         // SurrealDB 3.3 prints the configured address (including :0), rather than its socket's
         // actual local address. It is told a reserved scratch board port, and started again on
-        // another when that port was taken before it bound it (tasks::port), every start within
+        // another when that port was taken before it bound it (symphony_board::port), every start within
         // the one 30 s readiness bound. This exact child's announcement, and a health answer once
         // it itself listens on that port, are required before creating the board. The
         // announcement alone can precede listening under load. The Symphony listener below stays
@@ -248,11 +251,13 @@ printf '%s\n' '{"Self":{"DNSName":"review-fixture.tail.test.","TailscaleIPs":["f
         let log = root.join("surreal.log");
         let errors_log = root.join("surreal-stderr.log");
         let ready_by = Instant::now() + Duration::from_secs(30);
-        let database =
-            tasks::port::start_on_free_port(tasks::port::ATTEMPTS, ready_by, |board_address| {
+        let database = symphony_board::port::start_on_free_port(
+            symphony_board::port::ATTEMPTS,
+            ready_by,
+            |board_address| {
                 assert_ne!(board_address.port(), 8765);
                 let mut database = OwnedChild(
-                    tasks::sys::spawn_output(
+                    symphony_board::sys::spawn_output(
                         Command::new(&surreal)
                             .args([
                                 "start",
@@ -320,9 +325,13 @@ printf '%s\n' '{"Self":{"DNSName":"review-fixture.tail.test.","TailscaleIPs":["f
                     if database.0.try_wait().unwrap().is_some() {
                         return Ok(Start::Ended(said(reader, errors)));
                     }
-                    if tasks::rpc::healthy(&address.to_string())
-                        && tasks::port::listens(database.0.id(), board_address, tasks::sys::output)
-                            .unwrap()
+                    if symphony_board::rpc::healthy(&address.to_string())
+                        && symphony_board::port::listens(
+                            database.0.id(),
+                            board_address,
+                            symphony_board::sys::output,
+                        )
+                        .unwrap()
                     {
                         return Ok(Start::Up((database, reader, errors)));
                     }
@@ -330,15 +339,16 @@ printf '%s\n' '{"Self":{"DNSName":"review-fixture.tail.test.","TailscaleIPs":["f
                     assert!(!remaining.is_zero(), "SurrealDB health readiness ({log:?})");
                     std::thread::sleep(Duration::from_millis(50).min(remaining));
                 }
-            });
+            },
+        );
         let ((database, reader, errors), address) = database.unwrap_or_else(|why| {
             panic!("SurrealDB ended before its health answer ({log:?}): {why}")
         });
         let address_text = address.to_string();
-        let client = tasks::rpc::Client::new(&address_text, "sf", "after_host_origin");
-        let store = tasks::Store::open(client).unwrap();
+        let client = symphony_board::rpc::Client::new(&address_text, "sf", "after_host_origin");
+        let store = symphony_board::Store::open(client).unwrap();
         store
-            .create(&tasks::NewTask::new(
+            .create(&symphony_board::NewTask::new(
                 "fixture/host-origin",
                 "Private Host Origin task",
                 "owner",
@@ -413,8 +423,8 @@ printf '%s\n' '{"Self":{"DNSName":"review-fixture.tail.test.","TailscaleIPs":["f
 
     pub fn child(address: SocketAddr) -> Self {
         let root = PathBuf::from(std::env::var_os("SF_AFTER_HOST_ORIGIN_CHILD").unwrap());
-        let env = tasks::cli::Env::of_process();
-        let board = tasks::cli::connect(&env).unwrap();
+        let env = symphony_board::cli::Env::of_process();
+        let board = symphony_board::cli::connect(&env).unwrap();
         Self {
             root,
             address,
@@ -449,45 +459,16 @@ printf '%s\n' '{"Self":{"DNSName":"review-fixture.tail.test.","TailscaleIPs":["f
         feed.until("server notice", |line| line.starts_with("event: server"));
         feed
     }
-    /// Stands in for `tools/rs-bin.sh sf-land api`: records each request in `land.calls`, offers the
-    /// patch `fixture-patch`, accepts an owner approval and answers the stamps' release with the
-    /// JSON `released`. The checkout's
-    /// project file names the Star Foundry plugin, whose approve-to-land calls it.
-    pub fn land_stand_in(&self, released: &str) {
-        self.land_answering("", released);
-    }
-
-    /// [`Self::land_stand_in`], answering an owner approval with `refusal` (none when empty).
-    pub fn land_answering(&self, refusal: &str, released: &str) {
+    /// Makes the checkout's project name the [`approving`] plugin, which answers its owner's
+    /// approval with `refusal` (none when empty) and releases the slugs the JSON `released` lists.
+    pub fn approving(&self, refusal: &str, released: &str) {
         std::fs::write(
             self.root.join(symphony::project::FILE),
-            format!(
-                "[plugins]\ncrates = [\"{}\"]\n",
-                symphony::star_foundry::NAME
-            ),
+            format!("[plugins]\ncrates = [\"{}\"]\n", approving::NAME),
         )
         .unwrap();
-        let stub = self.root.join("tools/rs-bin.sh");
-        std::fs::create_dir_all(stub.parent().unwrap()).unwrap();
-        crate::fixture_script::write(
-            &stub,
-            &format!(
-                concat!(
-                    "#!/bin/sh\nset -eu\n",
-                    "[ \"$*\" = 'sf-land api' ] || exit 91\n",
-                    "request=$(cat)\n",
-                    "printf '%s\\n' \"$request\" >> \"$PWD/land.calls\"\n",
-                    "case \"$request\" in\n",
-                    "  *owner_offer*) printf '%s\\n' '\"fixture-patch\"' ;;\n",
-                    "  *record_owner_approval*) printf '%s\\n' '\"{}\"' ;;\n",
-                    "  *stamps_released*) printf '%s\\n' '{}' ;;\n",
-                    "  *) exit 92 ;;\n",
-                    "esac\n"
-                ),
-                refusal, released
-            ),
-            false,
-        );
+        std::fs::write(self.root.join(approving::REFUSAL), refusal).unwrap();
+        std::fs::write(self.root.join(approving::RELEASED), released).unwrap();
     }
 
     pub fn land_calls(&self) -> Vec<String> {

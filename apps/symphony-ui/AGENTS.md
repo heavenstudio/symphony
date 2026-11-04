@@ -41,7 +41,7 @@ in-memory blob pages are allowed; file URLs and external hosts are blocked.
   assemble their content-hashed assets with `package.sh`. Naming a kind rebuilds
   it against the other kinds already in that output folder. Dioxus's native
   splitter retained shared exports and increased the measured initial payload;
-  these builds use the page-kind fallback. Without `--debug-symbols false` dx 0.7 ships 260 KB of
+  these builds use the page-kind fallback. Without `--debug-symbols false` dx 0.7 emits 260 KB of
   DWARF. dx and wasm-bindgen (the lockfile's version) are built once per
   machine into `sf-cargo/` by `tools.sh`, which bundle.sh runs when one is
   missing. A new tree's folder starts from a seed another tree made, its
@@ -266,14 +266,14 @@ in-memory blob pages are allowed; file URLs and external hosts are blocked.
   The vendored `/static/model-viewer.min.js` is loaded once, on the first visible
   model, and is absent from the shell's preloads. A plugin's pages are the
   `ProjectView`'s `nav` items the served page inlines (`PROJECT_ELEMENT`): each
-  reads its document through `DocumentPage`, as Star Foundry's `/hulls` reads
-  `docs/ships/HULLS.md`; `/api/hulls` is gone. A `Media::Gallery` holds its
-  items (name, model `src`, `poster`), Star Foundry's models served under
-  `/x/hulls/`. Its grid has only small pictures until an item opens; one
-  selected model is mounted at a time, and closing it unmounts the viewer.
-  The server warms read snapshots before announcing its URL, and Star
-  Foundry's plugin warms the selected checkout's gallery cache at startup and
-  when its `view/models/` changes. Startup logs separate gallery, document and
+  reads its document through `DocumentPage`, as a `/shelf` page reads
+  `docs/SHELF.md`. A `Media::Gallery` holds its items (name, model `src`,
+  `poster`), served under the plugin's route, `/x/shelf/`. Its grid has only
+  small pictures until an item opens; one selected model is mounted at a time,
+  and closing it unmounts the viewer.
+  The server warms read snapshots before announcing its URL, and a gallery
+  plugin warms the selected checkout's gallery cache at startup and when a
+  folder its watch names changes. Startup logs separate gallery, document and
   board time; requests never walk model history or other checkouts to build
   the gallery.
   `DocumentPicture(image: symphony_api::Image)` preserves typed document image

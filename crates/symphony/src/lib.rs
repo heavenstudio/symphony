@@ -9,15 +9,14 @@
 //! a card had. An agent hears the owner through save-time native [`callbacks`], which also deliver
 //! the owner's [`asks`], the app's ephemeral questions that are never written into a document.
 //!
-//! On top of the cards: [`art`] says which picture a card shows and for what slot, [`model`] which
-//! cards are hull models, [`triage`] ranks what the owner should see first (`just triage`), and
+//! On top of the cards: the project's [`plugins`] say what kind of card each is, which picture it
+//! shows and for what slot, [`triage`] ranks what the owner should see first (`just triage`), and
 //! [`verdicts`] puts the cards waiting on an agent on the task board (`just verdict-tasks`), reading
 //! the cards unmerged branches hold ([`branches`]) and the board through [`taskcli`].
 //!
 //! Text rules retain Python's exact meanings ([`text`]): line breaks, whitespace and quoted values
 //! preserve byte-for-byte file compatibility.
 
-pub mod art;
 pub mod asks;
 pub mod assets;
 pub mod board;
@@ -35,21 +34,16 @@ pub mod entrypoint;
 pub mod images;
 pub mod landing;
 pub mod lint;
-pub(crate) mod markup;
-pub mod model;
+pub mod markup;
 pub mod page;
 pub mod plugins;
 pub mod postpone;
 pub mod project;
 pub mod register;
-pub mod relationships;
 pub mod reload;
 pub mod render;
 pub mod save;
 pub mod schema;
-pub mod screens;
-pub mod ship_art;
-pub mod star_foundry;
 pub mod taskcli;
 pub mod taskview;
 pub mod text;

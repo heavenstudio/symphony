@@ -8,8 +8,8 @@ use crate::common::{Tree, matches, plain};
 use crate::{card, entry};
 
 const CARD: [&str; 3] = [
-    "- [a] **pic** — A hull. *Shows:* X · ship",
-    "  [2026-09-27 10:00] agent — A ![X ship A](/a.png) B ![X ship B](/b.png)",
+    "- [a] **pic** — A lamp. *Fills:* X · lamp",
+    "  [2026-09-27 10:00] agent — A ![X lamp A](/a.png) B ![X lamp B](/b.png)",
     "  [2026-09-27 11:00] agent · auto-approved — B: clear mounts, bold outline",
 ];
 

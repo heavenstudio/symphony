@@ -7,7 +7,7 @@ use std::path::PathBuf;
 use std::process::Output;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant, SystemTime};
-use tasks::sys::{Child, Command, Stdio};
+use symphony_board::sys::{Child, Command, Stdio};
 
 /// The arguments of our serve process in ps's unquoted command line. The executable's path may
 /// contain spaces too, so recognize its basename before reading any argument.
@@ -255,8 +255,8 @@ mod tests {
 
         // The descendant reads this pipe, which only the test's end finishes: it holds the
         // command's stdout and stderr until something ends it. A child another test spawns holds
-        // neither end (tasks::sys::pipe).
-        let (held, mut test_end) = tasks::sys::pipe().unwrap();
+        // neither end (symphony_board::sys::pipe).
+        let (held, mut test_end) = symphony_board::sys::pipe().unwrap();
         let timeout = Duration::from_secs(30);
         let fd = held.as_raw_fd();
         let mut command = Command::new("sh");
@@ -297,8 +297,8 @@ mod tests {
         use std::io::ErrorKind;
         use std::os::fd::AsRawFd;
 
-        let (reader, writer) = tasks::sys::pipe().unwrap();
-        tasks::sys::set_nonblocking(&reader, true).unwrap();
+        let (reader, writer) = symphony_board::sys::pipe().unwrap();
+        symphony_board::sys::set_nonblocking(&reader, true).unwrap();
         let fd = writer.as_raw_fd();
         let mut command = Command::new("sh");
         command.args([

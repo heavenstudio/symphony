@@ -1,14 +1,14 @@
-//! A board still in SQLite (`star-foundry-tasks.db` in the git common dir) is refused until
-//! `just tasks-cutover` has copied it to SurrealDB and said so beside it, in `<file>.moved`: an agent
-//! that merged main before the move would write where the copy is about to replace everything. The
-//! copy itself reaches the board either way.
+//! A board still in SQLite (`<project id>-tasks.db` in the git common dir, `lamp-works-tasks.db` here)
+//! is refused until `just tasks-cutover` has copied it to SurrealDB and said so beside it, in
+//! `<file>.moved`: an agent that merged main before the move would write where the copy is about to
+//! replace everything. The copy itself reaches the board either way.
 
 use crate::run;
 use serde_json::{Value, json};
 use std::fs;
 use std::path::PathBuf;
-use tasks::cli::Env;
-use tasks::sys::Command;
+use symphony_board::cli::Env;
+use symphony_board::sys::Command;
 
 const REFUSED: &str = "the task board has not moved to SurrealDB yet: the lander runs `just tasks-cutover` once, right after landing (docs/workflow/TASKS.md#the-move-to-surrealdb)";
 const UNFINISHED: &str = "the task board is frozen by a move to SurrealDB that has not finished: unless one is running, run `just tasks-cutover` again (docs/workflow/TASKS.md#the-move-to-surrealdb)";
@@ -21,9 +21,15 @@ fn unmoved(name: &str) -> (PathBuf, Env) {
         .join(format!("moved-{}-{name}", std::process::id()));
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(&dir).unwrap();
-    let done = tasks::sys::output(Command::new("git").args(["init", "-q"]).arg(&dir)).unwrap();
+    let done =
+        symphony_board::sys::output(Command::new("git").args(["init", "-q"]).arg(&dir)).unwrap();
     assert!(done.status.success());
-    fs::write(dir.join(".git/star-foundry-tasks.db"), b"").unwrap();
+    fs::write(
+        dir.join("symphony.toml"),
+        "[project]\nid = \"lamp-works\"\n",
+    )
+    .unwrap();
+    fs::write(dir.join(".git/lamp-works-tasks.db"), b"").unwrap();
     let surreal = dir.join("no-surreal").display().to_string();
     let vars = [("SF_SURREAL".to_string(), surreal)].into_iter().collect();
     (dir.clone(), Env { vars, cwd: dir })
@@ -48,7 +54,7 @@ fn the_api_answers_each_call_with_it() {
 #[test]
 fn once_it_has_moved_the_board_is_reached() {
     let (dir, env) = unmoved("moved");
-    fs::write(dir.join(".git/star-foundry-tasks.db.moved"), b"").unwrap();
+    fs::write(dir.join(".git/lamp-works-tasks.db.moved"), b"").unwrap();
     let ran = run(&env, &["list"], "");
     assert_eq!(ran.code, 2, "the server it needs cannot start");
     assert!(!ran.err.contains("has not moved"), "{}", ran.err);
@@ -59,7 +65,7 @@ fn once_it_has_moved_the_board_is_reached() {
 #[test]
 fn a_marker_a_move_never_finished_is_no_marker() {
     let (dir, env) = unmoved("unfinished");
-    fs::write(dir.join(".git/star-foundry-tasks.db.moved.4242"), b"moved").unwrap();
+    fs::write(dir.join(".git/lamp-works-tasks.db.moved.4242"), b"moved").unwrap();
     let ran = run(&env, &["list"], "");
     assert_eq!((ran.code, ran.err), (2, format!("✖ {REFUSED}\n")));
     assert!(!dir.join(".git/sf-tasks").exists());
@@ -70,7 +76,7 @@ fn a_marker_a_move_never_finished_is_no_marker() {
 #[test]
 fn a_board_a_move_froze_and_never_marked_says_to_run_the_move_again() {
     let (dir, env) = unmoved("frozen");
-    let board = rusqlite::Connection::open(dir.join(".git/star-foundry-tasks.db")).unwrap();
+    let board = rusqlite::Connection::open(dir.join(".git/lamp-works-tasks.db")).unwrap();
     board
         .execute_batch(
             "PRAGMA journal_mode = WAL;
@@ -87,9 +93,28 @@ fn a_board_a_move_froze_and_never_marked_says_to_run_the_move_again() {
 #[test]
 fn a_repository_with_no_sqlite_board_has_nothing_to_move() {
     let (dir, env) = unmoved("fresh");
-    fs::remove_file(dir.join(".git/star-foundry-tasks.db")).unwrap();
+    fs::remove_file(dir.join(".git/lamp-works-tasks.db")).unwrap();
     let ran = run(&env, &["list"], "");
     assert!(!ran.err.contains("has not moved"), "{}", ran.err);
+}
+
+/// The board is named by the project's id, so a project file that names none, or no file at all,
+/// has no SQLite board, whatever the common dir holds.
+#[test]
+fn a_project_naming_no_id_has_no_sqlite_board() {
+    for (name, project) in [
+        ("unnamed", Some("[project]\nname = \"Lamp Works\"\n")),
+        ("fileless", None),
+    ] {
+        let (dir, env) = unmoved(name);
+        match project {
+            Some(text) => fs::write(dir.join("symphony.toml"), text).unwrap(),
+            None => fs::remove_file(dir.join("symphony.toml")).unwrap(),
+        }
+        let ran = run(&env, &["list"], "");
+        assert!(!ran.err.contains("has not moved"), "{name}: {}", ran.err);
+        assert_eq!(ran.code, 2, "{name}: the server it needs cannot start");
+    }
 }
 
 #[test]
@@ -97,7 +122,7 @@ fn the_copy_reaches_the_board_before_it_has_moved() {
     let (_, env) = unmoved("copy");
     let (mut out, mut err) = (Vec::new(), Vec::new());
     let args = ["--board".to_string(), "--out".to_string()];
-    let code = tasks::copy_main(&args, &env, &mut &b""[..], &mut out, &mut err);
+    let code = symphony_board::copy_main(&args, &env, &mut &b""[..], &mut out, &mut err);
     let said = String::from_utf8(err).unwrap();
     assert_eq!(code, 2, "the server it needs cannot start");
     assert!(!said.contains("has not moved"), "{said}");

@@ -57,8 +57,8 @@ fn a_mockup_without_alt_text_is_named_by_its_file() {
 #[test]
 fn a_relative_mockup_resolves_against_its_page() {
     assert_eq!(
-        media("![c](mockups/c.html)\n", "docs/art/UI.md").1,
-        [mockup("/docs/art/mockups/c.html", "c")]
+        media("![c](mockups/c.html)\n", "docs/pictures/UI.md").1,
+        [mockup("/docs/pictures/mockups/c.html", "c")]
     );
     assert_eq!(
         media("![u](../ui/hud.html)\n", "docs/A.md").1,
@@ -122,8 +122,8 @@ fn which_pictures_are_mockups() {
 
 #[test]
 fn an_image_to_a_glb_is_a_model_not_an_img() {
-    let (html, items) = media("![Frigate](/view/models/hulls/REP-F01.glb)\n", "docs/A.md");
-    assert_eq!(items, [model("/view/models/hulls/REP-F01.glb", "Frigate")]);
+    let (html, items) = media("![Frigate](/view/models/lamps/NOR-L01.glb)\n", "docs/A.md");
+    assert_eq!(items, [model("/view/models/lamps/NOR-L01.glb", "Frigate")]);
     assert!(!html.contains("<img"), "{html}");
     assert!(html.contains("data-kind=\"model\""));
 }
@@ -156,10 +156,10 @@ fn a_model_without_a_caption_is_named_by_its_file() {
 #[test]
 fn a_relative_and_a_worktree_model_resolve_like_an_image() {
     assert_eq!(
-        media("![f](../a.glb)\n", "docs/ships/x.md").1,
+        media("![f](../a.glb)\n", "docs/lamps/x.md").1,
         [model("/docs/a.glb", "f")]
     );
-    let worktree = ".claude/worktrees/art-x/view/models/hulls/REP-F01.glb";
+    let worktree = ".claude/worktrees/picture-x/view/models/lamps/NOR-L01.glb";
     assert_eq!(
         media(&format!("![f](/{worktree})\n"), "docs/A.md").1,
         [model(&format!("/{worktree}"), "f")]
@@ -179,11 +179,11 @@ fn a_glb_in_a_code_span_stays_text() {
 fn a_model_in_a_card_thread_message_is_media_of_the_threads_fragment() {
     let tree = Tree::new();
     let text =
-        "- [ ] **hull** — x\n  [2026-10-06 10:00] agent — ![f](/view/models/hulls/REP-F01.glb)\n";
+        "- [ ] **lamp** — x\n  [2026-10-06 10:00] agent — ![f](/view/models/lamps/NOR-L01.glb)\n";
     let threads = Render::new(&tree.root).history(text, "docs/A.md");
     assert_eq!(
-        threads["hull"].media,
-        [model("/view/models/hulls/REP-F01.glb", "f")]
+        threads["lamp"].media,
+        [model("/view/models/lamps/NOR-L01.glb", "f")]
     );
 }
 

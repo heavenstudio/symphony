@@ -191,7 +191,7 @@ fn regroups_when_the_file_has_a_register_region() {
 
 // AutoApprovedRenderTest: an auto-approved card is the owner's to overturn, never to set.
 
-const AUTO: &str = "<!-- register:start -->\n## Auto-approved: spot-check\n\n### T\n\n- [a] **pic** — A hull. *Shows:* X · ship\n\
+const AUTO: &str = "<!-- register:start -->\n## Auto-approved: spot-check\n\n### T\n\n- [a] **pic** — A lamp. *Fills:* X · lamp\n\
     \x20 [2026-09-27 10:00] agent — ![x](/x.png)\n  [2026-09-27 11:00] agent · auto-approved — A: bold outline\n\
     <!-- register:end -->\n";
 

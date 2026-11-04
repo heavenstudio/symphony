@@ -21,6 +21,7 @@ pub mod orphans;
 pub mod probe;
 mod reload;
 pub mod repo;
+pub mod shelf;
 pub mod sys;
 mod write;
 

@@ -46,15 +46,15 @@ fn the_anchor_matches_the_rendered_heading_id() {
     for (heading, anchor) in [
         ("Confirmed direction", "confirmed-direction"),
         (
-            "Coralline Accord art · Third pass: less animal, aboard their ships",
-            "coralline-accord-art-third-pass-less-animal-aboard-their-ships",
+            "Harbor Guild picture · Third pass: less brass, round their lamps",
+            "harbor-guild-picture-third-pass-less-brass-round-their-lamps",
         ),
         (
             "Capture, intrusion, and false identities",
             "capture-intrusion-and-false-identities",
         ),
         ("Café — naïve  spacing", "cafe-naive-spacing"),
-        ("REP-F01 Kite", "rep-f01-kite"),
+        ("NOR-L01 Kite", "nor-l01-kite"),
         ("x_y 2.5", "x_y-25"),
         ("Types of weapon", "types-of-weapon"),
     ] {

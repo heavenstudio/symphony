@@ -9,12 +9,15 @@ use std::fs::File;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
-use tasks::cli::Env;
-use tasks::health::LIVE_SECONDS;
-use tasks::launch::herdr::Herdr;
-use tasks::launch::reap::{self, Closed, REAP_SECONDS, Reap, Sweep, lock_path, state_path};
-use tasks::launch::{Ask, LaunchError, Processes, restore as restore_session};
-use tasks::{Error, NewLaunch, NewSession, NewTask, Store};
+use symphony_board::cli::Env;
+use symphony_board::health::LIVE_SECONDS;
+use symphony_board::launch::herdr::Herdr;
+use symphony_board::launch::reap::{
+    self, Closed, REAP_SECONDS, Reap, Sweep, lock_path, state_path,
+};
+use symphony_board::launch::{Ask, LaunchError, Processes, restore as restore_session};
+use symphony_board::{Error, NewLaunch, NewSession, NewTask, Store};
+use symphony_board::{Health, cli};
 
 #[test]
 fn failed_or_incomplete_presence_rounds_hold_work_until_the_cap_and_confirmation_resets_it() {
@@ -44,7 +47,7 @@ fn failed_or_incomplete_presence_rounds_hold_work_until_the_cap_and_confirmation
         "UPSERT type::record('callback_state', $handle) SET handle = $handle, address = 'codex:abcdef0f', host = 'this-host', confirmed_until = $until, lease = $lease RETURN NONE;",
         json!({"handle":finished, "until":w.f.now()+390.0, "lease":w.f.now()+1_000_000.0}),
     ).unwrap();
-    let before = tasks::cli::attach::observe(w.store(), &w.orch, "orchestrator").unwrap();
+    let before = cli::attach::observe(w.store(), &w.orch, "orchestrator").unwrap();
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let addr = listener.local_addr().unwrap().to_string();
     let (release, held) = std::sync::mpsc::channel();
@@ -53,8 +56,8 @@ fn failed_or_incomplete_presence_rounds_hold_work_until_the_cap_and_confirmation
         held.recv().unwrap();
     });
     let now = w.f.now();
-    let failed = tasks::Store::unchecked(
-        tasks::rpc::Client::new(&addr, "sf", w.store().client().database())
+    let failed = Store::unchecked(
+        symphony_board::rpc::Client::new(&addr, "sf", w.store().client().database())
             .waiting(Duration::from_millis(30)),
         Box::new(move || now),
         Box::new(|_| true),
@@ -78,13 +81,10 @@ fn failed_or_incomplete_presence_rounds_hold_work_until_the_cap_and_confirmation
 
     w.f.advance(601.0);
     for (slug, handle) in &workers {
-        assert_eq!(
-            w.store().session(handle).unwrap().health,
-            tasks::Health::Unknown
-        );
+        assert_eq!(w.store().session(handle).unwrap().health, Health::Unknown);
         assert_eq!(
             w.store().get(slug).unwrap().roles[0].health,
-            tasks::Health::Unknown
+            Health::Unknown
         );
         let other = w.f.session("worker");
         assert!(
@@ -92,12 +92,12 @@ fn failed_or_incomplete_presence_rounds_hold_work_until_the_cap_and_confirmation
             "unknown signal must retain ownership"
         );
     }
-    let digest = tasks::cli::pull::digest(w.store(), &[], None, w.f.now(), &[]).unwrap();
+    let digest = cli::pull::digest(w.store(), &[], None, w.f.now(), &[]).unwrap();
     assert_eq!(digest.executing, 2);
     assert_eq!(digest.count("in_progress_orphaned"), 0);
     assert_eq!(
         w.store().session(&finished).unwrap().health,
-        tasks::Health::Unknown
+        Health::Unknown
     );
     let mut holding = workers
         .iter()
@@ -114,9 +114,9 @@ fn failed_or_incomplete_presence_rounds_hold_work_until_the_cap_and_confirmation
             .iter()
             .any(|line| line.contains("native presence sweep overdue or failed"))
     );
-    let after = tasks::cli::attach::observe(w.store(), &w.orch, "orchestrator").unwrap();
+    let after = cli::attach::observe(w.store(), &w.orch, "orchestrator").unwrap();
     let mut events = Vec::new();
-    tasks::cli::attach::diff(w.store(), &before, &after, &w.orch, &mut |line| {
+    cli::attach::diff(w.store(), &before, &after, &w.orch, &mut |line| {
         events.push(line.to_string())
     })
     .unwrap();
@@ -128,9 +128,9 @@ fn failed_or_incomplete_presence_rounds_hold_work_until_the_cap_and_confirmation
         "{events:?}"
     );
     let board = w.store().board().unwrap();
-    let view = tasks::cli::agents::describe_board(
+    let view = cli::agents::describe_board(
         w.store(),
-        &tasks::cli::probes::machine(&w.env),
+        &cli::probes::machine(&w.env),
         w.f.now(),
         false,
         &board,
@@ -142,26 +142,23 @@ fn failed_or_incomplete_presence_rounds_hold_work_until_the_cap_and_confirmation
             .iter()
             .find(|a| &a.handle == handle)
             .expect("unknown agents remain visible");
-        assert_eq!(agent.health, tasks::Health::Unknown);
+        assert_eq!(agent.health, Health::Unknown);
         assert_ne!(agent.state, "gone");
     }
 
     w.f.advance(389.0); // exactly ten minutes since confirmation expired
     for (_, handle) in &workers {
-        assert_eq!(w.f.health(handle), tasks::Health::Unknown);
+        assert_eq!(w.f.health(handle), Health::Unknown);
     }
     w.f.advance(1.0);
     for (slug, handle) in &workers {
-        assert_eq!(w.f.health(handle), tasks::Health::Lost);
-        assert_eq!(
-            w.store().get(slug).unwrap().roles[0].health,
-            tasks::Health::Lost
-        );
+        assert_eq!(w.f.health(handle), Health::Lost);
+        assert_eq!(w.store().get(slug).unwrap().roles[0].health, Health::Lost);
     }
-    assert_eq!(w.f.health(&finished), tasks::Health::Left);
-    let lost = tasks::cli::attach::observe(w.store(), &w.orch, "orchestrator").unwrap();
+    assert_eq!(w.f.health(&finished), Health::Left);
+    let lost = cli::attach::observe(w.store(), &w.orch, "orchestrator").unwrap();
     events.clear();
-    tasks::cli::attach::diff(w.store(), &after, &lost, &w.orch, &mut |line| {
+    cli::attach::diff(w.store(), &after, &lost, &w.orch, &mut |line| {
         events.push(line.to_string())
     })
     .unwrap();
@@ -170,21 +167,21 @@ fn failed_or_incomplete_presence_rounds_hold_work_until_the_cap_and_confirmation
         events.iter().all(|line| line.starts_with("LOST ")),
         "{events:?}"
     );
-    let again = tasks::cli::attach::observe(w.store(), &w.orch, "orchestrator").unwrap();
+    let again = cli::attach::observe(w.store(), &w.orch, "orchestrator").unwrap();
     events.clear();
-    tasks::cli::attach::diff(w.store(), &lost, &again, &w.orch, &mut |line| {
+    cli::attach::diff(w.store(), &lost, &again, &w.orch, &mut |line| {
         events.push(line.to_string())
     })
     .unwrap();
     assert!(events.is_empty(), "LOST is announced once: {events:?}");
-    let digest = tasks::cli::pull::digest(w.store(), &[], None, w.f.now(), &[]).unwrap();
+    let digest = cli::pull::digest(w.store(), &[], None, w.f.now(), &[]).unwrap();
     assert_eq!(digest.count("in_progress_orphaned"), 2);
     assert!(digest.liveness_unknown.is_empty());
 
     // A real confirmation after expiry revives the workers and starts a fresh grace interval.
     presence_round(w.store(), &w.herdr(), &how, &mut Vec::new()).unwrap();
     for (_, handle) in &workers {
-        assert_eq!(w.f.health(handle), tasks::Health::Live);
+        assert_eq!(w.f.health(handle), Health::Live);
     }
     w.f.advance(601.0);
     for reply in [
@@ -205,10 +202,7 @@ fn failed_or_incomplete_presence_rounds_hold_work_until_the_cap_and_confirmation
                 .contains("presence is unknown")
         );
         for (_, handle) in &workers {
-            assert_eq!(
-                w.store().session(handle).unwrap().health,
-                tasks::Health::Unknown
-            );
+            assert_eq!(w.store().session(handle).unwrap().health, Health::Unknown);
             assert!(w.store().callbacks().unwrap().contains_key(handle));
         }
     }
@@ -240,9 +234,9 @@ fn failed_or_incomplete_presence_rounds_hold_work_until_the_cap_and_confirmation
             );
             for (i, (_, handle)) in workers.iter().enumerate() {
                 let expected = if replace_known && i == 0 {
-                    tasks::Health::Unknown
+                    Health::Unknown
                 } else {
-                    tasks::Health::Live
+                    Health::Live
                 };
                 assert_eq!(
                     w.store().session(handle).unwrap().health,
@@ -256,10 +250,7 @@ fn failed_or_incomplete_presence_rounds_hold_work_until_the_cap_and_confirmation
     w.set_state(inventory);
     presence_round(w.store(), &w.herdr(), &how, &mut Vec::new()).unwrap();
     for (_, handle) in &workers {
-        assert_eq!(
-            w.store().session(handle).unwrap().health,
-            tasks::Health::Live
-        );
+        assert_eq!(w.store().session(handle).unwrap().health, Health::Live);
         assert!(w.store().callbacks().unwrap().contains_key(handle));
     }
     w.edit_panes(|panes| panes.clear());
@@ -267,10 +258,7 @@ fn failed_or_incomplete_presence_rounds_hold_work_until_the_cap_and_confirmation
     presence_round(w.store(), &w.herdr(), &how, &mut Vec::new()).unwrap();
     for (_, handle) in &workers {
         assert!(!w.store().callbacks().unwrap().contains_key(handle));
-        assert_eq!(
-            w.store().session(handle).unwrap().health,
-            tasks::Health::Lost
-        );
+        assert_eq!(w.store().session(handle).unwrap().health, Health::Lost);
     }
 }
 
@@ -1217,10 +1205,10 @@ fn anything_not_known_harmless_under_claude_is_work() {
     let w = World::new();
     for command in [
         "blender -b -noaudio scene.blend -P build.py",
-        "codex exec 'draw a ship'",
-        "codex e 'draw a ship'",
-        "codex --profile e exec 'draw a ship'",
-        "codex exec 'draw an mcp-ship'",
+        "codex exec 'draw a lamp'",
+        "codex e 'draw a lamp'",
+        "codex --profile e exec 'draw a lamp'",
+        "codex exec 'draw an mcp-lamp'",
         "CODEX e 'run just tasks inbox'",
         "ffmpeg -i a.wav b.ogg",
         "node x.js",
