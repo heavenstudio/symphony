@@ -1,4 +1,7 @@
 //! Size probe: Rust and wasm-bindgen with no framework, one element written through web-sys.
+
+#![forbid(unsafe_code)]
+
 fn main() {
     #[cfg(target_arch = "wasm32")]
     {
