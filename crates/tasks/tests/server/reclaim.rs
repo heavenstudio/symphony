@@ -181,30 +181,53 @@ fn a_store_that_grew_under_the_value_log_is_rebuilt_with_every_database_task_and
     assert!(bytes(&data(&home).join("vlog")) < 65536);
 }
 
-#[test]
-fn a_store_holding_a_name_the_board_cannot_say_is_left_as_it_was_and_served_again() {
-    let s = Scratch::new("reclaim-refused");
+/// A reclaim `prepare` makes refuse, on a board of database `db`: refused saying each of `why`, the
+/// board's server started again on its store, which holds what it held, and no new store beside it.
+fn refused_and_served_again(name: &str, db: &str, prepare: impl FnOnce(&Store), why: &[&str]) {
+    let s = Scratch::new(name);
     let home = s.home();
     let running = home.ensure().unwrap();
-    let store = board(&running, "tasks");
+    let store = board(&running, db);
     store
         .create(&NewTask::new("sim/jump", "Jump departure", "owner"))
         .unwrap();
-    store
-        .client()
-        .unscoped("DEFINE NAMESPACE `not-plain`;", json!({}))
-        .unwrap();
+    prepare(&store);
     let held = holdings(&store);
     let error = home.reclaim().unwrap_err();
     assert!(
-        matches!(&error, ServerError::Reclaim(why) if why.contains("\"not-plain\"")),
+        matches!(&error, ServerError::Reclaim(said) if why.iter().all(|part| said.contains(part))),
         "{error}"
     );
     let again = home.recorded().expect("the board's server runs again");
     assert_ne!(again.pid, running.pid);
     assert_eq!(home.ensure().unwrap(), again);
-    assert_eq!(holdings(&board(&again, "tasks")), held);
+    assert_eq!(holdings(&board(&again, db)), held);
     assert!(!exists(&home.dir().join("reclaim").join("data")));
+}
+
+#[test]
+fn a_store_holding_a_name_the_board_cannot_say_is_left_as_it_was_and_served_again() {
+    let not_plain = |store: &Store| {
+        store
+            .client()
+            .unscoped("DEFINE NAMESPACE `not-plain`;", json!({}))
+            .unwrap();
+    };
+    refused_and_served_again("reclaim-refused", "tasks", not_plain, &["\"not-plain\""]);
+}
+
+/// Nothing a reclaim would carry is the board, so it carries nothing and removes nothing.
+#[test]
+fn a_store_without_the_board_s_own_database_is_left_as_it_was_and_served_again() {
+    refused_and_served_again(
+        "reclaim-no-board",
+        "scratch_board",
+        |_| {},
+        &[
+            "holds no sf/tasks, the board's own database",
+            "sf/scratch_board",
+        ],
+    );
 }
 
 #[test]

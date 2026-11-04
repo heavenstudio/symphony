@@ -237,8 +237,12 @@ an unrecorded one on the store. It exports every namespace's every database with
 `surreal export` and imports them into `reclaim/data` under `Storage`. Then it
 re-exports, compares each file byte for byte along with the root's and
 namespaces' users and accesses, swaps the stores, starts the board's server and
-removes the old store; the exports stay. A failure before the swap restarts the
-old store untouched. A start refuses while the store sits in `reclaim/old`
+removes the old store; the exports stay. It refuses a store without `sf/tasks`
+and an `INFO` answer without its namespaces or databases object, which would
+otherwise carry nothing and remove the store. Its private servers never take a
+port the halted server had, which a monitor may still hold as the board's. A
+failure before the swap restarts the old store untouched, and says the restart's
+own failure beside the reclaim's. A start refuses while the store sits in `reclaim/old`
 without a successor, and the next reclaim puts it back before starting over.
 Without arguments it reclaims the board of the repository it runs in; `--dir
 FOLDER` reclaims a board folder elsewhere, as its tests and a rehearsal on a
@@ -274,9 +278,8 @@ file lock admits one embed writer. Unchanged maintenance passes read only the me
 task update stamps and model id against the last successful whole-board checkpoint, never source
 text, chunk manifests, model loading or downloads. The checkpoint is the server's SHA-256 of those
 stamps, never the stamps: kept whole, they were a 165 KB row rewritten by each changed pass. A
-changed board scans hashes and part counts and embeds only changed sources. Explicit catch-up also repairs derived cache damage without a
-board write. Manual bulk catch-up uses
-one thread too; `--threads 1..64` explicitly overrides it for bulk work.
+changed board scans hashes and part counts and embeds only changed sources. Explicit catch-up
+also repairs derived cache damage without a board write. Manual bulk catch-up uses one thread too; `--threads 1..64` explicitly overrides it for bulk work.
 Short search queries always use one inference thread.
 
 The approved BAAI/bge-small-en-v1.5 model runs locally through tract-onnx 0.22.5

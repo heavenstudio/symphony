@@ -313,7 +313,7 @@ impl Home {
         let work = self.dir.join(RECLAIM);
         let data = self.dir.join(DATA);
         self.finish_swap()?;
-        self.halt()?;
+        let halted = self.halt()?;
         let before = bytes(&data);
         if work.exists() {
             fs::remove_dir_all(&work).map_err(io("could not remove", &work))?;
@@ -322,16 +322,20 @@ impl Home {
         for folder in [&exports, &check] {
             fs::create_dir_all(folder).map_err(io("could not make", folder))?;
         }
-        let databases = match self.rebuild(&data, &fresh, &exports, &check) {
+        let databases = match self.rebuild(&data, &fresh, &exports, &check, &halted) {
             Ok(databases) => databases,
             Err(problem) => {
                 let _ = fs::remove_dir_all(&fresh);
-                self.start()?;
-                return Err(problem);
+                return Err(self.serve_again(problem));
             }
         };
         let old = work.join(OLD);
-        fs::rename(&data, &old).map_err(io("could not move", &data))?;
+        if let Err(problem) = fs::rename(&data, &old) {
+            return Err(self.serve_again(ServerError::Reclaim(format!(
+                "could not move {}: {problem}",
+                data.display()
+            ))));
+        }
         let running = match fs::rename(&fresh, &data)
             .map_err(io("could not move", &fresh))
             .and_then(|()| self.start())
@@ -342,8 +346,7 @@ impl Home {
                     fs::rename(&data, &fresh).map_err(io("could not move", &data))?;
                 }
                 fs::rename(&old, &data).map_err(io("could not move", &old))?;
-                self.start()?;
-                return Err(ServerError::Reclaim(problem.to_string()));
+                return Err(self.serve_again(ServerError::Reclaim(problem.to_string())));
             }
         };
         fs::remove_dir_all(&old).map_err(io("could not remove", &old))?;
@@ -357,6 +360,22 @@ impl Home {
         })
     }
 
+    /// Why a reclaim stopped, the old store in place, once the board's server is started on that
+    /// store again; with the start's own failure beside it, if it fails too.
+    fn serve_again(&self, problem: ServerError) -> ServerError {
+        let Err(again) = self.start() else {
+            return problem;
+        };
+        let why = match problem {
+            ServerError::Reclaim(why) => why,
+            other => other.to_string(),
+        };
+        ServerError::NotUp(format!(
+            "the reclaim stopped with the board's old store in place, untouched, and the board's \
+             server did not start on it again: {again}. The reclaim stopped because: {why}"
+        ))
+    }
+
     /// What a reclaim cut short between its two moves left: the old store put back where the new
     /// one never arrived. One cut later leaves the old store beside the new, in the work folder the
     /// reclaim removes next. Under the lock.
@@ -368,34 +387,60 @@ impl Home {
         Ok(())
     }
 
-    /// End the board's server, recorded or found on its data, and forget its address. Under the lock.
-    fn halt(&self) -> Result<(), ServerError> {
+    /// End the board's server, recorded or found on its data, and forget its address: the ports
+    /// they had, which a client may still hold as the board's. Under the lock.
+    fn halt(&self) -> Result<Vec<u16>, ServerError> {
+        let mut ports = Vec::new();
         if let Some(running) = self.recorded() {
             if self.serves(running.pid) {
                 self.end(running.pid)?;
             }
             let address = self.dir.join(ADDRESS);
             fs::remove_file(&address).map_err(io("could not remove", &address))?;
+            ports.push(running.addr);
         }
         if let Some(running) = self.unrecorded() {
             self.end(running.pid)?;
+            ports.push(running.addr);
         }
-        Ok(())
+        Ok(ports
+            .iter()
+            .filter_map(|addr| addr.parse::<SocketAddr>().ok())
+            .map(|addr| addr.port())
+            .collect())
     }
 
     /// Export every database of the store at `data` into `exports`, import each into a new store at
     /// `fresh`, and export that one into `check`: the databases, once every pair of exports and the
-    /// two stores' layouts are the same. Each server is ended before this returns.
+    /// two stores' layouts are the same. A store without the board's own database is refused. Each
+    /// server is started on none of the `halted` ports, so a client still holding the board's old
+    /// address writes into neither store, and is ended before this returns.
     fn rebuild(
         &self,
         data: &Path,
         fresh: &Path,
         exports: &Path,
         check: &Path,
+        halted: &[u16],
     ) -> Result<Vec<String>, ServerError> {
         let file = |ns: &str, db: &str| format!("{ns}.{db}.surql");
-        let old = self.spawn(&store(data))?;
+        let old = self.spawn(&store(data), halted)?;
+        let board = (crate::NAMESPACE.to_string(), crate::DATABASE.to_string());
         let read = layout(&old).and_then(|held| {
+            if !held.databases.contains(&board) {
+                let named: Vec<String> = held
+                    .databases
+                    .iter()
+                    .map(|(ns, db)| format!("{ns}/{db}"))
+                    .collect();
+                return Err(ServerError::Reclaim(format!(
+                    "the store at {} holds no {}/{}, the board's own database; it holds [{}]",
+                    data.display(),
+                    board.0,
+                    board.1,
+                    named.join(", ")
+                )));
+            }
             for (ns, db) in &held.databases {
                 self.transfer("export", &old, ns, db, &exports.join(file(ns, db)))?;
             }
@@ -403,7 +448,7 @@ impl Home {
         });
         self.end(old.pid)?;
         let held = read?;
-        let new = self.spawn(&store(fresh))?;
+        let new = self.spawn(&store(fresh), halted)?;
         let built = (|| {
             for (ns, db) in &held.databases {
                 self.transfer("import", &new, ns, db, &exports.join(file(ns, db)))?;
@@ -567,23 +612,23 @@ impl Home {
                 old.display()
             )));
         }
-        let running = self.spawn(&self.data())?;
+        let running = self.spawn(&self.data(), &[])?;
         self.record(&running)?;
         Ok(running)
     }
 
-    /// Start a server on `data` on a free port, with this board's [`Storage`], and wait until it
-    /// answers. SurrealDB is told a reserved port to bind; one that ends saying the port was taken
+    /// Start a server on `data` on a free port, none of `except`, with this board's [`Storage`], and
+    /// wait until it answers. SurrealDB is told a reserved port to bind; one that ends saying the port was taken
     /// meanwhile is started again on another ([`port`]), every start within the one patience. It is
     /// up once it answers and holds the port's listener itself ([`port::listens`]): a process that
     /// took its port answers too, while this server is still on its way to ending.
-    fn spawn(&self, data: &str) -> Result<Running, ServerError> {
+    fn spawn(&self, data: &str, except: &[u16]) -> Result<Running, ServerError> {
         if !self.surreal.is_file() {
             return Err(ServerError::NoSurreal(self.surreal.clone()));
         }
         let log = self.dir.join(LOG);
         let until = Instant::now() + self.patience;
-        let started = port::start_on_free_port(port::ATTEMPTS, until, |reserved| {
+        let started = port::start_on_free_port_except(except, port::ATTEMPTS, until, |reserved| {
             let addr = reserved.to_string();
             let from = fs::metadata(&log).map_or(0, |meta| meta.len());
             let out = output(
@@ -721,7 +766,7 @@ pub fn bytes(path: &Path) -> u64 {
 }
 
 /// The databases the server `running` holds, sorted, with the users and accesses of its root (the
-/// empty scope) and of each namespace. A name the board's RPC could not say is refused.
+/// empty scope) and of each namespace, refused as [`names`] refuses an answer.
 fn layout(running: &Running) -> Result<Layout, ServerError> {
     let client = rpc::Client::new(&running.addr, crate::NAMESPACE, crate::DATABASE);
     let ask = |sql: &str| {
@@ -732,36 +777,40 @@ fn layout(running: &Running) -> Result<Layout, ServerError> {
             ))
         })
     };
-    let names = |info: &Value, field: &str| -> Result<Vec<String>, ServerError> {
-        let names: Vec<String> = info[field]
-            .as_object()
-            .map(|named| named.keys().cloned().collect())
-            .unwrap_or_default();
-        match names.iter().find(|name| !rpc::plain(name)) {
-            Some(name) => Err(ServerError::Reclaim(format!(
-                "{name:?} at {} is not a plain name for a namespace or database",
-                running.addr
-            ))),
-            None => Ok(names),
-        }
-    };
     let defined = |info: &Value| json!({"users": info["users"], "accesses": info["accesses"]});
     let root = ask("INFO FOR ROOT;")?.pop().unwrap_or(Value::Null);
     let mut layout = Layout {
         databases: Vec::new(),
         definitions: BTreeMap::from([(String::new(), defined(&root))]),
     };
-    for ns in names(&root, "namespaces")? {
+    for ns in names(&root, "namespaces", "the root", &running.addr)? {
         let info = ask(&format!("USE NS {ns}; INFO FOR NS;"))?
             .pop()
             .unwrap_or(Value::Null);
-        for db in names(&info, "databases")? {
+        for db in names(&info, "databases", &ns, &running.addr)? {
             layout.databases.push((ns.clone(), db));
         }
         layout.definitions.insert(ns, defined(&info));
     }
     layout.databases.sort();
     Ok(layout)
+}
+
+/// The names under `field` of `info`, the `INFO` answer for `scope` at `addr`. An answer without
+/// that object is refused, never read as none: a reclaim would carry nothing and remove the store.
+/// So is a name the board's RPC could not say.
+fn names(info: &Value, field: &str, scope: &str, addr: &str) -> Result<Vec<String>, ServerError> {
+    let Some(named) = info.get(field).and_then(Value::as_object) else {
+        return Err(ServerError::Reclaim(format!(
+            "INFO for {scope} at {addr} answered no {field} object: {info}"
+        )));
+    };
+    match named.keys().find(|name| !rpc::plain(name)) {
+        Some(name) => Err(ServerError::Reclaim(format!(
+            "{name:?} at {addr} is not a plain name for a namespace or database"
+        ))),
+        None => Ok(named.keys().cloned().collect()),
+    }
 }
 
 /// Whether `version` is older than the pinned SurrealDB, release by release (`3.10.0` after `3.9.1`); one
@@ -783,4 +832,49 @@ fn since(log: &Path, from: u64) -> String {
         let _ = file.read_to_string(&mut said);
     }
     said
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn refusal(info: &Value, field: &str) -> String {
+        names(info, field, "the root", "127.0.0.1:1")
+            .unwrap_err()
+            .to_string()
+    }
+
+    #[test]
+    fn an_info_answer_without_its_names_is_refused_never_read_as_none() {
+        for info in [
+            json!({"users": {}, "accesses": {}}),
+            json!({"namespaces": null}),
+            json!({"namespaces": ["sf"]}),
+            Value::Null,
+        ] {
+            let said = refusal(&info, "namespaces");
+            assert!(
+                said.contains("INFO for the root at 127.0.0.1:1 answered no namespaces object"),
+                "{said}"
+            );
+        }
+    }
+
+    #[test]
+    fn an_info_answer_names_what_it_holds_and_refuses_a_name_the_board_cannot_say() {
+        let info = json!({"databases": {"tasks": "DEFINE …", "scratch_board": "DEFINE …"}});
+        let mut held = names(&info, "databases", "sf", "127.0.0.1:1").unwrap();
+        held.sort();
+        assert_eq!(held, ["scratch_board", "tasks"]);
+        let empty = names(&json!({"databases": {}}), "databases", "sf", "127.0.0.1:1");
+        assert_eq!(empty.unwrap(), Vec::<String>::new());
+        let said = refusal(
+            &json!({"namespaces": {"sf": "", "not-plain": ""}}),
+            "namespaces",
+        );
+        assert!(
+            said.contains("\"not-plain\" at 127.0.0.1:1 is not a plain name"),
+            "{said}"
+        );
+    }
 }
