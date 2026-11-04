@@ -12,7 +12,7 @@ use std::process::ExitStatus;
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 use tasks::server::{Home, Running};
-use tasks::sys::{Child, Command, Stdio};
+use tasks::sys::{Child, Command, Spawning as _, Stdio};
 
 pub fn surreal() -> PathBuf {
     static FOUND: OnceLock<PathBuf> = OnceLock::new();
@@ -140,7 +140,7 @@ pub fn signal(pid: i64, name: &str) {
     let _ = std::process::Command::new("kill")
         .arg(format!("-{name}"))
         .arg(pid.to_string())
-        .status();
+        .status_locked();
 }
 
 /// Waits until `pid` is gone, for up to 20 s: whether it went.
@@ -231,7 +231,7 @@ pub fn script(path: &Path, body: &str) -> PathBuf {
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
-        .status()
+        .status_locked()
         .unwrap();
     assert!(
         status.success(),

@@ -185,7 +185,7 @@ fn scratch_cli_build_keeps_the_main_heartbeat_link() {
     assert!(done.status.success(), "{done:?}");
     assert_eq!(tree.read("stand-in-board"), "branch");
     stage("branch CLI completed; running heartbeat CLI");
-    assert!(Command::new(heartbeat).status().unwrap().success());
+    assert!(Command::new(heartbeat).status_locked().unwrap().success());
     assert_eq!(tree.read("stand-in-board"), "main");
     stage(format_args!(
         "scratch CLI case completed, wall={:.3}s",

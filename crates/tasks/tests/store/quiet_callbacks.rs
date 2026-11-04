@@ -4,7 +4,7 @@ use super::common::Fixture;
 use serde_json::json;
 use std::os::unix::fs::MetadataExt;
 use tasks::NewTask;
-use tasks::sys::Command;
+use tasks::sys::{Command, Spawning as _};
 
 const EMPTY_PULL: &str = "PULL executing=0 ready_unstaffed=0 in_progress_orphaned=0 review_unreviewed=0 landed_open=0 idle=0";
 const BUSY_PULL: &str = "PULL executing=1 ready_unstaffed=0 in_progress_orphaned=0 review_unreviewed=0 landed_open=0 idle=0";
@@ -23,7 +23,7 @@ impl CommandDirectory {
                 .args(["-TERM", &pid.to_string()])
                 .stdout(std::process::Stdio::null())
                 .stderr(std::process::Stdio::null())
-                .status();
+                .status_locked();
         }
     }
 }
@@ -77,7 +77,7 @@ fn a_stale_child_running_a_test_leaves_idle_callback_rows_unchanged() {
             std::process::Command::new("git")
                 .args(["init", "-q"])
                 .arg(&dir)
-                .status()
+                .status_locked()
                 .unwrap()
                 .success()
         );
@@ -1512,7 +1512,7 @@ done
     assert!(
         std::process::Command::new("/bin/kill")
             .args(["-0", pid.trim()])
-            .status()
+            .status_locked()
             .unwrap()
             .success(),
         "the inherited stdout holder must still be alive when delivery exits"
