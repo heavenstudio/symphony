@@ -7,6 +7,8 @@
 //! an approval in its herdr pane, and once when herdr cannot be asked.
 
 use super::agents::{Answer, Pane, Probes, View, describe, find_pane};
+mod pull_updates;
+
 use super::pull::digest;
 use super::text::event;
 use crate::health::{Health, LIVE_SECONDS};
@@ -531,16 +533,7 @@ fn look(
     }
     if let Some((stamp, statuses)) = pull {
         let digest = pull_digest(store, view.as_ref(), w.landed, stamp)?;
-        let entries = digest.entries();
-        memory
-            .pull_entries
-            .retain(|entry| entry.0 == "unanswered" || entries.contains(entry));
-        if !entries.is_subset(&memory.pull_entries) {
-            for line in digest.event_lines_since(&memory.pull_entries) {
-                emit(&line);
-            }
-            memory.pull_entries.extend(entries);
-        }
+        pull_updates::emit_new(&digest, &mut memory.pull_entries, emit);
         memory.last_pull = Some(stamp);
         memory.last_statuses = statuses;
     }

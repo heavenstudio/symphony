@@ -4,7 +4,7 @@
 use super::callback_peer::{self as peer, Owner};
 use super::{ACT, Error, Store, acting, logged, refused};
 use crate::cli::agents::{Answer, Pane, Probe, Probes};
-use crate::cli::{attach, pull};
+use crate::cli::attach;
 use crate::sys::{Command, Stdio};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -15,6 +15,7 @@ use std::time::{Duration, Instant};
 
 #[path = "codex_delivery.rs"]
 mod codex;
+mod pull_state;
 
 #[cfg(test)]
 #[path = "../../../../../tools/gate/tests/verify/script.rs"]
@@ -907,41 +908,16 @@ RETURN NONE;");
                 lines.push(event_line(line))
             })?;
         }
-        let mut pull_queued = state.pull_queued.clone();
-        let mut pull_entries = state.pull_entries.clone().unwrap_or_default();
-        let mut pull_current = BTreeSet::new();
-        let mut pull_event = None;
-        if due {
-            let root = crate::cli::probes::repo_root(&env.cwd);
-            let landed = |task: &crate::Task| {
-                root.as_ref()
-                    .is_some_and(|root| crate::cli::probes::landed(root, &task.slug))
-            };
-            let digest = pull::digest(self, &idle, Some(&landed), self.now(), &busy)?;
-            let entries = digest.entries();
-            pull_current = entries.clone();
-            pull_entries.retain(|entry| entry.0 == "unanswered" || entries.contains(entry));
-            if let Some(queued) = &mut pull_queued {
-                queued.retain(|entry| entry.0 == "unanswered" || entries.contains(entry));
-            }
-            if legacy_upgrade {
-                pull_entries = entries;
-            } else if (state.pull_entries.is_none() || !entries.is_subset(&pull_entries))
-                && pull_queued
-                    .as_ref()
-                    .is_none_or(|queued| !entries.is_subset(queued))
-            {
-                let text = digest
-                    .event_lines_since(&pull_entries)
-                    .iter()
-                    .map(|line| event_line(line))
-                    .collect::<Vec<_>>()
-                    .join("\n");
-                pull_entries.extend(entries);
-                pull_queued = Some(pull_entries.clone());
-                pull_event = Some((text, pull_entries.clone()));
-            }
-        }
+        let pull_state::Plan {
+            queued: pull_queued,
+            entries: pull_entries,
+            current: pull_current,
+            event: pull_event,
+        } = if due {
+            pull_state::Plan::observe(self, &state, &env, &idle, &busy, legacy_upgrade)?
+        } else {
+            pull_state::Plan::unchanged(&state)
+        };
         let revision = lease.map_or(state.revision, |(_, revision)| revision);
         let mut events: Vec<Event> = lines
             .into_iter()
