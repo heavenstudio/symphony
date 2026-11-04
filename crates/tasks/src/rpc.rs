@@ -77,13 +77,17 @@ impl Connection {
     }
 
     /// A check's EBADF on a number that still holds this connection's socket, the same ends both
-    /// ways: a drained socket ([`crate::sys::unshared`]), its evidence. A number that no
+    /// ways: a drained socket ([`crate::sys::connect`]), its evidence. A number that no
     /// longer holds it was closed by code that does not own it: the failure, with what it holds now.
     fn drained(&self, mut failure: Failure) -> Result<String, Failure> {
-        let (same, seen) = self.descriptor.recheck(&self.stream);
-        failure.why.push_str("; ");
-        failure.why.push_str(&seen);
-        if same { Ok(failure.why) } else { Err(failure) }
+        match self.descriptor.recheck(&self.stream) {
+            Ok(same) => Ok(format!("{} answered {}; {same}", failure.step, failure.why)),
+            Err(seen) => {
+                failure.why.push_str("; ");
+                failure.why.push_str(&seen);
+                Err(failure)
+            }
+        }
     }
 }
 
@@ -173,7 +177,8 @@ impl Client {
     /// `request` on a connection the server kept open, else on a new one: the reply's status and body.
     /// Each connection is checked ([`check`]) before anything is written on it, every kind of request
     /// alike: a kept one the server has closed, or that is drained, is dropped for another, and the
-    /// request was not sent on it. A request written on a connection that then gave back nothing, part
+    /// request was not sent on it; a new one that is drained is dropped for one more new one, once.
+    /// A request written on a connection that then gave back nothing, part
     /// of a reply, or nothing before the timeout is the request's failure and is never sent again,
     /// whatever it says: the server may have run it, and a write run twice is a message said twice.
     fn send(&self, request: &[u8]) -> Result<(u16, Vec<u8>), String> {
@@ -209,14 +214,9 @@ impl Client {
             }
         };
         let pooled = kept.is_some();
-        let mut connection = if let Some(connection) = kept {
-            connection
-        } else {
-            let connection = self.connect()?;
-            if let Err(failure) = check(&connection.stream) {
-                return Err(self.unanswered(false, 0, connection.failure(failure)));
-            }
-            connection
+        let mut connection = match kept {
+            Some(connection) => connection,
+            None => self.fresh(&mut check)?,
         };
         match talk(&mut connection.stream, request, self.timeout) {
             Ok(reply) => {
@@ -229,9 +229,44 @@ impl Client {
         }
     }
 
-    /// A new connection to the server, its socket's one descriptor close-on-fork
-    /// ([`crate::sys::unshared`]). The diagnostic copy of it is made and closed under
-    /// [`crate::sys::spawning`], so no child holds that either.
+    /// A new connection that passed its check. One the check found drained is dropped, said on
+    /// stderr, and replaced by one more new connection, once: if that one is drained too, the request
+    /// fails unsent with both evidence lines. Any other failed check fails it unsent at once.
+    fn fresh(
+        &self,
+        check: &mut impl FnMut(&TcpStream) -> Result<(), Failure>,
+    ) -> Result<Connection, String> {
+        let mut first: Option<String> = None;
+        loop {
+            let connection = self.connect()?;
+            let Err(failure) = check(&connection.stream) else {
+                return Ok(connection);
+            };
+            if !failure.bad_descriptor {
+                return Err(self.unanswered(false, 0, failure));
+            }
+            let step = failure.step;
+            match (connection.drained(failure), first) {
+                (Ok(evidence), None) => {
+                    eprintln!(
+                        "the server at {}: a freshly opened socket was drained, so it was dropped before the request was written, which goes on one more new connection: {evidence}",
+                        self.addr
+                    );
+                    first = Some(evidence);
+                }
+                (Ok(second), Some(first)) => {
+                    let why = format!(
+                        "a new connection and one more were both drained: [{first}] then [{second}]"
+                    );
+                    return Err(self.unanswered(false, 0, Failure::new(step, why)));
+                }
+                (Err(failure), _) => return Err(self.unanswered(false, 0, failure)),
+            }
+        }
+    }
+
+    /// A new connection to the server, its socket close-on-fork from the moment it exists
+    /// ([`crate::sys::connect`]), read for its evidence on its own number.
     fn connect(&self) -> Result<Connection, String> {
         let connect_failed = |why| self.unanswered(false, 0, Failure::new(Step::Connect, why));
         let to = self
@@ -240,13 +275,9 @@ impl Client {
             .map_err(|error| connect_failed(error.to_string()))?
             .next()
             .ok_or_else(|| connect_failed(format!("{} names no address", self.addr)))?;
-        let stream = TcpStream::connect_timeout(&to, self.timeout)
-            .and_then(crate::sys::unshared)
+        let stream = crate::sys::connect(&to, self.timeout)
             .map_err(|error| connect_failed(error.to_string()))?;
-        let descriptor = {
-            let _spawning = crate::sys::spawning();
-            descriptor::Descriptor::connected(&stream)
-        };
+        let (descriptor, stream) = descriptor::Descriptor::connected(stream);
         Ok(Connection {
             descriptor,
             stream,
@@ -431,7 +462,9 @@ fn whole(raw: &[u8]) -> Result<Option<Reply>, String> {
     }))
 }
 
-/// Send `request` to `addr` on a connection of its own and read the response to its end.
+/// Send `request` to `addr` on a connection of its own and read the response to its end. Its socket
+/// is the client's kind ([`crate::sys::connect`]): a copy a spawn took during the probe would
+/// drain it, and its read's EBADF would say a live server is not healthy.
 fn exchange(addr: &str, request: &[u8], timeout: Duration) -> Result<(u16, Vec<u8>), String> {
     let cannot = |e: std::io::Error| format!("cannot reach the server at {addr}: {e}");
     let to = addr
@@ -439,7 +472,7 @@ fn exchange(addr: &str, request: &[u8], timeout: Duration) -> Result<(u16, Vec<u
         .map_err(cannot)?
         .next()
         .ok_or_else(|| format!("{addr} names no address"))?;
-    let mut stream = TcpStream::connect_timeout(&to, timeout).map_err(cannot)?;
+    let mut stream = crate::sys::connect(&to, timeout).map_err(cannot)?;
     let talk = |stream: &mut TcpStream| -> std::io::Result<Vec<u8>> {
         stream.set_nodelay(true)?;
         stream.set_read_timeout(Some(timeout))?;
@@ -829,10 +862,12 @@ mod tests {
     fn only_bad_descriptor_failures_add_the_connected_socket_identity() {
         use std::os::fd::AsRawFd;
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let stream = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+        let (descriptor, stream) = descriptor::Descriptor::connected(
+            TcpStream::connect(listener.local_addr().unwrap()).unwrap(),
+        );
         let (_peer, _) = listener.accept().unwrap();
         let connection = Connection {
-            descriptor: descriptor::Descriptor::connected(&stream),
+            descriptor,
             stream,
             served: 15,
         };
@@ -876,10 +911,12 @@ mod tests {
         listener: &std::net::TcpListener,
         served: usize,
     ) -> (Connection, std::net::TcpStream) {
-        let stream = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+        let (descriptor, stream) = descriptor::Descriptor::connected(
+            TcpStream::connect(listener.local_addr().unwrap()).unwrap(),
+        );
         let (peer, _) = listener.accept().unwrap();
         let connection = Connection {
-            descriptor: descriptor::Descriptor::connected(&stream),
+            descriptor,
             stream,
             served,
         };
@@ -921,12 +958,8 @@ mod tests {
         assert_eq!(answer.map(|(status, _)| status), Ok(200));
         assert_eq!(checks, 2, "the drained one, then the new one");
         let _fresh = served.join().unwrap();
-        kept_peer
-            .set_read_timeout(Some(Duration::from_secs(2)))
-            .unwrap();
-        assert_eq!(
-            kept_peer.read(&mut [0]).unwrap(),
-            0,
+        assert!(
+            closed_unwritten(&mut kept_peer),
             "nothing on the drained socket, which is closed"
         );
         let kept = client.kept.lock().unwrap();
@@ -960,36 +993,154 @@ mod tests {
         assert!(error.contains("at-connect=Open"), "{error}");
         assert!(error.contains("at-failure=Open"), "{error}");
         assert!(error.ends_with("the request was not sent"), "{error}");
-        peer.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
-        assert_eq!(
-            peer.read(&mut [0]).unwrap(),
-            0,
-            "no request on the kept socket"
-        );
-        listener.set_nonblocking(true).unwrap();
-        assert!(
-            matches!(listener.accept(), Err(error) if error.kind() == std::io::ErrorKind::WouldBlock),
-            "no replacement connection"
-        );
+        assert!(closed_unwritten(&mut peer), "no request on the kept socket");
+        assert!(none_waiting(&listener), "no replacement connection");
     }
 
-    /// A fresh connection is checked before its first request too, and one that fails its check
-    /// fails the request, unsent, with what its number holds.
+    /// Whether `listener` has no connection waiting: none was made after the ones accepted.
+    fn none_waiting(listener: &std::net::TcpListener) -> bool {
+        listener.set_nonblocking(true).unwrap();
+        matches!(listener.accept(), Err(error) if error.kind() == std::io::ErrorKind::WouldBlock)
+    }
+
+    /// Whether the server's end `peer` was closed with nothing written on it.
+    fn closed_unwritten(peer: &mut std::net::TcpStream) -> bool {
+        peer.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+        peer.read(&mut [0]).unwrap() == 0
+    }
+
+    /// A fresh connection is checked before its first request too, and one the check finds drained
+    /// is dropped like a kept one: the request goes once on one more new connection.
     #[test]
-    fn a_fresh_connection_that_fails_its_check_fails_the_request_unsent() {
+    fn a_drained_fresh_connection_is_dropped_and_the_request_goes_once_on_one_more() {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let addr = listener.local_addr().unwrap().to_string();
         let client = Client::new(&addr, "sf", "t").waiting(Duration::from_secs(5));
+        let served = std::thread::spawn(move || {
+            let (drained, _) = listener.accept().unwrap();
+            let (mut more, _) = listener.accept().unwrap();
+            read_request(&mut more);
+            more.write_all(SEVEN).unwrap();
+            (drained, more, listener)
+        });
+        let mut checks = 0;
+        let answer =
+            client.send_checked(b"POST /rpc HTTP/1.1\r\nContent-Length: 0\r\n\r\n", |_| {
+                checks += 1;
+                if checks == 1 {
+                    Err(bad_descriptor_at_peek())
+                } else {
+                    Ok(())
+                }
+            });
+        assert_eq!(answer.map(|(status, _)| status), Ok(200));
+        assert_eq!(checks, 2, "the drained one, then one more");
+        let (mut drained, _more, listener) = served.join().unwrap();
+        assert!(closed_unwritten(&mut drained));
+        assert!(none_waiting(&listener), "no third connection");
+        let kept = client.kept.lock().unwrap();
+        assert_eq!(kept.len(), 1, "only the one more is kept");
+        assert_eq!(kept[0].served, 1);
+    }
+
+    /// One more new connection, once: if it is drained too, the request fails unsent with both
+    /// evidence lines, each saying its number still held its socket, and no third one is made.
+    #[test]
+    fn a_second_drained_fresh_connection_fails_the_request_unsent_with_both_evidence_lines() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap().to_string();
+        let client = Client::new(&addr, "sf", "t").waiting(Duration::from_secs(5));
+        let mut checks = 0;
         let error = client
-            .send_checked(b"must not be sent", |_| Err(bad_descriptor_at_peek()))
+            .send_checked(b"must not be sent", |_| {
+                checks += 1;
+                Err(bad_descriptor_at_peek())
+            })
             .unwrap_err();
+        assert_eq!(checks, 2);
+        let ebadf = std::io::Error::from_raw_os_error(libc::EBADF).to_string();
+        let lead = format!(
+            "the server at {addr} did not answer: connection check peek failed on a freshly opened socket after 0 completed requests: a new connection and one more were both drained: [connection check peek answered {ebadf}; descriptor fd="
+        );
+        assert!(error.starts_with(&lead), "{error}");
+        let held = "still holds its socket, both ends as at connect: local 127.0.0.1:";
+        assert_eq!(error.matches(held).count(), 2, "{error}");
+        assert!(
+            error.contains(&format!(
+                "] then [connection check peek answered {ebadf}; descriptor fd="
+            )),
+            "{error}"
+        );
+        assert!(error.ends_with("]; the request was not sent"), "{error}");
+        for _ in 0..2 {
+            let (mut peer, _) = listener.accept().unwrap();
+            assert!(closed_unwritten(&mut peer));
+        }
+        assert!(none_waiting(&listener), "no third connection");
+        assert!(client.kept.lock().unwrap().is_empty());
+    }
+
+    /// A fresh connection whose check fails without EBADF fails the request unsent at once, with
+    /// no other connection made.
+    #[test]
+    fn a_fresh_connection_whose_check_fails_otherwise_fails_the_request_unsent_at_once() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap().to_string();
+        let client = Client::new(&addr, "sf", "t").waiting(Duration::from_secs(5));
+        let mut checks = 0;
+        let error = client
+            .send_checked(b"must not be sent", |_| {
+                checks += 1;
+                Err(Failure::new(
+                    Step::Check("peek"),
+                    "it closed the connection",
+                ))
+            })
+            .unwrap_err();
+        assert_eq!(checks, 1);
+        assert_eq!(
+            error,
+            format!(
+                "the server at {addr} did not answer: connection check peek failed on a freshly opened socket after 0 completed requests: it closed the connection; the request was not sent"
+            )
+        );
+        let (mut peer, _) = listener.accept().unwrap();
+        assert!(closed_unwritten(&mut peer));
+        assert!(none_waiting(&listener), "no other connection");
+    }
+
+    /// A fresh connection whose number, at its check's EBADF, holds another socket was closed by
+    /// code that does not own it: the request fails unsent at once with that evidence, no other
+    /// connection made. The number is pointed at another socket in one step, never left free.
+    #[test]
+    fn a_fresh_number_that_no_longer_holds_its_socket_fails_the_request_unsent_at_once() {
+        use std::os::fd::AsRawFd;
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap().to_string();
+        let client = Client::new(&addr, "sf", "t").waiting(Duration::from_secs(5));
+        let elsewhere = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let other = TcpStream::connect(elsewhere.local_addr().unwrap()).unwrap();
+        let mut checks = 0;
+        let error = client
+            .send_checked(b"must not be sent", |stream| {
+                checks += 1;
+                // SAFETY: both numbers belong to streams alive for this whole call; dup2 makes the
+                // client's number hold the other socket in one step, so it is never free to reuse.
+                let swapped = unsafe { libc::dup2(other.as_raw_fd(), stream.as_raw_fd()) };
+                assert_eq!(swapped, stream.as_raw_fd());
+                Err(bad_descriptor_at_peek())
+            })
+            .unwrap_err();
+        assert_eq!(checks, 1);
         assert!(error.starts_with(&format!("the server at {addr} did not answer: connection check peek failed on a freshly opened socket after 0 completed requests: Bad file descriptor")), "{error}");
-        assert!(error.contains("descriptor fd="), "{error}");
+        assert!(error.contains("state=replaced"), "{error}");
         assert!(error.ends_with("the request was not sent"), "{error}");
         let (mut peer, _) = listener.accept().unwrap();
-        peer.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
-        assert_eq!(peer.read(&mut [0]).unwrap(), 0, "nothing was written");
-        assert!(client.kept.lock().unwrap().is_empty());
+        assert!(
+            closed_unwritten(&mut peer),
+            "its own socket closed unwritten"
+        );
+        assert!(none_waiting(&listener), "no other connection");
     }
 
     /// A child forked while a board connection is kept holds no copy of it, even before its exec, as

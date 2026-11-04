@@ -4,15 +4,15 @@
 //! Also how a child is started and its input and output read ([`Command`], [`output`],
 //! [`spawn_output`], [`spawn_piped`], [`pipe`]): without a fork and through pipes no child another
 //! thread spawns can hold open, from the leaf the cwd scans share ([`process_cwd::spawn`]), and
-//! the lock a std spawn beside them takes ([`spawning`]); and a socket no spawn copies
-//! ([`unshared`]).
+//! the lock a std spawn beside them takes ([`spawning`]); and a TCP connection no spawn copies
+//! ([`connect`]).
 
 use std::ffi::{c_char, c_int, c_long};
 use std::fs::File;
 
 pub use process_cwd::spawn::{
-    Child, Command, Stdio, output, pipe, set_nonblocking, spawn_output, spawn_piped, spawning,
-    unshared, wait_output,
+    Child, Command, Stdio, connect, output, pipe, set_nonblocking, spawn_output, spawn_piped,
+    spawning, wait_output,
 };
 
 unsafe extern "C" {

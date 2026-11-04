@@ -2,13 +2,17 @@
 //! seconds, prints what reached the session: messages and verdicts, roles taken and dropped on its
 //! tasks, their status changes, new ready work for an orchestrator, and a child session going stale
 //! or lost with work another could take. An orchestrator also hears the PULL digest
-//! ([`super::pull`]) only for actionable entries absent from its last delivered digest.
+//! ([`super::pull`]) only for actionable entries absent from its last delivered digest. The pane
+//! watch ([`pane_watch`]) tells an orchestrator or a parent once when a session it oversees waits on
+//! an approval in its herdr pane, and once when herdr cannot be asked.
 
-use super::agents::{Probes, View, describe};
+use super::agents::{Answer, Pane, Probes, View, describe, find_pane};
 use super::pull::digest;
 use super::text::event;
 use crate::health::{Health, LIVE_SECONDS};
+use crate::rows::TaskSessionRow;
 use crate::{Board, Error, Store, Task};
+use std::cell::OnceCell;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 /// What a session's monitor sees of the board at one poll.
@@ -278,6 +282,128 @@ pub fn diff(
     Ok(())
 }
 
+/// A session whose herdr pane waits on an approval or a question: the task it was launched for,
+/// and the pane.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct Blocked {
+    pub task: String,
+    pub pane: String,
+}
+
+/// What the pane watch last told a recipient: the sessions it said were blocked, and whether it
+/// said herdr could not be asked. Neither is said again until it ends.
+#[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct PaneWatch {
+    pub blocked: BTreeMap<String, Blocked>,
+    pub unanswered: bool,
+}
+
+/// The sessions `handle` oversees: its children, and whoever holds a role on a task it
+/// orchestrates or on one below it. Never itself, and none that left.
+pub fn overseen<'b>(board: &'b Board, handle: &str) -> BTreeSet<&'b str> {
+    let mut kids: HashMap<&str, Vec<&Task>> = HashMap::new();
+    for t in &board.tasks {
+        if let Some(parent) = &t.parent {
+            kids.entry(parent.as_str()).or_default().push(t);
+        }
+    }
+    let mut todo: Vec<&Task> = board
+        .tasks
+        .iter()
+        .filter(|t| {
+            t.roles
+                .iter()
+                .any(|r| r.handle == handle && r.role == "orchestrator")
+        })
+        .collect();
+    let mut tasks: HashSet<&str> = HashSet::new();
+    let mut holders: HashSet<&str> = HashSet::new();
+    while let Some(t) = todo.pop() {
+        if tasks.insert(&t.slug) {
+            holders.extend(t.roles.iter().map(|r| r.handle.as_str()));
+            todo.extend(kids.get(t.slug.as_str()).into_iter().flatten());
+        }
+    }
+    board
+        .sessions
+        .iter()
+        .map(|s| &s.row)
+        .filter(|s| s.left_at.is_none() && s.handle != handle)
+        .filter(|s| s.parent.as_deref() == Some(handle) || holders.contains(s.handle.as_str()))
+        .map(|s| s.handle.as_str())
+        .collect()
+}
+
+/// One look at the panes of the `overseen` sessions launched into one still open (`open`, oldest
+/// first): BLOCKED for each whose pane herdr reports `blocked` and did not at the last look, and
+/// WATCH once when herdr cannot be asked. `panes` is asked only when there is a pane to look at.
+/// Returns what the watch remembers for the next look.
+pub fn pane_watch(
+    board: &Board,
+    overseen: &BTreeSet<&str>,
+    open: &[TaskSessionRow],
+    panes: &dyn Fn() -> Answer<Vec<Pane>>,
+    before: &PaneWatch,
+    emit: &mut dyn FnMut(&str),
+) -> PaneWatch {
+    // Each session's latest open launch: the pane it was launched into.
+    let launched: BTreeMap<&str, &TaskSessionRow> = open
+        .iter()
+        .filter(|r| overseen.contains(r.handle.as_str()))
+        .map(|r| (r.handle.as_str(), r))
+        .collect();
+    if launched.is_empty() {
+        return PaneWatch::default();
+    }
+    let panes = match panes() {
+        Ok(panes) => panes,
+        Err(why) => {
+            if !before.unanswered {
+                emit(&format!(
+                    "WATCH herdr unanswered: {why} — blocked panes go unreported until it answers"
+                ));
+            }
+            let mut blocked = before.blocked.clone();
+            blocked.retain(|who, _| launched.contains_key(who.as_str()));
+            return PaneWatch {
+                blocked,
+                unanswered: true,
+            };
+        }
+    };
+    let bound: HashMap<&str, &str> = board
+        .sessions
+        .iter()
+        .filter_map(|s| Some((s.row.handle.as_str(), s.row.agent.as_deref()?)))
+        .collect();
+    let blocked: BTreeMap<String, Blocked> = launched
+        .iter()
+        .filter_map(|(&who, &record)| {
+            let pane = find_pane(&panes, Some(record), bound.get(who).copied(), who)?;
+            (pane.status.as_deref() == Some("blocked")).then(|| {
+                let blocked = Blocked {
+                    task: record.slug.clone(),
+                    pane: pane.id.clone(),
+                };
+                (who.to_string(), blocked)
+            })
+        })
+        .collect();
+    for (who, b) in &blocked {
+        if !before.blocked.contains_key(who) {
+            emit(&format!(
+                "BLOCKED {who} {} {} — its pane waits on an approval or a question",
+                b.task, b.pane
+            ));
+        }
+    }
+    PaneWatch {
+        blocked,
+        unanswered: false,
+    }
+}
+
 /// How a monitor runs.
 pub struct Watch<'a> {
     /// Seconds between looks.
@@ -287,7 +413,8 @@ pub struct Watch<'a> {
     /// Stop after this many waits (tests); None runs until the session is refused a beat.
     pub polls: Option<i64>,
     /// A child whose own verify is running or queued for a slot is never called STALE or LOST while it
-    /// is; the PULL digest's idle and verifying agents come from the same view.
+    /// is; the PULL digest's idle and verifying agents come from the same view. The pane watch asks
+    /// its herdr; with none, it does not run.
     pub probes: Option<&'a Probes<'a>>,
     /// Whether a task's branch is on main.
     pub landed: Option<&'a dyn Fn(&Task) -> bool>,
@@ -302,6 +429,7 @@ struct Memory {
     last_pull: Option<f64>,
     last_statuses: BTreeMap<String, String>,
     pull_entries: BTreeSet<(String, String)>,
+    panes: PaneWatch,
 }
 
 /// Heartbeat every `w.beat` s and print this session's events every `w.interval` s, through `emit`;
@@ -377,8 +505,15 @@ fn look(
     };
     let quiet = |h: &Health| matches!(h, Health::Stale | Health::Lost | Health::Unknown);
     let any_quiet = now.children.values().any(quiet);
+    // herdr is asked at most once a poll, by the agents view and the pane watch together.
+    let sample = OnceCell::new();
+    let probes = w.probes.map(|probes| Probes {
+        panes: Box::new(|| sample.get_or_init(|| (probes.panes)()).clone()),
+        runs: Box::new(|| (probes.runs)()),
+        branch_of: Box::new(|cwd| (probes.branch_of)(cwd)),
+    });
     // One view of the agents a poll, however many children are quiet, shared with the digest.
-    let view = match w.probes {
+    let view = match &probes {
         Some(probes) if any_quiet || pull.is_some() => {
             Some(describe(store, probes, store.now(), false)?)
         }
@@ -411,6 +546,15 @@ fn look(
         diff(store, before, &now, handle, emit)?;
     }
     memory.seen = Some(now);
+    if let Some(probes) = &probes {
+        let overseen = overseen(&board, handle);
+        let open = if overseen.is_empty() {
+            Vec::new()
+        } else {
+            store.open_task_sessions()?
+        };
+        memory.panes = pane_watch(&board, &overseen, &open, &probes.panes, &memory.panes, emit);
+    }
     Ok(())
 }
 
@@ -438,4 +582,215 @@ fn pull_digest(
         }
     }
     digest(store, &idle, landed, now, &busy)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::rows::SessionRow;
+    use crate::{Role, Session};
+    use serde_json::json;
+
+    fn task(slug: &str, parent: Option<&str>, roles: &[(&str, &str)]) -> Task {
+        Task {
+            id: 0,
+            slug: slug.into(),
+            title: String::new(),
+            body: String::new(),
+            status: "in_progress".into(),
+            priority: 2,
+            parent: parent.map(str::to_string),
+            created_by: String::new(),
+            created: 0.0,
+            updated: 0.0,
+            links: Vec::new(),
+            depends: Vec::new(),
+            roles: roles
+                .iter()
+                .map(|(handle, role)| Role {
+                    handle: handle.to_string(),
+                    role: role.to_string(),
+                    since: 0.0,
+                    expires: None,
+                    health: Health::Live,
+                })
+                .collect(),
+            instruction: false,
+        }
+    }
+
+    fn session(handle: &str, parent: Option<&str>) -> Session {
+        Session {
+            row: SessionRow {
+                handle: handle.into(),
+                parent: parent.map(str::to_string),
+                ..SessionRow::default()
+            },
+            health: Health::Live,
+        }
+    }
+
+    fn launched(handle: &str, slug: &str, pane: &str, conversation: &str) -> TaskSessionRow {
+        TaskSessionRow {
+            slug: slug.into(),
+            handle: handle.into(),
+            pane: pane.into(),
+            claude_session: conversation.into(),
+            ..TaskSessionRow::default()
+        }
+    }
+
+    fn pane(id: &str, status: &str, conversation: &str) -> Pane {
+        Pane::from_json(&json!({"pane_id": id, "agent_status": status,
+                                "agent_session": {"value": conversation}}))
+        .unwrap()
+    }
+
+    /// One look, and the lines it said.
+    fn look(
+        board: &Board,
+        who: &str,
+        open: &[TaskSessionRow],
+        panes: Answer<Vec<Pane>>,
+        before: &PaneWatch,
+    ) -> (PaneWatch, Vec<String>) {
+        let mut said = Vec::new();
+        let after = pane_watch(
+            board,
+            &overseen(board, who),
+            open,
+            &|| panes.clone(),
+            before,
+            &mut |line| said.push(line.to_string()),
+        );
+        (after, said)
+    }
+
+    #[test]
+    fn one_oversees_the_roles_below_what_it_orchestrates_and_its_children() {
+        // Never itself, nor a child that left; a task it only reviews is not its to oversee.
+        let mut gone = session("gone", Some("orch"));
+        gone.row.left_at = Some(1.0);
+        let board = Board {
+            tasks: vec![
+                task("t/root", None, &[("orch", "orchestrator")]),
+                task("t/root/a", Some("t/root"), &[("deep", "reviewer")]),
+                task("t/root/a/b", Some("t/root/a"), &[("deeper", "executor")]),
+                task(
+                    "t/side",
+                    None,
+                    &[("side", "executor"), ("orch", "reviewer")],
+                ),
+            ],
+            sessions: ["orch", "deep", "deeper", "side"]
+                .into_iter()
+                .map(|h| session(h, None))
+                .chain([session("kid", Some("orch")), gone])
+                .collect(),
+            latest_message: 0,
+        };
+        assert_eq!(
+            overseen(&board, "orch"),
+            BTreeSet::from(["deep", "deeper", "kid"])
+        );
+        assert_eq!(overseen(&board, "deep"), BTreeSet::new());
+    }
+
+    #[test]
+    fn a_launched_pane_is_found_by_its_conversation_once_its_recorded_id_is_gone() {
+        let board = Board {
+            tasks: vec![task(
+                "t/a",
+                None,
+                &[("orch", "orchestrator"), ("w", "executor")],
+            )],
+            sessions: vec![session("orch", None), session("w", None)],
+            latest_message: 0,
+        };
+        let open = [launched("w", "t/a", "w1:p1", "codex:thread-1")];
+        let (after, said) = look(
+            &board,
+            "orch",
+            &open,
+            Ok(vec![pane("w1:p7", "blocked", "thread-1")]),
+            &PaneWatch::default(),
+        );
+        assert_eq!(
+            said,
+            ["BLOCKED w t/a w1:p7 — its pane waits on an approval or a question"]
+        );
+        assert_eq!(after.blocked["w"].pane, "w1:p7");
+    }
+
+    #[test]
+    fn a_session_no_longer_launched_is_forgotten_while_herdr_cannot_be_asked() {
+        let board = Board {
+            tasks: vec![task(
+                "t/a",
+                None,
+                &[
+                    ("orch", "orchestrator"),
+                    ("w", "executor"),
+                    ("v", "reviewer"),
+                ],
+            )],
+            sessions: vec![
+                session("orch", None),
+                session("w", None),
+                session("v", None),
+            ],
+            latest_message: 0,
+        };
+        let blocked = |pane: &str| Blocked {
+            task: "t/a".into(),
+            pane: pane.into(),
+        };
+        let before = PaneWatch {
+            blocked: BTreeMap::from([
+                ("w".into(), blocked("w1:p1")),
+                ("v".into(), blocked("w1:p2")),
+            ]),
+            unanswered: false,
+        };
+        // v's pane closed: only w is still launched.
+        let open = [launched("w", "t/a", "w1:p1", "")];
+        let (after, said) = look(&board, "orch", &open, Err("down".into()), &before);
+        assert_eq!(
+            said,
+            ["WATCH herdr unanswered: down — blocked panes go unreported until it answers"]
+        );
+        let expected = PaneWatch {
+            blocked: BTreeMap::from([("w".into(), blocked("w1:p1"))]),
+            unanswered: true,
+        };
+        assert_eq!(after, expected);
+        let (again, said) = look(&board, "orch", &open, Err("down".into()), &after);
+        assert_eq!((again, said), (expected, Vec::new()));
+    }
+
+    #[test]
+    fn with_nothing_launched_herdr_is_not_asked_and_the_watch_forgets() {
+        let board = Board {
+            tasks: vec![task(
+                "t/a",
+                None,
+                &[("orch", "orchestrator"), ("w", "executor")],
+            )],
+            sessions: vec![session("orch", None), session("w", None)],
+            latest_message: 0,
+        };
+        let before = PaneWatch {
+            blocked: BTreeMap::new(),
+            unanswered: true,
+        };
+        let after = pane_watch(
+            &board,
+            &overseen(&board, "orch"),
+            &[],
+            &|| panic!("herdr asked with nothing to watch"),
+            &before,
+            &mut |line| panic!("said {line}"),
+        );
+        assert_eq!(after, PaneWatch::default());
+    }
 }
