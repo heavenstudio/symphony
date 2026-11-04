@@ -289,6 +289,112 @@ fn acknowledgements_keep_adjacent_large_integer_ids_and_recipients_distinct() {
     assert!(unread().is_empty());
 }
 
+/// Forward one real RPC to the private fixture, counting its complete HTTP response.
+fn measured_inbox(f: &Fixture, handle: &str) -> (Vec<Message>, usize) {
+    use std::io::{BufRead, BufReader, Read, Write};
+    use std::net::TcpListener;
+    use std::time::Duration;
+
+    let wait = Duration::from_secs(3);
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    let upstream = f.store.client().addr().parse().unwrap();
+    std::thread::scope(|scope| {
+        let proxy = scope.spawn(move || -> std::io::Result<usize> {
+            let (mut downstream, _) = listener.accept()?;
+            downstream.set_read_timeout(Some(wait))?;
+            downstream.set_write_timeout(Some(wait))?;
+            let mut reader = BufReader::new(&downstream);
+            let mut head = String::new();
+            loop {
+                let mut line = String::new();
+                assert_ne!(reader.read_line(&mut line)?, 0, "RPC has a complete head");
+                head.push_str(&line);
+                if line == "\r\n" {
+                    break;
+                }
+            }
+            let length = head
+                .lines()
+                .find_map(|line| {
+                    let (name, value) = line.split_once(':')?;
+                    name.eq_ignore_ascii_case("content-length")
+                        .then(|| value.trim().parse::<usize>().unwrap())
+                })
+                .expect("RPC declares its body length");
+            let mut body = vec![0; length];
+            reader.read_exact(&mut body)?;
+            drop(reader);
+            head.truncate(head.len() - 2);
+            head.push_str("Connection: close\r\n\r\n");
+            let mut server = tasks::sys::connect(&upstream, wait)?;
+            server.set_read_timeout(Some(wait))?;
+            server.set_write_timeout(Some(wait))?;
+            server.write_all(head.as_bytes())?;
+            server.write_all(&body)?;
+            let mut bytes = 0;
+            let mut chunk = [0; 16 * 1024];
+            loop {
+                let read = server.read(&mut chunk)?;
+                if read == 0 {
+                    return Ok(bytes);
+                }
+                downstream.write_all(&chunk[..read])?;
+                bytes += read;
+            }
+        });
+        let client =
+            Client::new(&addr.to_string(), "sf", f.store.client().database()).waiting(wait);
+        let store = Store::unchecked(client, Box::new(|| NOW), Box::new(|_| false), HOST);
+        let messages = store.inbox(handle);
+        let bytes = proxy.join().unwrap().unwrap();
+        (messages.unwrap(), bytes)
+    })
+}
+
+#[test]
+fn acknowledged_and_unaddressed_history_does_not_travel_as_message_bodies() {
+    use tasks::rows::{DeliveryRow, MessageRow};
+
+    let mut seed = Seed::default()
+        .session("amber-heron")
+        .session("brisk-finch")
+        .task("sim/jump", "ready");
+    let body = "x".repeat(4096);
+    seed.dump.messages = (1..=129)
+        .map(|id| MessageRow {
+            id,
+            slug: "sim/jump".into(),
+            sender: if id <= 65 { "owner" } else { "brisk-finch" }.into(),
+            recipient: (id <= 65).then(|| "amber-heron".into()),
+            kind: "msg".into(),
+            text: body.clone(),
+            ts: NOW,
+        })
+        .collect();
+    seed.dump.deliveries = (1..=64)
+        .map(|message| DeliveryRow {
+            message,
+            handle: "amber-heron".into(),
+            acked: NOW,
+        })
+        .collect();
+    let f = Fixture::new(seed);
+    let (messages, unread_bytes) = measured_inbox(&f, "amber-heron");
+    assert_eq!(messages.len(), 1);
+    assert_eq!((messages[0].id, &messages[0].text), (65, &body));
+    // One unread 4 KiB body fits; two acknowledged or unaddressed bodies cross this bound.
+    assert!(unread_bytes < 8 * 1024, "{unread_bytes} reply bytes");
+    f.store.ack("amber-heron", &[65]).unwrap();
+    let (messages, empty_bytes) = measured_inbox(&f, "amber-heron");
+    assert!(messages.is_empty());
+    assert!(
+        empty_bytes < 8 * 1024,
+        "{empty_bytes} empty-inbox reply bytes"
+    );
+    println!("inbox HTTP bytes: one unread {unread_bytes}, all acknowledged {empty_bytes}");
+}
+
 #[test]
 fn the_records_own_lines_and_what_came_before_a_session_never_reach_it() {
     let f = Fixture::empty();

@@ -18,20 +18,22 @@ pub const BOARD: &str = "board";
 
 /// What an inbox is worked out from: the session's roles, the tree, and the messages since it
 /// connected that are not its own, that it has not acknowledged, and that could reach it (not
-/// addressed to another handle or the owner). Acknowledged integer ids travel in that same snapshot;
-/// Rust builds their membership set once before filtering the candidate messages.
+/// addressed to another handle or the owner). Decimal integer keys let one bulk removal exclude
+/// acknowledged records before their bodies are read, within the same transaction snapshot.
 const INBOX: &str = "
 LET $me = (SELECT connected FROM ONLY type::record('session', $handle));
+LET $candidates = IF $me = NONE { {} } ELSE {
+    object::from_entries(SELECT VALUE [<string>sid, id] FROM message
+        WHERE sid > $since AND ts >= $me.connected AND kind IN $delivered AND sender != $handle
+        AND (sender = 'owner' OR recipient = $handle OR (recipient != NONE AND string::starts_with(recipient, '@')) OR kind = 'verdict'))
+};
+LET $acked = (SELECT VALUE <string>message FROM delivery WHERE handle = $handle AND message > $since);
+LET $wanted = object::values(object::remove($candidates, $acked));
 RETURN {
     known: $me != NONE,
     roles: (SELECT slug, role FROM role WHERE handle = $handle),
     tree: (SELECT VALUE [slug, parent] FROM task),
-    acked: (SELECT VALUE message FROM delivery WHERE handle = $handle AND message > $since),
-    messages: IF $me = NONE { [] } ELSE {
-        (SELECT * OMIT id FROM message WHERE sid > $since AND ts >= $me.connected AND kind IN $delivered AND sender != $handle
-            AND (sender = 'owner' OR recipient = NONE OR recipient = $handle OR string::starts_with(recipient, '@') OR kind = 'verdict')
-            ORDER BY sid)
-    },
+    messages: (SELECT * OMIT id FROM $wanted ORDER BY sid),
 };";
 
 impl Store {
@@ -166,7 +168,6 @@ RETURN [$sid, $ts];",
             known: bool,
             roles: Vec<Held>,
             tree: Vec<(String, Option<String>)>,
-            acked: HashSet<i64>,
             messages: Vec<MessageRow>,
         }
         let vars = json!({"handle": handle, "delivered": DELIVERED, "since":since});
@@ -203,7 +204,6 @@ RETURN [$sid, $ts];",
         Ok(read
             .messages
             .into_iter()
-            .filter(|m| !read.acked.contains(&m.id))
             .filter(reaches)
             .map(message)
             .collect())
