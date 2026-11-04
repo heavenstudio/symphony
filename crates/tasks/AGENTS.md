@@ -220,7 +220,10 @@ that starts like a record id, a datetime or a UUID. `tasks-copy` copies a whole
 board into a server, replacing what it held, in one transaction: `tasks-copy ADDR
 [DATABASE] < dump.json`, or `tasks-copy --board` for the board this run reaches;
 `tasks-copy --board --out` writes that board's dump, in the shape the copy reads,
-and changes nothing. `just tasks-cutover` (the `tasks-cutover` binary) moves the
+and changes nothing. On `surrealkv://` every row of that transaction costs the
+same, as long as no event UPSERTs a record (`src/schema.rs`): the board of
+2026-11-04, 28 MB of dump, copies in 20 s (`tests/server/copy.rs`, a quarter of
+it). `just tasks-cutover` (the `tasks-cutover` binary) moves the
 old SQLite board into it once, one way, reading SQLite through `rusqlite`
 ([TASKS](../../../docs/workflow/TASKS.md#the-move-to-surrealdb)). On the in-memory
 engine a transaction that big costs more than linearly (the board at the move:

@@ -10,6 +10,11 @@
 //! one agent (`Store::bind_agent`): each a record the writes that must not pass each other write.
 //! Mutation events advance `counter:board` in the transaction that changes board inputs,
 //! callback registration/observations or owner chat. Readers compare that marker without writing it.
+//! An event UPDATEs the marker, or CREATEs it on a board's first write, and never UPSERTs it: an
+//! UPSERT of a record that exists tries a create and rolls it back to a savepoint, and SurrealKV's
+//! rollback walks every key the transaction has written, so the copy's one transaction, an event a
+//! row, took time quadratic in its rows (the board of 2026-11-04: 17 min for that transaction; the
+//! whole copy now takes 20 s).
 //! Per-recipient `callback_lease` rows retain their revision and periodic PULL checkpoint across
 //! callback retirement; an event key must never inherit an earlier holder's revision.
 //!
@@ -21,7 +26,7 @@
 /// Bumped when `DEFINE` gains a table, field, index or event: a board at another version runs `DEFINE`
 /// again, and its `IF NOT EXISTS` adds what is new but leaves every definition already there as it
 /// was. Changing one (a field's type, an assertion, an index) also needs `DEFINE … OVERWRITE` for it.
-pub const VERSION: i64 = 10;
+pub const VERSION: i64 = 11;
 
 // Full-text index construction needs a committed analyzer, installed before the schema transaction.
 pub const ANALYZERS: &str = "DEFINE ANALYZER IF NOT EXISTS task_words TOKENIZERS blank, class, punct FILTERS lowercase, ascii;";
@@ -152,16 +157,16 @@ DEFINE TABLE IF NOT EXISTS callback_event SCHEMALESS;
 DEFINE INDEX IF NOT EXISTS callback_event_handle ON callback_event FIELDS handle, delivered;
 DEFINE TABLE IF NOT EXISTS chat_event SCHEMALESS;
 
-DEFINE EVENT IF NOT EXISTS board_changed ON task WHEN $before != $after THEN { UPSERT counter:board SET last = (last ?? 0) + 1; };
-DEFINE EVENT IF NOT EXISTS board_changed ON session WHEN $before != $after THEN { UPSERT counter:board SET last = (last ?? 0) + 1; };
-DEFINE EVENT IF NOT EXISTS board_changed ON role WHEN $before != $after THEN { UPSERT counter:board SET last = (last ?? 0) + 1; };
-DEFINE EVENT IF NOT EXISTS board_changed ON link WHEN $before != $after THEN { UPSERT counter:board SET last = (last ?? 0) + 1; };
-DEFINE EVENT IF NOT EXISTS board_changed ON message WHEN $before != $after THEN { UPSERT counter:board SET last = (last ?? 0) + 1; };
-DEFINE EVENT IF NOT EXISTS board_changed ON delivery WHEN $before != $after THEN { UPSERT counter:board SET last = (last ?? 0) + 1; };
-DEFINE EVENT IF NOT EXISTS board_changed ON task_session WHEN $before != $after THEN { UPSERT counter:board SET last = (last ?? 0) + 1; };
-DEFINE EVENT IF NOT EXISTS board_changed ON callback_state
+DEFINE EVENT OVERWRITE board_changed ON task WHEN $before != $after THEN { IF record::exists(counter:board) { UPDATE counter:board SET last = (last ?? 0) + 1 RETURN NONE; } ELSE { CREATE counter:board SET last = 1 RETURN NONE; }; };
+DEFINE EVENT OVERWRITE board_changed ON session WHEN $before != $after THEN { IF record::exists(counter:board) { UPDATE counter:board SET last = (last ?? 0) + 1 RETURN NONE; } ELSE { CREATE counter:board SET last = 1 RETURN NONE; }; };
+DEFINE EVENT OVERWRITE board_changed ON role WHEN $before != $after THEN { IF record::exists(counter:board) { UPDATE counter:board SET last = (last ?? 0) + 1 RETURN NONE; } ELSE { CREATE counter:board SET last = 1 RETURN NONE; }; };
+DEFINE EVENT OVERWRITE board_changed ON link WHEN $before != $after THEN { IF record::exists(counter:board) { UPDATE counter:board SET last = (last ?? 0) + 1 RETURN NONE; } ELSE { CREATE counter:board SET last = 1 RETURN NONE; }; };
+DEFINE EVENT OVERWRITE board_changed ON message WHEN $before != $after THEN { IF record::exists(counter:board) { UPDATE counter:board SET last = (last ?? 0) + 1 RETURN NONE; } ELSE { CREATE counter:board SET last = 1 RETURN NONE; }; };
+DEFINE EVENT OVERWRITE board_changed ON delivery WHEN $before != $after THEN { IF record::exists(counter:board) { UPDATE counter:board SET last = (last ?? 0) + 1 RETURN NONE; } ELSE { CREATE counter:board SET last = 1 RETURN NONE; }; };
+DEFINE EVENT OVERWRITE board_changed ON task_session WHEN $before != $after THEN { IF record::exists(counter:board) { UPDATE counter:board SET last = (last ?? 0) + 1 RETURN NONE; } ELSE { CREATE counter:board SET last = 1 RETURN NONE; }; };
+DEFINE EVENT OVERWRITE board_changed ON callback_state
     WHEN [$before.address, $before.owner, $before.host, $before.chat, $before.chat_fallback, $before.chat_resume, $before.confirmed_until, $before.in_process, $before.seen, $before.pull, $before.registration_revision]
       != [$after.address, $after.owner, $after.host, $after.chat, $after.chat_fallback, $after.chat_resume, $after.confirmed_until, $after.in_process, $after.seen, $after.pull, $after.registration_revision]
-    THEN { UPSERT counter:board SET last = (last ?? 0) + 1; };
-DEFINE EVENT IF NOT EXISTS board_changed ON chat_event WHEN $before != $after THEN { UPSERT counter:board SET last = (last ?? 0) + 1; };
+    THEN { IF record::exists(counter:board) { UPDATE counter:board SET last = (last ?? 0) + 1 RETURN NONE; } ELSE { CREATE counter:board SET last = 1 RETURN NONE; }; };
+DEFINE EVENT OVERWRITE board_changed ON chat_event WHEN $before != $after THEN { IF record::exists(counter:board) { UPDATE counter:board SET last = (last ?? 0) + 1 RETURN NONE; } ELSE { CREATE counter:board SET last = 1 RETURN NONE; }; };
 ";
