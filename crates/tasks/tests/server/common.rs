@@ -36,10 +36,9 @@ impl GuardedSurreal {
             env!("CARGO_MANIFEST_DIR"),
             "/../../../tools/fixture_process.sh"
         );
-        // One reader on one pipe (tasks::sys::pipe unlinks its FIFO once both ends are open).
-        // Independent readers on a shared named FIFO can remain blocked on macOS after its last
-        // writer closes. Keep the watchdog owned and reap it on normal teardown; its own group
-        // survives an interrupted suite's group.
+        // One reader on one real pipe (tasks::sys::pipe): a reader blocked on a FIFO can remain
+        // blocked on macOS after its last writer closes. Keep the watchdog owned and reap it on
+        // normal teardown; its own group survives an interrupted suite's group.
         let watchdog = crate::store::spawn_with_input(
             Command::new("bash")
                 .args([

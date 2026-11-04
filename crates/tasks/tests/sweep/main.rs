@@ -98,15 +98,15 @@ pub struct HeldCwd(std::process::Child);
 
 impl HeldCwd {
     pub fn at(path: &Path) -> Self {
-        Self(
-            Command::new("cat")
-                .current_dir(path)
-                .stdin(Stdio::piped())
-                .stdout(Stdio::null())
-                .stderr(Stdio::null())
-                .spawn()
-                .unwrap(),
-        )
+        let mut cat = Command::new("cat");
+        cat.current_dir(path)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        // Under the lock, as every std spawn beside the helpers: outside it, the process could keep
+        // a pipe's first ends, made in another thread, for its whole life.
+        let _spawning = tasks::sys::spawning();
+        Self(cat.spawn().unwrap())
     }
 }
 
