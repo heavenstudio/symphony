@@ -50,7 +50,7 @@ cannot keep installing after `--stop` returns.
 | `/api/tasks` | Version, task records and sessions without process ids |
 | `/api/task-board?q=…&status=…&cursor=…` | Thirty brief-free summaries in the requested column; `counts=1` returns only counts and sign-off slugs |
 | `/api/task-page?slug=…` | Task, shared typed brief blocks and child count |
-| `/api/task-offer?slug=…` | Resolved branch and optional owner-tier landing offer pinned to the patch; fetched near the controls |
+| `/api/task-offer?slug=…` | Resolved branch and the first offer of the project's board actions that has a payload, on work of any status (each action decides which it offers on); fetched near the controls |
 | `/api/task-history?slug=…&before=…` | Thirty structured messages with timestamps and typed blocks; `after=…` catches up a loaded thread after a lost feed |
 | `/api/agent-page?cursor=…` | Twenty connected agents and their current work and five latest finished tasks; `health=lost` pages lost agents |
 | `/api/task-thread?slug=…` | Alias for the typed paged task history |

@@ -560,7 +560,8 @@ pub(crate) async fn answer(shared: &Arc<Shared>, request: Request) -> Option<Res
                     }
                 } else if offer {
                     store.get(&slug).map_err(task_failure)?;
-                    symphony::taskview::owner_offer(&store, &slug, &root)
+                    let plugins = symphony::plugins::Plugins::of(&root);
+                    symphony::taskview::owner_offer(&store, &plugins, &slug, &root)
                         .map(|offer| no_store(Json(offer)))
                         .map_err(|e| (StatusCode::SERVICE_UNAVAILABLE, e))
                 } else if brief {
@@ -658,7 +659,7 @@ fn document_response(
         );
     }
     if root
-        .join(rel)
+        .join(symphony::project::Project::of(root).file(rel))
         .canonicalize()
         .is_ok_and(|target| shared.is_metadata(&target))
     {

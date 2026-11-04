@@ -141,9 +141,14 @@ fn fixture() -> tree::Tree {
 }
 
 fn run(test: &str, exercise: fn(&Fixture)) {
+    run_on(test, fixture, exercise);
+}
+
+/// `exercise` against a server on the repository `made` builds, in a child process of its own.
+fn run_on(test: &str, made: fn() -> tree::Tree, exercise: fn(&Fixture)) {
     if std::env::var_os(CHILD).is_none() {
         let began = Instant::now();
-        let tree = fixture();
+        let tree = made();
         let client = board::client();
         let done = tasks::sys::output(
             Command::new(std::env::current_exe().unwrap())
@@ -433,6 +438,62 @@ impl Feed {
 #[test]
 fn native_routes_media_and_persistence() {
     run("native_routes_media_and_persistence", contracts);
+}
+
+/// A project whose documents are in `manual/`, beside a stray `docs/` folder that is no document.
+fn manual_fixture() -> tree::Tree {
+    let mut tree = tree::Tree::new();
+    tree.root = tree.root.canonicalize().unwrap();
+    let root = tree.path("repo");
+    std::fs::create_dir(&root).unwrap();
+    repository(&root, &["init", "-b", "http-fixture"]);
+    repository(&root, &["config", "user.name", "HTTP fixture"]);
+    repository(&root, &["config", "user.email", "http@example.invalid"]);
+    repository(&root, &["config", "core.hooksPath", "/dev/null"]);
+    write(&root, "symphony.toml", "[project]\ndocs = \"manual\"\n");
+    write(&root, "manual/TOPIC.md", DOC);
+    write(&root, "manual/OTHER.md", "# Other\n");
+    write(&root, "manual/art/a.png", b"PNG in the manual");
+    write(&root, "docs/TOPIC.md", "# Stray\n");
+    repository(&root, &["add", "."]);
+    repository(&root, &["commit", "-qm", "Manual fixtures"]);
+    tree
+}
+
+#[test]
+fn a_projects_own_documents_folder_is_read_and_saved_by_route() {
+    run_on(
+        "a_projects_own_documents_folder_is_read_and_saved_by_route",
+        manual_fixture,
+        manual_routes,
+    );
+}
+
+fn manual_routes(f: &Fixture) {
+    let doc = f.get(DOCUMENT).status(200).json();
+    assert_eq!(doc["path"], "docs/TOPIC.md");
+    assert_eq!(doc["cards"][0]["slug"], "one");
+    f.get("/api/document?path=manual/TOPIC.md").status(400);
+    let versions = f.get("/api/versions?path=docs/TOPIC.md").status(200).json();
+    assert_eq!(versions["versions"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        f.get("/docs/art/a.png").status(200).body,
+        b"PNG in the manual"
+    );
+    let decision = json!({"path":"docs/TOPIC.md", "slug":"one", "state":"approved", "note":"saved in the manual"});
+    assert_eq!(
+        f.post("/api/decision", &decision).status(200).json()["ok"],
+        true
+    );
+    let saved = std::fs::read_to_string(f.root.join("manual/TOPIC.md")).unwrap();
+    assert!(
+        saved.contains("owner · approved — saved in the manual"),
+        "{saved}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(f.root.join("docs/TOPIC.md")).unwrap(),
+        "# Stray\n"
+    );
 }
 
 #[test]

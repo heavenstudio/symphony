@@ -212,7 +212,7 @@ pub fn snapshot(
             doc: item.doc.clone(),
             doc_title: tree::title(&branch.map_or_else(
                 || root.join(project.file(&item.doc)),
-                |b| b.tree.path.join(&b.doc),
+                |b| b.tree.path.join(project.file(&b.doc)),
             )),
             title: card_title(&plugins, card),
             summary: cut(summary, 260),

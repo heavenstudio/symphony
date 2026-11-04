@@ -16,24 +16,27 @@ use crate::render::Render;
 
 mod comparison;
 
-/// Resolve only project-relative paths whose canonical target remains under docs/.
+/// Resolve only document names (`docs/…`) whose canonical file remains under the project's
+/// documents folder, whatever that folder is called ([`crate::project::Project::file`]).
 pub fn target(root: &Path, rel: &str, document: bool) -> Result<PathBuf, String> {
-    if !rel.starts_with("docs/") && rel != "docs"
+    let route = crate::project::ROUTE;
+    if !rel.starts_with(&format!("{route}/")) && rel != route
         || Path::new(rel)
             .components()
             .any(|p| !matches!(p, Component::Normal(_)))
     {
         return Err(format!("not found: {rel}"));
     }
+    let project = crate::project::Project::of(root);
     let docs = root
-        .join("docs")
+        .join(&project.docs)
         .canonicalize()
         .map_err(|e| e.to_string())?;
     if !docs.starts_with(root.canonicalize().map_err(|e| e.to_string())?) {
         return Err(format!("not found: {rel}"));
     }
     let path = root
-        .join(rel)
+        .join(project.file(rel))
         .canonicalize()
         .map_err(|_| format!("not found: {rel}"))?;
     if !path.starts_with(docs)

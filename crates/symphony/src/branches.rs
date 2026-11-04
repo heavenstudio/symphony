@@ -43,7 +43,8 @@ impl Tree {
 #[derive(Clone, Debug)]
 pub struct BranchCard {
     pub tree: Tree,
-    /// The page under the worktree, `docs/DECISIONS.md`.
+    /// The page's document name, `docs/DECISIONS.md`, whatever the project's documents folder is
+    /// called: [`Project::file`] is the file under the worktree.
     pub doc: String,
     pub card: Decision,
 }
@@ -376,7 +377,7 @@ fn tree_cards(
             }
             found.push(BranchCard {
                 tree: tree.clone(),
-                doc: name.clone(),
+                doc: project.route(&name).unwrap_or_else(|| name.clone()),
                 card,
             });
         }

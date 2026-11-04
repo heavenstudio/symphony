@@ -251,7 +251,8 @@ pub struct ProgressBar {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProjectView {
     pub name: String,
-    /// The decision register, a project-relative path.
+    /// The decision register as a link names it: `docs/DECISIONS.md` when the documents folder
+    /// holds it, whatever that folder is called, else its project-relative path.
     pub register: String,
     /// The plugins' navigation entries, after the Symphony's own.
     #[serde(default)]

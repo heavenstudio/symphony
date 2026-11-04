@@ -1999,6 +1999,54 @@ fn saves_persist_verdicts_comments_asks_and_callbacks_across_restart() {
 }
 
 #[test]
+fn an_owner_save_in_a_projects_own_folder_commits_that_file_on_main() {
+    isolated(
+        "an_owner_save_in_a_projects_own_folder_commits_that_file_on_main",
+        |f| {
+            let root = f.repo();
+            git(&root, &["mv", "docs", "manual"]);
+            write(
+                &root.join(symphony::project::FILE),
+                &format!("[project]\ndocs = \"manual\"\n\n{VERDICTS}"),
+            );
+            git(&root, &["commit", "-qam", "the documents move to manual"]);
+            let saves = ClosingSaves::start(&root);
+            let physical = saves.0.post(
+                "",
+                "/api/decision",
+                &json!({"path":"manual/a.md", "slug":"one", "state":"approved", "note":""}),
+            );
+            assert_eq!(
+                physical.map_err(|failure| failure.error),
+                Err("path must be a markdown file under docs/".to_string())
+            );
+            assert_eq!(
+                saves.post(
+                    "",
+                    "/api/decision",
+                    json!({"path":"docs/a.md", "slug":"one", "state":"approved", "note":"use this shape"}),
+                ),
+                json!({"ok":true})
+            );
+            saves.0.close();
+            let text = std::fs::read_to_string(root.join("manual/a.md")).unwrap();
+            assert!(text.contains("[x] **one**"), "{text}");
+            assert_eq!(f.main("manual/a.md"), text);
+            assert_eq!(
+                git(
+                    &root,
+                    &["diff-tree", "--no-commit-id", "--name-only", "-r", "main"]
+                ),
+                "manual/a.md"
+            );
+            assert!(!root.join("docs").exists());
+            assert!(git(&root, &["status", "--porcelain"]).is_empty());
+            f.clean_workers();
+        },
+    );
+}
+
+#[test]
 fn board_filing_is_asynchronous_and_close_drains_it() {
     isolated("board_filing_is_asynchronous_and_close_drains_it", |f| {
         // Plain-folder serving isolates filing from commit-worker shutdown.

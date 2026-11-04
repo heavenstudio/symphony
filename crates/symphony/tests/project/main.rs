@@ -12,6 +12,7 @@ mod board;
 mod fields;
 mod folders;
 mod manifest;
+mod offers;
 mod seams;
 mod star_foundry;
 

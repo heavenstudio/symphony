@@ -12,7 +12,7 @@ use tasks::sys::Command;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::landing::{PrivateWorktree, generators, is_doc};
+use crate::landing::{PrivateWorktree, generators, is_doc_in};
 use crate::plugins::Plugins;
 use crate::project::Project;
 
@@ -1176,10 +1176,11 @@ impl Drop for Scratch {
 fn apply(root: &Path, parent: &str, edits: &[Edit]) -> Result<(Blobs, Blobs), CommitError> {
     let mut blobs = BTreeMap::new();
     let mut before = BTreeMap::new();
+    let docs = Project::of(root).docs.clone();
     for edit in edits {
-        if !is_doc(&edit.rel) {
+        if !is_doc_in(&docs, &edit.rel) {
             return Err(format!(
-                "{} is not a design document under docs/*.md: the app commits only those",
+                "{} is not a design document under {docs}/*.md: the app commits only those",
                 edit.rel
             )
             .into());
@@ -1497,17 +1498,15 @@ fn release(
 ) -> Result<Vec<Released>, String> {
     use std::collections::BTreeSet;
     let source = root.canonicalize().map_err(|e| e.to_string())?;
-    let base = git(
-        root,
-        &["merge-base", &Project::of(root).default_branch, branch],
-    )?;
+    let project = Project::of(root);
+    let base = git(root, &["merge-base", &project.default_branch, branch])?;
     let names = git(
         root,
         &["diff", "--no-renames", "--name-only", &base, branch],
     )?;
     let branch_pages: BTreeSet<String> = names
         .lines()
-        .filter(|name| is_doc(name))
+        .filter(|name| is_doc_in(&project.docs, name))
         .map(str::to_owned)
         .collect();
     let pending = waiting.lock().unwrap_or_else(|e| e.into_inner()).clone();
@@ -1516,7 +1515,9 @@ fn release(
     pages.extend(
         pending
             .values()
-            .filter(|edit| is_doc(&edit.rel) && output_pages.contains_key(&edit.rel))
+            .filter(|edit| {
+                is_doc_in(&project.docs, &edit.rel) && output_pages.contains_key(&edit.rel)
+            })
             .map(|edit| edit.rel.clone()),
     );
     let mut released = Vec::new();

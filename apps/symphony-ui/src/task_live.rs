@@ -544,7 +544,7 @@ pub async fn offer(route: Memo<String>, mut data: Signal<Data>) {
                 .read()
                 .detail
                 .as_ref()
-                .is_some_and(|p| p.task.status == "review" && p.task.updated == revision)
+                .is_some_and(|p| p.task.updated == revision)
             {
                 data.write().approval = offer.payload.is_some().then_some((offer, revision));
             }

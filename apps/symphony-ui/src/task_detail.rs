@@ -32,7 +32,7 @@ pub fn TaskDetail(
 ) -> Element {
     let task = &page.task;
     let approval = offer
-        .filter(|(_, revision)| task.status == "review" && *revision == task.updated)
+        .filter(|(_, revision)| *revision == task.updated)
         .map(|(offer, _)| offer);
     rsx! { article { class: "task", "data-slug": "{task.slug}",
         div { class: "task-head card",
@@ -64,7 +64,7 @@ pub fn TaskDetail(
             }
         }
         Near { id: "composer-{task.slug}", height: 200,
-            if task.status == "review" { OfferLoader { key: "offer-{task.slug}-{task.updated}", onoffer } }
+            OfferLoader { key: "offer-{task.slug}-{task.updated}", onoffer }
             Composer { slug: task.slug.clone(), roles: task.roles.clone(), approval }
         }
     } }

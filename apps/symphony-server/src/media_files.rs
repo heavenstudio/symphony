@@ -122,12 +122,15 @@ pub(crate) async fn answer(
     path: &str,
     request: &axum::http::Request<()>,
 ) -> Response {
+    let file;
     let (base, relative) = if path == "/favicon.ico" {
         (root.join("tools/static"), "icon.svg")
     } else if let Some(relative) = path.strip_prefix("/static/") {
         (root.join("tools/static"), relative)
     } else {
-        (root.to_path_buf(), path.trim_start_matches('/'))
+        // A file beside a document is named by its route, as the document is (`docs/…`).
+        file = symphony::project::Project::of(root).file(path.trim_start_matches('/'));
+        (root.to_path_buf(), file.as_str())
     };
     if relative.is_empty()
         || Path::new(relative)

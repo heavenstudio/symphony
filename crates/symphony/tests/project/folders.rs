@@ -2,8 +2,10 @@
 //! in `output/`: every walk reads those folders, and each document is still named `docs/…`.
 
 use symphony::board::{scan, tidy};
+use symphony::docview;
 use symphony::lint::history_in_prose;
 use symphony::project::{Project, ROUTE};
+use symphony::render::Render;
 
 use super::Tree;
 
@@ -125,5 +127,71 @@ fn uploads_are_stored_under_the_projects_artifacts_folder() {
     assert_eq!(
         symphony::uploads::dir(&plain.root),
         plain.path("artifacts/uploads")
+    );
+}
+
+#[test]
+fn the_register_is_linked_by_its_route_and_one_outside_the_documents_by_its_path() {
+    let project = Project::parse(std::path::Path::new("/p"), MANUAL).unwrap();
+    assert_eq!(project.view().register, "docs/DECISIONS.md");
+    let outside = MANUAL.replace("manual/DECISIONS.md", "notes/DECISIONS.md");
+    let project = Project::parse(std::path::Path::new("/p"), &outside).unwrap();
+    assert_eq!(project.view().register, "notes/DECISIONS.md");
+}
+
+#[test]
+fn a_document_and_its_folder_open_by_their_route_from_the_projects_folder() {
+    let tree = manual();
+    tree.write("manual/guide/README.md", "# The guide\n\nRead me.\n");
+    let render = Render::new(&tree.root);
+    let doc = docview::document(&render, "docs/guide/START.md", "").unwrap();
+    assert_eq!(
+        (doc.path.as_str(), doc.title.as_str()),
+        ("docs/guide/START.md", "Start")
+    );
+    assert_eq!(
+        doc.crumbs
+            .iter()
+            .map(|c| (c.name.as_str(), c.href.as_deref()))
+            .collect::<Vec<_>>(),
+        [
+            ("docs", Some("/docs/")),
+            ("The guide", Some("/docs/guide/")),
+            ("Start", None)
+        ]
+    );
+    // a physical name, the stray docs/ folder and a climb out are no documents
+    for refused in [
+        "manual/guide/START.md",
+        "docs/STRAY.md",
+        "docs/../docs/STRAY.md",
+    ] {
+        assert!(
+            docview::document(&render, refused, "").is_err(),
+            "{refused}"
+        );
+    }
+    let folder = docview::folder(&render, "docs/guide", "").unwrap();
+    assert_eq!(
+        folder.intro.map(|intro| intro.path),
+        Some("docs/guide/README.md".to_string())
+    );
+    assert_eq!(
+        folder
+            .entries
+            .iter()
+            .map(|e| e.path.as_str())
+            .collect::<Vec<_>>(),
+        ["docs/guide/START.md"]
+    );
+    assert!(docview::folder(&render, "manual/guide", "").is_err());
+    assert_eq!(
+        symphony::tree::index_order(&tree.root, ROUTE),
+        [
+            "docs/guide/README.md",
+            "docs/guide/START.md",
+            "docs/past/OLD.md",
+            "docs/DECISIONS.md"
+        ]
     );
 }

@@ -86,11 +86,13 @@ fn exercise_land_approve(address: std::net::SocketAddr) {
         assert_eq!(response.status, 200, "{response:?}");
         response.json()
     };
-    // Work that is not in review is offered nothing.
+    // Star Foundry's action offers nothing on work that is not in review, and asks land nothing:
+    // the offer names the task's branch alone.
     assert_eq!(
         offer(),
-        json!({"action":"", "label":"", "branch":"", "payload":null})
+        json!({"action":"", "label":"", "branch":"change/held", "payload":null})
     );
+    assert!(f.land_calls().is_empty());
     let approve = || {
         f.request(
             "POST",

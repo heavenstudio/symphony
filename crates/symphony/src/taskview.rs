@@ -188,25 +188,23 @@ pub fn brief(record: &tasks::Task, from: usize, root: &Path) -> symphony_api::Ta
     }
 }
 
-/// The first offer of the project's board actions on `slug` that has a payload. Requested only when
-/// the owner reaches the message/approval controls: preparing an offer must not delay the task's
-/// metadata and brief.
+/// The first offer of `plugins`' board actions on `slug` that has a payload, whatever the task's
+/// status: each action decides which work it offers on. Requested only when the owner reaches the
+/// message/approval controls: preparing an offer must not delay the task's metadata and brief.
 pub fn owner_offer(
     store: &tasks::Store,
+    plugins: &crate::plugins::Plugins,
     slug: &str,
     root: &Path,
 ) -> Result<symphony_api::TaskOffer, String> {
     let task = store.get(slug).map_err(|e| e.to_string())?;
-    if task.status != "review" {
-        return Ok(symphony_api::TaskOffer::default());
-    }
     let branch = approval_branch(store, &task).map_err(|e| e.to_string())?;
     let found = symphony_plugin::TaskRef {
         slug: &task.slug,
         status: &task.status,
         branch: &branch,
     };
-    for action in crate::plugins::Plugins::of(root).board_actions() {
+    for action in plugins.board_actions() {
         let offer = action.offer(root, &found)?;
         if offer.payload.is_some() {
             return Ok(offer);

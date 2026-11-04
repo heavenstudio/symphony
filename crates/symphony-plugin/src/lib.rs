@@ -253,7 +253,8 @@ pub struct Submitted {
 /// A button on a task, with the server's handler behind it.
 pub trait BoardAction: Send + Sync {
     fn name(&self) -> &str;
-    /// What the action offers on `task` in the project at `root`; an empty offer shows nothing.
+    /// What the action offers on `task` in the project at `root`, whatever the task's status: the
+    /// action decides which work it offers on. An empty offer shows nothing.
     fn offer(&self, root: &Path, task: &TaskRef<'_>) -> Result<TaskOffer, String>;
     /// The owner's answer to the offer on `task`, or why it is refused (the board then says
     /// nothing and moves nothing).

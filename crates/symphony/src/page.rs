@@ -138,10 +138,17 @@ fn not_found(rel: &str) -> io::Error {
 }
 
 impl Render {
-    /// The document at `rel`, cached by its text, all document inputs (card locations, wikilinks and
-    /// breadcrumb titles), and the component provider's version. Unversioned providers render afresh.
+    /// The file the document name `rel` stands for under the project's root.
+    fn file(&self, rel: &str) -> std::path::PathBuf {
+        self.root()
+            .join(crate::project::Project::of(self.root()).file(rel))
+    }
+
+    /// The document named `rel` (`docs/…`, in the project's documents folder), cached by its text,
+    /// all document inputs (card locations, wikilinks and breadcrumb titles), and the component
+    /// provider's version. Unversioned providers render afresh.
     pub fn document(&self, rel: &str) -> io::Result<Arc<Document>> {
-        let text = read_text(&self.root().join(rel))?;
+        let text = read_text(&self.file(rel))?;
         let version = self
             .component_version()
             .map(|version| fingerprint(self.root(), &text, &version));
@@ -182,7 +189,7 @@ impl Render {
         if !tree::is_folder(self.root(), rel) {
             return Err(not_found(rel));
         }
-        let folder = self.root().join(rel);
+        let folder = self.file(rel);
         let intro = match folder.join("README.md").is_file() {
             true => Some(self.document(&format!("{rel}/README.md"))?.as_ref().clone()),
             false => None,

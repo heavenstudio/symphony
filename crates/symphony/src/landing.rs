@@ -21,7 +21,16 @@ fn text(root: &Path, args: &[&str]) -> Option<String> {
 
 /// `docs/**/*.md`, with no hidden or dot path component, as the verdict exemption admits it.
 pub fn is_doc(path: &str) -> bool {
-    let Some(rest) = path.strip_prefix("docs/") else {
+    is_doc_in("docs", path)
+}
+
+/// [`is_doc`] under the documents folder `docs`, whatever the project calls it: what the app
+/// commits for the owner.
+pub fn is_doc_in(docs: &str, path: &str) -> bool {
+    let Some(rest) = path
+        .strip_prefix(docs)
+        .and_then(|rest| rest.strip_prefix('/'))
+    else {
         return false;
     };
     let parts: Vec<_> = rest.split('/').collect();

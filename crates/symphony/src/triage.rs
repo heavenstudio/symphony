@@ -404,7 +404,6 @@ pub fn queue(plugins: &Plugins, docs: &[Doc], n: usize, app: &str) -> Vec<Item> 
                     .iter()
                     .map(|(n, word)| (*n, word.as_str()))
                     .chain([(waiting, "card")])
-                    .filter(|(n, _)| *n > 0)
                     .map(|(n, word)| plural(n, word))
                     .collect();
                 format!("design · gates {}", named.join(" and "))

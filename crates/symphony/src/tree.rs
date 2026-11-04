@@ -230,21 +230,28 @@ pub(crate) fn documents(folder: &Path) -> Vec<PathBuf> {
     docs
 }
 
-/// A folder page: `docs/` or a folder under it, once `..` is resolved.
+/// The file or folder under `root` the document name `rel` (`docs/…`) stands for.
+fn file(root: &Path, rel: &str) -> PathBuf {
+    root.join(crate::project::Project::of(root).file(rel))
+}
+
+/// A folder page: `docs/` or a folder under it, once `..` is resolved, in the project's documents
+/// folder.
 pub fn is_folder(root: &Path, rel: &str) -> bool {
-    let Ok(docs) = root.join(ROOT).canonicalize() else {
+    let Ok(docs) = file(root, ROOT).canonicalize() else {
         return false;
     };
-    let Ok(target) = root.join(rel.trim_matches('/')).canonicalize() else {
+    let Ok(target) = file(root, rel.trim_matches('/')).canonicalize() else {
         return false;
     };
     target.is_dir() && target.starts_with(&docs)
 }
 
-/// Every document under a folder in the order the folder pages list them: the README, then each
-/// subfolder (by lowercase name) in turn, then the folder's documents by lowercase title.
+/// Every document under the folder named `rel` in the order the folder pages list them, by name: the
+/// README, then each subfolder (by lowercase name) in turn, then the folder's documents by
+/// lowercase title.
 pub fn index_order(root: &Path, rel: &str) -> Vec<String> {
-    let folder = root.join(rel);
+    let folder = file(root, rel);
     let mut found = Vec::new();
     if folder.join("README.md").is_file() {
         found.push(format!("{rel}/README.md"));
@@ -276,7 +283,7 @@ pub fn crumbs(root: &Path, rel: &str) -> Vec<Crumb> {
             let name = if i == 0 {
                 ROOT.to_string()
             } else {
-                title(&root.join(normpath(&here)))
+                title(&file(root, &normpath(&here)))
             };
             let href = (i + 1 < parts.len()).then(|| format!("/{here}/"));
             Crumb { name, href }

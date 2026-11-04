@@ -222,12 +222,15 @@ impl Project {
         project
     }
 
-    /// The project as the client's header and home read it: its name, its register and its
+    /// The project as the client's header and home read it: its name, its register (by its
+    /// document name when the documents folder holds it, as every link names a document) and its
     /// plugins' navigation.
     pub fn view(&self) -> symphony_api::ProjectView {
         symphony_api::ProjectView {
             name: self.name.clone(),
-            register: self.register.clone(),
+            register: self
+                .route(&self.register)
+                .unwrap_or_else(|| self.register.clone()),
             nav: crate::plugins::Plugins::for_project(self).nav(),
         }
     }

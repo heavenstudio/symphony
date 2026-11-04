@@ -2,7 +2,7 @@
 //! reads, edits and writes, including checkout synchronization by the verdict committer.
 
 use std::collections::{BTreeMap, VecDeque};
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, mpsc};
 
@@ -169,23 +169,11 @@ impl Saves {
         Ok((root, rel.to_string()))
     }
 
+    /// The file the document name `rel` (`docs/…`) stands for in the project's documents folder,
+    /// as the document view reads it ([`crate::docview::target`]).
     fn target(root: &Path, rel: &str) -> Result<PathBuf, Failure> {
-        let refuse = || Failure::from("path must be a markdown file under docs/".to_string());
-        if Path::new(rel)
-            .components()
-            .any(|c| !matches!(c, Component::Normal(_)))
-        {
-            return Err(refuse());
-        }
-        let docs = root.join("docs").canonicalize().map_err(|_| refuse())?;
-        let target = root.join(rel).canonicalize().map_err(|_| refuse())?;
-        if !target.starts_with(docs)
-            || target.extension().is_none_or(|s| s != "md")
-            || !target.is_file()
-        {
-            return Err(refuse());
-        }
-        Ok(target)
+        crate::docview::target(root, rel, true)
+            .map_err(|_| Failure::from("path must be a markdown file under docs/".to_string()))
     }
 
     fn page(&self, root: &Path, rel: &str, anchor: &str) -> Result<String, Failure> {
@@ -509,7 +497,7 @@ impl Saves {
             self.committer
                 .get_or_init(|| commit::Committer::start(&self.root, self.writes.clone()))
                 .submit(commit::Edit {
-                    rel,
+                    rel: crate::project::Project::of(&root).file(&rel),
                     base: original,
                     new: text,
                 })?;

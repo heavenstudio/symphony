@@ -379,6 +379,37 @@ mod queue {
     }
 
     #[test]
+    fn a_design_card_names_every_count_once_it_gates_anything_zero_included() {
+        let tree = tree();
+        tree.write(
+            "docs/WEAPONS.md",
+            &design().replace(
+                "*Depends:* weapon-kinds",
+                "*Depends:* weapon-kinds *Blocks:* small-thing",
+            ),
+        );
+        let items = triage::queue(&star_foundry(), &docs(&tree), 10, APP);
+        let reason = |slug: &str| {
+            items
+                .iter()
+                .find(|i| i.slug == slug)
+                .map(|i| i.reason.clone())
+        };
+        assert_eq!(
+            reason("weapon-kinds").as_deref(),
+            Some("design · gates 3 hulls and 1 card")
+        );
+        assert_eq!(
+            reason("after-kinds").as_deref(),
+            Some("design · gates 0 hulls and 1 card")
+        );
+        assert_eq!(
+            reason("small-thing").as_deref(),
+            Some("design · gates nothing known")
+        );
+    }
+
+    #[test]
     fn then_answered_questions_then_undecided_art() {
         let items = triage::queue(&star_foundry(), &docs(&tree()), 10, APP);
         assert_eq!(slugs(&items[3..]), ["folk-people", "rep-c-art"]);
@@ -616,7 +647,7 @@ mod dispatch {
         assert_eq!(
             found(&Plugins::new(vec![&DESK])),
             [
-                pair("rule", "design · gates 2 pages"),
+                pair("rule", "design · gates 2 pages and 0 cards"),
                 pair("other", "design · gates nothing known"),
                 pair("signed", "design · docs/DESK.md · only you sign it off"),
                 pair("sketch", "sketch · cover · the triage left it for you"),
