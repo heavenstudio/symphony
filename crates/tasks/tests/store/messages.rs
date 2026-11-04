@@ -396,6 +396,38 @@ fn acknowledged_and_unaddressed_history_does_not_travel_as_message_bodies() {
 }
 
 #[test]
+fn acknowledged_key_selection_fits_the_shared_store_wait() {
+    use std::time::{Duration, Instant};
+
+    let f = Fixture::empty();
+    // This is INBOX's production fragment. Opaque integer references keep the CPU case data-only.
+    let query = concat!(
+        "LET $candidates = $candidate_entries; LET $acked = $ack_entries;\n",
+        include_str!("../../src/store/inbox_unread.surql"),
+        "\nRETURN $wanted;"
+    );
+    let client = f.other_client().waiting(Duration::from_secs(3));
+    for count in [5_000, 10_000, 20_000, 70_000] {
+        let last = 10_000_i64 + count - 1;
+        let candidates: Vec<_> = (10_000..=last)
+            .map(|id| serde_json::json!([id.to_string(), id]))
+            .collect();
+        let acknowledged: Vec<_> = (10_000..last)
+            .map(|id| serde_json::json!([id.to_string(), null]))
+            .collect();
+        let vars =
+            serde_json::json!({"candidate_entries": candidates, "ack_entries": acknowledged});
+        let began = Instant::now();
+        let results = client.query(query, vars).unwrap();
+        assert_eq!(results.last(), Some(&serde_json::json!([last])));
+        println!(
+            "{count} inbox keys, one unread reference: {:.3?}",
+            began.elapsed()
+        );
+    }
+}
+
+#[test]
 fn the_records_own_lines_and_what_came_before_a_session_never_reach_it() {
     let f = Fixture::empty();
     let a = f.session("worker");
