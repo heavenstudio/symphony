@@ -5,7 +5,7 @@ use crate::common::{Fixture, HOST, NOW, Seed, refused};
 use std::collections::BTreeSet;
 use tasks::health::LIVE_SECONDS;
 use tasks::rpc::Client;
-use tasks::{Health, Message, NewLaunch, NewTask, Store};
+use tasks::{Health, LANDS_FROM, Message, NewLaunch, NewTask, Store};
 
 fn texts(messages: Vec<Message>) -> Vec<String> {
     messages.into_iter().map(|m| m.text).collect()
@@ -499,6 +499,7 @@ fn a_landing_the_board_records_as_its_verdict_counts() {
             &executor,
             "landed sim/a on main at 3e0c66192471",
             false,
+            &LANDS_FROM,
         )
         .unwrap();
     assert_eq!(f.store.get("sim/a").unwrap().status, "done");
@@ -712,6 +713,65 @@ fn a_post_to_an_executor_whose_pane_was_closed_tells_the_orchestrator_how_to_res
         texts(f.store.inbox("brisk-finch").unwrap()),
         Vec::<String>::new()
     );
+}
+
+/// A landing that closes work taken back to in progress says so to its executor in the verdict
+/// itself, and to the orchestrator when no executor reads it; one that closes work in review tells
+/// nobody. Both count as the task's landing.
+#[test]
+fn a_landing_of_work_taken_back_reaches_its_executor_or_the_orchestrator() {
+    let f = in_review();
+    pane_closed(&f);
+    f.store
+        .landed(
+            "sim/jump",
+            "ochre-owl",
+            "landed sim/jump on main at 3e0c66192471",
+            false,
+            &LANDS_FROM,
+        )
+        .unwrap();
+    assert_eq!(told(&f), Vec::<String>::new());
+    let f = in_review();
+    f.store
+        .move_to("sim/jump", "in_progress", "amber-heron")
+        .unwrap();
+    pane_closed(&f);
+    let landed = f
+        .store
+        .landed(
+            "sim/jump",
+            "ochre-owl",
+            "landed sim/jump on main at 3e0c66192471",
+            false,
+            &LANDS_FROM,
+        )
+        .unwrap();
+    assert_eq!(
+        (landed.task.status.as_str(), landed.from.as_str()),
+        ("done", "in_progress")
+    );
+    let verdict = f
+        .store
+        .thread("sim/jump")
+        .unwrap()
+        .into_iter()
+        .rfind(|m| m.kind == "verdict")
+        .unwrap();
+    assert_eq!(verdict.recipient.as_deref(), Some("@executor"));
+    assert_eq!(
+        texts(f.store.inbox("amber-heron").unwrap()),
+        [
+            "landed sim/jump on main at 3e0c66192471; sim/jump was taken back to in_progress, so the landing closes it: further changes go in a new task"
+        ]
+    );
+    assert_eq!(
+        told(&f),
+        [
+            "the landing of sim/jump from ochre-owl to @executor reaches no live executor: amber-heron's pane was closed (idle for two sweeps, its work finished); just tasks restore sim/jump amber-heron"
+        ]
+    );
+    assert_eq!(landings(&f), BTreeSet::from(["sim/jump".to_string()]));
 }
 
 #[test]

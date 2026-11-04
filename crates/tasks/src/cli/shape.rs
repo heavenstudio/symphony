@@ -2,7 +2,7 @@
 
 use crate::pyjson::Py;
 use crate::rows::TaskSessionRow;
-use crate::{Message, Role, Session, Task};
+use crate::{Landed, Message, Role, Session, Task};
 
 pub fn task(t: &Task) -> Py {
     Py::obj(vec![
@@ -20,6 +20,15 @@ pub fn task(t: &Task) -> Py {
         ("roles", Py::List(t.roles.iter().map(role).collect())),
         ("instruction", Py::Bool(t.instruction)),
     ])
+}
+
+/// A landed task, with the status the landing closed it from.
+pub fn landed(l: &Landed) -> Py {
+    let mut shaped = task(&l.task);
+    if let Py::Obj(fields) = &mut shaped {
+        fields.push(("from".into(), Py::str(&l.from)));
+    }
+    shaped
 }
 
 pub fn tasks(ts: &[Task]) -> Py {

@@ -369,7 +369,10 @@ landing finishes work still held blocked as it does work in review. It
 refuses work in progress, but finishes a task taken back to `in_progress`
 after its last read of it, as main moved: that branch is on main, so the
 landing tells its executor that further changes go in a new task. No other
-command closes work in progress.
+command closes work in progress. `landed` takes the statuses this landing
+closes (`from`; review and blocked when it names none) and checks them against
+the status its write reads; its answer names the one it found, and a close from
+`in_progress` addresses the verdict to `@executor` in that write.
 
 A task that has posted a card for the owner is lifted out of its column into
 a **Waiting for your sign-off** lane above the board. That needs all of:

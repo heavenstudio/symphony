@@ -39,7 +39,9 @@ pub use embeddings::{EmbeddingStats, VectorHit, VectorSearchProfile};
 pub use launches::NewLaunch;
 pub use search::SearchHit;
 pub use sessions::{Beat, KINDS, NewSession, Pick};
-pub use work::{BEFORE_WORK, NewTask, PIPELINE, PULLABLE, ROLES, STATUSES, can_transition};
+pub use work::{
+    BEFORE_WORK, LANDS_FROM, Landed, NewTask, PIPELINE, PULLABLE, ROLES, STATUSES, can_transition,
+};
 
 type Clock = Box<dyn Fn() -> f64 + Send + Sync>;
 type Probe = Box<dyn Fn(i64) -> bool + Send + Sync>;

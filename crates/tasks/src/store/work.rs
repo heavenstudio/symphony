@@ -9,6 +9,7 @@ use crate::health::Health;
 use crate::rows::RoleRow;
 use serde::Deserialize;
 use serde_json::{Value, json};
+use std::cell::RefCell;
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fmt::Write as _;
 
@@ -42,6 +43,15 @@ pub const BEFORE_WORK: [&str; 4] = ["backlog", "concept", "design", "ready"];
 /// What `next` offers and `claim` accepts, with in_progress.
 pub const PULLABLE: [&str; 3] = ["concept", "design", "ready"];
 pub const ROLES: [&str; 4] = ["orchestrator", "executor", "reviewer", "reserved"];
+/// What a landing closes a task from ([`Store::landed`]).
+pub const LANDS_FROM: [&str; 3] = ["review", "blocked", "in_progress"];
+
+/// A task a landing closed: as the write left it, and the status the write found it in.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Landed {
+    pub task: Task,
+    pub from: String,
+}
 
 /// A task as it is made (`Store.create`'s arguments).
 #[derive(Debug, Clone, PartialEq, Deserialize)]
@@ -589,8 +599,12 @@ LET $said = $actor + ' moved it ' + $task.status + ' → ' + $status;
     /// one blocked, which land held there while its stamps waited on nobody (`just land-stamps`) and
     /// could not move back, and one in progress: taken back (by its executor or a changes verdict) after
     /// land's last read of it, as main moved. Land refuses a task in progress before it moves main and
-    /// calls this once the branch is on main, so that work landed; further changes go in a new task.
-    /// No other command closes a task in progress.
+    /// names in progress in `from` only once the branch is on main, so that work landed; further
+    /// changes go in a new task. No other command closes a task in progress.
+    ///
+    /// `from` is which of [`LANDS_FROM`] this landing closes, checked against the status the write
+    /// reads, and the answer names the one it found. A task closed from in progress has the verdict
+    /// addressed to its executor, saying it was taken back, in the same write.
     ///
     /// Taken by a session holding a role on the task, or one that asked to land its branch
     /// (`requested`: `land-request` keeps that record, off the board), so the approval recorded with
@@ -601,26 +615,54 @@ LET $said = $actor + ' moved it ' + $task.status + ' → ' + $status;
         handle: &str,
         text: &str,
         requested: bool,
-    ) -> Result<Task, Error> {
-        self.rule(slug, handle, |view| {
+        from: &[&str],
+    ) -> Result<Landed, Error> {
+        if let Some(status) = from.iter().find(|s| !LANDS_FROM.contains(s)) {
+            return Err(refused(format!(
+                "a landing closes a task in review, blocked or in_progress, not {status}"
+            )));
+        }
+        let found = RefCell::new(String::new());
+        let task = self.rule(slug, handle, |view| {
             view.actor(handle)?;
             let task = view.task(slug)?;
-            if !matches!(task.status.as_str(), "review" | "blocked" | "in_progress") {
-                return Err(refused(format!("{slug} is {}, not in review", task.status)));
+            if !from.contains(&task.status.as_str()) {
+                return Err(refused(format!(
+                    "{slug} is {}, which this landing does not close",
+                    task.status
+                )));
             }
             if !requested && !view.snap.roles.iter().any(|r| r.handle == handle) {
                 return Err(refused(format!("{handle} holds no role on {slug}")));
             }
+            let taken_back = task.status == "in_progress";
+            found.replace(task.status.clone());
             Ok(Change {
                 status: Some("done".into()),
                 say: Some(Say {
                     kind: "verdict",
-                    text: text.trim().into(),
-                    recipient: None,
+                    text: if taken_back {
+                        format!(
+                            "{}; {slug} was taken back to in_progress, so the landing closes it: further changes go in a new task",
+                            text.trim()
+                        )
+                    } else {
+                        text.trim().into()
+                    },
+                    recipient: taken_back.then(|| "@executor".into()),
                 }),
                 ..Change::default()
             })
-        })
+        })?;
+        let from = found.into_inner();
+        if from == "in_progress" {
+            self.tell_if_unread(
+                slug,
+                None,
+                &format!("the landing of {slug} from {handle} to @executor"),
+            );
+        }
+        Ok(Landed { task, from })
     }
 
     /// The best work for `handle`: its own reservation, then priority, then its areas, then the order

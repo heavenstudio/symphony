@@ -2,8 +2,8 @@
 
 use crate::common::{Fixture, NOW, Seed, refused};
 use std::collections::BTreeSet;
-use tasks::NewTask;
 use tasks::health::RESERVE_SECONDS;
+use tasks::{LANDS_FROM, NewTask};
 
 /// An orchestrator, an executor and a reviewer on `sim/jump`, in review, each joined through the store.
 fn in_review() -> (Fixture, String, String, String) {
@@ -418,15 +418,22 @@ fn an_instruction_task_is_never_moved_to_review_or_done() {
 fn landing_finishes_a_task_in_review_for_a_role_holder() {
     let (f, _, exe, _) = in_review();
     f.advance(5.0);
-    let task = f
+    let landed = f
         .store
-        .landed("sim/jump", &exe, "  landed abc123 ", false)
+        .landed("sim/jump", &exe, "  landed abc123 ", false, &["review"])
         .unwrap();
-    assert_eq!((task.status.as_str(), task.updated), ("done", f.now()));
+    assert_eq!(
+        (
+            landed.task.status.as_str(),
+            landed.task.updated,
+            landed.from.as_str()
+        ),
+        ("done", f.now(), "review")
+    );
     let last = f.store.thread("sim/jump").unwrap().pop().unwrap();
     assert_eq!(
-        (last.sender, last.kind, last.text),
-        (exe, "verdict".into(), "landed abc123".into())
+        (last.sender, last.kind, last.text, last.recipient),
+        (exe, "verdict".into(), "landed abc123".into(), None)
     );
 }
 
@@ -435,14 +442,17 @@ fn landing_is_refused_to_a_session_without_a_role_or_off_review() {
     let (f, _, exe, _) = in_review();
     let stranger = f.session("worker");
     assert_eq!(
-        refused(f.store.landed("sim/jump", &stranger, "x", false)),
+        refused(
+            f.store
+                .landed("sim/jump", &stranger, "x", false, &LANDS_FROM)
+        ),
         format!("{stranger} holds no role on sim/jump")
     );
     f.store.release("sim/jump", &exe, None).unwrap();
     f.task("sim/other");
     assert_eq!(
-        refused(f.store.landed("sim/other", &exe, "x", false)),
-        "sim/other is ready, not in review"
+        refused(f.store.landed("sim/other", &exe, "x", false, &LANDS_FROM)),
+        "sim/other is ready, which this landing does not close"
     );
 }
 
@@ -451,15 +461,18 @@ fn landing_is_also_taken_by_the_session_that_asked_to_land_it() {
     let (f, _, _, _) = in_review();
     let asked = f.session("orchestrator");
     assert_eq!(
-        refused(f.store.landed("sim/jump", &asked, "x", false)),
+        refused(f.store.landed("sim/jump", &asked, "x", false, &LANDS_FROM)),
         format!("{asked} holds no role on sim/jump")
     );
     assert_eq!(
-        refused(f.store.landed("sim/jump", "nobody-at-all", "x", true)),
+        refused(
+            f.store
+                .landed("sim/jump", "nobody-at-all", "x", true, &LANDS_FROM)
+        ),
         "no session 'nobody-at-all'; attach first (just tasks-attach)"
     );
     f.store
-        .landed("sim/jump", &asked, "landed abc123", true)
+        .landed("sim/jump", &asked, "landed abc123", true, &LANDS_FROM)
         .unwrap();
     assert_eq!(f.store.get("sim/jump").unwrap().status, "done");
 }
@@ -469,10 +482,14 @@ fn landing_finishes_work_held_blocked_or_taken_back_in_progress_but_never_work_n
     let (f, _, exe, _) = in_review();
     let asked = f.session("orchestrator");
     f.store.move_to("sim/jump", "blocked", &exe).unwrap();
-    f.store
-        .landed("sim/jump", &asked, "landed abc123", true)
+    let landed = f
+        .store
+        .landed("sim/jump", &asked, "landed abc123", true, &LANDS_FROM)
         .unwrap();
-    assert_eq!(f.store.get("sim/jump").unwrap().status, "done");
+    assert_eq!(
+        (landed.task.status.as_str(), landed.from.as_str()),
+        ("done", "blocked")
+    );
     // Taken back from review as its branch landed: land closes it, as no other command does.
     f.task("sim/other");
     f.store.claim("sim/other", &exe).unwrap();
@@ -482,19 +499,54 @@ fn landing_finishes_work_held_blocked_or_taken_back_in_progress_but_never_work_n
         refused(f.store.move_to("sim/other", "done", &exe)),
         "sim/other cannot go from in_progress to done"
     );
-    f.store
-        .landed("sim/other", &asked, "landed def456", true)
+    let landed = f
+        .store
+        .landed("sim/other", &asked, "landed def456", true, &LANDS_FROM)
         .unwrap();
-    assert_eq!(f.store.get("sim/other").unwrap().status, "done");
+    assert_eq!(
+        (landed.task.status.as_str(), landed.from.as_str()),
+        ("done", "in_progress")
+    );
     for status in ["backlog", "concept", "design"] {
         let slug = format!("sim/{status}");
         f.task(&slug);
         f.store.move_to(&slug, status, &exe).unwrap();
         assert_eq!(
-            refused(f.store.landed(&slug, &asked, "x", true)),
-            format!("{slug} is {status}, not in review")
+            refused(f.store.landed(&slug, &asked, "x", true, &LANDS_FROM)),
+            format!("{slug} is {status}, which this landing does not close")
         );
     }
+}
+
+/// Land names what this landing closes, and the board checks it against the status its write reads:
+/// a task that moved after land's read is closed only if it moved to one land named.
+#[test]
+fn landing_closes_only_from_the_statuses_named_and_never_names_one_it_cannot_close() {
+    let (f, _, exe, _) = in_review();
+    let asked = f.session("orchestrator");
+    assert_eq!(
+        refused(
+            f.store
+                .landed("sim/jump", &asked, "x", true, &["review", "ready"])
+        ),
+        "a landing closes a task in review, blocked or in_progress, not ready"
+    );
+    f.store.move_to("sim/jump", "in_progress", &exe).unwrap();
+    for from in [&["review", "blocked"][..], &[][..]] {
+        assert_eq!(
+            refused(f.store.landed("sim/jump", &asked, "x", true, from)),
+            "sim/jump is in_progress, which this landing does not close"
+        );
+    }
+    f.store.move_to("sim/jump", "review", &exe).unwrap();
+    assert_eq!(
+        refused(
+            f.store
+                .landed("sim/jump", &asked, "x", true, &["in_progress"])
+        ),
+        "sim/jump is review, which this landing does not close"
+    );
+    assert_eq!(f.store.get("sim/jump").unwrap().status, "review");
 }
 
 #[test]
