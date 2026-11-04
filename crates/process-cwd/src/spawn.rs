@@ -15,10 +15,18 @@
 //! close-on-fork into the child it makes until that child's exec, and a spawn that fails leaves its
 //! child holding them after it returns, until the kernel tears it down (milliseconds, measured).
 //! So every [`pipe`]'s ends are close-on-fork, which no spawn copies; the copies a child is handed
-//! exist only under [`spawning`]; and a bare name is looked up before it is spawned, so a start
-//! leaves no failed child behind. An end reaches a child only through [`Command`], never through
-//! a std spawn, which cannot be handed one. A TCP socket kept across spawns is close-on-fork once
-//! [`connect`] has made it, and close-on-exec from just after it exists.
+//! exist only under [`spawning`]; and a bare name is looked up, and the file found read for what
+//! exec answers (a file it may not run, a `#!` line's interpreter missing or refused, no `#!` line
+//! at all, which `sh` runs), before anything is spawned. A start then leaves no failed child behind
+//! but where only an exec can answer (a file it cannot read, a `#!` line it cannot settle, a header
+//! the kernel refuses), whose child holds the copies it was handed for those milliseconds. An end
+//! reaches a child only through [`Command`], never through a std spawn, which cannot be handed one.
+//! A TCP socket kept across spawns is close-on-fork once [`connect`] has made it, and close-on-exec
+//! from just after it exists.
+//!
+//! A pipe's first ends are not close-on-exec until a second call, and a std child keeps each
+//! descriptor not close-on-exec at its spawn for its life: a std spawn in a binary that uses the
+//! helpers takes [`spawning`] for its spawn alone ([`Spawning`]), so it never starts in that gap.
 //!
 //! [`pipe`] is a real pipe, not a FIFO, though a FIFO opens close-on-exec in one call: macOS can
 //! lose a FIFO's end, and a read already blocked on one when its last writer goes may wait for
@@ -49,11 +57,46 @@ static SPAWNING: Mutex<()> = Mutex::new(());
 /// Held while this process holds a descriptor for a child that any spawn would copy: the copies
 /// [`Command::spawn`] hands its child, and a [`pipe`] or [`connect`]'s socket until its descriptors
 /// are close-on-fork. Every helper spawn holds it, and a std spawn in a binary that uses the helpers
-/// takes it around its `spawn()`, so that it never copies one (a std child keeps each descriptor not
-/// close-on-exec for its life).
+/// takes it around its `spawn()` ([`Spawning`]), so that it never copies one (a std child keeps each
+/// descriptor not close-on-exec for its life).
 /// Never held across a helper's spawn, pipe or [`connect`]: they take it themselves.
 pub fn spawning() -> MutexGuard<'static, ()> {
     SPAWNING.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
+/// std's spawn, status and output, each with [`spawning`] held for the spawn alone and released
+/// before the wait: what a std spawn in a binary that uses the helpers starts its child with, so
+/// that the child never keeps a [`pipe`]'s first ends, and the lock never waits on a child. What each
+/// answers is std's own.
+pub trait Spawning {
+    /// std's `spawn`, under [`spawning`].
+    fn spawn_locked(&mut self) -> io::Result<std::process::Child>;
+
+    /// std's `status`: its streams inherited unless set, spawned under [`spawning`], waited after.
+    fn status_locked(&mut self) -> io::Result<ExitStatus>;
+
+    /// std's `output` for a command whose streams are not set: stdin null and both outputs piped
+    /// (set here, as [`output`] sets them), spawned under [`spawning`], read to their end after.
+    fn output_locked(&mut self) -> io::Result<Output>;
+}
+
+impl Spawning for std::process::Command {
+    fn spawn_locked(&mut self) -> io::Result<std::process::Child> {
+        let _spawning = spawning();
+        self.spawn()
+    }
+
+    fn status_locked(&mut self) -> io::Result<ExitStatus> {
+        self.spawn_locked()?.wait()
+    }
+
+    fn output_locked(&mut self) -> io::Result<Output> {
+        self.stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn_locked()?
+            .wait_with_output()
+    }
 }
 
 /// Where a child's standard stream goes: this process's own, `/dev/null`, a descriptor handed
@@ -878,6 +921,103 @@ mod native {
         Ok(())
     }
 
+    /// What an exec of a file answers, where the file itself says it.
+    enum Image {
+        /// Only an exec can say: it is spawned, and its refusal is the answer.
+        Spawn,
+        /// ENOEXEC, which `execvp` and `posix_spawnp` answer by running it with `sh`.
+        Shell,
+        /// Refused before it runs, with this error number.
+        Refused(libc::c_int),
+    }
+
+    /// The first bytes of a Mach-O or universal file in either byte order: an image the kernel
+    /// loads itself (`mach-o/loader.h`, `mach-o/fat.h`).
+    const HEADERS: [[u8; 4]; 8] = [
+        [0xce, 0xfa, 0xed, 0xfe],
+        [0xcf, 0xfa, 0xed, 0xfe],
+        [0xfe, 0xed, 0xfa, 0xce],
+        [0xfe, 0xed, 0xfa, 0xcf],
+        [0xca, 0xfe, 0xba, 0xbe],
+        [0xca, 0xfe, 0xba, 0xbf],
+        [0xbe, 0xba, 0xfe, 0xca],
+        [0xbf, 0xba, 0xfe, 0xca],
+    ];
+
+    /// How much of a file the kernel reads for its `#!` line (`IMG_SHSIZE`).
+    const LINE: u64 = 512;
+
+    /// Whether `path` may be executed, as the kernel checks before it reads a byte: a regular file
+    /// it may execute (EACCES for anything else); `None` when the lookup or the check fails
+    /// otherwise, which only an exec answers.
+    fn executable(path: &Path) -> Option<Result<(), libc::c_int>> {
+        let found = std::fs::metadata(path).ok()?;
+        if !found.is_file() {
+            return Some(Err(libc::EACCES));
+        }
+        let name = CString::new(path.as_os_str().as_bytes()).ok()?;
+        // SAFETY: the path is NUL-terminated and outlives the call, which only reads it.
+        if unsafe { libc::access(name.as_ptr(), libc::X_OK) } == 0 {
+            return Some(Ok(()));
+        }
+        (io::Error::last_os_error().raw_os_error() == Some(libc::EACCES))
+            .then_some(Err(libc::EACCES))
+    }
+
+    /// What exec answers for the file at `path`, read from its mode and first bytes where they say:
+    /// a file it may not execute is refused (EACCES); a `#!` line's interpreter is refused as that
+    /// file would be, and one that is not there answers ENOENT (an interpreter is looked up from
+    /// `dir`, the child's directory); a file with neither a `#!` line nor a Mach-O header is ENOEXEC.
+    /// Anything a read cannot settle (a file not found or unreadable, a `#!` line not ended within
+    /// what the kernel reads, a `#` in it) is spawned for the kernel's own answer.
+    fn image(dir: &Path, path: &Path) -> Image {
+        match executable(path) {
+            Some(Ok(())) => {}
+            Some(Err(code)) => return Image::Refused(code),
+            None => return Image::Spawn,
+        }
+        use std::io::Read as _;
+        let mut first = Vec::new();
+        let read = File::open(path).and_then(|file| file.take(LINE).read_to_end(&mut first));
+        if read.is_err() {
+            return Image::Spawn;
+        }
+        let Some(line) = first.strip_prefix(b"#!") else {
+            return if first
+                .get(..4)
+                .is_some_and(|head| HEADERS.iter().any(|h| h == head))
+            {
+                Image::Spawn
+            } else {
+                Image::Shell
+            };
+        };
+        let Some(end) = line.iter().position(|&byte| byte == b'\n') else {
+            return Image::Spawn;
+        };
+        let line = &line[..end];
+        let interpreter = line
+            .split(|&byte| byte == b' ' || byte == b'\t')
+            .find(|word| !word.is_empty());
+        let Some(interpreter) = interpreter.filter(|_| !line.contains(&b'#')) else {
+            return Image::Spawn;
+        };
+        if interpreter.contains(&0) {
+            return Image::Spawn;
+        }
+        let interpreter = dir.join(OsStr::from_bytes(interpreter));
+        match std::fs::metadata(&interpreter) {
+            Err(e) if matches!(e.raw_os_error(), Some(libc::ENOENT | libc::ENOTDIR)) => {
+                Image::Refused(e.raw_os_error().unwrap_or(libc::ENOENT))
+            }
+            Err(_) => Image::Spawn,
+            Ok(_) => match executable(&interpreter) {
+                Some(Err(code)) => Image::Refused(code),
+                _ => Image::Spawn,
+            },
+        }
+    }
+
     fn pointers(strings: &[CString]) -> Vec<*mut libc::c_char> {
         strings
             .iter()
@@ -954,6 +1094,8 @@ mod native {
         // ENOENT for a relative one it started from there.
         let spawn_at = |path: &Path, argv: &[*mut libc::c_char]| -> io::Result<Spawned> {
             let path = cstring(base.join(path).as_os_str().as_bytes())?;
+            #[cfg(test)]
+            super::tests::SPAWNS.set(super::tests::SPAWNS.get() + 1);
             let mut pid = 0;
             // SAFETY: the pointer arrays are NUL-terminated, their strings and the opaque handles
             // stay live through the call, and pid is written only on success. No fork hook runs.
@@ -971,17 +1113,31 @@ mod native {
         };
         // A file with no `#!` line (ENOEXEC) is run as `sh NAME ARGS`, NAME as it was looked up,
         // and that start's answer is the answer, as `execvp` and `posix_spawnp` run it.
+        let shell = |name: &Path| -> io::Result<Spawned> {
+            let script: Vec<CString> = [OsStr::new("sh"), name.as_os_str()]
+                .into_iter()
+                .chain(command.args.iter().map(OsString::as_os_str))
+                .map(|arg| cstring(arg.as_bytes()))
+                .collect::<io::Result<_>>()?;
+            spawn_at(Path::new("/bin/sh"), &pointers(&script))
+        };
+        // What the exec would answer is read first where the file says it, so the one spawn is
+        // the start (a refused spawn's child holds the copies it was handed after the refusal);
+        // from a directory the child cannot enter, its change of directory answers first.
+        let readable = command.cwd.is_none() || enterable(&base).is_ok();
         let start = |name: &Path| -> io::Result<Spawned> {
-            match spawn_at(name, &argv)? {
-                Err(libc::ENOEXEC) => {
-                    let script: Vec<CString> = [OsStr::new("sh"), name.as_os_str()]
-                        .into_iter()
-                        .chain(command.args.iter().map(OsString::as_os_str))
-                        .map(|arg| cstring(arg.as_bytes()))
-                        .collect::<io::Result<_>>()?;
-                    spawn_at(Path::new("/bin/sh"), &pointers(&script))
-                }
-                started => Ok(started),
+            let image = if readable {
+                image(&base, &base.join(name))
+            } else {
+                Image::Spawn
+            };
+            match image {
+                Image::Refused(code) => Ok(Err(code)),
+                Image::Shell => shell(name),
+                Image::Spawn => match spawn_at(name, &argv)? {
+                    Err(libc::ENOEXEC) => shell(name),
+                    started => Ok(started),
+                },
             }
         };
         let program = Path::new(&command.program);
@@ -1000,7 +1156,8 @@ mod native {
                 // A spawn refused for a name that is not there leaves its child holding the copies
                 // it was handed until the kernel tears it down, after the refusal: such names are
                 // passed over unspawned while one that is there remains, and spawned for the
-                // kernel's own answer only when none is.
+                // kernel's own answer only when none is. One that is there and that its file says
+                // exec refuses is passed over by `start` unspawned too.
                 let (there, missing): (Vec<PathBuf>, Vec<PathBuf>) =
                     candidates(&command.program, path)
                         .into_iter()
@@ -1135,6 +1292,20 @@ mod tests {
     use std::os::unix::fs::PermissionsExt;
     use std::os::unix::process::ExitStatusExt;
     use std::sync::atomic::{AtomicBool, Ordering};
+
+    #[cfg(target_os = "macos")]
+    thread_local! {
+        /// The spawns this thread's helper starts have made, counted where each is made.
+        pub(super) static SPAWNS: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+    }
+
+    /// What `run` answers, and how many spawns this thread's helper made for it.
+    #[cfg(target_os = "macos")]
+    fn counted<T>(run: impl FnOnce() -> T) -> (T, u32) {
+        SPAWNS.set(0);
+        let answer = run();
+        (answer, SPAWNS.get())
+    }
 
     /// A folder of the test's own, removed however the test ends.
     struct Tmp(PathBuf);
@@ -1376,6 +1547,135 @@ mod tests {
             ),
         ] {
             assert!(same(case, result).is_none(), "{case} started");
+        }
+    }
+
+    /// A name exec refuses earlier along `PATH` (a file it may not run, a folder, a `#!` line whose
+    /// interpreter is missing or may not run) is read and passed over, and a file with no `#!` line
+    /// goes to `sh` at once: the one spawn is the start, as std's answers. With none to start, the
+    /// refusal is std's and nothing is spawned. Once the child ends, nothing holds its input.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn a_start_spawns_only_the_child_it_starts() {
+        let tmp = Tmp::new("searched");
+        let script = |dir: &str, body: &str, mode: u32| {
+            std::fs::create_dir_all(tmp.0.join(dir)).unwrap();
+            tmp.file(&format!("{dir}/prog"), body, mode)
+        };
+        script("found", "#!/bin/sh\nprintf found:%s \"$1\"\n", 0o755);
+        script("denied", "#!/bin/sh\nexit 9\n", 0o644);
+        std::fs::create_dir_all(tmp.0.join("folder/prog")).unwrap();
+        script("lost", "#!/no/such/sf-interpreter\nexit 9\n", 0o755);
+        let barred = tmp.file("barred-sh", "#!/bin/sh\nexit 9\n", 0o644);
+        script(
+            "barred",
+            &format!("#!{} -e\nexit 9\n", barred.display()),
+            0o755,
+        );
+        let plain = script("plain", "printf plain:%s \"$1\"", 0o755);
+        let empty = script("empty", "", 0o755);
+        // What std answers, under the lock as every std spawn here, then what the helper does and
+        // how many spawns it made.
+        let compare = |case: &str, program: &Path, path: &str| {
+            let theirs = std::process::Command::new(program)
+                .arg("x")
+                .env("PATH", path)
+                .current_dir(&tmp.0)
+                .output_locked();
+            let mut command = Command::new(program);
+            command.arg("x").env("PATH", path).current_dir(&tmp.0);
+            let (ours, spawns) = counted(|| output(&mut command));
+            (same(case, (theirs, ours)), spawns)
+        };
+        let prog = Path::new("prog");
+        for refused in ["denied", "folder", "lost", "barred"] {
+            let path = format!("{refused}:found");
+            let (done, spawns) = compare(refused, prog, &path);
+            assert_eq!(done.unwrap().stdout, b"found:x", "{refused}");
+            assert_eq!(spawns, 1, "{refused} before the start was spawned");
+            let (none, spawns) = compare(refused, prog, refused);
+            assert!(none.is_none(), "{refused} alone started");
+            assert_eq!(spawns, 0, "{refused} alone was spawned");
+            // Nothing but the ended child held its input's reader.
+            let mut child =
+                spawn_piped(Command::new("prog").env("PATH", &path).current_dir(&tmp.0)).unwrap();
+            let mut stdin = child.stdin.take().unwrap();
+            assert!(child.wait().unwrap().success(), "{refused}");
+            let refused_write = stdin.write_all(b"unread").unwrap_err();
+            assert_eq!(refused_write.kind(), io::ErrorKind::BrokenPipe, "{refused}");
+        }
+        for (case, program, said) in [
+            ("no #! line, by name", prog, "plain:x"),
+            ("no #! line, by path", plain.as_path(), "plain:x"),
+            ("empty, by path", empty.as_path(), ""),
+        ] {
+            let (done, spawns) = compare(case, program, "plain");
+            assert_eq!(done.unwrap().stdout, said.as_bytes(), "{case}");
+            assert_eq!(spawns, 1, "{case}: the file was spawned before sh");
+        }
+    }
+
+    /// std's spawn, status and output with the lock held for the spawn answer as std's own do: the
+    /// arguments, environment and directory, a null input read to its end, both outputs, the exit,
+    /// and the error of a program that is not there.
+    #[test]
+    fn std_spawns_under_the_lock_answer_as_std_does() {
+        let tmp = Tmp::new("locked");
+        let build = || {
+            let mut command = std::process::Command::new("/bin/sh");
+            command
+                .args([
+                    "-c",
+                    "printf '%s|%s|%s' \"$PWD\" \"$KEY\" \"$1\"; cat; printf err >&2; exit 3",
+                    "sh",
+                    "an argument",
+                ])
+                .env("KEY", "value")
+                .current_dir(&tmp.0);
+            command
+        };
+        let theirs = {
+            let _spawning = spawning();
+            build().output().unwrap()
+        };
+        let ours = build().output_locked().unwrap();
+        assert_eq!(
+            (&ours.status, &ours.stdout, &ours.stderr),
+            (&theirs.status, &theirs.stdout, &theirs.stderr)
+        );
+        assert_eq!(ours.status.code(), Some(3));
+        assert_eq!(
+            ours.stdout,
+            format!("{}|value|an argument", tmp.0.display()).as_bytes()
+        );
+        let status = |script: &str| {
+            std::process::Command::new("/bin/sh")
+                .args(["-c", script])
+                .stdout(std::process::Stdio::null())
+                .status_locked()
+                .unwrap()
+        };
+        assert_eq!(status("exit 4").code(), Some(4));
+        assert_eq!(status("kill -TERM $$").signal(), Some(libc::SIGTERM));
+        let mut child = std::process::Command::new("/bin/sh")
+            .args(["-c", "exit 5"])
+            .spawn_locked()
+            .unwrap();
+        assert_eq!(child.wait().unwrap().code(), Some(5));
+        let missing = || std::process::Command::new("/no/such/sf-locked-program");
+        let theirs = {
+            let _spawning = spawning();
+            missing().output().unwrap_err()
+        };
+        for ours in [
+            missing().output_locked().unwrap_err(),
+            missing().status_locked().unwrap_err(),
+            missing().spawn_locked().unwrap_err(),
+        ] {
+            assert_eq!(
+                (ours.kind(), ours.raw_os_error()),
+                (theirs.kind(), theirs.raw_os_error())
+            );
         }
     }
 
@@ -1881,13 +2181,12 @@ mod tests {
     fn racing(spawned: &AtomicBool) -> Children {
         let mut children = Children(Vec::new());
         for _ in 0..32 {
-            let _spawning = spawning();
             let child = std::process::Command::new("sleep")
                 .arg("60")
                 .stdin(std::process::Stdio::null())
                 .stdout(std::process::Stdio::null())
                 .stderr(std::process::Stdio::null())
-                .spawn()
+                .spawn_locked()
                 .unwrap();
             children.0.push(child);
         }

@@ -223,6 +223,7 @@ fn forward(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use symphony_board::sys::Spawning as _;
 
     #[test]
     fn timestamps_are_utc_with_milliseconds() {
@@ -315,7 +316,7 @@ mod tests {
                         "-c",
                         "printf 'child stdout\\n'; printf 'child stderr\\n' >&2"
                     ])
-                    .status()
+                    .status_locked()
                     .unwrap()
                     .success()
             );
