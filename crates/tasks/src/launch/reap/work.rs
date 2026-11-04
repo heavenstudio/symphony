@@ -3,6 +3,17 @@
 use crate::{Error, Message, Store};
 use std::collections::{HashMap, HashSet};
 
+/// Landing creates `review/BRANCH`, then `review-N/BRANCH` for N >= 2.
+fn reviewed_branch(slug: &str) -> Option<&str> {
+    let (prefix, branch) = slug.split_once('/')?;
+    if prefix == "review" {
+        return Some(branch);
+    }
+    let number = prefix.strip_prefix("review-")?;
+    let ordinal = number.parse::<usize>().ok()?;
+    (ordinal >= 2 && number == ordinal.to_string()).then_some(branch)
+}
+
 /// Landing reviews use a message to the executor; ordinary board reviews use a verdict record.
 fn review_decision(post: &Message, handle: &str, slug: &str) -> Option<bool> {
     if post.sender != handle {
@@ -19,7 +30,7 @@ fn review_decision(post: &Message, handle: &str, slug: &str) -> Option<bool> {
         .text
         .strip_prefix(prefix.as_str())?
         .split_once(" at tip ")?;
-    if branch != slug && slug.strip_prefix("review/") != Some(branch) {
+    if branch != slug && reviewed_branch(slug) != Some(branch) {
         return None;
     }
     let (tip, _) = rest.split_once(": ")?;
@@ -105,15 +116,28 @@ mod tests {
     fn landing_changes_require_the_reviewers_actual_executor_message_and_branch() {
         let text = "reviewer asks for changes on sim/jump at tip 012345abcdef: fix the edge";
         let original = post(1, "msg", text);
-        assert_eq!(
-            review_decision(&original, "reviewer", "sim/jump"),
-            Some(true)
-        );
-        assert_eq!(
-            review_decision(&original, "reviewer", "review/sim/jump"),
-            Some(true)
-        );
-        assert_eq!(review_decision(&original, "reviewer", "sim/other"), None);
+        for slug in [
+            "sim/jump",
+            "review/sim/jump",
+            "review-2/sim/jump",
+            "review-3/sim/jump",
+            "review-24/sim/jump",
+        ] {
+            assert_eq!(review_decision(&original, "reviewer", slug), Some(true));
+        }
+        for slug in [
+            "sim/other",
+            "review-2/sim/other",
+            "reviewer/sim/jump",
+            "review-/sim/jump",
+            "review-0/sim/jump",
+            "review-1/sim/jump",
+            "review-02/sim/jump",
+            "review-+2/sim/jump",
+            "review-other/sim/jump",
+        ] {
+            assert_eq!(review_decision(&original, "reviewer", slug), None);
+        }
         for (sender, to, kind, body) in [
             ("other", Some("@executor"), "msg", text),
             ("reviewer", None, "msg", text),

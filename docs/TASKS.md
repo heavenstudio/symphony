@@ -120,6 +120,13 @@ orchestrated work. The config belongs to the checkout running the command (main 
 the Symphony). `reap` runs staffing before its five-minute idle sweep. A shared
 `sf-tasks/staff.lock` keeps concurrent staffing passes from dispatching twice.
 
+`reap` also recovers missing agents with addressed work left unanswered for thirty
+minutes, even when staffing is disabled. It resumes a recorded conversation once
+per handle/post, after the pane inventory confirms its absence, and posts the
+restore on the task thread. With no recorded conversation it only flags the work;
+it never starts a fresh conversation on its own. A failed automatic attempt stays
+flagged for manual action. `reap --dry-run` starts no recovery.
+
 Only ready tasks with dependencies done and no executor or reservation qualify;
 review tasks with no reviewer get one breakage-only reviewer through an instruction
 child. A land-request task's opening `Review` line records the branch under review;
@@ -150,10 +157,16 @@ Symphony's process (`just symphony`) runs every five minutes. A lock in `sf-task
 beside the board's server, keeps two sweeps (a second app's, or `just tasks reap` by
 hand) from running at once, and nothing goes into any monitor. It closes a herdr pane whose named Claude agent was
 idle (or stuck on the folder-trust prompt) at two sweeps at least five minutes apart,
-however many apps sweep, when neither its handle nor a subagent session under it holds
-an executor role on an in-progress or blocked task or a reviewer role on a task in
-review, and nothing runs under it but MCP helpers, caffeinate and board commands:
-anything else is work. Status and roles are read again right before the close. Never an
+however many apps sweep, only when neither its handle nor a subagent session under
+it has live work. Live work includes an executor role on an in-progress, blocked or
+review task, a reviewer role on a task in review, an unanswered addressed post, and
+a reviewer role awaiting re-review after changes returned its task to in-progress.
+That last keep includes landing changes posted as a message to the executor before
+it moves the task back. A pending post keeps the pane immediately, before the
+thirty-minute recovery threshold. A post, status move or verdict by the addressed
+handle answers its earlier work; reading the inbox does not. Running any command
+beyond MCP helpers, caffeinate and board commands also keeps the pane. Status and
+roles are read again right before the close. Never an
 unnamed pane (it may be the owner's), an orchestrator, the focused pane or the caller's.
 Each close is one line on the handle's task thread, with its restore line, written
 before the pane is closed. `just tasks reap --dry-run` names what the next sweep would close.
@@ -304,8 +317,22 @@ digest (`symphony/crates/tasks/src/cli/pull.rs`) once at its first dispatch, eve
 (one on a subtask still to be executed counts), in-progress with none, review with no reviewer, tasks that landed
 (the branch is on main, or `landed <slug> on main` is on the task's thread) and are still open (a status change on the task after that line voids it, whether a move, a verdict such as `changes`, or a re-claim: the task is new work, not a landing left open), and idle agents. An executor
 or reviewer that is `running_test` counts as present however quiet the board says it is.
-Counts and the clock do not trigger delivery. A departure alone pushes nothing;
-an entry that stays present is never re-sent, and an entry that leaves and returns pushes once.
+Counts and clock changes trigger delivery only when they make an entry actionable.
+An entry that stays present is never re-sent, and an ordinary entry that leaves and
+returns pushes once. The `unanswered` category below retains its identity per task/post.
+
+`unanswered` lists an executor on an in-progress, blocked or review task, or a reviewer
+on a task in review, when it is lost or left (or its recorded pane is closed) and an
+addressed post has waited thirty minutes without a later message, status move or
+verdict from that handle. A deliberate role release also answers earlier requests;
+an automatic departure does not. Posts belong to their recipients at post time,
+so a replacement never inherits its predecessor's role-addressed work. Each line
+names the post and the recorded conversation's `just tasks restore SLUG HANDLE`
+command, or the explicit launch command when no conversation was recorded. The
+orchestrator receives each task/post once, even if it leaves and returns; a new
+unanswered post can push a new line for the same task. Its count appears only when
+nonzero. `reap` makes the sole automatic recovery attempt described above.
+
 A legacy native observer starts from the current board on upgrade rather than replaying its history.
 Its upgrade marker and message cursor are separate callback-state fields that older writers leave intact.
 Codex callbacks use the queue by default; `git config sf.codexSteer true` opts in to
