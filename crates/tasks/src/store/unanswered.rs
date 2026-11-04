@@ -34,8 +34,8 @@ impl Pending {
     }
 
     pub fn command(&self) -> String {
-        if self.launch.as_ref().is_some_and(restorable) {
-            format!("just tasks restore {} {}", self.slug, self.handle)
+        if let Some(launch) = self.launch.as_ref().filter(|s| restorable(s)) {
+            format!("just tasks restore {} {}", launch.slug, self.handle)
         } else {
             format!("just tasks launch {} --role {}", self.slug, self.role)
         }
@@ -44,6 +44,29 @@ impl Pending {
 
 pub(crate) fn restorable(launch: &TaskSessionRow) -> bool {
     !launch.claude_session.is_empty() && launch.claude_session != "codex:"
+}
+
+/// Review instructions launch on the child but review the parent. On the child itself the same
+/// agent executes the instruction, as `launch::take_up` records its reservation there.
+fn recorded_role<'a>(
+    launch: &'a TaskSessionRow,
+    task: &Task,
+    tasks: &BTreeMap<&str, &Task>,
+) -> Option<&'a str> {
+    if launch.slug == task.slug {
+        return Some(
+            if launch.role == "reviewer" && task.instruction && task.parent.is_some() {
+                "executor"
+            } else {
+                &launch.role
+            },
+        );
+    }
+    (launch.role == "reviewer"
+        && tasks.get(launch.slug.as_str()).is_some_and(|child| {
+            child.instruction && child.parent.as_deref() == Some(task.slug.as_str())
+        }))
+    .then_some("reviewer")
 }
 
 /// A post to this handle or its role, with no later message/verdict by it on this thread.
@@ -68,14 +91,16 @@ pub(crate) fn unanswered_post(
 
 impl Store {
     /// Pending posts, including direct handle posts on finished tasks (which still keep a pane).
-    /// Launch records retain the role of an agent that left; a replacement role holder supersedes it.
+    /// Launch records retain a departed agent's role. A replacement suppresses the old role alias;
+    /// a post explicitly naming that departed handle still belongs to it.
     pub(crate) fn pending_posts(&self, tasks: &[Task]) -> Result<Vec<Pending>, Error> {
         let launches = self.all_task_sessions()?;
         let confirmed = self.confirmed_callbacks()?;
+        let board = self.board()?;
+        let by_slug: BTreeMap<_, _> = board.tasks.iter().map(|t| (t.slug.as_str(), t)).collect();
         // The raw session list has heartbeat health only. Board health also applies native
         // presence and its Unknown grace, so a quiet but confirmed agent is never recovered.
-        let sessions: BTreeMap<_, _> = self
-            .board()?
+        let sessions: BTreeMap<_, _> = board
             .sessions
             .into_iter()
             .map(|s| {
@@ -102,9 +127,14 @@ FROM message:[$slug, NONE]..[$slug, ..] WHERE kind IN ['msg', 'verdict']));",
                 .filter(|r| matches!(r.role.as_str(), "executor" | "reviewer"))
                 .map(|r| (r.handle.clone(), r.role.clone()))
                 .collect();
-            for launch in launches.iter().filter(|s| s.slug == task.slug) {
-                if !task.roles.iter().any(|r| r.role == launch.role) {
-                    holders.insert((launch.handle.clone(), launch.role.clone()));
+            for launch in &launches {
+                if let Some(role) = recorded_role(launch, task, &by_slug)
+                    && (!task.roles.iter().any(|r| r.role == role)
+                        || thread
+                            .iter()
+                            .any(|post| post.recipient.as_deref() == Some(launch.handle.as_str())))
+                {
+                    holders.insert((launch.handle.clone(), role.into()));
                 }
             }
             for to in thread.iter().filter_map(|m| m.recipient.as_ref()) {
@@ -114,13 +144,23 @@ FROM message:[$slug, NONE]..[$slug, ..] WHERE kind IN ['msg', 'verdict']));",
             }
             let mut seen = BTreeSet::new();
             for (handle, role) in holders {
+                let alias = if task
+                    .roles
+                    .iter()
+                    .any(|r| r.role == role && r.handle == handle)
+                    || !task.roles.iter().any(|r| r.role == role)
+                {
+                    role.as_str()
+                } else {
+                    ""
+                };
                 let last_reply = thread
                     .iter()
                     .filter(|post| post.sender == handle)
                     .max_by_key(|post| post.id)
                     .cloned();
                 for post in &thread {
-                    if unanswered_post(post, last_reply.as_slice(), &handle, &role)
+                    if unanswered_post(post, last_reply.as_slice(), &handle, alias)
                         && seen.insert((handle.clone(), post.id))
                     {
                         pending.push(Pending {
@@ -130,7 +170,25 @@ FROM message:[$slug, NONE]..[$slug, ..] WHERE kind IN ['msg', 'verdict']));",
                             post: post.clone(),
                             launch: launches
                                 .iter()
-                                .find(|s| s.slug == task.slug && s.handle == handle)
+                                .rev()
+                                .find(|s| {
+                                    s.handle == handle && recorded_role(s, task, &by_slug).is_some()
+                                })
+                                .or_else(|| {
+                                    // A review instruction can name a target other than its parent.
+                                    if task
+                                        .roles
+                                        .iter()
+                                        .any(|r| r.role == "reviewer" && r.handle == handle)
+                                    {
+                                        launches
+                                            .iter()
+                                            .rev()
+                                            .find(|s| s.handle == handle && s.role == "reviewer")
+                                    } else {
+                                        None
+                                    }
+                                })
                                 .cloned(),
                             health: sessions.get(&handle).map_or(Health::Left, |s| s.0),
                             seen: sessions.get(&handle).map_or(0.0, |s| s.1),
@@ -156,7 +214,8 @@ LET $status = type::record('task', $slug).status;
 IF ($role = 'executor' AND $status NOT IN ['in_progress', 'blocked', 'review'])
     OR ($role = 'reviewer' AND $status != 'review') { RETURN false; };
 LET $holders = (SELECT VALUE handle FROM role WHERE slug = $slug AND role = $role);
-IF array::len($holders) > 0 AND $handle NOT IN $holders { RETURN false; };
+IF array::len($holders) > 0 AND $handle NOT IN $holders
+    AND type::record('message', [$slug, $post]).recipient != $handle { RETURN false; };
 CREATE $key CONTENT { slug: $slug, handle: $handle, post: $post } RETURN NONE;
 RETURN true;",
             json!({"slug": pending.slug, "handle": pending.handle, "post": pending.post.id, "seen":pending.seen, "role":pending.role}),

@@ -53,7 +53,7 @@ pub fn restore_unanswered(
             store,
             herdr,
             machine,
-            &pending.slug,
+            &launch.slug,
             Some(&pending.handle),
             None,
         ) {

@@ -37,12 +37,14 @@ pub fn restore(
             continue;
         }
         if s.closed.is_none() {
-            let task = store.get(slug)?;
-            if !store
-                .pending_posts(&[task])?
-                .iter()
-                .any(|p| p.handle == s.handle && p.overdue(store.now()))
-                || recover::present(s, &herdr.all_agents()?)
+            let tasks = store.tasks(None)?;
+            if !store.pending_posts(&tasks)?.iter().any(|p| {
+                p.handle == s.handle
+                    && p.overdue(store.now())
+                    && p.launch
+                        .as_ref()
+                        .is_some_and(|launch| launch.slug == s.slug)
+            }) || recover::present(s, &herdr.all_agents()?)
             {
                 continue;
             }

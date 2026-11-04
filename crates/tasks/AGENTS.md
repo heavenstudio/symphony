@@ -93,6 +93,8 @@ without a later message or verdict by that handle on the same thread. Reading an
 answer it. The periodic reap command reserves one durable recovery attempt per handle/post and
 resumes the recorded conversation only after the pane inventory confirms its absence; it never
 starts a fresh conversation. An unsuccessful attempt remains flagged for manual action.
+A reviewer launched on an instruction child resumes that child's recorded conversation when the
+unanswered post is on its parent; a departed reviewer explicitly named by handle still receives it.
 An unanswered post keeps a pane immediately, including through descendant sessions. A reviewer
 whose changes verdict returned the task to `in_progress` keeps its pane for re-review too.
 A post or changes verdict to `@executor`, or a post to the executor by handle, that no

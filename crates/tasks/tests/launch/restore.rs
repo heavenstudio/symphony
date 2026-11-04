@@ -8,6 +8,9 @@ use tasks::launch::{Ask, PROMPT_ENTERS, PROMPT_WAIT, Started, restore, restore_u
 use tasks::rows::TaskSessionRow;
 use tasks::{Error, NewLaunch};
 
+#[path = "restore_review.rs"]
+mod review_instructions;
+
 /// The fake discovers the id requested by Claude; Codex ids are supplied in its resume case.
 fn launched(w: &World) -> Started {
     w.try_launch(&Ask {
