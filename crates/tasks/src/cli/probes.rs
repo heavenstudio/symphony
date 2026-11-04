@@ -223,8 +223,9 @@ pub fn herdr_panes(env: &Env) -> Answer<Vec<Pane>> {
     }
 }
 
-/// `command`'s output, if it ends within `limit`; else it is killed. Read through [`sys::pipe`]s,
-/// so a child another thread spawns meanwhile cannot hold a finished answer past `limit`.
+/// `command`'s output, if it ends within `limit`; else it is killed. Read through the real pipes
+/// [`sys::spawn_output`] makes, so a child another thread spawns meanwhile cannot hold a finished
+/// answer past `limit`.
 pub(crate) fn within(command: &mut Command, limit: Duration) -> Answer<Output> {
     let child = sys::spawn_output(command).map_err(|e| e.to_string())?;
     let pid = i64::from(child.id());
