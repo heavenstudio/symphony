@@ -525,6 +525,46 @@ fn uploads_are_the_symphonys_store_never_a_collision_nor_documents() {
 }
 
 #[test]
+fn an_entrypoint_folder_linked_into_the_uploads_is_refused_and_one_above_them_never_enters() {
+    let tree = Tree::new();
+    tree.write("symphony.toml", SPEC);
+    tree.write("artifacts/uploads/0123abcd.md", "# Upload\n");
+    tree.write("artifacts/index.md", "# Spec\n");
+    std::os::unix::fs::symlink(tree.path("artifacts/uploads"), tree.path("spec")).unwrap();
+    let refusal = "symphony.toml: [[entrypoints]] / folder spec lies in artifacts/uploads once its \
+                   links are resolved: the Symphony's uploads, which no entrypoint shows";
+    assert_eq!(Project::load(&tree.root).unwrap_err(), refusal);
+    assert_eq!(project_problems(&tree.root), [refusal]);
+    assert_eq!(*Project::of(&tree.root), Project::plain(&tree.root));
+    assert!(docview::target(&tree.root, "0123abcd.md", true).is_err());
+    // through a folder above the uploads, the walk never enters them, nor does anything open there
+    std::fs::remove_file(tree.path("spec")).unwrap();
+    std::os::unix::fs::symlink(tree.path("artifacts"), tree.path("spec")).unwrap();
+    assert!(Project::load(&tree.root).is_ok());
+    assert_eq!(Project::of(&tree.root).entrypoints[0].folder, "spec");
+    let render = Render::new(&tree.root);
+    assert_eq!(
+        docview::folder(&render, "", "")
+            .unwrap()
+            .entries
+            .iter()
+            .map(|e| e.path.as_str())
+            .collect::<Vec<_>>(),
+        ["index.md"]
+    );
+    assert_eq!(
+        scan(&tree.root)
+            .unwrap()
+            .iter()
+            .map(|doc| doc.path.as_str())
+            .collect::<Vec<_>>(),
+        ["index.md"]
+    );
+    assert!(docview::folder(&render, "uploads", "").is_err());
+    assert!(docview::target(&tree.root, "uploads/0123abcd.md", true).is_err());
+}
+
+#[test]
 fn a_dotted_or_markdown_named_entrypoint_and_folder_are_folder_pages_on_both_sides() {
     for (url, folder) in [("v1.0", "guide.v2"), ("guide.md", "old.md")] {
         let tree = Tree::new();
