@@ -499,6 +499,10 @@ fn star_foundrys_manifest_carries_the_games_values() {
         project.board.disposable,
         ["artifacts/*", ".godot/*", ".venv/*", ".target/*"]
     );
+    assert_eq!(
+        project.board.on_review,
+        ["tools/rs-bin.sh", "sf-land", "review"]
+    );
 }
 
 #[test]

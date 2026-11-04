@@ -25,6 +25,8 @@ tokenizers.workspace = true
 tract-onnx.workspace = true
 tract-linalg.workspace = true
 sha2.workspace = true
+# The one key the board reads from the project file, `[board] on_review` (src/on_review.rs).
+toml.workspace = true
 
 [dev-dependencies]
 libc = "0.2"

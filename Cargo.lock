@@ -5368,6 +5368,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "tokenizers",
+ "toml",
  "tract-linalg",
  "tract-onnx",
 ]

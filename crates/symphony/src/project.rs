@@ -100,6 +100,9 @@ pub struct Board {
     pub export: Option<String>,
     /// What a finished worktree may hold and still be removed.
     pub disposable: Vec<String>,
+    /// The command the board starts, detached from the main checkout, when a task moves to review,
+    /// given the task's slug, its branch and the branch's tip; empty starts none.
+    pub on_review: Vec<String>,
 }
 
 /// The file as written: every table and key optional, nothing else allowed.
@@ -186,6 +189,7 @@ struct FileVerdicts {
 struct FileBoard {
     export: Option<String>,
     disposable: Vec<String>,
+    on_review: Vec<String>,
 }
 
 impl Project {
@@ -406,6 +410,7 @@ impl Project {
                 .map(|path| inside("[board] export", path))
                 .transpose()?,
             disposable: file.board.disposable,
+            on_review: file.board.on_review,
         };
         let project = Project {
             name,

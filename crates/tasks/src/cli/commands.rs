@@ -7,6 +7,7 @@ use super::attach::{Watch, watch};
 use super::text::{event, export_markdown, message_line, roles_text, tree_order};
 use super::{Clock, Env, probes, shape};
 use crate::health::{FINISHED, RESERVE_SECONDS};
+use crate::on_review;
 use crate::pyjson::{self, Py};
 use crate::sweep::{self, git::Listed, trigger};
 use crate::sys::{self, Command};
@@ -321,6 +322,9 @@ pub fn run(store: &Store, c: &mut Context) -> Result<(), Stop> {
             let t = store.move_to(&slug, &c.arg("status"), &c.actor()?)?;
             c.say(&format!("{slug} is {}", t.status));
             after_finish(store, c, &t);
+            if t.status == "review" {
+                on_review::trigger(c.env, &c.env.cwd, &t.slug);
+            }
         }
         "verdict" => {
             let slug = c.arg("slug");

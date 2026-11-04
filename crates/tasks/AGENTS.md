@@ -211,6 +211,14 @@ tests never sweep this repository; the sweep's own tests (`tests/sweep/`) build
 real repositories in a temporary folder, and spawn the binary `TASKS_BIN` names
 for the triggers, which stands in for the main checkout's build only on a
 board `TASKS_SERVER` names.
+`on_review.rs` owns the command a task moving to review starts: `[board]
+on_review` in the main checkout's `symphony.toml`, the one key the board reads
+there (the default is none), run detached from the main checkout with the
+task's slug, its branch (the slug, or what follows a `review/` or `review-N/`
+prefix) and that branch's tip appended, its output appended to
+`sf-tasks/on-review.log`; a slug naming no branch starts nothing and the log
+says so. A board `TASKS_SERVER` names starts none unless `TASKS_ON_REVIEW=on`,
+and `off` starts none anywhere (`tests/sweep/on_review.rs`).
 
 Its store tests start one in-memory server per test binary and give each test a
 database of its own. The server is the pinned SurrealDB `tools/surreal.sh`

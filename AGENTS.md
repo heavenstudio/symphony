@@ -10,7 +10,9 @@ The containing project's [guide](../AGENTS.md) owns landing and shared-service r
 `Cargo.toml` and `Cargo.lock` belong to this workspace. Members inherit its package
 settings and dependency versions. The containing project's thin host and board-only
 packages consume these libraries through path dependencies. A project's settings are
-its `symphony.toml` (generic defaults in `crates/symphony/src/project.rs`), and its
+its `symphony.toml` (generic defaults in `crates/symphony/src/project.rs`; the
+board reads its own one key, `[board] on_review`, the command a task moving to
+review starts detached from the main checkout, in `crates/tasks/src/on_review.rs`), and its
 game code is a plugin: the traits and block vocabulary in `crates/symphony-plugin`,
 Star Foundry's implementation in `crates/symphony/src/star_foundry/`, selected by
 the manifest's `[plugins] crates`. A plugin renders to generic blocks, never HTML,
