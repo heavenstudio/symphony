@@ -88,6 +88,80 @@ fn recovery_resumes_once_per_post_for_closed_or_missing_open_conversations() {
 }
 
 #[test]
+fn a_departed_executor_replacement_resumes_without_reviving_its_predecessor() {
+    for before_departure in [false, true] {
+        let w = World::new();
+        let a = launched(&w).row;
+        w.store().claim(&a.slug, &a.handle).unwrap();
+        w.store()
+            .release(&a.slug, &a.handle, Some("executor"))
+            .unwrap();
+        close_pane(&w, &a);
+        let b = w
+            .try_launch(&Ask {
+                kind: Some("claude".into()),
+                worktree: Some(a.worktree.clone().into()),
+                ..w.ask(&a.slug)
+            })
+            .unwrap()
+            .row;
+        w.store().claim(&b.slug, &b.handle).unwrap();
+        w.store().move_to(&b.slug, "review", &b.handle).unwrap();
+        assert_eq!(a.worktree, b.worktree);
+        assert_ne!(a.handle, b.handle);
+        if !before_departure {
+            w.store().leave(&b.handle).unwrap();
+        }
+        let post = w
+            .store()
+            .say(&b.slug, "owner", "finish the fix", Some("@executor"))
+            .unwrap();
+        if before_departure {
+            w.store().leave(&b.handle).unwrap();
+        }
+        close_pane(&w, &b);
+        assert!(
+            w.store()
+                .get(&b.slug)
+                .unwrap()
+                .holders("executor")
+                .is_empty()
+        );
+        assert_eq!(w.store().task_sessions(&b.slug).unwrap().len(), 2);
+        w.f.advance(31.0 * 60.0);
+        let digest = tasks::cli::pull::digest(w.store(), &[], None, w.f.now(), &[]).unwrap();
+        let lines = digest.lines().join("\n");
+        assert_eq!(digest.count("unanswered"), 1, "{lines}");
+        assert!(
+            lines.contains(&format!("just tasks restore {} {}", b.slug, b.handle)),
+            "{lines}"
+        );
+        assert!(!lines.contains(&a.handle), "{lines}");
+        let mut warnings = Vec::new();
+        let recovered =
+            restore_unanswered(w.store(), &w.herdr(), &w.machine(), &mut warnings).unwrap();
+        assert_eq!(recovered.len(), 1, "{recovered:?} {warnings:?}");
+        assert!(recovered[0].contains(&b.handle));
+        assert!(recovered[0].contains(&format!("post #{}", post.id)));
+        assert_eq!(w.calls_of(&["agent", "start"]).len(), 3);
+        let sessions = w.store().task_sessions(&b.slug).unwrap();
+        let old = sessions.iter().find(|s| s.handle == a.handle).unwrap();
+        let resumed = sessions.iter().find(|s| s.handle == b.handle).unwrap();
+        assert!(old.closed.is_some());
+        assert!(resumed.closed.is_none());
+        assert_eq!(resumed.claude_session, b.claude_session);
+        close_pane(&w, resumed);
+        assert!(
+            restore_unanswered(&w.f.other(), &w.herdr(), &w.machine(), &mut warnings)
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(w.calls_of(&["agent", "start"]).len(), 3);
+        assert!(warnings.is_empty(), "{warnings:?}");
+    }
+}
+
+#[test]
 fn recovery_leaves_answered_present_and_unrecorded_conversations_alone() {
     for case in [
         "answered",
