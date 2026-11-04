@@ -34,7 +34,7 @@ use std::sync::OnceLock;
 use std::time::Duration;
 
 use chrome::Chrome;
-use serde_json::json;
+use serde_json::{Value, json};
 use site::Site;
 
 const FIRST_VISIT_BYTES: f64 = 250_000.0;
@@ -1080,6 +1080,43 @@ fn a_stale_notice_leaves_header_and_fixed_controls_uncovered() {
             "at {width}px, the stale notice must leave visible header links and fixed controls uncovered"
         );
     }
+}
+
+// 760px is the phone rule's bound, where main's own end padding changes and the reserve's
+// lift changes with it. The page keeps the reserve's tallest box, so the lift must not be in it.
+#[test]
+fn the_notice_reserve_keeps_one_page_end_across_the_phone_breakpoint() {
+    let site = site();
+    let Some(mut chrome) = chrome() else { return };
+    chrome.open(&site.url("/tasks"));
+    assert!(chrome.wait_for(
+        "document.querySelector('.kanban') !== null && document.querySelector('.page-notice-reserve') !== null",
+        SHOWN
+    ));
+    let ends: Vec<Value> = [761, 760, 761]
+        .into_iter()
+        .map(|width| {
+            chrome.call(
+                "Emulation.setDeviceMetricsOverride",
+                json!({"width":width,"height":900,"deviceScaleFactor":1,"mobile":false}),
+            );
+            chrome.eval(
+                "new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))",
+            );
+            chrome.eval(r#"(() => {
+                const reserve = document.querySelector('.page-notice-reserve').getBoundingClientRect();
+                return {reserve: reserve.height, end: document.querySelector('main').getBoundingClientRect().bottom - reserve.top};
+            })()"#)
+        })
+        .collect();
+    assert_eq!(
+        ends[0], ends[1],
+        "both sides of 760px keep the same reserve and page end: {ends:?}"
+    );
+    assert_eq!(
+        ends[0], ends[2],
+        "returning to 761px restores the reserve and page end: {ends:?}"
+    );
 }
 
 #[test]

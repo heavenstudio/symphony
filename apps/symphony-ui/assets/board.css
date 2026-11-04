@@ -145,9 +145,10 @@ form input, form textarea, .filters input { font:inherit; font-size:var(--fs-sm)
 /* Matching metrics keep page-end controls above even a wrapped notice at every width. */
 .stale, .feed-notice-space { width:max-content; max-width:calc(100vw - 2 * var(--sp-4)); box-sizing:border-box; margin:0; white-space:normal; }
 .feed-notice-space { display:flex; visibility:hidden; }
-/* The final invisible notice reserves its wrapped height in both feed states, plus the
-   fixed notice's lift past main's own end padding, so page-end content clears it. */
-.page-notice-reserve { padding-bottom:calc(var(--feed-notice-bottom) + var(--sp-4) - var(--page-end)); }
+/* The final invisible notice reserves its wrapped height in both feed states. Its margin
+   adds the fixed notice's lift past main's own end padding, so page-end content clears the
+   notice; the lift stays outside the box whose height the page keeps (live.rs). */
+.page-notice-reserve { margin-bottom:calc(var(--feed-notice-bottom) + var(--sp-4) - var(--page-end)); }
 .stale { position:fixed; bottom:var(--feed-notice-bottom); left:var(--sp-4); z-index:5; background:color-mix(in srgb, var(--c) 12%, var(--background)); }
 .notice-stack { display:grid; gap:var(--sp-2); }
 .notice-stack[hidden] { display:none; }
