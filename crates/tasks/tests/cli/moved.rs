@@ -127,3 +127,29 @@ fn the_copy_reaches_the_board_before_it_has_moved() {
     assert_eq!(code, 2, "the server it needs cannot start");
     assert!(!said.contains("has not moved"), "{said}");
 }
+
+/// The board a move reads is the project's own file in the common dir, else the one `TASKS_DB`
+/// names; a project file naming an empty id is refused, naming that file.
+#[test]
+fn the_board_to_move_is_the_projects_own_or_the_one_tasks_db_names() {
+    use symphony_board::cutover::board_path;
+    let (dir, mut env) = unmoved("path");
+    let board = board_path(&env).unwrap();
+    assert_eq!(board.file_name().unwrap(), "lamp-works-tasks.db");
+    let common = board.parent().unwrap();
+    assert_eq!(
+        common.canonicalize().unwrap(),
+        dir.join(".git").canonicalize().unwrap()
+    );
+    fs::write(dir.join("symphony.toml"), "[project]\nid = \"\"\n").unwrap();
+    assert_eq!(
+        board_path(&env),
+        Err(format!(
+            "{} names no [project] id, so this repository has no SQLite board",
+            common.parent().unwrap().join("symphony.toml").display()
+        ))
+    );
+    env.vars
+        .insert("TASKS_DB".into(), "/elsewhere/board.db".into());
+    assert_eq!(board_path(&env), Ok(PathBuf::from("/elsewhere/board.db")));
+}
