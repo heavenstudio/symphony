@@ -368,7 +368,9 @@ impl Home {
         // Port 0 is the server's to pick: it binds first and says which it got, so nothing else
         // can take a port between a probe and the bind.
         let port = if self.port == 0 {
-            match self.announced(&log, from, pid, &mut child) {
+            match crate::cli::startup("detached server port announcement", || {
+                self.announced(&log, from, pid, &mut child)
+            }) {
                 Some(port) => port,
                 None => {
                     if child.try_wait().ok().flatten().is_none() {
@@ -390,7 +392,9 @@ impl Home {
             pid,
             root: self.root.display().to_string(),
         };
-        if !self.came_up(&running, &mut child) {
+        if !crate::cli::startup("detached server HTTP readiness", || {
+            self.came_up(&running, &mut child)
+        }) {
             if child.try_wait().ok().flatten().is_none() {
                 self.end(running.pid)?;
                 let _ = child.wait();

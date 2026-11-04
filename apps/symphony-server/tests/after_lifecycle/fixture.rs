@@ -179,6 +179,19 @@ fn output(stdout: &Path, stderr: &Path) -> String {
     )
 }
 
+/// Read every owned stream at failure time, including a detached server's separate log.
+fn diagnostic_output(stdout: &Path, stderr: &Path, server_log: Option<&Path>) -> String {
+    let mut text = output(stdout, stderr);
+    if let Some(path) = server_log {
+        let said = fs::read_to_string(path).unwrap_or_else(|error| format!("unavailable: {error}"));
+        text.push_str(&format!(
+            "\ndetached server log {}:\n{said}",
+            path.display()
+        ));
+    }
+    text
+}
+
 /// This polls an observable event, never a presumed startup duration.
 pub fn until<T>(why: &str, event: impl FnMut() -> Option<T>) -> T {
     poll(PATIENCE, || why.into(), event, Instant::elapsed)
@@ -271,6 +284,7 @@ pub struct Process {
     launch: String,
     stdout: PathBuf,
     stderr: PathBuf,
+    server_log: Option<PathBuf>,
     server_pid: Option<i64>,
     descendants: Option<Descendants>,
     // Normal commands use Instant::elapsed; the private clock makes wait-boundary tests deterministic.
@@ -405,6 +419,7 @@ impl Process {
             launch,
             stdout,
             stderr,
+            server_log: None,
             server_pid: None,
             descendants: Some(descendants),
             wait_elapsed: Box::new(Instant::elapsed),
@@ -420,10 +435,16 @@ impl Process {
         let id = child.id();
         let stdout = &self.stdout;
         let stderr = &self.stderr;
+        let server_log = self.server_log.as_deref();
         let launch = &self.launch;
         let status = poll(
             PATIENCE,
-            || format!("child {id} to exit; {launch}: {}", output(stdout, stderr)),
+            || {
+                format!(
+                    "child {id} to exit; {launch}: {}",
+                    diagnostic_output(stdout, stderr, server_log)
+                )
+            },
             || child.try_wait().unwrap(),
             &mut self.wait_elapsed,
         );
@@ -760,6 +781,7 @@ impl Repo {
 
     pub fn run(&self, command: Command) -> Process {
         let mut process = Process::spawn(command, &self.log("process"));
+        process.server_log = Some(self.home.join("server.log"));
         self.descendants
             .lock()
             .unwrap()
@@ -797,6 +819,7 @@ impl Repo {
                 launch,
                 stdout,
                 stderr,
+                server_log: Some(self.home.join("server.log")),
                 server_pid: None,
                 descendants: None,
                 wait_elapsed: Box::new(Instant::elapsed),
@@ -957,6 +980,50 @@ pub fn terminal() -> (File, OwnedFd) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn timeout_diagnostics_distinguish_an_unwritten_server_log_from_an_empty_one() {
+        let scratch = Scratch::new("server-log-diagnostics");
+        let stdout = scratch.path.join("stdout");
+        let stderr = scratch.path.join("stderr");
+        let log = scratch.path.join("server.log");
+        write(&stdout, "starter stdout\n");
+        write(&stderr, "starter stderr\n");
+        let streams = "starter stdout\nstarter stderr\n";
+        assert_eq!(diagnostic_output(&stdout, &stderr, None), streams);
+        let label = format!("\ndetached server log {}:\n", log.display());
+        assert!(
+            diagnostic_output(&stdout, &stderr, Some(&log))
+                .starts_with(&format!("{streams}{label}unavailable: "))
+        );
+        write(&log, "");
+        assert_eq!(
+            diagnostic_output(&stdout, &stderr, Some(&log)),
+            format!("{streams}{label}")
+        );
+    }
+
+    #[test]
+    fn a_traced_start_names_its_detached_server_waits() {
+        let repo = Repo::new("traced-detached-waits");
+        let starter = repo.start(&repo.main, false);
+        let text = starter.output();
+        let mut previous = 0;
+        for stage in [
+            "begin spawn detached server",
+            "end spawn detached server:",
+            "begin detached server port announcement",
+            "end detached server port announcement:",
+            "begin detached server HTTP readiness",
+            "end detached server HTTP readiness:",
+        ] {
+            let position = text
+                .find(stage)
+                .unwrap_or_else(|| panic!("missing {stage}: {text}"));
+            assert!(position >= previous, "startup stages out of order: {text}");
+            previous = position;
+        }
+    }
 
     /// A child std forks keeps every end this process holds until its exec, a sibling case's
     /// readiness pipe or lifetime endpoint among them, and no wait can shorten that.
@@ -1482,12 +1549,15 @@ mod tests {
             ])
             .stdin(Stdio::piped());
         let mut process = Process::spawn(command, &logs);
+        let server_log = scratch.path.join("detached-server.log");
+        process.server_log = Some(server_log.clone());
         let id = process.child.id();
         assert!(process.child.try_wait().unwrap().is_none());
         assert!(process.output().is_empty());
         let stdout = process.stdout.clone();
         let stderr = process.stderr.clone();
         let mut input = process.child.stdin.take().unwrap();
+        let detached = server_log.clone();
         process.wait_elapsed = Box::new(move |_: &Instant| {
             // The clock is read after Process::wait has begun and observed its pending child.
             // Release and observe real child output, then reach the unchanged wait deadline.
@@ -1495,6 +1565,7 @@ mod tests {
             until("late child stdout and stderr", || {
                 (output(&stdout, &stderr) == "late stdout\nlate stderr\n").then_some(())
             });
+            write(&detached, "late detached server progress\n");
             PATIENCE
         });
         // The expected timeout leaves Process owning its child, which is cleaned up below.
@@ -1505,7 +1576,10 @@ mod tests {
         let message = timeout.downcast_ref::<String>().unwrap();
         assert_eq!(
             message,
-            &format!("timed out: child {id} to exit; {launch}: late stdout\nlate stderr\n")
+            &format!(
+                "timed out: child {id} to exit; {launch}: late stdout\nlate stderr\n\ndetached server log {}:\nlate detached server progress\n",
+                server_log.display()
+            )
         );
     }
 }
