@@ -116,6 +116,7 @@ fn answered(status: u16, answer: &[u8], slug: &str, name: &str) -> Result<String
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::sys::Spawning as _;
     use std::collections::BTreeMap;
     use std::io::{BufRead, BufReader, Read};
     use std::net::TcpListener;
@@ -277,7 +278,7 @@ mod tests {
         std::process::Command::new("git")
             .args(["init", "-q"])
             .current_dir(repo)
-            .status()
+            .status_locked()
             .unwrap();
         assert_eq!(port(&env(&[], repo.into())), Ok(DEFAULT_PORT));
         std::fs::create_dir_all(repo.join(".git").join(FOLDER)).unwrap();
