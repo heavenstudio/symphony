@@ -274,17 +274,24 @@ impl ProjectView {
     }
 
     /// Whether `path` (a route, no leading slash) is a document page or a folder page of one of
-    /// the entrypoints: under one, with no extension or a Markdown one, and on no route the
-    /// Symphony or a plugin's page answers, which win.
+    /// the entrypoints: under one, on no route the Symphony or a plugin's page answers (which
+    /// win), and a folder (a trailing slash, or an entrypoint's own route) or a name with no dot
+    /// or a Markdown one. A file of any other type is served as itself.
     pub fn is_document_route(&self, path: &str) -> bool {
+        let page = path.trim_end_matches('/');
         let pages = self.nav.iter().map(|item| item.href.trim_matches('/'));
+        let entrypoints = self.entrypoints();
+        let name = page.rsplit('/').next().unwrap_or(page);
         !SYMPHONY_ROUTES
             .iter()
             .copied()
             .chain(pages)
-            .any(|route| within(route, path))
-            && self.entrypoints().iter().any(|url| within(url, path))
-            && (std::path::Path::new(path).extension().is_none() || path.ends_with(".md"))
+            .any(|route| within(route, page))
+            && entrypoints.iter().any(|url| within(url, page))
+            && (path.ends_with('/')
+                || entrypoints.contains(&page)
+                || !name.contains('.')
+                || name.ends_with(".md"))
     }
 
     /// The URL of the first entrypoint's folder page: `/docs/`, or `/` at the root.

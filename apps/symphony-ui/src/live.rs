@@ -100,7 +100,7 @@ pub fn App() -> Element {
         #[cfg(feature = "page-board")]
         "tasks" => rsx! { crate::board_live::TasksPage { key: "{current.scope}" } },
         #[cfg(feature = "page-docs")]
-        path if crate::project::current().is_document_route(path) => {
+        _ if current.document => {
             rsx! { main { "data-notices": "",
                 if current.path.ends_with(".md") {
                     crate::docs_live::DocumentPage { key: "{current.scope}/{current.path}", path: current.path.clone(), scope: current.scope.clone() }

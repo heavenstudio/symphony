@@ -11,6 +11,9 @@ use web_sys::Event;
 pub struct Route {
     pub path: String,
     pub scope: String,
+    /// Whether it is a document or folder page of an entrypoint
+    /// ([`symphony_api::ProjectView::is_document_route`]).
+    pub document: bool,
 }
 
 impl Route {
@@ -31,24 +34,31 @@ impl Route {
         } else {
             (String::new(), path)
         };
-        let path = path.strip_prefix("doc/").unwrap_or(path);
-        let path = path.strip_suffix('/').unwrap_or(path);
+        let slashed = path.strip_prefix("doc/").unwrap_or(path);
+        let path = slashed.strip_suffix('/').unwrap_or(slashed);
         let project = crate::project::current();
-        let path = match path {
-            "task" => "tasks",
-            path => crate::project::nav_page(&project.nav, path)
-                .map_or(path, |item| item.document.as_str()),
+        let (path, document) = match path {
+            "task" => ("tasks", false),
+            path => match crate::project::nav_page(&project.nav, path) {
+                Some(item) => (
+                    item.document.as_str(),
+                    project.is_document_route(&item.document),
+                ),
+                // a trailing slash names a folder page, whatever its name holds
+                None => (path, project.is_document_route(slashed)),
+            },
         };
         (path.is_empty()
             || path == "tasks"
             || path == "queue"
             || path == "agents"
             || path.starts_with("task/")
-            || project.is_document_route(path))
-        .then(|| Self {
-            path: path.into(),
-            scope,
-        })
+            || document)
+            .then(|| Self {
+                path: path.into(),
+                scope,
+                document,
+            })
     }
     pub fn current() -> Self {
         web_sys::window()

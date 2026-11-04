@@ -5,8 +5,9 @@
 //! `docs/` at `/docs/` with `docs/history` skipped, the register `DECISIONS.md` in the first
 //! entrypoint's folder, `artifacts/`, `main`, the Symphony's own theme, every built-in transport
 //! and no panes. An empty file, or none, is a plain project. An unknown table, key or renderer, a
-//! path outside the project, and an entrypoint or a file of one on a route another answers are
-//! refused by name, so a misspelt setting never passes for its default and no file is hidden.
+//! path outside the project (an entrypoint's folder leading out of it through a link too), and an
+//! entrypoint or a file of one on a route another answers are refused by name, so a misspelt
+//! setting never passes for its default and no file is hidden.
 
 use std::collections::BTreeMap;
 use std::path::{Component, Path, PathBuf};
@@ -200,7 +201,7 @@ impl Project {
     pub fn load(root: &Path) -> Result<Project, String> {
         let project = Self::read(root)?;
         project
-            .check_files(root)
+            .check_files(root, &mut Vec::new())
             .map_err(|e| format!("{FILE}: {e}"))?;
         Ok(project)
     }
@@ -224,9 +225,11 @@ impl Project {
     }
 
     /// The project at `root` as [`Project::load`] reads it, cached until its file changes, or an
-    /// entry appears or goes where a file of an entrypoint would meet another route. A project that
-    /// does not load leaves the plain project in its place and is reported once per version on
-    /// stderr; `symphony-status --lint` refuses it ([`crate::lint::project_problems`]).
+    /// entry appears, goes or is replaced in a folder whose entries the load looked at: an
+    /// entrypoint's folder, or one where a file of an entrypoint would meet another route, or any
+    /// folder under that. A project that does not load leaves the plain project in its place and
+    /// is reported once per version on stderr; `symphony-status --lint` refuses it
+    /// ([`crate::lint::project_problems`]).
     pub fn of(root: &Path) -> Arc<Project> {
         type Seen = BTreeMap<PathBuf, (Vec<(PathBuf, Stamp)>, Arc<Project>)>;
         static SEEN: LazyLock<Mutex<Seen>> = LazyLock::new(|| Mutex::new(BTreeMap::new()));
@@ -244,9 +247,12 @@ impl Project {
         };
         let mut stamps = vec![stamped(root.join(FILE))];
         let loaded = Self::read(root).and_then(|project| {
-            stamps.extend(project.meeting_paths().map(|path| stamped(root.join(path))));
-            project
-                .check_files(root)
+            let mut read = Vec::new();
+            let checked = project.check_files(root, &mut read);
+            read.sort();
+            read.dedup();
+            stamps.extend(read.into_iter().map(|path| stamped(root.join(path))));
+            checked
                 .map(|()| project)
                 .map_err(|e| format!("{FILE}: {e}"))
         });
@@ -446,13 +452,18 @@ impl Project {
 
     /// Each place a route another answers falls inside an entrypoint's URL: the entrypoint, the
     /// path inside its folder a file there would be served from, and who answers instead. Another
-    /// entrypoint's own folder is not a meeting: that entrypoint serves it.
+    /// entrypoint's own folder is not a meeting: that entrypoint serves it. Nor is the uploads
+    /// folder on the uploads route: the Symphony serves the very same files there.
     fn meetings(&self) -> Vec<(&Entrypoint, String, String)> {
         let mut found = Vec::new();
         let reserved = self.reserved();
+        let uploads = self.artifact(crate::uploads::DIR);
+        let uploads_route = crate::uploads::ROUTE.trim_matches('/');
         for entry in &self.entrypoints {
             for route in &reserved {
-                if let Some(inside) = below(&entry.url, route).filter(|inside| !inside.is_empty()) {
+                if let Some(inside) = below(&entry.url, route).filter(|inside| {
+                    !inside.is_empty() && (route != uploads_route || entry.file(inside) != uploads)
+                }) {
                     found.push((
                         entry,
                         inside.to_string(),
@@ -478,18 +489,25 @@ impl Project {
         found
     }
 
-    /// The project-relative folders whose entries [`Project::check_files`] reads.
-    fn meeting_paths(&self) -> impl Iterator<Item = String> + '_ {
-        self.meetings()
-            .into_iter()
-            .flat_map(|(entry, inside, _)| [entry.folder.clone(), entry.file(&inside)])
-    }
-
-    /// A file an entrypoint's patterns include where a route another answers falls, named with
-    /// that route: the other's pages win, so the file would never be served.
-    fn check_files(&self, root: &Path) -> Result<(), String> {
+    /// The first problem with what the entrypoints read in the checkout at `root`: a folder that
+    /// lies outside the project once its links are resolved, or a file an entrypoint's patterns
+    /// include where a route another answers falls, named with that route (the other's pages win,
+    /// so the file would never be served). `read` gets the project-relative path of every folder
+    /// whose entries it looked at.
+    fn check_files(&self, root: &Path, read: &mut Vec<String>) -> Result<(), String> {
+        for entry in &self.entrypoints {
+            read.push(entry.folder.clone());
+            if root.join(&entry.folder).exists() && bounds(root, entry).is_none() {
+                return Err(format!(
+                    "[[entrypoints]] {} folder {} lies outside the project once its links are \
+                     resolved",
+                    entry.label(),
+                    folder_label(&entry.folder)
+                ));
+            }
+        }
         for (entry, inside, who) in self.meetings() {
-            if let Some(found) = first_included(root, entry, &inside) {
+            if let Some(found) = self.first_included(root, entry, &inside, read) {
                 return Err(format!(
                     "[[entrypoints]] {} would serve {} at /{}, where {who}; move or exclude it",
                     entry.label(),
@@ -501,12 +519,19 @@ impl Project {
         Ok(())
     }
 
-    /// The entrypoint with the longest URL above `route`, and the route's path inside it.
+    /// The entrypoint with the longest URL above `route`, and the route's path inside it; none on
+    /// a route the Symphony or a plugin answers, whose pages win.
     fn by_url<'a>(&self, route: &'a str) -> Option<(&Entrypoint, &'a str)> {
         self.entrypoints
             .iter()
             .filter_map(|entry| entry.inside_url(route).map(|inside| (entry, inside)))
             .max_by_key(|(entry, _)| entry.url.len())
+            .filter(|_| {
+                !self
+                    .reserved()
+                    .iter()
+                    .any(|reserved| below(reserved, route).is_some())
+            })
     }
 
     /// The entrypoint serving `route` and the route's path inside it: the one with the longest URL
@@ -605,16 +630,31 @@ impl Project {
     /// Calls `each` with every file under the path `inside` `entry`'s folder that the entrypoint
     /// holds, by its path inside the folder, as [`Project::shown`] passes folders over: a folder's
     /// own files by name, then each folder in it by name, as Python's `os.walk` gives them.
+    /// Once links are resolved, no folder outside the entrypoint's and no file outside the project
+    /// is listed.
     pub fn walk(&self, root: &Path, entry: &Entrypoint, inside: &str, each: &mut dyn FnMut(&str)) {
+        if let Some(bounds) = bounds(root, entry) {
+            self.walk_in(root, &bounds, entry, inside, each);
+        }
+    }
+
+    fn walk_in(
+        &self,
+        root: &Path,
+        bounds: &Bounds,
+        entry: &Entrypoint,
+        inside: &str,
+        each: &mut dyn FnMut(&str),
+    ) {
         let (folders, files): (Vec<_>, Vec<_>) = self
-            .children(root, entry, inside)
+            .children(root, bounds, entry, inside)
             .into_iter()
             .partition(|(_, folder)| *folder);
         for (name, _) in files {
             each(&join(inside, &name));
         }
         for (name, _) in folders {
-            self.walk(root, entry, &join(inside, &name), each);
+            self.walk_in(root, bounds, entry, &join(inside, &name), each);
         }
     }
 
@@ -627,8 +667,11 @@ impl Project {
         inside: &str,
         each: &mut dyn FnMut(&str),
     ) {
+        let Some(bounds) = bounds(root, entry) else {
+            return;
+        };
         for (name, _) in self
-            .children(root, entry, inside)
+            .children(root, &bounds, entry, inside)
             .into_iter()
             .filter(|(_, folder)| *folder)
         {
@@ -636,30 +679,68 @@ impl Project {
         }
     }
 
-    /// The names in the path `inside` `entry`'s folder, each with whether it is a folder, in name
-    /// order: no name starting with a dot, no link to a folder, no folder an exclude pattern
-    /// matches or another entrypoint reads.
-    fn children(&self, root: &Path, entry: &Entrypoint, inside: &str) -> Vec<(String, bool)> {
-        let Ok(entries) = std::fs::read_dir(root.join(entry.file(inside))) else {
+    /// Calls `each` with the name of every file directly in the path `inside` `entry`'s folder
+    /// that [`Project::walk`] lists, in name order.
+    pub fn walk_files(
+        &self,
+        root: &Path,
+        entry: &Entrypoint,
+        inside: &str,
+        each: &mut dyn FnMut(&str),
+    ) {
+        let Some(bounds) = bounds(root, entry) else {
+            return;
+        };
+        for (name, _) in self
+            .children(root, &bounds, entry, inside)
+            .into_iter()
+            .filter(|(_, folder)| !*folder)
+        {
+            each(&name);
+        }
+    }
+
+    /// The files and folders in the path `inside` `entry`'s folder, each with whether it is a
+    /// folder, in name order: no name starting with a dot, no link to a folder or out of the
+    /// project, no folder an exclude pattern matches or another entrypoint reads. A folder outside
+    /// the entrypoint's, once links are resolved, lists nothing.
+    fn children(
+        &self,
+        root: &Path,
+        bounds: &Bounds,
+        entry: &Entrypoint,
+        inside: &str,
+    ) -> Vec<(String, bool)> {
+        let folder = root.join(entry.file(inside));
+        if !folder
+            .canonicalize()
+            .is_ok_and(|path| path.starts_with(&bounds.folder))
+        {
+            return Vec::new();
+        }
+        let Ok(entries) = std::fs::read_dir(folder) else {
             return Vec::new();
         };
         let mut names: Vec<(String, bool)> = entries
             .flatten()
-            .filter(|e| !(e.path().is_dir() && e.file_type().is_ok_and(|kind| kind.is_symlink())))
-            .map(|e| {
-                (
-                    e.file_name().to_string_lossy().into_owned(),
-                    e.path().is_dir(),
-                )
+            .filter_map(|e| {
+                let path = e.path();
+                let folder = path.is_dir();
+                let listed = if e.file_type().is_ok_and(|kind| kind.is_symlink()) {
+                    path.is_file()
+                        && path
+                            .canonicalize()
+                            .is_ok_and(|target| target.starts_with(&bounds.project))
+                } else {
+                    folder || path.is_file()
+                };
+                listed.then(|| (e.file_name().to_string_lossy().into_owned(), folder))
             })
             .filter(|(name, folder)| {
                 let path = join(inside, name);
                 !name.starts_with('.')
                     && (!*folder
-                        || !entry
-                            .exclude
-                            .iter()
-                            .any(|pattern| crate::entrypoint::matches(pattern, &path))
+                        || !entry.excluded(&path)
                             && self
                                 .holding(&entry.file(&path))
                                 .is_some_and(|(holder, _)| std::ptr::eq(holder, entry)))
@@ -667,6 +748,59 @@ impl Project {
             .collect();
         names.sort();
         names
+    }
+
+    /// The first file at or under the path `inside` `entry`'s folder that the entrypoint's walk
+    /// reaches and its patterns include, by its path in the folder. `read` gets every folder whose
+    /// entries it looked at, from the entrypoint's folder down.
+    fn first_included(
+        &self,
+        root: &Path,
+        entry: &Entrypoint,
+        inside: &str,
+        read: &mut Vec<String>,
+    ) -> Option<String> {
+        let bounds = bounds(root, entry)?;
+        // reach `inside` name by name, as the walk from the entrypoint's folder would
+        let mut at = String::new();
+        let mut folder = true;
+        for name in inside.split('/') {
+            read.push(entry.file(&at));
+            (_, folder) = self
+                .children(root, &bounds, entry, &at)
+                .into_iter()
+                .find(|(listed, _)| listed == name)?;
+            at = join(&at, name);
+        }
+        if !folder {
+            return entry.includes(inside).then(|| inside.to_string());
+        }
+        self.first_in(root, &bounds, entry, inside, read)
+    }
+
+    /// [`Project::first_included`] under the folder `inside` the walk reached.
+    fn first_in(
+        &self,
+        root: &Path,
+        bounds: &Bounds,
+        entry: &Entrypoint,
+        inside: &str,
+        read: &mut Vec<String>,
+    ) -> Option<String> {
+        read.push(entry.file(inside));
+        let (folders, files): (Vec<_>, Vec<_>) = self
+            .children(root, bounds, entry, inside)
+            .into_iter()
+            .partition(|(_, folder)| *folder);
+        files
+            .into_iter()
+            .map(|(name, _)| join(inside, &name))
+            .find(|file| entry.includes(file))
+            .or_else(|| {
+                folders.into_iter().find_map(|(name, _)| {
+                    self.first_in(root, bounds, entry, &join(inside, &name), read)
+                })
+            })
     }
 
     /// `rel` under the project's artifacts folder.
@@ -783,23 +917,21 @@ fn folder_label(folder: &str) -> &str {
     if folder.is_empty() { "." } else { folder }
 }
 
-/// The first file at or under the path `inside` `entry`'s folder that its patterns include, by
-/// its path in the folder; names starting with a dot are passed over.
-fn first_included(root: &Path, entry: &Entrypoint, inside: &str) -> Option<String> {
-    let path = root.join(entry.file(inside));
-    if path.is_file() {
-        return entry.includes(inside).then(|| inside.to_string());
-    }
-    let mut names: Vec<String> = std::fs::read_dir(&path)
-        .ok()?
-        .flatten()
-        .map(|e| e.file_name().to_string_lossy().into_owned())
-        .filter(|name| !name.starts_with('.'))
-        .collect();
-    names.sort();
-    names
-        .into_iter()
-        .find_map(|name| first_included(root, entry, &join(inside, &name)))
+/// What a walk of an entrypoint stays in, links resolved: the checkout, which a linked file must
+/// lie in, and the entrypoint's folder in it, which every folder listed lies in.
+struct Bounds {
+    project: PathBuf,
+    folder: PathBuf,
+}
+
+/// The bounds of `entry` in the checkout at `root`; `None` when its folder is missing or leads out
+/// of the checkout.
+fn bounds(root: &Path, entry: &Entrypoint) -> Option<Bounds> {
+    let project = root.canonicalize().ok()?;
+    let folder = root.join(&entry.folder).canonicalize().ok()?;
+    folder
+        .starts_with(&project)
+        .then_some(Bounds { project, folder })
 }
 
 /// `path` when it is relative and names something inside the project, spelled as the repository
@@ -839,16 +971,17 @@ pub fn slug(name: &str) -> String {
     out.trim_end_matches('-').to_string()
 }
 
-/// A file's length and modification time, or nothing when it is absent.
+/// A path's length and modification time, its own and then what it leads to (which differ for a
+/// link), each nothing when it is absent.
 #[derive(Clone, Copy, PartialEq, Eq)]
-struct Stamp(Option<(u64, SystemTime)>);
+struct Stamp([Option<(u64, SystemTime)>; 2]);
 
 impl Stamp {
     fn of(path: &Path) -> Self {
-        Self(
-            std::fs::metadata(path)
-                .ok()
-                .map(|m| (m.len(), m.modified().unwrap_or(SystemTime::UNIX_EPOCH))),
-        )
+        let held = |m: std::fs::Metadata| (m.len(), m.modified().unwrap_or(SystemTime::UNIX_EPOCH));
+        Self([
+            std::fs::symlink_metadata(path).ok().map(held),
+            std::fs::metadata(path).ok().map(held),
+        ])
     }
 }

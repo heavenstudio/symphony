@@ -217,11 +217,26 @@ fn changed(root: &Path) -> Option<Vec<String>> {
     Some(names)
 }
 
-pub fn regenerates(root: &Path, branch: &str, generators: &[Generator]) -> bool {
-    regenerates_inner(root, branch, generators).unwrap_or(false)
+/// Whether `branch` is a verdict commit of the checkout at `root` whose every change but
+/// `project`'s documents is what `generators` write from those documents: its record is in
+/// `project`'s record folder, and running the generators on the default branch with its documents
+/// makes exactly its other changes. `project` (the lander's is main's committed one) alone says
+/// which changes are documents, never the checkout's own `symphony.toml`.
+pub fn regenerates(
+    root: &Path,
+    branch: &str,
+    project: &crate::project::Project,
+    generators: &[Generator],
+) -> bool {
+    regenerates_inner(root, branch, project, generators).unwrap_or(false)
 }
 
-fn regenerates_inner(root: &Path, branch: &str, generators: &[Generator]) -> Option<bool> {
+fn regenerates_inner(
+    root: &Path,
+    branch: &str,
+    project: &crate::project::Project,
+    generators: &[Generator],
+) -> Option<bool> {
     let tip = text(
         root,
         &[
@@ -236,7 +251,6 @@ fn regenerates_inner(root: &Path, branch: &str, generators: &[Generator]) -> Opt
         root,
         &["rev-parse", "--path-format=absolute", "--git-common-dir"],
     )?;
-    let project = crate::project::Project::of(root);
     let records = project.record_folder(root, Path::new(common.trim()))?;
     if !records.join(tip).exists() {
         return Some(false);
@@ -259,7 +273,7 @@ fn regenerates_inner(root: &Path, branch: &str, generators: &[Generator]) -> Opt
         .map(|n| String::from_utf8_lossy(n).to_string())
         .collect();
     let (docs, mut outputs): (Vec<_>, Vec<_>) =
-        names.into_iter().partition(|name| is_doc(&project, name));
+        names.into_iter().partition(|name| is_doc(project, name));
     if outputs.is_empty()
         || outputs
             .iter()

@@ -89,13 +89,28 @@ impl Entrypoint {
     }
 
     /// Whether the patterns include the path `inside` the folder, whatever its type. A name
-    /// starting with a dot, and an empty one, are never included.
+    /// starting with a dot, an empty one and anything [`Entrypoint::excluded`] are never included.
     pub fn includes(&self, inside: &str) -> bool {
         !inside
             .split('/')
             .any(|name| name.is_empty() || name.starts_with('.'))
             && self.include.iter().any(|pattern| matches(pattern, inside))
-            && !self.exclude.iter().any(|pattern| matches(pattern, inside))
+            && !self.excluded(inside)
+    }
+
+    /// Whether an exclude pattern matches the path `inside` the folder or a folder above it: an
+    /// excluded folder takes everything in it.
+    pub fn excluded(&self, inside: &str) -> bool {
+        let mut path = inside;
+        loop {
+            if self.exclude.iter().any(|pattern| matches(pattern, path)) {
+                return true;
+            }
+            match path.rsplit_once('/') {
+                Some((parent, _)) => path = parent,
+                None => return false,
+            }
+        }
     }
 
     /// The renderer that shows the file `inside` the folder, if the patterns include it and one of
@@ -279,6 +294,24 @@ mod tests {
         assert_eq!(entry.renderer("index.md"), Some(MARKDOWN));
         assert_eq!(entry.renderer("art/a.PNG"), Some(MEDIA));
         assert_eq!(entry.renderer("drafts/x.md"), None, "excluded");
+        let folder = Entrypoint {
+            exclude: vec!["drafts".into(), "*/old".into()],
+            ..entry.clone()
+        };
+        for excluded in [
+            "drafts",
+            "drafts/x.md",
+            "drafts/deep/y.md",
+            "guide/old/z.md",
+        ] {
+            assert!(
+                folder.excluded(excluded) && !folder.includes(excluded),
+                "{excluded}"
+            );
+        }
+        for kept in ["draftsx/a.md", "guide/older/z.md", "index.md"] {
+            assert!(!folder.excluded(kept) && folder.includes(kept), "{kept}");
+        }
         assert_eq!(entry.renderer("main.rs"), None, "no renderer");
         assert_eq!(entry.renderer("Makefile"), None, "no type");
         assert!(entry.page("old/x.md") && !entry.document("old/x.md"));

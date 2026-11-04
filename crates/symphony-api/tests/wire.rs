@@ -179,16 +179,34 @@ fn a_route_is_a_document_page_under_an_entrypoint_unless_the_symphony_answers_it
         serde_json::from_str(&fixture("project.json")).unwrap();
     for (path, page) in [
         ("docs", true),
+        ("docs/", true),
         ("docs/game", true),
         ("docs/game/SPEC.md", true),
         ("docs/art/a.png", false),
+        ("docs/v1.0", false),
+        ("docs/v1.0/", true),
+        ("docs/art/a.png/", true),
         ("docsx/A.md", false),
         ("", false),
         ("tasks", false),
+        ("tasks/", false),
         ("hulls", false),
         ("README.md", false),
     ] {
         assert_eq!(star_foundry.is_document_route(path), page, "{path}");
+    }
+    let dotted = symphony_api::ProjectView {
+        entrypoints: vec!["v1.0".into()],
+        ..star_foundry.clone()
+    };
+    for (path, page) in [
+        ("v1.0", true),
+        ("v1.0/", true),
+        ("v1.0/A.md", true),
+        ("v1.0/a.png", false),
+        ("v1.0x", false),
+    ] {
+        assert_eq!(dotted.is_document_route(path), page, "{path}");
     }
     assert_eq!(star_foundry.documents_href(), "/docs/");
     assert_eq!(star_foundry.readme_route(), "docs/README.md");

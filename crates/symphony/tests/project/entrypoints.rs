@@ -1,6 +1,8 @@
 //! A project whose entrypoint serves `spec/` at `/`: its documents are named from the root, its
 //! pages list only what its patterns include and its renderers handle, its links follow the
-//! mapping, and a file whose route the Symphony answers is refused by name.
+//! mapping, and a file whose route the Symphony answers is refused by name, however deep and
+//! however late it appears. Nothing a link leads out of the folder to, or an excluded folder
+//! holds, is read.
 
 use symphony::board::scan;
 use symphony::docview;
@@ -183,7 +185,10 @@ fn a_file_on_a_route_the_symphony_answers_is_refused_by_name_until_it_goes() {
     // an entry on a Symphony route the patterns pass over is no collision
     tree.write("spec/favicon.ico", "icon");
     tree.write("spec/tasks/plan.txt", "not included");
-    assert!(Project::load(&tree.root).is_ok());
+    let project = Project::load(&tree.root).unwrap();
+    // the route is the Symphony's: no entrypoint maps it to a file of its folder
+    assert!(project.serving("tasks/plan.txt").is_none());
+    assert_eq!(project.file("tasks/plan.txt"), "tasks/plan.txt");
     assert_eq!(Project::of(&tree.root).entrypoints[0].folder, "spec");
     tree.write("spec/tasks/plan.md", "# Plan\n");
     let refusal = "symphony.toml: [[entrypoints]] / would serve spec/tasks/plan.md at \
@@ -276,4 +281,169 @@ fn the_project_root_at_the_root_with_a_type_no_renderer_handles_is_refused_by_na
             .collect::<Vec<_>>(),
         ["README.md"]
     );
+}
+
+#[test]
+fn a_folder_linked_out_of_the_project_is_refused_and_no_walk_follows_a_link_out() {
+    let outside = Tree::new();
+    outside.write(
+        "SECRET.md",
+        "# Secret\n\n- [ ] **secret** — Not the project's.\n",
+    );
+    let tree = Tree::new();
+    tree.write("symphony.toml", SPEC);
+    std::os::unix::fs::symlink(&outside.root, tree.path("spec")).unwrap();
+    let refusal = "symphony.toml: [[entrypoints]] / folder spec lies outside the project once its \
+                   links are resolved";
+    assert_eq!(Project::load(&tree.root).unwrap_err(), refusal);
+    assert_eq!(project_problems(&tree.root), [refusal]);
+    assert_eq!(*Project::of(&tree.root), Project::plain(&tree.root));
+    // in the folder, a link to a folder or out of the project is passed over, one to a file in it listed
+    let tree = spec();
+    std::os::unix::fs::symlink(outside.path("SECRET.md"), tree.path("spec/guide/LEAK.md")).unwrap();
+    std::os::unix::fs::symlink(&outside.root, tree.path("spec/linked")).unwrap();
+    std::os::unix::fs::symlink(tree.path("spec/index.md"), tree.path("spec/guide/ALIAS.md"))
+        .unwrap();
+    assert!(Project::load(&tree.root).is_ok());
+    let docs = scan(&tree.root).unwrap();
+    assert_eq!(
+        docs.iter().map(|doc| doc.path.as_str()).collect::<Vec<_>>(),
+        [
+            "DECISIONS.md",
+            "guide/ALIAS.md",
+            "guide/START.md",
+            "index.md"
+        ]
+    );
+    let render = Render::new(&tree.root);
+    assert_eq!(
+        docview::folder(&render, "guide", "")
+            .unwrap()
+            .entries
+            .iter()
+            .map(|e| e.path.as_str())
+            .collect::<Vec<_>>(),
+        ["guide/ALIAS.md", "guide/START.md"],
+        "by title: the alias is titled Spec"
+    );
+    for refused in ["guide/LEAK.md", "linked/SECRET.md"] {
+        assert!(
+            docview::document(&render, refused, "").is_err(),
+            "{refused}"
+        );
+    }
+    assert!(docview::folder(&render, "linked", "").is_err());
+}
+
+#[test]
+fn a_colliding_file_appearing_deep_in_a_folder_already_read_is_refused_at_once() {
+    let tree = spec();
+    tree.write("spec/tasks/deep/notes.txt", "not included");
+    assert_eq!(Project::of(&tree.root).entrypoints[0].folder, "spec");
+    tree.write("spec/tasks/deep/LEAK.md", "# Leak\n");
+    assert_eq!(
+        *Project::of(&tree.root),
+        Project::plain(&tree.root),
+        "the cached project is read again"
+    );
+    assert!(
+        project_problems(&tree.root)[0]
+            .contains("would serve spec/tasks/deep/LEAK.md at /tasks/deep/LEAK.md")
+    );
+    std::fs::remove_file(tree.path("spec/tasks/deep/LEAK.md")).unwrap();
+    assert_eq!(Project::of(&tree.root).entrypoints[0].folder, "spec");
+    // a new folder under one already read holds the file
+    tree.write("spec/tasks/deep/deeper/LEAK.md", "# Leak\n");
+    assert_eq!(*Project::of(&tree.root), Project::plain(&tree.root));
+}
+
+#[test]
+fn an_excluded_folder_takes_everything_under_it_from_every_reader() {
+    let tree = Tree::new();
+    tree.write(
+        "symphony.toml",
+        "[[entrypoints]]\nurl = \"/\"\nfolder = \"spec\"\nexclude = [\"drafts\"]\n",
+    );
+    tree.write("spec/index.md", "# Spec\n");
+    tree.write(
+        "spec/drafts/PRIVATE.md",
+        "# Private\n\n- [ ] **private** — Excluded.\n",
+    );
+    tree.write("spec/drafts/deep/D.md", "# Deep\n");
+    tree.write("spec/draftsx/K.md", "# Kept\n");
+    let project = Project::load(&tree.root).unwrap();
+    assert!(project.is_page("spec/index.md") && project.is_page("spec/draftsx/K.md"));
+    let render = Render::new(&tree.root);
+    for refused in ["drafts/PRIVATE.md", "drafts/deep/D.md"] {
+        assert!(!project.is_page(&project.file(refused)), "{refused}");
+        assert!(
+            docview::document(&render, refused, "").is_err(),
+            "{refused}"
+        );
+        assert!(
+            docview::target(&tree.root, refused, true).is_err(),
+            "the save target too: {refused}"
+        );
+    }
+    assert!(docview::folder(&render, "drafts/deep", "").is_err());
+    assert_eq!(
+        scan(&tree.root)
+            .unwrap()
+            .iter()
+            .map(|doc| doc.path.as_str())
+            .collect::<Vec<_>>(),
+        ["draftsx/K.md", "index.md"]
+    );
+}
+
+#[test]
+fn the_uploads_folder_on_the_uploads_route_is_no_collision() {
+    let tree = Tree::new();
+    let root_types =
+        "[[entrypoints]]\nurl = \"/\"\nfolder = \".\"\ntypes = [\"markdown\", \"media\"]\n";
+    tree.write("symphony.toml", root_types);
+    tree.write("README.md", "# Orbit\n");
+    tree.write("artifacts/uploads/notes.md", "# Pasted\n");
+    std::fs::write(tree.path("artifacts/uploads/0123abcd.png"), PNG_5X7).unwrap();
+    let project = Project::load(&tree.root).unwrap();
+    assert!(project_problems(&tree.root).is_empty());
+    assert_eq!(
+        project.file("artifacts/uploads/0123abcd.png"),
+        "artifacts/uploads/0123abcd.png"
+    );
+    // elsewhere than the project's uploads folder, a file on that route would be hidden
+    tree.write(
+        "symphony.toml",
+        &format!("[project]\nartifacts = \"out\"\n{root_types}"),
+    );
+    assert!(
+        Project::load(&tree.root).unwrap_err().contains(
+            "would serve artifacts/uploads/0123abcd.png at /artifacts/uploads/0123abcd.png"
+        )
+    );
+    let tree = spec();
+    tree.write("spec/artifacts/uploads/notes.md", "# Not the uploads\n");
+    assert!(
+        Project::load(&tree.root)
+            .unwrap_err()
+            .contains("would serve spec/artifacts/uploads/notes.md at /artifacts/uploads/notes.md")
+    );
+}
+
+#[test]
+fn a_dotted_entrypoint_and_folder_are_folder_pages_on_both_sides() {
+    let tree = Tree::new();
+    tree.write(
+        "symphony.toml",
+        "[[entrypoints]]\nurl = \"/v1.0/\"\nfolder = \"spec\"\n",
+    );
+    tree.write("spec/guide.v2/A.md", "# A\n");
+    let project = Project::load(&tree.root).unwrap();
+    let view = project.view();
+    let render = Render::new(&tree.root);
+    for (route, page) in [("v1.0", "v1.0"), ("v1.0/guide.v2", "v1.0/guide.v2/")] {
+        assert!(docview::folder(&render, route, "").is_ok(), "{route}");
+        assert!(view.is_document_route(page), "{page}");
+    }
+    assert!(view.is_document_route("v1.0/guide.v2/A.md"));
 }

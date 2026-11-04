@@ -700,7 +700,7 @@ pub fn FolderPage(path: String, scope: String) -> Element {
                 div { class: "folder-entries",
                     for entry in folder.entries {
                         NearViewport { key: "{entry.path}", height: 120,
-                        a { class: if entry.kind == "folder" { "card folder-entry tree-folder" } else { "card folder-entry" }, href: "/{entry.path}",
+                        a { class: if entry.kind == "folder" { "card folder-entry tree-folder" } else { "card folder-entry" }, href: if entry.kind == "folder" { format!("/{}/", entry.path) } else { format!("/{}", entry.path) },
                             strong { class: "tree-name", if entry.kind == "folder" { span { class: "tree-icon", "aria-hidden": "true", "▸" } } "{entry.title}" }
                             div { class: "tree-pills",
                                 if entry.kind == "folder" { span { class: "pill", if entry.docs == 1 { "1 doc" } else { "{entry.docs} docs" } } }

@@ -145,15 +145,12 @@ pub(crate) struct Place<'a> {
 
 impl Place<'_> {
     /// The folder page at the route `rel`, when an entrypoint serves it as a folder: the folder
-    /// lies in its folder once `..` is resolved, and no exclude pattern or dot name passes it over.
+    /// lies in its folder once `..` is resolved, and no exclude pattern or dot name passes it, or
+    /// a folder above it, over.
     pub(crate) fn of<'a>(root: &'a Path, project: &'a Project, rel: &str) -> Option<Place<'a>> {
         let (entry, inside) = project.serving(rel.trim_matches('/'))?;
         let passed_over = !inside.is_empty()
-            && (inside.split('/').any(|name| name.starts_with('.'))
-                || entry
-                    .exclude
-                    .iter()
-                    .any(|p| crate::entrypoint::matches(p, inside)));
+            && (inside.split('/').any(|name| name.starts_with('.')) || entry.excluded(inside));
         let base = root.join(&entry.folder).canonicalize().ok()?;
         let target = root.join(entry.file(inside)).canonicalize().ok()?;
         (!passed_over
@@ -218,17 +215,13 @@ impl Place<'_> {
 
     /// The folder's own files the entrypoint shows with `renderer`, by name.
     fn files(&self, renderer: crate::entrypoint::Renderer) -> Vec<String> {
-        let mut found: Vec<String> = std::fs::read_dir(self.path())
-            .map(|entries| {
-                entries
-                    .flatten()
-                    .filter(|e| e.path().is_file())
-                    .map(|e| e.file_name().to_string_lossy().into_owned())
-                    .filter(|name| self.entry.renderer(&join(&self.inside, name)) == Some(renderer))
-                    .collect()
-            })
-            .unwrap_or_default();
-        found.sort();
+        let mut found = Vec::new();
+        self.project
+            .walk_files(self.root, self.entry, &self.inside, &mut |name| {
+                if self.entry.renderer(&join(&self.inside, name)) == Some(renderer) {
+                    found.push(name.to_string());
+                }
+            });
         found
     }
 

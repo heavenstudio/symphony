@@ -133,12 +133,13 @@ function route(path) {
     const view = project();
     const pages = (view.nav || []).map(item => item.href.replace(/^\/+|\/+$/g, "")).filter(Boolean);
     if (pages.includes(clean)) return "docs";
-    // A document or folder page of an entrypoint (ProjectView::is_document_route).
+    // A document or folder page of an entrypoint (ProjectView::is_document_route): a trailing
+    // slash or an entrypoint's own route names a folder, whatever its name holds.
     const urls = view.entrypoints?.length ? view.entrypoints : ["docs"];
     const name = clean.split("/").pop();
     if (!SYMPHONY_ROUTES.concat(pages).some(taken => within(taken, clean))
         && urls.some(url => within(url, clean))
-        && (!name.includes(".") || name.endsWith(".md"))) return "docs";
+        && (path.endsWith("/") || urls.includes(clean) || !name.includes(".") || name.endsWith(".md"))) return "docs";
     return clean === "" ? "review" : null;
 }
 

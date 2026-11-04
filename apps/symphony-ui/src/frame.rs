@@ -239,12 +239,12 @@ pub fn Frame(route: Route, children: Element) -> Element {
         (
             "/".to_string(),
             "⌂ board".to_string(),
-            route.path.is_empty() && !project.is_document_route(""),
+            route.path.is_empty() && !route.document,
         ),
         (
             project.documents_href(),
             "☰ docs".into(),
-            project.is_document_route(&route.path) && plugin_page.is_none(),
+            route.document && plugin_page.is_none(),
         ),
         (
             "/tasks".into(),

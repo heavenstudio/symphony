@@ -1383,7 +1383,7 @@ pub(crate) fn client_page(project: &symphony_api::ProjectView, path: &str) -> bo
             .iter()
             .any(|nav| nav.href.trim_end_matches('/') == page)
         || path.starts_with("/task/")
-        || project.is_document_route(page.trim_start_matches('/'))
+        || project.is_document_route(path.trim_start_matches('/'))
 }
 
 /// Compatibility shell prefixes and version pages redirect to the document view.
@@ -1444,6 +1444,11 @@ mod tests {
             ("/docs/game/SPEC.md", true, true),
             ("/index.md", false, true),
             ("/guide/", false, true),
+            ("/docs/v1.0/", true, true),
+            ("/docs/v1.0", false, false),
+            ("/v1.0/", false, true),
+            ("/tasks/", true, true),
+            ("/api/", false, false),
             ("/art/a.png", false, false),
             ("/api/document", false, false),
             ("/assets/app.js", false, false),
