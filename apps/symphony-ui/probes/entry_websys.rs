@@ -1,6 +1,9 @@
 //! Size probe: the home page's body (`view::BoardView`) and its live feed drawn over web-sys with
 //! no framework: the board fetched and read by serde-wasm-bindgen, each delta applied by
 //! `state::apply`, the regions redrawn. Not the frame, the media dialog or navigation.
+
+#![forbid(unsafe_code)]
+
 #[cfg(target_arch = "wasm32")]
 mod page {
     use std::cell::RefCell;
