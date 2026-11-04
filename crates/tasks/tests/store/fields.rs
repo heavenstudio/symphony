@@ -180,7 +180,7 @@ fn a_board_of_schema_nine_gains_the_field_when_this_schema_opens_it() {
     assert!(!defines_fields(&f));
     let reopened = f.other();
     assert!(defines_fields(&f));
-    assert_eq!(schema_version(&f), json!(10));
+    assert_eq!(schema_version(&f), json!(11));
     let set = reopened
         .set_field("sim/jump", "game", "effort", &json!("4"), "brisk-finch")
         .unwrap();
@@ -191,7 +191,7 @@ fn a_board_of_schema_nine_gains_the_field_when_this_schema_opens_it() {
 }
 
 /// A schema-9 open runs its own definitions, every one `IF NOT EXISTS`, and names version 9: the
-/// field's definition and a task's fields stay, and the next open of this schema names 10 again.
+/// field's definition and a task's fields stay, and the next open of this schema names 11 again.
 #[test]
 fn an_open_from_schema_nine_keeps_the_field_and_its_values() {
     let f = Fixture::new(Seed::default().session("brisk-finch"));
@@ -215,7 +215,7 @@ COMMIT TRANSACTION;",
         json!({"game": {"effort": 2}})
     );
     let reopened = f.other();
-    assert_eq!(schema_version(&f), json!(10));
+    assert_eq!(schema_version(&f), json!(11));
     assert_eq!(
         serde_json::to_value(reopened.get("sim/jump").unwrap().fields).unwrap(),
         json!({"game": {"effort": 2}})
