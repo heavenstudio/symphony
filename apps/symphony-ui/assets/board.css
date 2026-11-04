@@ -21,9 +21,7 @@
 html { background:var(--background); scroll-padding-top:76px; }
 [hidden] { display:none !important; }
 body { margin:0; color:var(--foreground); background:var(--background); font:16px/1.55 var(--font-sans); -webkit-font-smoothing:antialiased; }
-main { max-width:1440px; margin:0 auto; padding:var(--sp-5) var(--sp-5) 120px; }
-/* The final invisible notice reserves its wrapped height in both feed states. */
-main[data-feed], main[data-notices] { --feed-notice-bottom:calc(132px + env(safe-area-inset-bottom)); padding-bottom:calc(var(--feed-notice-bottom) + var(--sp-4)); }
+main { --page-end:120px; --feed-notice-bottom:calc(132px + env(safe-area-inset-bottom)); max-width:1440px; margin:0 auto; padding:var(--sp-5) var(--sp-5) var(--page-end); }
 h1, h2, h3 { line-height:1.25; letter-spacing:-.01em; } h1 { font-size:var(--fs-2xl); } h2 { font-size:var(--fs-xl); margin-top:1.6em; }
 a { color:var(--primary); }
 img { max-width:100%; height:auto; }
@@ -147,6 +145,9 @@ form input, form textarea, .filters input { font:inherit; font-size:var(--fs-sm)
 /* Matching metrics keep page-end controls above even a wrapped notice at every width. */
 .stale, .feed-notice-space { width:max-content; max-width:calc(100vw - 2 * var(--sp-4)); box-sizing:border-box; margin:0; white-space:normal; }
 .feed-notice-space { display:flex; visibility:hidden; }
+/* The final invisible notice reserves its wrapped height in both feed states, plus the
+   fixed notice's lift past main's own end padding, so page-end content clears it. */
+.page-notice-reserve { padding-bottom:calc(var(--feed-notice-bottom) + var(--sp-4) - var(--page-end)); }
 .stale { position:fixed; bottom:var(--feed-notice-bottom); left:var(--sp-4); z-index:5; background:color-mix(in srgb, var(--c) 12%, var(--background)); }
 .notice-stack { display:grid; gap:var(--sp-2); }
 .notice-stack[hidden] { display:none; }
@@ -232,7 +233,7 @@ a.bar:hover { background:var(--background); }
   .pipeline { grid-template-columns:minmax(0,1fr); }
   .pipeline .column { min-height:0; }
   .pipeline .column + .column h2::before { content:"↓"; }
-  main { padding:var(--sp-4) var(--sp-4) 96px; }
+  main { --page-end:96px; padding:var(--sp-4) var(--sp-4) var(--page-end); }
   .page-head h1 { font-size:var(--fs-2xl); }
   .card { padding:var(--sp-3) var(--sp-4); }
   .dash-top, .dash-grid { grid-template-columns:minmax(0, 1fr); }
