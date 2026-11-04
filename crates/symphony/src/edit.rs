@@ -127,13 +127,15 @@ pub fn insert_comment(
     Ok(out.join("\n") + "\n")
 }
 
-/// Set a card's verdict and append a dated owner entry; regroup the register if it has one.
+/// Set a card's verdict and append a dated owner entry; regroup the register if it has one, as the
+/// project's card kinds group its cards.
 pub fn set_decision(
     text: &str,
     slug: &str,
     state: &str,
     note: &str,
     now: &str,
+    plugins: &crate::plugins::Plugins,
 ) -> Result<String, EditError> {
     let Some(state) = State::parse(state).filter(|s| OWNER_STATES.contains(s)) else {
         let owner: Vec<&str> = OWNER_STATES.iter().map(|s| s.as_str()).collect();
@@ -157,7 +159,7 @@ pub fn set_decision(
     out.push(entry);
     out.extend(note.iter().skip(1).map(|line| format!("    {line}")));
     out.extend(lines[end..].iter().map(|line| line.to_string()));
-    sort_register(&(out.join("\n") + "\n")).map_err(|problem| EditError(problem.0))
+    sort_register(&(out.join("\n") + "\n"), plugins).map_err(|problem| EditError(problem.0))
 }
 
 fn unreadable_time(stamp: &str) -> EditError {

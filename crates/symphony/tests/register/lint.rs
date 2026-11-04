@@ -1,7 +1,7 @@
 //! HistoryInProseTest and VerdictsOnPagesTest: documents describe the current design; why and when
 //! live in the cards and the ledger, and which picture was approved is a register's record.
 
-use symphony::lint::{Finding, history_in_prose, verdicts_on_pages};
+use symphony::lint::{Finding, history_in_prose, rule_findings};
 
 use crate::common::{Tree, status};
 
@@ -175,7 +175,7 @@ fn the_lint_flag_passes_on_clean_prose() {
 }
 
 fn verdict_tree() -> Tree {
-    let tree = Tree::new();
+    let tree = Tree::star_foundry();
     tree.write(
         "docs/factions/x.md",
         "# X\n\n**Look:** Black glass.\n\n**Also approved:** [people](a.png)\n\nThe rejected hulls are gone.\n\n\
@@ -190,7 +190,7 @@ fn verdict_tree() -> Tree {
 fn verdict_words_in_a_faction_page_are_reported_with_their_place() {
     let tree = verdict_tree();
     assert_eq!(
-        verdicts_on_pages(&tree.root),
+        rule_findings(&tree.root).0,
         vec![
             finding("docs/factions/x.md", 5, "approved"),
             finding("docs/factions/x.md", 7, "rejected")
@@ -205,7 +205,8 @@ fn registers_code_blocks_and_other_documents_are_exempt() {
         "docs/factions/y.md",
         "# Y\n\nNo verdicts here; an unapproved word is another word.\n",
     );
-    let paths: Vec<String> = verdicts_on_pages(&tree.root)
+    let paths: Vec<String> = rule_findings(&tree.root)
+        .0
         .into_iter()
         .map(|(path, _, _)| path)
         .collect();
@@ -223,7 +224,8 @@ fn the_folders_readme_and_its_uppercase_hub_documents_are_not_faction_pages() {
         "docs/factions/FACTIONS.md",
         "# Factions\n\nHow the approved design fits together.\n",
     );
-    let paths: Vec<String> = verdicts_on_pages(&tree.root)
+    let paths: Vec<String> = rule_findings(&tree.root)
+        .0
         .into_iter()
         .map(|(path, _, _)| path)
         .collect();

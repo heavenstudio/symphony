@@ -27,9 +27,7 @@ vocabulary!(CardState { Pending => "pending", Approved => "approved", AutoApprov
 vocabulary!(CardGroup { Decide => "decide", Auto => "auto", Confirm => "confirm", Agent => "agent", Rejected => "rejected", Resolved => "resolved" });
 vocabulary!(ThreadAuthor { Owner => "owner", Agent => "agent", Unknown => "unknown" });
 vocabulary!(CalloutKind { Comment => "comment", Like => "like", Dislike => "dislike", Question => "question", Decision => "decision", Resolved => "resolved" });
-vocabulary!(ShipSize { Small => "small", Row => "row", Large => "large" });
-vocabulary!(ShapePivot { Class => "class" });
-vocabulary!(RelationshipTable { Destroy => "destroy", Help => "help" });
+vocabulary!(FigureSize { Small => "small", Row => "row", Large => "large", Tile => "tile", Cell => "cell", Slot => "slot", Wide => "wide" });
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "kebab-case")]
@@ -47,9 +45,13 @@ pub enum Block {
         start: u64,
         items: Vec<Vec<Block>>,
     },
+    /// A table; a cell holds figures through `Span::Blocks`. A component's table names its look in
+    /// `presentation` (a class a stylesheet selects), a document's table carries none.
     Table {
         head: Vec<Cell>,
         rows: Vec<Vec<Cell>>,
+        #[serde(default, skip_serializing_if = "Presentation::is_empty")]
+        presentation: Presentation,
     },
     Code {
         language: String,
@@ -77,8 +79,11 @@ pub enum Block {
         line_offset: Option<usize>,
         comparison: Vec<Block>,
     },
+    /// A `[[kind:argument|option]]` component, as its plugin rendered it. `kind` is the component's
+    /// name, kept on the wrapper (`data-component`) so a project's stylesheet can select it.
     Component {
-        component: LiveComponent,
+        kind: String,
+        blocks: Vec<Block>,
     },
     Media {
         media: Media,
@@ -86,18 +91,15 @@ pub enum Block {
     Image {
         image: Image,
     },
-    /// The pictures filling an art slot, in their display order.
-    ArtSlot {
-        figures: Vec<Block>,
-    },
-    /// A hull's picture, navigation and facts in a roster/matrix cell.
-    Hull {
-        blocks: Vec<Block>,
-    },
+    /// A picture with its caption: a picture slot, a hull in a strip or a table cell, a capture.
+    /// `href` links the picture, `badge` is the short state shown where the picture is missing,
+    /// and `size` chooses the layout.
     Figure {
-        blocks: Vec<Block>,
-        caption: Vec<Block>,
-        missing: bool,
+        picture: Option<Image>,
+        caption: Vec<Span>,
+        href: Option<String>,
+        badge: Option<String>,
+        size: FigureSize,
     },
     Caption {
         blocks: Vec<Block>,
@@ -105,23 +107,7 @@ pub enum Block {
     Comparison {
         figures: Vec<Block>,
     },
-    Matrix {
-        matrix: MatrixKind,
-        head: Vec<Cell>,
-        rows: Vec<Vec<Cell>>,
-    },
-    MatrixNote {
-        blocks: Vec<Block>,
-    },
-    EmptyRoster {
-        blocks: Vec<Block>,
-    },
     Group {
-        blocks: Vec<Block>,
-    },
-    ScreenCapture {
-        id: String,
-        missing: bool,
         blocks: Vec<Block>,
     },
     /// Structural grouping and presentation from the document and its live data. The tag is a
@@ -187,8 +173,19 @@ pub enum Span {
     Media {
         media: Media,
     },
+    /// A component inside a line of text, as `Block::Component` is beside one.
     Component {
-        component: LiveComponent,
+        kind: String,
+        blocks: Vec<Block>,
+    },
+    /// A small vector symbol on the 24-unit stroke grid with its name: `label` is what it is called
+    /// (its accessible name, and shown after it when `named`), `tip` what it means on hover.
+    Icon {
+        shape: Vec<VectorShape>,
+        label: String,
+        named: bool,
+        #[serde(default, skip_serializing_if = "String::is_empty")]
+        tip: String,
     },
     Styled {
         tag: InlineKind,
@@ -200,7 +197,7 @@ pub enum Span {
         presentation: Presentation,
         shapes: Vec<VectorShape>,
     },
-    /// Block content embedded in inline contexts (notably live ship matrices in table cells).
+    /// Block content embedded in inline contexts (a component's figures in a table cell).
     Blocks {
         blocks: Vec<Block>,
     },
@@ -231,6 +228,20 @@ pub struct Presentation {
     pub attributes: BTreeMap<String, String>,
 }
 
+impl Presentation {
+    /// A presentation with only a class.
+    pub fn class(class: impl Into<String>) -> Self {
+        Self {
+            class: class.into(),
+            ..Self::default()
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        *self == Self::default()
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Image {
     pub src: String,
@@ -259,128 +270,6 @@ pub struct ThreadEntry {
     pub timestamp: Option<String>,
     pub verdict: Option<String>,
     pub blocks: Vec<Block>,
-}
-
-/// Each live component has its own selector and the fully expanded, typed display data. This
-/// keeps the current component output (pictures, captions, links, tables and icons) without
-/// duplicating its business rules in a client or sending markup. The client renders `blocks`
-/// with its document components; the selector provides identity for updates and navigation.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "kebab-case")]
-pub enum LiveComponent {
-    Task {
-        slug: String,
-        label: Option<String>,
-        blocks: Vec<Block>,
-    },
-    Ship {
-        id: String,
-        size: ShipSize,
-        blocks: Vec<Block>,
-    },
-    Ships {
-        ids: Vec<String>,
-        size: ShipSize,
-        blocks: Vec<Block>,
-    },
-    Art {
-        slot: String,
-        blocks: Vec<Block>,
-    },
-    Screen {
-        id: String,
-        blocks: Vec<Block>,
-    },
-    ShipMatrix {
-        faction: String,
-        blocks: Vec<Block>,
-    },
-    ShapeMatrix {
-        faction: String,
-        pivot: Option<ShapePivot>,
-        blocks: Vec<Block>,
-    },
-    SubfactionShips {
-        name: String,
-        size: ShipSize,
-        blocks: Vec<Block>,
-    },
-    Relationships {
-        table: RelationshipTable,
-        blocks: Vec<Block>,
-    },
-    Capability {
-        id: String,
-        named: bool,
-        blocks: Vec<Block>,
-    },
-    Weapon {
-        id: String,
-        named: bool,
-        blocks: Vec<Block>,
-    },
-    Gear {
-        id: String,
-        named: bool,
-        blocks: Vec<Block>,
-    },
-    Status {
-        id: String,
-        named: bool,
-        blocks: Vec<Block>,
-    },
-    Defence {
-        id: String,
-        named: bool,
-        blocks: Vec<Block>,
-    },
-}
-
-impl LiveComponent {
-    pub fn kind_name(&self) -> &'static str {
-        match self {
-            Self::Task { .. } => "task",
-            Self::Ship { .. } => "ship",
-            Self::Ships { .. } => "ships",
-            Self::Art { .. } => "art",
-            Self::Screen { .. } => "screen",
-            Self::ShipMatrix { .. } => "ship-matrix",
-            Self::ShapeMatrix { .. } => "shape-matrix",
-            Self::SubfactionShips { .. } => "subfaction-ships",
-            Self::Relationships { .. } => "relationships",
-            Self::Capability { .. } => "capability",
-            Self::Weapon { .. } => "weapon",
-            Self::Gear { .. } => "gear",
-            Self::Status { .. } => "status",
-            Self::Defence { .. } => "defence",
-        }
-    }
-    pub fn blocks(&self) -> &[Block] {
-        match self {
-            Self::Task { blocks, .. }
-            | Self::Ship { blocks, .. }
-            | Self::Ships { blocks, .. }
-            | Self::Art { blocks, .. }
-            | Self::Screen { blocks, .. }
-            | Self::ShipMatrix { blocks, .. }
-            | Self::ShapeMatrix { blocks, .. }
-            | Self::SubfactionShips { blocks, .. }
-            | Self::Relationships { blocks, .. }
-            | Self::Capability { blocks, .. }
-            | Self::Weapon { blocks, .. }
-            | Self::Gear { blocks, .. }
-            | Self::Status { blocks, .. }
-            | Self::Defence { blocks, .. } => blocks,
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum MatrixKind {
-    Ships,
-    Shapes,
-    Relationships,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]

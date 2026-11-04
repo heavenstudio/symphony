@@ -226,23 +226,46 @@ pub fn Frame(route: Route, children: Element) -> Element {
     let open = field(&snapshot("reviewQuickDraft"), "open").as_bool() == Some(true);
     let panel = snapshot("reviewActivityOpen").as_bool() == Some(true);
     let has_pending = array(field(&snapshot("reviewPendingSnapshot"), "items")).length() > 0;
-    let hulls = route.path == symphony_api::HULL_GALLERY_DOC;
-    let crumbs: Vec<_> = if hulls {
-        vec!["hulls"]
+    let project = crate::project::current();
+    let plugin_page = crate::project::nav_for_document(&project.nav, &route.path);
+    let crumbs: Vec<_> = if let Some(item) = plugin_page {
+        vec![item.href.trim_matches('/')]
     } else if route.path.is_empty() {
         vec!["board"]
     } else {
         route.path.trim_end_matches('/').split('/').collect()
     };
+    let mut links = vec![
+        (
+            "/".to_string(),
+            "⌂ board".to_string(),
+            route.path.is_empty(),
+        ),
+        (
+            "/docs/".into(),
+            "☰ docs".into(),
+            route.path.starts_with("docs") && plugin_page.is_none(),
+        ),
+        (
+            "/tasks".into(),
+            "▦ tasks".into(),
+            route.path == "tasks" || route.path.starts_with("task/"),
+        ),
+        ("/agents".into(), "◉ agents".into(), route.path == "agents"),
+    ];
+    links.extend(project.nav.iter().map(|item| {
+        (
+            item.href.clone(),
+            item.label.clone(),
+            item.document == route.path,
+        )
+    }));
     rsx! {
         div { class: if open { "app-frame quick-expanded" } else { "app-frame" },
             header { class: "app-header", id: "top",
-                for (href, label, active) in [
-                    ("/", "⌂ board", route.path.is_empty()),
-                    ("/docs/", "☰ docs", route.path.starts_with("docs") && !hulls),
-                    ("/tasks", "▦ tasks", route.path == "tasks" || route.path.starts_with("task/")),
-                    ("/agents", "◉ agents", route.path == "agents"), ("/hulls", "⬡ hulls", hulls),
-                ] { a { href: if matches!(href, "/" | "/tasks" | "/agents") { href.to_string() } else { docs::scoped(&route.scope, href) }, class: if active { "active" } else { "" }, "{label}" } }
+                for (href, label, active) in links {
+                    a { href: if matches!(href.as_str(), "/" | "/tasks" | "/agents") { href.clone() } else { docs::scoped(&route.scope, &href) }, class: if active { "active" } else { "" }, "{label}" }
+                }
                 nav { class: "crumbs", "aria-label": "Breadcrumbs",
                     for (index, crumb) in crumbs.iter().enumerate() {
                         if index > 0 { " / " }

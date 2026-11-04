@@ -283,8 +283,9 @@ async fn judge(
                 .strip_prefix("diff/")
                 .and_then(|rest| rest.split_once('/').map(|(_, path)| path))
         });
+        let project = symphony::project::Project::of(&root);
         for relative in [Some(relative), document].into_iter().flatten() {
-            if let Ok(target) = tokio::fs::canonicalize(root.join(relative)).await
+            if let Ok(target) = tokio::fs::canonicalize(root.join(project.file(relative))).await
                 && shared.is_metadata(&target)
             {
                 return StatusCode::NOT_FOUND.into_response();

@@ -85,7 +85,8 @@ pub fn main_only(root: &Path) -> Result<(), String> {
         .next()
         .and_then(|s| s.strip_prefix("worktree "));
     if main.map(Path::new).and_then(|p| p.canonicalize().ok()) != root.canonicalize().ok()
-        || git(root, &["symbolic-ref", "--quiet", "--short", "HEAD"])? != "main"
+        || git(root, &["symbolic-ref", "--quiet", "--short", "HEAD"])?
+            != crate::project::Project::of(root).default_branch
     {
         return Err(format!(
             "{} is not the main checkout on main",

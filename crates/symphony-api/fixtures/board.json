@@ -69,13 +69,8 @@
     "tasks": {"in_progress": 12, "in_review": 5, "agents_live": 14}
   },
   "progress": {
-    "ship_art": [
-      {"faction": "republic", "name": "Republic", "page": "docs/ships/republic.md", "approved": 21, "waiting": 4, "total": 31},
-      {"faction": "empire", "name": "Empire", "page": "docs/ships/empire.md", "approved": 18, "waiting": 2, "total": 29},
-      {"faction": "coalition", "name": "Alien coalition", "page": "docs/ships/coalition.md", "approved": 9, "waiting": 3, "total": 27},
-      {"faction": "machine", "name": "Machine civilization", "page": "docs/ships/machine.md", "approved": 12, "waiting": 2, "total": 26},
-      {"faction": "biological", "name": "Biological civilization", "page": "docs/ships/biological.md", "approved": 6, "waiting": 0, "total": 24},
-      {"faction": "dimensional", "name": "Dimensional civilization", "page": "docs/ships/dimensional.md", "approved": 3, "waiting": 1, "total": 24}
+    "regions": [
+      {"id":"ship-art","title":"Ship art","note":"69 of 161 hulls approved","bars":[{"key":"republic","name":"Republic","page":"docs/ships/republic.md","title":"21 approved, 4 waiting on review, 6 not drawn yet","done":21,"waiting":4,"total":31},{"key":"empire","name":"Empire","page":"docs/ships/empire.md","title":"18 approved, 2 waiting on review, 9 not drawn yet","done":18,"waiting":2,"total":29},{"key":"coalition","name":"Alien coalition","page":"docs/ships/coalition.md","title":"9 approved, 3 waiting on review, 15 not drawn yet","done":9,"waiting":3,"total":27},{"key":"machine","name":"Machine civilization","page":"docs/ships/machine.md","title":"12 approved, 2 waiting on review, 12 not drawn yet","done":12,"waiting":2,"total":26},{"key":"biological","name":"Biological civilization","page":"docs/ships/biological.md","title":"6 approved, 0 waiting on review, 18 not drawn yet","done":6,"waiting":0,"total":24},{"key":"dimensional","name":"Dimensional civilization","page":"docs/ships/dimensional.md","title":"3 approved, 1 waiting on review, 20 not drawn yet","done":3,"waiting":1,"total":24}],"legend":["approved","waiting on you","not drawn"]}
     ],
     "docs": 64,
     "decisions_waiting": 41

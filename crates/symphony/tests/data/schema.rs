@@ -755,7 +755,7 @@ fn every_content_file_matches_its_folder_s_schema_as_python_found() {
 
 #[test]
 fn gear_schema_types_and_component_icon_keys_agree_in_both_directions() {
-    let catalogue = read_json(&repo().join("symphony/crates/symphony/src/component_icons.json"));
+    let catalogue = read_json(&repo().join("symphony/crates/symphony/src/star_foundry/icons.json"));
     let schema = read_json(&repo().join("content/schemas/gear.schema.json"));
     let icons = catalogue["gear"].as_array().unwrap();
     let types = schema["properties"]["type"]["enum"].as_array().unwrap();

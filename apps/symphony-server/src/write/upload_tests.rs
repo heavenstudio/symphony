@@ -79,7 +79,7 @@ impl Fixture {
     }
 
     fn files(&self) -> Vec<String> {
-        let mut files: Vec<_> = std::fs::read_dir(self.root.join(symphony::uploads::DIR))
+        let mut files: Vec<_> = std::fs::read_dir(symphony::uploads::dir(&self.root))
             .map(|dir| {
                 dir.map(|e| e.unwrap().file_name().into_string().unwrap())
                     .collect()
@@ -354,7 +354,7 @@ async fn only_a_stored_name_under_the_uploads_folder_is_ever_served() {
     assert_eq!(status, StatusCode::NOT_FOUND, "no upload folder yet");
     let upload = f.stored("a.png", PNG).await;
     let url = upload["url"].as_str().unwrap();
-    let folder = f.root.join(symphony::uploads::DIR);
+    let folder = symphony::uploads::dir(&f.root);
     let sha = "b".repeat(64);
     std::fs::write(folder.join(format!("{sha}.svg")), "<svg/>").unwrap();
     std::fs::write(folder.join(format!("{sha}.html")), "<html>").unwrap();

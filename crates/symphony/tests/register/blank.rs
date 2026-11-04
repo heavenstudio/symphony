@@ -3,6 +3,7 @@
 
 use symphony::register::{resolve, sort_register, supersede};
 
+use crate::common::plain;
 use crate::{cards, lines};
 
 const LINES: [&str; 8] = [
@@ -29,7 +30,7 @@ fn sort_register_keeps_every_line() {
         "<!-- register:start -->\n## Needs your decision\n\n{}\n<!-- register:end -->\n",
         LINES.join("\n")
     );
-    let out = lines(&sort_register(&text).unwrap());
+    let out = lines(&sort_register(&text, &plain()).unwrap());
     let kept = |all: &[String]| {
         let mut kept: Vec<String> = all
             .iter()
@@ -69,7 +70,7 @@ fn tidy_resolve_closes_after_the_whole_thread() {
         "    ![p](/p.png)",
         "  [2026-10-05 12:20] owner · approved",
     ];
-    let (out, _) = resolve(&(given.join("\n") + "\n"), "2026-10-05 13:00");
+    let (out, _) = resolve(&(given.join("\n") + "\n"), "2026-10-05 13:00", &plain());
     let written = lines(&out);
     for line in &given[1..] {
         assert!(

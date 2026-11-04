@@ -21,7 +21,16 @@ fn text(root: &Path, args: &[&str]) -> Option<String> {
 
 /// `docs/**/*.md`, with no hidden or dot path component, as the verdict exemption admits it.
 pub fn is_doc(path: &str) -> bool {
-    let Some(rest) = path.strip_prefix("docs/") else {
+    is_doc_in("docs", path)
+}
+
+/// [`is_doc`] under the documents folder `docs`, whatever the project calls it: what the app
+/// commits for the owner.
+pub fn is_doc_in(docs: &str, path: &str) -> bool {
+    let Some(rest) = path
+        .strip_prefix(docs)
+        .and_then(|rest| rest.strip_prefix('/'))
+    else {
         return false;
     };
     let parts: Vec<_> = rest.split('/').collect();
@@ -165,35 +174,45 @@ impl Drop for PrivateWorktree {
 }
 
 /// A generator run as a command in a private worktree; heavy outputs run only after an earlier
-/// generator changed something. This is also the shape the review-app port can use.
+/// generator changed something. A project names its own in `[verdicts] generators`.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Generator {
     pub name: String,
     pub outputs: String,
     pub command: Vec<String>,
+    /// Run only after an earlier generator changed something.
+    #[serde(default)]
     pub when_changed: bool,
 }
 
-pub fn default_generators() -> Vec<Generator> {
-    vec![
-        Generator {
-            name: "content".into(),
-            outputs: "content/".into(),
-            command: vec!["just".into(), "content".into()],
-            when_changed: false,
-        },
-        Generator {
-            name: "content-ids".into(),
-            outputs: "sim/content_ids.gd".into(),
-            command: vec!["just".into(), "content-ids".into()],
-            when_changed: true,
-        },
-        Generator {
-            name: "hull-atlas".into(),
-            outputs: "view/hull_atlas".into(),
-            command: vec!["just".into(), "hull-atlas".into(), "build".into()],
-            when_changed: true,
-        },
-    ]
+/// The generators of the project at `root` ([`of_project`]).
+pub fn generators(root: &Path) -> Vec<Generator> {
+    of_project(&crate::project::Project::of(root))
+}
+
+/// The generators of `project`: its `symphony.toml`'s in their order, then its plugins'.
+pub fn of_project(project: &crate::project::Project) -> Vec<Generator> {
+    with_plugins(project, &crate::plugins::Plugins::for_project(project))
+}
+
+/// The generators of `project` with `plugins` as its plugins.
+pub fn with_plugins(
+    project: &crate::project::Project,
+    plugins: &crate::plugins::Plugins,
+) -> Vec<Generator> {
+    project
+        .verdicts
+        .generators
+        .iter()
+        .cloned()
+        .chain(plugins.generators().into_iter().map(|generator| Generator {
+            name: generator.name().into(),
+            outputs: generator.outputs().into(),
+            command: generator.command(),
+            when_changed: generator.when_changed(),
+        }))
+        .collect()
 }
 
 fn changed(root: &Path) -> Option<Vec<String>> {
@@ -229,14 +248,12 @@ fn regenerates_inner(root: &Path, branch: &str, generators: &[Generator]) -> Opt
         root,
         &["rev-parse", "--path-format=absolute", "--git-common-dir"],
     )?;
-    if !Path::new(common.trim())
-        .join("sf-land/verdicts")
-        .join(tip)
-        .exists()
-    {
+    let project = crate::project::Project::of(root);
+    let records = project.record_folder(root, Path::new(common.trim()))?;
+    if !records.join(tip).exists() {
         return Some(false);
     }
-    let base = text(root, &["merge-base", "main", tip])?;
+    let base = text(root, &["merge-base", &project.default_branch, tip])?;
     let names = git(
         root,
         &[

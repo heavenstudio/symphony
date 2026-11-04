@@ -121,9 +121,10 @@ fn fingerprint(root: &Path, text: &str, components: &str) -> String {
     field(components);
     // Card links read all live documents, wikilinks read their paths, and breadcrumbs read READMEs.
     // Hash content rather than metadata: an equal-length rewrite with a preserved mtime is an edit too.
+    let project = crate::project::Project::of(root);
     for path in crate::render::doc_paths(root) {
         field(&path);
-        field(&read_text(&root.join(path)).unwrap_or_default());
+        field(&read_text(&root.join(project.file(&path))).unwrap_or_default());
     }
     digest
         .finalize()
@@ -137,10 +138,17 @@ fn not_found(rel: &str) -> io::Error {
 }
 
 impl Render {
-    /// The document at `rel`, cached by its text, all document inputs (card locations, wikilinks and
-    /// breadcrumb titles), and the component provider's version. Unversioned providers render afresh.
+    /// The file the document name `rel` stands for under the project's root.
+    fn file(&self, rel: &str) -> std::path::PathBuf {
+        self.root()
+            .join(crate::project::Project::of(self.root()).file(rel))
+    }
+
+    /// The document named `rel` (`docs/…`, in the project's documents folder), cached by its text,
+    /// all document inputs (card locations, wikilinks and breadcrumb titles), and the component
+    /// provider's version. Unversioned providers render afresh.
     pub fn document(&self, rel: &str) -> io::Result<Arc<Document>> {
-        let text = read_text(&self.root().join(rel))?;
+        let text = read_text(&self.file(rel))?;
         let version = self
             .component_version()
             .map(|version| fingerprint(self.root(), &text, &version));
@@ -181,7 +189,7 @@ impl Render {
         if !tree::is_folder(self.root(), rel) {
             return Err(not_found(rel));
         }
-        let folder = self.root().join(rel);
+        let folder = self.file(rel);
         let intro = match folder.join("README.md").is_file() {
             true => Some(self.document(&format!("{rel}/README.md"))?.as_ref().clone()),
             false => None,

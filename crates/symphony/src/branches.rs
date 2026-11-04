@@ -17,15 +17,15 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, LazyLock, Mutex};
 use tasks::sys::Command;
 
-use crate::register::{DOCS_DIR, Decision, REGION_START, parse_decisions};
+use crate::project::Project;
+use crate::register::{Decision, REGION_START, parse_decisions};
 use crate::text::{rstrip, splitlines};
 use sha2::{Digest, Sha256};
 
-const MAIN: &str = "main";
 /// Git processes at once: a scan is mostly waiting on them.
 const WORKERS: usize = 8;
 
-/// A worktree on a branch other than main.
+/// A worktree on a branch other than the project's default branch (main).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Tree {
     pub branch: String,
@@ -43,7 +43,8 @@ impl Tree {
 #[derive(Clone, Debug)]
 pub struct BranchCard {
     pub tree: Tree,
-    /// The page under the worktree, `docs/DECISIONS.md`.
+    /// The page's document name, `docs/DECISIONS.md`, whatever the project's documents folder is
+    /// called: [`Project::file`] is the file under the worktree.
     pub doc: String,
     pub card: Decision,
 }
@@ -111,6 +112,7 @@ fn git(at: &Path, args: &[&str]) -> Option<String> {
 }
 
 pub fn trees(root: &Path) -> Vec<Tree> {
+    let main = Project::of(root).default_branch.clone();
     let listing = git(root, &["worktree", "list", "--porcelain"]).unwrap_or_default();
     let here = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
     let mut found = Vec::new();
@@ -126,7 +128,7 @@ pub fn trees(root: &Path) -> Vec<Tree> {
         let name = &branch["refs/heads/".len()..];
         let path = PathBuf::from(entry.get("worktree").copied().unwrap_or(""));
         let resolved = path.canonicalize().unwrap_or_else(|_| path.clone());
-        if name != MAIN && path.is_dir() && resolved != here {
+        if name != main && path.is_dir() && resolved != here {
             found.push(Tree {
                 branch: name.to_string(),
                 path,
@@ -137,13 +139,13 @@ pub fn trees(root: &Path) -> Vec<Tree> {
 }
 
 /// The branches already in main: all they can hold of their own is what is uncommitted.
-fn merged(root: &Path) -> HashSet<String> {
+fn merged(root: &Path, main: &str) -> HashSet<String> {
     git(
         root,
         &[
             "for-each-ref",
             "--merged",
-            MAIN,
+            main,
             "--format=%(refname:short)",
             "refs/heads",
         ],
@@ -154,9 +156,10 @@ fn merged(root: &Path) -> HashSet<String> {
     .collect()
 }
 
-/// The files under docs/ at `rev` that hold a register (cards): where a branch's cards can be.
-fn registers(at: &Path, rev: &str) -> Vec<String> {
-    git(at, &["grep", "-l", "-e", REGION_START, rev, "--", DOCS_DIR])
+/// The files under the documents folder `docs` at `rev` that hold a register (cards): where a
+/// branch's cards can be.
+fn registers(at: &Path, rev: &str, docs: &str) -> Vec<String> {
+    git(at, &["grep", "-l", "-e", REGION_START, rev, "--", docs])
         .unwrap_or_default()
         .replace(&format!("{rev}:"), "")
         .split_whitespace()
@@ -223,7 +226,7 @@ fn blobs(at: &Path, specs: &[String]) -> Vec<String> {
 
 /// (path, the worktree's text) for each markdown file under docs/ the branch changed since it forked
 /// from main, uncommitted or not, or added. A branch already in main has only its uncommitted files.
-fn changed_docs(tree: &Tree, is_merged: bool) -> Vec<(String, String)> {
+fn changed_docs(tree: &Tree, is_merged: bool, project: &Project) -> Vec<(String, String)> {
     let mut names: BTreeSet<String> = BTreeSet::new();
     if is_merged {
         let status = git(
@@ -233,7 +236,7 @@ fn changed_docs(tree: &Tree, is_merged: bool) -> Vec<(String, String)> {
                 "--porcelain",
                 "--untracked-files=all",
                 "--",
-                DOCS_DIR,
+                &project.docs,
             ],
         )
         .unwrap_or_default();
@@ -248,19 +251,26 @@ fn changed_docs(tree: &Tree, is_merged: bool) -> Vec<(String, String)> {
             );
         }
     } else {
-        let base = git(&tree.path, &["merge-base", MAIN, "HEAD"]).unwrap_or_default();
+        let base =
+            git(&tree.path, &["merge-base", &project.default_branch, "HEAD"]).unwrap_or_default();
         if base.trim().is_empty() {
             return Vec::new();
         }
         let diff = git(
             &tree.path,
-            &["diff", "--name-only", base.trim(), "--", DOCS_DIR],
+            &["diff", "--name-only", base.trim(), "--", &project.docs],
         )
         .unwrap_or_default();
         names.extend(diff.lines().map(str::to_string));
         let others = git(
             &tree.path,
-            &["ls-files", "--others", "--exclude-standard", "--", DOCS_DIR],
+            &[
+                "ls-files",
+                "--others",
+                "--exclude-standard",
+                "--",
+                &project.docs,
+            ],
         )
         .unwrap_or_default();
         names.extend(others.lines().map(str::to_string));
@@ -320,11 +330,11 @@ fn shapes(texts: &[String]) -> Arc<Shapes> {
 }
 
 /// The cards of every register as the branch found them when it forked from main.
-fn fork_shapes(tree: &Tree, is_merged: bool) -> Arc<Shapes> {
+fn fork_shapes(tree: &Tree, is_merged: bool, project: &Project) -> Arc<Shapes> {
     let base = if is_merged {
         "HEAD".to_string()
     } else {
-        git(&tree.path, &["merge-base", MAIN, "HEAD"])
+        git(&tree.path, &["merge-base", &project.default_branch, "HEAD"])
             .unwrap_or_default()
             .trim()
             .to_string()
@@ -332,7 +342,7 @@ fn fork_shapes(tree: &Tree, is_merged: bool) -> Arc<Shapes> {
     if base.is_empty() {
         return Arc::new(HashMap::new());
     }
-    let specs: Vec<String> = registers(&tree.path, &base)
+    let specs: Vec<String> = registers(&tree.path, &base, &project.docs)
         .iter()
         .map(|n| format!("{base}:{n}"))
         .collect();
@@ -341,12 +351,17 @@ fn fork_shapes(tree: &Tree, is_merged: bool) -> Arc<Shapes> {
 
 /// The tree's cards main does not have. A tree that cannot be read lists nothing: one bad worktree
 /// never takes the app down.
-fn tree_cards(tree: &Tree, is_merged: bool, main_shapes: &Shapes) -> Vec<BranchCard> {
-    let changed = changed_docs(tree, is_merged);
+fn tree_cards(
+    tree: &Tree,
+    is_merged: bool,
+    main_shapes: &Shapes,
+    project: &Project,
+) -> Vec<BranchCard> {
+    let changed = changed_docs(tree, is_merged, project);
     if changed.is_empty() {
         return Vec::new();
     }
-    let forked = fork_shapes(tree, is_merged);
+    let forked = fork_shapes(tree, is_merged, project);
     let mut found = Vec::new();
     for (name, text) in changed {
         for card in cards(&text) {
@@ -362,7 +377,7 @@ fn tree_cards(tree: &Tree, is_merged: bool, main_shapes: &Shapes) -> Vec<BranchC
             }
             found.push(BranchCard {
                 tree: tree.clone(),
-                doc: name.clone(),
+                doc: project.route(&name).unwrap_or_else(|| name.clone()),
                 card,
             });
         }
@@ -386,12 +401,14 @@ pub fn branch_cards(root: &Path) -> Vec<BranchCard> {
     if all.is_empty() {
         return Vec::new();
     }
-    let in_main = merged(root);
-    let names = registers(root, MAIN);
+    let project = Project::of(root);
+    let main = &project.default_branch;
+    let in_main = merged(root, main);
+    let names = registers(root, main, &project.docs);
     let specs: Vec<String> = {
         let mut sorted = names;
         sorted.sort();
-        sorted.iter().map(|n| format!("{MAIN}:{n}")).collect()
+        sorted.iter().map(|n| format!("{main}:{n}")).collect()
     };
     let main_shapes = shapes(&blobs(root, &specs));
     let next = AtomicUsize::new(0);
@@ -402,7 +419,8 @@ pub fn branch_cards(root: &Path) -> Vec<BranchCard> {
                 loop {
                     let at = next.fetch_add(1, Ordering::SeqCst);
                     let Some(tree) = all.get(at) else { break };
-                    let found = tree_cards(tree, in_main.contains(&tree.branch), &main_shapes);
+                    let found =
+                        tree_cards(tree, in_main.contains(&tree.branch), &main_shapes, &project);
                     *done[at].lock().unwrap_or_else(|e| e.into_inner()) = found;
                 }
             });

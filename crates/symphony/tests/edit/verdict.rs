@@ -4,6 +4,7 @@
 use symphony::edit::{add_message, is_repeat_decision, set_decision};
 use symphony::register::Who;
 
+use crate::common::plain;
 use crate::lines;
 
 // RepeatDecisionTest: a tap whose answer was lost is sent again; the file itself says whether it
@@ -12,7 +13,7 @@ use crate::lines;
 const BASE: &str = "# D\n\n- [ ] **one** — first.\n- [ ] **two** — second.\n";
 
 fn written(slug: &str, state: &str, note: &str, at: &str) -> String {
-    set_decision(BASE, slug, state, note, at).unwrap()
+    set_decision(BASE, slug, state, note, at, &plain()).unwrap()
 }
 
 fn repeat(text: &str, slug: &str, state: &str, note: &str, at: &str) -> bool {
@@ -123,7 +124,7 @@ const NOW: &str = "2026-09-26 09:15";
 
 #[test]
 fn sets_marker_and_appends_a_dated_owner_entry() {
-    let out = set_decision(TEXT, "one", "rejected", "Too many.\nCut it.", NOW).unwrap();
+    let out = set_decision(TEXT, "one", "rejected", "Too many.\nCut it.", NOW, &plain()).unwrap();
     assert_eq!(
         lines(&out)[2..6].to_vec(),
         vec![
@@ -137,7 +138,7 @@ fn sets_marker_and_appends_a_dated_owner_entry() {
 
 #[test]
 fn history_is_appended_never_replaced() {
-    let out = set_decision(TEXT, "two", "approved", "", NOW).unwrap();
+    let out = set_decision(TEXT, "two", "approved", "", NOW, &plain()).unwrap();
     assert_eq!(
         lines(&out)[3..6].to_vec(),
         vec![
@@ -150,7 +151,7 @@ fn history_is_appended_never_replaced() {
 
 #[test]
 fn pending_is_a_valid_state() {
-    let out = set_decision(TEXT, "three", "pending", "", NOW).unwrap();
+    let out = set_decision(TEXT, "three", "pending", "", NOW, &plain()).unwrap();
     assert!(
         out.contains("- [ ] **three** — third.\n  [2026-09-26 09:15] owner · pending"),
         "{out}"
@@ -159,7 +160,7 @@ fn pending_is_a_valid_state() {
 
 #[test]
 fn dismissed_is_an_owner_state_with_its_own_mark() {
-    let out = set_decision(TEXT, "one", "dismissed", "", NOW).unwrap();
+    let out = set_decision(TEXT, "one", "dismissed", "", NOW, &plain()).unwrap();
     assert!(
         out.contains("- [~] **one** — first.\n  [2026-09-26 09:15] owner · dismissed"),
         "{out}"
@@ -168,19 +169,19 @@ fn dismissed_is_an_owner_state_with_its_own_mark() {
 
 #[test]
 fn owner_cannot_mark_resolved() {
-    assert!(set_decision(TEXT, "one", "resolved", "", NOW).is_err());
+    assert!(set_decision(TEXT, "one", "resolved", "", NOW, &plain()).is_err());
 }
 
 #[test]
 fn unknown_slug_or_state_is_an_error() {
-    assert!(set_decision(TEXT, "nine", "approved", "", NOW).is_err());
-    assert!(set_decision(TEXT, "one", "maybe", "", NOW).is_err());
+    assert!(set_decision(TEXT, "nine", "approved", "", NOW, &plain()).is_err());
+    assert!(set_decision(TEXT, "one", "maybe", "", NOW, &plain()).is_err());
 }
 
 #[test]
 fn regroups_when_the_file_has_a_register_region() {
     let text = "<!-- register:start -->\n### T\n\n- [ ] **a** — 1\n- [ ] **b** — 2\n<!-- register:end -->\n";
-    let out = set_decision(text, "a", "approved", "", NOW).unwrap();
+    let out = set_decision(text, "a", "approved", "", NOW, &plain()).unwrap();
     assert!(
         out.find("**b**").unwrap() < out.find("**a**").unwrap(),
         "{out}"
@@ -196,7 +197,17 @@ const AUTO: &str = "<!-- register:start -->\n## Auto-approved: spot-check\n\n###
 
 #[test]
 fn the_owner_cannot_set_it_from_the_app() {
-    assert!(set_decision(AUTO, "pic", "auto-approved", "", "2026-09-27 12:00").is_err());
+    assert!(
+        set_decision(
+            AUTO,
+            "pic",
+            "auto-approved",
+            "",
+            "2026-09-27 12:00",
+            &plain()
+        )
+        .is_err()
+    );
 }
 
 #[test]
@@ -207,6 +218,7 @@ fn the_owner_can_overturn_it() {
         "rejected",
         "turrets too small",
         "2026-09-27 12:00",
+        &plain(),
     )
     .unwrap();
     assert!(out.contains("- [-] **pic**"), "{out}");

@@ -24,8 +24,9 @@
 //!   orchestrator or a chat: an unnamed pane may be the owner's;
 //! - it is not the calling pane, the focused pane or the caller's handle;
 //! - neither that handle nor any session under it (`parent`, at any depth, including through a
-//!   session that left) holds an executor role on an `in_progress` or `blocked` task or a reviewer
-//!   role on a task in `review`;
+//!   session that left) holds an executor role on an `in_progress`, `blocked` or `review` task or a
+//!   reviewer role on a task in `review`: an executor in review waits on its reviewers, whose
+//!   changes must reach its pane, and [`super::finish`] closes it once the task is done;
 //! - nothing runs under its claude process but what is known to be harmless
 //!   ([`procs::reap_busy_reason`]): MCP helpers, caffeinate, a board command or monitor (`just
 //!   tasks…`, the `tasks` binary). Anything else, whatever it is, is work. A pane whose processes
@@ -345,14 +346,15 @@ fn read_seen(state: &Path, now: f64) -> HashMap<String, f64> {
 }
 
 /// Handles that hold live work, themselves or through a session under them (a subagent): an
-/// executor on a task `in_progress` or `blocked`, a reviewer on one in `review`. A departed middle
-/// session still links its live descendants to their ancestors; leaving releases its own roles.
+/// executor on a task `in_progress`, `blocked` or in `review`, a reviewer on one in `review`. A
+/// departed middle session still links its live descendants to their ancestors; leaving releases
+/// its own roles.
 fn live_work(store: &Store) -> Result<HashSet<String>, Error> {
     let mut own: Vec<String> = Vec::new();
     for task in store.tasks(None)? {
         for role in &task.roles {
             let live = match role.role.as_str() {
-                "executor" => matches!(task.status.as_str(), "in_progress" | "blocked"),
+                "executor" => matches!(task.status.as_str(), "in_progress" | "blocked" | "review"),
                 "reviewer" => task.status == "review",
                 _ => false,
             };

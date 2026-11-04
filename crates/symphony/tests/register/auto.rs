@@ -4,7 +4,7 @@
 use symphony::board::{render, scan};
 use symphony::register::{Group, State, Who, resolve, sort_register};
 
-use crate::common::{Tree, matches};
+use crate::common::{Tree, matches, plain};
 use crate::{card, entry};
 
 const CARD: [&str; 3] = [
@@ -36,8 +36,8 @@ fn the_auto_line_is_an_agent_entry_with_its_verdict() {
 #[test]
 fn it_sits_in_its_own_group_and_is_not_open() {
     let found = card(&CARD);
-    assert_eq!(found.group(), Group::Auto);
-    assert!(!found.open());
+    assert_eq!(found.group(&plain()), Group::Auto);
+    assert!(!found.open(&plain()));
     assert_eq!(
         (Group::Auto.key(), Group::Auto.title()),
         ("auto", "Auto-approved: spot-check")
@@ -47,7 +47,10 @@ fn it_sits_in_its_own_group_and_is_not_open() {
 #[test]
 fn tidy_does_not_resolve_it() {
     let text = CARD.join("\n") + "\n";
-    assert_eq!(resolve(&text, "2026-09-27 12:00"), (text.clone(), vec![]));
+    assert_eq!(
+        resolve(&text, "2026-09-27 12:00", &plain()),
+        (text.clone(), vec![])
+    );
 }
 
 #[test]
@@ -56,7 +59,7 @@ fn the_register_groups_it_apart_from_decide_and_resolved() {
         "<!-- register:start -->\n### T\n\n- [ ] **new** — 1\n  [2026-09-27 09:00] agent — x\n{}\n- [x] **done** — 2\n<!-- register:end -->\n",
         CARD.join("\n")
     );
-    let out = sort_register(&text).unwrap();
+    let out = sort_register(&text, &plain()).unwrap();
     let heads: Vec<&str> = out.lines().filter(|l| l.starts_with("## ")).collect();
     assert_eq!(
         heads,
@@ -75,8 +78,8 @@ fn an_owner_comment_on_it_is_work_for_an_agent() {
     let mut lines = CARD.to_vec();
     lines.push("  [2026-09-27 12:00] owner — the turrets are too small");
     let found = card(&lines);
-    assert!(found.open());
-    assert_eq!(found.group(), Group::Agent);
+    assert!(found.open(&plain()));
+    assert_eq!(found.group(&plain()), Group::Agent);
 }
 
 #[test]
@@ -96,7 +99,7 @@ fn an_owner_verdict_overrides_it() {
 fn the_board_counts_it() {
     let tree = Tree::new();
     tree.write("docs/x.md", &(CARD.join("\n") + "\n"));
-    let out = render(&scan(&tree.root).unwrap(), false);
+    let out = render(&plain(), &scan(&tree.root).unwrap(), false);
     assert!(matches(r"auto-approved\s+1", &out), "{out}");
     assert!(matches(r"auto-approved: spot-check\s+1", &out), "{out}");
 }

@@ -4,17 +4,17 @@
 
 /// The usage line of `just tasks` itself.
 pub const USAGE: &str = r#"usage: just tasks [-h] [--as ACTOR]
-                  {callback,register,attach,list,search,embed,next,create,priority,claim,reserve,release,show,parent,depends,done,role,move,verdict,say,launch,restore,cleanup,reap,staff,agents,who,inbox,leave,beat,export,finish,sweep} ...
+                  {callback,register,attach,list,search,embed,next,create,priority,field,claim,reserve,release,show,parent,depends,done,role,move,verdict,say,launch,restore,cleanup,reap,staff,agents,who,inbox,leave,beat,export,finish,sweep} ...
 "#;
 
 /// `just tasks --help`.
 pub const HELP: &str = r#"usage: just tasks [-h] [--as ACTOR]
-                  {callback,register,attach,list,search,embed,next,create,priority,claim,reserve,release,show,parent,depends,done,role,move,verdict,say,launch,restore,cleanup,reap,staff,agents,who,inbox,leave,beat,export,finish,sweep} ...
+                  {callback,register,attach,list,search,embed,next,create,priority,field,claim,reserve,release,show,parent,depends,done,role,move,verdict,say,launch,restore,cleanup,reap,staff,agents,who,inbox,leave,beat,export,finish,sweep} ...
 
 The task board from the terminal — `just tasks …` and `just tasks-attach`.
 
 positional arguments:
-  {callback,register,attach,list,search,embed,next,create,priority,claim,reserve,release,show,parent,depends,done,role,move,verdict,say,launch,restore,cleanup,reap,staff,agents,who,inbox,leave,beat,export,finish,sweep}
+  {callback,register,attach,list,search,embed,next,create,priority,field,claim,reserve,release,show,parent,depends,done,role,move,verdict,say,launch,restore,cleanup,reap,staff,agents,who,inbox,leave,beat,export,finish,sweep}
     callback            register a native channel or --off for inbox fallback
     depends             change what a task waits on
     beat               a hook: read one Claude Code tool event on stdin and
@@ -194,6 +194,23 @@ positional arguments:
 
 options:
   -h, --help    show this help message and exit
+  --as ACTOR
+"#,
+    ),
+    (
+        "field",
+        "usage: just tasks field [-h] [--as ACTOR] slug name value\n",
+        r#"usage: just tasks field [-h] [--as ACTOR] slug name value
+
+Set a plugin's board field on a task; the Symphony server validates it first
+
+positional arguments:
+  slug
+  name        the field, or PLUGIN.FIELD
+  value
+
+options:
+  -h, --help  show this help message and exit
   --as ACTOR
 "#,
     ),

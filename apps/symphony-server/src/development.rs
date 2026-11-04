@@ -276,6 +276,7 @@ async fn run(root: PathBuf, dx: PathBuf, port: u16) -> Result<(), String> {
         front.local_addr().map_err(|e| e.to_string())?,
         std::process::id()
     );
+    let nav = std::sync::Arc::new(crate::api::nav_pages(&root));
     let mut tick = tokio::time::interval(Duration::from_millis(200));
     let outcome = 'serving: loop {
         tokio::select! {
@@ -295,8 +296,9 @@ async fn run(root: PathBuf, dx: PathBuf, port: u16) -> Result<(), String> {
             }
             accepted = front.accept() => {
                 let (stream, _) = accepted.map_err(|e| e.to_string())?;
+                let nav = nav.clone();
                 tokio::spawn(async move {
-                    if let Err(why) = forward(stream, api, web).await {
+                    if let Err(why) = forward(stream, api, web, &nav).await {
                         eprintln!("symphony-ui-dev request: {why}");
                     }
                 });
@@ -307,7 +309,7 @@ async fn run(root: PathBuf, dx: PathBuf, port: u16) -> Result<(), String> {
     outcome
 }
 
-async fn forward(mut stream: TcpStream, api: u16, web: u16) -> Result<(), String> {
+async fn forward(mut stream: TcpStream, api: u16, web: u16, nav: &[String]) -> Result<(), String> {
     // One request per upstream connection. Force HTTP/1.1 close for ordinary requests so a
     // keep-alive connection cannot send its next API request to the page server (or vice versa).
     // Upgrade connections keep their headers: WebSocket frames and SSE are streamed untouched.
@@ -339,7 +341,7 @@ async fn forward(mut stream: TcpStream, api: u16, web: u16) -> Result<(), String
     let path = crate::api::decode_path(target.split('?').next().unwrap_or(target))
         .ok_or("bad request path")?;
     let (_, path) = crate::api::scope_path(&path);
-    let port = if crate::api::client_page(path)
+    let port = if crate::api::client_page(nav, path)
         || path.starts_with("/assets/")
         || path.starts_with("/wasm/")
         || path.starts_with("/_dioxus")

@@ -21,7 +21,7 @@
 /// Bumped when `DEFINE` gains a table, field, index or event: a board at another version runs `DEFINE`
 /// again, and its `IF NOT EXISTS` adds what is new but leaves every definition already there as it
 /// was. Changing one (a field's type, an assertion, an index) also needs `DEFINE … OVERWRITE` for it.
-pub const VERSION: i64 = 9;
+pub const VERSION: i64 = 10;
 
 // Full-text index construction needs a committed analyzer, installed before the schema transaction.
 pub const ANALYZERS: &str = "DEFINE ANALYZER IF NOT EXISTS task_words TOKENIZERS blank, class, punct FILTERS lowercase, ascii;";
@@ -41,6 +41,7 @@ DEFINE FIELD IF NOT EXISTS created ON task TYPE float;
 DEFINE FIELD IF NOT EXISTS updated ON task TYPE float;
 DEFINE FIELD IF NOT EXISTS instruction ON task TYPE bool DEFAULT false;
 DEFINE FIELD IF NOT EXISTS version ON task TYPE int DEFAULT 0;
+DEFINE FIELD IF NOT EXISTS fields ON task TYPE option<object> FLEXIBLE;
 DEFINE INDEX IF NOT EXISTS task_sid ON task FIELDS sid UNIQUE;
 DEFINE INDEX IF NOT EXISTS task_status ON task FIELDS status;
 DEFINE INDEX IF NOT EXISTS task_parent ON task FIELDS parent;
