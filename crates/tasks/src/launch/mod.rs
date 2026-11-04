@@ -26,10 +26,12 @@ mod cleanup;
 pub mod herdr;
 pub mod procs;
 pub mod reap;
+mod recover;
 pub mod staff;
 mod startup;
 
 pub use cleanup::{Closure, cleanup, finish};
+pub use recover::restore_unanswered;
 
 use crate::cli::{Env, probes};
 use crate::health::{FINISHED, RESERVE_SECONDS};
@@ -498,8 +500,19 @@ pub fn restore(
     }
     let mut restored = Vec::new();
     for s in &recorded {
-        if s.closed.is_none() || handle.is_some_and(|h| s.handle != h) {
+        if handle.is_some_and(|h| s.handle != h) {
             continue;
+        }
+        if s.closed.is_none() {
+            let task = store.get(slug)?;
+            if !store
+                .pending_posts(&[task])?
+                .iter()
+                .any(|p| p.handle == s.handle && p.overdue(store.now()))
+                || recover::present(s, &herdr.all_agents()?)
+            {
+                continue;
+            }
         }
         if s.claude_session.is_empty() || s.claude_session == "codex:" {
             return Err(Error::Refused(format!(

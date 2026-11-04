@@ -84,6 +84,17 @@ metadata restoring Unknown for newer readers. Both old and new writers must shar
 past the ten-minute lost threshold, or alternating dispatchers repeat liveness notices.
 A finished idle pane still closes under the original cleanup rules, retiring its
 registration; an executor of a task in review is not finished, and keeps its pane.
+PULL's `unanswered` category lists a missing executor on `in_progress`, `blocked` or `review`,
+or a missing reviewer on `review`, after an addressed post has waited thirty minutes. Each line
+names the post and its restore command (or an explicit launch when no conversation was recorded).
+The monitor and native stream emit that task/post once. `store/unanswered.rs::unanswered_post`
+defines pending work for the digest, restore selection and sweep: a post to a handle or its role,
+without a later message or verdict by that handle on the same thread. Reading an inbox does not
+answer it. The periodic reap command reserves one durable recovery attempt per handle/post and
+resumes the recorded conversation only after the pane inventory confirms its absence; it never
+starts a fresh conversation. An unsuccessful attempt remains flagged for manual action.
+An unanswered post keeps a pane immediately, including through descendant sessions. A reviewer
+whose changes verdict returned the task to `in_progress` keeps its pane for re-review too.
 A post or changes verdict to `@executor`, or a post to the executor by handle, that no
 executor can read (no callback, and its launch record closed or no live beat) adds a
 `board` post to `@orchestrator` on the

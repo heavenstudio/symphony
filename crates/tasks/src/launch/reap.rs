@@ -27,6 +27,8 @@
 //!   session that left) holds an executor role on an `in_progress`, `blocked` or `review` task or a
 //!   reviewer role on a task in `review`: an executor in review waits on its reviewers, whose
 //!   changes must reach its pane, and [`super::finish`] closes it once the task is done;
+//! - neither it nor a descendant has an unanswered addressed post, or a reviewer role awaiting
+//!   re-review on an `in_progress` task after its changes verdict;
 //! - nothing runs under its claude process but what is known to be harmless
 //!   ([`procs::reap_busy_reason`]): MCP helpers, caffeinate, a board command or monitor (`just
 //!   tasks…`, the `tasks` binary). Anything else, whatever it is, is work. A pane whose processes
@@ -351,11 +353,34 @@ fn read_seen(state: &Path, now: f64) -> HashMap<String, f64> {
 /// its own roles.
 fn live_work(store: &Store) -> Result<HashSet<String>, Error> {
     let mut own: Vec<String> = Vec::new();
-    for task in store.tasks(None)? {
+    let tasks = store.tasks(None)?;
+    own.extend(store.pending_posts(&tasks)?.into_iter().map(|p| p.handle));
+    let threads = store.threads(
+        &tasks
+            .iter()
+            .filter(|t| t.status == "in_progress")
+            .map(|t| t.slug.clone())
+            .collect::<Vec<_>>(),
+    )?;
+    for task in tasks {
         for role in &task.roles {
             let live = match role.role.as_str() {
                 "executor" => matches!(task.status.as_str(), "in_progress" | "blocked" | "review"),
-                "reviewer" => task.status == "review",
+                "reviewer" => {
+                    task.status == "review"
+                        || (task.status == "in_progress"
+                            && threads.get(&task.slug).is_some_and(|thread| {
+                                thread
+                                    .iter()
+                                    .rev()
+                                    .find(|post| {
+                                        post.kind == "verdict" && post.sender == role.handle
+                                    })
+                                    .is_some_and(|post| {
+                                        post.text == "changes" || post.text.starts_with("changes:")
+                                    })
+                            }))
+                }
                 _ => false,
             };
             if live {
@@ -508,7 +533,7 @@ fn still_idle(
     Ok(Some(now.clone()))
 }
 
-fn native_sessions(agents: &[Object]) -> (BTreeSet<String>, bool) {
+pub(super) fn native_sessions(agents: &[Object]) -> (BTreeSet<String>, bool) {
     let mut sessions = BTreeSet::new();
     let mut complete = true;
     for agent in agents {

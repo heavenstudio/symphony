@@ -920,9 +920,9 @@ RETURN NONE;");
             let digest = pull::digest(self, &idle, Some(&landed), self.now(), &busy)?;
             let entries = digest.entries();
             pull_current = entries.clone();
-            pull_entries.retain(|entry| entries.contains(entry));
+            pull_entries.retain(|entry| entry.0 == "unanswered" || entries.contains(entry));
             if let Some(queued) = &mut pull_queued {
-                queued.retain(|entry| entries.contains(entry));
+                queued.retain(|entry| entry.0 == "unanswered" || entries.contains(entry));
             }
             if legacy_upgrade {
                 pull_entries = entries;
@@ -932,13 +932,14 @@ RETURN NONE;");
                     .is_none_or(|queued| !entries.is_subset(queued))
             {
                 let text = digest
-                    .event_lines()
+                    .event_lines_since(&pull_entries)
                     .iter()
                     .map(|line| event_line(line))
                     .collect::<Vec<_>>()
                     .join("\n");
-                pull_queued = Some(entries.clone());
-                pull_event = Some((text, entries));
+                pull_entries.extend(entries);
+                pull_queued = Some(pull_entries.clone());
+                pull_event = Some((text, pull_entries.clone()));
             }
         }
         let revision = lease.map_or(state.revision, |(_, revision)| revision);
@@ -1085,7 +1086,7 @@ RETURN NONE;");
         }
         self.retrying(|| self.transact::<Value>(
             "IF $computed {
-                UPDATE callback_event SET pull_entries = pull_entries.filter(|$entry| $entry IN $pull_current)
+                UPDATE callback_event SET pull_entries = pull_entries.filter(|$entry| $entry[0] = 'unanswered' OR $entry IN $pull_current)
                     WHERE handle = $handle AND delivered != true AND pull_entries != NONE RETURN NONE;
              };
              IF $replace_pull { DELETE callback_event WHERE handle = $handle AND delivered != true AND string::starts_with(key, 'pull-') RETURN NONE; };
@@ -1109,7 +1110,7 @@ RETURN NONE;");
              UPDATE type::record('callback_state', $handle) SET seen = $seen, unknown_children = $unknown_children, snapshot_sequence = $snapshot_sequence, statuses = $statuses, revision = $revision, pull = $pull, pull_queued = $pull_queued,
                 observed_registration = registration_revision ?? 0,
                 pull_entries = IF $legacy_upgrade { $pull_entries }
-                    ELSE IF $computed AND pull_entries != NONE { pull_entries.filter(|$entry| $entry IN $pull_current) } ELSE { pull_entries },
+                    ELSE IF $computed AND pull_entries != NONE { pull_entries.filter(|$entry| $entry[0] = 'unanswered' OR $entry IN $pull_current) } ELSE { pull_entries },
                 message_cursor = math::max([message_cursor ?? 0, $message_cursor]),
                 inbox_cursor = $inbox_cursor,
                 delivery_version = delivery_version ?? 1 RETURN NONE;

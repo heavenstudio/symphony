@@ -170,6 +170,23 @@ pub(super) fn reap(store: &Store, c: &mut Context) -> Result<(), Stop> {
     if swept.closed.is_empty() && swept.idle.is_empty() {
         c.say("nothing to close");
     }
+    if !dry_run {
+        match launch::restore_unanswered(
+            store,
+            &Binary::of(c.env),
+            &Machine::of(c.env),
+            &mut *c.err,
+        ) {
+            Ok(lines) => {
+                for line in lines {
+                    c.say(&line);
+                }
+            }
+            Err(problem) => {
+                let _ = writeln!(c.err, "unanswered recovery unavailable: {problem}");
+            }
+        }
+    }
     Ok(())
 }
 

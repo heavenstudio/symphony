@@ -714,6 +714,60 @@ fn the_digest_does_not_repeat_when_its_interval_passes() {
 }
 
 #[test]
+fn unanswered_stream_lines_are_once_per_post_despite_other_pull_changes() {
+    let m = Monitor::new("unanswered");
+    let orch = m.register("orchestrator");
+    let worker = m.register("worker");
+    m.ok(&orch, &["create", "sim/a", "A"]);
+    m.ok(&worker, &["claim", "sim/a"]);
+    let first = m
+        .board()
+        .say("sim/a", "owner", "continue", Some("@executor"))
+        .unwrap();
+    m.now.set(NOW + 31.0 * 60.0);
+    let second = Cell::new(0);
+    m.watch(
+        &orch,
+        Watch {
+            polls: 5,
+            interval: 31.0 * 60.0,
+            pull_every: 1.0,
+            ..Watch::polls(5)
+        },
+        &|m, n| match n {
+            0 => {
+                m.ok(&orch, &["create", "sim/b", "B"]);
+            }
+            1 => {
+                m.board().touch(&worker).unwrap();
+            }
+            2 => {
+                second.set(
+                    m.board()
+                        .say("sim/a", "owner", "another request", Some(&worker))
+                        .unwrap()
+                        .id,
+                );
+            }
+            _ => {}
+        },
+    );
+    let lines = m.starting(&["  unanswered "]);
+    assert_eq!(lines.len(), 2, "{lines:?}");
+    for id in [first.id, second.get()] {
+        assert!(id > 0);
+        assert_eq!(
+            lines
+                .iter()
+                .filter(|line| line.contains(&format!("post #{id} —")))
+                .count(),
+            1,
+            "{lines:?}"
+        );
+    }
+}
+
+#[test]
 fn a_gap_departure_is_silent_and_its_return_is_delivered_once() {
     for returns in [false, true] {
         let m = Monitor::new(&format!("digest-change-{returns}"));

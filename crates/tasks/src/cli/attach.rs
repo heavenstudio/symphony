@@ -532,12 +532,14 @@ fn look(
     if let Some((stamp, statuses)) = pull {
         let digest = pull_digest(store, view.as_ref(), w.landed, stamp)?;
         let entries = digest.entries();
-        memory.pull_entries.retain(|entry| entries.contains(entry));
+        memory
+            .pull_entries
+            .retain(|entry| entry.0 == "unanswered" || entries.contains(entry));
         if !entries.is_subset(&memory.pull_entries) {
-            for line in digest.event_lines() {
+            for line in digest.event_lines_since(&memory.pull_entries) {
                 emit(&line);
             }
-            memory.pull_entries = entries;
+            memory.pull_entries.extend(entries);
         }
         memory.last_pull = Some(stamp);
         memory.last_statuses = statuses;
