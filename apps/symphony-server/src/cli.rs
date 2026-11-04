@@ -152,39 +152,6 @@ fn port(word: &str) -> Result<u16, String> {
         .map_err(|_| format!("{word:?} is not a port (0 to 65535)"))
 }
 
-/// A `symphony-server` binary holding `plugins`: they are installed, the server log runs while it
-/// serves a checkout, and [`main`] does the rest. The exit code.
-pub fn run(plugins: &'static [&'static dyn symphony_plugin::Plugin], args: &[String]) -> i32 {
-    if let Err(problem) = symphony::plugins::install(plugins) {
-        eprintln!("{problem}");
-        return 2;
-    }
-    let logging = if args.first().is_some_and(|arg| arg == "serve") {
-        match args
-            .windows(2)
-            .find(|pair| pair[0] == "--home")
-            .map(|_| crate::log::Log::start())
-            .transpose()
-        {
-            Ok(logging) => logging,
-            Err(e) => {
-                eprintln!("cannot start server log: {e}");
-                return 1;
-            }
-        }
-    } else {
-        None
-    };
-    let code = main(args);
-    if let Some(log) = logging
-        && let Err(e) = log.finish()
-    {
-        eprintln!("cannot finish server log: {e}");
-        return 1;
-    }
-    code
-}
-
 /// Run `exe`, this server, with `args` against its own board `database` and asks file `asks`, in this
 /// process's folder and on its streams: the server's exit code, or 2 when it could not start or ended
 /// on a signal.

@@ -11,8 +11,8 @@ use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 mod document_task_layout;
-mod home_hero;
 mod list_and_queue_spacing;
+mod pictures;
 
 const DOC: &str = "docs/look-parity.md";
 const PICTURE: &str = "data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20width='600'%20height='900'%3E%3Crect%20width='600'%20height='900'%20fill='teal'/%3E%3C/svg%3E";
@@ -1019,51 +1019,6 @@ fn task_columns_keep_status_tones_priority_edges_health_dots_and_the_phone_pipel
     ));
     assert_eq!(browser.eval("const cols=[...document.querySelectorAll('.pipeline > .column')]; cols.every(e=>Math.abs(e.getBoundingClientRect().x-cols[0].getBoundingClientRect().x)<1)"),json!(true));
     report_styles(&mut browser, "task columns, desktop and phone");
-}
-
-#[test]
-fn the_lamp_picker_has_one_card_border_and_a_visible_keyboard_focus_ring() {
-    let site = ParitySite::start();
-    let Some(mut browser) = chrome() else { return };
-    track_styles(&mut browser);
-    browser.open(&site.url(&format!("/{DOC}#L30")));
-    assert!(browser.wait_for("document.querySelector('.gallery-pick') !== null", SHOWN));
-    assert!(browser.wait_for(
-        "document.querySelector('.gallery-pick img')?.naturalWidth === 600",
-        SHOWN
-    ));
-    painted_layout(&mut browser);
-    assert_eq!(
-        browser.eval("document.querySelector('.gallery-pick img').getAttribute('src')"),
-        json!(PICTURE),
-        "use the supplied picture thumbnail"
-    );
-    assert_eq!(
-        browser.eval("getComputedStyle(document.querySelector('.gallery-card')).borderTopWidth"),
-        json!("1px")
-    );
-    assert_eq!(
-        browser.eval("getComputedStyle(document.querySelector('.gallery-card')).borderRadius"),
-        json!("14px")
-    );
-    assert_eq!(
-        browser.eval("getComputedStyle(document.querySelector('.gallery-pick')).borderTopWidth"),
-        json!("0px")
-    );
-    for mode in ["light", "dark"] {
-        browser.call(
-            "Emulation.setEmulatedMedia",
-            json!({"features":[{"name":"prefers-color-scheme","value":mode}]}),
-        );
-        painted_layout(&mut browser);
-        assert_eq!(browser.eval("(() => {const pick=document.querySelector('.gallery-pick'), style=getComputedStyle(pick), card=getComputedStyle(pick.parentElement), image=pick.querySelector('img').getBoundingClientRect(), outer=pick.parentElement.getBoundingClientRect();return style.borderTopWidth === '0px' && style.boxShadow === 'none' && Math.abs(image.left-outer.left-parseFloat(card.borderLeftWidth)-parseFloat(card.paddingLeft)) <= 1 && image.width === 80 && image.height === 80;})()"), json!(true), "{mode}: the thumbnail stays left aligned inside the card's single border");
-    }
-    browser.eval("document.querySelector('.gallery-pick').focus()");
-    assert_eq!(
-        browser.eval("getComputedStyle(document.querySelector('.gallery-pick')).outlineWidth"),
-        json!("2px")
-    );
-    report_styles(&mut browser, "lamp picker and keyboard focus");
 }
 
 #[test]
