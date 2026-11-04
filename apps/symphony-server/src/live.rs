@@ -1271,15 +1271,32 @@ fn relevant(common: Option<&Path>, path: &Path) -> bool {
     }
 }
 
-/// What the checkout at `root` adds to the watched and swept paths: its project's documents and
-/// what its plugins watch outside them.
+/// What the checkout at `root` adds to the watched and swept paths: its entrypoints' folders and
+/// what its plugins watch outside them. An entrypoint at the project's root is the empty path.
 fn tree_inputs(root: &Path) -> Vec<(String, RecursiveMode)> {
-    let docs = symphony::project::Project::of(root).docs.clone();
+    let project = symphony::project::Project::of(root);
+    let mut folders: Vec<String> = Vec::new();
+    let mut by_depth: Vec<&String> = project.entrypoints.iter().map(|e| &e.folder).collect();
+    by_depth.sort_by_key(|folder| folder.len());
+    for folder in by_depth {
+        // A folder inside one already watched recursively is watched with it.
+        if !folders
+            .iter()
+            .any(|held| Path::new(folder).starts_with(held))
+        {
+            folders.push(folder.clone());
+        }
+    }
     let outside: Vec<String> = watched(root)
         .into_iter()
-        .filter(|path| !Path::new(path).starts_with(&docs))
+        .filter(|path| {
+            !folders
+                .iter()
+                .any(|folder| Path::new(path).starts_with(folder))
+        })
         .collect();
-    std::iter::once(docs)
+    folders
+        .into_iter()
         .chain(outside)
         .map(|below| (below, RecursiveMode::Recursive))
         .collect()

@@ -9,6 +9,7 @@ use std::sync::Arc;
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 
+use crate::entrypoint::join;
 use crate::render::{Render, Section};
 use crate::text::read_text;
 use crate::tree::{self, Crumb, Heading};
@@ -53,6 +54,8 @@ impl Document {
 pub enum EntryKind {
     Folder,
     Doc,
+    /// A file a media renderer shows, opened as it is.
+    Media,
 }
 
 /// One thing a folder holds.
@@ -144,7 +147,7 @@ impl Render {
             .join(crate::project::Project::of(self.root()).file(rel))
     }
 
-    /// The document named `rel` (`docs/…`, in the project's documents folder), cached by its text,
+    /// The document named by its route `rel` (`docs/…`, in its entrypoint's folder), cached by its text,
     /// all document inputs (card locations, wikilinks and breadcrumb titles), and the component
     /// provider's version. Unversioned providers render afresh.
     pub fn document(&self, rel: &str) -> io::Result<Arc<Document>> {
@@ -183,52 +186,59 @@ impl Render {
         Ok(doc)
     }
 
-    /// The folder page at `rel`: its README as the intro, then its subfolders and documents.
+    /// The folder page at `rel`: its README as the intro, then its subfolders, its documents and
+    /// the media its entrypoint shows.
     pub fn folder(&self, rel: &str) -> io::Result<Folder> {
         let rel = rel.trim_matches('/');
-        if !tree::is_folder(self.root(), rel) {
+        let project = crate::project::Project::of(self.root());
+        let Some(place) = tree::Place::of(self.root(), &project, rel) else {
             return Err(not_found(rel));
-        }
-        let folder = self.file(rel);
-        let intro = match folder.join("README.md").is_file() {
-            true => Some(self.document(&format!("{rel}/README.md"))?.as_ref().clone()),
+        };
+        let folder = place.path();
+        let route = |name: &str| place.entry.route(&join(&place.inside, name));
+        let intro = match place.entry.page(&join(&place.inside, "README.md"))
+            && folder.join("README.md").is_file()
+        {
+            true => Some(self.document(&route("README.md"))?.as_ref().clone()),
             false => None,
         };
         let mut entries = Vec::new();
-        for sub in tree::subfolders(&folder) {
+        for name in place.subfolders() {
+            let sub = folder.join(&name);
             entries.push(Entry {
                 kind: EntryKind::Folder,
-                path: format!(
-                    "{rel}/{}",
-                    sub.file_name()
-                        .map(|n| n.to_string_lossy().to_string())
-                        .unwrap_or_default()
-                ),
+                path: route(&name),
                 title: tree::title(&sub),
-                docs: tree::count_docs(&sub),
+                docs: place.sub(&name).count_docs(),
                 waiting: 0,
                 summary: tree::summary(&sub),
             });
         }
-        let documents = tree::documents(&folder);
-        for doc in &documents {
-            let text = read_text(doc)?;
+        let documents = place.documents();
+        for name in &documents {
+            let doc = folder.join(name);
+            let text = read_text(&doc)?;
             entries.push(Entry {
                 kind: EntryKind::Doc,
-                path: format!(
-                    "{rel}/{}",
-                    doc.file_name()
-                        .map(|n| n.to_string_lossy().to_string())
-                        .unwrap_or_default()
-                ),
-                title: tree::title(doc),
+                path: route(name),
+                title: tree::title(&doc),
                 docs: 0,
                 waiting: tree::pending(&text).len(),
-                summary: tree::summary(doc),
+                summary: tree::summary(&doc),
+            });
+        }
+        for name in place.media() {
+            entries.push(Entry {
+                kind: EntryKind::Media,
+                path: route(&name),
+                title: name,
+                docs: 0,
+                waiting: 0,
+                summary: String::new(),
             });
         }
         Ok(Folder {
-            path: rel.to_string(),
+            path: place.route(),
             title: tree::title(&folder),
             crumbs: tree::crumbs(self.root(), &format!("{rel}/")),
             docs: documents.len(),

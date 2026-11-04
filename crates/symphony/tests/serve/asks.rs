@@ -108,7 +108,7 @@ fn a_refusal_is_an_ask_error_and_a_store_that_cannot_open_is_a_store_error() {
     let tree = Tree::new();
     let db = tree.path("asks.db");
     let refused = call(
-        json!({"fn": "asks_ask", "db": db, "path": "secret.md", "question": "hi", "anchor": "", "quote": ""}),
+        json!({"fn": "asks_ask", "db": db, "path": "../secret.md", "question": "hi", "anchor": "", "quote": ""}),
     );
     assert_eq!(refused["error"], "ask", "{refused}");
     let missing = call(json!({"fn": "asks_reply", "db": db, "id": 42, "text": "hi"}));

@@ -132,3 +132,37 @@ fn failed_adds_are_retried_and_a_failed_commit_is_not_marked_watched() {
     assert_eq!(watched, watcher.active.keys().cloned().collect());
     assert_eq!((watcher.batches, watcher.commits), (4, 4));
 }
+
+#[test]
+fn the_watch_follows_the_projects_entrypoints() {
+    let tree = Tree::new();
+    let root = repository(&tree);
+    tree.write(
+        "main/symphony.toml",
+        "[[entrypoints]]\nurl = \"/\"\nfolder = \"spec\"\n\
+         [[entrypoints]]\nurl = \"/notes/\"\nfolder = \"spec/notes\"\n\
+         [[entrypoints]]\nurl = \"/manual/\"\nfolder = \"manual\"\n",
+    );
+    assert_eq!(
+        tree_inputs(&root),
+        [
+            ("spec".to_string(), RecursiveMode::Recursive),
+            ("manual".to_string(), RecursiveMode::Recursive),
+        ],
+        "a folder inside a watched one is watched with it, and docs/ is no entrypoint's"
+    );
+    tree.write(
+        "main/symphony.toml",
+        "[[entrypoints]]\nurl = \"/\"\nfolder = \".\"\n",
+    );
+    assert_eq!(
+        tree_inputs(&root),
+        [(String::new(), RecursiveMode::Recursive)]
+    );
+    let hub = Hub::new(&root, &root.join("build/client"));
+    assert!(
+        hub.watch_paths()
+            .contains(&(root.clone(), RecursiveMode::Recursive)),
+        "the project's root itself"
+    );
+}

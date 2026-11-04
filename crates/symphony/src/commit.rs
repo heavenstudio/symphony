@@ -12,7 +12,7 @@ use tasks::sys::Command;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::landing::{PrivateWorktree, generators, is_doc_in};
+use crate::landing::{PrivateWorktree, generators};
 use crate::plugins::Plugins;
 use crate::project::Project;
 
@@ -1176,12 +1176,18 @@ impl Drop for Scratch {
 fn apply(root: &Path, parent: &str, edits: &[Edit]) -> Result<(Blobs, Blobs), CommitError> {
     let mut blobs = BTreeMap::new();
     let mut before = BTreeMap::new();
-    let docs = Project::of(root).docs.clone();
+    let project = Project::of(root);
     for edit in edits {
-        if !is_doc_in(&docs, &edit.rel) {
+        if !project.is_page(&edit.rel) {
+            let under: Vec<String> = project
+                .entrypoints
+                .iter()
+                .map(|entry| crate::entrypoint::join(&entry.folder, "*.md"))
+                .collect();
             return Err(format!(
-                "{} is not a design document under {docs}/*.md: the app commits only those",
-                edit.rel
+                "{} is not a design document under {}: the app commits only those",
+                edit.rel,
+                under.join(" or ")
             )
             .into());
         }
@@ -1506,7 +1512,7 @@ fn release(
     )?;
     let branch_pages: BTreeSet<String> = names
         .lines()
-        .filter(|name| is_doc_in(&project.docs, name))
+        .filter(|name| project.is_page(name))
         .map(str::to_owned)
         .collect();
     let pending = waiting.lock().unwrap_or_else(|e| e.into_inner()).clone();
@@ -1515,9 +1521,7 @@ fn release(
     pages.extend(
         pending
             .values()
-            .filter(|edit| {
-                is_doc_in(&project.docs, &edit.rel) && output_pages.contains_key(&edit.rel)
-            })
+            .filter(|edit| project.is_page(&edit.rel) && output_pages.contains_key(&edit.rel))
             .map(|edit| edit.rel.clone()),
     );
     let mut released = Vec::new();

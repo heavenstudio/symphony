@@ -251,12 +251,106 @@ pub struct ProgressBar {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProjectView {
     pub name: String,
-    /// The decision register as a link names it: `docs/DECISIONS.md` when the documents folder
-    /// holds it, whatever that folder is called, else its project-relative path.
+    /// The decision register as a link names it: its route when an entrypoint holds it
+    /// (`docs/DECISIONS.md`), whatever the folder is called, else its project-relative path.
     pub register: String,
     /// The plugins' navigation entries, after the Symphony's own.
     #[serde(default)]
     pub nav: Vec<NavItem>,
+    /// The routes the project's entrypoints are served at, in its file's order, without slashes:
+    /// `docs`, or empty for one at `/`. None sent is the convention, `docs` alone.
+    #[serde(default)]
+    pub entrypoints: Vec<String>,
+}
+
+impl ProjectView {
+    /// The routes documents are served at: the project's entrypoints, or the convention's.
+    pub fn entrypoints(&self) -> Vec<&str> {
+        if self.entrypoints.is_empty() {
+            vec!["docs"]
+        } else {
+            self.entrypoints.iter().map(String::as_str).collect()
+        }
+    }
+
+    /// Whether `path` (a route, no leading slash) is a document page or a folder page of one of
+    /// the entrypoints: under one, on no route the Symphony or a plugin's page answers (which
+    /// win), and a folder (a trailing slash, or an entrypoint's own route) or a name with no dot
+    /// or a Markdown one. A file of any other type is served as itself.
+    pub fn is_document_route(&self, path: &str) -> bool {
+        let page = path.trim_end_matches('/');
+        let pages = self.nav.iter().map(|item| item.href.trim_matches('/'));
+        let entrypoints = self.entrypoints();
+        let name = page.rsplit('/').next().unwrap_or(page);
+        !SYMPHONY_ROUTES
+            .iter()
+            .copied()
+            .chain(pages)
+            .any(|route| within(route, page))
+            && entrypoints.iter().any(|url| within(url, page))
+            && (path.ends_with('/')
+                || entrypoints.contains(&page)
+                || !name.contains('.')
+                || name.ends_with(".md"))
+    }
+
+    /// Whether `path` is a document route ([`ProjectView::is_document_route`]) naming a folder page
+    /// rather than a document: a trailing slash, an entrypoint's own route, or a name that is not
+    /// Markdown. A folder or an entrypoint named `guide.md` is a folder page.
+    pub fn is_folder_route(&self, path: &str) -> bool {
+        let page = path.trim_end_matches('/');
+        self.is_document_route(path)
+            && (path.ends_with('/') || self.entrypoints().contains(&page) || !page.ends_with(".md"))
+    }
+
+    /// The URL of the first entrypoint's folder page: `/docs/`, or `/` at the root.
+    pub fn documents_href(&self) -> String {
+        match self.entrypoints().first() {
+            Some(url) if !url.is_empty() => format!("/{url}/"),
+            _ => "/".into(),
+        }
+    }
+
+    /// The route of the first entrypoint's README, where a question no page names goes:
+    /// `docs/README.md`, or `README.md` at the root.
+    pub fn readme_route(&self) -> String {
+        match self.entrypoints().first() {
+            Some(url) if !url.is_empty() => format!("{url}/README.md"),
+            _ => "README.md".into(),
+        }
+    }
+}
+
+/// The routes the Symphony answers itself, each with everything under it, without slashes. An
+/// entrypoint is never served on one, and a file of an entrypoint whose route lands on one is
+/// refused: the Symphony's pages win.
+pub const SYMPHONY_ROUTES: &[&str] = &[
+    "tasks",
+    "task",
+    "agents",
+    "queue",
+    "api",
+    "assets",
+    "static",
+    "thumb",
+    "x",
+    "artifacts/uploads",
+    "app",
+    "doc",
+    "history",
+    "diff",
+    "wasm",
+    "_dioxus",
+    "favicon.ico",
+];
+
+/// Whether the route `path` is `route` or lies under it; every path lies under the empty route.
+fn within(route: &str, path: &str) -> bool {
+    route.is_empty()
+        || path == route
+        || path
+            .strip_prefix(route)
+            .is_some_and(|rest| rest.starts_with('/'))
 }
 
 /// The id of the element holding a [`ProjectView`] in the served page.

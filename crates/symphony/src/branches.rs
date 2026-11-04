@@ -156,13 +156,17 @@ fn merged(root: &Path, main: &str) -> HashSet<String> {
     .collect()
 }
 
-/// The files under the documents folder `docs` at `rev` that hold a register (cards): where a
+/// The document pages of the project's entrypoints at `rev` that hold a register (cards): where a
 /// branch's cards can be.
-fn registers(at: &Path, rev: &str, docs: &str) -> Vec<String> {
-    git(at, &["grep", "-l", "-e", REGION_START, rev, "--", docs])
+fn registers(at: &Path, rev: &str, project: &Project) -> Vec<String> {
+    let folders = project.pathspecs();
+    let mut args = vec!["grep", "-l", "-e", REGION_START, rev, "--"];
+    args.extend(folders.iter().map(String::as_str));
+    git(at, &args)
         .unwrap_or_default()
         .replace(&format!("{rev}:"), "")
         .split_whitespace()
+        .filter(|name| project.is_page(name))
         .map(str::to_string)
         .collect()
 }
@@ -224,22 +228,19 @@ fn blobs(at: &Path, specs: &[String]) -> Vec<String> {
     out
 }
 
-/// (path, the worktree's text) for each markdown file under docs/ the branch changed since it forked
-/// from main, uncommitted or not, or added. A branch already in main has only its uncommitted files.
+/// (path, the worktree's text) for each document page of an entrypoint the branch changed since it
+/// forked from main, uncommitted or not, or added. A branch already in main has only its
+/// uncommitted files.
 fn changed_docs(tree: &Tree, is_merged: bool, project: &Project) -> Vec<(String, String)> {
     let mut names: BTreeSet<String> = BTreeSet::new();
+    let folders = project.pathspecs();
+    let over_folders = |args: &[&str]| {
+        let mut all = args.to_vec();
+        all.extend(folders.iter().map(String::as_str));
+        git(&tree.path, &all).unwrap_or_default()
+    };
     if is_merged {
-        let status = git(
-            &tree.path,
-            &[
-                "status",
-                "--porcelain",
-                "--untracked-files=all",
-                "--",
-                &project.docs,
-            ],
-        )
-        .unwrap_or_default();
+        let status = over_folders(&["status", "--porcelain", "--untracked-files=all", "--"]);
         for line in status.lines() {
             let name = line.get(3..).unwrap_or("");
             names.insert(
@@ -256,28 +257,14 @@ fn changed_docs(tree: &Tree, is_merged: bool, project: &Project) -> Vec<(String,
         if base.trim().is_empty() {
             return Vec::new();
         }
-        let diff = git(
-            &tree.path,
-            &["diff", "--name-only", base.trim(), "--", &project.docs],
-        )
-        .unwrap_or_default();
+        let diff = over_folders(&["diff", "--name-only", base.trim(), "--"]);
         names.extend(diff.lines().map(str::to_string));
-        let others = git(
-            &tree.path,
-            &[
-                "ls-files",
-                "--others",
-                "--exclude-standard",
-                "--",
-                &project.docs,
-            ],
-        )
-        .unwrap_or_default();
+        let others = over_folders(&["ls-files", "--others", "--exclude-standard", "--"]);
         names.extend(others.lines().map(str::to_string));
     }
     names
         .into_iter()
-        .filter(|n| n.ends_with(".md") && tree.path.join(n).is_file())
+        .filter(|n| project.is_page(n) && tree.path.join(n).is_file())
         .filter_map(|n| {
             let text = crate::text::read_text(&tree.path.join(&n)).ok()?;
             Some((n, text))
@@ -342,7 +329,7 @@ fn fork_shapes(tree: &Tree, is_merged: bool, project: &Project) -> Arc<Shapes> {
     if base.is_empty() {
         return Arc::new(HashMap::new());
     }
-    let specs: Vec<String> = registers(&tree.path, &base, &project.docs)
+    let specs: Vec<String> = registers(&tree.path, &base, project)
         .iter()
         .map(|n| format!("{base}:{n}"))
         .collect();
@@ -404,7 +391,7 @@ pub fn branch_cards(root: &Path) -> Vec<BranchCard> {
     let project = Project::of(root);
     let main = &project.default_branch;
     let in_main = merged(root, main);
-    let names = registers(root, main, &project.docs);
+    let names = registers(root, main, &project);
     let specs: Vec<String> = {
         let mut sorted = names;
         sorted.sort();
