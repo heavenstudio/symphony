@@ -88,11 +88,13 @@ PULL's `unanswered` category lists a missing executor on `in_progress`, `blocked
 or a missing reviewer on `review`, after an addressed post has waited thirty minutes. Each line
 names the post and its restore command (or an explicit launch when no conversation was recorded).
 The monitor and native stream emit that task/post once. `store/unanswered.rs::unanswered_post`
-defines pending work for the digest, restore selection and sweep: a post to a handle or its role,
-without a later message or verdict by that handle on the same thread. Reading an inbox does not
-answer it. The periodic reap command reserves one durable recovery attempt per handle/post and
-resumes the recorded conversation only after the pane inventory confirms its absence; it never
-starts a fresh conversation. An unsuccessful attempt remains flagged for manual action.
+defines pending work for the digest, restore selection and sweep: a post since that handle took
+its role, without a later message, status move or verdict by it on the same thread. Acquiring the
+role also puts the predecessor's posts before the new holder's work, even at the same clock time.
+Reading an inbox does not answer it. The periodic reap command reserves one durable recovery
+attempt per handle/post and resumes the recorded conversation only after the pane inventory
+confirms its absence; it never starts a fresh conversation. An unsuccessful attempt remains
+flagged for manual action.
 A reviewer launched on an instruction child resumes that child's recorded conversation when the
 unanswered post is on its parent; a departed reviewer explicitly named by handle still receives it.
 An unanswered post keeps a pane immediately, including through descendant sessions. A reviewer

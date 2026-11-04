@@ -3,6 +3,25 @@
 use super::*;
 
 #[test]
+fn a_status_answer_does_not_keep_a_finished_agents_pane() {
+    let w = World::new();
+    let handle = w.executor_on("in_progress", "sim/jump");
+    w.store()
+        .say("sim/jump", "owner", "finish this", Some(&handle))
+        .unwrap();
+    w.store().move_to("sim/jump", "review", &handle).unwrap();
+    let reviewer = w.f.session("reviewer");
+    w.store()
+        .take_role("sim/jump", &reviewer, "reviewer")
+        .unwrap();
+    w.store()
+        .verdict("sim/jump", &reviewer, "approve", "finished")
+        .unwrap();
+    let pane = w.agent(Agent::named(&handle));
+    assert_eq!(panes(&w.twice(How::default())), [pane.as_str()]);
+}
+
+#[test]
 fn a_finished_idle_agent_is_closed_on_the_second_idle_sweep() {
     let w = World::new();
     let handle = w.executor_on("done", "sim/jump");

@@ -8,6 +8,14 @@ use std::collections::{BTreeMap, BTreeSet};
 
 const UNANSWERED_SECONDS: f64 = 30.0 * 60.0;
 
+// Actor-authored state changes answer work too. Other system records (launch, delivery, release)
+// do not. Role acquisition also puts older role-addressed posts before the new holder's work.
+const ANSWER_SQL: &str = "(kind IN ['msg', 'verdict'] OR (kind = 'system' AND
+    (string::starts_with(text, sender + ' moved it ')
+    OR string::starts_with(text, sender + ' claimed it')
+    OR text = sender + ' joined as reviewer'
+    OR text = sender + ' joined as executor')))";
+
 #[derive(Clone, Debug)]
 pub(crate) struct Pending {
     pub slug: String,
@@ -69,22 +77,25 @@ fn recorded_role<'a>(
     .then_some("reviewer")
 }
 
-/// A post to this handle or its role, with no later message/verdict by it on this thread.
-/// System records and inbox acknowledgements are not answers. Sequence ids also order equal clocks.
+/// A post since this role began, with no later message, verdict or actor-authored action on its
+/// thread. Only the actions selected by ANSWER_SQL become `activity`; other system records and
+/// inbox acknowledgements are not answers. Sequence ids also order equal clocks.
 pub(crate) fn unanswered_post(
     post: &Message,
     thread: &[Message],
     handle: &str,
     role: &str,
+    since: f64,
 ) -> bool {
     matches!(post.kind.as_str(), "msg" | "verdict")
+        && post.ts >= since
         && post.sender != handle
         && post.recipient.as_deref().is_some_and(|to| {
             to == handle || (!role.is_empty() && to.strip_prefix('@') == Some(role))
         })
         && !thread.iter().any(|reply| {
             reply.sender == handle
-                && matches!(reply.kind.as_str(), "msg" | "verdict")
+                && matches!(reply.kind.as_str(), "msg" | "verdict" | "activity")
                 && reply.id > post.id
         })
 }
@@ -112,15 +123,24 @@ impl Store {
                 (s.row.handle, (health, s.row.last_seen))
             })
             .collect();
-        // No briefs, system history or post bodies cross the database boundary for this decision.
+        // Only metadata crosses the boundary, including the actor-authored state actions above.
         let rows: Vec<Vec<MessageRow>> = self.transact(
-            "RETURN $slugs.map(|$slug| (SELECT sid, slug, sender, recipient, kind, ts, '' AS text
-FROM message:[$slug, NONE]..[$slug, ..] WHERE kind IN ['msg', 'verdict']));",
+            &format!("RETURN $slugs.map(|$slug| (SELECT sid, slug, sender, recipient, kind, ts, '' AS text
+FROM message:[$slug, NONE]..[$slug, ..] WHERE {ANSWER_SQL}));"),
             json!({"slugs": tasks.iter().map(|t| &t.slug).collect::<Vec<_>>()}),
         ).map_err(recovery_error)?;
         let mut pending = Vec::new();
         for (task, rows) in tasks.iter().zip(rows) {
-            let thread: Vec<_> = rows.into_iter().map(super::message).collect();
+            let thread: Vec<_> = rows
+                .into_iter()
+                .map(|row| {
+                    let mut post = super::message(row);
+                    if post.kind == "system" {
+                        post.kind = "activity".into();
+                    }
+                    post
+                })
+                .collect();
             let mut holders: BTreeSet<(String, String)> = task
                 .roles
                 .iter()
@@ -144,6 +164,11 @@ FROM message:[$slug, NONE]..[$slug, ..] WHERE kind IN ['msg', 'verdict']));",
             }
             let mut seen = BTreeSet::new();
             for (handle, role) in holders {
+                let since = task
+                    .roles
+                    .iter()
+                    .find(|r| r.handle == handle && r.role == role)
+                    .map_or(f64::NEG_INFINITY, |r| r.since);
                 let alias = if task
                     .roles
                     .iter()
@@ -160,7 +185,7 @@ FROM message:[$slug, NONE]..[$slug, ..] WHERE kind IN ['msg', 'verdict']));",
                     .max_by_key(|post| post.id)
                     .cloned();
                 for post in &thread {
-                    if unanswered_post(post, last_reply.as_slice(), &handle, alias)
+                    if unanswered_post(post, last_reply.as_slice(), &handle, alias, since)
                         && seen.insert((handle.clone(), post.id))
                     {
                         pending.push(Pending {
@@ -205,19 +230,19 @@ FROM message:[$slug, NONE]..[$slug, ..] WHERE kind IN ['msg', 'verdict']));",
     /// Reserve before starting a process: an interruption may leave it flagged, never duplicated.
     pub(crate) fn claim_unanswered_restore(&self, pending: &Pending) -> Result<bool, Error> {
         self.transact(
-            "LET $key = type::record('unanswered_restore', [$slug, $handle, $post]);
-IF record::exists($key) { RETURN false; };
-IF type::record('session', $handle).last_seen != $seen { RETURN false; };
+            &format!("LET $key = type::record('unanswered_restore', [$slug, $handle, $post]);
+IF record::exists($key) {{ RETURN false; }};
+IF type::record('session', $handle).last_seen != $seen {{ RETURN false; }};
 IF array::len(SELECT VALUE sid FROM message:[$slug, NONE]..[$slug, ..]
-    WHERE sender = $handle AND kind IN ['msg', 'verdict'] AND sid > $post) > 0 { RETURN false; };
+    WHERE sender = $handle AND {ANSWER_SQL} AND sid > $post) > 0 {{ RETURN false; }};
 LET $status = type::record('task', $slug).status;
 IF ($role = 'executor' AND $status NOT IN ['in_progress', 'blocked', 'review'])
-    OR ($role = 'reviewer' AND $status != 'review') { RETURN false; };
+    OR ($role = 'reviewer' AND $status != 'review') {{ RETURN false; }};
 LET $holders = (SELECT VALUE handle FROM role WHERE slug = $slug AND role = $role);
 IF array::len($holders) > 0 AND $handle NOT IN $holders
-    AND type::record('message', [$slug, $post]).recipient != $handle { RETURN false; };
-CREATE $key CONTENT { slug: $slug, handle: $handle, post: $post } RETURN NONE;
-RETURN true;",
+    AND type::record('message', [$slug, $post]).recipient != $handle {{ RETURN false; }};
+CREATE $key CONTENT {{ slug: $slug, handle: $handle, post: $post }} RETURN NONE;
+RETURN true;"),
             json!({"slug": pending.slug, "handle": pending.handle, "post": pending.post.id, "seen":pending.seen, "role":pending.role}),
         )
         .map_err(recovery_error)
@@ -273,12 +298,17 @@ mod tests {
             ] {
                 thread.push(irrelevant);
             }
-            assert!(unanswered_post(&addressed, &thread, "worker", "executor"));
-            for kind in ["msg", "verdict"] {
+            assert!(unanswered_post(
+                &addressed, &thread, "worker", "executor", 0.0
+            ));
+            assert!(!unanswered_post(
+                &addressed, &thread, "worker", "executor", 2.0
+            ));
+            for kind in ["msg", "verdict", "activity"] {
                 let mut answered = thread.clone();
                 answered.push(post(5, "worker", None, kind));
                 assert!(!unanswered_post(
-                    &addressed, &answered, "worker", "executor"
+                    &addressed, &answered, "worker", "executor", 0.0
                 ));
             }
         }
@@ -294,7 +324,8 @@ mod tests {
                 &ignored,
                 std::slice::from_ref(&ignored),
                 "worker",
-                "executor"
+                "executor",
+                0.0
             ));
         }
         let verdict = post(2, "reviewer", Some("@executor"), "verdict");
@@ -302,7 +333,8 @@ mod tests {
             &verdict,
             std::slice::from_ref(&verdict),
             "worker",
-            "executor"
+            "executor",
+            0.0
         ));
     }
 }

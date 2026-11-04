@@ -91,6 +91,7 @@ fn recovery_resumes_once_per_post_for_closed_or_missing_open_conversations() {
 fn recovery_leaves_answered_present_and_unrecorded_conversations_alone() {
     for case in [
         "answered",
+        "status-answer",
         "present",
         "unrecorded",
         "native",
@@ -106,6 +107,9 @@ fn recovery_leaves_answered_present_and_unrecorded_conversations_alone() {
             .unwrap();
         if case == "answered" {
             w.store().say(&s.slug, &s.handle, "answer", None).unwrap();
+        }
+        if case == "status-answer" {
+            w.store().move_to(&s.slug, "blocked", &s.handle).unwrap();
         }
         if case.ends_with("-open") {
             w.edit_panes(|panes| panes.clear());
