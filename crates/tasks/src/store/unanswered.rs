@@ -6,6 +6,9 @@ use crate::rows::TaskSessionRow;
 use serde_json::json;
 use std::collections::{BTreeMap, BTreeSet};
 
+#[path = "unanswered_recipients.rs"]
+mod recipients;
+
 const UNANSWERED_SECONDS: f64 = 30.0 * 60.0;
 
 // Actor-authored state changes answer work too. Other system records (launch, delivery, release)
@@ -102,10 +105,15 @@ pub(crate) fn unanswered_post(
 
 impl Store {
     /// Pending posts, including direct handle posts on finished tasks (which still keep a pane).
-    /// Launch records retain a departed agent's role. A replacement suppresses the old role alias;
-    /// a post explicitly naming that departed handle still belongs to it.
+    /// Role aliases retain their recipients from the post's thread prefix, including departed
+    /// agents. A later release or replacement cannot assign an old post to another conversation.
     pub(crate) fn pending_posts(&self, tasks: &[Task]) -> Result<Vec<Pending>, Error> {
         let launches = self.all_task_sessions()?;
+        let recorded_reviewers: BTreeSet<_> = launches
+            .iter()
+            .filter(|launch| launch.role == "reviewer")
+            .map(|launch| launch.handle.as_str())
+            .collect();
         let confirmed = self.confirmed_callbacks()?;
         let board = self.board()?;
         let by_slug: BTreeMap<_, _> = board.tasks.iter().map(|t| (t.slug.as_str(), t)).collect();
@@ -124,23 +132,28 @@ impl Store {
             })
             .collect();
         // Only metadata crosses the boundary, including the actor-authored state actions above.
-        let rows: Vec<Vec<MessageRow>> = self.transact(
-            &format!("RETURN $slugs.map(|$slug| (SELECT sid, slug, sender, recipient, kind, ts, '' AS text
-FROM message:[$slug, NONE]..[$slug, ..] WHERE {ANSWER_SQL}));"),
-            json!({"slugs": tasks.iter().map(|t| &t.slug).collect::<Vec<_>>()}),
-        ).map_err(recovery_error)?;
+        let rows: Vec<Vec<MessageRow>> = self
+            .transact(
+                &format!(
+                    "RETURN $slugs.map(|$slug| (SELECT sid, slug, sender, recipient, kind, ts,
+IF kind = 'system' {{ text }} ELSE {{ '' }} AS text
+FROM message:[$slug, NONE]..[$slug, ..] WHERE {ANSWER_SQL}
+OR (kind = 'system' AND string::starts_with(text, sender + ' released '))));"
+                ),
+                json!({"slugs": tasks.iter().map(|t| &t.slug).collect::<Vec<_>>()}),
+            )
+            .map_err(recovery_error)?;
         let mut pending = Vec::new();
         for (task, rows) in tasks.iter().zip(rows) {
-            let thread: Vec<_> = rows
-                .into_iter()
-                .map(|row| {
-                    let mut post = super::message(row);
-                    if post.kind == "system" {
-                        post.kind = "activity".into();
-                    }
-                    post
-                })
-                .collect();
+            let mut thread: Vec<_> = rows.into_iter().map(super::message).collect();
+            let recipients = recipients::resolve(&thread, &task.roles);
+            for post in &mut thread {
+                if post.kind == "system"
+                    && !post.text.starts_with(&format!("{} released ", post.sender))
+                {
+                    post.kind = "activity".into();
+                }
+            }
             let mut holders: BTreeSet<(String, String)> = task
                 .roles
                 .iter()
@@ -148,13 +161,23 @@ FROM message:[$slug, NONE]..[$slug, ..] WHERE {ANSWER_SQL}));"),
                 .map(|r| (r.handle.clone(), r.role.clone()))
                 .collect();
             for launch in &launches {
-                if let Some(role) = recorded_role(launch, task, &by_slug)
-                    && (!task.roles.iter().any(|r| r.role == role)
-                        || thread
-                            .iter()
-                            .any(|post| post.recipient.as_deref() == Some(launch.handle.as_str())))
-                {
+                if let Some(role) = recorded_role(launch, task, &by_slug) {
                     holders.insert((launch.handle.clone(), role.into()));
+                }
+            }
+            // A named review target may differ from the instruction's parent. Its role history
+            // still binds the post after departure, when today's role rows have disappeared.
+            for post in thread
+                .iter()
+                .filter(|post| post.recipient.as_deref() == Some("@reviewer"))
+            {
+                if let Some(handles) = recipients.get(&post.id) {
+                    holders.extend(
+                        handles
+                            .iter()
+                            .filter(|h| recorded_reviewers.contains(h.as_str()))
+                            .map(|handle| (handle.clone(), "reviewer".into())),
+                    );
                 }
             }
             for to in thread.iter().filter_map(|m| m.recipient.as_ref()) {
@@ -169,22 +192,23 @@ FROM message:[$slug, NONE]..[$slug, ..] WHERE {ANSWER_SQL}));"),
                     .iter()
                     .find(|r| r.handle == handle && r.role == role)
                     .map_or(f64::NEG_INFINITY, |r| r.since);
-                let alias = if task
-                    .roles
-                    .iter()
-                    .any(|r| r.role == role && r.handle == handle)
-                    || !task.roles.iter().any(|r| r.role == role)
-                {
-                    role.as_str()
-                } else {
-                    ""
-                };
                 let last_reply = thread
                     .iter()
-                    .filter(|post| post.sender == handle)
+                    .filter(|post| {
+                        post.sender == handle
+                            && matches!(post.kind.as_str(), "msg" | "verdict" | "activity")
+                    })
                     .max_by_key(|post| post.id)
                     .cloned();
                 for post in &thread {
+                    let alias = if recipients
+                        .get(&post.id)
+                        .is_some_and(|to| to.contains(&handle))
+                    {
+                        role.as_str()
+                    } else {
+                        ""
+                    };
                     if unanswered_post(post, last_reply.as_slice(), &handle, alias, since)
                         && seen.insert((handle.clone(), post.id))
                     {
@@ -201,11 +225,7 @@ FROM message:[$slug, NONE]..[$slug, ..] WHERE {ANSWER_SQL}));"),
                                 })
                                 .or_else(|| {
                                     // A review instruction can name a target other than its parent.
-                                    if task
-                                        .roles
-                                        .iter()
-                                        .any(|r| r.role == "reviewer" && r.handle == handle)
-                                    {
+                                    if role == "reviewer" {
                                         launches
                                             .iter()
                                             .rev()
@@ -228,6 +248,7 @@ FROM message:[$slug, NONE]..[$slug, ..] WHERE {ANSWER_SQL}));"),
 
     /// Reserve the sole automatic resume attempt for this handle/post, across restarts and sweeps.
     /// Reserve before starting a process: an interruption may leave it flagged, never duplicated.
+    /// Role recipients come from the immutable thread prefix; later holders cannot reassign them.
     pub(crate) fn claim_unanswered_restore(&self, pending: &Pending) -> Result<bool, Error> {
         self.transact(
             &format!("LET $key = type::record('unanswered_restore', [$slug, $handle, $post]);
@@ -238,9 +259,6 @@ IF array::len(SELECT VALUE sid FROM message:[$slug, NONE]..[$slug, ..]
 LET $status = type::record('task', $slug).status;
 IF ($role = 'executor' AND $status NOT IN ['in_progress', 'blocked', 'review'])
     OR ($role = 'reviewer' AND $status != 'review') {{ RETURN false; }};
-LET $holders = (SELECT VALUE handle FROM role WHERE slug = $slug AND role = $role);
-IF array::len($holders) > 0 AND $handle NOT IN $holders
-    AND type::record('message', [$slug, $post]).recipient != $handle {{ RETURN false; }};
 CREATE $key CONTENT {{ slug: $slug, handle: $handle, post: $post }} RETURN NONE;
 RETURN true;"),
             json!({"slug": pending.slug, "handle": pending.handle, "post": pending.post.id, "seen":pending.seen, "role":pending.role}),

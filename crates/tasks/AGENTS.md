@@ -91,6 +91,8 @@ The monitor and native stream emit that task/post once. `store/unanswered.rs::un
 defines pending work for the digest, restore selection and sweep: a post since that handle took
 its role, without a later message, status move or verdict by it on the same thread. Acquiring the
 role also puts the predecessor's posts before the new holder's work, even at the same clock time.
+Role aliases bind to the holders in the thread prefix at each post; a later departure or
+replacement cannot transfer that request to another recorded conversation.
 Reading an inbox does not answer it. The periodic reap command reserves one durable recovery
 attempt per handle/post and resumes the recorded conversation only after the pane inventory
 confirms its absence; it never starts a fresh conversation. An unsuccessful attempt remains

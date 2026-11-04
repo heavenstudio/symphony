@@ -41,7 +41,7 @@ pub fn restore_unanswered(
         if !reap::native_sessions(&agents).1 || present(launch, &agents) {
             continue;
         }
-        // Re-read immediately before reserving: an answer or replacement makes recovery obsolete.
+        // Re-read before reserving: an answer or task-status change can make recovery obsolete.
         let task = store.get(&pending.slug)?;
         if !store.pending_posts(&[task])?.iter().any(|p| {
             p.handle == pending.handle && p.post.id == pending.post.id && p.overdue(store.now())

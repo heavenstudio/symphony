@@ -3,6 +3,93 @@
 use super::*;
 
 #[test]
+fn a_departed_replacement_keeps_its_role_posts_without_reviving_its_predecessor() {
+    for parent in ["sim/jump", "sim/other"] {
+        for before_departure in [false, true] {
+            for another_reviewer in [false, true] {
+                let w = World::new();
+                let executor = w.f.session("worker");
+                w.store().claim("sim/jump", &executor).unwrap();
+                w.store().move_to("sim/jump", "review", &executor).unwrap();
+                if parent != "sim/jump" {
+                    w.task(parent, None);
+                }
+                w.task("sim/jump/review-a", Some(parent));
+                let a = w.review("sim/jump/review-a").row;
+                if parent != "sim/jump" {
+                    w.store()
+                        .take_role("sim/jump", &a.handle, "reviewer")
+                        .unwrap();
+                }
+                w.store()
+                    .release("sim/jump", &a.handle, Some("reviewer"))
+                    .unwrap();
+                close_pane(&w, &a);
+                w.task("sim/jump/review-b", Some(parent));
+                let b = w.review("sim/jump/review-b").row;
+                if parent != "sim/jump" {
+                    w.store()
+                        .take_role("sim/jump", &b.handle, "reviewer")
+                        .unwrap();
+                }
+                if !before_departure {
+                    w.store().leave(&b.handle).unwrap();
+                }
+                let post = w
+                    .store()
+                    .say("sim/jump", "owner", "finish review", Some("@reviewer"))
+                    .unwrap();
+                if before_departure {
+                    w.store().leave(&b.handle).unwrap();
+                }
+                close_pane(&w, &b);
+                if another_reviewer {
+                    w.task("sim/jump/review-c", Some(parent));
+                    let c = w.review("sim/jump/review-c").row;
+                    if parent != "sim/jump" {
+                        w.store()
+                            .take_role("sim/jump", &c.handle, "reviewer")
+                            .unwrap();
+                    }
+                }
+                w.f.advance(31.0 * 60.0);
+                let digest =
+                    tasks::cli::pull::digest(w.store(), &[], None, w.f.now(), &[]).unwrap();
+                let lines = digest.lines().join("\n");
+                assert_eq!(digest.count("unanswered"), 1, "{lines}");
+                assert!(
+                    lines.contains(&format!("just tasks restore {} {}", b.slug, b.handle)),
+                    "{lines}"
+                );
+                assert!(!lines.contains(&a.handle), "{lines}");
+                let starts = w.calls_of(&["agent", "start"]).len();
+                let mut warnings = Vec::new();
+                let restored =
+                    restore_unanswered(w.store(), &w.herdr(), &w.machine(), &mut warnings).unwrap();
+                assert_eq!(restored.len(), 1, "{restored:?} {warnings:?}");
+                assert!(restored[0].contains(&b.handle), "{restored:?}");
+                assert!(restored[0].contains(&format!("post #{}", post.id)));
+                assert_eq!(w.calls_of(&["agent", "start"]).len(), starts + 1);
+                assert!(
+                    w.store().task_sessions(&a.slug).unwrap()[0]
+                        .closed
+                        .is_some()
+                );
+                let resumed = &w.store().task_sessions(&b.slug).unwrap()[0];
+                assert!(resumed.closed.is_none());
+                assert_eq!(resumed.claude_session, b.claude_session);
+                assert!(warnings.is_empty(), "{warnings:?}");
+                assert!(
+                    restore_unanswered(w.store(), &w.herdr(), &w.machine(), &mut warnings)
+                        .unwrap()
+                        .is_empty()
+                );
+            }
+        }
+    }
+}
+
+#[test]
 fn an_unanswered_review_post_resumes_its_instruction_conversation() {
     for closed in [false, true] {
         for (departed, by_role, parent) in [

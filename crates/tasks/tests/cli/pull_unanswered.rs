@@ -3,6 +3,32 @@
 use super::*;
 
 #[test]
+fn leaving_after_answering_does_not_hide_a_replacements_reply() {
+    let c = Case::new();
+    c.task("sim/a", "review");
+    let a = c.f.session("reviewer");
+    let b = c.f.session("reviewer");
+    c.f.store.take_role("sim/a", &a, "reviewer").unwrap();
+    c.f.store
+        .record_launch(&tasks::NewLaunch::new("sim/a", &a, "reviewer"))
+        .unwrap();
+    c.f.store.release("sim/a", &a, Some("reviewer")).unwrap();
+    c.f.store.take_role("sim/a", &b, "reviewer").unwrap();
+    c.f.store
+        .record_launch(&tasks::NewLaunch::new("sim/a", &b, "reviewer"))
+        .unwrap();
+    c.f.store
+        .say("sim/a", "owner", "review", Some("@reviewer"))
+        .unwrap();
+    c.f.store
+        .say("sim/a", &b, "review completed", None)
+        .unwrap();
+    c.f.store.leave(&b).unwrap();
+    c.f.advance(31.0 * 60.0);
+    assert_eq!(c.digest().count("unanswered"), 0);
+}
+
+#[test]
 fn unanswered_posts_observe_age_role_health_answers_and_recovery_commands() {
     for status in ["in_progress", "blocked", "review"] {
         let c = Case::new();
