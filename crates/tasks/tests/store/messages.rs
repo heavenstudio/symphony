@@ -236,6 +236,60 @@ fn ack_empties_the_inbox_and_new_messages_arrive_again() {
 }
 
 #[test]
+fn acknowledgements_keep_adjacent_large_integer_ids_and_recipients_distinct() {
+    use tasks::rows::{DeliveryRow, MessageRow};
+
+    let ids = [
+        1,
+        9_007_199_254_740_992,
+        9_007_199_254_740_993,
+        i64::MAX - 2,
+    ];
+    let mut seed = Seed::default()
+        .session("amber-heron")
+        .session("brisk-finch")
+        .task("sim/jump", "ready");
+    seed.dump.messages = ids
+        .iter()
+        .map(|&id| MessageRow {
+            id,
+            slug: "sim/jump".into(),
+            sender: "owner".into(),
+            recipient: Some("amber-heron".into()),
+            kind: "msg".into(),
+            text: format!("message {id}"),
+            ts: NOW,
+        })
+        .collect();
+    seed.dump.deliveries = [
+        (ids[0], "amber-heron"),
+        (ids[1], "amber-heron"),
+        (ids[2], "brisk-finch"),
+    ]
+    .into_iter()
+    .map(|(message, handle)| DeliveryRow {
+        message,
+        handle: handle.into(),
+        acked: NOW,
+    })
+    .collect();
+    let f = Fixture::new(seed);
+    let unread = || {
+        f.store
+            .inbox("amber-heron")
+            .unwrap()
+            .into_iter()
+            .map(|m| m.id)
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(unread(), ids[2..]);
+    f.store.ack("amber-heron", &[ids[2]]).unwrap();
+    assert_eq!(unread(), [ids[3]]);
+    f.store.ack("amber-heron", &[ids[3]]).unwrap();
+    assert!(unread().is_empty());
+}
+
+#[test]
 fn the_records_own_lines_and_what_came_before_a_session_never_reach_it() {
     let f = Fixture::empty();
     let a = f.session("worker");

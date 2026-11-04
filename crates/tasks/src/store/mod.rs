@@ -756,6 +756,7 @@ impl Store {
         })
     }
 
+    #[track_caller]
     fn view(&self, which: &Which) -> Result<View, Failure> {
         let (read, vars) = Self::reading(which);
         let snap: Snapshot = self.transact(&read, vars)?;
@@ -764,6 +765,7 @@ impl Store {
 
     /// `body`'s writes, then `slug` read as `get` reads it, in one transaction: the task as the write
     /// left it, in the write's one round trip. `body` ends without a `RETURN`.
+    #[track_caller]
     fn written(&self, body: &str, mut vars: Value, slug: &str) -> Result<Task, Failure> {
         let (read, more) = Self::reading(&Which::Slug(slug));
         if let (Some(vars), Value::Object(more)) = (vars.as_object_mut(), more) {
@@ -873,12 +875,14 @@ impl Store {
     /// `body`'s statements in one transaction; the last of them is a `RETURN` of the answer. A null
     /// among `vars` is left out, so it reads as NONE: SurrealDB's NULL is a value an `option` field
     /// refuses, and that is never equal to NONE.
+    #[track_caller]
     fn transact<T: DeserializeOwned>(&self, body: &str, vars: Value) -> Result<T, Failure> {
         self.transact_dispatch(body, vars, true)
     }
 
     /// A task write returns recipient presence in its snapshot and dispatches after decoding it.
     /// Other writes keep the normal post-commit dispatch path.
+    #[track_caller]
     fn transact_dispatch<T: DeserializeOwned>(
         &self,
         body: &str,

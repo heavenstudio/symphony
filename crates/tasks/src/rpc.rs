@@ -12,7 +12,7 @@ use std::io::{Read, Write};
 use std::net::{TcpStream, ToSocketAddrs};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Mutex, PoisonError};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 mod descriptor;
 
@@ -131,12 +131,14 @@ impl Client {
 
     /// Each statement's result, in order. The first statement that failed decides the error; a
     /// conflict anywhere decides it first, since the whole transaction can then be retried.
+    #[track_caller]
     pub fn query(&self, sql: &str, vars: Value) -> Result<Vec<Value>, DbError> {
         self.call(sql, vars, true)
     }
 
     /// The namespace and the database, made if they are not there yet, then `sql` in them, in one
     /// request: each statement's result, the four that make and enter them first.
+    #[track_caller]
     pub fn define_then(&self, sql: &str, vars: Value) -> Result<Vec<Value>, DbError> {
         let (ns, db) = (&self.ns, &self.db);
         let sql = format!(
@@ -146,6 +148,7 @@ impl Client {
     }
 
     /// `scoped`: in this client's namespace and database, which must exist.
+    #[track_caller]
     fn call(&self, sql: &str, vars: Value, scoped: bool) -> Result<Vec<Value>, DbError> {
         self.requests.fetch_add(1, Ordering::SeqCst);
         let body = cbor::encode(&json!({"id": 1, "method": "query", "params": [sql, vars]}));
@@ -173,6 +176,11 @@ impl Client {
     }
 }
 
+/// Failure diagnostics identify the query's source without logging SQL or its variables.
+fn failed_query(source: &str, elapsed: Duration, timeout: Duration, error: &str) -> String {
+    format!("RPC query at {source}, elapsed {elapsed:.3?}, configured wait {timeout:.3?}: {error}")
+}
+
 impl Client {
     /// `request` on a connection the server kept open, else on a new one: the reply's status and body.
     /// Each connection is checked ([`check`]) before anything is written on it, every kind of request
@@ -181,15 +189,19 @@ impl Client {
     /// A request written on a connection that then gave back nothing, part
     /// of a reply, or nothing before the timeout is the request's failure and is never sent again,
     /// whatever it says: the server may have run it, and a write run twice is a message said twice.
+    #[track_caller]
     fn send(&self, request: &[u8]) -> Result<(u16, Vec<u8>), String> {
         self.send_checked(request, check)
     }
 
+    #[track_caller]
     fn send_checked(
         &self,
         request: &[u8],
         mut check: impl FnMut(&TcpStream) -> Result<(), Failure>,
     ) -> Result<(u16, Vec<u8>), String> {
+        let began = Instant::now();
+        let caller = std::panic::Location::caller();
         let kept = loop {
             let kept = self
                 .kept
@@ -224,7 +236,18 @@ impl Client {
                 Ok(self.keep(connection, reply))
             }
             Err(failure) => {
-                Err(self.unanswered(pooled, connection.served, connection.failure(failure)))
+                let timed_out = failure.timed_out;
+                let error = self.unanswered(pooled, connection.served, connection.failure(failure));
+                Err(if timed_out {
+                    failed_query(
+                        &format!("{}:{}", caller.file(), caller.line()),
+                        began.elapsed(),
+                        self.timeout,
+                        &error,
+                    )
+                } else {
+                    error
+                })
             }
         }
     }
@@ -341,6 +364,7 @@ struct Failure {
     step: Step,
     why: String,
     bad_descriptor: bool,
+    timed_out: bool,
 }
 
 impl Failure {
@@ -349,6 +373,7 @@ impl Failure {
             step,
             why: why.to_string(),
             bad_descriptor: false,
+            timed_out: false,
         }
     }
 
@@ -356,6 +381,10 @@ impl Failure {
         Self {
             step,
             bad_descriptor: descriptor::bad_descriptor(&error),
+            timed_out: matches!(
+                error.kind(),
+                std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+            ),
             why: error.to_string(),
         }
     }
@@ -669,6 +698,19 @@ mod tests {
 
     fn ok(result: Value) -> Value {
         json!({"result": result, "status": "OK", "time": "1ms"})
+    }
+
+    #[test]
+    fn a_query_failure_names_its_source_elapsed_time_wait_and_original_cause() {
+        assert_eq!(
+            failed_query(
+                "store/callbacks.rs:734",
+                Duration::from_millis(3125),
+                Duration::from_secs(3),
+                "read failed; the request may have run there, so it was not sent again",
+            ),
+            "RPC query at store/callbacks.rs:734, elapsed 3.125s, configured wait 3.000s: read failed; the request may have run there, so it was not sent again"
+        );
     }
 
     #[test]
@@ -1462,6 +1504,60 @@ mod tests {
             )
         );
         assert!(!served.join().unwrap(), "the request was sent again");
+    }
+
+    #[test]
+    fn a_kept_requests_read_timeout_never_resends_a_write_or_keeps_its_socket() {
+        for partial in [
+            &b""[..],
+            &b"HTTP/1.1 200 OK\r\nContent-Length: 32\r\n\r\n\xa2"[..],
+        ] {
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            let addr = listener.local_addr().unwrap().to_string();
+            let served = std::thread::spawn(move || {
+                let (mut kept, _) = listener.accept().unwrap();
+                for _ in 0..15 {
+                    read_request(&mut kept);
+                    kept.write_all(SEVEN).unwrap();
+                }
+                let request = read_request(&mut kept);
+                kept.write_all(partial).unwrap();
+                assert_eq!(kept.read(&mut [0]).unwrap(), 0, "no repeated request");
+                assert!(none_waiting(&listener), "no replacement connection");
+                request
+            });
+            let client = Client::new(&addr, "sf", "t").waiting(Duration::from_millis(300));
+            sevens(&client, 15);
+            let sql = "CREATE ONLY task:once SET title = $title;";
+            let vars = json!({"title": "one owner write"});
+            let called_at = format!("{}:{}", file!(), line!() + 1);
+            let failed = client.query(sql, vars.clone()).unwrap_err();
+            let DbError::Failed(said) = failed else {
+                panic!("{failed:?}")
+            };
+            let timing = said
+                .strip_prefix(&format!("RPC query at {called_at}, elapsed "))
+                .expect("the diagnostic identifies the query call site");
+            let (elapsed, cause) = timing
+                .split_once(", configured wait 300.000ms: ")
+                .expect("the diagnostic retains the configured wait");
+            assert!(!elapsed.is_empty(), "elapsed time is present");
+            assert_eq!(
+                cause,
+                format!(
+                    "the server at {addr} did not answer: read failed on a pooled socket after 15 completed requests: {}; the request may have run there, so it was not sent again",
+                    std::io::Error::from_raw_os_error(libc::EAGAIN)
+                )
+            );
+            assert!(client.kept.lock().unwrap().is_empty());
+            assert_eq!(client.requests(), 16);
+            let request = served.join().unwrap();
+            let body = &request[find(&request, b"\r\n\r\n").unwrap() + 4..];
+            assert_eq!(
+                cbor::decode(body),
+                Ok(json!({"id": 1, "method": "query", "params": [sql, vars]}))
+            );
+        }
     }
 
     #[test]

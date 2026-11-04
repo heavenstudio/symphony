@@ -18,19 +18,19 @@ pub const BOARD: &str = "board";
 
 /// What an inbox is worked out from: the session's roles, the tree, and the messages since it
 /// connected that are not its own, that it has not acknowledged, and that could reach it (not
-/// addressed to another handle or the owner). The acknowledged ids are read once rather than looked
-/// up per message, which on the live board halves the read for a session days old.
+/// addressed to another handle or the owner). Acknowledged integer ids travel in that same snapshot;
+/// Rust builds their membership set once before filtering the candidate messages.
 const INBOX: &str = "
 LET $me = (SELECT connected FROM ONLY type::record('session', $handle));
-LET $acked = (SELECT VALUE message FROM delivery WHERE handle = $handle AND message > $since);
 RETURN {
     known: $me != NONE,
     roles: (SELECT slug, role FROM role WHERE handle = $handle),
     tree: (SELECT VALUE [slug, parent] FROM task),
+    acked: (SELECT VALUE message FROM delivery WHERE handle = $handle AND message > $since),
     messages: IF $me = NONE { [] } ELSE {
         (SELECT * OMIT id FROM message WHERE sid > $since AND ts >= $me.connected AND kind IN $delivered AND sender != $handle
             AND (sender = 'owner' OR recipient = NONE OR recipient = $handle OR string::starts_with(recipient, '@') OR kind = 'verdict')
-            AND sid NOTINSIDE $acked ORDER BY sid)
+            ORDER BY sid)
     },
 };";
 
@@ -166,6 +166,7 @@ RETURN [$sid, $ts];",
             known: bool,
             roles: Vec<Held>,
             tree: Vec<(String, Option<String>)>,
+            acked: HashSet<i64>,
             messages: Vec<MessageRow>,
         }
         let vars = json!({"handle": handle, "delivered": DELIVERED, "since":since});
@@ -202,6 +203,7 @@ RETURN [$sid, $ts];",
         Ok(read
             .messages
             .into_iter()
+            .filter(|m| !read.acked.contains(&m.id))
             .filter(reaches)
             .map(message)
             .collect())
