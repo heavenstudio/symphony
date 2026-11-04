@@ -75,7 +75,9 @@ RETURN [$sid, $ts];",
         );
         let (id, ts): (i64, f64) = self.retrying(|| self.transact(&body, vars.clone()))?;
         if role == Some("executor") {
-            self.tell_if_unread(slug, &format!("#{id} from {sender}"));
+            self.tell_if_unread(slug, None, &format!("#{id} from {sender} to @executor"));
+        } else if let Some(to) = handle {
+            self.tell_if_unread(slug, Some(to), &format!("#{id} from {sender} to {to}"));
         }
         Ok(Message {
             id,
@@ -88,23 +90,32 @@ RETURN [$sid, $ts];",
         })
     }
 
-    /// `what` (a post or a changes verdict to `slug`'s executor) has no executor to read it now: its
-    /// pane was closed (its launch record says so), or it has neither a native callback nor a live
-    /// beat. The task's orchestrators hear it at once on the thread, with the restore line of each
-    /// executor whose pane was closed. Never fails the write it follows: what went wrong goes to
-    /// stderr.
-    pub(super) fn tell_if_unread(&self, slug: &str, what: &str) {
-        if let Err(problem) = self.unread(slug, what) {
+    /// `what` (a post or a changes verdict to `slug`'s executor, or to `only` when that handle
+    /// executes it) has no executor to read it now: none has a native callback, and each has its
+    /// pane recorded closed or no live beat. The task's orchestrators hear it at once on the
+    /// thread, with the restore line of each executor whose pane was closed. A post to a handle
+    /// that does not execute `slug` is left alone. Never fails the write it follows: what went
+    /// wrong goes to stderr.
+    pub(super) fn tell_if_unread(&self, slug: &str, only: Option<&str>, what: &str) {
+        if let Err(problem) = self.unread(slug, only, what) {
             eprintln!("could not tell @orchestrator that no executor reads {what}: {problem}");
         }
     }
 
-    fn unread(&self, slug: &str, what: &str) -> Result<(), Error> {
+    fn unread(&self, slug: &str, only: Option<&str>, what: &str) -> Result<(), Error> {
         let task = self.get(slug)?;
+        let executors: Vec<_> = task
+            .roles
+            .iter()
+            .filter(|r| r.role == "executor" && only.is_none_or(|h| r.handle == h))
+            .collect();
+        if only.is_some() && executors.is_empty() {
+            return Ok(());
+        }
         let callbacks = self.callbacks()?;
         let launched = self.task_sessions(slug)?;
         let mut gone = Vec::new();
-        for executor in task.roles.iter().filter(|r| r.role == "executor") {
+        for executor in executors {
             let handle = executor.handle.as_str();
             let mine: Vec<_> = launched.iter().filter(|s| s.handle == handle).collect();
             let closed = mine
@@ -126,10 +137,7 @@ RETURN [$sid, $ts];",
         if gone.is_empty() {
             gone.push("no session holds the role".into());
         }
-        let text = format!(
-            "{what} to @executor reaches no live executor: {}",
-            gone.join("; ")
-        );
+        let text = format!("{what} reaches no live executor: {}", gone.join("; "));
         let body = format!(
             "{}\nRETURN NONE;",
             logged("$slug", "$sender", "'msg'", "$text", "$to")

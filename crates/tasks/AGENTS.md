@@ -84,8 +84,9 @@ metadata restoring Unknown for newer readers. Both old and new writers must shar
 past the ten-minute lost threshold, or alternating dispatchers repeat liveness notices.
 A finished idle pane still closes under the original cleanup rules, retiring its
 registration; an executor of a task in review is not finished, and keeps its pane.
-A post or changes verdict to `@executor` that no executor can read (its launch record
-closed, or no callback and no live beat) adds a `board` post to `@orchestrator` on the
+A post or changes verdict to `@executor`, or a post to the executor by handle, that no
+executor can read (no callback, and its launch record closed or no live beat) adds a
+`board` post to `@orchestrator` on the
 thread after the write commits (`store/messages.rs`, `tell_if_unread`); its failure is
 said on stderr, never turned into a failed write.
 Restore prompts re-register the resumed process's callback first.

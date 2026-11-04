@@ -715,6 +715,27 @@ fn a_post_to_an_executor_whose_pane_was_closed_tells_the_orchestrator_how_to_res
 }
 
 #[test]
+fn a_post_to_the_executor_by_handle_is_checked_and_one_to_another_handle_is_not() {
+    let f = in_review();
+    pane_closed(&f);
+    f.store
+        .say("sim/jump", "ochre-owl", "your turn", Some("brisk-finch"))
+        .unwrap();
+    assert_eq!(told(&f), Vec::<String>::new(), "brisk-finch reviews it");
+    let sent = f
+        .store
+        .say("sim/jump", "ochre-owl", "rebase it", Some("amber-heron"))
+        .unwrap();
+    assert_eq!(
+        told(&f),
+        [format!(
+            "#{} from ochre-owl to amber-heron reaches no live executor: amber-heron's pane was closed (idle for two sweeps, its work finished); just tasks restore sim/jump amber-heron",
+            sent.id
+        )]
+    );
+}
+
+#[test]
 fn a_quiet_executor_with_no_callback_is_named_by_its_health() {
     let f = in_review();
     f.advance(LIVE_SECONDS + 1.0);
