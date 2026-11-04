@@ -18,6 +18,7 @@ use crate::callouts::{Comment, parse_comments};
 use crate::clock::now_stamp;
 use crate::edit::{self, EditError};
 use crate::lint;
+use crate::plugins::Plugins;
 use crate::register::{self, Decision, QUESTION, ReviewError, Who, card_end, parse_decisions};
 use crate::taskcli::CliBoard;
 use crate::text::{os_error, read_text, write_whole};
@@ -332,10 +333,11 @@ pub fn status_main(args: &[String], out: &mut dyn Write, err: &mut dyn Write) ->
             return 2;
         }
     };
+    let plugins = crate::plugins::Plugins::of(&root);
     let said = if parsed.flag("--json") {
-        to_json(&docs)
+        to_json(&plugins, &docs)
     } else {
-        render(&docs, parsed.flag("--open"))
+        render(&plugins, &docs, parsed.flag("--open"))
     };
     let _ = writeln!(out, "{said}");
     0
@@ -521,8 +523,8 @@ struct CardData<'a> {
     group: &'static str,
 }
 
-fn card_data(d: &Decision) -> CardData<'_> {
-    let thread = d.thread();
+fn card_data<'a>(d: &'a Decision, plugins: &Plugins) -> CardData<'a> {
+    let thread = d.thread(plugins);
     CardData {
         line: d.line,
         slug: &d.slug,
@@ -552,11 +554,11 @@ fn comment_data(c: &Comment) -> Value {
            "raw": c.raw, "open": c.open()})
 }
 
-fn doc_data(doc: &Doc) -> Value {
+fn doc_data(doc: &Doc, plugins: &Plugins) -> Value {
     json!({
         "path": doc.path,
         "comments": doc.comments.iter().map(comment_data).collect::<Vec<_>>(),
-        "decisions": doc.decisions.iter().map(card_data).collect::<Vec<_>>(),
+        "decisions": doc.decisions.iter().map(|d| card_data(d, plugins)).collect::<Vec<_>>(),
     })
 }
 
@@ -612,11 +614,16 @@ fn dispatch(request: &Value) -> Result<Value, Failure> {
     let name = text_arg(request, "fn")?;
     let text = || text_arg(request, "text");
     let now = || text_arg(request, "now");
+    // Cards are read by the card kinds of the project at the request's `root`; none without one.
+    let plugins = request
+        .get("root")
+        .and_then(Value::as_str)
+        .map_or_else(Plugins::default, |root| Plugins::of(Path::new(root)));
     Ok(match name {
         "parse_decisions" => json!(
             parse_decisions(&lines_arg(request, "lines")?)
                 .iter()
-                .map(card_data)
+                .map(|d| card_data(d, &plugins))
                 .collect::<Vec<_>>()
         ),
         "parse_comments" => json!(
@@ -631,8 +638,8 @@ fn dispatch(request: &Value) -> Result<Value, Failure> {
                 .map_err(|_| bad("index must not be negative".into()))?;
             json!(card_end(&lines, index))
         }
-        "sort_register" => json!(register::sort_register(text()?)?),
-        "resolve" => json!(register::resolve(text()?, now()?)),
+        "sort_register" => json!(register::sort_register(text()?, &plugins)?),
+        "resolve" => json!(register::resolve(text()?, now()?, &plugins)),
         "supersede" => json!(register::supersede(text()?, now()?)),
         "check_nothing_lost" => {
             register::check_nothing_lost(
@@ -645,7 +652,7 @@ fn dispatch(request: &Value) -> Result<Value, Failure> {
         "scan" => json!(
             scan(Path::new(text_arg(request, "root")?))?
                 .iter()
-                .map(doc_data)
+                .map(|doc| doc_data(doc, &plugins))
                 .collect::<Vec<_>>()
         ),
         "dashboard" => {
@@ -682,14 +689,15 @@ fn dispatch(request: &Value) -> Result<Value, Failure> {
             let card = cards
                 .first()
                 .ok_or_else(|| bad("board_words needs a card".into()))?;
-            json!({"title":crate::dashboard::card_title(card), "summary":crate::dashboard::card_summary(card), "rest":crate::dashboard::card_rest(card)})
+            json!({"title":crate::dashboard::card_title(&plugins, card), "summary":crate::dashboard::card_summary(card), "rest":crate::dashboard::card_rest(&plugins, card)})
         }
         "set_decision" => json!(edit::set_decision(
             text()?,
             text_arg(request, "slug")?,
             text_arg(request, "state")?,
             text_arg(request, "note")?,
-            now()?
+            now()?,
+            &plugins,
         )?),
         "is_repeat_decision" => {
             let (slug, state, note) = (
@@ -746,20 +754,18 @@ fn dispatch(request: &Value) -> Result<Value, Failure> {
         "read_manifest" => {
             json!(screens::read_manifest(Path::new(text_arg(request, "out")?)).map_err(bad)?)
         }
-        "expand_components" => {
-            let components = crate::components::Live::new(
-                text_arg(request, "root")?,
+        "expand_components" => json!(
+            crate::render::Render::new(text_arg(request, "root")?)
+                .expand_components(text()?, text_arg(request, "doc_path")?)
+        ),
+        "component" => json!(
+            crate::render::Render::new(text_arg(request, "root")?).component(
                 text_arg(request, "doc_path")?,
-            );
-            json!(crate::render::expand_components(text()?, &components))
-        }
-        "component" => json!(crate::components::render_one(
-            Path::new(text_arg(request, "root")?),
-            text_arg(request, "doc_path")?,
-            text_arg(request, "name")?,
-            text_arg(request, "arg")?,
-            optional_text(request, "option")?
-        )),
+                text_arg(request, "name")?,
+                text_arg(request, "arg")?,
+                optional_text(request, "option")?
+            )
+        ),
         name if name.starts_with("asks_") => asks_call(name, request)?,
         other => return Err(bad(format!("unknown function {other:?}"))),
     })
@@ -883,7 +889,7 @@ pub fn triage_main(args: &[String], out: &mut dyn Write, err: &mut dyn Write) ->
         }
     };
     let said = if command == "stats" {
-        match triage::stats(&docs) {
+        match triage::stats(&crate::plugins::Plugins::of(&root), &docs) {
             Ok(found) => triage::render_stats(&found),
             Err(problem) => {
                 let _ = writeln!(err, "✖ {problem}");
@@ -891,7 +897,13 @@ pub fn triage_main(args: &[String], out: &mut dyn Write, err: &mut dyn Write) ->
             }
         }
     } else {
-        triage::render_queue(&triage::queue(&docs, count, &triage::app_url(&root)))
+        let plugins = crate::plugins::Plugins::of(&root);
+        triage::render_queue(&triage::queue(
+            &plugins,
+            &docs,
+            count,
+            &triage::app_url(&root),
+        ))
     };
     let _ = writeln!(out, "{said}");
     0

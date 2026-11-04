@@ -1,6 +1,7 @@
 //! The task pages' read API, directly over the Rust board. Failures remain visible to the HTTP
 //! layer: a missing task is a 404, an unreachable board a 503.
 
+use std::collections::BTreeMap;
 use std::path::Path;
 
 use sha2::{Digest, Sha256};
@@ -124,6 +125,7 @@ fn task(t: &tasks::Task) -> Task {
         depends: t.depends.clone(),
         roles: t.roles.iter().map(role).collect(),
         instruction: t.instruction,
+        fields: fields(&t.fields),
     }
 }
 
@@ -186,26 +188,32 @@ pub fn brief(record: &tasks::Task, from: usize, root: &Path) -> symphony_api::Ta
     }
 }
 
-/// Requested only when the owner reaches the message/approval controls. Preparing the landing
-/// tool must not delay the task's metadata and brief.
+/// The first offer of `plugins`' board actions on `slug` that has a payload, whatever the task's
+/// status: each action decides which work it offers on. Requested only when the owner reaches the
+/// message/approval controls: preparing an offer must not delay the task's metadata and brief.
 pub fn owner_offer(
     store: &tasks::Store,
+    plugins: &crate::plugins::Plugins,
     slug: &str,
     root: &Path,
 ) -> Result<symphony_api::TaskOffer, String> {
     let task = store.get(slug).map_err(|e| e.to_string())?;
-    if task.status != "review" {
-        return Ok(symphony_api::TaskOffer::default());
-    }
     let branch = approval_branch(store, &task).map_err(|e| e.to_string())?;
-    let patch = crate::commit::land_call(
-        root,
-        &serde_json::json!({"method":"owner_offer","branch":&branch}),
-    )?
-    .as_str()
-    .filter(|patch| !patch.is_empty())
-    .map(str::to_string);
-    Ok(symphony_api::TaskOffer { branch, patch })
+    let found = symphony_plugin::TaskRef {
+        slug: &task.slug,
+        status: &task.status,
+        branch: &branch,
+    };
+    for action in plugins.board_actions() {
+        let offer = action.offer(root, &found)?;
+        if offer.payload.is_some() {
+            return Ok(offer);
+        }
+    }
+    Ok(symphony_api::TaskOffer {
+        branch,
+        ..symphony_api::TaskOffer::default()
+    })
 }
 
 /// A task slug can differ from its branch when an ancestor already names a branch. Review
@@ -312,11 +320,7 @@ fn typed_blocks(
     render: &Render,
 ) -> Vec<symphony_api::Block> {
     let path = task_doc();
-    let mut media = fragment
-        .media
-        .iter()
-        .map(crate::blocks::wire_media)
-        .collect::<Vec<_>>();
+    let mut media = std::mem::take(&mut fragment.media);
     crate::docview::prepare_fragment(&mut fragment.html, &mut media, render.root(), path, "");
     crate::blocks::parse(&fragment.html, &media, path)
 }
@@ -452,6 +456,68 @@ fn agents_probed(
     }
     .map_err(|e| e.to_string())?;
     serde_json::from_str(&tasks::pyjson::dumps_line(&view.json())).map_err(|e| e.to_string())
+}
+
+/// Set the board field `name` on the task `slug`: the first of `plugins` declaring a field of that
+/// name (or `plugin.name`, naming the plugin) validates `value` before the board stores what it
+/// returns. Returns the plugin's name and the stored value.
+pub fn set_field(
+    store: &tasks::Store,
+    plugins: &crate::plugins::Plugins,
+    slug: &str,
+    name: &str,
+    value: &serde_json::Value,
+    actor: &str,
+) -> Result<(String, symphony_api::FieldValue), String> {
+    let (wanted_plugin, field_name) = name
+        .split_once('.')
+        .map_or((None, name), |(plugin, field)| (Some(plugin), field));
+    let (plugin, field) = plugins
+        .list()
+        .iter()
+        .filter(|plugin| wanted_plugin.is_none_or(|wanted| plugin.name() == wanted))
+        .find_map(|plugin| {
+            plugins
+                .board_field(plugin.name(), field_name)
+                .map(|field| (plugin.name().to_string(), field))
+        })
+        .ok_or_else(|| format!("no plugin of this project declares a board field {name:?}"))?;
+    let given = match value {
+        serde_json::Value::String(text) => symphony_api::FieldValue::Text(text.clone()),
+        serde_json::Value::Number(number) => symphony_api::FieldValue::Number(
+            number
+                .as_f64()
+                .ok_or_else(|| format!("{number} is not a number"))?,
+        ),
+        other => return Err(format!("a field value is a number or text, not {other}")),
+    };
+    let stored = field.validate(&given)?;
+    let json = serde_json::to_value(&stored).map_err(|e| e.to_string())?;
+    store
+        .set_field(slug, &plugin, field_name, &json, actor)
+        .map_err(|e| e.to_string())?;
+    Ok((plugin, stored))
+}
+
+/// A task's board fields as the wire carries them: a value that is neither a number nor text (a
+/// write the board never makes) is left out.
+fn fields(
+    stored: &BTreeMap<String, BTreeMap<String, serde_json::Value>>,
+) -> BTreeMap<String, BTreeMap<String, symphony_api::FieldValue>> {
+    stored
+        .iter()
+        .map(|(plugin, fields)| {
+            let values = fields
+                .iter()
+                .filter_map(|(name, value)| {
+                    serde_json::from_value(value.clone())
+                        .ok()
+                        .map(|value| (name.clone(), value))
+                })
+                .collect();
+            (plugin.clone(), values)
+        })
+        .collect()
 }
 
 #[cfg(test)]

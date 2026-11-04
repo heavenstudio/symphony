@@ -27,6 +27,7 @@ mod callback_peer;
 mod callbacks;
 mod depends;
 mod embeddings;
+mod fields;
 mod launches;
 mod messages;
 pub(crate) mod search;
@@ -101,6 +102,8 @@ pub struct Task {
     pub roles: Vec<Role>,
     /// An instruction subtask: its executor closes it with `done`.
     pub instruction: bool,
+    /// The plugins' board fields: plugin, then field, then its value.
+    pub fields: std::collections::BTreeMap<String, std::collections::BTreeMap<String, Value>>,
 }
 
 impl Task {
@@ -1256,6 +1259,7 @@ impl View {
                     })
                     .collect(),
                 instruction: row.instruction,
+                fields: row.fields.clone(),
             })
             .collect()
     }

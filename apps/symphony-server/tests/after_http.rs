@@ -66,8 +66,13 @@ fn fixture() -> tree::Tree {
     write(&root, "docs/OTHER.md", "# Other\n");
     write(
         &root,
+        "symphony.toml",
+        "[plugins]\ncrates = [\"star-foundry-symphony\"]\n",
+    );
+    write(
+        &root,
         "docs/ships/HULLS.md",
-        "# Hulls\n\n<div data-hull-gallery></div>\n",
+        "# Hulls\n\n[[hull-gallery:all]]\n",
     );
     write(
         &root,
@@ -136,9 +141,14 @@ fn fixture() -> tree::Tree {
 }
 
 fn run(test: &str, exercise: fn(&Fixture)) {
+    run_on(test, fixture, exercise);
+}
+
+/// `exercise` against a server on the repository `made` builds, in a child process of its own.
+fn run_on(test: &str, made: fn() -> tree::Tree, exercise: fn(&Fixture)) {
     if std::env::var_os(CHILD).is_none() {
         let began = Instant::now();
-        let tree = fixture();
+        let tree = made();
         let client = board::client();
         let done = tasks::sys::output(
             Command::new(std::env::current_exe().unwrap())
@@ -430,6 +440,62 @@ fn native_routes_media_and_persistence() {
     run("native_routes_media_and_persistence", contracts);
 }
 
+/// A project whose documents are in `manual/`, beside a stray `docs/` folder that is no document.
+fn manual_fixture() -> tree::Tree {
+    let mut tree = tree::Tree::new();
+    tree.root = tree.root.canonicalize().unwrap();
+    let root = tree.path("repo");
+    std::fs::create_dir(&root).unwrap();
+    repository(&root, &["init", "-b", "http-fixture"]);
+    repository(&root, &["config", "user.name", "HTTP fixture"]);
+    repository(&root, &["config", "user.email", "http@example.invalid"]);
+    repository(&root, &["config", "core.hooksPath", "/dev/null"]);
+    write(&root, "symphony.toml", "[project]\ndocs = \"manual\"\n");
+    write(&root, "manual/TOPIC.md", DOC);
+    write(&root, "manual/OTHER.md", "# Other\n");
+    write(&root, "manual/art/a.png", b"PNG in the manual");
+    write(&root, "docs/TOPIC.md", "# Stray\n");
+    repository(&root, &["add", "."]);
+    repository(&root, &["commit", "-qm", "Manual fixtures"]);
+    tree
+}
+
+#[test]
+fn a_projects_own_documents_folder_is_read_and_saved_by_route() {
+    run_on(
+        "a_projects_own_documents_folder_is_read_and_saved_by_route",
+        manual_fixture,
+        manual_routes,
+    );
+}
+
+fn manual_routes(f: &Fixture) {
+    let doc = f.get(DOCUMENT).status(200).json();
+    assert_eq!(doc["path"], "docs/TOPIC.md");
+    assert_eq!(doc["cards"][0]["slug"], "one");
+    f.get("/api/document?path=manual/TOPIC.md").status(400);
+    let versions = f.get("/api/versions?path=docs/TOPIC.md").status(200).json();
+    assert_eq!(versions["versions"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        f.get("/docs/art/a.png").status(200).body,
+        b"PNG in the manual"
+    );
+    let decision = json!({"path":"docs/TOPIC.md", "slug":"one", "state":"approved", "note":"saved in the manual"});
+    assert_eq!(
+        f.post("/api/decision", &decision).status(200).json()["ok"],
+        true
+    );
+    let saved = std::fs::read_to_string(f.root.join("manual/TOPIC.md")).unwrap();
+    assert!(
+        saved.contains("owner · approved — saved in the manual"),
+        "{saved}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(f.root.join("docs/TOPIC.md")).unwrap(),
+        "# Stray\n"
+    );
+}
+
 #[test]
 fn later_order_is_shared_without_document_writes_and_reloaded_by_a_new_server() {
     run(
@@ -648,6 +714,15 @@ fn later_expiry(f: &Fixture) {
 fn contracts(f: &Fixture) {
     let shell = f.get("/").status(200);
     assert!(shell.text().contains("Native shell."));
+    let project = format!(
+        "<html><body><script type=\"application/json\" id=\"symphony-project\">{}</script>",
+        json!({
+            "name": f.root.file_name().unwrap().to_str().unwrap(),
+            "register": "docs/DECISIONS.md",
+            "nav": [{"label": "⬡ hulls", "title": "Hull models", "href": "/hulls", "document": "docs/ships/HULLS.md"}],
+        })
+    );
+    assert!(shell.text().starts_with(&project), "{}", shell.text());
     assert_eq!(shell.header("content-type"), "text/html; charset=utf-8");
     assert_eq!(shell.header("cache-control"), "no-cache");
     for route in [
@@ -701,6 +776,7 @@ fn contracts(f: &Fixture) {
         "/assets/app-dxh123.js",
         "/artifacts/raw.svg",
         "/view/models/hulls/A.glb",
+        "/x/hulls/A.glb",
     ] {
         let get = f.get(route).status(200);
         let head = f.request("HEAD", route, &[], &[]).status(200);
@@ -722,6 +798,7 @@ fn contracts(f: &Fixture) {
         "/",
         "/assets/app-dxh123.js",
         "/view/models/hulls/A.glb",
+        "/x/hulls/A.glb",
         "/artifacts/raw.svg",
     ] {
         let get = f.get(route).status(200);
@@ -806,6 +883,7 @@ fn contracts(f: &Fixture) {
         "/api/board",
         "/artifacts/large.svg",
         "/view/models/hulls/A.glb",
+        "/x/hulls/A.glb",
     ] {
         let get = if route == "/" {
             &compressed
@@ -1000,6 +1078,12 @@ fn media_refusals_and_thumbnail(f: &Fixture) {
         "/view/models/hulls/directory.glb",
         "/view/models/hulls/missing.glb",
         "/view/models/hulls/%2E%2E/outside.glb",
+        "/x/hulls/outside.glb",
+        "/x/hulls/directory.glb",
+        "/x/hulls/missing.glb",
+        "/x/hulls/%2E%2E/outside.glb",
+        "/x/hulls/",
+        "/x/unknown/A.glb",
         "/api/document?path=docs/METADATA.md",
         "/thumb/400/stale/artifacts/metadata.png.jpg",
         "/thumb/400/stale/artifacts/outside.svg.jpg",
@@ -1437,7 +1521,7 @@ fn watcher(f: &Fixture) {
     write(
         &f.root,
         "docs/ships/HULLS.md",
-        "# Hulls\n\nDocument refresh handshake\n\n<div data-hull-gallery></div>\n",
+        "# Hulls\n\nDocument refresh handshake\n\n[[hull-gallery:all]]\n",
     );
     root_feed.until("Document refresh handshake");
     assert!(gallery(f, "").contains("Document refresh handshake"));

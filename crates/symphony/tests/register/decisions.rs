@@ -2,6 +2,7 @@
 
 use symphony::register::State;
 
+use crate::common::plain;
 use crate::{card, cards};
 
 #[test]
@@ -81,7 +82,7 @@ fn open_is_rejected_or_question() {
         "- [?] **d** — 4",
     ]);
     assert_eq!(
-        found.iter().map(|d| d.open()).collect::<Vec<_>>(),
+        found.iter().map(|d| d.open(&plain())).collect::<Vec<_>>(),
         vec![false, false, true, true]
     );
 }
@@ -95,7 +96,7 @@ fn an_owner_note_is_open_whatever_the_verdict() {
         "  thinking about it",
     ]);
     assert_eq!(
-        found.iter().map(|d| d.open()).collect::<Vec<_>>(),
+        found.iter().map(|d| d.open(&plain())).collect::<Vec<_>>(),
         vec![true, true]
     );
 }
@@ -114,7 +115,7 @@ fn an_agent_reply_after_the_last_note_closes_it() {
         "  still unclear",
     ]);
     assert_eq!(
-        found.iter().map(|d| d.open()).collect::<Vec<_>>(),
+        found.iter().map(|d| d.open(&plain())).collect::<Vec<_>>(),
         vec![false, false, true]
     );
 }

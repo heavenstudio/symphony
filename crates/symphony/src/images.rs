@@ -90,7 +90,8 @@ pub fn file_size(path: &Path) -> Option<(u32, u32)> {
     size
 }
 
-/// The file a root-relative `src` names, if it is one under `root`.
+/// The file a root-relative `src` names, if it is one under `root`: a document's neighbour named by
+/// its route (`/docs/…`) is in the project's documents folder.
 fn local(root: &Path, src: &str) -> Option<PathBuf> {
     let src = src.replace("&amp;", "&");
     let path = src.split(['?', '#']).next().unwrap_or("");
@@ -98,7 +99,8 @@ fn local(root: &Path, src: &str) -> Option<PathBuf> {
         return None; // a scheme, a host or a relative path is not a file of the project's
     }
     let base = root.canonicalize().ok()?;
-    let joined = base.join(unquote(path).trim_start_matches('/'));
+    let file = crate::project::Project::of(root).file(unquote(path).trim_start_matches('/'));
+    let joined = base.join(file);
     let found = PathBuf::from(normpath(&joined.to_string_lossy()));
     let found = found.canonicalize().unwrap_or(found);
     (found != base && found.starts_with(&base)).then_some(found)

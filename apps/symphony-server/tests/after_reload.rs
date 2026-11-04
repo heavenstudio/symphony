@@ -387,6 +387,15 @@ impl Fixture {
         repository(&root, &["config", "core.hooksPath", "/dev/null"]);
         write(&root.join("docs/TOPIC.md"), DOC);
         write(&root.join(".gitignore"), "artifacts/\n");
+        // Star Foundry's verdict commands, which the fixture's `just` stands in for.
+        write(
+            &root.join("symphony.toml"),
+            "[verdicts]\ncheck = [\"just\", \"verify\"]\nland = [\"just\", \"land\"]\ngenerators = [\n  \
+             { name = \"content\", outputs = \"content/\", command = [\"just\", \"content\"] },\n  \
+             { name = \"content-ids\", outputs = \"sim/content_ids.gd\", command = [\"just\", \"content-ids\"], when_changed = true },\n  \
+             { name = \"hull-atlas\", outputs = \"view/hull_atlas\", command = [\"just\", \"hull-atlas\", \"build\"], when_changed = true },\n]\n\
+             record = \".git/sf-land/verdicts\"\n",
+        );
         write(
             &root.join("Cargo.toml"),
             "[workspace]\nmembers = [\"symphony/apps/symphony-server\"]\n",

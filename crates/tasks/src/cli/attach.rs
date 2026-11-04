@@ -616,6 +616,7 @@ mod tests {
                 })
                 .collect(),
             instruction: false,
+            fields: Default::default(),
         }
     }
 

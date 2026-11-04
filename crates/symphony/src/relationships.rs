@@ -22,6 +22,7 @@ use std::path::{Path, PathBuf};
 use serde::de::{Deserializer, IgnoredAny, MapAccess, Visitor};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use symphony_api::{Block, Cell, InlineKind, Presentation, Span};
 
 use crate::cli::{Flag, parse, refuse};
 use crate::schema;
@@ -264,8 +265,7 @@ impl Tables {
 
 /// The live three-column relationship table: gain/loss symbols, faction-coloured side chips, and
 /// the compact "everyone else" group rather than a repeated chip for every member.
-pub fn render_table(tables: &Tables, table: &str) -> Result<String, String> {
-    use crate::markup::escape;
+pub fn table(tables: &Tables, table: &str) -> Result<Block, String> {
     let (first, left, right) = match table {
         "destroy" => ("You destroy a ship of", "goes down", "goes up"),
         "help" => ("You help", "goes up", "goes down"),
@@ -275,7 +275,17 @@ pub fn render_table(tables: &Tables, table: &str) -> Result<String, String> {
             ));
         }
     };
-    fn mark(value: f64, title: &str) -> Result<String, String> {
+    let styled = |title: &str, style: String, spans: Vec<Span>| Span::Styled {
+        tag: InlineKind::Span,
+        presentation: Presentation {
+            title: title.into(),
+            attributes: [("style".to_string(), style)].into(),
+            ..Presentation::default()
+        },
+        spans,
+    };
+    let text = |text: &str| Span::Text { text: text.into() };
+    let mark = |value: f64, title: &str| -> Result<Span, String> {
         let index = SIZES
             .iter()
             .position(|(_, weight)| *weight == value.abs())
@@ -285,13 +295,13 @@ pub fn render_table(tables: &Tables, table: &str) -> Result<String, String> {
         } else {
             ("#a3161b", ["▼▼▼", "▼▼", "▼", "▽", "▾"])
         };
-        Ok(format!(
-            "<span style=\"color:{colour};font-weight:700\" title=\"{}\">{}</span>",
-            escape(title),
-            symbols[index]
+        Ok(styled(
+            title,
+            format!("color:{colour};font-weight:700"),
+            vec![text(symbols[index])],
         ))
-    }
-    fn cell(tables: &Tables, table: &str, code: &str, up: bool) -> Result<String, String> {
+    };
+    let cell = |code: &str, up: bool| -> Result<Cell, String> {
         let row = tables
             .row(table, code)
             .ok_or_else(|| format!("{table}: no row for {code}"))?;
@@ -310,15 +320,15 @@ pub fn render_table(tables: &Tables, table: &str) -> Result<String, String> {
                 .side(other)
                 .ok_or_else(|| format!("{table}: unknown side {other}"))?;
             let size = word(*value).ok_or_else(|| format!("unknown relationship size {value}"))?;
-            let symbol = mark(*value, &format!("{}: {size} {action}", side.name))?;
-            let chip = format!(
-                "<span style=\"white-space:nowrap;border-bottom:3px solid {}\" title=\"{}\">{} {}</span>",
-                escape(&side.colour),
-                escape(&side.name),
-                escape(&side.icon),
-                escape(&side.code)
-            );
-            parts.push(format!("{symbol}&nbsp;{chip}"));
+            parts.push(vec![
+                mark(*value, &format!("{}: {size} {action}", side.name))?,
+                text("\u{a0}"),
+                styled(
+                    &side.name,
+                    format!("white-space:nowrap;border-bottom:3px solid {}", side.colour),
+                    vec![text(&format!("{} {}", side.icon, side.code))],
+                ),
+            ]);
         }
         if let Some(group) = &row.others
             && (group.value > 0.0) == up
@@ -326,24 +336,71 @@ pub fn render_table(tables: &Tables, table: &str) -> Result<String, String> {
         {
             let size = word(group.value)
                 .ok_or_else(|| format!("unknown relationship size {}", group.value))?;
-            let symbol = mark(group.value, &format!("{size} {action}"))?;
             let except = if group.excepted.is_empty() {
                 String::new()
             } else {
-                format!(" except the {}", escape(&group.excepted.join(" and the ")))
+                format!(" except the {}", group.excepted.join(" and the "))
             };
-            parts.push(format!("{symbol}&nbsp;everyone else{except}"));
+            parts.push(vec![
+                mark(group.value, &format!("{size} {action}"))?,
+                text(&format!("\u{a0}everyone else{except}")),
+            ]);
         }
-        Ok(format!("<td>{}</td>", parts.join(" &nbsp; ")))
-    }
-    let mut out = vec![format!(
-        "<table style=\"border-collapse:collapse;font-size:.92em\"><thead><tr><th style=\"text-align:left\">{first}</th><th style=\"text-align:left\">{left}</th><th style=\"text-align:left\">{right}</th></tr></thead><tbody>"
-    )];
+        let mut spans = Vec::new();
+        for (index, part) in parts.into_iter().enumerate() {
+            if index > 0 {
+                spans.push(text(" \u{a0} "));
+            }
+            spans.extend(part);
+        }
+        Ok(Cell {
+            header: false,
+            spans,
+            presentation: Presentation::default(),
+        })
+    };
+    let heading = |words: &str| Cell {
+        header: true,
+        spans: vec![text(words)],
+        presentation: Presentation {
+            attributes: [("style".to_string(), "text-align:left".to_string())].into(),
+            ..Presentation::default()
+        },
+    };
+    let mut rows = Vec::new();
     for side in &tables.sides {
-        out.push(format!("<tr><td style=\"white-space:nowrap;border-left:4px solid {};padding-left:6px\">{} {} <small>{}</small></td>{}{}</tr>", escape(&side.colour), escape(&side.icon), escape(&side.name), escape(&side.code), cell(tables, table, &side.code, left == "goes up")?, cell(tables, table, &side.code, left != "goes up")?));
+        rows.push(vec![
+            Cell {
+                header: false,
+                spans: vec![
+                    text(&format!("{} {} ", side.icon, side.name)),
+                    Span::Styled {
+                        tag: InlineKind::Small,
+                        presentation: Presentation::default(),
+                        spans: vec![text(&side.code)],
+                    },
+                ],
+                presentation: Presentation {
+                    attributes: [(
+                        "style".to_string(),
+                        format!(
+                            "white-space:nowrap;border-left:4px solid {};padding-left:6px",
+                            side.colour
+                        ),
+                    )]
+                    .into(),
+                    ..Presentation::default()
+                },
+            },
+            cell(&side.code, left == "goes up")?,
+            cell(&side.code, left != "goes up")?,
+        ]);
     }
-    out.push("</tbody></table>".into());
-    Ok(out.join("\n"))
+    Ok(Block::Table {
+        head: vec![heading(first), heading(left), heading(right)],
+        rows,
+        presentation: Presentation::class("matrix relationships"),
+    })
 }
 
 /// A value as Python's `str()` writes it, for an effect that is not a string.

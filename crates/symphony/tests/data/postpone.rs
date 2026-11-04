@@ -1,4 +1,4 @@
-use crate::common::Tree;
+use crate::common::{Tree, plain};
 use symphony::{board, dashboard, postpone};
 
 const PATH: &str = "docs/TOPIC.md";
@@ -13,7 +13,7 @@ fn fixture() -> Tree {
 
 fn ordered(tree: &Tree, owner: &str, now: u64) -> Vec<(String, bool)> {
     let docs = board::scan(&tree.root).unwrap();
-    let mut waiting: Vec<symphony_api::Card> = symphony::triage::queue(&docs, usize::MAX, "").into_iter()
+    let mut waiting: Vec<symphony_api::Card> = symphony::triage::queue(&plain(), &docs, usize::MAX, "").into_iter()
         .map(|item| serde_json::from_value(serde_json::json!({"slug":item.slug,"doc":item.doc,"doc_title":"Topic","title":"Card","why":item.reason})).unwrap()).collect();
     postpone::apply(&tree.root, owner, &docs, &mut waiting, now).unwrap();
     waiting
@@ -205,7 +205,8 @@ fn a_new_owner_line_clears_postponement_without_a_group_change() {
             .any(|(slug, marked)| slug == "alpha" && *marked)
     );
     let reset =
-        symphony::edit::set_decision(CARDS, "alpha", "pending", "", "2026-10-28 12:00").unwrap();
+        symphony::edit::set_decision(CARDS, "alpha", "pending", "", "2026-10-28 12:00", &plain())
+            .unwrap();
     tree.write(PATH, &reset);
     let docs = board::scan(&tree.root).unwrap();
     let card = docs
@@ -213,7 +214,7 @@ fn a_new_owner_line_clears_postponement_without_a_group_change() {
         .flat_map(|doc| &doc.decisions)
         .find(|card| card.slug == "alpha")
         .unwrap();
-    assert_eq!(card.group(), symphony::Group::Decide);
+    assert_eq!(card.group(&plain()), symphony::Group::Decide);
     assert_eq!(card.state, symphony::State::Pending);
     assert!(
         card.entries()

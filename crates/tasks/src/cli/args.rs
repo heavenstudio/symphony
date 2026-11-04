@@ -215,6 +215,11 @@ const COMMANDS: &[Command] = &[
         opts: &[AS],
     },
     Command {
+        name: "field",
+        pos: &[pos("slug"), pos("name"), pos("value")],
+        opts: &[AS],
+    },
+    Command {
         name: "claim",
         pos: SLUG,
         opts: &[AS],
@@ -797,7 +802,7 @@ mod tests {
             .unwrap()
     }
 
-    const ALL: &str = "'callback', 'register', 'attach', 'list', 'search', 'embed', 'next', 'create', 'priority', 'claim', 'reserve', 'release', 'show', 'parent', 'depends', 'done', 'role', 'move', 'verdict', 'say', 'launch', 'restore', 'cleanup', 'reap', 'staff', 'agents', 'who', 'inbox', 'leave', 'beat', 'export', 'finish', 'sweep'";
+    const ALL: &str = "'callback', 'register', 'attach', 'list', 'search', 'embed', 'next', 'create', 'priority', 'field', 'claim', 'reserve', 'release', 'show', 'parent', 'depends', 'done', 'role', 'move', 'verdict', 'say', 'launch', 'restore', 'cleanup', 'reap', 'staff', 'agents', 'who', 'inbox', 'leave', 'beat', 'export', 'finish', 'sweep'";
 
     #[test]
     fn every_command_of_the_usage_is_read_and_has_its_help() {

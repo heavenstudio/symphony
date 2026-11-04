@@ -32,6 +32,18 @@ use serde_json::{Value, json};
 const DOC: &str = "# A\n\nfirst paragraph\n\n<!-- register:start -->\n- [ ] **one** — proposal.\n<!-- register:end -->\n\nlast paragraph\n";
 const TWO: &str =
     "# B\n\n<!-- register:start -->\n- [ ] **two** — second proposal.\n<!-- register:end -->\n";
+/// How the fixture's project commits verdicts: Star Foundry's commands, which its justfile stands
+/// in for.
+const VERDICTS: &str = r#"[verdicts]
+check = ["just", "verify"]
+land = ["just", "land"]
+generators = [
+  { name = "content", outputs = "content/", command = ["just", "content"] },
+  { name = "content-ids", outputs = "sim/content_ids.gd", command = ["just", "content-ids"], when_changed = true },
+  { name = "hull-atlas", outputs = "view/hull_atlas", command = ["just", "hull-atlas", "build"], when_changed = true },
+]
+record = ".git/sf-land/verdicts"
+"#;
 const CHILD: &str = "SF_AFTER_COMMIT_ROOT";
 const DEADLINE: Duration = Duration::from_secs(45);
 
@@ -413,6 +425,7 @@ impl Fixture {
         write(&root.join("docs/b.md"), TWO);
         write(&root.join("other"), "original\n");
         write(&root.join(".gitignore"), "artifacts/\n");
+        write(&root.join(symphony::project::FILE), VERDICTS);
         write(
             &root.join("tools/test_budget.json"),
             r#"{"before_verify_after_port":true}"#,

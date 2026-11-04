@@ -10,6 +10,7 @@ pub mod attach;
 mod beat;
 mod commands;
 mod embedding;
+mod field;
 pub mod probes;
 pub mod pull;
 mod search;
@@ -108,6 +109,9 @@ pub fn main(
     };
     if parsed.command == "beat" {
         return beat::run(input, env);
+    }
+    if parsed.command == "field" {
+        return field::run(&parsed, env, out, err);
     }
     // A sweep work finishing started never starts the board's server: it runs only on a board in use.
     let start = !(parsed.command == "sweep" && parsed.flag("background"));

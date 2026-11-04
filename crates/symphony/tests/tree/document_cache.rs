@@ -4,7 +4,10 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use symphony::page::Document;
-use symphony::render::{Components, Render};
+use symphony::plugins::Plugins;
+use symphony::render::Render;
+use symphony_plugin::vocabulary::{Block, Span};
+use symphony_plugin::{Component, Page, Plugin};
 
 use super::Tree;
 
@@ -86,26 +89,46 @@ fn editing_a_readme_refreshes_child_breadcrumbs() {
     );
 }
 
+/// `[[ship:…]]` as the text of the file at `path`, with that text as its cache version when
+/// `versioned`.
 struct Live {
     path: PathBuf,
+    versioned: bool,
 }
 
-impl Components for Live {
-    fn render_one(&self, _: &str, _: &str, _: Option<&str>) -> Result<String, String> {
-        std::fs::read_to_string(&self.path).map_err(|error| error.to_string())
+impl Component for Live {
+    fn name(&self) -> &str {
+        "ship"
+    }
+
+    fn render(&self, _: &Page<'_>, _: &str, _: Option<&str>) -> Result<Vec<Block>, String> {
+        let text = std::fs::read_to_string(&self.path).map_err(|error| error.to_string())?;
+        Ok(vec![Block::Paragraph {
+            spans: vec![Span::Text { text }],
+        }])
+    }
+
+    fn cache_version(&self, _: &Page<'_>) -> Option<String> {
+        self.versioned
+            .then(|| std::fs::read_to_string(&self.path).unwrap())
     }
 }
 
-struct Versioned(Live);
+/// A plugin of one component, leaked for the `'static` a plugin list holds.
+struct One(Box<dyn Component>);
 
-impl Components for Versioned {
-    fn render_one(&self, name: &str, arg: &str, option: Option<&str>) -> Result<String, String> {
-        self.0.render_one(name, arg, option)
+impl Plugin for One {
+    fn name(&self) -> &str {
+        "one"
     }
 
-    fn cache_version(&self) -> Option<String> {
-        Some(std::fs::read_to_string(&self.0.path).unwrap())
+    fn components(&self) -> Vec<&dyn Component> {
+        vec![self.0.as_ref()]
     }
+}
+
+fn plugins(component: impl Component + 'static) -> Plugins {
+    Plugins::new(vec![Box::leak(Box::new(One(Box::new(component))))])
 }
 
 fn component_update(path: &str, before: &str, after: &str) {
@@ -113,13 +136,11 @@ fn component_update(path: &str, before: &str, after: &str) {
         let tree = Tree::new();
         tree.write("docs/A.md", "# A\n\n[[ship:REP-F01]]\n");
         let path = tree.write(path, before);
-        let live = Live { path: path.clone() };
-        let components: Box<dyn Components> = if versioned {
-            Box::new(Versioned(live))
-        } else {
-            Box::new(live)
+        let live = Live {
+            path: path.clone(),
+            versioned,
         };
-        let render = Render::new(&tree.root).with_components(components);
+        let render = Render::new(&tree.root).with_plugins(plugins(live));
         let first = render.document("docs/A.md").unwrap();
         assert!(html(&first).contains(before));
         let unchanged = render.document("docs/A.md").unwrap();
@@ -134,41 +155,49 @@ fn component_update(path: &str, before: &str, after: &str) {
 
 #[test]
 fn an_approved_component_picture_refreshes_without_editing_the_document() {
-    component_update(
-        "artifacts/approved-picture",
-        "<img src=\"/old.png\">",
-        "<img src=\"/new.png\">",
-    );
+    component_update("artifacts/approved-picture", "old.png", "new.png");
 }
 
 #[test]
 fn component_data_refreshes_without_editing_the_document() {
-    component_update("docs/data/stats", "<span>1</span>", "<span>2</span>");
+    component_update("docs/data/stats", "stat one", "stat two");
+}
+
+/// `[[ship:…]]` as fixed words, with one cache version whatever the words.
+struct Fixed(&'static str);
+
+impl Component for Fixed {
+    fn name(&self) -> &str {
+        "ship"
+    }
+
+    fn render(&self, _: &Page<'_>, _: &str, _: Option<&str>) -> Result<Vec<Block>, String> {
+        Ok(vec![Block::Paragraph {
+            spans: vec![Span::Text {
+                text: self.0.into(),
+            }],
+        }])
+    }
+
+    fn cache_version(&self, _: &Page<'_>) -> Option<String> {
+        Some(String::new())
+    }
 }
 
 #[test]
-fn replacing_the_component_provider_clears_its_previous_cached_documents() {
-    struct Replacement;
-    impl Components for Replacement {
-        fn render_one(&self, _: &str, _: &str, _: Option<&str>) -> Result<String, String> {
-            Ok("<span>new provider</span>".into())
-        }
-
-        fn cache_version(&self) -> Option<String> {
-            Some(String::new()) // deliberately the same version as Builtin
-        }
-    }
+fn replacing_the_plugins_clears_their_previous_cached_documents() {
     let tree = Tree::new();
     tree.write("docs/A.md", "[[ship:REP-F01]]\n");
-    // Select Builtin explicitly: the default live provider has its own data fingerprint.
-    let render = Render::new(&tree.root).with_components(Box::new(symphony::render::Builtin));
+    let render = Render::new(&tree.root).with_plugins(plugins(Fixed("old provider")));
     let first = render.document("docs/A.md").unwrap();
-    assert!(html(&first).contains("⚠ unknown component ship"));
+    assert!(html(&first).contains("old provider"));
     assert!(Arc::ptr_eq(&first, &render.document("docs/A.md").unwrap()));
-    let render = render.with_components(Box::new(Replacement));
+    // The same cache version: only the replacement itself may drop the cached document.
+    let render = render.with_plugins(plugins(Fixed("new provider")));
     let next = render.document("docs/A.md").unwrap();
     assert!(!Arc::ptr_eq(&first, &next));
-    assert_eq!(html(&next).trim(), "<span>new provider</span>");
+    assert!(html(&next).contains("new provider"), "{}", html(&next));
+    assert!(!html(&next).contains("old provider"));
     assert_eq!(next.changed_since(&first).len(), 1);
     assert!(Arc::ptr_eq(&next, &render.document("docs/A.md").unwrap()));
 }

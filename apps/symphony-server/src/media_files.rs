@@ -70,7 +70,7 @@ pub(crate) async fn upload(
     let Ok(root) = tokio::fs::canonicalize(&shared.root).await else {
         return StatusCode::NOT_FOUND.into_response();
     };
-    let Ok(folder) = tokio::fs::canonicalize(root.join(symphony::uploads::DIR)).await else {
+    let Ok(folder) = tokio::fs::canonicalize(symphony::uploads::dir(&root)).await else {
         return StatusCode::NOT_FOUND.into_response();
     };
     let Ok(path) = tokio::fs::canonicalize(path).await else {
@@ -122,12 +122,15 @@ pub(crate) async fn answer(
     path: &str,
     request: &axum::http::Request<()>,
 ) -> Response {
+    let file;
     let (base, relative) = if path == "/favicon.ico" {
         (root.join("tools/static"), "icon.svg")
     } else if let Some(relative) = path.strip_prefix("/static/") {
         (root.join("tools/static"), relative)
     } else {
-        (root.to_path_buf(), path.trim_start_matches('/'))
+        // A file beside a document is named by its route, as the document is (`docs/…`).
+        file = symphony::project::Project::of(root).file(path.trim_start_matches('/'));
+        (root.to_path_buf(), file.as_str())
     };
     if relative.is_empty()
         || Path::new(relative)
@@ -147,10 +150,21 @@ pub(crate) async fn answer(
     if !base.starts_with(&root) {
         return StatusCode::NOT_FOUND.into_response();
     }
-    let Ok(path) = tokio::fs::canonicalize(base.join(relative)).await else {
+    contained(shared, &base, &base.join(relative), request).await
+}
+
+/// The file `wanted` as served media when it resolves inside `base` (canonical) and outside the
+/// repository's metadata, its type read from its own name; not found otherwise.
+pub(crate) async fn contained(
+    shared: &crate::front::Shared,
+    base: &Path,
+    wanted: &Path,
+    request: &axum::http::Request<()>,
+) -> Response {
+    let Ok(path) = tokio::fs::canonicalize(wanted).await else {
         return StatusCode::NOT_FOUND.into_response();
     };
-    if !path.starts_with(&base) || shared.is_metadata(&path) {
+    if !path.starts_with(base) || shared.is_metadata(&path) {
         return StatusCode::NOT_FOUND.into_response();
     }
     let Ok(file) = tokio::fs::File::open(&path).await else {
@@ -178,7 +192,7 @@ pub(crate) async fn answer(
     for (name, value) in [
         (
             header::CONTENT_TYPE,
-            mime(relative).unwrap_or("application/octet-stream"),
+            mime(&wanted.to_string_lossy()).unwrap_or("application/octet-stream"),
         ),
         (header::CONTENT_SECURITY_POLICY, "sandbox allow-scripts"),
         (header::X_CONTENT_TYPE_OPTIONS, "nosniff"),

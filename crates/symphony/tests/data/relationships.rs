@@ -4,8 +4,7 @@ use std::path::{Path, PathBuf};
 
 use serde_json::{Value, json};
 use symphony::relationships::{
-    Declaration, Settings, Tables, check_main, load, parse_effect, render_table, schema_errors,
-    tables,
+    Declaration, Settings, Tables, check_main, load, parse_effect, schema_errors, table, tables,
 };
 
 use crate::common::Tree;
@@ -202,6 +201,12 @@ fn each_side_carries_its_faction_and_colour() {
         ("🔷", "Consensus", "Machine", "#2a9d8f")
     );
     assert!(tables.side("XXX").is_none());
+}
+
+/// The table as the document's HTML holds it.
+fn render_table(tables: &Tables, name: &str) -> Result<String, String> {
+    let block = table(tables, name)?;
+    Ok(symphony::blocks::write::html(&[block], &mut |_| 0))
 }
 
 // The first fixture row is HOM: destroying it loses HOM and gains SYN;

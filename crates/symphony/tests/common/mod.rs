@@ -44,6 +44,16 @@ pub fn after_open(out: &str) -> &str {
     out.split_once("OPEN").map(|(_, rest)| rest).unwrap_or("")
 }
 
+/// No plugins: the register of a project that names none.
+pub fn plain() -> symphony::plugins::Plugins {
+    symphony::plugins::Plugins::default()
+}
+
+/// The Star Foundry plugin alone, whose card kinds read golden frames, art and models.
+pub fn star_foundry() -> symphony::plugins::Plugins {
+    symphony::plugins::Plugins::new(vec![&symphony::star_foundry::PLUGIN])
+}
+
 /// The repository this crate is in.
 pub fn repo() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))

@@ -374,7 +374,11 @@ fn add_tree(files: &mut HashMap<String, Body>, root: &Path, prefix: &str) {
             .unwrap()
             .to_string_lossy()
             .replace('\\', "/");
-        let bytes = std::fs::read(&path).unwrap_or_else(|err| panic!("{}: {err}", path.display()));
+        let mut bytes =
+            std::fs::read(&path).unwrap_or_else(|err| panic!("{}: {err}", path.display()));
+        if relative == "index.html" {
+            bytes = crate::common::served_shell(&String::from_utf8(bytes).unwrap()).into_bytes();
+        }
         let content_type = content_type(&relative);
         // A hashed build file never changes under its name; anything else is revalidated.
         let cache = if relative.starts_with("assets/") || relative.starts_with("wasm/") {

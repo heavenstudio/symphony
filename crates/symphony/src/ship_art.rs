@@ -8,11 +8,11 @@ use std::path::{Path, PathBuf};
 use regex::Regex;
 use serde::Deserialize;
 use serde_json::{Value, json};
+use symphony_api::{Block, Cell, ContainerKind, FigureSize, Image, InlineKind, Presentation, Span};
 
 use crate::art;
 use crate::cli::{Flag, parse, refuse};
 use crate::edit::heading_anchor;
-use crate::markup::escape;
 use crate::register::{Decision, REGION_END, REGION_START};
 use crate::text::{os_error, read_text};
 
@@ -264,56 +264,102 @@ pub fn picture_width(length: f64) -> i64 {
         .max(40.0) as i64
 }
 
-fn hull_html(hull: &Hull, chosen: Option<(String, bool)>) -> String {
-    let alt = escape(&hull.label());
-    let label = format!(
-        "<a class=\"hull-link\" href=\"{}\">{alt}</a>",
-        escape(&hull.href())
-    );
-    let Some((src, pending)) = chosen else {
-        return format!(
-            "<div class=\"hull\">{label}<br><small>{} m · no picture yet</small></div>",
-            hull.length_m
-        );
+/// A hull in a matrix cell: its picture at its length's width, linked to the full picture, its
+/// name linked to its section and its length and state.
+fn hull_figure(hull: &Hull, chosen: Option<(String, bool)>) -> Block {
+    let alt = hull.label();
+    let mut caption = vec![
+        Span::Link {
+            href: hull.href(),
+            target: None,
+            title: String::new(),
+            spans: vec![Span::Text { text: alt.clone() }],
+        },
+        Span::LineBreak,
+    ];
+    let small = |text: String| Span::Styled {
+        tag: InlineKind::Small,
+        presentation: Presentation::default(),
+        spans: vec![Span::Text { text }],
     };
-    let src = escape(&src);
+    let Some((src, pending)) = chosen else {
+        caption.push(small(format!("{} m · no picture yet", hull.length_m)));
+        return Block::Figure {
+            picture: None,
+            caption,
+            href: None,
+            badge: None,
+            size: FigureSize::Cell,
+        };
+    };
     let width = picture_width(hull.length_m.as_f64().unwrap_or(1.0));
     let state = if pending {
         "pending review"
     } else {
         "approved"
     };
-    format!(
-        "<div class=\"hull\"><a href=\"{src}\"><img src=\"{src}\" alt=\"{alt}\" width=\"{width}\" style=\"width:{width}px;max-width:none\"></a><br>{label}<br><small>{} m · {state}</small></div>",
-        hull.length_m
-    )
+    caption.push(small(format!("{} m · {state}", hull.length_m)));
+    Block::Figure {
+        picture: Some(Image {
+            src: src.clone(),
+            alt,
+            presentation: Presentation {
+                attributes: [
+                    ("width".to_string(), width.to_string()),
+                    (
+                        "style".to_string(),
+                        format!("width:{width}px;max-width:none"),
+                    ),
+                ]
+                .into(),
+                ..Presentation::default()
+            },
+        }),
+        caption,
+        href: Some(src),
+        badge: None,
+        size: FigureSize::Cell,
+    }
 }
 
-pub fn matrix_table(
+/// The scale's note and the matrix of `factions`' hulls: a row per subfaction, a column per class.
+pub fn matrix(
     data: &Data,
     cards: &BTreeMap<String, Vec<Decision>>,
     factions: &[String],
-) -> Result<String, String> {
+) -> Result<Vec<Block>, String> {
     let columns = unique(
         data.classes()
             .into_iter()
             .chain(data.hulls.iter().map(|h| h.class.clone())),
     );
-    let mut table = vec![
-        format!(
-            "<p class=\"matrix-scale\">Scale: a 20 m hull is drawn 40 px wide and every doubling of length adds 30 px, so a 2400 m dreadnought is {} px wide.</p>",
-            picture_width(2400.0)
-        ),
-        "<table class=\"matrix\">".into(),
-        format!(
-            "<thead><tr><th>Subfaction</th>{}</tr></thead>",
-            columns
-                .iter()
-                .map(|c| format!("<th>{}</th>", escape(c)))
-                .collect::<String>()
-        ),
-        "<tbody>".into(),
-    ];
+    let text = |text: String| Span::Text { text };
+    let note = Block::Container {
+        tag: ContainerKind::Div,
+        presentation: Presentation::class("matrix-note"),
+        blocks: vec![Block::Paragraph {
+            spans: vec![text(format!(
+                "Scale: a 20 m hull is drawn 40 px wide and every doubling of length adds 30 px, so a 2400 m dreadnought is {} px wide.",
+                picture_width(2400.0)
+            ))],
+        }],
+    };
+    let cell = |header: bool, spans: Vec<Span>, presentation: Presentation| Cell {
+        header,
+        spans,
+        presentation,
+    };
+    let mut head = vec![cell(
+        true,
+        vec![text("Subfaction".into())],
+        Presentation::default(),
+    )];
+    head.extend(
+        columns
+            .iter()
+            .map(|c| cell(true, vec![text(c.clone())], Presentation::default())),
+    );
+    let mut rows = Vec::new();
     for faction in unique(
         TITLES
             .iter()
@@ -338,14 +384,25 @@ pub fn matrix_table(
         );
         for name in names {
             let title = title(&faction);
-            let head = if name == title {
-                escape(&name)
-            } else {
-                format!("{}<br><small>{}</small>", escape(&name), escape(&title))
-            };
-            let mut cells = String::new();
+            let mut heading = vec![text(name.clone())];
+            if name != title {
+                heading.push(Span::LineBreak);
+                heading.push(Span::Styled {
+                    tag: InlineKind::Small,
+                    presentation: Presentation::default(),
+                    spans: vec![text(title)],
+                });
+            }
+            let mut row = vec![cell(
+                true,
+                heading,
+                Presentation {
+                    attributes: [("scope".to_string(), "row".to_string())].into(),
+                    ..Presentation::default()
+                },
+            )];
             for column in &columns {
-                cells.push_str("<td>");
+                let mut figures = Vec::new();
                 for hull in data.hulls.iter().filter(|h| {
                     h.faction == faction && h.class == *column && data.row_name(h) == name
                 }) {
@@ -355,15 +412,23 @@ pub fn matrix_table(
                         "ship",
                     )
                     .map_err(|e| e.0)?;
-                    cells.push_str(&hull_html(hull, chosen));
+                    figures.push(Span::Blocks {
+                        blocks: vec![hull_figure(hull, chosen)],
+                    });
                 }
-                cells.push_str("</td>");
+                row.push(cell(false, figures, Presentation::default()));
             }
-            table.push(format!("<tr><th scope=\"row\">{head}</th>{cells}</tr>"));
+            rows.push(row);
         }
     }
-    table.extend(["</tbody>".into(), "</table>".into()]);
-    Ok(table.join("\n"))
+    Ok(vec![
+        note,
+        Block::Table {
+            head,
+            rows,
+            presentation: Presentation::class("matrix"),
+        },
+    ])
 }
 
 /// Biological donor ids are declared in the roster document's donor table.

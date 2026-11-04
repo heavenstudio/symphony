@@ -19,7 +19,7 @@ use tasks::sys::Command;
 use serde::{Deserialize, Serialize};
 
 use crate::clock::stamp_at;
-use crate::register::DOCS_DIR;
+use crate::project::ROUTE;
 use crate::text::{is_space, os_error, prefix_chars, repr, strip};
 
 /// Characters in one question or answer.
@@ -195,18 +195,18 @@ fn now_seconds() -> f64 {
         .map_or(0.0, |since| since.as_secs_f64())
 }
 
-/// A markdown path under `docs/`, relative and normal, or the refusal.
+/// A document's name under the `docs/` route, relative and normal, or the refusal.
 pub fn check_path(path: &str) -> Result<&str, AskError> {
     let normal = !path.is_empty()
         && !path.starts_with('/')
         && path
             .split('/')
             .all(|part| !part.is_empty() && part != "." && part != "..");
-    if normal && path.starts_with(&format!("{DOCS_DIR}/")) && path.ends_with(".md") {
+    if normal && path.starts_with(&format!("{ROUTE}/")) && path.ends_with(".md") {
         return Ok(path);
     }
     Err(AskError::Refused(format!(
-        "path must be a markdown file under {DOCS_DIR}/, not {}",
+        "path must be a markdown file under {ROUTE}/, not {}",
         repr(path)
     )))
 }

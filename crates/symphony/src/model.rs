@@ -21,7 +21,12 @@ static MODEL: LazyLock<Regex> = LazyLock::new(|| {
 
 /// (hull, version) a model card is for, or `None` for any other card.
 pub fn model(card: &Decision) -> Option<(String, u32)> {
-    let found = MODEL.captures(&card.text)?;
+    tagged(&card.text)
+}
+
+/// [`model`] of a card whose text is `text`.
+pub fn tagged(text: &str) -> Option<(String, u32)> {
+    let found = MODEL.captures(text)?;
     Some((found["hull"].to_string(), found["version"].parse().ok()?))
 }
 
