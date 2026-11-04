@@ -43,6 +43,29 @@ impl Store {
         text: &str,
         to: Option<&str>,
     ) -> Result<Message, Error> {
+        self.post(slug, sender, sender, text, to)
+    }
+
+    /// A tool's addressed notification, authorized as `actor` and authored by the board so even
+    /// a waiting actor receives it in its inbox. Ordinary agent posts keep their own author.
+    pub fn notify(
+        &self,
+        slug: &str,
+        actor: &str,
+        handle: &str,
+        text: &str,
+    ) -> Result<Message, Error> {
+        self.post(slug, actor, BOARD, text, Some(handle))
+    }
+
+    fn post(
+        &self,
+        slug: &str,
+        actor: &str,
+        sender: &str,
+        text: &str,
+        to: Option<&str>,
+    ) -> Result<Message, Error> {
         let text = text.trim();
         if text.is_empty() {
             return Err(refused("an empty message says nothing".into()));
@@ -53,7 +76,16 @@ impl Store {
             format!("{REFUSED}no role @{role}; use one of {}", roles.join(", "))
         });
         let handle = to.filter(|to| *to != OWNER && role.is_none());
-        let act = if sender == OWNER { "" } else { ACT };
+        let act = if actor == OWNER {
+            ""
+        } else if sender == BOARD {
+            // A machine event is no tool call or heartbeat from the waiting session.
+            "LET $me = (SELECT left_at FROM ONLY type::record('session', $actor));
+IF $me = NONE { THROW $unknown_actor };
+IF $me.left_at != NONE { THROW $left_actor };"
+        } else {
+            ACT
+        };
         let body = format!(
             "{act}
 IF !record::exists(type::record('task', $slug)) {{ THROW $no_task }};
@@ -61,14 +93,14 @@ IF $no_role != NONE {{ THROW $no_role }};
 IF $handle != NONE AND !record::exists(type::record('session', $handle)) {{ THROW $nobody }};
 {}
 RETURN [$sid, $ts];",
-            logged("$slug", "$actor", "'msg'", "$text", "$to")
+            logged("$slug", "$sender", "'msg'", "$text", "$to")
         );
         let now = (self.clock)();
         let vars = acting(
-            sender,
+            actor,
             now,
             json!({
-                "slug": slug, "text": text, "to": to, "handle": handle, "no_role": no_role,
+                "slug": slug, "sender": sender, "text": text, "to": to, "handle": handle, "no_role": no_role,
                 "no_task": format!("{REFUSED}{}", no_task(slug)),
                 "nobody": handle.map(|h| format!("{REFUSED}no session {} to send to", repr(h))),
             }),

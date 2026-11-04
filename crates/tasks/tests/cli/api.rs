@@ -396,3 +396,65 @@ fn landed_closes_only_from_what_the_call_names_and_answers_what_it_found() {
         (&json!("sim/a"), &json!("done"), &json!("in_progress"))
     );
 }
+
+#[test]
+fn board_authored_notices_reach_the_actors_own_inbox_and_still_validate_the_actor_and_recipient() {
+    let c = Case::new();
+    let actor = c.register("worker");
+    c.ok(&actor, &["create", "tools/example", "Example"]);
+    c.ok(&actor, &["claim", "tools/example"]);
+    let before = answer(&c.env, json!({"method":"session", "args":{"handle":actor}}));
+    let mut later = c.env.clone();
+    later
+        .vars
+        .insert("TASKS_NOW".into(), (common_now() + 60.0).to_string());
+    let text = "room: 16.5 GiB free; run `just check` once";
+    let notified = answer(
+        &later,
+        json!({"method":"notify", "args":{
+            "slug":"tools/example", "actor":actor, "handle":actor, "text":text
+        }}),
+    );
+    assert_eq!(notified["ok"]["sender"], "board");
+    assert_eq!(notified["ok"]["recipient"], actor);
+    let after = answer(&later, json!({"method":"session", "args":{"handle":actor}}));
+    assert_eq!(
+        after["ok"]["last_seen"], before["ok"]["last_seen"],
+        "a machine event is no heartbeat"
+    );
+    let inbox = answer(&c.env, json!({"method":"inbox", "args":{"handle":actor}}));
+    let messages = inbox["ok"].as_array().unwrap();
+    assert_eq!(messages.len(), 1, "{inbox}");
+    assert_eq!(messages[0]["text"], text);
+    assert_eq!(messages[0]["kind"], "msg");
+    for (sender, recipient, reason) in [
+        ("missing-otter", actor.as_str(), "no session"),
+        (actor.as_str(), "missing-otter", "no session"),
+        ("owner", actor.as_str(), "owner acts from the Symphony"),
+    ] {
+        let refused = answer(
+            &c.env,
+            json!({"method":"notify", "args":{
+                "slug":"tools/example", "actor":sender, "handle":recipient, "text":text
+            }}),
+        );
+        assert!(
+            refused["refused"].as_str().unwrap().contains(reason),
+            "{refused}"
+        );
+    }
+    let ordinary = answer(
+        &c.env,
+        json!({"method":"say", "args":{
+            "slug":"tools/example", "sender":actor, "to":actor, "text":"own post"
+        }}),
+    );
+    assert_eq!(ordinary["ok"]["sender"], actor);
+    assert_eq!(
+        answer(&c.env, json!({"method":"inbox", "args":{"handle":actor}}))["ok"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+}

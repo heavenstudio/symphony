@@ -150,6 +150,9 @@ JSON interface (`src/cli/api.rs`) takes a call on stdin; `tasks api --lines` tak
 one JSON call per line on stdin and answers each on its own line (a line that
 is a list of calls gets a list of answers), the methods being the store's, plus
 `threads` and `snapshot`, which read several things in one round trip.
+`notify` authorizes a tool's actor and posts an addressed `board` message to a
+session on its task. It reaches that session's inbox even when the actor is the
+recipient; ordinary `say` posts retain their agent author and self-post filtering.
 `launch`, `restore`, `cleanup`, `finish` and `reap` (the Symphony's idle
 sweep, every five minutes) drive herdr's panes and git's worktrees from
 `src/launch/`; after a launch's prompt it looks at the pane again and sends
