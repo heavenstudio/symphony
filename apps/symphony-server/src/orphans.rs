@@ -50,15 +50,13 @@ pub fn count(ps: &str, own: i64, recorded: impl Fn(&Path) -> Option<i64>) -> usi
 /// spawns meanwhile could keep a pipe's writer and hold the round open for its whole life.
 pub async fn scan() -> Option<usize> {
     let table = crate::sys::capture().ok()?;
-    let status = tokio::process::Command::new("ps")
-        .args(["-axww", "-o", "pid=,ppid=,command="])
+    let mut ps = tokio::process::Command::new("ps");
+    ps.args(["-axww", "-o", "pid=,ppid=,command="])
         .stdin(std::process::Stdio::null())
         .stdout(table.try_clone().ok()?)
         .stderr(std::process::Stdio::null())
-        .kill_on_drop(true)
-        .status()
-        .await
-        .ok()?;
+        .kill_on_drop(true);
+    let status = crate::sys::spawn_async(&mut ps).ok()?.wait().await.ok()?;
     let table = crate::sys::captured(table).ok()?;
     status.success().then(|| {
         count(
