@@ -404,17 +404,24 @@ pub(crate) fn open(url: &str) {
         eprintln!("· printing the URL without opening a browser");
         return;
     }
-    let opener = if cfg!(target_os = "macos") {
+    let _ = opener(url).spawn().and_then(|mut opener| opener.wait());
+}
+
+/// The system's opener for `url`, its streams null. A server of its own opens its page too
+/// (front::start), once it accepts: the opener starts without a fork and inherits only its
+/// streams, never a connection not yet close-on-exec.
+fn opener(url: &str) -> tasks::sys::Command {
+    let mut command = tasks::sys::Command::new(if cfg!(target_os = "macos") {
         "open"
     } else {
         "xdg-open"
-    };
-    let _ = std::process::Command::new(opener)
+    });
+    command
         .arg(url)
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status();
+        .stdin(tasks::sys::Stdio::null())
+        .stdout(tasks::sys::Stdio::null())
+        .stderr(tasks::sys::Stdio::null());
+    command
 }
 
 #[cfg(test)]
@@ -423,6 +430,20 @@ mod tests {
 
     fn args(text: &str) -> Vec<String> {
         text.split_whitespace().map(str::to_string).collect()
+    }
+
+    #[test]
+    fn the_opener_is_the_systems_own_given_the_url_alone() {
+        let url = "http://127.0.0.1:8765/@tools~branch/";
+        let opener = opener(url);
+        let system = if cfg!(target_os = "macos") {
+            "open"
+        } else {
+            "xdg-open"
+        };
+        assert_eq!(opener.get_program(), system);
+        assert_eq!(opener.get_args().collect::<Vec<_>>(), [url]);
+        assert_eq!(opener.get_current_dir(), None);
     }
 
     #[test]
