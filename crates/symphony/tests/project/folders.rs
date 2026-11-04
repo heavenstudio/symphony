@@ -195,3 +195,35 @@ fn a_document_and_its_folder_open_by_their_route_from_the_projects_folder() {
         ]
     );
 }
+
+const PNG_5X7: &[u8] = b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR\0\0\0\x05\0\0\0\x07";
+
+#[test]
+fn a_documents_card_links_and_pictures_resolve_in_the_projects_folder() {
+    let tree = manual();
+    tree.write(
+        "manual/guide/START.md",
+        "# Start\n\nAs **pick** says.\n\n![shot](shot.png)\n",
+    );
+    std::fs::write(tree.path("manual/guide/shot.png"), PNG_5X7).unwrap();
+    let doc = docview::document(&Render::new(&tree.root), "docs/guide/START.md", "").unwrap();
+    let blocks = serde_json::to_string(&doc.sections).unwrap();
+    assert!(blocks.contains("\"/docs/DECISIONS.md#pick\""), "{blocks}");
+    assert!(
+        blocks.contains("\"src\":\"/docs/guide/shot.png?v="),
+        "{blocks}"
+    );
+    assert!(
+        blocks.contains("\"width\":\"5\"") && blocks.contains("\"height\":\"7\""),
+        "the picture keeps its real size: {blocks}"
+    );
+    let made = symphony::images::thumbnail(
+        &tree.root,
+        symphony::images::THUMB_WIDTH,
+        "",
+        "docs/guide/shot.png",
+        &|_, made, _| std::fs::write(made, b"thumbnail").is_ok(),
+        true,
+    );
+    assert!(made.is_some_and(|(file, _)| file.is_file()));
+}

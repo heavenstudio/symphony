@@ -180,16 +180,18 @@ pub(crate) fn card_docs(
     paths: &[String],
     cache: &CardCache,
 ) -> Arc<HashMap<String, String>> {
-    let live: Vec<&String> = paths
+    let project = crate::project::Project::of(root);
+    let live: Vec<(&String, String)> = paths
         .iter()
-        .filter(|rel| !rel.contains("/history/"))
+        .map(|rel| (rel, project.file(rel)))
+        .filter(|(_, file)| project.is_document_path(file))
         .collect();
     let stamp: Vec<(String, String)> = live
         .iter()
-        .map(|rel| {
+        .map(|(rel, file)| {
             (
                 (*rel).clone(),
-                read_text(&root.join(rel)).unwrap_or_default(),
+                read_text(&root.join(file)).unwrap_or_default(),
             )
         })
         .collect();

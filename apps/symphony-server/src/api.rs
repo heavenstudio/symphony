@@ -843,8 +843,10 @@ fn thumbnail(shared: &Shared, root: &Path, path: &str) -> Response {
     {
         return error(StatusCode::NOT_FOUND, "no such thumbnail");
     }
+    // A picture beside a document is named by its route, as the document is (`docs/…`).
+    let file = symphony::project::Project::of(root).file(rel);
     if root
-        .join(rel)
+        .join(&file)
         .canonicalize()
         .is_ok_and(|target| shared.is_metadata(&target))
     {
@@ -861,7 +863,7 @@ fn thumbnail(shared: &Shared, root: &Path, path: &str) -> Response {
     let (file, mime, current) = if let Some((file, current)) = made {
         (file, "image/jpeg", current)
     } else {
-        let Ok(file) = root.join(rel).canonicalize() else {
+        let Ok(file) = root.join(&file).canonicalize() else {
             return error(StatusCode::NOT_FOUND, "no such thumbnail");
         };
         if !root.canonicalize().is_ok_and(|root| file.starts_with(root))

@@ -54,6 +54,7 @@ fn wire<T: Serialize, U: DeserializeOwned>(value: T) -> U {
 
 fn tasks(root: &Path, rel: &str) -> Vec<DocumentTask> {
     let paths = crate::render::doc_paths(root);
+    let project = crate::project::Project::of(root);
     crate::taskview::connect(root)
         .and_then(|store| {
             store
@@ -67,7 +68,7 @@ fn tasks(root: &Path, rel: &str) -> Vec<DocumentTask> {
             task.links.iter().any(|link| {
                 let path = link.split('#').next().unwrap_or_default();
                 path == rel
-                    || (!root.join(path).is_file()
+                    || (!root.join(project.file(path)).is_file()
                         && Path::new(path)
                             .file_name()
                             .and_then(|name| name.to_str())
