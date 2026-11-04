@@ -110,19 +110,19 @@ fn a_bold_card_slug_links_to_the_document_that_holds_the_card() {
     let tree = Tree::new();
     tree.write(
         "docs/lamps/east.md",
-        "# East\n\n- [ ] **kite-picture** — a card\n",
+        "# East\n\n- [ ] **lumen-picture** — a card\n",
     );
     let html = Render::new(&tree.root).html(
-        "See **kite-picture** and **nothing-here**, and *Replaces:* kite-picture.\n",
+        "See **lumen-picture** and **nothing-here**, and *Replaces:* lumen-picture.\n",
         "docs/DECISIONS.md",
     );
     assert!(
-        html.contains("<a href=\"/docs/lamps/east.md#kite-picture\">kite-picture</a>"),
+        html.contains("<a href=\"/docs/lamps/east.md#lumen-picture\">lumen-picture</a>"),
         "{html}"
     );
     assert!(html.contains("<strong>nothing-here</strong>"));
     assert_eq!(
-        html.matches("href=\"/docs/lamps/east.md#kite-picture\"")
+        html.matches("href=\"/docs/lamps/east.md#lumen-picture\"")
             .count(),
         2,
         "{html}"
@@ -132,9 +132,9 @@ fn a_bold_card_slug_links_to_the_document_that_holds_the_card() {
 #[test]
 fn a_card_slug_inside_a_link_or_code_is_not_linked_again() {
     let tree = Tree::new();
-    tree.write("docs/lamps/east.md", "- [ ] **kite-picture** — a card\n");
+    tree.write("docs/lamps/east.md", "- [ ] **lumen-picture** — a card\n");
     let html = Render::new(&tree.root).html(
-        "[**kite-picture**](/x) and `**kite-picture**`\n",
+        "[**lumen-picture**](/x) and `**lumen-picture**`\n",
         "docs/DECISIONS.md",
     );
     assert!(!html.contains("east.md"), "{html}");

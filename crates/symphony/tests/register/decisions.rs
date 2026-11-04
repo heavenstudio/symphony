@@ -8,7 +8,7 @@ use crate::{card, cards};
 #[test]
 fn each_checkbox_state() {
     let found = cards(&[
-        "- [ ] **pending-one** — Five civilizations.",
+        "- [ ] **pending-one** — Five workshops.",
         "- [x] **approved-one** — Star lanes.",
         "- [X] **approved-two** — Capital X too.",
         "- [-] **rejected-one** — 141 lamps.",
@@ -25,7 +25,7 @@ fn each_checkbox_state() {
         ]
     );
     assert_eq!(found[0].slug, "pending-one");
-    assert_eq!(found[0].text, "Five civilizations.");
+    assert_eq!(found[0].text, "Five workshops.");
     assert_eq!(found[0].line, 1);
 }
 

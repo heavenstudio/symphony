@@ -34,9 +34,9 @@ fn the_hero_is_the_next_card_with_a_button_straight_to_it() {
     let html = render(board("board.json"));
     let hero = region(&html, r#"class="hero card""#);
     assert!(hero.contains("Next up · 1 of 37"), "{hero}");
-    assert!(hero.contains("North · frigate picture"), "{hero}");
+    assert!(hero.contains("North · pendant picture"), "{hero}");
     assert!(
-        hero.contains("Three candidates for the Lancer-class frigate"),
+        hero.contains("Three candidates for the Heron pendant"),
         "{hero}"
     );
     assert!(
@@ -50,7 +50,7 @@ fn the_hero_is_the_next_card_with_a_button_straight_to_it() {
         "posted 07:42, now 10:12: {hero}"
     );
     assert!(
-        hero.contains(r#"href="/docs/lamps/north.md#north-frigate-picture""#),
+        hero.contains(r#"href="/docs/lamps/north.md#north-pendant-picture""#),
         "{hero}"
     );
     assert!(hero.contains("Open this card"), "{hero}");
@@ -59,7 +59,7 @@ fn the_hero_is_the_next_card_with_a_button_straight_to_it() {
         3,
         "one figure per candidate: {hero}"
     );
-    for (letter, src) in [("A", "frigate-a"), ("B", "frigate-b"), ("C", "frigate-c")] {
+    for (letter, src) in [("A", "pendant-a"), ("B", "pendant-b"), ("C", "pendant-c")] {
         assert!(
             hero.contains(&format!("<figcaption>{letter}</figcaption>")),
             "{letter}: {hero}"
@@ -78,11 +78,11 @@ fn a_lamp_not_drawn_yet_shows_that_its_picture_is_coming() {
     let html = render(board);
     let hero = region(&html, r#"class="hero card""#);
     assert_eq!(count(hero, "<figure"), 3, "{hero}");
-    assert_eq!(count(hero, "picture coming"), 1, "the cruiser: {hero}");
+    assert_eq!(count(hero, "picture coming"), 1, "the lantern: {hero}");
     assert_eq!(
         count(hero, r#"class="waiting""#),
         1,
-        "the destroyer waits on review: {hero}"
+        "the sconce waits on review: {hero}"
     );
     assert!(
         !hero.contains("hero-summary"),
@@ -97,7 +97,7 @@ fn then_come_the_four_after_it_in_the_queues_order() {
     assert_eq!(count(next, r#"class="nextcard""#), 4, "{next}");
     let order: Vec<usize> = [
         "mining-yield-curve",
-        "machine-carrier-picture",
+        "west-chandelier-picture",
         "dock-menu-order",
         "east-lamp-silhouettes",
     ]
@@ -110,7 +110,7 @@ fn then_come_the_four_after_it_in_the_queues_order() {
     assert!(order.is_sorted(), "in the queue's order: {order:?}");
     assert!(next.contains("Mining · design · gates 2 cards"), "{next}");
     assert!(
-        next.contains(r#"src="/docs/pictures/lamps/machine/carrier-a.png""#),
+        next.contains(r#"src="/docs/pictures/lamps/west/chandelier-a.png""#),
         "the first picture is the thumbnail: {next}"
     );
     assert!(
@@ -158,7 +158,7 @@ fn progress_shows_lamp_picture_per_maker_and_the_design_docs() {
         progress.contains(r#"href="/docs/lamps/south.md""#),
         "{progress}"
     );
-    assert!(progress.contains("Alien south"), "{progress}");
+    assert!(progress.contains("Far south"), "{progress}");
     assert!(
         progress.contains("width: 33.3%"),
         "south: 9 of 27 approved: {progress}"
@@ -208,7 +208,7 @@ fn a_branch_decision_uses_the_ordinary_hero_and_links_its_task() {
     let html = render(board);
     let hero = region(&html, r#"class="hero card""#);
     assert!(hero.contains("href=\"/task/design/policy\""));
-    assert!(hero.contains("href=\"/@design~policy/docs/POLICY.md#north-frigate-picture\""));
+    assert!(hero.contains("href=\"/@design~policy/docs/POLICY.md#north-pendant-picture\""));
     assert!(hero.contains("Next up · 1 of 37"));
 }
 

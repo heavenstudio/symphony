@@ -11,6 +11,7 @@ use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 mod document_task_layout;
+mod home_hero;
 mod list_and_queue_spacing;
 
 const DOC: &str = "docs/look-parity.md";

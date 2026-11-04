@@ -103,9 +103,9 @@ fn a_card_without_pictures_summary_or_date_leaves_them_out() {
         bare.get("pictures").is_none(),
         "no pictures, no field: {bare}"
     );
-    let cruiser = &board.next[4].pictures[2];
+    let lantern = &board.next[4].pictures[2];
     assert_eq!(
-        (cruiser.src.as_deref(), cruiser.waiting),
+        (lantern.src.as_deref(), lantern.waiting),
         (None, false),
         "a lamp not drawn yet"
     );
@@ -248,7 +248,7 @@ fn a_route_is_a_document_page_under_an_entrypoint_unless_the_symphony_answers_it
         ("artifacts/uploads/a.md", false),
         ("favicon.ico", false),
         ("lamps", false),
-        ("hullsx", true),
+        ("lampsx", true),
     ] {
         assert_eq!(spec.is_document_route(path), page, "{path}");
     }

@@ -9,7 +9,7 @@ const HEADINGS: [&str; 6] = [
     "Harbor Guild picture · Third pass: less brass, round their lamps",
     "Capture, intrusion, and false identities",
     "Café — naïve  spacing",
-    "NOR-L01 Kite",
+    "NOR-L01 Lumen",
     "x_y 2.5",
 ];
 

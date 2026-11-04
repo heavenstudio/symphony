@@ -149,6 +149,44 @@ fn the_board_to_move_is_the_projects_own_or_the_one_tasks_db_names() {
             common.parent().unwrap().join("symphony.toml").display()
         ))
     );
+    for (id, file) in [("lamp-2", "lamp-2-tasks.db"), ("7", "7-tasks.db")] {
+        fs::write(
+            dir.join("symphony.toml"),
+            format!("[project]\nid = \"{id}\"\n"),
+        )
+        .unwrap();
+        assert_eq!(board_path(&env), Ok(common.join(file)), "{id}");
+        assert_eq!(
+            symphony_board::cutover::board_name(common).as_deref(),
+            Some(file)
+        );
+    }
+    for id in [
+        "../outside",
+        "lamp/works",
+        "Lamp",
+        "-lamp",
+        "lamp-",
+        "lamp--works",
+        "lamp works",
+        "lämp",
+        ".",
+    ] {
+        fs::write(
+            dir.join("symphony.toml"),
+            format!("[project]\nid = \"{id}\"\n"),
+        )
+        .unwrap();
+        assert_eq!(
+            board_path(&env),
+            Err(format!(
+                "{} names [project] id {id:?}, which is not a slug (lowercase letters, digits and dashes), so it names no SQLite board",
+                common.parent().unwrap().join("symphony.toml").display()
+            )),
+            "{id}"
+        );
+        assert_eq!(symphony_board::cutover::board_name(common), None, "{id}");
+    }
     env.vars
         .insert("TASKS_DB".into(), "/elsewhere/board.db".into());
     assert_eq!(board_path(&env), Ok(PathBuf::from("/elsewhere/board.db")));

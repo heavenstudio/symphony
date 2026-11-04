@@ -142,7 +142,7 @@ fn decision_tree() -> Tree {
     tree.write(
         "docs/DECISIONS.md",
         "---\nstatus: review\n---\n# Decisions\n\n\
-         - [x] **five-civilizations** — There are five civilizations.\n\
+         - [x] **five-workshops** — There are five workshops.\n\
          - [ ] **star-lanes** — Travel is by star lanes.\n\
          - [-] **lamp-count-141** — 141 lamps.\n  Thirty first.\n\
          - [?] **five-station-bands** — Five size bands.\n",
@@ -162,7 +162,7 @@ fn board_counts_decisions_and_lists_open_ones() {
     assert!(open.contains("lamp-count-141"));
     assert!(open.contains("Thirty first."));
     assert!(open.contains("five-station-bands"));
-    assert!(!open.contains("five-civilizations"));
+    assert!(!open.contains("five-workshops"));
     assert!(!open.contains("star-lanes"));
 }
 

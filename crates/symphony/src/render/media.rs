@@ -1,7 +1,7 @@
 //! Pictures that markup cannot draw: an `.html` mockup and a `.glb` model, held as [`Media`] items.
 //!
 //! `![Flight HUD A](/ui/mockups/hud-a.html)` is a mockup: a sandboxed frame at its native size,
-//! scaled to the card's width by the client. `![Kite](kite.glb)` and `[Kite](kite.glb)` are a model the
+//! scaled to the card's width by the client. `![Lumen](lumen.glb)` and `[Lumen](lumen.glb)` are a model the
 //! viewer orbits. Both leave `<span class="media" data-media="N" data-kind="…">` in the fragment.
 
 use std::sync::LazyLock;

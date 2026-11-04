@@ -706,15 +706,15 @@ fn wrong_type_suppresses_only_its_own_subtree_through_escaped_references() {
 #[test]
 fn the_generic_blocks_and_spans_write_and_read_back_as_themselves() {
     use symphony_api::{Cell, GalleryItem, VectorKind, VectorShape};
-    let kite = Image {
+    let lumen = Image {
         src: "/x/k.png".into(),
-        alt: "Kite".into(),
+        alt: "Lumen".into(),
         presentation: Presentation::default(),
     };
     let figure =
         |picture: Option<Image>, href: Option<&str>, badge: Option<&str>, size| Block::Figure {
             picture,
-            caption: vec![text("NOR-L01 Kite")],
+            caption: vec![text("NOR-L01 Lumen")],
             href: href.map(str::to_string),
             badge: badge.map(str::to_string),
             size,
@@ -735,13 +735,13 @@ fn the_generic_blocks_and_spans_write_and_read_back_as_themselves() {
     };
     let original = vec![
         figure(
-            Some(kite.clone()),
+            Some(lumen.clone()),
             Some("/docs/lamps/north.md#nor-l01"),
             None,
             FigureSize::Row,
         ),
         figure(None, None, Some("coming"), FigureSize::Tile),
-        figure(Some(kite.clone()), None, None, FigureSize::Wide),
+        figure(Some(lumen.clone()), None, None, FigureSize::Wide),
         Block::Component {
             kind: "lamp-matrix".into(),
             blocks: vec![paragraph("inside")],
@@ -763,7 +763,7 @@ fn the_generic_blocks_and_spans_write_and_read_back_as_themselves() {
             rows: vec![vec![cell(
                 false,
                 vec![Span::Blocks {
-                    blocks: vec![figure(Some(kite), None, Some("concept"), FigureSize::Cell)],
+                    blocks: vec![figure(Some(lumen), None, Some("concept"), FigureSize::Cell)],
                 }],
             )]],
             presentation: Presentation::class("matrix shape-matrix"),

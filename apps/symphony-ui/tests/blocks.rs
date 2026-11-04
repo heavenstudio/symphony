@@ -13,10 +13,10 @@ fn text(text: &str) -> Span {
     Span::Text { text: text.into() }
 }
 
-fn kite() -> Image {
+fn lumen() -> Image {
     Image {
         src: "/k.png".into(),
-        alt: "Kite".into(),
+        alt: "Lumen".into(),
         presentation: Presentation::default(),
     }
 }
@@ -29,7 +29,7 @@ fn figure(
 ) -> Block {
     Block::Figure {
         picture,
-        caption: vec![text("NOR-L01 Kite")],
+        caption: vec![text("NOR-L01 Lumen")],
         href: href.map(str::to_string),
         badge: badge.map(str::to_string),
         size,
@@ -46,7 +46,7 @@ fn a_lamp_sized_figure_is_a_link_card_its_badge_standing_in_for_a_missing_pictur
     ] {
         let class = format!("figure figure-{}", size.as_str());
         let html = drawn(vec![figure(
-            Some(kite()),
+            Some(lumen()),
             Some("/docs/lamps/north.md#nor-l01"),
             None,
             size,
@@ -57,9 +57,9 @@ fn a_lamp_sized_figure_is_a_link_card_its_badge_standing_in_for_a_missing_pictur
             )),
             "{html}"
         );
-        assert!(html.contains("<img src=\"/k.png\" alt=\"Kite\""), "{html}");
+        assert!(html.contains("<img src=\"/k.png\" alt=\"Lumen\""), "{html}");
         assert!(
-            html.contains("<span class=\"figure-caption\">NOR-L01 Kite</span>"),
+            html.contains("<span class=\"figure-caption\">NOR-L01 Lumen</span>"),
             "{html}"
         );
         assert!(!html.contains("figure-badge"), "{html}");
@@ -79,7 +79,7 @@ fn a_lamp_sized_figure_is_a_link_card_its_badge_standing_in_for_a_missing_pictur
 #[test]
 fn any_other_figure_is_a_figure_marked_missing_without_its_picture() {
     let html = drawn(vec![figure(
-        Some(kite()),
+        Some(lumen()),
         Some("/screens/title.png"),
         None,
         FigureSize::Wide,
@@ -93,10 +93,10 @@ fn any_other_figure_is_a_figure_marked_missing_without_its_picture() {
         "{html}"
     );
     assert!(
-        html.contains("<figcaption>NOR-L01 Kite</figcaption>"),
+        html.contains("<figcaption>NOR-L01 Lumen</figcaption>"),
         "{html}"
     );
-    let html = drawn(vec![figure(Some(kite()), None, None, FigureSize::Slot)]);
+    let html = drawn(vec![figure(Some(lumen()), None, None, FigureSize::Slot)]);
     assert!(
         html.starts_with("<figure class=\"figure figure-slot\"><img"),
         "{html}"
@@ -230,7 +230,7 @@ fn a_components_table_names_its_look_and_holds_figures_in_its_cells() {
             presentation: Presentation::default(),
         }],
         rows: vec![vec![cell(vec![Span::Blocks {
-            blocks: vec![figure(Some(kite()), None, None, FigureSize::Cell)],
+            blocks: vec![figure(Some(lumen()), None, None, FigureSize::Cell)],
         }])]],
         presentation: Presentation::class("matrix shape-matrix"),
     }]);

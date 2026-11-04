@@ -54,7 +54,7 @@ fn the_anchor_matches_the_rendered_heading_id() {
             "capture-intrusion-and-false-identities",
         ),
         ("Café — naïve  spacing", "cafe-naive-spacing"),
-        ("NOR-L01 Kite", "nor-l01-kite"),
+        ("NOR-L01 Lumen", "nor-l01-lumen"),
         ("x_y 2.5", "x_y-25"),
         ("Types of weapon", "types-of-weapon"),
     ] {

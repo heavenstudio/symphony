@@ -122,8 +122,8 @@ fn which_pictures_are_mockups() {
 
 #[test]
 fn an_image_to_a_glb_is_a_model_not_an_img() {
-    let (html, items) = media("![Frigate](/view/models/lamps/NOR-L01.glb)\n", "docs/A.md");
-    assert_eq!(items, [model("/view/models/lamps/NOR-L01.glb", "Frigate")]);
+    let (html, items) = media("![Pendant](/view/models/lamps/NOR-L01.glb)\n", "docs/A.md");
+    assert_eq!(items, [model("/view/models/lamps/NOR-L01.glb", "Pendant")]);
     assert!(!html.contains("<img"), "{html}");
     assert!(html.contains("data-kind=\"model\""));
 }
@@ -140,8 +140,8 @@ fn an_image_is_one_model_and_a_link_is_one_model() {
 #[test]
 fn a_link_to_a_glb_takes_its_text_as_the_caption_without_markup() {
     assert_eq!(
-        media("[the **Kite** model](/a.glb)\n", "docs/A.md").1,
-        [model("/a.glb", "the Kite model")]
+        media("[the **Lumen** model](/a.glb)\n", "docs/A.md").1,
+        [model("/a.glb", "the Lumen model")]
     );
 }
 

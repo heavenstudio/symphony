@@ -10,26 +10,62 @@ use std::path::{Path, PathBuf};
 const PROJECT_FILE: &str = "symphony.toml";
 
 /// The SQLite board's file in the git common dir `common`: `<project id>-tasks.db`, by the id the
-/// main checkout's project file names (`[project] id`). `None` for a project that names none,
-/// which has no SQLite board.
+/// main checkout's project file names (`[project] id`). `None` for a project that names none, or
+/// an id that is not a slug, which has no SQLite board.
 pub fn board_name(common: &Path) -> Option<String> {
-    let text = fs::read_to_string(common.parent()?.join(PROJECT_FILE)).ok()?;
-    let file: toml::Table = text.parse().ok()?;
-    let id = file.get("project")?.get("id")?.as_str()?;
-    (!id.is_empty()).then(|| format!("{id}-tasks.db"))
+    project_id(common)
+        .ok()
+        .flatten()
+        .map(|id| format!("{id}-tasks.db"))
 }
 
 /// The SQLite board in the git common dir `common`, by [`board_name`].
 pub(super) fn board_in(common: &Path) -> Result<PathBuf, String> {
-    board_name(common)
-        .map(|name| common.join(name))
-        .ok_or_else(|| {
-            let file = common.parent().unwrap_or(common).join(PROJECT_FILE);
-            format!(
-                "{} names no [project] id, so this repository has no SQLite board",
-                file.display()
-            )
-        })
+    let file = common.parent().unwrap_or(common).join(PROJECT_FILE);
+    match project_id(common) {
+        Ok(Some(id)) => Ok(common.join(format!("{id}-tasks.db"))),
+        Ok(None) => Err(format!(
+            "{} names no [project] id, so this repository has no SQLite board",
+            file.display()
+        )),
+        Err(id) => Err(format!(
+            "{} names [project] id {id:?}, which is not a slug (lowercase letters, digits and dashes), so it names no SQLite board",
+            file.display()
+        )),
+    }
+}
+
+/// The `[project] id` of the project file beside the git common dir `common`: `None` when it names
+/// none (or an empty one), the id as the error when it is not a slug, as the project file refuses it.
+fn project_id(common: &Path) -> Result<Option<String>, String> {
+    let Some(text) = common
+        .parent()
+        .and_then(|main| fs::read_to_string(main.join(PROJECT_FILE)).ok())
+    else {
+        return Ok(None);
+    };
+    let Ok(file) = text.parse::<toml::Table>() else {
+        return Ok(None);
+    };
+    match file
+        .get("project")
+        .and_then(|project| project.get("id"))
+        .and_then(toml::Value::as_str)
+    {
+        None | Some("") => Ok(None),
+        Some(id) if is_slug(id) => Ok(Some(id.to_string())),
+        Some(id) => Err(id.to_string()),
+    }
+}
+
+/// Whether `id` is a slug: lowercase letters and digits, single dashes between them.
+fn is_slug(id: &str) -> bool {
+    id.split('-').all(|part| {
+        !part.is_empty()
+            && part
+                .bytes()
+                .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit())
+    })
 }
 
 /// The repository's board `board` is, at its place in the git common dir: the [`board_name`] of a

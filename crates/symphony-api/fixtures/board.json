@@ -4,17 +4,17 @@
   "ping_ms": 5000,
   "next": [
     {
-      "slug": "north-frigate-picture",
+      "slug": "north-pendant-picture",
       "doc": "docs/lamps/north.md",
       "doc_title": "North lamps",
-      "title": "North · frigate picture",
-      "summary": "Three candidates for the Lancer-class frigate, drawn from the lamp outline the model now uses: a long spine, twin forward arms and the gun deck under the bridge.",
+      "title": "North · pendant picture",
+      "summary": "Three candidates for the Heron pendant, drawn from the lamp outline the model now uses: a long spine, twin brass arms and the switch under the shade.",
       "why": "picture · gates 4 lamps",
       "posted": "2026-10-08 07:42",
       "pictures": [
-        {"src": "/docs/pictures/lamps/north/frigate-a.png", "caption": "A", "waiting": true},
-        {"src": "/docs/pictures/lamps/north/frigate-b.png", "caption": "B", "waiting": true},
-        {"src": "/docs/pictures/lamps/north/frigate-c.png", "caption": "C", "waiting": true}
+        {"src": "/docs/pictures/lamps/north/pendant-a.png", "caption": "A", "waiting": true},
+        {"src": "/docs/pictures/lamps/north/pendant-b.png", "caption": "B", "waiting": true},
+        {"src": "/docs/pictures/lamps/north/pendant-c.png", "caption": "C", "waiting": true}
       ]
     },
     {
@@ -27,15 +27,15 @@
       "posted": "2026-10-07 18:05"
     },
     {
-      "slug": "machine-carrier-picture",
-      "doc": "docs/lamps/machine.md",
-      "doc_title": "Machine civilization lamps",
-      "title": "Machine civilization · carrier picture",
+      "slug": "west-chandelier-picture",
+      "doc": "docs/lamps/west.md",
+      "doc_title": "West lamps",
+      "title": "West · chandelier picture",
       "why": "picture · gates 1 lamp",
       "posted": "2026-10-07",
       "pictures": [
-        {"src": "/docs/pictures/lamps/machine/carrier-a.png", "caption": "A", "waiting": true},
-        {"src": "/docs/pictures/lamps/machine/carrier-b.png", "caption": "B", "waiting": true}
+        {"src": "/docs/pictures/lamps/west/chandelier-a.png", "caption": "A", "waiting": true},
+        {"src": "/docs/pictures/lamps/west/chandelier-b.png", "caption": "B", "waiting": true}
       ]
     },
     {
@@ -55,9 +55,9 @@
       "why": "design · gates 11 lamps",
       "posted": "2026-10-05 09:30",
       "pictures": [
-        {"src": "/docs/pictures/lamps/east/corvette.png", "caption": "Corvette"},
-        {"src": "/docs/pictures/lamps/east/destroyer.png", "caption": "Destroyer", "waiting": true},
-        {"caption": "Cruiser"}
+        {"src": "/docs/pictures/lamps/east/desk.png", "caption": "Desk"},
+        {"src": "/docs/pictures/lamps/east/sconce.png", "caption": "Sconce", "waiting": true},
+        {"caption": "Lantern"}
       ]
     }
   ],
@@ -70,7 +70,7 @@
   },
   "progress": {
     "regions": [
-      {"id":"lamp-pictures","title":"Lamp pictures","note":"69 of 161 lamps approved","bars":[{"key":"north","name":"North","page":"docs/lamps/north.md","title":"21 approved, 4 waiting on review, 6 not drawn yet","done":21,"waiting":4,"total":31},{"key":"east","name":"East","page":"docs/lamps/east.md","title":"18 approved, 2 waiting on review, 9 not drawn yet","done":18,"waiting":2,"total":29},{"key":"south","name":"Alien south","page":"docs/lamps/south.md","title":"9 approved, 3 waiting on review, 15 not drawn yet","done":9,"waiting":3,"total":27},{"key":"machine","name":"Machine civilization","page":"docs/lamps/machine.md","title":"12 approved, 2 waiting on review, 12 not drawn yet","done":12,"waiting":2,"total":26},{"key":"harbor","name":"Harbor civilization","page":"docs/lamps/harbor.md","title":"6 approved, 0 waiting on review, 18 not drawn yet","done":6,"waiting":0,"total":24},{"key":"garden","name":"Garden civilization","page":"docs/lamps/garden.md","title":"3 approved, 1 waiting on review, 20 not drawn yet","done":3,"waiting":1,"total":24}],"legend":["approved","waiting on you","not drawn"]}
+      {"id":"lamp-pictures","title":"Lamp pictures","note":"69 of 161 lamps approved","bars":[{"key":"north","name":"North","page":"docs/lamps/north.md","title":"21 approved, 4 waiting on review, 6 not drawn yet","done":21,"waiting":4,"total":31},{"key":"east","name":"East","page":"docs/lamps/east.md","title":"18 approved, 2 waiting on review, 9 not drawn yet","done":18,"waiting":2,"total":29},{"key":"south","name":"Far south","page":"docs/lamps/south.md","title":"9 approved, 3 waiting on review, 15 not drawn yet","done":9,"waiting":3,"total":27},{"key":"west","name":"West","page":"docs/lamps/west.md","title":"12 approved, 2 waiting on review, 12 not drawn yet","done":12,"waiting":2,"total":26},{"key":"harbor","name":"Harbor guild","page":"docs/lamps/harbor.md","title":"6 approved, 0 waiting on review, 18 not drawn yet","done":6,"waiting":0,"total":24},{"key":"garden","name":"Garden guild","page":"docs/lamps/garden.md","title":"3 approved, 1 waiting on review, 20 not drawn yet","done":3,"waiting":1,"total":24}],"legend":["approved","waiting on you","not drawn"]}
     ],
     "docs": 64,
     "decisions_waiting": 41
