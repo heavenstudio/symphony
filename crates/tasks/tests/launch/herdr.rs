@@ -3,6 +3,7 @@
 use crate::{FAKE, World};
 use serde_json::json;
 use std::collections::BTreeMap;
+use std::io::{BufRead, BufReader};
 use std::os::unix::fs::MetadataExt;
 use tasks::cli::Env;
 use tasks::launch::LaunchError;
@@ -228,26 +229,42 @@ fn the_fake_shows_a_stuck_prompt_in_the_input_line_until_enter_sends_it() {
     assert_eq!(herdr.read("p", 12).unwrap(), "welcome\n");
 }
 
-#[test]
-fn a_key_press_to_the_fakes_pending_chooser_moves_what_reads_show_and_writes_no_state() {
+/// A world whose fake shows the hooks chooser on a codex start, with one pane, `w1:p101`.
+fn chooser_world() -> World {
     let mut w = World::new();
     let screen = w.dir().join("hooks-screen.txt");
     std::fs::write(&screen, include_str!("fixtures/codex-hooks.txt")).unwrap();
     w.set("FAKE_HERDR_START_SCREEN", screen.to_str().unwrap());
+    w.herdr().call(&["tab", "create", "--label", "x"]).unwrap();
+    w
+}
+
+/// The fake's codex start on `w1:p101`, run alone: through Binary its observer would press keys.
+fn chooser_start(w: &World) -> Command {
+    let mut start = Command::new(FAKE);
+    start
+        .args([
+            "agent", "start", "probe", "--kind", "codex", "--pane", "w1:p101",
+        ])
+        .env_clear()
+        .envs(&w.env.vars);
+    start
+}
+
+/// The line `w1:p101` shows selected.
+fn selected(herdr: &Binary) -> String {
+    let shown = herdr.read("w1:p101", 80).unwrap();
+    let line = shown.lines().map(str::trim).find(|l| l.starts_with('›'));
+    line.unwrap_or_default().to_string()
+}
+
+#[test]
+fn a_key_press_to_the_fakes_pending_chooser_moves_what_reads_show_and_writes_no_state() {
+    let mut w = chooser_world();
+    // Its wait runs out at once and leaves the chooser pending.
     w.set("FAKE_HERDR_START_WAIT_MS", "1");
     let herdr = w.herdr();
-    herdr.call(&["tab", "create", "--label", "x"]).unwrap();
-    // The fake alone, not Binary, whose observer would press keys: its wait runs out at once and
-    // leaves the chooser pending.
-    let start = tasks::sys::output(
-        Command::new(FAKE)
-            .args([
-                "agent", "start", "probe", "--kind", "codex", "--pane", "w1:p101",
-            ])
-            .env_clear()
-            .envs(&w.env.vars),
-    )
-    .unwrap();
+    let start = tasks::sys::output(&mut chooser_start(&w)).unwrap();
     assert!(
         String::from_utf8_lossy(&start.stderr).contains("timed out waiting for agent startup"),
         "{start:?}"
@@ -255,34 +272,62 @@ fn a_key_press_to_the_fakes_pending_chooser_moves_what_reads_show_and_writes_no_
     let state = w.dir().join("herdr.json");
     let stored = || (std::fs::metadata(&state).unwrap().ino(), w.state());
     let saved = stored();
-    let selected = || {
-        let shown = herdr.read("w1:p101", 80).unwrap();
-        let line = shown.lines().map(str::trim).find(|l| l.starts_with('›'));
-        line.unwrap_or_default().to_string()
-    };
-    assert_eq!(selected(), "› 1. Review hooks");
+    assert_eq!(selected(&herdr), "› 1. Review hooks");
     herdr
         .call(&["pane", "send-keys", "w1:p101", "down"])
         .unwrap();
-    assert_eq!(selected(), "› 2. Trust all and continue");
+    assert_eq!(selected(&herdr), "› 2. Trust all and continue");
     let refused = herdr.call(&["pane", "send-keys", "w1:p101", "down", "sideways"]);
     assert!(
         matches!(&refused, Err(LaunchError(why)) if why.contains("unknown startup key sideways")),
         "{refused:?}"
     );
-    assert_eq!(selected(), "› 2. Trust all and continue");
+    assert_eq!(selected(&herdr), "› 2. Trust all and continue");
     herdr
         .call(&["pane", "send-keys", "w1:p101", "up", "up"])
         .unwrap();
     assert_eq!(
-        selected(),
+        selected(&herdr),
         "› 3. Continue without trusting (hooks won't run)"
     );
     herdr
+        .call(&["pane", "send-keys", "w1:p101", "enter", "up"])
+        .unwrap();
+    assert_eq!(selected(&herdr), "› Ask Codex to do anything");
+    herdr.call(&["pane", "send-keys", "w1:p101", "up"]).unwrap();
+    assert_eq!(selected(&herdr), "› Ask Codex to do anything");
+    assert_eq!(stored(), saved);
+}
+
+#[test]
+fn an_unsafe_choice_the_fakes_waiting_start_refuses_stays_shown_and_takes_no_more_keys() {
+    let mut w = chooser_world();
+    w.set("FAKE_HERDR_START_SAYS_PENDING", "1");
+    let herdr = w.herdr();
+    let mut start = tasks::sys::spawn_output(&mut chooser_start(&w)).unwrap();
+    let mut out = BufReader::new(start.stdout.take().unwrap());
+    let mut said = String::new();
+    out.read_line(&mut said).unwrap();
+    assert_eq!(said, "pending w1:p101\n");
+    herdr
+        .call(&["pane", "send-keys", "w1:p101", "down"])
+        .unwrap();
+    herdr
         .call(&["pane", "send-keys", "w1:p101", "enter"])
         .unwrap();
-    assert_eq!(selected(), "› Ask Codex to do anything");
-    assert_eq!(stored(), saved);
+    let ended = tasks::sys::wait_output(start).unwrap();
+    let why = String::from_utf8_lossy(&ended.stderr);
+    assert!(
+        !ended.status.success() && why.contains("unsafe_choice"),
+        "{ended:?}"
+    );
+    assert_eq!(w.state()["panes"][0]["confirmed_choice"], 2);
+    assert_eq!(selected(&herdr), "› 2. Trust all and continue");
+    herdr
+        .call(&["pane", "send-keys", "w1:p101", "down", "enter"])
+        .unwrap();
+    assert_eq!(selected(&herdr), "› 2. Trust all and continue");
+    drop(out);
 }
 
 #[test]
