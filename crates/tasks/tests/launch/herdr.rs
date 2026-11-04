@@ -3,9 +3,11 @@
 use crate::{FAKE, World};
 use serde_json::json;
 use std::collections::BTreeMap;
+use std::os::unix::fs::MetadataExt;
 use tasks::cli::Env;
 use tasks::launch::LaunchError;
 use tasks::launch::herdr::{Binary, Herdr, text, truthy};
+use tasks::sys::Command;
 
 fn binary(named: &str) -> Binary {
     let mut vars = BTreeMap::new();
@@ -224,6 +226,63 @@ fn the_fake_shows_a_stuck_prompt_in_the_input_line_until_enter_sends_it() {
     // the next prompt is taken
     herdr.call(&["agent", "prompt", "amber", "again"]).unwrap();
     assert_eq!(herdr.read("p", 12).unwrap(), "welcome\n");
+}
+
+#[test]
+fn a_key_press_to_the_fakes_pending_chooser_moves_what_reads_show_and_writes_no_state() {
+    let mut w = World::new();
+    let screen = w.dir().join("hooks-screen.txt");
+    std::fs::write(&screen, include_str!("fixtures/codex-hooks.txt")).unwrap();
+    w.set("FAKE_HERDR_START_SCREEN", screen.to_str().unwrap());
+    w.set("FAKE_HERDR_START_WAIT_MS", "1");
+    let herdr = w.herdr();
+    herdr.call(&["tab", "create", "--label", "x"]).unwrap();
+    // The fake alone, not Binary, whose observer would press keys: its wait runs out at once and
+    // leaves the chooser pending.
+    let start = tasks::sys::output(
+        Command::new(FAKE)
+            .args([
+                "agent", "start", "probe", "--kind", "codex", "--pane", "w1:p101",
+            ])
+            .env_clear()
+            .envs(&w.env.vars),
+    )
+    .unwrap();
+    assert!(
+        String::from_utf8_lossy(&start.stderr).contains("timed out waiting for agent startup"),
+        "{start:?}"
+    );
+    let state = w.dir().join("herdr.json");
+    let stored = || (std::fs::metadata(&state).unwrap().ino(), w.state());
+    let saved = stored();
+    let selected = || {
+        let shown = herdr.read("w1:p101", 80).unwrap();
+        let line = shown.lines().map(str::trim).find(|l| l.starts_with('›'));
+        line.unwrap_or_default().to_string()
+    };
+    assert_eq!(selected(), "› 1. Review hooks");
+    herdr
+        .call(&["pane", "send-keys", "w1:p101", "down"])
+        .unwrap();
+    assert_eq!(selected(), "› 2. Trust all and continue");
+    let refused = herdr.call(&["pane", "send-keys", "w1:p101", "down", "sideways"]);
+    assert!(
+        matches!(&refused, Err(LaunchError(why)) if why.contains("unknown startup key sideways")),
+        "{refused:?}"
+    );
+    assert_eq!(selected(), "› 2. Trust all and continue");
+    herdr
+        .call(&["pane", "send-keys", "w1:p101", "up", "up"])
+        .unwrap();
+    assert_eq!(
+        selected(),
+        "› 3. Continue without trusting (hooks won't run)"
+    );
+    herdr
+        .call(&["pane", "send-keys", "w1:p101", "enter"])
+        .unwrap();
+    assert_eq!(selected(), "› Ask Codex to do anything");
+    assert_eq!(stored(), saved);
 }
 
 #[test]
