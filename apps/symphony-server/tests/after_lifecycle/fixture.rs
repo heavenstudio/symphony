@@ -4,7 +4,7 @@
 
 use std::ffi::OsString;
 use std::fs::{self, File};
-use std::io::{Read, Write};
+use std::io::{Read, Seek, SeekFrom, Write};
 use std::net::TcpStream;
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 use std::os::unix::fs::symlink;
@@ -179,11 +179,42 @@ fn output(stdout: &Path, stderr: &Path) -> String {
     )
 }
 
-/// Read every owned stream at failure time, including a detached server's separate log.
+const SERVER_LOG_TAIL_BYTES: u64 = 16 * 1024;
+
+/// A bounded byte tail of the opened regular file, preserving malformed or split UTF-8 lossily.
+fn server_log_tail(path: &Path) -> std::io::Result<String> {
+    // Nonblocking open prevents a substituted FIFO from holding the failure report. Check the
+    // opened descriptor's type, and refuse a symlink at the log entry itself.
+    let mut file = fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NONBLOCK | libc::O_NOFOLLOW)
+        .open(path)?;
+    let metadata = file.metadata()?;
+    if !metadata.is_file() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "not a regular file",
+        ));
+    }
+    let start = metadata.len().saturating_sub(SERVER_LOG_TAIL_BYTES);
+    file.seek(SeekFrom::Start(start))?;
+    let mut bytes = Vec::new();
+    // This snapshot's range stays bounded even when the server appends while it is read.
+    file.take(metadata.len() - start).read_to_end(&mut bytes)?;
+    let mut text = if start == 0 {
+        String::new()
+    } else {
+        format!("[showing last {} bytes]\n", bytes.len())
+    };
+    text.push_str(&String::from_utf8_lossy(&bytes));
+    Ok(text)
+}
+
+/// Read the child streams and the detached server's bounded log tail at failure time.
 fn diagnostic_output(stdout: &Path, stderr: &Path, server_log: Option<&Path>) -> String {
     let mut text = output(stdout, stderr);
     if let Some(path) = server_log {
-        let said = fs::read_to_string(path).unwrap_or_else(|error| format!("unavailable: {error}"));
+        let said = server_log_tail(path).unwrap_or_else(|error| format!("unavailable: {error}"));
         text.push_str(&format!(
             "\ndetached server log {}:\n{said}",
             path.display()
@@ -980,6 +1011,69 @@ pub fn terminal() -> (File, OwnedFd) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn server_log_tail_bounds_a_large_log_and_keeps_its_latest_progress() {
+        let scratch = Scratch::new("large-server-log-tail");
+        let path = scratch.path.join("server.log");
+        let latest = "\nlatest detached server progress\n";
+        let mut bytes = vec![b'x'; 128 * 1024];
+        bytes.extend_from_slice(latest.as_bytes());
+        fs::write(&path, bytes).unwrap();
+        let tail = server_log_tail(&path).unwrap();
+        let label = "[showing last 16384 bytes]\n";
+        assert_eq!(tail.len(), label.len() + 16384);
+        assert_eq!(
+            tail,
+            format!("{label}{}{latest}", "x".repeat(16384 - latest.len()))
+        );
+    }
+
+    #[test]
+    fn server_log_tail_preserves_progress_on_invalid_and_split_utf8() {
+        let scratch = Scratch::new("server-log-tail-utf8");
+        let path = scratch.path.join("server.log");
+        let mut split = vec![b'x'; 16384];
+        split.extend_from_slice("é".as_bytes());
+        split.extend(std::iter::repeat_n(b'y', 16383));
+        for (bytes, expected) in [
+            (
+                b"early \xff progress\nlatest progress\n".to_vec(),
+                "early � progress\nlatest progress\n".to_owned(),
+            ),
+            (
+                split,
+                format!("[showing last 16384 bytes]\n�{}", "y".repeat(16383)),
+            ),
+        ] {
+            fs::write(&path, bytes).unwrap();
+            assert_eq!(server_log_tail(&path).unwrap(), expected);
+        }
+    }
+
+    #[test]
+    fn server_log_tail_refuses_nonregular_files_without_a_writer() {
+        let scratch = Scratch::new("nonregular-server-log-tail");
+        let directory = scratch.path.join("directory");
+        fs::create_dir(&directory).unwrap();
+        let fifo = scratch.path.join("fifo");
+        mkfifo(&fifo);
+        for path in [&directory, &fifo] {
+            let error = server_log_tail(path).unwrap_err();
+            assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput);
+            assert_eq!(error.to_string(), "not a regular file");
+        }
+
+        let regular = scratch.path.join("regular");
+        write(&regular, "owned progress\n");
+        assert_eq!(server_log_tail(&regular).unwrap(), "owned progress\n");
+        let linked = scratch.path.join("linked");
+        symlink(&regular, &linked).unwrap();
+        assert_eq!(
+            server_log_tail(&linked).unwrap_err().raw_os_error(),
+            Some(libc::ELOOP)
+        );
+    }
 
     #[test]
     fn timeout_diagnostics_distinguish_an_unwritten_server_log_from_an_empty_one() {
