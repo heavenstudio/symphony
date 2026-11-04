@@ -35,7 +35,7 @@ impl Drop for CommandDirectory {
     }
 }
 
-fn listen(f: &Fixture, handle: &str) -> Listener {
+pub(super) fn listen(f: &Fixture, handle: &str) -> Listener {
     let listener = Listener::new(&format!("{}-{handle}", f.store.client().database()));
     f.store
         .callback(

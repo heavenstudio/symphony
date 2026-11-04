@@ -1,5 +1,6 @@
 //! The store over a real SurrealDB server, one test binary so they share one server.
 
+mod blocked_panes;
 mod board;
 mod callbacks;
 mod claim;

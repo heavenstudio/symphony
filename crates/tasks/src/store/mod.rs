@@ -153,6 +153,8 @@ pub struct Store {
     pick: Mutex<Box<dyn Pick>>,
     callback_snapshot: Mutex<Option<Snapshot>>,
     callback_idle: Mutex<Option<callbacks::Idle>>,
+    /// The herdr panes the server clock's current tick sampled, which every view of that tick reads.
+    clock_panes: Mutex<Option<crate::cli::agents::Answer<Vec<crate::cli::agents::Pane>>>>,
 }
 
 impl Store {
@@ -204,6 +206,7 @@ impl Store {
             pick: Mutex::new(Box::new(sessions::Random::seeded())),
             callback_snapshot: Mutex::new(None),
             callback_idle: Mutex::new(None),
+            clock_panes: Mutex::new(None),
         }
     }
 
