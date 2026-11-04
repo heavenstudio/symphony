@@ -465,7 +465,7 @@ fn landing_is_also_taken_by_the_session_that_asked_to_land_it() {
 }
 
 #[test]
-fn landing_finishes_work_its_stamps_held_blocked_but_never_work_in_progress() {
+fn landing_finishes_work_held_blocked_or_taken_back_in_progress_but_never_work_not_started() {
     let (f, _, exe, _) = in_review();
     let asked = f.session("orchestrator");
     f.store.move_to("sim/jump", "blocked", &exe).unwrap();
@@ -473,12 +473,28 @@ fn landing_finishes_work_its_stamps_held_blocked_but_never_work_in_progress() {
         .landed("sim/jump", &asked, "landed abc123", true)
         .unwrap();
     assert_eq!(f.store.get("sim/jump").unwrap().status, "done");
+    // Taken back from review as its branch landed: land closes it, as no other command does.
     f.task("sim/other");
     f.store.claim("sim/other", &exe).unwrap();
+    f.store.move_to("sim/other", "review", &exe).unwrap();
+    f.store.move_to("sim/other", "in_progress", &exe).unwrap();
     assert_eq!(
-        refused(f.store.landed("sim/other", &exe, "x", false)),
-        "sim/other is in_progress, not in review"
+        refused(f.store.move_to("sim/other", "done", &exe)),
+        "sim/other cannot go from in_progress to done"
     );
+    f.store
+        .landed("sim/other", &asked, "landed def456", true)
+        .unwrap();
+    assert_eq!(f.store.get("sim/other").unwrap().status, "done");
+    for status in ["backlog", "concept", "design"] {
+        let slug = format!("sim/{status}");
+        f.task(&slug);
+        f.store.move_to(&slug, status, &exe).unwrap();
+        assert_eq!(
+            refused(f.store.landed(&slug, &asked, "x", true)),
+            format!("{slug} is {status}, not in review")
+        );
+    }
 }
 
 #[test]

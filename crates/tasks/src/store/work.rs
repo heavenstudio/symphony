@@ -587,7 +587,10 @@ LET $said = $actor + ' moved it ' + $task.status + ' → ' + $status;
 
     /// A task in review whose branch `just land` put on main is done: the landing is its verdict. So is
     /// one blocked, which land held there while its stamps waited on nobody (`just land-stamps`) and
-    /// could not move back.
+    /// could not move back, and one in progress: taken back (by its executor or a changes verdict) after
+    /// land's last read of it, as main moved. Land refuses a task in progress before it moves main and
+    /// calls this once the branch is on main, so that work landed; further changes go in a new task.
+    /// No other command closes a task in progress.
     ///
     /// Taken by a session holding a role on the task, or one that asked to land its branch
     /// (`requested`: `land-request` keeps that record, off the board), so the approval recorded with
@@ -602,7 +605,7 @@ LET $said = $actor + ' moved it ' + $task.status + ' → ' + $status;
         self.rule(slug, handle, |view| {
             view.actor(handle)?;
             let task = view.task(slug)?;
-            if !matches!(task.status.as_str(), "review" | "blocked") {
+            if !matches!(task.status.as_str(), "review" | "blocked" | "in_progress") {
                 return Err(refused(format!("{slug} is {}, not in review", task.status)));
             }
             if !requested && !view.snap.roles.iter().any(|r| r.handle == handle) {
