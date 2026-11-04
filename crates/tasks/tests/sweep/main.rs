@@ -25,6 +25,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, SystemTime};
 use tasks::cli::Env;
 use tasks::sweep::{Options, Sweep, sweep};
+use tasks::sys::Spawning as _;
 use tasks::{NewSession, NewTask};
 
 /// Past the sweep's two-hour window of recent activity.
@@ -120,7 +121,7 @@ impl Drop for HeldCwd {
 
 /// The pid of a process that has exited and been reaped.
 pub fn dead_pid() -> i64 {
-    let mut child = Command::new("true").spawn().unwrap();
+    let mut child = Command::new("true").spawn_locked().unwrap();
     child.wait().unwrap();
     i64::from(child.id())
 }
@@ -208,7 +209,7 @@ impl Repo {
             .arg("-R")
             .arg(template())
             .arg(&root)
-            .status()
+            .status_locked()
             .unwrap();
         assert!(copied.success(), "cp -R of the template repository");
         Repo {

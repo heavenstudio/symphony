@@ -18,6 +18,8 @@ use std::path::{Path, PathBuf};
 #[allow(unused_imports)]
 use std::process::{Child, Command, Stdio};
 #[allow(unused_imports)]
+use tasks::sys::Spawning as _;
+#[allow(unused_imports)]
 use std::sync::{Arc, Barrier, Mutex};
 #[allow(unused_imports)]
 use std::time::{Duration, Instant};
