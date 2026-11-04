@@ -3,6 +3,7 @@
 //! SQLite board into it, in a repository of its own.
 
 mod common;
+mod copy;
 mod cutover;
 #[path = "../../../../../tools/gate/tests/verify/script.rs"]
 mod fixture_script;
