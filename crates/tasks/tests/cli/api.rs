@@ -430,6 +430,8 @@ fn board_authored_notices_reach_the_actors_own_inbox_and_still_validate_the_acto
     for (sender, recipient, reason) in [
         ("missing-otter", actor.as_str(), "no session"),
         (actor.as_str(), "missing-otter", "no session"),
+        (actor.as_str(), "@orchestrator", "literal session handle"),
+        (actor.as_str(), "owner", "literal session handle"),
         ("owner", actor.as_str(), "owner acts from the Symphony"),
     ] {
         let refused = answer(

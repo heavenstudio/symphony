@@ -55,6 +55,9 @@ impl Store {
         handle: &str,
         text: &str,
     ) -> Result<Message, Error> {
+        if handle == OWNER || handle.starts_with('@') {
+            return Err(refused("a notice needs a literal session handle".into()));
+        }
         self.post(slug, actor, BOARD, text, Some(handle))
     }
 
