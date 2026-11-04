@@ -144,25 +144,20 @@ pub(crate) struct Place<'a> {
 }
 
 impl Place<'_> {
-    /// The folder page at the route `rel`, when an entrypoint serves it as a folder: the folder
-    /// lies in its folder once `..` is resolved, and no exclude pattern or dot name passes it, or
-    /// a folder above it, over.
+    /// The folder page at the route `rel`, when an entrypoint serves it as a folder its walk
+    /// reaches ([`Project::reachable`]): never one an exclude pattern or a dot name passes over,
+    /// nor one only a link leads to.
     pub(crate) fn of<'a>(root: &'a Path, project: &'a Project, rel: &str) -> Option<Place<'a>> {
         let (entry, inside) = project.serving(rel.trim_matches('/'))?;
-        let passed_over = !inside.is_empty()
-            && (inside.split('/').any(|name| name.starts_with('.')) || entry.excluded(inside));
-        let base = root.join(&entry.folder).canonicalize().ok()?;
-        let target = root.join(entry.file(inside)).canonicalize().ok()?;
-        (!passed_over
-            && target.is_dir()
-            && target.starts_with(&base)
-            && base.starts_with(root.canonicalize().ok()?))
-        .then(|| Place {
-            root,
-            project,
-            entry,
-            inside: inside.to_string(),
-        })
+        project
+            .reachable(root, entry, inside)
+            .is_some_and(|path| path.is_dir())
+            .then(|| Place {
+                root,
+                project,
+                entry,
+                inside: inside.to_string(),
+            })
     }
 
     pub(crate) fn path(&self) -> PathBuf {

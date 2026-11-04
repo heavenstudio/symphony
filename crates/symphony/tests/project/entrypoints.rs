@@ -298,19 +298,25 @@ fn a_folder_linked_out_of_the_project_is_refused_and_a_linked_file_opens_where_i
     assert_eq!(Project::load(&tree.root).unwrap_err(), refusal);
     assert_eq!(project_problems(&tree.root), [refusal]);
     assert_eq!(*Project::of(&tree.root), Project::plain(&tree.root));
-    // in the folder, a link to a folder, out of the project or into a dot folder is passed over;
-    // one to a file elsewhere in it is listed, and opens
+    // in the folder, a link to a folder (even one inside it), out of the project, into a dot folder
+    // or to an upload is passed over; one to a file elsewhere in the project is listed, and opens
     let tree = spec();
     tree.write("OTHER.md", "# Other\n");
     tree.write(".private/KEY.md", "# Key\n");
+    tree.write("artifacts/uploads/0123abcd.md", "# Upload\n");
     let link = |target: std::path::PathBuf, name: &str| {
         std::os::unix::fs::symlink(target, tree.path(name)).unwrap();
     };
     link(outside.path("SECRET.md"), "spec/guide/LEAK.md");
     link(outside.root.clone(), "spec/linked");
+    link(tree.path("spec/guide"), "spec/alias");
     link(tree.path("spec/index.md"), "spec/guide/ALIAS.md");
     link(tree.path("OTHER.md"), "spec/guide/OTHER.md");
     link(tree.path(".private/KEY.md"), "spec/guide/KEY.md");
+    link(
+        tree.path("artifacts/uploads/0123abcd.md"),
+        "spec/guide/UPLOAD.md",
+    );
     assert!(Project::load(&tree.root).is_ok());
     let docs = scan(&tree.root).unwrap();
     assert_eq!(
@@ -338,13 +344,25 @@ fn a_folder_linked_out_of_the_project_is_refused_and_a_linked_file_opens_where_i
     for opens in &listed {
         assert!(docview::document(&render, opens, "").is_ok(), "{opens}");
     }
-    for refused in ["guide/LEAK.md", "guide/KEY.md", "linked/SECRET.md"] {
+    for refused in [
+        "guide/LEAK.md",
+        "guide/KEY.md",
+        "guide/UPLOAD.md",
+        "linked/SECRET.md",
+        "alias/START.md",
+    ] {
         assert!(
             docview::document(&render, refused, "").is_err(),
             "{refused}"
         );
+        assert!(
+            docview::target(&tree.root, refused, true).is_err(),
+            "nor saved: {refused}"
+        );
     }
-    assert!(docview::folder(&render, "linked", "").is_err());
+    for refused in ["linked", "alias"] {
+        assert!(docview::folder(&render, refused, "").is_err(), "{refused}");
+    }
 }
 
 #[test]
@@ -420,6 +438,14 @@ fn uploads_are_the_symphonys_store_never_a_collision_nor_documents() {
         "# D\n\n<!-- register:start -->\n### T\n\n- [x] **done** — plain.\n<!-- register:end -->\n";
     tree.write("artifacts/uploads/5ca1ab1e.md", register);
     std::fs::write(tree.path("artifacts/uploads/0123abcd.png"), PNG_5X7).unwrap();
+    // a link to an upload, or into a dot folder, is no way in either
+    tree.write(".private/KEY.md", "# Key\n");
+    for (target, name) in [
+        (".private/KEY.md", "KEY.md"),
+        ("artifacts/uploads/5ca1ab1e.md", "PASTED.md"),
+    ] {
+        std::os::unix::fs::symlink(tree.path(target), tree.path(name)).unwrap();
+    }
     let project = Project::load(&tree.root).unwrap();
     assert!(project_problems(&tree.root).is_empty());
     assert_eq!(
@@ -457,6 +483,16 @@ fn uploads_are_the_symphonys_store_never_a_collision_nor_documents() {
     );
     assert!(docview::folder(&render, "artifacts/uploads", "").is_err());
     assert!(docview::document(&render, "artifacts/uploads/5ca1ab1e.md", "").is_err());
+    for refused in ["KEY.md", "PASTED.md"] {
+        assert!(
+            docview::document(&render, refused, "").is_err(),
+            "{refused}"
+        );
+        assert!(
+            docview::target(&tree.root, refused, true).is_err(),
+            "nor saved: {refused}"
+        );
+    }
     // nor does an entrypoint read the uploads folder
     tree.write(
         "symphony.toml",

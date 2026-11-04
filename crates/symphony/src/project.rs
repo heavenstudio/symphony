@@ -501,7 +501,7 @@ impl Project {
     fn check_files(&self, root: &Path, read: &mut Vec<String>) -> Result<(), String> {
         for entry in &self.entrypoints {
             read.push(entry.folder.clone());
-            if root.join(&entry.folder).exists() && bounds(root, entry).is_none() {
+            if root.join(&entry.folder).exists() && self.bounds(root, entry).is_none() {
                 return Err(format!(
                     "[[entrypoints]] {} folder {} lies outside the project once its links are \
                      resolved",
@@ -641,7 +641,7 @@ impl Project {
     /// Once links are resolved, no folder outside the entrypoint's and no file outside the project
     /// is listed.
     pub fn walk(&self, root: &Path, entry: &Entrypoint, inside: &str, each: &mut dyn FnMut(&str)) {
-        if let Some(bounds) = bounds(root, entry) {
+        if let Some(bounds) = self.bounds(root, entry) {
             self.walk_in(root, &bounds, entry, inside, each);
         }
     }
@@ -675,7 +675,7 @@ impl Project {
         inside: &str,
         each: &mut dyn FnMut(&str),
     ) {
-        let Some(bounds) = bounds(root, entry) else {
+        let Some(bounds) = self.bounds(root, entry) else {
             return;
         };
         for (name, _) in self
@@ -696,7 +696,7 @@ impl Project {
         inside: &str,
         each: &mut dyn FnMut(&str),
     ) {
-        let Some(bounds) = bounds(root, entry) else {
+        let Some(bounds) = self.bounds(root, entry) else {
             return;
         };
         for (name, _) in self
@@ -709,18 +709,53 @@ impl Project {
     }
 
     /// The file or folder at the path `inside` `entry`'s folder in the checkout at `root`, links
-    /// resolved, where the walk's bounds would list it: the entrypoint's folder itself, or a path
-    /// whose folder lies in the entrypoint's and that [`Bounds::admits`]. What a folder page lists,
-    /// the document view opens.
+    /// resolved, when the entrypoint's walk reaches it: what a folder page lists, the document view
+    /// opens, and nothing else.
     pub fn reachable(&self, root: &Path, entry: &Entrypoint, inside: &str) -> Option<PathBuf> {
-        let bounds = bounds(root, entry)?;
-        if inside.is_empty() {
-            return Some(bounds.folder);
+        let bounds = self.bounds(root, entry)?;
+        self.reach(root, &bounds, entry, inside, &mut Vec::new())?;
+        root.join(entry.file(inside)).canonicalize().ok()
+    }
+
+    /// Whether the walk from `entry`'s folder reaches the path `inside` it, and as a folder: name by
+    /// name, each one listed by [`Project::children`] in the folder before it. `read` gets every
+    /// folder whose entries it looked at.
+    fn reach(
+        &self,
+        root: &Path,
+        bounds: &Bounds,
+        entry: &Entrypoint,
+        inside: &str,
+        read: &mut Vec<String>,
+    ) -> Option<bool> {
+        let mut at = String::new();
+        let mut folder = true;
+        for name in inside.split('/').filter(|name| !name.is_empty()) {
+            read.push(entry.file(&at));
+            (_, folder) = self
+                .children(root, bounds, entry, &at)
+                .into_iter()
+                .find(|(listed, _)| listed == name)?;
+            at = join(&at, name);
         }
-        let path = root.join(entry.file(inside));
-        let folder = path.parent()?.canonicalize().ok()?;
-        let file = path.canonicalize().ok()?;
-        (folder.starts_with(&bounds.folder) && bounds.admits(&file)).then_some(file)
+        Some(folder)
+    }
+
+    /// The first file at or under the path `inside` `entry`'s folder that the entrypoint's walk
+    /// reaches and its patterns include, by its path in the folder. `read` gets every folder whose
+    /// entries it looked at, from the entrypoint's folder down.
+    fn first_included(
+        &self,
+        root: &Path,
+        entry: &Entrypoint,
+        inside: &str,
+        read: &mut Vec<String>,
+    ) -> Option<String> {
+        let bounds = self.bounds(root, entry)?;
+        if !self.reach(root, &bounds, entry, inside, read)? {
+            return entry.includes(inside).then(|| inside.to_string());
+        }
+        self.first_in(root, &bounds, entry, inside, read)
     }
 
     /// The files and folders in the path `inside` `entry`'s folder, each with whether it is a
@@ -773,32 +808,20 @@ impl Project {
         names
     }
 
-    /// The first file at or under the path `inside` `entry`'s folder that the entrypoint's walk
-    /// reaches and its patterns include, by its path in the folder. `read` gets every folder whose
-    /// entries it looked at, from the entrypoint's folder down.
-    fn first_included(
-        &self,
-        root: &Path,
-        entry: &Entrypoint,
-        inside: &str,
-        read: &mut Vec<String>,
-    ) -> Option<String> {
-        let bounds = bounds(root, entry)?;
-        // reach `inside` name by name, as the walk from the entrypoint's folder would
-        let mut at = String::new();
-        let mut folder = true;
-        for name in inside.split('/') {
-            read.push(entry.file(&at));
-            (_, folder) = self
-                .children(root, &bounds, entry, &at)
-                .into_iter()
-                .find(|(listed, _)| listed == name)?;
-            at = join(&at, name);
-        }
-        if !folder {
-            return entry.includes(inside).then(|| inside.to_string());
-        }
-        self.first_in(root, &bounds, entry, inside, read)
+    /// The bounds of `entry` in the checkout at `root`; `None` when its folder is missing or leads
+    /// out of the checkout.
+    fn bounds(&self, root: &Path, entry: &Entrypoint) -> Option<Bounds> {
+        let project = root.canonicalize().ok()?;
+        let folder = root.join(&entry.folder).canonicalize().ok()?;
+        let uploads = root
+            .join(self.artifact(crate::uploads::DIR))
+            .canonicalize()
+            .ok();
+        folder.starts_with(&project).then_some(Bounds {
+            project,
+            folder,
+            uploads,
+        })
     }
 
     /// [`Project::first_included`] under the folder `inside` the walk reached.
@@ -941,33 +964,34 @@ fn folder_label(folder: &str) -> &str {
 }
 
 /// What a walk of an entrypoint stays in, links resolved: the checkout, which a linked file must
-/// lie in, and the entrypoint's folder in it, which every folder listed lies in.
+/// lie in, and the entrypoint's folder in it, which every folder listed lies in; never the
+/// uploads folder, when there is one.
 struct Bounds {
     project: PathBuf,
     folder: PathBuf,
+    uploads: Option<PathBuf>,
 }
 
 impl Bounds {
     /// Whether a file resolving to `target` (links resolved) may be listed and read: in the
-    /// entrypoint's folder, or elsewhere in the checkout under no name starting with a dot.
+    /// checkout under no name starting with a dot (counted from the entrypoint's folder inside it,
+    /// as the walk counts them), and never in the uploads folder, whose files no document
+    /// replaces.
     fn admits(&self, target: &Path) -> bool {
-        target.starts_with(&self.folder)
-            || target.strip_prefix(&self.project).is_ok_and(|rest| {
-                !rest
-                    .components()
-                    .any(|name| name.as_os_str().to_string_lossy().starts_with('.'))
-            })
+        let shown = |rest: &Path| {
+            !rest
+                .components()
+                .any(|name| name.as_os_str().to_string_lossy().starts_with('.'))
+        };
+        !self
+            .uploads
+            .as_ref()
+            .is_some_and(|uploads| target.starts_with(uploads))
+            && match target.strip_prefix(&self.folder) {
+                Ok(rest) => shown(rest),
+                Err(_) => target.strip_prefix(&self.project).is_ok_and(shown),
+            }
     }
-}
-
-/// The bounds of `entry` in the checkout at `root`; `None` when its folder is missing or leads out
-/// of the checkout.
-fn bounds(root: &Path, entry: &Entrypoint) -> Option<Bounds> {
-    let project = root.canonicalize().ok()?;
-    let folder = root.join(&entry.folder).canonicalize().ok()?;
-    folder
-        .starts_with(&project)
-        .then_some(Bounds { project, folder })
 }
 
 /// `path` when it is relative and names something inside the project, spelled as the repository
