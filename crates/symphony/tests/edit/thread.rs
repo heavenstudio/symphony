@@ -4,6 +4,7 @@
 use symphony::edit::{add_message, check_nothing_lost, set_decision};
 use symphony::register::Who;
 
+use crate::common::plain;
 use crate::lines;
 
 const NOW: &str = "2026-10-05 14:15";
@@ -36,14 +37,15 @@ fn card_lines(out: &str) -> Vec<String> {
 
 #[test]
 fn a_verdict_keeps_every_line_in_order_and_appends_after() {
-    let card = card_lines(&set_decision(&text(), "pilot", "pending", "", NOW).unwrap());
+    let card = card_lines(&set_decision(&text(), "pilot", "pending", "", NOW, &plain()).unwrap());
     assert_eq!(card[1..CARD.len()].to_vec(), CARD[1..].to_vec());
     assert_eq!(card[CARD.len()], "  [2026-10-05 14:15] owner · pending");
 }
 
 #[test]
 fn a_question_moves_the_card_and_keeps_every_line() {
-    let card = card_lines(&set_decision(&text(), "pilot", "question", "Why?", NOW).unwrap());
+    let card =
+        card_lines(&set_decision(&text(), "pilot", "question", "Why?", NOW, &plain()).unwrap());
     assert_eq!(card[1..CARD.len()].to_vec(), CARD[1..].to_vec());
     assert_eq!(
         card[CARD.len()],

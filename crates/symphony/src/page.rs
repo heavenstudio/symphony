@@ -121,9 +121,10 @@ fn fingerprint(root: &Path, text: &str, components: &str) -> String {
     field(components);
     // Card links read all live documents, wikilinks read their paths, and breadcrumbs read READMEs.
     // Hash content rather than metadata: an equal-length rewrite with a preserved mtime is an edit too.
+    let project = crate::project::Project::of(root);
     for path in crate::render::doc_paths(root) {
         field(&path);
-        field(&read_text(&root.join(path)).unwrap_or_default());
+        field(&read_text(&root.join(project.file(&path))).unwrap_or_default());
     }
     digest
         .finalize()

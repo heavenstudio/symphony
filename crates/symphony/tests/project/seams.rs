@@ -3,13 +3,15 @@
 
 use std::path::Path;
 
+use symphony::landing::Generator as Generated;
 use symphony::plugins::{Plugins, Reply};
+use symphony::project::Project;
 use symphony_plugin::vocabulary::{
     Block, FieldValue, InlineKind, NavItem, ProgressBar, Region, Span, TaskOffer,
 };
 use symphony_plugin::{
     BoardAction, BoardField, Card, CardKind, Component, DocCheck, FieldKind, Generator, HomeRegion,
-    Page, Plugin, ProseRule, Route, TaskRef, Watch, check_kind,
+    Page, Plugin, ProseRule, Route, Submission, Submitted, TaskRef, Watch, check_kind,
 };
 
 use super::Tree;
@@ -165,8 +167,24 @@ impl BoardAction for Fixture {
     }
     fn offer(&self, _: &Path, task: &TaskRef<'_>) -> Result<TaskOffer, String> {
         Ok(TaskOffer {
+            action: self.word.into(),
+            label: format!("{} it", self.word),
             branch: task.branch.into(),
-            patch: None,
+            payload: Some(format!("{}:{}", self.word, task.branch)),
+        })
+    }
+    fn submit(
+        &self,
+        _: &Path,
+        task: &TaskRef<'_>,
+        submission: &Submission,
+    ) -> Result<Submitted, String> {
+        if submission.payload != format!("{}:{}", self.word, task.branch) {
+            return Err(format!("{} refuses a stale offer", self.word));
+        }
+        Ok(Submitted {
+            said: format!("{} {}: {}", self.word, task.branch, submission.note),
+            released: vec![task.slug.into()],
         })
     }
 }
@@ -358,9 +376,26 @@ fn every_list_seam_gathers_each_plugin_in_the_projects_order() {
     assert_eq!(
         plugins.board_actions()[1].offer(root, &task).unwrap(),
         TaskOffer {
+            action: "two".into(),
+            label: "two it".into(),
             branch: "sim/jump".into(),
-            patch: None
+            payload: Some("two:sim/jump".into()),
         }
+    );
+    let submission = |payload: &str| Submission {
+        payload: payload.into(),
+        note: "ship it".into(),
+    };
+    assert_eq!(
+        plugins.board_actions()[1].submit(root, &task, &submission("two:sim/jump")),
+        Ok(Submitted {
+            said: "two sim/jump: ship it".into(),
+            released: vec!["sim/jump".into()],
+        })
+    );
+    assert_eq!(
+        plugins.board_actions()[0].submit(root, &task, &submission("two:sim/jump")),
+        Err("one refuses a stale offer".into())
     );
     assert_eq!(
         plugins
@@ -400,6 +435,40 @@ fn every_list_seam_gathers_each_plugin_in_the_projects_order() {
         rules[1].check("docs/A.md", "a\ntwo\nb two\n"),
         [(2, "two".into()), (3, "two".into())]
     );
+}
+
+#[test]
+fn a_plugins_generators_run_after_the_projects_and_need_its_land_command() {
+    let landed = Project::parse(
+        Path::new("/r"),
+        "[verdicts]\nland = [\"l\"]\ngenerators = [{ name = \"g\", outputs = \"o\", command = [\"x\"] }]\n",
+    )
+    .unwrap();
+    let generator = |name: &str, outputs: &str, command: &[&str]| Generated {
+        name: name.into(),
+        outputs: outputs.into(),
+        command: command.iter().map(|word| word.to_string()).collect(),
+        when_changed: false,
+    };
+    assert_eq!(
+        symphony::landing::with_plugins(&landed, &both()),
+        [
+            generator("g", "o", &["x"]),
+            generator("one", "out/", &["make", "one"]),
+            generator("two", "out/", &["make", "two"]),
+        ]
+    );
+    assert!(symphony::plugins::unlanded(&landed, &both()).is_empty());
+    let unlanded = Project::parse(Path::new("/r"), "").unwrap();
+    assert_eq!(
+        symphony::plugins::unlanded(&unlanded, &both()),
+        [
+            "symphony.toml: the plugin generator one needs a [verdicts] land command",
+            "symphony.toml: the plugin generator two needs a [verdicts] land command",
+        ]
+    );
+    assert!(symphony::plugins::unlanded(&unlanded, &Plugins::new(vec![&Bare])).is_empty());
+    assert!(symphony::landing::of_project(&unlanded).is_empty());
 }
 
 #[test]

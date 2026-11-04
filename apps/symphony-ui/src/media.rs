@@ -164,7 +164,6 @@ pub fn DocumentPicture(image: Image) -> Element {
 fn Gallery(items: Vec<GalleryItem>) -> Element {
     let mut selected = use_signal(|| None::<String>);
     rsx! {
-        p { class: "muted", "{items.len()} models." }
         div { class: "gallery-grid",
             for item in items {
                 GalleryRow { key: "{item.name}", open: selected().as_deref() == Some(item.name.as_str()),
@@ -238,8 +237,9 @@ mod tests {
             ],
         };
         let gallery = dioxus_ssr::render_element(rsx! { MediaView { media } });
+        // the component above the gallery says how many models there are; the gallery does not
         assert!(
-            gallery.contains("2 models.") && gallery.contains("class=\"gallery-grid\""),
+            !gallery.contains("models.") && gallery.contains("class=\"gallery-grid\""),
             "{gallery}"
         );
         assert_eq!(

@@ -135,7 +135,8 @@ in-memory blob pages are allowed; file URLs and external hosts are blocked.
   and agents page separately. A reconnect catches up a loaded thread by
   message id before following the feed again. Composer drafts are local to
   their keyed component and saved through `Platform`, never replaced by a
-  snapshot. The optional owner offer is pinned to the patch the server showed.
+  snapshot. The optional owner offer is pinned to the payload the server showed,
+  labelled and posted to `/api/task-action` by the action the offer names.
   It is fetched only near the controls, using the task's recorded branch;
   preparing the landing tool must not hold up the brief or the message box.
   Briefs and agent messages use the shared `block_view::BlocksView`; owner and

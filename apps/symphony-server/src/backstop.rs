@@ -88,7 +88,7 @@ impl Stamp {
 
 /// A root to sweep: the folder it belongs to (a checkout, the client build, the common folder),
 /// the path below that folder, and whether its subfolders count.
-pub(crate) type Root = (PathBuf, &'static str, RecursiveMode);
+pub(crate) type Root = (PathBuf, String, RecursiveMode);
 
 /// A root as a walk uses it: its folder, the path it covers, and whether its subfolders count.
 type Covering = (PathBuf, PathBuf, RecursiveMode);
@@ -354,9 +354,13 @@ mod tests {
         tree.write("git/packed-refs", "refs");
         tree.write("git/refs/heads/main", "nested under a flat root");
         let roots = vec![
-            (docs.clone(), "", RecursiveMode::Recursive),
-            (flat.clone(), "", RecursiveMode::NonRecursive),
-            (tree.path("missing"), "", RecursiveMode::Recursive),
+            (docs.clone(), String::new(), RecursiveMode::Recursive),
+            (flat.clone(), String::new(), RecursiveMode::NonRecursive),
+            (
+                tree.path("missing"),
+                String::new(),
+                RecursiveMode::Recursive,
+            ),
         ];
         let mut sweep = Sweep::new(&roots);
         assert_eq!(
@@ -389,9 +393,21 @@ mod tests {
     fn a_root_new_to_the_sweep_compares_with_its_adopted_stamps_and_a_dropped_one_reports_nothing()
     {
         let tree = Tree::new();
-        let main = (tree.path("main/docs"), "", RecursiveMode::Recursive);
-        let served = (tree.path("served/docs"), "", RecursiveMode::Recursive);
-        let unadopted = (tree.path("unadopted/docs"), "", RecursiveMode::Recursive);
+        let main = (
+            tree.path("main/docs"),
+            String::new(),
+            RecursiveMode::Recursive,
+        );
+        let served = (
+            tree.path("served/docs"),
+            String::new(),
+            RecursiveMode::Recursive,
+        );
+        let unadopted = (
+            tree.path("unadopted/docs"),
+            String::new(),
+            RecursiveMode::Recursive,
+        );
         tree.write("main/docs/a.md", "a");
         for name in ["untouched", "edited", "removed"] {
             tree.write(&format!("served/docs/{name}.md"), name);
@@ -437,7 +453,7 @@ mod tests {
         tree.write("docs/a.md", "a");
         tree.write("docs/gone.md", "gone");
         tree.write("unserved/docs/x.md", "x");
-        let roots = vec![(docs.clone(), "", RecursiveMode::Recursive)];
+        let roots = vec![(docs.clone(), String::new(), RecursiveMode::Recursive)];
         let mut sweep = Sweep::new(&roots);
         tree.write("docs/a.md", "edited, and its event arrived");
         tree.write("docs/b.md", "created, and its event arrived");
@@ -478,9 +494,9 @@ mod tests {
         }
         // The common folder's shape: a flat root whose refs folder is a recursive root of its own.
         let roots = vec![
-            (docs.clone(), "", RecursiveMode::Recursive),
-            (git.join("refs"), "", RecursiveMode::Recursive),
-            (git.clone(), "", RecursiveMode::NonRecursive),
+            (docs.clone(), String::new(), RecursiveMode::Recursive),
+            (git.join("refs"), String::new(), RecursiveMode::Recursive),
+            (git.clone(), String::new(), RecursiveMode::NonRecursive),
         ];
         let mut sweep = Sweep::new(&roots);
         assert_eq!(sweep.stamps.len(), 6);
@@ -540,8 +556,12 @@ mod tests {
         // Restamp reads through the same guard, so an event behind the link adds no stamp the
         // walk would then report as removed.
         let roots = vec![
-            (checkout.clone(), "docs", RecursiveMode::Recursive),
-            (checkout.clone(), "view/models", RecursiveMode::Recursive),
+            (checkout.clone(), "docs".into(), RecursiveMode::Recursive),
+            (
+                checkout.clone(),
+                "view/models".into(),
+                RecursiveMode::Recursive,
+            ),
         ];
         let mut sweep = Sweep::new(&roots);
         assert_eq!(

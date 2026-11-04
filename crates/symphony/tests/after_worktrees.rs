@@ -209,6 +209,11 @@ fn branch_decisions_share_ranking_counts_and_navigation_with_main() {
         "branch_decisions_share_ranking_counts_and_navigation_with_main",
         |_| {
             let tree = repository();
+            // the candidates a card shows are drawn by Star Foundry's picture kind
+            tree.write(
+                "symphony.toml",
+                "[plugins]\ncrates = [\"star-foundry-symphony\"]\n",
+            );
             tree.write(DOC, &register(&(card("alpha") + &card("behind"))));
             commit(&tree.root, "base", 1);
             let wt = branch(&tree, "design/policy", "policy");
@@ -549,7 +554,7 @@ fn revised_cards_count_once_and_answered_branch_questions_stay_in_navigation() {
                     .find(|c| c.card.slug == "answered")
                     .unwrap()
                     .card
-                    .group(),
+                    .group(&common::plain()),
                 symphony::Group::Confirm
             );
             let snapshot = symphony::dashboard::snapshot(&tree.root, &cards, "test").unwrap();
@@ -1311,6 +1316,7 @@ fn versions_and_patches_cover_first_commit_owner_verdict_and_invalid_revisions()
         "approved",
         "yes, shorter",
         "2026-09-03 10:00",
+        &common::plain(),
     )
     .unwrap();
     tree.write(DOC, &answered);
@@ -1692,6 +1698,7 @@ fn keyed_document_deltas_send_only_changed_fragments_within_four_kib_gzip() {
                 "approved",
                 "Use the smaller layout.",
                 "2026-09-04 10:00",
+                &common::plain(),
             )
             .unwrap();
             tree.write(rel, &answered);

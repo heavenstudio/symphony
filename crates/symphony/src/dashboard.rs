@@ -11,6 +11,7 @@ use symphony_api::{
     ActivityItem, Board, Card, Counts, Pending, PendingItem, Progress, Queue, QueueItem,
 };
 
+use crate::plugins::Plugins;
 use crate::{Decision, Doc, Group, ReviewError, State, Who, board, branches, clock, tree, triage};
 
 static TAG: LazyLock<Regex> = LazyLock::new(|| {
@@ -69,8 +70,8 @@ fn first_sentence(text: &str) -> &str {
         .map_or(text, |m| m.as_str())
 }
 
-pub fn card_title(card: &Decision) -> String {
-    crate::plugins::slot(card).map_or_else(
+pub fn card_title(plugins: &Plugins, card: &Decision) -> String {
+    plugins.slot(card).map_or_else(
         || cut(first_sentence(&words(card)), 110),
         |slot| format!("{slot} picture"),
     )
@@ -80,9 +81,9 @@ pub fn card_summary(card: &Decision) -> String {
     cut(&words(card), 260)
 }
 
-pub fn card_rest(card: &Decision) -> String {
+pub fn card_rest(plugins: &Plugins, card: &Decision) -> String {
     let text = words(card);
-    let rest = if crate::plugins::slot(card).is_some() {
+    let rest = if plugins.slot(card).is_some() {
         text.as_str()
     } else {
         text.strip_prefix(first_sentence(&text))
@@ -181,7 +182,9 @@ pub fn snapshot(
     } else {
         branches::task_names(root)
     };
-    let ranked = triage::queue(&docs, usize::MAX, "");
+    let plugins = Plugins::of(root);
+    let project = crate::project::Project::of(root);
+    let ranked = triage::queue(&plugins, &docs, usize::MAX, "");
     let mut queue = Queue::default();
     for item in &ranked {
         let branch = proposals
@@ -196,7 +199,7 @@ pub fn snapshot(
             continue;
         };
         let text = words(card);
-        let summary = if crate::plugins::slot(card).is_some() {
+        let summary = if plugins.slot(card).is_some() {
             text.as_str()
         } else {
             text.strip_prefix(first_sentence(&text))
@@ -207,21 +210,20 @@ pub fn snapshot(
             postponed: false,
             slug: card.slug.clone(),
             doc: item.doc.clone(),
-            doc_title: tree::title(
-                &branch.map_or_else(|| root.join(&item.doc), |b| b.tree.path.join(&b.doc)),
-            ),
-            title: card_title(card),
+            doc_title: tree::title(&branch.map_or_else(
+                || root.join(project.file(&item.doc)),
+                |b| b.tree.path.join(&b.doc),
+            )),
+            title: card_title(&plugins, card),
             summary: cut(summary, 260),
             why: item
                 .reason
-                .replace(" and 0 cards", "")
-                .replace("gates 0 hulls and ", "gates ")
                 .replace("design · gates nothing known", "design call"),
             posted: card.posted_at(),
             pictures: {
                 let mut found = match branch {
-                    Some(branch) => crate::plugins::pictures(&branch.tree.path, &branch.doc, card),
-                    None => crate::plugins::pictures(root, &item.doc, card),
+                    Some(branch) => plugins.pictures(&branch.tree.path, &branch.doc, card),
+                    None => plugins.pictures(root, &item.doc, card),
                 };
                 if let Some(branch) = branch {
                     for src in found.iter_mut().filter_map(|p| p.src.as_mut()) {
@@ -241,7 +243,8 @@ pub fn snapshot(
             }),
         });
     }
-    let queue_order = std::sync::Arc::new(crate::postpone::View::new(&docs, &queue.waiting));
+    let queue_order =
+        std::sync::Arc::new(crate::postpone::View::new(&plugins, &docs, &queue.waiting));
     match queue_order.waiting(root, crate::postpone::OWNER, crate::postpone::now()) {
         Ok(waiting) => queue.waiting = waiting,
         Err(error) => {
@@ -260,7 +263,7 @@ pub fn snapshot(
                 href: format!("/{}#L{}", doc.path, comment.line),
                 path: doc.path.clone(),
                 slug: format!("L{}", comment.line),
-                title: tree::title(&root.join(&doc.path)),
+                title: tree::title(&root.join(project.file(&doc.path))),
                 kind: comment.kind.clone(),
                 text: comment.title.clone(),
                 branch: None,
@@ -272,7 +275,7 @@ pub fn snapshot(
                 href: format!("/{}#{}", doc.path, card.slug),
                 path: doc.path.clone(),
                 slug: card.slug.clone(),
-                title: card_title(card),
+                title: card_title(&plugins, card),
                 kind: card.state.as_str().to_string(),
                 text: plain(
                     &entries
@@ -281,10 +284,10 @@ pub fn snapshot(
                 ),
                 branch: None,
             };
-            if card.group() == Group::Auto {
+            if card.group(&plugins) == Group::Auto {
                 queue.spot_check.push(item.clone());
             }
-            if card.open() {
+            if card.open(&plugins) {
                 queue.agent.push(item);
             }
             let mut said = false;

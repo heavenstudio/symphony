@@ -1,6 +1,6 @@
 //! Exercise notified and swept gallery changes through an owned, ephemeral listener.
 
-use super::{Hub, Sweep, watched_root};
+use super::{Hub, Sweep, tree_inputs, watched_root};
 use crate::backstop::Backstop;
 use crate::front::{Shared, router};
 use crate::gate::Gate;
@@ -9,7 +9,6 @@ use notify::event::{AccessKind, CreateKind, Flag, ModifyKind, RemoveKind, Rename
 use notify::{Event, EventKind, Watcher};
 use std::collections::BTreeSet;
 use std::net::SocketAddr;
-use std::path::Path;
 use std::sync::{Arc, mpsc};
 use std::time::{Duration, Instant};
 use symphony_api::{Block, Document, GalleryItem, Media};
@@ -429,7 +428,7 @@ fn a_models_link_outside_its_root_is_neither_shown_nor_swept() {
     // The link is stamped as itself, so a change behind it is none of the served root's.
     let roots = vec![(
         root.clone(),
-        "view/models",
+        "view/models".to_string(),
         notify::RecursiveMode::Recursive,
     )];
     let mut sweep = Sweep::new(&roots);
@@ -622,7 +621,14 @@ fn the_sweep_follows_only_trees_with_pages_and_a_page_that_goes_leaves_its_galle
 
 #[test]
 fn gallery_paths_include_input_directories_and_deleted_files_but_not_neighbours() {
-    let root = Path::new("/private/tree");
+    let tree = Tree::new();
+    tree.write("main/symphony.toml", MANIFEST);
+    tree.write(
+        "main/plain/README.md",
+        "a checkout inside main, its project plain",
+    );
+    let (main, plain) = (tree.path("main"), tree.path("main/plain"));
+    let roots = [main.clone(), plain.clone()];
     for relative in [
         "view/models",
         "view/models/hulls/A.glb",
@@ -631,7 +637,17 @@ fn gallery_paths_include_input_directories_and_deleted_files_but_not_neighbours(
         "docs/data/hull-outlines",
         "docs/data/hull-outlines/A.notes.json",
     ] {
-        assert_eq!(watched_root(&root.join(relative)), Some(root), "{relative}");
+        assert_eq!(
+            watched_root(&roots, &main.join(relative)),
+            Some(main.as_path()),
+            "{relative}"
+        );
+        // The plain project's plugins watch nothing, so its paths belong to none.
+        assert_eq!(
+            watched_root(&roots, &plain.join(relative)),
+            None,
+            "{relative}"
+        );
     }
     for relative in [
         "docs/TOPIC.md",
@@ -639,8 +655,45 @@ fn gallery_paths_include_input_directories_and_deleted_files_but_not_neighbours(
         "artifacts/concepts-other/A.png",
         "docs/data/hull-outlines-other/A.svg",
     ] {
-        assert_eq!(watched_root(&root.join(relative)), None, "{relative}");
+        assert_eq!(
+            watched_root(&roots, &main.join(relative)),
+            None,
+            "{relative}"
+        );
     }
+}
+
+#[test]
+fn a_tree_watches_its_projects_documents_folder_and_what_its_plugins_watch_outside_it() {
+    let tree = Tree::new();
+    let manual = "[project]\ndocs = \"manual\"\nhistory = [\"manual/past\"]\n\
+                  register = \"manual/DECISIONS.md\"\nartifacts = \"output\"\n";
+    tree.write("plain/symphony.toml", manual);
+    let below =
+        |root: &str| -> Vec<(String, notify::RecursiveMode)> { tree_inputs(&tree.path(root)) };
+    let recursive = |paths: &[&str]| -> Vec<(String, notify::RecursiveMode)> {
+        paths
+            .iter()
+            .map(|path| (path.to_string(), notify::RecursiveMode::Recursive))
+            .collect()
+    };
+    assert_eq!(below("plain"), recursive(&["manual"]));
+    tree.write("game/symphony.toml", &format!("{manual}{MANIFEST}"));
+    assert_eq!(
+        below("game"),
+        recursive(&[
+            "manual",
+            "artifacts/concepts",
+            "docs/data/hull-outlines",
+            "view/models"
+        ])
+    );
+    // a watched folder inside the documents folder is watched with it
+    tree.write("default/symphony.toml", MANIFEST);
+    assert_eq!(
+        below("default"),
+        recursive(&["docs", "artifacts/concepts", "view/models"])
+    );
 }
 
 #[test]
@@ -648,6 +701,9 @@ fn watcher_filters_access_and_metadata_and_invalidates_all_trees_on_rescan() {
     let tree = Tree::new();
     let root = repository(&tree);
     let branch = tree.path("branch");
+    // both trees' projects use the plugin that watches gallery art
+    tree.write("main/symphony.toml", MANIFEST);
+    tree.write("branch/symphony.toml", MANIFEST);
     let hub = Hub::new(&root, &root.join("client/public"));
     hub.trees
         .write()

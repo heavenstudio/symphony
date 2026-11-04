@@ -341,9 +341,18 @@ impl Hub {
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .extend(paths.iter().cloned());
+        let roots: Vec<PathBuf> = std::iter::once(self.root.clone())
+            .chain(
+                self.trees
+                    .read()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .values()
+                    .cloned(),
+            )
+            .collect();
         let mut dirty = self.watch_changes.lock().unwrap_or_else(|e| e.into_inner());
         for path in paths {
-            if let Some(root) = watched_root(&path) {
+            if let Some(root) = watched_root(&roots, &path) {
                 dirty.insert(root.to_path_buf());
             }
         }
@@ -393,7 +402,7 @@ impl Hub {
         })?;
         // Stamped before the read, so the sweep that first covers this tree reports only what
         // changed after it.
-        let roots: Vec<_> = tree_inputs()
+        let roots: Vec<_> = tree_inputs(&root)
             .into_iter()
             .map(|(below, mode)| (root.clone(), below, mode))
             .collect();
@@ -510,8 +519,10 @@ impl Hub {
         // clear their comparisons without touching a single file in the branch checkout.
         let baseline_changed = self.common.as_ref().is_some_and(|common| {
             dirty.is_none_or(|paths| {
-                paths.contains(&common.join("refs/heads/main"))
-                    || paths.contains(&common.join("packed-refs"))
+                paths.contains(&common.join(format!(
+                    "refs/heads/{}",
+                    symphony::project::Project::of(&self.root).default_branch
+                ))) || paths.contains(&common.join("packed-refs"))
             })
         });
         for scope in scopes {
@@ -628,9 +639,9 @@ impl Hub {
             .warmed_watches
             .lock()
             .unwrap_or_else(|e| e.into_inner());
-        let inputs: Vec<_> = WATCHED
-            .iter()
-            .map(|below| (root.to_path_buf(), below.as_str(), RecursiveMode::Recursive))
+        let inputs: Vec<_> = watched(root)
+            .into_iter()
+            .map(|below| (root.to_path_buf(), below, RecursiveMode::Recursive))
             .collect();
         // A native notification can arrive after the read that already included its edit.
         // Compare with the inputs stamped before that read, retaining edits made during it.
@@ -1092,7 +1103,7 @@ impl Hub {
             .collect();
         self.inputs(&trees)
             .into_iter()
-            .map(|(base, below, mode)| (crate::backstop::joined(&base, below), mode))
+            .map(|(base, below, mode)| (crate::backstop::joined(&base, &below), mode))
             .collect()
     }
 
@@ -1129,19 +1140,19 @@ impl Hub {
 
     /// Each input as the folder it belongs to (main, a tree, the client build, the common folder)
     /// and its path below that folder.
-    fn inputs(&self, trees: &[PathBuf]) -> Vec<(PathBuf, &'static str, RecursiveMode)> {
-        let mut paths: Vec<_> = tree_inputs()
+    fn inputs(&self, trees: &[PathBuf]) -> Vec<crate::backstop::Root> {
+        let mut paths: Vec<_> = tree_inputs(&self.root)
             .into_iter()
-            .chain([("build", RecursiveMode::NonRecursive)])
+            .chain([("build".to_string(), RecursiveMode::NonRecursive)])
             .map(|(below, mode)| (self.root.clone(), below, mode))
             .collect();
         paths.push((
             self.ui_dist.parent().unwrap_or(&self.root).to_path_buf(),
-            "",
+            String::new(),
             RecursiveMode::Recursive,
         ));
         paths.extend(trees.iter().flat_map(|root| {
-            tree_inputs()
+            tree_inputs(root)
                 .into_iter()
                 .map(|(below, mode)| (root.clone(), below, mode))
         }));
@@ -1152,7 +1163,7 @@ impl Hub {
                     ("refs", RecursiveMode::Recursive),
                     ("worktrees", RecursiveMode::Recursive),
                 ]
-                .map(|(below, mode)| (common.clone(), below, mode)),
+                .map(|(below, mode)| (common.clone(), below.to_string(), mode)),
             );
         }
         paths
@@ -1198,29 +1209,31 @@ impl Hub {
     }
 }
 
-/// The checkout a changed path belongs to when it is below a path a plugin watches.
-fn watched_root(path: &Path) -> Option<&Path> {
-    for input in WATCHED.iter() {
-        if let Some(folder) = path.ancestors().find(|p| p.ends_with(input)) {
-            return folder
-                .ancestors()
-                .nth(Path::new(input).components().count());
-        }
-    }
-    None
+/// Of `roots`, the checkout a changed path belongs to when it is below a path its project's plugins
+/// watch; the deepest, as a worktree may sit inside another checkout.
+fn watched_root<'a>(roots: &'a [PathBuf], path: &Path) -> Option<&'a Path> {
+    roots
+        .iter()
+        .filter(|root| {
+            watched(root)
+                .iter()
+                .any(|input| path.starts_with(root.join(input)))
+        })
+        .max_by_key(|root| root.components().count())
+        .map(PathBuf::as_path)
 }
 
-/// The paths below a checkout the compiled plugins' watches read.
-static WATCHED: LazyLock<Vec<String>> = LazyLock::new(|| {
-    let mut paths: Vec<String> = symphony::plugins::compiled()
+/// The paths below the checkout at `root` its project's plugins' watches read.
+fn watched(root: &Path) -> Vec<String> {
+    let mut paths: Vec<String> = symphony::plugins::Plugins::of(root)
+        .watches()
         .into_iter()
-        .flat_map(|plugin| plugin.watches())
         .flat_map(|watch| watch.paths())
         .collect();
     paths.sort();
     paths.dedup();
     paths
-});
+}
 
 fn scope_affected(
     previous: Option<&Path>,
@@ -1258,16 +1271,16 @@ fn relevant(common: Option<&Path>, path: &Path) -> bool {
     }
 }
 
-/// What each checkout adds to the watched and swept paths: its documents and what the plugins
-/// watch outside them.
-fn tree_inputs() -> Vec<(&'static str, RecursiveMode)> {
-    std::iter::once("docs")
-        .chain(
-            WATCHED
-                .iter()
-                .map(String::as_str)
-                .filter(|path| !Path::new(path).starts_with("docs")),
-        )
+/// What the checkout at `root` adds to the watched and swept paths: its project's documents and
+/// what its plugins watch outside them.
+fn tree_inputs(root: &Path) -> Vec<(String, RecursiveMode)> {
+    let docs = symphony::project::Project::of(root).docs.clone();
+    let outside: Vec<String> = watched(root)
+        .into_iter()
+        .filter(|path| !Path::new(path).starts_with(&docs))
+        .collect();
+    std::iter::once(docs)
+        .chain(outside)
         .map(|below| (below, RecursiveMode::Recursive))
         .collect()
 }
@@ -2087,7 +2100,7 @@ mod tests {
         let swept: BTreeSet<_> = hub
             .swept_paths()
             .into_iter()
-            .map(|(base, below, _)| crate::backstop::joined(&base, below))
+            .map(|(base, below, _)| crate::backstop::joined(&base, &below))
             .collect();
         for path in [root.join("docs"), tree.path("served/docs")] {
             assert!(swept.contains(&path), "{}", path.display());

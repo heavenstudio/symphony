@@ -2,7 +2,7 @@
 
 use std::collections::VecDeque;
 use std::path::{Component, Path};
-use std::sync::{Arc, LazyLock};
+use std::sync::Arc;
 use std::time::Duration;
 
 use axum::body::Body;
@@ -106,7 +106,9 @@ pub(crate) async fn answer(shared: &Arc<Shared>, request: Request) -> Option<Res
             .and_then(|v| v.to_str().ok())
             .is_some_and(|s| s.contains("application/json"));
     let alias = if json_queue { None } else { legacy_page(path) };
-    let static_file = client_page(path) || path.starts_with("/assets/") || alias.is_some();
+    let static_file = client_page(&nav_pages(&shared.root), path)
+        || path.starts_with("/assets/")
+        || alias.is_some();
     // Typed document links can point to any project source or data file. Keep those raw downloads
     // behind the same canonical containment, metadata exclusion and sandbox as embedded media.
     let media_file = crate::media_files::handles(path)
@@ -1252,7 +1254,7 @@ fn typed_anchors(value: &serde_json::Value) -> Vec<String> {
 }
 
 async fn static_response(shared: &Shared, path: &str, request: &Request) -> Response {
-    let relative = if client_page(path) {
+    let relative = if client_page(&nav_pages(&shared.root), path) {
         "index.html"
     } else {
         path.trim_start_matches('/')
@@ -1362,19 +1364,20 @@ fn client_unbuilt(shared: &Shared) -> Response {
     )
 }
 
-/// The client pages the compiled plugins' navigation opens (`/hulls`).
-static NAV_PAGES: LazyLock<Vec<String>> = LazyLock::new(|| {
-    symphony::plugins::compiled()
+/// The client pages the navigation of the project at `root` opens (`/hulls`).
+pub(crate) fn nav_pages(root: &Path) -> Vec<String> {
+    symphony::plugins::Plugins::of(root)
+        .nav()
         .into_iter()
-        .flat_map(|plugin| plugin.nav())
         .map(|item| item.href.trim_end_matches('/').to_string())
         .collect()
-});
+}
 
-pub(crate) fn client_page(path: &str) -> bool {
+/// Whether `path` is a page the client draws: its own, or one of `nav`, the project's.
+pub(crate) fn client_page(nav: &[String], path: &str) -> bool {
     let page = path.trim_end_matches('/');
     matches!(page, "" | "/tasks" | "/agents" | "/queue")
-        || NAV_PAGES.iter().any(|nav| nav == page)
+        || nav.iter().any(|nav| nav == page)
         || path.starts_with("/task/")
         || (path.trim_end_matches('/') == "/docs" || path.starts_with("/docs/"))
             && (Path::new(path.trim_end_matches('/')).extension().is_none()

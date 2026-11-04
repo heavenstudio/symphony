@@ -237,4 +237,15 @@ impl CardKind for HullMentions {
             .take(6)
             .collect()
     }
+
+    /// The distinct hulls the card names, as written.
+    fn gates(&self, card: &Card<'_>) -> Option<(usize, String)> {
+        let named: BTreeSet<&str> = HULLS
+            .captures_iter(card.text)
+            .flat_map(|c| c.get(1).map_or("", |ids| ids.as_str()).split(','))
+            .map(crate::text::strip)
+            .filter(|id| !id.is_empty())
+            .collect();
+        Some((named.len(), "hull".into()))
+    }
 }

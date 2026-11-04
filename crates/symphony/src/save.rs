@@ -23,7 +23,7 @@ pub const ROUTES: [&str; 13] = [
     "/api/quick-task",
     "/api/ask",
     "/api/ask-reply",
-    "/api/land-approve",
+    symphony_api::TASK_ACTION_ROUTE,
 ];
 
 pub struct Failure {
@@ -347,34 +347,40 @@ impl Saves {
                     .move_to(string(payload, "slug"), "cancelled", "owner")?;
                 Ok(json!({"ok":true}))
             }
-            "/api/land-approve" => {
+            symphony_api::TASK_ACTION_ROUTE => {
                 let slug = string(payload, "slug");
                 let store = self.store()?;
                 let task = store.get(slug)?;
                 let branch = crate::taskview::approval_branch(&store, &task)?;
-                let problem = commit::land_call(
+                let plugins = crate::plugins::Plugins::of(&self.root);
+                let actions = plugins.board_actions();
+                // The board action that made the offer, by the name the offer gave.
+                let named = string(payload, "action");
+                let Some(action) = actions.iter().find(|action| action.name() == named) else {
+                    return Err(Failure {
+                        status: 404,
+                        error: "no such board action".into(),
+                    });
+                };
+                let done = action.submit(
                     &self.root,
-                    &json!({"method":"record_owner_approval", "branch":&branch, "patch":string(payload,"patch"), "note":string(payload,"note")}),
+                    &symphony_plugin::TaskRef {
+                        slug,
+                        status: &task.status,
+                        branch: &branch,
+                    },
+                    &symphony_plugin::Submission {
+                        payload: string(payload, "payload").into(),
+                        note: string(payload, "note").into(),
+                    },
                 )?;
-                if let Some(problem) = problem.as_str().filter(|s| !s.is_empty()) {
-                    return Err(problem.to_string().into());
+                store.say(slug, "owner", &done.said, None)?;
+                // The work it releases goes back to review. A move that fails here is made by the
+                // next landing or stamp edit, which re-reads them.
+                for held in &done.released {
+                    let _ = store.move_to(held, "review", "owner");
                 }
-                store.say(slug, "owner", &format!("approved {branch} to land"), None)?;
-                // Work its stamps held blocked waiting on this approval goes back to review. A move
-                // that fails here is made by the next landing or stamp edit, which re-reads them.
-                let released = commit::land_call(
-                    &self.root,
-                    &json!({"method":"stamps_released", "branch":&branch}),
-                );
-                for held in released
-                    .iter()
-                    .flat_map(|r| r.as_array().into_iter().flatten())
-                {
-                    if let Some(held) = held.as_str() {
-                        let _ = store.move_to(held, "review", "owner");
-                    }
-                }
-                Ok(json!({"ok":true}))
+                Ok(json!({"ok":true, "said": done.said}))
             }
             "/api/ask" | "/api/ask-reply" => self.ask(scope, route, payload),
             "/api/quick-chat" | "/api/quick-task" => self.quick(scope, route, payload),
@@ -387,7 +393,8 @@ impl Saves {
             let notify = matches!(
                 route,
                 "/api/ask" | "/api/ask-reply" | "/api/quick-chat" | "/api/message" | "/api/comment"
-            ) || (matches!(route, "/api/decision" | "/api/land-approve")
+            ) || ((route == "/api/decision"
+                || route == symphony_api::TASK_ACTION_ROUTE)
                 && !string(payload, "note").trim().is_empty());
             if notify && value["repeat"] != true {
                 let id = value["id"].as_i64();
@@ -474,6 +481,7 @@ impl Saves {
                     string(payload, "state"),
                     string(payload, "note"),
                     &now,
+                    &crate::plugins::Plugins::of(&self.root),
                 )?
             }
         };

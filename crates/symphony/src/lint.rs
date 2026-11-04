@@ -90,6 +90,7 @@ fn named_in<'a>(line: &str, slugs: &HashMap<char, Vec<&'a str>>) -> Vec<&'a str>
 /// decided live on the cards and in the ledger.
 pub fn history_in_prose(root: &Path) -> Result<Vec<Finding>, ReviewError> {
     let docs = scan(root)?;
+    let project = crate::project::Project::of(root);
     let slugs: BTreeSet<&str> = docs
         .iter()
         .flat_map(|doc| doc.decisions.iter().map(|d| d.slug.as_str()))
@@ -120,7 +121,7 @@ pub fn history_in_prose(root: &Path) -> Result<Vec<Finding>, ReviewError> {
         {
             continue;
         }
-        let path = root.join(&doc.path);
+        let path = root.join(project.file(&doc.path));
         let text = read_text(&path).map_err(|e| ReviewError(os_error(&e, &path)))?;
         for (number, line) in prose(&text) {
             found.extend(
@@ -159,8 +160,9 @@ pub fn rule_findings(root: &Path) -> (Vec<Finding>, Vec<String>) {
     if rules.is_empty() {
         return (found, names);
     }
+    let project = crate::project::Project::of(root);
     for rel in crate::render::doc_paths(root) {
-        let Ok(text) = read_text(&root.join(&rel)) else {
+        let Ok(text) = read_text(&root.join(project.file(&rel))) else {
             continue;
         };
         for rule in &rules {
@@ -192,9 +194,30 @@ pub fn check_findings(root: &Path) -> (Vec<String>, Vec<String>) {
     (found, names)
 }
 
-/// `symphony status --lint`: card slugs in prose, the plugins' prose rules and their document
-/// checks, each finding named on `err`; exit 1 on any, 2 when the docs cannot be read.
+/// What is wrong with the project file at `root`: why it does not load, or each plugin it names
+/// that this build does not hold.
+pub fn project_problems(root: &Path) -> Vec<String> {
+    match crate::project::Project::load(root) {
+        Ok(project) => crate::plugins::problems(&project),
+        Err(problem) => vec![problem],
+    }
+}
+
+/// `symphony status --lint`: the project file, card slugs in prose, the plugins' prose rules and
+/// their document checks, each finding named on `err`; exit 1 on any, 2 when the docs cannot be
+/// read.
 pub fn main(root: &Path, out: &mut dyn Write, err: &mut dyn Write) -> i32 {
+    let project = project_problems(root);
+    if !project.is_empty() {
+        for problem in &project {
+            let _ = writeln!(err, "{problem}");
+        }
+        let _ = writeln!(
+            err,
+            "✖ the project file is refused, so the Symphony would use the defaults in its place."
+        );
+        return 1;
+    }
     let slugs = match history_in_prose(root) {
         Ok(slugs) => slugs,
         Err(problem) => {

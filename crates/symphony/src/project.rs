@@ -1,9 +1,9 @@
 //! A project: a root folder holding a committed `symphony.toml`. The file names what the Symphony
 //! would otherwise assume, and every value it leaves out is the Symphony's generic default, never a
 //! game's: no plugins, no generators, no check, the folder's name as the project's name and its
-//! slug as the id, `docs/` with `docs/history` skipped, `docs/DECISIONS.md`, `artifacts/`, `main`,
-//! the Symphony's own theme, every built-in transport and no panes. An empty file, or none, is a
-//! plain project. An unknown table or key is refused by name, so a misspelt setting never passes
+//! slug as the id (`project` when the folder's has no letter or digit), `docs/` with `docs/history`
+//! skipped, `docs/DECISIONS.md`, `artifacts/`, `main`, the Symphony's own theme, every built-in
+//! transport and no panes. An empty file, or none, is a plain project. An unknown table or key is refused by name, so a misspelt setting never passes
 //! for its default.
 
 use std::collections::BTreeMap;
@@ -21,6 +21,11 @@ pub const FILE: &str = "symphony.toml";
 pub const TRANSPORTS: [&str; 3] = ["claude-uds", "codex-queue", "inbox"];
 /// The multiplexers agents' panes may run in; `none` for a project without one.
 pub const PANES: [&str; 2] = ["herdr", "none"];
+/// What the Symphony calls the documents folder in a document's name and URL, whatever the
+/// project's folder is called.
+pub const ROUTE: &str = "docs";
+/// The id of a project whose folder's name has no letter or digit to make one of.
+pub const DEFAULT_ID: &str = "project";
 /// The prefix naming a path in the repository's common git folder.
 const COMMON_DIR: &str = ".git/";
 
@@ -194,7 +199,7 @@ impl Project {
 
     /// The project at `root` as [`Project::load`] reads it, cached until its file changes. A file
     /// that does not load leaves the plain project in its place and is reported once per version
-    /// on stderr; the server and the lint refuse it through [`Project::load`].
+    /// on stderr; `symphony-status --lint` refuses it ([`crate::lint::project_problems`]).
     pub fn of(root: &Path) -> Arc<Project> {
         type Seen = BTreeMap<PathBuf, (Stamp, Arc<Project>)>;
         static SEEN: LazyLock<Mutex<Seen>> = LazyLock::new(|| Mutex::new(BTreeMap::new()));
@@ -253,8 +258,12 @@ impl Project {
             .map(|name| name.to_string_lossy().into_owned())
             .unwrap_or_default();
         let p = file.project;
+        let id = p.id.unwrap_or_else(|| match (&p.name, slug(&folder)) {
+            (Some(named), _) => slug(named),
+            (None, found) if found.is_empty() => DEFAULT_ID.to_string(),
+            (None, found) => found,
+        });
         let name = p.name.unwrap_or_else(|| folder.clone());
-        let id = p.id.unwrap_or_else(|| slug(&name));
         if id.is_empty() || slug(&id) != id {
             return Err(format!(
                 "[project] id {id:?} is not a slug (lowercase letters, digits and dashes)"
@@ -367,6 +376,33 @@ impl Project {
     /// the history folders.
     pub fn is_document_path(&self, rel: &str) -> bool {
         under(rel, &self.docs) && !self.history.iter().any(|folder| under(rel, folder))
+    }
+
+    /// The name the Symphony gives the document at the project-relative `file`: [`ROUTE`] and its
+    /// path inside the documents folder, whatever the folder is called. `None` outside it.
+    pub fn route(&self, file: &str) -> Option<String> {
+        let inside = file.strip_prefix(&self.docs)?;
+        if inside.is_empty() {
+            return Some(ROUTE.into());
+        }
+        inside
+            .strip_prefix('/')
+            .map(|inside| format!("{ROUTE}/{inside}"))
+    }
+
+    /// The project-relative file a document's name (`docs/…`) stands for; any other path is
+    /// itself.
+    pub fn file(&self, route: &str) -> String {
+        if route == ROUTE {
+            return self.docs.clone();
+        }
+        match route
+            .strip_prefix(ROUTE)
+            .and_then(|rest| rest.strip_prefix('/'))
+        {
+            Some(inside) => format!("{}/{inside}", self.docs),
+            None => route.into(),
+        }
     }
 
     /// The history folders, relative to the documents folder (`history`), for walks that start

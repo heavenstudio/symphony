@@ -183,9 +183,16 @@ pub trait CardKind: Send + Sync {
     fn triage_category(&self, _card: &Card<'_>) -> Option<String> {
         None
     }
-    /// Whether an approval predicted from the owner's past verdicts may stand for the owner's.
+    /// Whether an approval predicted from the owner's past verdicts may stand for the owner's. The
+    /// triage lists a pending card some kind refuses as the owner's sign-off alone.
     fn auto_approvable(&self, _card: &Card<'_>) -> bool {
         true
+    }
+    /// What the card gates that this kind counts, as (how many, the word for one: `hull`). A kind
+    /// that counts something answers for every card, none included, so the triage's reason names
+    /// it; the triage adds the cards waiting on it.
+    fn gates(&self, _card: &Card<'_>) -> Option<(usize, String)> {
+        None
     }
     /// Whether the owner's approval leaves agent work: an approved card that waits for an agent
     /// to apply it.
@@ -228,11 +235,34 @@ pub struct TaskRef<'a> {
     pub branch: &'a str,
 }
 
+/// What the owner sends back on an offer: its payload, as it came, and their note.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Submission {
+    pub payload: String,
+    pub note: String,
+}
+
+/// What a submission did: the line the board says for the owner on the task, and the tasks it
+/// releases, which the board moves back to review.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Submitted {
+    pub said: String,
+    pub released: Vec<String>,
+}
+
 /// A button on a task, with the server's handler behind it.
 pub trait BoardAction: Send + Sync {
     fn name(&self) -> &str;
     /// What the action offers on `task` in the project at `root`; an empty offer shows nothing.
     fn offer(&self, root: &Path, task: &TaskRef<'_>) -> Result<TaskOffer, String>;
+    /// The owner's answer to the offer on `task`, or why it is refused (the board then says
+    /// nothing and moves nothing).
+    fn submit(
+        &self,
+        root: &Path,
+        task: &TaskRef<'_>,
+        submission: &Submission,
+    ) -> Result<Submitted, String>;
 }
 
 /// What a board field holds.

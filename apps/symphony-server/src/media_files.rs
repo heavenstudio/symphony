@@ -70,7 +70,7 @@ pub(crate) async fn upload(
     let Ok(root) = tokio::fs::canonicalize(&shared.root).await else {
         return StatusCode::NOT_FOUND.into_response();
     };
-    let Ok(folder) = tokio::fs::canonicalize(root.join(symphony::uploads::DIR)).await else {
+    let Ok(folder) = tokio::fs::canonicalize(symphony::uploads::dir(&root)).await else {
         return StatusCode::NOT_FOUND.into_response();
     };
     let Ok(path) = tokio::fs::canonicalize(path).await else {

@@ -75,18 +75,35 @@ fn exercise_land_approve(address: std::net::SocketAddr) {
         .status = "blocked".into();
     f.board.copy(&dump).unwrap();
     f.land_stand_in(&format!("[\"{slug}\"]"));
+    let offer = || {
+        let response = f.request(
+            "GET",
+            &format!("/api/task-offer?slug={slug}"),
+            Some(&host),
+            None,
+            &serde_json::Value::Null,
+        );
+        assert_eq!(response.status, 200, "{response:?}");
+        response.json()
+    };
+    // Work that is not in review is offered nothing.
+    assert_eq!(
+        offer(),
+        json!({"action":"", "label":"", "branch":"", "payload":null})
+    );
     let approve = || {
         f.request(
             "POST",
-            "/api/land-approve",
+            symphony_api::TASK_ACTION_ROUTE,
             Some(&host),
             Some(&origin),
-            &json!({"slug":slug, "patch":"fixture-patch", "note":""}),
+            &json!({"slug":slug, "action":"approve to land", "payload":"fixture-patch", "note":""}),
         )
     };
     let response = approve();
     assert_eq!(response.status, 200, "{response:?}");
     assert_eq!(response.json()["ok"], true);
+    assert_eq!(response.json()["said"], "approved change/held to land");
     assert_eq!(f.board.get(slug).unwrap().status, "review");
     let said: Vec<String> = (f.board.thread(slug).unwrap().into_iter())
         .map(|message| format!("{}: {}", message.sender, message.text))
@@ -105,6 +122,13 @@ fn exercise_land_approve(address: std::net::SocketAddr) {
         calls[1].contains("\"stamps_released\"") && calls[1].contains("\"change/held\""),
         "{calls:?}"
     );
+    // In review, land's patch is offered under the action's name and label.
+    assert_eq!(
+        offer(),
+        json!({"action":"approve to land", "label":"Approve to land",
+               "branch":"change/held", "payload":"fixture-patch"})
+    );
+    assert!(f.land_calls()[2].contains("\"owner_offer\""));
     // A move the board refuses (the work is in review already) leaves the approval standing.
     let response = approve();
     assert_eq!(response.status, 200, "{response:?}");
@@ -120,6 +144,23 @@ fn exercise_land_approve(address: std::net::SocketAddr) {
     f.land_stand_in("not json");
     let response = approve();
     assert_eq!(response.status, 200, "{response:?}");
+    assert_eq!(f.board.get(slug).unwrap().status, "blocked");
+    // An approval land refuses, or an action no plugin of the project offers, says and moves nothing.
+    let heard = f.board.thread(slug).unwrap().len();
+    f.land_answering("the patch moved", &format!("[\"{slug}\"]"));
+    let response = approve();
+    assert_eq!(response.status, 400, "{response:?}");
+    assert_eq!(response.json()["error"], "the patch moved");
+    let response = f.request(
+        "POST",
+        symphony_api::TASK_ACTION_ROUTE,
+        Some(&host),
+        Some(&origin),
+        &json!({"slug":slug, "action":"approve to ship", "payload":"fixture-patch", "note":""}),
+    );
+    assert_eq!(response.status, 404, "{response:?}");
+    assert_eq!(response.json()["error"], "no such board action");
+    assert_eq!(f.board.thread(slug).unwrap().len(), heard);
     assert_eq!(f.board.get(slug).unwrap().status, "blocked");
 }
 

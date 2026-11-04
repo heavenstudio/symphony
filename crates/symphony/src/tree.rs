@@ -13,7 +13,7 @@ use serde::Serialize;
 use crate::clock::now_stamp;
 use crate::edit::{frontmatter_end, heading_anchor};
 use crate::markup::normpath;
-use crate::register::{Group, REGION_END, REGION_START, parse_decisions, supersede};
+use crate::register::{Group, REGION_END, REGION_START, State, parse_decisions, supersede};
 use crate::text::{read_text, splitlines, strip};
 
 pub const ROOT: &str = "docs";
@@ -102,8 +102,10 @@ pub fn pending(text: &str) -> Vec<String> {
     parse_decisions(&splitlines(&text))
         .into_iter()
         .filter(|card| {
-            let thread = card.thread();
-            card.state.as_str() == "pending" || (thread.asks_owner && thread.group == Group::Decide)
+            // An agent's question keeps a card the owner's until it is resolved or dismissed;
+            // no card kind changes that.
+            let settled = matches!(card.state, State::Resolved | State::Dismissed);
+            card.state == State::Pending || (card.asks_owner() && !settled)
         })
         .map(|card| card.slug)
         .collect()

@@ -1,9 +1,11 @@
 //! Star Foundry's ship art through its plugin's seams: the home's progress region, a bar per
-//! faction, and the pictures of the hulls a card names.
+//! faction, the pictures of the hulls a card names, and the gallery of every hull model.
 
 use symphony::plugins::Plugins;
-use symphony_plugin::Card;
-use symphony_plugin::vocabulary::{Picture, ProgressBar, Region};
+use symphony_plugin::vocabulary::{
+    Block, ContainerKind, GalleryItem, Media, Picture, Presentation, ProgressBar, Region, Span,
+};
+use symphony_plugin::{Card, Page};
 
 use super::Tree;
 
@@ -153,5 +155,45 @@ fn a_card_naming_hulls_shows_their_pictures_once_each_six_at_most() {
     assert_eq!(
         shown.iter().map(|p| p.caption.as_str()).collect::<Vec<_>>(),
         ["H-1 N1", "H-2 N2", "H-3 N3", "H-4 N4", "H-5 N5", "H-6 N6"]
+    );
+}
+
+#[test]
+fn the_hull_gallery_counts_its_models_once_above_the_gallery_of_them() {
+    let tree = Tree::star_foundry();
+    tree.write("view/models/hulls/REP-F01.glb", "glb");
+    tree.write("view/models/hulls/COA-F01.glb", "glb");
+    tree.write("view/models/hulls/README.md", "not a model");
+    let plugins = Plugins::new(vec![&symphony::star_foundry::PLUGIN]);
+    let page = Page::new(&tree.root, "docs/art/HULLS.md");
+    let item = |name: &str| GalleryItem {
+        name: name.into(),
+        src: format!("/x/hulls/{name}.glb"),
+        poster: None,
+    };
+    assert_eq!(
+        plugins.render(&page, "hull-gallery", "all", None),
+        [
+            Block::Container {
+                tag: ContainerKind::Div,
+                presentation: Presentation::class("muted"),
+                blocks: vec![Block::Paragraph {
+                    spans: vec![Span::Text {
+                        text: "2 hull models.".into()
+                    }],
+                }],
+            },
+            Block::Media {
+                media: Media::Gallery {
+                    items: vec![item("COA-F01"), item("REP-F01")],
+                },
+            },
+        ]
+    );
+    assert_eq!(
+        plugins.render(&page, "hull-gallery", "republic", None),
+        [symphony::plugins::error(
+            "hull-gallery: no gallery is called republic; use all"
+        )]
     );
 }

@@ -557,12 +557,21 @@ pub struct TaskBrief {
     pub revision: String,
 }
 
-/// The resolved landing target and the exact patch the owner is offered for approval.
+/// What a project's board action offers the owner on a task: a button named `label` beside the
+/// task's `branch`, shown while there is a `payload`, which the button sends back to the action
+/// `action` as it came (approve to land: the exact patch to land).
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TaskOffer {
+    /// The board action's name.
+    pub action: String,
+    pub label: String,
     pub branch: String,
-    pub patch: Option<String>,
+    pub payload: Option<String>,
 }
+
+/// The route the owner's answer to a [`TaskOffer`] is posted to: `slug`, `action`, `payload` and
+/// `note`.
+pub const TASK_ACTION_ROUTE: &str = "/api/task-action";
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct TaskEntry {

@@ -1,12 +1,13 @@
 //! The review triage's ranking: what the owner should see first, and how they decide.
 //!
-//! `stats` reads every register under docs/ (the same cards `just symphony-status --json` reports) and
-//! reports the owner's first-pass approval rate per category, how often an approval still carries a
-//! note, the letters they pick and how often they answer with a question. `queue N` lists the N pending
-//! cards the owner should see first: design cards by how many hulls and cards they gate, then their
-//! questions an agent has answered, then hull model cards, then art nobody could decide, each with a
-//! link that scrolls the Symphony to the card. `auto-approve` and its roster-variety check go with
-//! tools/python-zero/art-cards.
+//! `stats` reads every register under the documents (the same cards `just symphony-status --json`
+//! reports) and reports the owner's first-pass approval rate per category, how often an approval
+//! still carries a note, the letters they pick and how often they answer with a question. `queue N`
+//! lists the N pending cards the owner should see first: design cards by how much they gate, then
+//! their questions an agent has answered, then the cards only the owner signs off, then pictures
+//! nobody could decide, each with a link that scrolls the Symphony to the card. The project's card
+//! kinds say which card is which and what a card gates besides the cards waiting on it. `auto-approve`
+//! and its roster-variety check go with tools/python-zero/art-cards.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::net::{SocketAddr, TcpStream};
@@ -18,7 +19,7 @@ use regex::Regex;
 
 use crate::art::{self, ArtError};
 use crate::board::Doc;
-use crate::model::is_model;
+use crate::plugins::Plugins;
 use crate::register::{Decision, Group, REPLACES, Who};
 use crate::text::{S, is_space, strip};
 
@@ -29,8 +30,6 @@ pub const DEFAULT_APP: &str = "http://127.0.0.1:8765";
 
 const OWNER_VERDICTS: [&str; 4] = ["approved", "rejected", "question", "dismissed"];
 
-static HULLS: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"\[\[ships?:(?P<ids>[^\]|]+)").unwrap());
 static DEPENDS: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(&format!(
         r"\*(?:Depends|After):\*{S}*(?P<slugs>[a-z0-9][a-z0-9, -]*)"
@@ -77,22 +76,20 @@ pub struct Item {
     pub link: String,
 }
 
-/// A picture card: it fills a picture slot (`*Shows:*`). A picture on a design card does not make it art.
-pub fn is_art(card: &Decision) -> bool {
-    art::shows(card).is_some()
+/// A picture card: one of the project's card kinds names the slot it fills. A picture on a design
+/// card does not make it art.
+pub fn is_art(plugins: &Plugins, card: &Decision) -> bool {
+    plugins.slot(card).is_some()
 }
 
-pub fn category(doc: &str, card: &Decision) -> String {
+pub fn category(plugins: &Plugins, doc: &str, card: &Decision) -> String {
     let doc = doc
         .strip_prefix('@')
         .and_then(|p| p.split_once('/'))
         .map_or(doc, |(_, path)| path);
-    crate::plugins::with_card(card, doc, |found| {
-        crate::plugins::card_kinds()
-            .iter()
-            .find_map(|kind| kind.triage_category(found))
-    })
-    .unwrap_or_else(|| format!("design · {doc}"))
+    plugins
+        .triage_category(doc, card)
+        .unwrap_or_else(|| format!("design · {doc}"))
 }
 
 pub fn is_redraw(card: &Decision) -> bool {
@@ -158,7 +155,10 @@ fn is_note(text: &str) -> bool {
 }
 
 /// ("art" or "design", letter) the owner picked on an approved card, or `None`.
-fn picked_letter(card: &Decision) -> Result<Option<(&'static str, String)>, ArtError> {
+fn picked_letter(
+    plugins: &Plugins,
+    card: &Decision,
+) -> Result<Option<(&'static str, String)>, ArtError> {
     let entries = card.entries();
     let approved = |e: &&crate::register::Entry| {
         e.who == Who::Owner && e.verdict.as_deref() == Some("approved")
@@ -168,7 +168,7 @@ fn picked_letter(card: &Decision) -> Result<Option<(&'static str, String)>, ArtE
     {
         return Ok(None);
     }
-    if is_art(card) {
+    if is_art(plugins, card) {
         let letters = letters(card);
         if letters.len() < 2 {
             return Ok(None);
@@ -200,7 +200,7 @@ fn cards_of(docs: &[Doc]) -> Vec<(String, Decision)> {
         .collect()
 }
 
-pub fn stats(docs: &[Doc]) -> Result<Stats, ArtError> {
+pub fn stats(plugins: &Plugins, docs: &[Doc]) -> Result<Stats, ArtError> {
     let mut found = Stats {
         categories: BTreeMap::new(),
         first_post: Bucket::default(),
@@ -225,7 +225,10 @@ pub fn stats(docs: &[Doc]) -> Result<Stats, ArtError> {
             };
             post.decided += 1;
             post.approved_first += approved;
-            let bucket = found.categories.entry(category(&doc, &card)).or_default();
+            let bucket = found
+                .categories
+                .entry(category(plugins, &doc, &card))
+                .or_default();
             bucket.decided += 1;
             bucket.approved_first += approved;
             let asked = entries
@@ -239,7 +242,7 @@ pub fn stats(docs: &[Doc]) -> Result<Stats, ArtError> {
                 found.with_note += u32::from(is_note(&entry.text));
             }
         }
-        if let Some((kind, letter)) = picked_letter(&card)? {
+        if let Some((kind, letter)) = picked_letter(plugins, &card)? {
             let counts = if kind == "art" {
                 &mut found.art_letters
             } else {
@@ -333,19 +336,15 @@ fn slugs_in(pattern: &Regex, text: &str) -> BTreeSet<String> {
         .collect()
 }
 
-/// How many (hulls, cards) a design card gates: hulls it names, cards naming it in `*Depends:*`,
-/// cards in its `*Blocks:*`.
-pub fn gates(card: &Decision, cards: &[(String, Decision)]) -> (usize, usize) {
-    let hulls: BTreeSet<String> = HULLS
-        .captures_iter(&card.text)
-        .flat_map(|m| {
-            m["ids"]
-                .split(',')
-                .map(|h| strip(h).to_string())
-                .collect::<Vec<_>>()
-        })
-        .filter(|h| !h.is_empty())
-        .collect();
+/// What a design card of `doc` gates: what the project's card kinds count in it, each as (how
+/// many, the word for one), and how many cards wait on it (those naming it in `*Depends:*`, those
+/// in its `*Blocks:*`).
+pub fn gates(
+    plugins: &Plugins,
+    doc: &str,
+    card: &Decision,
+    cards: &[(String, Decision)],
+) -> (Vec<(usize, String)>, usize) {
     let mut waiting: BTreeSet<String> = cards
         .iter()
         .filter(|(_, other)| {
@@ -358,7 +357,7 @@ pub fn gates(card: &Decision, cards: &[(String, Decision)]) -> (usize, usize) {
             .into_iter()
             .filter(|s| *s != card.slug),
     );
-    (hulls.len(), waiting.len())
+    (plugins.gates(doc, card), waiting.len())
 }
 
 fn link(doc: &str, slug: &str, app: &str) -> String {
@@ -369,45 +368,53 @@ fn plural(n: usize, word: &str) -> String {
     format!("{n} {word}{}", if n == 1 { "" } else { "s" })
 }
 
-/// The `n` pending cards the owner should see first, highest leverage first.
-pub fn queue(docs: &[Doc], n: usize, app: &str) -> Vec<Item> {
+/// The `n` pending cards the owner should see first, highest leverage first, as the project's card
+/// kinds sort them.
+pub fn queue(plugins: &Plugins, docs: &[Doc], n: usize, app: &str) -> Vec<Item> {
     let cards = cards_of(docs);
     let mut design: Vec<(usize, String, Item)> = Vec::new();
     let mut answered: Vec<(String, Item)> = Vec::new();
     let mut art_cards: Vec<(String, Item)> = Vec::new();
-    let mut models: Vec<(String, Item)> = Vec::new();
+    let mut sign_offs: Vec<(String, Item)> = Vec::new();
     for (doc, card) in &cards {
         let posted = card.posted_at().unwrap_or_default();
-        let thread = card.thread();
+        let thread = card.thread(plugins);
         let item = |reason: String| Item {
             slug: card.slug.clone(),
             doc: doc.clone(),
             reason,
             link: link(doc, &card.slug, app),
         };
-        if thread.group == Group::Decide && is_model(card) {
+        if thread.group == Group::Decide && !plugins.auto_approvable(card) {
             // the owner's sign-off alone: no triage decides one
             let why = if thread.asks_owner {
                 "an agent asks you"
             } else {
                 "only you sign it off"
             };
-            models.push((posted, item(format!("{} · {why}", category(doc, card)))));
-        } else if thread.group == Group::Decide && !is_art(card) {
-            let (hulls, waiting) = gates(card, &cards);
-            let mut reason = if hulls > 0 || waiting > 0 {
-                format!(
-                    "design · gates {} and {}",
-                    plural(hulls, "hull"),
-                    plural(waiting, "card")
-                )
+            sign_offs.push((
+                posted,
+                item(format!("{} · {why}", category(plugins, doc, card))),
+            ));
+        } else if thread.group == Group::Decide && !is_art(plugins, card) {
+            let (counted, waiting) = gates(plugins, doc, card, &cards);
+            let total = waiting + counted.iter().map(|(n, _)| n).sum::<usize>();
+            let mut reason = if total > 0 {
+                let named: Vec<String> = counted
+                    .iter()
+                    .map(|(n, word)| (*n, word.as_str()))
+                    .chain([(waiting, "card")])
+                    .filter(|(n, _)| *n > 0)
+                    .map(|(n, word)| plural(n, word))
+                    .collect();
+                format!("design · gates {}", named.join(" and "))
             } else {
                 "design · gates nothing known".to_string()
             };
             if thread.asks_owner {
                 reason = "design · an agent asks you".to_string();
             }
-            design.push((usize::MAX - (hulls + waiting), posted, item(reason)));
+            design.push((usize::MAX - total, posted, item(reason)));
         } else if thread.group == Group::Confirm {
             let what = if card.state.as_str() == "question" {
                 "your question"
@@ -421,16 +428,19 @@ pub fn queue(docs: &[Doc], n: usize, app: &str) -> Vec<Item> {
             } else {
                 "the triage left it for you"
             };
-            art_cards.push((posted, item(format!("{} · {why}", category(doc, card)))));
+            art_cards.push((
+                posted,
+                item(format!("{} · {why}", category(plugins, doc, card))),
+            ));
         }
     }
     design.sort_by(|a, b| (a.0, &a.1).cmp(&(b.0, &b.1)));
     answered.sort_by(|a, b| a.0.cmp(&b.0));
-    models.sort_by(|a, b| a.0.cmp(&b.0));
+    sign_offs.sort_by(|a, b| a.0.cmp(&b.0));
     art_cards.sort_by(|a, b| a.0.cmp(&b.0));
     let mut ranked: Vec<Item> = design.into_iter().map(|(_, _, i)| i).collect();
     ranked.extend(answered.into_iter().map(|(_, i)| i));
-    ranked.extend(models.into_iter().map(|(_, i)| i));
+    ranked.extend(sign_offs.into_iter().map(|(_, i)| i));
     ranked.extend(art_cards.into_iter().map(|(_, i)| i));
     ranked.truncate(n);
     ranked

@@ -100,7 +100,7 @@ pub fn document(render: &Render, rel: &str, scope: &str) -> Result<Document, Str
     let cards = crate::register::parse_decisions(&crate::text::splitlines(&text))
         .into_iter()
         .map(|card| {
-            let thread = card.thread();
+            let thread = card.thread(render.plugins());
             symphony_api::DocumentCard {
                 slug: card.slug.clone(),
                 state: card.state.as_str().into(),

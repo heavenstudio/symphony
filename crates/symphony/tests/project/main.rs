@@ -10,6 +10,7 @@ mod common;
 mod board;
 
 mod fields;
+mod folders;
 mod manifest;
 mod seams;
 mod star_foundry;

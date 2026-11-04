@@ -84,7 +84,8 @@ pub(crate) fn outside_code(text: &str, swap: &mut dyn FnMut(&str) -> String) -> 
     out
 }
 
-/// Every document under `docs/`, project-relative, live ones before those in `history/`.
+/// Every document of the project, named by its route (`docs/…`), live ones before those in its
+/// history folders.
 pub(crate) fn doc_paths(root: &Path) -> Vec<String> {
     fn walk(base: &Path, rel: &str, found: &mut Vec<String>) {
         let Ok(entries) = std::fs::read_dir(base.join(rel)) else {
@@ -100,12 +101,21 @@ pub(crate) fn doc_paths(root: &Path) -> Vec<String> {
             }
         }
     }
+    let project = crate::project::Project::of(root);
     let mut found = Vec::new();
-    walk(root, "docs", &mut found);
-    found.sort();
-    let (history, live): (Vec<String>, Vec<String>) =
-        found.into_iter().partition(|p| p.contains("/history/"));
-    live.into_iter().chain(history).collect()
+    walk(root, &project.docs, &mut found);
+    let (live, history): (Vec<String>, Vec<String>) = found
+        .into_iter()
+        .partition(|file| project.is_document_path(file));
+    let named = |files: Vec<String>| {
+        let mut names: Vec<String> = files
+            .into_iter()
+            .filter_map(|file| project.route(&file))
+            .collect();
+        names.sort();
+        names
+    };
+    named(live).into_iter().chain(named(history)).collect()
 }
 
 /// The document a wikilink names: the path it spells from the linking page if that exists, else the one

@@ -4,6 +4,7 @@
 use std::path::Path;
 
 use symphony::landing::Generator;
+use symphony::lint::project_problems;
 use symphony::project::{FILE, PANES, Project, TRANSPORTS, slug};
 
 use super::Tree;
@@ -52,6 +53,30 @@ fn no_file_and_an_empty_file_are_the_plain_project_of_every_default() {
             .unwrap(),
         parsed("").unwrap()
     );
+}
+
+#[test]
+fn a_folder_whose_name_makes_no_slug_is_still_a_plain_project() {
+    let tree = Tree::new();
+    for root in [Path::new(""), Path::new("/"), &folder(&tree, "★ ★")] {
+        let plain = Project::plain(root);
+        assert_eq!(
+            plain.id,
+            symphony::project::DEFAULT_ID,
+            "{}",
+            root.display()
+        );
+        assert_eq!(plain.docs, "docs");
+    }
+    assert_eq!(Project::of(&tree.path("★ ★")).id, "project");
+    // a name the file gives still names the id, and one that makes no slug is refused
+    assert_eq!(
+        Project::parse(Path::new("/"), "[project]\nname = \"Night Shift\"\n")
+            .unwrap()
+            .id,
+        "night-shift"
+    );
+    assert!(Project::parse(Path::new("/"), "[project]\nname = \"!!\"\n").is_err());
 }
 
 #[test]
@@ -318,6 +343,31 @@ fn a_project_naming_a_plugin_this_build_lacks_is_told_and_keeps_the_ones_it_has(
             .len(),
         1
     );
+}
+
+#[test]
+fn the_lint_names_why_the_project_file_is_refused_and_fails_on_it() {
+    let tree = Tree::new();
+    let lint = || {
+        let (mut out, mut err) = (Vec::new(), Vec::new());
+        let code = symphony::lint::main(&tree.root, &mut out, &mut err);
+        (code, String::from_utf8(err).unwrap())
+    };
+    assert!(project_problems(&tree.root).is_empty());
+    tree.write(FILE, "[project]\nid = \"Night Shift\"\n");
+    let problems = project_problems(&tree.root);
+    assert_eq!(problems.len(), 1, "{problems:?}");
+    assert!(problems[0].contains("is not a slug"), "{problems:?}");
+    let (code, err) = lint();
+    assert_eq!(code, 1);
+    assert!(err.contains(&problems[0]), "{err}");
+    assert!(err.contains("✖ the project file is refused"), "{err}");
+    tree.write(FILE, "[plugins]\ncrates = [\"no-such-plugin\"]\n");
+    assert_eq!(
+        project_problems(&tree.root),
+        ["symphony.toml: [plugins] crates names no-such-plugin, which this build does not hold"]
+    );
+    assert_eq!(lint().0, 1);
 }
 
 #[test]

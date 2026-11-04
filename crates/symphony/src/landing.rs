@@ -177,12 +177,33 @@ pub struct Generator {
     pub when_changed: bool,
 }
 
-/// The generators of the project at `root`, in its `symphony.toml`'s order.
+/// The generators of the project at `root` ([`of_project`]).
 pub fn generators(root: &Path) -> Vec<Generator> {
-    crate::project::Project::of(root)
+    of_project(&crate::project::Project::of(root))
+}
+
+/// The generators of `project`: its `symphony.toml`'s in their order, then its plugins'.
+pub fn of_project(project: &crate::project::Project) -> Vec<Generator> {
+    with_plugins(project, &crate::plugins::Plugins::for_project(project))
+}
+
+/// The generators of `project` with `plugins` as its plugins.
+pub fn with_plugins(
+    project: &crate::project::Project,
+    plugins: &crate::plugins::Plugins,
+) -> Vec<Generator> {
+    project
         .verdicts
         .generators
-        .clone()
+        .iter()
+        .cloned()
+        .chain(plugins.generators().into_iter().map(|generator| Generator {
+            name: generator.name().into(),
+            outputs: generator.outputs().into(),
+            command: generator.command(),
+            when_changed: generator.when_changed(),
+        }))
+        .collect()
 }
 
 fn changed(root: &Path) -> Option<Vec<String>> {

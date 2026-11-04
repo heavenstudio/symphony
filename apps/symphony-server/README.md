@@ -158,7 +158,11 @@ snapshot; changed observations commit their sequence with their queued events.
 
 Owner POSTs to `/api/decision`, `/api/comment`, `/api/message`,
 `/api/task-message`, `/api/quick-chat`, `/api/quick-task`, `/api/ask`,
-`/api/ask-reply` and `/api/land-approve` run natively through `symphony::save`.
+`/api/ask-reply` and `/api/task-action` run natively through `symphony::save`. A task
+action is a board action of the project's plugins, named by the offer it answers
+(`TaskOffer`: the action, its label, the branch and the payload it hands back);
+an action no plugin of the project offers is a 404, and one the action refuses
+says and moves nothing on the board.
 Writes require an allowed Host and, when supplied, the app's exact Origin.
 One register lock covers read, edit, no-loss validation, write and tap
 deduplication across all worktrees. Asks share the existing `ASKS_DB` store.
@@ -166,8 +170,8 @@ deduplication across all worktrees. Asks share the existing `ASKS_DB` store.
 `POST /api/upload?name=FILE` takes an owner's attachment as the raw body, behind
 the same Host and Origin check, refusing a declared or streamed body past 10 MB
 before reading the rest (`write.rs`). `symphony::uploads` reads its kind from its
-bytes and stores it by SHA-256 in this server's own `artifacts/uploads/`,
-whatever branch the page is on. `GET /artifacts/uploads/<sha256>.<ext>` serves a
+bytes and stores it by SHA-256 in `uploads/` of this server's project artifacts
+folder (`artifacts/uploads/` by default), whatever branch the page is on. `GET /artifacts/uploads/<sha256>.<ext>` serves a
 stored name only, from every scope, with its fixed type, `nosniff`, immutable
 caching and a script-free sandboxing CSP, PDF and Office files as downloads
 (`media_files.rs`); docs/workflow/REVIEW.md,

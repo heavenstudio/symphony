@@ -292,6 +292,11 @@ impl Render {
         self
     }
 
+    /// The plugins of the project it renders.
+    pub fn plugins(&self) -> &crate::plugins::Plugins {
+        &self.plugins
+    }
+
     pub fn root(&self) -> &std::path::Path {
         &self.root
     }
@@ -360,7 +365,7 @@ impl Render {
         ctx.typed = typed;
         let mut keys = SectionKeys::default();
         let counts = if text.contains(REGION_START) {
-            Some(group_counts(text))
+            Some(group_counts(text, &self.plugins))
         } else {
             None
         };
@@ -526,14 +531,17 @@ pub fn references(text: &str) -> Vec<(String, String, Option<String>)> {
 }
 
 /// How many cards belong to each register group, by where the cards belong, not where they sit.
-fn group_counts(text: &str) -> Vec<(Group, usize)> {
+fn group_counts(text: &str, plugins: &crate::plugins::Plugins) -> Vec<(Group, usize)> {
     let cards = parse_decisions(&splitlines(text));
     Group::ALL
         .iter()
         .map(|group| {
             (
                 *group,
-                cards.iter().filter(|card| card.group() == *group).count(),
+                cards
+                    .iter()
+                    .filter(|card| card.group(plugins) == *group)
+                    .count(),
             )
         })
         .collect()

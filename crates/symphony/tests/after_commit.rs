@@ -547,6 +547,7 @@ fn generated_stale_verdict_keeps_the_concurrent_reply_in_the_checkout() {
                 "approved",
                 "Owner's exact words.",
                 "2026-10-30 07:42",
+                &common::plain(),
             )
             .unwrap();
             let expected = set_decision(
@@ -555,6 +556,7 @@ fn generated_stale_verdict_keeps_the_concurrent_reply_in_the_checkout() {
                 "approved",
                 "Owner's exact words.",
                 "2026-10-30 07:42",
+                &common::plain(),
             )
             .unwrap();
             let committer = ClosingCommitter::start(&root);
@@ -588,15 +590,22 @@ fn syncing_a_stale_save_keeps_later_local_edits_and_queued_messages() {
             use symphony::edit::{add_message, set_decision};
             use symphony::register::{Who, sort_register};
             let root = f.repo();
-            let base = sort_register("# Prose\n\n<!-- register:start -->\n### Topic\n\n- [ ] **c** — Existing card.\n<!-- register:end -->\n").unwrap();
+            let base = sort_register("# Prose\n\n<!-- register:start -->\n### Topic\n\n- [ ] **c** — Existing card.\n<!-- register:end -->\n", &common::plain()).unwrap();
             write(&root.join("docs/a.md"), &base);
             git(&root, &["commit", "-qam", "base card"]);
             let current =
                 add_message(&base, "c", "Reply.", "2026-10-30 07:41", Who::Agent, None).unwrap();
             write(&root.join("docs/a.md"), &current);
             git(&root, &["commit", "-qam", "main reply"]);
-            let saved =
-                set_decision(&base, "c", "approved", "Keep it.", "2026-10-30 07:42").unwrap();
+            let saved = set_decision(
+                &base,
+                "c",
+                "approved",
+                "Keep it.",
+                "2026-10-30 07:42",
+                &common::plain(),
+            )
+            .unwrap();
             let edit = f.edit("docs/a.md", &base, &saved);
             let queued = add_message(
                 &saved,
@@ -618,8 +627,15 @@ fn syncing_a_stale_save_keeps_later_local_edits_and_queued_messages() {
                 outcome.error,
                 outcome.notes
             );
-            let committed =
-                set_decision(&current, "c", "approved", "Keep it.", "2026-10-30 07:42").unwrap();
+            let committed = set_decision(
+                &current,
+                "c",
+                "approved",
+                "Keep it.",
+                "2026-10-30 07:42",
+                &common::plain(),
+            )
+            .unwrap();
             assert_eq!(f.main("docs/a.md"), committed);
             let expected = add_message(
                 &committed,
@@ -713,7 +729,7 @@ fn stale_save_shapes(f: &Fixture, shape: StaleSaveShape) {
     };
     for (base, slug, adjacent) in cases {
         for verdict in [false, true] {
-            let base = sort_register(base).unwrap();
+            let base = sort_register(base, &common::plain()).unwrap();
             let mut current = add_message(
                 &base,
                 slug,
@@ -726,13 +742,19 @@ fn stale_save_shapes(f: &Fixture, shape: StaleSaveShape) {
             if adjacent != 0 {
                 let added = "- [ ] **fresh** — Independent new card.\n    Proposal details stay verbatim.\n  [2026-10-30 07:41] agent — New card history.\n";
                 current = if adjacent < 0 {
-                    sort_register(&current.replace("- [ ] **c**", &format!("{added}\n- [ ] **c**")))
-                        .unwrap()
+                    sort_register(
+                        &current.replace("- [ ] **c**", &format!("{added}\n- [ ] **c**")),
+                        &common::plain(),
+                    )
+                    .unwrap()
                 } else if current.contains("<!-- register:end -->") {
-                    sort_register(&current.replace(
-                        "<!-- register:end -->",
-                        &format!("{added}\n<!-- register:end -->"),
-                    ))
+                    sort_register(
+                        &current.replace(
+                            "<!-- register:end -->",
+                            &format!("{added}\n<!-- register:end -->"),
+                        ),
+                        &common::plain(),
+                    )
                     .unwrap()
                 } else {
                     format!("{current}\n{added}")
@@ -745,6 +767,7 @@ fn stale_save_shapes(f: &Fixture, shape: StaleSaveShape) {
                     "approved",
                     "Owner's exact words.\n\nAnother paragraph.",
                     "2026-10-30 07:43",
+                    &common::plain(),
                 )
                 .unwrap()
             } else {
@@ -765,6 +788,7 @@ fn stale_save_shapes(f: &Fixture, shape: StaleSaveShape) {
                     "approved",
                     "Owner's exact words.\n\nAnother paragraph.",
                     "2026-10-30 07:43",
+                    &common::plain(),
                 )
                 .unwrap()
             } else {
@@ -786,7 +810,7 @@ fn stale_save_shapes(f: &Fixture, shape: StaleSaveShape) {
                 "Owner's exact words.\n    Another",
                 "Owner's exact words.\n\n    Another",
             );
-            let expected = sort_register(&expected).unwrap();
+            let expected = sort_register(&expected, &common::plain()).unwrap();
             write(&root.join("docs/a.md"), &base);
             git(&root, &["commit", "-qam", "base history"]);
             write(&root.join("docs/a.md"), &current);
@@ -840,14 +864,17 @@ fn a_card_added_on_main_survives_a_stale_message_in_plain_and_register_documents
 
             let root = f.repo();
             let plain = "- [ ] **c** — Existing card.\n\n- [ ] **other** — Another card.\n";
-            let register = sort_register(&format!("# Decisions\n\n<!-- register:start -->\n### Topic\n\n{plain}<!-- register:end -->\n")).unwrap();
+            let register = sort_register(&format!("# Decisions\n\n<!-- register:start -->\n### Topic\n\n{plain}<!-- register:end -->\n"), &common::plain()).unwrap();
             for base in [plain, register.as_str()] {
                 let added = "- [ ] **fresh** — Added independently on main.\n";
                 let current = if base.contains("<!-- register:end -->") {
-                    sort_register(&base.replace(
-                        "<!-- register:end -->",
-                        &format!("{added}<!-- register:end -->"),
-                    ))
+                    sort_register(
+                        &base.replace(
+                            "<!-- register:end -->",
+                            &format!("{added}<!-- register:end -->"),
+                        ),
+                        &common::plain(),
+                    )
                     .unwrap()
                 } else {
                     format!("{base}\n{added}")
@@ -903,11 +930,18 @@ fn a_clean_text_merge_cannot_resurrect_a_card_removed_on_main() {
 
             let root = f.repo();
             let removed = "- [?] **c** — Choose a framework.\n  [2026-10-30 07:00] agent · question — Which?\n";
-            let base = sort_register(&format!("# Decisions\n\n<!-- register:start -->\n### Topic\n\n{removed}\n- [ ] **pending** — Still pending.\n\n- [?] **answered** — Already answered.\n  [2026-10-30 07:00] owner · question — Explain.\n  [2026-10-30 07:01] agent — Explained.\n\n- [?] **waiting** — Still waiting.\n  [2026-10-30 07:00] owner · question — Explain this too.\n<!-- register:end -->\n")).unwrap();
+            let base = sort_register(&format!("# Decisions\n\n<!-- register:start -->\n### Topic\n\n{removed}\n- [ ] **pending** — Still pending.\n\n- [?] **answered** — Already answered.\n  [2026-10-30 07:00] owner · question — Explain.\n  [2026-10-30 07:01] agent — Explained.\n\n- [?] **waiting** — Still waiting.\n  [2026-10-30 07:00] owner · question — Explain this too.\n<!-- register:end -->\n"), &common::plain()).unwrap();
             assert!(base.contains(removed));
-            let current = sort_register(&base.replace(removed, "")).unwrap();
-            let saved =
-                set_decision(&base, "c", "approved", "Keep Dioxus.", "2026-10-30 07:42").unwrap();
+            let current = sort_register(&base.replace(removed, ""), &common::plain()).unwrap();
+            let saved = set_decision(
+                &base,
+                "c",
+                "approved",
+                "Keep Dioxus.",
+                "2026-10-30 07:42",
+                &common::plain(),
+            )
+            .unwrap();
             for (name, text) in [
                 ("merge-current", &current),
                 ("merge-base", &base),
@@ -971,7 +1005,7 @@ fn clean_text_merge_of_two_group_moves_keeps_one_card_and_accepts_the_next_save(
             use symphony::register::{Who, parse_decisions, sort_register};
 
             let root = f.repo();
-            let base = sort_register("# Decisions\n\n<!-- register:start -->\n### Topic\n\n- [?] **c** — Choose a framework.\n  [2026-10-30 07:00] agent · question — Which?\n\n- [ ] **pending** — Still pending.\n\n- [?] **answered** — Already answered.\n  [2026-10-30 07:00] owner · question — Explain.\n  [2026-10-30 07:01] agent — Explained.\n\n- [?] **waiting** — Still waiting.\n  [2026-10-30 07:00] owner · question — Explain this too.\n<!-- register:end -->\n").unwrap();
+            let base = sort_register("# Decisions\n\n<!-- register:start -->\n### Topic\n\n- [?] **c** — Choose a framework.\n  [2026-10-30 07:00] agent · question — Which?\n\n- [ ] **pending** — Still pending.\n\n- [?] **answered** — Already answered.\n  [2026-10-30 07:00] owner · question — Explain.\n  [2026-10-30 07:01] agent — Explained.\n\n- [?] **waiting** — Still waiting.\n  [2026-10-30 07:00] owner · question — Explain this too.\n<!-- register:end -->\n", &common::plain()).unwrap();
             let question = add_message(
                 &base,
                 "c",
@@ -991,10 +1025,18 @@ fn clean_text_merge_of_two_group_moves_keeps_one_card_and_accepts_the_next_save(
                     None,
                 )
                 .unwrap(),
+                &common::plain(),
             )
             .unwrap();
-            let saved =
-                set_decision(&base, "c", "approved", "Keep Dioxus.", "2026-10-30 07:42").unwrap();
+            let saved = set_decision(
+                &base,
+                "c",
+                "approved",
+                "Keep Dioxus.",
+                "2026-10-30 07:42",
+                &common::plain(),
+            )
+            .unwrap();
             for (name, text) in [
                 ("merge-current", &current),
                 ("merge-base", &base),
@@ -1051,6 +1093,7 @@ fn clean_text_merge_of_two_group_moves_keeps_one_card_and_accepts_the_next_save(
                 "approved",
                 "Keep Dioxus.",
                 "2026-10-30 07:42",
+                &common::plain(),
             )
             .unwrap();
             assert_eq!(f.main("docs/a.md"), expected);
@@ -1060,6 +1103,7 @@ fn clean_text_merge_of_two_group_moves_keeps_one_card_and_accepts_the_next_save(
                 "approved",
                 "Now answered.",
                 "2026-10-30 07:43",
+                &common::plain(),
             )
             .unwrap();
             let outcome = commit_verdicts(
@@ -1177,7 +1221,7 @@ fn register_verdicts_merge_generated_groups_without_reordering_existing_history(
             let second = "  [2026-10-30 07:20] owner — Second, kept after first.\n";
             let other_history = "  [2026-10-30 07:50] owner — Other first.\n  [2026-10-30 07:40] owner — Other second.\n";
             for mark in [" ", "x", "?"] {
-                let base = sort_register(&format!("# Decision\n\nProse.\n\n<!-- register:start -->\n### Framework\n\n- [{mark}] **choice** — Choose.\n{first}{second}  [2026-10-30 07:37] owner · question — Can we keep Dioxus with themes?\n\n- [ ] **other** — Another.\n{other_history}<!-- register:end -->\n\nTail.\n")).unwrap();
+                let base = sort_register(&format!("# Decision\n\nProse.\n\n<!-- register:start -->\n### Framework\n\n- [{mark}] **choice** — Choose.\n{first}{second}  [2026-10-30 07:37] owner · question — Can we keep Dioxus with themes?\n\n- [ ] **other** — Another.\n{other_history}<!-- register:end -->\n\nTail.\n"), &common::plain()).unwrap();
                 write(&root.join("docs/a.md"), &base);
                 git(&root, &["commit", "-qam", "register fixture"]);
                 let replied = sort_register(
@@ -1190,6 +1234,7 @@ fn register_verdicts_merge_generated_groups_without_reordering_existing_history(
                         None,
                     )
                     .unwrap(),
+                    &common::plain(),
                 )
                 .unwrap();
                 let saved = set_decision(
@@ -1198,6 +1243,7 @@ fn register_verdicts_merge_generated_groups_without_reordering_existing_history(
                     "approved",
                     "Keep Dioxus.",
                     "2026-10-30 07:42",
+                    &common::plain(),
                 )
                 .unwrap();
                 assert_ne!(replied, saved);
@@ -1223,6 +1269,7 @@ fn register_verdicts_merge_generated_groups_without_reordering_existing_history(
                     "approved",
                     "Keep Dioxus.",
                     "2026-10-30 07:42",
+                    &common::plain(),
                 )
                 .unwrap();
                 assert_eq!(f.main("docs/a.md"), expected);
@@ -1235,6 +1282,7 @@ fn register_verdicts_merge_generated_groups_without_reordering_existing_history(
                     "approved",
                     "Also compare repeat visits.",
                     "2026-10-30 07:44",
+                    &common::plain(),
                 )
                 .unwrap();
                 let outcome = commit_verdicts(
@@ -1254,7 +1302,8 @@ fn register_verdicts_merge_generated_groups_without_reordering_existing_history(
                         "choice",
                         "approved",
                         "Also compare repeat visits.",
-                        "2026-10-30 07:44"
+                        "2026-10-30 07:44",
+                        &common::plain()
                     )
                     .unwrap()
                 );
@@ -1274,9 +1323,16 @@ fn register_regrouping_does_not_allow_removed_edited_or_extracted_cards() {
 
             let root = f.repo();
             let block = "- [ ] **choice** — Choose.\n  [2026-10-30 07:30] owner — Original.\n";
-            let base = sort_register(&format!("# Decision\n\nProse.\n\n<!-- register:start -->\n### Topic\n\n{block}\n- [ ] **other** — Other.\n<!-- register:end -->\n")).unwrap();
-            let saved =
-                set_decision(&base, "choice", "approved", "Yes.", "2026-10-30 07:42").unwrap();
+            let base = sort_register(&format!("# Decision\n\nProse.\n\n<!-- register:start -->\n### Topic\n\n{block}\n- [ ] **other** — Other.\n<!-- register:end -->\n"), &common::plain()).unwrap();
+            let saved = set_decision(
+                &base,
+                "choice",
+                "approved",
+                "Yes.",
+                "2026-10-30 07:42",
+                &common::plain(),
+            )
+            .unwrap();
             let replied = sort_register(
                 &add_message(
                     &base,
@@ -1287,6 +1343,7 @@ fn register_regrouping_does_not_allow_removed_edited_or_extracted_cards() {
                     None,
                 )
                 .unwrap(),
+                &common::plain(),
             )
             .unwrap();
             let replied_block = format!("{block}  [2026-10-30 07:38] agent — Reply.\n");
@@ -1337,6 +1394,7 @@ fn unterminated_history_entry_is_separated_from_a_stale_owner_save() {
                 "approved",
                 "Keep Dioxus.",
                 "2026-10-30 07:42",
+                &common::plain(),
             )
             .unwrap();
             write(&root.join("docs/a.md"), base);
@@ -1378,9 +1436,10 @@ fn stale_owner_comment_stays_open_until_a_reply_sees_it() {
             for register in [false, true] {
                 let base = "- [ ] **choice** — Choose.\n  [2026-10-30 06:00] owner — Previously seen comment.\n";
                 let base = if register {
-                    sort_register(&format!(
-                        "<!-- register:start -->\n{base}<!-- register:end -->\n"
-                    ))
+                    sort_register(
+                        &format!("<!-- register:start -->\n{base}<!-- register:end -->\n"),
+                        &common::plain(),
+                    )
                     .unwrap()
                 } else {
                     base.into()
@@ -1431,8 +1490,11 @@ fn stale_owner_comment_stays_open_until_a_reply_sees_it() {
                 let card = parse_decisions(&merged.lines().collect::<Vec<_>>()).remove(0);
                 assert_eq!(card.entries().len(), 4, "metadata is not a post");
                 assert_eq!(card.unanswered(), ["Unseen comment.\nSecond paragraph."]);
-                assert!(card.open());
-                assert_eq!(card.group(), symphony::register::Group::Decide);
+                assert!(card.open(&common::plain()));
+                assert_eq!(
+                    card.group(&common::plain()),
+                    symphony::register::Group::Decide
+                );
                 assert!(
                     symphony::verdicts::open_cards(&root)
                         .unwrap()
@@ -1440,7 +1502,7 @@ fn stale_owner_comment_stays_open_until_a_reply_sees_it() {
                         .any(|card| card.slug == "choice")
                 );
                 assert!(status().contains("Unseen comment."));
-                assert_eq!(sort_register(&merged).unwrap(), merged);
+                assert_eq!(sort_register(&merged, &common::plain()).unwrap(), merged);
 
                 // A second queued owner save still uses a base without main's reply or metadata.
                 let queued = add_message(
@@ -1494,7 +1556,7 @@ fn stale_owner_comment_stays_open_until_a_reply_sees_it() {
                 );
                 let answered = f.main("docs/a.md");
                 let card = parse_decisions(&answered.lines().collect::<Vec<_>>()).remove(0);
-                assert!(!card.open());
+                assert!(!card.open(&common::plain()));
                 assert!(card.unanswered().is_empty());
                 assert!(!status().contains("Unseen comment."));
 
@@ -1594,7 +1656,15 @@ fn stale_owner_verdict_without_words_stays_open_until_answered() {
                 .unwrap();
                 write(&root.join("docs/a.md"), &replied);
                 git(&root, &["commit", "-qam", "agent reply"]);
-                let saved = set_decision(base, "choice", verdict, "", "2026-10-30 07:00").unwrap();
+                let saved = set_decision(
+                    base,
+                    "choice",
+                    verdict,
+                    "",
+                    "2026-10-30 07:00",
+                    &common::plain(),
+                )
+                .unwrap();
                 let outcome =
                     commit_verdicts(&root, &[f.edit("docs/a.md", base, &saved)], "owner verdict");
                 assert!(
@@ -1604,8 +1674,8 @@ fn stale_owner_verdict_without_words_stays_open_until_answered() {
                 );
                 let merged = f.main("docs/a.md");
                 let card = parse_decisions(&merged.lines().collect::<Vec<_>>()).remove(0);
-                assert!(card.open(), "{verdict}: {merged}");
-                assert!(!card.resolvable());
+                assert!(card.open(&common::plain()), "{verdict}: {merged}");
+                assert!(!card.resolvable(&common::plain()));
                 assert!(card.unanswered().is_empty(), "no invented owner words");
                 write(&root.join("docs/a.md"), &merged);
                 let status = common::status_ok(&root, &["--open"]);
@@ -1631,7 +1701,10 @@ fn stale_owner_verdict_without_words_stays_open_until_answered() {
                     outcome.error
                 );
                 let answered = f.main("docs/a.md");
-                assert!(!parse_decisions(&answered.lines().collect::<Vec<_>>())[0].open());
+                assert!(
+                    !parse_decisions(&answered.lines().collect::<Vec<_>>())[0]
+                        .open(&common::plain())
+                );
             }
             f.clean_workers();
         },

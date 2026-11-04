@@ -154,10 +154,12 @@ impl Plugins {
     }
 }
 
-/// What in `project` names a plugin this build does not hold.
+/// What in `project` names a plugin this build does not hold, and a plugin's generator in a
+/// project that names no land command: a generated branch never moves the default branch
+/// unchecked.
 pub fn problems(project: &Project) -> Vec<String> {
     let compiled = compiled();
-    project
+    let mut found: Vec<String> = project
         .plugins
         .iter()
         .filter(|name| !compiled.iter().any(|p| p.name() == name.as_str()))
@@ -165,6 +167,26 @@ pub fn problems(project: &Project) -> Vec<String> {
             format!(
                 "{}: [plugins] crates names {name}, which this build does not hold",
                 crate::project::FILE
+            )
+        })
+        .collect();
+    found.extend(unlanded(project, &Plugins::for_project(project)));
+    found
+}
+
+/// Each generator of `plugins` in `project` when it names no land command.
+pub fn unlanded(project: &Project, plugins: &Plugins) -> Vec<String> {
+    if !project.verdicts.land.is_empty() {
+        return Vec::new();
+    }
+    plugins
+        .generators()
+        .iter()
+        .map(|generator| {
+            format!(
+                "{}: the plugin generator {} needs a [verdicts] land command",
+                crate::project::FILE,
+                generator.name()
             )
         })
         .collect()
@@ -231,15 +253,6 @@ impl Component for Task {
     }
 }
 
-/// The card kinds of every compiled plugin: a card's kind is read from its own text, wherever it
-/// sits.
-pub fn card_kinds() -> Vec<&'static dyn CardKind> {
-    compiled()
-        .into_iter()
-        .flat_map(|p| p.card_kinds())
-        .collect()
-}
-
 /// `decision`, a card of the document `doc`, as card kinds read it.
 pub fn with_card<R>(decision: &Decision, doc: &str, read: impl FnOnce(&Card<'_>) -> R) -> R {
     let entries = decision.entries();
@@ -260,29 +273,63 @@ pub fn with_card<R>(decision: &Decision, doc: &str, read: impl FnOnce(&Card<'_>)
     })
 }
 
-/// The slot a picture card fills (`Republic · ship`), as the first card kind that names one says.
-pub fn slot(decision: &Decision) -> Option<String> {
-    with_card(decision, "", |card| {
-        card_kinds().iter().find_map(|kind| kind.slot(card))
-    })
-}
+/// What the project's card kinds say of a card: a kind is read from the card's own text, wherever
+/// it sits, and only the kinds of the plugins the project names read it.
+impl Plugins {
+    /// The slot a picture card fills (`Republic · ship`), as the first card kind that names one
+    /// says.
+    pub fn slot(&self, decision: &Decision) -> Option<String> {
+        with_card(decision, "", |card| {
+            self.card_kinds().iter().find_map(|kind| kind.slot(card))
+        })
+    }
 
-/// The pictures the board shows on `decision`, a card of `doc` in the checkout at `root`.
-pub fn pictures(root: &Path, doc: &str, decision: &Decision) -> Vec<Picture> {
-    with_card(decision, doc, |card| {
-        card_kinds()
-            .iter()
-            .map(|kind| kind.pictures(root, card))
-            .find(|found| !found.is_empty())
-            .unwrap_or_default()
-    })
-}
+    /// The pictures the board shows on `decision`, a card of `doc` in the checkout at `root`.
+    pub fn pictures(&self, root: &Path, doc: &str, decision: &Decision) -> Vec<Picture> {
+        with_card(decision, doc, |card| {
+            self.card_kinds()
+                .iter()
+                .map(|kind| kind.pictures(root, card))
+                .find(|found| !found.is_empty())
+                .unwrap_or_default()
+        })
+    }
 
-/// Whether the owner's approval of `decision` waits for an agent to apply it.
-pub fn approval_needs_agent(decision: &Decision) -> bool {
-    with_card(decision, "", |card| {
-        card_kinds()
-            .iter()
-            .any(|kind| kind.approval_needs_agent(card))
-    })
+    /// Whether the owner's approval of `decision` waits for an agent to apply it.
+    pub fn approval_needs_agent(&self, decision: &Decision) -> bool {
+        with_card(decision, "", |card| {
+            self.card_kinds()
+                .iter()
+                .any(|kind| kind.approval_needs_agent(card))
+        })
+    }
+
+    /// The triage's category for `decision`, a card of `doc`, as the first kind to give one says.
+    pub fn triage_category(&self, doc: &str, decision: &Decision) -> Option<String> {
+        with_card(decision, doc, |card| {
+            self.card_kinds()
+                .iter()
+                .find_map(|kind| kind.triage_category(card))
+        })
+    }
+
+    /// Whether every kind lets a predicted approval stand for the owner's on `decision`.
+    pub fn auto_approvable(&self, decision: &Decision) -> bool {
+        with_card(decision, "", |card| {
+            self.card_kinds()
+                .iter()
+                .all(|kind| kind.auto_approvable(card))
+        })
+    }
+
+    /// What `decision`, a card of `doc`, gates as the kinds count it: (how many, the word for one),
+    /// in the kinds' order.
+    pub fn gates(&self, doc: &str, decision: &Decision) -> Vec<(usize, String)> {
+        with_card(decision, doc, |card| {
+            self.card_kinds()
+                .iter()
+                .filter_map(|kind| kind.gates(card))
+                .collect()
+        })
+    }
 }

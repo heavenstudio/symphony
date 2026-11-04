@@ -14,7 +14,7 @@ use std::path::{Component as Part, Path};
 use symphony_plugin::vocabulary::{NavItem, TaskOffer};
 use symphony_plugin::{
     BoardAction, CardKind, Component, DocCheck, HomeRegion, Plugin, ProseRule, Reply, Route,
-    TaskRef, Watch,
+    Submission, Submitted, TaskRef, Watch,
 };
 
 pub use cards::GOLDEN_FRAME;
@@ -170,8 +170,8 @@ impl ProseRule for FactionVerdicts {
     }
 }
 
-/// The owner's approval of a task in review lands its branch: the offer carries the patch `sf-land`
-/// prepares for it.
+/// The owner's approval of a task in review lands its branch: the offer's payload is the patch
+/// `sf-land` prepares for it.
 struct ApproveToLand;
 
 impl BoardAction for ApproveToLand {
@@ -183,7 +183,7 @@ impl BoardAction for ApproveToLand {
         if task.status != "review" {
             return Ok(TaskOffer::default());
         }
-        let patch = crate::commit::land_call(
+        let payload = crate::commit::land_call(
             root,
             &serde_json::json!({"method": "owner_offer", "branch": task.branch}),
         )?
@@ -191,8 +191,41 @@ impl BoardAction for ApproveToLand {
         .filter(|patch| !patch.is_empty())
         .map(str::to_string);
         Ok(TaskOffer {
+            action: self.name().into(),
+            label: "Approve to land".into(),
             branch: task.branch.into(),
-            patch,
+            payload,
+        })
+    }
+
+    /// Records the owner's approval of the patch `sf-land` offered, then asks which tasks its
+    /// stamps held blocked on it. A release that cannot be read leaves them for the next landing or
+    /// stamp edit, which re-reads them.
+    fn submit(
+        &self,
+        root: &Path,
+        task: &TaskRef<'_>,
+        submission: &Submission,
+    ) -> Result<Submitted, String> {
+        let problem = crate::commit::land_call(
+            root,
+            &serde_json::json!({"method": "record_owner_approval", "branch": task.branch,
+                "patch": submission.payload, "note": submission.note}),
+        )?;
+        if let Some(problem) = problem.as_str().filter(|problem| !problem.is_empty()) {
+            return Err(problem.into());
+        }
+        let released = crate::commit::land_call(
+            root,
+            &serde_json::json!({"method": "stamps_released", "branch": task.branch}),
+        );
+        Ok(Submitted {
+            said: format!("approved {} to land", task.branch),
+            released: released
+                .iter()
+                .flat_map(|held| held.as_array().into_iter().flatten())
+                .filter_map(|held| held.as_str().map(str::to_string))
+                .collect(),
         })
     }
 }

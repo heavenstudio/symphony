@@ -197,7 +197,7 @@ fn summary(text: &str) -> String {
 pub(super) fn decisions(block: &Block, ctx: &Ctx<'_>) -> String {
     let mut out: Vec<String> = Vec::new();
     for card in parse_decisions(&splitlines(&block.text)) {
-        let thread = card.thread();
+        let thread = card.thread(ctx.plugins);
         let inline = ctx.convert(&card.text);
         let history = if ctx.detached_threads {
             String::new()

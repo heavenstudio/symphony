@@ -10,7 +10,11 @@ use crate::render::Render;
 
 fn baselines(root: &std::path::Path, rel: &str) -> Option<(String, String)> {
     let repo = gix::discover(root).ok()?;
-    let main = repo.rev_parse_single("refs/heads/main").ok()?;
+    let main_ref = format!(
+        "refs/heads/{}",
+        crate::project::Project::of(root).default_branch
+    );
+    let main = repo.rev_parse_single(main_ref.as_str()).ok()?;
     let head = repo.head_id().ok()?;
     let base = repo.merge_base(main, head).ok()?;
     let text = |id: gix::Id<'_>| {

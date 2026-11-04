@@ -60,13 +60,14 @@ fn a_thread_uses_the_edit_boundary_even_with_indented_or_unclosed_fences() {
             assert_eq!(pilot.entries().len(), 2);
             assert!(pilot.entries()[0].text.contains("**example**"));
             assert_eq!(pilot.entries()[1].text, "Keep the example.");
-            assert!(pilot.open());
+            assert!(pilot.open(&symphony::plugins::Plugins::default()));
             let updated = symphony::edit::set_decision(
                 &source,
                 "pilot",
                 "approved",
                 "Kept.",
                 "2026-10-06 09:00",
+                &symphony::plugins::Plugins::default(),
             )
             .unwrap();
             register::check_nothing_lost(&source, &updated, "verdict").unwrap();
