@@ -19,13 +19,13 @@ use std::fs::OpenOptions;
 use std::io::Read;
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{LazyLock, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
 use regex::{Captures, Regex};
 use sha2::{Digest, Sha256};
+use tasks::sys::{Command, Stdio};
 
 use crate::markup::{normpath, quote, unquote};
 
@@ -143,6 +143,8 @@ fn part_file(dest: &Path) -> std::io::Result<PathBuf> {
 }
 
 /// Run the converter, publish only a complete output, and reap it when it exceeds its time budget.
+/// It starts without a fork and inherits only its streams (tasks::sys::Command), so a connection
+/// the server has accepted but not yet marked close-on-exec stays out of it.
 fn convert(mut command: Command, dest: &Path, timeout: Duration) -> bool {
     let Ok(part) = part_file(dest) else {
         return false;
