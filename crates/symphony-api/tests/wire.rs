@@ -208,6 +208,24 @@ fn a_route_is_a_document_page_under_an_entrypoint_unless_the_symphony_answers_it
     ] {
         assert_eq!(dotted.is_document_route(path), page, "{path}");
     }
+    // a page keeps its kind: a folder whatever its name, a document only as Markdown with no slash
+    let markdown_named = symphony_api::ProjectView {
+        entrypoints: vec!["guide.md".into(), "docs".into()],
+        ..star_foundry.clone()
+    };
+    for (path, folder) in [
+        ("guide.md", true),
+        ("guide.md/", true),
+        ("guide.md/A.md", false),
+        ("guide.md/old.md/", true),
+        ("docs", true),
+        ("docs/game", true),
+        ("docs/game/SPEC.md", false),
+        ("docs/a.png", false),
+        ("tasks/", false),
+    ] {
+        assert_eq!(markdown_named.is_folder_route(path), folder, "{path}");
+    }
     assert_eq!(star_foundry.documents_href(), "/docs/");
     assert_eq!(star_foundry.readme_route(), "docs/README.md");
     let spec = symphony_api::ProjectView {

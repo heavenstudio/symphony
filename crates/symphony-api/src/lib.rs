@@ -294,6 +294,15 @@ impl ProjectView {
                 || name.ends_with(".md"))
     }
 
+    /// Whether `path` is a document route ([`ProjectView::is_document_route`]) naming a folder page
+    /// rather than a document: a trailing slash, an entrypoint's own route, or a name that is not
+    /// Markdown. A folder or an entrypoint named `guide.md` is a folder page.
+    pub fn is_folder_route(&self, path: &str) -> bool {
+        let page = path.trim_end_matches('/');
+        self.is_document_route(path)
+            && (path.ends_with('/') || self.entrypoints().contains(&page) || !page.ends_with(".md"))
+    }
+
     /// The URL of the first entrypoint's folder page: `/docs/`, or `/` at the root.
     pub fn documents_href(&self) -> String {
         match self.entrypoints().first() {

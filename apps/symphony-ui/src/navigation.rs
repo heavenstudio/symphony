@@ -14,6 +14,9 @@ pub struct Route {
     /// Whether it is a document or folder page of an entrypoint
     /// ([`symphony_api::ProjectView::is_document_route`]).
     pub document: bool,
+    /// Whether that page is a folder's rather than a document's
+    /// ([`symphony_api::ProjectView::is_folder_route`]).
+    pub folder: bool,
 }
 
 impl Route {
@@ -37,17 +40,18 @@ impl Route {
         let slashed = path.strip_prefix("doc/").unwrap_or(path);
         let path = slashed.strip_suffix('/').unwrap_or(slashed);
         let project = crate::project::current();
-        let (path, document) = match path {
-            "task" => ("tasks", false),
-            path => match crate::project::nav_page(&project.nav, path) {
-                Some(item) => (
-                    item.document.as_str(),
-                    project.is_document_route(&item.document),
-                ),
-                // a trailing slash names a folder page, whatever its name holds
-                None => (path, project.is_document_route(slashed)),
-            },
+        // the route as the server answers it: a trailing slash names a folder page, whatever its
+        // name holds
+        let named = match crate::project::nav_page(&project.nav, path) {
+            Some(item) => item.document.as_str(),
+            None if path == "task" => "tasks",
+            None => slashed,
         };
+        let (document, folder) = (
+            project.is_document_route(named),
+            project.is_folder_route(named),
+        );
+        let path = named.strip_suffix('/').unwrap_or(named);
         (path.is_empty()
             || path == "tasks"
             || path == "queue"
@@ -58,6 +62,7 @@ impl Route {
                 path: path.into(),
                 scope,
                 document,
+                folder,
             })
     }
     pub fn current() -> Self {

@@ -284,7 +284,7 @@ fn the_project_root_at_the_root_with_a_type_no_renderer_handles_is_refused_by_na
 }
 
 #[test]
-fn a_folder_linked_out_of_the_project_is_refused_and_no_walk_follows_a_link_out() {
+fn a_folder_linked_out_of_the_project_is_refused_and_a_linked_file_opens_where_it_is_listed() {
     let outside = Tree::new();
     outside.write(
         "SECRET.md",
@@ -298,12 +298,19 @@ fn a_folder_linked_out_of_the_project_is_refused_and_no_walk_follows_a_link_out(
     assert_eq!(Project::load(&tree.root).unwrap_err(), refusal);
     assert_eq!(project_problems(&tree.root), [refusal]);
     assert_eq!(*Project::of(&tree.root), Project::plain(&tree.root));
-    // in the folder, a link to a folder or out of the project is passed over, one to a file in it listed
+    // in the folder, a link to a folder, out of the project or into a dot folder is passed over;
+    // one to a file elsewhere in it is listed, and opens
     let tree = spec();
-    std::os::unix::fs::symlink(outside.path("SECRET.md"), tree.path("spec/guide/LEAK.md")).unwrap();
-    std::os::unix::fs::symlink(&outside.root, tree.path("spec/linked")).unwrap();
-    std::os::unix::fs::symlink(tree.path("spec/index.md"), tree.path("spec/guide/ALIAS.md"))
-        .unwrap();
+    tree.write("OTHER.md", "# Other\n");
+    tree.write(".private/KEY.md", "# Key\n");
+    let link = |target: std::path::PathBuf, name: &str| {
+        std::os::unix::fs::symlink(target, tree.path(name)).unwrap();
+    };
+    link(outside.path("SECRET.md"), "spec/guide/LEAK.md");
+    link(outside.root.clone(), "spec/linked");
+    link(tree.path("spec/index.md"), "spec/guide/ALIAS.md");
+    link(tree.path("OTHER.md"), "spec/guide/OTHER.md");
+    link(tree.path(".private/KEY.md"), "spec/guide/KEY.md");
     assert!(Project::load(&tree.root).is_ok());
     let docs = scan(&tree.root).unwrap();
     assert_eq!(
@@ -311,22 +318,27 @@ fn a_folder_linked_out_of_the_project_is_refused_and_no_walk_follows_a_link_out(
         [
             "DECISIONS.md",
             "guide/ALIAS.md",
+            "guide/OTHER.md",
             "guide/START.md",
             "index.md"
         ]
     );
     let render = Render::new(&tree.root);
+    let listed: Vec<String> = docview::folder(&render, "guide", "")
+        .unwrap()
+        .entries
+        .iter()
+        .map(|e| e.path.clone())
+        .collect();
     assert_eq!(
-        docview::folder(&render, "guide", "")
-            .unwrap()
-            .entries
-            .iter()
-            .map(|e| e.path.as_str())
-            .collect::<Vec<_>>(),
-        ["guide/ALIAS.md", "guide/START.md"],
-        "by title: the alias is titled Spec"
+        listed,
+        ["guide/OTHER.md", "guide/ALIAS.md", "guide/START.md"],
+        "by title: Other, Spec (the alias), Start"
     );
-    for refused in ["guide/LEAK.md", "linked/SECRET.md"] {
+    for opens in &listed {
+        assert!(docview::document(&render, opens, "").is_ok(), "{opens}");
+    }
+    for refused in ["guide/LEAK.md", "guide/KEY.md", "linked/SECRET.md"] {
         assert!(
             docview::document(&render, refused, "").is_err(),
             "{refused}"
@@ -397,19 +409,65 @@ fn an_excluded_folder_takes_everything_under_it_from_every_reader() {
 }
 
 #[test]
-fn the_uploads_folder_on_the_uploads_route_is_no_collision() {
+fn uploads_are_the_symphonys_store_never_a_collision_nor_documents() {
     let tree = Tree::new();
     let root_types =
         "[[entrypoints]]\nurl = \"/\"\nfolder = \".\"\ntypes = [\"markdown\", \"media\"]\n";
     tree.write("symphony.toml", root_types);
     tree.write("README.md", "# Orbit\n");
-    tree.write("artifacts/uploads/notes.md", "# Pasted\n");
+    tree.write("artifacts/notes.md", "# Notes\n");
+    let register =
+        "# D\n\n<!-- register:start -->\n### T\n\n- [x] **done** — plain.\n<!-- register:end -->\n";
+    tree.write("artifacts/uploads/5ca1ab1e.md", register);
     std::fs::write(tree.path("artifacts/uploads/0123abcd.png"), PNG_5X7).unwrap();
     let project = Project::load(&tree.root).unwrap();
     assert!(project_problems(&tree.root).is_empty());
     assert_eq!(
         project.file("artifacts/uploads/0123abcd.png"),
         "artifacts/uploads/0123abcd.png"
+    );
+    // no walk reads an upload: it is no document, card, register or entry of a folder page
+    assert!(!project.is_page("artifacts/uploads/5ca1ab1e.md"));
+    assert_eq!(
+        scan(&tree.root)
+            .unwrap()
+            .iter()
+            .map(|doc| doc.path.as_str())
+            .collect::<Vec<_>>(),
+        ["README.md", "artifacts/notes.md"]
+    );
+    assert!(symphony::board::register_files(&tree.root).is_empty());
+    let (mut out, mut err) = (Vec::new(), Vec::new());
+    assert_eq!(
+        symphony::board::tidy(&tree.root, Some("2026-09-26 08:00"), &mut out, &mut err),
+        0,
+        "{}",
+        String::from_utf8_lossy(&err)
+    );
+    assert_eq!(tree.read("artifacts/uploads/5ca1ab1e.md"), register);
+    let render = Render::new(&tree.root);
+    assert_eq!(
+        docview::folder(&render, "artifacts", "")
+            .unwrap()
+            .entries
+            .iter()
+            .map(|e| e.path.as_str())
+            .collect::<Vec<_>>(),
+        ["artifacts/notes.md"]
+    );
+    assert!(docview::folder(&render, "artifacts/uploads", "").is_err());
+    assert!(docview::document(&render, "artifacts/uploads/5ca1ab1e.md", "").is_err());
+    // nor does an entrypoint read the uploads folder
+    tree.write(
+        "symphony.toml",
+        &format!(
+            "{root_types}[[entrypoints]]\nurl = \"/pasted/\"\nfolder = \"artifacts/uploads\"\n"
+        ),
+    );
+    assert_eq!(
+        Project::load(&tree.root).unwrap_err(),
+        "symphony.toml: [[entrypoints]] /pasted/ reads artifacts/uploads, the Symphony's uploads, \
+         which no entrypoint shows"
     );
     // elsewhere than the project's uploads folder, a file on that route would be hidden
     tree.write(
@@ -431,19 +489,28 @@ fn the_uploads_folder_on_the_uploads_route_is_no_collision() {
 }
 
 #[test]
-fn a_dotted_entrypoint_and_folder_are_folder_pages_on_both_sides() {
-    let tree = Tree::new();
-    tree.write(
-        "symphony.toml",
-        "[[entrypoints]]\nurl = \"/v1.0/\"\nfolder = \"spec\"\n",
-    );
-    tree.write("spec/guide.v2/A.md", "# A\n");
-    let project = Project::load(&tree.root).unwrap();
-    let view = project.view();
-    let render = Render::new(&tree.root);
-    for (route, page) in [("v1.0", "v1.0"), ("v1.0/guide.v2", "v1.0/guide.v2/")] {
-        assert!(docview::folder(&render, route, "").is_ok(), "{route}");
-        assert!(view.is_document_route(page), "{page}");
+fn a_dotted_or_markdown_named_entrypoint_and_folder_are_folder_pages_on_both_sides() {
+    for (url, folder) in [("v1.0", "guide.v2"), ("guide.md", "old.md")] {
+        let tree = Tree::new();
+        tree.write(
+            "symphony.toml",
+            &format!("[[entrypoints]]\nurl = \"/{url}/\"\nfolder = \"spec\"\n"),
+        );
+        tree.write(&format!("spec/{folder}/A.md"), "# A\n");
+        let view = Project::load(&tree.root).unwrap().view();
+        let render = Render::new(&tree.root);
+        let inner = format!("{url}/{folder}");
+        // the client asks for the root by its URL and for a folder by its slash
+        for (route, page) in [
+            (url.to_string(), url.to_string()),
+            (inner.clone(), format!("{inner}/")),
+        ] {
+            assert!(docview::folder(&render, &route, "").is_ok(), "{route}");
+            assert!(docview::document(&render, &route, "").is_err(), "{route}");
+            assert!(view.is_folder_route(&page), "{page}");
+        }
+        let document = format!("{inner}/A.md");
+        assert!(docview::document(&render, &document, "").is_ok());
+        assert!(view.is_document_route(&document) && !view.is_folder_route(&document));
     }
-    assert!(view.is_document_route("v1.0/guide.v2/A.md"));
 }

@@ -492,7 +492,7 @@ fn QuickPanel(route: Route, mut draft: Signal<Draft>) -> Element {
                     .unwrap_or_default();
                 // The legacy quick-add API recognizes canonical document paths when linking a
                 // task to its document; the client URL has an additional /app prefix.
-                let page = if route.path.ends_with(".md") {
+                let page = if route.document && !route.folder {
                     let hash = web_sys::window()
                         .and_then(|w| w.location().hash().ok())
                         .unwrap_or_default();
@@ -524,7 +524,7 @@ fn QuickPanel(route: Route, mut draft: Signal<Draft>) -> Element {
                 let page = web_sys::window()
                     .and_then(|w| w.location().href().ok())
                     .unwrap_or_default();
-                let (path, question) = if route.path.ends_with(".md") {
+                let (path, question) = if route.document && !route.folder {
                     (route.path.clone(), attach.compose(&d.text))
                 } else {
                     (

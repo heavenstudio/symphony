@@ -421,7 +421,15 @@ impl Project {
             board,
         };
         let reserved = project.reserved();
+        let uploads = project.artifact(crate::uploads::DIR);
         for entry in &project.entrypoints {
+            if below(&uploads, &entry.folder).is_some() {
+                return Err(format!(
+                    "[[entrypoints]] {} reads {}, the Symphony's uploads, which no entrypoint shows",
+                    entry.label(),
+                    entry.folder
+                ));
+            }
             if let Some(route) = reserved
                 .iter()
                 .find(|route| below(route, &entry.url).is_some())
@@ -452,18 +460,14 @@ impl Project {
 
     /// Each place a route another answers falls inside an entrypoint's URL: the entrypoint, the
     /// path inside its folder a file there would be served from, and who answers instead. Another
-    /// entrypoint's own folder is not a meeting: that entrypoint serves it. Nor is the uploads
-    /// folder on the uploads route: the Symphony serves the very same files there.
+    /// entrypoint's own folder is not a meeting: that entrypoint serves it. The uploads folder on
+    /// the uploads route holds nothing an entrypoint shows ([`Project::holding`]).
     fn meetings(&self) -> Vec<(&Entrypoint, String, String)> {
         let mut found = Vec::new();
         let reserved = self.reserved();
-        let uploads = self.artifact(crate::uploads::DIR);
-        let uploads_route = crate::uploads::ROUTE.trim_matches('/');
         for entry in &self.entrypoints {
             for route in &reserved {
-                if let Some(inside) = below(&entry.url, route).filter(|inside| {
-                    !inside.is_empty() && (route != uploads_route || entry.file(inside) != uploads)
-                }) {
+                if let Some(inside) = below(&entry.url, route).filter(|inside| !inside.is_empty()) {
                     found.push((
                         entry,
                         inside.to_string(),
@@ -544,8 +548,12 @@ impl Project {
     }
 
     /// The entrypoint holding the project-relative `file`, the one with the longest folder above
-    /// it, and the file's path inside that folder.
+    /// it, and the file's path inside that folder. None holds the uploads folder: it is the
+    /// Symphony's store of pasted files, never documents, listed or read by no walk.
     pub fn holding<'a>(&self, file: &'a str) -> Option<(&Entrypoint, &'a str)> {
+        if below(&self.artifact(crate::uploads::DIR), file).is_some() {
+            return None;
+        }
         self.entrypoints
             .iter()
             .filter_map(|entry| entry.inside_folder(file).map(|inside| (entry, inside)))
@@ -700,10 +708,25 @@ impl Project {
         }
     }
 
+    /// The file or folder at the path `inside` `entry`'s folder in the checkout at `root`, links
+    /// resolved, where the walk's bounds would list it: the entrypoint's folder itself, or a path
+    /// whose folder lies in the entrypoint's and that [`Bounds::admits`]. What a folder page lists,
+    /// the document view opens.
+    pub fn reachable(&self, root: &Path, entry: &Entrypoint, inside: &str) -> Option<PathBuf> {
+        let bounds = bounds(root, entry)?;
+        if inside.is_empty() {
+            return Some(bounds.folder);
+        }
+        let path = root.join(entry.file(inside));
+        let folder = path.parent()?.canonicalize().ok()?;
+        let file = path.canonicalize().ok()?;
+        (folder.starts_with(&bounds.folder) && bounds.admits(&file)).then_some(file)
+    }
+
     /// The files and folders in the path `inside` `entry`'s folder, each with whether it is a
-    /// folder, in name order: no name starting with a dot, no link to a folder or out of the
-    /// project, no folder an exclude pattern matches or another entrypoint reads. A folder outside
-    /// the entrypoint's, once links are resolved, lists nothing.
+    /// folder, in name order: no name starting with a dot, no link to a folder or to a file
+    /// [`Bounds::admits`] refuses, no folder an exclude pattern matches or another entrypoint
+    /// reads. A folder outside the entrypoint's, once links are resolved, lists nothing.
     fn children(
         &self,
         root: &Path,
@@ -730,7 +753,7 @@ impl Project {
                     path.is_file()
                         && path
                             .canonicalize()
-                            .is_ok_and(|target| target.starts_with(&bounds.project))
+                            .is_ok_and(|target| bounds.admits(&target))
                 } else {
                     folder || path.is_file()
                 };
@@ -922,6 +945,19 @@ fn folder_label(folder: &str) -> &str {
 struct Bounds {
     project: PathBuf,
     folder: PathBuf,
+}
+
+impl Bounds {
+    /// Whether a file resolving to `target` (links resolved) may be listed and read: in the
+    /// entrypoint's folder, or elsewhere in the checkout under no name starting with a dot.
+    fn admits(&self, target: &Path) -> bool {
+        target.starts_with(&self.folder)
+            || target.strip_prefix(&self.project).is_ok_and(|rest| {
+                !rest
+                    .components()
+                    .any(|name| name.as_os_str().to_string_lossy().starts_with('.'))
+            })
+    }
 }
 
 /// The bounds of `entry` in the checkout at `root`; `None` when its folder is missing or leads out

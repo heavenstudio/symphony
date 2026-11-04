@@ -102,7 +102,7 @@ pub fn App() -> Element {
         #[cfg(feature = "page-docs")]
         _ if current.document => {
             rsx! { main { "data-notices": "",
-                if current.path.ends_with(".md") {
+                if !current.folder {
                     crate::docs_live::DocumentPage { key: "{current.scope}/{current.path}", path: current.path.clone(), scope: current.scope.clone() }
                 } else {
                     crate::docs_live::FolderPage { key: "{current.scope}/{current.path}", path: current.path.clone(), scope: current.scope.clone() }

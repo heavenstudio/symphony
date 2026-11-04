@@ -16,9 +16,10 @@ use crate::render::Render;
 
 mod comparison;
 
-/// Resolve only routes an entrypoint serves (`docs/…`) whose canonical file remains under its
-/// folder, whatever that folder is called ([`crate::project::Project::serving`]); a `document`
-/// is a Markdown file the entrypoint shows.
+/// Resolve only routes an entrypoint serves (`docs/…`) to the file the entrypoint's walk would
+/// list there, links resolved ([`crate::project::Project::serving`],
+/// [`crate::project::Project::reachable`]), whatever its folder is called; a `document` is a Markdown
+/// file the entrypoint shows.
 pub fn target(root: &Path, rel: &str, document: bool) -> Result<PathBuf, String> {
     let not_found = || format!("not found: {rel}");
     if Path::new(rel)
@@ -29,18 +30,10 @@ pub fn target(root: &Path, rel: &str, document: bool) -> Result<PathBuf, String>
     }
     let project = crate::project::Project::of(root);
     let (entry, inside) = project.serving(rel).ok_or_else(not_found)?;
-    let base = root
-        .join(&entry.folder)
-        .canonicalize()
-        .map_err(|e| e.to_string())?;
-    if !base.starts_with(root.canonicalize().map_err(|e| e.to_string())?) {
-        return Err(not_found());
-    }
-    let path = root
-        .join(entry.file(inside))
-        .canonicalize()
-        .map_err(|_| not_found())?;
-    if !path.starts_with(base) || (document && (!path.is_file() || !entry.page(inside))) {
+    let path = project
+        .reachable(root, entry, inside)
+        .ok_or_else(not_found)?;
+    if document && (!path.is_file() || !entry.page(inside)) {
         return Err(not_found());
     }
     Ok(path)
