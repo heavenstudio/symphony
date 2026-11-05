@@ -602,9 +602,10 @@ pub(crate) fn reload_if_redeployed(served: &str) {
     let Ok(Some(storage)) = window.session_storage() else {
         return;
     };
-    let tried = storage.get_item(RELOADED_FOR).ok().flatten();
+    let key = crate::project::stored(&crate::project::current(), RELOADED_FOR);
+    let tried = storage.get_item(&key).ok().flatten();
     if reload_for(own.as_deref(), served, tried.as_deref()) {
-        let _ = storage.set_item(RELOADED_FOR, served);
+        let _ = storage.set_item(&key, served);
         let _ = window.location().reload();
     }
 }

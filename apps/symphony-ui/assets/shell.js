@@ -1,7 +1,7 @@
 // One history adapter; switching page kinds awaits the old runtime's cleanup.
 const modules = __MODULES__;
 try {
-    const css = localStorage.getItem("studio.cssVars");
+    const css = localStorage.getItem(stored("studio.cssVars"));
     if (css) {
         const style = document.createElement("style");
         style.id = "studio-theme";
@@ -114,6 +114,13 @@ function within(route, path) {
 // pages and its entrypoints. A page without it is the plain project.
 function project() {
     try { return JSON.parse(document.getElementById("symphony-project")?.textContent || "{}"); } catch { return {}; }
+}
+
+// `key` as the project keeps it in the browser (project::stored): the one server's projects share
+// its origin, so each key takes the project's id first; a server of its own keeps it as it is.
+function stored(key) {
+    const id = (project().base || "").replace(/^\/+/, "");
+    return id ? `${id}:${key}` : key;
 }
 
 // The page's path under the project's base (ProjectView::here): the one server serves each

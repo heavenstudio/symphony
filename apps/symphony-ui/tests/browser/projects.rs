@@ -1,10 +1,12 @@
 //! Two projects on the one real server, each as the owner first opens it: its home within the
 //! first visit's budget, its theme in the page's computed look and the rest of the look the
-//! other's, every link under its own `/<id>/`. `alpha` is a plain project whose file sets a token
-//! and a layout; `pantry` names the shelf plugin and the theme package it provides.
+//! other's, every link under its own `/<id>/`; and what one keeps in the browser, a draft or a
+//! saved theme, never shows in the other, whose origin it shares. `alpha` is a plain project whose
+//! file sets a token and a layout; `pantry` names the shelf plugin and the theme package it
+//! provides.
 use super::{
-    FIRST_VISIT_BYTES, SHOWN, binaries, chrome, completed_requests, dist, needed_bytes,
-    owner_controls::ScratchBoard,
+    FIRST_VISIT_BYTES, SHOWN, binaries, chrome, chrome::Chrome, completed_requests, dist,
+    needed_bytes, owner_controls::ScratchBoard,
 };
 use serde_json::{Value, json};
 use std::io::{BufRead, BufReader};
@@ -171,6 +173,47 @@ const LOOK: &str = "(() => { const root = getComputedStyle(document.documentElem
         layouts: Object.assign({}, document.documentElement.dataset), \
         background: body.backgroundColor, color: body.color, font: hero.fontFamily, \
         size: hero.fontSize}; })()";
+
+/// Open the page's quick composer and wait for its text field.
+fn quick_text(browser: &mut Chrome) {
+    assert!(browser.wait_for("document.querySelector('#quick-open') !== null", SHOWN));
+    browser.eval("document.querySelector('#quick-open').click()");
+    assert!(browser.wait_for("document.querySelector('#quick-text') !== null", SHOWN));
+}
+
+#[test]
+fn a_draft_and_a_theme_one_project_keeps_never_appear_in_another() {
+    let board = ScratchBoard::start();
+    let server = OneServer::start(board.address());
+    let Some(mut browser) = chrome() else { return };
+    browser.open(&server.url("/alpha/"));
+    browser.eval(
+        "localStorage.setItem('alpha:studio.cssVars', ':root[data-studio-theme]{--radius:23px;}')",
+    );
+    quick_text(&mut browser);
+    browser.eval("(() => { const field = document.querySelector('#quick-text'); field.value = 'Alpha private draft'; field.dispatchEvent(new Event('input', {bubbles: true})); return true; })()");
+    assert!(
+        browser.wait_for("JSON.parse(localStorage.getItem('alpha:review-quick-draft') || '{}').text === 'Alpha private draft'", SHOWN),
+        "alpha keeps its draft under its own key: {}",
+        browser.eval("JSON.stringify(localStorage)")
+    );
+    assert_eq!(
+        browser.eval("localStorage.getItem('review-quick-draft')"),
+        Value::Null
+    );
+    browser.open(&server.url("/alpha/"));
+    assert!(
+        browser.wait_for("document.querySelector('#studio-theme') !== null", SHOWN),
+        "alpha's saved theme applies to alpha"
+    );
+    browser.open(&server.url("/pantry/"));
+    quick_text(&mut browser);
+    assert_eq!(
+        browser.eval("({draft: document.querySelector('#quick-text').value, theme: document.querySelector('#studio-theme') !== null})"),
+        json!({"draft": "", "theme": false}),
+        "pantry shows nothing alpha saved"
+    );
+}
 
 #[test]
 fn each_project_fits_the_first_visit_budget_in_its_own_theme_and_the_shared_look() {

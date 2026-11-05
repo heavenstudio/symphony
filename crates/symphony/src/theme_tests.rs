@@ -1,3 +1,6 @@
+//! The theme package: the defaults, each part a project file sets over a plugin's, the tokens and
+//! layouts refused by name, and the ETag that moves with every part.
+
 use super::*;
 use crate::test_tree::Tree;
 

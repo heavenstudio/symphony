@@ -26,10 +26,12 @@ patterns and renderers leave out is never listed or read. The Symphony's own rou
 entrypoint.
 
 One server serves every project the machine folder's registry holds
-(`crates/symphony/src/machine.rs`: `projects.json` beside the server's record, in
-`SYMPHONY_MACHINE_DIR` when set), each under `/<id>/` with its own watcher, feed,
+(`crates/symphony/src/machine/registry.rs`: `projects.json` beside the server's record,
+in `SYMPHONY_MACHINE_DIR` when set), each under `/<id>/` with its own watcher, feed,
 board snapshot and branch scan. A project's state stays in its checkout: paths under
 its artifacts folder go through `Project::artifact`, never an `artifacts/` literal.
+The projects share the server's origin, so the client keys what it keeps in the
+browser by the project's id (`project::stored` in `apps/symphony-ui`).
 The host rule (`crates/symphony/src/machine/host.rs`) decides whether a start's build
 serves, waits for or replaces the running one. A project's look is its theme
 package (`crates/symphony/src/theme.rs`), served as `/<id>/theme.css` and inlined in
