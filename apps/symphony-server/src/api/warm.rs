@@ -1,0 +1,43 @@
+//! The read hub behind the data routes: published once per server, its first board read awaited.
+
+use std::sync::Arc;
+
+use crate::front::Shared;
+use crate::live::Hub;
+
+/// Publish the document hub; its owned worker completes the first board read separately.
+pub(crate) async fn start(shared: &Arc<Shared>) -> Result<Arc<Hub>, String> {
+    if !shared.stopping()
+        && let Some(hub) = shared.api.get()
+    {
+        return Ok(hub.clone());
+    }
+    let shared = shared.clone();
+    tokio::task::spawn_blocking(move || {
+        let _held = shared.lifecycle.lock().unwrap_or_else(|e| e.into_inner());
+        if shared.stopping() {
+            return Err("the Symphony server is stopping".into());
+        }
+        if let Some(hub) = shared.api.get() {
+            return Ok(hub.clone());
+        }
+        // Only --home servers hold the shared lease. A preview must never send the owner's
+        // journal to its board, even when that board is a copied scratch database.
+        let hub = Hub::start(&shared.root, &shared.ui_dist, shared.installed_ui)?;
+        assert!(
+            shared.api.set(hub.clone()).is_ok(),
+            "hub startup is serialized"
+        );
+        Ok(hub)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// A complete first read for data routes and replacement handover.
+pub(crate) async fn warm(shared: &Arc<Shared>) -> Result<Arc<Hub>, String> {
+    let hub = start(shared).await?;
+    hub.start_initial_board();
+    hub.wait_initial_board().await?;
+    Ok(hub)
+}

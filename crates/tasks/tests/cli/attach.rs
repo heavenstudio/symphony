@@ -8,11 +8,11 @@ use crate::{env, run};
 use serde_json::json;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
-use tasks::cli::Clock;
-use tasks::cli::agents::Probes;
-use tasks::cli::attach::{Watch, observe, watch};
-use tasks::health::{LIVE_SECONDS, STALE_SECONDS};
-use tasks::{NewSession, NewTask};
+use symphony_board::cli::Clock;
+use symphony_board::cli::agents::Probes;
+use symphony_board::cli::attach::{Watch, observe, watch};
+use symphony_board::health::{LIVE_SECONDS, STALE_SECONDS};
+use symphony_board::{NewSession, NewTask};
 
 /// An orchestrator of `n` tasks, each with a child and a grandchild.
 fn orchestrate(n: usize) -> (Fixture, String) {

@@ -442,7 +442,7 @@ fn create(store: &Store, c: &mut Context) -> Result<(), Stop> {
             listed.get_or_insert_with(|| sweep::git::worktrees(&c.env.cwd).unwrap_or_default());
         if let Some(named) = imported_worktree(&body, dep, listed) {
             return Err(Stop::Refused(format!(
-                "the brief names {named}, the worktree of {dep}, which has not landed; code and art build only on main \
+                "the brief names {named}, the worktree of {dep}, which has not landed; code and data build only on main \
                  (RULES.md workflow/shared-data-lands-first). Wait for that task to land, or ask on its thread"
             )));
         }
@@ -664,34 +664,34 @@ mod tests {
     #[test]
     fn a_slug_named_folder_counts_only_as_a_whole_name() {
         for body in [
-            "Read .claude/worktrees/content-roster/content/x.json",
-            "Read .claude/worktrees/content-roster.",
-            "Read .claude/worktrees/content-roster now",
-            "Read .claude/worktrees/content-roster",
+            "Read .claude/worktrees/content-lineup/content/x.json",
+            "Read .claude/worktrees/content-lineup.",
+            "Read .claude/worktrees/content-lineup now",
+            "Read .claude/worktrees/content-lineup",
         ] {
             assert_eq!(
-                imported_worktree(body, "content/roster", &[]).as_deref(),
-                Some(".claude/worktrees/content-roster"),
+                imported_worktree(body, "content/lineup", &[]).as_deref(),
+                Some(".claude/worktrees/content-lineup"),
                 "{body}"
             );
         }
         // x-y never names x-yz, nor x-yz x-y, whichever of the two is the dependency.
         for (body, dep) in [
             (
-                "Read .claude/worktrees/content-roster-stretch/x.json",
-                "content/roster",
+                "Read .claude/worktrees/content-lineup-stretch/x.json",
+                "content/lineup",
             ),
             (
-                "Read .claude/worktrees/content-roster_2/x.json",
-                "content/roster",
+                "Read .claude/worktrees/content-lineup_2/x.json",
+                "content/lineup",
             ),
             (
-                "Read .claude/worktrees/content-roster2/x.json",
-                "content/roster",
+                "Read .claude/worktrees/content-lineup2/x.json",
+                "content/lineup",
             ),
             (
-                "Read .claude/worktrees/content-roster/x.json",
-                "content/roster-stretch",
+                "Read .claude/worktrees/content-lineup/x.json",
+                "content/lineup-stretch",
             ),
         ] {
             assert_eq!(imported_worktree(body, dep, &[]), None, "{body} for {dep}");
@@ -702,22 +702,22 @@ mod tests {
     fn a_dependency_in_an_agent_folder_is_found_by_its_branch() {
         let listed = [
             at("/r", "main"),
-            at("/r/.claude/worktrees/agent-a1b2", "content/roster"),
+            at("/r/.claude/worktrees/agent-a1b2", "content/lineup"),
         ];
         let body = "Import .claude/worktrees/agent-a1b2/content/x.json.";
         assert_eq!(
-            imported_worktree(body, "content/roster", &listed).as_deref(),
+            imported_worktree(body, "content/lineup", &listed).as_deref(),
             Some("/r/.claude/worktrees/agent-a1b2")
         );
         for (body, dep) in [
             // Its boundary holds as a slug's does.
             (
                 "Import .claude/worktrees/agent-a1b2c/content/x.json",
-                "content/roster",
+                "content/lineup",
             ),
             (
-                "See .claude/worktrees/agent-a1b2/artifacts/hull.png",
-                "content/roster",
+                "See .claude/worktrees/agent-a1b2/artifacts/lamp.png",
+                "content/lineup",
             ),
             // Another dependency's branch is not on it.
             (body, "content/other"),
@@ -733,14 +733,14 @@ mod tests {
     #[test]
     fn a_dependency_in_a_codex_folder_is_found_by_its_branch_spelled_either_way() {
         let listed = [
-            at("/r/.claude/worktrees/codex-roster-pilot", "content/roster"),
+            at("/r/.claude/worktrees/codex-lineup-pilot", "content/lineup"),
             at("/u/.codex/worktrees/1767/fixtures", "content-stretch"),
         ];
         for (body, dep, named) in [
             (
-                "Import /r/.claude/worktrees/codex-roster-pilot/content/x.json",
-                "content/roster",
-                "/r/.claude/worktrees/codex-roster-pilot",
+                "Import /r/.claude/worktrees/codex-lineup-pilot/content/x.json",
+                "content/lineup",
+                "/r/.claude/worktrees/codex-lineup-pilot",
             ),
             (
                 "Import ~/.codex/worktrees/1767/fixtures/content/x.json",
@@ -760,15 +760,15 @@ mod tests {
     fn a_brief_naming_no_worktree_names_none() {
         let listed = [
             at("/r", "main"),
-            at("/r/.claude/worktrees/agent-a1b2", "content/roster"),
+            at("/r/.claude/worktrees/agent-a1b2", "content/lineup"),
         ];
         for body in [
             "",
-            "Build the roster from content/x.json on main.",
-            "Read /r/content/x.json and the roster's thread.",
+            "Build the lineup from content/x.json on main.",
+            "Read /r/content/x.json and the lineup's thread.",
         ] {
             assert_eq!(
-                imported_worktree(body, "content/roster", &listed),
+                imported_worktree(body, "content/lineup", &listed),
                 None,
                 "{body}"
             );

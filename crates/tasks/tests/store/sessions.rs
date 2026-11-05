@@ -4,10 +4,10 @@
 use crate::common::{Fixture, GONE, HOST, NOW, Seed, refused};
 use std::collections::{BTreeMap, HashSet};
 use std::sync::{Arc, Barrier};
-use tasks::health::LIVE_SECONDS;
-use tasks::rows::BarredKeyRow;
-use tasks::rpc::Client;
-use tasks::{Beat, Health, NewSession, Pick, Store};
+use symphony_board::health::LIVE_SECONDS;
+use symphony_board::rows::BarredKeyRow;
+use symphony_board::rpc::Client;
+use symphony_board::{Beat, Health, NewSession, Pick, Store};
 
 fn executing() -> (Fixture, String) {
     let f = Fixture::new(Seed::default().task("sim/jump", "ready"));
@@ -305,8 +305,8 @@ fn leave_releases_every_role_on_the_record_and_ends_the_session() {
             .role("sim/dock", "brisk-finch", "executor")
             .role("sim/dock", "amber-heron", "orchestrator")
             .role("sim/dock", "amber-heron", "reviewer")
-            .task("sim/hull", "design")
-            .role("sim/hull", "amber-heron", "executor"),
+            .task("sim/lamp", "design")
+            .role("sim/lamp", "amber-heron", "executor"),
     );
     f.advance(5.0);
     f.store.leave("amber-heron").unwrap();
@@ -326,9 +326,9 @@ fn leave_releases_every_role_on_the_record_and_ends_the_session() {
         ("in_progress", 1, NOW)
     );
     assert_eq!(dock.holders("executor"), ["brisk-finch"]);
-    let hull = f.store.get("sim/hull").unwrap();
-    assert_eq!((hull.status.as_str(), hull.roles.len()), ("design", 0));
-    for slug in ["sim/dock", "sim/hull", "sim/jump"] {
+    let lamp = f.store.get("sim/lamp").unwrap();
+    assert_eq!((lamp.status.as_str(), lamp.roles.len()), ("design", 0));
+    for slug in ["sim/dock", "sim/lamp", "sim/jump"] {
         let last = f.store.thread(slug).unwrap().pop().unwrap();
         assert_eq!(
             (

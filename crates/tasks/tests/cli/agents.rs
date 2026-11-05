@@ -6,11 +6,11 @@ use crate::common::{Fixture, NOW};
 use serde_json::{Value, json};
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
-use tasks::cli::agents::{
+use symphony_board::cli::agents::{
     self, Agent, Detail, MESSAGE_CHARS, Pane, Probes, Run, View, describe, running_tests,
 };
-use tasks::health::{LIVE_SECONDS, RESERVE_SECONDS, STALE_SECONDS};
-use tasks::{Beat, Health, NewLaunch, NewSession, NewTask};
+use symphony_board::health::{LIVE_SECONDS, RESERVE_SECONDS, STALE_SECONDS};
+use symphony_board::{Beat, Health, NewLaunch, NewSession, NewTask};
 
 const AGENT_KEYS: [&str; 19] = [
     "handle",
@@ -219,7 +219,7 @@ fn detail(recipe: &str, phase: &str, since: f64) -> Option<Detail> {
 }
 
 fn parsed(view: &View) -> Value {
-    serde_json::from_str(&tasks::pyjson::dumps(&view.json())).expect("the view is JSON")
+    serde_json::from_str(&symphony_board::pyjson::dumps(&view.json())).expect("the view is JSON")
 }
 
 fn keys(value: &Value) -> BTreeSet<String> {
@@ -253,7 +253,7 @@ fn the_json_is_written_in_the_contracts_key_order_as_python_writes_it() {
     let handle = c.worker();
     c.pane("w1:p5", "working", json!({}));
     c.f.store.say("sim/jump", &handle, "on it", None).unwrap();
-    let text = tasks::pyjson::dumps(&c.view().json());
+    let text = symphony_board::pyjson::dumps(&c.view().json());
     let me = text.find(&format!("\"handle\": \"{handle}\"")).unwrap();
     let start = text[..me].rfind("  {").unwrap();
     let end = start + text[start..].find("\n  }").unwrap() + 4;
@@ -953,7 +953,7 @@ fn a_run_in_a_subdirectory_of_the_worktree_is_not_its_agents() {
     assert_eq!(c.agent(&handle).state, "working");
 }
 
-/// azure-raven's live case: one run under star-foundry/.worktrees/x made 25 main-checkout agents read
+/// azure-raven's live case: one run under lamp-works/.worktrees/x made 25 main-checkout agents read
 /// running_test.
 #[test]
 fn a_run_in_a_worktree_nested_under_the_main_checkout_is_not_every_main_agents() {

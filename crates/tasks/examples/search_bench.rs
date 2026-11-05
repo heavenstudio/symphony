@@ -5,9 +5,9 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::PathBuf;
 use std::time::Instant;
-use tasks::embedding::{Bge, Embedder, MODEL_ID, fuse};
-use tasks::sys::Spawning as _;
-use tasks::{DATABASE, cli, rows::Dump, rpc};
+use symphony_board::embedding::{Bge, Embedder, MODEL_ID, fuse};
+use symphony_board::sys::Spawning as _;
+use symphony_board::{DATABASE, cli, rows::Dump, rpc};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<_> = std::env::args().skip(1).collect();
@@ -60,7 +60,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     let mut report = json!({"database":database,"model":MODEL_ID,"runtime":"tract-onnx 0.22.5","load_before": load()});
     let start = Instant::now();
-    let mut model = Bge::load(&tasks::git::common_dir(&env.cwd).map_err(|e| e.to_string())?)?;
+    let mut model =
+        Bge::load(&symphony_board::git::common_dir(&env.cwd).map_err(|e| e.to_string())?)?;
     report["load_model_s"] = json!(start.elapsed().as_secs_f64());
     println!("model loaded in {} s", report["load_model_s"]);
     let start = Instant::now();
@@ -128,7 +129,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "test",
         "verify slow",
         "nightly",
-        "hull art",
+        "picture review",
         "python",
         "deck",
         "golden",
@@ -145,12 +146,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let search_s = start.elapsed().as_secs_f64();
         let exact = store.vector_search(&vector, MODEL_ID, None, 100, true)?;
         let hybrid = fuse(&keyword, &ann, query);
-        let rows = |hits: &[tasks::SearchHit]| {
+        let rows = |hits: &[symphony_board::SearchHit]| {
             hits.iter().take(5).map(|h|json!({"slug":h.slug,"score":h.score,"title":by_slug.get(&h.slug).map(|t|&t.title)})).collect::<Vec<_>>()
         };
         let ann_rows: Vec<_> = ann
             .iter()
-            .map(|h| tasks::SearchHit {
+            .map(|h| symphony_board::SearchHit {
                 slug: h.slug.clone(),
                 score: h.score,
             })
@@ -193,7 +194,7 @@ fn cpu() -> std::io::Result<f64> {
 }
 
 fn maintenance_cost(
-    store: &tasks::Store,
+    store: &symphony_board::Store,
     out: &std::path::Path,
     env: &cli::Env,
 ) -> Result<(), Box<dyn std::error::Error>> {

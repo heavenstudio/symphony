@@ -4,7 +4,7 @@
 use std::fmt::Write;
 
 /// Python's `html.escape(text)`: `&`, `<`, `>`, and both quotes.
-pub(crate) fn escape(text: &str) -> String {
+pub fn escape(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     for c in text.chars() {
         match c {
@@ -20,7 +20,7 @@ pub(crate) fn escape(text: &str) -> String {
 }
 
 /// `html.unescape` for the references an escaped attribute holds: the five named ones and numbers.
-pub(crate) fn unescape(text: &str) -> String {
+pub fn unescape(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     let mut rest = text;
     while let Some(at) = rest.find('&') {
@@ -61,7 +61,7 @@ pub(crate) fn unescape(text: &str) -> String {
 }
 
 /// Python's `urllib.parse.quote(text, safe)`: every byte but letters, digits, `_.-~` and `safe`, as `%XX`.
-pub(crate) fn quote(text: &str, safe: &str) -> String {
+pub fn quote(text: &str, safe: &str) -> String {
     let mut out = String::with_capacity(text.len());
     for byte in text.bytes() {
         if byte.is_ascii_alphanumeric()

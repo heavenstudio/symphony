@@ -32,7 +32,7 @@ static TOC_HEADING: LazyLock<Regex> = LazyLock::new(|| {
 static FENCE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^\s*(```|~~~)").expect("the fence pattern"));
 
-/// A step of the way back up: `docs › Ships › old › notes`. The page itself has no `href`.
+/// A step of the way back up: `docs › Lamps › old › notes`. The page itself has no `href`.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct Crumb {
     pub name: String,
@@ -308,7 +308,7 @@ fn order(place: &Place<'_>, found: &mut Vec<String>) {
     );
 }
 
-/// `docs › Ships › old › notes`: the entrypoint's own route first, then every folder above the page,
+/// `docs › Lamps › old › notes`: the entrypoint's own route first, then every folder above the page,
 /// each linking to its folder page; the page itself is plain. An entrypoint at `/` is named by its
 /// folder's title.
 pub fn crumbs(root: &Path, rel: &str) -> Vec<Crumb> {

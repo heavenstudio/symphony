@@ -16,9 +16,9 @@ use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
-use tasks::NewTask;
-use tasks::cli::Env;
-use tasks::sweep::trigger::{HOURLY_SECONDS, LOG, STAMP, folder};
+use symphony_board::NewTask;
+use symphony_board::cli::Env;
+use symphony_board::sweep::trigger::{HOURLY_SECONDS, LOG, STAMP, folder};
 
 /// `tasks ARGS` as `handle`, from `cwd`, the sweep let start on this board, with `change` made to
 /// the environment: what it printed (it must succeed).
@@ -51,7 +51,7 @@ fn run(
     };
     let args: Vec<String> = args.iter().map(|a| a.to_string()).collect();
     let (mut out, mut err) = (Vec::new(), Vec::new());
-    let code = tasks::cli::main(&args, &env, &mut "".as_bytes(), &mut out, &mut err);
+    let code = symphony_board::cli::main(&args, &env, &mut "".as_bytes(), &mut out, &mut err);
     let (out, err) = (
         String::from_utf8(out).unwrap(),
         String::from_utf8(err).unwrap(),
@@ -150,9 +150,9 @@ fn a_subtask_done_starts_a_sweep_in_which_its_closed_sessions_worktree_goes_at_o
     r.board.store.claim("sim/jump/do", &handle).unwrap();
     r.board
         .store
-        .record_launch(&tasks::NewLaunch {
+        .record_launch(&symphony_board::NewLaunch {
             worktree: wt.to_string_lossy().into_owned(),
-            ..tasks::NewLaunch::new("sim/jump/do", &handle, "executor")
+            ..symphony_board::NewLaunch::new("sim/jump/do", &handle, "executor")
         })
         .unwrap();
     r.board
@@ -283,8 +283,10 @@ fn a_test_board_starts_none_unless_told_and_off_starts_none_anywhere() {
                 vars,
                 cwd: r.root.clone(),
             };
-            assert!(!tasks::sweep::trigger::trigger(&env, &r.root, "x", None));
-            assert!(!tasks::sweep::trigger::hourly(&env, &r.root));
+            assert!(!symphony_board::sweep::trigger::trigger(
+                &env, &r.root, "x", None
+            ));
+            assert!(!symphony_board::sweep::trigger::hourly(&env, &r.root));
         } else {
             run(
                 &r,
@@ -327,8 +329,10 @@ fn outside_a_repository_nothing_starts() {
         vars,
         cwd: r.dir.clone(),
     };
-    assert!(!tasks::sweep::trigger::trigger(&env, &r.dir, "x", None));
-    assert!(!tasks::sweep::trigger::hourly(&env, &r.dir));
+    assert!(!symphony_board::sweep::trigger::trigger(
+        &env, &r.dir, "x", None
+    ));
+    assert!(!symphony_board::sweep::trigger::hourly(&env, &r.dir));
     none_started(&r);
 }
 

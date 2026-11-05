@@ -11,9 +11,9 @@ use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
-use tasks::cli::Env;
-use tasks::on_review::{LOG, MANIFEST, Started};
-use tasks::sweep::trigger::folder;
+use symphony_board::cli::Env;
+use symphony_board::on_review::{LOG, MANIFEST, Started};
+use symphony_board::sweep::trigger::folder;
 
 /// `tasks ARGS` as `handle`, from `cwd`, the review command let start on this board, with `change`
 /// made to the environment: what it printed (it must succeed).
@@ -39,7 +39,7 @@ fn run(
     };
     let args: Vec<String> = args.iter().map(|a| a.to_string()).collect();
     let (mut out, mut err) = (Vec::new(), Vec::new());
-    let code = tasks::cli::main(&args, &env, &mut "".as_bytes(), &mut out, &mut err);
+    let code = symphony_board::cli::main(&args, &env, &mut "".as_bytes(), &mut out, &mut err);
     let (out, err) = (
         String::from_utf8(out).unwrap(),
         String::from_utf8(err).unwrap(),
@@ -290,7 +290,7 @@ fn the_trigger_names_what_it_started_and_refuses_from_a_worktree_too() {
         cwd: r.dir.join("sim-jump"),
     };
     assert_eq!(
-        tasks::on_review::trigger(&env, &env.cwd, "sim/jump"),
+        symphony_board::on_review::trigger(&env, &env.cwd, "sim/jump"),
         Started::Command(vec![
             "tools/on-review.sh".into(),
             "sim/jump".into(),
@@ -300,7 +300,7 @@ fn the_trigger_names_what_it_started_and_refuses_from_a_worktree_too() {
     );
     written(&record);
     assert_eq!(
-        tasks::on_review::trigger(&env, &env.cwd, "sim/gone"),
+        symphony_board::on_review::trigger(&env, &env.cwd, "sim/gone"),
         Started::Refused(format!(
             "no branch sim/gone in {}",
             r.root.canonicalize().unwrap().display()
@@ -309,7 +309,7 @@ fn the_trigger_names_what_it_started_and_refuses_from_a_worktree_too() {
     let mut off = env.clone();
     off.vars.insert("TASKS_ON_REVIEW".into(), "off".into());
     assert_eq!(
-        tasks::on_review::trigger(&off, &off.cwd, "sim/jump"),
+        symphony_board::on_review::trigger(&off, &off.cwd, "sim/jump"),
         Started::None
     );
 }

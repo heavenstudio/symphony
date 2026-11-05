@@ -3,9 +3,9 @@
 
 use std::fs::{self, File};
 use std::path::{Path, PathBuf};
-use tasks::cli::Env;
-use tasks::cli::probes::{branch_of, herdr_panes, landed, machine, slot_runs, split};
-use tasks::sys::Command;
+use symphony_board::cli::Env;
+use symphony_board::cli::probes::{branch_of, herdr_panes, landed, machine, slot_runs, split};
+use symphony_board::sys::Command;
 
 /// A run's fields, in `Run`'s order, for comparing several at once.
 type RunFields<'a> = (
@@ -337,7 +337,7 @@ fn repo(name: &str) -> PathBuf {
 }
 
 fn git(dir: &Path, args: &[&str]) {
-    let done = tasks::sys::output(
+    let done = symphony_board::sys::output(
         Command::new("git")
             .args(["-c", "user.email=t@t", "-c", "user.name=t", "-C"])
             .arg(dir)

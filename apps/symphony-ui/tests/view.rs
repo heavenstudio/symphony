@@ -34,23 +34,23 @@ fn the_hero_is_the_next_card_with_a_button_straight_to_it() {
     let html = render(board("board.json"));
     let hero = region(&html, r#"class="hero card""#);
     assert!(hero.contains("Next up · 1 of 37"), "{hero}");
-    assert!(hero.contains("Republic · frigate picture"), "{hero}");
+    assert!(hero.contains("North · pendant picture"), "{hero}");
     assert!(
-        hero.contains("Three candidates for the Lancer-class frigate"),
+        hero.contains("Three candidates for the Heron pendant"),
         "{hero}"
     );
     assert!(
-        hero.contains(r#"href="/docs/ships/republic.md""#),
+        hero.contains(r#"href="/docs/lamps/north.md""#),
         "the document chip: {hero}"
     );
-    assert!(hero.contains("Republic ships"), "{hero}");
-    assert!(hero.contains("art · gates 4 hulls"), "{hero}");
+    assert!(hero.contains("North lamps"), "{hero}");
+    assert!(hero.contains("picture · gates 4 lamps"), "{hero}");
     assert!(
         hero.contains("waiting 2 h"),
         "posted 07:42, now 10:12: {hero}"
     );
     assert!(
-        hero.contains(r#"href="/docs/ships/republic.md#republic-frigate-picture""#),
+        hero.contains(r#"href="/docs/lamps/north.md#north-pendant-picture""#),
         "{hero}"
     );
     assert!(hero.contains("Open this card"), "{hero}");
@@ -59,30 +59,30 @@ fn the_hero_is_the_next_card_with_a_button_straight_to_it() {
         3,
         "one figure per candidate: {hero}"
     );
-    for (letter, src) in [("A", "frigate-a"), ("B", "frigate-b"), ("C", "frigate-c")] {
+    for (letter, src) in [("A", "pendant-a"), ("B", "pendant-b"), ("C", "pendant-c")] {
         assert!(
             hero.contains(&format!("<figcaption>{letter}</figcaption>")),
             "{letter}: {hero}"
         );
         assert!(
-            hero.contains(&format!("/docs/art/ships/republic/{src}.png")),
+            hero.contains(&format!("/docs/pictures/lamps/north/{src}.png")),
             "{src}: {hero}"
         );
     }
 }
 
 #[test]
-fn a_hull_not_drawn_yet_shows_that_its_picture_is_coming() {
+fn a_lamp_not_drawn_yet_shows_that_its_picture_is_coming() {
     let mut board = board("board.json");
-    board.next.rotate_left(4); // the Empire card, naming three hulls, comes first
+    board.next.rotate_left(4); // the East card, naming three lamps, comes first
     let html = render(board);
     let hero = region(&html, r#"class="hero card""#);
     assert_eq!(count(hero, "<figure"), 3, "{hero}");
-    assert_eq!(count(hero, "picture coming"), 1, "the cruiser: {hero}");
+    assert_eq!(count(hero, "picture coming"), 1, "the lantern: {hero}");
     assert_eq!(
         count(hero, r#"class="waiting""#),
         1,
-        "the destroyer waits on review: {hero}"
+        "the sconce waits on review: {hero}"
     );
     assert!(
         !hero.contains("hero-summary"),
@@ -97,9 +97,9 @@ fn then_come_the_four_after_it_in_the_queues_order() {
     assert_eq!(count(next, r#"class="nextcard""#), 4, "{next}");
     let order: Vec<usize> = [
         "mining-yield-curve",
-        "machine-carrier-picture",
+        "west-chandelier-picture",
         "dock-menu-order",
-        "empire-hull-silhouettes",
+        "east-lamp-silhouettes",
     ]
     .iter()
     .map(|slug| {
@@ -110,7 +110,7 @@ fn then_come_the_four_after_it_in_the_queues_order() {
     assert!(order.is_sorted(), "in the queue's order: {order:?}");
     assert!(next.contains("Mining · design · gates 2 cards"), "{next}");
     assert!(
-        next.contains(r#"src="/docs/art/ships/machine/carrier-a.png""#),
+        next.contains(r#"src="/docs/pictures/lamps/west/chandelier-a.png""#),
         "the first picture is the thumbnail: {next}"
     );
     assert!(
@@ -145,27 +145,27 @@ fn without_a_task_board_its_counts_are_dashes() {
 }
 
 #[test]
-fn progress_shows_ship_art_per_faction_and_the_design_docs() {
+fn progress_shows_lamp_picture_per_maker_and_the_design_docs() {
     let html = render(board("board.json"));
     let progress = region(&html, r#"class="progress panel card""#);
     assert!(
         progress.contains("43%"),
-        "69 of 161 hulls approved: {progress}"
+        "69 of 161 lamps approved: {progress}"
     );
-    assert!(progress.contains("69 of 161 hulls approved"), "{progress}");
+    assert!(progress.contains("69 of 161 lamps approved"), "{progress}");
     assert_eq!(count(progress, r#"class="bar""#), 6, "{progress}");
     assert!(
-        progress.contains(r#"href="/docs/ships/coalition.md""#),
+        progress.contains(r#"href="/docs/lamps/south.md""#),
         "{progress}"
     );
-    assert!(progress.contains("Alien coalition"), "{progress}");
+    assert!(progress.contains("Far south"), "{progress}");
     assert!(
         progress.contains("width: 33.3%"),
-        "coalition: 9 of 27 approved: {progress}"
+        "south: 9 of 27 approved: {progress}"
     );
     assert!(
         progress.contains("width: 11.1%"),
-        "coalition: 3 of 27 waiting: {progress}"
+        "south: 3 of 27 waiting: {progress}"
     );
     assert!(progress.contains("browse all 64"), "{progress}");
     assert!(progress.contains("41 decisions waiting"), "{progress}");
@@ -195,8 +195,8 @@ fn an_empty_queue_says_nothing_waits_and_points_at_the_spot_checks() {
         "no list after an empty hero: {html}"
     );
     assert!(
-        !html.contains(r#"class="art""#),
-        "no ship art without hulls: {html}"
+        !html.contains(r#"class="pics""#),
+        "no pictures without a card: {html}"
     );
 }
 
@@ -208,7 +208,7 @@ fn a_branch_decision_uses_the_ordinary_hero_and_links_its_task() {
     let html = render(board);
     let hero = region(&html, r#"class="hero card""#);
     assert!(hero.contains("href=\"/task/design/policy\""));
-    assert!(hero.contains("href=\"/@design~policy/docs/POLICY.md#republic-frigate-picture\""));
+    assert!(hero.contains("href=\"/@design~policy/docs/POLICY.md#north-pendant-picture\""));
     assert!(hero.contains("Next up · 1 of 37"));
 }
 
@@ -271,7 +271,7 @@ fn region_of(id: &str, totals: &[u32]) -> symphony_api::Region {
 fn each_plugin_region_draws_in_its_order_and_one_with_nothing_to_count_is_left_out() {
     let mut regions = board("board.json");
     regions.progress.regions = vec![
-        region_of("art", &[4, 2]),
+        region_of("pictures", &[4, 2]),
         region_of("empty", &[0, 0]),
         region_of("bare", &[]),
         region_of("audio", &[10]),
@@ -279,23 +279,26 @@ fn each_plugin_region_draws_in_its_order_and_one_with_nothing_to_count_is_left_o
     let html = render(regions);
     let progress = region(&html, r#"class="progress panel card""#);
     assert_eq!(count(progress, "data-region="), 2, "{progress}");
-    let art = progress
-        .find(r#"data-region="art""#)
-        .expect("the art region");
+    let picture = progress
+        .find(r#"data-region="pictures""#)
+        .expect("the picture region");
     let audio = progress
         .find(r#"data-region="audio""#)
         .expect("the audio region");
-    assert!(art < audio, "{progress}");
+    assert!(picture < audio, "{progress}");
     assert!(
         !progress.contains("empty title") && !progress.contains("bare title"),
         "{progress}"
     );
-    assert!(progress.contains("<h2>art title</h2>"), "{progress}");
+    assert!(progress.contains("<h2>pictures title</h2>"), "{progress}");
     assert!(
         progress.contains("50%<small>audio note</small>"),
         "{progress}"
     );
-    assert!(progress.contains(r#"href="/docs/art.md""#), "{progress}");
+    assert!(
+        progress.contains(r#"href="/docs/pictures.md""#),
+        "{progress}"
+    );
     let mut none = board("board.json");
     none.progress.regions.clear();
     let html = render(none);
@@ -318,7 +321,7 @@ fn the_home_links_the_projects_own_pages_and_its_register() {
     let html = render(board("board.json"));
     let links = links(&html);
     assert!(
-        !links.contains("/hulls"),
+        !links.contains("/lamps"),
         "a plain project adds no page: {links}"
     );
     assert!(links.contains(r#"href="/docs/DECISIONS.md""#), "{links}");
@@ -328,10 +331,10 @@ fn the_home_links_the_projects_own_pages_and_its_register() {
         register: "notes/register.md".into(),
         nav: vec![
             symphony_api::NavItem {
-                label: "⬡ hulls".into(),
-                title: "Hull models".into(),
-                href: "/hulls".into(),
-                document: "docs/ships/HULLS.md".into(),
+                label: "⬡ lamps".into(),
+                title: "Lamp models".into(),
+                href: "/lamps".into(),
+                document: "docs/lamps/LAMPS.md".into(),
             },
             symphony_api::NavItem {
                 label: "♪ cues".into(),
@@ -345,9 +348,9 @@ fn the_home_links_the_projects_own_pages_and_its_register() {
     let board = board("board.json");
     let html = dioxus_ssr::render_element(rsx! { BoardView { board, now, project } });
     let links = self::links(&html);
-    let hulls = links
-        .find(r#"<a class="pill" href="/hulls">Hull models</a>"#)
-        .expect("the hulls pill");
+    let lamps = links
+        .find(r#"<a class="pill" href="/lamps">Lamp models</a>"#)
+        .expect("the lamps pill");
     let cues = links
         .find(r#"<a class="pill" href="/cues">Audio cues</a>"#)
         .expect("the cues pill");
@@ -359,7 +362,7 @@ fn the_home_links_the_projects_own_pages_and_its_register() {
         "all docs open the first entrypoint: {links}"
     );
     assert!(
-        links.find("All docs").unwrap() < hulls && hulls < cues && cues < register,
+        links.find("All docs").unwrap() < lamps && lamps < cues && cues < register,
         "{links}"
     );
 }

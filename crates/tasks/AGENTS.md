@@ -3,7 +3,7 @@
 The workspace, the cargo wrapper and the toolchain pin: [the Rust section of
 the root guide](../../AGENTS.md#rust).
 
-The `tasks` crate is the task board ([TASKS](../../docs/TASKS.md)): its
+The `symphony-board` crate (this folder) is the task board ([TASKS](../../docs/TASKS.md)): its
 store over SurrealDB, the server it starts in `sf-tasks/` in the git common
 dir, and the `tasks` binary, which is `just tasks` and `just tasks-attach`.
 These recipes and `just worktree-sweep` go through `tools/tasks.sh`: live board
@@ -212,7 +212,7 @@ real repositories in a temporary folder, and spawn the binary `TASKS_BIN` names
 for the triggers, which stands in for the main checkout's build only on a
 board `TASKS_SERVER` names.
 `on_review.rs` owns the command a task moving to review starts: `[board]
-on_review` in the main checkout's `symphony.toml`, the one key the board reads
+on_review` in the main checkout's `symphony.toml`, read by the board itself
 there (the default is none), run detached from the main checkout with the
 task's slug, its branch (the slug, or what follows a `review/` or `review-N/`
 prefix) and that branch's tip appended, its output appended to
@@ -281,7 +281,7 @@ CLS/SEP and retain their original token ids, including at subword boundaries.
 Board text never enters network requests. Tests use the `Embedder` seam with
 deterministic vectors and a tiny local tokenizer, requiring no model/network.
 
-`cargo run --release -p tasks --example search_bench -- --database NAME --out
+`cargo run --release -p symphony-board --example search_bench -- --database NAME --out
 artifacts/HANDLE/embedding-bench` (through the root cargo wrapper) reads a board
 snapshot without upgrading the live schema, copies it only to the explicitly
 named non-live `TASKS_DATABASE`, and measures catch-up and all ten documented

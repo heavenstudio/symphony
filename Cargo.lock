@@ -1468,13 +1468,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "docs-index"
-version = "0.1.0"
-dependencies = [
- "serde_json",
-]
-
-[[package]]
 name = "document-features"
 version = "0.2.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5218,7 +5211,6 @@ name = "symphony"
 version = "0.1.0"
 dependencies = [
  "comrak",
- "docs-index",
  "fancy-regex 0.19.2",
  "gix",
  "jsonschema",
@@ -5228,8 +5220,8 @@ dependencies = [
  "serde_json",
  "sha2",
  "symphony-api",
+ "symphony-board",
  "symphony-plugin",
- "tasks",
  "toml",
  "unicode-normalization",
 ]
@@ -5244,10 +5236,31 @@ dependencies = [
 ]
 
 [[package]]
+name = "symphony-board"
+version = "0.1.0"
+dependencies = [
+ "libc",
+ "process-cwd",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tokenizers",
+ "toml",
+ "tract-linalg",
+ "tract-onnx",
+]
+
+[[package]]
+name = "symphony-docs"
+version = "0.1.0"
+
+[[package]]
 name = "symphony-plugin"
 version = "0.1.0"
 dependencies = [
  "symphony-api",
+ "symphony-docs",
 ]
 
 [[package]]
@@ -5263,7 +5276,8 @@ dependencies = [
  "sha2",
  "symphony",
  "symphony-api",
- "tasks",
+ "symphony-board",
+ "symphony-plugin",
  "tokio",
  "tower",
  "tower-http",
@@ -5355,22 +5369,6 @@ dependencies = [
  "filetime",
  "libc",
  "xattr",
-]
-
-[[package]]
-name = "tasks"
-version = "0.1.0"
-dependencies = [
- "libc",
- "process-cwd",
- "rusqlite",
- "serde",
- "serde_json",
- "sha2",
- "tokenizers",
- "toml",
- "tract-linalg",
- "tract-onnx",
 ]
 
 [[package]]

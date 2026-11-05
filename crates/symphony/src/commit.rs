@@ -7,10 +7,9 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Output;
 use std::sync::{Arc, Mutex, mpsc};
-use tasks::sys::Command;
+use symphony_board::sys::Command;
 
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 
 use crate::landing::{PrivateWorktree, generators};
 use crate::plugins::Plugins;
@@ -248,7 +247,7 @@ mod metadata_tests {
             for key in REPOSITORY_OVERRIDES {
                 cmd.env_remove(key);
             }
-            let done = tasks::sys::output(
+            let done = symphony_board::sys::output(
                 cmd.args(args)
                     .current_dir(root)
                     .env("GIT_CONFIG_GLOBAL", "/dev/null")
@@ -316,7 +315,7 @@ mod metadata_tests {
             } else if mode == "without-git" {
                 child.env("PATH", tree.path("no-executables"));
             }
-            let done = tasks::sys::output(&mut child).unwrap();
+            let done = symphony_board::sys::output(&mut child).unwrap();
             assert!(done.status.success(), "{done:?}");
             assert!(
                 String::from_utf8_lossy(&done.stdout).contains("1 passed"),
@@ -538,7 +537,7 @@ fn run(
     }
     let child = {
         let _stage = PublicationStage::start(format_args!("spawn git {args:?}"));
-        tasks::sys::spawn_piped(&mut command).map_err(|e| e.to_string())?
+        symphony_board::sys::spawn_piped(&mut command).map_err(|e| e.to_string())?
     };
     let mut child = child;
     if let Some(input) = input {
@@ -551,7 +550,7 @@ fn run(
             .map_err(|e| e.to_string())?;
     }
     let _wait = PublicationStage::start(format_args!("wait git pid={} {args:?}", child.id()));
-    tasks::sys::wait_output(child).map_err(|e| e.to_string())
+    symphony_board::sys::wait_output(child).map_err(|e| e.to_string())
 }
 
 fn checked(done: Output) -> Result<String, String> {
@@ -595,26 +594,6 @@ pub fn on_main(root: &Path) -> bool {
     git(root, &["symbolic-ref", "--quiet", "HEAD"]).is_ok_and(|branch| branch == main_ref(root))
 }
 
-/// Landing owns the approval rules. Call its binary to avoid a review -> gate -> review cycle.
-pub fn land_call(root: &Path, request: &Value) -> Result<Value, String> {
-    let mut child = tasks::sys::spawn_piped(
-        Command::new(root.join("tools/rs-bin.sh"))
-            .args(["sf-land", "api"])
-            .current_dir(root),
-    )
-    .map_err(|e| e.to_string())?;
-    child
-        .stdin
-        .take()
-        .ok_or("no landing input")?
-        .write_all(request.to_string().as_bytes())
-        .map_err(|e| e.to_string())?;
-    serde_json::from_str(&checked(
-        tasks::sys::wait_output(child).map_err(|e| e.to_string())?,
-    )?)
-    .map_err(|e| e.to_string())
-}
-
 fn merge(root: &Path, current: &str, base: &str, new: &str) -> Result<String, CommitError> {
     let plugins = &Plugins::of(root);
     let _stage = PublicationStage::start(format_args!("merge saved text"));
@@ -626,7 +605,7 @@ fn merge(root: &Path, current: &str, base: &str, new: &str) -> Result<String, Co
     }
     let done = {
         let _child = PublicationStage::start(format_args!("git merge-file"));
-        tasks::sys::output(
+        symphony_board::sys::output(
             Command::new("git")
                 .args(["merge-file", "-p"])
                 .args(["current", "base", "new"].map(|n| scratch.0.join(n)))
@@ -1413,7 +1392,7 @@ fn generate(root: &Path, heavy: bool) -> Result<(), String> {
             continue;
         }
         let (program, args) = generator.command.split_first().ok_or("empty generator")?;
-        let done = tasks::sys::output(Command::new(program).args(args).current_dir(root))
+        let done = symphony_board::sys::output(Command::new(program).args(args).current_dir(root))
             .map_err(|e| e.to_string())?;
         if !done.status.success() {
             return Err(format!(
@@ -1464,13 +1443,13 @@ fn report(root: &Path, message: &str) {
     let filed = (|| {
         let by = app_actor(root)?;
         crate::taskview::connect(root)?
-            .create(&tasks::NewTask {
+            .create(&symphony_board::NewTask {
                 slug,
                 title: "Symphony could not commit an owner verdict cleanly".into(),
                 body: message,
                 by,
                 priority: 0,
-                ..tasks::NewTask::default()
+                ..symphony_board::NewTask::default()
             })
             .map_err(|e| e.to_string())?;
         Ok::<_, String>(())
@@ -1669,7 +1648,7 @@ fn output_branch(
     let actor = app_actor(root)?;
     let check = Project::of(&wt.path).verdicts.check.clone();
     if let Some((program, args)) = check.split_first() {
-        let done = tasks::sys::output(
+        let done = symphony_board::sys::output(
             Command::new(program)
                 .args(args)
                 .current_dir(&wt.path)
@@ -1730,7 +1709,7 @@ fn publish(
     };
     // Land may verify a moving-main candidate. Neither that work nor the branch's initial
     // verify can hold the app's write locks; land owns its publication CAS and bounded retry.
-    let done = tasks::sys::output(
+    let done = symphony_board::sys::output(
         Command::new(program)
             .args(args)
             .arg(&publication.branch)
@@ -2410,7 +2389,7 @@ mod publication_tests {
     #[test]
     fn recovery_adopts_only_the_locked_inode_still_named_by_the_journal() {
         let tree = crate::test_tree::Tree::new();
-        let done = tasks::sys::output(
+        let done = symphony_board::sys::output(
             Command::new("git")
                 .args(["init", "-q", "-b", "main"])
                 .current_dir(&tree.root),

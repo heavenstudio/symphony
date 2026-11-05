@@ -2,7 +2,7 @@
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use tasks::sys::Command;
+use symphony_board::sys::Command;
 
 const ROOT: &str = "SF_AFTER_ACCESS_ROOT";
 const CASE: &str = "SF_AFTER_ACCESS_CASE";
@@ -52,7 +52,7 @@ exit {status}
 
     pub fn run(&self, test: &str, case: &str) {
         // Set PATH only on this child: concurrent tests and the machine's CLI stay untouched.
-        let done = tasks::sys::output(
+        let done = symphony_board::sys::output(
             Command::new(std::env::current_exe().unwrap())
                 .args(["--exact", test, "--nocapture"])
                 .current_dir(&self.root)

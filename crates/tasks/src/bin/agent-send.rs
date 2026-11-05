@@ -5,7 +5,7 @@ use std::process::ExitCode;
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     // Read only the board connection and sender settings. Messaging credentials are never needed.
-    let env = tasks::cli::Env {
+    let env = symphony_board::cli::Env {
         vars: [
             "TASKS_SESSION",
             "TASKS_DATABASE",
@@ -18,7 +18,11 @@ fn main() -> ExitCode {
         .collect(),
         cwd: std::env::current_dir().unwrap_or_default(),
     };
-    let code =
-        tasks::cli::agent_send::main(&args, &env, &mut std::io::stdout(), &mut std::io::stderr());
+    let code = symphony_board::cli::agent_send::main(
+        &args,
+        &env,
+        &mut std::io::stdout(),
+        &mut std::io::stderr(),
+    );
     ExitCode::from(u8::try_from(code).unwrap_or(2))
 }

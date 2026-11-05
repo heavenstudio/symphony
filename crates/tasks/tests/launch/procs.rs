@@ -1,7 +1,7 @@
 //! What runs under a pane, read: `ps`'s table walked, and each pattern as Python's `re` reads it,
 //! matched by hand (the protected work, `harmless`, `shell`, `helper` and `board`).
 
-use tasks::launch::procs::{
+use symphony_board::launch::procs::{
     board, busy_reason, harmless, helper, land, named, reap_busy_reason, shell, symphony_app,
     test_run, under, verify,
 };
@@ -239,7 +239,7 @@ fn interactive_codex_is_harmless_but_nested_exec_is_work() {
         "codex e draw",
         "/opt/bin/codex -m model exec draw",
         "CODEX e draw",
-        "codex exec 'draw an mcp-ship'",
+        "codex exec 'draw an mcp-lamp'",
         "CODEX e 'run just tasks inbox'",
         "codex --profile e exec draw",
         "codex --profile=e e draw",

@@ -40,7 +40,7 @@ impl fmt::Display for SchemaError {
 /// so each subschema is held to `unevaluatedProperties: false` as the top one is.
 pub const STRICT: &str = r#"{
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "urn:star-foundry:schema:draft-2020-12-strict",
+  "$id": "urn:symphony:schema:draft-2020-12-strict",
   "$dynamicAnchor": "meta",
   "$ref": "https://json-schema.org/draft/2020-12/schema",
   "unevaluatedProperties": false

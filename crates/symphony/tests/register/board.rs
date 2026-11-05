@@ -51,8 +51,8 @@ fn render_tree() -> Tree {
         "---\nstatus: review\n---\n# V\n\n> [!dislike] Too grim\n> Lighten the tone.\n",
     );
     tree.write(
-        "docs/FACTIONS.md",
-        "---\nstatus: approved\n---\n> [!like] Empire\n",
+        "docs/MAKERS.md",
+        "---\nstatus: approved\n---\n> [!like] East\n",
     );
     tree.write("docs/PLAN.md", "# plan\n");
     tree.write("docs/BAD.md", "---\nstatus: shipped\n---\n");
@@ -72,7 +72,7 @@ fn board_lists_open_comments_and_has_no_status_section() {
     assert!(out.contains("Too grim"));
     assert!(out.contains("Lighten the tone."));
     assert!(
-        !after_open(&out).contains("Empire"),
+        !after_open(&out).contains("East"),
         "a like is not open work"
     );
     assert!(!after_open(&out).contains("docs/DONE.md"));
@@ -117,7 +117,7 @@ fn open_only_prints_just_open_comments() {
     let tree = render_tree();
     let (_, out, _) = status(&tree.root, &["--open"]);
     assert!(out.contains("docs/VISION.md:6"), "{out}");
-    assert!(!out.contains("docs/FACTIONS.md"));
+    assert!(!out.contains("docs/MAKERS.md"));
     assert!(
         !out.lines()
             .next()
@@ -142,9 +142,9 @@ fn decision_tree() -> Tree {
     tree.write(
         "docs/DECISIONS.md",
         "---\nstatus: review\n---\n# Decisions\n\n\
-         - [x] **five-civilizations** — There are five civilizations.\n\
+         - [x] **five-workshops** — There are five workshops.\n\
          - [ ] **star-lanes** — Travel is by star lanes.\n\
-         - [-] **hull-count-141** — 141 hulls.\n  Thirty first.\n\
+         - [-] **lamp-count-141** — 141 lamps.\n  Thirty first.\n\
          - [?] **five-station-bands** — Five size bands.\n",
     );
     tree
@@ -159,10 +159,10 @@ fn board_counts_decisions_and_lists_open_ones() {
     assert!(matches(r"pending\s+1", &out), "{out}");
     let open = after_open(&out);
     assert!(open.contains("docs/DECISIONS.md:8"), "{out}");
-    assert!(open.contains("hull-count-141"));
+    assert!(open.contains("lamp-count-141"));
     assert!(open.contains("Thirty first."));
     assert!(open.contains("five-station-bands"));
-    assert!(!open.contains("five-civilizations"));
+    assert!(!open.contains("five-workshops"));
     assert!(!open.contains("star-lanes"));
 }
 
@@ -170,7 +170,7 @@ fn board_counts_decisions_and_lists_open_ones() {
 fn open_only_includes_decisions() {
     let tree = decision_tree();
     let out = status_ok(&tree.root, &["--open"]);
-    assert!(out.contains("hull-count-141"), "{out}");
+    assert!(out.contains("lamp-count-141"), "{out}");
     assert!(!out.contains("DECISIONS ("));
 }
 
@@ -343,17 +343,17 @@ fn tidy_takes_the_decisions_register_before_the_others() {
 }
 
 #[test]
-fn tidy_leaves_a_faction_pages_picture_slot_to_the_app() {
+fn tidy_leaves_a_maker_pages_picture_slot_to_the_app() {
     let tree = decision_tree();
     tree.write(
-        "docs/factions/x.md",
-        "# X\n\n### Scouts\n\n[[art:Scouts · ship]]\n\n<!-- register:start -->\n### Subfaction art\n\n\
-         - [x] **scout-ship** — A scout. *Shows:* Scouts · ship\n  [2026-09-26 07:00] agent — ![s](/s.png)\n\
+        "docs/makers/x.md",
+        "# X\n\n### Scouts\n\n[[picture:Scouts · lamp]]\n\n<!-- register:start -->\n### Workshop picture\n\n\
+         - [x] **scout-lamp** — A scout. *Fills:* Scouts · lamp\n  [2026-09-26 07:00] agent — ![s](/s.png)\n\
          \x20 [2026-09-26 07:30] owner · approved\n<!-- register:end -->\n",
     );
     let out = status_ok(&tree.root, &["--tidy", "--now", "2026-09-26 08:00"]);
-    let page = tree.read("docs/factions/x.md");
-    assert!(page.contains("\n[[art:Scouts · ship]]\n"), "{page}");
+    let page = tree.read("docs/makers/x.md");
+    assert!(page.contains("\n[[picture:Scouts · lamp]]\n"), "{page}");
     assert!(!page.contains("<figure"));
     assert!(!out.contains("pictures:"));
 }
@@ -362,15 +362,15 @@ fn tidy_leaves_a_faction_pages_picture_slot_to_the_app() {
 fn tidy_covers_every_register_file_under_docs() {
     let tree = decision_tree();
     tree.write(
-        "docs/art/ships.md",
-        "# Ships\n\n<!-- register:start -->\n### Republic\n\n- [x] **rep-a** — one image.\n- [ ] **rep-b** — another.\n<!-- register:end -->\n",
+        "docs/pictures/lamps.md",
+        "# Lamps\n\n<!-- register:start -->\n### North\n\n- [x] **rep-a** — one image.\n- [ ] **rep-b** — another.\n<!-- register:end -->\n",
     );
     let plain = "# Notes\n\n- [x] **not-a-register** — outside any region.\n";
     tree.write("docs/notes.md", plain);
     let out = status_ok(&tree.root, &["--tidy", "--now", "2026-09-26 08:00"]);
-    let text = tree.read("docs/art/ships.md");
+    let text = tree.read("docs/pictures/lamps.md");
     assert!(out.contains("rep-a"), "{out}");
-    assert!(out.contains("regrouped docs/art/ships.md"), "{out}");
+    assert!(out.contains("regrouped docs/pictures/lamps.md"), "{out}");
     assert!(
         text.find("**rep-b**").unwrap() < text.find("**rep-a**").unwrap(),
         "{text}"

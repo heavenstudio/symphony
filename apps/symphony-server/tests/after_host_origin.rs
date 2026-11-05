@@ -12,6 +12,7 @@ mod fixture_script;
 
 use fixture::{Fixture, Server};
 use serde_json::json;
+use symphony_board::{NewSession, NewTask};
 
 const DOCUMENT: &str = "/api/document?path=docs/TOPIC.md";
 // Why the server's log says a write was refused.
@@ -64,7 +65,7 @@ fn exercise_land_approve(address: std::net::SocketAddr) {
     let origin = format!("http://{host}");
     let slug = "review/change/held";
     f.board
-        .create(&tasks::NewTask::new(slug, "Review change/held", "owner"))
+        .create(&NewTask::new(slug, "Review change/held", "owner"))
         .unwrap();
     // Seed it blocked through the board's copy boundary, as land holds it while it waits on the owner.
     let mut dump = f.board.dump().unwrap();
@@ -74,7 +75,7 @@ fn exercise_land_approve(address: std::net::SocketAddr) {
         .unwrap()
         .status = "blocked".into();
     f.board.copy(&dump).unwrap();
-    f.land_stand_in(&format!("[\"{slug}\"]"));
+    f.approving("", &format!("[\"{slug}\"]"));
     let offer = || {
         let response = f.request(
             "GET",
@@ -86,8 +87,8 @@ fn exercise_land_approve(address: std::net::SocketAddr) {
         assert_eq!(response.status, 200, "{response:?}");
         response.json()
     };
-    // Star Foundry's action offers nothing on work that is not in review, and asks land nothing:
-    // the offer names the task's branch alone.
+    // The action offers nothing on work that is not in review, and calls nothing: the offer names
+    // the task's branch alone.
     assert_eq!(
         offer(),
         json!({"action":"", "label":"", "branch":"change/held", "payload":null})
@@ -119,10 +120,9 @@ fn exercise_land_approve(address: std::net::SocketAddr) {
     );
     let calls = f.land_calls();
     assert_eq!(calls.len(), 2, "{calls:?}");
-    assert!(calls[0].contains("\"record_owner_approval\""), "{calls:?}");
-    assert!(
-        calls[1].contains("\"stamps_released\"") && calls[1].contains("\"change/held\""),
-        "{calls:?}"
+    assert_eq!(
+        calls,
+        ["approve change/held fixture-patch", "release change/held"]
     );
     // In review, land's patch is offered under the action's name and label.
     assert_eq!(
@@ -130,7 +130,7 @@ fn exercise_land_approve(address: std::net::SocketAddr) {
         json!({"action":"approve to land", "label":"Approve to land",
                "branch":"change/held", "payload":"fixture-patch"})
     );
-    assert!(f.land_calls()[2].contains("\"owner_offer\""));
+    assert_eq!(f.land_calls()[2], "offer change/held");
     // A move the board refuses (the work is in review already) leaves the approval standing.
     let response = approve();
     assert_eq!(response.status, 200, "{response:?}");
@@ -143,13 +143,13 @@ fn exercise_land_approve(address: std::net::SocketAddr) {
         .unwrap()
         .status = "blocked".into();
     f.board.copy(&dump).unwrap();
-    f.land_stand_in("not json");
+    f.approving("", "not json");
     let response = approve();
     assert_eq!(response.status, 200, "{response:?}");
     assert_eq!(f.board.get(slug).unwrap().status, "blocked");
     // An approval land refuses, or an action no plugin of the project offers, says and moves nothing.
     let heard = f.board.thread(slug).unwrap().len();
-    f.land_answering("the patch moved", &format!("[\"{slug}\"]"));
+    f.approving("the patch moved", &format!("[\"{slug}\"]"));
     let response = approve();
     assert_eq!(response.status, 400, "{response:?}");
     assert_eq!(response.json()["error"], "the patch moved");
@@ -158,7 +158,7 @@ fn exercise_land_approve(address: std::net::SocketAddr) {
         symphony_api::TASK_ACTION_ROUTE,
         Some(&host),
         Some(&origin),
-        &json!({"slug":slug, "action":"approve to ship", "payload":"fixture-patch", "note":""}),
+        &json!({"slug":slug, "action":"approve to release", "payload":"fixture-patch", "note":""}),
     );
     assert_eq!(response.status, 404, "{response:?}");
     assert_eq!(response.json()["error"], "no such board action");
@@ -195,7 +195,7 @@ fn exercise_blocked_finish(_: std::net::SocketAddr) {
         let slug = format!("fixture/blocked-finish-{index}");
         shared
             .board
-            .create(&tasks::NewTask::new(&slug, "Blocked finish", "owner"))
+            .create(&NewTask::new(&slug, "Blocked finish", "owner"))
             .unwrap();
         let mut release = shared.block_finish();
         // Neither the FIFO nor a timer releases cleanup to let the request pass. A synchronous
@@ -338,7 +338,7 @@ fn exercise_finish(address: std::net::SocketAddr) {
     let slug = "fixture/shared-cancel";
     shared
         .board
-        .create(&tasks::NewTask::new(slug, "Shared cancel", "owner"))
+        .create(&NewTask::new(slug, "Shared cancel", "owner"))
         .unwrap();
     let response = shared.request(
         "POST",
@@ -403,6 +403,7 @@ fn run(test: &str, exercise: fn(std::net::SocketAddr)) {
         .enable_all()
         .build()
         .unwrap();
+    symphony::plugins::install(fixture::approving::PLUGINS).unwrap();
     runtime.block_on(async {
         let server = Server::start().await;
         let result = tokio::task::spawn_blocking({
@@ -716,7 +717,7 @@ fn exercise_task_controls(address: std::net::SocketAddr) {
         "cancelled",
     ] {
         let slug = format!("fixture/cancel-{}", status.replace('_', "-"));
-        let task = tasks::NewTask::new(&slug, "Owner cancellation", "owner");
+        let task = NewTask::new(&slug, "Owner cancellation", "owner");
         f.board.create(&task).unwrap();
         // Seed existing work through the board's copy boundary: create admits only pre-work
         // statuses, and these owner cases must have no registered agent or role.
@@ -761,16 +762,8 @@ fn exercise_task_controls(address: std::net::SocketAddr) {
         f.board.dump().unwrap().sessions.is_empty(),
         "owner controls must not fabricate an agent session"
     );
-    let worker = f
-        .board
-        .register(&tasks::NewSession::new("worker"))
-        .unwrap()
-        .row;
-    let outsider = f
-        .board
-        .register(&tasks::NewSession::new("worker"))
-        .unwrap()
-        .row;
+    let worker = f.board.register(&NewSession::new("worker")).unwrap().row;
+    let outsider = f.board.register(&NewSession::new("worker")).unwrap().row;
     f.board.claim(slug, &worker.handle).unwrap();
     let before = f.snapshot();
     let refusal = f
@@ -796,7 +789,7 @@ fn exercise_task_controls(address: std::net::SocketAddr) {
         "owner"
     );
     // The shared transaction must still admit ordinary role holders after adding the owner case.
-    let mut task = tasks::NewTask::new("fixture/executor-cancel", "Executor cancellation", "owner");
+    let mut task = NewTask::new("fixture/executor-cancel", "Executor cancellation", "owner");
     task.status = "ready".into();
     f.board.create(&task).unwrap();
     f.board.claim(&task.slug, &worker.handle).unwrap();

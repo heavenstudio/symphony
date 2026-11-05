@@ -103,14 +103,14 @@ or cancelled) the record stays and says why and how to bring it back,
 `just tasks restore SLUG [HANDLE]`, which resumes the conversation in the same
 worktree. See the [tasks skill](../../.agents/skills/tasks/SKILL.md#launch-restore-clean-up-herdr).
 
-**Reviewers come from the other agent family than the branch's author:** create
-the review instruction subtask, then
-`just tasks launch SLUG --role reviewer --kind K`. Launch registers its handle
-and records its session in its own pane and worktree. K is `codex`
-(`gpt-6.1-sol` or better, `xhigh`) for a branch a Claude executor wrote, `claude`
-for a branch a Codex executor wrote. Never use an in-process reviewer subagent,
-including outside herdr. Executors are kept about half Claude and half Codex
-([standing rule](../../RULES.md#workflowreviewer-from-the-other-family)).
+**Which agent starts where** is a [standing rule](../../RULES.md#workflowclaude-first-agents):
+executors and reviewers are Claude, started as in-process subagents or
+`claude -p`, with a handle registered for them and a subtask made `--for` it. A
+pane, `just tasks launch SLUG --kind K` (`--role reviewer` for a reviewer),
+holds work that needs one: Codex's adversarial review of a branch a Claude
+executor wrote (`gpt-6.1-sol` or better, `xhigh`), its image generation and 3D
+modelling, or an agent that must be watched or outlive its orchestrator
+([task-orchestrator](../../.agents/skills/task-orchestrator/SKILL.md#which-way-an-agent-starts)).
 
 **Optional automatic staffing:** `just tasks staff [--dry-run]` makes one pass, highest
 priority first. Enable it in [task_staff.json](../../tools/task_staff.json): `enabled`
@@ -216,8 +216,8 @@ command. A handle anywhere else
 in a command (a grep pattern, text inside a quoted argument, another recipe
 such as `just land` run under someone's `TASKS_SESSION`) binds nothing. From
 then on each of its tool calls beats for that handle, until a later board
-command names another. A full session with no agent id (one started in a herdr pane)
-is bound and beats the same way, keyed by its session id, but keeps the first handle
+command names another. A full session with no agent id (one started in a herdr pane, or a
+`claude -p` run) is bound and beats the same way, keyed by its session id, but keeps the first handle
 it names: naming another (registering or relaying for a child) moves nothing. A handle
 with a monitor of its own (an orchestrator) is never bound: its monitor beats for it,
 and a session that names such a handle is barred from binding at all, so the calls of
@@ -228,12 +228,10 @@ reads live for as long as its timeout allows (at most 10 minutes), so a long
 one that may run longest keeps the mark, and only its own end clears it. A
 subagent that stops makes no more calls, and ages to stale and lost as before.
 
-Two orchestrators share the board. The **concepts** one holds design, art
-and review (`design/`, `art/`, the docs); the **game** one holds `sim/`,
-`view/`, `game/`, `perf/` and the engine's `tools/`. A design decision that
-needs code becomes a short board task for the game side, and the concepts
-side commits approved docs regularly, because worktree agents see only what
-is committed.
+Orchestrators can share the board, each holding its own slug prefixes. A decision
+one side makes that the other must act on becomes a short board task for that side,
+and a side that approves documents commits them regularly, because worktree agents
+see only what is committed.
 
 ## The agents API
 
@@ -250,7 +248,7 @@ panes and the test-slot locks are probes that say what each agent is doing now, 
    "handle": "amber-heron", "kind": "worker", "model": "sonnet", "parent": "cobalt-otter",
    "task": "sim/jump", "role": "executor",           # the task it works now (an open one first)
    "tasks": [{"slug": "sim/jump", "role": "executor", "status": "in_progress"}],
-   "worktree": "/…/star-foundry-wt/sim-jump", "branch": "sim/jump",   # where it really works
+   "worktree": "/…/lamp-works-wt/sim-jump", "branch": "sim/jump",   # where it really works
    "agent": "claude", "session_id": "9aa0…", "pane": "w1:p5",
    "callback": "uds:/tmp/cc-socks/1234.sock", "chat": false,
    "state": "running_test",

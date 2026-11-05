@@ -39,7 +39,7 @@ fn changing_p2_to_p0_immediately_updates_next_show_list_and_pull() {
         assert!(line.starts_with(priority), "{line}");
         assert!(line.contains(slug), "{line}");
     }
-    let digest = tasks::cli::pull::digest(&c.store(), &[], None, super::common::NOW, &[])
+    let digest = symphony_board::cli::pull::digest(&c.store(), &[], None, super::common::NOW, &[])
         .unwrap()
         .lines();
     assert_eq!(

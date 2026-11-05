@@ -6,7 +6,7 @@
 //! free local port. It runs under a shell that stops it when this process's pipe to the shell closes,
 //! so it goes with the test binary however that ends, and that ends as soon as the server does, so a
 //! server whose port was taken before it bound it is started again at once on another
-//! (`tasks::port`), every start within one readiness bound; one that ends for any other reason
+//! (`symphony_board::port`), every start within one readiness bound; one that ends for any other reason
 //! fails the tests with its log. The shell says the server's pid, so an answer on the port counts
 //! only once that process itself listens there. At a normal exit the binary also waits for the
 //! shell, so the server's CPU is counted in the rusage of whoever ran the tests, as a child's,
@@ -20,12 +20,12 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
-use tasks::health::{LIVE_SECONDS, STALE_SECONDS};
-use tasks::port::Start;
-use tasks::rows::{Dump, LinkRow, RoleRow, SessionRow, TaskRow};
-use tasks::rpc::{self, Client, DbError};
-use tasks::sys::{Child, Command};
-use tasks::{Health, NewSession, NewTask, Store, Task};
+use symphony_board::health::{LIVE_SECONDS, STALE_SECONDS};
+use symphony_board::port::Start;
+use symphony_board::rows::{Dump, LinkRow, RoleRow, SessionRow, TaskRow};
+use symphony_board::rpc::{self, Client, DbError};
+use symphony_board::sys::{Child, Command};
+use symphony_board::{Health, NewSession, NewTask, Store, Task};
 
 pub const NOW: f64 = 1_800_000_000.0;
 /// Past the lost line.
@@ -129,8 +129,8 @@ pub fn surreal() -> PathBuf {
         return named.into();
     }
     let script = project_root().join("tools/surreal.sh");
-    let found =
-        tasks::sys::output(Command::new("bash").arg(&script)).expect("bash runs tools/surreal.sh");
+    let found = symphony_board::sys::output(Command::new("bash").arg(&script))
+        .expect("bash runs tools/surreal.sh");
     assert!(
         found.status.success(),
         "tools/surreal.sh found no SurrealDB server for the tests: {}",
@@ -150,11 +150,11 @@ fn project_root() -> PathBuf {
         .to_path_buf()
 }
 
-/// `command` started with its stdin a [`tasks::sys::pipe`], kept as `child.stdin`, and its other
+/// `command` started with its stdin a [`symphony_board::sys::pipe`], kept as `child.stdin`, and its other
 /// streams as `command` sets them: what the child reads ends once the test drops that input, never
 /// later because a child another test spawned took a copy of it.
 pub fn spawn_with_input(command: &mut Command) -> std::io::Result<Child> {
-    let (input, stdin) = tasks::sys::pipe()?;
+    let (input, stdin) = symphony_board::sys::pipe()?;
     let mut child = command.stdin(input).spawn()?;
     child.stdin = Some(OwnedFd::from(stdin).into());
     Ok(child)
@@ -173,10 +173,14 @@ fn start() -> Server {
     // Up once it answers and the server itself listens there (the shell says its pid), every start
     // within the one readiness bound: a process that took its port answers too.
     let until = Instant::now() + Duration::from_secs(20);
-    let started = tasks::port::start_on_free_port(tasks::port::ATTEMPTS, until, |reserved| {
-        let addr = reserved.to_string();
-        let (announced, announcer) = tasks::sys::pipe().expect("a pipe for the server's pid");
-        let mut shell = spawn_with_input(
+    let started = symphony_board::port::start_on_free_port(
+        symphony_board::port::ATTEMPTS,
+        until,
+        |reserved| {
+            let addr = reserved.to_string();
+            let (announced, announcer) =
+                symphony_board::sys::pipe().expect("a pipe for the server's pid");
+            let mut shell = spawn_with_input(
             Command::new("bash")
                 .arg("-c")
                 .arg(concat!(
@@ -191,30 +195,32 @@ fn start() -> Server {
                 .stdout(announcer),
         )
         .expect("sh starts the server");
-        let mut line = String::new();
-        let _ = BufReader::new(announced).read_line(&mut line);
-        let server: Option<u32> = line.trim().parse().ok();
-        while Instant::now() < until {
-            if shell.try_wait().unwrap().is_some() {
-                return Ok::<_, Infallible>(Start::Ended(said()));
+            let mut line = String::new();
+            let _ = BufReader::new(announced).read_line(&mut line);
+            let server: Option<u32> = line.trim().parse().ok();
+            while Instant::now() < until {
+                if shell.try_wait().unwrap().is_some() {
+                    return Ok::<_, Infallible>(Start::Ended(said()));
+                }
+                if rpc::healthy(&addr)
+                    && server.is_some_and(|pid| {
+                        symphony_board::port::listens(pid, reserved, symphony_board::sys::output)
+                            .unwrap()
+                    })
+                {
+                    return Ok(Start::Up((addr, shell)));
+                }
+                std::thread::sleep(Duration::from_millis(20));
             }
-            if rpc::healthy(&addr)
-                && server.is_some_and(|pid| {
-                    tasks::port::listens(pid, reserved, tasks::sys::output).unwrap()
-                })
-            {
-                return Ok(Start::Up((addr, shell)));
-            }
-            std::thread::sleep(Duration::from_millis(20));
-        }
-        drop(shell.stdin.take()); // the shell stops the server, if it is still there, and ends
-        let _ = shell.wait();
-        panic!(
-            "the SurrealDB server did not answer on {addr} within 20 s; its log ({}):\n{}",
-            log.display(),
-            said()
-        );
-    });
+            drop(shell.stdin.take()); // the shell stops the server, if it is still there, and ends
+            let _ = shell.wait();
+            panic!(
+                "the SurrealDB server did not answer on {addr} within 20 s; its log ({}):\n{}",
+                log.display(),
+                said()
+            );
+        },
+    );
     let ((addr, shell), _) = started.unwrap_or_else(|why| {
         panic!(
             "the SurrealDB server did not come up: {why}; its log is {}",
@@ -504,9 +510,9 @@ pub fn task(slug: &str, status: &str) -> TaskRow {
 }
 
 /// The refusal's words, or a panic naming what came back instead.
-pub fn refused<T: std::fmt::Debug>(result: Result<T, tasks::Error>) -> String {
+pub fn refused<T: std::fmt::Debug>(result: Result<T, symphony_board::Error>) -> String {
     match result {
-        Err(tasks::Error::Refused(message)) => message,
+        Err(symphony_board::Error::Refused(message)) => message,
         other => panic!("expected a refusal, got {other:?}"),
     }
 }

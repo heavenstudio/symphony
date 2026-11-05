@@ -5,7 +5,7 @@
 
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};
-use tasks::sys::Command;
+use symphony_board::{NewSession, Store, rpc, sys};
 
 use symphony::verdicts::{self, Board, BoardTask, VerdictError, epoch};
 
@@ -24,10 +24,10 @@ fn board_env() -> Vec<(String, String)> {
 }
 
 /// Fixture writes use the native store; assertions still exercise the real CLI board.
-fn fixture_store(env: &[(String, String)]) -> tasks::Store {
+fn fixture_store(env: &[(String, String)]) -> Store {
     let value = |name| env.iter().find(|(key, _)| key == name).unwrap().1.as_str();
-    tasks::Store::with(
-        tasks::rpc::Client::new(value("TASKS_SERVER"), "sf", value("TASKS_DATABASE")),
+    Store::with(
+        rpc::Client::new(value("TASKS_SERVER"), "sf", value("TASKS_DATABASE")),
         Box::new(|| board::NOW),
         Box::new(|_| false),
         board::HOST,
@@ -35,11 +35,11 @@ fn fixture_store(env: &[(String, String)]) -> tasks::Store {
     .unwrap()
 }
 
-fn fixture_worker(store: &tasks::Store, root: &Path, kind: &str) -> String {
+fn fixture_worker(store: &Store, root: &Path, kind: &str) -> String {
     store
-        .register(&tasks::NewSession {
+        .register(&NewSession {
             worktree: root.to_string_lossy().into_owned(),
-            ..tasks::NewSession::new(kind)
+            ..NewSession::new(kind)
         })
         .unwrap()
         .row
@@ -48,8 +48,8 @@ fn fixture_worker(store: &tasks::Store, root: &Path, kind: &str) -> String {
 
 /// `tasks ARGS` on the board `env` reaches, run in `cwd`, as no session: its stdout, once it succeeded.
 fn tasks(env: &[(String, String)], cwd: &Path, args: &[&str]) -> String {
-    let done = tasks::sys::output(
-        Command::new(tasks_binary())
+    let done = sys::output(
+        sys::Command::new(tasks_binary())
             .args(args)
             .envs(env.iter().map(|(k, v)| (k, v)))
             .env_remove("TASKS_SESSION")
@@ -64,17 +64,17 @@ fn tasks(env: &[(String, String)], cwd: &Path, args: &[&str]) -> String {
     String::from_utf8_lossy(&done.stdout).trim().to_string()
 }
 
-const REGISTER: &str = "# Ships
+const REGISTER: &str = "# Lamps
 
 <!-- register:start -->
-- [-] **hull-a-art** — Hull A. Approve and say A or B.
+- [-] **lamp-a-pic** — Lamp A. Approve and say A or B.
   [2026-10-06 09:00] agent — A ![a](/a.png)
   [2026-10-06 10:00] owner · rejected — the turrets face inward.
-- [x] **hull-b-art** — Hull B.
+- [x] **lamp-b-pic** — Lamp B.
   [2026-10-06 10:05] owner · approved — B
-- [x] **hull-c-art** — Hull C.
+- [x] **lamp-c-pic** — Lamp C.
   [2026-10-06 10:06] owner · approved — A
-  [2026-10-06 10:30] agent — Pick A recorded; **game/roster** takes it in.
+  [2026-10-06 10:30] agent — Pick A recorded; **game/lineup** takes it in.
 - [-] **ui-list-v1** — A list.
   [2026-10-06 10:10] owner · rejected — needs image explanation
 - [ ] **ui-list-v10** — Pending, nobody has answered it.
@@ -217,7 +217,7 @@ struct Case {
 impl Case {
     fn new() -> Case {
         let tree = Tree::new();
-        tree.write("docs/ships/hulls.md", REGISTER);
+        tree.write("docs/lamps/lamps.md", REGISTER);
         Case {
             tree,
             board: Fake::at("2026-10-06 11:00"),
@@ -225,7 +225,7 @@ impl Case {
     }
 
     fn doc(&self, text: &str) {
-        self.tree.write("docs/ships/hulls.md", text);
+        self.tree.write("docs/lamps/lamps.md", text);
     }
 
     fn untasked(&self) -> Vec<String> {
@@ -249,9 +249,9 @@ mod untasked {
         let case = Case::new();
         let cards = verdicts::untasked(&case.tree.root, &case.board).unwrap();
         let slugs: Vec<&str> = cards.iter().map(|c| c.slug.as_str()).collect();
-        assert_eq!(slugs, ["hull-a-art", "hull-b-art", "ui-list-v1"]);
+        assert_eq!(slugs, ["lamp-a-pic", "lamp-b-pic", "ui-list-v1"]);
         let first = &cards[0];
-        assert_eq!(first.path, "docs/ships/hulls.md");
+        assert_eq!(first.path, "docs/lamps/lamps.md");
         assert_eq!(first.state, "rejected");
         assert_eq!(first.quotes, ["the turrets face inward."]);
         assert_eq!(first.since.as_deref(), Some("2026-10-06 10:00"));
@@ -261,72 +261,72 @@ mod untasked {
     fn a_live_task_written_after_the_verdict_that_names_the_card_takes_it() {
         let case = Case::new();
         case.board.task(
-            "art/hull-a-redraw",
-            "Redraw **hull-a-art**: turrets outward.",
+            "pic/lamp-a-redraw",
+            "Redraw **lamp-a-pic**: turrets outward.",
             "2026-10-06 10:20",
             "ready",
         );
-        assert!(!case.untasked().contains(&"hull-a-art".to_string()));
+        assert!(!case.untasked().contains(&"lamp-a-pic".to_string()));
     }
 
     #[test]
     fn a_brief_written_the_same_minute_as_the_verdict_counts() {
         let case = Case::new();
         case.board.task(
-            "art/hull-a-redraw",
-            "Redraw hull-a-art.",
+            "pic/lamp-a-redraw",
+            "Redraw lamp-a-pic.",
             "2026-10-06 10:00",
             "ready",
         );
-        assert!(!case.untasked().contains(&"hull-a-art".to_string()));
+        assert!(!case.untasked().contains(&"lamp-a-pic".to_string()));
     }
 
     #[test]
     fn a_brief_written_before_the_verdict_does_not_act_on_it() {
         let case = Case::new();
         case.board.task(
-            "art/hull-a-first",
-            "Draw hull-a-art.",
+            "pic/lamp-a-first",
+            "Draw lamp-a-pic.",
             "2026-10-06 08:00",
             "ready",
         );
-        assert!(case.untasked().contains(&"hull-a-art".to_string()));
+        assert!(case.untasked().contains(&"lamp-a-pic".to_string()));
     }
 
     #[test]
     fn a_thread_message_after_the_verdict_names_the_card() {
         let case = Case::new();
         case.board.task(
-            "art/hull-a-first",
-            "Draw hull A.",
+            "pic/lamp-a-first",
+            "Draw lamp A.",
             "2026-10-06 08:00",
             "ready",
         );
         case.board.set("2026-10-06 10:40");
         case.board
             .say(
-                "art/hull-a-first",
+                "pic/lamp-a-first",
                 "w",
-                "Redrawing hull-a-art after the owner's rejection.",
+                "Redrawing lamp-a-pic after the owner's rejection.",
             )
             .unwrap();
-        assert!(!case.untasked().contains(&"hull-a-art".to_string()));
+        assert!(!case.untasked().contains(&"lamp-a-pic".to_string()));
     }
 
     #[test]
     fn a_brief_from_before_and_a_message_after_the_verdict_take_it() {
         let case = Case::new();
         case.board.task(
-            "art/hull-a-first",
-            "Draw hull-a-art.",
+            "pic/lamp-a-first",
+            "Draw lamp-a-pic.",
             "2026-10-06 08:00",
             "ready",
         );
         case.board.set("2026-10-06 10:40");
         case.board
-            .say("art/hull-a-first", "w", "Redrawing hull-a-art again.")
+            .say("pic/lamp-a-first", "w", "Redrawing lamp-a-pic again.")
             .unwrap();
-        assert!(!case.untasked().contains(&"hull-a-art".to_string()));
+        assert!(!case.untasked().contains(&"lamp-a-pic".to_string()));
     }
 
     #[test]
@@ -334,13 +334,13 @@ mod untasked {
         for status in ["cancelled", "done"] {
             let case = Case::new();
             case.board.task(
-                "art/hull-a-redraw",
-                "Redraw hull-a-art.",
+                "pic/lamp-a-redraw",
+                "Redraw lamp-a-pic.",
                 "2026-10-06 10:20",
                 status,
             );
             assert!(
-                case.untasked().contains(&"hull-a-art".to_string()),
+                case.untasked().contains(&"lamp-a-pic".to_string()),
                 "{status}"
             );
         }
@@ -375,7 +375,7 @@ mod untasked {
         let case = Case::new();
         case.board.task(
             "design/x",
-            "Answer (ui-list-v1), `hull-a-art`; **hull-b-art**.",
+            "Answer (ui-list-v1), `lamp-a-pic`; **lamp-b-pic**.",
             "2026-10-06 10:30",
             "ready",
         );
@@ -393,20 +393,20 @@ mod filing {
         assert_eq!(slug, "verdicts/2026-10-06-1100");
         let body = case.board.body(&slug);
         for words in [
-            "hull-a-art",
+            "lamp-a-pic",
             "the turrets face inward.",
-            "docs/ships/hulls.md",
-            "hull-b-art",
+            "docs/lamps/lamps.md",
+            "lamp-b-pic",
             "ui-list-v1",
             "needs image explanation",
             "docs/workflow/REVIEW.md",
         ] {
             assert!(body.contains(words), "{words}: {body}");
         }
-        assert!(!body.contains("hull-c-art"));
+        assert!(!body.contains("lamp-c-pic"));
         let created = case.board.created.borrow();
         assert_eq!(created[0].1, "w");
-        assert_eq!(created[0].2, ["docs/ships/hulls.md"]);
+        assert_eq!(created[0].2, ["docs/lamps/lamps.md"]);
         drop(created);
         assert!(case.untasked().is_empty());
     }
@@ -422,7 +422,7 @@ mod filing {
         );
         drop(tasks);
         let case = Case::new();
-        case.doc("<!-- register:start -->\n- [-] **hull-a-art** — Hull A.\n  [2026-10-06 10:00] owner · rejected — no.\n<!-- register:end -->\n");
+        case.doc("<!-- register:start -->\n- [-] **lamp-a-pic** — Lamp A.\n  [2026-10-06 10:00] owner · rejected — no.\n<!-- register:end -->\n");
         let slug = case.file("w").unwrap();
         let tasks = case.board.tasks.borrow();
         assert_eq!(
@@ -466,7 +466,7 @@ mod filing {
         assert_eq!(second, "verdicts/2026-10-06-1120");
         let body = case.board.body(&second);
         assert!(body.contains("ui-list-v10"));
-        assert!(!body.contains("hull-a-art"));
+        assert!(!body.contains("lamp-a-pic"));
     }
 
     #[test]
@@ -540,17 +540,17 @@ mod filing {
         let cards = verdicts::untasked(&case.tree.root, &case.board).unwrap();
         assert_eq!(
             cards[0].entry(),
-            "- docs/ships/hulls.md:2 **a-card** rejected (2026-10-06 10:00): (no note)"
+            "- docs/lamps/lamps.md:2 **a-card** rejected (2026-10-06 10:00): (no note)"
         );
         assert_eq!(
             cards[1].entry(),
-            "- docs/ships/hulls.md:4 **b-card** rejected (2026-10-06 10:00): \"two lines here\""
+            "- docs/lamps/lamps.md:4 **b-card** rejected (2026-10-06 10:00): \"two lines here\""
         );
     }
 }
 
 fn git(root: &Path, args: &[&str]) -> String {
-    let out = tasks::sys::output(Command::new("git").args(args).current_dir(root)).unwrap();
+    let out = sys::output(sys::Command::new("git").args(args).current_dir(root)).unwrap();
     assert!(
         out.status.success(),
         "git {args:?}: {}",
@@ -559,11 +559,11 @@ fn git(root: &Path, args: &[&str]) -> String {
     String::from_utf8_lossy(&out.stdout).trim().to_string()
 }
 
-const HULL_D: &str = "- [-] **hull-d-art** — Hull D, only on the branch.
+const LAMP_D: &str = "- [-] **lamp-d-pic** — Lamp D, only on the branch.
   [2026-10-06 09:30] agent — D ![d](/d.png)
   [2026-10-06 10:15] owner · rejected — the fins are too long.
 ";
-const HULL_A_ANSWER: &str = "  [2026-10-06 10:30] agent — Redrawn on **art/hull-a-redraw**.\n";
+const LAMP_A_ANSWER: &str = "  [2026-10-06 10:30] agent — Redrawn on **pic/lamp-a-redraw**.\n";
 
 /// The root is main's checkout. A worktree's register holds main's cards as of its fork as well as the
 /// branch's own: only the branch's own count, as the Symphony lists them.
@@ -609,14 +609,14 @@ impl Branched {
                 "main",
             ],
         );
-        std::fs::write(path.join("docs/ships/hulls.md"), text).unwrap();
+        std::fs::write(path.join("docs/lamps/lamps.md"), text).unwrap();
         path
     }
 
-    fn with_hull_d(text: &str) -> String {
+    fn with_lamp_d(text: &str) -> String {
         text.replace(
             "<!-- register:end -->",
-            &format!("{HULL_D}<!-- register:end -->"),
+            &format!("{LAMP_D}<!-- register:end -->"),
         )
     }
 }
@@ -627,15 +627,15 @@ mod branches {
     #[test]
     fn a_card_open_only_on_a_branch_is_listed_under_its_branch() {
         let b = Branched::new();
-        b.branch("art/x", &Branched::with_hull_d(REGISTER));
+        b.branch("pic/x", &Branched::with_lamp_d(REGISTER));
         let cards = verdicts::untasked(&b.case.tree.root, &b.case.board).unwrap();
-        let card = cards.iter().find(|c| c.slug == "hull-d-art").unwrap();
-        assert_eq!(card.path, "@art~x/docs/ships/hulls.md");
+        let card = cards.iter().find(|c| c.slug == "lamp-d-pic").unwrap();
+        assert_eq!(card.path, "@pic~x/docs/lamps/lamps.md");
         assert_eq!(card.quotes, ["the fins are too long."]);
-        assert!(card.entry().contains("art/x"), "{}", card.entry());
+        assert!(card.entry().contains("pic/x"), "{}", card.entry());
         assert!(
             card.entry()
-                .ends_with("on branch art/x: \"the fins are too long.\""),
+                .ends_with("on branch pic/x: \"the fins are too long.\""),
             "{}",
             card.entry()
         );
@@ -644,74 +644,74 @@ mod branches {
     #[test]
     fn the_branch_card_is_filed_linking_its_branch_page() {
         let b = Branched::new();
-        b.branch("art/x", &Branched::with_hull_d(REGISTER));
+        b.branch("pic/x", &Branched::with_lamp_d(REGISTER));
         let slug = b.case.file("w").unwrap();
-        assert!(b.case.board.body(&slug).contains("hull-d-art"));
+        assert!(b.case.board.body(&slug).contains("lamp-d-pic"));
         assert!(
             b.case.board.created.borrow()[0]
                 .2
-                .contains(&"@art~x/docs/ships/hulls.md".to_string())
+                .contains(&"@pic~x/docs/lamps/lamps.md".to_string())
         );
     }
 
     #[test]
     fn a_card_main_answered_after_the_branch_forked_is_not_listed_from_the_branch() {
         let b = Branched::new();
-        b.branch("art/x", &Branched::with_hull_d(REGISTER)); // its copy of hull-a-art still waits on an agent
+        b.branch("pic/x", &Branched::with_lamp_d(REGISTER)); // its copy of lamp-a-pic still waits on an agent
         let answered = REGISTER.replace(
             "turrets face inward.\n",
-            &format!("turrets face inward.\n{HULL_A_ANSWER}"),
+            &format!("turrets face inward.\n{LAMP_A_ANSWER}"),
         );
         b.case.doc(&answered);
         git(
             &b.case.tree.root,
-            &["commit", "-q", "-am", "answer hull-a-art"],
+            &["commit", "-q", "-am", "answer lamp-a-pic"],
         );
         let waiting = b.case.untasked();
-        assert!(!waiting.contains(&"hull-a-art".to_string()), "{waiting:?}");
-        assert!(waiting.contains(&"hull-d-art".to_string()), "{waiting:?}");
+        assert!(!waiting.contains(&"lamp-a-pic".to_string()), "{waiting:?}");
+        assert!(waiting.contains(&"lamp-d-pic".to_string()), "{waiting:?}");
     }
 
     #[test]
     fn a_card_only_on_a_branch_that_waits_on_the_owner_is_not_listed() {
         let b = Branched::new();
-        let asked = "- [-] **hull-e-art** — Hull E.\n  [2026-10-06 10:20] owner · rejected — too pale.\n  [2026-10-06 10:40] agent · question — Paler trim, or a darker hull?\n";
+        let asked = "- [-] **lamp-e-pic** — Lamp E.\n  [2026-10-06 10:20] owner · rejected — too pale.\n  [2026-10-06 10:40] agent · question — Paler trim, or a darker lamp?\n";
         b.branch(
-            "art/x",
+            "pic/x",
             &REGISTER.replace(
                 "<!-- register:end -->",
                 &format!("{asked}<!-- register:end -->"),
             ),
         );
-        assert!(!b.case.untasked().contains(&"hull-e-art".to_string()));
+        assert!(!b.case.untasked().contains(&"lamp-e-pic".to_string()));
     }
 
     #[test]
     fn a_branch_card_identical_to_mains_is_listed_once_from_main() {
         let b = Branched::new();
-        b.branch("art/x", &Branched::with_hull_d(REGISTER));
+        b.branch("pic/x", &Branched::with_lamp_d(REGISTER));
         let cards = verdicts::untasked(&b.case.tree.root, &b.case.board).unwrap();
         let paths: Vec<&str> = cards
             .iter()
-            .filter(|c| c.slug == "hull-a-art")
+            .filter(|c| c.slug == "lamp-a-pic")
             .map(|c| c.path.as_str())
             .collect();
-        assert_eq!(paths, ["docs/ships/hulls.md"]);
+        assert_eq!(paths, ["docs/lamps/lamps.md"]);
     }
 
     #[test]
     fn a_card_stacked_branches_carry_is_listed_once() {
         let b = Branched::new();
-        b.branch("art/x", &Branched::with_hull_d(REGISTER));
-        b.branch("art/y", &Branched::with_hull_d(REGISTER));
+        b.branch("pic/x", &Branched::with_lamp_d(REGISTER));
+        b.branch("pic/y", &Branched::with_lamp_d(REGISTER));
         let cards = verdicts::untasked(&b.case.tree.root, &b.case.board).unwrap();
-        assert_eq!(cards.iter().filter(|c| c.slug == "hull-d-art").count(), 1);
+        assert_eq!(cards.iter().filter(|c| c.slug == "lamp-d-pic").count(), 1);
     }
 
     #[test]
     fn the_roots_own_checkout_and_a_root_with_no_git_list_only_main() {
         let case = Case::new(); // no repository at all
-        assert_eq!(case.untasked(), ["hull-a-art", "hull-b-art", "ui-list-v1"]);
+        assert_eq!(case.untasked(), ["lamp-a-pic", "lamp-b-pic", "ui-list-v1"]);
     }
 }
 
@@ -757,7 +757,7 @@ fn a_large_backlog_against_a_busy_board_is_judged_quickly() {
     let case = Case::new();
     let cards: String = (0..300)
         .map(|i| {
-            format!("- [-] **card-{i}-art** — C.\n  [2026-10-06 10:00] owner · rejected — no.\n")
+            format!("- [-] **card-{i}-pic** — C.\n  [2026-10-06 10:00] owner · rejected — no.\n")
         })
         .collect();
     case.doc(&format!(
@@ -765,16 +765,16 @@ fn a_large_backlog_against_a_busy_board_is_judged_quickly() {
     ));
     for i in 0..300 {
         case.board.task(
-            &format!("art/t-{i}"),
-            &format!("Brief naming card-{}-art and others. ", i + 1000).repeat(20),
+            &format!("pic/t-{i}"),
+            &format!("Brief naming card-{}-pic and others. ", i + 1000).repeat(20),
             "2026-10-06 10:30",
             "ready",
         );
         for j in 0..10 {
-            case.board.change(&format!("art/t-{i}"), |t| {
+            case.board.change(&format!("pic/t-{i}"), |t| {
                 t.thread.push((
                     epoch("2026-10-06 10:31").unwrap(),
-                    format!("progress on card-{}-art, step {j}", i + 2000),
+                    format!("progress on card-{}-pic, step {j}", i + 2000),
                 ));
             });
         }
@@ -867,7 +867,7 @@ mod command {
 
     fn setup() -> (Tree, Rc<Fake>) {
         let tree = Tree::new();
-        tree.write("docs/ships/hulls.md", REGISTER);
+        tree.write("docs/lamps/lamps.md", REGISTER);
         (tree, Rc::new(Fake::at("2026-10-06 11:00")))
     }
 
@@ -876,8 +876,8 @@ mod command {
         let (tree, board) = setup();
         let (code, out, _) = run(&tree, &board, None, &[]);
         assert_eq!(code, 0);
-        assert!(out.contains("docs/ships/hulls.md"), "{out}");
-        assert!(out.contains("hull-a-art"), "{out}");
+        assert!(out.contains("docs/lamps/lamps.md"), "{out}");
+        assert!(out.contains("lamp-a-pic"), "{out}");
         assert!(
             out.ends_with(
                 "3 open cards with no task: `just verdict-tasks --file` puts them on the board\n"
@@ -981,8 +981,8 @@ mod real {
     use super::*;
 
     fn review(tree: &Tree, env: &[(String, String)], args: &[&str]) -> (i32, String, String) {
-        let done = tasks::sys::output(
-            Command::new(crate::review_binary())
+        let done = sys::output(
+            sys::Command::new(crate::review_binary())
                 .args(args)
                 .args(["--root", tree.root.to_str().unwrap()])
                 .envs(env.iter().map(|(k, v)| (k, v)))
@@ -1006,7 +1006,7 @@ mod real {
     #[test]
     fn three_waiting_cards_are_filed_once_and_a_second_run_files_none() {
         let tree = Tree::new();
-        tree.write("docs/ships/hulls.md", REGISTER);
+        tree.write("docs/lamps/lamps.md", REGISTER);
         let env = board_env();
         let handle = register_worker(&tree, &env);
 
@@ -1025,7 +1025,7 @@ mod real {
         let slug = out.trim().strip_prefix("filed on ").unwrap().to_string();
 
         let shown = tasks(&env, &tree.root, &["show", &slug, "--json"]);
-        for slug in ["hull-a-art", "hull-b-art", "ui-list-v1"] {
+        for slug in ["lamp-a-pic", "lamp-b-pic", "ui-list-v1"] {
             assert!(shown.contains(slug), "{slug}: {shown}");
         }
 
@@ -1042,14 +1042,14 @@ mod real {
     #[test]
     fn the_app_files_as_one_app_session_and_a_new_verdict_joins_its_roll_up() {
         let tree = Tree::new();
-        tree.write("docs/ships/hulls.md", REGISTER);
+        tree.write("docs/lamps/lamps.md", REGISTER);
         let env = board_env();
         register_worker(&tree, &env);
         let (code, out, err) = review(&tree, &env, &["verdict-tasks", "--file", "--app"]);
         assert_eq!(code, 0, "{err}");
         let first = out.trim().strip_prefix("filed on ").unwrap().to_string();
         tree.write(
-            "docs/ships/hulls.md",
+            "docs/lamps/lamps.md",
             &REGISTER.replace(PENDING_V10, &rejected_v10("2999-01-01 00:00")),
         );
         let (code, out, err) = review(&tree, &env, &["verdict-tasks", "--file", "--app"]);
@@ -1060,7 +1060,7 @@ mod real {
     fn a_board_it_cannot_reach_is_said_so_in_one_line_naming_it_and_exit_two() {
         // Exit 2, as a refusal's 1 is not, and the line names the address it tried.
         let tree = Tree::new();
-        tree.write("docs/ships/hulls.md", REGISTER);
+        tree.write("docs/lamps/lamps.md", REGISTER);
         let gone = [("TASKS_SERVER".to_string(), "127.0.0.1:1".to_string())];
         for args in [
             &["verdict-tasks"][..],
@@ -1081,13 +1081,13 @@ mod real {
     #[test]
     fn triage_prints_the_ranking_of_the_docs() {
         let tree = Tree::new();
-        tree.write("docs/ships/hulls.md", REGISTER);
+        tree.write("docs/lamps/lamps.md", REGISTER);
         let env = board_env();
         let (code, out, err) = review(&tree, &env, &["triage", "queue", "2"]);
         assert_eq!(code, 0, "{err}");
         assert!(
             out.starts_with(
-                " 1. ui-list-v10  docs/ships/hulls.md\n    design · gates nothing known"
+                " 1. ui-list-v10  docs/lamps/lamps.md\n    design · gates nothing known"
             ),
             "{out}"
         );
@@ -1102,14 +1102,14 @@ mod contract {
     //! the in-memory board cannot check for it.
 
     use symphony::taskcli::CliBoard;
-    use tasks::health::RESERVE_SECONDS;
+    use symphony_board::health::RESERVE_SECONDS;
 
     use super::*;
 
     struct Real {
         tree: Tree,
         env: Vec<(String, String)>,
-        setup: std::sync::OnceLock<tasks::Store>,
+        setup: std::sync::OnceLock<Store>,
     }
 
     impl Real {
@@ -1130,7 +1130,7 @@ mod contract {
             fixture_worker(self.setup(), &self.tree.root, kind)
         }
 
-        fn setup(&self) -> &tasks::Store {
+        fn setup(&self) -> &Store {
             self.setup.get_or_init(|| fixture_store(&self.env))
         }
 
@@ -1147,11 +1147,11 @@ mod contract {
             assignee: Option<&str>,
         ) {
             self.setup()
-                .create(&tasks::NewTask {
+                .create(&symphony_board::NewTask {
                     body: body.into(),
                     priority,
                     assignee: assignee.map(str::to_owned),
-                    ..tasks::NewTask::new(slug, "a task", by)
+                    ..symphony_board::NewTask::new(slug, "a task", by)
                 })
                 .unwrap();
         }
@@ -1186,15 +1186,15 @@ mod contract {
     fn a_task_is_read_with_its_words_status_and_creation_time() {
         let real = Real::new();
         let w = real.worker("worker");
-        real.create(&w, "art/one", "Redraw hull-a-art.");
-        let task = real.task("art/one");
+        real.create(&w, "pic/one", "Redraw lamp-a-pic.");
+        let task = real.task("pic/one");
         assert_eq!(
             (
                 task.title.as_str(),
                 task.body.as_str(),
                 task.status.as_str()
             ),
-            ("a task", "Redraw hull-a-art.", "ready")
+            ("a task", "Redraw lamp-a-pic.", "ready")
         );
         assert_eq!((task.created, real.board().now()), (board::NOW, board::NOW));
         assert_eq!((task.executors, task.reserved), (0, 0));
@@ -1211,9 +1211,9 @@ mod contract {
     fn tasks_come_in_the_boards_order_priority_then_age() {
         let real = Real::new();
         let w = real.worker("worker");
-        real.create_with(&w, "art/late", "x", 3, None);
-        real.create_with(&w, "art/first", "x", 1, None);
-        real.create_with(&w, "art/second", "x", 1, None);
+        real.create_with(&w, "pic/late", "x", 3, None);
+        real.create_with(&w, "pic/first", "x", 1, None);
+        real.create_with(&w, "pic/second", "x", 1, None);
         let slugs: Vec<String> = real
             .board()
             .tasks()
@@ -1221,30 +1221,30 @@ mod contract {
             .into_iter()
             .map(|t| t.slug)
             .collect();
-        assert_eq!(slugs, ["art/first", "art/second", "art/late"]);
+        assert_eq!(slugs, ["pic/first", "pic/second", "pic/late"]);
     }
 
     #[test]
     fn the_thread_holds_every_message_of_its_own_task() {
         let real = Real::new();
         let w = real.worker("worker");
-        real.create(&w, "art/one", "x");
-        real.create(&w, "art/two", "x");
-        real.tasks(&["--as", &w, "say", "art/one", "Redrawing hull-a-art."]);
-        let one = real.task("art/one");
+        real.create(&w, "pic/one", "x");
+        real.create(&w, "pic/two", "x");
+        real.tasks(&["--as", &w, "say", "pic/one", "Redrawing lamp-a-pic."]);
+        let one = real.task("pic/one");
         assert!(
             one.thread
                 .iter()
-                .any(|(at, text)| text == "Redrawing hull-a-art." && *at == board::NOW),
+                .any(|(at, text)| text == "Redrawing lamp-a-pic." && *at == board::NOW),
             "{:?}",
             one.thread
         );
         assert!(
             !real
-                .task("art/two")
+                .task("pic/two")
                 .thread
                 .iter()
-                .any(|(_, text)| text.contains("hull-a-art"))
+                .any(|(_, text)| text.contains("lamp-a-pic"))
         );
     }
 
@@ -1252,25 +1252,25 @@ mod contract {
     fn a_claimed_task_has_an_executor_and_only_the_claimed_one() {
         let real = Real::new();
         let w = real.worker("worker");
-        real.create(&w, "art/one", "x");
-        real.create(&w, "art/two", "x");
-        real.tasks(&["--as", &w, "claim", "art/one"]);
-        assert_eq!(real.task("art/one").executors, 1);
-        assert_eq!(real.task("art/two").executors, 0);
+        real.create(&w, "pic/one", "x");
+        real.create(&w, "pic/two", "x");
+        real.tasks(&["--as", &w, "claim", "pic/one"]);
+        assert_eq!(real.task("pic/one").executors, 1);
+        assert_eq!(real.task("pic/two").executors, 0);
     }
 
     #[test]
     fn a_reservation_counts_until_it_lapses() {
         let real = Real::new();
         let w = real.worker("worker");
-        real.create_with(&w, "art/for", "x", 2, Some(&w)); // no lapse
-        real.create(&w, "art/lapsing", "x");
-        real.tasks(&["--as", &w, "reserve", "art/lapsing"]);
-        assert_eq!(real.task("art/for").reserved, 1);
-        assert_eq!(real.task("art/lapsing").reserved, 1);
+        real.create_with(&w, "pic/for", "x", 2, Some(&w)); // no lapse
+        real.create(&w, "pic/lapsing", "x");
+        real.tasks(&["--as", &w, "reserve", "pic/lapsing"]);
+        assert_eq!(real.task("pic/for").reserved, 1);
+        assert_eq!(real.task("pic/lapsing").reserved, 1);
         let later = real.board_at(board::NOW + RESERVE_SECONDS + 1.0);
-        assert_eq!(find(&later, "art/lapsing").reserved, 0);
-        assert_eq!(find(&later, "art/for").reserved, 1);
+        assert_eq!(find(&later, "pic/lapsing").reserved, 0);
+        assert_eq!(find(&later, "pic/for").reserved, 1);
     }
 
     #[test]
@@ -1348,8 +1348,8 @@ mod solar {
 
     /// The binary run in `cwd`, on the board `env` reaches through the `tasks` binary.
     fn run(cwd: &Path, env: &[(String, String)], args: &[&str]) -> (i32, String, String) {
-        let done = tasks::sys::output(
-            Command::new(crate::review_binary())
+        let done = sys::output(
+            sys::Command::new(crate::review_binary())
                 .args(args)
                 .current_dir(cwd)
                 .envs(env.iter().map(|(k, v)| (k, v)))
@@ -1369,7 +1369,7 @@ mod solar {
     #[test]
     fn an_owner_line_with_an_impossible_date_refuses_naming_the_card_and_its_date() {
         let tree = Tree::new();
-        tree.write("docs/ships/hulls.md", IMPOSSIBLE);
+        tree.write("docs/lamps/lamps.md", IMPOSSIBLE);
         let env = board_env();
         let handle = fixture_worker(&fixture_store(&env), &tree.root, "worker");
         for args in [
@@ -1391,7 +1391,7 @@ mod solar {
     #[test]
     fn a_board_nothing_has_written_to_yet_lists_every_waiting_card() {
         let tree = Tree::new();
-        tree.write("docs/ships/hulls.md", REGISTER);
+        tree.write("docs/lamps/lamps.md", REGISTER);
         let (code, out, err) = run(&tree.root, &board_env(), &["verdict-tasks", "--root", "."]);
         assert_eq!(code, 0, "{err}");
         assert!(

@@ -5,7 +5,7 @@
 
 use symphony_api::{NavItem, ProjectView};
 
-/// The plugin page `path` opens (`hulls`, from `/hulls`): the item whose link it is.
+/// The plugin page `path` opens (`shelf`, from `/shelf`): the item whose link it is.
 pub fn nav_page<'a>(nav: &'a [NavItem], path: &str) -> Option<&'a NavItem> {
     let path = path.trim_matches('/');
     nav.iter()
@@ -50,10 +50,10 @@ mod tests {
     fn nav() -> Vec<NavItem> {
         vec![
             NavItem {
-                label: "⬡ hulls".into(),
-                title: "Hull models".into(),
-                href: "/hulls".into(),
-                document: "docs/ships/HULLS.md".into(),
+                label: "▤ shelf".into(),
+                title: "Shelf items".into(),
+                href: "/shelf".into(),
+                document: "docs/SHELF.md".into(),
             },
             NavItem {
                 label: "◇ maps".into(),
@@ -68,12 +68,12 @@ mod tests {
     fn a_route_finds_its_plugin_page_with_or_without_slashes() {
         let nav = nav();
         for (path, title) in [
-            ("hulls", Some("Hull models")),
-            ("/hulls/", Some("Hull models")),
+            ("shelf", Some("Shelf items")),
+            ("/shelf/", Some("Shelf items")),
             ("maps", Some("Maps")),
             ("", None),
             ("tasks", None),
-            ("hulls/extra", None),
+            ("shelf/extra", None),
         ] {
             assert_eq!(
                 nav_page(&nav, path).map(|item| item.title.as_str()),
@@ -81,7 +81,7 @@ mod tests {
                 "{path}"
             );
         }
-        assert_eq!(nav_page(&[], "hulls"), None);
+        assert_eq!(nav_page(&[], "shelf"), None);
     }
 
     #[test]
