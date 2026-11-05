@@ -20,6 +20,9 @@ use symphony_board::sys::{Child, Command, Stdio};
 #[path = "../../../../../tools/gate/tests/gate/scratch.rs"]
 mod scratch;
 
+#[path = "machine_copy.rs"]
+pub mod machine_copy;
+
 #[cfg(test)]
 #[path = "scratch_tests.rs"]
 mod scratch_tests;
@@ -139,12 +142,17 @@ pub fn write(path: &Path, text: &str) {
 }
 
 fn command_fixture(path: &Path, name: &str) {
-    // Fresh executable scripts incur first-exec validation too. Keep one immutable image for
-    // every scratch checkout; $0 still names the invoking fixture path (ps/open use it).
-    let source = Path::new(env!("CARGO_MANIFEST_DIR"))
+    // Fresh executable scripts incur first-exec validation too, and a checkout's own scripts are
+    // fresh in every verify run. Link the machine's one copy of these bytes for every scratch
+    // checkout; $0 still names the invoking fixture path (ps/open use it).
+    symlink(machine_copy::machine_copy(&script_source(name)), path).unwrap();
+}
+
+/// The tracked script a fixture command's machine-wide copy is made from.
+pub fn script_source(name: &str) -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests/after_lifecycle")
-        .join(name);
-    symlink(source, path).unwrap();
+        .join(name)
 }
 
 pub fn repository(root: &Path, args: &[&str]) {
