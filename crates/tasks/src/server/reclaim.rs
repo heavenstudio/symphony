@@ -1,7 +1,8 @@
 //! [`Home::reclaim`]: the board's store rebuilt from an export of itself, for a store that grew
 //! before every server kept its values in its sstables ([`super::Storage`]).
 
-use super::{ADDRESS, DATA, Home, OLD, RECLAIM, Running, ServerError, io, store};
+use super::storage::store;
+use super::{ADDRESS, DATA, Home, OLD, RECLAIM, Running, ServerError, io};
 use crate::rpc;
 use crate::sys::{Command, output};
 use serde_json::{Value, json};
@@ -295,8 +296,9 @@ pub fn bytes(path: &Path) -> u64 {
 /// in no namespace or database: one about the server itself, or one that enters its own with `USE`.
 fn layout(running: &Running) -> Result<Layout, ServerError> {
     let client = rpc::Client::new(&running.addr, crate::NAMESPACE, crate::DATABASE);
+    let scoped = false;
     let ask = |sql: &str| {
-        client.call(sql, json!({}), false).map_err(|problem| {
+        client.call(sql, json!({}), scoped).map_err(|problem| {
             ServerError::Reclaim(format!(
                 "could not read {sql:?} at {}: {problem}",
                 running.addr
