@@ -11,6 +11,9 @@ mod bash_env;
 #[path = "after_lifecycle/discovery_tests.rs"]
 mod discovery_tests;
 
+#[path = "after_lifecycle/projects_tests.rs"]
+mod projects_tests;
+
 use fixture::{AGENTS, Repo, front, get, repository, until, write};
 use std::fs;
 use std::io::{Read, Write};
@@ -220,14 +223,15 @@ fn concurrent_starts_from_main_and_a_worktree_publish_one_native_server() {
     let actual = repo.check_server();
     for (n, child) in starts {
         let page = if n % 2 == 0 {
-            ""
+            "/"
         } else {
-            "@feature~lifecycle/"
+            "/@feature~lifecycle/"
         };
+        let page = repo.page(repo.port(), page);
         assert!(
             child
                 .output()
-                .contains(&format!("http://127.0.0.1:{}/{page}", repo.port())),
+                .contains(&format!("http://127.0.0.1:{}{page}", repo.port())),
             "{}",
             child.output()
         );
@@ -1076,10 +1080,8 @@ fn opener_decisions_cover_empty_agent_markers_piped_stdout_and_interactive_open(
         let (mut interactive, _terminal) = repo.run_terminal(command);
         interactive.success();
         let opened = fs::read_to_string(repo.base.join("opened")).unwrap();
-        assert_eq!(
-            opened,
-            format!("http://127.0.0.1:{}/@feature~lifecycle/\n", repo.port())
-        );
+        let page = repo.page(repo.port(), "/@feature~lifecycle/");
+        assert_eq!(opened, format!("http://127.0.0.1:{}{page}\n", repo.port()));
         fs::remove_file(repo.base.join("opened")).unwrap();
     }
 }

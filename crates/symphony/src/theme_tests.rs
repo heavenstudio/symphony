@@ -27,14 +27,14 @@ fn a_project_without_a_package_has_the_symphonys_defaults() {
 #[test]
 fn each_part_the_file_sets_is_taken_and_each_it_leaves_is_the_default() {
     let (_tree, full) = project(
-        "[project]\nname = \"Full\"\n[theme]\nname = \"Shown\"\nicon = \"art/icon.svg\"\n\
-         stylesheet = \"art/look.css\"\n[theme.tokens]\nprimary = \"#a33\"\nfont-sans = \"Georgia, serif\"\n\
+        "[project]\nname = \"Full\"\n[theme]\nname = \"Shown\"\nicon = \"look/icon.svg\"\n\
+         stylesheet = \"look/look.css\"\n[theme.tokens]\nprimary = \"#a33\"\nfont-sans = \"Georgia, serif\"\n\
          [theme.layouts]\nheader = \"compact\"\nhome = \"default\"\n",
     );
     let package = Package::of(&full);
     assert_eq!(package.name, "Shown");
-    assert_eq!(package.icon.as_deref(), Some("art/icon.svg"));
-    assert_eq!(package.stylesheets, ["art/look.css"]);
+    assert_eq!(package.icon.as_deref(), Some("look/icon.svg"));
+    assert_eq!(package.stylesheets, ["look/look.css"]);
     assert_eq!(
         package.css(),
         ":root{--font-sans:Georgia, serif;--primary:#a33;}\n"
@@ -66,7 +66,7 @@ fn each_part_the_file_sets_is_taken_and_each_it_leaves_is_the_default() {
 }
 
 #[test]
-fn a_package_no_plugin_ships_is_the_defaults_and_named_by_the_lint() {
+fn a_package_no_plugin_provides_is_the_defaults_and_named_by_the_lint() {
     let (_tree, project) = project("[theme]\npackage = \"nowhere\"\nicon = \"i.svg\"\n");
     let package = Package::of(&project);
     assert_eq!(package.package, None);

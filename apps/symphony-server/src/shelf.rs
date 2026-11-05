@@ -79,7 +79,7 @@ impl Plugin for Shelf {
     }
 }
 
-/// The theme package the plugin ships, as a fixture project's `[theme] package` names it.
+/// The theme package the plugin provides, as a fixture project's `[theme] package` names it.
 pub const THEME: &str = "fixture-shelf";
 
 impl Route for Shelf {

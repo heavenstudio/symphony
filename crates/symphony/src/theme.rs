@@ -1,4 +1,4 @@
-//! A project's look: its theme package. A plugin ships one through its `Theme` seam, chosen by
+//! A project's look: its theme package. A plugin provides one through its `Theme` seam, chosen by
 //! `[theme] package`, and the project file sets any part over it (`[theme]`: a name, an icon, a
 //! stylesheet, `[theme.tokens]` and `[theme.layouts]`). A project with neither has the Symphony's
 //! defaults: its own name, no icon, no tokens, no stylesheet, every region's default layout.
@@ -27,7 +27,7 @@ pub const LAYOUTS: &[(&str, &[&str])] = &[
 /// A project's theme package, as the server serves it.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Package {
-    /// The plugin package it starts from, when a selected plugin ships the one the file names.
+    /// The plugin package it starts from, when a selected plugin provides the one the file names.
     pub package: Option<String>,
     /// The name of the header and the tab.
     pub name: String,
@@ -42,7 +42,7 @@ pub struct Package {
 }
 
 impl Package {
-    /// The package of `project`: the one a selected plugin ships under `[theme] package`, then
+    /// The package of `project`: the one a selected plugin provides under `[theme] package`, then
     /// the file's parts over it. A plugin's token or layout the client cannot read is left out
     /// (`symphony-status --lint` names it, [`problems`]).
     pub fn of(project: &Project) -> Package {
@@ -191,7 +191,7 @@ fn default_of(region: &str) -> Option<&'static str> {
         .map(|(_, variants)| variants[0])
 }
 
-/// What in `project`'s theme names a package none of its plugins ships, or a plugin package's
+/// What in `project`'s theme names a package none of its plugins provides, or a plugin package's
 /// token or layout the client cannot read.
 pub fn problems(project: &Project) -> Vec<String> {
     let Some(wanted) = &project.theme.package else {

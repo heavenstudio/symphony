@@ -25,6 +25,16 @@ patterns and renderers leave out is never listed or read. The Symphony's own rou
 (`symphony_api::SYMPHONY_ROUTES`, which `assets/shell.js` repeats) win over every
 entrypoint.
 
+One server serves every project the machine folder's registry holds
+(`crates/symphony/src/machine.rs`: `projects.json` beside the server's record, in
+`SYMPHONY_MACHINE_DIR` when set), each under `/<id>/` with its own watcher, feed,
+board snapshot and branch scan. A project's state stays in its checkout: paths under
+its artifacts folder go through `Project::artifact`, never an `artifacts/` literal.
+The host rule (`crates/symphony/src/machine/host.rs`) decides whether a start's build
+serves, waits for or replaces the running one. A project's look is its theme
+package (`crates/symphony/src/theme.rs`), served as `/<id>/theme.css` and inlined in
+its pages. Tests use a temporary machine folder.
+
 Use `just lint-rs`, `just test-rs`, `just symphony-ui-dist` and `just symphony-ui-dev`
 from this folder. `tools/rs-bin.sh` delegates to the containing project's source
 launcher and slot wrapper. Each workspace builds in its own `.target/`; the root

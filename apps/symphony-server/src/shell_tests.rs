@@ -55,23 +55,23 @@ fn with_no_package_the_symphony_defaults_stand_and_only_the_project_rides_in() {
 #[test]
 fn a_package_names_the_tab_and_sets_icon_tokens_stylesheet_and_layouts_under_the_base() {
     let tree = project(
-        "[theme]\nname = \"Lantern <Works>\"\nicon = \"art/icon.svg\"\nstylesheet = \
-         \"art/look.css\"\n[theme.tokens]\nprimary = \"#a33\"\n[theme.layouts]\nheader = \
+        "[theme]\nname = \"Lantern <Works>\"\nicon = \"look/icon.svg\"\nstylesheet = \
+         \"look/look.css\"\n[theme.tokens]\nprimary = \"#a33\"\n[theme.layouts]\nheader = \
          \"compact\"\nhome = \"focus\"\n",
     );
-    tree.write("art/icon.svg", "<svg/>");
-    tree.write("art/look.css", "main{}");
+    tree.write("look/icon.svg", "<svg/>");
+    tree.write("look/look.css", "main{}");
     let page = page(SHELL, &tree.root, "/lantern", "<p>banner</p>");
     assert!(
         page.contains("<title>Lantern &lt;Works&gt;</title>"),
         "{page}"
     );
     assert!(
-        page.contains("<link rel=\"icon\" href=\"/lantern/art/icon.svg?v="),
+        page.contains("<link rel=\"icon\" href=\"/lantern/look/icon.svg?v="),
         "{page}"
     );
     let tokens = format!("<style {THEME_MARK}>:root{{--primary:#a33;}}\n</style>");
-    let sheet = "<link rel=\"stylesheet\" href=\"/lantern/art/look.css?v=";
+    let sheet = "<link rel=\"stylesheet\" href=\"/lantern/look/look.css?v=";
     let (tokens_at, sheet_at) = (page.find(&tokens).unwrap(), page.find(sheet).unwrap());
     assert!(tokens_at < sheet_at && sheet_at < page.find("</head>").unwrap());
     assert!(page.contains("<html data-layout-header=\"compact\" data-layout-home=\"focus\" lang"));
@@ -84,20 +84,20 @@ fn a_package_names_the_tab_and_sets_icon_tokens_stylesheet_and_layouts_under_the
 
 #[test]
 fn a_changed_file_gets_a_new_version_and_a_missing_one_none() {
-    let tree = project("[theme]\nstylesheet = \"art/look.css\"\n");
-    tree.write("art/look.css", "main{}");
+    let tree = project("[theme]\nstylesheet = \"look/look.css\"\n");
+    tree.write("look/look.css", "main{}");
     let first = page(SHELL, &tree.root, "", "");
-    tree.write("art/look.css", "main{color:red}");
+    tree.write("look/look.css", "main{color:red}");
     let second = page(SHELL, &tree.root, "", "");
     let href = |page: &str| {
-        let at = page.find("href=\"/art/look.css").unwrap() + "href=\"".len();
+        let at = page.find("href=\"/look/look.css").unwrap() + "href=\"".len();
         page[at..at + page[at..].find('"').unwrap()].to_string()
     };
     assert_ne!(href(&first), href(&second));
-    assert!(href(&first).starts_with("/art/look.css?v="));
+    assert!(href(&first).starts_with("/look/look.css?v="));
     assert_eq!(
-        versioned(&tree.root, "/x", "art/none.css"),
-        "/x/art/none.css"
+        versioned(&tree.root, "/x", "look/none.css"),
+        "/x/look/none.css"
     );
 }
 

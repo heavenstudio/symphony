@@ -1,6 +1,8 @@
 use crate::common::{Tree, plain};
 use symphony::{board, dashboard, postpone};
 
+/// Where a project keeping the default artifacts folder holds the queue order.
+pub const ORDER: &str = "artifacts/review-order/postponed.json";
 const PATH: &str = "docs/TOPIC.md";
 const CARDS: &str = "# Topic\n\n- [ ] **alpha** — First.\n- [ ] **bravo** — Second.\n- [ ] **charlie** — Third.\n- [?] **confirm** — A question.\n  [2026-10-20 10:00] owner · question — Why?\n  [2026-10-20 11:00] agent — Because.\n- [x] **done** — Answered.\n";
 
@@ -35,7 +37,7 @@ fn later_is_persistent_owner_order_with_unchanged_documents_and_groups() {
     postpone::act(&tree.root, "owner", PATH, "alpha", "seen", now).unwrap();
     postpone::act(&tree.root, "owner", PATH, "alpha", "undo", now).unwrap();
     postpone::answered(&tree.root, "owner", "alpha").unwrap();
-    assert!(!tree.path(postpone::FILE).exists());
+    assert!(!tree.path(ORDER).exists());
     postpone::act(&tree.root, "owner", PATH, "alpha", "later", now).unwrap();
     assert_eq!(
         ordered(&tree, "owner", now),
@@ -49,18 +51,18 @@ fn later_is_persistent_owner_order_with_unchanged_documents_and_groups() {
     assert_eq!(slugs(ordered(&tree, "another-owner", now)), before);
     assert_eq!(tree.read(PATH), CARDS);
     assert_eq!(tree.read("docs/DECISIONS.md"), "# Decisions\n");
-    let persisted = tree.read(postpone::FILE);
+    let persisted = tree.read(ORDER);
     for (owner, path, action) in [
         ("another-owner", PATH, "seen"),
         ("another-owner", PATH, "undo"),
         ("owner", "docs/OTHER.md", "undo"),
     ] {
         assert!(!postpone::act(&tree.root, owner, path, "alpha", action, now).unwrap());
-        assert_eq!(tree.read(postpone::FILE), persisted);
+        assert_eq!(tree.read(ORDER), persisted);
     }
     // A fresh directory, as on a restarted process: no in-memory cache can supply the order.
     let restarted = fixture();
-    restarted.write(postpone::FILE, &persisted);
+    restarted.write(ORDER, &persisted);
     let snapshot = dashboard::snapshot(&restarted.root, &[], "").unwrap();
     assert_eq!(snapshot.board.counts.waiting, 4);
     assert_eq!(snapshot.board.next[0].slug, "bravo");
@@ -77,6 +79,27 @@ fn later_is_persistent_owner_order_with_unchanged_documents_and_groups() {
     );
     postpone::act(&tree.root, "owner", PATH, "alpha", "undo", now).unwrap();
     assert_eq!(slugs(ordered(&tree, "owner", now)), before);
+}
+
+#[test]
+fn the_order_is_kept_in_the_projects_own_artifacts_folder() {
+    let tree = fixture();
+    tree.write("symphony.toml", "[project]\nartifacts = \"output\"\n");
+    let now = postpone::now();
+    postpone::act(&tree.root, "owner", PATH, "alpha", "later", now).unwrap();
+    assert_eq!(
+        postpone::order_file(&tree.root),
+        tree.path("output/review-order/postponed.json")
+    );
+    assert!(
+        tree.read("output/review-order/postponed.json")
+            .contains("alpha")
+    );
+    assert!(!tree.path(ORDER).exists());
+    assert_eq!(
+        slugs(ordered(&tree, "owner", now)),
+        ["bravo", "charlie", "alpha", "confirm"]
+    );
 }
 
 #[test]
@@ -103,7 +126,7 @@ fn seen_round_and_three_day_expiry_restore_normal_order() {
         slugs(ordered(&tree, "owner", now + 3 * 86_400)),
         ["alpha", "bravo", "charlie", "confirm"]
     );
-    assert!(!tree.read(postpone::FILE).contains("alpha"));
+    assert!(!tree.read(ORDER).contains("alpha"));
 }
 
 #[test]
@@ -121,7 +144,7 @@ fn answered_deleted_and_invalid_cards_cannot_keep_a_postponement() {
         slugs(ordered(&tree, "owner", now)),
         ["bravo", "charlie", "confirm"]
     );
-    assert!(!tree.read(postpone::FILE).contains("alpha"));
+    assert!(!tree.read(ORDER).contains("alpha"));
     tree.write(PATH, CARDS);
     postpone::act(&tree.root, "owner", PATH, "alpha", "later", now).unwrap();
     postpone::answered(&tree.root, "owner", "bravo").unwrap();
@@ -131,10 +154,10 @@ fn answered_deleted_and_invalid_cards_cannot_keep_a_postponement() {
             .any(|(slug, marked)| slug == "alpha" && *marked)
     );
     postpone::act(&tree.root, "owner", PATH, "charlie", "seen", now).unwrap();
-    assert!(!tree.read(postpone::FILE).contains("alpha"));
+    assert!(!tree.read(ORDER).contains("alpha"));
     postpone::act(&tree.root, "owner", PATH, "alpha", "later", now).unwrap();
     postpone::answered(&tree.root, "owner", "alpha").unwrap();
-    assert!(!tree.read(postpone::FILE).contains("alpha"));
+    assert!(!tree.read(ORDER).contains("alpha"));
     assert_eq!(tree.read(PATH), CARDS);
 }
 
@@ -154,10 +177,10 @@ fn repeated_later_finishes_a_round_and_state_errors_preserve_the_file() {
         slugs(ordered(&tree, "owner", now)),
         ["alpha", "bravo", "charlie", "confirm"]
     );
-    tree.write(postpone::FILE, "corrupt");
+    tree.write(ORDER, "corrupt");
     let error = postpone::act(&tree.root, "owner", PATH, "alpha", "later", now).unwrap_err();
-    assert!(error.to_string().contains(postpone::FILE));
-    assert_eq!(tree.read(postpone::FILE), "corrupt");
+    assert!(error.to_string().contains(ORDER));
+    assert_eq!(tree.read(ORDER), "corrupt");
     assert_eq!(tree.read(PATH), CARDS);
 }
 
@@ -189,7 +212,7 @@ fn confirmation_order_and_concurrent_owners_stay_independent() {
             .replace("owner · question — Why?", "owner · approved — Yes."),
     );
     ordered(&tree, "owner", now);
-    let state: serde_json::Value = serde_json::from_str(&tree.read(postpone::FILE)).unwrap();
+    let state: serde_json::Value = serde_json::from_str(&tree.read(ORDER)).unwrap();
     assert!(state["owners"]["owner"].is_null());
     assert!(state["owners"]["another-owner"]["alpha"].is_object());
 }
@@ -227,13 +250,13 @@ fn a_new_owner_line_clears_postponement_without_a_group_change() {
             .iter()
             .any(|(slug, marked)| slug == "alpha" && !marked)
     );
-    assert!(!tree.read(postpone::FILE).contains("alpha"));
+    assert!(!tree.read(ORDER).contains("alpha"));
 }
 
 #[test]
 fn seen_is_best_effort_when_the_existence_check_fails_but_undo_reports_it() {
     let tree = fixture();
-    let path = tree.path(postpone::FILE);
+    let path = tree.path(ORDER);
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
     std::os::unix::fs::symlink("postponed.json", &path).unwrap();
     assert!(
@@ -242,7 +265,7 @@ fn seen_is_best_effort_when_the_existence_check_fails_but_undo_reports_it() {
     );
     assert!(!postpone::act(&tree.root, "owner", PATH, "alpha", "seen", 0).unwrap());
     let error = postpone::act(&tree.root, "owner", PATH, "alpha", "undo", 0).unwrap_err();
-    assert!(error.to_string().contains(postpone::FILE));
+    assert!(error.to_string().contains(ORDER));
     assert_eq!(
         std::fs::read_link(&path).unwrap(),
         std::path::Path::new("postponed.json")
@@ -255,9 +278,9 @@ fn broken_view_preferences_preserve_the_file_and_serve_triage_order() {
     for unreadable in [false, true] {
         let tree = fixture();
         if unreadable {
-            std::fs::create_dir_all(tree.path(postpone::FILE)).unwrap();
+            std::fs::create_dir_all(tree.path(ORDER)).unwrap();
         } else {
-            tree.write(postpone::FILE, "corrupt preferences");
+            tree.write(ORDER, "corrupt preferences");
         }
         assert!(
             !postpone::act(&tree.root, "owner", PATH, "alpha", "seen", postpone::now()).unwrap()
@@ -279,9 +302,9 @@ fn broken_view_preferences_preserve_the_file_and_serve_triage_order() {
         assert_eq!(snapshot.board.counts.waiting, 4);
         assert_eq!(tree.read(PATH), CARDS);
         if unreadable {
-            assert!(tree.path(postpone::FILE).is_dir());
+            assert!(tree.path(ORDER).is_dir());
         } else {
-            assert_eq!(tree.read(postpone::FILE), "corrupt preferences");
+            assert_eq!(tree.read(ORDER), "corrupt preferences");
         }
     }
 }

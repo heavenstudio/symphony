@@ -766,8 +766,13 @@ fn text_response(stream: &mut TcpStream) -> String {
     assert!(headers.starts_with("HTTP/1.1 200 "), "{text}");
     body.into()
 }
+/// The shell the server's own project serves, under its `/<id>/` on a server with a home.
 fn client_page(address: SocketAddr) -> String {
-    text_get(address, "/")
+    let front = get(address, "/api/front");
+    let page = front["projects"][0]
+        .as_str()
+        .map_or_else(|| "/".to_string(), |id| format!("/{id}/"));
+    text_get(address, &page)
 }
 fn text_get(address: SocketAddr, route: &str) -> String {
     let mut stream = connect(address);

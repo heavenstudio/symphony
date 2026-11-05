@@ -1,15 +1,10 @@
 //! The bound port's hint for local tools, written as soon as the listener is bound and cleared
 //! only by the server that wrote it.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
-/// The server's address for local tools that link to the app, in the project's artifacts folder.
-const PORT_FILE: &str = "docs-app.port";
-
-/// The port record of the project at `root`.
-pub(crate) fn port_file(root: &Path) -> PathBuf {
-    root.join(symphony::project::Project::of(root).artifact(PORT_FILE))
-}
+/// The port record of the project at `root`, in its artifacts folder.
+pub(crate) use symphony::triage::port_file;
 
 fn records(root: &Path, port: u16) -> bool {
     std::fs::read_to_string(port_file(root)).is_ok_and(|said| said.trim() == port.to_string())

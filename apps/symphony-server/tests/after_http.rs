@@ -26,6 +26,8 @@ const LIMIT: Duration = Duration::from_secs(30);
 const DOCUMENT: &str = "/api/document?path=docs/TOPIC.md";
 const SCOPE: &str = "/@work~http";
 const PHASE: &str = "after_http phase: ";
+/// Where the fixture project, keeping the default artifacts folder, holds the queue order.
+const ORDER: &str = "artifacts/review-order/postponed.json";
 const DOC: &str = "# HTTP fixture\n\n[Other](OTHER.md)\n\n<!-- register:start -->\n- [ ] **one** — A question.\n<!-- register:end -->\n";
 
 fn repository(root: &Path, args: &[&str]) -> String {
@@ -621,11 +623,11 @@ fn later_order(f: &Fixture) {
     )
     .status(200);
     assert!(
-        !std::fs::read_to_string(f.root.join(symphony::postpone::FILE))
+        !std::fs::read_to_string(symphony::postpone::order_file(&f.root))
             .unwrap()
             .contains("one")
     );
-    write(&f.root, symphony::postpone::FILE, "corrupt preferences");
+    write(&f.root, ORDER, "corrupt preferences");
     f.post(
         "/api/decision",
         &json!({"path":"docs/TOPIC.md","slug":"two","state":"approved"}),
@@ -651,7 +653,7 @@ fn later_order(f: &Fixture) {
     assert_ne!(queue["waiting"][0]["postponed"], true);
     f.get(DOCUMENT).status(200);
     assert_eq!(
-        std::fs::read_to_string(f.root.join(symphony::postpone::FILE)).unwrap(),
+        std::fs::read_to_string(symphony::postpone::order_file(&f.root)).unwrap(),
         "corrupt preferences"
     );
 }
@@ -675,7 +677,7 @@ fn later_expiry(f: &Fixture) {
     assert_eq!(before["waiting"][0]["slug"], "two");
     assert_eq!(before["waiting"][2]["postponed"], true);
     let mut feed = f.feed("");
-    let path = f.root.join(symphony::postpone::FILE);
+    let path = symphony::postpone::order_file(&f.root);
     let mut order: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
     order["owners"]["owner"]["one"]["until"] = json!(0);
     std::fs::write(&path, order.to_string()).unwrap();

@@ -344,7 +344,7 @@ fn idle_source_watch_follows_build_inputs_and_recovers_an_incomplete_graph() {
     assert!(!source_event(
         root,
         &BTreeSet::new(),
-        &root.join("artifacts/log.txt")
+        &root.join(symphony::project::Project::of(root).artifact("log.txt"))
     ));
 }
 

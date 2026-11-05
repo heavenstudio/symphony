@@ -921,6 +921,16 @@ impl Repo {
         }
     }
 
+    /// Own the server on the record for cleanup, whichever registered project started it.
+    pub fn adopt(&self) {
+        if let Some(record) = self.record()
+            && front(record.port).is_some_and(|actual| actual.pid == record.pid)
+        {
+            write(&self.base.join(format!("owned.{}", record.pid)), "");
+            self.detached.lock().unwrap().push(record.pid);
+        }
+    }
+
     pub fn record(&self) -> Option<symphony_server::home::Running> {
         serde_json::from_str(&fs::read_to_string(self.home.join("server.json")).ok()?).ok()
     }

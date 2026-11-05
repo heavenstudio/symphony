@@ -297,7 +297,7 @@ fn branch_decisions_share_ranking_counts_and_navigation_with_main() {
                 [("alpha", false), ("beta", true)]
             );
             assert_eq!(postponed.board.next, postponed.queue.waiting);
-            assert!(!wt.join(symphony::postpone::FILE).exists());
+            assert!(!symphony::postpone::order_file(&wt).exists());
             assert_eq!(std::fs::read_to_string(wt.join(DOC)).unwrap(), before);
             let undone = post(
                 &saves,
@@ -340,7 +340,7 @@ fn branch_decisions_share_ranking_counts_and_navigation_with_main() {
             );
             saves.close();
             let order: serde_json::Value = serde_json::from_slice(
-                &std::fs::read(tree.path(symphony::postpone::FILE)).unwrap(),
+                &std::fs::read(symphony::postpone::order_file(&tree.root)).unwrap(),
             )
             .unwrap();
             assert!(order["owners"]["owner"]["@design~policy/docs/DECISIONS.md#beta"].is_null());

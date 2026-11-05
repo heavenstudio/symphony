@@ -25,6 +25,7 @@ mod components;
 mod folder;
 mod look_parity;
 mod owner_controls;
+mod projects;
 mod restored;
 mod site;
 

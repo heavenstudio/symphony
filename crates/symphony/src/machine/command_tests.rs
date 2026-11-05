@@ -61,6 +61,36 @@ fn a_project_is_registered_once_and_said_again_as_the_running_server_serves_it()
 }
 
 #[test]
+fn a_renamed_project_is_registered_again_and_one_whose_folder_moved_says_where_from() {
+    let tree = Tree::new();
+    let first = project(&tree, "lantern", "");
+    let machine = tree.path("machine");
+    add(&first, &machine, None).unwrap();
+    tree.write(
+        "lantern/symphony.toml",
+        "[project]\nid = \"lantern\"\nname = \"Lantern Lit\"\n",
+    );
+    let again = add(&first, &machine, None).unwrap();
+    assert!(
+        again.starts_with("· Lantern Lit registered again at /lantern/ ("),
+        "{again}"
+    );
+    let left = Registry::read(&machine).unwrap().projects[0].root.clone();
+    std::fs::rename(&first, tree.path("lamp")).unwrap();
+    let moved = add(&tree.path("lamp"), &machine, None).unwrap();
+    assert!(
+        moved.starts_with(&format!(
+            "· Lantern Lit moved from {} at /lantern/ (",
+            left.display()
+        )),
+        "{moved}"
+    );
+    let registry = Registry::read(&machine).unwrap();
+    assert_eq!(registry.projects.len(), 1);
+    assert_eq!(registry.projects[0].root, left.with_file_name("lamp"));
+}
+
+#[test]
 fn a_running_host_lacking_its_plugins_is_said_and_a_newer_schema_refused_unregistered() {
     let tree = Tree::new();
     let shelved = project(

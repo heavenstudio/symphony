@@ -169,7 +169,7 @@ impl Plugins {
         self.0.iter().flat_map(|p| p.generators()).collect()
     }
 
-    /// The theme package called `package`: the first plugin's that ships one by that name.
+    /// The theme package called `package`: the first plugin's that provides one by that name.
     pub fn theme(&self, package: &str) -> Option<symphony_plugin::Theme> {
         self.0
             .iter()
