@@ -12,7 +12,7 @@ use std::io::{Read, Write};
 use std::net::{TcpStream, ToSocketAddrs};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Mutex, PoisonError};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 mod descriptor;
 
@@ -131,12 +131,14 @@ impl Client {
 
     /// Each statement's result, in order. The first statement that failed decides the error; a
     /// conflict anywhere decides it first, since the whole transaction can then be retried.
+    #[track_caller]
     pub fn query(&self, sql: &str, vars: Value) -> Result<Vec<Value>, DbError> {
         self.call(sql, vars, true)
     }
 
     /// The namespace and the database, made if they are not there yet, then `sql` in them, in one
     /// request: each statement's result, the four that make and enter them first.
+    #[track_caller]
     pub fn define_then(&self, sql: &str, vars: Value) -> Result<Vec<Value>, DbError> {
         let (ns, db) = (&self.ns, &self.db);
         let sql = format!(
@@ -146,6 +148,7 @@ impl Client {
     }
 
     /// `scoped`: in this client's namespace and database, which must exist.
+    #[track_caller]
     fn call(&self, sql: &str, vars: Value, scoped: bool) -> Result<Vec<Value>, DbError> {
         self.requests.fetch_add(1, Ordering::SeqCst);
         let body = cbor::encode(&json!({"id": 1, "method": "query", "params": [sql, vars]}));
@@ -173,6 +176,11 @@ impl Client {
     }
 }
 
+/// Failure diagnostics identify the query's source without logging SQL or its variables.
+fn failed_query(source: &str, elapsed: Duration, timeout: Duration, error: &str) -> String {
+    format!("RPC query at {source}, elapsed {elapsed:.3?}, configured wait {timeout:.3?}: {error}")
+}
+
 impl Client {
     /// `request` on a connection the server kept open, else on a new one: the reply's status and body.
     /// Each connection is checked ([`check`]) before anything is written on it, every kind of request
@@ -181,15 +189,19 @@ impl Client {
     /// A request written on a connection that then gave back nothing, part
     /// of a reply, or nothing before the timeout is the request's failure and is never sent again,
     /// whatever it says: the server may have run it, and a write run twice is a message said twice.
+    #[track_caller]
     fn send(&self, request: &[u8]) -> Result<(u16, Vec<u8>), String> {
         self.send_checked(request, check)
     }
 
+    #[track_caller]
     fn send_checked(
         &self,
         request: &[u8],
         mut check: impl FnMut(&TcpStream) -> Result<(), Failure>,
     ) -> Result<(u16, Vec<u8>), String> {
+        let began = Instant::now();
+        let caller = std::panic::Location::caller();
         let kept = loop {
             let kept = self
                 .kept
@@ -224,7 +236,18 @@ impl Client {
                 Ok(self.keep(connection, reply))
             }
             Err(failure) => {
-                Err(self.unanswered(pooled, connection.served, connection.failure(failure)))
+                let timed_out = failure.timed_out;
+                let error = self.unanswered(pooled, connection.served, connection.failure(failure));
+                Err(if timed_out {
+                    failed_query(
+                        &format!("{}:{}", caller.file(), caller.line()),
+                        began.elapsed(),
+                        self.timeout,
+                        &error,
+                    )
+                } else {
+                    error
+                })
             }
         }
     }
@@ -341,6 +364,7 @@ struct Failure {
     step: Step,
     why: String,
     bad_descriptor: bool,
+    timed_out: bool,
 }
 
 impl Failure {
@@ -349,6 +373,7 @@ impl Failure {
             step,
             why: why.to_string(),
             bad_descriptor: false,
+            timed_out: false,
         }
     }
 
@@ -356,6 +381,10 @@ impl Failure {
         Self {
             step,
             bad_descriptor: descriptor::bad_descriptor(&error),
+            timed_out: matches!(
+                error.kind(),
+                std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+            ),
             why: error.to_string(),
         }
     }
@@ -664,28 +693,13 @@ fn results(reply: Value) -> Result<Vec<Value>, DbError> {
 
 #[cfg(test)]
 mod tests {
+    mod failures;
+
     use super::*;
     use serde_json::json;
 
     fn ok(result: Value) -> Value {
         json!({"result": result, "status": "OK", "time": "1ms"})
-    }
-
-    #[test]
-    fn a_client_waits_on_a_silent_server_no_longer_than_it_was_told() {
-        let silent = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let addr = silent.local_addr().unwrap().to_string();
-        let held = std::thread::spawn(move || silent.accept().map(|(stream, _)| stream));
-        let began = std::time::Instant::now();
-        let client = Client::new(&addr, "sf", "t").waiting(Duration::from_millis(300));
-        let failed = client.query("RETURN 1;", json!({})).unwrap_err();
-        assert!(
-            began.elapsed() < Duration::from_secs(5),
-            "{:?}",
-            began.elapsed()
-        );
-        assert!(failed.to_string().contains(&addr), "{failed}");
-        drop(held.join());
     }
 
     fn not_executed() -> Value {
@@ -1427,85 +1441,6 @@ mod tests {
             client.kept.lock().unwrap()[0].served,
             1,
             "the count belongs to the replacement socket"
-        );
-    }
-
-    /// A kept connection that took a request and closed without answering may have run it (a write
-    /// committed, then the server went): the request fails, and is never sent again, which would run a
-    /// write twice.
-    #[test]
-    fn a_request_a_kept_connection_took_and_never_answered_is_not_sent_again() {
-        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let addr = listener.local_addr().unwrap().to_string();
-        let served = std::thread::spawn(move || {
-            let (mut kept, _) = listener.accept().unwrap();
-            for _ in 0..3 {
-                read_request(&mut kept);
-                kept.write_all(SEVEN).unwrap();
-            }
-            read_request(&mut kept);
-            drop(kept); // taken, perhaps run, never answered
-            listener.set_nonblocking(true).unwrap();
-            std::thread::sleep(Duration::from_millis(500));
-            listener.accept().is_ok()
-        });
-        let client = Client::new(&addr, "sf", "t").waiting(Duration::from_secs(5));
-        sevens(&client, 3);
-        let failed = client.query("RETURN 7;", json!({}));
-        let Err(DbError::Failed(said)) = failed else {
-            panic!("{failed:?}")
-        };
-        assert_eq!(
-            said,
-            format!(
-                "the server at {addr} did not answer: read failed on a pooled socket after 3 completed requests: it closed the connection; the request may have run there, so it was not sent again"
-            )
-        );
-        assert!(!served.join().unwrap(), "the request was sent again");
-    }
-
-    #[test]
-    fn a_fresh_sockets_eof_names_read_and_zero_completed_requests() {
-        let (addr, served) = one_reply(b"");
-        let client = Client::new(&addr, "sf", "t").waiting(Duration::from_secs(5));
-        assert_eq!(
-            client.query("RETURN 7;", json!({})),
-            Err(DbError::Failed(format!(
-                "the server at {addr} did not answer: read failed on a freshly opened socket after 0 completed requests: it closed the connection; the request may have run there, so it was not sent again"
-            )))
-        );
-        served.join().unwrap();
-    }
-
-    #[test]
-    fn socket_option_and_write_failures_name_the_actual_operation() {
-        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let addr = listener.local_addr().unwrap().to_string();
-        let mut stream = TcpStream::connect(&addr).unwrap();
-        let (mut peer, _) = listener.accept().unwrap();
-        let client = Client::new(&addr, "sf", "t");
-        let failure = talk(&mut stream, b"request", Duration::ZERO).err().unwrap();
-        assert_eq!(
-            client.unanswered(false, 0, failure),
-            format!(
-                "the server at {addr} did not answer: socket option SO_RCVTIMEO failed on a freshly opened socket after 0 completed requests: cannot set a 0 duration timeout; the request was not sent"
-            )
-        );
-        stream.shutdown(std::net::Shutdown::Write).unwrap();
-        let failure = talk(&mut stream, b"request", Duration::from_secs(5))
-            .err()
-            .unwrap();
-        assert_eq!(
-            client.unanswered(false, 0, failure),
-            format!(
-                "the server at {addr} did not answer: write failed on a freshly opened socket after 0 completed requests: {}; the request may have run there, so it was not sent again",
-                std::io::Error::from_raw_os_error(libc::EPIPE)
-            )
-        );
-        assert_eq!(
-            peer.read(&mut [0]).unwrap(),
-            0,
-            "neither failure sent a request"
         );
     }
 

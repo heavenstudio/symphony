@@ -65,8 +65,7 @@ pub(crate) fn group_alive(leader: i64) -> bool {
 
 /// This process's parent now.
 pub fn parent() -> i64 {
-    // SAFETY: getppid cannot fail.
-    i64::from(unsafe { libc::getppid() })
+    i64::from(std::os::unix::process::parent_id())
 }
 
 /// `name` on the PATH, as a shell finds it.
@@ -108,16 +107,6 @@ impl Drop for CommandGroup {
     fn drop(&mut self) {
         self.stop();
     }
-}
-
-/// Start a tokio `command`, under the helpers' lock for its spawn alone as every std spawn beside
-/// them: a pipe's first ends are inheritable until reopened under it ([`symphony_board::sys::pipe`]), and a
-/// child keeps such an end for its life.
-pub(crate) fn spawn_async(
-    command: &mut tokio::process::Command,
-) -> std::io::Result<tokio::process::Child> {
-    let _spawning = symphony_board::sys::spawning();
-    command.spawn()
 }
 
 pub(crate) fn capture() -> std::io::Result<File> {
@@ -212,67 +201,6 @@ mod tests {
         child.wait().unwrap();
         assert!(!pid_alive(pid));
         assert!(!pid_alive(0) && !pid_alive(-1));
-    }
-
-    /// The server's long children, tokio's started by [`spawn_async`], keep none of the board's
-    /// pipes made beside them: an answer ends with its child, and a piped child's input refuses a
-    /// write once it ends, while every racer still lives.
-    #[test]
-    fn tokio_spawns_racing_the_helpers_hold_none_of_their_pipes() {
-        use std::io::Write as _;
-        use std::sync::atomic::AtomicBool;
-        let runtime = tokio::runtime::Builder::new_multi_thread()
-            .enable_all()
-            .build()
-            .unwrap();
-        let spawned = AtomicBool::new(false);
-        std::thread::scope(|scope| {
-            let racers = scope.spawn(|| {
-                let _entered = runtime.enter();
-                let racers: Vec<tokio::process::Child> = (0..32)
-                    .map(|_| {
-                        let mut sleep = tokio::process::Command::new("sleep");
-                        sleep
-                            .arg("60")
-                            .stdin(std::process::Stdio::null())
-                            .stdout(std::process::Stdio::null())
-                            .stderr(std::process::Stdio::null())
-                            .kill_on_drop(true);
-                        spawn_async(&mut sleep).unwrap()
-                    })
-                    .collect();
-                spawned.store(true, Ordering::Relaxed);
-                racers
-            });
-            let mut answers = 0;
-            while !spawned.load(Ordering::Relaxed) {
-                let mut child =
-                    symphony_board::sys::spawn_piped(&mut Command::new("true")).unwrap();
-                let mut input = child.stdin.take().unwrap();
-                assert!(child.wait().unwrap().success());
-                let refused = input.write_all(b"unread").unwrap_err();
-                assert_eq!(
-                    refused.kind(),
-                    std::io::ErrorKind::BrokenPipe,
-                    "answer {answers}"
-                );
-                let done =
-                    symphony_board::sys::output(Command::new("/bin/echo").arg("answer")).unwrap();
-                assert_eq!(done.stdout, b"answer\n");
-                answers += 1;
-            }
-            let mut racers = racers.join().unwrap();
-            // A wait some racer held would have ended only with that racer, 60 s on.
-            for racer in &mut racers {
-                assert!(racer.try_wait().unwrap().is_none(), "a racer ended first");
-            }
-            runtime.block_on(async {
-                for racer in &mut racers {
-                    racer.kill().await.unwrap();
-                }
-            });
-            assert!(answers > 0, "no answer was waited for beside the spawns");
-        });
     }
 
     #[test]
