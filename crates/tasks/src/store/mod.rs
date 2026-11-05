@@ -496,11 +496,8 @@ impl Store {
             })
         })?;
         if verdict == "changes" {
-            self.tell_if_unread(
-                slug,
-                None,
-                &format!("the changes verdict from {handle} to @executor"),
-            );
+            let what = format!("the changes verdict from {handle} to @executor");
+            self.tell_if_unread(slug, None, &what, None);
         }
         Ok(task)
     }

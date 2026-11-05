@@ -656,11 +656,8 @@ LET $said = $actor + ' moved it ' + $task.status + ' → ' + $status;
         })?;
         let from = found.into_inner();
         if from == "in_progress" {
-            self.tell_if_unread(
-                slug,
-                None,
-                &format!("the landing of {slug} from {handle} to @executor"),
-            );
+            let what = format!("the landing of {slug} from {handle} to @executor");
+            self.tell_if_unread(slug, None, &what, None);
         }
         Ok(Landed { task, from })
     }

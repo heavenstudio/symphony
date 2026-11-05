@@ -34,6 +34,19 @@ RETURN {
     },
 };";
 
+/// `line`, a message's write, made once per `$key` on `$slug`'s thread: the first write under the
+/// key makes the line and `delivery_key:[slug, key]`, which names that line to every later one,
+/// and a later write makes nothing. `$had` is the key's record before this write.
+fn once(line: &str) -> String {
+    format!(
+        "LET $had = (SELECT message FROM ONLY type::record('delivery_key', [$slug, $key]));
+IF $had = NONE {{
+    {line}
+    CREATE type::record('delivery_key', [$slug, $key]) SET slug = $slug, key = $key, message = $sid, ts = $ts RETURN NONE;
+}};"
+    )
+}
+
 impl Store {
     /// Post to a task's thread. Only addressed messages and owner messages enter inboxes.
     pub fn say(
@@ -83,20 +96,17 @@ impl Store {
         let handle = to.filter(|to| *to != OWNER && role.is_none());
         let act = if sender == OWNER { "" } else { ACT };
         let line = logged("$slug", "$actor", "'msg'", "$text", "$to");
-        // The answer is the line on the record and whether it was there before this post.
+        // The answer is the line on the record: this post's, or the one its key names.
         let said = match key {
             None => format!(
                 "{line}
-RETURN [(SELECT * OMIT id FROM ONLY type::record('message', [$slug, $sid])), false];"
+RETURN (SELECT * OMIT id FROM ONLY type::record('message', [$slug, $sid]));"
             ),
             Some(_) => format!(
-                "LET $had = (SELECT message FROM ONLY type::record('delivery_key', [$slug, $key]));
-IF $had = NONE {{
-    {line}
-    CREATE type::record('delivery_key', [$slug, $key]) SET slug = $slug, key = $key, message = $sid, ts = $ts RETURN NONE;
-}};
+                "{}
 LET $made = (SELECT message FROM ONLY type::record('delivery_key', [$slug, $key]));
-RETURN [(SELECT * OMIT id FROM ONLY type::record('message', [$slug, $made.message])), $had != NONE];"
+RETURN (SELECT * OMIT id FROM ONLY type::record('message', [$slug, $made.message]));",
+                once(&line)
             ),
         };
         let body = format!(
@@ -116,23 +126,26 @@ IF $handle != NONE AND !record::exists(type::record('session', $handle)) {{ THRO
                 "nobody": handle.map(|h| format!("{REFUSED}no session {} to send to", repr(h))),
             }),
         );
-        let (row, repeated): (MessageRow, bool) =
-            self.retrying(|| self.transact(&body, vars.clone()))?;
-        if repeated {
-            return Ok(message(row));
-        }
-        if role == Some("executor") {
-            self.tell_if_unread(
+        let row: MessageRow = self.retrying(|| self.transact(&body, vars.clone()))?;
+        // Told of the line's recipient, not this call's: a post repeated under a key answers the
+        // first post's line, and says once that no executor reads it when the first post's run
+        // stopped before saying so (the board's notice goes under the line's own key,
+        // `unread:<id>`, so it is said once per line, whichever post says it).
+        let unread = format!("unread:{}", row.id);
+        match row.recipient.as_deref() {
+            Some("@executor") => self.tell_if_unread(
                 slug,
                 None,
-                &format!("#{} from {sender} to @executor", row.id),
-            );
-        } else if let Some(to) = handle {
-            self.tell_if_unread(
+                &format!("#{} from {} to @executor", row.id, row.sender),
+                Some(&unread),
+            ),
+            Some(to) if to != OWNER && !to.starts_with('@') => self.tell_if_unread(
                 slug,
                 Some(to),
-                &format!("#{} from {sender} to {to}", row.id),
-            );
+                &format!("#{} from {} to {to}", row.id, row.sender),
+                Some(&unread),
+            ),
+            _ => {}
         }
         Ok(message(row))
     }
@@ -141,15 +154,28 @@ IF $handle != NONE AND !record::exists(type::record('session', $handle)) {{ THRO
     /// executes it) has no executor to read it now: none has a native callback, and each has its
     /// pane recorded closed or no live beat. The task's orchestrators hear it at once on the
     /// thread, with the restore line of each executor whose pane was closed. A post to a handle
-    /// that does not execute `slug` is left alone. Never fails the write it follows: what went
-    /// wrong goes to stderr.
-    pub(super) fn tell_if_unread(&self, slug: &str, only: Option<&str>, what: &str) {
-        if let Err(problem) = self.unread(slug, only, what) {
+    /// that does not execute `slug` is left alone. Under `key`, it is said once per key on the
+    /// thread however often it is asked. Never fails the write it follows: what went wrong goes to
+    /// stderr.
+    pub(super) fn tell_if_unread(
+        &self,
+        slug: &str,
+        only: Option<&str>,
+        what: &str,
+        key: Option<&str>,
+    ) {
+        if let Err(problem) = self.unread(slug, only, what, key) {
             eprintln!("could not tell @orchestrator that no executor reads {what}: {problem}");
         }
     }
 
-    fn unread(&self, slug: &str, only: Option<&str>, what: &str) -> Result<(), Error> {
+    fn unread(
+        &self,
+        slug: &str,
+        only: Option<&str>,
+        what: &str,
+        key: Option<&str>,
+    ) -> Result<(), Error> {
         let task = self.get(slug)?;
         let executors: Vec<_> = task
             .roles
@@ -185,11 +211,12 @@ IF $handle != NONE AND !record::exists(type::record('session', $handle)) {{ THRO
             gone.push("no session holds the role".into());
         }
         let text = format!("{what} reaches no live executor: {}", gone.join("; "));
+        let line = logged("$slug", "$sender", "'msg'", "$text", "$to");
         let body = format!(
             "{}\nRETURN NONE;",
-            logged("$slug", "$sender", "'msg'", "$text", "$to")
+            if key.is_some() { once(&line) } else { line }
         );
-        let vars = json!({"slug": slug, "sender": BOARD, "text": text, "to": "@orchestrator", "now": (self.clock)()});
+        let vars = json!({"slug": slug, "sender": BOARD, "text": text, "to": "@orchestrator", "key": key, "now": (self.clock)()});
         self.retrying(|| self.transact::<Value>(&body, vars.clone()))
             .map(|_| ())
     }
