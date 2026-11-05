@@ -213,9 +213,9 @@ fn plain_orchestrators_receive_queued_chat_and_preserve_explicit_priority() {
 }
 
 fn sweep_callbacks(f: &Fixture, listener: &Listener) {
-    use tasks::launch::LaunchError;
-    use tasks::launch::herdr::Herdr;
-    use tasks::launch::reap::{self, REAP_SECONDS, Reap};
+    use symphony_board::launch::LaunchError;
+    use symphony_board::launch::herdr::Herdr;
+    use symphony_board::launch::reap::{self, REAP_SECONDS, Reap};
 
     struct EmptyPanes;
     impl Herdr for EmptyPanes {
@@ -411,7 +411,7 @@ fn a_plain_orchestrator_needs_live_health_or_confirmed_native_presence() {
         .client()
         .query(
             "UPDATE type::record('session', $handle) SET last_seen = $seen RETURN NONE;",
-            json!({"handle":orchestrator, "seen":f.now()-tasks::health::LIVE_SECONDS-1.0}),
+            json!({"handle":orchestrator, "seen":f.now()-symphony_board::health::LIVE_SECONDS-1.0}),
         )
         .unwrap();
     assert_eq!(f.store.chat_recipient().unwrap(), None);
@@ -435,7 +435,7 @@ fn a_plain_orchestrator_needs_live_health_or_confirmed_native_presence() {
 
 #[test]
 fn legacy_writers_do_not_repeat_unknown_notices_across_the_lost_threshold() {
-    use tasks::{Health, NewSession};
+    use symphony_board::{Health, NewSession};
 
     let f = Fixture::empty();
     let orchestrator = f.session("orchestrator");
@@ -687,7 +687,7 @@ fn idle_unchanged_observation_prevents_an_older_snapshot_from_emitting_a_transie
     assert_eq!(before["seen"]["statuses"]["tools/idle"], "in_progress");
     assert_eq!(before["statuses"], json!({}));
     assert!(before["snapshot_sequence"].as_u64().unwrap() > 0);
-    let events = |store: &tasks::Store| {
+    let events = |store: &symphony_board::Store| {
         store
             .client()
             .query(
@@ -750,7 +750,7 @@ fn cached_board_inputs_age_without_a_board_read_and_refresh_after_mutation() {
     );
     assert_eq!(
         f.store.clock_board().unwrap().sessions[0].health,
-        tasks::Health::Live
+        symphony_board::Health::Live
     );
     let requests = f.store.client().requests();
     f.advance(GONE);
@@ -760,8 +760,8 @@ fn cached_board_inputs_age_without_a_board_read_and_refresh_after_mutation() {
         1,
         "only the marker is read"
     );
-    assert_eq!(board.sessions[0].health, tasks::Health::Lost);
-    assert_eq!(board.tasks[0].roles[0].health, tasks::Health::Lost);
+    assert_eq!(board.sessions[0].health, symphony_board::Health::Lost);
+    assert_eq!(board.tasks[0].roles[0].health, symphony_board::Health::Lost);
     f.store
         .client()
         .query(
@@ -1118,10 +1118,10 @@ fn unchanged_periodic_pull_rearms_across_lost_sessions_and_fresh_stores() {
             .find(|session| session.row.handle == "lost")
             .unwrap()
             .health,
-        tasks::Health::Lost,
+        symphony_board::Health::Lost,
         "a Lost session keeps the global idle shortcut off"
     );
-    let dispatch_requests = |store: &tasks::Store| {
+    let dispatch_requests = |store: &symphony_board::Store| {
         let before = store.client().requests();
         store.dispatch_callbacks().unwrap();
         store.client().requests() - before

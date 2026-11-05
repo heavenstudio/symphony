@@ -42,8 +42,8 @@ fn a_long_task_panel_keeps_its_last_link_clear_of_fixed_page_controls() {
 fn every_document_entry_uses_the_same_responsive_task_panel() {
     let Some(mut browser) = chrome() else { return };
     for (route, path, headings) in [
-        ("/docs/ships/HULLS.md", "docs/ships/HULLS.md", true),
-        ("/hulls", "docs/ships/HULLS.md", true),
+        ("/docs/lamps/LAMPS.md", "docs/lamps/LAMPS.md", true),
+        ("/lamps", "docs/lamps/LAMPS.md", true),
         ("/docs/game/SPEC.md", "docs/game/SPEC.md", false),
         ("/docs/", "docs/README.md", true),
         ("/@task-layout/docs/game/SPEC.md", "docs/game/SPEC.md", true),

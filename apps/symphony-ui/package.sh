@@ -40,7 +40,7 @@ for kind in board tasks docs review queue panel; do
             "$module/public/assets/$original"
     } > "$stage/module-$kind.js"
     if [ "$(grep -o "globalThis.reviewModuleReady_$kind=" "$stage/module-$kind.js" | wc -l | tr -d ' ')" != 1 ]; then
-        echo "symphony-ui: $kind has no unique dx initializer; refusing to ship it" >&2
+        echo "symphony-ui: $kind has no unique dx initializer; refusing to package it" >&2
         exit 2
     fi
     script_hash="$(shasum -a 256 "$stage/module-$kind.js" | cut -c1-16)"

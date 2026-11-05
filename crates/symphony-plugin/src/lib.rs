@@ -7,8 +7,11 @@
 //! The client holds no plugin code: a component renders to [`vocabulary::Block`]s, which every
 //! project's client draws with the same generic components.
 
+#![forbid(unsafe_code)]
+
 use std::any::Any;
 use std::collections::BTreeMap;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
 
@@ -62,6 +65,10 @@ pub trait Plugin: Send + Sync {
         Vec::new()
     }
     fn generators(&self) -> Vec<&dyn Generator> {
+        Vec::new()
+    }
+    /// Commands of the project's `symphony` binary, after the Symphony's own.
+    fn commands(&self) -> Vec<&dyn Command> {
         Vec::new()
     }
     fn transports(&self) -> Vec<&dyn Transport> {
@@ -179,7 +186,12 @@ pub trait CardKind: Send + Sync {
     fn slot(&self, _card: &Card<'_>) -> Option<String> {
         None
     }
-    /// The triage's category for the card (`hull model · kite`); the first kind to give one wins.
+    /// The markers the kind reads in a card's text, by name (`Slot` for `*Slot:* …`). A card's
+    /// title and summary leave each out, with the words after it.
+    fn markers(&self) -> &[&str] {
+        &[]
+    }
+    /// The triage's category for the card (`model · lantern`); the first kind to give one wins.
     fn triage_category(&self, _card: &Card<'_>) -> Option<String> {
         None
     }
@@ -188,7 +200,7 @@ pub trait CardKind: Send + Sync {
     fn auto_approvable(&self, _card: &Card<'_>) -> bool {
         true
     }
-    /// What the card gates that this kind counts, as (how many, the word for one: `hull`). A kind
+    /// What the card gates that this kind counts, as (how many, the word for one: `item`). A kind
     /// that counts something answers for every card, none included, so the triage's reason names
     /// it; the triage adds the cards waiting on it.
     fn gates(&self, _card: &Card<'_>) -> Option<(usize, String)> {
@@ -199,6 +211,20 @@ pub trait CardKind: Send + Sync {
     fn approval_needs_agent(&self, _card: &Card<'_>) -> bool {
         false
     }
+    /// The letter (`B`) of the candidate the card's approval chose, for a card offering two or
+    /// more lettered candidates; the triage counts the letters the owner picks. An error when the
+    /// card's thread names a choice it cannot hold.
+    fn chosen(&self, _card: &Card<'_>) -> Result<Option<String>, String> {
+        Ok(None)
+    }
+}
+
+/// A command of the project's `symphony` binary: `symphony NAME ARGS…`.
+pub trait Command: Send + Sync {
+    /// The binary's first argument that runs it.
+    fn name(&self) -> &str;
+    /// Runs it with `args`, what follows its name, writing to `out` and `err`; its exit code.
+    fn run(&self, args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i32;
 }
 
 /// What a route answers.
@@ -212,7 +238,7 @@ pub enum Reply {
 
 /// An answer under `/x/<path>/`, behind the same gate as every other request.
 pub trait Route: Send + Sync {
-    /// The segment after `/x/` (`hulls`).
+    /// The segment after `/x/` (`shelf`).
     fn path(&self) -> &str;
     /// The answer for `rest`, what follows `/x/<path>/`, in the checkout at `root`; `None` is
     /// not found.
@@ -344,13 +370,9 @@ pub trait Watch: Send + Sync {
     fn forget(&self, _root: &Path) {}
 }
 
-/// A check over the project's documents and data, run by the docs build and by
-/// `symphony-status --lint`.
-pub trait DocCheck: Send + Sync {
-    fn name(&self) -> &str;
-    /// Each problem in the project at `root`, naming its file (`docs/data/screens.json: …`).
-    fn check(&self, root: &Path) -> Vec<String>;
-}
+/// A check over the project's documents and data, run by the project's docs build
+/// (`symphony_docs::check`) and by `symphony-status --lint`, over one reading of its `docs/`.
+pub use symphony_docs::{DocCheck, Docs, Problem};
 
 /// A rule for one document's prose.
 pub trait ProseRule: Send + Sync {

@@ -1,4 +1,4 @@
-//! The board's move from SQLite to SurrealDB (`just tasks-cutover`, [`tasks::cutover`]), forward only.
+//! The board's move from SQLite to SurrealDB (`just tasks-cutover`, [`cutover`]), forward only.
 //!
 //! The board is live under dozens of sessions when it moves, so the move must lose nothing, leave the
 //! old board refusing writes and kept as it was, and, whenever it fails, leave exactly one board taking
@@ -15,11 +15,11 @@ use std::cell::{Cell, RefCell};
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
-use tasks::cli::Env;
-use tasks::cutover::{self, FROZEN};
-use tasks::rows::Dump;
-use tasks::rpc::Client;
-use tasks::{NewTask, Store};
+use symphony_board::cli::Env;
+use symphony_board::cutover::{self, FROZEN};
+use symphony_board::rows::Dump;
+use symphony_board::rpc::Client;
+use symphony_board::{NewSession, NewTask, Store};
 
 /// One write to each table, to see the frozen board refuse them all.
 const WRITES: [&str; 10] = [
@@ -49,7 +49,7 @@ impl Old {
             .join(format!("cutover-{}-{name}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
-        let path = dir.join("star-foundry-tasks.db");
+        let path = dir.join("lamp-works-tasks.db");
         sqlite::make(&path, &sample());
         Old {
             dir,
@@ -190,7 +190,7 @@ impl Old {
     }
 
     fn beside(&self, end: &str) -> PathBuf {
-        self.dir.join(format!("star-foundry-tasks.db{end}"))
+        self.dir.join(format!("lamp-works-tasks.db{end}"))
     }
 
     fn moved(&self) -> PathBuf {
@@ -488,7 +488,7 @@ fn a_beat_alone_after_the_move_holds_up_a_move_again() {
 #[test]
 fn a_registration_alone_after_the_move_holds_up_a_move_again() {
     a_move_again_is_refused_after("register", &|store| {
-        store.register(&tasks::NewSession::new("worker")).unwrap();
+        store.register(&NewSession::new("worker")).unwrap();
     });
 }
 
@@ -608,9 +608,9 @@ fn the_marker_file_a_killed_move_left_is_removed_by_the_next_move() {
     assert_eq!(
         old.files(),
         [
-            "star-foundry-tasks.db",
-            "star-foundry-tasks.db.cutover",
-            "star-foundry-tasks.db.moved"
+            "lamp-works-tasks.db",
+            "lamp-works-tasks.db.cutover",
+            "lamp-works-tasks.db.moved"
         ]
     );
 }
@@ -795,7 +795,7 @@ fn a_full_disk_writing_the_marker_leaves_no_marker_and_the_board_taking_writes()
     assert!(!old.moved().exists());
     assert_eq!(
         old.files(),
-        ["star-foundry-tasks.db", "star-foundry-tasks.db.cutover"],
+        ["lamp-works-tasks.db", "lamp-works-tasks.db.cutover"],
         "nothing of the marker is left"
     );
     assert!(!seen.get(), "the marker was there while it was written");

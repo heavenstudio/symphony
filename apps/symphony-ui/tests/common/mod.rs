@@ -23,7 +23,7 @@ pub fn delta(name: &str) -> Delta {
     serde_json::from_str(&fixture(name)).unwrap_or_else(|err| panic!("{name}: {err}"))
 }
 
-/// `shell`, a build's `index.html`, as the server serves it to Star Foundry: the project fixture
+/// `shell`, a build's `index.html`, as the server serves it to a project with a plugin page: the project fixture
 /// (`project.json`) inlined after `<body>`, escaped as the server escapes it.
 pub fn served_shell(shell: &str) -> String {
     let project: ProjectView = serde_json::from_str(&fixture("project.json")).expect("a project");

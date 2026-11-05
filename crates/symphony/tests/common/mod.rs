@@ -4,6 +4,7 @@
 
 use std::path::{Path, PathBuf};
 
+pub mod candidates;
 mod tree;
 pub use tree::Tree;
 
@@ -49,11 +50,6 @@ pub fn plain() -> symphony::plugins::Plugins {
     symphony::plugins::Plugins::default()
 }
 
-/// The Star Foundry plugin alone, whose card kinds read golden frames, art and models.
-pub fn star_foundry() -> symphony::plugins::Plugins {
-    symphony::plugins::Plugins::new(vec![&symphony::star_foundry::PLUGIN])
-}
-
 /// The repository this crate is in.
 pub fn repo() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -64,8 +60,8 @@ pub fn repo() -> PathBuf {
 
 /// Build the scratch board's CLI without publishing it to the live heartbeat.
 pub fn build_tasks(root: &Path) -> String {
-    let done = tasks::sys::output(
-        tasks::sys::Command::new(root.join("tools/rs-bin.sh")).args(["--build", "tasks"]),
+    let done = symphony_board::sys::output(
+        symphony_board::sys::Command::new(root.join("tools/rs-bin.sh")).args(["--build", "tasks"]),
     )
     .unwrap();
     assert!(
@@ -92,8 +88,8 @@ pub fn tasks_binary() -> &'static str {
 /// Resolve a setup-built CLI by this checkout's source hash, without building inside a test.
 pub fn prebuilt_binary(root: &Path, name: &str) -> Result<PathBuf, String> {
     use std::os::unix::fs::PermissionsExt as _;
-    let done = tasks::sys::output(
-        tasks::sys::Command::new(root.join("tools/rs-bin.sh"))
+    let done = symphony_board::sys::output(
+        symphony_board::sys::Command::new(root.join("tools/rs-bin.sh"))
             .args(["--where", name])
             .current_dir(root),
     )

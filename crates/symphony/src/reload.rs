@@ -9,7 +9,7 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
 use std::time::Duration;
-use tasks::sys::{Child, Command, Stdio};
+use symphony_board::sys::{Child, Command, Stdio};
 
 const POLL: Duration = Duration::from_millis(50);
 const BUILD_GRACE: Duration = Duration::from_secs(2);
@@ -61,7 +61,7 @@ impl Drop for BuildProcess {
 }
 
 fn git(root: &Path, args: &[&str]) -> Result<String, String> {
-    let done = tasks::sys::output(
+    let done = symphony_board::sys::output(
         Command::new("git")
             .args(args)
             .current_dir(root)
@@ -442,7 +442,7 @@ fn server_build(root: &Path, home: &Path) -> Command {
 }
 
 /// Run one build from `root` in a process group of its own, its diagnostics the error when it fails.
-/// It starts without a fork and inherits only its streams (tasks::sys::Command): macOS's accept
+/// It starts without a fork and inherits only its streams (symphony_board::sys::Command): macOS's accept
 /// marks a connection close-on-exec in a second call, and a build started between the two would
 /// hold that client's connection open for its whole run.
 fn run_build(
@@ -452,9 +452,9 @@ fn run_build(
     stopping: impl Fn() -> bool,
 ) -> Result<(), String> {
     // Read to its end once the build has ended: a child another thread spawns meanwhile must not
-    // hold its writer, so it is made close-on-exec (tasks::sys::pipe) and only the build gets it.
+    // hold its writer, so it is made close-on-exec (symphony_board::sys::pipe) and only the build gets it.
     let (mut stderr, writer) =
-        tasks::sys::pipe().map_err(|e| format!("could not build {product}: {e}"))?;
+        symphony_board::sys::pipe().map_err(|e| format!("could not build {product}: {e}"))?;
     let child = command
         .current_dir(root)
         .env_remove("TASKS_SESSION")

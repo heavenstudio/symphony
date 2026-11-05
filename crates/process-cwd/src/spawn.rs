@@ -1,5 +1,5 @@
 //! Children started without a fork, and the pipes their input and output go through, which no child
-//! another thread spawns can hold open: the board's helpers (`tasks::sys` re-exports them) and the
+//! another thread spawns can hold open: the board's helpers (`symphony_board::sys` re-exports them) and the
 //! scans' `lsof`.
 //!
 //! std takes its fork path for a `pre_exec`, a session, or a changed environment with a bare program

@@ -1,10 +1,10 @@
 //! Owned processes, scratch repositories and build/opener fixtures for the lifecycle boundary.
-//! Every child starts through the board's forkless `tasks::sys::Command`: a child std forks
+//! Every child starts through the board's forkless `symphony_board::sys::Command`: a child std forks
 //! holds every descriptor this process has until its exec, a sibling case's pipes among them.
 
 use std::ffi::OsString;
 use std::fs::{self, File};
-use std::io::{Read, Write};
+use std::io::{Read, Seek, SeekFrom, Write};
 use std::net::TcpStream;
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 use std::os::unix::fs::symlink;
@@ -15,7 +15,7 @@ use std::process::{ExitStatus, Output};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Mutex, Once, OnceLock};
 use std::time::{Duration, Instant};
-use tasks::sys::{Child, Command, Stdio};
+use symphony_board::sys::{Child, Command, Stdio};
 
 #[path = "../../../../../tools/gate/tests/gate/scratch.rs"]
 mod scratch;
@@ -23,6 +23,10 @@ mod scratch;
 #[cfg(test)]
 #[path = "scratch_tests.rs"]
 mod scratch_tests;
+
+#[cfg(test)]
+#[path = "descendant_cleanup_tests.rs"]
+mod descendant_cleanup_tests;
 
 pub const APP: &str = env!("CARGO_BIN_EXE_symphony-server");
 pub const PATIENCE: Duration = Duration::from_secs(30);
@@ -144,8 +148,8 @@ fn command_fixture(path: &Path, name: &str) {
 }
 
 pub fn repository(root: &Path, args: &[&str]) {
-    let done = tasks::sys::output(
-        tasks::sys::Command::new("git")
+    let done = symphony_board::sys::output(
+        symphony_board::sys::Command::new("git")
             .args([
                 "-c",
                 "user.name=Lifecycle fixture",
@@ -177,6 +181,50 @@ fn output(stdout: &Path, stderr: &Path) -> String {
         fs::read_to_string(stdout).unwrap_or_default(),
         fs::read_to_string(stderr).unwrap_or_default()
     )
+}
+
+const SERVER_LOG_TAIL_BYTES: u64 = 16 * 1024;
+
+/// A bounded byte tail of the opened regular file, preserving malformed or split UTF-8 lossily.
+fn server_log_tail(path: &Path) -> std::io::Result<String> {
+    // Nonblocking open prevents a substituted FIFO from holding the failure report. Check the
+    // opened descriptor's type, and refuse a symlink at the log entry itself.
+    let mut file = fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NONBLOCK | libc::O_NOFOLLOW)
+        .open(path)?;
+    let metadata = file.metadata()?;
+    if !metadata.is_file() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "not a regular file",
+        ));
+    }
+    let start = metadata.len().saturating_sub(SERVER_LOG_TAIL_BYTES);
+    file.seek(SeekFrom::Start(start))?;
+    let mut bytes = Vec::new();
+    // This snapshot's range stays bounded even when the server appends while it is read.
+    file.take(metadata.len() - start).read_to_end(&mut bytes)?;
+    let mut text = if start == 0 {
+        String::new()
+    } else {
+        format!("[showing last {} bytes]\n", bytes.len())
+    };
+    text.push_str(&String::from_utf8_lossy(&bytes));
+    Ok(text)
+}
+
+/// Read the child streams and the detached server's bounded log tail at failure time.
+fn diagnostic_output(stdout: &Path, stderr: &Path, server_log: Option<&Path>) -> String {
+    let mut text = output(stdout, stderr);
+    if let Some(path) = server_log {
+        let said = server_log_tail(path).unwrap_or_else(|error| format!("unavailable: {error}"));
+        text.push_str(&format!(
+            "\ndetached server log {}:\n{said}",
+            path.display()
+        ));
+    }
+    text
 }
 
 /// This polls an observable event, never a presumed startup duration.
@@ -271,6 +319,7 @@ pub struct Process {
     launch: String,
     stdout: PathBuf,
     stderr: PathBuf,
+    server_log: Option<PathBuf>,
     server_pid: Option<i64>,
     descendants: Option<Descendants>,
     // Normal commands use Instant::elapsed; the private clock makes wait-boundary tests deterministic.
@@ -348,6 +397,7 @@ impl Descendants {
 
     fn spawn(command: &mut Command, at: &Path) -> (Self, File) {
         let (descendants, writer) = Self::endpoint(at, invocation(command));
+        let writer = above_shell_descriptors(writer);
         // The writer lives through spawn, which hands it to the child alone under its own number.
         // This process's copy stays close-on-exec, so concurrent tests' unrelated commands
         // cannot inherit this endpoint.
@@ -379,6 +429,32 @@ impl Descendants {
     }
 }
 
+/// The lowest descriptor a shell script does not name: POSIX redirections take one digit
+/// (`exec 3<&0`), and the child receives the endpoint under the number it has here.
+const ABOVE_SHELL_DESCRIPTORS: libc::c_int = 10;
+
+/// `file` moved above every single-digit descriptor. Wherever it was opened, a fixture script's
+/// own redirection of that number would close it in the shell, and no descendant would hold it.
+fn above_shell_descriptors(file: File) -> File {
+    // SAFETY: duplicates a live descriptor this function owns; the copy is close-on-exec from
+    // the moment it exists, as the original was.
+    let raised = unsafe {
+        libc::fcntl(
+            file.as_raw_fd(),
+            libc::F_DUPFD_CLOEXEC,
+            ABOVE_SHELL_DESCRIPTORS,
+        )
+    };
+    assert_ne!(
+        raised,
+        -1,
+        "cannot raise the lifetime endpoint: {}",
+        std::io::Error::last_os_error()
+    );
+    // SAFETY: fcntl just returned this new descriptor; ownership is transferred once.
+    unsafe { File::from_raw_fd(raised) }
+}
+
 impl Process {
     pub fn spawn(mut command: Command, log: &Path) -> Self {
         let invocation = invocation(&command);
@@ -405,6 +481,7 @@ impl Process {
             launch,
             stdout,
             stderr,
+            server_log: None,
             server_pid: None,
             descendants: Some(descendants),
             wait_elapsed: Box::new(Instant::elapsed),
@@ -420,10 +497,16 @@ impl Process {
         let id = child.id();
         let stdout = &self.stdout;
         let stderr = &self.stderr;
+        let server_log = self.server_log.as_deref();
         let launch = &self.launch;
         let status = poll(
             PATIENCE,
-            || format!("child {id} to exit; {launch}: {}", output(stdout, stderr)),
+            || {
+                format!(
+                    "child {id} to exit; {launch}: {}",
+                    diagnostic_output(stdout, stderr, server_log)
+                )
+            },
             || child.try_wait().unwrap(),
             &mut self.wait_elapsed,
         );
@@ -760,6 +843,7 @@ impl Repo {
 
     pub fn run(&self, command: Command) -> Process {
         let mut process = Process::spawn(command, &self.log("process"));
+        process.server_log = Some(self.home.join("server.log"));
         self.descendants
             .lock()
             .unwrap()
@@ -797,6 +881,7 @@ impl Repo {
                 launch,
                 stdout,
                 stderr,
+                server_log: Some(self.home.join("server.log")),
                 server_pid: None,
                 descendants: None,
                 wait_elapsed: Box::new(Instant::elapsed),
@@ -957,6 +1042,113 @@ pub fn terminal() -> (File, OwnedFd) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn server_log_tail_bounds_a_large_log_and_keeps_its_latest_progress() {
+        let scratch = Scratch::new("large-server-log-tail");
+        let path = scratch.path.join("server.log");
+        let latest = "\nlatest detached server progress\n";
+        let mut bytes = vec![b'x'; 128 * 1024];
+        bytes.extend_from_slice(latest.as_bytes());
+        fs::write(&path, bytes).unwrap();
+        let tail = server_log_tail(&path).unwrap();
+        let label = "[showing last 16384 bytes]\n";
+        assert_eq!(tail.len(), label.len() + 16384);
+        assert_eq!(
+            tail,
+            format!("{label}{}{latest}", "x".repeat(16384 - latest.len()))
+        );
+    }
+
+    #[test]
+    fn server_log_tail_preserves_progress_on_invalid_and_split_utf8() {
+        let scratch = Scratch::new("server-log-tail-utf8");
+        let path = scratch.path.join("server.log");
+        let mut split = vec![b'x'; 16384];
+        split.extend_from_slice("é".as_bytes());
+        split.extend(std::iter::repeat_n(b'y', 16383));
+        for (bytes, expected) in [
+            (
+                b"early \xff progress\nlatest progress\n".to_vec(),
+                "early � progress\nlatest progress\n".to_owned(),
+            ),
+            (
+                split,
+                format!("[showing last 16384 bytes]\n�{}", "y".repeat(16383)),
+            ),
+        ] {
+            fs::write(&path, bytes).unwrap();
+            assert_eq!(server_log_tail(&path).unwrap(), expected);
+        }
+    }
+
+    #[test]
+    fn server_log_tail_refuses_nonregular_files_without_a_writer() {
+        let scratch = Scratch::new("nonregular-server-log-tail");
+        let directory = scratch.path.join("directory");
+        fs::create_dir(&directory).unwrap();
+        let fifo = scratch.path.join("fifo");
+        mkfifo(&fifo);
+        for path in [&directory, &fifo] {
+            let error = server_log_tail(path).unwrap_err();
+            assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput);
+            assert_eq!(error.to_string(), "not a regular file");
+        }
+
+        let regular = scratch.path.join("regular");
+        write(&regular, "owned progress\n");
+        assert_eq!(server_log_tail(&regular).unwrap(), "owned progress\n");
+        let linked = scratch.path.join("linked");
+        symlink(&regular, &linked).unwrap();
+        assert_eq!(
+            server_log_tail(&linked).unwrap_err().raw_os_error(),
+            Some(libc::ELOOP)
+        );
+    }
+
+    #[test]
+    fn timeout_diagnostics_distinguish_an_unwritten_server_log_from_an_empty_one() {
+        let scratch = Scratch::new("server-log-diagnostics");
+        let stdout = scratch.path.join("stdout");
+        let stderr = scratch.path.join("stderr");
+        let log = scratch.path.join("server.log");
+        write(&stdout, "starter stdout\n");
+        write(&stderr, "starter stderr\n");
+        let streams = "starter stdout\nstarter stderr\n";
+        assert_eq!(diagnostic_output(&stdout, &stderr, None), streams);
+        let label = format!("\ndetached server log {}:\n", log.display());
+        assert!(
+            diagnostic_output(&stdout, &stderr, Some(&log))
+                .starts_with(&format!("{streams}{label}unavailable: "))
+        );
+        write(&log, "");
+        assert_eq!(
+            diagnostic_output(&stdout, &stderr, Some(&log)),
+            format!("{streams}{label}")
+        );
+    }
+
+    #[test]
+    fn a_traced_start_names_its_detached_server_waits() {
+        let repo = Repo::new("traced-detached-waits");
+        let starter = repo.start(&repo.main, false);
+        let text = starter.output();
+        let mut previous = 0;
+        for stage in [
+            "begin spawn detached server",
+            "end spawn detached server:",
+            "begin detached server port announcement",
+            "end detached server port announcement:",
+            "begin detached server HTTP readiness",
+            "end detached server HTTP readiness:",
+        ] {
+            let position = text
+                .find(stage)
+                .unwrap_or_else(|| panic!("missing {stage}: {text}"));
+            assert!(position >= previous, "startup stages out of order: {text}");
+            previous = position;
+        }
+    }
 
     /// A child std forks keeps every end this process holds until its exec, a sibling case's
     /// readiness pipe or lifetime endpoint among them, and no wait can shorten that.
@@ -1249,54 +1441,6 @@ mod tests {
         );
     }
 
-    #[test]
-    fn cleanup_waits_for_orphaned_fixture_descendants_before_removing_scratch() {
-        for repository in [false, true] {
-            let repo = Repo::new("descendant-cleanup");
-            let base = repo.base.clone();
-            let mut command = Command::new("/bin/sh");
-            // The launcher exits while its child holds the lifetime endpoint and waits for the
-            // test's input. The child's final write must finish before scratch can disappear.
-            command
-                .args([
-                    "-c",
-                    "exec 3<&0; sh -c 'printf ready; read -r line; printf finished > \"$1\"' fixture \"$1\" <&3 & exit",
-                    "fixture",
-                ])
-                .arg(base.join("late-write"))
-                .stdin(Stdio::piped());
-            let mut process = if repository {
-                repo.run(command)
-            } else {
-                Process::spawn(command, &repo.log("orphan"))
-            };
-            let mut input = process.child.stdin.take().unwrap();
-            process.success();
-            until("orphaned fixture readiness", || {
-                (process.output() == "ready").then_some(())
-            });
-            let (finished, completion) = std::sync::mpsc::channel();
-            let cleanup = std::thread::spawn(move || {
-                drop(process);
-                drop(repo);
-                finished.send(()).unwrap();
-            });
-            // A bounded negative observation, not cleanup's synchronization. Input releases the
-            // descendant; EOF on its inherited endpoint is what releases cleanup.
-            let early = completion.recv_timeout(Duration::from_millis(50));
-            let scratch_present = base.is_dir();
-            writeln!(input, "finish").unwrap();
-            completion.recv_timeout(PATIENCE).unwrap();
-            cleanup.join().unwrap();
-            assert_eq!(early, Err(std::sync::mpsc::RecvTimeoutError::Timeout));
-            assert!(
-                scratch_present,
-                "scratch removed while a descendant could write"
-            );
-            assert!(!base.exists());
-        }
-    }
-
     /// Another case's fixture command can be spawned while this one makes its endpoint. Racing
     /// children live on, so a writer one took would hold back that endpoint's EOF until cleanup.
     #[test]
@@ -1482,12 +1626,15 @@ mod tests {
             ])
             .stdin(Stdio::piped());
         let mut process = Process::spawn(command, &logs);
+        let server_log = scratch.path.join("detached-server.log");
+        process.server_log = Some(server_log.clone());
         let id = process.child.id();
         assert!(process.child.try_wait().unwrap().is_none());
         assert!(process.output().is_empty());
         let stdout = process.stdout.clone();
         let stderr = process.stderr.clone();
         let mut input = process.child.stdin.take().unwrap();
+        let detached = server_log.clone();
         process.wait_elapsed = Box::new(move |_: &Instant| {
             // The clock is read after Process::wait has begun and observed its pending child.
             // Release and observe real child output, then reach the unchanged wait deadline.
@@ -1495,6 +1642,7 @@ mod tests {
             until("late child stdout and stderr", || {
                 (output(&stdout, &stderr) == "late stdout\nlate stderr\n").then_some(())
             });
+            write(&detached, "late detached server progress\n");
             PATIENCE
         });
         // The expected timeout leaves Process owning its child, which is cleaned up below.
@@ -1505,7 +1653,10 @@ mod tests {
         let message = timeout.downcast_ref::<String>().unwrap();
         assert_eq!(
             message,
-            &format!("timed out: child {id} to exit; {launch}: late stdout\nlate stderr\n")
+            &format!(
+                "timed out: child {id} to exit; {launch}: late stdout\nlate stderr\n\ndetached server log {}:\nlate detached server progress\n",
+                server_log.display()
+            )
         );
     }
 }

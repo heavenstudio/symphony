@@ -11,8 +11,8 @@ use std::path::{Path, PathBuf};
 use std::process::ExitStatus;
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
-use tasks::server::{Home, Running};
-use tasks::sys::{Child, Command, Spawning as _, Stdio};
+use symphony_board::server::{Home, Running};
+use symphony_board::sys::{Child, Command, Spawning as _, Stdio};
 
 pub fn surreal() -> PathBuf {
     static FOUND: OnceLock<PathBuf> = OnceLock::new();
@@ -36,7 +36,7 @@ impl GuardedSurreal {
             env!("CARGO_MANIFEST_DIR"),
             "/../../../tools/fixture_process.sh"
         );
-        // One reader on one real pipe (tasks::sys::pipe): a reader blocked on a FIFO can remain
+        // One reader on one real pipe (symphony_board::sys::pipe): a reader blocked on a FIFO can remain
         // blocked on macOS after its last writer closes. Keep the watchdog owned and reap it on
         // normal teardown; its own group survives an interrupted suite's group.
         let watchdog = crate::store::spawn_with_input(
@@ -124,7 +124,7 @@ impl Drop for GuardedSurreal {
 
 /// The command line of process `pid`, if it runs.
 pub fn command_of(pid: i64) -> Option<String> {
-    let out = tasks::sys::output(Command::new("ps").args([
+    let out = symphony_board::sys::output(Command::new("ps").args([
         "-ww",
         "-o",
         "command=",
@@ -147,7 +147,7 @@ pub fn signal(pid: i64, name: &str) {
 pub fn gone(pid: i64) -> bool {
     let began = Instant::now();
     while began.elapsed() < Duration::from_secs(20) {
-        if !tasks::sys::pid_alive(pid) {
+        if !symphony_board::sys::pid_alive(pid) {
             return true;
         }
         std::thread::sleep(Duration::from_millis(20));
@@ -304,56 +304,65 @@ fn one_watchdog_ends_every_server_on_eof_even_with_inherited_high_writers() {
         // Started again on another port only if its port was taken before it bound it, every
         // start within the one readiness bound; up once the server itself listens there.
         let until = Instant::now() + Duration::from_secs(20);
-        tasks::port::start_on_free_port(tasks::port::ATTEMPTS, until, |reserved| {
-            let addr = reserved.to_string();
-            let out = std::fs::File::create(&log).unwrap();
-            let mut command = Command::new(s.surreal());
-            command
-                .args([
-                    "start",
-                    "--unauthenticated",
-                    "--bind",
-                    &addr,
-                    "--log",
-                    "error",
-                ])
-                .arg(format!(
-                    "surrealkv://{}",
-                    s.dir.join(format!("data-{index}")).display()
-                ))
-                .stdin(Stdio::null())
-                .stdout(out.try_clone().unwrap())
-                .stderr(out);
-            // A writer above fd 3 models the descriptor a helper can inherit from its native test.
-            // Without fixture_close_fds the server retains it and the watchdog can never see EOF.
-            // It is handed at 64 or above, away from shell redirections; this process's copy is
-            // close-on-exec from its making and goes once the server has started.
-            // SAFETY: F_DUPFD_CLOEXEC makes a new descriptor, which the OwnedFd alone then owns.
-            let inherited = unsafe {
-                let fd = libc::fcntl(writer, libc::F_DUPFD_CLOEXEC, 64);
-                assert_ne!(fd, -1, "{}", std::io::Error::last_os_error());
-                OwnedFd::from_raw_fd(fd)
-            };
-            servers
-                .0
-                .push(command.pass_fd(inherited.as_raw_fd()).spawn().unwrap());
-            drop(inherited);
-            let server = servers.0.last_mut().unwrap();
-            loop {
-                if server.try_wait().unwrap().is_some() {
-                    servers.0.pop();
-                    let said = std::fs::read_to_string(&log).unwrap();
-                    return Ok::<_, Infallible>(tasks::port::Start::Ended(said));
+        symphony_board::port::start_on_free_port(
+            symphony_board::port::ATTEMPTS,
+            until,
+            |reserved| {
+                let addr = reserved.to_string();
+                let out = std::fs::File::create(&log).unwrap();
+                let mut command = Command::new(s.surreal());
+                command
+                    .args([
+                        "start",
+                        "--unauthenticated",
+                        "--bind",
+                        &addr,
+                        "--log",
+                        "error",
+                    ])
+                    .arg(format!(
+                        "surrealkv://{}",
+                        s.dir.join(format!("data-{index}")).display()
+                    ))
+                    .stdin(Stdio::null())
+                    .stdout(out.try_clone().unwrap())
+                    .stderr(out);
+                // A writer above fd 3 models the descriptor a helper can inherit from its native test.
+                // Without fixture_close_fds the server retains it and the watchdog can never see EOF.
+                // It is handed at 64 or above, away from shell redirections; this process's copy is
+                // close-on-exec from its making and goes once the server has started.
+                // SAFETY: F_DUPFD_CLOEXEC makes a new descriptor, which the OwnedFd alone then owns.
+                let inherited = unsafe {
+                    let fd = libc::fcntl(writer, libc::F_DUPFD_CLOEXEC, 64);
+                    assert_ne!(fd, -1, "{}", std::io::Error::last_os_error());
+                    OwnedFd::from_raw_fd(fd)
+                };
+                servers
+                    .0
+                    .push(command.pass_fd(inherited.as_raw_fd()).spawn().unwrap());
+                drop(inherited);
+                let server = servers.0.last_mut().unwrap();
+                loop {
+                    if server.try_wait().unwrap().is_some() {
+                        servers.0.pop();
+                        let said = std::fs::read_to_string(&log).unwrap();
+                        return Ok::<_, Infallible>(symphony_board::port::Start::Ended(said));
+                    }
+                    if symphony_board::rpc::healthy(&addr)
+                        && symphony_board::port::listens(
+                            server.id(),
+                            reserved,
+                            symphony_board::sys::output,
+                        )
+                        .unwrap()
+                    {
+                        return Ok(symphony_board::port::Start::Up(()));
+                    }
+                    assert!(Instant::now() < until, "server readiness: {addr}");
+                    std::thread::sleep(Duration::from_millis(20));
                 }
-                if tasks::rpc::healthy(&addr)
-                    && tasks::port::listens(server.id(), reserved, tasks::sys::output).unwrap()
-                {
-                    return Ok(tasks::port::Start::Up(()));
-                }
-                assert!(Instant::now() < until, "server readiness: {addr}");
-                std::thread::sleep(Duration::from_millis(20));
-            }
-        })
+            },
+        )
         .unwrap_or_else(|why| panic!("server {index}: {why}"));
     }
     let watchdog_pid = i64::from(s.surreal.watchdog.id());
@@ -363,7 +372,7 @@ fn one_watchdog_ends_every_server_on_eof_even_with_inherited_high_writers() {
         "the watchdog must exit on EOF without a forced kill"
     );
     assert!(
-        !tasks::sys::pid_alive(watchdog_pid),
+        !symphony_board::sys::pid_alive(watchdog_pid),
         "the watchdog must be reaped"
     );
     for server in &mut servers.0 {

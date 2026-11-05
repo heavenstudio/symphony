@@ -1,9 +1,9 @@
 //! Decision cards: a task item with a bold slug, its verdict in the mark, its history under it.
 //!
 //! ```text
-//! - [-] **hull-count-141** — 141 hulls.
+//! - [-] **lamp-count-141** — 141 lamps.
 //!   [2026-09-24 14:02] owner · rejected — needs better names
-//!   [2026-09-24 15:10] agent — Options are in **alien-people-names**.
+//!   [2026-09-24 15:10] agent — Options are in **street-names**.
 //! ```
 //!
 //! One dated line per event under a card, appended and never rewritten; deeper-indented lines
@@ -284,7 +284,7 @@ pub(crate) fn unseen_marker(owner: &str, reply: &str) -> String {
     format!("  <!-- review:unseen-owner {owner} {reply} -->\n")
 }
 
-/// A decision card: `- [x] **five-civilizations** — There are five civilizations.`
+/// A decision card: `- [x] **five-workshops** — There are five workshops.`
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Decision {
     /// 1-based, in the lines it was parsed from.

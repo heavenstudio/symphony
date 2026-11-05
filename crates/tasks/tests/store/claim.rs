@@ -3,8 +3,8 @@
 use crate::common::{Fixture, GONE, NOW, Seed, amber_back_meanwhile, refused, session};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Barrier};
-use tasks::Health;
-use tasks::health::LIVE_SECONDS;
+use symphony_board::Health;
+use symphony_board::health::LIVE_SECONDS;
 
 fn two_and_a_task(status: &str) -> Fixture {
     Fixture::new(
@@ -160,7 +160,7 @@ fn claiming_concept_or_design_work_keeps_its_stage() {
 fn a_left_or_unknown_session_cannot_act() {
     let f = Fixture::new(
         Seed::default()
-            .session_row(tasks::rows::SessionRow {
+            .session_row(symphony_board::rows::SessionRow {
                 left_at: Some(NOW),
                 ..session("amber-heron")
             })
@@ -194,19 +194,20 @@ fn concurrent_claims_have_exactly_one_winner() {
     }
     let f = Fixture::new(seed);
     let barrier = Arc::new(Barrier::new(handles.len()));
-    let outcomes: Vec<(String, Result<tasks::Task, tasks::Error>)> = std::thread::scope(|scope| {
-        let racers: Vec<_> = handles
-            .iter()
-            .map(|h| {
-                let (store, barrier) = (f.other(), Arc::clone(&barrier));
-                scope.spawn(move || {
-                    barrier.wait();
-                    (h.clone(), store.claim("sim/jump", h))
+    let outcomes: Vec<(String, Result<symphony_board::Task, symphony_board::Error>)> =
+        std::thread::scope(|scope| {
+            let racers: Vec<_> = handles
+                .iter()
+                .map(|h| {
+                    let (store, barrier) = (f.other(), Arc::clone(&barrier));
+                    scope.spawn(move || {
+                        barrier.wait();
+                        (h.clone(), store.claim("sim/jump", h))
+                    })
                 })
-            })
-            .collect();
-        racers.into_iter().map(|r| r.join().unwrap()).collect()
-    });
+                .collect();
+            racers.into_iter().map(|r| r.join().unwrap()).collect()
+        });
     let wins: Vec<&str> = outcomes
         .iter()
         .filter(|(_, r)| r.is_ok())
@@ -216,7 +217,7 @@ fn concurrent_claims_have_exactly_one_winner() {
     for (_, outcome) in outcomes.iter().filter(|(_, r)| r.is_err()) {
         assert_eq!(
             outcome,
-            &Err(tasks::Error::Refused(format!(
+            &Err(symphony_board::Error::Refused(format!(
                 "sim/jump is held by {} (live)",
                 wins[0]
             )))

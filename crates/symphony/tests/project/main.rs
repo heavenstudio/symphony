@@ -15,6 +15,5 @@ mod folders;
 mod manifest;
 mod offers;
 mod seams;
-mod star_foundry;
 
 use common::Tree;

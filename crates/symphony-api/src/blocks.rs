@@ -91,7 +91,7 @@ pub enum Block {
     Image {
         image: Image,
     },
-    /// A picture with its caption: a picture slot, a hull in a strip or a table cell, a capture.
+    /// A picture with its caption: a picture slot, an item in a strip or a table cell, a capture.
     /// `href` links the picture, `badge` is the short state shown where the picture is missing,
     /// and `size` chooses the layout.
     Figure {

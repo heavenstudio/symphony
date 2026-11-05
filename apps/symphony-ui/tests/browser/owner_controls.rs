@@ -9,7 +9,7 @@ use std::process::{Child, Command, Stdio};
 use std::sync::mpsc::RecvTimeoutError;
 use std::time::Instant;
 
-/// The board's port helper (`tasks::port`), taken as a file: this crate links nothing of the board's.
+/// The board's port helper (`symphony_board::port`), taken as a file: this crate links nothing of the board's.
 #[path = "../../../../crates/tasks/src/port.rs"]
 mod port;
 
@@ -54,7 +54,7 @@ impl ScratchBoard {
             tasks,
         };
         // SurrealDB prints its configured address for :0, so it is told a reserved port, and
-        // started again on another when that port was taken before it bound it (tasks::port),
+        // started again on another when that port was taken before it bound it (symphony_board::port),
         // every start within the one readiness bound.
         let ready_by = Instant::now() + SHOWN;
         port::start_on_free_port(port::ATTEMPTS, ready_by, |expected| {

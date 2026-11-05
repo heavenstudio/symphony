@@ -1,4 +1,4 @@
-//! Card pictures, queue priority and untasked owner verdicts.
+//! Untasked owner verdicts and the review binary the verdict filing runs.
 
 #[path = "../common/mod.rs"]
 mod common;
@@ -10,9 +10,6 @@ mod fixture_script;
 #[allow(dead_code)]
 mod board;
 
-mod art;
-mod model;
-mod triage;
 mod verdicts;
 
 use symphony::register::{Decision, parse_decisions};

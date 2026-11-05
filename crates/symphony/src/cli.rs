@@ -1,8 +1,9 @@
-//! The `symphony` binary: `status` (`just symphony-status`), `reply` (`just symphony-reply`), `relationships`
-//! (`just relationships`), `screens --check`, `triage` (`just triage`), `verdict-tasks` (`just
-//! verdict-tasks`), `ask` (`just symphony-ask`), and `serve`, one line-oriented JSON entry to the
-//! register, the asks, the schema check, the relationship tables and the screen catalogue, one JSON
-//! line per call.
+//! The `symphony` binary: `status` (`just symphony-status`), `reply` (`just symphony-reply`), `triage`
+//! (`just triage`), `verdict-tasks` (`just verdict-tasks`), `ask` (`just symphony-ask`), the commands
+//! the project's plugins add, and `serve`, one line-oriented JSON entry to the register, the asks and
+//! the schema check, one JSON line per call.
+
+mod commands;
 
 use std::io::{BufRead, Write};
 use std::path::{Path, PathBuf};
@@ -23,7 +24,7 @@ use crate::register::{self, Decision, QUESTION, ReviewError, Who, card_end, pars
 use crate::taskcli::CliBoard;
 use crate::text::{os_error, read_text, write_whole};
 use crate::verdicts::{self, Board};
-use crate::{relationships, schema, screens, triage};
+use crate::{schema, triage};
 
 const STATUS_USAGE: &str =
     "usage: symphony status [-h] [--root ROOT] [--json] [--open] [--tidy] [--lint] [--now NOW]";
@@ -50,7 +51,8 @@ options:
   --question  the line asks the owner something: the card stays open for the owner (`agent · question`)
   --now NOW   timestamp (default: local time)";
 
-/// `symphony COMMAND ARGS…`: the whole command line without the program name. Its exit code.
+/// `symphony COMMAND ARGS…`: the whole command line without the program name. Its exit code. A
+/// command the Symphony does not have is run by the first plugin this process holds that adds it.
 pub fn main(
     args: &[String],
     input: &mut dyn BufRead,
@@ -61,29 +63,14 @@ pub fn main(
         Some("status") => status_main(&args[1..], out, err),
         Some("reply") => reply_main(&args[1..], out, err),
         Some("serve") => serve_main(input, out),
-        Some("relationships") => relationships::check_main(&args[1..], out, err),
-        Some("screens") => screens::check_main(&args[1..], out, err),
-        Some("ship-art") => crate::ship_art::main(&args[1..], out, err),
         Some("docs-audit") => crate::docs_audit::main(&args[1..], out, err),
         Some("blocks") => crate::blocks::main(&args[1..], out, err),
         Some("publish-client") => publish_client_main(&args[1..], err),
         Some("triage") => triage_main(&args[1..], out, err),
         Some("verdict-tasks") => verdict_tasks_main(&args[1..], out, err),
         Some("ask") => asks::main(&args[1..], &std::env::vars().collect(), out, err),
-        Some(other) => {
-            let _ = writeln!(
-                err,
-                "symphony: unknown command {other:?}; use status, reply, relationships, screens, ship-art, docs-audit, blocks, publish-client, triage, verdict-tasks, ask or serve"
-            );
-            2
-        }
-        None => {
-            let _ = writeln!(
-                err,
-                "usage: symphony status|reply|relationships|screens|ship-art|docs-audit|blocks|publish-client|triage|verdict-tasks|ask|serve …"
-            );
-            2
-        }
+        Some(other) => commands::plugin(other, &args[1..], out, err),
+        None => commands::usage(err),
     }
 }
 
@@ -270,7 +257,7 @@ pub fn parse(args: &[String], flags: &[Flag]) -> Result<Parsed, String> {
 }
 
 /// A refusal of the command line, as argparse words one: the usage, then the error. Exit 2.
-pub(crate) fn refuse(err: &mut dyn Write, usage: &str, command: &str, problem: &str) -> i32 {
+pub fn refuse(err: &mut dyn Write, usage: &str, command: &str, problem: &str) -> i32 {
     let _ = writeln!(err, "{usage}\nsymphony {command}: error: {problem}");
     2
 }
@@ -689,7 +676,7 @@ fn dispatch(request: &Value) -> Result<Value, Failure> {
             let card = cards
                 .first()
                 .ok_or_else(|| bad("board_words needs a card".into()))?;
-            json!({"title":crate::dashboard::card_title(&plugins, card), "summary":crate::dashboard::card_summary(card), "rest":crate::dashboard::card_rest(&plugins, card)})
+            json!({"title":crate::dashboard::card_title(&plugins, card), "summary":crate::dashboard::card_summary(&plugins, card), "rest":crate::dashboard::card_rest(&plugins, card)})
         }
         "set_decision" => json!(edit::set_decision(
             text()?,
@@ -740,20 +727,6 @@ fn dispatch(request: &Value) -> Result<Value, Failure> {
             schema::validate(value_arg(request, "instance"), value_arg(request, "schema"))
                 .map_err(|e| bad(e.0))?
         ),
-        "relationship_tables" => relationships::tables(Path::new(text_arg(request, "root")?))
-            .map_err(|e| bad(e.0))?
-            .to_json(),
-        "screen_problems" => {
-            let root = Path::new(text_arg(request, "root")?);
-            json!(screens::problems(
-                &screens::load_catalogue(root).map_err(bad)?,
-                root
-            ))
-        }
-        "film_document" => screens::film_document(value_arg(request, "entry")),
-        "read_manifest" => {
-            json!(screens::read_manifest(Path::new(text_arg(request, "out")?)).map_err(bad)?)
-        }
         "expand_components" => json!(
             crate::render::Render::new(text_arg(request, "root")?)
                 .expand_components(text()?, text_arg(request, "doc_path")?)
@@ -818,9 +791,9 @@ const TRIAGE_HELP: &str =
 
   stats      the owner's first-pass approval rate per category, how often an approval still
              carries a note, the letters they pick and how often they answer with a question
-  queue N    the N pending cards the owner should see first: design cards by how many hulls
-             and cards they gate, then their questions an agent has answered, then hull model
-             cards, then art nobody could decide, each with a link that scrolls
+  queue N    the N pending cards the owner should see first: design cards by how much
+             they gate, then their questions an agent has answered, then the cards only the
+             owner signs off, then pictures nobody could decide, each with a link that scrolls
              Symphony to the card
 
 options:

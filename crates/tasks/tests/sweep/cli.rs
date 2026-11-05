@@ -6,9 +6,9 @@ use crate::common::Seed;
 use crate::{HeldCwd, Repo, git, write};
 use std::collections::BTreeMap;
 use std::path::Path;
-use tasks::cli::Env;
-use tasks::sweep::trigger::{STAMP, folder};
-use tasks::{NewLaunch, sweep::RECENT_ENV};
+use symphony_board::cli::Env;
+use symphony_board::sweep::trigger::{STAMP, folder};
+use symphony_board::{NewLaunch, sweep::RECENT_ENV};
 
 /// `tasks ARGS` from `cwd` on the repository's board, with `change` made to its environment: the exit
 /// code, what it printed and what it said on stderr.
@@ -26,7 +26,7 @@ fn run(
     };
     let args: Vec<String> = args.iter().map(|a| a.to_string()).collect();
     let (mut out, mut err) = (Vec::new(), Vec::new());
-    let code = tasks::cli::main(&args, &env, &mut "".as_bytes(), &mut out, &mut err);
+    let code = symphony_board::cli::main(&args, &env, &mut "".as_bytes(), &mut out, &mut err);
     (
         code,
         String::from_utf8(out).unwrap(),
@@ -73,8 +73,8 @@ fn busy_trees_with_escaped_names_are_kept_in_real_and_dry_sweeps() {
     }
     for args in [&["--dry-run"][..], &[]] {
         r.idle(&[]);
-        let done = tasks::sys::output(
-            tasks::sys::Command::new(env!("CARGO_BIN_EXE_tasks"))
+        let done = symphony_board::sys::output(
+            symphony_board::sys::Command::new(env!("CARGO_BIN_EXE_tasks"))
                 .arg("sweep")
                 .args(args)
                 .env_clear()
@@ -109,8 +109,8 @@ fn inherited_repository_and_index_variables_do_not_redirect_sweep_operations() {
             "extends RefCounted\n# keep my edit\n",
         );
         r.idle(&[]);
-        let done = tasks::sys::output(
-            tasks::sys::Command::new(env!("CARGO_BIN_EXE_tasks"))
+        let done = symphony_board::sys::output(
+            symphony_board::sys::Command::new(env!("CARGO_BIN_EXE_tasks"))
                 .arg("sweep")
                 .env_clear()
                 .envs(r.vars())

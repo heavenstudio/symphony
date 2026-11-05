@@ -2,8 +2,8 @@
 //! temporary folder is inside it).
 
 use std::path::{Path, PathBuf};
-use tasks::git::common_dir;
-use tasks::sys::Command;
+use symphony_board::git::common_dir;
+use symphony_board::sys::Command;
 
 struct Temp(PathBuf);
 
@@ -35,7 +35,7 @@ impl Make for PathBuf {
 }
 
 fn git(args: &[&str]) {
-    let done = tasks::sys::output(
+    let done = symphony_board::sys::output(
         Command::new("git")
             .args(["-c", "user.email=t@t", "-c", "user.name=t"])
             .args(args),

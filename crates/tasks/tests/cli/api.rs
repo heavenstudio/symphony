@@ -4,7 +4,7 @@
 use crate::{Case, env, run};
 use serde_json::{Value, json};
 
-fn answer(env: &tasks::cli::Env, call: Value) -> Value {
+fn answer(env: &symphony_board::cli::Env, call: Value) -> Value {
     let ran = run(env, &["api"], &call.to_string());
     assert_eq!(ran.code, 0, "{}", ran.err);
     serde_json::from_str(&ran.out).unwrap_or_else(|e| panic!("{e}: {:?}", ran.out))
@@ -20,7 +20,7 @@ fn a_call_gives_the_stores_result_in_pythons_field_order() {
         json!({"method": "create", "args": {"slug": "sim/a", "title": "A", "by": actor, "links": ["docs/X.md"]}}),
     );
     let task = &made["ok"];
-    // Sorted here: a parsed map keeps serde_json's order, which a workspace build changes (tools/art turns
+    // Sorted here: a parsed map keeps serde_json's order, which a workspace build changes (tools/picture turns
     // on its preserve_order for every member). The order the answer has is the raw text's, below.
     let mut keys: Vec<&str> = task
         .as_object()
@@ -204,7 +204,7 @@ fn tasks_now_is_the_clock() {
 }
 
 /// `tasks api --lines` with `lines` on stdin: its exit code and each line it answered, read as JSON.
-fn served(env: &tasks::cli::Env, lines: &str) -> (i32, Vec<Value>) {
+fn served(env: &symphony_board::cli::Env, lines: &str) -> (i32, Vec<Value>) {
     let ran = run(env, &["api", "--lines"], lines);
     let answers = ran
         .out

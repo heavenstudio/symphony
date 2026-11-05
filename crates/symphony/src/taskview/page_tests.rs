@@ -15,7 +15,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 mod store_fixture;
 
 use store_fixture::{Fixture, Seed, task as row};
-use tasks::rows::TaskRow;
+use symphony_board::rows::TaskRow;
 
 use super::{BRIEF_LIMIT, brief, page};
 use crate::test_tree::Tree;
@@ -108,7 +108,7 @@ fn a_long_briefs_page_sends_its_start_reads_only_its_rows_and_reaches_the_rest_o
             )),
     );
     let relay = Relay::to(f.store.client().addr());
-    let store = tasks::Store::open(tasks::rpc::Client::new(
+    let store = symphony_board::Store::open(symphony_board::rpc::Client::new(
         &relay.addr,
         "sf",
         f.store.client().database(),

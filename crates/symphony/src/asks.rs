@@ -14,7 +14,7 @@
 use std::collections::BTreeMap;
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use tasks::sys::Command;
+use symphony_board::sys::Command;
 
 use serde::{Deserialize, Serialize};
 
@@ -259,7 +259,7 @@ impl AskStore {
     /// `script` through `sqlite3` on the file: what it printed (JSON arrays), or what it said failed.
     pub(crate) fn run(&self, script: &str) -> Result<String, AskError> {
         let failed = |problem: std::io::Error| AskError::Store(format!("sqlite3: {problem}"));
-        let mut child = tasks::sys::spawn_piped(
+        let mut child = symphony_board::sys::spawn_piped(
             Command::new("sqlite3")
                 .args(["-bail", "-batch", "-json"])
                 .arg(&self.path),
@@ -268,7 +268,7 @@ impl AskStore {
         if let Some(mut input) = child.stdin.take() {
             let _ = write!(input, ".timeout {BUSY_TIMEOUT_MS}\n{script}");
         }
-        let done = tasks::sys::wait_output(child).map_err(failed)?;
+        let done = symphony_board::sys::wait_output(child).map_err(failed)?;
         if done.status.success() {
             return Ok(String::from_utf8_lossy(&done.stdout).into_owned());
         }
@@ -509,7 +509,7 @@ pub fn default_path(root: &Path, asks_db: Option<&str>) -> PathBuf {
         return PathBuf::from(db);
     }
     let mut base = std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
-    let common = tasks::sys::output(Command::new("git").arg("-C").arg(root).args([
+    let common = symphony_board::sys::output(Command::new("git").arg("-C").arg(root).args([
         "rev-parse",
         "--path-format=absolute",
         "--git-common-dir",
