@@ -34,7 +34,7 @@ pub fn runs(line: &str, keep: impl Fn(char) -> bool) -> Vec<(Option<char>, &str)
         match (keep(c), start) {
             (true, None) => start = Some(at),
             (false, Some(from)) => {
-                found.push((before, &line[from..at]));
+                found.extend(line.get(from..at).map(|run| (before, run)));
                 start = None;
             }
             _ => {}
@@ -44,7 +44,7 @@ pub fn runs(line: &str, keep: impl Fn(char) -> bool) -> Vec<(Option<char>, &str)
         }
     }
     if let Some(from) = start {
-        found.push((before, &line[from..]));
+        found.extend(line.get(from..).map(|run| (before, run)));
     }
     found
 }
@@ -59,22 +59,24 @@ fn mentions<'a>(line: &'a str, slugs: &HashSet<&str>, odd: &[&str]) -> Vec<&'a s
         .map(|(_, run)| (run.as_ptr() as usize - line.as_ptr() as usize, run))
         .collect();
     for slug in odd {
-        for (at, _) in line.match_indices(slug) {
-            let before = line[..at].chars().next_back();
-            let after = line[at + slug.len()..].chars().next();
+        for (at, matched) in line.match_indices(slug) {
+            let before = line.get(..at).and_then(|head| head.chars().next_back());
+            let after = line
+                .get(at + matched.len()..)
+                .and_then(|tail| tail.chars().next());
             if !before.is_some_and(|c| word(c) || c == '/' || c == '#') && !after.is_some_and(word)
             {
-                found.push((at, &line[at..at + slug.len()]));
+                found.push((at, matched));
             }
         }
     }
-    found.sort();
+    found.sort_unstable();
     found.into_iter().map(|(_, slug)| slug).collect()
 }
 
 pub(super) fn prose(tree: &Docs, problems: &mut Vec<Problem>) {
     let scanned: Vec<&String> = tree
-        .docs
+        .documents
         .iter()
         .filter(|rel| !rel.split('/').any(|p| p == "history" || p.starts_with('.')))
         .collect();

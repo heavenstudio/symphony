@@ -146,7 +146,7 @@ pub fn check(root: &Path, checks: &[&dyn DocCheck]) -> Result<Index, Vec<Problem
 pub struct Docs {
     root: PathBuf,
     /// Every document, sorted by its project-relative path.
-    docs: Vec<String>,
+    documents: Vec<String>,
     texts: HashMap<String, String>,
     /// Each document's heading anchors, sorted; each live document's cards.
     anchors: HashMap<String, Vec<String>>,
@@ -163,7 +163,7 @@ impl Docs {
         let root = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
         let mut tree = Docs {
             root: root.clone(),
-            docs: Vec::new(),
+            documents: Vec::new(),
             texts: HashMap::new(),
             anchors: HashMap::new(),
             cards: HashMap::new(),
@@ -171,10 +171,13 @@ impl Docs {
             unreadable: Vec::new(),
             listings: RefCell::new(HashMap::new()),
         };
-        tree.walk(&root.join(DOCS), DOCS.to_string(), false);
-        tree.docs.sort();
+        tree.walk(&root.join(DOCS), DOCS, false);
+        tree.documents.sort();
         tree.media.sort();
-        for (rel, text) in &tree.texts {
+        for rel in &tree.documents {
+            let Some(text) = tree.texts.get(rel) else {
+                continue;
+            };
             tree.anchors.insert(rel.clone(), syntax::anchors(text));
             if !is_history(rel) {
                 tree.cards
@@ -191,12 +194,12 @@ impl Docs {
 
     /// Every document, history included, by its project-relative path, sorted.
     pub fn paths(&self) -> &[String] {
-        &self.docs
+        &self.documents
     }
 
     /// A document's text; empty for one the tree does not hold.
     pub fn text(&self, rel: &str) -> &str {
-        self.texts.get(rel).map(String::as_str).unwrap_or("")
+        self.texts.get(rel).map_or("", String::as_str)
     }
 
     /// Whether the tree holds the document `rel`.
@@ -206,12 +209,12 @@ impl Docs {
 
     /// A live document's cards (none for a history document).
     pub fn cards(&self, rel: &str) -> &[syntax::Card] {
-        self.cards.get(rel).map(Vec::as_slice).unwrap_or(&[])
+        self.cards.get(rel).map_or(&[], Vec::as_slice)
     }
 
     /// Every component the docs build checks, with its document: those outside `docs/history/`.
     pub fn components(&self) -> Vec<(&str, syntax::Component)> {
-        self.docs
+        self.documents
             .iter()
             .filter(|rel| !rel.starts_with("docs/history/"))
             .flat_map(|rel| {
@@ -223,14 +226,18 @@ impl Docs {
     }
 
     fn doc_anchors(&self, rel: &str) -> &[String] {
-        self.anchors.get(rel).map(Vec::as_slice).unwrap_or(&[])
+        self.anchors.get(rel).map_or(&[], Vec::as_slice)
     }
 
     fn doc_cards(&self, rel: &str) -> &[syntax::Card] {
         self.cards(rel)
     }
 
-    fn walk(&mut self, dir: &Path, rel: String, hidden: bool) {
+    #[expect(
+        clippy::case_sensitive_file_extension_comparisons,
+        reason = "a document is a `.md` file in lower case, as the Symphony serves one"
+    )]
+    fn walk(&mut self, dir: &Path, rel: &str, hidden: bool) {
         let Ok(entries) = std::fs::read_dir(dir) else {
             return;
         };
@@ -248,12 +255,12 @@ impl Docs {
             let child = format!("{rel}/{name}");
             let quiet = hidden || name.starts_with('.');
             if is_dir {
-                self.walk(&dir.join(&name), child, quiet);
+                self.walk(&dir.join(&name), &child, quiet);
             } else if name.ends_with(".md") {
                 match std::fs::read_to_string(dir.join(&name)) {
                     Ok(text) => {
                         self.texts.insert(child.clone(), text);
-                        self.docs.push(child);
+                        self.documents.push(child);
                     }
                     Err(error) => self.unreadable.push(Problem {
                         file: child,
@@ -272,13 +279,13 @@ impl Docs {
     }
 
     fn live(&self) -> impl Iterator<Item = &String> {
-        self.docs.iter().filter(|rel| !is_history(rel))
+        self.documents.iter().filter(|rel| !is_history(rel))
     }
 
     /// The documents in the order a document link searches them: live ones, then history.
     fn search_order(&self) -> Vec<&str> {
-        let live = self.docs.iter().filter(|rel| !is_history(rel));
-        let past = self.docs.iter().filter(|rel| is_history(rel));
+        let live = self.documents.iter().filter(|rel| !is_history(rel));
+        let past = self.documents.iter().filter(|rel| is_history(rel));
         live.chain(past).map(String::as_str).collect()
     }
 
@@ -317,7 +324,7 @@ impl Docs {
 
     fn index(&self, watch: Vec<PathBuf>) -> Index {
         let docs: Vec<DocInfo> = self
-            .docs
+            .documents
             .iter()
             .map(|rel| DocInfo {
                 path: rel.clone(),
@@ -325,7 +332,7 @@ impl Docs {
             })
             .collect();
         let place: HashMap<&str, usize> = self
-            .docs
+            .documents
             .iter()
             .enumerate()
             .map(|(at, rel)| (rel.as_str(), at))
@@ -367,8 +374,8 @@ fn normalize(path: &Path) -> PathBuf {
     let mut out = PathBuf::new();
     for part in path.components() {
         match part {
-            std::path::Component::CurDir => {}
-            std::path::Component::ParentDir => {
+            Component::CurDir => {}
+            Component::ParentDir => {
                 if !out.pop() {
                     out.push("..");
                 }

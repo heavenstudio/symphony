@@ -7,6 +7,10 @@
 
 use std::ops::Range;
 
+mod fold;
+
+use fold::fold;
+
 /// Python's `str.isspace()`, which `\s` and `strip()` use: Unicode whitespace plus the ASCII
 /// separators `\x1c`..`\x1f`.
 pub fn is_space(c: char) -> bool {
@@ -40,7 +44,7 @@ pub fn lines(text: &str) -> Vec<&str> {
         if !breaks {
             continue;
         }
-        out.push(&text[start..at]);
+        out.extend(text.get(start..at));
         start = at + c.len_utf8();
         if c == '\r' && chars.peek().map(|&(_, next)| next) == Some('\n') {
             chars.next();
@@ -48,7 +52,7 @@ pub fn lines(text: &str) -> Vec<&str> {
         }
     }
     if start < text.len() {
-        out.push(&text[start..]);
+        out.extend(text.get(start..));
     }
     out
 }
@@ -84,7 +88,7 @@ pub fn heading(line: &str) -> Option<(usize, &str)> {
     if level == 0 || level > 6 {
         return None;
     }
-    let rest = &line[level..];
+    let rest = line.get(level..)?;
     if !rest.chars().next().is_some_and(is_space) {
         return None;
     }
@@ -92,7 +96,7 @@ pub fn heading(line: &str) -> Option<(usize, &str)> {
     if source.is_empty() {
         // all whitespace: `\s+` gives back its last character to the title
         let last = rest.chars().next_back()?;
-        return Some((level, &rest[rest.len() - last.len_utf8()..]));
+        return Some((level, rest.get(rest.len() - last.len_utf8()..)?));
     }
     let title = source
         .trim_end_matches(is_space)
@@ -100,62 +104,9 @@ pub fn heading(line: &str) -> Option<(usize, &str)> {
         .trim_end_matches(is_space);
     if title.is_empty() {
         let first = source.chars().next()?;
-        return Some((level, &source[..first.len_utf8()]));
+        return Some((level, source.get(..first.len_utf8())?));
     }
     Some((level, title))
-}
-
-/// The ASCII a character folds to under NFKD with the marks dropped, as Python's
-/// `normalize("NFKD", s).encode("ascii", "ignore")` gives it, for the Latin letters, spaces and
-/// punctuation the docs can hold; any other non-ASCII character folds to nothing.
-fn fold(c: char) -> &'static str {
-    const LATIN1: [&str; 64] = [
-        // U+00C0..U+00FF
-        "A", "A", "A", "A", "A", "A", "", "C", "E", "E", "E", "E", "I", "I", "I", "I", //
-        "", "N", "O", "O", "O", "O", "O", "", "", "U", "U", "U", "U", "Y", "", "", //
-        "a", "a", "a", "a", "a", "a", "", "c", "e", "e", "e", "e", "i", "i", "i", "i", //
-        "", "n", "o", "o", "o", "o", "o", "", "", "u", "u", "u", "u", "y", "", "y",
-    ];
-    const LATIN_A: [&str; 128] = [
-        // U+0100..U+017F
-        "A", "a", "A", "a", "A", "a", "C", "c", "C", "c", "C", "c", "C", "c", "D", "d", //
-        "", "", "E", "e", "E", "e", "E", "e", "E", "e", "E", "e", "G", "g", "G", "g", //
-        "G", "g", "G", "g", "H", "h", "", "", "I", "i", "I", "i", "I", "i", "I", "i", //
-        "I", "", "IJ", "ij", "J", "j", "K", "k", "", "L", "l", "L", "l", "L", "l", "L", //
-        "l", "", "", "N", "n", "N", "n", "N", "n", "n", "", "", "O", "o", "O", "o", //
-        "O", "o", "", "", "R", "r", "R", "r", "R", "r", "S", "s", "S", "s", "S", "s", //
-        "S", "s", "T", "t", "T", "t", "", "", "U", "u", "U", "u", "U", "u", "U", "u", //
-        "U", "u", "U", "u", "W", "w", "Y", "y", "Y", "Z", "z", "Z", "z", "Z", "z", "s",
-    ];
-    match c {
-        '\u{a0}' | '\u{2000}'..='\u{200a}' | '\u{202f}' | '\u{205f}' | '\u{3000}' => " ",
-        '\u{a8}' | '\u{af}' | '\u{b4}' | '\u{b8}' => " ", // a spacing mark: a space and the mark
-        '\u{aa}' => "a",
-        '\u{b2}' => "2",
-        '\u{b3}' => "3",
-        '\u{b9}' => "1",
-        '\u{ba}' => "o",
-        '\u{bc}' => "14",
-        '\u{bd}' => "12",
-        '\u{be}' => "34",
-        '\u{2024}' => ".",
-        '\u{2025}' => "..",
-        '\u{2026}' => "...",
-        '\u{2122}' => "TM",
-        '\u{fb00}' => "ff",
-        '\u{fb01}' => "fi",
-        '\u{fb02}' => "fl",
-        '\u{fb03}' => "ffi",
-        '\u{fb04}' => "ffl",
-        '\u{c0}'..='\u{ff}' => LATIN1[c as usize - 0xc0],
-        '\u{100}'..='\u{17f}' => LATIN_A[c as usize - 0x100],
-        '\u{ff01}'..='\u{ff5e}' => {
-            const ASCII: &str = "!\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~";
-            let i = c as usize - 0xff01;
-            &ASCII[i..i + 1]
-        }
-        _ => "",
-    }
 }
 
 /// The id a heading's title gets, the rule of markdown's `toc` (`slugify` with `-`): folded to
@@ -211,14 +162,14 @@ pub fn anchors(text: &str) -> Vec<String> {
 pub fn mask_code_spans(line: &str) -> String {
     let mut out = String::with_capacity(line.len());
     let mut rest = line;
-    while let Some(open) = rest.find('`') {
-        let Some(close) = rest[open + 1..].find('`') else {
+    while let Some((before, after)) = rest.split_once('`') {
+        let Some((code, tail)) = after.split_once('`') else {
             break;
         };
-        out.push_str(&rest[..open]);
-        let span = &rest[open..open + close + 2];
-        out.extend(std::iter::repeat_n('x', span.chars().count()));
-        rest = &rest[open + close + 2..];
+        out.push_str(before);
+        // the span: its two backticks and the code between them
+        out.extend(std::iter::repeat_n('x', code.chars().count() + 2));
+        rest = tail;
     }
     out.push_str(rest);
     out
@@ -229,7 +180,7 @@ pub fn mask_code_spans(line: &str) -> String {
 pub fn line_links(line: &str) -> Vec<&str> {
     let mut found = Vec::new();
     let mut from = 0;
-    while let Some(offset) = line[from..].find('[') {
+    while let Some(offset) = line.get(from..).and_then(|rest| rest.find('[')) {
         let open = from + offset;
         match link_at(line, open) {
             Some((target, end)) => {
@@ -243,18 +194,15 @@ pub fn line_links(line: &str) -> Vec<&str> {
 }
 
 fn link_at(line: &str, open: usize) -> Option<(&str, usize)> {
-    let close = open + 1 + line[open + 1..].find(']')?;
-    let rest = &line[close + 1..];
-    let rest = rest.strip_prefix('(')?;
-    let start = close + 2;
+    let close = open + 1 + line.get(open + 1..)?.find(']')?;
+    let rest = line.get(close + 1..)?.strip_prefix('(')?;
     let length = rest
         .find(|c: char| c == ')' || is_space(c))
         .unwrap_or(rest.len());
     if length == 0 {
         return None;
     }
-    let target = &line[start..start + length];
-    let after = &rest[length..];
+    let (target, after) = rest.split_at_checked(length)?;
     if let Some(stripped) = after.strip_prefix(')') {
         return Some((target, line.len() - stripped.len()));
     }
@@ -265,7 +213,7 @@ fn link_at(line: &str, open: usize) -> Option<(&str, usize)> {
     }
     let quoted = titled.strip_prefix('"')?;
     let close_quote = quoted.find('"')?;
-    let tail = quoted[close_quote + 1..].strip_prefix(')')?;
+    let tail = quoted.get(close_quote + 1..)?.strip_prefix(')')?;
     Some((target, line.len() - tail.len()))
 }
 
@@ -316,14 +264,14 @@ pub fn code_ranges(text: &str) -> Vec<Range<usize>> {
 }
 
 fn fenced_block(text: &str, at: usize) -> Option<usize> {
-    let marker = ["```", "~~~"]
-        .into_iter()
-        .find(|m| text[at..].starts_with(m))?;
+    let from = text.get(at..)?;
+    let marker = ["```", "~~~"].into_iter().find(|m| from.starts_with(m))?;
     let mut line = at;
     loop {
-        line += text[line..].find('\n')? + 1;
-        if text[line..].starts_with(marker) {
-            return Some(line + text[line..].find('\n').unwrap_or(text.len() - line));
+        line += text.get(line..)?.find('\n')? + 1;
+        let rest = text.get(line..)?;
+        if rest.starts_with(marker) {
+            return Some(line + rest.find('\n').unwrap_or(rest.len()));
         }
     }
 }
@@ -349,20 +297,16 @@ pub fn outside_code(text: &str) -> Vec<(usize, &str)> {
     let mut out = Vec::new();
     let mut last = 0;
     for range in code_ranges(text) {
-        out.push((last, &text[last..range.start]));
+        out.extend(text.get(last..range.start).map(|stretch| (last, stretch)));
         last = range.end;
     }
-    out.push((last, &text[last..]));
+    out.extend(text.get(last..).map(|stretch| (last, stretch)));
     out
 }
 
-/// The 1-based line of byte offset `at` in `text`.
+/// The 1-based line of byte offset `at` in `text`: how many pieces the newlines before it make.
 pub fn line_of(text: &str, at: usize) -> usize {
-    text.as_bytes()[..at]
-        .iter()
-        .filter(|&&b| b == b'\n')
-        .count()
-        + 1
+    text.as_bytes()[..at].split(|&b| b == b'\n').count()
 }
 
 /// Where each line of a text starts, so a page with many matches finds each one's line by a search
@@ -402,18 +346,18 @@ pub fn wikilinks(text: &str) -> Vec<WikiLink> {
     let mut found = Vec::new();
     for (offset, part) in outside_code(text) {
         let mut from = 0;
-        while let Some(at) = part[from..].find("[[") {
+        while let Some(at) = part.get(from..).and_then(|rest| rest.find("[[")) {
             let open = from + at;
-            match wikilink_at(&part[open..]) {
-                Some((length, target, heading, label)) => {
+            match part.get(open..).and_then(wikilink_at) {
+                Some((whole, target, heading, label)) => {
                     found.push(WikiLink {
                         line: starts.line(offset + open),
-                        whole: part[open..open + length].to_string(),
+                        whole: whole.to_string(),
                         target: target.to_string(),
                         heading: heading.map(str::to_string),
                         label: label.map(str::to_string),
                     });
-                    from = open + length;
+                    from = open + whole.len();
                 }
                 None => from = open + 1,
             }
@@ -422,38 +366,40 @@ pub fn wikilinks(text: &str) -> Vec<WikiLink> {
     found
 }
 
-type WikiParts<'a> = (usize, &'a str, Option<&'a str>, Option<&'a str>);
+/// A wiki link's whole text, its target, heading and label.
+type WikiParts<'a> = (&'a str, &'a str, Option<&'a str>, Option<&'a str>);
 
+/// The wiki link `text` starts with (at its `[[`), if it is one.
 fn wikilink_at(text: &str) -> Option<WikiParts<'_>> {
-    let body = &text[2..];
+    let body = text.get(2..)?;
     let target_len = body.find([']', '|', '#']).unwrap_or(body.len());
     if target_len == 0 {
         return None;
     }
-    let target = &body[..target_len];
-    let mut at = target_len;
+    let (target, mut tail) = body.split_at_checked(target_len)?;
     let mut heading = None;
-    if body[at..].starts_with('#') {
-        let rest = &body[at + 1..];
+    if let Some(rest) = tail.strip_prefix('#') {
         let length = rest.find([']', '|']).unwrap_or(rest.len());
         if length > 0 {
-            heading = Some(&rest[..length]);
-            at += 1 + length;
+            let (named, after) = rest.split_at_checked(length)?;
+            heading = Some(named);
+            tail = after;
         }
     }
     let mut label = None;
-    if body[at..].starts_with('|') {
-        let rest = &body[at + 1..];
+    if let Some(rest) = tail.strip_prefix('|') {
         let length = rest.find(']').unwrap_or(rest.len());
         if length > 0 {
-            label = Some(&rest[..length]);
-            at += 1 + length;
+            let (named, after) = rest.split_at_checked(length)?;
+            label = Some(named);
+            tail = after;
         }
     }
-    if !body[at..].starts_with("]]") {
+    if !tail.starts_with("]]") {
         return None;
     }
-    Some((2 + at + 2, target, heading, label))
+    let whole = text.get(..text.len() - tail.len() + 2)?;
+    Some((whole, target, heading, label))
 }
 
 /// A component, `[[name:argument|option]]`.
@@ -473,18 +419,18 @@ pub fn components(text: &str) -> Vec<Component> {
     let mut found = Vec::new();
     for (offset, part) in outside_code(text) {
         let mut from = 0;
-        while let Some(at) = part[from..].find("[[") {
+        while let Some(at) = part.get(from..).and_then(|rest| rest.find("[[")) {
             let open = from + at;
-            match component_at(&part[open..]) {
-                Some((length, name, arg, option)) => {
+            match part.get(open..).and_then(component_at) {
+                Some((whole, name, arg, option)) => {
                     found.push(Component {
                         line: starts.line(offset + open),
-                        whole: part[open..open + length].to_string(),
+                        whole: whole.to_string(),
                         name: name.to_string(),
                         arg: arg.to_string(),
                         option: option.map(str::to_string),
                     });
-                    from = open + length;
+                    from = open + whole.len();
                 }
                 None => from = open + 1,
             }
@@ -493,32 +439,34 @@ pub fn components(text: &str) -> Vec<Component> {
     found
 }
 
-type ComponentParts<'a> = (usize, &'a str, &'a str, Option<&'a str>);
+/// A component's whole text, its name, argument and option.
+type ComponentParts<'a> = (&'a str, &'a str, &'a str, Option<&'a str>);
 
+/// The component `text` starts with (at its `[[`), if it is one.
 fn component_at(text: &str) -> Option<ComponentParts<'_>> {
-    let body = &text[2..];
+    let body = text.get(2..)?;
     if !body.starts_with(|c: char| c.is_ascii_lowercase()) {
         return None;
     }
     let name_len = body
         .find(|c: char| !(c.is_ascii_lowercase() || c == '-'))
         .unwrap_or(body.len());
-    let name = &body[..name_len];
-    let rest = body[name_len..].strip_prefix(':')?;
+    let (name, rest) = body.split_at_checked(name_len)?;
+    let rest = rest.strip_prefix(':')?;
     let arg_len = rest.find([']', '|']).unwrap_or(rest.len());
-    let arg = &rest[..arg_len];
-    let mut at = arg_len;
+    let (arg, mut tail) = rest.split_at_checked(arg_len)?;
     let mut option = None;
-    if rest[at..].starts_with('|') {
-        let tail = &rest[at + 1..];
-        let length = tail.find(']').unwrap_or(tail.len());
-        option = Some(&tail[..length]);
-        at += 1 + length;
+    if let Some(rest) = tail.strip_prefix('|') {
+        let length = rest.find(']').unwrap_or(rest.len());
+        let (named, after) = rest.split_at_checked(length)?;
+        option = Some(named);
+        tail = after;
     }
-    if !rest[at..].starts_with("]]") {
+    if !tail.starts_with("]]") {
         return None;
     }
-    Some((2 + name_len + 1 + at + 2, name, arg, option))
+    let whole = text.get(..text.len() - tail.len() + 2)?;
+    Some((whole, name, arg, option))
 }
 
 /// Where a page's register begins and ends; a card outside it is prose.
@@ -541,18 +489,15 @@ pub fn card_line(line: &str) -> Option<(char, &str, &str)> {
     if !" xX?r~a-".contains(mark) || chars.next()? != ']' {
         return None;
     }
-    let rest = &after[2 + mark.len_utf8()..];
+    let rest = after.get(2 + mark.len_utf8()..)?;
     let after = rest.trim_start_matches(is_space);
     if after.len() == rest.len() {
         return None;
     }
     let body = after.strip_prefix("**")?;
-    let slug_len = body.find('*')?;
-    if slug_len == 0 || !body[slug_len..].starts_with("**") {
-        return None;
-    }
-    let slug = &body[..slug_len];
-    let mut text = body[slug_len + 2..].trim_start_matches(is_space);
+    let (slug, tail) = body.split_at_checked(body.find('*')?)?;
+    let tail = tail.strip_prefix("**").filter(|_| !slug.is_empty())?;
+    let mut text = tail.trim_start_matches(is_space);
     if let Some(dashed) = text.strip_prefix(['—', '–', '-']) {
         text = dashed.trim_start_matches(is_space);
     }
@@ -603,7 +548,7 @@ fn topic(line: &str) -> Option<&str> {
     let title = rest.trim_start_matches(is_space).trim_end_matches(is_space);
     if title.is_empty() {
         let last = rest.chars().next_back()?;
-        return Some(&rest[rest.len() - last.len_utf8()..]);
+        return rest.get(rest.len() - last.len_utf8()..);
     }
     Some(title)
 }
@@ -678,12 +623,11 @@ pub fn entry_line(line: &str) -> Option<Entry> {
         return None;
     }
     let rest = rest.strip_prefix('[')?;
-    let close = rest.find(']')?;
-    let ts = &rest[..close];
+    let (ts, rest) = rest.split_at_checked(rest.find(']')?)?;
     if !is_stamp(ts) {
         return None;
     }
-    let rest = &rest[close + 1..];
+    let rest = rest.strip_prefix(']')?;
     let after = rest.trim_start_matches(is_space);
     if after.len() == rest.len() {
         return None;
@@ -712,7 +656,7 @@ fn is_stamp(ts: &str) -> bool {
     match b.len() {
         10 => digits(0..4) && b[4] == b'-' && digits(5..7) && b[7] == b'-' && digits(8..10),
         16 => {
-            is_stamp(&ts[..10])
+            ts.get(..10).is_some_and(is_stamp)
                 && b[10] == b' '
                 && digits(11..13)
                 && b[13] == b':'
@@ -735,12 +679,12 @@ fn verdict_part(rest: &str) -> Option<(&str, &str)> {
     let length = word
         .find(|c: char| !(c.is_ascii_lowercase() || c == '-'))
         .unwrap_or(word.len());
-    let verdict = &word[..length];
+    let (verdict, tail) = word.split_at_checked(length)?;
     let well_formed = !verdict.is_empty()
         && !verdict.starts_with('-')
         && !verdict.ends_with('-')
         && !verdict.contains("--");
-    well_formed.then(|| (verdict, &word[length..]))
+    well_formed.then_some((verdict, tail))
 }
 
 /// What follows the author and verdict: `(?:\s+—\s*(text))?\s*$`, the text ("" when there is none).
@@ -803,18 +747,25 @@ pub fn entries(raw: &[String]) -> Vec<Entry> {
 pub fn pictures(text: &str) -> Vec<&str> {
     let mut found = Vec::new();
     let mut from = 0;
-    while let Some(at) = text[from..].find("![") {
+    while let Some(at) = text.get(from..).and_then(|rest| rest.find("![")) {
         let open = from + at;
-        let alt_end = text[open + 2..].find(']').map(|i| open + 2 + i);
-        let Some(close) = alt_end else { break };
-        let rest = &text[close + 1..];
+        let alt_end = text
+            .get(open + 2..)
+            .and_then(|rest| rest.find(']'))
+            .map(|i| open + 2 + i);
+        let Some(rest) = alt_end.and_then(|close| text.get(close + 1..)) else {
+            break;
+        };
         if let Some(inner) = rest.strip_prefix('(') {
             let length = inner
                 .find(|c: char| c == ')' || is_space(c))
                 .unwrap_or(inner.len());
-            if length > 0 && inner[length..].starts_with(')') {
-                found.push(&inner[..length]);
-                from = close + 2 + length + 1;
+            if let Some((source, after)) = inner.split_at_checked(length)
+                && length > 0
+                && after.starts_with(')')
+            {
+                found.push(source);
+                from = text.len() - after.len() + 1;
                 continue;
             }
         }

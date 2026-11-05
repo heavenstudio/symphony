@@ -52,7 +52,7 @@ pub(super) fn reachable(tree: &Docs, problems: &mut Vec<Problem>) {
             }
         }
     }
-    for rel in &tree.docs {
+    for rel in &tree.documents {
         if seen.contains(rel) {
             continue;
         }
@@ -136,12 +136,16 @@ pub(super) fn links(tree: &Docs, problems: &mut Vec<Problem>, watch: &mut BTreeS
 
 /// The document a `[[NAME]]` names: the path it spells from the linking page if that exists, else the
 /// first document whose path ends with it (live ones before history), so a document can move folders.
+#[expect(
+    clippy::case_sensitive_file_extension_comparisons,
+    reason = "a link names a document with `.md` in lower case, as the renderer resolves it"
+)]
 fn find_doc<'a>(target: &str, from: &str, order: &[&'a str]) -> Option<&'a str> {
     let mut name = target.trim_matches(syntax::is_space).to_string();
     if !name.ends_with(".md") {
         name.push_str(".md");
     }
-    let folder = from.rsplit_once('/').map(|(dir, _)| dir).unwrap_or("");
+    let folder = from.rsplit_once('/').map_or("", |(dir, _)| dir);
     let direct = if name.starts_with('/') {
         normpath(&name)
     } else {

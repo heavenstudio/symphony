@@ -148,7 +148,7 @@ fn components_in_code_and_in_history_are_not_checked() {
 struct Reads;
 
 impl DocCheck for Reads {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "reads"
     }
 

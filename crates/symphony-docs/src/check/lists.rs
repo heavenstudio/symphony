@@ -11,7 +11,10 @@ use crate::syntax;
 fn is_row(line: &str) -> bool {
     let body = line.trim_start_matches(syntax::is_space);
     body.starts_with('|')
-        || (body.starts_with(['-', '*', '+']) && body[1..].starts_with(syntax::is_space))
+        || (body.starts_with(['-', '*', '+'])
+            && body
+                .get(1..)
+                .is_some_and(|rest| rest.starts_with(syntax::is_space)))
 }
 
 fn subfolders(path: &Path) -> Vec<String> {
@@ -72,12 +75,12 @@ pub(super) fn folders_list(tree: &Docs, problems: &mut Vec<Problem>) {
 
 fn holds_docs(tree: &Docs, folder: &Path) -> bool {
     let prefix = format!("{}/", tree.rel(folder));
-    tree.docs.iter().any(|rel| rel.starts_with(&prefix))
+    tree.documents.iter().any(|rel| rel.starts_with(&prefix))
 }
 
 pub(super) fn guides(tree: &Docs, problems: &mut Vec<Problem>) {
     for rel in tree
-        .docs
+        .documents
         .iter()
         .filter(|rel| rel.ends_with("/README.md") && rel.as_str() != ROOT_README)
     {
@@ -129,7 +132,7 @@ pub(super) fn guides(tree: &Docs, problems: &mut Vec<Problem>) {
         }
         let prefix = format!("{}/", tree.rel(&folder));
         let mut wanted: Vec<(PathBuf, bool)> = tree
-            .docs
+            .documents
             .iter()
             .filter_map(|doc| doc.strip_prefix(&prefix))
             .filter(|name| !name.contains('/') && *name != "README.md")

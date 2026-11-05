@@ -68,7 +68,7 @@ fn baseline() -> BTreeMap<&'static str, String> {
 struct Items;
 
 impl DocCheck for Items {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "items"
     }
 
@@ -98,22 +98,22 @@ impl Tree {
                 None => files.remove(path),
             };
         }
-        let (root, keep) = match std::env::var_os("DOCS_FIXTURES") {
-            Some(dir) => (PathBuf::from(dir).join(name), true),
-            None => {
-                let n = TREES.fetch_add(1, Ordering::SeqCst);
-                (
-                    std::env::temp_dir()
-                        .join(format!("symphony-docs-{}-{n}-{name}", std::process::id())),
-                    false,
-                )
-            }
+        let (root, keep) = if let Some(dir) = std::env::var_os("DOCS_FIXTURES") {
+            (PathBuf::from(dir).join(name), true)
+        } else {
+            let n = TREES.fetch_add(1, Ordering::SeqCst);
+            (
+                std::env::temp_dir()
+                    .join(format!("symphony-docs-{}-{n}-{name}", std::process::id())),
+                false,
+            )
         };
         let _ = std::fs::remove_dir_all(&root);
         for (path, text) in files {
             let file = root.join(path);
-            std::fs::create_dir_all(file.parent().unwrap()).unwrap();
-            std::fs::write(file, text).unwrap();
+            std::fs::create_dir_all(file.parent().expect("a fixture file sits in a folder"))
+                .expect("a fixture folder is made");
+            std::fs::write(file, text).expect("a fixture file is written");
         }
         Tree { root, keep }
     }

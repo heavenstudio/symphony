@@ -1,5 +1,5 @@
 //! A temporary project tree shared by unit and integration tests.
-#![allow(dead_code)]
+#![allow(dead_code, reason = "each test binary uses its own share of these")]
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
