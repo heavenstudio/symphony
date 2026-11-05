@@ -424,6 +424,15 @@ pub fn connect(root: &Path) -> Result<tasks::Store, String> {
     }
 }
 
+/// A quick-task outcome read must identify the owner's intended task before confirming it.
+pub(crate) fn is_quick_task(task: &tasks::Task, new: &tasks::NewTask) -> bool {
+    task.created_by == "owner"
+        && task.title == new.title.trim()
+        && task.body == new.body
+        && task.priority == new.priority
+        && task.links == new.links
+}
+
 pub fn agents(store: &tasks::Store, root: &Path) -> Result<symphony_api::Agents, String> {
     let mut env = tasks::cli::Env::of_process();
     env.cwd = root.to_path_buf();

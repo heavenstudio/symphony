@@ -10,6 +10,8 @@ use serde_json::{Value, json};
 
 use crate::{Who, asks, branches, clock, commit, edit, register, taskview};
 
+mod quick_task;
+
 pub const ROUTES: [&str; 13] = [
     "/api/postpone",
     "/api/decision",
@@ -557,6 +559,27 @@ impl Saves {
     }
 
     fn quick(&self, scope: &str, route: &str, payload: &Value) -> Result<Value, Failure> {
+        let title = string(payload, "title").trim();
+        let identity = if route == "/api/quick-task" {
+            if title.chars().count() > symphony_api::QUICK_TASK_TITLE_MAX {
+                return Err(format!(
+                    "Use at most {} characters for the task title",
+                    symphony_api::QUICK_TASK_TITLE_MAX
+                )
+                .into());
+            }
+            Some(quick_task::identity(payload)?)
+        } else {
+            None
+        };
+        if let Some(identity) = identity.as_deref()
+            && let Some(record) = quick_task::load(&self.root, identity, scope, payload)?
+        {
+            return match self.store() {
+                Ok(store) => quick_task::create(&store, &record.task(), true),
+                Err(error) => Ok(quick_task::pending(&error.error)),
+            };
+        }
         let raw: String = string(payload, "page").chars().take(500).collect();
         let raw = raw.split_once("://").map_or(raw.as_str(), |(_, tail)| {
             tail.find('/').map_or("/", |at| &tail[at..])
@@ -600,14 +623,7 @@ impl Saves {
             )?;
             return Ok(json!({"id":id}));
         }
-        let title = string(payload, "title").trim();
-        if title.chars().count() > symphony_api::QUICK_TASK_TITLE_MAX {
-            return Err(format!(
-                "Use at most {} characters for the task title",
-                symphony_api::QUICK_TASK_TITLE_MAX
-            )
-            .into());
-        }
+        let identity = identity.expect("the quick-task route has a save identity");
         let store = self.store()?;
         let mut slug = string(payload, "slug").trim().to_string();
         if slug.is_empty() {
@@ -654,8 +670,8 @@ impl Saves {
                 .or_else(|| payload["priority"].as_str().and_then(|s| s.parse().ok()))
                 .ok_or("priority must be a number".to_string())?
         };
-        store.create(&tasks::NewTask {
-            slug: slug.clone(),
+        let new = tasks::NewTask {
+            slug,
             title: title.into(),
             body,
             by: "owner".into(),
@@ -671,8 +687,9 @@ impl Saves {
                 }]
             },
             ..tasks::NewTask::default()
-        })?;
-        Ok(json!({"slug":slug}))
+        };
+        let record = quick_task::reserve(&self.root, &identity, scope, payload, &new)?;
+        quick_task::create(&store, &record.task(), false)
     }
 }
 

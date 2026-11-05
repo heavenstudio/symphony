@@ -322,6 +322,9 @@ pub struct Draft {
     priority: String,
     ask: i64,
     ask_scope: String,
+    request: String,
+    request_page: String,
+    request_scope: String,
 }
 
 fn load_draft() -> Draft {
@@ -425,6 +428,7 @@ fn QuickPanel(route: Route, mut draft: Signal<Draft>) -> Element {
     let mut error = use_signal(|| None::<String>);
     let mut read_error = use_signal(|| None::<String>);
     let mut created = use_signal(|| None::<String>);
+    let mut checking = use_signal(|| None::<String>);
     let mut revision = use_signal(|| 0_u64);
     let mut running = use_signal(|| None::<Task>);
     let mut attach = crate::attach::use_attach("quick".into());
@@ -463,7 +467,7 @@ fn QuickPanel(route: Route, mut draft: Signal<Draft>) -> Element {
     }));
     let send = move |event: FormEvent| {
         event.prevent_default();
-        let d = draft();
+        let mut d = draft();
         if sending()
             || attach.busy()
             || !d.task && d.text.trim().is_empty() && attach.is_empty()
@@ -480,6 +484,39 @@ fn QuickPanel(route: Route, mut draft: Signal<Draft>) -> Element {
         }
         sending.set(true);
         error.set(None);
+        checking.set(None);
+        if d.task {
+            created.set(None);
+            if d.request.is_empty() {
+                let identity = (|| {
+                    let mut bytes = [0u8; 16];
+                    web_sys::window()
+                        .ok_or_else(|| JsValue::from_str("No window"))?
+                        .crypto()?
+                        .get_random_values_with_u8_array(&mut bytes)?;
+                    Ok::<_, JsValue>(
+                        bytes
+                            .iter()
+                            .map(|byte| format!("{byte:02x}"))
+                            .collect::<String>(),
+                    )
+                })();
+                match identity {
+                    Ok(identity) => {
+                        d.request = identity.clone();
+                        d.request_scope.clone_from(&route.scope);
+                        let mut saved = draft.write();
+                        saved.request = identity;
+                        saved.request_scope.clone_from(&route.scope);
+                    }
+                    Err(why) => {
+                        error.set(Some(crate::live::describe(why)));
+                        sending.set(false);
+                        return;
+                    }
+                }
+            }
+        }
         let route = route.clone();
         spawn(async move {
             let result = if d.task {
@@ -490,9 +527,10 @@ fn QuickPanel(route: Route, mut draft: Signal<Draft>) -> Element {
                         })
                     })
                     .unwrap_or_default();
-                // The legacy quick-add API recognizes canonical document paths when linking a
-                // task to its document; the client URL has an additional /app prefix.
-                let page = if route.document && !route.folder {
+                // Document tasks keep the canonical page URL and its anchor.
+                let page = if !d.request_page.is_empty() {
+                    d.request_page.clone()
+                } else if route.document && !route.folder {
                     let hash = web_sys::window()
                         .and_then(|w| w.location().hash().ok())
                         .unwrap_or_default();
@@ -500,17 +538,29 @@ fn QuickPanel(route: Route, mut draft: Signal<Draft>) -> Element {
                 } else {
                     page
                 };
-                post(
-                    &docs::scoped(&route.scope, "/api/quick-task"),
-                    &[
-                        ("title", d.title.into()),
-                        ("body", attach.compose(&d.text).into()),
-                        ("slug", d.slug.into()),
-                        ("priority", d.priority.parse::<f64>().unwrap_or(2.0).into()),
-                        ("page", page.into()),
-                    ],
-                )
-                .await
+                draft.write().request_page.clone_from(&page);
+                // A reload must retain the same identity and page before this request can run.
+                save_draft(&draft());
+                let url = docs::scoped(&d.request_scope, "/api/quick-task");
+                let fields = [
+                    ("request", d.request.clone().into()),
+                    ("title", d.title.clone().into()),
+                    ("body", attach.compose(&d.text).into()),
+                    ("slug", d.slug.clone().into()),
+                    ("priority", d.priority.parse::<f64>().unwrap_or(2.0).into()),
+                    ("page", page.into()),
+                ];
+                loop {
+                    match crate::request::task_post(&url, &fields).await {
+                        Ok(crate::task_save::Outcome::Saved(slug)) => {
+                            break Ok(crate::request::object(&[("slug", slug.into())]));
+                        }
+                        Ok(crate::task_save::Outcome::Checking(why)) => checking.set(Some(why)),
+                        Err(crate::task_save::Failure::Uncertain(why)) => checking.set(Some(why)),
+                        Err(why) => break Err(why.into_text()),
+                    }
+                    sleep(1_000).await;
+                }
             } else if d.ask > 0 {
                 post(
                     &docs::scoped(&d.ask_scope, "/api/ask-reply"),
@@ -556,6 +606,9 @@ fn QuickPanel(route: Route, mut draft: Signal<Draft>) -> Element {
                     if saved.task {
                         saved.title.clear();
                         saved.slug.clear();
+                        saved.request.clear();
+                        saved.request_page.clear();
+                        saved.request_scope.clear();
                         created.set(field(&value, "slug").as_string());
                     } else if saved.ask == 0 {
                         saved.ask = field(&value, "id").as_f64().unwrap_or_default() as i64;
@@ -563,11 +616,18 @@ fn QuickPanel(route: Route, mut draft: Signal<Draft>) -> Element {
                     }
                     revision += 1;
                 }
-                Err(why) => error.set(Some(why)),
+                Err(why) => {
+                    draft.write().request.clear();
+                    draft.write().request_page.clear();
+                    draft.write().request_scope.clear();
+                    error.set(Some(why));
+                }
             }
+            checking.set(None);
             sending.set(false);
         });
     };
+    let busy = sending() || !current.request.is_empty();
     let content = || {
         rsx! {
                 div { class: "quick-thread", "aria-live": "polite",
@@ -590,38 +650,41 @@ fn QuickPanel(route: Route, mut draft: Signal<Draft>) -> Element {
                             } else { p { role: "status", "Loading conversation…" } }
                             crate::components::button::Button { r#type: "button", disabled: sending(), onclick: move |_| { draft.write().ask = 0; thread.set(None); }, "New conversation" }
                         } else { p { class: "muted", "Ask about this page." } }
-                    } else if let Some(slug) = created() { p { role: "status", "✓ Task " a { href: "/task/{slug}", "{slug}" } " created" } }
+                    } else if let Some(why) = checking() { p { role: "status", "Checking save… {why}" } }
+                    else if !current.request.is_empty() { p { role: "status", "Check the previous save to continue; your text is kept." } }
+                    else if let Some(slug) = created() { p { role: "status", "✓ Task " a { href: "/task/{slug}", "{slug}" } " created" } }
                 }
                 form { onsubmit: send.clone(), "data-attach": attach.zone(),
                     if current.task {
                         label { r#for: "quick-title", "Title" }
-                        crate::components::input::Input { id: "quick-title", value: "{current.title}", required: true, maxlength: symphony_api::QUICK_TASK_TITLE_MAX, aria_describedby: "quick-title-limit", disabled: sending(), oninput: move |e: FormEvent| draft.write().title = e.value() }
+                        crate::components::input::Input { id: "quick-title", value: "{current.title}", required: true, maxlength: symphony_api::QUICK_TASK_TITLE_MAX, aria_describedby: "quick-title-limit", disabled: busy, oninput: move |e: FormEvent| draft.write().title = e.value() }
                         p { id: "quick-title-limit", role: "status",
                             "{current.title.trim().chars().count()} / {symphony_api::QUICK_TASK_TITLE_MAX} characters"
                         }
                     }
                     label { r#for: "quick-text", if current.task { "Details" } else { "Message" } }
-                    crate::components::textarea::Textarea { id: "quick-text", rows: 3, value: "{current.text}", required: !current.task, maxlength: 4000, disabled: sending(), oninput: move |e: FormEvent| draft.write().text = e.value() }
+                    crate::components::textarea::Textarea { id: "quick-text", rows: 3, value: "{current.text}", required: !current.task, maxlength: 4000, disabled: busy, oninput: move |e: FormEvent| draft.write().text = e.value() }
                     if current.task {
                         div { class: "row",
-                            label { "Slug (optional)" crate::components::input::Input { value: "{current.slug}", disabled: sending(), oninput: move |e: FormEvent| draft.write().slug = e.value() } }
+                            label { "Slug (optional)" crate::components::input::Input { value: "{current.slug}", disabled: busy, oninput: move |e: FormEvent| draft.write().slug = e.value() } }
                             label { "Priority" crate::components::select::SelectField {
-                                label: "Priority", value: current.priority.clone(), disabled: sending(),
+                                label: "Priority", value: current.priority.clone(), disabled: busy,
                                 options: (0..=4).map(|priority| (priority.to_string(), format!("p{priority}"))).collect::<Vec<_>>(),
                                 on_change: move |value| draft.write().priority = value,
                             } }
                         }
                     }
-                    crate::attach::AttachControls { attach, disabled: sending() }
+                    crate::attach::AttachControls { attach, disabled: busy }
                     if let Some(why) = error() { p { role: "alert", "{why}" } }
-                    crate::components::button::Button { r#type: "submit", disabled: sending() || attach.busy() || !current.task && current.text.trim().is_empty() && attach.is_empty() || current.task && current.title.trim().is_empty(), if sending() { "Sending…" } else { "Send" } }
+                    crate::components::button::Button { r#type: "submit", disabled: sending() || attach.busy() || !current.task && current.text.trim().is_empty() && attach.is_empty() || current.task && current.title.trim().is_empty(), if sending() { "Sending…" } else if !current.request.is_empty() { "Check save" } else { "Send" } }
                 }
         }
     };
     rsx! {
-        aside { id: "quick-sheet", hidden: !current.open, "aria-label": "Chat or add a task", "data-busy": sending() || !current.text.is_empty() || !attach.is_empty() || attach.busy(), "data-posting": sending(),
+        aside { id: "quick-sheet", hidden: !current.open, "aria-label": "Chat or add a task", "data-busy": busy || !current.title.is_empty() || !current.text.is_empty() || !attach.is_empty() || attach.busy(), "data-posting": sending(),
             crate::theme::ThemeMenu {}
             crate::components::tabs::Tabs {
+                disabled: busy,
                 value: Some(if current.task { "task".to_string() } else { "chat".to_string() }),
                 horizontal: true,
                 on_value_change: move |value| draft.write().task = value == "task",

@@ -30,6 +30,8 @@ pub mod media;
 pub mod platform;
 pub mod project;
 pub mod state;
+#[cfg(any(target_arch = "wasm32", test))]
+mod task_save;
 pub mod tasks;
 pub mod theme;
 #[cfg(any(not(target_arch = "wasm32"), feature = "page-review"))]

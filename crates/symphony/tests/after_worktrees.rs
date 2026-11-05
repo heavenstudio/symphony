@@ -2,6 +2,8 @@
 //! command counts rather than host wall-clock speed.
 
 mod common;
+#[path = "after_worktrees/owner_save.rs"]
+mod owner_save;
 
 use std::cell::RefCell;
 use std::io::{BufRead, BufReader, Write};

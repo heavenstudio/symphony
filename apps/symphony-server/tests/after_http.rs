@@ -1241,7 +1241,20 @@ fn persistence(f: &Fixture) {
     );
     f.get("/api/ask?id=bad").status(400);
     f.get("/api/ask?id=999999").status(404);
-    let filed = f.post("/api/quick-task", &json!({"title":"HTTP filed task", "body":"Private board body", "page":"/docs/TOPIC.md#one", "priority":1})).status(200).json();
+    let legacy = f
+        .post(
+            "/api/quick-task",
+            &json!({"title":"Keep the legacy form's text"}),
+        )
+        .status(400)
+        .json();
+    assert!(
+        legacy["error"]
+            .as_str()
+            .unwrap()
+            .contains("Reload this page")
+    );
+    let filed = f.post("/api/quick-task", &json!({"request":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "title":"HTTP filed task", "body":"Private board body", "page":"/docs/TOPIC.md#one", "priority":1})).status(200).json();
     assert_eq!(filed["slug"], "inbox/http-filed-task");
     let store = tasks::cli::connect(&tasks::cli::Env::of_process()).unwrap();
     let task = store.get("inbox/http-filed-task").unwrap();
@@ -1257,7 +1270,7 @@ fn persistence(f: &Fixture) {
     assert_eq!(
         f.post(
             "/api/quick-task",
-            &json!({"title":"HTTP filed task", "page":"/docs/TOPIC.md"})
+            &json!({"request":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "title":"HTTP filed task", "page":"/docs/TOPIC.md"})
         )
         .status(200)
         .json()["slug"],
@@ -1450,7 +1463,7 @@ fn uploads(f: &Fixture) {
     let filed = f
         .post(
             "/api/quick-task",
-            &json!({"title":"Upload task", "body":format!("The bug:\n\n{markup}"), "page":"/tasks"}),
+            &json!({"request":"cccccccccccccccccccccccccccccccc", "title":"Upload task", "body":format!("The bug:\n\n{markup}"), "page":"/tasks"}),
         )
         .status(200)
         .json();
