@@ -417,7 +417,7 @@ fn end_when(
     worker(name, move || {
         while !shared.stopping() {
             if ended() {
-                eprintln!("· Symphony server: {why}: stopping");
+                tell(format_args!("· Symphony server: {why}: stopping"));
                 shared.stop();
                 return;
             }
@@ -450,7 +450,7 @@ impl Background {
                 .to_owned();
             stage(&format!("the {name} worker"));
             if worker.join().is_err() {
-                eprintln!("· {name} worker panicked while stopping");
+                tell(format_args!("· {name} worker panicked while stopping"));
             }
         }
     }
@@ -475,7 +475,14 @@ fn stages_of(pid: i64, log: impl Fn(String) + Send + Sync + 'static) -> Stages {
 /// [`Stages`] of generation `pid` on stderr, where the shared server's log stamps each line
 /// with its time.
 fn stages_on_stderr(pid: i64) -> Stages {
-    stages_of(pid, |line| eprintln!("{line}"))
+    stages_of(pid, |line| tell(format_args!("{line}")))
+}
+
+/// `line` on stderr, a failed write ignored: a stopping server says what it does on the way,
+/// and a closed or broken stderr must never end a stop before every save closes and every
+/// worker joins (`eprintln!` panics on a failed write).
+pub(crate) fn tell(line: std::fmt::Arguments<'_>) {
+    let _ = std::io::Write::write_fmt(&mut std::io::stderr(), format_args!("{line}\n"));
 }
 
 /// A listener on `host`, reusing an address a restart left in TIME_WAIT; on IPv6 that side alone, so
@@ -859,7 +866,9 @@ impl Started {
         if let Some(census) = background.census.take() {
             stages("the orphan census");
             if let Err(problem) = census.await {
-                eprintln!("· review orphan census failed while stopping: {problem}");
+                tell(format_args!(
+                    "· review orphan census failed while stopping: {problem}"
+                ));
             }
         }
         stages("the open requests");
@@ -883,7 +892,7 @@ impl Started {
         if record && !shared.replaced.load(Ordering::SeqCst) {
             clear_port(&serve.root, serve.port);
         }
-        eprintln!("· Symphony server stopped");
+        tell(format_args!("· Symphony server stopped"));
         0
     }
 }
@@ -1023,6 +1032,9 @@ mod compression_tests;
 
 #[cfg(test)]
 mod head_tests;
+
+#[cfg(test)]
+mod broken_stderr_tests;
 
 #[cfg(test)]
 mod tests {
