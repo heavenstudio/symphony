@@ -7,7 +7,7 @@ use crate::health::Health;
 use crate::rows::MessageRow;
 use serde::Deserialize;
 use serde_json::{Value, json};
-use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 /// The kinds of message that reach an inbox; `system` is the record only.
 pub const DELIVERED: [&str; 2] = ["msg", "verdict"];
@@ -24,6 +24,7 @@ const INBOX: &str = "
 LET $me = (SELECT connected FROM ONLY type::record('session', $handle));
 LET $acked = (SELECT VALUE message FROM delivery WHERE handle = $handle AND message > $since);
 RETURN {
+    orchestrators: (SELECT VALUE [slug, handle] FROM role WHERE role = 'orchestrator'),
     known: $me != NONE,
     roles: (SELECT slug, role FROM role WHERE handle = $handle),
     tree: (SELECT VALUE [slug, parent] FROM task),
@@ -163,6 +164,7 @@ RETURN [$sid, $ts];",
         }
         #[derive(Deserialize)]
         struct Read {
+            orchestrators: Vec<(String, String)>,
             known: bool,
             roles: Vec<Held>,
             tree: Vec<(String, Option<String>)>,
@@ -178,12 +180,18 @@ RETURN [$sid, $ts];",
         for held in &read.roles {
             holds.entry(&held.slug).or_default().push(&held.role);
         }
-        let orchestrates: HashSet<&str> = read
-            .roles
-            .iter()
-            .filter(|held| held.role == "orchestrator")
-            .map(|held| held.slug.as_str())
-            .collect();
+        let mut orchestrators: HashMap<&str, Vec<&str>> = HashMap::new();
+        for (slug, who) in &read.orchestrators {
+            orchestrators.entry(slug).or_default().push(who);
+        }
+        // @orchestrator and verdicts go to the orchestrator of the nearest task, at or above the
+        // message's, that has one: one orchestrator a task, never every one up the tree.
+        let nearest = |slug: &str| {
+            std::iter::once(slug)
+                .chain(above(&tree, slug))
+                .find_map(|at| orchestrators.get(at))
+                .is_some_and(|held| held.contains(&handle))
+        };
         let reaches = |m: &MessageRow| {
             let to = m.recipient.as_deref();
             let roles = holds.get(m.slug.as_str());
@@ -193,10 +201,10 @@ RETURN [$sid, $ts];",
                     && roles.is_some_and(|held| {
                         held.contains(&"executor") || held.contains(&"orchestrator")
                     }))
-                || ((to == Some("@orchestrator") || m.kind == "verdict")
-                    && above(&tree, &m.slug).any(|up| orchestrates.contains(up)))
+                || ((to == Some("@orchestrator") || m.kind == "verdict") && nearest(&m.slug))
                 || to
                     .and_then(|to| to.strip_prefix('@'))
+                    .filter(|role| *role != "orchestrator")
                     .is_some_and(|role| roles.is_some_and(|held| held.contains(&role)))
         };
         Ok(read

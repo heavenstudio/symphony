@@ -4,7 +4,7 @@
 use super::agents::{describe, table};
 use super::args::Parsed;
 use super::attach::{Watch, watch};
-use super::text::{event, export_markdown, message_line, roles_text, tree_order};
+use super::text::{event, export_markdown, message_line, roles_text};
 use super::{Clock, Env, probes, shape};
 use crate::health::{FINISHED, RESERVE_SECONDS};
 use crate::pyjson::{self, Py};
@@ -20,6 +20,7 @@ const EXPORT_PATH: &str = "docs/history/tasks.md";
 /// How often an orchestrator's monitor prints the PULL digest, unless `TASKS_PULL_SECONDS` says.
 const PULL_SECONDS: f64 = 600.0;
 
+mod list;
 mod panes;
 
 /// Why a command stopped short.
@@ -214,34 +215,7 @@ pub fn run(store: &Store, c: &mut Context) -> Result<(), Stop> {
                 ));
             }
         }
-        "list" => {
-            let mut tasks = store.tasks(p.get("status"))?;
-            if p.flag("mine") {
-                let me = c.actor()?;
-                tasks.retain(|t| t.roles.iter().any(|r| r.handle == me));
-            }
-            if p.flag("json") {
-                let json = Py::obj(vec![("tasks", shape::tasks(&tasks))]);
-                c.say(&pyjson::dumps(&json));
-                return Ok(());
-            }
-            for (depth, t) in tree_order(&tasks) {
-                let roles = roles_text(t);
-                let roles = if roles.is_empty() {
-                    String::new()
-                } else {
-                    format!("  [{roles}]")
-                };
-                c.say(&format!(
-                    "{}p{} {:<11} {:<28} {}{roles}",
-                    "  ".repeat(depth),
-                    t.priority,
-                    t.status,
-                    t.slug,
-                    t.title
-                ));
-            }
-        }
+        "list" => list::run(store, c)?,
         "search" => super::search::run(store, c)?,
         "embed" => {
             // Only the cache-only maintenance mode may run without an agent. Explicit actors
@@ -315,6 +289,11 @@ pub fn run(store: &Store, c: &mut Context) -> Result<(), Stop> {
             let (slug, role) = (c.arg("slug"), c.arg("role"));
             store.take_role(&slug, &c.actor()?, &role)?;
             c.say(&format!("{role} on {slug}"));
+        }
+        "handover" => {
+            let (slug, to) = (c.arg("slug"), c.arg("to"));
+            store.hand_over(&slug, &c.actor()?, &to)?;
+            c.say(&format!("handed {slug} to {to} (orchestrator)"));
         }
         "move" => {
             let slug = c.arg("slug");

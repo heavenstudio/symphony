@@ -19,8 +19,10 @@
 //! reason instead. The monitor delivers it only for newly actionable entries.
 
 use crate::health::EXECUTING;
+use crate::orchestration::{Owners, claimable_work};
+use crate::rows::SessionRow;
 use crate::sys::local_minute;
-use crate::{Error, Store, Task};
+use crate::{Board, Error, Store, Task};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 /// How many of a category are listed.
@@ -41,6 +43,8 @@ pub struct Digest {
     pub now: f64,
     /// In-progress tasks with an executor present.
     pub executing: usize,
+    /// The slugs `executing` counts, for [`Digest::only_for`].
+    running: Vec<String>,
     tasks: BTreeMap<&'static str, Vec<Task>>,
     /// Handles the agents API reports idle.
     pub idle: Vec<String>,
@@ -85,6 +89,40 @@ impl Digest {
     /// The tasks in category `name` (none for `idle`, which holds handles).
     pub fn items(&self, name: &str) -> &[Task] {
         self.tasks.get(name).map_or(&[], Vec::as_slice)
+    }
+
+    /// The digest as orchestrator `handle` hears it: the rows of its own tasks and of unclaimed
+    /// ones ([`Owners::reaches`]), and the idle sessions but another orchestrator's children.
+    /// Staffing was judged on the whole board, so work on a subtask still staffs its parent.
+    pub fn only_for(mut self, board: &Board, handle: &str) -> Digest {
+        let owners = Owners::new(&board.tasks);
+        for listed in self.tasks.values_mut() {
+            listed.retain(|t| owners.reaches(&t.slug, handle));
+        }
+        self.tasks.retain(|_, listed| !listed.is_empty());
+        self.running.retain(|slug| owners.reaches(slug, handle));
+        self.executing = self.running.len();
+        self.notes.retain(|slug, _| owners.reaches(slug, handle));
+        let sessions: HashMap<&str, &SessionRow> = (board.sessions.iter())
+            .map(|s| (s.row.handle.as_str(), &s.row))
+            .collect();
+        let elsewhere = |parent: &str| {
+            parent != handle
+                && sessions
+                    .get(parent)
+                    .is_some_and(|p| p.kind == "orchestrator")
+        };
+        self.idle.retain(|h| {
+            !(sessions.get(h.as_str()))
+                .and_then(|s| s.parent.as_deref())
+                .is_some_and(elsewhere)
+        });
+        let work = claimable_work(board);
+        self.liveness_unknown.retain(|h| {
+            (work.get(h.as_str()))
+                .is_some_and(|held| held.iter().any(|t| owners.reaches(&t.slug, handle)))
+        });
+        self
     }
 
     pub fn lines(&self) -> Vec<String> {
@@ -182,6 +220,7 @@ pub fn digest(
     let staffed = |task: &Task| {
         present(task, "executor") || below(task).iter().any(|c| present(c, "executor"))
     };
+    let mut running = Vec::new();
     let mut found: BTreeMap<&'static str, Vec<Task>> = BTreeMap::new();
     let mut notes = BTreeMap::new();
     let mut executing = 0;
@@ -228,6 +267,7 @@ pub fn digest(
             "in_progress" => {
                 if staffed(t) {
                     executing += 1;
+                    running.push(t.slug.clone());
                 } else {
                     found
                         .entry("in_progress_orphaned")
@@ -259,6 +299,7 @@ pub fn digest(
     Ok(Digest {
         now,
         executing,
+        running,
         tasks: found,
         idle: idle.to_vec(),
         notes,

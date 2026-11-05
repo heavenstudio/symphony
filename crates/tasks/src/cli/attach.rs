@@ -10,6 +10,7 @@ use super::agents::{Answer, Pane, Probes, View, describe, find_pane};
 use super::pull::digest;
 use super::text::event;
 use crate::health::{Health, LIVE_SECONDS};
+use crate::orchestration::{Owners, claimable_work, moved, reports_to};
 use crate::rows::TaskSessionRow;
 use crate::{Board, Error, Store, Task};
 use std::cell::OnceCell;
@@ -51,10 +52,12 @@ pub(crate) fn seen(board: &Board, handle: &str, kind: &str) -> Seen {
         .iter()
         .filter(|t| t.roles.iter().any(|r| r.handle == handle))
         .collect();
+    let owners = Owners::new(&board.tasks);
     let mut watched: BTreeMap<&str, &Task> = mine.iter().map(|t| (t.slug.as_str(), *t)).collect();
     let mut followed: HashSet<&str> = HashSet::new();
     for t in &mine {
-        // What an orchestrator of a task follows includes everything below it.
+        // What an orchestrator of a task follows includes everything below it, but for a task
+        // below that another orchestrator holds, which is that one's.
         if t.roles
             .iter()
             .any(|r| r.handle == handle && r.role == "orchestrator")
@@ -64,6 +67,9 @@ pub(crate) fn seen(board: &Board, handle: &str, kind: &str) -> Seen {
                 .cloned()
                 .unwrap_or_default();
             while let Some(below) = todo.pop() {
+                if owners.elsewhere(&below.slug, handle) {
+                    continue;
+                }
                 if followed.insert(&below.slug) {
                     watched.insert(&below.slug, below);
                     todo.extend(kids.get(&Some(below.slug.as_str())).into_iter().flatten());
@@ -71,11 +77,12 @@ pub(crate) fn seen(board: &Board, handle: &str, kind: &str) -> Seen {
             }
         }
     }
+    // An orchestrator hears its own ready work and nobody's, never another orchestrator's.
     let ready = if kind == "orchestrator" {
         board
             .tasks
             .iter()
-            .filter(|t| t.status == "ready")
+            .filter(|t| t.status == "ready" && owners.reaches(&t.slug, handle))
             .map(|t| (t.slug.clone(), t.title.clone()))
             .collect()
     } else {
@@ -86,8 +93,9 @@ pub(crate) fn seen(board: &Board, handle: &str, kind: &str) -> Seen {
             .tasks
             .iter()
             .filter(|t| {
-                matches!(t.status.as_str(), "ready" | "review")
-                    || crate::health::EXECUTING.contains(&t.status.as_str())
+                (matches!(t.status.as_str(), "ready" | "review")
+                    || crate::health::EXECUTING.contains(&t.status.as_str()))
+                    && owners.reaches(&t.slug, handle)
             })
             .flat_map(|t| {
                 t.roles
@@ -133,12 +141,26 @@ pub(crate) fn seen(board: &Board, handle: &str, kind: &str) -> Seen {
             .map(|(slug, t)| (slug.to_string(), t.status.clone()))
             .collect(),
         ready,
-        children: board
-            .sessions
-            .iter()
-            .filter(|s| s.row.parent.as_deref() == Some(handle))
-            .map(|s| (s.row.handle.clone(), s.health))
-            .collect(),
+        // A session going quiet is said to its parent; to an orchestrator, only when it is the
+        // orchestrator of the work that session holds, or that work is nobody's.
+        children: {
+            let work = (kind == "orchestrator").then(|| claimable_work(board));
+            board
+                .sessions
+                .iter()
+                .filter(|s| s.row.handle != handle)
+                .filter(|s| {
+                    let parent = s.row.parent.as_deref();
+                    work.as_ref().map_or(parent == Some(handle), |work| {
+                        let held = work
+                            .get(s.row.handle.as_str())
+                            .map_or(&[][..], Vec::as_slice);
+                        reports_to(&owners, held, parent, handle)
+                    })
+                })
+                .map(|s| (s.row.handle.clone(), s.health))
+                .collect()
+        },
     }
 }
 
@@ -177,7 +199,19 @@ pub fn diff(
     let confirmed = store.confirmed_callbacks()?;
     let through = now.latest_message.unwrap_or_default();
     let since = before.latest_message.unwrap_or(through);
+    // The tasks this session's orchestrator role came to or left since the last look.
+    let orchestrating = |seen: &Seen| -> BTreeSet<String> {
+        (seen.roles.iter())
+            .filter(|(_, who, role)| who == handle && role == "orchestrator")
+            .map(|(slug, _, _)| slug.clone())
+            .collect()
+    };
+    let flipped: BTreeSet<String> = orchestrating(before)
+        .symmetric_difference(&orchestrating(now))
+        .cloned()
+        .collect();
     let needs_actions = before.statuses != now.statuses
+        || !flipped.is_empty()
         || now
             .ready
             .keys()
@@ -226,6 +260,26 @@ pub fn diff(
         let status = &now.statuses[slug];
         emit(&format!("ROLE {slug} {who} {roles}, {status}"));
         announced.insert(slug);
+    }
+    // A move of the orchestrator role: the session it left and the one it reached each hear it
+    // once, from the line the move wrote on the thread.
+    for m in (messages.iter()).filter(|m| m.kind == "system" && flipped.contains(&m.slug)) {
+        let Some((from, to)) = moved(&m.text) else {
+            continue;
+        };
+        if to != handle && !from.contains(&handle) {
+            continue;
+        }
+        let status = match now.statuses.get(&m.slug) {
+            Some(status) => status.clone(),
+            None => store.get(&m.slug)?.status,
+        };
+        emit(&format!(
+            "ROLE {} {to} orchestrator, {status} (from {})",
+            m.slug,
+            from.join(", ")
+        ));
+        announced.insert(m.slug.as_str());
     }
     for (slug, status) in &now.statuses {
         if let Some(old) = before.statuses.get(slug)
@@ -317,12 +371,17 @@ pub fn overseen<'b>(board: &'b Board, handle: &str) -> BTreeSet<&'b str> {
                 .any(|r| r.handle == handle && r.role == "orchestrator")
         })
         .collect();
+    let owners = Owners::new(&board.tasks);
     let mut tasks: HashSet<&str> = HashSet::new();
     let mut holders: HashSet<&str> = HashSet::new();
     while let Some(t) = todo.pop() {
         if tasks.insert(&t.slug) {
             holders.extend(t.roles.iter().map(|r| r.handle.as_str()));
-            todo.extend(kids.get(t.slug.as_str()).into_iter().flatten());
+            // Not into a task below that another orchestrator holds, nor what is below that.
+            todo.extend(
+                (kids.get(t.slug.as_str()).into_iter().flatten())
+                    .filter(|kid| !owners.elsewhere(&kid.slug, handle)),
+            );
         }
     }
     board
@@ -530,7 +589,7 @@ fn look(
         }
     }
     if let Some((stamp, statuses)) = pull {
-        let digest = pull_digest(store, view.as_ref(), w.landed, stamp)?;
+        let digest = pull_digest(store, view.as_ref(), w.landed, stamp)?.only_for(&board, handle);
         let entries = digest.entries();
         memory.pull_entries.retain(|entry| entries.contains(entry));
         if !entries.is_subset(&memory.pull_entries) {
@@ -585,213 +644,4 @@ fn pull_digest(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::rows::SessionRow;
-    use crate::{Role, Session};
-    use serde_json::json;
-
-    fn task(slug: &str, parent: Option<&str>, roles: &[(&str, &str)]) -> Task {
-        Task {
-            id: 0,
-            slug: slug.into(),
-            title: String::new(),
-            body: String::new(),
-            status: "in_progress".into(),
-            priority: 2,
-            parent: parent.map(str::to_string),
-            created_by: String::new(),
-            created: 0.0,
-            updated: 0.0,
-            links: Vec::new(),
-            depends: Vec::new(),
-            roles: roles
-                .iter()
-                .map(|(handle, role)| Role {
-                    handle: handle.to_string(),
-                    role: role.to_string(),
-                    since: 0.0,
-                    expires: None,
-                    health: Health::Live,
-                })
-                .collect(),
-            instruction: false,
-            fields: Default::default(),
-        }
-    }
-
-    fn session(handle: &str, parent: Option<&str>) -> Session {
-        Session {
-            row: SessionRow {
-                handle: handle.into(),
-                parent: parent.map(str::to_string),
-                ..SessionRow::default()
-            },
-            health: Health::Live,
-        }
-    }
-
-    fn launched(handle: &str, slug: &str, pane: &str, conversation: &str) -> TaskSessionRow {
-        TaskSessionRow {
-            slug: slug.into(),
-            handle: handle.into(),
-            pane: pane.into(),
-            claude_session: conversation.into(),
-            ..TaskSessionRow::default()
-        }
-    }
-
-    fn pane(id: &str, status: &str, conversation: &str) -> Pane {
-        Pane::from_json(&json!({"pane_id": id, "agent_status": status,
-                                "agent_session": {"value": conversation}}))
-        .unwrap()
-    }
-
-    /// One look, and the lines it said.
-    fn look(
-        board: &Board,
-        who: &str,
-        open: &[TaskSessionRow],
-        panes: Answer<Vec<Pane>>,
-        before: &PaneWatch,
-    ) -> (PaneWatch, Vec<String>) {
-        let mut said = Vec::new();
-        let after = pane_watch(
-            board,
-            &overseen(board, who),
-            open,
-            &|| panes.clone(),
-            before,
-            &mut |line| said.push(line.to_string()),
-        );
-        (after, said)
-    }
-
-    #[test]
-    fn one_oversees_the_roles_below_what_it_orchestrates_and_its_children() {
-        // Never itself, nor a child that left; a task it only reviews is not its to oversee.
-        let mut gone = session("gone", Some("orch"));
-        gone.row.left_at = Some(1.0);
-        let board = Board {
-            tasks: vec![
-                task("t/root", None, &[("orch", "orchestrator")]),
-                task("t/root/a", Some("t/root"), &[("deep", "reviewer")]),
-                task("t/root/a/b", Some("t/root/a"), &[("deeper", "executor")]),
-                task(
-                    "t/side",
-                    None,
-                    &[("side", "executor"), ("orch", "reviewer")],
-                ),
-            ],
-            sessions: ["orch", "deep", "deeper", "side"]
-                .into_iter()
-                .map(|h| session(h, None))
-                .chain([session("kid", Some("orch")), gone])
-                .collect(),
-            latest_message: 0,
-        };
-        assert_eq!(
-            overseen(&board, "orch"),
-            BTreeSet::from(["deep", "deeper", "kid"])
-        );
-        assert_eq!(overseen(&board, "deep"), BTreeSet::new());
-    }
-
-    #[test]
-    fn a_launched_pane_is_found_by_its_conversation_once_its_recorded_id_is_gone() {
-        let board = Board {
-            tasks: vec![task(
-                "t/a",
-                None,
-                &[("orch", "orchestrator"), ("w", "executor")],
-            )],
-            sessions: vec![session("orch", None), session("w", None)],
-            latest_message: 0,
-        };
-        let open = [launched("w", "t/a", "w1:p1", "codex:thread-1")];
-        let (after, said) = look(
-            &board,
-            "orch",
-            &open,
-            Ok(vec![pane("w1:p7", "blocked", "thread-1")]),
-            &PaneWatch::default(),
-        );
-        assert_eq!(
-            said,
-            ["BLOCKED w t/a w1:p7 — its pane waits on an approval or a question"]
-        );
-        assert_eq!(after.blocked["w"].pane, "w1:p7");
-    }
-
-    #[test]
-    fn a_session_no_longer_launched_is_forgotten_while_herdr_cannot_be_asked() {
-        let board = Board {
-            tasks: vec![task(
-                "t/a",
-                None,
-                &[
-                    ("orch", "orchestrator"),
-                    ("w", "executor"),
-                    ("v", "reviewer"),
-                ],
-            )],
-            sessions: vec![
-                session("orch", None),
-                session("w", None),
-                session("v", None),
-            ],
-            latest_message: 0,
-        };
-        let blocked = |pane: &str| Blocked {
-            task: "t/a".into(),
-            pane: pane.into(),
-        };
-        let before = PaneWatch {
-            blocked: BTreeMap::from([
-                ("w".into(), blocked("w1:p1")),
-                ("v".into(), blocked("w1:p2")),
-            ]),
-            unanswered: false,
-        };
-        // v's pane closed: only w is still launched.
-        let open = [launched("w", "t/a", "w1:p1", "")];
-        let (after, said) = look(&board, "orch", &open, Err("down".into()), &before);
-        assert_eq!(
-            said,
-            ["WATCH herdr unanswered: down — blocked panes go unreported until it answers"]
-        );
-        let expected = PaneWatch {
-            blocked: BTreeMap::from([("w".into(), blocked("w1:p1"))]),
-            unanswered: true,
-        };
-        assert_eq!(after, expected);
-        let (again, said) = look(&board, "orch", &open, Err("down".into()), &after);
-        assert_eq!((again, said), (expected, Vec::new()));
-    }
-
-    #[test]
-    fn with_nothing_launched_herdr_is_not_asked_and_the_watch_forgets() {
-        let board = Board {
-            tasks: vec![task(
-                "t/a",
-                None,
-                &[("orch", "orchestrator"), ("w", "executor")],
-            )],
-            sessions: vec![session("orch", None), session("w", None)],
-            latest_message: 0,
-        };
-        let before = PaneWatch {
-            blocked: BTreeMap::new(),
-            unanswered: true,
-        };
-        let after = pane_watch(
-            &board,
-            &overseen(&board, "orch"),
-            &[],
-            &|| panic!("herdr asked with nothing to watch"),
-            &before,
-            &mut |line| panic!("said {line}"),
-        );
-        assert_eq!(after, PaneWatch::default());
-    }
-}
+mod tests;

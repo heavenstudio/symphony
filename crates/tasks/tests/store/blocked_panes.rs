@@ -10,6 +10,7 @@ use tasks::NewLaunch;
 use tasks::sys::{Command, Spawning as _};
 
 const IN_CHILD: &str = "SF_BLOCKED_PANES_CHILD";
+const EMPTY_PULL: &str = "PULL executing=0 ready_unstaffed=0 in_progress_orphaned=0 review_unreviewed=0 landed_open=0 idle=0";
 const BUSY_PULL: &str = "PULL executing=1 ready_unstaffed=0 in_progress_orphaned=0 review_unreviewed=0 landed_open=0 idle=0";
 
 /// A folder removed when the case ends.
@@ -133,8 +134,10 @@ fn a_blocked_pane_reaches_its_orchestrator_and_parent_once_an_episode() {
     ])));
     let (o, p, x) = (listen(&f, &orch), listen(&f, &parent), listen(&f, &other));
     let w = listen(&f, &worker);
-    for listener in [&o, &p, &x] {
-        assert_eq!(listener.text(), BUSY_PULL);
+    // The work is orch's: only its digest counts it.
+    assert_eq!(o.text(), BUSY_PULL);
+    for listener in [&p, &x] {
+        assert_eq!(listener.text(), EMPTY_PULL);
     }
     tick(&f);
     let quiet: [&[String]; 4] = [&[], &[], &[], &[]];
