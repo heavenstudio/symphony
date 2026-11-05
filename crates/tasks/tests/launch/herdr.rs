@@ -5,10 +5,10 @@ use serde_json::json;
 use std::collections::BTreeMap;
 use std::io::{BufRead, BufReader};
 use std::os::unix::fs::MetadataExt;
-use tasks::cli::Env;
-use tasks::launch::LaunchError;
-use tasks::launch::herdr::{Binary, Herdr, text, truthy};
-use tasks::sys::Command;
+use symphony_board::cli::Env;
+use symphony_board::launch::LaunchError;
+use symphony_board::launch::herdr::{Binary, Herdr, text, truthy};
+use symphony_board::sys::Command;
 
 fn binary(named: &str) -> Binary {
     let mut vars = BTreeMap::new();
@@ -264,7 +264,7 @@ fn a_key_press_to_the_fakes_pending_chooser_moves_what_reads_show_and_writes_no_
     // Its wait runs out at once and leaves the chooser pending.
     w.set("FAKE_HERDR_START_WAIT_MS", "1");
     let herdr = w.herdr();
-    let start = tasks::sys::output(&mut chooser_start(&w)).unwrap();
+    let start = symphony_board::sys::output(&mut chooser_start(&w)).unwrap();
     assert!(
         String::from_utf8_lossy(&start.stderr).contains("timed out waiting for agent startup"),
         "{start:?}"
@@ -304,7 +304,7 @@ fn an_unsafe_choice_the_fakes_waiting_start_refuses_stays_shown_and_takes_no_mor
     let mut w = chooser_world();
     w.set("FAKE_HERDR_START_SAYS_PENDING", "1");
     let herdr = w.herdr();
-    let mut start = tasks::sys::spawn_output(&mut chooser_start(&w)).unwrap();
+    let mut start = symphony_board::sys::spawn_output(&mut chooser_start(&w)).unwrap();
     let mut out = BufReader::new(start.stdout.take().unwrap());
     let mut said = String::new();
     out.read_line(&mut said).unwrap();
@@ -315,7 +315,7 @@ fn an_unsafe_choice_the_fakes_waiting_start_refuses_stays_shown_and_takes_no_mor
     herdr
         .call(&["pane", "send-keys", "w1:p101", "enter"])
         .unwrap();
-    let ended = tasks::sys::wait_output(start).unwrap();
+    let ended = symphony_board::sys::wait_output(start).unwrap();
     let why = String::from_utf8_lossy(&ended.stderr);
     assert!(
         !ended.status.success() && why.contains("unsafe_choice"),

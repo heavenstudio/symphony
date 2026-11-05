@@ -6,7 +6,7 @@ use rusqlite::Connection;
 use rusqlite::types::Value as Sql;
 use serde_json::{Map, Value};
 use std::path::Path;
-use tasks::rows::{
+use symphony_board::rows::{
     BarredKeyRow, DeliveryRow, Dump, LinkRow, MessageRow, RoleRow, SessionRow, TaskRow,
     TaskSessionRow,
 };

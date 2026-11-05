@@ -14,9 +14,8 @@ use symphony_api::{
 use crate::plugins::Plugins;
 use crate::{Decision, Doc, Group, ReviewError, State, Who, board, branches, clock, tree, triage};
 
-static TAG: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"\*(?:Shows|Replaces|Depends|After|Blocks|Gates):\*[^*]*").unwrap()
-});
+/// The register's own card markers, which a card's title and summary leave out with a plugin's.
+const MARKERS: [&str; 5] = ["Replaces", "Depends", "After", "Blocks", "Gates"];
 static ASK: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"Approve(?:,| and)[^.]*\.").unwrap());
 static REF: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"\[\[(?:([a-z][a-z-]*):)?([^\]|]*)(?:\|([^\]]*))?\]\]").unwrap());
@@ -59,8 +58,31 @@ fn cut(text: &str, limit: usize) -> String {
     format!("{}…", words.trim_end_matches([',', ';', ':', '—', '-']))
 }
 
-fn words(card: &Decision) -> String {
-    plain(&ASK.replace_all(&TAG.replace_all(&card.text, ""), ""))
+/// `text` without each marker `names` names: `*Name:*` and the words after it, up to the next `*`.
+fn unmarked(text: &str, names: &[&str]) -> String {
+    let mut kept = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(at) = rest.find('*') {
+        let after = &rest[at + 1..];
+        let marked = names
+            .iter()
+            .find_map(|name| after.strip_prefix(name)?.strip_prefix(":*"));
+        if let Some(words) = marked {
+            kept.push_str(&rest[..at]);
+            rest = words.find('*').map_or("", |end| &words[end..]);
+        } else {
+            kept.push_str(&rest[..=at]);
+            rest = after;
+        }
+    }
+    kept.push_str(rest);
+    kept
+}
+
+fn words(plugins: &Plugins, card: &Decision) -> String {
+    let mut names = MARKERS.to_vec();
+    names.extend(plugins.markers());
+    plain(&ASK.replace_all(&unmarked(&card.text, &names), ""))
 }
 
 fn first_sentence(text: &str) -> &str {
@@ -72,17 +94,17 @@ fn first_sentence(text: &str) -> &str {
 
 pub fn card_title(plugins: &Plugins, card: &Decision) -> String {
     plugins.slot(card).map_or_else(
-        || cut(first_sentence(&words(card)), 110),
+        || cut(first_sentence(&words(plugins, card)), 110),
         |slot| format!("{slot} picture"),
     )
 }
 
-pub fn card_summary(card: &Decision) -> String {
-    cut(&words(card), 260)
+pub fn card_summary(plugins: &Plugins, card: &Decision) -> String {
+    cut(&words(plugins, card), 260)
 }
 
 pub fn card_rest(plugins: &Plugins, card: &Decision) -> String {
-    let text = words(card);
+    let text = words(plugins, card);
     let rest = if plugins.slot(card).is_some() {
         text.as_str()
     } else {
@@ -198,7 +220,7 @@ pub fn snapshot(
         else {
             continue;
         };
-        let text = words(card);
+        let text = words(&plugins, card);
         let summary = if plugins.slot(card).is_some() {
             text.as_str()
         } else {

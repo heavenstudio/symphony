@@ -2,23 +2,23 @@
 
 use super::{bare, page, page_at};
 
-const CANDIDATES: &str = "- [ ] **h** — three takes. Approve and say A, B or C in the note.\n  [2026-09-27 18:00] agent — A ![H ship A](/a.png) B ![H ship B](/b.png) C ![H ship C](/c.png)\n";
+const CANDIDATES: &str = "- [ ] **h** — three takes. Approve and say A, B or C in the note.\n  [2026-09-27 18:00] agent — A ![H lamp A](/a.png) B ![H lamp B](/b.png) C ![H lamp C](/c.png)\n";
 const MOCKUPS: &str = concat!(
     "- [ ] **s** — three ways. Pick A, B or C.\n",
-    "  [2026-10-06] agent — A ![Stat table A](/docs/art/mockups/a.html) [a.png](/artifacts/a.png)",
-    " B ![Changed stats first B](/docs/art/mockups/b.html) [b.png](/artifacts/b.png)",
-    " C ![Stats around the ship C](mockups/c.html) [c.png](/artifacts/c.png)\n",
+    "  [2026-10-06] agent — A ![Stat table A](/docs/pictures/mockups/a.html) [a.png](/artifacts/a.png)",
+    " B ![Changed stats first B](/docs/pictures/mockups/b.html) [b.png](/artifacts/b.png)",
+    " C ![Stats around the lamp C](mockups/c.html) [c.png](/artifacts/c.png)\n",
 );
 
 #[test]
 fn decision_item_renders_as_control() {
     let html = page_at(
-        "- [-] **hull-count-141** — 141 hulls. *If no:* art.\n  Thirty first.\n",
+        "- [-] **lamp-count-141** — 141 lamps. *If no:* picture.\n  Thirty first.\n",
         "docs/DECISIONS.md",
     );
     for want in [
         "class=\"decision\"",
-        "data-slug=\"hull-count-141\"",
+        "data-slug=\"lamp-count-141\"",
         "data-state=\"rejected\"",
         "data-line=\"1\"",
         "<em>If no:</em>",
@@ -59,7 +59,7 @@ fn strip(html: &str) -> &str {
 
 #[test]
 fn a_picture_card_compares_its_candidates_in_one_labelled_row() {
-    let html = page_at(CANDIDATES, "docs/ships/x.md");
+    let html = page_at(CANDIDATES, "docs/lamps/x.md");
     let row = strip(&html);
     let at: Vec<usize> = ["/a.png", "/b.png", "/c.png"]
         .iter()
@@ -80,7 +80,7 @@ fn the_base_picture_leads_the_row() {
     let text = format!(
         "{CANDIDATES}  [2026-09-27 19:00] agent — Base, the donor's approved picture: ![D donor](/base.png)\n"
     );
-    let html = page_at(&text, "docs/ships/x.md");
+    let html = page_at(&text, "docs/lamps/x.md");
     let row = strip(&html);
     assert!(
         row.find("/base.png").unwrap() < row.find("/a.png").unwrap(),
@@ -93,7 +93,7 @@ fn the_base_picture_leads_the_row() {
 fn an_html_candidate_in_the_row_is_a_mockup_item_not_a_broken_image() {
     // A browser cannot draw an .html file as an <img>: the row holds it as media, for the client to frame.
     let (_tree, render) = bare();
-    let sections = render.sections(MOCKUPS, "docs/art/UI.md");
+    let sections = render.sections(MOCKUPS, "docs/pictures/UI.md");
     let media = &sections[0].media;
     let mut srcs: Vec<&str> = media
         .iter()
@@ -107,12 +107,12 @@ fn an_html_candidate_in_the_row_is_a_mockup_item_not_a_broken_image() {
     assert_eq!(
         srcs,
         [
-            "/docs/art/mockups/a.html",
-            "/docs/art/mockups/a.html",
-            "/docs/art/mockups/b.html",
-            "/docs/art/mockups/b.html",
-            "/docs/art/mockups/c.html",
-            "/docs/art/mockups/c.html"
+            "/docs/pictures/mockups/a.html",
+            "/docs/pictures/mockups/a.html",
+            "/docs/pictures/mockups/b.html",
+            "/docs/pictures/mockups/b.html",
+            "/docs/pictures/mockups/c.html",
+            "/docs/pictures/mockups/c.html"
         ]
     );
     let html = &sections[0].html;
@@ -132,7 +132,7 @@ fn a_png_base_beside_mockup_candidates_stays_a_picture() {
     let text =
         format!("{MOCKUPS}  [2026-10-06] agent — Base, the approved screen: ![Old](/base.png)\n");
     let (_tree, render) = bare();
-    let sections = render.sections(&text, "docs/art/UI.md");
+    let sections = render.sections(&text, "docs/pictures/UI.md");
     let row = strip(&sections[0].html);
     assert!(row.contains("<img src=\"/base.png\""), "{row}");
     assert!(row.find("/base.png").unwrap() < row.find("data-media=").unwrap());
@@ -146,8 +146,8 @@ fn a_png_base_beside_mockup_candidates_stays_a_picture() {
 #[test]
 fn a_card_with_one_picture_has_no_row() {
     let html = page_at(
-        "- [ ] **h** — one fix.\n  [2026-09-27 18:00] agent — ![H ship](/a.png)\n",
-        "docs/ships/x.md",
+        "- [ ] **h** — one fix.\n  [2026-09-27 18:00] agent — ![H lamp](/a.png)\n",
+        "docs/lamps/x.md",
     );
     assert!(!html.contains("class=\"compare\""));
 }
@@ -242,11 +242,11 @@ fn legacy_undated_lines_still_render() {
 #[test]
 fn agent_entries_render_markdown_but_owner_entries_stay_text() {
     let (tree, render) = bare();
-    tree.write("docs/factions/FACTIONS.md", "# Factions\n");
-    let html = render.html("- [?] **a** — one.\n  [2026-09-24] owner · question — <b>raw</b>\n  [2026-09-24] agent — See ![scale](/artifacts/x.svg) and [[FACTIONS#Empire]].\n", "docs/DECISIONS.md");
+    tree.write("docs/makers/MAKERS.md", "# Makers\n");
+    let html = render.html("- [?] **a** — one.\n  [2026-09-24] owner · question — <b>raw</b>\n  [2026-09-24] agent — See ![scale](/artifacts/x.svg) and [[MAKERS#East]].\n", "docs/DECISIONS.md");
     assert!(html.contains("&lt;b&gt;raw&lt;/b&gt;"), "{html}");
     assert!(html.contains("<img src=\"/artifacts/x.svg\" alt=\"scale\""));
-    assert!(html.contains("href=\"/docs/factions/FACTIONS.md#empire\""));
+    assert!(html.contains("href=\"/docs/makers/MAKERS.md#east\""));
 }
 
 const PNG_5X7: &[u8] = b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR\0\0\0\x05\0\0\0\x07";
@@ -347,11 +347,11 @@ fn history_html_gives_each_card_its_rendered_thread() {
     assert!(threads["two"].html.contains("class=\"entry agent\""));
 }
 
-const AUTO: &str = "<!-- register:start -->\n## Auto-approved: spot-check\n\n### T\n\n- [a] **pic** — A hull. *Shows:* X · ship\n  [2026-09-27 10:00] agent — ![x](/x.png)\n  [2026-09-27 11:00] agent · auto-approved — A: bold outline\n<!-- register:end -->\n";
+const AUTO: &str = "<!-- register:start -->\n## Auto-approved: spot-check\n\n### T\n\n- [a] **pic** — A lamp. *Fills:* X · lamp\n  [2026-09-27 10:00] agent — ![x](/x.png)\n  [2026-09-27 11:00] agent · auto-approved — A: bold outline\n<!-- register:end -->\n";
 
 #[test]
 fn an_auto_approved_card_renders_unfolded_with_its_state_and_group() {
-    let html = page_at(AUTO, "docs/ships/x.md");
+    let html = page_at(AUTO, "docs/lamps/x.md");
     assert!(html.contains("data-state=\"auto-approved\""), "{html}");
     assert!(html.contains("data-group=\"auto\""));
     assert!(!html.contains("<details"));
@@ -359,12 +359,12 @@ fn an_auto_approved_card_renders_unfolded_with_its_state_and_group() {
 
 #[test]
 fn an_auto_approved_card_is_counted_in_its_group_heading() {
-    assert!(page_at(AUTO, "docs/ships/x.md").contains(">Auto-approved: spot-check (1)</h2>"));
+    assert!(page_at(AUTO, "docs/lamps/x.md").contains(">Auto-approved: spot-check (1)</h2>"));
 }
 
 #[test]
 fn the_auto_line_shows_its_verdict() {
-    assert!(page_at(AUTO, "docs/ships/x.md").contains("<b>auto-approved</b>"));
+    assert!(page_at(AUTO, "docs/lamps/x.md").contains("<b>auto-approved</b>"));
 }
 
 #[test]

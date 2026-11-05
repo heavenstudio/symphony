@@ -1,9 +1,7 @@
 //! Axum serves the Symphony client, JSON API and project media directly. Every request is judged by
 //! client address first; read and save handlers also check Host and Origin.
 
-use crate::cli::Serve;
-use crate::gate::Gate;
-use crate::{orphans, sys};
+use crate::{cli::Serve, gate::Gate, orphans, sys};
 use axum::Router;
 use axum::body::{Body, HttpBody};
 use axum::extract::{ConnectInfo, Request, State};
@@ -18,6 +16,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant, SystemTime};
+use symphony_board::{launch::reap::REAP_SECONDS, sys::Command};
 use tokio::sync::watch;
 
 mod connections;
@@ -900,7 +899,7 @@ fn session_maintenance(
     home?;
     Some(maintenance_worker(
         Arc::clone(shared),
-        Duration::from_secs_f64(tasks::launch::reap::REAP_SECONDS),
+        Duration::from_secs_f64(REAP_SECONDS),
         SWEEP_TIMEOUT,
         clock,
     ))
@@ -974,7 +973,7 @@ fn maintenance_worker(
             // Log before waiting on output: a hung child must still leave its actual start time.
             eprintln!("· idle-session sweep started");
             match crate::live::measured("idle-session sweep", || {
-                let mut command = tasks::sys::Command::new(shared.root.join("tools/rs-bin.sh"));
+                let mut command = Command::new(shared.root.join("tools/rs-bin.sh"));
                 command
                     .args(["tasks", "reap"])
                     .current_dir(&shared.root)
@@ -1417,7 +1416,7 @@ mod tests {
             "the reap child outlived its {SWEEP_TIMEOUT:?} timeout"
         );
         // The next round starts at the reap interval, with a child of its own.
-        clock.set(Duration::from_secs_f64(tasks::launch::reap::REAP_SECONDS));
+        clock.set(Duration::from_secs_f64(REAP_SECONDS));
         let second = crate::testing::entered(&announced);
         assert_ne!(first, second);
         drop(fixture);

@@ -197,10 +197,6 @@ impl Clock {
     }
 }
 
-/// The file `just tasks-cutover` writes beside the SQLite board in the git common dir once its copy into
-/// SurrealDB is checked ([`crate::cutover`]), and which stays.
-const MOVED: &str = "star-foundry-tasks.db.moved";
-
 /// The board `env` reaches, its server started if it is down, whether or not the board has moved
 /// there: what `tasks-copy --board` and `just tasks-cutover` write into.
 pub fn board_client(env: &Env) -> Result<Client, String> {
@@ -242,8 +238,11 @@ fn reach_board(env: &Env, cwd: &Path, start: bool, unmoved: bool) -> Result<Clie
 /// Why the board in `common` is not served here: the SQLite board there has not moved yet, or a move
 /// froze it and has not finished (it runs, or was cut short).
 fn not_here(common: &Path) -> Option<String> {
-    let board = common.join(crate::cutover::BOARD);
-    if !board.exists() || common.join(MOVED).exists() {
+    // `<board>.moved` is what `just tasks-cutover` writes beside it once its copy into SurrealDB is
+    // checked ([`crate::cutover`]), and it stays.
+    let name = crate::cutover::board_name(common)?;
+    let board = common.join(&name);
+    if !board.exists() || common.join(format!("{name}.moved")).exists() {
         return None;
     }
     Some(if crate::cutover::frozen(&board) {

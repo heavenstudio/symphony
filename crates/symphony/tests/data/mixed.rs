@@ -3,7 +3,7 @@ use crate::common::Tree;
 #[test]
 fn the_home_and_full_queue_mix_topics_oldest_first_with_later_last() {
     let tree = Tree::new();
-    for (folder, count) in [("art", 30), ("engineering", 3)] {
+    for (folder, count) in [("pictures", 30), ("engineering", 3)] {
         let cards: String = (0..count).rev().map(|n| format!(
             "- [ ] **{folder}-{n}** — Decision {n}.\n  [2026-10-01 10:{n:02}] agent — Ready for review.\n"
         )).collect();
@@ -26,12 +26,12 @@ fn the_home_and_full_queue_mix_topics_oldest_first_with_later_last() {
             .map(|c| c.slug.as_str())
             .collect::<Vec<_>>(),
         [
-            "art-0",
             "engineering-0",
-            "art-1",
+            "pictures-0",
             "engineering-1",
-            "art-2",
-            "engineering-2"
+            "pictures-1",
+            "engineering-2",
+            "pictures-2"
         ]
     );
     assert_eq!(
@@ -39,36 +39,36 @@ fn the_home_and_full_queue_mix_topics_oldest_first_with_later_last() {
             .queue
             .waiting
             .iter()
-            .filter(|c| symphony_api::queue_category(&c.doc) == "art")
+            .filter(|c| symphony_api::queue_category(&c.doc) == "pictures")
             .map(|c| c.slug.clone())
             .collect::<Vec<_>>(),
-        (0..30).map(|n| format!("art-{n}")).collect::<Vec<_>>()
+        (0..30).map(|n| format!("pictures-{n}")).collect::<Vec<_>>()
     );
     symphony::postpone::act(
         &tree.root,
         "owner",
-        "docs/art/CARDS.md",
-        "art-1",
+        "docs/pictures/CARDS.md",
+        "pictures-1",
         "later",
         symphony::postpone::now(),
     )
     .unwrap();
     let after = snapshot();
     assert_eq!(after.queue.waiting.len(), 33);
-    let art: Vec<_> = after
+    let picture: Vec<_> = after
         .queue
         .waiting
         .iter()
-        .filter(|c| symphony_api::queue_category(&c.doc) == "art")
+        .filter(|c| symphony_api::queue_category(&c.doc) == "pictures")
         .collect();
-    assert_eq!(art[0].slug, "art-0");
-    assert_eq!(art.last().unwrap().slug, "art-1");
-    assert!(art.last().unwrap().postponed);
+    assert_eq!(picture[0].slug, "pictures-0");
+    assert_eq!(picture.last().unwrap().slug, "pictures-1");
+    assert!(picture.last().unwrap().postponed);
     symphony::postpone::act(
         &tree.root,
         "owner",
-        "docs/art/CARDS.md",
-        "art-0",
+        "docs/pictures/CARDS.md",
+        "pictures-0",
         "later",
         symphony::postpone::now(),
     )
@@ -84,7 +84,7 @@ fn the_home_and_full_queue_mix_topics_oldest_first_with_later_last() {
         .collect();
     assert_eq!(
         tail,
-        ["art-0", "art-1"],
+        ["pictures-0", "pictures-1"],
         "Later keeps its preference order at the category's tail"
     );
     tree.write(symphony::postpone::FILE, "corrupt");

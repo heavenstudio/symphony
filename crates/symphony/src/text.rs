@@ -31,7 +31,7 @@ impl FileStamp {
 }
 
 /// Python's `\s` inside a pattern: Rust's `\s` plus the four separators Python also counts.
-pub(crate) const S: &str = r"[\s\x1C-\x1F]";
+pub const S: &str = r"[\s\x1C-\x1F]";
 /// Python's `\S`.
 pub(crate) const NS: &str = r"[^\s\x1C-\x1F]";
 

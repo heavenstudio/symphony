@@ -2,9 +2,10 @@
 //! each with its links and holders.
 
 use crate::common::{Fixture, NOW, RawWrite, Seed, refused, session};
-use tasks::Health;
-use tasks::health::LIVE_SECONDS;
-use tasks::rows::{MessageRow, SessionRow, TaskRow};
+use symphony_board::Health;
+use symphony_board::health::LIVE_SECONDS;
+use symphony_board::rows::{MessageRow, SessionRow, TaskRow};
+use symphony_board::{NewSession, NewTask, Store, Task, rpc};
 
 fn a_board_of(tasks: usize) -> Seed {
     let mut seed = Seed::default()
@@ -356,7 +357,7 @@ fn a_board_read_never_sees_half_a_write() {
 /// `read` of a board holding a ready `sim/jump`, with another session's claim of it forced into the
 /// middle (main's `SnapshotReadTest`): the read stalls on each task row it reads, after the tasks and
 /// before the roles, for as long as `gate:read` says when it starts, and the claim lands in that stall.
-fn claimed_mid_read<T>(read: impl FnOnce(&tasks::Store) -> T) -> T {
+fn claimed_mid_read<T>(read: impl FnOnce(&Store) -> T) -> T {
     let f = Fixture::new(
         Seed::default()
             .session("amber-heron")
@@ -393,7 +394,7 @@ fn claimed_mid_read<T>(read: impl FnOnce(&tasks::Store) -> T) -> T {
     result
 }
 
-fn consistent(task: &tasks::Task) {
+fn consistent(task: &Task) {
     assert_eq!(
         task.status == "ready",
         task.holders("executor").is_empty(),
@@ -538,9 +539,7 @@ fn a_new_task_is_one_round_trip_and_a_move_under_another_two() {
     let f = Fixture::empty();
     let orch = f.session("orchestrator");
     let (requests, made) = counted(&f, || {
-        f.store
-            .create(&tasks::NewTask::new("p/a", "A", &orch))
-            .unwrap()
+        f.store.create(&NewTask::new("p/a", "A", &orch)).unwrap()
     });
     assert_eq!((requests, made.slug.as_str()), (1, "p/a"));
     assert_eq!(made, f.store.get("p/a").unwrap());
@@ -555,9 +554,7 @@ fn a_new_task_is_one_round_trip_and_a_move_under_another_two() {
 #[test]
 fn a_new_session_is_two_round_trips() {
     let f = Fixture::empty();
-    let (requests, made) = counted(&f, || {
-        f.store.register(&tasks::NewSession::new("worker")).unwrap()
-    });
+    let (requests, made) = counted(&f, || f.store.register(&NewSession::new("worker")).unwrap());
     assert_eq!(requests, 2);
     assert_eq!(made, f.store.session(&made.row.handle).unwrap());
 }
@@ -574,7 +571,7 @@ fn a_definition_that_fails_leaves_no_board_taken_for_made() {
     let made =
         (0..100).find_map(
             |_| match client.define_then("RETURN NONE;", serde_json::json!({})) {
-                Err(tasks::rpc::DbError::Conflict) => {
+                Err(rpc::DbError::Conflict) => {
                     std::thread::sleep(std::time::Duration::from_millis(50));
                     None
                 }
@@ -589,15 +586,15 @@ fn a_definition_that_fails_leaves_no_board_taken_for_made() {
             serde_json::json!({}),
         )
         .unwrap();
-    assert!(tasks::Store::open(client).is_err());
+    assert!(Store::open(client).is_err());
     for _ in 0..2 {
-        let again = tasks::Store::open(tasks::rpc::Client::new(&addr, "sf", &db));
+        let again = Store::open(rpc::Client::new(&addr, "sf", &db));
         assert!(
             again.is_err(),
             "a board missing a definition was taken for made"
         );
     }
-    let fields = tasks::rpc::Client::new(&addr, "sf", &db)
+    let fields = rpc::Client::new(&addr, "sf", &db)
         .query(
             "RETURN (INFO FOR DB).tables.session;",
             serde_json::json!({}),
@@ -614,7 +611,7 @@ fn a_definition_that_fails_leaves_no_board_taken_for_made() {
 fn opening_a_board_already_made_is_one_round_trip() {
     let first = crate::common::client();
     let (addr, db) = (first.addr().to_string(), first.database().to_string());
-    tasks::Store::open(first).unwrap();
-    let again = tasks::Store::open(tasks::rpc::Client::new(&addr, "sf", &db)).unwrap();
+    Store::open(first).unwrap();
+    let again = Store::open(rpc::Client::new(&addr, "sf", &db)).unwrap();
     assert_eq!(again.client().requests(), 1);
 }

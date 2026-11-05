@@ -1,5 +1,6 @@
 //! Native saves and their background work, on private repositories and a private board per case.
 include!("common/commit_fixture.rs");
+use symphony_board::{rpc, sys};
 
 #[path = "after_commit/publication_reports.rs"]
 mod publication_reports;
@@ -51,8 +52,7 @@ fn scratch_cli_build_keeps_the_main_heartbeat_link() {
     assert_eq!(Path::new(&binary), branch);
     assert_eq!(tree.read("launcher-calls"), "--build tasks\n");
     assert_eq!(std::fs::read_link(&heartbeat).unwrap(), main);
-    let done = tasks::sys::output(tasks::sys::Command::new(binary).args(["--database", "scratch"]))
-        .unwrap();
+    let done = sys::output(sys::Command::new(binary).args(["--database", "scratch"])).unwrap();
     assert!(done.status.success(), "{done:?}");
     assert_eq!(tree.read("stand-in-board"), "branch");
     stage("branch CLI completed; running heartbeat CLI");
@@ -89,7 +89,7 @@ fn child_stages_are_forwarded_before_the_child_closes_its_output() {
         }
     }
     // A pipe no git another test spawns meanwhile can keep: the relay's end comes with `child`'s.
-    let (reader, mut child) = tasks::sys::pipe().unwrap();
+    let (reader, mut child) = sys::pipe().unwrap();
     let (send, receive) = std::sync::mpsc::channel();
     let forwarding = std::thread::spawn(move || {
         let mut saved = Vec::new();
@@ -442,7 +442,7 @@ fn generated_stale_verdict_keeps_the_concurrent_reply_in_the_checkout() {
                 expected
             );
             assert_eq!(f.main("content/one"), "approved\n");
-            assert_eq!(f.main("view/hull_atlas"), "approved\n");
+            assert_eq!(f.main("view/lamp_atlas"), "approved\n");
             assert!(git(&root, &["status", "--porcelain"]).is_empty());
             assert!(
                 f.store().tasks(None).unwrap().is_empty(),
@@ -820,8 +820,8 @@ fn a_clean_text_merge_cannot_resurrect_a_card_removed_on_main() {
             ] {
                 write(&root.join(name), text);
             }
-            let raw = tasks::sys::output(
-                tasks::sys::Command::new("git")
+            let raw = sys::output(
+                sys::Command::new("git")
                     .args([
                         "merge-file",
                         "-p",
@@ -915,8 +915,8 @@ fn clean_text_merge_of_two_group_moves_keeps_one_card_and_accepts_the_next_save(
             ] {
                 write(&root.join(name), text);
             }
-            let plain = tasks::sys::output(
-                tasks::sys::Command::new("git")
+            let plain = sys::output(
+                sys::Command::new("git")
                     .args([
                         "merge-file",
                         "-p",
@@ -992,8 +992,8 @@ fn clean_text_merge_of_two_group_moves_keeps_one_card_and_accepts_the_next_save(
             // fallback cannot resolve it, rather than publishing either copy.
             let edited = current.replace("Choose a framework.", "Changed framework question.");
             write(&root.join("merge-current"), &edited);
-            let plain = tasks::sys::output(
-                tasks::sys::Command::new("git")
+            let plain = sys::output(
+                sys::Command::new("git")
                     .args([
                         "merge-file",
                         "-p",
@@ -1791,7 +1791,7 @@ fn saves_persist_verdicts_comments_asks_and_callbacks_across_restart() {
                 "/api/message",
                 json!({"path":"docs/a.md", "slug":"one", "text":"follow this up"}),
             );
-            let id = saves.post("", "/api/ask", json!({"path":"docs/a.md", "question":"Why this hull?", "anchor":"one", "quote":"proposal."}))["id"].as_i64().unwrap();
+            let id = saves.post("", "/api/ask", json!({"path":"docs/a.md", "question":"Why this lamp?", "anchor":"one", "quote":"proposal."}))["id"].as_i64().unwrap();
             saves.post(
                 "",
                 "/api/ask-reply",
@@ -1821,7 +1821,7 @@ fn saves_persist_verdicts_comments_asks_and_callbacks_across_restart() {
                 assert!(text.contains(words), "{words}: {text}");
             }
             assert_eq!(f.main("docs/a.md"), text);
-            assert!(!text.contains("Why this hull?"));
+            assert!(!text.contains("Why this lamp?"));
             let tip = git(&root, &["rev-parse", "main"]);
             let ask = symphony::asks::AskStore::open(&f.home.join("asks.db"))
                 .unwrap()
@@ -1836,7 +1836,7 @@ fn saves_persist_verdicts_comments_asks_and_callbacks_across_restart() {
                     .iter()
                     .map(|m| m.text.as_str())
                     .collect::<Vec<_>>(),
-                ["Why this hull?", "And its radius?"]
+                ["Why this lamp?", "And its radius?"]
             );
             let restarted = ClosingSaves::start(&root);
             restarted
@@ -1847,7 +1847,7 @@ fn saves_persist_verdicts_comments_asks_and_callbacks_across_restart() {
             let mut flusher = symphony::callbacks::Flusher::new(&root);
             flusher.flush(&root).unwrap();
             flusher.flush(&root).unwrap();
-            let rows = tasks::rpc::Client::new(
+            let rows = rpc::Client::new(
                 &std::env::var("TASKS_SERVER").unwrap(),
                 "sf",
                 &std::env::var("TASKS_DATABASE").unwrap(),
@@ -1865,7 +1865,7 @@ fn saves_persist_verdicts_comments_asks_and_callbacks_across_restart() {
                 "use this shape",
                 "keep the outline",
                 "follow this up",
-                "Why this hull?",
+                "Why this lamp?",
                 "And its radius?",
             ] {
                 assert!(callbacks.contains(words), "{words}: {callbacks}");
@@ -1955,12 +1955,12 @@ fn board_filing_is_asynchronous_and_close_drains_it() {
         let ready = Gate::new();
         let log_path = f.home.join("filing.log");
         let mut child = OwnedChild::logged(
-            tasks::sys::Command::new(std::env::current_exe().unwrap())
+            sys::Command::new(std::env::current_exe().unwrap())
                 .args(["--exact", "filing_case", "--nocapture"])
                 .env("SF_TASKS_CLI", &wrapper)
                 .env("SF_AFTER_COMMIT_FILING", "1")
                 .env("SF_AFTER_COMMIT_READY", ready.address())
-                .stdin(tasks::sys::Stdio::Null),
+                .stdin(sys::Stdio::Null),
             &log_path,
         );
         stage("filing child spawned; awaiting held board command");
@@ -2072,7 +2072,7 @@ fn a_failed_callback_journal_retries_the_saved_comment_once() {
             let mut flusher = symphony::callbacks::Flusher::new(&root);
             flusher.flush(&root).unwrap();
             flusher.flush(&root).unwrap();
-            let rows = tasks::rpc::Client::new(
+            let rows = rpc::Client::new(
                 &std::env::var("TASKS_SERVER").unwrap(),
                 "sf",
                 &std::env::var("TASKS_DATABASE").unwrap(),

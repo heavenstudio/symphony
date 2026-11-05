@@ -11,8 +11,9 @@ use std::os::fd::AsRawFd;
 use std::path::{Path, PathBuf};
 use std::sync::{OnceLock, mpsc};
 use std::time::{Duration, Instant};
-use tasks::port::Start;
-use tasks::sys::{Child, Command};
+use symphony_board::port::Start;
+use symphony_board::sys::{Child, Command};
+use symphony_board::{Store, port, rpc, sys};
 
 #[path = "after_reload/lines.rs"]
 mod lines;
@@ -33,7 +34,7 @@ fn repository(root: &Path, args: &[&str]) -> String {
             command.env_remove(key);
         }
     }
-    let done = tasks::sys::output(
+    let done = sys::output(
         command
             .args(args)
             .env("GIT_CONFIG_GLOBAL", "/dev/null")
@@ -140,7 +141,7 @@ fn driver(logs: &Path) -> &'static Path {
         let output = logs.join(format!("reload-driver-{}", std::process::id()));
         // rustc reads the whole source before it says anything, so the source is written first.
         let mut compiler = OwnedChild(
-            tasks::sys::spawn_piped(
+            sys::spawn_piped(
                 Command::new("rustc")
                     .args(["--edition=2024", "-", "-o"])
                     .arg(&output),
@@ -230,16 +231,16 @@ fn main() {
             }
         }
         Some("content-ids") => assert_eq!(args, ["content-ids"]),
-        Some("hull-atlas") => {
-            assert_eq!(args, ["hull-atlas", "build"]);
+        Some("lamp-atlas") => {
+            assert_eq!(args, ["lamp-atlas", "build"]);
             fs::create_dir_all("view").unwrap();
-            fs::copy("content/one", "view/hull_atlas").unwrap();
+            fs::copy("content/one", "view/lamp_atlas").unwrap();
         }
         Some("verify") => {
             assert_eq!(args, ["verify"]);
             assert!(fs::read_to_string("docs/TOPIC.md").unwrap().contains("[x] **one**"));
             assert_eq!(fs::read_to_string("content/one").unwrap(), "approved\n");
-            assert_eq!(fs::read_to_string("view/hull_atlas").unwrap(), "approved\n");
+            assert_eq!(fs::read_to_string("view/lamp_atlas").unwrap(), "approved\n");
             let actor = env::var("TASKS_SESSION").unwrap();
             assert!(!actor.is_empty() && actor != "owner");
             let cwd = env::current_dir().unwrap();
@@ -291,7 +292,7 @@ struct Fixture {
     root: PathBuf,
     home: PathBuf,
     gate: Gate,
-    board: tasks::Store,
+    board: Store,
     database: OwnedChild,
     board_address: String,
     generation_pids: Vec<i64>,
@@ -317,13 +318,13 @@ impl Fixture {
         repository(&root, &["config", "core.hooksPath", "/dev/null"]);
         write(&root.join("docs/TOPIC.md"), DOC);
         write(&root.join(".gitignore"), "artifacts/\n");
-        // Star Foundry's verdict commands, which the fixture's `just` stands in for.
+        // The project's verdict commands, which the fixture's `just` stands in for.
         write(
             &root.join("symphony.toml"),
             "[verdicts]\ncheck = [\"just\", \"verify\"]\nland = [\"just\", \"land\"]\ngenerators = [\n  \
              { name = \"content\", outputs = \"content/\", command = [\"just\", \"content\"] },\n  \
              { name = \"content-ids\", outputs = \"sim/content_ids.gd\", command = [\"just\", \"content-ids\"], when_changed = true },\n  \
-             { name = \"hull-atlas\", outputs = \"view/hull_atlas\", command = [\"just\", \"hull-atlas\", \"build\"], when_changed = true },\n]\n\
+             { name = \"lamp-atlas\", outputs = \"view/lamp_atlas\", command = [\"just\", \"lamp-atlas\", \"build\"], when_changed = true },\n]\n\
              record = \".git/sf-land/verdicts\"\n",
         );
         write(
@@ -432,7 +433,7 @@ impl Fixture {
 
         let surreal = std::env::var_os("SF_SURREAL").map_or_else(
             || {
-                let found = tasks::sys::output(
+                let found = sys::output(
                     Command::new("bash")
                         .arg(
                             PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -447,76 +448,69 @@ impl Fixture {
             PathBuf::from,
         );
         // Surreal prints its configured address for :0, so it is told a reserved port, and started
-        // again on another when that port was taken before it bound it (tasks::port), every start
+        // again on another when that port was taken before it bound it (port), every start
         // within the one 30 s budget. A readiness announcement from this exact child, and its own
         // listener on that port, are required before any fixture writes can be sent.
         let began = Instant::now();
         let deadline = began + Duration::from_secs(30);
-        let started =
-            tasks::port::start_on_free_port(tasks::port::ATTEMPTS, deadline, |reserved| {
-                assert_ne!(reserved.port(), 8765);
-                let board_address = reserved.to_string();
-                let mut database = OwnedChild(
-                    tasks::sys::spawn_output(
-                        Command::new(&surreal)
-                            .args([
-                                "start",
-                                "--unauthenticated",
-                                "--bind",
-                                &board_address,
-                                "--log",
-                                "info",
-                                "memory",
-                            ])
-                            .env("NO_COLOR", "1"),
-                    )
-                    .unwrap(),
-                );
-                let mut database_lines = Lines::of(&mut database.0, &dir.join("board.log"));
-                let ready = match database_lines.seen_before("Started web server on ", deadline) {
-                    Ok(ready) => ready,
-                    Err(mpsc::RecvTimeoutError::Disconnected) => {
-                        return Ok::<_, Infallible>(Start::Ended(database_lines.said()));
-                    }
-                    Err(e) => panic!(
-                        "waiting for the private database's announcement: {e}; {:?}",
-                        database_lines.history
-                    ),
-                };
-                assert!(ready.ends_with(&board_address), "{ready}");
-                // Surreal emits that line before binding. Wait for an actual response, including under
-                // instrumentation/load, before schema setup; a log message is not a listening socket,
-                // and an answer counts only once this child itself listens on the port.
-                loop {
-                    if database.0.try_wait().unwrap().is_some() {
-                        return Ok(Start::Ended(database_lines.said()));
-                    }
-                    if tasks::rpc::healthy(&board_address)
-                        && tasks::port::listens(database.0.id(), reserved, tasks::sys::output)
-                            .unwrap()
-                    {
-                        return Ok(Start::Up((database, database_lines, board_address)));
-                    }
-                    assert!(
-                        began.elapsed() < LIMIT,
-                        "private database never answered its health check"
-                    );
-                    let remaining = deadline.saturating_duration_since(Instant::now());
-                    assert!(
-                        !remaining.is_zero(),
-                        "private database exhausted its 30 s announcement and health budget"
-                    );
-                    std::thread::sleep(Duration::from_millis(50).min(remaining));
+        let started = port::start_on_free_port(port::ATTEMPTS, deadline, |reserved| {
+            assert_ne!(reserved.port(), 8765);
+            let board_address = reserved.to_string();
+            let mut database = OwnedChild(
+                sys::spawn_output(
+                    Command::new(&surreal)
+                        .args([
+                            "start",
+                            "--unauthenticated",
+                            "--bind",
+                            &board_address,
+                            "--log",
+                            "info",
+                            "memory",
+                        ])
+                        .env("NO_COLOR", "1"),
+                )
+                .unwrap(),
+            );
+            let mut database_lines = Lines::of(&mut database.0, &dir.join("board.log"));
+            let ready = match database_lines.seen_before("Started web server on ", deadline) {
+                Ok(ready) => ready,
+                Err(mpsc::RecvTimeoutError::Disconnected) => {
+                    return Ok::<_, Infallible>(Start::Ended(database_lines.said()));
                 }
-            });
+                Err(e) => panic!(
+                    "waiting for the private database's announcement: {e}; {:?}",
+                    database_lines.history
+                ),
+            };
+            assert!(ready.ends_with(&board_address), "{ready}");
+            // Surreal emits that line before binding. Wait for an actual response, including under
+            // instrumentation/load, before schema setup; a log message is not a listening socket,
+            // and an answer counts only once this child itself listens on the port.
+            loop {
+                if database.0.try_wait().unwrap().is_some() {
+                    return Ok(Start::Ended(database_lines.said()));
+                }
+                if rpc::healthy(&board_address)
+                    && port::listens(database.0.id(), reserved, sys::output).unwrap()
+                {
+                    return Ok(Start::Up((database, database_lines, board_address)));
+                }
+                assert!(
+                    began.elapsed() < LIMIT,
+                    "private database never answered its health check"
+                );
+                let remaining = deadline.saturating_duration_since(Instant::now());
+                assert!(
+                    !remaining.is_zero(),
+                    "private database exhausted its 30 s announcement and health budget"
+                );
+                std::thread::sleep(Duration::from_millis(50).min(remaining));
+            }
+        });
         let ((database, _database_lines, board_address), _) =
             started.unwrap_or_else(|why| panic!("private database exited before readiness: {why}"));
-        let board = tasks::Store::open(tasks::rpc::Client::new(
-            &board_address,
-            "sf",
-            "after_reload",
-        ))
-        .unwrap();
+        let board = Store::open(rpc::Client::new(&board_address, "sf", "after_reload")).unwrap();
         Self {
             dir,
             root,
@@ -581,7 +575,7 @@ impl Fixture {
         if installed {
             command.arg("--home").arg(&self.home);
         }
-        let mut child = OwnedChild(tasks::sys::spawn_output(&mut command).unwrap());
+        let mut child = OwnedChild(sys::spawn_output(&mut command).unwrap());
         let mut lines = Lines::of(&mut child.0, &self.dir.join("server.log"));
         let line = lines.until("→ Symphony at http://127.0.0.1:");
         let url = line
@@ -632,7 +626,7 @@ impl Fixture {
         assert_ne!(Path::new(commands[0][1]), self.root);
         let main = repository(&self.root, &["show", "main:docs/TOPIC.md"]);
         assert!(main.contains("[x] **one**"), "{main}");
-        for path in ["content/one", "view/hull_atlas"] {
+        for path in ["content/one", "view/lamp_atlas"] {
             assert_eq!(
                 repository(&self.root, &["show", &format!("main:{path}")]),
                 "approved"
@@ -755,7 +749,7 @@ fn tasks_binary() -> &'static Path {
             return PathBuf::from(built);
         }
         let wrapper = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../tools/rs-bin.sh");
-        let done = tasks::sys::output(Command::new(wrapper).args(["--build", "tasks"])).unwrap();
+        let done = sys::output(Command::new(wrapper).args(["--build", "tasks"])).unwrap();
         assert!(done.status.success(), "tasks binary build: {done:?}");
         PathBuf::from(String::from_utf8(done.stdout).unwrap().trim())
     })

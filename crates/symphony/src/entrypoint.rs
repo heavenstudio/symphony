@@ -34,7 +34,7 @@ pub const MEDIA: Renderer = Renderer {
     ],
 };
 
-/// Every renderer the Symphony ships, by the name an entrypoint's `types` gives it.
+/// Every renderer the Symphony has, by the name an entrypoint's `types` gives it.
 pub const RENDERERS: [Renderer; 2] = [MARKDOWN, MEDIA];
 
 pub use symphony_api::SYMPHONY_ROUTES;
@@ -292,7 +292,7 @@ mod tests {
             history: vec!["old".into()],
         };
         assert_eq!(entry.renderer("index.md"), Some(MARKDOWN));
-        assert_eq!(entry.renderer("art/a.PNG"), Some(MEDIA));
+        assert_eq!(entry.renderer("media/a.PNG"), Some(MEDIA));
         assert_eq!(entry.renderer("drafts/x.md"), None, "excluded");
         let folder = Entrypoint {
             exclude: vec!["drafts".into(), "*/old".into()],
@@ -316,7 +316,7 @@ mod tests {
         assert_eq!(entry.renderer("Makefile"), None, "no type");
         assert!(entry.page("old/x.md") && !entry.document("old/x.md"));
         assert!(entry.document("guide/x.md"));
-        assert!(!entry.page("art/a.png"));
+        assert!(!entry.page("media/a.png"));
         assert!(entry.includes("main.rs") && !entry.shows("main.rs"));
         assert_eq!(entry.label(), "/");
         assert_eq!(entry.route("index.md"), "index.md");
@@ -328,6 +328,6 @@ mod tests {
         assert_eq!(convention.label(), "/docs/");
         assert!(convention.document("game/SPEC.md"));
         assert!(convention.page("history/OLD.md") && !convention.document("history/OLD.md"));
-        assert!(!convention.shows("art/a.png"), "Markdown only");
+        assert!(!convention.shows("media/a.png"), "Markdown only");
     }
 }

@@ -7,7 +7,7 @@ use crate::{env, run};
 use serde_json::{Value, json};
 use std::fs;
 use std::path::PathBuf;
-use tasks::cli::Env;
+use symphony_board::cli::Env;
 
 /// A keys' folder of its own, not there yet.
 fn keys(name: &str) -> PathBuf {
@@ -131,8 +131,8 @@ mod beats {
     use crate::{Case, Ran, repository, run, scratch};
     use serde_json::{Value, json};
     use std::cell::Cell;
-    use tasks::health::{LIVE_SECONDS, STALE_SECONDS};
-    use tasks::{Beat, NewSession, Store};
+    use symphony_board::health::{LIVE_SECONDS, STALE_SECONDS};
+    use symphony_board::{Beat, NewSession, Store};
 
     /// Three-second polls past the lost line.
     const GONE_POLLS: usize = ((LIVE_SECONDS + STALE_SECONDS) / 3.0) as usize + 3;
@@ -194,7 +194,7 @@ mod beats {
         fn monitored(&self) -> String {
             let new = NewSession {
                 pid: Some(i64::from(std::process::id())),
-                host: tasks::sys::hostname(),
+                host: symphony_board::sys::hostname(),
                 ..NewSession::new("orchestrator")
             };
             self.board().register(&new).unwrap().row.handle

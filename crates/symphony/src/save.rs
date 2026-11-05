@@ -116,7 +116,7 @@ impl Saves {
         }
     }
 
-    fn store(&self) -> Result<tasks::Store, Failure> {
+    fn store(&self) -> Result<symphony_board::Store, Failure> {
         taskview::connect(&self.root).map_err(|e| Failure {
             status: 503,
             error: format!("the task board cannot be reached: {e}"),
@@ -610,7 +610,7 @@ impl Saves {
                         n += 1;
                         slug = format!("{base}-{n}");
                     }
-                    Err(tasks::Error::Refused(_)) => break,
+                    Err(symphony_board::Error::Refused(_)) => break,
                     Err(e) => return Err(e.into()),
                 }
             }
@@ -630,7 +630,7 @@ impl Saves {
                 .or_else(|| payload["priority"].as_str().and_then(|s| s.parse().ok()))
                 .ok_or("priority must be a number".to_string())?
         };
-        store.create(&tasks::NewTask {
+        store.create(&symphony_board::NewTask {
             slug: slug.clone(),
             title: title.into(),
             body,
@@ -646,7 +646,7 @@ impl Saves {
                     format!("{doc}#{anchor}")
                 }]
             },
-            ..tasks::NewTask::default()
+            ..symphony_board::NewTask::default()
         })?;
         Ok(json!({"slug":slug}))
     }

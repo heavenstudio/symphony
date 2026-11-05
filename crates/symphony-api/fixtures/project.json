@@ -1,1 +1,1 @@
-{"name":"Star Foundry","register":"docs/DECISIONS.md","nav":[{"label":"⬡ hulls","title":"Hull models","href":"/hulls","document":"docs/ships/HULLS.md"}],"entrypoints":["docs"]}
+{"name":"Lamp Works","register":"docs/DECISIONS.md","nav":[{"label":"⬡ lamps","title":"Lamp models","href":"/lamps","document":"docs/lamps/LAMPS.md"}],"entrypoints":["docs"]}

@@ -24,8 +24,8 @@ mod search;
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
-use tasks::Store;
-use tasks::cli::{Env, connect};
+use symphony_board::Store;
+use symphony_board::cli::{Env, connect};
 
 /// What one run of `tasks` said: its exit code, its stdout and its stderr.
 pub struct Ran {
@@ -55,7 +55,7 @@ pub fn env() -> Env {
 pub fn run(env: &Env, args: &[&str], input: &str) -> Ran {
     let args: Vec<String> = args.iter().map(|a| a.to_string()).collect();
     let (mut out, mut err) = (Vec::new(), Vec::new());
-    let code = tasks::cli::main(&args, env, &mut input.as_bytes(), &mut out, &mut err);
+    let code = symphony_board::cli::main(&args, env, &mut input.as_bytes(), &mut out, &mut err);
     Ran {
         code,
         out: String::from_utf8(out).unwrap(),
@@ -123,8 +123,8 @@ pub fn scratch(name: &str) -> PathBuf {
 
 /// `git ARGS` in `dir`, as a committer named `t`, which must succeed.
 pub fn git(dir: &Path, args: &[&str]) {
-    let done = tasks::sys::output(
-        tasks::sys::Command::new("git")
+    let done = symphony_board::sys::output(
+        symphony_board::sys::Command::new("git")
             .args(["-c", "user.email=t@t", "-c", "user.name=t", "-C"])
             .arg(dir)
             .args(args),

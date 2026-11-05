@@ -7,7 +7,7 @@ use std::io::{BufRead, BufReader, Read, Write};
 use std::path::Path;
 use std::sync::{Arc, Mutex, mpsc};
 use std::time::Instant;
-use tasks::sys::Child;
+use symphony_board::sys::Child;
 
 /// Readiness and diagnostics are consumed as events. Both streams stay drained even when the
 /// caller is waiting on a build/publication socket instead of a log line.

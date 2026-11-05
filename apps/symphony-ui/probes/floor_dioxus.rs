@@ -1,4 +1,4 @@
-//! Size probe: the smallest page the client's Dioxus build can ship (same features), with one
+//! Size probe: the smallest page the client's Dioxus build can make (same features), with one
 //! signal and one plain action listener as `entry_events::action` attaches them.
 
 #![forbid(unsafe_code)]
