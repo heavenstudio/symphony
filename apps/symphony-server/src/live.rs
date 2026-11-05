@@ -236,18 +236,6 @@ impl Hub {
         }
     }
 
-    /// Finish the current refresh (including its children), then release the watcher and board.
-    pub fn stop(&self) {
-        self.draining.send_replace(true);
-        self.disarm_initial_board();
-        let mut worker = self.worker.lock().unwrap_or_else(|e| e.into_inner());
-        if let Some(worker) = worker.take()
-            && worker.join().is_err()
-        {
-            eprintln!("· Symphony data worker panicked while stopping");
-        }
-    }
-
     /// Queue one watcher notification, retaining a watched input's change until its tree is refreshed.
     fn record_event(&self, event: notify::Result<notify::Event>) -> bool {
         if event
