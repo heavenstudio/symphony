@@ -185,7 +185,7 @@ fn scratch_cli_build_keeps_the_main_heartbeat_link() {
     assert!(done.status.success(), "{done:?}");
     assert_eq!(tree.read("stand-in-board"), "branch");
     stage("branch CLI completed; running heartbeat CLI");
-    assert!(Command::new(heartbeat).status().unwrap().success());
+    assert!(Command::new(heartbeat).status_locked().unwrap().success());
     assert_eq!(tree.read("stand-in-board"), "main");
     stage(format_args!(
         "scratch CLI case completed, wall={:.3}s",
@@ -2007,7 +2007,7 @@ fn an_owner_save_in_a_projects_own_folder_commits_that_file_on_main() {
             git(&root, &["mv", "docs", "manual"]);
             write(
                 &root.join(symphony::project::FILE),
-                &format!("[project]\ndocs = \"manual\"\n\n{VERDICTS}"),
+                &format!("[[entrypoints]]\nurl = \"/docs/\"\nfolder = \"manual\"\n\n{VERDICTS}"),
             );
             git(&root, &["commit", "-qam", "the documents move to manual"]);
             let saves = ClosingSaves::start(&root);

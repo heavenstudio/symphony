@@ -11,7 +11,8 @@ commands always run committed main's build, preserving the calling worktree's
 working directory. `sf-cargo/tasks-main/TREE` in the common dir records the
 binary for main's tree id. A warm call checks that executable and runs it with
 no export, build or source hashing. On a miss, an ancestor main build serves
-immediately when its committed schema and supported RPC server versions match.
+immediately when its committed schema, supported RPC server and `tasks api`
+versions match (`cli/api.rs`'s `VERSION`, raised when a caller relies on a change).
 One background builder exports committed Rust sources and atomically publishes
 the new pointer after success. It owns a separate process group, so maintenance
 callers ending their groups leave the refresh running. A changed or unreadable
@@ -172,8 +173,11 @@ from `apps/symphony-ui`'s browser test, which compiles `port.rs` alone. On macOS
 makes a pipe or socket pair and sets close-on-exec in a second call, so a
 spawn on another thread between the two keeps the writer and holds the
 reader's EOF off for that child's whole life: a herdr answer then reads as
-unanswered. `sys::pipe` opens a FIFO close-on-exec in the open itself;
-macOS's `poll` never sees a FIFO's end, so its readers are read, never polled.
+unanswered. `sys::pipe` is a real pipe, its ends reopened close-on-exec and
+close-on-fork under `sys::spawning()`, so no spawn under that lock copies them;
+an end reaches a child only through a `sys::Command` (a std spawn handed one
+cannot start). Not a FIFO, which macOS opens close-on-exec in one call: a read
+already blocked on one can miss its end there, and `poll` never sees it.
 Those helpers take a `sys::Command`, std's builder by its method names plus
 `new_session` and `pass_fd`, and so does every spawn in a session of its own
 (`sys::new_session` is gone). std takes its fork path for a `pre_exec`, a
@@ -217,7 +221,10 @@ that starts like a record id, a datetime or a UUID. `tasks-copy` copies a whole
 board into a server, replacing what it held, in one transaction: `tasks-copy ADDR
 [DATABASE] < dump.json`, or `tasks-copy --board` for the board this run reaches;
 `tasks-copy --board --out` writes that board's dump, in the shape the copy reads,
-and changes nothing. `just tasks-cutover` (the `tasks-cutover` binary) moves the
+and changes nothing. On `surrealkv://` every row of that transaction costs the
+same, as long as no event UPSERTs a record (`src/schema.rs`): the board of
+2026-11-04, 28 MB of dump, copies in 20 s (`tests/server/copy.rs`, a quarter of
+it). `just tasks-cutover` (the `tasks-cutover` binary) moves the
 old SQLite board into it once, one way, reading SQLite through `rusqlite`
 ([TASKS](../../../docs/workflow/TASKS.md#the-move-to-surrealdb)). On the in-memory
 engine a transaction that big costs more than linearly (the board at the move:

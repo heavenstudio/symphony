@@ -101,6 +101,20 @@ window.reviewOverlay = request => {
     ensurePanel().then(() => dispatchEvent(new Event("review:overlay")));
 };
 
+// The routes the Symphony answers itself, symphony_api::SYMPHONY_ROUTES word for word (a test
+// keeps them equal): they win over every entrypoint.
+const SYMPHONY_ROUTES = ["tasks", "task", "agents", "queue", "api", "assets", "static", "thumb", "x", "artifacts/uploads", "app", "doc", "history", "diff", "wasm", "_dioxus", "favicon.ico"];
+
+function within(route, path) {
+    return route === "" || path === route || path.startsWith(`${route}/`);
+}
+
+// The project the server inlines in the page (symphony_api::PROJECT_ELEMENT): its plugins'
+// pages and its entrypoints. A page without it is the plain project.
+function project() {
+    try { return JSON.parse(document.getElementById("symphony-project")?.textContent || "{}"); } catch { return {}; }
+}
+
 function route(path) {
     try { path = decodeURIComponent(path); } catch { return null; }
     // Keep module selection aligned with navigation.rs for scoped URLs and repeated slashes.
@@ -115,12 +129,17 @@ function route(path) {
     const clean = path.replace(/\/$/, "");
     if (clean === "tasks" || clean === "task") return "board";
     if (path.startsWith("task/") || clean === "agents") return "tasks";
-    if (clean === "hulls") return "docs";
-    if (clean === "docs" || path.startsWith("docs/")) {
-        const name = clean.split("/").pop();
-        if (!name.includes(".") || name.endsWith(".md")) return "docs";
-    }
     if (clean === "queue") return "queue";
+    const view = project();
+    const pages = (view.nav || []).map(item => item.href.replace(/^\/+|\/+$/g, "")).filter(Boolean);
+    if (pages.includes(clean)) return "docs";
+    // A document or folder page of an entrypoint (ProjectView::is_document_route): a trailing
+    // slash or an entrypoint's own route names a folder, whatever its name holds.
+    const urls = view.entrypoints?.length ? view.entrypoints : ["docs"];
+    const name = clean.split("/").pop();
+    if (!SYMPHONY_ROUTES.concat(pages).some(taken => within(taken, clean))
+        && urls.some(url => within(url, clean))
+        && (path.endsWith("/") || urls.includes(clean) || !name.includes(".") || name.endsWith(".md"))) return "docs";
     return clean === "" ? "review" : null;
 }
 

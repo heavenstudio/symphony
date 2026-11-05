@@ -10,6 +10,13 @@
 //! `agent start` calls fail with `agent_pane_busy`, as a pane whose shell is not up yet does. A prompt
 //! the agent takes sets it `working`, as herdr reports it; `FAKE_HERDR_STUCK=N` leaves the first N
 //! prompts in their pane's input line instead, unsent, until `pane send-keys PANE enter` sends it.
+//! `FAKE_HERDR_START_SCREEN=FILE` makes a codex `agent start` show FILE as a startup chooser and wait
+//! until a key press confirms it. Those presses go to a file of the pane's own beside the state
+//! (`$FAKE_HERDR_STATE.PANE.keys`, one JSON list of keys per press), which `pane read` and the waiting
+//! start replay over the pane the start saved, up to the press that confirms a choice: a press, like a
+//! read, writes no state, so the 2 s the launcher gives it hold no file made or renamed. The start
+//! saves the confirmed pane before it answers, and keys reach no chooser after that. With
+//! `FAKE_HERDR_START_SAYS_PENDING=1` the start prints `pending PANE` once its chooser is saved.
 
 use serde_json::{Map, Value, json};
 use std::io::Write;
@@ -51,21 +58,16 @@ fn run(argv: &[String]) -> i32 {
         return refuse("fake_failure", &format!("{words} failed"), 1);
     }
     let path = var("FAKE_HERDR_STATE");
-    let read = std::fs::read_to_string(&path)
-        .map_err(|e| e.to_string())
-        .and_then(|text| serde_json::from_str::<Value>(&text).map_err(|e| e.to_string()));
-    let mut state = match read {
-        Ok(Value::Object(state)) => state,
-        Ok(_) => return refuse("fake_state", &format!("{path} holds no object"), 2),
-        Err(e) => return refuse("fake_state", &format!("{path}: {e}"), 2),
+    let mut state = match load(&path) {
+        Ok(state) => state,
+        Err(e) => return refuse("fake_state", &e, 2),
     };
-    for key in ["tabs", "panes"] {
-        if !state.get(key).is_some_and(Value::is_array) {
-            state.insert(key.into(), json!([]));
-        }
-    }
     let result = match answer(argv, &words, &mut state) {
         Answer::Result(result) => result,
+        Answer::Kept(result) => {
+            println!("{}", json!({"id": "fake", "result": result}));
+            return 0;
+        }
         Answer::Text(text) => {
             println!("{text}");
             return 0;
@@ -82,26 +84,37 @@ fn run(argv: &[String]) -> i32 {
         // Native startup waits for the pane to become interactive, not merely for process creation.
         // Reads/keys run beside this blocked call, just as with the real Herdr client.
         let started = std::time::Instant::now();
+        let id = flag(argv, "--pane").unwrap_or("");
+        if count("FAKE_HERDR_START_SAYS_PENDING") > 0 {
+            // For a test that presses keys itself: the chooser is saved, so its presses reach it.
+            println!("pending {id}");
+        }
         loop {
-            let current: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
-            let pane = current["panes"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .find(|pane| pane["pane_id"].as_str() == flag(argv, "--pane"));
-            if let Some(pane) = pane {
-                if let Some(choice) = pane["confirmed_choice"].as_u64() {
-                    if choice != 3 {
-                        return refuse(
-                            "unsafe_choice",
-                            "startup trusted hooks or opened their review",
-                            1,
-                        );
-                    }
-                    break;
-                }
-            } else {
+            let mut now = match load(&path) {
+                Ok(now) => now,
+                Err(e) => return refuse("fake_state", &e, 2),
+            };
+            let Some(pane) = pane_mut(&mut now, id) else {
                 return refuse("pane_not_found", "startup pane disappeared", 1);
+            };
+            let view = match seen(pane) {
+                Ok(view) => view,
+                Err(e) => return refuse("fake_state", &e, 2),
+            };
+            if let Some(choice) = view.get("confirmed_choice").and_then(Value::as_u64) {
+                // The presses wrote nothing: the confirmed pane is saved here, before the answer.
+                *pane = view;
+                if let Err(e) = save(&path, &now) {
+                    return refuse("fake_state", &e, 2);
+                }
+                if choice != 3 {
+                    return refuse(
+                        "unsafe_choice",
+                        "startup trusted hooks or opened their review",
+                        1,
+                    );
+                }
+                break;
             }
             let wait_ms = count("FAKE_HERDR_START_WAIT_MS");
             let wait_ms = if wait_ms == 0 { 10_000 } else { wait_ms };
@@ -115,6 +128,22 @@ fn run(argv: &[String]) -> i32 {
     0
 }
 
+/// The state `path` holds, with its `tabs` and `panes` lists, empty when it has none.
+fn load(path: &str) -> Result<Map<String, Value>, String> {
+    let text = std::fs::read_to_string(path).map_err(|e| format!("{path}: {e}"))?;
+    let mut state = match serde_json::from_str::<Value>(&text) {
+        Ok(Value::Object(state)) => state,
+        Ok(_) => return Err(format!("{path} holds no object")),
+        Err(e) => return Err(format!("{path}: {e}")),
+    };
+    for key in ["tabs", "panes"] {
+        if !state.get(key).is_some_and(Value::is_array) {
+            state.insert(key.into(), json!([]));
+        }
+    }
+    Ok(state)
+}
+
 /// Write the state whole, by a rename, so a call running beside this one never reads half of it.
 fn save(path: &str, state: &Map<String, Value>) -> Result<(), String> {
     let tmp = format!("{path}.{}.tmp", std::process::id());
@@ -123,8 +152,85 @@ fn save(path: &str, state: &Map<String, Value>) -> Result<(), String> {
         .map_err(|e| format!("cannot write {path}: {e}"))
 }
 
+/// The presses pane `id`'s startup chooser received, one JSON list of keys per line, beside the state.
+fn keys_file(id: &str) -> String {
+    format!("{}.{id}.keys", var("FAKE_HERDR_STATE"))
+}
+
+fn pending(pane: &Map<String, Value>) -> bool {
+    pane.get("launch_pending").and_then(Value::as_bool) == Some(true)
+}
+
+/// Whether the pane shows a startup chooser no press has confirmed yet: the only one keys reach.
+fn choosing(pane: &Map<String, Value>) -> bool {
+    pending(pane) && !pane.contains_key("confirmed_choice")
+}
+
+/// The pane as herdr shows it: a startup chooser with the presses it received replayed over what its
+/// start saved, up to the one that confirms it; any other pane, a confirmed one its start saved
+/// included, as the state holds it.
+fn seen(pane: &Map<String, Value>) -> Result<Map<String, Value>, String> {
+    let mut view = pane.clone();
+    if !choosing(pane) {
+        return Ok(view);
+    }
+    let path = keys_file(pane.get("pane_id").and_then(Value::as_str).unwrap_or(""));
+    let presses = std::fs::read_to_string(&path).map_err(|e| format!("{path}: {e}"))?;
+    for line in presses.lines() {
+        if !choosing(&view) {
+            break;
+        }
+        let keys: Vec<String> = serde_json::from_str(line).map_err(|e| format!("{path}: {e}"))?;
+        press(&mut view, &keys)?;
+    }
+    Ok(view)
+}
+
+/// `keys` pressed on a startup chooser: down and up move the selection, enter confirms it and closes
+/// the chooser to the keys after it, and confirming "Continue without trusting" leaves the agent's
+/// prompt ready. An unknown key is an error, and the caller keeps none of the press.
+fn press(pane: &mut Map<String, Value>, keys: &[impl AsRef<str>]) -> Result<(), String> {
+    let mut selection = pane["startup_selection"].as_u64().unwrap();
+    for key in keys {
+        match key.as_ref() {
+            "down" => {
+                if count("FAKE_HERDR_DROP_DOWN") > 0
+                    && pane.get("dropped_down").and_then(Value::as_bool) != Some(true)
+                {
+                    pane.insert("dropped_down".into(), json!(true));
+                } else {
+                    selection = selection % 3 + 1;
+                }
+            }
+            "up" => selection = (selection + 1) % 3 + 1,
+            "enter" => {
+                pane.insert("confirmed_choice".into(), json!(selection));
+                if selection == 3 {
+                    pane.insert("screen".into(), json!("› Ask Codex to do anything"));
+                    pane.insert("agent_status".into(), json!("idle"));
+                    pane.insert("interactive_ready".into(), json!(true));
+                    pane.insert("launch_pending".into(), json!(false));
+                }
+                break;
+            }
+            key => return Err(format!("unknown startup key {key}")),
+        }
+    }
+    pane.insert("startup_selection".into(), json!(selection));
+    if pending(pane) {
+        let screen = pane["screen"].as_str().unwrap_or("").replace('›', " ");
+        pane.insert(
+            "screen".into(),
+            json!(screen.replace(&format!("  {selection}."), &format!("› {selection}."))),
+        );
+    }
+    Ok(())
+}
+
 enum Answer {
     Result(Value),
+    /// A result, the state left as it was.
+    Kept(Value),
     /// Printed as it is, the state left as it was.
     Text(String),
     Refused(&'static str, String, i32),
@@ -216,6 +322,10 @@ fn answer(argv: &[String], words: &str, state: &mut Map<String, Value>) -> Answe
             let Some(pane) = pane_mut(state, arg(2)) else {
                 return no_pane(arg(2));
             };
+            let pane = match seen(pane) {
+                Ok(pane) => pane,
+                Err(e) => return Answer::Refused("fake_state", e, 2),
+            };
             let mut shown = pane
                 .get("screen")
                 .and_then(Value::as_str)
@@ -300,6 +410,15 @@ fn answer(argv: &[String], words: &str, state: &mut Map<String, Value>) -> Answe
                     "screen".into(),
                     json!(std::fs::read_to_string(screen).unwrap()),
                 );
+                // A new chooser has received no press: its keys file is made here, outside the 2 s
+                // a press is given, and an earlier start's answer is gone.
+                for left in ["confirmed_choice", "dropped_down", "interactive_ready"] {
+                    pane.remove(left);
+                }
+                let keys = keys_file(target);
+                if let Err(e) = std::fs::write(&keys, "") {
+                    return Answer::Refused("fake_state", format!("cannot write {keys}: {e}"), 2);
+                }
                 pane.insert(
                     "agent_session".into(),
                     json!({"agent":"codex", "kind":"id", "value":"startup-probe-session"}),
@@ -346,48 +465,28 @@ fn answer(argv: &[String], words: &str, state: &mut Map<String, Value>) -> Answe
             let Some(pane) = pane_mut(state, arg(2)) else {
                 return no_pane(arg(2));
             };
-            if pane.get("launch_pending").and_then(Value::as_bool) == Some(true) {
-                let mut selection = pane["startup_selection"].as_u64().unwrap();
-                for key in &keys {
-                    match *key {
-                        "down" => {
-                            if count("FAKE_HERDR_DROP_DOWN") > 0
-                                && pane.get("dropped_down").and_then(Value::as_bool) != Some(true)
-                            {
-                                pane.insert("dropped_down".into(), json!(true));
-                            } else {
-                                selection = selection % 3 + 1;
-                            }
-                        }
-                        "up" => selection = (selection + 1) % 3 + 1,
-                        "enter" => {
-                            pane.insert("confirmed_choice".into(), json!(selection));
-                            if selection == 3 {
-                                pane.insert("screen".into(), json!("› Ask Codex to do anything"));
-                                pane.insert("agent_status".into(), json!("idle"));
-                                pane.insert("interactive_ready".into(), json!(true));
-                                pane.insert("launch_pending".into(), json!(false));
-                            }
-                        }
-                        _ => {
-                            return Answer::Refused(
-                                "unsupported",
-                                format!("unknown startup key {key}"),
-                                2,
-                            );
-                        }
-                    }
+            if choosing(pane) {
+                // The chooser takes them as one line of its keys file, checked against it as it
+                // stands; the state stays as it was, as a read leaves it.
+                let mut view = match seen(pane) {
+                    Ok(view) => view,
+                    Err(e) => return Answer::Refused("fake_state", e, 2),
+                };
+                if choosing(&view)
+                    && let Err(why) = press(&mut view, &keys)
+                {
+                    return Answer::Refused("unsupported", why, 2);
                 }
-                pane.insert("startup_selection".into(), json!(selection));
-                if pane.get("launch_pending").and_then(Value::as_bool) == Some(true) {
-                    let screen = pane["screen"].as_str().unwrap_or("").replace('›', " ");
-                    pane.insert(
-                        "screen".into(),
-                        json!(
-                            screen.replace(&format!("  {selection}."), &format!("› {selection}."))
-                        ),
-                    );
+                let path = keys_file(arg(2));
+                let line = format!("{}\n", json!(keys));
+                let written = std::fs::OpenOptions::new()
+                    .append(true)
+                    .open(&path)
+                    .and_then(|mut file| file.write_all(line.as_bytes()));
+                if let Err(e) = written {
+                    return Answer::Refused("fake_state", format!("cannot write {path}: {e}"), 2);
                 }
+                return Answer::Kept(json!({"type": "keys_sent"}));
             }
             let typed = pane
                 .get("input")

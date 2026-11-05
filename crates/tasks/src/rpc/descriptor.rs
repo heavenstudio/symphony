@@ -1,4 +1,6 @@
-//! Failure evidence only: borrow a socket, never take ownership of its descriptor number.
+//! Failure evidence only. At connect the client's own new socket is read on its own number, the
+//! stream taken and given back, no copy of it made or closed; at a failure the number is read
+//! through a borrowed copy, never taking ownership of a number that may no longer be the client's.
 
 use std::fs::File;
 use std::io;
@@ -27,16 +29,20 @@ enum Observation {
 fn inspect(fd: BorrowedFd<'_>) -> Observation {
     // Cloning borrows the original and gives File exactly one newly owned descriptor. Its
     // metadata is fstat on that duplicate, observing the original's file description at clone.
-    let copy = match fd.try_clone_to_owned() {
-        Ok(copy) => File::from(copy),
-        Err(error) if bad_descriptor(&error) => return Observation::Closed,
-        Err(error) => return Observation::Unknown(error.to_string()),
-    };
-    let metadata = copy.metadata();
+    match fd.try_clone_to_owned() {
+        Ok(copy) => observed(File::from(copy)).0,
+        Err(error) if bad_descriptor(&error) => Observation::Closed,
+        Err(error) => Observation::Unknown(error.to_string()),
+    }
+}
+
+/// What `file`'s descriptor holds, and the descriptor back as a stream.
+fn observed(file: File) -> (Observation, TcpStream) {
+    let metadata = file.metadata();
     // Endpoint reads must observe that same held description, not an original fd which another
     // component might replace between the stat and getsockname/getpeername calls.
-    let socket = TcpStream::from(OwnedFd::from(copy));
-    match metadata {
+    let socket = TcpStream::from(OwnedFd::from(file));
+    let observation = match metadata {
         Ok(meta) => Observation::Open {
             device: meta.dev(),
             inode: meta.ino(),
@@ -45,7 +51,8 @@ fn inspect(fd: BorrowedFd<'_>) -> Observation {
             peer: socket.peer_addr().map_err(|error| error.to_string()),
         },
         Err(error) => Observation::Unknown(error.to_string()),
-    }
+    };
+    (observation, socket)
 }
 
 #[derive(Debug)]
@@ -55,15 +62,51 @@ pub(super) struct Descriptor {
 }
 
 impl Descriptor {
-    pub(super) fn connected(stream: &TcpStream) -> Self {
-        Self {
-            number: stream.as_raw_fd(),
-            connected: inspect(stream.as_fd()),
-        }
+    /// `stream`, the client's own new socket, read on its own number and given back: a copy closed
+    /// here is one more close that a process reading it could turn into a drain.
+    pub(super) fn connected(stream: TcpStream) -> (Self, TcpStream) {
+        let number = stream.as_raw_fd();
+        let (connected, stream) = observed(File::from(OwnedFd::from(stream)));
+        (Self { number, connected }, stream)
     }
 
     pub(super) fn failure(&self, stream: &TcpStream) -> String {
         self.describe(inspect(stream.as_fd()))
+    }
+
+    /// Whether `stream`'s number still holds the socket it held at connect, as read now: the same
+    /// ends, said as such; else the evidence of what it holds.
+    pub(super) fn recheck(&self, stream: &TcpStream) -> Result<String, String> {
+        self.judge(inspect(stream.as_fd()))
+    }
+
+    /// The same socket: open, a socket, the same stat, and both ends read and unchanged. A peer
+    /// that no longer reads as one, or any end that cannot be read, is not proof of it.
+    fn judge(&self, current: Observation) -> Result<String, String> {
+        match (&self.connected, &current) {
+            (
+                Observation::Open {
+                    device,
+                    inode,
+                    socket: true,
+                    local: Ok(local),
+                    peer: Ok(peer),
+                },
+                Observation::Open {
+                    device: now_device,
+                    inode: now_inode,
+                    socket: true,
+                    local: Ok(now_local),
+                    peer: Ok(now_peer),
+                },
+            ) if (device, inode, local, peer) == (now_device, now_inode, now_local, now_peer) => {
+                Ok(format!(
+                    "descriptor fd={} still holds its socket, both ends as at connect: local {local}, peer {peer}",
+                    self.number
+                ))
+            }
+            _ => Err(self.describe(current)),
+        }
     }
 
     fn describe(&self, current: Observation) -> String {
@@ -148,8 +191,10 @@ mod tests {
     fn evidence_borrows_the_socket_and_compares_each_identity_outcome() {
         use std::io::{Read, Write};
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let (mut socket, mut peer) = connect(&listener);
-        let evidence = Descriptor::connected(&socket);
+        let (socket, mut peer) = connect(&listener);
+        let number = socket.as_raw_fd();
+        let (evidence, mut socket) = Descriptor::connected(socket);
+        assert_eq!((evidence.number, socket.as_raw_fd()), (number, number));
         assert!(matches!(evidence.connected, Observation::Open { .. }));
         let same = evidence.failure(&socket);
         assert!(
@@ -167,6 +212,16 @@ mod tests {
             (socket.local_addr().unwrap(), socket.peer_addr().unwrap()),
             (other.local_addr().unwrap(), other.peer_addr().unwrap())
         );
+        assert_eq!(
+            evidence.recheck(&socket),
+            Ok(format!(
+                "descriptor fd={number} still holds its socket, both ends as at connect: local {}, peer {}",
+                socket.local_addr().unwrap(),
+                socket.peer_addr().unwrap()
+            ))
+        );
+        let another = evidence.recheck(&other).unwrap_err();
+        assert!(another.contains("state=replaced"), "{another}");
         let replaced = evidence.failure(&other);
         assert!(replaced.contains("state=replaced"), "{replaced}");
         assert!(replaced.contains("local: Ok"), "{replaced}");
@@ -201,7 +256,7 @@ mod tests {
     #[test]
     fn file_type_proves_replacement_even_when_stat_is_uninformative() {
         let (socket, _peer) = pair();
-        let mut evidence = Descriptor::connected(&socket);
+        let (mut evidence, socket) = Descriptor::connected(socket);
         evidence.connected = Observation::Open {
             device: 0,
             inode: 0,
@@ -225,7 +280,7 @@ mod tests {
     fn a_listeners_changed_local_address_proves_replacement_despite_its_peer_error() {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let (socket, _peer) = connect(&listener);
-        let evidence = Descriptor::connected(&socket);
+        let (evidence, socket) = Descriptor::connected(socket);
         assert_ne!(socket.local_addr().unwrap(), listener.local_addr().unwrap());
         let observed = inspect(listener.as_fd());
         assert!(matches!(
@@ -236,7 +291,7 @@ mod tests {
                 ..
             }
         ));
-        let text = evidence.describe(observed);
+        let text = evidence.judge(observed).unwrap_err();
         assert!(text.contains("state=replaced"), "{text}");
         assert!(
             text.contains(&io::Error::from_raw_os_error(libc::ENOTCONN).to_string()),
@@ -248,7 +303,9 @@ mod tests {
             panic!("socket must be open");
         };
         *peer = Err("peer lookup unavailable".into());
-        let text = evidence.describe(unavailable);
+        let text = evidence
+            .judge(unavailable)
+            .expect_err("an unread end proves nothing");
         assert!(text.contains("state=identity-unknown"), "{text}");
         assert!(text.contains("peer lookup unavailable"), "{text}");
     }

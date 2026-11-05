@@ -324,7 +324,11 @@ pub fn snapshot(
             answered += u32::from(answered_today);
         }
     }
-    let order = tree::index_order(root, "docs");
+    let order: Vec<String> = crate::project::Project::of(root)
+        .entrypoints
+        .iter()
+        .flat_map(|entry| tree::index_order(root, &entry.url))
+        .collect();
     let mut pending = Pending {
         docs: order.clone(),
         items: Vec::new(),

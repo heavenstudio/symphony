@@ -1029,8 +1029,8 @@ mod tests {
         use super::{Answer, Control, answer};
         use std::io::{ErrorKind, Read};
         use std::os::fd::AsRawFd;
-        use std::process::{Child, Command, Stdio};
         use std::sync::atomic::{AtomicBool, Ordering};
+        use tasks::sys::{Child, Command, Stdio};
 
         /// Children killed and reaped however the test ends.
         struct Children(Vec<Child>);
@@ -1045,8 +1045,9 @@ mod tests {
 
         let spawned = AtomicBool::new(false);
         std::thread::scope(|scope| {
-            // Children outliving every handover, spawned beside its pipes' making, as a build or a
-            // board command is spawned beside a reload.
+            // Children outliving every handover, spawned beside its pipes' making through the
+            // helpers, as a build or a board command is spawned beside a reload. A std spawn that
+            // skips the lock could keep a real pipe's first ends for its life.
             let other = scope.spawn(|| {
                 let mut children = Children(Vec::new());
                 for _ in 0..32 {
@@ -1064,9 +1065,9 @@ mod tests {
             });
             // Handovers made back to back, so the racers' spawns fall while pairs are being made.
             // Each generation's ends go at once, as a replacement or a parent that dies does. A
-            // racer mid-spawn holds a copy until its exec closes it, no longer, so an end not yet
-            // answered is kept and asked again once every racer has started: waiting for it here
-            // would leave the spawns that start meanwhile unraced.
+            // racer never keeps a copy past its exec, so an end not yet answered is kept and asked
+            // again once every racer has started: waiting for it here would leave the spawns that
+            // start meanwhile unraced.
             let mut handovers = 0;
             let mut held = Vec::new();
             while !spawned.load(Ordering::Relaxed) {

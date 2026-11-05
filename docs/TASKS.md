@@ -376,7 +376,14 @@ Symphony's approve-to-land button, or relayed), a waiver, or a stamp someone
 produces going missing. A role holder may move blocked work back to review, and
 so may the owner; a command run by a session with no role on the task says the
 move it could not make, and leaves it to the next run by a role holder. A
-landing finishes work still held blocked as it does work in review.
+landing finishes work still held blocked as it does work in review. It
+refuses work in progress, but finishes a task taken back to `in_progress`
+after its last read of it, as main moved: that branch is on main, so the
+landing tells its executor that further changes go in a new task. No other
+command closes work in progress. `landed` takes the statuses this landing
+closes (`from`; review and blocked when it names none) and checks them against
+the status its write reads; its answer names the one it found, and a close from
+`in_progress` addresses the verdict to `@executor` in that write.
 
 A task that has posted a card for the owner is lifted out of its column into
 a **Waiting for your sign-off** lane above the board. That needs all of:

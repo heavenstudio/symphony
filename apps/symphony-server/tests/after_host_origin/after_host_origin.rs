@@ -11,7 +11,7 @@ use std::time::{Duration, Instant};
 use symphony_server::front::{Shared, router};
 use symphony_server::gate::Gate;
 use tasks::port::Start;
-use tasks::sys::{Child, Command};
+use tasks::sys::{Child, Command, Spawning as _};
 
 pub struct Fixture {
     root: PathBuf,
@@ -181,7 +181,7 @@ impl Fixture {
             let notice = root.join("finish.notice");
             let done = std::process::Command::new("mkfifo")
                 .arg(&notice)
-                .status()
+                .status_locked()
                 .unwrap();
             assert!(done.success(), "mkfifo {}: {done}", notice.display());
             // Each call is recorded, then noticed with a line on the FIFO (`Fixture::notices`).
@@ -558,7 +558,7 @@ printf '%s\n' '{"Self":{"DNSName":"review-fixture.tail.test.","TailscaleIPs":["f
         if !path.exists() {
             let done = std::process::Command::new("mkfifo")
                 .arg(&path)
-                .status()
+                .status_locked()
                 .unwrap();
             assert!(done.success(), "mkfifo {}: {done}", path.display());
         }

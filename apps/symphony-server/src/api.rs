@@ -13,6 +13,9 @@ use serde_json::json;
 use crate::front::Shared;
 use crate::live::Hub;
 
+mod warm;
+pub(crate) use warm::{start, warm};
+
 /// Where a plugin's routes answer: `/x/<route>/<rest>`.
 const PLUGIN_ROUTES: &str = "/x/";
 
@@ -46,34 +49,6 @@ const READS: &[&str] = &[
 
 type Request = axum::http::Request<()>;
 
-pub(crate) async fn warm(shared: &Arc<Shared>) -> Result<Arc<Hub>, String> {
-    if !shared.stopping()
-        && let Some(hub) = shared.api.get()
-    {
-        return Ok(hub.clone());
-    }
-    let shared = shared.clone();
-    tokio::task::spawn_blocking(move || {
-        let _held = shared.lifecycle.lock().unwrap_or_else(|e| e.into_inner());
-        if shared.stopping() {
-            return Err("the Symphony server is stopping".into());
-        }
-        if let Some(hub) = shared.api.get() {
-            return Ok(hub.clone());
-        }
-        // Only --home servers hold the shared lease. A preview must never send the owner's
-        // journal to its board, even when that board is a copied scratch database.
-        let hub = Hub::start(&shared.root, &shared.ui_dist, shared.installed_ui)?;
-        assert!(
-            shared.api.set(hub.clone()).is_ok(),
-            "hub startup is serialized"
-        );
-        Ok(hub)
-    })
-    .await
-    .map_err(|e| e.to_string())?
-}
-
 pub(crate) async fn answer(shared: &Arc<Shared>, request: Request) -> Option<Response> {
     let Some(decoded) = decode_path(request.uri().path()) else {
         return Some(error(StatusCode::BAD_REQUEST, "invalid URL path"));
@@ -106,7 +81,7 @@ pub(crate) async fn answer(shared: &Arc<Shared>, request: Request) -> Option<Res
             .and_then(|v| v.to_str().ok())
             .is_some_and(|s| s.contains("application/json"));
     let alias = if json_queue { None } else { legacy_page(path) };
-    let static_file = client_page(&nav_pages(&shared.root), path)
+    let static_file = client_page(&project_view(&shared.root), path)
         || path.starts_with("/assets/")
         || alias.is_some();
     // Typed document links can point to any project source or data file. Keep those raw downloads
@@ -650,13 +625,14 @@ fn document_response(
     {
         return error(StatusCode::BAD_REQUEST, "id must be a number");
     }
+    let project = symphony::project::Project::of(root);
     if !matches!(path, "/api/folder" | "/api/hulls" | "/api/ask")
-        && symphony::asks::check_path(rel).is_err()
+        && (symphony::asks::check_path(rel).is_err()
+            || project
+                .serving(rel)
+                .is_none_or(|(entry, inside)| !entry.page(inside)))
     {
-        return error(
-            StatusCode::BAD_REQUEST,
-            "path must be a markdown file under docs/",
-        );
+        return error(StatusCode::BAD_REQUEST, project.not_a_document());
     }
     if root
         .join(symphony::project::Project::of(root).file(rel))
@@ -1257,7 +1233,7 @@ fn typed_anchors(value: &serde_json::Value) -> Vec<String> {
 }
 
 async fn static_response(shared: &Shared, path: &str, request: &Request) -> Response {
-    let relative = if client_page(&nav_pages(&shared.root), path) {
+    let relative = if client_page(&project_view(&shared.root), path) {
         "index.html"
     } else {
         path.trim_start_matches('/')
@@ -1367,24 +1343,22 @@ fn client_unbuilt(shared: &Shared) -> Response {
     )
 }
 
-/// The client pages the navigation of the project at `root` opens (`/hulls`).
-pub(crate) fn nav_pages(root: &Path) -> Vec<String> {
-    symphony::plugins::Plugins::of(root)
-        .nav()
-        .into_iter()
-        .map(|item| item.href.trim_end_matches('/').to_string())
-        .collect()
+/// The project at `root` as the client reads it: its navigation (`/hulls`) and its entrypoints.
+pub(crate) fn project_view(root: &Path) -> symphony_api::ProjectView {
+    symphony::project::Project::of(root).view()
 }
 
-/// Whether `path` is a page the client draws: its own, or one of `nav`, the project's.
-pub(crate) fn client_page(nav: &[String], path: &str) -> bool {
+/// Whether `path` is a page the client draws: its own, one of the project's navigation pages, or
+/// a document or folder page of one of its entrypoints.
+pub(crate) fn client_page(project: &symphony_api::ProjectView, path: &str) -> bool {
     let page = path.trim_end_matches('/');
     matches!(page, "" | "/tasks" | "/agents" | "/queue")
-        || nav.iter().any(|nav| nav == page)
+        || project
+            .nav
+            .iter()
+            .any(|nav| nav.href.trim_end_matches('/') == page)
         || path.starts_with("/task/")
-        || (path.trim_end_matches('/') == "/docs" || path.starts_with("/docs/"))
-            && (Path::new(path.trim_end_matches('/')).extension().is_none()
-                || path.ends_with(".md"))
+        || project.is_document_route(path.trim_start_matches('/'))
 }
 
 /// Compatibility shell prefixes and version pages redirect to the document view.
@@ -1420,6 +1394,44 @@ fn encode_location(path: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_client_draws_the_symphonys_pages_and_each_entrypoints_documents() {
+        let convention = symphony_api::ProjectView {
+            nav: vec![symphony_api::NavItem {
+                label: "⬡ hulls".into(),
+                title: "Hull models".into(),
+                href: "/hulls".into(),
+                document: "docs/ships/HULLS.md".into(),
+            }],
+            ..symphony_api::ProjectView::default()
+        };
+        let root = symphony_api::ProjectView {
+            entrypoints: vec![String::new()],
+            ..convention.clone()
+        };
+        for (path, by_convention, at_root) in [
+            ("/", true, true),
+            ("/tasks", true, true),
+            ("/task/tools/x", true, true),
+            ("/hulls/", true, true),
+            ("/docs/", true, true),
+            ("/docs/game/SPEC.md", true, true),
+            ("/index.md", false, true),
+            ("/guide/", false, true),
+            ("/docs/v1.0/", true, true),
+            ("/docs/v1.0", false, false),
+            ("/v1.0/", false, true),
+            ("/tasks/", true, true),
+            ("/api/", false, false),
+            ("/art/a.png", false, false),
+            ("/api/document", false, false),
+            ("/assets/app.js", false, false),
+        ] {
+            assert_eq!(client_page(&convention, path), by_convention, "{path}");
+            assert_eq!(client_page(&root, path), at_root, "{path} at /");
+        }
+    }
 
     #[test]
     fn document_feed_defers_bodies_and_reserves_only_current_anchors() {
