@@ -1,7 +1,4 @@
-//! Validate every repository settings file against its declared schema.
-
-use std::collections::{BTreeMap, BTreeSet};
-use std::path::{Path, PathBuf};
+//! The schema check: each keyword of the draft, enforced, and each problem in the words it gives.
 
 use serde_json::{Value, json};
 use symphony::schema::{Schema, SchemaError, validate};
@@ -255,7 +252,7 @@ fn dependent_required_and_not() {
 // --- the lines ---
 //
 // The crate judges; each problem of a core keyword is written in Python's terms, in the lines
-// `content --check`, `ship_art --check` and `just relationships` print.
+// `content --check`, `lamp_picture --check` and `just relationships` print.
 
 #[test]
 fn a_wrong_type_reads_expected_and_got_with_python_s_type_names() {
@@ -422,10 +419,10 @@ fn an_integer_is_written_without_a_fraction_as_python_read_it() {
     for text in ["1", "1.0", "1.5"] {
         assert!(valid(&parsed(text), &json!({"type": "number"})), "{text}");
     }
-    let hull =
+    let lamp =
         json!({"type": "object", "properties": {"beam_m": {"type": "integer", "minimum": 0}}});
     assert_eq!(
-        errors(&parsed(r#"{"beam_m": 181.0}"#), &hull),
+        errors(&parsed(r#"{"beam_m": 181.0}"#), &lamp),
         ["$.beam_m: expected integer, got float"]
     );
     // Under `not` too: 1.0 is not an integer, so it does not match the forbidden schema.
@@ -626,149 +623,5 @@ fn a_misspelt_keyword_is_the_only_one_named() {
     assert_eq!(
         refused(&in_defs).0,
         "unsupported keyword(s): minItem (at $.$defs.row.items)"
-    );
-}
-
-// --- the repository's own files ---
-
-fn repo() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..")
-}
-
-fn read_json(path: &Path) -> Value {
-    let text = std::fs::read_to_string(path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
-    serde_json::from_str(&text).unwrap_or_else(|e| panic!("{}: {e}", path.display()))
-}
-
-/// Every `.json` under `dir`, recursively, sorted.
-fn json_files(dir: &Path) -> Vec<PathBuf> {
-    let mut found = Vec::new();
-    let mut folders = vec![dir.to_path_buf()];
-    while let Some(folder) = folders.pop() {
-        for entry in std::fs::read_dir(&folder).unwrap() {
-            let path = entry.unwrap().path();
-            if path.is_dir() {
-                folders.push(path);
-            } else if path.extension().is_some_and(|e| e == "json") {
-                found.push(path);
-            }
-        }
-    }
-    found.sort();
-    found
-}
-
-// The verdict on every file the repository checks against a schema (`just relationships`,
-// `screens --check`, `ship_art --check`, `content --check`, the hull outline check): all valid.
-// Split three ways, so the harness runs them side by side; the hull outlines, 12 MB of notes, also
-// share their files out.
-
-/// Each file of `files` that names its schema by a relative `$schema`, checked against it; the names
-/// of the schemas used.
-fn check_named(files: &[PathBuf]) -> BTreeSet<String> {
-    let mut compiled: BTreeMap<PathBuf, Schema> = BTreeMap::new();
-    let mut used = BTreeSet::new();
-    for path in files {
-        let data = read_json(path);
-        let Some(named) = data.get("$schema").and_then(Value::as_str) else {
-            continue;
-        };
-        if named.starts_with("https://") {
-            continue; // a schema itself, checked against the draft when it is used
-        }
-        let schema_path = path.parent().unwrap().join(named).canonicalize().unwrap();
-        let schema = compiled
-            .entry(schema_path.clone())
-            .or_insert_with(|| Schema::compile(&read_json(&schema_path)).unwrap());
-        let found = schema.errors(&data);
-        assert!(found.is_empty(), "{}: {found:?}", path.display());
-        used.insert(
-            schema_path
-                .file_name()
-                .unwrap()
-                .to_string_lossy()
-                .to_string(),
-        );
-    }
-    used
-}
-
-const OUTLINES: &str = "docs/data/hull-outlines";
-
-#[test]
-fn every_settings_file_matches_the_schema_it_names_as_python_found() {
-    let outlines = repo().join(OUTLINES);
-    let files: Vec<PathBuf> = json_files(&repo().join("docs/data"))
-        .into_iter()
-        .filter(|path| !path.starts_with(&outlines))
-        .collect();
-    let mut used = check_named(&files);
-    used.insert("hull-outline-notes.schema.json".to_string()); // the next test's
-    for schema in json_files(&repo().join("docs/data/schemas")) {
-        let name = schema.file_name().unwrap().to_string_lossy().to_string();
-        assert!(used.contains(&name), "no file is checked against {name}");
-    }
-}
-
-#[test]
-fn every_hull_outline_note_matches_its_schema_as_python_found() {
-    let files = json_files(&repo().join(OUTLINES));
-    assert!(files.len() > 100, "{} notes", files.len());
-    let used: BTreeSet<String> = std::thread::scope(|scope| {
-        let shares: Vec<_> = files
-            .chunks(files.len().div_ceil(4))
-            .map(|share| scope.spawn(|| check_named(share)))
-            .collect();
-        shares
-            .into_iter()
-            .flat_map(|share| share.join().unwrap())
-            .collect()
-    });
-    assert_eq!(
-        used,
-        BTreeSet::from(["hull-outline-notes.schema.json".to_string()])
-    );
-}
-
-#[test]
-fn every_content_file_matches_its_folder_s_schema_as_python_found() {
-    for (folder, name) in [
-        ("classes", "class"),
-        ("factions", "faction"),
-        ("subfactions", "subfaction"),
-        ("hulls", "hull"),
-        ("hull_stats", "hull_stats"),
-        ("class_stats", "class_stats"),
-        ("role_stats", "role_stats"),
-        ("gear", "gear"),
-    ] {
-        let schema_path = repo().join(format!("content/schemas/{name}.schema.json"));
-        let schema = Schema::compile(&read_json(&schema_path)).unwrap();
-        let files = json_files(&repo().join("content").join(folder));
-        assert!(!files.is_empty(), "content/{folder} holds no file");
-        for path in files {
-            let found = schema.errors(&read_json(&path));
-            assert!(found.is_empty(), "{}: {found:?}", path.display());
-        }
-    }
-}
-
-#[test]
-fn gear_schema_types_and_component_icon_keys_agree_in_both_directions() {
-    let catalogue = read_json(&repo().join("symphony/crates/symphony/src/star_foundry/icons.json"));
-    let schema = read_json(&repo().join("content/schemas/gear.schema.json"));
-    let icons = catalogue["gear"].as_array().unwrap();
-    let types = schema["properties"]["type"]["enum"].as_array().unwrap();
-    let icon_keys: BTreeSet<_> = icons
-        .iter()
-        .map(|icon| icon["key"].as_str().unwrap())
-        .collect();
-    let type_keys: BTreeSet<_> = types.iter().map(|value| value.as_str().unwrap()).collect();
-    assert!(!icon_keys.is_empty());
-    assert_eq!(icon_keys.len(), icons.len(), "duplicate gear icon keys");
-    assert_eq!(type_keys.len(), types.len(), "duplicate gear schema types");
-    assert_eq!(
-        icon_keys, type_keys,
-        "gear icons and content schema types must match"
     );
 }

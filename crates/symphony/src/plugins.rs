@@ -1,14 +1,15 @@
-//! The plugins a project uses: of the plugins compiled into this build, the ones its
-//! `symphony.toml` names (`[plugins] crates`), in that order. Every seam is asked through
+//! The plugins a project uses: of the plugins this process holds, the ones its `symphony.toml`
+//! names (`[plugins] crates`), in that order. A host binary compiles in the plugins it lists and
+//! [`install`]s that list before anything reads a project; every seam is asked through
 //! [`Plugins`], so the Symphony's own code names no plugin.
 
 use std::path::Path;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use symphony_plugin::vocabulary::{Block, NavItem, Picture, Presentation, Span};
 use symphony_plugin::{
-    BoardAction, BoardField, Card, CardKind, Component, DocCheck, Generator, HomeRegion, Page,
-    Plugin, ProseRule, Route, ThreadLine, Watch,
+    BoardAction, BoardField, Card, CardKind, Command, Component, DocCheck, Generator, HomeRegion,
+    Page, Plugin, ProseRule, Route, ThreadLine, Watch,
 };
 
 pub use symphony_plugin::Reply;
@@ -16,9 +17,53 @@ pub use symphony_plugin::Reply;
 use crate::project::Project;
 use crate::register::{Decision, Who};
 
-/// Every plugin this build holds.
-pub fn compiled() -> Vec<&'static dyn Plugin> {
-    vec![&crate::star_foundry::PLUGIN]
+static COMPILED: OnceLock<&'static [&'static dyn Plugin]> = OnceLock::new();
+
+/// Makes `plugins` the ones this process holds, for good: a host installs its list before it reads
+/// a project. Installing the same plugin values again changes nothing; another list is refused,
+/// naming the plugins already held, and so is another value under a name already held.
+pub fn install(plugins: &'static [&'static dyn Plugin]) -> Result<(), String> {
+    let held = COMPILED.get_or_init(|| plugins);
+    let names = |list: &[&dyn Plugin]| {
+        list.iter()
+            .map(|p| p.name().to_string())
+            .collect::<Vec<_>>()
+    };
+    // A value is its place and its type's table of methods: a plugin with no fields has no place of
+    // its own, so its table tells it from another. The same list read twice holds the same pointers.
+    let same = std::ptr::eq(*held, plugins)
+        || (held.len() == plugins.len()
+            && held
+                .iter()
+                .zip(plugins)
+                .all(|(held, given)| std::ptr::eq(*held, *given)));
+    if same {
+        Ok(())
+    } else if names(held) == names(plugins) {
+        Err(format!(
+            "this process already holds the plugins [{}]; another value of the same names cannot replace them",
+            names(held).join(", ")
+        ))
+    } else {
+        Err(format!(
+            "this process already holds the plugins [{}]; it cannot hold [{}] instead",
+            names(held).join(", "),
+            names(plugins).join(", ")
+        ))
+    }
+}
+
+/// Every plugin this process holds: the list its host installed, none before.
+pub fn compiled() -> &'static [&'static dyn Plugin] {
+    COMPILED.get().copied().unwrap_or_default()
+}
+
+/// Every command the plugins this process holds add to the `symphony` binary, in their order.
+pub fn commands() -> Vec<&'static dyn Command> {
+    compiled()
+        .iter()
+        .flat_map(|plugin| plugin.commands())
+        .collect()
 }
 
 /// A project's plugins.
@@ -276,12 +321,20 @@ pub fn with_card<R>(decision: &Decision, doc: &str, read: impl FnOnce(&Card<'_>)
 /// What the project's card kinds say of a card: a kind is read from the card's own text, wherever
 /// it sits, and only the kinds of the plugins the project names read it.
 impl Plugins {
-    /// The slot a picture card fills (`Republic · ship`), as the first card kind that names one
+    /// The slot a picture card fills (`North · cover`), as the first card kind that names one
     /// says.
     pub fn slot(&self, decision: &Decision) -> Option<String> {
         with_card(decision, "", |card| {
             self.card_kinds().iter().find_map(|kind| kind.slot(card))
         })
+    }
+
+    /// The markers every card kind of these plugins reads in a card's text, by name.
+    pub fn markers(&self) -> Vec<&str> {
+        self.card_kinds()
+            .into_iter()
+            .flat_map(|kind| kind.markers().iter().copied())
+            .collect()
     }
 
     /// The pictures the board shows on `decision`, a card of `doc` in the checkout at `root`.
@@ -310,6 +363,19 @@ impl Plugins {
             self.card_kinds()
                 .iter()
                 .find_map(|kind| kind.triage_category(card))
+        })
+    }
+
+    /// The letter of the candidate an approval of `decision` chose, as the first kind to answer
+    /// says, or why its thread cannot be read.
+    pub fn chosen(&self, decision: &Decision) -> Result<Option<String>, String> {
+        with_card(decision, "", |card| {
+            for kind in self.card_kinds() {
+                if let Some(letter) = kind.chosen(card)? {
+                    return Ok(Some(letter));
+                }
+            }
+            Ok(None)
         })
     }
 

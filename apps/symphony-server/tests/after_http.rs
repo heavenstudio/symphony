@@ -18,9 +18,10 @@ use std::net::{SocketAddr, TcpStream};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+use symphony_board::sys::Command;
 use symphony_server::front::{Shared, router};
 use symphony_server::gate::Gate;
-use tasks::sys::Command;
+use symphony_server::shelf;
 
 const CHILD: &str = "SF_AFTER_HTTP_CHILD";
 const LIMIT: Duration = Duration::from_secs(30);
@@ -36,7 +37,7 @@ fn repository(root: &Path, args: &[&str]) -> String {
             command.env_remove(key);
         }
     }
-    let done = tasks::sys::output(
+    let done = symphony_board::sys::output(
         command
             .args(args)
             .current_dir(root)
@@ -66,20 +67,12 @@ fn fixture() -> tree::Tree {
     repository(&root, &["config", "core.hooksPath", "/dev/null"]);
     write(&root, "docs/TOPIC.md", DOC);
     write(&root, "docs/OTHER.md", "# Other\n");
+    write(&root, "symphony.toml", shelf::MANIFEST);
+    write(&root, shelf::DOC, "# Shelf\n\n[[shelf:all]]\n");
     write(
         &root,
-        "symphony.toml",
-        "[plugins]\ncrates = [\"star-foundry-symphony\"]\n",
-    );
-    write(
-        &root,
-        "docs/ships/HULLS.md",
-        "# Hulls\n\n[[hull-gallery:all]]\n",
-    );
-    write(
-        &root,
-        "view/models/hulls/A.glb",
-        b"glTF fixture A".repeat(300),
+        "room/shelf/items/A.item",
+        b"item fixture A".repeat(300),
     );
     write(&root, "artifacts/raw.svg", "<svg>private fixture</svg>");
     write(
@@ -152,7 +145,7 @@ fn run_on(test: &str, made: fn() -> tree::Tree, exercise: fn(&Fixture)) {
         let began = Instant::now();
         let tree = made();
         let client = board::client();
-        let done = tasks::sys::output(
+        let done = symphony_board::sys::output(
             Command::new(std::env::current_exe().unwrap())
                 .args(["--exact", test, "--nocapture"])
                 .env(CHILD, &tree.root)
@@ -184,8 +177,7 @@ fn run_on(test: &str, made: fn() -> tree::Tree, exercise: fn(&Fixture)) {
             out.contains("1 passed"),
             "exact child filter ran no assertions: {out}"
         );
-        if test == "watcher_refreshes_documents_without_gallery_work_and_models_only_in_their_tree"
-        {
+        if test == "watcher_refreshes_documents_without_gallery_work_and_items_only_in_their_tree" {
             let phases: Vec<_> = err
                 .split(PHASE)
                 .skip(1)
@@ -194,14 +186,14 @@ fn run_on(test: &str, made: fn() -> tree::Tree, exercise: fn(&Fixture)) {
                         phase.lines().next().unwrap(),
                         phase
                             .lines()
-                            .filter(|line| line.starts_with("→ hull gallery warmed:"))
+                            .filter(|line| line.starts_with("→ shelf warmed:"))
                             .collect::<Vec<_>>(),
                     )
                 })
                 .collect();
             assert_eq!(
                 phases.iter().map(|(name, _)| *name).collect::<Vec<_>>(),
-                ["document", "branch model", "root model", "finished"],
+                ["document", "branch item", "root item", "finished"],
                 "{err}"
             );
             assert!(
@@ -211,14 +203,14 @@ fn run_on(test: &str, made: fn() -> tree::Tree, exercise: fn(&Fixture)) {
             for (index, root) in [(1, tree.path("branch")), (2, tree.path("repo"))] {
                 assert!(
                     !phases[index].1.is_empty(),
-                    "model edit never warmed a gallery: {err}"
+                    "an item edit never warmed a gallery: {err}"
                 );
                 assert!(
                     phases[index]
                         .1
                         .iter()
                         .all(|line| line.contains(&format!("{}:", root.display()))),
-                    "model refresh warmed its neighbour: {err}"
+                    "an item refresh warmed its neighbour: {err}"
                 );
             }
             assert!(
@@ -232,6 +224,8 @@ fn run_on(test: &str, made: fn() -> tree::Tree, exercise: fn(&Fixture)) {
         );
         return;
     }
+    // The child serves the shelf as a host serves its plugins.
+    shelf::install().unwrap();
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)
         .enable_all()
@@ -367,7 +361,7 @@ impl Fixture {
     }
     fn feed(&self, scope: &str) -> Feed {
         let document = self
-            .get(&format!("{scope}/api/document?path=docs/ships/HULLS.md"))
+            .get(&format!("{scope}/api/document?path=docs/SHELF.md"))
             .status(200)
             .json();
         let document_path: String = document["path"]
@@ -459,7 +453,7 @@ fn manual_fixture() -> tree::Tree {
     );
     write(&root, "manual/TOPIC.md", DOC);
     write(&root, "manual/OTHER.md", "# Other\n");
-    write(&root, "manual/art/a.png", b"PNG in the manual");
+    write(&root, "manual/pictures/a.png", b"PNG in the manual");
     write(&root, "docs/TOPIC.md", "# Stray\n");
     repository(&root, &["add", "."]);
     repository(&root, &["commit", "-qm", "Manual fixtures"]);
@@ -483,7 +477,7 @@ fn manual_routes(f: &Fixture) {
     let versions = f.get("/api/versions?path=docs/TOPIC.md").status(200).json();
     assert_eq!(versions["versions"].as_array().unwrap().len(), 1);
     assert_eq!(
-        f.get("/docs/art/a.png").status(200).body,
+        f.get("/docs/pictures/a.png").status(200).body,
         b"PNG in the manual"
     );
     let decision = json!({"path":"docs/TOPIC.md", "slug":"one", "state":"approved", "note":"saved in the manual"});
@@ -646,8 +640,8 @@ fn later_order(f: &Fixture) {
     );
     write(
         &f.root,
-        "docs/ships/HULLS.md",
-        "# Hulls\n\nCorrupt preference recovery\n",
+        "docs/SHELF.md",
+        "# Shelf\n\nCorrupt preference recovery\n",
     );
     feed.until("Corrupt preference recovery");
     assert_eq!(
@@ -725,7 +719,7 @@ fn contracts(f: &Fixture) {
         json!({
             "name": f.root.file_name().unwrap().to_str().unwrap(),
             "register": "docs/DECISIONS.md",
-            "nav": [{"label": "⬡ hulls", "title": "Hull models", "href": "/hulls", "document": "docs/ships/HULLS.md"}],
+            "nav": [{"label": "▤ shelf", "title": "Shelf items", "href": "/shelf", "document": "docs/SHELF.md"}],
             "entrypoints": ["docs"],
         })
     );
@@ -736,7 +730,7 @@ fn contracts(f: &Fixture) {
         "/tasks",
         "/agents",
         "/queue",
-        "/hulls/",
+        "/shelf/",
         "/task/fixture/one",
         "/docs/TOPIC.md",
         "/docs",
@@ -774,7 +768,6 @@ fn contracts(f: &Fixture) {
         .status(404);
     f.get("/@work~http/api/document?path=%40other%2Fdocs%2FTOPIC.md")
         .status(400);
-    f.get("/api/hulls").status(410);
     client_decodes_document_reads(f);
     for route in [
         "/",
@@ -782,8 +775,8 @@ fn contracts(f: &Fixture) {
         "/api/board",
         "/assets/app-dxh123.js",
         "/artifacts/raw.svg",
-        "/view/models/hulls/A.glb",
-        "/x/hulls/A.glb",
+        "/room/shelf/items/A.item",
+        "/x/shelf/A.item",
     ] {
         let get = f.get(route).status(200);
         let head = f.request("HEAD", route, &[], &[]).status(200);
@@ -804,8 +797,8 @@ fn contracts(f: &Fixture) {
     for route in [
         "/",
         "/assets/app-dxh123.js",
-        "/view/models/hulls/A.glb",
-        "/x/hulls/A.glb",
+        "/room/shelf/items/A.item",
+        "/x/shelf/A.item",
         "/artifacts/raw.svg",
     ] {
         let get = f.get(route).status(200);
@@ -889,8 +882,8 @@ fn contracts(f: &Fixture) {
         DOCUMENT,
         "/api/board",
         "/artifacts/large.svg",
-        "/view/models/hulls/A.glb",
-        "/x/hulls/A.glb",
+        "/room/shelf/items/A.item",
+        "/x/shelf/A.item",
     ] {
         let get = if route == "/" {
             &compressed
@@ -935,14 +928,14 @@ fn contracts(f: &Fixture) {
         cached.headers.get("content-length"),
         cached_get.headers.get("content-length")
     );
-    let mut decoder = tasks::sys::spawn_piped(Command::new("gzip").arg("-dc")).unwrap();
+    let mut decoder = symphony_board::sys::spawn_piped(Command::new("gzip").arg("-dc")).unwrap();
     let mut input = decoder.stdin.take().unwrap();
     let body = &compressed.body;
     // Written beside the read: gzip answers while it reads, and a pipe holds only so much. The
     // writer moves into its thread, so gzip reads its end when the write is done.
     let decoded = std::thread::scope(|scope| {
         let written = scope.spawn(move || input.write_all(body));
-        let decoded = tasks::sys::wait_output(decoder).unwrap();
+        let decoded = symphony_board::sys::wait_output(decoder).unwrap();
         written.join().unwrap().unwrap();
         decoded
     });
@@ -1030,7 +1023,7 @@ fn contracts(f: &Fixture) {
 /// client's own types.
 fn client_decodes_document_reads(f: &Fixture) {
     for scope in ["", SCOPE] {
-        for path in ["docs/ships/HULLS.md", "docs/TOPIC.md"] {
+        for path in ["docs/SHELF.md", "docs/TOPIC.md"] {
             let outline = f
                 .get(&format!("{scope}/api/document?path={path}&view=outline"))
                 .status(200);
@@ -1063,10 +1056,10 @@ fn client_decodes_document_reads(f: &Fixture) {
 fn media_refusals_and_thumbnail(f: &Fixture) {
     std::os::unix::fs::symlink(
         f.root.parent().unwrap().join("outside.svg"),
-        f.root.join("view/models/hulls/outside.glb"),
+        f.root.join("room/shelf/items/outside.item"),
     )
     .unwrap();
-    std::fs::create_dir(f.root.join("view/models/hulls/directory.glb")).unwrap();
+    std::fs::create_dir(f.root.join("room/shelf/items/directory.item")).unwrap();
     for route in ["/bad%", "/bad%GG", "/bad%FF"] {
         f.get(route).status(400);
     }
@@ -1081,16 +1074,16 @@ fn media_refusals_and_thumbnail(f: &Fixture) {
         "/artifacts/%2E%2E/%2E%2E/outside.svg",
         "/artifacts/missing.svg",
         "/data",
-        "/view/models/hulls/outside.glb",
-        "/view/models/hulls/directory.glb",
-        "/view/models/hulls/missing.glb",
-        "/view/models/hulls/%2E%2E/outside.glb",
-        "/x/hulls/outside.glb",
-        "/x/hulls/directory.glb",
-        "/x/hulls/missing.glb",
-        "/x/hulls/%2E%2E/outside.glb",
-        "/x/hulls/",
-        "/x/unknown/A.glb",
+        "/room/shelf/items/outside.item",
+        "/room/shelf/items/directory.item",
+        "/room/shelf/items/missing.item",
+        "/room/shelf/items/%2E%2E/outside.item",
+        "/x/shelf/outside.item",
+        "/x/shelf/directory.item",
+        "/x/shelf/missing.item",
+        "/x/shelf/%2E%2E/outside.item",
+        "/x/shelf/",
+        "/x/unknown/A.item",
         "/api/document?path=docs/METADATA.md",
         "/thumb/400/stale/artifacts/metadata.png.jpg",
         "/thumb/400/stale/artifacts/outside.svg.jpg",
@@ -1213,9 +1206,9 @@ fn persistence(f: &Fixture) {
         "HTTP question <tag>\n\n(sent from /@work~http/docs/TOPIC.md#one)"
     );
     assert!(stored.messages.iter().any(|m| m.text == "Owner follow-up"));
-    let store = tasks::cli::connect(&tasks::cli::Env::of_process()).unwrap();
+    let store = symphony_board::cli::connect(&symphony_board::cli::Env::of_process()).unwrap();
     let orchestrator = store
-        .register(&tasks::NewSession::new("orchestrator"))
+        .register(&symphony_board::NewSession::new("orchestrator"))
         .unwrap()
         .row
         .handle;
@@ -1256,7 +1249,7 @@ fn marks(text: &str) -> Vec<usize> {
 /// A long brief's task page sends a part of it, and `/api/task-brief` the rest, a chunk at a time,
 /// all of one revision, so the owner reaches every line of it.
 fn task_pages(f: &Fixture) {
-    let store = tasks::cli::connect(&tasks::cli::Env::of_process()).unwrap();
+    let store = symphony_board::cli::connect(&symphony_board::cli::Env::of_process()).unwrap();
     let mut body = String::new();
     let mut lines = 0;
     while body.len() < 400_000 {
@@ -1264,15 +1257,15 @@ fn task_pages(f: &Fixture) {
         lines += 1;
     }
     store
-        .create(&tasks::NewTask {
+        .create(&symphony_board::NewTask {
             body: body.clone(),
-            ..tasks::NewTask::new("fixture/long-brief", "Long brief", "owner")
+            ..symphony_board::NewTask::new("fixture/long-brief", "Long brief", "owner")
         })
         .unwrap();
     store
-        .create(&tasks::NewTask {
+        .create(&symphony_board::NewTask {
             parent: Some("fixture/long-brief".into()),
-            ..tasks::NewTask::new("fixture/long-brief-step", "A step", "owner")
+            ..symphony_board::NewTask::new("fixture/long-brief-step", "A step", "owner")
         })
         .unwrap();
     let page = f
@@ -1484,49 +1477,49 @@ fn installed_client_failure_names_stop_and_restart_from_main() {
 }
 
 #[test]
-fn watcher_refreshes_documents_without_gallery_work_and_models_only_in_their_tree() {
+fn watcher_refreshes_documents_without_gallery_work_and_items_only_in_their_tree() {
     run(
-        "watcher_refreshes_documents_without_gallery_work_and_models_only_in_their_tree",
+        "watcher_refreshes_documents_without_gallery_work_and_items_only_in_their_tree",
         watcher,
     );
 }
 
 fn gallery(f: &Fixture, scope: &str) -> String {
-    f.get(&format!("{scope}/api/document?path=docs/ships/HULLS.md"))
+    f.get(&format!("{scope}/api/document?path=docs/SHELF.md"))
         .status(200)
         .text()
         .to_string()
 }
 
 fn watcher(f: &Fixture) {
-    assert!(gallery(f, "").contains("A.glb"));
-    assert!(gallery(f, SCOPE).contains("A.glb"));
+    assert!(gallery(f, "").contains("A.item"));
+    assert!(gallery(f, SCOPE).contains("A.item"));
     let mut root_feed = f.feed("");
     let mut branch_feed = f.feed(SCOPE);
     eprintln!("{PHASE}document");
     write(
         &f.root,
-        "docs/ships/HULLS.md",
-        "# Hulls\n\nDocument refresh handshake\n\n[[hull-gallery:all]]\n",
+        "docs/SHELF.md",
+        "# Shelf\n\nDocument refresh handshake\n\n[[shelf:all]]\n",
     );
     root_feed.until("Document refresh handshake");
     assert!(gallery(f, "").contains("Document refresh handshake"));
-    assert!(gallery(f, SCOPE).contains("A.glb"));
-    eprintln!("{PHASE}branch model");
+    assert!(gallery(f, SCOPE).contains("A.item"));
+    eprintln!("{PHASE}branch item");
     write(
         &f.root.parent().unwrap().join("branch"),
-        "view/models/hulls/BRANCH.glb",
-        b"branch model",
+        "room/shelf/items/BRANCH.item",
+        b"branch item",
     );
-    branch_feed.until("BRANCH.glb");
-    assert!(gallery(f, SCOPE).contains("BRANCH.glb"));
-    assert!(!gallery(f, "").contains("BRANCH.glb"));
+    branch_feed.until("BRANCH.item");
+    assert!(gallery(f, SCOPE).contains("BRANCH.item"));
+    assert!(!gallery(f, "").contains("BRANCH.item"));
     // A document edit can replace section keys. Subscribe to its current viewport for this edit.
     root_feed = f.feed("");
-    eprintln!("{PHASE}root model");
-    write(&f.root, "view/models/hulls/ROOT.glb", b"root model");
-    root_feed.until("ROOT.glb");
-    assert!(gallery(f, "").contains("ROOT.glb"));
-    assert!(!gallery(f, SCOPE).contains("ROOT.glb"));
+    eprintln!("{PHASE}root item");
+    write(&f.root, "room/shelf/items/ROOT.item", b"root item");
+    root_feed.until("ROOT.item");
+    assert!(gallery(f, "").contains("ROOT.item"));
+    assert!(!gallery(f, SCOPE).contains("ROOT.item"));
     eprintln!("{PHASE}finished");
 }

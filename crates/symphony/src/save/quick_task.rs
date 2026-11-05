@@ -5,5 +5,5 @@ mod outcome;
 mod receipt;
 
 pub(super) use journal::{identity, load, reserve};
-pub(super) use outcome::{Attempt, create, pending};
+pub(super) use outcome::{Attempt, create, pending, recover};
 pub(super) use receipt::Receipt;

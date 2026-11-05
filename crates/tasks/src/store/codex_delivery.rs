@@ -112,7 +112,7 @@ pub(super) fn steer(thread: &str, text: &str) -> Result<bool, DeliveryError> {
             1,
             "initialize",
             json!({
-                "clientInfo":{"name":"star-foundry-tasks", "version":env!("CARGO_PKG_VERSION")},
+                "clientInfo":{"name":"symphony-board", "version":env!("CARGO_PKG_VERSION")},
                 "capabilities":{"experimentalApi":true}
             }),
         )?;

@@ -10,6 +10,11 @@ struct PageContext {
     anchor: String,
 }
 
+enum Filing {
+    Saved(String),
+    New(Box<symphony_board::NewTask>),
+}
+
 impl Saves {
     /// Apply a quick save with its page context and any already recorded task intent.
     pub(super) fn quick(
@@ -80,15 +85,22 @@ impl Saves {
             };
         }
         if !receipt.fresh {
-            return Err(Failure {
-                status: 422,
-                error: "This task save stopped before dispatch; your text is kept for another try"
-                    .into(),
-            });
+            return match self.store() {
+                Ok(store) => match quick_task::recover(&store, &receipt.fingerprint) {
+                    Ok(Some(saved)) => Ok(saved),
+                    Ok(None) => Err(Failure { status: 422,
+                        error: "This task save stopped before dispatch; your text is kept for another try".into() }),
+                    Err(error) => Ok(quick_task::pending(&error.error)),
+                },
+                Err(error) => Ok(quick_task::pending(&error.error)),
+            };
         }
         let context = self.quick_context(scope, payload)?;
         let store = self.store().map_err(before_dispatch)?;
-        let new = self.quick_task_fields(payload, context, &store)?;
+        let new = match self.quick_task_fields(payload, context, &store, &receipt.fingerprint)? {
+            Filing::Saved(slug) => return Ok(json!({"slug":slug})),
+            Filing::New(new) => new,
+        };
         let record = quick_task::reserve(&self.root, identity, scope, payload, &new)
             .map_err(before_dispatch)?;
         quick_task::create(
@@ -103,8 +115,9 @@ impl Saves {
         &self,
         payload: &Value,
         context: PageContext,
-        store: &tasks::Store,
-    ) -> Result<tasks::NewTask, Failure> {
+        store: &symphony_board::Store,
+        fingerprint: &str,
+    ) -> Result<Filing, Failure> {
         let PageContext { page, doc, anchor } = context;
         let title = string(payload, "title").trim();
         let mut slug = string(payload, "slug").trim().to_string();
@@ -128,11 +141,14 @@ impl Saves {
             let mut n = 1;
             loop {
                 match store.get(&slug) {
+                    Ok(task) if crate::taskview::is_quick_task(&task, fingerprint) => {
+                        return Ok(Filing::Saved(task.slug));
+                    }
                     Ok(_) => {
                         n += 1;
                         slug = format!("{base}-{n}");
                     }
-                    Err(tasks::Error::Refused(_)) => break,
+                    Err(symphony_board::Error::Refused(_)) => break,
                     Err(e) => return Err(before_dispatch(e.into())),
                 }
             }
@@ -152,7 +168,7 @@ impl Saves {
                 .or_else(|| payload["priority"].as_str().and_then(|s| s.parse().ok()))
                 .ok_or("priority must be a number".to_string())?
         };
-        Ok(tasks::NewTask {
+        Ok(Filing::New(Box::new(symphony_board::NewTask {
             slug,
             title: title.into(),
             body,
@@ -168,8 +184,8 @@ impl Saves {
                     format!("{doc}#{anchor}")
                 }]
             },
-            ..tasks::NewTask::default()
-        })
+            ..symphony_board::NewTask::default()
+        })))
     }
 
     fn quick_context(&self, scope: &str, payload: &Value) -> Result<PageContext, Failure> {

@@ -9,13 +9,13 @@ use symphony_api::{ActivityItem, Message, Role, Session, Task, TaskCounts, Tasks
 
 use crate::{clock, dashboard, render::Render};
 
-pub fn snapshot(store: &tasks::Store) -> Result<(Tasks, i64), tasks::Error> {
+pub fn snapshot(store: &symphony_board::Store) -> Result<(Tasks, i64), symphony_board::Error> {
     let board = store.board()?;
     Ok(snapshot_board(&board))
 }
 
 /// Project one shared board read into the wire snapshot, preserving its message cursor.
-pub fn snapshot_board(board: &tasks::Board) -> (Tasks, i64) {
+pub fn snapshot_board(board: &symphony_board::Board) -> (Tasks, i64) {
     let tasks: Vec<Task> = board.tasks.iter().map(task).collect();
     let sessions: Vec<Session> = board.sessions.iter().map(session).collect();
     // A version is opaque. Include every field the API returns, plus the last message, so a body,
@@ -57,7 +57,7 @@ pub fn counts(board: &Tasks) -> TaskCounts {
 }
 
 pub fn signoff(
-    store: &tasks::Store,
+    store: &symphony_board::Store,
     tasks: &[Task],
     pending: &symphony_api::Pending,
 ) -> Result<Vec<String>, String> {
@@ -100,7 +100,7 @@ pub fn signoff(
     Ok(result)
 }
 
-fn role(r: &tasks::Role) -> Role {
+fn role(r: &symphony_board::Role) -> Role {
     Role {
         handle: r.handle.clone(),
         role: r.role.clone(),
@@ -110,7 +110,7 @@ fn role(r: &tasks::Role) -> Role {
     }
 }
 
-fn task(t: &tasks::Task) -> Task {
+fn task(t: &symphony_board::Task) -> Task {
     Task {
         slug: t.slug.clone(),
         title: t.title.clone(),
@@ -148,15 +148,16 @@ fn brief_part(
     from: usize,
     limit: usize,
 ) -> (Vec<symphony_api::Block>, usize) {
-    let (fragment, next) = render.typed_reply_part(body, task_doc(), from, limit, BRIEF_LIMIT);
+    let (fragment, next) =
+        render.typed_reply_part(body, &task_doc(render), from, limit, BRIEF_LIMIT);
     (typed_blocks(fragment, render), next)
 }
 
 /// The page of `record`, already read by the caller. Children are counted from the rows right under
 /// it: reading every descendant would load the whole board for a number.
 pub fn page(
-    store: &tasks::Store,
-    record: &tasks::Task,
+    store: &symphony_board::Store,
+    record: &symphony_board::Task,
     root: &Path,
 ) -> Result<symphony_api::TaskPage, String> {
     let (blocks, brief_next) = brief_part(&Render::new(root), &record.body, 0, BRIEF_LIMIT);
@@ -178,7 +179,7 @@ pub fn page(
 
 /// The next part of the brief of `record` from byte `from`, for the owner who asks for what the
 /// page left out.
-pub fn brief(record: &tasks::Task, from: usize, root: &Path) -> symphony_api::TaskBrief {
+pub fn brief(record: &symphony_board::Task, from: usize, root: &Path) -> symphony_api::TaskBrief {
     let (blocks, next) = brief_part(&Render::new(root), &record.body, from, BRIEF_CHUNK);
     symphony_api::TaskBrief {
         blocks,
@@ -192,7 +193,7 @@ pub fn brief(record: &tasks::Task, from: usize, root: &Path) -> symphony_api::Ta
 /// status: each action decides which work it offers on. Requested only when the owner reaches the
 /// message/approval controls: preparing an offer must not delay the task's metadata and brief.
 pub fn owner_offer(
-    store: &tasks::Store,
+    store: &symphony_board::Store,
     plugins: &crate::plugins::Plugins,
     slug: &str,
     root: &Path,
@@ -219,9 +220,9 @@ pub fn owner_offer(
 /// A task slug can differ from its branch when an ancestor already names a branch. Review
 /// requests name their target in their brief; ordinary work uses its recorded executor branch.
 pub(crate) fn approval_branch(
-    store: &tasks::Store,
-    task: &tasks::Task,
-) -> Result<String, tasks::Error> {
+    store: &symphony_board::Store,
+    task: &symphony_board::Task,
+) -> Result<String, symphony_board::Error> {
     if let Some(branch) = task
         .body
         .trim_start()
@@ -243,12 +244,12 @@ pub(crate) fn approval_branch(
 }
 
 pub fn history(
-    store: &tasks::Store,
+    store: &symphony_board::Store,
     slug: &str,
     before: Option<i64>,
     after: Option<i64>,
     root: &Path,
-) -> Result<symphony_api::TaskHistory, tasks::Error> {
+) -> Result<symphony_api::TaskHistory, symphony_board::Error> {
     store.get(slug)?;
     let all = store.thread(slug)?;
     let selected: Vec<_> = all
@@ -292,7 +293,7 @@ pub fn entry(message: &Message, render: &Render) -> symphony_api::TaskEntry {
         Vec::new()
     } else if message.sender == "owner" {
         if crate::uploads::has_reference(&message.text) {
-            typed_blocks(render.typed_owner(&message.text, task_doc()), render)
+            typed_blocks(render.typed_owner(&message.text, &task_doc(render)), render)
         } else {
             Vec::new()
         }
@@ -306,26 +307,29 @@ pub fn entry(message: &Message, render: &Render) -> symphony_api::TaskEntry {
     }
 }
 
-/// Task text links and pictures resolve as on the board's own page.
-fn task_doc() -> &'static str {
-    docs_index::doc::WORKFLOW_TASKS.path()
+/// Task text links and pictures resolve as on the board's guide (`[board] guide`).
+fn task_doc(render: &Render) -> String {
+    crate::project::Project::of(render.root())
+        .board
+        .guide()
+        .to_string()
 }
 
 fn reply_blocks(render: &Render, text: &str) -> Vec<symphony_api::Block> {
-    typed_blocks(render.typed_reply(text, task_doc()), render)
+    typed_blocks(render.typed_reply(text, &task_doc(render)), render)
 }
 
 fn typed_blocks(
     mut fragment: crate::render::Fragment,
     render: &Render,
 ) -> Vec<symphony_api::Block> {
-    let path = task_doc();
+    let path = &task_doc(render);
     let mut media = std::mem::take(&mut fragment.media);
     crate::docview::prepare_fragment(&mut fragment.html, &mut media, render.root(), path, "");
     crate::blocks::parse(&fragment.html, &media, path)
 }
 
-fn session(s: &tasks::Session) -> Session {
+fn session(s: &symphony_board::Session) -> Session {
     let r = &s.row;
     Session {
         handle: r.handle.clone(),
@@ -349,7 +353,7 @@ fn session(s: &tasks::Session) -> Session {
     }
 }
 
-pub fn message(m: &tasks::Message) -> Message {
+pub fn message(m: &symphony_board::Message) -> Message {
     Message {
         id: m.id,
         slug: m.slug.clone(),
@@ -370,7 +374,7 @@ fn stamp(seconds: f64) -> String {
     clock::stamp_at(seconds as libc::time_t)
 }
 
-pub fn activity(store: &tasks::Store) -> Result<Vec<ActivityItem>, tasks::Error> {
+pub fn activity(store: &symphony_board::Store) -> Result<Vec<ActivityItem>, symphony_board::Error> {
     let said = store.to_owner(40)?;
     let slugs = said
         .iter()
@@ -400,32 +404,33 @@ pub fn activity(store: &tasks::Store) -> Result<Vec<ActivityItem>, tasks::Error>
         .collect())
 }
 
-pub fn connect(root: &Path) -> Result<tasks::Store, String> {
-    let mut env = tasks::cli::Env::of_process();
+pub fn connect(root: &Path) -> Result<symphony_board::Store, String> {
+    let mut env = symphony_board::cli::Env::of_process();
     env.cwd = root.to_path_buf();
     // A read-only web request is never a board session or a launcher.
     env.vars.remove("TASKS_SESSION");
-    let client = tasks::cli::board_client(&env)?.waiting(std::time::Duration::from_secs(3));
+    let client =
+        symphony_board::cli::board_client(&env)?.waiting(std::time::Duration::from_secs(3));
     if let Some(text) = env.vars.get("TASKS_NOW") {
         let now = text
             .parse::<f64>()
             .ok()
             .filter(|n| n.is_finite())
             .ok_or_else(|| format!("TASKS_NOW={text} is not a time in seconds"))?;
-        tasks::Store::with(
+        symphony_board::Store::with(
             client,
             Box::new(move || now),
-            Box::new(tasks::sys::pid_alive),
-            &tasks::sys::hostname(),
+            Box::new(symphony_board::sys::pid_alive),
+            &symphony_board::sys::hostname(),
         )
         .map_err(|e| e.to_string())
     } else {
-        tasks::Store::open(client).map_err(|e| e.to_string())
+        symphony_board::Store::open(client).map_err(|e| e.to_string())
     }
 }
 
 /// A quick-task outcome read must identify the owner's intended task before confirming it.
-pub(crate) fn is_quick_task(task: &tasks::Task, receipt: &str) -> bool {
+pub(crate) fn is_quick_task(task: &symphony_board::Task, receipt: &str) -> bool {
     task.created_by == "owner"
         && task
             .fields
@@ -435,45 +440,48 @@ pub(crate) fn is_quick_task(task: &tasks::Task, receipt: &str) -> bool {
             == Some(receipt)
 }
 
-pub fn agents(store: &tasks::Store, root: &Path) -> Result<symphony_api::Agents, String> {
-    let mut env = tasks::cli::Env::of_process();
+pub fn agents(store: &symphony_board::Store, root: &Path) -> Result<symphony_api::Agents, String> {
+    let mut env = symphony_board::cli::Env::of_process();
     env.cwd = root.to_path_buf();
-    agents_probed(store, &tasks::cli::probes::machine(&env), None)
+    agents_probed(store, &symphony_board::cli::probes::machine(&env), None)
 }
 
 pub fn agents_in(
-    store: &tasks::Store,
+    store: &symphony_board::Store,
     root: &Path,
     common: Option<&Path>,
-    board: &tasks::Board,
+    board: &symphony_board::Board,
 ) -> Result<symphony_api::Agents, String> {
-    let mut env = tasks::cli::Env::of_process();
+    let mut env = symphony_board::cli::Env::of_process();
     env.cwd = root.to_path_buf();
     let probes = match common {
-        Some(common) => tasks::cli::probes::machine_in(&env, common),
-        None => tasks::cli::probes::machine(&env),
+        Some(common) => symphony_board::cli::probes::machine_in(&env, common),
+        None => symphony_board::cli::probes::machine(&env),
     };
     agents_probed(store, &probes, Some(board))
 }
 
 fn agents_probed(
-    store: &tasks::Store,
-    probes: &tasks::cli::agents::Probes<'_>,
-    board: Option<&tasks::Board>,
+    store: &symphony_board::Store,
+    probes: &symphony_board::cli::agents::Probes<'_>,
+    board: Option<&symphony_board::Board>,
 ) -> Result<symphony_api::Agents, String> {
     let view = match board {
-        Some(board) => tasks::cli::agents::describe_board(store, probes, store.now(), false, board),
-        None => tasks::cli::agents::describe(store, probes, store.now(), false),
+        Some(board) => {
+            symphony_board::cli::agents::describe_board(store, probes, store.now(), false, board)
+        }
+        None => symphony_board::cli::agents::describe(store, probes, store.now(), false),
     }
     .map_err(|e| e.to_string())?;
-    serde_json::from_str(&tasks::pyjson::dumps_line(&view.json())).map_err(|e| e.to_string())
+    serde_json::from_str(&symphony_board::pyjson::dumps_line(&view.json()))
+        .map_err(|e| e.to_string())
 }
 
 /// Set the board field `name` on the task `slug`: the first of `plugins` declaring a field of that
 /// name (or `plugin.name`, naming the plugin) validates `value` before the board stores what it
 /// returns. Returns the plugin's name and the stored value.
 pub fn set_field(
-    store: &tasks::Store,
+    store: &symphony_board::Store,
     plugins: &crate::plugins::Plugins,
     slug: &str,
     name: &str,

@@ -22,8 +22,8 @@ pub(in crate::save) struct Record {
 }
 
 impl Record {
-    pub(in crate::save) fn task(&self) -> tasks::NewTask {
-        tasks::NewTask {
+    pub(in crate::save) fn task(&self) -> symphony_board::NewTask {
+        symphony_board::NewTask {
             slug: self.slug.clone(),
             title: self.title.clone(),
             body: self.body.clone(),
@@ -31,7 +31,7 @@ impl Record {
             links: self.links.clone(),
             by: "owner".into(),
             status: "concept".into(),
-            ..tasks::NewTask::default()
+            ..symphony_board::NewTask::default()
         }
     }
 }
@@ -60,6 +60,17 @@ pub(in crate::save) fn identity(payload: &Value) -> Result<String, Failure> {
 fn path(root: &Path, identity: &str) -> PathBuf {
     root.join("artifacts/symphony-quick-tasks")
         .join(format!("{identity}.json"))
+}
+
+/// Unreadable intent metadata is conservatively treated as a possible dispatch.
+pub(super) fn present(root: &Path, identity: &str) -> bool {
+    match std::fs::metadata(path(root, identity)) {
+        Ok(_) => true,
+        Err(error) => !matches!(
+            error.kind(),
+            std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory
+        ),
+    }
 }
 
 fn failure(path: &Path, error: impl std::fmt::Display) -> Failure {
@@ -95,7 +106,7 @@ pub(in crate::save) fn reserve(
     identity: &str,
     scope: &str,
     payload: &Value,
-    new: &tasks::NewTask,
+    new: &symphony_board::NewTask,
 ) -> Result<Record, Failure> {
     if let Some(record) = load(root, identity, scope, payload)? {
         return Ok(record);
@@ -163,14 +174,14 @@ mod tests {
         result.unwrap_or_else(|error| panic!("{}", error.error))
     }
 
-    fn task(slug: &str) -> tasks::NewTask {
-        tasks::NewTask {
+    fn task(slug: &str) -> symphony_board::NewTask {
+        symphony_board::NewTask {
             slug: slug.into(),
             title: "First owner task".into(),
             body: "Original resolved details".into(),
             priority: 1,
             links: vec!["docs/PROBE.md#probe".into()],
-            ..tasks::NewTask::default()
+            ..symphony_board::NewTask::default()
         }
     }
 

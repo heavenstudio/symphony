@@ -5,20 +5,48 @@ use std::path::Path;
 
 fn post(root: &Path, payload: &Value) -> Result<Value, symphony::save::Failure> {
     let saves = symphony::save::Saves::start(root);
-    let result = saves.post("", "/api/quick-task", payload);
+    let began = std::time::Instant::now();
+    let mut result = saves.post("", "/api/quick-task", payload);
+    while result.as_ref().is_ok_and(|value| value["pending"] == true)
+        || result.as_ref().is_err_and(|error| error.status == 503)
+    {
+        assert!(
+            began.elapsed() < super::LIMIT,
+            "concurrent save stayed uncertain"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        result = saves.post("", "/api/quick-task", payload);
+    }
     saves.close();
     result
 }
 
 pub(super) fn saves(root: &Path) {
-    for (case, second_id, second_body) in [
-        ("same-id", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "Same body"),
-        ("same-text", "cccccccccccccccccccccccccccccccc", "Same body"),
-        (
-            "other-text",
-            "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
-            "Other body",
-        ),
+    struct Case {
+        name: &'static str,
+        second_id: &'static str,
+        second_body: &'static str,
+    }
+    for Case {
+        name: case,
+        second_id,
+        second_body,
+    } in [
+        Case {
+            name: "same-id",
+            second_id: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            second_body: "Same body",
+        },
+        Case {
+            name: "same-text",
+            second_id: "cccccccccccccccccccccccccccccccc",
+            second_body: "Same body",
+        },
+        Case {
+            name: "other-text",
+            second_id: "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            second_body: "Other body",
+        },
     ] {
         let first_id = match case {
             "same-id" => "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",

@@ -4,8 +4,8 @@
 //!
 //! The SurrealDB board is the one `tasks-copy --board` reaches from here ([`crate::cli::board_client`]):
 //! this repository's own, unless `TASKS_SERVER` names another (a test's, a dry run's). Only this
-//! repository's own board moves into its own SurrealDB board: `star-foundry-tasks.db` in the git common
-//! dir, which `TASKS_DB` may name by another path or another name of its file. Whether a board is a
+//! repository's own board moves into its own SurrealDB board: `<project id>-tasks.db` in the git common
+//! dir ([`board_name`]), which `TASKS_DB` may name by another path or another name of its file. Whether a board is a
 //! repository's own is decided from where it is, wherever the run starts, and a repository's own board
 //! is refused any `TASKS_SERVER` (another would freeze it and mark it moved with its rows elsewhere);
 //! any other board moves only into a server `TASKS_SERVER` names, and never by a hard link. Whether a
@@ -33,9 +33,13 @@
 //! it recorded in SurrealDB holds it up only once that board has been written since, which nothing but a
 //! finished move lets happen.
 
+mod board_file;
+
 use crate::cli::{self, Env};
 use crate::rows::Dump;
 use crate::{Moved, Store, git, server, sys};
+pub use board_file::board_name;
+use board_file::{board_in, repository_board, same_file};
 use rusqlite::types::ValueRef;
 use rusqlite::{Connection, OpenFlags, TransactionBehavior};
 use serde_json::{Map, Value};
@@ -49,8 +53,6 @@ use std::time::Duration;
 /// What every write to the frozen SQLite board is refused with, from the freeze on: true whether the
 /// move has finished, is running or was cut short, which the binary, reading the marker, tells apart.
 pub const FROZEN: &str = "the task board is frozen for its move to SurrealDB: merge main, then run just tasks again, which says whether the move finished";
-/// The SQLite board in the git common dir (`tools/tasks_store.py`'s).
-pub const BOARD: &str = "star-foundry-tasks.db";
 const USAGE: &str = "usage: just tasks-cutover";
 /// The tables the move knows, with how it says them.
 const TABLES: [(&str, &str); 8] = [
@@ -104,7 +106,7 @@ pub fn board_path(env: &Env) -> Result<PathBuf, String> {
         return Ok(named.into());
     }
     let common = git::common_dir(&env.cwd).map_err(|e| format!("{e}; {IN_THE_REPOSITORY}"))?;
-    Ok(common.join(BOARD))
+    board_in(&common)
 }
 
 /// Move the SQLite board at `board` into the SurrealDB board `env` reaches, replacing what is there:
@@ -277,7 +279,9 @@ fn write_whole(path: &Path, bytes: &[u8]) -> io::Result<()> {
 /// copy), and never by another name of a file (a hard link), which may be a repository's board and is
 /// frozen with it. Every refusal comes before anything is locked, frozen or marked.
 fn own_board(board: &Path, env: &Env) -> Result<PathBuf, String> {
-    let here = git::common_dir(&env.cwd).map(|common| common.join(BOARD));
+    let here = git::common_dir(&env.cwd)
+        .map_err(|e| format!("{e}; {IN_THE_REPOSITORY}"))
+        .and_then(|common| board_in(&common));
     let theirs = repository_board(board, here.as_deref().ok());
     if let Some(named) = env.var("TASKS_SERVER") {
         if let Some(theirs) = theirs {
@@ -296,7 +300,7 @@ fn own_board(board: &Path, env: &Env) -> Result<PathBuf, String> {
             _ => Ok(board.into()),
         };
     }
-    let here = here.map_err(|e| format!("{e}; {IN_THE_REPOSITORY}"))?;
+    let here = here?;
     match theirs {
         Some(theirs) if same_file(&theirs, &here) => Ok(here),
         _ => Err(format!(
@@ -304,29 +308,6 @@ fn own_board(board: &Path, env: &Env) -> Result<PathBuf, String> {
             board.display(),
             here.display()
         )),
-    }
-}
-
-/// The repository's board `board` is, at its place in the git common dir: `star-foundry-tasks.db` in a
-/// repository's common dir, whatever path or link names it; or the board of the repository the run
-/// starts in, `here`, by another name of the same file. None for any other board.
-fn repository_board(board: &Path, here: Option<&Path>) -> Option<PathBuf> {
-    if let Ok(found) = fs::canonicalize(board)
-        && found.file_name() == Some(std::ffi::OsStr::new(BOARD))
-        && let Some(folder) = found.parent()
-        && git::common_dir(folder).is_ok_and(|common| common == folder)
-    {
-        return Some(found);
-    }
-    here.filter(|here| same_file(board, here))
-        .map(Path::to_path_buf)
-}
-
-/// Whether `a` and `b` are one file, by its device and inode, whatever paths or links name it.
-fn same_file(a: &Path, b: &Path) -> bool {
-    match (fs::metadata(a), fs::metadata(b)) {
-        (Ok(a), Ok(b)) => (a.dev(), a.ino()) == (b.dev(), b.ino()),
-        _ => false,
     }
 }
 

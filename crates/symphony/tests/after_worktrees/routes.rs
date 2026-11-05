@@ -10,11 +10,13 @@ pub(super) fn branch_card_in_project_folder() {
         |_| {
             let tree = repository();
             let file = "manual/DECISIONS.md";
-            // the candidates a card shows are drawn by Star Foundry's picture kind; the folder
-            // is spelled as a person may write it
+            // the candidates a card shows are drawn by the project's card kind; the folder is
+            // spelled as a person may write it
             tree.write(
                 "symphony.toml",
-                "[[entrypoints]]\nurl = \"/docs/\"\nfolder = \"./manual\"\n[plugins]\ncrates = [\"star-foundry-symphony\"]\n",
+                &crate::common::candidates::candidates(
+                    "[[entrypoints]]\nurl = \"/docs/\"\nfolder = \"./manual\"\n",
+                ),
             );
             tree.write(file, &register(&card("alpha")));
             commit(&tree.root, "base", 1);

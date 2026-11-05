@@ -2,7 +2,7 @@
 //! tree's own, which starts from a seed another tree made, its wasm32 builds among it). Cargo names a
 //! workspace crate's artifacts by its path inside the workspace, the same in every worktree, and judges
 //! them fresh by mtime, so in a folder holding another tree's wasm32 build, a tree whose sources are older
-//! would ship, or lint, that build. The host's guard (`cargo clean --workspace`) never reaches the wasm32
+//! would package, or lint, that build. The host's guard (`cargo clean --workspace`) never reaches the wasm32
 //! folders, so the client keeps a guard of its own, its record inside the folder.
 //!
 //! These run the real scripts with real cargo, on a build folder of their own, with stand-ins for dx

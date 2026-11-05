@@ -14,8 +14,8 @@ use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Write};
 use std::path::PathBuf;
 use std::rc::Rc;
-use tasks::health::{LIVE_SECONDS, STALE_SECONDS};
-use tasks::{NewLaunch, Store};
+use symphony_board::health::{LIVE_SECONDS, STALE_SECONDS};
+use symphony_board::{NewLaunch, NewTask, Store, cli, sys};
 
 /// Three-second polls past the lost line.
 const GONE_POLLS: usize = ((LIVE_SECONDS + STALE_SECONDS) / 3.0) as usize + 3;
@@ -227,7 +227,7 @@ impl Monitor {
             taken: 0,
         };
         let mut out = Vec::new();
-        let code = tasks::cli::main(&args, &env, &mut steps, &mut out, &mut Said(said.clone()));
+        let code = cli::main(&args, &env, &mut steps, &mut out, &mut Said(said.clone()));
         let said = String::from_utf8_lossy(&said.borrow()).into_owned();
         let errors: Vec<&str> = said.lines().filter(|l| !l.starts_with("STEP ")).collect();
         assert_eq!(code, 0, "{errors:?}");
@@ -604,7 +604,7 @@ fn new_ready_tasks_are_announced_to_orchestrators() {
     m.watch(&orch, Watch::polls(2), &|m, n| {
         if n == 0 {
             m.board()
-                .create(&tasks::NewTask::new("sim/new", "New", "owner"))
+                .create(&NewTask::new("sim/new", "New", "owner"))
                 .unwrap();
         }
     });
@@ -642,7 +642,7 @@ fn attach_registers_and_prints_the_handle_first() {
     let s = m.board().session(handle).unwrap().row;
     assert_eq!(
         (s.kind.as_str(), s.worktree.as_str(), s.host),
-        ("worker", m.repo.to_str().unwrap(), tasks::sys::hostname())
+        ("worker", m.repo.to_str().unwrap(), sys::hostname())
     );
     assert!(s.pid.is_some());
 }

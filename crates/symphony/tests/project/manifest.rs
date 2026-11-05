@@ -3,7 +3,6 @@
 
 use std::path::Path;
 
-use symphony::landing::Generator;
 use symphony::lint::project_problems;
 use symphony::project::{Entrypoint, FILE, PANES, Project, TRANSPORTS, slug};
 
@@ -356,7 +355,7 @@ fn an_id_a_pane_a_branch_or_a_generator_that_cannot_work_is_refused() {
 #[test]
 fn a_name_becomes_an_id_of_lowercase_letters_digits_and_single_dashes() {
     for (name, id) in [
-        ("Star Foundry", "star-foundry"),
+        ("Lamp Works", "lamp-works"),
         ("  Deep -- Field 2 ", "deep-field-2"),
         ("ÉCOLE", "cole"),
         ("a_b.c", "a-b-c"),
@@ -375,7 +374,10 @@ fn documents_history_artifacts_and_the_record_folder_resolve_against_the_project
     .unwrap();
     assert!(project.is_document_path("docs/SPEC.md"));
     assert!(!project.is_document_path("docs"), "a folder is no document");
-    assert!(!project.is_document_path("docs/art.png"), "nor a picture");
+    assert!(
+        !project.is_document_path("docs/picture.png"),
+        "nor a picture"
+    );
     assert!(!project.is_document_path("docsy/SPEC.md"));
     assert!(!project.is_document_path("docs/history/2026.md"));
     assert!(!project.is_document_path("docs/old/x.md"));
@@ -425,96 +427,11 @@ fn a_cached_project_follows_its_file_and_a_broken_file_reads_as_the_plain_projec
 fn the_nearest_folder_holding_a_project_file_is_the_project() {
     let tree = Tree::new();
     let root = folder(&tree, "outer");
-    std::fs::create_dir_all(root.join("docs/ships")).unwrap();
-    assert_eq!(Project::find(&root.join("docs/ships")), None);
+    std::fs::create_dir_all(root.join("docs/lamps")).unwrap();
+    assert_eq!(Project::find(&root.join("docs/lamps")), None);
     std::fs::write(root.join(FILE), "").unwrap();
-    assert_eq!(Project::find(&root.join("docs/ships")), Some(root.clone()));
+    assert_eq!(Project::find(&root.join("docs/lamps")), Some(root.clone()));
     assert_eq!(Project::find(&root), Some(root));
-}
-
-#[test]
-fn star_foundrys_manifest_carries_the_games_values() {
-    let root = super::common::repo();
-    let project = Project::load(&root).unwrap();
-    assert_eq!(project.name, "Star Foundry");
-    assert_eq!(project.id, "star-foundry");
-    // it passes no entrypoint, so the convention serves every page where it was
-    assert_eq!(project.entrypoints, [Entrypoint::convention()]);
-    assert_eq!(project.history(), ["docs/history"]);
-    assert_eq!(project.register, "docs/DECISIONS.md");
-    assert_eq!(project.default_branch, "main");
-    assert_eq!(project.plugins, ["star-foundry-symphony"]);
-    assert!(symphony::plugins::problems(&project).is_empty());
-    assert_eq!(
-        symphony::plugins::Plugins::for_project(&project)
-            .list()
-            .iter()
-            .map(|plugin| plugin.name())
-            .collect::<Vec<_>>(),
-        ["star-foundry-symphony"]
-    );
-    assert_eq!(project.theme.package.as_deref(), Some("star-foundry"));
-    let icon = project.theme.icon.as_deref().unwrap();
-    assert!(root.join(icon).is_file(), "{icon}");
-    assert_eq!(project.agents.transports, TRANSPORTS);
-    assert_eq!(project.agents.panes, "herdr");
-    assert_eq!(project.verdicts.check, ["just", "verify"]);
-    assert_eq!(project.verdicts.land, ["just", "land"]);
-    assert_eq!(
-        project.verdicts.generators,
-        [
-            Generator {
-                name: "content".into(),
-                outputs: "content/".into(),
-                command: vec!["just".into(), "content".into()],
-                when_changed: false,
-            },
-            Generator {
-                name: "content-ids".into(),
-                outputs: "sim/content_ids.gd".into(),
-                command: vec!["just".into(), "content-ids".into()],
-                when_changed: true,
-            },
-            Generator {
-                name: "hull-atlas".into(),
-                outputs: "view/hull_atlas".into(),
-                command: vec!["just".into(), "hull-atlas".into(), "build".into()],
-                when_changed: true,
-            },
-        ]
-    );
-    assert_eq!(
-        symphony::landing::generators(&root),
-        project.verdicts.generators
-    );
-    assert_eq!(
-        project.verdicts.record.as_deref(),
-        Some(".git/sf-land/verdicts")
-    );
-    assert_eq!(
-        project.board.export.as_deref(),
-        Some("docs/history/tasks.md")
-    );
-    assert_eq!(
-        project.board.disposable,
-        ["artifacts/*", ".godot/*", ".venv/*", ".target/*"]
-    );
-}
-
-#[test]
-fn a_project_naming_a_plugin_this_build_lacks_is_told_and_keeps_the_ones_it_has() {
-    let project =
-        parsed("[plugins]\ncrates = [\"no-such-plugin\", \"star-foundry-symphony\"]\n").unwrap();
-    assert_eq!(
-        symphony::plugins::problems(&project),
-        ["symphony.toml: [plugins] crates names no-such-plugin, which this build does not hold"]
-    );
-    assert_eq!(
-        symphony::plugins::Plugins::for_project(&project)
-            .list()
-            .len(),
-        1
-    );
 }
 
 #[test]
@@ -548,16 +465,6 @@ fn the_page_inlines_the_projects_view_as_json_no_value_can_close_or_comment_out(
     assert_eq!(plain.name, "Night Shift");
     assert_eq!(plain.register, "docs/DECISIONS.md");
     assert!(plain.nav.is_empty(), "a plain project has no plugin pages");
-    let star_foundry = Project::of(&super::common::repo()).view();
-    assert_eq!(star_foundry.name, "Star Foundry");
-    assert_eq!(
-        star_foundry
-            .nav
-            .iter()
-            .map(|item| (item.href.as_str(), item.document.as_str()))
-            .collect::<Vec<_>>(),
-        [("/hulls", "docs/ships/HULLS.md")]
-    );
     let hostile = symphony_api::ProjectView {
         name: "</script><!--<script>alert(1)</script>".into(),
         ..plain

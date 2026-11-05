@@ -35,7 +35,7 @@ owner's answers; view preferences never become verdicts.
 
 The owner queue mixes document categories in round-robin order, oldest first inside each
 category. The home preview follows the same order. A category is the first folder under
-`docs/` (such as `art` or `engineering`); root-level documents use `docs`, and branch
+`docs/` (such as `design` or `engineering`); root-level documents use `docs`, and branch
 proposals use their document's folder. This changes order, never a card's computed group.
 The full queue's category chips show counts that add up to the section total. **All** is
 the default; selecting a chip filters the rows and remembers that filter on this device.
@@ -94,7 +94,7 @@ The direction documents are far too long to review as prose. `DECISIONS.md`
 lists the proposals they rest on, one line each, as a checklist:
 
 ```markdown
-- [x] **hull-count-141** — 141 original hulls ... [[SHIP_ROSTER#Size distribution]]
+- [x] **lamp-count-141** — 141 original lamps ... [[LAMP_CATALOGUE#Size distribution]]
   [2026-09-24] owner · approved — at least 21. Number could vary.
   [2026-09-24] agent — Recorded as a floor.
 ```
@@ -103,11 +103,11 @@ lists the proposals they rest on, one line each, as a checklist:
 |---|---|
 | `[ ]` | not answered yet |
 | `[x]` | approved |
-| `[-]` | rejected; `tools/rs-bin.sh art triage reject --answered-by` sets it where the owner rejected the card in the terminal |
+| `[-]` | rejected; the project's triage command (`reject --answered-by`) sets it where the owner rejected the card in the terminal |
 | `[?]` | a question |
 | `[r]` | resolved: approved with nothing left to answer (set by an agent's tidy pass, never by hand) |
-| `[a]` | auto-approved: set only by `tools/rs-bin.sh art triage auto-approve`, with a dated `agent · auto-approved — <letter>: <basis>` line; counts as approved, and any owner verdict overrides it |
-| `[~]` | dismissed: the owner says the card is not needed (⊘ Dismiss), or a newer card names it in its *Replaces:* while it still asks the owner, pending or answered `[?]` ("superseded by …"; set by `--tidy` and on every post in the app), or `tools/rs-bin.sh art triage dismiss --answered-by` where the owner said so in the terminal; nothing to act on |
+| `[a]` | auto-approved: set only by the project's triage command (`auto-approve`), with a dated `agent · auto-approved — <letter>: <basis>` line; counts as approved, and any owner verdict overrides it |
+| `[~]` | dismissed: the owner says the card is not needed (⊘ Dismiss), or a newer card names it in its *Replaces:* while it still asks the owner, pending or answered `[?]` ("superseded by …"; set by `--tidy` and on every post in the app), or the project's triage command (`dismiss --answered-by`) where the owner said so in the terminal; nothing to act on |
 
 ### Card history
 
@@ -170,10 +170,10 @@ document's prose ("approved in *some-card*") is history, and history belongs
 on the card. A slug outside a register or code block fails the build of
 `crates/docs-index` (`just docs-index`), naming its file and line; `just symphony-status
 --lint` lists every one too, and `just verify` fails on any. The
-exceptions are `docs/history/` and `docs/analysis/`, which are records. On the
-faction pages the same check also refuses the verdict words themselves
-(approved, rejected, superseded, dismissed) outside the register: a page shows
-the chosen pictures and traits, never a list of what else was approved.
+exceptions are `docs/history/` and `docs/analysis/`, which are records. A
+project's own checks may also refuse the verdict words themselves (approved,
+rejected, superseded, dismissed) outside the register of the pages they name: such
+a page shows the chosen pictures and traits, never a list of what else was approved.
 
 An agent registers with `just tasks callback --chat --as HANDLE`. Each ask,
 follow-up, card message, verdict note and callout you save is queued by that
@@ -208,7 +208,7 @@ call in a clear and concise manner"".
   clear question. Not a wall of text.
 - Low-level detail the decision does not need (benchmark method, rigs, per-run
   numbers, gate thresholds) goes in a linked log or analysis file.
-- Pictures where the thing judged is visual (art, UI, hulls, renders), shown
+- Pictures where the thing judged is visual (pictures, UI, models, renders), shown
   rather than described; a gameplay mechanic is fine as well-written text.
 - A results or comparison card says how each option looks and how well it
   performs, one plain line each, such as "all three cost the same on the GPU,
@@ -237,13 +237,13 @@ app's **+ comment** button has one text box, whose first line becomes the
 title, and writes exactly this after the block you were on:
 
 ```markdown
-> [!comment] 141 hulls
+> [!comment] 141 lamps
 > Far too many to validate. Show me the 30 that matter first.
 
 > [!question] Do the stations need five size bands?
 > Three would do if the spans stay this far apart.
 
-> [!decision] Drop the Dimensional civilization from the station matrix.
+> [!decision] Drop the brass finish from the lamp matrix.
 ```
 
 The first line is the tag and a short title; the `>` lines under it are the
@@ -253,9 +253,9 @@ answer needed) and `dislike` (open, like `comment`); the app no longer offers
 them. A resolution looks like this:
 
 ```markdown
-> [!decision] Drop the Dimensional civilization from the station matrix.
-> > [!resolved] Removed the row and its five encounter constructs; the
-> > matrix is now 20 cells. Evidence kept in docs/history/stations.md.
+> [!decision] Drop the brass finish from the lamp matrix.
+> > [!resolved] Removed the row and its five fittings; the
+> > matrix is now 20 cells. Evidence kept in docs/history/finishes.md.
 ```
 
 The owner's words are never edited or deleted. The resolution goes under them.
@@ -340,10 +340,8 @@ The owner reviews on a phone over a mobile link, so the app is built to cost lit
 
 - **JSON data is not reviewable here.** The app and the board only read
   markdown, so the data in `docs/data/` is reviewed through the page that
-  shows it: a hull of `ship-roster.v2.json` on its faction's ships page
-  (`docs/ships/<faction>.md`, one card per hull, built by `just ship-art`),
-  the reputation numbers of `relationships.json` in the live tables on
-  `docs/factions/RELATIONSHIPS.md`.
+  shows it: a plugin draws a record of it as a component of a page, one card per
+  record or a live table, and the cards on that page are where it is reviewed.
 - **Images live in `artifacts/`, which is gitignored.** The app shows them on
   this machine and nowhere else. Anything approved should be copied into a
   tracked place as part of resolving the approval.
@@ -363,7 +361,7 @@ The card's comparison row (Base, A, B, C above its lines) shows an `.html` candi
   the app), so a mockup opened full size has the same reach as the one in a card. `/api/*` also refuses `Origin: null`,
   which is what a sandboxed page sends.
 - **Assets.** The page's CSS, JS, SVG and images are served like any file under the project (`artifacts/`, or the tracked
-  mockup folder `docs/art/mockups/`: `tokens.css` plus one component file per element); nothing outside the repo is.
+  mockup folder under `docs/`: `tokens.css` plus one component file per element); nothing outside the repo is.
 - **Source.** Compose a screen from one shared CSS file of tokens and one file per component, assembled per page; a
   PNG is only a snapshot for a thumbnail. Tracked sources beat `artifacts/`, which is gitignored.
 

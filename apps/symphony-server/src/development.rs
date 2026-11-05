@@ -8,7 +8,8 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
-use tasks::sys::{Child, Command};
+use symphony_board::sys::{Child, Command};
+use symphony_board::{port, sys};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 
@@ -105,20 +106,18 @@ fn start_child(
     cancelled: &AtomicBool,
     mut command: impl FnMut(SocketAddr) -> Command,
 ) -> Result<(Child, SocketAddr), String> {
-    tasks::port::start_on_free_port(tasks::port::ATTEMPTS, until, |addr| {
+    port::start_on_free_port(port::ATTEMPTS, until, |addr| {
         if cancelled.load(Ordering::Relaxed) || crate::sys::parent() != parent {
             return Err("development startup cancelled".to_string());
         }
         if addr.port() == crate::home::DEFAULT_PORT {
             // Never start a private child on the shared server's port, even when it is down.
-            return Ok(tasks::port::Start::Ended(
-                "AddrInUse: shared server port".into(),
-            ));
+            return Ok(port::Start::Ended("AddrInUse: shared server port".into()));
         }
         let mut launch = command(addr);
         let program = launch.get_program().to_string_lossy().into_owned();
         // Its output is read to the end after it exits: no child another thread spawns may hold it.
-        let mut child = tasks::sys::spawn_output(launch.process_group(0))
+        let mut child = sys::spawn_output(launch.process_group(0))
             .map_err(|e| format!("start {program} on {addr}: {e}"))?;
         #[cfg(test)]
         tests::SPAWNED.set(Some(child.id()));
@@ -137,7 +136,7 @@ fn start_child(
                 for reader in readers {
                     reader.join().map_err(|_| "read development child output")?;
                 }
-                return Ok(tasks::port::Start::Ended(
+                return Ok(port::Start::Ended(
                     output
                         .lock()
                         .expect("child output mutex")
@@ -145,12 +144,10 @@ fn start_child(
                         .expect("startup output"),
                 ));
             }
-            if tasks::port::listens(owned.0[0].id(), addr, tasks::sys::output)
-                .map_err(|e| e.to_string())?
-            {
+            if port::listens(owned.0[0].id(), addr, sys::output).map_err(|e| e.to_string())? {
                 // Continue showing output during development, without retaining an unbounded log.
                 output.lock().expect("child output mutex").take();
-                return Ok(tasks::port::Start::Up(owned.0.remove(0)));
+                return Ok(port::Start::Up(owned.0.remove(0)));
             }
             if Instant::now() >= until {
                 return Err(format!(
@@ -444,9 +441,9 @@ mod tests {
             (
                 "Address already in use (os error 48)",
                 false,
-                tasks::port::ATTEMPTS,
+                port::ATTEMPTS,
             ),
-            ("AddrInUse", false, tasks::port::ATTEMPTS),
+            ("AddrInUse", false, port::ATTEMPTS),
             ("compile failed", false, 1),
             ("startup deadline", true, 1),
         ] {
@@ -578,10 +575,10 @@ mod tests {
         let listener =
             std::net::TcpListener::bind(child_addr.as_deref().unwrap_or("127.0.0.1:0")).unwrap();
         assert!(
-            tasks::port::listens(
+            port::listens(
                 std::process::id(),
                 listener.local_addr().unwrap(),
-                tasks::sys::output
+                sys::output
             )
             .unwrap()
         );
@@ -625,9 +622,9 @@ mod tests {
         let mut owned = Children(vec![child]);
         // The deliberately failed first start must be retried; a real collision on a later
         // reservation is handled by the same bound.
-        assert!((2..=tasks::port::ATTEMPTS).contains(&starts));
+        assert!((2..=port::ATTEMPTS).contains(&starts));
         assert_ne!(addr, tried[0]);
-        assert!(tasks::port::listens(owned.0[0].id(), addr, tasks::sys::output).unwrap());
+        assert!(port::listens(owned.0[0].id(), addr, sys::output).unwrap());
         assert!(std::net::TcpStream::connect(addr).is_ok());
         let pid = owned.0[0].id();
         owned.stop().unwrap();

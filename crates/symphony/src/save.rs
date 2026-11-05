@@ -56,11 +56,11 @@ impl From<asks::AskError> for Failure {
         }
     }
 }
-impl From<tasks::Error> for Failure {
-    fn from(e: tasks::Error) -> Self {
+impl From<symphony_board::Error> for Failure {
+    fn from(e: symphony_board::Error) -> Self {
         match e {
-            tasks::Error::Refused(error) => error.into(),
-            tasks::Error::Db(error) => Self {
+            symphony_board::Error::Refused(error) => error.into(),
+            symphony_board::Error::Db(error) => Self {
                 status: 503,
                 error: format!("the task board cannot be reached: {error}"),
             },
@@ -143,7 +143,7 @@ impl Saves {
         }
     }
 
-    fn store(&self) -> Result<tasks::Store, Failure> {
+    fn store(&self) -> Result<symphony_board::Store, Failure> {
         taskview::connect(&self.root).map_err(|e| Failure {
             status: 503,
             error: format!("the task board cannot be reached: {e}"),

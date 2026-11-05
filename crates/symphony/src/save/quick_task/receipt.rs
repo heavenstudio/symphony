@@ -1,14 +1,13 @@
 //! A locked, durable receipt serializes one identity and remembers its terminal outcome.
 
+use super::super::Failure;
+use super::{journal, pending};
+use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
-
-use serde_json::{Value, json};
-use sha2::{Digest, Sha256};
-
-use super::super::Failure;
-use super::{journal, pending};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 /// The lock stays owned through preflight, dispatch and confirmation.
 pub(in crate::save) struct Receipt {
@@ -18,9 +17,15 @@ pub(in crate::save) struct Receipt {
     identity: String,
     /// Binds the UUID, scope and canonical submitted text to the board row.
     pub(in crate::save) fingerprint: String,
-    /// Only the lock holder that initializes the receipt may prepare a new intent.
+    /// Only the publisher of a synced fingerprint may prepare a new intent.
     pub(in crate::save) fresh: bool,
     terminal: Option<Value>,
+}
+
+struct Claim {
+    file: File,
+    fresh: bool,
+    preparation_error: Option<String>,
 }
 
 fn failure(path: &Path, cause: impl std::fmt::Display) -> Failure {
@@ -28,6 +33,121 @@ fn failure(path: &Path, cause: impl std::fmt::Display) -> Failure {
         status: 503,
         error: format!("task save receipt {}: {cause}", path.display()),
     }
+}
+
+fn preflight_failure(
+    root: &Path,
+    identity: &str,
+    path: &Path,
+    cause: impl std::fmt::Display,
+) -> Failure {
+    let mut error = failure(path, cause);
+    if !journal::present(root, identity) {
+        error.status = 422;
+    }
+    error
+}
+
+fn lock(file: &File, path: &Path) -> Result<(), Failure> {
+    file.try_lock().map_err(|error| failure(path, error))
+}
+
+fn existing(root: &Path, identity: &str, path: &Path) -> Result<Option<Claim>, Failure> {
+    match OpenOptions::new().read(true).write(true).open(path) {
+        Ok(file) => {
+            lock(&file, path)?;
+            Ok(Some(Claim {
+                file,
+                fresh: false,
+                preparation_error: None,
+            }))
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) if path.is_dir() => Err(preflight_failure(root, identity, path, error)),
+        Err(error) => Err(failure(path, error)),
+    }
+}
+
+fn sync_directories(root: &Path, directory: &Path) -> Result<(), Failure> {
+    let artifacts = root.join("artifacts");
+    let folders = [
+        directory,
+        directory
+            .parent()
+            .expect("the receipts folder is under the journal folder"),
+        &artifacts,
+        root,
+    ];
+    for folder in folders {
+        File::open(folder)
+            .and_then(|file| file.sync_all())
+            .map_err(|error| failure(folder, error))?;
+    }
+    Ok(())
+}
+
+fn claim(root: &Path, identity: &str, path: &Path, fingerprint: &str) -> Result<Claim, Failure> {
+    let directory = path.parent().expect("a receipt path includes its folder");
+    std::fs::create_dir_all(directory)
+        .map_err(|error| preflight_failure(root, identity, directory, error))?;
+    if let Some(claim) = existing(root, identity, path)? {
+        return Ok(claim);
+    }
+    // Publication is serialized only while preparing files; database work holds its own identity lock.
+    let guard_path = directory.join(".publish");
+    let guard = OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .open(&guard_path)
+        .map_err(|error| preflight_failure(root, identity, &guard_path, error))?;
+    lock(&guard, &guard_path)?;
+    if let Some(claim) = existing(root, identity, path)? {
+        return Ok(claim);
+    }
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    let part = directory.join(format!(
+        ".{identity}-{}-{}",
+        std::process::id(),
+        NEXT.fetch_add(1, Ordering::Relaxed)
+    ));
+    let result = (|| {
+        let mut file = OpenOptions::new()
+            .create_new(true)
+            .read(true)
+            .write(true)
+            .open(&part)
+            .map_err(|error| preflight_failure(root, identity, &part, error))?;
+        lock(&file, &part)?;
+        let preparation_error = file
+            .write_all(fingerprint.as_bytes())
+            .and_then(|()| file.sync_all())
+            .err()
+            .map(|error| error.to_string());
+        if preparation_error.is_some() {
+            // A published empty receipt seals an attempt that cannot dispatch.
+            file.set_len(0)
+                .and_then(|()| file.sync_all())
+                .map_err(|error| failure(&part, error))?;
+        }
+        match std::fs::hard_link(&part, path) {
+            Ok(()) => {
+                sync_directories(root, directory)?;
+                Ok(Claim {
+                    file,
+                    fresh: preparation_error.is_none(),
+                    preparation_error,
+                })
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                existing(root, identity, path)?.ok_or_else(|| failure(path, "receipt disappeared"))
+            }
+            Err(error) => Err(preflight_failure(root, identity, path, error)),
+        }
+    })();
+    let _ = std::fs::remove_file(part);
+    result
 }
 
 fn canonical(value: &Value) -> Value {
@@ -45,65 +165,60 @@ fn canonical(value: &Value) -> Value {
 }
 
 impl Receipt {
-    /// Bind a UUID to its canonical payload before any board work and lock every replay.
+    /// Publish a synced fingerprint under its lock; short receipts never initialize again.
     pub(in crate::save) fn open(
         root: &Path,
         identity: &str,
         scope: &str,
         payload: &Value,
     ) -> Result<Self, Failure> {
-        let directory = root.join("artifacts/symphony-quick-tasks/.receipts");
-        std::fs::create_dir_all(&directory).map_err(|error| failure(&directory, error))?;
-        let path = directory.join(identity);
-        let mut file = OpenOptions::new()
-            .create(true)
-            .truncate(false)
-            .read(true)
-            .write(true)
-            .open(&path)
-            .map_err(|error| failure(&path, error))?;
-        file.lock().map_err(|error| failure(&path, error))?;
-        let mut bytes = Vec::new();
-        file.read_to_end(&mut bytes)
-            .map_err(|error| failure(&path, error))?;
+        let path = root
+            .join("artifacts/symphony-quick-tasks/.receipts")
+            .join(identity);
         let fingerprint: String = Sha256::digest(canonical(&json!([scope, payload])).to_string())
             .iter()
             .map(|byte| format!("{byte:02x}"))
             .collect();
-        let fresh = bytes.is_empty();
-        let terminal = if fresh {
-            file.write_all(fingerprint.as_bytes())
-                .map_err(|error| failure(&path, error))?;
+        let Claim {
+            mut file,
+            fresh,
+            preparation_error,
+        } = claim(root, identity, &path, &fingerprint)?;
+        file.seek(SeekFrom::Start(0))
+            .map_err(|error| failure(&path, error))?;
+        let mut bytes = Vec::new();
+        file.read_to_end(&mut bytes)
+            .map_err(|error| failure(&path, error))?;
+        if bytes.len() < 64 {
+            let cause = preparation_error
+                .unwrap_or_else(|| format!("fingerprint has {} of 64 bytes", bytes.len()));
+            return Err(preflight_failure(
+                root,
+                identity,
+                &path,
+                format!(
+                    "{cause}; this save stopped before dispatch; your text is kept for another try"
+                ),
+            ));
+        }
+        if bytes[..64] != *fingerprint.as_bytes() {
+            return Err(
+                "this task save identity belongs to different text; check the original save"
+                    .to_string()
+                    .into(),
+            );
+        }
+        let terminal = if bytes.len() == 64 {
             None
         } else {
-            if bytes.len() < 64 {
-                return Err(failure(
-                    &path,
-                    "receipt is incomplete; check the original save",
-                ));
-            }
-            if bytes[..64] != *fingerprint.as_bytes() {
-                return Err(
-                    "this task save identity belongs to different text; check the original save"
-                        .to_string()
-                        .into(),
-                );
-            }
-            if bytes.len() == 64 {
-                None
-            } else {
-                serde_json::from_slice(&bytes[64..]).ok()
-            }
+            serde_json::from_slice(&bytes[64..]).ok()
         };
         // A replay can read bytes whose writer could not confirm their durability.
         file.sync_all().map_err(|error| failure(&path, error))?;
-        let artifacts = root.join("artifacts");
-        let folders = [&directory, directory.parent().unwrap(), &artifacts, root];
-        for folder in folders {
-            File::open(folder)
-                .and_then(|file| file.sync_all())
-                .map_err(|error| failure(folder, error))?;
-        }
+        sync_directories(
+            root,
+            path.parent().expect("a receipt path includes its folder"),
+        )?;
         Ok(Self {
             file,
             path,
@@ -151,7 +266,13 @@ impl Receipt {
             .and_then(|()| self.file.sync_all());
         match persisted {
             Ok(()) => journal::remove(&self.root, &self.identity),
-            Err(error) if result.is_err() => return Ok(pending(&failure(&self.path, error).error)),
+            Err(_) if result.is_err() => {
+                // Truncating a known refusal needs no data block and prevents any later dispatch.
+                if let Err(error) = self.file.set_len(0).and_then(|()| self.file.sync_all()) {
+                    return Ok(pending(&failure(&self.path, error).error));
+                }
+                journal::remove(&self.root, &self.identity);
+            }
             Err(_) => {} // A confirmed board commit remains saved; its journal still supports checks.
         }
         result
@@ -236,7 +357,10 @@ mod tests {
     fn a_save_interrupted_before_its_journal_refuses_without_dispatch() {
         let tree = Tree::new();
         let payload = json!({"request":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","title":"Task"});
-        drop(open(&tree.root, &payload));
+        let receipt = open(&tree.root, &payload);
+        let path = receipt.path.clone();
+        drop(receipt);
+        std::fs::write(path, "").unwrap();
         let saves = crate::save::Saves::start(&tree.root);
         for _ in 0..2 {
             let error = saves
@@ -282,13 +406,42 @@ mod tests {
         std::fs::write(&path, "short").unwrap();
         let error = Receipt::open(&tree.root, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "", &payload)
             .err()
-            .expect("partial receipt stays uncertain");
-        assert_eq!(error.status, 503);
-        assert!(error.error.contains("incomplete"), "{}", error.error);
+            .expect("a short fingerprint cannot have dispatched");
+        assert_eq!(error.status, 422);
+        assert!(error.error.contains("before dispatch"), "{}", error.error);
         assert!(
             error.error.contains(path.to_str().unwrap()),
             "{}",
             error.error
         );
+    }
+
+    #[test]
+    fn fresh_save_receipt_folder_and_file_failures_keep_a_repeatable_refusal() {
+        let payload = json!({"request":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","title":"Task"});
+        for case in ["folder", "file"] {
+            let tree = Tree::new();
+            let directory = tree.root.join("artifacts/symphony-quick-tasks/.receipts");
+            if case == "folder" {
+                std::fs::create_dir_all(directory.parent().expect("receipt parent")).unwrap();
+                std::fs::write(&directory, "blocked").unwrap();
+            } else {
+                std::fs::create_dir_all(directory.join("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"))
+                    .unwrap();
+            }
+            let saves = crate::save::Saves::start(&tree.root);
+            for _ in 0..2 {
+                let error = saves
+                    .post("", "/api/quick-task", &payload)
+                    .expect_err("unwritable receipt");
+                assert_eq!(error.status, 422, "{case}: {}", error.error);
+                assert!(
+                    error.error.contains("task save receipt"),
+                    "{case}: {}",
+                    error.error
+                );
+            }
+            saves.close();
+        }
     }
 }

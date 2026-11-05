@@ -12,8 +12,10 @@ fn summary_of(text: &str) -> String {
 #[test]
 fn an_underscore_inside_a_name_is_kept() {
     assert_eq!(
-        summary_of("# Ships\n\nSHIP_ROSTER sets the lengths; `ship_art.py` draws _the_ pages.\n"),
-        "SHIP_ROSTER sets the lengths; ship_art.py draws the pages."
+        summary_of(
+            "# Lamps\n\nLAMP_CATALOGUE sets the lengths; `lamp_pictures.py` draws _the_ pages.\n"
+        ),
+        "LAMP_CATALOGUE sets the lengths; lamp_pictures.py draws the pages."
     );
 }
 

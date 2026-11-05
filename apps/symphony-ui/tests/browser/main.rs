@@ -869,15 +869,15 @@ fn the_board_shows_the_next_card_the_four_after_it_the_counts_and_progress() {
     wait_for_board(&mut chrome);
     assert_eq!(
         texts(&mut chrome, ".hero-title"),
-        ["Republic · frigate picture"]
+        ["North · pendant picture"]
     );
     assert_eq!(
         texts(&mut chrome, ".nextcard strong"),
         [
             "Should a rock's yield fall off with each pass of the beam, or stay flat until it is spent?",
-            "Machine civilization · carrier picture",
+            "West · chandelier picture",
             "The dock menu lists repair before trade.",
-            "Empire hulls keep the stepped prow across every size class.",
+            "East lamps keep the stepped prow across every size class.",
         ]
     );
     assert_eq!(
@@ -886,10 +886,7 @@ fn the_board_shows_the_next_card_the_four_after_it_the_counts_and_progress() {
     );
     assert_eq!(texts(&mut chrome, ".bar .bar-name").len(), 6);
     let href = chrome.eval("document.querySelector('.hero .go').getAttribute('href')");
-    assert_eq!(
-        href,
-        json!("/docs/ships/republic.md#republic-frigate-picture")
-    );
+    assert_eq!(href, json!("/docs/lamps/north.md#north-pendant-picture"));
 }
 
 /// Wait for the page to hold a feed stream open, up to 10 s; whether it does.

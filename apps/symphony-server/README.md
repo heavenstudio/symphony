@@ -44,7 +44,7 @@ cannot keep installing after `--stop` returns.
 
 | GET | Response |
 | --- | --- |
-| `/api/board` | Next five ranked cards, counts, ship-art and document progress, build and feed version |
+| `/api/board` | Next five ranked cards, counts, the project's progress regions, build and feed version |
 | `/api/queue` | All ranked cards, spot checks, agent work and branch cards |
 | `/queue` with `Accept: application/json` | Same queue; ordinary navigation opens the client board |
 | `/api/tasks` | Version, task records and sessions without process ids |
@@ -229,7 +229,7 @@ the URL without opening a browser when `TASKS_SESSION`, `CODEX_THREAD_ID` or
 enforces the same boundary even when called directly.
 
 Old `/app/...` and `/doc/...` links redirect to root routes with their query
-and branch scope intact. `/docs/...`, `/tasks`, `/task/...`, `/agents`, `/hulls`
+and branch scope intact. `/docs/...`, `/tasks`, `/task/...`, `/agents`, a plugin's pages
 and scoped `/@<tree>/...` pages use the same shell. `/queue` shows the complete
 typed queue: owner decisions, spot checks, agent work and pending branch cards;
 `#you`, `#spot` and `#agent` are section anchors. The feed refreshes
@@ -237,9 +237,9 @@ the queue when those records change, and row contents mount near the viewport.
 Old standalone `/history/...` and `/diff/...` bookmarks open their document,
 whose Versions and diffs control reads `/api/versions` and `/api/diff`.
 
-Gallery snapshots warm once per selected tree and again only when that tree's
-`view/models/` changes. Document-only refreshes leave the gallery cache alone.
-The backstop sweep above covers model files too, so a hull added or removed without a
+A plugin's gallery snapshots warm once per selected tree and again only when a
+folder its watch names changes in that tree. Document-only refreshes leave the gallery cache alone.
+The backstop sweep above covers model files too, so a model added or removed without a
 filesystem notification still shows within a period. A page that goes, or follows its tree to
 another folder, leaves that folder's gallery cold, so serving it again reads its models afresh.
 An installed server missing its client instructs the user to run

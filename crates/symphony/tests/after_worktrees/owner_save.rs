@@ -11,7 +11,7 @@ use serde_json::{Value, json};
 use std::io::{BufRead, BufReader, Read};
 use std::net::TcpStream;
 use std::time::{Duration, Instant};
-use tasks::sys::Command;
+use symphony_board::sys::Command;
 
 const CHILD: &str = "SF_OWNER_SAVE_PROBE";
 const CASE: &str = "owner_save::reports_each_private_database_timeout_phase";
@@ -113,7 +113,10 @@ fn child(root: &str) {
         return;
     }
     let saves = symphony::save::Saves::start(root);
-    let payload = payload();
+    let mut payload = payload();
+    if phase == "journal-write" {
+        payload["body"] = json!("x".repeat(2000));
+    }
     validate(&saves, &payload);
     let began = Instant::now();
     let mut result = saves.post("", "/api/quick-task", &payload);
@@ -122,13 +125,22 @@ fn child(root: &str) {
         Err(error) => json!({"status":error.status,"error":error.error}),
     };
     let elapsed = began.elapsed().as_secs_f64();
-    if matches!(phase.as_str(), "open" | "lookup" | "journal") {
+    if no_task_phase(&phase) {
         let refused = result.expect_err("a pre-dispatch failure must unlock the draft");
         assert_eq!(refused.status, 422, "{}", refused.error);
         let again = saves
             .post("", "/api/quick-task", &payload)
             .expect_err("refusal stays terminal");
         assert_eq!(again.status, 422);
+        if matches!(phase.as_str(), "receipt-write" | "journal-write") {
+            let receipt = root
+                .join("artifacts/symphony-quick-tasks/.receipts/11111111111111111111111111111111");
+            assert_eq!(
+                std::fs::metadata(receipt).unwrap().len(),
+                0,
+                "a failed attempt remains sealed"
+            );
+        }
         saves.close();
         println!(
             "OWNER_SAVE_PROBE {}",
@@ -153,31 +165,60 @@ fn child(root: &str) {
         "confirmed typed text remains at {}",
         journal.display()
     );
-    std::fs::remove_file(root.join("docs/PROBE.md")).unwrap();
-    let reopened = symphony::save::Saves::start(root);
-    let repeated = reopened
-        .post("", "/api/quick-task", &payload)
-        .unwrap_or_else(|error| panic!("{}", error.error));
-    assert_eq!(
-        repeated["slug"], slug,
-        "a new Saves must recover the same receipt"
-    );
-    refusals(&reopened, &payload, &slug);
-    reopened.close();
+    replay(root, &payload, &slug, &phase);
     println!(
         "OWNER_SAVE_PROBE {}",
         json!({"first":first,"elapsed_s":elapsed,"confirmed":slug})
     );
 }
 
+fn replay(root: &std::path::Path, payload: &Value, slug: &Value, phase: &str) {
+    std::fs::remove_file(root.join("docs/PROBE.md")).unwrap();
+    let reopened = symphony::save::Saves::start(root);
+    let repeated = reopened
+        .post("", "/api/quick-task", payload)
+        .unwrap_or_else(|error| panic!("{}", error.error));
+    assert_eq!(
+        repeated["slug"], *slug,
+        "a new Saves must recover the same receipt"
+    );
+    if phase == "wipe" {
+        let receipt =
+            root.join("artifacts/symphony-quick-tasks/.receipts/11111111111111111111111111111111");
+        std::fs::OpenOptions::new()
+            .write(true)
+            .open(receipt)
+            .unwrap()
+            .set_len(64)
+            .unwrap();
+        let checked = reopened
+            .post("", "/api/quick-task", payload)
+            .unwrap_or_else(|error| panic!("{}", error.error));
+        assert_eq!(
+            checked["slug"], *slug,
+            "a header without its outcome checks the board fingerprint"
+        );
+    }
+    refusals(&reopened, payload, slug);
+    reopened.close();
+}
+
 #[path = "owner_save/concurrent.rs"]
 mod concurrent;
 
-fn phase(phase: &'static str) {
-    let tree = super::Tree::new();
-    tree.write("docs/PROBE.md", "# Probe\n");
+fn scratch(base: &std::path::Path, phase: &str) -> std::path::PathBuf {
+    let mut root = base.to_path_buf();
+    if phase == "journal-write" {
+        // The refusal includes this path, exceeding the child's one-block regular-file limit.
+        while root.as_os_str().len() < 880 {
+            let component = (879 - root.as_os_str().len()).min(200);
+            root = root.join("x".repeat(component));
+        }
+    }
+    std::fs::create_dir_all(root.join("docs")).unwrap();
+    std::fs::write(root.join("docs/PROBE.md"), "# Probe\n").unwrap();
+    let directory = root.join("artifacts/symphony-quick-tasks");
     if phase == "journal" {
-        let directory = tree.root.join("artifacts/symphony-quick-tasks");
         std::fs::create_dir_all(&directory).unwrap();
         std::os::unix::fs::symlink(
             "missing-journal",
@@ -185,18 +226,65 @@ fn phase(phase: &'static str) {
         )
         .unwrap();
     }
+    if phase == "interrupted" {
+        use sha2::Digest as _;
+        let original = payload();
+        let sorted = json!({"body":original["body"],"page":original["page"],"request":original["request"],"title":original["title"]});
+        let fingerprint: String = sha2::Sha256::digest(json!(["", sorted]).to_string())
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect();
+        std::fs::create_dir_all(directory.join(".receipts")).unwrap();
+        std::fs::write(
+            directory.join(".receipts/11111111111111111111111111111111"),
+            fingerprint,
+        )
+        .unwrap();
+    }
+    root
+}
+
+fn child_command(phase: &str) -> Command {
+    let executable = std::env::current_exe().unwrap();
+    let limit = match phase {
+        "receipt-write" => Some(0),
+        "journal-write" => Some(1),
+        _ => None,
+    };
+    if let Some(limit) = limit {
+        let mut command = Command::new("/bin/sh");
+        command
+            .args([
+                "-c",
+                &format!(r#"trap '' XFSZ; ulimit -S -f {limit}; exec "$@""#),
+                "owner-save-size",
+            ])
+            .arg(executable)
+            // The lowered regular-file limit applies only to this private child; profiles are not regular files here.
+            .env("LLVM_PROFILE_FILE", "/dev/null");
+        command
+    } else {
+        Command::new(executable)
+    }
+}
+
+fn phase(phase: &'static str) {
+    let tree = super::Tree::new();
+    tree.write("docs/PROBE.md", "# Probe\n");
+    let root = scratch(&tree.root, phase);
     let client = board::client();
-    let store = tasks::Store::open(tasks::rpc::Client::new(
+    let store = symphony_board::Store::open(symphony_board::rpc::Client::new(
         client.addr(),
         "sf",
         client.database(),
     ))
     .unwrap();
-    let delay = Delayed::start(client.addr().into(), phase);
-    let done = tasks::sys::output(
-        Command::new(std::env::current_exe().unwrap())
+    let delay = Delayed::start(client.addr().into(), phase, &root);
+    let mut command = child_command(phase);
+    let done = symphony_board::sys::output(
+        command
             .args(["--exact", CASE, "--nocapture"])
-            .env(CHILD, &tree.root)
+            .env(CHILD, &root)
             .env("SF_OWNER_SAVE_PHASE", phase)
             .env("TASKS_SERVER", delay.address.to_string())
             .env("TASKS_DATABASE", client.database())
@@ -206,7 +294,7 @@ fn phase(phase: &'static str) {
             .env_remove("GIT_WORK_TREE")
             .env_remove("GIT_COMMON_DIR")
             .env_remove("GIT_INDEX_FILE")
-            .current_dir(&tree.root),
+            .current_dir(&root),
     )
     .unwrap();
     let out = String::from_utf8(done.stdout).unwrap();
@@ -218,7 +306,7 @@ fn phase(phase: &'static str) {
     let delays = match phase {
         "check" => 3,
         "reopen" => 2,
-        "journal" | "concurrent" => 0,
+        "journal" | "concurrent" | "receipt-write" | "journal-write" | "interrupted" => 0,
         _ => 1,
     };
     for _ in 0..delays {
@@ -232,6 +320,17 @@ fn phase(phase: &'static str) {
             .unwrap(),
     )
     .unwrap();
+    check_phase(&store, phase, &record);
+}
+
+fn no_task_phase(phase: &str) -> bool {
+    matches!(
+        phase,
+        "open" | "lookup" | "journal" | "receipt-write" | "journal-write" | "interrupted"
+    )
+}
+
+fn check_phase(store: &symphony_board::Store, phase: &str, record: &Value) {
     let tasks = store.tasks(None).unwrap();
     let messages: usize = tasks
         .iter()
@@ -245,7 +344,7 @@ fn phase(phase: &'static str) {
         })
         .sum();
     let count = match phase {
-        "open" | "lookup" | "journal" => 0,
+        phase if no_task_phase(phase) => 0,
         "concurrent" => 3,
         _ => 1,
     };
@@ -293,6 +392,10 @@ fn reports_each_private_database_timeout_phase() {
         "check",
         "reopen",
         "edited",
+        "wipe",
+        "receipt-write",
+        "journal-write",
+        "interrupted",
         "journal",
         "concurrent",
     ] {
@@ -302,23 +405,29 @@ fn reports_each_private_database_timeout_phase() {
 
 #[test]
 fn owner_task_receipts_commit_once_and_validation_writes_nothing() {
-    let store = tasks::Store::open(board::client()).unwrap();
-    let mut new = tasks::NewTask {
+    let store = symphony_board::Store::open(board::client()).unwrap();
+    let mut new = symphony_board::NewTask {
         slug: "inbox/atomic-receipt".into(),
         title: "Atomic receipt".into(),
         by: "owner".into(),
         status: "concept".into(),
-        ..tasks::NewTask::default()
+        ..symphony_board::NewTask::default()
     };
     let invalid = store
         .create_owner_task(&new, "")
         .expect_err("empty receipt");
-    assert!(matches!(invalid, tasks::Error::Refused(_)), "{invalid:?}");
+    assert!(
+        matches!(invalid, symphony_board::Error::Refused(_)),
+        "{invalid:?}"
+    );
     new.by = "someone-else".into();
     let invalid = store
         .create_owner_task(&new, "receipt")
         .expect_err("only owner creates owner tasks");
-    assert!(matches!(invalid, tasks::Error::Refused(_)), "{invalid:?}");
+    assert!(
+        matches!(invalid, symphony_board::Error::Refused(_)),
+        "{invalid:?}"
+    );
     assert_eq!(store.tasks(None).unwrap().len(), 0);
     new.by = "owner".into();
     let task = store.create_owner_task(&new, "first-receipt").unwrap();
@@ -327,7 +436,7 @@ fn owner_task_receipts_commit_once_and_validation_writes_nothing() {
         .create_owner_task(&new, "second-receipt")
         .expect_err("slug guard");
     assert!(
-        matches!(duplicate, tasks::Error::Refused(_)),
+        matches!(duplicate, symphony_board::Error::Refused(_)),
         "{duplicate:?}"
     );
     assert_eq!(

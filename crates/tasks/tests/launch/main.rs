@@ -20,11 +20,11 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use tasks::cli::Env;
-use tasks::launch::herdr::{Binary, Herdr};
-use tasks::launch::{Ask, LaunchError, Machine, Started};
-use tasks::sys::Command;
-use tasks::{Error, NewTask, Store};
+use symphony_board::cli::Env;
+use symphony_board::launch::herdr::{Binary, Herdr};
+use symphony_board::launch::{Ask, LaunchError, Machine, Started};
+use symphony_board::sys::Command;
+use symphony_board::{Error, NewTask, Store};
 
 pub const FAKE: &str = env!("CARGO_BIN_EXE_fake-herdr");
 
@@ -56,7 +56,7 @@ impl Drop for Folder {
 
 /// `git ARGS` in `dir`, which must succeed: its output, trimmed.
 pub fn git(dir: &Path, args: &[&str]) -> String {
-    let done = tasks::sys::output(
+    let done = symphony_board::sys::output(
         Command::new("git")
             .args(["-c", "user.email=t@t", "-c", "user.name=t", "-C"])
             .arg(dir)
@@ -132,11 +132,11 @@ impl Default for World {
 impl World {
     pub fn new() -> World {
         let folder = Folder::new();
-        let repo = folder.0.join("star-foundry");
+        let repo = folder.0.join("lamp-works");
         fs::create_dir_all(&repo).unwrap();
         git(&repo, &["init", "-q", "-b", "main"]);
         git(&repo, &["commit", "-q", "--allow-empty", "-m", "x"]);
-        let wt = folder.0.join("star-foundry-wt");
+        let wt = folder.0.join("lamp-works-wt");
         let f = Fixture::empty();
         let orch = f.session("orchestrator");
         f.task("sim/jump");
@@ -218,7 +218,7 @@ impl World {
     }
 
     pub fn try_launch(&self, ask: &Ask) -> Result<Started, Error> {
-        tasks::launch::launch(self.store(), &self.herdr(), &self.machine(), ask)
+        symphony_board::launch::launch(self.store(), &self.herdr(), &self.machine(), ask)
     }
 
     /// An executor launched on `slug`.

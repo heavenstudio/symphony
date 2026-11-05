@@ -3,8 +3,8 @@ use serde_json::json;
 use std::fs;
 use std::path::PathBuf;
 use std::time::Instant;
-use tasks::embedding::{Bge, Embedder, text_hash};
-use tasks::sys::Spawning as _;
+use symphony_board::embedding::{Bge, Embedder, text_hash};
+use symphony_board::sys::Spawning as _;
 
 fn cpu() -> std::io::Result<f64> {
     let mut time = libc::timespec {
@@ -39,11 +39,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if samples == 0 {
         return Err("--samples must be positive".into());
     }
-    let dump: tasks::rows::Dump = serde_json::from_slice(&fs::read(snapshot)?)?;
+    let dump: symphony_board::rows::Dump = serde_json::from_slice(&fs::read(snapshot)?)?;
     fs::create_dir_all(&out)?;
     let start = Instant::now();
     let before = cpu()?;
-    let common = tasks::git::common_dir(&std::env::current_dir()?).map_err(|e| e.to_string())?;
+    let common =
+        symphony_board::git::common_dir(&std::env::current_dir()?).map_err(|e| e.to_string())?;
     let mut model = Bge::load_with_threads(&common, threads)?;
     let mut report = json!({"threads":threads,"cores":std::thread::available_parallelism()?.get(),
         "load_before":load(),"model_load_wall_s":start.elapsed().as_secs_f64(),"model_load_cpu_s":cpu()?-before});

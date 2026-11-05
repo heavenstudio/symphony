@@ -1,4 +1,4 @@
-//! Settings-file schema checks, relationship tables and screen-catalogue reads.
+//! Settings-file schema checks, cached reads, postponed cards and the serve commands.
 
 #[path = "../common/mod.rs"]
 mod common;
@@ -6,7 +6,5 @@ mod common;
 mod cache;
 mod mixed;
 mod postpone;
-mod relationships;
 mod schema;
-mod screens;
 mod serve;

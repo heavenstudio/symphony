@@ -25,7 +25,7 @@ fn task_filing(f: &Fixture) {
     );
     let filed = f.post("/api/quick-task", &json!({"request":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "title":"HTTP filed task", "body":"Private board body", "page":"/docs/TOPIC.md#one", "priority":1})).status(200).json();
     assert_eq!(filed["slug"], "inbox/http-filed-task");
-    let store = tasks::cli::connect(&tasks::cli::Env::of_process()).unwrap();
+    let store = symphony_board::cli::connect(&symphony_board::cli::Env::of_process()).unwrap();
     let task = store.get("inbox/http-filed-task").unwrap();
     assert_eq!(task.title, "HTTP filed task");
     assert_eq!(task.status, "concept");

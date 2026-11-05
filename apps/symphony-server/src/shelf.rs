@@ -1,0 +1,218 @@
+//! A fixture project's plugin, which the server's tests and the client's browser cases serve
+//! (`symphony-shelf`, the server holding it): `[[shelf:all]]` draws every item on the checkout's
+//! shelf, each with the poster its label names, else its label's own picture. The gallery is cached
+//! per root and its watch drops and warms it, as a project's gallery would. Its page is `/shelf`, and
+//! `/x/shelf/NAME.item` serves an item's file.
+
+use std::collections::HashMap;
+use std::path::{Component as Part, Path, PathBuf};
+use std::sync::{LazyLock, Mutex};
+
+use sha2::{Digest, Sha256};
+use symphony_plugin::vocabulary::{Block, GalleryItem, Media, NavItem};
+use symphony_plugin::{Component, Page, Plugin, Reply, Route, Watch};
+
+/// The plugin's name, as a project's `[plugins] crates` lists it.
+pub const NAME: &str = "fixture-shelf";
+/// The document that draws the shelf.
+pub const DOC: &str = "docs/SHELF.md";
+/// The shelf, and the folder of its items (`NAME.item`).
+pub const SHELF: &str = "room/shelf";
+pub const ITEMS: &str = "room/shelf/items";
+/// Where the posters a label names are.
+pub const POSTERS: &str = "posters";
+/// Each item's label (`NAME.notes.json`, naming its poster) and own picture (`NAME.svg`).
+pub const LABELS: &str = "docs/labels";
+
+/// The plugins a process serving the fixture holds: the shelf alone.
+pub static PLUGINS: &[&dyn Plugin] = &[&Shelf];
+
+/// A project file naming the plugin.
+pub const MANIFEST: &str = "[plugins]\ncrates = [\"fixture-shelf\"]\n";
+
+/// Makes [`PLUGINS`] the process's plugins; again is no change.
+///
+/// # Errors
+///
+/// When the process already holds another list.
+pub fn install() -> Result<(), String> {
+    symphony::plugins::install(PLUGINS)
+}
+
+struct Shelf;
+
+impl Plugin for Shelf {
+    fn name(&self) -> &str {
+        NAME
+    }
+
+    fn components(&self) -> Vec<&dyn Component> {
+        vec![self]
+    }
+
+    fn watches(&self) -> Vec<&dyn Watch> {
+        vec![self]
+    }
+
+    fn routes(&self) -> Vec<&dyn Route> {
+        vec![self]
+    }
+
+    fn nav(&self) -> Vec<NavItem> {
+        vec![NavItem {
+            label: "▤ shelf".into(),
+            title: "Shelf items".into(),
+            href: "/shelf".into(),
+            document: DOC.into(),
+        }]
+    }
+}
+
+impl Route for Shelf {
+    fn path(&self) -> &str {
+        "shelf"
+    }
+
+    /// An item's file by its name alone; the server refuses what is missing, a folder or a link
+    /// out of the checkout.
+    fn serve(&self, root: &Path, rest: &str) -> Option<Reply> {
+        let plain = !rest.is_empty()
+            && Path::new(rest)
+                .components()
+                .all(|part| matches!(part, Part::Normal(_)));
+        (plain && rest.ends_with(".item") && !rest.contains('/'))
+            .then(|| Reply::File(root.join(ITEMS).join(rest)))
+    }
+}
+
+impl Component for Shelf {
+    fn name(&self) -> &str {
+        "shelf"
+    }
+
+    fn render(&self, page: &Page<'_>, _: &str, _: Option<&str>) -> Result<Vec<Block>, String> {
+        Ok(vec![Block::Media {
+            media: Media::Gallery {
+                items: gallery(page.root),
+            },
+        }])
+    }
+
+    fn cache_version(&self, page: &Page<'_>) -> Option<String> {
+        let bytes = serde_json::to_vec(&gallery(page.root)).unwrap_or_default();
+        Some(
+            Sha256::digest(&bytes)
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect(),
+        )
+    }
+}
+
+impl Watch for Shelf {
+    fn paths(&self) -> Vec<String> {
+        vec![SHELF.into(), POSTERS.into(), LABELS.into()]
+    }
+
+    fn changed(&self, root: &Path) -> Option<String> {
+        invalidate(root);
+        let items = warm(root);
+        Some(format!("shelf warmed: {}: {items} items", root.display()))
+    }
+
+    fn forget(&self, root: &Path) {
+        invalidate(root);
+    }
+}
+
+static GALLERIES: LazyLock<Mutex<HashMap<PathBuf, Vec<GalleryItem>>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+fn invalidate(root: &Path) {
+    GALLERIES
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .remove(root);
+}
+
+/// The shelf of `root` built into the cache when it is not there: how many items it holds.
+pub fn warm(root: &Path) -> usize {
+    gallery(root).len()
+}
+
+fn gallery(root: &Path) -> Vec<GalleryItem> {
+    GALLERIES
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .entry(root.to_path_buf())
+        .or_insert_with(|| build(root))
+        .clone()
+}
+
+/// Whether `relative` names a file inside `root`, reached through no link out of it.
+fn project_file(root: &Path, relative: &str) -> bool {
+    !relative.is_empty()
+        && Path::new(relative)
+            .components()
+            .all(|part| matches!(part, Part::Normal(_)))
+        && root
+            .join(relative)
+            .canonicalize()
+            .is_ok_and(|path| path.starts_with(root) && path.is_file())
+}
+
+fn build(root: &Path) -> Vec<GalleryItem> {
+    let root = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
+    let folder = root
+        .join(ITEMS)
+        .canonicalize()
+        .ok()
+        .filter(|folder| folder.starts_with(&root));
+    let mut paths: Vec<_> = folder
+        .and_then(|folder| std::fs::read_dir(folder).ok())
+        .into_iter()
+        .flatten()
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|path| {
+            path.extension()
+                .is_some_and(|extension| extension == "item")
+                && path.is_file()
+        })
+        .collect();
+    paths.sort();
+    let mut items = Vec::new();
+    for path in paths {
+        let Some(name) = path.file_stem().and_then(|name| name.to_str()) else {
+            continue;
+        };
+        let poster = std::fs::read(root.join(format!("{LABELS}/{name}.notes.json")))
+            .ok()
+            .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
+            .and_then(|notes| notes["source"]["picture"].as_str().map(str::to_string))
+            .filter(|picture| project_file(&root, picture));
+        let own = format!("{LABELS}/{name}.svg");
+        let poster = poster.or_else(|| project_file(&root, &own).then_some(own));
+        let poster = poster.map(|picture| {
+            let image = symphony::images::reserve(
+                &format!("<img src=\"/{picture}\" width=\"80\" height=\"80\">"),
+                &root,
+                false,
+                symphony::images::sips_available(),
+            );
+            symphony::markup::unescape(
+                image
+                    .split("src=\"")
+                    .nth(1)
+                    .and_then(|s| s.split('"').next())
+                    .unwrap_or_default(),
+            )
+        });
+        items.push(GalleryItem {
+            name: name.into(),
+            src: format!("/{ITEMS}/{name}.item"),
+            poster,
+        });
+    }
+    items
+}

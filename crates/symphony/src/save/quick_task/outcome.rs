@@ -8,7 +8,37 @@ pub(in crate::save) fn pending(error: &str) -> Value {
     json!({"pending": true, "error": error})
 }
 
-fn found(store: &tasks::Store, new: &tasks::NewTask, receipt: &str) -> Result<bool, Failure> {
+/// Recover a confirmed task when only its fingerprint remains in the local receipt.
+pub(in crate::save) fn recover(
+    store: &symphony_board::Store,
+    receipt: &str,
+) -> Result<Option<Value>, Failure> {
+    let values = store.client().query(
+        "SELECT VALUE slug FROM task WHERE created_by = 'owner' AND fields._symphony.owner_save = $receipt LIMIT 2;",
+        json!({"receipt":receipt}),
+    ).map_err(|error| Failure::from(symphony_board::Error::Db(error.to_string())))?;
+    let rows = values
+        .last()
+        .and_then(Value::as_array)
+        .ok_or_else(|| Failure {
+            status: 503,
+            error: format!("task save {receipt}: the board did not return a task list"),
+        })?;
+    match rows.as_slice() {
+        [] => Ok(None),
+        [Value::String(slug)] => Ok(Some(json!({"slug":slug}))),
+        _ => Err(Failure {
+            status: 503,
+            error: format!("task save {receipt}: ambiguous task list {rows:?}"),
+        }),
+    }
+}
+
+fn found(
+    store: &symphony_board::Store,
+    new: &symphony_board::NewTask,
+    receipt: &str,
+) -> Result<bool, Failure> {
     match store.get(&new.slug) {
         Ok(task) if crate::taskview::is_quick_task(&task, receipt) => Ok(true),
         Ok(_) => Err(format!(
@@ -16,7 +46,7 @@ fn found(store: &tasks::Store, new: &tasks::NewTask, receipt: &str) -> Result<bo
             new.slug
         )
         .into()),
-        Err(tasks::Error::Refused(_)) => Ok(false),
+        Err(symphony_board::Error::Refused(_)) => Ok(false),
         Err(error) => Err(error.into()),
     }
 }
@@ -30,8 +60,8 @@ pub(in crate::save) enum Attempt {
 
 /// Return a confirmed slug or pending outcome, reading an uncertain write back first.
 pub(in crate::save) fn create(
-    store: &tasks::Store,
-    new: &tasks::NewTask,
+    store: &symphony_board::Store,
+    new: &symphony_board::NewTask,
     receipt: &str,
     attempt: Attempt,
 ) -> Result<Value, Failure> {
@@ -49,7 +79,7 @@ pub(in crate::save) fn create(
         Ok(_) => Ok(saved()),
         Err(error) => match found(store, new, receipt) {
             Ok(true) => Ok(saved()),
-            Ok(false) if matches!(error, tasks::Error::Refused(_)) => Err(error.into()),
+            Ok(false) if matches!(error, symphony_board::Error::Refused(_)) => Err(error.into()),
             Ok(false) => Ok(pending(&error.to_string())),
             Err(check) if check.status == 503 => Ok(pending(&check.error)),
             Err(check) => Err(check),

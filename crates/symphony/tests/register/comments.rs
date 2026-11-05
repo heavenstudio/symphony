@@ -7,7 +7,7 @@ fn finds_a_callout_with_title_and_body() {
     let found = parse_comments(&[
         "# Doc",
         "",
-        "> [!dislike] Too many hulls",
+        "> [!dislike] Too many lamps",
         "> 141 is a lot. Cut to 60.",
         "",
         "text",
@@ -16,7 +16,7 @@ fn finds_a_callout_with_title_and_body() {
     let comment = &found[0];
     assert_eq!(comment.kind, "dislike");
     assert_eq!(comment.line, 3);
-    assert_eq!(comment.title, "Too many hulls");
+    assert_eq!(comment.title, "Too many lamps");
     assert_eq!(comment.body, vec!["141 is a lot. Cut to 60."]);
     assert!(comment.open());
 }
@@ -107,15 +107,15 @@ fn ledger_entries_keep_where_and_what() {
 #[test]
 fn nested_resolved_closes_the_comment() {
     let found = parse_comments(&[
-        "> [!decision] Ship 60 hulls, not 141",
-        "> Trim the roster.",
-        "> > [!resolved] SHIP_ROSTER.md now lists 60.",
+        "> [!decision] Lamp 60 lamps, not 141",
+        "> Trim the lineup.",
+        "> > [!resolved] LAMP_CATALOGUE.md now lists 60.",
     ]);
     assert_eq!(found.len(), 1);
     assert!(!found[0].open());
     assert_eq!(
         found[0].resolution.as_deref(),
-        Some("SHIP_ROSTER.md now lists 60.")
+        Some("LAMP_CATALOGUE.md now lists 60.")
     );
 }
 

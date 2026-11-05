@@ -10,6 +10,7 @@ use std::sync::{Arc, Mutex, mpsc};
 #[derive(Clone)]
 struct Forward {
     upstream: String,
+    root: std::path::PathBuf,
     phase: &'static str,
     chosen: Arc<Mutex<u8>>,
     send: mpsc::Sender<()>,
@@ -24,10 +25,10 @@ impl Forward {
         let applies = match self.phase {
             "open" => sql.contains("INFO FOR DB"),
             "lookup" => lookup,
-            "create" | "message" | "reply" | "edited" => create,
+            "create" | "message" | "reply" | "edited" | "wipe" => create,
             "check" => create && *chosen == 0 || lookup && matches!(*chosen, 1 | 2),
             "reopen" => create && *chosen == 0 || sql.contains("INFO FOR DB") && *chosen == 1,
-            "journal" | "concurrent" => false,
+            "journal" | "concurrent" | "receipt-write" | "journal-write" | "interrupted" => false,
             _ => unreachable!(),
         };
         let delay = applies && (*chosen == 0 || matches!(self.phase, "check" | "reopen"));
@@ -46,7 +47,7 @@ impl Forward {
                     "SLEEP 4s;\nCREATE type::record('message',",
                     1
                 ),
-                "reply" | "edited" => sql.to_string(),
+                "reply" | "edited" | "wipe" => sql.to_string(),
                 _ => unreachable!(),
             });
         }
@@ -56,9 +57,13 @@ impl Forward {
     fn forward(&self, mut incoming: BufReader<TcpStream>, first: (String, Vec<u8>)) {
         let mut next = Some(first);
         while let Some((headers, bytes)) = next.take() {
-            let mut call = tasks::cbor::decode(&bytes).unwrap();
+            let mut call = symphony_board::cbor::decode(&bytes).unwrap();
             let delayed = self.delay(&mut call);
-            let (reply, bytes) = exchange(&self.upstream, &headers, &tasks::cbor::encode(&call));
+            let (reply, bytes) = exchange(
+                &self.upstream,
+                &headers,
+                &symphony_board::cbor::encode(&call),
+            );
             if delayed && self.phase == "edited" {
                 let vars = &call["params"][1];
                 let db = headers
@@ -66,11 +71,14 @@ impl Forward {
                     .find_map(|line| line.strip_prefix("surreal-db: "))
                     .expect("private RPC names its database")
                     .trim();
-                let client = tasks::rpc::Client::new(&self.upstream, "sf", db);
+                let client = symphony_board::rpc::Client::new(&self.upstream, "sf", db);
                 client.query("UPDATE type::record('task', $slug) SET priority = 4, title = 'Edited title', body = 'Edited body'; DELETE link WHERE slug = $slug AND kind = 'doc';",
                     json!({"slug":vars["slug"]})).unwrap();
             }
-            if delayed && matches!(self.phase, "reply" | "edited") {
+            if delayed && self.phase == "wipe" {
+                std::fs::remove_dir_all(self.root.join("artifacts/symphony-quick-tasks")).unwrap();
+            }
+            if delayed && matches!(self.phase, "reply" | "edited" | "wipe") {
                 std::thread::sleep(std::time::Duration::from_secs(4));
             }
             if delayed {
@@ -123,7 +131,7 @@ pub(super) struct Delayed {
 }
 
 impl Delayed {
-    pub(super) fn start(upstream: String, phase: &'static str) -> Self {
+    pub(super) fn start(upstream: String, phase: &'static str, root: &std::path::Path) -> Self {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let address = listener.local_addr().unwrap();
         assert_ne!(address.port(), 8765);
@@ -133,6 +141,7 @@ impl Delayed {
         let (send, delayed) = mpsc::channel();
         let forward = Forward {
             upstream,
+            root: root.to_path_buf(),
             phase,
             chosen: Arc::new(Mutex::new(0)),
             send,
