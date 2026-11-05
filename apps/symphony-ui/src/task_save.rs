@@ -3,6 +3,8 @@
 #[cfg(any(feature = "page-panel", test))]
 use serde::Deserialize;
 
+/// A known refusal releases the draft; an uncertain outcome needs confirmation.
+#[derive(Debug, Clone, PartialEq)]
 pub(crate) enum Failure {
     Known(String),
     Uncertain(String),

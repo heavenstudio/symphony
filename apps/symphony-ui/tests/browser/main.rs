@@ -17,6 +17,7 @@
 //! Without Chrome on the machine the browser tests say so and pass: the one capability a test
 //! may lack. The build is made once per run of this binary, into `build/symphony-ui/` of the tree.
 
+mod assets;
 mod binaries;
 mod chrome;
 #[path = "../common/mod.rs"]
@@ -29,11 +30,9 @@ mod owner_save;
 mod restored;
 mod site;
 
-use std::path::{Path, PathBuf};
-use std::process::Command;
-use std::sync::OnceLock;
 use std::time::Duration;
 
+use assets::dist;
 use chrome::Chrome;
 use serde_json::json;
 use site::Site;
@@ -43,37 +42,6 @@ const RETURN_VISIT_BYTES: f64 = 20_000.0;
 const PHONE_MS: f64 = 2_000.0;
 /// How long a page may take to show the board at all before a test gives up on it.
 const SHOWN: Duration = Duration::from_secs(30);
-
-/// The client's build, made once for this run (or the one `SF_SYMPHONY_UI_DIST` names).
-fn dist() -> &'static Path {
-    static DIST: OnceLock<PathBuf> = OnceLock::new();
-    DIST.get_or_init(|| {
-        if let Some(named) = std::env::var_os("SF_SYMPHONY_UI_DIST") {
-            return PathBuf::from(named);
-        }
-        // As `just symphony-ui-dist` builds it: cargo's subcommand `symphony-ui dist`, found on PATH. This
-        // binary already runs under the cargo wrapper, so it calls cargo itself, not the wrapper.
-        let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-        let out = crate_dir.join("../../build/symphony-ui");
-        let path = format!(
-            "{}:{}",
-            crate_dir.join("bin").display(),
-            std::env::var("PATH").unwrap_or_default()
-        );
-        let status = Command::new(std::env::var("CARGO").unwrap_or_else(|_| "cargo".into()))
-            .args(["symphony-ui", "dist"])
-            .arg(&out)
-            .env("PATH", path)
-            // Coverage instruments this native driver. Its flags cannot reach the separate
-            // wasm release build: wasm32 has no profiler runtime and the page is shipped code.
-            .env_remove("CARGO_ENCODED_RUSTFLAGS")
-            .env_remove("RUSTFLAGS")
-            .status()
-            .expect("run cargo symphony-ui dist");
-        assert!(status.success(), "the client's build failed: {status}");
-        out.join("public")
-    })
-}
 
 fn site() -> Site {
     Site::start(dist(), &common::fixture("board.json"))

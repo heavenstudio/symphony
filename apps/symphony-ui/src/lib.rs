@@ -8,6 +8,8 @@
 //!   outside, storage), so the browser and the desktop window run the same app.
 //! - `live` (wasm only): the fetch and the feed.
 
+#![forbid(unsafe_code)]
+
 #[cfg(any(
     not(target_arch = "wasm32"),
     feature = "page-tasks",

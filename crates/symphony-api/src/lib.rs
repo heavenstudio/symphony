@@ -30,6 +30,8 @@
 //! The server's own route, [`FRONT_PATH`], answers a [`Front`]: the one server in front of the app,
 //! as its starters and the agents see it.
 
+#![forbid(unsafe_code)]
+
 use serde::{Deserialize, Serialize};
 
 mod blocks;
@@ -51,7 +53,7 @@ pub struct Front {
     pub ready: bool,
     /// The app's pid, while one runs.
     pub app: Option<i64>,
-    /// This machine's MagicDNS name, when Tailscale gives one: the address a phone reaches.
+    /// This machine's `MagicDNS` name, when Tailscale gives one: the address a phone reaches.
     pub tailnet: Option<String>,
     /// Symphony processes whose parent is init: leftovers nothing ends on its own (never killed).
     pub orphans: usize,
@@ -291,7 +293,7 @@ impl ProjectView {
             && (path.ends_with('/')
                 || entrypoints.contains(&page)
                 || !name.contains('.')
-                || name.ends_with(".md"))
+                || is_markdown(name))
     }
 
     /// Whether `path` is a document route ([`ProjectView::is_document_route`]) naming a folder page
@@ -300,7 +302,7 @@ impl ProjectView {
     pub fn is_folder_route(&self, path: &str) -> bool {
         let page = path.trim_end_matches('/');
         self.is_document_route(path)
-            && (path.ends_with('/') || self.entrypoints().contains(&page) || !page.ends_with(".md"))
+            && (path.ends_with('/') || self.entrypoints().contains(&page) || !is_markdown(page))
     }
 
     /// The URL of the first entrypoint's folder page: `/docs/`, or `/` at the root.
@@ -343,6 +345,14 @@ pub const SYMPHONY_ROUTES: &[&str] = &[
     "_dioxus",
     "favicon.ico",
 ];
+
+/// Whether `name`, a route or a file name, names a Markdown file: the docs tree holds `.md` alone, as
+/// docs-index lists it, so the comparison keeps its case.
+fn is_markdown(name: &str) -> bool {
+    std::path::Path::new(name)
+        .extension()
+        .is_some_and(|extension| extension == "md")
+}
 
 /// Whether the route `path` is `route` or lies under it; every path lies under the empty route.
 fn within(route: &str, path: &str) -> bool {
@@ -417,7 +427,7 @@ struct ChangeVisitor;
 impl<'de> serde::de::Visitor<'de> for ChangeVisitor {
     type Value = Change;
 
-    fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+    fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter.write_str(r#"a region of the board: {"region": "...", "data": ...}"#)
     }
 
@@ -464,6 +474,10 @@ impl<'de> serde::de::Visitor<'de> for ChangeVisitor {
 
 const KNOWN_REGIONS: [&str; 5] = ["card", "queue", "counts", "progress", "client"];
 
+#[expect(
+    clippy::trivially_copy_pass_by_ref,
+    reason = "serde's skip_serializing_if passes the field by reference"
+)]
 fn is_false(value: &bool) -> bool {
     !*value
 }
@@ -565,6 +579,7 @@ pub enum FieldValue {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[expect(clippy::struct_field_names, reason = "the field is the wire's name")]
 pub struct Role {
     pub handle: String,
     pub role: String,
@@ -591,6 +606,7 @@ pub struct Session {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[expect(clippy::struct_field_names, reason = "the field is the wire's name")]
 pub struct Tasks {
     pub version: String,
     pub tasks: Vec<Task>,
@@ -996,6 +1012,7 @@ pub struct TaskChange {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[expect(clippy::struct_field_names, reason = "the field is the wire's name")]
 pub struct Agents {
     pub generated: f64,
     pub probes: AgentProbes,
@@ -1009,6 +1026,7 @@ pub struct AgentProbes {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[expect(clippy::struct_field_names, reason = "the field is the wire's name")]
 pub struct Agent {
     pub handle: String,
     pub kind: String,

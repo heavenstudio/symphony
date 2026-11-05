@@ -9,6 +9,7 @@ use serde_json::{Value, json};
 
 use super::Failure;
 
+/// The chosen task fields and original payload, published before dispatch.
 #[derive(Serialize, Deserialize)]
 pub(super) struct Record {
     pub(super) slug: String,
@@ -34,6 +35,7 @@ impl Record {
     }
 }
 
+/// Require the draft's lowercase hexadecimal save identity before dispatch.
 pub(super) fn identity(payload: &Value) -> Result<String, Failure> {
     let supplied = super::string(payload, "request");
     if supplied.is_empty() {
@@ -63,6 +65,7 @@ fn failure(path: &Path, error: impl std::fmt::Display) -> Failure {
     }
 }
 
+/// Read an intent and refuse a different payload bound to the same identity.
 pub(super) fn load(
     root: &Path,
     identity: &str,
@@ -133,6 +136,7 @@ pub(super) fn reserve(
     result
 }
 
+/// Keep an unconfirmed outcome pending so the composer retains its draft.
 pub(super) fn pending(error: &str) -> Value {
     json!({"pending": true, "error": error})
 }
@@ -150,13 +154,21 @@ fn found(store: &tasks::Store, new: &tasks::NewTask) -> Result<bool, Failure> {
     }
 }
 
+/// Whether this call starts a save or checks an already dispatched intent.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(super) enum Attempt {
+    First,
+    Check,
+}
+
+/// Return a confirmed slug or pending outcome, reading an uncertain write back first.
 pub(super) fn create(
     store: &tasks::Store,
     new: &tasks::NewTask,
-    repeated: bool,
+    attempt: Attempt,
 ) -> Result<Value, Failure> {
     let saved = || json!({"slug":new.slug});
-    if repeated {
+    if attempt == Attempt::Check {
         match found(store, new) {
             Ok(true) => return Ok(saved()),
             Ok(false) => {}

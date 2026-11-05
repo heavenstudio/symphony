@@ -1,6 +1,8 @@
 //! Development only: all page kinds in one runtime, using the same client library as releases.
 //! DX updates RSX in place and incrementally rebuilds Rust logic; dev.js gates the resulting reload.
 
+#![forbid(unsafe_code)]
+
 #[cfg(target_arch = "wasm32")]
 use symphony_ui::{frame, live, navigation};
 

@@ -6,6 +6,8 @@
 )]
 #[path = "../../../crates/tasks/tests/store/common.rs"]
 mod board;
+#[path = "after_http/owner_save.rs"]
+mod owner_save;
 #[path = "../../../crates/symphony/tests/common/tree.rs"]
 mod tree;
 
@@ -1241,41 +1243,7 @@ fn persistence(f: &Fixture) {
     );
     f.get("/api/ask?id=bad").status(400);
     f.get("/api/ask?id=999999").status(404);
-    let legacy = f
-        .post(
-            "/api/quick-task",
-            &json!({"title":"Keep the legacy form's text"}),
-        )
-        .status(400)
-        .json();
-    assert!(
-        legacy["error"]
-            .as_str()
-            .unwrap()
-            .contains("Reload this page")
-    );
-    let filed = f.post("/api/quick-task", &json!({"request":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "title":"HTTP filed task", "body":"Private board body", "page":"/docs/TOPIC.md#one", "priority":1})).status(200).json();
-    assert_eq!(filed["slug"], "inbox/http-filed-task");
-    let store = tasks::cli::connect(&tasks::cli::Env::of_process()).unwrap();
-    let task = store.get("inbox/http-filed-task").unwrap();
-    assert_eq!(task.title, "HTTP filed task");
-    assert_eq!(task.status, "concept");
-    assert_eq!(task.priority, 1);
-    assert!(task.body.contains("Private board body"));
-    assert!(
-        task.body
-            .contains("Sent from [/docs/TOPIC.md#one](/docs/TOPIC.md#one)")
-    );
-    assert!(task.links.iter().any(|link| link == "docs/TOPIC.md#one"));
-    assert_eq!(
-        f.post(
-            "/api/quick-task",
-            &json!({"request":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "title":"HTTP filed task", "page":"/docs/TOPIC.md"})
-        )
-        .status(200)
-        .json()["slug"],
-        "inbox/http-filed-task-2"
-    );
+    owner_save::quick_tasks(f);
 }
 
 /// The numbers of the `mark-NNNNNN` lines `text` shows, in the order it shows them.
