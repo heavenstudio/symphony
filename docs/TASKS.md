@@ -306,6 +306,9 @@ Counts and the clock do not trigger delivery. A departure alone pushes nothing;
 an entry that stays present is never re-sent, and an entry that leaves and returns pushes once.
 A legacy native observer starts from the current board on upgrade rather than replaying its history.
 Its upgrade marker and message cursor are separate callback-state fields that older writers leave intact.
+The fields writers older than that scoping read (the observation, the open-status map and the delivered PULL entries)
+keep their whole-board meaning; the scoped observation and the entries it withheld are kept beside them, in fields
+those writers ignore, and read over them: a line either writer said is not said again by the other.
 Codex callbacks use the queue by default; `git config sf.codexSteer true` opts in to
 active-turn steering. The owner decides its first live use.
 

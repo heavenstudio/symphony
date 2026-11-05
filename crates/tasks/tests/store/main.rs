@@ -16,6 +16,7 @@ mod fixture_script;
 mod health;
 mod launches;
 mod messages;
+mod mixed_dispatchers;
 mod next;
 mod orchestrators;
 mod priority;

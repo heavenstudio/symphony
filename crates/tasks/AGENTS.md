@@ -83,6 +83,10 @@ cursor advances only with the persisted observation and queued events.
 Unknown observations keep the heartbeat health older binaries derive in `seen`, with separate
 metadata restoring Unknown for newer readers. Both old and new writers must share that baseline
 past the ten-minute lost threshold, or alternating dispatchers repeat liveness notices.
+In the same way an orchestrator's `seen`, `statuses` and PULL entries keep the whole-board meaning
+binaries older than one orchestrator per task read (`attach::legacy_seen`, every open status, every
+digest entry); what it hears lives in `narrowing` and `pull_withheld`, which they ignore, read over
+that record, so neither generation repeats a NEW, LOST or PULL the other said.
 A finished idle pane still closes under the original cleanup rules, retiring its
 registration; an executor of a task in review is not finished, and keeps its pane.
 A post or changes verdict to `@executor`, or a post to the executor by handle, that no

@@ -2,6 +2,7 @@
 //! clock drains retries and observes actionable PULL/STALE/LOST changes. No agent keeps a monitor alive.
 
 use super::callback_peer::{self as peer, Owner};
+use super::callback_state::{State, stored_seen};
 use super::{ACT, Error, Store, acting, logged, refused};
 use crate::cli::agents::{Answer, Pane, Probe, Probes};
 use crate::cli::{attach, pull};
@@ -51,57 +52,6 @@ pub(super) struct Idle {
     marker: u64,
     health: Vec<crate::Health>,
     pull_at: f64,
-}
-
-#[derive(Default, Deserialize)]
-#[serde(default)]
-struct State {
-    seen: Option<attach::Seen>,
-    statuses: BTreeMap<String, String>,
-    pull: f64,
-    pull_entries: Option<BTreeSet<(String, String)>>,
-    pull_queued: Option<BTreeSet<(String, String)>>,
-    // Legacy dispatchers replace Seen wholesale. They leave these stream fields untouched.
-    message_cursor: Option<i64>,
-    delivery_version: Option<u32>,
-    revision: u64,
-    snapshot_sequence: u64,
-    inbox_cursor: Option<i64>,
-    unknown_children: BTreeSet<String>,
-    registration_revision: u64,
-    observed_registration: u64,
-}
-
-impl State {
-    fn restore_unknown(&mut self) {
-        if let Some(seen) = &mut self.seen {
-            for child in &self.unknown_children {
-                if let Some(health) = seen.children.get_mut(child)
-                    && *health != crate::Health::Live
-                {
-                    *health = crate::Health::Unknown;
-                }
-            }
-        }
-    }
-}
-
-/// Older dispatchers deserialize Seen's health enum. Keep their existing values in that record,
-/// and retain the richer observation in a field they ignore, so mixed binary versions still read it.
-/// The value must match their heartbeat observation, or each writer's diff repeats the other's notice.
-fn stored_seen(
-    seen: &attach::Seen,
-    legacy_health: impl Fn(&str) -> crate::Health,
-) -> (attach::Seen, BTreeSet<String>) {
-    let mut stored = seen.clone();
-    let mut unknown = BTreeSet::new();
-    for (child, health) in &mut stored.children {
-        if *health == crate::Health::Unknown {
-            unknown.insert(child.clone());
-            *health = legacy_health(child);
-        }
-    }
-    (stored, unknown)
 }
 
 #[derive(Deserialize, Serialize)]
@@ -787,7 +737,10 @@ RETURN NONE;");
         else {
             return Ok((true, f64::INFINITY));
         };
+        let orchestrator = session.row.kind == "orchestrator";
+        // What the recipient hears, and the whole board's look older dispatchers keep.
         let mut seen = attach::seen(board, handle, &session.row.kind);
+        let mut legacy = attach::legacy_seen(board, handle, &session.row.kind);
         let active: BTreeSet<&str> = board
             .tasks
             .iter()
@@ -820,27 +773,31 @@ RETURN NONE;");
         } else {
             cursor.unwrap_or(board.latest_message)
         };
+        let before = state.heard();
         // Only an orchestrator uses the global status map to schedule its PULL digest. Workers
         // need their own seen state, not a copy of every task in each callback read and write.
-        let statuses: BTreeMap<String, String> = if session.row.kind == "orchestrator" {
-            crate::orchestration::open_statuses(board, handle)
+        let statuses: BTreeMap<String, String> = if orchestrator {
+            crate::orchestration::open_statuses(board)
         } else {
             BTreeMap::new()
         };
+        let owners = crate::orchestration::Owners::new(&board.tasks);
+        let hears = |statuses| crate::orchestration::heard_statuses(&owners, statuses, handle);
         let last_pull = state.pull.max(checked_pull);
-        let scheduled = session.row.kind == "orchestrator"
+        let scheduled = orchestrator
             && (initializing
                 || (state.pull_entries.is_none() && state.pull_queued.is_none())
                 || self.now() - last_pull >= 600.0
-                || statuses != state.statuses);
-        let changed = session.row.kind == "orchestrator"
-            && attach::pull_changed(state.seen.as_ref(), &compact(&seen));
-        let quiet = seen.children.values().any(|health| {
-            matches!(
-                health,
-                crate::Health::Stale | crate::Health::Lost | crate::Health::Unknown
-            )
-        });
+                || hears(&statuses) != hears(&state.statuses));
+        let changed = orchestrator && attach::pull_changed(before.as_ref(), &compact(&seen));
+        let quiet = (seen.children.values())
+            .chain(legacy.children.values())
+            .any(|health| {
+                matches!(
+                    health,
+                    crate::Health::Stale | crate::Health::Lost | crate::Health::Unknown
+                )
+            });
         let env = crate::cli::Env::of_process();
         let view = if scheduled || changed || quiet {
             Some(crate::cli::agents::describe_board(
@@ -858,8 +815,10 @@ RETURN NONE;");
         for agent in view.as_ref().map_or(&[][..], |view| view.agents.as_slice()) {
             if agent.state == "running_test" {
                 busy.push(agent.handle.clone());
-                if let Some(health) = seen.children.get_mut(&agent.handle) {
-                    *health = crate::Health::Live;
+                for look in [&mut seen, &mut legacy] {
+                    if let Some(health) = look.children.get_mut(&agent.handle) {
+                        *health = crate::Health::Live;
+                    }
                 }
             } else if agent.state == "idle"
                 && !matches!(agent.kind.as_str(), "orchestrator" | "chat")
@@ -868,10 +827,9 @@ RETURN NONE;");
             }
         }
         // Compare the same effective child health that observation checkpoints persist.
-        let due = scheduled
-            || (session.row.kind == "orchestrator"
-                && attach::pull_changed(state.seen.as_ref(), &compact(&seen)));
-        let pull_at = if session.row.kind != "orchestrator" {
+        let due =
+            scheduled || (orchestrator && attach::pull_changed(before.as_ref(), &compact(&seen)));
+        let pull_at = if !orchestrator {
             f64::INFINITY
         } else if due {
             self.now() + 600.0
@@ -894,7 +852,7 @@ RETURN NONE;");
                 .map(|handled| (handled, pull_at));
         }
         let mut lines = Vec::new();
-        if let Some(before) = &state.seen
+        if let Some(before) = &before
             && !legacy_upgrade
             && before != &compact(&seen)
         {
@@ -902,8 +860,11 @@ RETURN NONE;");
                 lines.push(event_line(line))
             })?;
         }
+        // The recorded entries are the whole digest's, as older dispatchers record them; the
+        // recipient is told the heard digest's rows, and the rest are recorded as withheld.
         let mut pull_queued = state.pull_queued.clone();
         let mut pull_entries = state.pull_entries.clone().unwrap_or_default();
+        let mut pull_withheld = state.pull_withheld.clone();
         let mut pull_current = BTreeSet::new();
         let mut pull_event = None;
         if due {
@@ -912,20 +873,20 @@ RETURN NONE;");
                 root.as_ref()
                     .is_some_and(|root| crate::cli::probes::landed(root, &task.slug))
             };
-            let digest = pull::digest(self, &idle, Some(&landed), self.now(), &busy)?
-                .only_for(board, handle);
+            let digest = pull::digest(self, &idle, Some(&landed), self.now(), &busy)?;
             let entries = digest.entries();
-            pull_current = entries.clone();
+            let digest = digest.only_for(board, handle);
+            let heard = digest.entries();
             pull_entries.retain(|entry| entries.contains(entry));
             if let Some(queued) = &mut pull_queued {
                 queued.retain(|entry| entries.contains(entry));
             }
             if legacy_upgrade {
-                pull_entries = entries;
-            } else if (state.pull_entries.is_none() || !entries.is_subset(&pull_entries))
+                pull_entries = entries.clone();
+            } else if (state.pull_entries.is_none() || !heard.is_subset(&state.told(&pull_entries)))
                 && pull_queued
                     .as_ref()
-                    .is_none_or(|queued| !entries.is_subset(queued))
+                    .is_none_or(|queued| !heard.is_subset(&state.told(queued)))
             {
                 let text = digest
                     .event_lines()
@@ -934,8 +895,13 @@ RETURN NONE;");
                     .collect::<Vec<_>>()
                     .join("\n");
                 pull_queued = Some(entries.clone());
-                pull_event = Some((text, entries));
+                pull_event = Some((text, entries.clone()));
             }
+            pull_withheld = entries.difference(&heard).cloned().collect();
+            if state.pull_entries.is_some() {
+                pull_entries.extend(pull_withheld.iter().cloned());
+            }
+            pull_current = entries;
         }
         let revision = lease.map_or(state.revision, |(_, revision)| revision);
         let mut events: Vec<Event> = lines
@@ -964,12 +930,13 @@ RETURN NONE;");
                 pull_entries: Some(entries),
             });
         }
-        seen = compact(&seen);
+        let legacy = compact(&legacy);
+        let narrowing = attach::Narrowing::between(&legacy, &compact(&seen));
+        let unchanged =
+            state.seen.as_ref() == Some(&legacy) && state.narrowing.as_ref() == Some(&narrowing);
         // Message, role and task-tree writes append a board message. Once the inbox is durably
         // copied, an unchanged observation needs only outbox retries, not another history scan.
-        let inbox = if state.inbox_cursor == Some(board.latest_message)
-            && state.seen.as_ref() == Some(&seen)
-        {
+        let inbox = if state.inbox_cursor == Some(board.latest_message) && unchanged {
             Vec::new()
         } else if first_observation {
             self.inbox(handle)?
@@ -1025,7 +992,7 @@ RETURN NONE;");
                 });
             }
         }
-        let (stored_seen, unknown_children) = stored_seen(&seen, |handle| {
+        let (stored_seen, unknown_children) = stored_seen(&legacy, |handle| {
             let Some(child) = board.sessions.iter().find(|s| s.row.handle == handle) else {
                 return crate::Health::Left;
             };
@@ -1039,12 +1006,13 @@ RETURN NONE;");
         if events.is_empty()
             && !initializing
             && state.registration_revision == state.observed_registration
-            && state.seen.as_ref() == Some(&seen)
+            && unchanged
             && state.statuses == statuses
             && state.inbox_cursor == Some(board.latest_message)
             && state.unknown_children == unknown_children
             && pull_queued == state.pull_queued
             && pull_entries == state.pull_entries.clone().unwrap_or_default()
+            && pull_withheld == state.pull_withheld
         {
             if due {
                 // Fresh command Stores share this deadline even when the digest has no new
@@ -1097,23 +1065,24 @@ RETURN NONE;");
                 };
              };
              IF $computed { UPDATE type::record('callback_lease', $handle) SET pull = $pull WHERE revision = $revision RETURN NONE; };
-             LET $before = (SELECT seen, unknown_children, statuses, pull_queued, inbox_cursor, message_cursor, delivery_version, registration_revision, observed_registration FROM ONLY type::record('callback_state', $handle));
-             IF $before.seen != $seen OR $before.unknown_children != $unknown_children OR $before.statuses != $statuses
+             LET $before = (SELECT seen, narrowing, unknown_children, statuses, pull_queued, inbox_cursor, message_cursor, delivery_version, registration_revision, observed_registration FROM ONLY type::record('callback_state', $handle));
+             IF $before.seen != $seen OR $before.narrowing != $narrowing OR $before.unknown_children != $unknown_children OR $before.statuses != $statuses
                 OR $before.pull_queued != $pull_queued OR $before.inbox_cursor != $inbox_cursor
                 OR ($before.message_cursor ?? 0) < $message_cursor OR $before.delivery_version = NONE
                 OR ($before.registration_revision ?? 0) != ($before.observed_registration ?? 0) OR $computed {
-             UPDATE type::record('callback_state', $handle) SET seen = $seen, unknown_children = $unknown_children, snapshot_sequence = $snapshot_sequence, statuses = $statuses, revision = $revision, pull = $pull, pull_queued = $pull_queued,
+             UPDATE type::record('callback_state', $handle) SET seen = $seen, narrowing = $narrowing, unknown_children = $unknown_children, snapshot_sequence = $snapshot_sequence, statuses = $statuses, revision = $revision, pull = $pull, pull_queued = $pull_queued,
                 observed_registration = registration_revision ?? 0,
                 pull_entries = IF $legacy_upgrade { $pull_entries }
-                    ELSE IF $computed AND pull_entries != NONE { pull_entries.filter(|$entry| $entry IN $pull_current) } ELSE { pull_entries },
+                    ELSE IF $computed AND pull_entries != NONE { array::union(pull_entries.filter(|$entry| $entry IN $pull_current), $pull_withheld) } ELSE { pull_entries },
+                pull_withheld = IF $computed { $pull_withheld } ELSE { pull_withheld },
                 message_cursor = math::max([message_cursor ?? 0, $message_cursor]),
                 inbox_cursor = $inbox_cursor,
                 delivery_version = delivery_version ?? 1 RETURN NONE;
              };
              RETURN NONE;",
-            json!({"handle":handle, "events":events, "seen":stored_seen, "unknown_children":unknown_children, "snapshot_sequence":sequence, "statuses":statuses, "revision":revision,
+            json!({"handle":handle, "events":events, "seen":stored_seen, "narrowing":narrowing, "unknown_children":unknown_children, "snapshot_sequence":sequence, "statuses":statuses, "revision":revision,
                 "pull":if due {self.now()} else {state.pull}, "pull_queued":pull_queued,
-                "legacy_upgrade":legacy_upgrade, "pull_entries":pull_entries,
+                "legacy_upgrade":legacy_upgrade, "pull_entries":pull_entries, "pull_withheld":pull_withheld,
                 "message_cursor":board.latest_message, "inbox_cursor":board.latest_message,
                 "computed":due, "pull_current":pull_current,
                 "replace_pull":events.iter().any(|event| event.pull_entries.is_some())}),
@@ -1559,70 +1528,6 @@ mod tests {
         .unwrap();
         assert_eq!(attempts, 1);
         assert_eq!(recorded, [(vec![1, 2, 3], false)]);
-    }
-
-    #[test]
-    fn unknown_observations_remain_readable_by_legacy_dispatchers_and_restore_without_repeats() {
-        #[derive(Debug, PartialEq, Deserialize)]
-        enum LegacyHealth {
-            Live,
-            Stale,
-            Lost,
-            Left,
-        }
-        #[derive(Deserialize)]
-        struct LegacySeen {
-            children: BTreeMap<String, LegacyHealth>,
-        }
-        let seen: attach::Seen = serde_json::from_value(json!({
-            "roles":[], "statuses":{}, "ready":{},
-            "children":{"stale-unknown":"Unknown", "lost-unknown":"Unknown", "left-unknown":"Unknown", "active":"Live", "stale":"Stale"}
-        }))
-        .unwrap();
-        let (stored, unknown) = stored_seen(&seen, |child| match child {
-            "stale-unknown" => crate::Health::Stale,
-            "lost-unknown" => crate::Health::Lost,
-            "left-unknown" => crate::Health::Left,
-            other => panic!("unexpected unknown child: {other}"),
-        });
-        let legacy: LegacySeen =
-            serde_json::from_value(serde_json::to_value(&stored).unwrap()).unwrap();
-        assert_eq!(legacy.children["stale-unknown"], LegacyHealth::Stale);
-        assert_eq!(legacy.children["lost-unknown"], LegacyHealth::Lost);
-        assert_eq!(legacy.children["left-unknown"], LegacyHealth::Left);
-        assert_eq!(legacy.children["active"], LegacyHealth::Live);
-        assert_eq!(
-            unknown,
-            BTreeSet::from([
-                "stale-unknown".to_string(),
-                "lost-unknown".to_string(),
-                "left-unknown".to_string(),
-            ])
-        );
-
-        let mut state: State =
-            serde_json::from_value(json!({"seen":stored, "unknown_children":unknown})).unwrap();
-        state.restore_unknown();
-        assert_eq!(
-            state.seen,
-            Some(seen),
-            "the next dispatcher must see the same observation, not emit unknown again"
-        );
-        state
-            .seen
-            .as_mut()
-            .unwrap()
-            .children
-            .insert("lost-unknown".into(), crate::Health::Live);
-        state.restore_unknown();
-        assert_eq!(
-            state.seen.as_ref().unwrap().children["lost-unknown"],
-            crate::Health::Live,
-            "an older dispatcher's fresh evidence wins over stale metadata"
-        );
-        let mut empty = State::default();
-        empty.restore_unknown();
-        assert!(empty.seen.is_none());
     }
 
     /// Where a re-run of a queue test below finds its folder, whose stand-in is the only codex on

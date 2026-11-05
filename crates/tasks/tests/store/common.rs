@@ -345,6 +345,19 @@ impl Fixture {
         open(&self.db, &self.clock, &self.alive)
     }
 
+    /// Another store on the same board, clock and process table, on another host: its writes
+    /// dispatch no callback registered on this one, which hears them from the next dispatch here.
+    pub fn elsewhere(&self) -> Store {
+        let (clock, alive) = (Arc::clone(&self.clock), Arc::clone(&self.alive));
+        Store::with(
+            self.other_client(),
+            Box::new(move || *clock.lock().unwrap()),
+            Box::new(move |pid| alive.lock().unwrap().contains(&pid)),
+            "another-host",
+        )
+        .expect("the store opens")
+    }
+
     /// Another store on the same board whose clock, read between a rule's read and its write, first
     /// lets `meanwhile` act once: the board moves under a rule that has already decided.
     pub fn late(&self, meanwhile: impl Fn() + Send + Sync + 'static) -> Store {

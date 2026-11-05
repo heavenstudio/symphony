@@ -112,14 +112,25 @@ pub fn told(board: &Board, child: &str, handle: &str, held: Vec<String>) -> Vec<
         .collect()
 }
 
-/// The status of each unfinished task orchestrator `handle` hears, by slug: what schedules its
-/// PULL digest, so another orchestrator's tasks moving schedule nothing for it.
-pub fn open_statuses(board: &Board, handle: &str) -> BTreeMap<String, String> {
-    let owners = Owners::new(&board.tasks);
+/// The status of each unfinished task on the board, by slug: the map an orchestrator's callback
+/// state keeps, in the meaning dispatchers built before one orchestrator per task read it.
+pub fn open_statuses(board: &Board) -> BTreeMap<String, String> {
     (board.tasks.iter())
         .filter(|t| !crate::health::FINISHED.contains(&t.status.as_str()))
-        .filter(|t| owners.reaches(&t.slug, handle))
         .map(|t| (t.slug.clone(), t.status.clone()))
+        .collect()
+}
+
+/// Of `statuses`, those of the tasks orchestrator `handle` hears: what schedules its PULL digest,
+/// so another orchestrator's tasks moving schedule nothing for it.
+pub fn heard_statuses<'s>(
+    owners: &Owners,
+    statuses: &'s BTreeMap<String, String>,
+    handle: &str,
+) -> BTreeMap<&'s str, &'s str> {
+    (statuses.iter())
+        .filter(|(slug, _)| owners.reaches(slug, handle))
+        .map(|(slug, status)| (slug.as_str(), status.as_str()))
         .collect()
 }
 

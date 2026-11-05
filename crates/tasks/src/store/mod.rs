@@ -23,6 +23,7 @@ use std::sync::Mutex;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 mod callback_peer;
+mod callback_state;
 mod callbacks;
 mod depends;
 mod embeddings;

@@ -1,6 +1,8 @@
 //! What a session's monitor sees of the board at one poll ([`Seen`]), scoped to what it hears: its
 //! own tasks, and for an orchestrator the ones it orchestrates and the ones nobody does
-//! ([`crate::orchestration`]).
+//! ([`crate::orchestration`]). Dispatchers built before that scope keep the whole board's look
+//! ([`legacy_seen`]) in the callback state they share with newer ones, which keep their scoped look
+//! beside it as a [`Narrowing`] of it.
 
 use crate::health::{EXECUTING, FINISHED, Health};
 use crate::orchestration::{Owners, claimable_work, told_of};
@@ -25,7 +27,8 @@ pub struct Seen {
     pub statuses: BTreeMap<String, String>,
     /// Of `statuses`, the tasks an orchestrator follows only because nobody orchestrates them: it
     /// hears their move to `blocked`, which no PULL row shows, and leaves the rest to its digest.
-    #[serde(default)]
+    /// Never in a legacy look, whose record stays in the shape older dispatchers write.
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
     pub unclaimed: BTreeSet<String>,
     /// For an orchestrator, the ready tasks, slug -> title.
     pub ready: BTreeMap<String, String>,
@@ -38,30 +41,52 @@ pub fn observe(store: &Store, handle: &str, kind: &str) -> Result<Seen, Error> {
     Ok(seen(&store.board()?, handle, kind))
 }
 
+/// What the session hears of the board.
 pub(crate) fn seen(board: &Board, handle: &str, kind: &str) -> Seen {
+    look(board, handle, kind, Scope::Heard)
+}
+
+/// The session's look as dispatchers built before one orchestrator per task took it, and still
+/// read it from the callback state: for an orchestrator, every ready task, every task below the
+/// ones it orchestrates and the staffing of the whole board; for anyone, its children by parent.
+pub(crate) fn legacy_seen(board: &Board, handle: &str, kind: &str) -> Seen {
+    look(board, handle, kind, Scope::Board)
+}
+
+/// How much of the board a look takes in.
+#[derive(Clone, Copy, PartialEq)]
+enum Scope {
+    /// What the session hears ([`crate::orchestration`]).
+    Heard,
+    /// The whole board, as before an orchestrator heard only its own tasks and the unclaimed ones.
+    Board,
+}
+
+fn look(board: &Board, handle: &str, kind: &str, scope: Scope) -> Seen {
     let mine: Vec<&Task> = board
         .tasks
         .iter()
         .filter(|t| t.roles.iter().any(|r| r.handle == handle))
         .collect();
     let owners = Owners::new(&board.tasks);
+    let reaches = |slug: &str| scope == Scope::Board || owners.reaches(slug, handle);
     let orchestrator = kind == "orchestrator";
     let Followed {
         watched,
         below,
         unclaimed,
-    } = followed(board, &owners, &mine, handle, orchestrator);
+    } = followed(board, &owners, &mine, handle, orchestrator, scope);
     // An orchestrator hears its own ready work and nobody's, never another orchestrator's.
     let ready = if orchestrator {
         (board.tasks.iter())
-            .filter(|t| t.status == "ready" && owners.reaches(&t.slug, handle))
+            .filter(|t| t.status == "ready" && reaches(&t.slug))
             .map(|t| (t.slug.clone(), t.title.clone()))
             .collect()
     } else {
         BTreeMap::new()
     };
     let staffing = if orchestrator {
-        staffing(board, &owners, handle)
+        staffing(board, &reaches)
     } else {
         String::new()
     };
@@ -77,7 +102,7 @@ pub(crate) fn seen(board: &Board, handle: &str, kind: &str) -> Seen {
         .collect();
     // A session going quiet is said to its parent; to an orchestrator, only when it is the
     // orchestrator of the work that session holds, or that work is nobody's.
-    let work = orchestrator.then(|| claimable_work(board));
+    let work = (orchestrator && scope == Scope::Heard).then(|| claimable_work(board));
     let children = (board.sessions.iter())
         .filter(|s| s.row.handle != handle)
         .filter(|s| told_of(&owners, work.as_ref(), &s.row, handle))
@@ -106,13 +131,15 @@ struct Followed<'b> {
 }
 
 /// Its own tasks; for each it orchestrates, everything below but what another orchestrator holds;
-/// for an orchestrator, every unfinished task nobody orchestrates that it holds no role on.
+/// for an orchestrator, every unfinished task nobody orchestrates that it holds no role on. A look
+/// at the whole board follows everything below, and nothing for being nobody's.
 fn followed<'b>(
     board: &'b Board,
     owners: &Owners,
     mine: &[&'b Task],
     handle: &str,
     orchestrator: bool,
+    scope: Scope,
 ) -> Followed<'b> {
     let mut kids: HashMap<Option<&str>, Vec<&Task>> = HashMap::new();
     for task in &board.tasks {
@@ -122,6 +149,7 @@ fn followed<'b>(
     let mut below: HashSet<&str> = HashSet::new();
     let orchestrated =
         |t: &&&Task| (t.roles.iter()).any(|r| r.handle == handle && r.role == "orchestrator");
+    let elsewhere = |slug: &str| scope == Scope::Heard && owners.elsewhere(slug, handle);
     let orchestrating = mine.iter().filter(orchestrated);
     for task in orchestrating {
         let mut todo = kids
@@ -129,7 +157,7 @@ fn followed<'b>(
             .cloned()
             .unwrap_or_default();
         while let Some(under) = todo.pop() {
-            if owners.elsewhere(&under.slug, handle) || !below.insert(&under.slug) {
+            if elsewhere(&under.slug) || !below.insert(&under.slug) {
                 continue;
             }
             watched.insert(&under.slug, under);
@@ -137,7 +165,7 @@ fn followed<'b>(
         }
     }
     let mut unclaimed: BTreeSet<&str> = BTreeSet::new();
-    if orchestrator {
+    if orchestrator && scope == Scope::Heard {
         let open = |t: &&Task| !FINISHED.contains(&t.status.as_str());
         let nobodys = (board.tasks.iter())
             .filter(open)
@@ -156,12 +184,12 @@ fn followed<'b>(
     }
 }
 
-/// The staffing of the work an orchestrator hears, as one canonical string: a change in it is a
-/// reason to compute the PULL digest again.
-fn staffing(board: &Board, owners: &Owners, handle: &str) -> String {
+/// The staffing of the work an orchestrator takes in (`reaches`), as one canonical string: a change
+/// in it is a reason to compute the PULL digest again.
+fn staffing(board: &Board, reaches: &dyn Fn(&str) -> bool) -> String {
     let active = |t: &&Task| {
         (matches!(t.status.as_str(), "ready" | "review") || EXECUTING.contains(&t.status.as_str()))
-            && owners.reaches(&t.slug, handle)
+            && reaches(&t.slug)
     };
     let roles: BTreeSet<(&str, &str, &str, bool)> = (board.tasks.iter())
         .filter(active)
@@ -188,4 +216,110 @@ pub(crate) fn pull_changed(before: Option<&Seen>, now: &Seen) -> bool {
             || before.children != now.children
             || before.staffing != now.staffing
     })
+}
+
+/// A session's heard look ([`seen`]) as what it leaves out of and adds to its legacy look
+/// ([`legacy_seen`]) of the same board. Dispatchers built before the narrowing read and write only
+/// the legacy record and never this, so the heard baseline is always the legacy record as it now
+/// stands with this on it ([`Narrowing::over`]): what an older writer said since counts as said for
+/// both, and neither repeats a line for the other.
+#[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct Narrowing {
+    statuses: Delta<String>,
+    ready: Delta<String>,
+    children: Delta<Health>,
+    /// The verdict tasks the legacy look holds that the heard one does not, and the reverse.
+    verdicts_left: BTreeSet<String>,
+    verdicts_added: BTreeSet<String>,
+    unclaimed: BTreeSet<String>,
+    staffing: String,
+}
+
+/// How one map of the heard look differs from the legacy look's. The entries both hold agree, as
+/// both looks read one board, so the legacy record's own value stands for each key it holds.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+struct Delta<V> {
+    /// Keys of the legacy map the heard one leaves out.
+    left: BTreeSet<String>,
+    /// Entries of the heard map the legacy one lacks.
+    added: BTreeMap<String, V>,
+}
+
+impl<V> Default for Delta<V> {
+    fn default() -> Self {
+        Delta {
+            left: BTreeSet::new(),
+            added: BTreeMap::new(),
+        }
+    }
+}
+
+impl<V: Clone> Delta<V> {
+    fn between(legacy: &BTreeMap<String, V>, heard: &BTreeMap<String, V>) -> Delta<V> {
+        Delta {
+            left: (legacy.keys())
+                .filter(|key| !heard.contains_key(*key))
+                .cloned()
+                .collect(),
+            added: (heard.iter())
+                .filter(|(key, _)| !legacy.contains_key(*key))
+                .map(|(key, value)| (key.clone(), value.clone()))
+                .collect(),
+        }
+    }
+
+    fn over(&self, legacy: &BTreeMap<String, V>) -> BTreeMap<String, V> {
+        let mut heard: BTreeMap<String, V> = (legacy.iter())
+            .filter(|(key, _)| !self.left.contains(*key))
+            .map(|(key, value)| (key.clone(), value.clone()))
+            .collect();
+        for (key, value) in &self.added {
+            heard.entry(key.clone()).or_insert_with(|| value.clone());
+        }
+        heard
+    }
+}
+
+impl Narrowing {
+    /// The heard look `heard` as a narrowing of `legacy`, both of one board.
+    pub fn between(legacy: &Seen, heard: &Seen) -> Narrowing {
+        Narrowing {
+            statuses: Delta::between(&legacy.statuses, &heard.statuses),
+            ready: Delta::between(&legacy.ready, &heard.ready),
+            children: Delta::between(&legacy.children, &heard.children),
+            verdicts_left: (legacy.verdict_tasks)
+                .difference(&heard.verdict_tasks)
+                .cloned()
+                .collect(),
+            verdicts_added: (heard.verdict_tasks)
+                .difference(&legacy.verdict_tasks)
+                .cloned()
+                .collect(),
+            unclaimed: heard.unclaimed.clone(),
+            staffing: heard.staffing.clone(),
+        }
+    }
+
+    /// The heard look this narrowing makes of `legacy`. Its roles and messages are the legacy
+    /// look's, which both scopes share.
+    pub fn over(&self, legacy: &Seen) -> Seen {
+        let mut verdict_tasks: BTreeSet<String> = legacy
+            .verdict_tasks
+            .difference(&self.verdicts_left)
+            .cloned()
+            .collect();
+        verdict_tasks.extend(self.verdicts_added.iter().cloned());
+        Seen {
+            latest_message: legacy.latest_message,
+            verdict_tasks,
+            staffing: self.staffing.clone(),
+            roles: legacy.roles.clone(),
+            statuses: self.statuses.over(&legacy.statuses),
+            unclaimed: self.unclaimed.clone(),
+            ready: self.ready.over(&legacy.ready),
+            children: self.children.over(&legacy.children),
+        }
+    }
 }

@@ -14,8 +14,8 @@ mod watch;
 
 pub use events::diff;
 pub use panes::{Blocked, Overseen, PaneWatch, overseen, pane_watch};
-pub use seen::{Seen, observe};
-pub(crate) use seen::{pull_changed, seen};
+pub use seen::{Narrowing, Seen, observe};
+pub(crate) use seen::{legacy_seen, pull_changed, seen};
 pub use watch::{Watch, watch};
 
 #[cfg(test)]
