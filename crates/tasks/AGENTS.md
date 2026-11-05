@@ -164,8 +164,11 @@ idle sweep keeps what it saw; `HERDR_BIN` names a fake herdr (the crate's
 `fake-herdr` binary, its panes a JSON file `FAKE_HERDR_STATE` names);
 `TASKS_PS_TABLE` names a file of `ps -axo pid=,ppid=,command=` lines the commands
 read in place of `ps` (`procs::table`), so no command-line case reads this
-machine's process table. A pane whose process-info or table cannot be read stays,
-and cleanup and finish print `kept pane P (never closed on no information: WHY)`.
+machine's process table; it is read only with a `TASKS_DATABASE` other than the
+live one, never on the live board. A table, the file's or `ps`'s, that lists no
+row for the pane's shell says nothing of it. A pane the board would close whose
+process-info or table cannot be read stays, and cleanup and finish print `kept
+pane P [of H] (never closed on no information: WHY)`.
 
 A child's input and output go through `sys::output` (or `sys::spawn_output`,
 `sys::spawn_piped` for one that reads stdin, and `sys::wait_output`), never

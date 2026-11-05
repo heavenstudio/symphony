@@ -127,23 +127,69 @@ fn a_finish_that_cannot_read_the_process_table_keeps_the_pane_and_names_the_fail
         ("sim/a", &["move", "sim/a", "cancelled"][..], "cancelled"),
         ("sim/a/do", &["done", "sim/a/do", "it is"][..], "done"),
     ] {
-        let p = Panes::new("finish-no-table");
-        let worker = launched_on(&p, on);
-        let why = p.unreadable_process_table();
-        let ran = p.as_(&worker, args);
-        assert_eq!(
-            (ran.code, ran.out, ran.err.as_str()),
-            (
-                0,
-                format!(
-                    "{on} is {status}\n→ kept pane w1:p1 (never closed on no information: {why})\n"
+        for table in [None, Some("    1     0 /sbin/launchd\n")] {
+            let p = Panes::new("finish-no-table");
+            let worker = launched_on(&p, on);
+            let why = no_table(&p, table);
+            let ran = p.as_(&worker, args);
+            assert_eq!(
+                (ran.code, ran.out, ran.err.as_str()),
+                (
+                    0,
+                    format!(
+                        "{on} is {status}\n→ kept pane w1:p1 of {worker} (never closed on no information: {why})\n"
+                    ),
+                    ""
                 ),
-                ""
-            ),
-            "{args:?}"
-        );
+                "{args:?} {table:?}"
+            );
+            assert_eq!(p.pane_ids(), ["w1:p1"]);
+            assert_eq!(p.board().get(on).unwrap().status, status);
+        }
+    }
+}
+
+/// The process table the commands read made useless: none (`table` is None), or `table`, which
+/// lists no shell of the pane's. What each kept pane's line says of it.
+fn no_table(p: &Panes, table: Option<&str>) -> String {
+    let file = p.ps_table();
+    match table {
+        None => {
+            std::fs::remove_file(&file).unwrap();
+            format!(
+                "ps table {}: No such file or directory (os error 2)",
+                file.display()
+            )
+        }
+        Some(text) => {
+            std::fs::write(&file, text).unwrap();
+            format!("ps table {} lists no process 99999999", file.display())
+        }
+    }
+}
+
+#[test]
+fn a_cleanup_that_cannot_read_the_process_table_keeps_the_pane_and_names_the_failure() {
+    for table in [None, Some("garbage only\n")] {
+        let p = Panes::new("cleanup-no-table");
+        let worker = launched_on(&p, "sim/a");
+        p.board().move_to("sim/a", "cancelled", &worker).unwrap(); // on the board itself
+        let why = no_table(&p, table);
+        for args in [&["cleanup", "--dry-run"][..], &["cleanup"]] {
+            let ran = p.run(args);
+            assert_eq!(
+                (ran.code, ran.out, ran.err.as_str()),
+                (
+                    0,
+                    format!(
+                        "kept pane w1:p1 of {worker} (never closed on no information: {why})\n"
+                    ),
+                    ""
+                ),
+                "{args:?} {table:?}"
+            );
+        }
         assert_eq!(p.pane_ids(), ["w1:p1"]);
-        assert_eq!(p.board().get(on).unwrap().status, status);
     }
 }
 

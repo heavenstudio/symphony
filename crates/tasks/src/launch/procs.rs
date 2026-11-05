@@ -6,7 +6,7 @@
 use super::{LaunchError, Processes};
 use crate::cli::{Env, probes};
 use crate::sys::Command;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -19,35 +19,43 @@ pub fn descendants(pid: i64) -> Result<Vec<String>, LaunchError> {
     descendants_by(Command::new("ps"), pid)
 }
 
-/// The process table a command in `env` reads: [`descendants`], or with `TASKS_PS_TABLE` set,
-/// [`listed`] from the file it names, so the command line's tests never read this machine's.
+/// The process table a command in `env` reads: [`descendants`], or on a scratch board (a
+/// `TASKS_DATABASE` other than the live one, as every test's is) with `TASKS_PS_TABLE` set,
+/// [`listed`] from the file it names, so the command line's tests never read this machine's. On
+/// the live board the variable is never read: a stale or leaked one cannot stand in for `ps` there.
 pub fn table(env: &Env) -> Box<Processes> {
-    match env.var("TASKS_PS_TABLE") {
+    match table_file(env) {
         None => Box::new(descendants),
-        Some(file) => {
-            let file = PathBuf::from(file);
-            Box::new(move |pid| listed(&file, pid))
-        }
+        Some(file) => Box::new(move |pid| listed(&file, pid)),
     }
+}
+
+/// The file [`table`] reads in place of `ps`: `TASKS_PS_TABLE`'s, on a scratch board only.
+pub fn table_file(env: &Env) -> Option<PathBuf> {
+    let scratch = env
+        .var("TASKS_DATABASE")
+        .is_some_and(|db| db != crate::DATABASE);
+    env.var("TASKS_PS_TABLE")
+        .filter(|_| scratch)
+        .map(PathBuf::from)
 }
 
 /// The command lines under `pid` in `file`, which holds a table as `ps -axo pid=,ppid=,command=`
-/// prints it. A file that cannot be read, or holds no table, is `LaunchError`, as `ps` failing is.
+/// prints it. A file that cannot be read, or that lists no process `pid`, is `LaunchError`, as
+/// `ps` failing is: a table that does not describe the pane's shell says nothing of what runs there.
 pub fn listed(file: &Path, pid: i64) -> Result<Vec<String>, LaunchError> {
     let table = std::fs::read(file)
         .map_err(|why| LaunchError(format!("ps table {}: {why}", file.display())))?;
-    let table = String::from_utf8_lossy(&table);
-    if table.trim().is_empty() {
-        return Err(LaunchError(format!(
-            "ps table {} holds nothing",
+    under_listed(&String::from_utf8_lossy(&table), pid).ok_or_else(|| {
+        LaunchError(format!(
+            "ps table {} lists no process {pid}",
             file.display()
-        )));
-    }
-    Ok(under(&table, pid))
+        ))
+    })
 }
 
 /// [`descendants`], the table read from `ps` (a test's stand-in for it): `-axo pid=,ppid=,command=`
-/// is added to it.
+/// is added to it. A table that lists no process `pid` is `LaunchError`, as one `ps` could not give.
 pub fn descendants_by(mut ps: Command, pid: i64) -> Result<Vec<String>, LaunchError> {
     ps.args(["-axo", "pid=,ppid=,command="]);
     let done =
@@ -56,11 +64,20 @@ pub fn descendants_by(mut ps: Command, pid: i64) -> Result<Vec<String>, LaunchEr
     if !done.status.success() || table.trim().is_empty() {
         return Err(LaunchError("ps printed nothing".into()));
     }
-    Ok(under(&table, pid))
+    under_listed(&table, pid).ok_or_else(|| LaunchError(format!("ps lists no process {pid}")))
+}
+
+/// [`under`], or none when no line of `table` is process `pid`'s own.
+fn under_listed(table: &str, pid: i64) -> Option<Vec<String>> {
+    table
+        .lines()
+        .any(|line| columns(line).is_some_and(|(at, _, _)| at == pid))
+        .then(|| under(table, pid))
 }
 
 /// The command lines under `pid` in `table` (`ps`'s `pid ppid command` lines), each child before
-/// what runs under it, the last child's line of descent first, as a stack walks them.
+/// what runs under it, the last child's line of descent first, as a stack walks them. Each process
+/// is walked once, so a table whose parents loop still ends.
 pub fn under(table: &str, pid: i64) -> Vec<String> {
     let mut children: HashMap<i64, Vec<(i64, String)>> = HashMap::new();
     for line in table.lines() {
@@ -72,11 +89,13 @@ pub fn under(table: &str, pid: i64) -> Vec<String> {
             .or_default()
             .push((child, command.to_string()));
     }
-    let (mut found, mut todo) = (Vec::new(), vec![pid]);
+    let (mut found, mut todo, mut seen) = (Vec::new(), vec![pid], HashSet::from([pid]));
     while let Some(at) = todo.pop() {
         for (child, command) in children.get(&at).into_iter().flatten() {
-            found.push(command.clone());
-            todo.push(*child);
+            if seen.insert(*child) {
+                found.push(command.clone());
+                todo.push(*child);
+            }
         }
     }
     found

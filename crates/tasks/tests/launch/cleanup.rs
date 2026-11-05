@@ -348,11 +348,11 @@ fn only_the_named_tasks_sessions_are_cleaned_when_asked() {
     assert!(w.has_pane(&a));
 }
 
-/// `pane` kept because a call failed: `why` names it.
-fn kept(pane: &str, why: String) -> Closure {
+/// `pane` of `handle` kept because a call failed: `why` names it.
+fn kept(pane: &str, handle: Option<&str>, why: String) -> Closure {
     Closure {
         pane: pane.into(),
-        handle: None,
+        handle: handle.map(str::to_string),
         why,
         restore: String::new(),
         closed: false,
@@ -363,7 +363,7 @@ fn kept(pane: &str, why: String) -> Closure {
 #[test]
 fn a_pane_herdr_cannot_describe_or_whose_processes_cannot_be_read_is_kept_naming_the_call() {
     let mut w = World::new();
-    let (_, pane) = w.worker("sim/jump", Some("done"));
+    let (handle, pane) = w.worker("sim/jump", Some("done"));
     w.set("FAKE_HERDR_FAIL", "pane process-info");
     for dry_run in [true, false] {
         let [closure] = <[_; 1]>::try_from(w.clean(dry_run, None, &[])).unwrap();
@@ -386,6 +386,7 @@ fn a_pane_herdr_cannot_describe_or_whose_processes_cannot_be_read_is_kept_naming
         cleanup(w.store(), &w.herdr(), &broken, false, None, &[]).unwrap(),
         [kept(
             &pane,
+            Some(&handle),
             "never closed on no information: ps failed".into()
         )]
     );
@@ -396,6 +397,26 @@ fn a_pane_herdr_cannot_describe_or_whose_processes_cannot_be_read_is_kept_naming
             .is_none()
     );
     assert!(w.has_pane(&pane));
+}
+
+#[test]
+fn a_process_table_that_cannot_be_read_is_said_only_of_a_pane_the_board_would_close() {
+    let w = World::new();
+    let (handle, pane) = w.worker("sim/jump", None);
+    w.store().claim("sim/jump", &handle).unwrap(); // live work: kept whatever runs there
+    let orchestrator = w.add_pane(true, Some(&w.orch), json!({}));
+    let asked = std::rc::Rc::new(std::cell::Cell::new(0));
+    let counted = std::rc::Rc::clone(&asked);
+    let broken = move |_: i64| -> Result<Vec<String>, LaunchError> {
+        counted.set(counted.get() + 1);
+        Err(LaunchError("ps failed".into()))
+    };
+    assert_eq!(
+        cleanup(w.store(), &w.herdr(), &broken, false, None, &[]).unwrap(),
+        []
+    );
+    assert_eq!(asked.get(), 0, "the board said first: no table asked for");
+    assert!(w.has_pane(&pane) && w.has_pane(&orchestrator));
 }
 
 #[test]
@@ -412,14 +433,14 @@ fn a_pane_herdr_knows_no_shell_of_is_kept_and_says_nothing() {
 #[test]
 fn a_finish_whose_process_table_cannot_be_read_keeps_the_pane_and_says_why() {
     let w = World::new();
-    let (_, pane) = w.worker("sim/jump", Some("done"));
+    let (handle, pane) = w.worker("sim/jump", Some("done"));
     let broken = |_: i64| -> Result<Vec<String>, LaunchError> {
         Err(LaunchError("ps: no answer in 30 s".into()))
     };
     assert_eq!(
         symphony_board::launch::finish(w.store(), &w.herdr(), &broken, "sim/jump", None),
         [format!(
-            "kept pane {pane} (never closed on no information: ps: no answer in 30 s)"
+            "kept pane {pane} of {handle} (never closed on no information: ps: no answer in 30 s)"
         )]
     );
     assert!(w.has_pane(&pane));
@@ -511,6 +532,17 @@ fn a_command_line_that_is_not_utf8_is_read_and_the_pids_still_parse() {
         descendants_by(sh_ps("echo '  10     1 bash'; exit 1"), 10),
         Err(LaunchError("ps printed nothing".into()))
     );
+    // A table that does not list the shell says nothing of what runs under it.
+    for table in [
+        r"printf '   9     1 zsh\n  11     9 x\n'",
+        "echo 'not a table'",
+    ] {
+        assert_eq!(
+            descendants_by(sh_ps(table), 10),
+            Err(LaunchError("ps lists no process 10".into())),
+            "{table}"
+        );
+    }
     let missing = descendants_by(symphony_board::sys::Command::new(w.dir().join("no-ps")), 10);
     assert!(
         matches!(&missing, Err(LaunchError(why)) if why.starts_with("ps: ")),

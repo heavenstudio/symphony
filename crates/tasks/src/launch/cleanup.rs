@@ -23,12 +23,14 @@ pub struct Closure {
     /// False for a dry run, or when herdr refused.
     pub closed: bool,
     /// True for a pane left as it is because a call that says whether it is idle failed: `why`
-    /// names the call and its error. Never closed on no information, and never silently.
+    /// names the call and its error. Never closed on no information, and never silently. Its
+    /// handle is the session the board would have closed it for; none when herdr's process-info
+    /// failed, before the pane's session was looked for.
     pub kept: bool,
 }
 
 impl Closure {
-    /// `pane` left as it is: `problem`, the failed call's error, said in `why`.
+    /// `pane` left as it is, of no known session: `problem`, the failed call's error, said in `why`.
     fn kept(pane: &str, problem: &LaunchError) -> Closure {
         Closure {
             pane: pane.into(),
@@ -109,14 +111,8 @@ pub fn cleanup(
         let Some(shell_pid) = pid(info.get("shell_pid")) else {
             continue; // herdr knows no shell: nothing to look under, not known to be idle
         };
-        match processes(shell_pid) {
-            Ok(commands) if busy_reason(&commands).is_none() => {}
-            Ok(_) => continue, // work
-            Err(problem) => {
-                result.push(Closure::kept(&pane_id, &problem));
-                continue;
-            }
-        }
+        // What the board says first, so a table that cannot be read is said only of a pane it
+        // would otherwise close.
         let (handle, why, mine) = if is_agent {
             let Some(handle) = handle_of(&pane, &info, store, &handles, &by_pane, &by_session)?
             else {
@@ -138,6 +134,17 @@ pub fn cleanup(
         } else {
             (None, "an idle shell", Vec::new())
         };
+        match processes(shell_pid) {
+            Ok(commands) if busy_reason(&commands).is_none() => {}
+            Ok(_) => continue, // work
+            Err(problem) => {
+                result.push(Closure {
+                    handle,
+                    ..Closure::kept(&pane_id, &problem)
+                });
+                continue;
+            }
+        }
         let slug = open
             .iter()
             .find(|s| Some(s.handle.as_str()) == handle.as_deref())
@@ -317,7 +324,11 @@ pub fn finish(
             .iter()
             .filter_map(|c| {
                 if c.kept {
-                    Some(format!("kept pane {} ({})", c.pane, c.why))
+                    let of = c
+                        .handle
+                        .as_ref()
+                        .map_or(String::new(), |h| format!(" of {h}"));
+                    Some(format!("kept pane {}{of} ({})", c.pane, c.why))
                 } else if c.closed {
                     Some(format!(
                         "closed pane {} of {} ({}); restore: {}",

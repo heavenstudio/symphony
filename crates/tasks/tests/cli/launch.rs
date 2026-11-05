@@ -66,22 +66,20 @@ impl Panes {
         }
         env.cwd = repo;
         // The process table the commands read: never this machine's `ps`, whose transient failures
-        // under load would keep a pane these cases close. Nothing runs under NO_PID in it.
-        fs::write(dir.join("ps.txt"), "    1     0 /sbin/launchd\n").unwrap();
+        // under load would keep a pane these cases close. NO_PID is a shell with nothing under it.
+        fs::write(
+            dir.join("ps.txt"),
+            format!("    1     0 /sbin/launchd\n{NO_PID}     1 -zsh\n"),
+        )
+        .unwrap();
         let panes = Panes { dir, env };
         panes.set_state(json!({"tabs": [], "panes": [], "next": 100}));
         panes
     }
 
-    /// The process table the commands read cannot be: a missing file, as `ps` failing is. The
-    /// error each kept pane's line names.
-    pub(crate) fn unreadable_process_table(&self) -> String {
-        let file = self.dir.join("ps.txt");
-        fs::remove_file(&file).unwrap();
-        format!(
-            "ps table {}: No such file or directory (os error 2)",
-            file.display()
-        )
+    /// The process table the commands read in place of `ps` (`TASKS_PS_TABLE`).
+    pub(crate) fn ps_table(&self) -> PathBuf {
+        self.dir.join("ps.txt")
     }
 
     pub(crate) fn set(&mut self, key: &str, value: &str) {
@@ -519,32 +517,6 @@ fn a_cleanup_says_what_it_would_close_and_what_it_closed_with_its_restore_line()
         (0, line("closed"), "")
     );
     assert!(!p.pane_ids().contains(&s.pane));
-}
-
-#[test]
-fn a_cleanup_that_cannot_read_the_process_table_keeps_the_pane_and_names_the_failure() {
-    let p = Panes::new("no-table");
-    let worker = p
-        .board()
-        .register(&NewSession::new("worker"))
-        .unwrap()
-        .row
-        .handle;
-    p.idle_pane(&worker);
-    let why = p.unreadable_process_table();
-    for args in [&["cleanup", "--dry-run"][..], &["cleanup"]] {
-        let ran = p.run(args);
-        assert_eq!(
-            (ran.code, ran.out, ran.err.as_str()),
-            (
-                0,
-                format!("kept pane w1:p1 (never closed on no information: {why})\n"),
-                ""
-            ),
-            "{args:?}"
-        );
-    }
-    assert_eq!(p.pane_ids(), ["w1:p1"]);
 }
 
 #[test]
