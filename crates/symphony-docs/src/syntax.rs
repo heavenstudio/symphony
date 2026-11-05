@@ -8,8 +8,10 @@
 use std::ops::Range;
 
 mod fold;
+mod wiki;
 
 use fold::fold;
+pub use wiki::{Component, WikiLink, components, wikilinks};
 
 /// Python's `str.isspace()`, which `\s` and `strip()` use: Unicode whitespace plus the ASCII
 /// separators `\x1c`..`\x1f`.
@@ -327,146 +329,6 @@ impl LineIndex {
     pub fn line(&self, at: usize) -> usize {
         self.0.partition_point(|&start| start <= at)
     }
-}
-
-/// A document link, `[[target#heading|label]]`.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct WikiLink {
-    pub line: usize,
-    pub whole: String,
-    pub target: String,
-    pub heading: Option<String>,
-    pub label: Option<String>,
-}
-
-/// Every `[[target#heading|label]]` outside code, `\[\[([^\]|#]+)(?:#([^\]|]+))?(?:\|([^\]]+))?\]\]`.
-/// A target holding `:` is a component or a task, not a document; it is kept, and the caller decides.
-pub fn wikilinks(text: &str) -> Vec<WikiLink> {
-    let starts = LineIndex::new(text);
-    let mut found = Vec::new();
-    for (offset, part) in outside_code(text) {
-        let mut from = 0;
-        while let Some(at) = part.get(from..).and_then(|rest| rest.find("[[")) {
-            let open = from + at;
-            match part.get(open..).and_then(wikilink_at) {
-                Some((whole, target, heading, label)) => {
-                    found.push(WikiLink {
-                        line: starts.line(offset + open),
-                        whole: whole.to_string(),
-                        target: target.to_string(),
-                        heading: heading.map(str::to_string),
-                        label: label.map(str::to_string),
-                    });
-                    from = open + whole.len();
-                }
-                None => from = open + 1,
-            }
-        }
-    }
-    found
-}
-
-/// A wiki link's whole text, its target, heading and label.
-type WikiParts<'a> = (&'a str, &'a str, Option<&'a str>, Option<&'a str>);
-
-/// The wiki link `text` starts with (at its `[[`), if it is one.
-fn wikilink_at(text: &str) -> Option<WikiParts<'_>> {
-    let body = text.get(2..)?;
-    let target_len = body.find([']', '|', '#']).unwrap_or(body.len());
-    if target_len == 0 {
-        return None;
-    }
-    let (target, mut tail) = body.split_at_checked(target_len)?;
-    let mut heading = None;
-    if let Some(rest) = tail.strip_prefix('#') {
-        let length = rest.find([']', '|']).unwrap_or(rest.len());
-        if length > 0 {
-            let (named, after) = rest.split_at_checked(length)?;
-            heading = Some(named);
-            tail = after;
-        }
-    }
-    let mut label = None;
-    if let Some(rest) = tail.strip_prefix('|') {
-        let length = rest.find(']').unwrap_or(rest.len());
-        if length > 0 {
-            let (named, after) = rest.split_at_checked(length)?;
-            label = Some(named);
-            tail = after;
-        }
-    }
-    if !tail.starts_with("]]") {
-        return None;
-    }
-    let whole = text.get(..text.len() - tail.len() + 2)?;
-    Some((whole, target, heading, label))
-}
-
-/// A component, `[[name:argument|option]]`.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Component {
-    pub line: usize,
-    pub whole: String,
-    pub name: String,
-    pub arg: String,
-    pub option: Option<String>,
-}
-
-/// Every `[[name:argument|option]]` outside code,
-/// `\[\[([a-z][a-z-]*):([^\]|]*)(?:\|([^\]]*))?\]\]`.
-pub fn components(text: &str) -> Vec<Component> {
-    let starts = LineIndex::new(text);
-    let mut found = Vec::new();
-    for (offset, part) in outside_code(text) {
-        let mut from = 0;
-        while let Some(at) = part.get(from..).and_then(|rest| rest.find("[[")) {
-            let open = from + at;
-            match part.get(open..).and_then(component_at) {
-                Some((whole, name, arg, option)) => {
-                    found.push(Component {
-                        line: starts.line(offset + open),
-                        whole: whole.to_string(),
-                        name: name.to_string(),
-                        arg: arg.to_string(),
-                        option: option.map(str::to_string),
-                    });
-                    from = open + whole.len();
-                }
-                None => from = open + 1,
-            }
-        }
-    }
-    found
-}
-
-/// A component's whole text, its name, argument and option.
-type ComponentParts<'a> = (&'a str, &'a str, &'a str, Option<&'a str>);
-
-/// The component `text` starts with (at its `[[`), if it is one.
-fn component_at(text: &str) -> Option<ComponentParts<'_>> {
-    let body = text.get(2..)?;
-    if !body.starts_with(|c: char| c.is_ascii_lowercase()) {
-        return None;
-    }
-    let name_len = body
-        .find(|c: char| !(c.is_ascii_lowercase() || c == '-'))
-        .unwrap_or(body.len());
-    let (name, rest) = body.split_at_checked(name_len)?;
-    let rest = rest.strip_prefix(':')?;
-    let arg_len = rest.find([']', '|']).unwrap_or(rest.len());
-    let (arg, mut tail) = rest.split_at_checked(arg_len)?;
-    let mut option = None;
-    if let Some(rest) = tail.strip_prefix('|') {
-        let length = rest.find(']').unwrap_or(rest.len());
-        let (named, after) = rest.split_at_checked(length)?;
-        option = Some(named);
-        tail = after;
-    }
-    if !tail.starts_with("]]") {
-        return None;
-    }
-    let whole = text.get(..text.len() - tail.len() + 2)?;
-    Some((whole, name, arg, option))
 }
 
 /// Where a page's register begins and ends; a card outside it is prose.
