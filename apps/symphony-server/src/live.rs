@@ -236,126 +236,10 @@ impl Hub {
         }
     }
 
-    pub fn start(root: &Path, ui_dist: &Path, drain_chat: bool) -> Result<Arc<Self>, String> {
-        Self::start_watching::<notify::RecommendedWatcher>(
-            root,
-            ui_dist,
-            drain_chat,
-            crate::backstop::PERIOD,
-            taskview::connect,
-        )
-    }
-
-    /// Install watcher `W` and documents. The owned worker starts its board read when activated,
-    /// then sweeps the watched files on its own every `period`.
-    fn start_watching<W: Watcher + Send + 'static>(
-        root: &Path,
-        ui_dist: &Path,
-        drain_chat: bool,
-        period: Duration,
-        mut connect: impl FnMut(&Path) -> Result<tasks::Store, String> + Send + 'static,
-    ) -> Result<Arc<Self>, String> {
-        let started = Instant::now();
-        let mut hub = measured("hub new", || Self::new(root, ui_dist));
-        if drain_chat {
-            *hub.callbacks.get_mut().unwrap_or_else(|e| e.into_inner()) =
-                Some(symphony::callbacks::Flusher::new(root));
-            eprintln!("→ chat journal: draining enabled for the shared server");
-        } else {
-            eprintln!("→ chat journal: left untouched by this private server");
-        }
-        let (start, starting) = mpsc::channel();
-        *hub.initial_start
-            .get_mut()
-            .unwrap_or_else(|e| e.into_inner()) = Some(start);
-        let hub = Arc::new(hub);
-        hub.initial_board.send_replace(false);
-        // Install watches before the first read, so an edit during that read is queued too.
-        let (send, recv) = mpsc::sync_channel(1);
-        let changed_hub = Arc::downgrade(&hub);
-        let mut watcher = W::new(
-            move |event: notify::Result<notify::Event>| {
-                if let Some(hub) = changed_hub.upgrade()
-                    && hub.record_event(event)
-                {
-                    let _ = send.try_send(());
-                }
-            },
-            notify::Config::default(),
-        )
-        .map_err(|e| format!("cannot watch Symphony data: {e}"))?;
-        let mut watched = BTreeSet::new();
-        measured("initial watches", || hub.watch(&mut watcher, &mut watched));
-        // The sweep's first stamps come before the first read too.
-        *hub.swept.lock().unwrap_or_else(|e| e.into_inner()) =
-            measured("initial sweep", || Sweep::new(&hub.swept_paths()));
-        measured("initial documents", || hub.refresh_docs(None))?;
-        let docs_ready = started.elapsed();
-        let weak = Arc::downgrade(&hub);
-        let backstop = crate::backstop::Backstop::new(period);
-        *hub.worker.lock().unwrap_or_else(|e| e.into_inner()) =
-            Some(std::thread::spawn(move || {
-                if starting.recv().is_err() {
-                    return;
-                }
-                let Some(hub) = weak.upgrade() else { return };
-                if *hub.draining.borrow() {
-                    return;
-                }
-                let board_started = Instant::now();
-                let board = match connect(&hub.root).and_then(|store| {
-                    hub.board_read(&store)?;
-                    Ok(store)
-                }) {
-                    Ok(store) => Some(store),
-                    Err(error) => {
-                        hub.board_error(error);
-                        None
-                    }
-                };
-                hub.initial_board.send_replace(true);
-                eprintln!(
-                    "→ native read data warmed: documents {:.1} ms, board {:.1} ms, total {:.1} ms",
-                    docs_ready.as_secs_f64() * 1000.0,
-                    board_started.elapsed().as_secs_f64() * 1000.0,
-                    started.elapsed().as_secs_f64() * 1000.0
-                );
-                drop(hub);
-                run(weak, recv, watcher, watched, backstop, board, connect)
-            }));
-        Ok(hub)
-    }
-
-    /// Activate the owned read once, after announcement or when a data caller needs it.
-    pub(crate) fn start_initial_board(&self) {
-        if let Some(start) = self
-            .initial_start
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .take()
-        {
-            let _ = start.send(());
-        }
-    }
-
-    /// Data requests wait for the first board attempt; shutdown releases them with an error.
-    pub(crate) async fn wait_initial_board(&self) -> Result<(), String> {
-        let mut ready = self.initial_board.subscribe();
-        let mut draining = self.draining.subscribe();
-        tokio::select! {
-            biased;
-            _ = draining.wait_for(|stopping| *stopping) => Err("the Symphony server is stopping".into()),
-            _ = ready.wait_for(|ready| *ready) => Ok(()),
-        }
-    }
-
     /// Finish the current refresh (including its children), then release the watcher and board.
     pub fn stop(&self) {
         self.draining.send_replace(true);
-        self.initial_start
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .take();
+        self.disarm_initial_board();
         let mut worker = self.worker.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(worker) = worker.take()
             && worker.join().is_err()
@@ -1570,6 +1454,8 @@ fn task_changes(changes: &mut Vec<Value>, old: &[symphony_api::Task], new: &[sym
         }
     }
 }
+
+mod startup;
 
 #[cfg(test)]
 mod gallery_tests;

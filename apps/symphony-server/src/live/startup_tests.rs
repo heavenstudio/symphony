@@ -1,6 +1,7 @@
 //! Hold the first board I/O while exercising the published hub and its real read routes.
 
 use super::Hub;
+use super::startup::PANICKED;
 use crate::front::{Shared, router};
 use crate::gate::Gate;
 use crate::testing::{Tree, board::Fixture, board::Seed, repository};
@@ -11,8 +12,21 @@ use std::future::{Future, poll_fn};
 use std::net::SocketAddr;
 use std::sync::{Arc, mpsc};
 use std::task::Poll;
+use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
+use tokio::sync::oneshot::error::TryRecvError;
 use tower::ServiceExt;
+
+/// How the held first board read ends once released.
+#[derive(Clone, Copy, Debug)]
+enum Board {
+    /// It opens a seeded board holding one task.
+    Opens,
+    /// It returns an error, as an unavailable board does.
+    Fails,
+    /// It panics, as a defect in connecting, reading or probing would.
+    Panics,
+}
 
 struct Held {
     hub: Arc<Hub>,
@@ -22,8 +36,9 @@ struct Held {
 }
 
 impl Held {
-    async fn new(succeeds: bool) -> Self {
-        let mut held = Self::published(succeeds).await;
+    /// A published hub whose first board read has been activated and is held inside its I/O.
+    async fn entered(board: Board) -> Self {
+        let mut held = Self::published(board).await;
         held.hub.start_initial_board();
         tokio::time::timeout(Duration::from_secs(30), held.entering.take().unwrap())
             .await
@@ -32,10 +47,11 @@ impl Held {
         held
     }
 
-    async fn published(succeeds: bool) -> Self {
+    /// A published hub whose first board read has not been activated.
+    async fn published(board: Board) -> Self {
         let tree = Arc::new(Tree::new());
         let root = repository(&tree);
-        let mut store = succeeds
+        let mut store = matches!(board, Board::Opens)
             .then(|| Fixture::new(Seed::default().task("tests/initial-board", "ready")).store);
         let (entered, entering) = tokio::sync::oneshot::channel();
         let (release, waiting) = mpsc::channel();
@@ -55,6 +71,9 @@ impl Held {
                     }
                     if let Some(waiting) = waiting.take() {
                         waiting.recv().map_err(|e| e.to_string())?;
+                    }
+                    if matches!(board, Board::Panics) {
+                        panic!("the held first board read panicked");
                     }
                     store
                         .take()
@@ -90,6 +109,16 @@ impl Held {
         assert!(shared.api.set(self.hub.clone()).is_ok());
         shared
     }
+
+    /// Whether the owned worker has ended, or `None` once it has been joined.
+    fn worker_finished(&self) -> Option<bool> {
+        self.hub
+            .worker
+            .lock()
+            .unwrap()
+            .as_ref()
+            .map(JoinHandle::is_finished)
+    }
 }
 
 impl Drop for Held {
@@ -102,12 +131,12 @@ impl Drop for Held {
 
 #[tokio::test]
 async fn a_published_hub_stops_and_joins_without_opening_its_unactivated_board() {
-    let mut held = Held::published(false).await;
-    assert!(held.hub.worker.lock().unwrap().is_some());
-    assert!(matches!(
+    let mut held = Held::published(Board::Fails).await;
+    assert_eq!(held.worker_finished(), Some(false));
+    assert_eq!(
         held.entering.as_mut().unwrap().try_recv(),
-        Err(tokio::sync::oneshot::error::TryRecvError::Empty)
-    ));
+        Err(TryRecvError::Empty)
+    );
     held.release();
     let stopping = held.hub.clone();
     let stopped = tokio::task::spawn_blocking(move || stopping.stop());
@@ -115,11 +144,11 @@ async fn a_published_hub_stops_and_joins_without_opening_its_unactivated_board()
         .await
         .unwrap()
         .unwrap();
-    assert!(matches!(
+    assert_eq!(
         held.entering.as_mut().unwrap().try_recv(),
-        Err(tokio::sync::oneshot::error::TryRecvError::Closed)
-    ));
-    assert!(held.hub.worker.lock().unwrap().is_none());
+        Err(TryRecvError::Closed)
+    );
+    assert_eq!(held.worker_finished(), None);
 }
 
 fn request(path: &str) -> Request<Body> {
@@ -130,81 +159,89 @@ fn request(path: &str) -> Request<Body> {
         .unwrap()
 }
 
+/// `/api/tasks` asked while the held first read is inside its I/O, answered once it is released.
+async fn tasks_read_across_the_held_board(held: &mut Held) -> (StatusCode, Vec<u8>) {
+    let app = router(held.shared()).layer(MockConnectInfo(
+        "127.0.0.1:2".parse::<SocketAddr>().unwrap(),
+    ));
+    let status = app.clone().oneshot(request("/api/front")).await.unwrap();
+    assert_eq!(status.status(), StatusCode::OK);
+    let status: symphony_api::Front =
+        serde_json::from_slice(&to_bytes(status.into_body(), 1024 * 1024).await.unwrap()).unwrap();
+    assert!(status.ready, "the document hub is published: {status:?}");
+
+    let mut read = Box::pin(app.oneshot(request("/api/tasks")));
+    tokio::time::timeout(Duration::from_secs(30), async {
+        loop {
+            if let Poll::Ready(response) = poll_fn(|cx| Poll::Ready(read.as_mut().poll(cx))).await {
+                panic!(
+                    "data answered before its initial board result: {}",
+                    response.unwrap().status()
+                );
+            }
+            if held.hub.initial_board.receiver_count() > 0 {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("request did not reach the initial-board barrier");
+    held.release();
+    let response = tokio::time::timeout(Duration::from_secs(30), read)
+        .await
+        .expect("the read never answered once the first board read ended")
+        .unwrap();
+    let status = response.status();
+    let body = to_bytes(response.into_body(), 1024 * 1024).await.unwrap();
+    (status, body.to_vec())
+}
+
 #[tokio::test]
 async fn status_is_ready_while_data_reads_wait_for_the_initial_board_result() {
-    for succeeds in [true, false] {
-        let mut held = Held::new(succeeds).await;
-        let app = router(held.shared()).layer(MockConnectInfo(
-            "127.0.0.1:2".parse::<SocketAddr>().unwrap(),
-        ));
-        let status = app.clone().oneshot(request("/api/front")).await.unwrap();
-        assert_eq!(status.status(), StatusCode::OK);
-        let status: symphony_api::Front =
-            serde_json::from_slice(&to_bytes(status.into_body(), 1024 * 1024).await.unwrap())
-                .unwrap();
-        assert!(status.ready, "the document hub is published: {status:?}");
+    let mut held = Held::entered(Board::Opens).await;
+    let (status, body) = tasks_read_across_the_held_board(&mut held).await;
+    assert_eq!(status, StatusCode::OK);
+    let tasks: symphony_api::Tasks = serde_json::from_slice(&body).unwrap();
+    assert_eq!(tasks.tasks.len(), 1);
+    assert_eq!(tasks.tasks[0].slug, "tests/initial-board");
 
-        let mut read = Box::pin(app.oneshot(request("/api/tasks")));
-        tokio::time::timeout(Duration::from_secs(30), async {
-            loop {
-                if let Poll::Ready(response) =
-                    poll_fn(|cx| Poll::Ready(read.as_mut().poll(cx))).await
-                {
-                    panic!(
-                        "data answered before its initial board result: {}",
-                        response.unwrap().status()
-                    );
-                }
-                if held.hub.initial_board.receiver_count() > 0 {
-                    break;
-                }
-                tokio::task::yield_now().await;
-            }
-        })
-        .await
-        .expect("request did not reach the initial-board barrier");
-        held.release();
-        let response = tokio::time::timeout(Duration::from_secs(30), read)
-            .await
-            .unwrap()
-            .unwrap();
-        let status = response.status();
-        let body = to_bytes(response.into_body(), 1024 * 1024).await.unwrap();
-        if succeeds {
-            assert_eq!(status, StatusCode::OK);
-            let tasks: symphony_api::Tasks = serde_json::from_slice(&body).unwrap();
-            assert_eq!(tasks.tasks.len(), 1);
-            assert_eq!(tasks.tasks[0].slug, "tests/initial-board");
-        } else {
-            assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
-            assert!(
-                String::from_utf8_lossy(&body).contains("initial board fixture failed"),
-                "{body:?}"
-            );
-        }
+    for (board, error) in [
+        (Board::Fails, "initial board fixture failed"),
+        (Board::Panics, PANICKED),
+    ] {
+        let mut held = Held::entered(board).await;
+        let (status, body) = tasks_read_across_the_held_board(&mut held).await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{board:?}");
+        let body = String::from_utf8_lossy(&body);
+        assert!(body.contains(error), "{board:?}: {body}");
     }
 }
 
 #[tokio::test]
 async fn stopping_releases_initial_board_waiters_and_joins_the_owned_read() {
-    let mut held = Held::new(false).await;
+    let mut held = Held::entered(Board::Fails).await;
     let mut waiting = Box::pin(held.hub.wait_initial_board());
-    assert!(
-        poll_fn(|cx| Poll::Ready(waiting.as_mut().poll(cx)))
-            .await
-            .is_pending()
+    assert_eq!(
+        poll_fn(|cx| Poll::Ready(waiting.as_mut().poll(cx))).await,
+        Poll::Pending
     );
     let stopping = held.hub.clone();
-    let stopped = tokio::task::spawn_blocking(move || stopping.stop());
+    let mut stopped = tokio::task::spawn_blocking(move || stopping.stop());
     let result = tokio::time::timeout(Duration::from_secs(30), waiting)
         .await
         .unwrap();
-    assert_eq!(result.unwrap_err(), "the Symphony server is stopping");
-    assert!(!stopped.is_finished(), "the held read was not joined");
+    assert_eq!(result, Err("the Symphony server is stopping".into()));
+    assert_eq!(
+        poll_fn(|cx| Poll::Ready(std::pin::Pin::new(&mut stopped).poll(cx).map(|r| r.is_ok())))
+            .await,
+        Poll::Pending,
+        "the held read was not joined"
+    );
     held.release();
     tokio::time::timeout(Duration::from_secs(30), stopped)
         .await
         .unwrap()
         .unwrap();
-    assert!(held.hub.worker.lock().unwrap().is_none());
+    assert_eq!(held.worker_finished(), None);
 }

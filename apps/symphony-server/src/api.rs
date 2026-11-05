@@ -13,6 +13,9 @@ use serde_json::json;
 use crate::front::Shared;
 use crate::live::Hub;
 
+mod warm;
+pub(crate) use warm::{start, warm};
+
 /// Where a plugin's routes answer: `/x/<route>/<rest>`.
 const PLUGIN_ROUTES: &str = "/x/";
 
@@ -45,43 +48,6 @@ const READS: &[&str] = &[
 ];
 
 type Request = axum::http::Request<()>;
-
-/// Publish the document hub; its owned worker completes the first board read separately.
-pub(crate) async fn start(shared: &Arc<Shared>) -> Result<Arc<Hub>, String> {
-    if !shared.stopping()
-        && let Some(hub) = shared.api.get()
-    {
-        return Ok(hub.clone());
-    }
-    let shared = shared.clone();
-    tokio::task::spawn_blocking(move || {
-        let _held = shared.lifecycle.lock().unwrap_or_else(|e| e.into_inner());
-        if shared.stopping() {
-            return Err("the Symphony server is stopping".into());
-        }
-        if let Some(hub) = shared.api.get() {
-            return Ok(hub.clone());
-        }
-        // Only --home servers hold the shared lease. A preview must never send the owner's
-        // journal to its board, even when that board is a copied scratch database.
-        let hub = Hub::start(&shared.root, &shared.ui_dist, shared.installed_ui)?;
-        assert!(
-            shared.api.set(hub.clone()).is_ok(),
-            "hub startup is serialized"
-        );
-        Ok(hub)
-    })
-    .await
-    .map_err(|e| e.to_string())?
-}
-
-/// A complete first read for data routes and replacement handover.
-pub(crate) async fn warm(shared: &Arc<Shared>) -> Result<Arc<Hub>, String> {
-    let hub = start(shared).await?;
-    hub.start_initial_board();
-    hub.wait_initial_board().await?;
-    Ok(hub)
-}
 
 pub(crate) async fn answer(shared: &Arc<Shared>, request: Request) -> Option<Response> {
     let Some(decoded) = decode_path(request.uri().path()) else {

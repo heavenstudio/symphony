@@ -22,6 +22,10 @@ use tokio::sync::watch;
 
 mod connections;
 mod embeddings;
+mod port_file;
+
+pub(crate) use port_file::PORT_FILE;
+use port_file::{clear_port, record_port};
 
 /// How often the process table is read for leftovers.
 const ORPHAN_SECONDS: Duration = Duration::from_secs(60);
@@ -31,8 +35,6 @@ const SWEEP_TIMEOUT: Duration = Duration::from_secs(240);
 const LATE_SWEEP: Duration = Duration::from_secs(30);
 /// Existing connection-shutdown grace, also used to bound a rejected socket's read-side drain.
 const SHUTDOWN_GRACE: Duration = Duration::from_secs(5);
-/// The server's address for local tools that link to the app.
-pub(crate) const PORT_FILE: &str = "artifacts/docs-app.port";
 /// Names the test process that started this server, which then ends with it, however it ends: a test
 /// killed by a signal runs no cleanup, and a started server is in a session of its own, out of the
 /// runner's process group (`tests/app.rs` sets it on everything it runs).
@@ -448,26 +450,6 @@ impl Drop for Background {
                 eprintln!("· {name} worker panicked while stopping");
             }
         }
-    }
-}
-
-fn records(root: &Path, port: u16) -> bool {
-    std::fs::read_to_string(root.join(PORT_FILE)).is_ok_and(|said| said.trim() == port.to_string())
-}
-
-fn record_port(root: &Path, port: u16) {
-    let path = root.join(PORT_FILE);
-    if let Some(folder) = path.parent()
-        && std::fs::create_dir_all(folder).is_ok()
-    {
-        let _ = std::fs::write(&path, format!("{port}\n"));
-    }
-}
-
-/// Remove the port record, unless another app has written its own over it since.
-fn clear_port(root: &Path, port: u16) {
-    if records(root, port) {
-        let _ = std::fs::remove_file(root.join(PORT_FILE));
     }
 }
 

@@ -142,12 +142,13 @@ sequenced board snapshot also supplies the board and agents views. Unchanged raw
 
 A cold server publishes its document hub and URL, then activates the first board
 read in the hub's owned worker. Data reads activate and await that first result; an unavailable board
-keeps its existing error response, and shutdown releases waiting reads before
-joining the worker. A reload replacement awaits the first board result before
+keeps its existing error response, a panic in that read answers as an unavailable board, and
+shutdown releases waiting reads before joining the worker. A reload replacement awaits the first board result before
 acknowledging handover. The server publishes its bound-port hint before warmup.
 Auto-port discovery also reads bounded owned announcements and probes the known
 ports before scanning processes. Cold homes and known free ports need no census;
 unresolved startup history retains the recovery scan and its process identity checks.
+
 On macOS, notify filters nonrecursive watches from a recursive FSEvents stream,
 so writes below a watched root still cost event filtering. Foreground preview
 measurements exclude the shared server's source watcher.
