@@ -94,9 +94,12 @@ A post under a key (`Store::say_keyed`; `tasks api` `say` with `key`) is made on
 a thread: its transaction makes the first post's line and `delivery_key:[slug, key]`, and
 answers that line to every later post under the key, writing nothing, so a caller that may have
 posted without reading its answer repeats the call rather than reading the thread, and a request
-of its that outlived it cannot post twice. The board's notice that no executor reads a line is
-itself under the line's key (`unread:<id>`), so a post repeated under a key says it when the first
-post's run stopped before saying so, and never twice. The copy carries the keys with the board.
+of its that outlived it cannot post twice. Asked to adopt (`Store::adopt_or_say`; `say` with
+`adopt`), a key naming no line yet takes the thread's earliest line reading exactly the text to
+the recipient, one made under no key, and writes nothing. The board's notice that no executor
+reads a line is itself under the line's key (`unread:<id>`, taking a notice of the line made under
+no key), so a post repeated under a key, or one that took a line, says it when nothing said so
+yet, and never twice. The copy carries the keys with the board.
 Restore prompts re-register the resumed process's callback first.
 Neither channel checks nor delivery fabricate tool calls.
 Outbox rows are indexed by handle

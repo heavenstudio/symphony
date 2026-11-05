@@ -429,3 +429,33 @@ fn a_say_under_a_key_answers_the_first_post_under_it() {
         .collect();
     assert_eq!(posts, vec!["main is red".to_string()]);
 }
+
+#[test]
+fn a_say_asked_to_adopt_answers_the_threads_line_reading_it() {
+    let c = Case::new();
+    let actor = c.register("worker");
+    c.ok(&actor, &["create", "sim/a", "A"]);
+    let old = answer(
+        &c.env,
+        json!({"method":"say", "args":{"slug":"sim/a", "sender":actor, "text":"main is red", "to":"@executor"}}),
+    );
+    let taken = answer(
+        &c.env,
+        json!({"method":"say", "args":{"slug":"sim/a", "sender":actor, "text":"main is red", "to":"@executor", "key":"main-red:3e0c", "adopt":true}}),
+    );
+    assert_eq!(taken, old);
+    let again = answer(
+        &c.env,
+        json!({"method":"say", "args":{"slug":"sim/a", "sender":actor, "text":"main is red, said again", "key":"main-red:3e0c"}}),
+    );
+    assert_eq!(again, old);
+    let posts: Vec<String> = c
+        .store()
+        .thread("sim/a")
+        .unwrap()
+        .into_iter()
+        .filter(|m| m.kind == "msg" && m.sender == actor)
+        .map(|m| m.text)
+        .collect();
+    assert_eq!(posts, vec!["main is red".to_string()]);
+}

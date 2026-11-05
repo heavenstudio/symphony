@@ -36,13 +36,30 @@ RETURN {
 
 /// `line`, a message's write, made once per `$key` on `$slug`'s thread: the first write under the
 /// key makes the line and `delivery_key:[slug, key]`, which names that line to every later one,
-/// and a later write makes nothing. `$had` is the key's record before this write.
-fn once(line: &str) -> String {
+/// and a later write makes nothing. Given `same`, a condition on the thread's lines, the first
+/// write under the key instead takes the earliest line meeting it when the thread holds one (a
+/// line made under no key), binding the key to that line and writing nothing. `$had` is the key's
+/// record before this write.
+fn once(line: &str, same: Option<&str>) -> String {
+    let make = format!(
+        "{line}
+    CREATE type::record('delivery_key', [$slug, $key]) SET slug = $slug, key = $key, message = $sid, ts = $ts RETURN NONE;"
+    );
+    let write = match same {
+        None => make,
+        Some(same) => format!(
+            "LET $same = array::first((SELECT VALUE sid FROM message:[$slug, NONE]..[$slug, ..] WHERE {same} LIMIT 1));
+    IF $same != NONE {{
+        CREATE type::record('delivery_key', [$slug, $key]) SET slug = $slug, key = $key, message = $same, ts = $now RETURN NONE;
+    }} ELSE {{
+        {make}
+    }};"
+        ),
+    };
     format!(
         "LET $had = (SELECT message FROM ONLY type::record('delivery_key', [$slug, $key]));
 IF $had = NONE {{
-    {line}
-    CREATE type::record('delivery_key', [$slug, $key]) SET slug = $slug, key = $key, message = $sid, ts = $ts RETURN NONE;
+    {write}
 }};"
     )
 }
@@ -56,7 +73,7 @@ impl Store {
         text: &str,
         to: Option<&str>,
     ) -> Result<Message, Error> {
-        self.post(slug, sender, text, to, None)
+        self.post(slug, sender, text, to, None, false)
     }
 
     /// Post to a task's thread once per `key`: the first post under a key on a thread is made, and
@@ -73,7 +90,21 @@ impl Store {
         to: Option<&str>,
         key: &str,
     ) -> Result<Message, Error> {
-        self.post(slug, sender, text, to, Some(key))
+        self.post(slug, sender, text, to, Some(key), false)
+    }
+
+    /// `say_keyed`, but a key that names no line yet takes the thread's earliest line reading
+    /// exactly `text` to `to` when there is one (a post made under no key, before keys were) and
+    /// writes nothing: that line is answered, and told of as a repeat's is.
+    pub fn adopt_or_say(
+        &self,
+        slug: &str,
+        sender: &str,
+        text: &str,
+        to: Option<&str>,
+        key: &str,
+    ) -> Result<Message, Error> {
+        self.post(slug, sender, text, to, Some(key), true)
     }
 
     fn post(
@@ -83,6 +114,7 @@ impl Store {
         text: &str,
         to: Option<&str>,
         key: Option<&str>,
+        adopt: bool,
     ) -> Result<Message, Error> {
         let text = text.trim();
         if text.is_empty() {
@@ -106,7 +138,10 @@ RETURN (SELECT * OMIT id FROM ONLY type::record('message', [$slug, $sid]));"
                 "{}
 LET $made = (SELECT message FROM ONLY type::record('delivery_key', [$slug, $key]));
 RETURN (SELECT * OMIT id FROM ONLY type::record('message', [$slug, $made.message]));",
-                once(&line)
+                once(
+                    &line,
+                    adopt.then_some("kind = 'msg' AND text = $text AND recipient = $to")
+                )
             ),
         };
         let body = format!(
@@ -127,10 +162,11 @@ IF $handle != NONE AND !record::exists(type::record('session', $handle)) {{ THRO
             }),
         );
         let row: MessageRow = self.retrying(|| self.transact(&body, vars.clone()))?;
-        // Told of the line's recipient, not this call's: a post repeated under a key answers the
-        // first post's line, and says once that no executor reads it when the first post's run
-        // stopped before saying so (the board's notice goes under the line's own key,
-        // `unread:<id>`, so it is said once per line, whichever post says it).
+        // Told of the line's recipient, not this call's: a post repeated under a key, or one that
+        // took a line made under no key, answers that line, and says once that no executor reads
+        // it when nothing said so yet (the board's notice goes under the line's own key,
+        // `unread:<id>`, which takes a notice of the line said under no key, so it is said once
+        // per line, whichever post says it).
         let unread = format!("unread:{}", row.id);
         match row.recipient.as_deref() {
             Some("@executor") => self.tell_if_unread(
@@ -214,9 +250,18 @@ IF $handle != NONE AND !record::exists(type::record('session', $handle)) {{ THRO
         let line = logged("$slug", "$sender", "'msg'", "$text", "$to");
         let body = format!(
             "{}\nRETURN NONE;",
-            if key.is_some() { once(&line) } else { line }
+            match key {
+                Some(_) => once(
+                    &line,
+                    Some("sender = $sender AND string::starts_with(text, $said)")
+                ),
+                None => line,
+            }
         );
-        let vars = json!({"slug": slug, "sender": BOARD, "text": text, "to": "@orchestrator", "key": key, "now": (self.clock)()});
+        let vars = json!({
+            "slug": slug, "sender": BOARD, "text": text, "to": "@orchestrator", "key": key,
+            "said": format!("{what} reaches no live executor"), "now": (self.clock)(),
+        });
         self.retrying(|| self.transact::<Value>(&body, vars.clone()))
             .map(|_| ())
     }

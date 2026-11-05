@@ -22,7 +22,7 @@ use std::io::{BufRead, Read, Write};
     dead_code,
     reason = "tools/tasks.sh reads it from the committed source; no Rust code compares builds"
 )]
-pub const VERSION: i64 = 2;
+pub const VERSION: i64 = 3;
 
 /// Why a call has no result.
 enum Fail {
@@ -449,11 +449,15 @@ fn dispatch<F: FnOnce() -> Result<Store, String>>(
         }
         // Messages
         "say" => {
-            args!(slug: need, sender: actor, text: need, to: take, key: take);
+            args!(slug: need, sender: actor, text: need, to: take, key: take, adopt: or(false));
             let (slug, sender, text): (String, String, String) = (slug, sender, text);
             let (to, key): (Option<String>, Option<String>) = (to, key);
+            let adopt: bool = adopt;
             let board = board.get()?;
             let said = match key.as_deref() {
+                Some(key) if adopt => {
+                    board.adopt_or_say(&slug, &sender, &text, to.as_deref(), key)?
+                }
                 Some(key) => board.say_keyed(&slug, &sender, &text, to.as_deref(), key)?,
                 None => board.say(&slug, &sender, &text, to.as_deref())?,
             };

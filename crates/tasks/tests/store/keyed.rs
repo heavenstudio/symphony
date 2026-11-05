@@ -1,6 +1,7 @@
 //! Posts under a key (`Store::say_keyed`): made once per key on a thread, whatever a later post
-//! under it says, once when two come at once, and said once to be unread by any executor,
-//! whichever post under the key finds that.
+//! under it says, once when two come at once, said once to be unread by any executor, whichever
+//! post under the key finds that, and taking the thread's line made under no key when asked to
+//! (`Store::adopt_or_say`).
 
 use crate::common::{Fixture, Seed};
 use symphony_board::health::LIVE_SECONDS;
@@ -160,6 +161,128 @@ fn a_repeated_keyed_post_says_once_that_no_executor_reads_it() {
     let notice = format!(
         "#{} from ochre-owl to @executor reaches no live executor: amber-heron is stale with no callback",
         first.id
+    );
+    assert_eq!(told(), vec![notice.clone()]);
+    f.store
+        .say_keyed(
+            "sim/jump",
+            "ochre-owl",
+            "main is red",
+            Some("@executor"),
+            "main-red:3e0c",
+        )
+        .unwrap();
+    assert_eq!(told(), vec![notice]);
+}
+
+/// Asked to adopt, a key naming no line yet takes the thread's line reading its text to its
+/// recipient, one made under no key, and the board's notice of that line: nothing is written, a
+/// later post under the key answers the line, and a key not asked to, or asked with a text the
+/// thread lacks, makes its own line.
+#[test]
+fn a_post_asked_to_adopt_takes_the_threads_line_reading_it_and_the_notice_of_it() {
+    let f = Fixture::empty();
+    let a = f.session("worker");
+    f.task("sim/jump");
+    let thread = || -> (Vec<i64>, usize) {
+        let lines = f.store.thread("sim/jump").unwrap();
+        (
+            lines
+                .iter()
+                .filter(|m| m.sender == a)
+                .map(|m| m.id)
+                .collect(),
+            lines.iter().filter(|m| m.sender == "board").count(),
+        )
+    };
+    // Under no key, to a task nobody executes: the board's notice of it is under no key either.
+    let old = f
+        .store
+        .say("sim/jump", &a, "main is red", Some("@executor"))
+        .unwrap();
+    assert_eq!(thread(), (vec![old.id], 1));
+    let taken = f
+        .store
+        .adopt_or_say(
+            "sim/jump",
+            &a,
+            "main is red",
+            Some("@executor"),
+            "main-red:3e0c",
+        )
+        .unwrap();
+    assert_eq!(taken, old);
+    let again = f
+        .store
+        .say_keyed("sim/jump", &a, "main is red, again", None, "main-red:3e0c")
+        .unwrap();
+    assert_eq!(again, old);
+    assert_eq!(thread(), (vec![old.id], 1));
+    let own = f
+        .store
+        .say_keyed(
+            "sim/jump",
+            &a,
+            "main is red",
+            Some("@executor"),
+            "main-red:5a1d",
+        )
+        .unwrap();
+    let other = f
+        .store
+        .adopt_or_say(
+            "sim/jump",
+            &a,
+            "main is red again",
+            Some("@executor"),
+            "main-red:7c2e",
+        )
+        .unwrap();
+    assert!(old.id < own.id && own.id < other.id);
+    assert_eq!(thread(), (vec![old.id, own.id, other.id], 3));
+}
+
+/// A post that took a line made under no key says once that no executor reads it when nothing
+/// said so yet: the executor was live at the line's post and is stale by the taking.
+#[test]
+fn a_post_that_takes_a_line_says_once_that_no_executor_reads_it() {
+    let f = Fixture::new(
+        Seed::default()
+            .session("ochre-owl")
+            .session("amber-heron")
+            .task("sim/jump", "in_progress")
+            .role("sim/jump", "ochre-owl", "orchestrator")
+            .role("sim/jump", "amber-heron", "executor"),
+    );
+    let told = || -> Vec<String> {
+        f.store
+            .inbox("ochre-owl")
+            .unwrap()
+            .into_iter()
+            .filter(|m| m.sender == "board")
+            .map(|m| m.text)
+            .collect()
+    };
+    let old = f
+        .store
+        .say("sim/jump", "ochre-owl", "main is red", Some("@executor"))
+        .unwrap();
+    assert_eq!(told(), Vec::<String>::new());
+    f.advance(LIVE_SECONDS + 1.0);
+    let taken = f
+        .store
+        .adopt_or_say(
+            "sim/jump",
+            "ochre-owl",
+            "main is red",
+            Some("@executor"),
+            "main-red:3e0c",
+        )
+        .unwrap();
+    assert_eq!(taken, old);
+    let notice = format!(
+        "#{} from ochre-owl to @executor reaches no live executor: amber-heron is stale with no callback",
+        old.id
     );
     assert_eq!(told(), vec![notice.clone()]);
     f.store
