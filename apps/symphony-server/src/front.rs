@@ -1,9 +1,7 @@
 //! Axum serves the Symphony client, JSON API and project media directly. Every request is judged by
 //! client address first; read and save handlers also check Host and Origin.
 
-use crate::cli::Serve;
-use crate::gate::Gate;
-use crate::{orphans, sys};
+use crate::{cli::Serve, gate::Gate, orphans, sys};
 use axum::Router;
 use axum::body::{Body, HttpBody};
 use axum::extract::{ConnectInfo, Request, State};
@@ -18,10 +16,15 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant, SystemTime};
+use symphony_board::{launch::reap::REAP_SECONDS, sys::Command};
 use tokio::sync::watch;
 
 mod connections;
 mod embeddings;
+mod port_file;
+
+pub(crate) use port_file::PORT_FILE;
+use port_file::{clear_port, record_port};
 
 /// How often the process table is read for leftovers.
 const ORPHAN_SECONDS: Duration = Duration::from_secs(60);
@@ -31,8 +34,6 @@ const SWEEP_TIMEOUT: Duration = Duration::from_secs(240);
 const LATE_SWEEP: Duration = Duration::from_secs(30);
 /// Existing connection-shutdown grace, also used to bound a rejected socket's read-side drain.
 const SHUTDOWN_GRACE: Duration = Duration::from_secs(5);
-/// The server's address for local tools that link to the app.
-const PORT_FILE: &str = "artifacts/docs-app.port";
 /// Names the test process that started this server, which then ends with it, however it ends: a test
 /// killed by a signal runs no cleanup, and a started server is in a session of its own, out of the
 /// runner's process group (`tests/app.rs` sets it on everything it runs).
@@ -451,26 +452,6 @@ impl Drop for Background {
     }
 }
 
-fn records(root: &Path, port: u16) -> bool {
-    std::fs::read_to_string(root.join(PORT_FILE)).is_ok_and(|said| said.trim() == port.to_string())
-}
-
-fn record_port(root: &Path, port: u16) {
-    let path = root.join(PORT_FILE);
-    if let Some(folder) = path.parent()
-        && std::fs::create_dir_all(folder).is_ok()
-    {
-        let _ = std::fs::write(&path, format!("{port}\n"));
-    }
-}
-
-/// Remove the port record, unless another app has written its own over it since.
-fn clear_port(root: &Path, port: u16) {
-    if records(root, port) {
-        let _ = std::fs::remove_file(root.join(PORT_FILE));
-    }
-}
-
 /// A listener on `host`, reusing an address a restart left in TIME_WAIT; on IPv6 that side alone, so
 /// "::" and "0.0.0.0" do not collide on one port.
 fn listen(host: &str, port: u16) -> std::io::Result<tokio::net::TcpListener> {
@@ -696,6 +677,14 @@ async fn start(mut serve: Serve, open: bool) -> Result<Started, i32> {
         }
     }
     serve.port = port;
+    // The bound port is discoverable during warmup. A private preview on main leaves the shared
+    // server's hint alone.
+    let record = serve.home.is_some()
+        || crate::repo::checkout(&serve.root)
+            .map_or(true, |checkout| checkout.top != checkout.main);
+    if record {
+        record_port(&serve.root, port);
+    }
     let shared = Shared::new(
         i64::from(std::process::id()),
         port,
@@ -737,20 +726,18 @@ async fn start(mut serve: Serve, open: bool) -> Result<Started, i32> {
             move || !sys::pid_alive(test),
         ));
     }
-    // Make the document/board snapshots and gallery content ready before printing or opening
-    // the URL: the first visitor must not pay the read hub's initialization cost.
-    if let Err(why) = crate::api::warm(&shared).await {
+    // Documents are ready before the URL. The first board read runs in the hub's owned worker;
+    // data requests await it, and a replacement keeps the same barrier before handover.
+    let warm = if reload.is_replacement() {
+        crate::api::warm(&shared).await
+    } else {
+        crate::api::start(&shared).await
+    };
+    if let Err(why) = warm {
         eprintln!("· native read data could not be warmed: {why}");
         if reload.is_replacement() {
             return Err(2);
         }
-    }
-    // A private server on the main checkout must not replace the shared app's discovery record.
-    let record = serve.home.is_some()
-        || crate::repo::checkout(&serve.root)
-            .map_or(true, |checkout| checkout.top != checkout.main);
-    if record {
-        record_port(&serve.root, port);
     }
     // Keep copies before moving listeners into axum. The watcher starts only after the replacement
     // has committed its own handover, below.
@@ -808,6 +795,9 @@ async fn start(mut serve: Serve, open: bool) -> Result<Started, i32> {
     ));
     let url = format!("http://127.0.0.1:{port}/");
     println!("→ Symphony at {url}  (pid {})", shared.pid);
+    if let Some(hub) = shared.api.get() {
+        hub.start_initial_board();
+    }
     if open {
         crate::cli::open(&url);
     }
@@ -874,7 +864,7 @@ fn session_maintenance(
     home?;
     Some(maintenance_worker(
         Arc::clone(shared),
-        Duration::from_secs_f64(tasks::launch::reap::REAP_SECONDS),
+        Duration::from_secs_f64(REAP_SECONDS),
         SWEEP_TIMEOUT,
         clock,
     ))
@@ -948,7 +938,7 @@ fn maintenance_worker(
             // Log before waiting on output: a hung child must still leave its actual start time.
             eprintln!("· idle-session sweep started");
             match crate::live::measured("idle-session sweep", || {
-                let mut command = tasks::sys::Command::new(shared.root.join("tools/rs-bin.sh"));
+                let mut command = Command::new(shared.root.join("tools/rs-bin.sh"));
                 command
                     .args(["tasks", "reap"])
                     .current_dir(&shared.root)
@@ -1472,7 +1462,7 @@ mod tests {
             "the reap child outlived its {SWEEP_TIMEOUT:?} timeout"
         );
         // The next round starts at the reap interval, with a child of its own.
-        clock.set(Duration::from_secs_f64(tasks::launch::reap::REAP_SECONDS));
+        clock.set(Duration::from_secs_f64(REAP_SECONDS));
         let second = crate::testing::entered(&announced);
         assert_ne!(first, second);
         drop(fixture);

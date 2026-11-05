@@ -13,7 +13,7 @@ use symphony::render::Render;
 use super::Tree;
 
 const SPEC: &str = "[[entrypoints]]\nurl = \"/\"\nfolder = \"spec\"\n\
-                    include = [\"**/*.md\", \"art/**\"]\nexclude = [\"drafts/**\"]\n\
+                    include = [\"**/*.md\", \"pictures/**\"]\nexclude = [\"drafts/**\"]\n\
                     types = [\"markdown\", \"media\"]\n";
 
 const PNG_5X7: &[u8] = b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR\0\0\0\x05\0\0\0\x07";
@@ -30,17 +30,17 @@ fn spec() -> Tree {
     );
     tree.write(
         "spec/index.md",
-        "# Spec\n\nStart at [[START]].\n\n![ship](art/ship.png)\n",
+        "# Spec\n\nStart at [[START]].\n\n![lamp](pictures/lamp.png)\n",
     );
     tree.write(
         "spec/guide/START.md",
         "# Start\n\nAs **pick** says; back to [[index]] or [[DECISIONS#Topic]].\n",
     );
     tree.write(
-        "spec/art/credits.txt",
+        "spec/pictures/credits.txt",
         "included, but no renderer handles it",
     );
-    std::fs::write(tree.path("spec/art/ship.png"), PNG_5X7).unwrap();
+    std::fs::write(tree.path("spec/pictures/lamp.png"), PNG_5X7).unwrap();
     tree.write("spec/guide/notes.txt", "not included");
     tree.write(
         "spec/drafts/WIP.md",
@@ -92,7 +92,7 @@ fn an_entrypoint_at_the_root_serves_its_folders_index_there() {
         "spec/index.md",
         "docs/STRAY.md",
         "guide/notes.txt",
-        "art/ship.png",
+        "pictures/lamp.png",
     ] {
         assert!(
             docview::document(&render, refused, "").is_err(),
@@ -115,11 +115,11 @@ fn an_entrypoints_pages_list_only_what_its_patterns_include_and_its_renderers_ha
     };
     assert_eq!(
         entries(""),
-        ["art", "guide", "DECISIONS.md", "index.md"],
+        ["guide", "pictures", "DECISIONS.md", "index.md"],
         "no drafts/, .hidden/ or docs/"
     );
     assert_eq!(entries("guide"), ["guide/START.md"]);
-    assert_eq!(entries("art"), ["art/ship.png"]);
+    assert_eq!(entries("pictures"), ["pictures/lamp.png"]);
     let root = render.folder("").unwrap();
     assert_eq!(
         root.entries
@@ -127,8 +127,8 @@ fn an_entrypoints_pages_list_only_what_its_patterns_include_and_its_renderers_ha
             .map(|e| (e.path.as_str(), e.docs))
             .collect::<Vec<_>>(),
         [
-            ("art", 0),
             ("guide", 1),
+            ("pictures", 0),
             ("DECISIONS.md", 0),
             ("index.md", 0)
         ]
@@ -171,7 +171,7 @@ fn links_cards_and_pictures_follow_the_mapping() {
     }
     let index = blocks("index.md");
     assert!(index.contains("\"/guide/START.md\""), "{index}");
-    assert!(index.contains("\"src\":\"/art/ship.png?v="), "{index}");
+    assert!(index.contains("\"src\":\"/pictures/lamp.png?v="), "{index}");
     assert!(
         index.contains("\"width\":\"5\"") && index.contains("\"height\":\"7\""),
         "the picture is read from spec/: {index}"

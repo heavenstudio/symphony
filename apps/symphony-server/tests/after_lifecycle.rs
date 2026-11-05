@@ -8,6 +8,9 @@ mod fixture;
 #[path = "common/bash_env.rs"]
 mod bash_env;
 
+#[path = "after_lifecycle/discovery_tests.rs"]
+mod discovery_tests;
+
 use fixture::{AGENTS, Repo, front, get, repository, until, write};
 use std::fs;
 use std::io::{Read, Write};
@@ -15,8 +18,8 @@ use std::net::{TcpListener, TcpStream};
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::Path;
 use std::time::{Duration, Instant};
+use symphony_board::sys::{Command, Stdio};
 use symphony_server::home::{Home, ServerError};
-use tasks::sys::{Command, Stdio};
 
 #[test]
 fn symphony_recipes_find_and_stop_a_live_predecessor_record_on_a_private_port() {
@@ -396,24 +399,6 @@ fn missing_malformed_stale_and_lying_records_recover_the_same_running_server() {
 }
 
 #[test]
-fn malformed_and_dead_records_without_a_server_are_replaced() {
-    for malformed in [true, false] {
-        let repo = Repo::new("dead record");
-        let mut dead = Command::new("/usr/bin/true").spawn().unwrap();
-        let pid = dead.id();
-        dead.wait().unwrap();
-        let text = if malformed {
-            "{malformed".into()
-        } else {
-            serde_json::json!({"pid": pid, "port": 1, "root": "/gone"}).to_string()
-        };
-        write(&repo.home.join("server.json"), &text);
-        repo.start(&repo.main, false);
-        assert_ne!(repo.check_server().pid, i64::from(pid));
-    }
-}
-
-#[test]
 fn a_record_naming_an_unrelated_owned_process_never_makes_cleanup_signal_it() {
     let repo = Repo::new("foreign-record-cleanup");
     let mut command = Command::new("/bin/sleep");
@@ -471,6 +456,14 @@ fn a_record_naming_an_unrelated_owned_process_never_makes_cleanup_signal_it() {
 fn a_killed_shared_server_is_replaced_by_one_that_answers() {
     let repo = Repo::new("killed-shared");
     let check_progress = |process: fixture::Process| {
+        assert!(
+            !repo
+                .base
+                .join(format!("env.{}", process.child.id()))
+                .exists(),
+            "a start on an unheld known port read the process table: {}",
+            process.output()
+        );
         let said = process.output();
         for stage in [
             "start command entered at ",

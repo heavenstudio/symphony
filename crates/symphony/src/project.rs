@@ -16,13 +16,17 @@ use std::time::SystemTime;
 
 use serde::Deserialize;
 
+mod board;
+
 pub use crate::entrypoint::Entrypoint;
 use crate::entrypoint::{RENDERERS, SYMPHONY_ROUTES, below, join};
+pub use board::Board;
+use board::FileBoard;
 
 /// The project file at a project's root.
 pub const FILE: &str = "symphony.toml";
 
-/// The agent transports the Symphony ships: Claude's inbox socket, Codex's queue, and the inbox a
+/// The agent transports the Symphony knows: Claude's inbox socket, Codex's queue, and the inbox a
 /// session without a channel reads.
 pub const TRANSPORTS: [&str; 3] = ["claude-uds", "codex-queue", "inbox"];
 /// The multiplexers agents' panes may run in; `none` for a project without one.
@@ -55,7 +59,7 @@ pub struct Project {
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Theme {
-    /// A theme package a plugin ships; `None` is the Symphony's own.
+    /// A theme package a plugin brings; `None` is the Symphony's own.
     pub package: Option<String>,
     pub icon: Option<String>,
     pub stylesheet: Option<String>,
@@ -93,14 +97,6 @@ pub struct Verdicts {
 }
 
 pub use crate::landing::Generator;
-
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct Board {
-    /// Where the board's export is written, project-relative; `None` writes none.
-    pub export: Option<String>,
-    /// What a finished worktree may hold and still be removed.
-    pub disposable: Vec<String>,
-}
 
 /// The file as written: every table and key optional, nothing else allowed.
 #[derive(Default, Deserialize)]
@@ -179,13 +175,6 @@ struct FileVerdicts {
     land: Vec<String>,
     generators: Vec<Generator>,
     record: Option<String>,
-}
-
-#[derive(Default, Deserialize)]
-#[serde(deny_unknown_fields, default)]
-struct FileBoard {
-    export: Option<String>,
-    disposable: Vec<String>,
 }
 
 impl Project {
@@ -399,14 +388,7 @@ impl Project {
                 .map(|path| inside("[verdicts] record", path))
                 .transpose()?,
         };
-        let board = Board {
-            export: file
-                .board
-                .export
-                .map(|path| inside("[board] export", path))
-                .transpose()?,
-            disposable: file.board.disposable,
-        };
+        let board = Board::from_file(file.board)?;
         let project = Project {
             name,
             id,

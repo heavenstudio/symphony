@@ -4,7 +4,7 @@
 
 use crate::common::{launch, surreal};
 use std::path::PathBuf;
-use tasks::rpc;
+use symphony_board::rpc;
 
 /// A folder of this test's own, empty.
 fn folder(name: &str) -> PathBuf {

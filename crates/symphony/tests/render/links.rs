@@ -14,12 +14,12 @@ fn with_docs(files: &[&str], text: &str, doc_path: &str) -> String {
 #[test]
 fn wikilink_resolves_to_doc_route_with_heading_anchor() {
     let html = with_docs(
-        &["docs/factions/FACTIONS.md"],
-        "see [[FACTIONS#Confirmed direction|the plan]]\n",
+        &["docs/makers/MAKERS.md"],
+        "see [[MAKERS#Confirmed direction|the plan]]\n",
         "docs/DECISIONS.md",
     );
     assert!(
-        html.contains("href=\"/docs/factions/FACTIONS.md#confirmed-direction\""),
+        html.contains("href=\"/docs/makers/MAKERS.md#confirmed-direction\""),
         "{html}"
     );
     assert!(html.contains(">the plan</a>"));
@@ -27,12 +27,12 @@ fn wikilink_resolves_to_doc_route_with_heading_anchor() {
 
 #[test]
 fn wikilink_without_label_or_heading() {
-    let html = page_at("[[SHIP_ROSTER]]\n", "docs/concepts/README.md");
+    let html = page_at("[[LAMP_CATALOGUE]]\n", "docs/concepts/README.md");
     assert!(
-        html.contains("href=\"/docs/concepts/SHIP_ROSTER.md\""),
+        html.contains("href=\"/docs/concepts/LAMP_CATALOGUE.md\""),
         "nothing by that name: left where it points: {html}"
     );
-    assert!(html.contains(">SHIP_ROSTER</a>"));
+    assert!(html.contains(">LAMP_CATALOGUE</a>"));
 }
 
 #[test]
@@ -51,12 +51,12 @@ fn a_wikilink_finds_its_document_by_name_wherever_it_lives() {
 #[test]
 fn a_wikilink_with_a_folder_matches_the_end_of_the_path() {
     let html = with_docs(
-        &["docs/world/factions/empire.md", "docs/ships/empire.md"],
-        "[[factions/empire#Look]]\n",
+        &["docs/world/makers/east.md", "docs/lamps/east.md"],
+        "[[makers/east#Look]]\n",
         "docs/DECISIONS.md",
     );
     assert!(
-        html.contains("href=\"/docs/world/factions/empire.md#look\""),
+        html.contains("href=\"/docs/world/makers/east.md#look\""),
         "{html}"
     );
 }
@@ -83,8 +83,11 @@ fn a_wikilink_from_the_page_s_own_folder_wins_over_a_document_elsewhere() {
 
 #[test]
 fn a_document_link_inside_a_code_block_stays_literal() {
-    let html = page("```markdown\n[[SHIP_ROSTER#Size distribution]]\n```\n");
-    assert!(html.contains("[[SHIP_ROSTER#Size distribution]]"), "{html}");
+    let html = page("```markdown\n[[LAMP_CATALOGUE#Size distribution]]\n```\n");
+    assert!(
+        html.contains("[[LAMP_CATALOGUE#Size distribution]]"),
+        "{html}"
+    );
 }
 
 #[test]
@@ -106,20 +109,20 @@ fn task_wikilink_goes_to_the_task_page() {
 fn a_bold_card_slug_links_to_the_document_that_holds_the_card() {
     let tree = Tree::new();
     tree.write(
-        "docs/ships/empire.md",
-        "# Empire\n\n- [ ] **kite-art** — a card\n",
+        "docs/lamps/east.md",
+        "# East\n\n- [ ] **lumen-picture** — a card\n",
     );
     let html = Render::new(&tree.root).html(
-        "See **kite-art** and **nothing-here**, and *Replaces:* kite-art.\n",
+        "See **lumen-picture** and **nothing-here**, and *Replaces:* lumen-picture.\n",
         "docs/DECISIONS.md",
     );
     assert!(
-        html.contains("<a href=\"/docs/ships/empire.md#kite-art\">kite-art</a>"),
+        html.contains("<a href=\"/docs/lamps/east.md#lumen-picture\">lumen-picture</a>"),
         "{html}"
     );
     assert!(html.contains("<strong>nothing-here</strong>"));
     assert_eq!(
-        html.matches("href=\"/docs/ships/empire.md#kite-art\"")
+        html.matches("href=\"/docs/lamps/east.md#lumen-picture\"")
             .count(),
         2,
         "{html}"
@@ -129,10 +132,10 @@ fn a_bold_card_slug_links_to_the_document_that_holds_the_card() {
 #[test]
 fn a_card_slug_inside_a_link_or_code_is_not_linked_again() {
     let tree = Tree::new();
-    tree.write("docs/ships/empire.md", "- [ ] **kite-art** — a card\n");
+    tree.write("docs/lamps/east.md", "- [ ] **lumen-picture** — a card\n");
     let html = Render::new(&tree.root).html(
-        "[**kite-art**](/x) and `**kite-art**`\n",
+        "[**lumen-picture**](/x) and `**lumen-picture**`\n",
         "docs/DECISIONS.md",
     );
-    assert!(!html.contains("empire.md"), "{html}");
+    assert!(!html.contains("east.md"), "{html}");
 }

@@ -322,7 +322,7 @@ mod tests {
         let html =
             dioxus_ssr::render_element(rsx! { MockupFrame { src:"/picture.svg", caption:"bad" } });
         assert!(!html.contains("<iframe"), "{html}");
-        let mut image: Image = serde_json::from_value(serde_json::json!({"src":"/thumb.png","alt":"Hull","presentation":{"attributes":{"width":"640","height":"480","data-full":"/original.png"}}})).unwrap();
+        let mut image: Image = serde_json::from_value(serde_json::json!({"src":"/thumb.png","alt":"Lamp","presentation":{"attributes":{"width":"640","height":"480","data-full":"/original.png"}}})).unwrap();
         image.presentation.id = "picture".into();
         let html = dioxus_ssr::render_element(rsx! { DocumentPicture { image } });
         for attr in [
@@ -330,7 +330,7 @@ mod tests {
             "height=\"480\"",
             "data-full=\"/original.png\"",
             "id=\"picture\"",
-            "alt=\"Hull\"",
+            "alt=\"Lamp\"",
         ] {
             assert!(html.contains(attr), "{html}");
         }

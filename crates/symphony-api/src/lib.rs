@@ -30,6 +30,8 @@
 //! The server's own route, [`FRONT_PATH`], answers a [`Front`]: the one server in front of the app,
 //! as its starters and the agents see it.
 
+#![forbid(unsafe_code)]
+
 use serde::{Deserialize, Serialize};
 
 mod blocks;
@@ -51,7 +53,7 @@ pub struct Front {
     pub ready: bool,
     /// The app's pid, while one runs.
     pub app: Option<i64>,
-    /// This machine's MagicDNS name, when Tailscale gives one: the address a phone reaches.
+    /// This machine's `MagicDNS` name, when Tailscale gives one: the address a phone reaches.
     pub tailnet: Option<String>,
     /// Symphony processes whose parent is init: leftovers nothing ends on its own (never killed).
     pub orphans: usize,
@@ -143,18 +145,18 @@ pub struct Card {
     pub doc: String,
     /// The document's title.
     pub doc_title: String,
-    /// A picture card by the slot it fills ("Republic · frigate picture"); any other card by its
+    /// A picture card by the slot it fills ("North · cover picture"); any other card by its
     /// first sentence, cut short.
     pub title: String,
     /// The words the title did not already say, cut short; empty when there are none.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub summary: String,
-    /// The triage's reason, without its zero counts: "design · gates 11 hulls".
+    /// The triage's reason, without its zero counts: "design · gates 11 items".
     pub why: String,
     /// When it was posted, as the register writes it: `YYYY-MM-DD HH:MM` or `YYYY-MM-DD`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub posted: Option<String>,
-    /// Its pictures in the card's order: the candidates (up to four) or the hulls it names (up
+    /// Its pictures in the card's order: the candidates (up to four) or the items it names (up
     /// to six). The first one is its thumbnail.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub pictures: Vec<Picture>,
@@ -173,10 +175,10 @@ impl Card {
 /// One picture a card shows.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Picture {
-    /// Where the picture is served; `None` for a hull not drawn yet ("picture coming").
+    /// Where the picture is served; `None` for an item not drawn yet ("picture coming").
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub src: Option<String>,
-    /// The candidate's letter ("A"), or the hull's name.
+    /// The candidate's letter ("A"), or the item's name.
     pub caption: String,
     /// The picture still waits on the owner's review.
     #[serde(default, skip_serializing_if = "is_false")]
@@ -225,7 +227,7 @@ pub struct Region {
     /// The region's id among the project's regions, stable across snapshots.
     pub id: String,
     pub title: String,
-    /// The line under the headline's percentage (`21 of 31 hulls approved`).
+    /// The line under the headline's percentage (`21 of 31 items approved`).
     pub note: String,
     pub bars: Vec<ProgressBar>,
     /// The legend's words for done, waiting and remaining, in that order.
@@ -291,7 +293,7 @@ impl ProjectView {
             && (path.ends_with('/')
                 || entrypoints.contains(&page)
                 || !name.contains('.')
-                || name.ends_with(".md"))
+                || is_markdown(name))
     }
 
     /// Whether `path` is a document route ([`ProjectView::is_document_route`]) naming a folder page
@@ -300,7 +302,7 @@ impl ProjectView {
     pub fn is_folder_route(&self, path: &str) -> bool {
         let page = path.trim_end_matches('/');
         self.is_document_route(path)
-            && (path.ends_with('/') || self.entrypoints().contains(&page) || !page.ends_with(".md"))
+            && (path.ends_with('/') || self.entrypoints().contains(&page) || !is_markdown(page))
     }
 
     /// The URL of the first entrypoint's folder page: `/docs/`, or `/` at the root.
@@ -344,6 +346,14 @@ pub const SYMPHONY_ROUTES: &[&str] = &[
     "favicon.ico",
 ];
 
+/// Whether `name`, a route or a file name, names a Markdown file: the docs tree holds `.md` alone, as
+/// docs-index lists it, so the comparison keeps its case.
+fn is_markdown(name: &str) -> bool {
+    std::path::Path::new(name)
+        .extension()
+        .is_some_and(|extension| extension == "md")
+}
+
 /// Whether the route `path` is `route` or lies under it; every path lies under the empty route.
 fn within(route: &str, path: &str) -> bool {
     route.is_empty()
@@ -359,11 +369,11 @@ pub const PROJECT_ELEMENT: &str = "symphony-project";
 /// A plugin's entry in the header and in the home's links.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NavItem {
-    /// The header's word (`⬡ hulls`), also the last crumb on its page.
+    /// The header's word (`▤ shelf`), also the last crumb on its page.
     pub label: String,
-    /// The home's link text (`Hull models`).
+    /// The home's link text (`Shelf items`).
     pub title: String,
-    /// The path it opens (`/hulls`), a client page.
+    /// The path it opens (`/shelf`), a client page.
     pub href: String,
     /// The document that page shows, a project-relative path.
     pub document: String,
@@ -417,7 +427,7 @@ struct ChangeVisitor;
 impl<'de> serde::de::Visitor<'de> for ChangeVisitor {
     type Value = Change;
 
-    fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+    fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter.write_str(r#"a region of the board: {"region": "...", "data": ...}"#)
     }
 
@@ -464,6 +474,10 @@ impl<'de> serde::de::Visitor<'de> for ChangeVisitor {
 
 const KNOWN_REGIONS: [&str; 5] = ["card", "queue", "counts", "progress", "client"];
 
+#[expect(
+    clippy::trivially_copy_pass_by_ref,
+    reason = "serde's skip_serializing_if passes the field by reference"
+)]
 fn is_false(value: &bool) -> bool {
     !*value
 }
@@ -565,6 +579,7 @@ pub enum FieldValue {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[expect(clippy::struct_field_names, reason = "the field is the wire's name")]
 pub struct Role {
     pub handle: String,
     pub role: String,
@@ -591,6 +606,7 @@ pub struct Session {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[expect(clippy::struct_field_names, reason = "the field is the wire's name")]
 pub struct Tasks {
     pub version: String,
     pub tasks: Vec<Task>,
@@ -996,6 +1012,7 @@ pub struct TaskChange {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[expect(clippy::struct_field_names, reason = "the field is the wire's name")]
 pub struct Agents {
     pub generated: f64,
     pub probes: AgentProbes,
@@ -1009,6 +1026,7 @@ pub struct AgentProbes {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[expect(clippy::struct_field_names, reason = "the field is the wire's name")]
 pub struct Agent {
     pub handle: String,
     pub kind: String,

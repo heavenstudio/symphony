@@ -265,7 +265,7 @@ mod tests {
     fn a_block_line_from_before_the_record_or_a_move_by_hand_names_no_status() {
         let legacy = lines(&[
             "created by teal-owl",
-            "blocked: cancelled dependencies: game/roster-pilot",
+            "blocked: cancelled dependencies: game/lineup-pilot",
         ]);
         assert_eq!(blocked_by(&legacy), Blocked::Unrecorded);
         let by_hand = lines(&[

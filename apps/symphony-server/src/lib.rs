@@ -8,6 +8,7 @@
 
 mod api;
 mod backstop;
+pub mod binary;
 pub mod cli;
 pub mod development;
 mod file_body;
@@ -21,6 +22,7 @@ pub mod orphans;
 pub mod probe;
 mod reload;
 pub mod repo;
+pub mod shelf;
 pub mod sys;
 mod write;
 

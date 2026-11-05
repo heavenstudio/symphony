@@ -1,5 +1,5 @@
 //! Owned processes, scratch repositories and build/opener fixtures for the lifecycle boundary.
-//! Every child starts through the board's forkless `tasks::sys::Command`: a child std forks
+//! Every child starts through the board's forkless `symphony_board::sys::Command`: a child std forks
 //! holds every descriptor this process has until its exec, a sibling case's pipes among them.
 
 use std::ffi::OsString;
@@ -15,7 +15,7 @@ use std::process::{ExitStatus, Output};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Mutex, Once, OnceLock};
 use std::time::{Duration, Instant};
-use tasks::sys::{Child, Command, Stdio};
+use symphony_board::sys::{Child, Command, Stdio};
 
 #[path = "../../../../../tools/gate/tests/gate/scratch.rs"]
 mod scratch;
@@ -23,6 +23,10 @@ mod scratch;
 #[cfg(test)]
 #[path = "scratch_tests.rs"]
 mod scratch_tests;
+
+#[cfg(test)]
+#[path = "descendant_cleanup_tests.rs"]
+mod descendant_cleanup_tests;
 
 pub const APP: &str = env!("CARGO_BIN_EXE_symphony-server");
 pub const PATIENCE: Duration = Duration::from_secs(30);
@@ -144,8 +148,8 @@ fn command_fixture(path: &Path, name: &str) {
 }
 
 pub fn repository(root: &Path, args: &[&str]) {
-    let done = tasks::sys::output(
-        tasks::sys::Command::new("git")
+    let done = symphony_board::sys::output(
+        symphony_board::sys::Command::new("git")
             .args([
                 "-c",
                 "user.name=Lifecycle fixture",
@@ -393,6 +397,7 @@ impl Descendants {
 
     fn spawn(command: &mut Command, at: &Path) -> (Self, File) {
         let (descendants, writer) = Self::endpoint(at, invocation(command));
+        let writer = above_shell_descriptors(writer);
         // The writer lives through spawn, which hands it to the child alone under its own number.
         // This process's copy stays close-on-exec, so concurrent tests' unrelated commands
         // cannot inherit this endpoint.
@@ -422,6 +427,32 @@ impl Descendants {
             &mut self.wait_elapsed,
         );
     }
+}
+
+/// The lowest descriptor a shell script does not name: POSIX redirections take one digit
+/// (`exec 3<&0`), and the child receives the endpoint under the number it has here.
+const ABOVE_SHELL_DESCRIPTORS: libc::c_int = 10;
+
+/// `file` moved above every single-digit descriptor. Wherever it was opened, a fixture script's
+/// own redirection of that number would close it in the shell, and no descendant would hold it.
+fn above_shell_descriptors(file: File) -> File {
+    // SAFETY: duplicates a live descriptor this function owns; the copy is close-on-exec from
+    // the moment it exists, as the original was.
+    let raised = unsafe {
+        libc::fcntl(
+            file.as_raw_fd(),
+            libc::F_DUPFD_CLOEXEC,
+            ABOVE_SHELL_DESCRIPTORS,
+        )
+    };
+    assert_ne!(
+        raised,
+        -1,
+        "cannot raise the lifetime endpoint: {}",
+        std::io::Error::last_os_error()
+    );
+    // SAFETY: fcntl just returned this new descriptor; ownership is transferred once.
+    unsafe { File::from_raw_fd(raised) }
 }
 
 impl Process {
@@ -1408,54 +1439,6 @@ mod tests {
                 "timed out: descendants of child {pid} (\"/bin/sh\" [\"-c\", \"printf ready; read -r release\"]) to exit before scratch removal"
             )
         );
-    }
-
-    #[test]
-    fn cleanup_waits_for_orphaned_fixture_descendants_before_removing_scratch() {
-        for repository in [false, true] {
-            let repo = Repo::new("descendant-cleanup");
-            let base = repo.base.clone();
-            let mut command = Command::new("/bin/sh");
-            // The launcher exits while its child holds the lifetime endpoint and waits for the
-            // test's input. The child's final write must finish before scratch can disappear.
-            command
-                .args([
-                    "-c",
-                    "exec 3<&0; sh -c 'printf ready; read -r line; printf finished > \"$1\"' fixture \"$1\" <&3 & exit",
-                    "fixture",
-                ])
-                .arg(base.join("late-write"))
-                .stdin(Stdio::piped());
-            let mut process = if repository {
-                repo.run(command)
-            } else {
-                Process::spawn(command, &repo.log("orphan"))
-            };
-            let mut input = process.child.stdin.take().unwrap();
-            process.success();
-            until("orphaned fixture readiness", || {
-                (process.output() == "ready").then_some(())
-            });
-            let (finished, completion) = std::sync::mpsc::channel();
-            let cleanup = std::thread::spawn(move || {
-                drop(process);
-                drop(repo);
-                finished.send(()).unwrap();
-            });
-            // A bounded negative observation, not cleanup's synchronization. Input releases the
-            // descendant; EOF on its inherited endpoint is what releases cleanup.
-            let early = completion.recv_timeout(Duration::from_millis(50));
-            let scratch_present = base.is_dir();
-            writeln!(input, "finish").unwrap();
-            completion.recv_timeout(PATIENCE).unwrap();
-            cleanup.join().unwrap();
-            assert_eq!(early, Err(std::sync::mpsc::RecvTimeoutError::Timeout));
-            assert!(
-                scratch_present,
-                "scratch removed while a descendant could write"
-            );
-            assert!(!base.exists());
-        }
     }
 
     /// Another case's fixture command can be spawned while this one makes its endpoint. Racing

@@ -3,7 +3,7 @@
 use super::Hub;
 use crate::testing::{Tree, board, git, repository};
 use std::time::{Duration, Instant};
-use tasks::sys::Command;
+use symphony_board::sys::Command;
 
 const CHILD: &str = "SF_HUB_BACKSTOP_CHILD";
 const TEST: &str =
@@ -13,7 +13,7 @@ const TEST: &str =
 fn a_hub_whose_watcher_delivers_nothing_still_refreshes_within_a_period() {
     if std::env::var_os(CHILD).is_none() {
         let board = board::client();
-        let done = tasks::sys::output(
+        let done = symphony_board::sys::output(
             Command::new(std::env::current_exe().unwrap())
                 .args(["--exact", TEST, "--nocapture"])
                 .env(CHILD, "1")
@@ -54,8 +54,10 @@ fn a_hub_whose_watcher_delivers_nothing_still_refreshes_within_a_period() {
         &root.join("build/client"),
         false,
         period,
+        symphony::taskview::connect,
     )
     .unwrap();
+    hub.start_initial_board();
     hub.ensure_page("served").unwrap();
     for scope in ["", "served"] {
         hub.document(scope, "docs/TOPIC.md").unwrap();

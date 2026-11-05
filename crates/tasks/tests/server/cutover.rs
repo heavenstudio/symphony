@@ -10,13 +10,17 @@ use std::net::UdpSocket;
 use std::os::unix::process::ExitStatusExt;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
-use tasks::cli::Env;
-use tasks::server::{FOLDER, Home, Running};
-use tasks::sys::{Child, Command, Stdio};
+use symphony_board::cli::Env;
+use symphony_board::server::{FOLDER, Home, Running};
+use symphony_board::sys::{Child, Command, Stdio};
+use symphony_board::{cli, cutover, rpc, sys};
 
 /// A repository of its own holding the sample SQLite board in its git dir. The server a test started
 /// there is stopped when it goes, by the pid its address file records, if that process serves it;
 /// its pipe watchdog also stops it when the test process ends without running Drop.
+/// The project file of every repository here: its id names its SQLite board, `lamp-works-tasks.db`.
+const PROJECT: &str = "[project]\nid = \"lamp-works\"\n";
+
 struct Repo {
     dir: PathBuf,
     surreal: GuardedSurreal,
@@ -28,10 +32,11 @@ impl Repo {
             .join(format!("cutover-home-{}-{name}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
-        let done = tasks::sys::output(Command::new("git").args(["init", "-q"]).arg(&dir)).unwrap();
+        let done = sys::output(Command::new("git").args(["init", "-q"]).arg(&dir)).unwrap();
         assert!(done.status.success());
         let dir = dir.canonicalize().unwrap();
-        sqlite::make(&dir.join(".git/star-foundry-tasks.db"), &sqlite::sample());
+        fs::write(dir.join("symphony.toml"), PROJECT).unwrap();
+        sqlite::make(&dir.join(".git/lamp-works-tasks.db"), &sqlite::sample());
         let surreal = GuardedSurreal::new(&dir);
         Repo { dir, surreal }
     }
@@ -71,7 +76,7 @@ impl Drop for Repo {
 fn tasks(env: &Env, args: &[&str]) -> (i32, String, String) {
     let args: Vec<String> = args.iter().map(|a| a.to_string()).collect();
     let (mut out, mut err) = (Vec::new(), Vec::new());
-    let code = tasks::cli::main(&args, env, &mut &b""[..], &mut out, &mut err);
+    let code = cli::main(&args, env, &mut &b""[..], &mut out, &mut err);
     (
         code,
         String::from_utf8(out).unwrap(),
@@ -83,9 +88,9 @@ fn tasks(env: &Env, args: &[&str]) -> (i32, String, String) {
 fn a_board_moved_in_a_repository_is_the_one_its_tasks_reach_with_its_keys_and_sweep() {
     let repo = Repo::new("moved");
     let env = repo.env();
-    let board = repo.common().join("star-foundry-tasks.db");
+    let board = repo.common().join("lamp-works-tasks.db");
     fs::write(
-        repo.common().join("star-foundry-tasks.db.reap.json"),
+        repo.common().join("lamp-works-tasks.db.reap.json"),
         r#"{"idle": {}}"#,
     )
     .unwrap();
@@ -94,7 +99,7 @@ fn a_board_moved_in_a_repository_is_the_one_its_tasks_reach_with_its_keys_and_sw
     assert!(err.contains("has not moved to SurrealDB yet"), "{err}");
 
     let (mut out, mut err) = (Vec::new(), Vec::new());
-    let code = tasks::cutover::main(&[], &env, &mut out, &mut err);
+    let code = cutover::main(&[], &env, &mut out, &mut err);
     let (out, err) = (
         String::from_utf8(out).unwrap(),
         String::from_utf8(err).unwrap(),
@@ -125,7 +130,7 @@ fn cutover_of(env: &Env, board: &Path) -> (i32, String, String) {
     env.vars
         .insert("TASKS_DB".into(), board.display().to_string());
     let (mut out, mut err) = (Vec::new(), Vec::new());
-    let code = tasks::cutover::main(&[], &env, &mut out, &mut err);
+    let code = cutover::main(&[], &env, &mut out, &mut err);
     (
         code,
         String::from_utf8(out).unwrap(),
@@ -140,7 +145,7 @@ fn cutover_with(env: &Env, vars: &[(&str, &str)]) -> (i32, String, String) {
         env.vars.insert(name.to_string(), value.to_string());
     }
     let (mut out, mut err) = (Vec::new(), Vec::new());
-    let code = tasks::cutover::main(&[], &env, &mut out, &mut err);
+    let code = cutover::main(&[], &env, &mut out, &mut err);
     (
         code,
         String::from_utf8(out).unwrap(),
@@ -198,10 +203,7 @@ fn servers_end_when_the_fixture_process_is_killed_without_dropping_it() {
             .expect("the fixture's server must become ready");
         let (dir, data, running): (PathBuf, String, Running) =
             serde_json::from_slice(&message[..size]).unwrap();
-        assert!(
-            tasks::rpc::healthy(&running.addr),
-            "{route}: server is ready"
-        );
+        assert!(rpc::healthy(&running.addr), "{route}: server is ready");
         assert!(
             command_of(running.pid).unwrap().contains(&data),
             "{route}: server serves the fixture"
@@ -284,7 +286,7 @@ fn fixture_descendants_release_the_slot_while_the_server_is_running() {
         "helper must remain alive"
     );
     assert!(
-        tasks::rpc::healthy(&running.addr),
+        rpc::healthy(&running.addr),
         "fixture server must remain alive"
     );
     assert!(
@@ -339,7 +341,7 @@ fn helper_fixture_process() {
         let running = if route == "cutover" {
             let (mut out, mut err) = (Vec::new(), Vec::new());
             assert_eq!(
-                tasks::cutover::main(&[], &repo.env(), &mut out, &mut err),
+                cutover::main(&[], &repo.env(), &mut out, &mut err),
                 0,
                 "{}",
                 String::from_utf8_lossy(&err)
@@ -362,7 +364,7 @@ fn helper_fixture_process() {
 /// That a refused move left the repository's board as it found it: nothing locked or marked beside it,
 /// or beside `named`, the path the run was given; and it takes writes, never frozen.
 fn left_alone(repo: &Repo, named: &Path) {
-    let board = repo.common().join("star-foundry-tasks.db");
+    let board = repo.common().join("lamp-works-tasks.db");
     for path in [&board, named] {
         for end in [".cutover", ".moved"] {
             let mut beside = path.as_os_str().to_owned();
@@ -393,7 +395,7 @@ fn a_copy_of_the_frozen_board_is_not_moved_over_the_live_one() {
     let repo = Repo::new("dry-run");
     let env = repo.env();
     let (mut out, mut err) = (Vec::new(), Vec::new());
-    assert_eq!(tasks::cutover::main(&[], &env, &mut out, &mut err), 0);
+    assert_eq!(cutover::main(&[], &env, &mut out, &mut err), 0);
     let (code, _, err) = tasks(
         &env,
         &[
@@ -409,7 +411,7 @@ fn a_copy_of_the_frozen_board_is_not_moved_over_the_live_one() {
     fs::write(home.join("keys").join("agent-2"), "").unwrap();
     fs::write(home.join("reap.json"), r#"{"idle": {"since": 1}}"#).unwrap();
     let copy = repo.dir.join("copy.db");
-    rusqlite::Connection::open(repo.common().join("star-foundry-tasks.db"))
+    rusqlite::Connection::open(repo.common().join("lamp-works-tasks.db"))
         .unwrap()
         .execute("VACUUM INTO ?1", [copy.display().to_string()])
         .unwrap();
@@ -441,20 +443,15 @@ fn a_copy_of_the_frozen_board_is_not_moved_over_the_live_one() {
 #[test]
 fn a_board_of_another_repository_is_not_moved_into_this_ones() {
     let (repo, other) = (Repo::new("here"), Repo::new("there"));
-    let board = other.common().join("star-foundry-tasks.db");
+    let board = other.common().join("lamp-works-tasks.db");
 
     let (code, out, err) = cutover_of(&repo.env(), &board);
     assert_eq!((code, out.as_str()), (2, ""), "{err}");
     assert!(err.contains("is not this repository's board"), "{err}");
     assert!(err.contains(&board.display().to_string()), "{err}");
     assert!(!repo.common().join(FOLDER).exists(), "no server started");
-    assert!(
-        !other
-            .common()
-            .join("star-foundry-tasks.db.cutover")
-            .exists()
-    );
-    assert!(!other.common().join("star-foundry-tasks.db.moved").exists());
+    assert!(!other.common().join("lamp-works-tasks.db.cutover").exists());
+    assert!(!other.common().join("lamp-works-tasks.db.moved").exists());
     rusqlite::Connection::open(&board)
         .unwrap()
         .execute_batch("UPDATE tasks SET title = 'Hop' WHERE slug = 'sim/jump'")
@@ -469,7 +466,7 @@ fn the_repositorys_board_by_another_path_moves_and_is_marked_in_its_git_dir() {
     for hard in [false, true] {
         let repo = Repo::new(if hard { "linked-hard" } else { "linked" });
         let (board, link) = (
-            repo.common().join("star-foundry-tasks.db"),
+            repo.common().join("lamp-works-tasks.db"),
             repo.dir.join("board.db"),
         );
         if hard {
@@ -480,7 +477,7 @@ fn the_repositorys_board_by_another_path_moves_and_is_marked_in_its_git_dir() {
 
         let (code, _, err) = cutover_of(&repo.env(), &link);
         assert_eq!((code, err.as_str()), (0, ""), "hard: {hard}");
-        assert!(repo.common().join("star-foundry-tasks.db.moved").is_file());
+        assert!(repo.common().join("lamp-works-tasks.db.moved").is_file());
         assert!(!repo.dir.join("board.db.moved").exists());
         assert!(!repo.dir.join("board.db.cutover").exists());
         let (code, out, _) = tasks(&repo.env(), &["list"]);
@@ -496,7 +493,7 @@ fn the_repositorys_board_does_not_move_into_another_repositorys_server() {
     let (here, there) = (Repo::new("server-here"), Repo::new("server-there"));
     let mut env = there.env();
     let (mut out, mut err) = (Vec::new(), Vec::new());
-    assert_eq!(tasks::cutover::main(&[], &env, &mut out, &mut err), 0);
+    assert_eq!(cutover::main(&[], &env, &mut out, &mut err), 0);
     let theirs: Running = serde_json::from_str(
         &fs::read_to_string(there.common().join(FOLDER).join("server.json")).unwrap(),
     )
@@ -505,7 +502,7 @@ fn the_repositorys_board_does_not_move_into_another_repositorys_server() {
     env = here.env();
     env.vars.insert("TASKS_SERVER".into(), theirs.addr);
     let (mut out, mut err) = (Vec::new(), Vec::new());
-    let code = tasks::cutover::main(&[], &env, &mut out, &mut err);
+    let code = cutover::main(&[], &env, &mut out, &mut err);
     let (out, err) = (
         String::from_utf8(out).unwrap(),
         String::from_utf8(err).unwrap(),
@@ -513,7 +510,7 @@ fn the_repositorys_board_does_not_move_into_another_repositorys_server() {
     assert_eq!((code, out.as_str()), (2, ""), "{err}");
     assert!(err.contains("is a repository's own board"), "{err}");
     assert!(err.ends_with("unset TASKS_SERVER\n"), "{err}");
-    left_alone(&here, &here.common().join("star-foundry-tasks.db"));
+    left_alone(&here, &here.common().join("lamp-works-tasks.db"));
 }
 
 /// Resolve source ownership from the board path independently of the caller's
@@ -522,7 +519,7 @@ fn the_repositorys_board_does_not_move_into_another_repositorys_server() {
 fn a_repositorys_board_does_not_move_into_another_server_wherever_the_run_starts() {
     let (here, there) = (Repo::new("whence-here"), Repo::new("whence-there"));
     let theirs = own_server(&there);
-    let board = here.common().join("star-foundry-tasks.db");
+    let board = here.common().join("lamp-works-tasks.db");
     for cwd in [PathBuf::from("/"), there.dir.clone()] {
         let env = Env {
             cwd: cwd.clone(),
@@ -549,7 +546,7 @@ fn the_repositorys_board_by_a_link_does_not_move_into_another_server() {
     for hard in [false, true] {
         let repo = Repo::new(if hard { "links-hard" } else { "links-soft" });
         let (board, link) = (
-            repo.common().join("star-foundry-tasks.db"),
+            repo.common().join("lamp-works-tasks.db"),
             repo.dir.join("link.db"),
         );
         if hard {
@@ -584,17 +581,17 @@ fn the_repositorys_board_does_not_move_with_its_own_server_named() {
     let repo = Repo::new("own-named");
     let own = own_server(&repo);
     fs::write(
-        repo.common().join("star-foundry-tasks.db.reap.json"),
+        repo.common().join("lamp-works-tasks.db.reap.json"),
         r#"{"idle": {}}"#,
     )
     .unwrap();
-    for database in [None, Some(tasks::DATABASE), Some("elsewhere")] {
+    for database in [None, Some(symphony_board::DATABASE), Some("elsewhere")] {
         let mut vars = vec![("TASKS_SERVER", own.addr.as_str())];
         vars.extend(database.map(|name| ("TASKS_DATABASE", name)));
         let (code, out, err) = cutover_with(&repo.env(), &vars);
         assert_eq!((code, out.as_str()), (2, ""), "{database:?}: {err}");
         assert!(err.contains("is a repository's own board"), "{err}");
-        left_alone(&repo, &repo.common().join("star-foundry-tasks.db"));
+        left_alone(&repo, &repo.common().join("lamp-works-tasks.db"));
     }
     let (code, _, err) = cutover_with(&repo.env(), &[]);
     assert_eq!((code, err.as_str()), (0, ""));

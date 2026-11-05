@@ -156,7 +156,7 @@ fn port(word: &str) -> Result<u16, String> {
 /// process's folder and on its streams: the server's exit code, or 2 when it could not start or ended
 /// on a signal.
 fn scratch(exe: &Path, args: &[String], database: &str, asks: &Path) -> i32 {
-    tasks::sys::Command::new(exe)
+    symphony_board::sys::Command::new(exe)
         .args(args)
         .env("TASKS_DATABASE", database)
         .env("ASKS_DB", asks)
@@ -173,10 +173,9 @@ pub fn main(args: &[String]) -> i32 {
     // Keep scratch runs explicit and self-contained without mutating the process environment
     // after threads exist. The child serves normally against its own board and asks file.
     if args.first().is_some_and(|arg| arg == "--scratch") {
-        let Some(database) = args
-            .get(1)
-            .filter(|database| tasks::rpc::plain(database) && database.as_str() != tasks::DATABASE)
-        else {
+        let Some(database) = args.get(1).filter(|database| {
+            symphony_board::rpc::plain(database) && database.as_str() != symphony_board::DATABASE
+        }) else {
             eprintln!("--scratch needs a database name other than tasks");
             return 2;
         };
@@ -418,17 +417,17 @@ pub(crate) fn open(url: &str) {
 /// The system's opener for `url`, its streams null. A server of its own opens its page too
 /// (front::start), once it accepts: the opener starts without a fork and inherits only its
 /// streams, never a connection not yet close-on-exec.
-fn opener(url: &str) -> tasks::sys::Command {
-    let mut command = tasks::sys::Command::new(if cfg!(target_os = "macos") {
+fn opener(url: &str) -> symphony_board::sys::Command {
+    let mut command = symphony_board::sys::Command::new(if cfg!(target_os = "macos") {
         "open"
     } else {
         "xdg-open"
     });
     command
         .arg(url)
-        .stdin(tasks::sys::Stdio::null())
-        .stdout(tasks::sys::Stdio::null())
-        .stderr(tasks::sys::Stdio::null());
+        .stdin(symphony_board::sys::Stdio::null())
+        .stdout(symphony_board::sys::Stdio::null())
+        .stderr(symphony_board::sys::Stdio::null());
     command
 }
 
@@ -483,7 +482,7 @@ mod tests {
         std::fs::write(dir.join("input"), "request\n").unwrap();
         let run = |server: &Path| {
             let file = |name: &str| std::fs::File::create(dir.join(name)).unwrap();
-            let status = tasks::sys::Command::new(std::env::current_exe().unwrap())
+            let status = symphony_board::sys::Command::new(std::env::current_exe().unwrap())
                 .args(["--exact", "cli::tests::scratch_run_in_a_child"])
                 .args(["--nocapture", "--test-threads=1"])
                 .env(SCRATCH_SERVER, server)

@@ -1,5 +1,5 @@
 //! A temporary project tree shared by unit and integration tests.
-#![allow(dead_code)]
+#![allow(dead_code, reason = "each test binary uses its own share of these")]
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -17,17 +17,6 @@ impl Tree {
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(&root).unwrap();
         Tree { root }
-    }
-
-    /// A tree whose `symphony.toml` names Star Foundry's plugin, for what the game's components,
-    /// regions and rules draw.
-    pub fn star_foundry() -> Tree {
-        let tree = Tree::new();
-        tree.write(
-            "symphony.toml",
-            "[plugins]\ncrates = [\"star-foundry-symphony\"]\n",
-        );
-        tree
     }
 
     pub fn path(&self, rel: &str) -> PathBuf {

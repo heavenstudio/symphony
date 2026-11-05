@@ -1,7 +1,7 @@
-# Symphony's workspace: server, client, review library, wire types, plugin seams, board and OS scanner.
+# Symphony's workspace: server, client, review library, wire types, docs checks, plugin seams, board and OS scanner.
 [workspace]
 resolver = "3"
-members = ["apps/symphony-server", "apps/symphony-ui", "crates/process-cwd", "crates/symphony", "crates/symphony-api", "crates/symphony-plugin", "crates/tasks"]
+members = ["apps/symphony-server", "apps/symphony-ui", "crates/process-cwd", "crates/symphony", "crates/symphony-api", "crates/symphony-docs", "crates/symphony-plugin", "crates/tasks"]
 
 [workspace.package]
 edition = "2024"
@@ -82,6 +82,11 @@ unused_import_braces = "warn"
 meta_variable_misuse = "warn"
 # `#[macro_use] extern crate` is the 2015 way; `use crate::name` is the one written here.
 macro_use_extern_crate = "warn"
+# `unsafe` is confined (tools/rust-style-audit, 2026-11-04: 354 unsafe blocks in 90 files, none confined, 48
+# without a SAFETY comment). A crate with no unsafe code forbids it at every root (`#![forbid(unsafe_code)]`);
+# the one module or item that needs it carries `#[expect(unsafe_code, reason = "...")]`, which goes red once
+# the unsafe code leaves, so the set only shrinks. A member reads this through `[lints] workspace = true`.
+unsafe_code = "deny"
 
 [workspace.lints.clippy]
 # `clippy::all` (correctness, suspicious, style, complexity, perf) is on by default. Pedantic is on
