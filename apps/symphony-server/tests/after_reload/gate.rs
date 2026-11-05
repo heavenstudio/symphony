@@ -156,7 +156,7 @@ mod tests {
     use std::panic::{AssertUnwindSafe, catch_unwind};
     use std::time::Duration;
 
-    const SIGHTED: &str = "GET /api/document?path=docs/ships/HULLS.md HTTP/1.1\r\n";
+    const SIGHTED: &str = "GET /api/document?path=docs/notes/PAGE.md HTTP/1.1\r\n";
 
     fn stand_in(gate: &Gate, line: &str) -> UnixStream {
         let mut stream = UnixStream::connect(gate.path()).unwrap();
@@ -210,7 +210,7 @@ mod tests {
         let why = failure(&gate, "build", Duration::from_millis(300));
         assert!(
             why.starts_with("no build handshake within 300ms: the deadline passed; set aside: ")
-                && why.contains("HULLS.md"),
+                && why.contains("PAGE.md"),
             "{why}"
         );
         // A connection holding its line back holds the wait only until the deadline.
