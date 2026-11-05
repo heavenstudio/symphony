@@ -130,7 +130,12 @@ fn a_task_moved_to_review_starts_the_manifests_command_from_the_main_checkout_wi
         &["move", "sim/jump", "review"],
         |_| {},
     );
-    assert_eq!(out, "sim/jump is review\n");
+    assert_eq!(
+        out,
+        format!(
+            "sim/jump is review\n→ the tip's verify started detached: tools/on-review.sh --quiet sim/jump sim/jump {tip}\n"
+        )
+    );
     let main = r.root.canonicalize().unwrap();
     assert_eq!(
         written(&record),

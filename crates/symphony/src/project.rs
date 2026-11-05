@@ -94,16 +94,9 @@ pub struct Verdicts {
 
 pub use crate::landing::Generator;
 
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct Board {
-    /// Where the board's export is written, project-relative; `None` writes none.
-    pub export: Option<String>,
-    /// What a finished worktree may hold and still be removed.
-    pub disposable: Vec<String>,
-    /// The command the board starts, detached from the main checkout, when a task moves to review,
-    /// given the task's slug, its branch and the branch's tip; empty starts none.
-    pub on_review: Vec<String>,
-}
+mod board;
+pub use board::Board;
+use board::FileBoard;
 
 /// The file as written: every table and key optional, nothing else allowed.
 #[derive(Default, Deserialize)]
@@ -182,14 +175,6 @@ struct FileVerdicts {
     land: Vec<String>,
     generators: Vec<Generator>,
     record: Option<String>,
-}
-
-#[derive(Default, Deserialize)]
-#[serde(deny_unknown_fields, default)]
-struct FileBoard {
-    export: Option<String>,
-    disposable: Vec<String>,
-    on_review: Vec<String>,
 }
 
 impl Project {

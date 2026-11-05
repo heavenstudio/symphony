@@ -200,27 +200,45 @@ impl BoardAction for ApproveToLand {
 
     /// Records the owner's approval of the patch `sf-land` offered, then asks which tasks its
     /// stamps held blocked on it. A release that cannot be read leaves them for the next landing or
-    /// stamp edit, which re-reads them.
+    /// stamp edit, which re-reads them. The answer is `{"problem", "said"}`: a problem refuses,
+    /// and what the stamp started (the landing, the tip's verify, or what still waits) is said
+    /// back; a bare string is a problem.
     fn submit(
         &self,
         root: &Path,
         task: &TaskRef<'_>,
         submission: &Submission,
     ) -> Result<Submitted, String> {
-        let problem = crate::commit::land_call(
+        let answer = crate::commit::land_call(
             root,
             &serde_json::json!({"method": "record_owner_approval", "branch": task.branch,
                 "patch": submission.payload, "note": submission.note}),
         )?;
-        if let Some(problem) = problem.as_str().filter(|problem| !problem.is_empty()) {
+        let problem = answer["problem"]
+            .as_str()
+            .or_else(|| answer.as_str())
+            .unwrap_or_default();
+        if !problem.is_empty() {
             return Err(problem.into());
         }
+        let started = answer["said"]
+            .as_str()
+            .unwrap_or_default()
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+            .collect::<Vec<_>>()
+            .join("; ");
         let released = crate::commit::land_call(
             root,
             &serde_json::json!({"method": "stamps_released", "branch": task.branch}),
         );
         Ok(Submitted {
-            said: format!("approved {} to land", task.branch),
+            said: if started.is_empty() {
+                format!("approved {} to land", task.branch)
+            } else {
+                format!("approved {} to land; {started}", task.branch)
+            },
             released: released
                 .iter()
                 .flat_map(|held| held.as_array().into_iter().flatten())

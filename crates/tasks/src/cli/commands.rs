@@ -6,8 +6,7 @@ use super::args::Parsed;
 use super::attach::{Watch, watch};
 use super::text::{event, export_markdown, message_line, roles_text, tree_order};
 use super::{Clock, Env, probes, shape};
-use crate::health::{FINISHED, RESERVE_SECONDS};
-use crate::on_review;
+use crate::health::RESERVE_SECONDS;
 use crate::pyjson::{self, Py};
 use crate::sweep::{self, git::Listed, trigger};
 use crate::sys::{self, Command};
@@ -21,6 +20,7 @@ const EXPORT_PATH: &str = "docs/history/tasks.md";
 /// How often an orchestrator's monitor prints the PULL digest, unless `TASKS_PULL_SECONDS` says.
 const PULL_SECONDS: f64 = 600.0;
 
+mod finish;
 mod panes;
 
 /// Why a command stopped short.
@@ -297,7 +297,7 @@ pub fn run(store: &Store, c: &mut Context) -> Result<(), Stop> {
             let slug = c.arg("slug");
             let t = store.done(&slug, &c.actor()?, &c.arg("note"))?;
             c.say(&format!("{slug} is {}", t.status));
-            after_finish(store, c, &t);
+            finish::after_finish(store, c, &t);
         }
         "claim" => {
             let t = store.claim(&c.arg("slug"), &c.actor()?)?;
@@ -321,16 +321,13 @@ pub fn run(store: &Store, c: &mut Context) -> Result<(), Stop> {
             let slug = c.arg("slug");
             let t = store.move_to(&slug, &c.arg("status"), &c.actor()?)?;
             c.say(&format!("{slug} is {}", t.status));
-            after_finish(store, c, &t);
-            if t.status == "review" {
-                on_review::trigger(c.env, &c.env.cwd, &t.slug);
-            }
+            finish::after_move(store, c, &t);
         }
         "verdict" => {
             let slug = c.arg("slug");
             let t = store.verdict(&slug, &c.actor()?, &c.arg("verdict"), &c.arg("text"))?;
             c.say(&format!("{slug} is {}", t.status));
-            after_finish(store, c, &t);
+            finish::after_finish(store, c, &t);
         }
         "say" => {
             let m = store.say(&c.arg("slug"), &c.actor()?, &c.arg("text"), p.get("to"))?;
@@ -421,15 +418,6 @@ pub fn run(store: &Store, c: &mut Context) -> Result<(), Stop> {
 /// close ([`panes::close_finished`]), and then a sweep starts, detached, in which their worktrees go
 /// without the window when merged and clean ([`trigger`]). The status change stands whatever happens
 /// here; what went wrong closing panes is said, and the sweep says nothing.
-fn after_finish(store: &Store, c: &mut Context, task: &Task) {
-    if !FINISHED.contains(&task.status.as_str()) {
-        return;
-    }
-    panes::close_finished(store, c, &task.slug);
-    let why = format!("{} is {}", task.slug, task.status);
-    trigger::trigger(c.env, &c.env.cwd, &why, Some(&task.slug));
-}
-
 fn create(store: &Store, c: &mut Context) -> Result<(), Stop> {
     let p = c.parsed;
     let body = match p.get("body_file") {
