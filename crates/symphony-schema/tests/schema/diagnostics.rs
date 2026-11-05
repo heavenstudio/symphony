@@ -1,3 +1,5 @@
+//! Pin schema diagnostic wording and traversal order across keywords and references.
+
 use super::*;
 
 // --- the lines ---

@@ -1,3 +1,5 @@
+//! Quote and escape schema diagnostic strings with the Python-compatible representation.
+
 use std::fmt::Write as _;
 
 /// Not printable by Python's `str.isprintable`: controls, separators other than a space, format

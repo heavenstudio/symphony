@@ -462,6 +462,9 @@ pub fn validate(instance: &Value, schema: &Value) -> Result<Vec<String>, SchemaE
     static COMPILED: LazyLock<Mutex<BTreeMap<String, Arc<Schema>>>> =
         LazyLock::new(|| Mutex::new(BTreeMap::new()));
     let key = serde_json::to_string(schema).expect("a JSON schema serializes");
+    // Only complete validators are inserted. A panic during compilation leaves the cache unchanged;
+    // clearing can remove entries but cannot leave a partially built validator. A poisoned cache
+    // therefore holds reusable entries, and a missing schema is compiled on its next lookup.
     let mut compiled = COMPILED
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);

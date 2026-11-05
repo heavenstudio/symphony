@@ -1,3 +1,5 @@
+//! Pin argument parsing, option prefixes and command selection without linking the app.
+
 use symphony_args::{Flag, command_at, parse};
 
 const FLAGS: &[Flag] = &[
@@ -25,10 +27,18 @@ fn values_keep_repetitions_and_last_value_while_options_allow_unique_prefixes() 
     assert_eq!(parsed.values("--root").collect::<Vec<_>>(), ["a", "b"]);
     assert_eq!(parsed.value("--root"), Some("b"));
     assert_eq!(parsed.value("--missing"), None);
-    assert!(parsed.flag("--raw"));
-    assert!(!parsed.flag("--missing"));
+    assert!(
+        parsed.flag("--raw"),
+        "--raw flag = {}",
+        parsed.flag("--raw")
+    );
+    assert!(
+        !parsed.flag("--missing"),
+        "--missing flag = {}",
+        parsed.flag("--missing")
+    );
     assert_eq!(parsed.positionals, ["first", "last"]);
-    assert!(!parsed.help);
+    assert!(!parsed.help, "help = {}", parsed.help);
 }
 
 #[test]
@@ -38,10 +48,14 @@ fn end_of_options_help_negative_numbers_and_empty_values_keep_their_meaning() {
         FLAGS,
     )
     .unwrap();
-    assert!(parsed.help);
+    assert!(parsed.help, "help = {}", parsed.help);
     assert_eq!(parsed.value("--root"), Some(""));
     assert_eq!(parsed.positionals, ["-2", "-a b", "--raw", "-h"]);
-    assert!(!parsed.flag("--raw"));
+    assert!(
+        !parsed.flag("--raw"),
+        "--raw flag = {}",
+        parsed.flag("--raw")
+    );
     let parsed = parse(&args(&["--root", "-2"]), FLAGS).unwrap();
     assert_eq!(parsed.value("--root"), Some("-2"));
 }
