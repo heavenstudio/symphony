@@ -244,7 +244,9 @@ impl Hub {
         if let Some(worker) = worker.take()
             && worker.join().is_err()
         {
-            eprintln!("· Symphony data worker panicked while stopping");
+            crate::front::tell(format_args!(
+                "· Symphony data worker panicked while stopping"
+            ));
         }
     }
 

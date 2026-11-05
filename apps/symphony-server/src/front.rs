@@ -39,8 +39,8 @@ const SHUTDOWN_GRACE: Duration = Duration::from_secs(5);
 /// runner's process group (`tests/app.rs` sets it on everything it runs).
 pub const TEST_PID: &str = "SF_SYMPHONY_TEST_PID";
 
-/// The thread names of the workers a server owns and joins as it ends; a sample of a stuck
-/// shutdown shows the one it waits on.
+/// The thread names of the workers a server owns and joins as it ends; the stop's stage lines
+/// and a sample of a stuck shutdown name the one it waits on.
 const TAILNET_WORKER: &str = "review tailnet name";
 const SWEEP_WORKER: &str = "review idle-session sweep";
 pub(crate) const RELOAD_WORKER: &str = "Symphony source reload";
@@ -469,7 +469,7 @@ fn end_when(
     worker(name, move || {
         while !shared.stopping() {
             if ended() {
-                eprintln!("· Symphony server: {why}: stopping");
+                tell(format_args!("· Symphony server: {why}: stopping"));
                 shared.stop();
                 return;
             }
@@ -488,8 +488,11 @@ struct Background {
     census: Option<tokio::task::JoinHandle<()>>,
 }
 
-impl Drop for Background {
-    fn drop(&mut self) {
+impl Background {
+    /// Stop the server, finishing its data refresh, then join each worker, naming each wait
+    /// through `stage` as it begins.
+    fn join(&mut self, stage: &dyn Fn(&str)) {
+        stage("the data refresh");
         self.shared.stop();
         for worker in self.workers.drain(..) {
             let name = worker
@@ -497,11 +500,41 @@ impl Drop for Background {
                 .name()
                 .unwrap_or("review background")
                 .to_owned();
+            stage(&format!("the {name} worker"));
             if worker.join().is_err() {
-                eprintln!("· {name} worker panicked while stopping");
+                tell(format_args!("· {name} worker panicked while stopping"));
             }
         }
     }
+}
+
+impl Drop for Background {
+    fn drop(&mut self) {
+        self.join(&|_| {});
+    }
+}
+
+/// Names each wait of a stopping server as it begins, so a stop that never ends names its wait.
+type Stages = Arc<dyn Fn(&str) + Send + Sync>;
+
+/// [`Stages`] writing each stage's line to `log`, naming the generation `pid` that stops: a
+/// generation can reload into the next while the one before it still drains, and every
+/// generation writes to the one log it inherited.
+fn stages_of(pid: i64, log: impl Fn(String) + Send + Sync + 'static) -> Stages {
+    Arc::new(move |stage| log(format!("· Symphony server pid {pid} stopping: {stage}")))
+}
+
+/// [`Stages`] of generation `pid` on stderr, where the shared server's log stamps each line
+/// with its time.
+fn stages_on_stderr(pid: i64) -> Stages {
+    stages_of(pid, |line| tell(format_args!("{line}")))
+}
+
+/// `line` on stderr, a failed write ignored: a stopping server says what it does on the way,
+/// and a closed or broken stderr must never end a stop before every save closes and every
+/// worker joins (`eprintln!` panics on a failed write).
+pub(crate) fn tell(line: std::fmt::Arguments<'_>) {
+    let _ = std::io::Write::write_fmt(&mut std::io::stderr(), format_args!("{line}\n"));
 }
 
 /// A listener on `host`, reusing an address a restart left in TIME_WAIT; on IPv6 that side alone, so
@@ -697,6 +730,8 @@ struct Started {
     serving: Vec<tokio::task::JoinHandle<()>>,
     /// This server wrote the port record, and clears it as it ends.
     record: bool,
+    /// Where the stop names its waits ([`stages_on_stderr`] outside tests).
+    stages: Stages,
 }
 
 /// Listen, start the owned workers and print the URL; a failed start is its exit status.
@@ -871,6 +906,7 @@ async fn start(mut serve: Serve, open: bool) -> Result<Started, i32> {
     if open {
         crate::cli::open(&url);
     }
+    let stages = stages_on_stderr(shared.pid);
     Ok(Started {
         serve,
         shared,
@@ -878,6 +914,7 @@ async fn start(mut serve: Serve, open: bool) -> Result<Started, i32> {
         background,
         serving,
         record,
+        stages,
     })
 }
 
@@ -907,7 +944,7 @@ fn handover_when_asked(shared: &Arc<Shared>) {
 
 impl Started {
     /// Serve until the server stops, on `signal` or for any other reason, then drain and join
-    /// every owned worker.
+    /// every owned worker, naming each wait as it begins.
     async fn serve_until_stopped(self, signal: impl Future<Output = ()> + Send + 'static) -> i32 {
         let Started {
             serve,
@@ -916,6 +953,7 @@ impl Started {
             mut background,
             serving,
             record,
+            stages,
         } = self;
         let signals = stop_when(&shared, signal);
         shared.until_stopped().await;
@@ -924,11 +962,15 @@ impl Started {
             let _ = tokio::task::spawn_blocking(move || projects.stop()).await;
         }
         // The stop ends the census, dropping a pending scan's child; this waits for that end.
-        if let Some(census) = background.census.take()
-            && let Err(problem) = census.await
-        {
-            eprintln!("· review orphan census failed while stopping: {problem}");
+        if let Some(census) = background.census.take() {
+            stages("the orphan census");
+            if let Err(problem) = census.await {
+                tell(format_args!(
+                    "· review orphan census failed while stopping: {problem}"
+                ));
+            }
         }
+        stages("the open requests");
         for task in serving {
             if shared.replaced.load(Ordering::SeqCst) {
                 let _ = task.await;
@@ -937,17 +979,19 @@ impl Started {
             }
         }
         let draining = shared.clone();
+        let closing = stages.clone();
         let _ = tokio::task::spawn_blocking(move || {
             if let Some(saves) = draining.saves.get() {
-                saves.close();
+                saves.close_saying(|stage| closing(stage));
             }
         })
         .await;
+        background.join(&*stages);
         drop(background);
         if record && !shared.replaced.load(Ordering::SeqCst) {
             clear_port(&serve.root, serve.port);
         }
-        eprintln!("· Symphony server stopped");
+        tell(format_args!("· Symphony server stopped"));
         0
     }
 }
@@ -1090,3 +1134,9 @@ mod tests;
 
 #[cfg(test)]
 mod sweep_tests;
+
+#[cfg(test)]
+mod head_tests;
+
+#[cfg(test)]
+mod broken_stderr_tests;
