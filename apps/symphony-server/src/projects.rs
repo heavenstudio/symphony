@@ -9,8 +9,8 @@
 //! there, so a bookmark opens under `/<id>/`, and anything else is answered by that project in
 //! place; a project this server refuses answers its refusal on either way in. Every route but
 //! `/api/front`, which loopback's name alone reaches, answers a Host naming this machine alone.
-//! A project's state is its registered root's under its id: the registry is read again whenever
-//! its file changes, and a changed root or id is served from new state.
+//! A project's state is its registered root's under its id: until the server stops, the registry
+//! is read again whenever its file changes, and a changed root or id is served from new state.
 
 use std::fs;
 use std::net::SocketAddr;
@@ -66,6 +66,8 @@ struct Held {
     served: Vec<Served>,
     /// The state of the projects it no longer names as they were.
     retired: Vec<retired::Retired>,
+    /// Whether the server stopped them: the projects served stay as they are from then on.
+    stopped: bool,
 }
 
 /// One project as this server serves it.
@@ -113,7 +115,7 @@ impl Projects {
                 meta.len(),
             )
         });
-        if held.read == Some(stamp) {
+        if held.stopped || held.read == Some(stamp) {
             return held.served.clone();
         }
         let registry = Registry::read(&self.machine).unwrap_or_else(|why| {
@@ -244,34 +246,6 @@ impl Projects {
                     .iter()
                     .find(|served| served.entry.id == self.starter_id)
             })
-    }
-
-    /// Stop every project but the starter's, whose stop is the server's own, and every retired
-    /// project's state a request still holds: what the server closes the saves of once its open
-    /// requests have drained ([`close_saves`]).
-    pub(crate) fn stop(&self) -> Vec<Stopped> {
-        // A panic while reading leaves the lists before it whole ([`Projects::served`]): they
-        // are taken whole here.
-        let (served, gone) = {
-            let mut held = self.held.lock().unwrap_or_else(PoisonError::into_inner);
-            (
-                std::mem::take(&mut held.served),
-                std::mem::take(&mut held.retired),
-            )
-        };
-        let stopped: Vec<Stopped> = served
-            .into_iter()
-            .filter(|served| !Arc::ptr_eq(&served.shared, &self.starter))
-            .map(|served| Stopped {
-                id: served.entry.id,
-                shared: served.shared,
-            })
-            .chain(retired::alive(gone))
-            .collect();
-        for stopped in &stopped {
-            stopped.shared.stop();
-        }
-        stopped
     }
 }
 

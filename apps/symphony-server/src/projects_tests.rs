@@ -10,16 +10,16 @@ use std::time::Instant;
 
 /// A machine folder registering `alpha` (the starter) and `beta`, each with a theme of its own,
 /// and an install folder holding a client shell.
-struct Machine {
-    tree: Tree,
-    projects: Arc<Projects>,
+pub(super) struct Machine {
+    pub(super) tree: Tree,
+    pub(super) projects: Arc<Projects>,
 }
 
 const SHELL: &str = "<!DOCTYPE html><html lang=\"en\"><head><title>Symphony</title>\
 <link rel=\"icon\" href=\"data:,\"></head><body><div id=\"main\"></div></body></html>";
 
 impl Machine {
-    fn new() -> Machine {
+    pub(super) fn new() -> Machine {
         let tree = Tree::new();
         for (id, color) in [("alpha", "#a00"), ("beta", "#0b0")] {
             tree.write(&format!("{id}/docs/README.md"), "# Docs\n");
@@ -74,7 +74,7 @@ fn location(response: &Response) -> &str {
     response.headers()[header::LOCATION].to_str().unwrap()
 }
 
-async fn text(response: Response) -> String {
+pub(super) async fn text(response: Response) -> String {
     let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
         .await
         .unwrap();
@@ -470,105 +470,6 @@ async fn the_registry_is_read_again_when_it_changes_and_a_project_moved_is_serve
         !machine.projects.starter.stopping(),
         "the starter's stop is the server's own"
     );
-}
-
-#[test]
-fn a_stop_closes_every_other_projects_saves_naming_each_wait() {
-    let machine = Machine::new();
-    let served = machine.projects.served();
-    let beta = served
-        .iter()
-        .find(|served| served.entry.id == "beta")
-        .unwrap();
-    let saves = beta
-        .shared
-        .saves
-        .get_or_init(|| symphony::save::Saves::start(&beta.entry.root));
-    let stopped = machine.projects.stop();
-    let ids: Vec<&str> = stopped.iter().map(|s| s.id.as_str()).collect();
-    assert_eq!(ids, ["beta"], "the starter's stop is the server's own");
-    assert_eq!(
-        (beta.shared.stopping(), machine.projects.starter.stopping()),
-        (true, false),
-        "(beta stopping, starter stopping)"
-    );
-    let said = Mutex::new(Vec::new());
-    close_saves(&stopped, &|stage| {
-        said.lock().unwrap().push(stage.to_string())
-    });
-    machine.tree.write("beta/docs/TOPIC.md", "# Topic\n");
-    let payload =
-        serde_json::json!({"path": "docs/TOPIC.md", "slug": "a-card", "state": "approved"});
-    let refused = saves.post("", "/api/decision", &payload).err().unwrap();
-    assert_eq!(
-        (refused.status, refused.error.as_str()),
-        (503, "document saves are closing")
-    );
-    let said = said.into_inner().unwrap();
-    assert_eq!(
-        said.first().map(String::as_str),
-        Some("beta: the save in flight"),
-        "{said:?}"
-    );
-}
-
-/// A comment request of beta's reading its body while beta is renamed gamma: beta's state is
-/// retired, and the server's last drain closes its saves too, so the request is refused rather
-/// than saved after the close.
-#[tokio::test]
-async fn a_request_holding_a_retired_projects_state_is_refused_after_the_last_close() {
-    let machine = Machine::new();
-    let beta = machine.projects.served().remove(1);
-    assert_eq!(beta.entry.id, "beta");
-    machine.tree.write("beta/docs/TOPIC.md", "# Topic\n");
-    let (entered, reading) = tokio::sync::oneshot::channel();
-    let (release, released) = tokio::sync::oneshot::channel::<()>();
-    let body = Body::from_stream(futures_util::stream::once(async move {
-        let _ = entered.send(());
-        let _ = released.await;
-        Ok::<_, std::io::Error>(axum::body::Bytes::from_static(
-            br#"{"path":"docs/TOPIC.md","after_line":1,"kind":"comment","title":"Late","body":"After the close"}"#,
-        ))
-    }));
-    let request = Request::builder()
-        .method(Method::POST)
-        .uri("/api/comment")
-        .header(header::HOST, "127.0.0.1:1")
-        .body(body)
-        .unwrap();
-    let old = beta.shared.clone();
-    drop(beta);
-    let pending = tokio::spawn(async move { crate::write::answer(&old, request).await });
-    reading.await.unwrap();
-    machine.tree.write(
-        "beta/symphony.toml",
-        "[project]\nname = \"Gamma\"\nid = \"gamma\"\n",
-    );
-    Registry::change(&machine.tree.path("machine"), |registry| {
-        registry.add(Entry::of(&machine.tree.path("beta")).unwrap())
-    })
-    .unwrap();
-    let ids: Vec<String> = machine
-        .projects
-        .served()
-        .into_iter()
-        .map(|s| s.entry.id)
-        .collect();
-    assert_eq!(ids, ["alpha", "gamma"]);
-    let stopped = machine.projects.stop();
-    let ids: Vec<&str> = stopped.iter().map(|s| s.id.as_str()).collect();
-    assert_eq!(
-        ids,
-        ["gamma", "beta"],
-        "the retired state is drained with the rest"
-    );
-    close_saves(&stopped, &|_| {});
-    release.send(()).unwrap();
-    let response = pending.await.unwrap();
-    let status = response.status();
-    let said = text(response).await;
-    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{said}");
-    assert!(said.contains("document saves are closing"), "{said}");
 }
 
 #[test]

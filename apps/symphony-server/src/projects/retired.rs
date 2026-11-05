@@ -2,10 +2,41 @@
 //! registry no longer names as it was (renamed, moved or removed) is retired: stopped, and its
 //! saves closed, at once. A request that still holds its state keeps it alive, and a stopping
 //! server drains it with every project it serves, so no save outlives the server's last close.
+//! Once stopped, the server serves the projects it stopped as they were, whatever the registry
+//! says after, so no state starts after that close.
 
-use std::sync::{Arc, Weak};
+use std::sync::{Arc, PoisonError, Weak};
 
+use super::Projects;
 use crate::front::Shared;
+
+impl Projects {
+    /// Stop every project but the starter's, whose stop is the server's own, and every retired
+    /// project's state a request still holds: what the server closes the saves of once its open
+    /// requests have drained ([`close_saves`]). A request that reads the projects after this is
+    /// handed this same state.
+    pub(crate) fn stop(&self) -> Vec<Stopped> {
+        // A panic while reading leaves the lists before it whole ([`Projects::served`]).
+        let (served, gone) = {
+            let mut held = self.held.lock().unwrap_or_else(PoisonError::into_inner);
+            held.stopped = true;
+            (held.served.clone(), std::mem::take(&mut held.retired))
+        };
+        let stopped: Vec<Stopped> = served
+            .into_iter()
+            .filter(|served| !Arc::ptr_eq(&served.shared, &self.starter))
+            .map(|served| Stopped {
+                id: served.entry.id,
+                shared: served.shared,
+            })
+            .chain(alive(gone))
+            .collect();
+        for stopped in &stopped {
+            stopped.shared.stop();
+        }
+        stopped
+    }
+}
 
 /// A project's state a stopping server stopped, with the id its stage lines name.
 pub(crate) struct Stopped {
@@ -40,7 +71,7 @@ pub(super) fn retire(gone: Vec<Stopped>, retired: &mut Vec<Retired>) {
 }
 
 /// The retired state still alive, for the server's final drain.
-pub(super) fn alive(retired: Vec<Retired>) -> impl Iterator<Item = Stopped> {
+fn alive(retired: Vec<Retired>) -> impl Iterator<Item = Stopped> {
     retired.into_iter().filter_map(|old| {
         old.shared
             .upgrade()
@@ -60,3 +91,7 @@ pub(crate) fn close_saves(stopped: &[Stopped], stage: &dyn Fn(&str)) {
             .close_saying(|wait| stage(&format!("{id}: {wait}")));
     }
 }
+
+#[cfg(test)]
+#[path = "retired_tests.rs"]
+mod tests;
