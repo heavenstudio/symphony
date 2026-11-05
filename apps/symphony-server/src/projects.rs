@@ -243,21 +243,34 @@ impl Projects {
             })
     }
 
-    /// Stop every project but the starter's, whose stop is the server's own.
-    pub(crate) fn stop(&self) {
+    /// Stop every project but the starter's, whose stop is the server's own: the projects
+    /// stopped, whose saves the server closes once its open requests have drained
+    /// ([`close_saves`]).
+    pub(crate) fn stop(&self) -> Vec<Served> {
         // A panic while reading leaves the list before it whole ([`Projects::served`]): it is
         // taken whole here.
-        let served = std::mem::take(
+        let mut served = std::mem::take(
             &mut self
                 .held
                 .lock()
                 .unwrap_or_else(PoisonError::into_inner)
                 .served,
         );
-        for served in served {
-            if !Arc::ptr_eq(&served.shared, &self.starter) {
-                served.shared.stop();
-            }
+        served.retain(|served| !Arc::ptr_eq(&served.shared, &self.starter));
+        for served in &served {
+            served.shared.stop();
+        }
+        served
+    }
+}
+
+/// Close the saves of each of `stopped`, as the server closes its starter's: a save in flight
+/// ends and the queued verdict publications go out. Each wait is named through `stage` with its
+/// project's id.
+pub(crate) fn close_saves(stopped: &[Served], stage: &dyn Fn(&str)) {
+    for served in stopped {
+        if let Some(saves) = served.shared.saves.get() {
+            saves.close_saying(|wait| stage(&format!("{}: {wait}", served.entry.id)));
         }
     }
 }

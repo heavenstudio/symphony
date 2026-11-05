@@ -473,6 +473,42 @@ async fn the_registry_is_read_again_when_it_changes_and_a_project_moved_is_serve
 }
 
 #[test]
+fn a_stop_closes_every_other_projects_saves_naming_each_wait() {
+    let machine = Machine::new();
+    let served = machine.projects.served();
+    let beta = served
+        .iter()
+        .find(|served| served.entry.id == "beta")
+        .unwrap();
+    let saves = beta
+        .shared
+        .saves
+        .get_or_init(|| symphony::save::Saves::start(&beta.entry.root));
+    let stopped = machine.projects.stop();
+    let ids: Vec<&str> = stopped.iter().map(|s| s.entry.id.as_str()).collect();
+    assert_eq!(ids, ["beta"], "the starter's stop is the server's own");
+    assert!(beta.shared.stopping() && !machine.projects.starter.stopping());
+    let said = Mutex::new(Vec::new());
+    close_saves(&stopped, &|stage| {
+        said.lock().unwrap().push(stage.to_string())
+    });
+    machine.tree.write("beta/docs/TOPIC.md", "# Topic\n");
+    let payload =
+        serde_json::json!({"path": "docs/TOPIC.md", "slug": "a-card", "state": "approved"});
+    let refused = saves.post("", "/api/decision", &payload).err().unwrap();
+    assert_eq!(
+        (refused.status, refused.error.as_str()),
+        (503, "document saves are closing")
+    );
+    let said = said.into_inner().unwrap();
+    assert_eq!(
+        said.first().map(String::as_str),
+        Some("beta: the save in flight"),
+        "{said:?}"
+    );
+}
+
+#[test]
 fn a_page_load_is_a_navigation_and_a_fetch_is_not() {
     let headers = |pairs: &[(&'static str, &'static str)]| {
         let mut map = HeaderMap::new();

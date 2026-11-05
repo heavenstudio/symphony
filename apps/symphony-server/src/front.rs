@@ -958,9 +958,15 @@ impl Started {
         let signals = stop_when(&shared, signal);
         shared.until_stopped().await;
         signals.abort();
-        if let Some(projects) = projects {
-            let _ = tokio::task::spawn_blocking(move || projects.stop()).await;
-        }
+        let others = match projects {
+            Some(projects) => {
+                stages("the other projects");
+                tokio::task::spawn_blocking(move || projects.stop())
+                    .await
+                    .unwrap_or_default()
+            }
+            None => Vec::new(),
+        };
         // The stop ends the census, dropping a pending scan's child; this waits for that end.
         if let Some(census) = background.census.take() {
             stages("the orphan census");
@@ -984,6 +990,7 @@ impl Started {
             if let Some(saves) = draining.saves.get() {
                 saves.close_saying(|stage| closing(stage));
             }
+            crate::projects::close_saves(&others, &*closing);
         })
         .await;
         background.join(&*stages);

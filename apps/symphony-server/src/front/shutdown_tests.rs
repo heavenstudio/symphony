@@ -350,7 +350,9 @@ async fn a_started_server_keeps_every_worker_it_owns_until_it_returns() {
         .shared
         .saves
         .get_or_init(|| symphony::save::Saves::start(&root));
+    // A server with a home is the one server, which stops its other projects first.
     let mut waits: Vec<String> = [
+        "the other projects",
         "the orphan census",
         "the open requests",
         "the save in flight",
