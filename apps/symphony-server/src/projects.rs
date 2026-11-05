@@ -28,6 +28,10 @@ use tower::ServiceExt;
 use crate::front::Shared;
 use crate::host::{Build, Lack};
 
+mod retired;
+
+pub(crate) use retired::{Stopped, close_saves};
+
 /// The cookie naming the last project visited, which `/` opens.
 pub(crate) const LAST: &str = "symphony-project";
 
@@ -60,6 +64,8 @@ struct Held {
     read: Option<Option<(SystemTime, u64)>>,
     /// The projects in the registry's order, the starter's among them.
     served: Vec<Served>,
+    /// The state of the projects it no longer names as they were.
+    retired: Vec<retired::Retired>,
 }
 
 /// One project as this server serves it.
@@ -154,7 +160,7 @@ impl Projects {
                 }),
             );
         }
-        let gone: Vec<Arc<Shared>> = held
+        let gone: Vec<Stopped> = held
             .served
             .iter()
             .filter(|old| {
@@ -163,15 +169,12 @@ impl Projects {
                         .iter()
                         .any(|served| Arc::ptr_eq(&served.shared, &old.shared))
             })
-            .map(|old| old.shared.clone())
+            .map(|old| Stopped {
+                id: old.entry.id.clone(),
+                shared: old.shared.clone(),
+            })
             .collect();
-        if !gone.is_empty() {
-            std::thread::spawn(move || {
-                for shared in gone {
-                    shared.stop();
-                }
-            });
-        }
+        retired::retire(gone, &mut held.retired);
         held.read = Some(stamp);
         held.served = next;
         held.served.clone()
@@ -243,35 +246,32 @@ impl Projects {
             })
     }
 
-    /// Stop every project but the starter's, whose stop is the server's own: the projects
-    /// stopped, whose saves the server closes once its open requests have drained
-    /// ([`close_saves`]).
-    pub(crate) fn stop(&self) -> Vec<Served> {
-        // A panic while reading leaves the list before it whole ([`Projects::served`]): it is
-        // taken whole here.
-        let mut served = std::mem::take(
-            &mut self
-                .held
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner)
-                .served,
-        );
-        served.retain(|served| !Arc::ptr_eq(&served.shared, &self.starter));
-        for served in &served {
-            served.shared.stop();
+    /// Stop every project but the starter's, whose stop is the server's own, and every retired
+    /// project's state a request still holds: what the server closes the saves of once its open
+    /// requests have drained ([`close_saves`]).
+    pub(crate) fn stop(&self) -> Vec<Stopped> {
+        // A panic while reading leaves the lists before it whole ([`Projects::served`]): they
+        // are taken whole here.
+        let (served, gone) = {
+            let mut held = self.held.lock().unwrap_or_else(PoisonError::into_inner);
+            (
+                std::mem::take(&mut held.served),
+                std::mem::take(&mut held.retired),
+            )
+        };
+        let stopped: Vec<Stopped> = served
+            .into_iter()
+            .filter(|served| !Arc::ptr_eq(&served.shared, &self.starter))
+            .map(|served| Stopped {
+                id: served.entry.id,
+                shared: served.shared,
+            })
+            .chain(retired::alive(gone))
+            .collect();
+        for stopped in &stopped {
+            stopped.shared.stop();
         }
-        served
-    }
-}
-
-/// Close the saves of each of `stopped`, as the server closes its starter's: a save in flight
-/// ends and the queued verdict publications go out. Each wait is named through `stage` with its
-/// project's id.
-pub(crate) fn close_saves(stopped: &[Served], stage: &dyn Fn(&str)) {
-    for served in stopped {
-        if let Some(saves) = served.shared.saves.get() {
-            saves.close_saying(|wait| stage(&format!("{}: {wait}", served.entry.id)));
-        }
+        stopped
     }
 }
 
