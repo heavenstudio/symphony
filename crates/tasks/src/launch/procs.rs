@@ -3,10 +3,11 @@
 //! Python's `re` reads them: `\s` is what `str.isspace` calls space, `\w` a letter, digit or
 //! underscore).
 
-use super::LaunchError;
-use crate::cli::probes;
+use super::{LaunchError, Processes};
+use crate::cli::{Env, probes};
 use crate::sys::Command;
 use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 /// How long `ps` may take.
@@ -16,6 +17,33 @@ const PS_PATIENCE: Duration = Duration::from_secs(30);
 /// `LaunchError`: a pane is never called idle on no information.
 pub fn descendants(pid: i64) -> Result<Vec<String>, LaunchError> {
     descendants_by(Command::new("ps"), pid)
+}
+
+/// The process table a command in `env` reads: [`descendants`], or with `TASKS_PS_TABLE` set,
+/// [`listed`] from the file it names, so the command line's tests never read this machine's.
+pub fn table(env: &Env) -> Box<Processes> {
+    match env.var("TASKS_PS_TABLE") {
+        None => Box::new(descendants),
+        Some(file) => {
+            let file = PathBuf::from(file);
+            Box::new(move |pid| listed(&file, pid))
+        }
+    }
+}
+
+/// The command lines under `pid` in `file`, which holds a table as `ps -axo pid=,ppid=,command=`
+/// prints it. A file that cannot be read, or holds no table, is `LaunchError`, as `ps` failing is.
+pub fn listed(file: &Path, pid: i64) -> Result<Vec<String>, LaunchError> {
+    let table = std::fs::read(file)
+        .map_err(|why| LaunchError(format!("ps table {}: {why}", file.display())))?;
+    let table = String::from_utf8_lossy(&table);
+    if table.trim().is_empty() {
+        return Err(LaunchError(format!(
+            "ps table {} holds nothing",
+            file.display()
+        )));
+    }
+    Ok(under(&table, pid))
 }
 
 /// [`descendants`], the table read from `ps` (a test's stand-in for it): `-axo pid=,ppid=,command=`

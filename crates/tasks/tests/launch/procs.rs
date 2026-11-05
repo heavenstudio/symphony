@@ -1,9 +1,11 @@
 //! What runs under a pane, read: `ps`'s table walked, and each pattern as Python's `re` reads it,
 //! matched by hand (the protected work, `harmless`, `shell`, `helper` and `board`).
 
+use symphony_board::cli::Env;
+use symphony_board::launch::LaunchError;
 use symphony_board::launch::procs::{
-    board, busy_reason, harmless, helper, land, named, reap_busy_reason, shell, symphony_app,
-    test_run, under, verify,
+    board, busy_reason, harmless, helper, land, listed, named, reap_busy_reason, shell,
+    symphony_app, table, test_run, under, verify,
 };
 
 fn all(commands: &[&str]) -> Vec<String> {
@@ -19,6 +21,40 @@ fn the_table_is_walked_from_the_pid_down_each_child_before_its_own() {
     );
     assert_eq!(under(table, 14), Vec::<String>::new());
     assert_eq!(under(" 20 1\n 21 20 \n", 20), Vec::<String>::new());
+}
+
+#[test]
+fn tasks_ps_table_names_a_file_read_in_place_of_ps_and_one_that_cannot_be_read_is_an_error() {
+    let folder = crate::Folder::new();
+    let file = folder.0.join("ps.txt");
+    let mut env = Env {
+        vars: Default::default(),
+        cwd: folder.0.clone(),
+    };
+    env.vars
+        .insert("TASKS_PS_TABLE".into(), file.display().to_string());
+    let processes = table(&env);
+    let missing = processes(10);
+    assert!(
+        matches!(&missing, Err(LaunchError(why))
+            if why.starts_with(&format!("ps table {}: ", file.display()))),
+        "{missing:?}"
+    );
+    std::fs::write(&file, " \n").unwrap();
+    assert_eq!(
+        processes(10),
+        Err(LaunchError(format!(
+            "ps table {} holds nothing",
+            file.display()
+        )))
+    );
+    std::fs::write(
+        &file,
+        b"  10     1 bash\n  11    10 sleep \xff\n  12    11 tail\n",
+    )
+    .unwrap();
+    assert_eq!(processes(10).unwrap(), ["sleep \u{fffd}", "tail"]);
+    assert_eq!(listed(&file, 12).unwrap(), Vec::<String>::new());
 }
 
 #[test]

@@ -161,7 +161,11 @@ enter while the prompt still sits in the input line. Its tests' handles:
 orchestrator's monitor computes its PULL digest (only a new actionable entry
 prints one); `TASKS_REAP_STATE` is where the
 idle sweep keeps what it saw; `HERDR_BIN` names a fake herdr (the crate's
-`fake-herdr` binary, its panes a JSON file `FAKE_HERDR_STATE` names).
+`fake-herdr` binary, its panes a JSON file `FAKE_HERDR_STATE` names);
+`TASKS_PS_TABLE` names a file of `ps -axo pid=,ppid=,command=` lines the commands
+read in place of `ps` (`procs::table`), so no command-line case reads this
+machine's process table. A pane whose process-info or table cannot be read stays,
+and cleanup and finish print `kept pane P (never closed on no information: WHY)`.
 
 A child's input and output go through `sys::output` (or `sys::spawn_output`,
 `sys::spawn_piped` for one that reads stdin, and `sys::wait_output`), never

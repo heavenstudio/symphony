@@ -2,7 +2,6 @@
 
 use crate::World;
 use serde_json::json;
-use std::os::unix::fs::PermissionsExt;
 use symphony_board::Error;
 use symphony_board::launch::herdr::Herdr;
 use symphony_board::launch::procs::{busy_reason, descendants_by};
@@ -69,6 +68,7 @@ fn an_idle_agent_of_a_finished_task_is_closed_and_the_closure_recorded_with_its_
                 why: "its tasks are finished".into(),
                 restore: restore.clone(),
                 closed: true,
+                kept: false,
             }],
             "{status}"
         );
@@ -146,6 +146,7 @@ fn an_idle_shell_pane_is_closed_too_but_not_one_running_a_command() {
             why: "an idle shell".into(),
             restore: String::new(),
             closed: true,
+            kept: false,
         }]
     );
     assert!(!w.has_pane(&pane));
@@ -347,24 +348,86 @@ fn only_the_named_tasks_sessions_are_cleaned_when_asked() {
     assert!(w.has_pane(&a));
 }
 
+/// `pane` kept because a call failed: `why` names it.
+fn kept(pane: &str, why: String) -> Closure {
+    Closure {
+        pane: pane.into(),
+        handle: None,
+        why,
+        restore: String::new(),
+        closed: false,
+        kept: true,
+    }
+}
+
 #[test]
-fn a_pane_herdr_cannot_describe_with_no_shell_or_whose_processes_cannot_be_read_is_kept() {
+fn a_pane_herdr_cannot_describe_or_whose_processes_cannot_be_read_is_kept_naming_the_call() {
     let mut w = World::new();
     let (_, pane) = w.worker("sim/jump", Some("done"));
     w.set("FAKE_HERDR_FAIL", "pane process-info");
-    assert_eq!(w.clean(false, None, &[]), []);
+    for dry_run in [true, false] {
+        let [closure] = <[_; 1]>::try_from(w.clean(dry_run, None, &[])).unwrap();
+        assert!(
+            closure.kept
+                && !closure.closed
+                && closure.pane == pane
+                && closure.handle.is_none()
+                && closure.restore.is_empty()
+                && closure.why.starts_with(
+                    "never closed on no information: herdr pane process-info failed: "
+                ),
+            "{closure:?}"
+        );
+    }
     w.set("FAKE_HERDR_FAIL", "");
     let broken =
         |_: i64| -> Result<Vec<String>, LaunchError> { Err(LaunchError("ps failed".into())) };
     assert_eq!(
         cleanup(w.store(), &w.herdr(), &broken, false, None, &[]).unwrap(),
-        []
+        [kept(
+            &pane,
+            "never closed on no information: ps failed".into()
+        )]
     );
+    assert_eq!(w.calls_of(&["pane", "close"]), Vec::<Vec<String>>::new());
+    assert!(
+        w.store().task_sessions("sim/jump").unwrap()[0]
+            .closed
+            .is_none()
+    );
+    assert!(w.has_pane(&pane));
+}
+
+#[test]
+fn a_pane_herdr_knows_no_shell_of_is_kept_and_says_nothing() {
+    let w = World::new();
+    let (_, pane) = w.worker("sim/jump", Some("done"));
     w.edit_pane(&pane, |p| {
         p.insert("shell_pid".into(), 0.into());
     });
     assert_eq!(w.clean(false, None, &[]), []);
     assert!(w.has_pane(&pane));
+}
+
+#[test]
+fn a_finish_whose_process_table_cannot_be_read_keeps_the_pane_and_says_why() {
+    let w = World::new();
+    let (_, pane) = w.worker("sim/jump", Some("done"));
+    let broken = |_: i64| -> Result<Vec<String>, LaunchError> {
+        Err(LaunchError("ps: no answer in 30 s".into()))
+    };
+    assert_eq!(
+        symphony_board::launch::finish(w.store(), &w.herdr(), &broken, "sim/jump", None),
+        [format!(
+            "kept pane {pane} (never closed on no information: ps: no answer in 30 s)"
+        )]
+    );
+    assert!(w.has_pane(&pane));
+    assert!(
+        w.store().task_sessions("sim/jump").unwrap()[0]
+            .closed
+            .is_none()
+    );
 }
 
 #[test]
@@ -418,23 +481,34 @@ fn panes_and_tabs_are_listed_in_the_calling_workspace_only() {
     );
 }
 
+/// A stand-in for `ps` that runs `script` in the system's `sh`, never a freshly written file: macOS
+/// assesses a new executable on its first run, in one machine-wide queue, which under load has
+/// taken the whole of `ps`'s 30 s. The flags `descendants_by` adds are the script's `$0` and `$1`.
+fn sh_ps(script: &str) -> symphony_board::sys::Command {
+    let mut ps = symphony_board::sys::Command::new("/bin/sh");
+    ps.args(["-c", script]);
+    ps
+}
+
 #[test]
 fn a_command_line_that_is_not_utf8_is_read_and_the_pids_still_parse() {
     let w = World::new();
-    let ps = w.dir().join("ps");
-    std::fs::write(
-        &ps,
-        b"#!/bin/sh\nprintf '  10     1 bash\\n  11    10 sleep \\377\\n  12    11 tail\\n  13     1 x\\n'\n",
-    )
-    .unwrap();
-    std::fs::set_permissions(&ps, std::fs::Permissions::from_mode(0o755)).unwrap();
     assert_eq!(
-        descendants_by(symphony_board::sys::Command::new(&ps), 10).unwrap(),
+        descendants_by(
+            sh_ps(
+                r"printf '  10     1 bash\n  11    10 sleep \377\n  12    11 tail\n  13     1 x\n'"
+            ),
+            10
+        )
+        .unwrap(),
         ["sleep \u{fffd}", "tail"]
     );
-    std::fs::write(&ps, b"#!/bin/sh\nexit 0\n").unwrap();
     assert_eq!(
-        descendants_by(symphony_board::sys::Command::new(&ps), 10),
+        descendants_by(sh_ps("exit 0"), 10),
+        Err(LaunchError("ps printed nothing".into()))
+    );
+    assert_eq!(
+        descendants_by(sh_ps("echo '  10     1 bash'; exit 1"), 10),
         Err(LaunchError("ps printed nothing".into()))
     );
     let missing = descendants_by(symphony_board::sys::Command::new(w.dir().join("no-ps")), 10);
