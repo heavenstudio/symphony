@@ -20,7 +20,7 @@ use symphony_board::sys::{Child, Command, Stdio};
 #[path = "../../../../../tools/gate/tests/gate/scratch.rs"]
 mod scratch;
 
-#[path = "machine_copy.rs"]
+#[path = "../../../../../tools/gate/tests/verify/machine_copy.rs"]
 pub mod machine_copy;
 
 #[cfg(test)]
