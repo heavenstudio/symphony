@@ -24,6 +24,10 @@ mod scratch;
 #[path = "scratch_tests.rs"]
 mod scratch_tests;
 
+#[cfg(test)]
+#[path = "descendant_cleanup_tests.rs"]
+mod descendant_cleanup_tests;
+
 pub const APP: &str = env!("CARGO_BIN_EXE_symphony-server");
 pub const PATIENCE: Duration = Duration::from_secs(30);
 pub const AGENTS: [&str; 3] = ["TASKS_SESSION", "CODEX_THREAD_ID", "CLAUDECODE"];
@@ -393,6 +397,7 @@ impl Descendants {
 
     fn spawn(command: &mut Command, at: &Path) -> (Self, File) {
         let (descendants, writer) = Self::endpoint(at, invocation(command));
+        let writer = above_shell_descriptors(writer);
         // The writer lives through spawn, which hands it to the child alone under its own number.
         // This process's copy stays close-on-exec, so concurrent tests' unrelated commands
         // cannot inherit this endpoint.
@@ -422,6 +427,32 @@ impl Descendants {
             &mut self.wait_elapsed,
         );
     }
+}
+
+/// The lowest descriptor a shell script does not name: POSIX redirections take one digit
+/// (`exec 3<&0`), and the child receives the endpoint under the number it has here.
+const ABOVE_SHELL_DESCRIPTORS: libc::c_int = 10;
+
+/// `file` moved above every single-digit descriptor. Wherever it was opened, a fixture script's
+/// own redirection of that number would close it in the shell, and no descendant would hold it.
+fn above_shell_descriptors(file: File) -> File {
+    // SAFETY: duplicates a live descriptor this function owns; the copy is close-on-exec from
+    // the moment it exists, as the original was.
+    let raised = unsafe {
+        libc::fcntl(
+            file.as_raw_fd(),
+            libc::F_DUPFD_CLOEXEC,
+            ABOVE_SHELL_DESCRIPTORS,
+        )
+    };
+    assert_ne!(
+        raised,
+        -1,
+        "cannot raise the lifetime endpoint: {}",
+        std::io::Error::last_os_error()
+    );
+    // SAFETY: fcntl just returned this new descriptor; ownership is transferred once.
+    unsafe { File::from_raw_fd(raised) }
 }
 
 impl Process {

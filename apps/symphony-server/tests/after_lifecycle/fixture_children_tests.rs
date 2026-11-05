@@ -96,54 +96,6 @@ fn a_descendant_that_keeps_its_endpoint_fails_with_its_launch_identity() {
     );
 }
 
-#[test]
-fn cleanup_waits_for_orphaned_fixture_descendants_before_removing_scratch() {
-    for repository in [false, true] {
-        let repo = Repo::new("descendant-cleanup");
-        let base = repo.base.clone();
-        let mut command = Command::new("/bin/sh");
-        // The launcher exits while its child holds the lifetime endpoint and waits for the
-        // test's input. The child's final write must finish before scratch can disappear.
-        command
-                .args([
-                    "-c",
-                    "exec 3<&0; sh -c 'printf ready; read -r line; printf finished > \"$1\"' fixture \"$1\" <&3 & exit",
-                    "fixture",
-                ])
-                .arg(base.join("late-write"))
-                .stdin(Stdio::piped());
-        let mut process = if repository {
-            repo.run(command)
-        } else {
-            Process::spawn(command, &repo.log("orphan"))
-        };
-        let mut input = process.child.stdin.take().unwrap();
-        process.success();
-        until("orphaned fixture readiness", || {
-            (process.output() == "ready").then_some(())
-        });
-        let (finished, completion) = std::sync::mpsc::channel();
-        let cleanup = std::thread::spawn(move || {
-            drop(process);
-            drop(repo);
-            finished.send(()).unwrap();
-        });
-        // A bounded negative observation, not cleanup's synchronization. Input releases the
-        // descendant; EOF on its inherited endpoint is what releases cleanup.
-        let early = completion.recv_timeout(Duration::from_millis(50));
-        let scratch_present = base.is_dir();
-        writeln!(input, "finish").unwrap();
-        completion.recv_timeout(PATIENCE).unwrap();
-        cleanup.join().unwrap();
-        assert_eq!(early, Err(std::sync::mpsc::RecvTimeoutError::Timeout));
-        assert!(
-            scratch_present,
-            "scratch removed while a descendant could write"
-        );
-        assert!(!base.exists());
-    }
-}
-
 /// Another case's fixture command can be spawned while this one makes its endpoint. Racing
 /// children live on, so a writer one took would hold back that endpoint's EOF until cleanup.
 #[test]
