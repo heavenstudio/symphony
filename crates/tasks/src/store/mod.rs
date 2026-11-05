@@ -994,7 +994,7 @@ FOR $s IN $seen {
 };
 UPDATE type::record('session', $actor) SET last_seen = math::max([last_seen, $now]) RETURN NONE;
 FOR $r IN $drop { DELETE type::record('role', [$slug, $r.handle, $r.role]); };
-FOR $r IN $add { UPSERT type::record('role', [$slug, $r.handle, $r.role]) CONTENT $r RETURN NONE; };
+FOR $r IN $add { IF type::record('session', $r.handle).left_at != NONE { THROW 'stale' }; UPSERT type::record('role', [$slug, $r.handle, $r.role]) CONTENT $r RETURN NONE; };
 UPDATE type::record('task', $slug) SET version += 1, status = $status ?? status, updated = $updated ?? updated RETURN NONE;
 IF $say {
     LET $counted = (UPSERT ONLY counter:message SET last += 1, ts = IF ts != NONE AND ts > $now AND ts <= $now + 60 { ts } ELSE { $now });

@@ -30,6 +30,7 @@ pub mod embedding;
 pub mod git;
 pub mod health;
 pub mod launch;
+pub mod orchestration;
 pub mod port;
 pub mod pyjson;
 pub mod rows;
