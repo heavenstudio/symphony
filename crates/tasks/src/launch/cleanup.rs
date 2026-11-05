@@ -11,16 +11,19 @@ use crate::{Error, NewLaunch, Store, Task};
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
 
-/// A pane cleanup closed, or for a dry run would close.
+/// A pane cleanup closed, or for a dry run would close; or one it kept (`kept`) because a call
+/// that says whether it is idle failed.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Closure {
     pub pane: String,
-    /// The board session it belongs to; none for an idle shell.
+    /// The board session it belongs to; none for an idle shell, or a kept pane of no known session.
     pub handle: Option<String>,
+    /// Why it closes; for a kept pane, why it stays: the failed call and its error.
     pub why: String,
-    /// The line that brings it back; empty when there is no task to bring it back on.
+    /// The line that brings it back; empty when there is no task to bring it back on, and for a
+    /// kept pane.
     pub restore: String,
-    /// False for a dry run, or when herdr refused.
+    /// False for a dry run, when herdr refused, and for a kept pane.
     pub closed: bool,
     /// True for a pane left as it is because a call that says whether it is idle failed: `why`
     /// names the call and its error. Never closed on no information, and never silently. Its
