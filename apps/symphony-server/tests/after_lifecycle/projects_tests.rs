@@ -65,12 +65,19 @@ fn navigate(port: u16, path: &str, cookie: Option<&str>) -> (u16, String) {
 fn both_served(repo: &Repo, starter: &str) {
     let port = repo.port();
     let front = front(port).expect("native status");
-    assert!(front.plugins.iter().any(|name| name == "fixture-shelf"));
+    assert!(
+        front.plugins.iter().any(|name| name == "fixture-shelf"),
+        "{:?}",
+        front.plugins
+    );
     let mut projects = front.projects.clone();
     projects.sort();
     assert_eq!(projects, ["alpha", "pantry"]);
     let registry = fs::read_to_string(repo.home.join("projects.json")).unwrap();
-    assert!(registry.contains("\"alpha\"") && registry.contains("\"pantry\""));
+    assert!(
+        registry.contains("\"alpha\"") && registry.contains("\"pantry\""),
+        "{registry}"
+    );
     let (status, alpha) = get(port, "/alpha/").unwrap();
     assert_eq!(status, 200, "{alpha}");
     assert!(alpha.contains("<title>Alpha</title>"), "{alpha}");
@@ -113,11 +120,11 @@ fn a_plain_host_waits_for_the_plugins_project_whose_build_then_takes_over_by_han
     let shelf = projects(&repo);
     repo.start(&repo.main, false);
     let plain = repo.check_server();
-    assert!(plain.plugins.is_empty());
+    assert!(plain.plugins.is_empty(), "{:?}", plain.plugins);
     // The plain build cannot serve the shelf: it registers the project and says whose build can.
     let mut waits = start_with(&repo, APP, &shelf);
     let said = waits.wait();
-    assert!(!said.success());
+    assert!(!said.success(), "{said}");
     let output = waits.output();
     assert!(
         output.contains("lacks the plugin fixture-shelf"),

@@ -7,7 +7,10 @@
 //! project's theme tokens). A path of today, under no project, is the project's whose page asked
 //! for it (a same-origin Referer under `/<id>/`), else the starter's: a page load is redirected
 //! there, so a bookmark opens under `/<id>/`, and anything else is answered by that project in
-//! place. The registry is read again whenever its file changes.
+//! place; a project this server refuses answers its refusal on either way in. Every route but
+//! `/api/front`, which loopback's name alone reaches, answers a Host naming this machine alone.
+//! A project's state is its registered root's under its id: the registry is read again whenever
+//! its file changes, and a changed root or id is served from new state.
 
 use std::fs;
 use std::net::SocketAddr;
@@ -32,12 +35,23 @@ pub(crate) const LAST: &str = "symphony-project";
 pub(crate) struct Projects {
     machine: PathBuf,
     starter: Arc<Shared>,
+    /// The id the starter's state is served under, its base without the slash.
     starter_id: String,
+    /// The starter's checkout as the registry names a root: canonical.
+    starter_root: PathBuf,
     build: Build,
-    /// Whether a project read from the registry has its read data warmed at once, so the list
-    /// counts it: the server's, not a test's.
-    warm: bool,
+    warming: Warming,
     held: Mutex<Held>,
+}
+
+/// When a project read from the registry has its read data warmed.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Warming {
+    /// As it is read, so the list counts it: the server's.
+    AsRead,
+    /// On its first request: the dispatch's tests', which read the dispatch alone.
+    #[cfg(test)]
+    OnRequest,
 }
 
 #[derive(Default)]
@@ -62,16 +76,20 @@ impl Projects {
     /// The projects the registry in `machine` holds, served beside `starter`'s, each warmed as
     /// it is read.
     pub(crate) fn new(machine: &Path, starter: &Arc<Shared>) -> Arc<Projects> {
-        Projects::made(machine, starter, true)
+        Projects::made(machine, starter, Warming::AsRead)
     }
 
-    fn made(machine: &Path, starter: &Arc<Shared>, warm: bool) -> Arc<Projects> {
+    fn made(machine: &Path, starter: &Arc<Shared>, warming: Warming) -> Arc<Projects> {
         let projects = Arc::new(Projects {
             machine: machine.into(),
             starter: starter.clone(),
             starter_id: starter.base.trim_start_matches('/').to_string(),
+            starter_root: starter
+                .root
+                .canonicalize()
+                .unwrap_or_else(|_| starter.root.clone()),
             build: Build::this(&starter.root),
-            warm,
+            warming,
             held: Mutex::default(),
         });
         projects.served();
@@ -80,6 +98,8 @@ impl Projects {
 
     /// The projects served now, the registry read again when its file changed.
     pub(crate) fn served(&self) -> Vec<Served> {
+        // A panic while reading leaves the list before it whole: the new one is stored last, in
+        // one assignment with the stamp it was read at.
         let mut held = self.held.lock().unwrap_or_else(PoisonError::into_inner);
         let stamp = fs::metadata(self.machine.join(PROJECTS)).ok().map(|meta| {
             (
@@ -112,11 +132,15 @@ impl Projects {
                 None => self.serve(entry),
             });
         }
-        if !next.iter().any(|served| served.entry.id == self.starter_id) {
+        // The starter's checkout, unregistered, is served under the id it started with, unless
+        // another checkout holds that id now.
+        if !next.iter().any(|served| {
+            served.entry.root == self.starter_root || served.entry.id == self.starter_id
+        }) {
             let entry = Entry::of(&self.starter.root).unwrap_or_else(|_| Entry {
                 id: self.starter_id.clone(),
                 name: self.starter_id.clone(),
-                root: self.starter.root.clone(),
+                root: self.starter_root.clone(),
                 manifest: None,
                 plugins: Vec::new(),
                 pin: self.build.pin,
@@ -134,29 +158,35 @@ impl Projects {
             .served
             .iter()
             .filter(|old| {
-                !next
-                    .iter()
-                    .any(|served| Arc::ptr_eq(&served.shared, &old.shared))
+                !Arc::ptr_eq(&old.shared, &self.starter)
+                    && !next
+                        .iter()
+                        .any(|served| Arc::ptr_eq(&served.shared, &old.shared))
             })
             .map(|old| old.shared.clone())
             .collect();
         if !gone.is_empty() {
-            std::thread::spawn(move || gone.iter().for_each(|shared| shared.stop()));
+            std::thread::spawn(move || {
+                for shared in gone {
+                    shared.stop();
+                }
+            });
         }
         held.read = Some(stamp);
         held.served = next;
         held.served.clone()
     }
 
-    /// `entry` served: the starter's own state for its project, a new one beside it for another.
+    /// `entry` served: the starter's own state while the entry is the starter's checkout under the
+    /// id it started with, a new one beside it for any other root or id.
     fn serve(&self, entry: Entry) -> Served {
-        let shared = if entry.id == self.starter_id {
+        let shared = if entry.root == self.starter_root && entry.id == self.starter_id {
             self.starter.clone()
         } else {
             self.starter.beside(&entry.root, &format!("/{}", entry.id))
         };
         let refused = self.refused(&entry);
-        if self.warm
+        if self.warming == Warming::AsRead
             && refused.is_none()
             && !Arc::ptr_eq(&shared, &self.starter)
             && let Ok(runtime) = tokio::runtime::Handle::try_current()
@@ -176,23 +206,22 @@ impl Projects {
         }
     }
 
-    /// Why this server cannot serve `entry`, naming what fixes it.
+    /// Why this server cannot serve `entry`, naming what fixes it by the projects' ids: the page
+    /// that says it names no folder of this machine.
     fn refused(&self, entry: &Entry) -> Option<String> {
-        if entry.id != self.starter_id && !entry.root.is_dir() {
-            return Some(format!(
-                "its folder {} is gone: run `just symphony` in its new folder",
-                entry.root.display()
-            ));
+        if entry.root != self.starter_root && !entry.root.is_dir() {
+            return Some("its folder is gone: run `just symphony` in its new folder".to_string());
         }
         let lack = self.build.lacks(entry)?;
         let fix = match lack {
             Lack::Plugins(_) => format!(
-                "run `just symphony` in {}, whose build holds them",
-                entry.root.display()
+                "run `just symphony` in {}'s checkout, whose build holds them",
+                entry.id
             ),
             Lack::Pin(_) | Lack::Schema(_) => format!(
-                "{} must bump its Symphony, then run `just symphony` there",
-                self.starter.root.display()
+                "{}, which started this Symphony, must bump its Symphony, then run `just \
+                 symphony` there",
+                self.starter_id
             ),
         };
         Some(format!(
@@ -201,8 +230,23 @@ impl Projects {
         ))
     }
 
+    /// The project today's paths belong to: the starter's checkout under whatever id it is
+    /// registered with now, else the project that holds the id it started with.
+    fn started<'a>(&self, served: &'a [Served]) -> Option<&'a Served> {
+        served
+            .iter()
+            .find(|served| served.entry.root == self.starter_root)
+            .or_else(|| {
+                served
+                    .iter()
+                    .find(|served| served.entry.id == self.starter_id)
+            })
+    }
+
     /// Stop every project but the starter's, whose stop is the server's own.
     pub(crate) fn stop(&self) {
+        // A panic while reading leaves the list before it whole ([`Projects::served`]): it is
+        // taken whole here.
         let served = std::mem::take(
             &mut self
                 .held
@@ -241,11 +285,31 @@ async fn dispatch(
         )
             .into_response();
     }
+    let path = request.uri().path().to_string();
+    // `/api/front` holds to loopback's name alone; every other route to a name of this machine.
+    if path != symphony_api::FRONT_PATH {
+        let host = request
+            .headers()
+            .get(header::HOST)
+            .and_then(|host| host.to_str().ok())
+            .unwrap_or("")
+            .to_string();
+        let starter = projects.starter.clone();
+        let named = tokio::task::spawn_blocking(move || starter.allows_host(&host))
+            .await
+            .unwrap_or(false);
+        if !named {
+            return (
+                StatusCode::FORBIDDEN,
+                "Forbidden: the Host header does not name this machine\n",
+            )
+                .into_response();
+        }
+    }
     let reading = projects.clone();
     let Ok(served) = tokio::task::spawn_blocking(move || reading.served()).await else {
         return StatusCode::INTERNAL_SERVER_ERROR.into_response();
     };
-    let path = request.uri().path().to_string();
     if path == symphony_api::FRONT_PATH {
         return front(&projects, &served, request.headers());
     }
@@ -267,13 +331,13 @@ async fn dispatch(
         }
         return forward(project, &format!("/{rest}"), request).await;
     }
-    let owner = referred(request.headers(), &served)
-        .or_else(|| {
-            served
-                .iter()
-                .find(|served| served.entry.id == projects.starter_id)
-        })
-        .expect("the starter's project is always served");
+    let Some(owner) = referred(request.headers(), &served).or_else(|| projects.started(&served))
+    else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    if let Some(why) = &owner.refused {
+        return refusal(&owner.entry, why);
+    }
     if navigation(request.method(), request.headers()) {
         return redirect(&format!("/{}{path}", owner.entry.id), request.uri());
     }
@@ -407,6 +471,8 @@ fn home(served: &[Served], headers: &HeaderMap) -> Response {
         .iter()
         .map(|project| {
             let counts = project.shared.api.get().and_then(|hub| {
+                // A writer's panic leaves at worst a page between two of its regions' updates:
+                // these counts are shown, and the project's next delta corrects them.
                 let pages = hub.pages.read().unwrap_or_else(PoisonError::into_inner);
                 pages.get("").map(|page| page.board.counts.clone())
             });

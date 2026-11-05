@@ -15,6 +15,9 @@ use super::{Added, Entry, Registry};
 const USAGE: &str = "usage: symphony project add [DIR]";
 /// The running server's record in the machine folder, as its starters write it.
 const RECORD: &str = "server.json";
+/// A project's Symphony install in its git common dir, which also held the record of a server
+/// started before the machine folder.
+const INSTALL: &str = "sf-symphony";
 /// How long the running server is given to say what it is.
 const LOOK: Duration = Duration::from_secs(2);
 
@@ -29,7 +32,7 @@ pub fn main(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i32 {
         }
     };
     let added = super::dir().and_then(|machine| {
-        let front = running(&machine);
+        let front = running(&machine, older_record_folder(Path::new(dir)).as_deref());
         add(Path::new(dir), &machine, front.as_ref())
     });
     match added {
@@ -110,14 +113,29 @@ pub fn add(
     })
 }
 
-/// What the server the machine folder `machine` records says it is, when it answers.
-pub fn running(machine: &Path) -> Option<symphony_api::Front> {
+/// Where a server started before the machine folder recorded itself, for the project at `dir`:
+/// [`INSTALL`] in its repository's git common dir.
+fn older_record_folder(dir: &Path) -> Option<PathBuf> {
+    symphony_board::git::common_dir(dir)
+        .ok()
+        .map(|common| common.join(INSTALL))
+}
+
+/// What the server the machine folder `machine` records says it is, when it answers; with no
+/// record there, the server `older` records, one started before the machine folder.
+pub fn running(machine: &Path, older: Option<&Path>) -> Option<symphony_api::Front> {
     #[derive(serde::Deserialize)]
     struct Record {
         port: u16,
     }
-    let record: Record =
-        serde_json::from_str(&std::fs::read_to_string(machine.join(RECORD)).ok()?).ok()?;
+    let text = match std::fs::read_to_string(machine.join(RECORD)) {
+        Ok(text) => text,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            std::fs::read_to_string(older?.join(RECORD)).ok()?
+        }
+        Err(_) => return None,
+    };
+    let record: Record = serde_json::from_str(&text).ok()?;
     let address = SocketAddr::from(([127, 0, 0, 1], record.port));
     let mut stream = TcpStream::connect_timeout(&address, LOOK).ok()?;
     stream.set_read_timeout(Some(LOOK)).ok()?;

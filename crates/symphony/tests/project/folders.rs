@@ -225,7 +225,13 @@ fn a_documents_card_links_and_pictures_resolve_in_the_projects_folder() {
         &|_, made, _| std::fs::write(made, b"thumbnail").is_ok(),
         true,
     );
-    assert!(made.is_some_and(|(file, _)| file.is_file()));
+    let (file, _) = made.expect("a thumbnail is made");
+    assert!(file.is_file(), "{}", file.display());
+    assert!(
+        file.starts_with(tree.root.canonicalize().unwrap().join("output/docs-thumbs")),
+        "a thumbnail is kept in the project's artifacts folder: {}",
+        file.display()
+    );
 }
 
 #[test]

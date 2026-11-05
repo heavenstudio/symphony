@@ -47,7 +47,7 @@ impl Machine {
             Gate::new(Arc::new(|_| Ok(None)), Arc::new(Instant::now)),
             "/alpha",
         );
-        let projects = Projects::made(&machine, &starter, false);
+        let projects = Projects::made(&machine, &starter, Warming::OnRequest);
         Machine { tree, projects }
     }
 
@@ -272,6 +272,158 @@ async fn a_client_outside_this_machine_and_its_tailnet_reads_nothing() {
         let response = machine.from("192.0.2.7:1", path, &[]).await;
         assert_eq!(response.status(), StatusCode::FORBIDDEN, "{path}");
     }
+}
+
+#[tokio::test]
+async fn a_host_that_names_another_machine_reads_no_route_of_any_project() {
+    let machine = Machine::new();
+    for path in [
+        "/",
+        "/beta",
+        "/beta/theme.css",
+        "/alpha/",
+        "/docs/README.md",
+        "/tasks",
+    ] {
+        let response = router(machine.projects.clone())
+            .layer(MockConnectInfo(
+                "127.0.0.1:1".parse::<SocketAddr>().unwrap(),
+            ))
+            .oneshot(
+                Request::builder()
+                    .uri(path)
+                    .header(header::HOST, "rebound.example")
+                    .header("sec-fetch-mode", "navigate")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN, "{path}");
+    }
+    assert_eq!(
+        machine.get("/beta/theme.css", &[]).await.status(),
+        StatusCode::OK
+    );
+}
+
+#[tokio::test]
+async fn a_refused_project_is_refused_through_todays_paths_as_under_its_prefix() {
+    let machine = Machine::new();
+    let path = machine.tree.path("machine");
+    let original = Registry::read(&path).unwrap();
+    // The checkouts' common folder, as the registry names them.
+    let folders = original.projects[0]
+        .root
+        .parent()
+        .unwrap()
+        .display()
+        .to_string();
+    for lack in ["plugin", "pin", "schema"] {
+        let mut registry = original.clone();
+        let beta = registry
+            .projects
+            .iter_mut()
+            .find(|entry| entry.id == "beta")
+            .unwrap();
+        match lack {
+            "plugin" => beta.plugins.push("fixture-uncompiled".into()),
+            "pin" => beta.pin += 1,
+            _ => beta.schema += 1,
+        }
+        registry.write(&path).unwrap();
+        let from_beta = ("referer", "http://127.0.0.1:1/beta/docs/");
+        for (route, headers) in [
+            ("/beta/tasks", vec![]),
+            ("/tasks", vec![from_beta]),
+            ("/tasks", vec![from_beta, PAGE]),
+            ("/api/board", vec![from_beta]),
+        ] {
+            let response = machine.get(route, &headers).await;
+            assert_eq!(
+                response.status(),
+                StatusCode::SERVICE_UNAVAILABLE,
+                "{lack}: {route} {headers:?}"
+            );
+            let said = text(response).await;
+            assert!(said.contains("does not serve beta"), "{lack}: {said}");
+            assert!(
+                !said.contains(folders.as_str()),
+                "{lack}: the page names no folder: {said}"
+            );
+        }
+        // The starter's project, which this build serves, still answers today's paths.
+        let starter = machine.get("/tasks", &[PAGE]).await;
+        assert_eq!(location(&starter), "/alpha/tasks", "{lack}");
+    }
+}
+
+#[tokio::test]
+async fn the_starters_id_taken_by_another_checkout_serves_that_checkout() {
+    let machine = Machine::new();
+    machine.tree.write(
+        "alpha/symphony.toml",
+        "[project]\nid = \"gamma\"\nname = \"Gamma private\"\n",
+    );
+    machine.tree.write(
+        "replacement/symphony.toml",
+        "[project]\nid = \"alpha\"\nname = \"Replacement Alpha\"\n",
+    );
+    machine
+        .tree
+        .write("replacement/docs/README.md", "# Replacement\n");
+    Registry::change(&machine.tree.path("machine"), |registry| {
+        registry.add(Entry::of(&machine.tree.path("alpha"))?)?;
+        registry.add(Entry::of(&machine.tree.path("replacement"))?)
+    })
+    .unwrap();
+    let alpha = text(machine.get("/alpha/", &[PAGE]).await).await;
+    assert!(
+        alpha.contains("<title>Replacement Alpha</title>"),
+        "{alpha}"
+    );
+    assert!(!alpha.contains("Gamma private"), "{alpha}");
+    let gamma = text(machine.get("/gamma/", &[PAGE]).await).await;
+    assert!(gamma.contains("<title>Gamma private</title>"), "{gamma}");
+    assert!(gamma.contains("\"base\":\"/gamma\""), "{gamma}");
+    let served = machine.projects.served();
+    for served in &served {
+        assert_eq!(
+            served.shared.root.canonicalize().unwrap(),
+            served.entry.root,
+            "{}",
+            served.entry.id
+        );
+    }
+    // Today's paths stay the starter's checkout's, under the id it holds now.
+    let bookmark = machine.get("/docs/README.md", &[PAGE]).await;
+    assert_eq!(location(&bookmark), "/gamma/docs/README.md");
+    assert!(
+        !machine.projects.starter.stopping(),
+        "the starter's state is the server's own"
+    );
+}
+
+#[tokio::test]
+async fn a_moved_starter_is_served_from_its_new_root() {
+    let machine = Machine::new();
+    std::fs::rename(machine.tree.path("alpha"), machine.tree.path("moved-alpha")).unwrap();
+    Registry::change(&machine.tree.path("machine"), |registry| {
+        registry.add(Entry::of(&machine.tree.path("moved-alpha"))?)
+    })
+    .unwrap();
+    let served = machine.projects.served();
+    let alpha = served
+        .iter()
+        .find(|served| served.entry.id == "alpha")
+        .unwrap();
+    assert!(alpha.entry.root.ends_with("moved-alpha"));
+    assert_eq!(alpha.shared.root, alpha.entry.root);
+    assert_eq!(served.len(), 2, "the old root is served no more");
+    let page = machine.get("/alpha/", &[PAGE]).await;
+    assert_eq!(page.status(), StatusCode::OK);
+    let bookmark = machine.get("/docs/README.md", &[PAGE]).await;
+    assert_eq!(location(&bookmark), "/alpha/docs/README.md");
 }
 
 #[tokio::test]

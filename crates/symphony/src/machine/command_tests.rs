@@ -138,16 +138,20 @@ fn the_running_server_is_read_from_its_record_and_its_front() {
     use std::io::BufRead;
     let tree = Tree::new();
     let machine = tree.path("machine");
-    assert_eq!(running(&machine), None, "no record, no server");
+    let older = tree.path("common/sf-symphony");
+    assert_eq!(
+        running(&machine, Some(&older)),
+        None,
+        "no record, no server"
+    );
     let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
     let port = listener.local_addr().unwrap().port();
-    tree.write(
-        "machine/server.json",
-        &format!("{{\"port\":{port},\"pid\":7,\"root\":\"/r\"}}"),
-    );
-    let said = serde_json::to_string(&front(&["shelf"], 1, 2)).unwrap();
+    let record = format!("{{\"port\":{port},\"pid\":7,\"root\":\"/r\"}}");
+    // A server from before the machine folder recorded itself in the project's install folder.
+    tree.write("common/sf-symphony/server.json", &record);
+    let said = serde_json::to_string(&front(&["shelf"], 0, 0)).unwrap();
     let answering = std::thread::spawn(move || {
-        for status in ["200 OK", "403 Forbidden"] {
+        for status in ["200 OK", "200 OK", "403 Forbidden"] {
             let (mut stream, _) = listener.accept().unwrap();
             let mut reader = std::io::BufReader::new(stream.try_clone().unwrap());
             let mut line = String::new();
@@ -161,7 +165,28 @@ fn the_running_server_is_read_from_its_record_and_its_front() {
             .unwrap();
         }
     });
-    assert_eq!(running(&machine).unwrap().plugins, ["shelf"]);
-    assert_eq!(running(&machine), None, "a refusal is no server");
+    assert_eq!(running(&machine, None), None, "the older record unasked");
+    let old = running(&machine, Some(&older)).unwrap();
+    assert_eq!(old.pin, 0, "{old:?}");
+    let plain = project(&tree, "plain", "");
+    let added = add(&plain, &machine, Some(&old)).unwrap();
+    assert!(added.contains("predates the registry"), "{added}");
+    // The machine folder's record is read before the older one.
+    tree.write("machine/server.json", &record);
+    std::fs::remove_file(older.join("server.json")).unwrap();
+    assert_eq!(running(&machine, Some(&older)).unwrap().plugins, ["shelf"]);
+    assert_eq!(running(&machine, None), None, "a refusal is no server");
     answering.join().unwrap();
+}
+
+#[test]
+fn a_projects_older_record_is_in_its_repositorys_install_folder() {
+    let tree = Tree::new();
+    tree.write("checkout/.git/HEAD", "ref: refs/heads/main\n");
+    tree.write("checkout/docs/README.md", "# Docs\n");
+    let common = tree.path("checkout/.git").canonicalize().unwrap();
+    assert_eq!(
+        older_record_folder(&tree.path("checkout/docs")),
+        Some(common.join(INSTALL))
+    );
 }

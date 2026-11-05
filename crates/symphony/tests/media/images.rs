@@ -225,6 +225,16 @@ fn the_thumbnail_is_made_once_and_is_current_by_its_token() {
         let (made, current) =
             thumbnail(&tree.root, 540, &tok, "artifacts/big.png", &convert, true).unwrap();
         assert!(current);
+        assert!(
+            made.starts_with(
+                tree.root
+                    .canonicalize()
+                    .unwrap()
+                    .join("artifacts/docs-thumbs")
+            ),
+            "a project without a symphony.toml keeps its thumbnails in artifacts/: {}",
+            made.display()
+        );
         assert_eq!(std::fs::read(made).unwrap(), b"\xff\xd8thumb");
     }
     assert_eq!(calls.borrow().len(), 1);
