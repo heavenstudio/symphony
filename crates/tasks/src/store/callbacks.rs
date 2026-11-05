@@ -579,7 +579,7 @@ RETURN NONE;");
         board: &super::Board,
         callbacks: &BTreeMap<String, Callback>,
     ) -> Result<(), Error> {
-        let recipients: Vec<(&Callback, BTreeSet<&str>)> = callbacks
+        let recipients: Vec<(&Callback, attach::Overseen)> = callbacks
             .values()
             .filter(|c| c.host == self.host)
             .map(|c| (c, attach::overseen(board, &c.handle)))
@@ -823,12 +823,7 @@ RETURN NONE;");
         // Only an orchestrator uses the global status map to schedule its PULL digest. Workers
         // need their own seen state, not a copy of every task in each callback read and write.
         let statuses: BTreeMap<String, String> = if session.row.kind == "orchestrator" {
-            board
-                .tasks
-                .iter()
-                .filter(|t| !crate::health::FINISHED.contains(&t.status.as_str()))
-                .map(|t| (t.slug.clone(), t.status.clone()))
-                .collect()
+            crate::orchestration::open_statuses(board, handle)
         } else {
             BTreeMap::new()
         };
@@ -917,7 +912,8 @@ RETURN NONE;");
                 root.as_ref()
                     .is_some_and(|root| crate::cli::probes::landed(root, &task.slug))
             };
-            let digest = pull::digest(self, &idle, Some(&landed), self.now(), &busy)?;
+            let digest = pull::digest(self, &idle, Some(&landed), self.now(), &busy)?
+                .only_for(board, handle);
             let entries = digest.entries();
             pull_current = entries.clone();
             pull_entries.retain(|entry| entries.contains(entry));
