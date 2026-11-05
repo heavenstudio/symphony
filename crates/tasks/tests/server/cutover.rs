@@ -2,14 +2,13 @@
 //! the move, on disk) in a repository's git dir, reached from the repository as every agent reaches
 //! them, with no `TASKS_*` variable naming either.
 
-use crate::common::{GuardedSurreal, Scratch, command_of, gone, signal};
+use crate::common::{GuardedSurreal, Scratch, command_of, event_of, gone, signal};
 use crate::sqlite;
 use std::fs;
 use std::io::{Read, Write};
 use std::net::UdpSocket;
 use std::os::unix::process::ExitStatusExt;
 use std::path::{Path, PathBuf};
-use std::time::Duration;
 use symphony_board::cli::Env;
 use symphony_board::server::{FOLDER, Home, Running};
 use symphony_board::sys::{Child, Command, Stdio};
@@ -175,9 +174,6 @@ impl Drop for TestProcess {
 fn servers_end_when_the_fixture_process_is_killed_without_dropping_it() {
     for route in ["cutover", "own-server", "home"] {
         let events = UdpSocket::bind("127.0.0.1:0").unwrap();
-        events
-            .set_read_timeout(Some(Duration::from_secs(20)))
-            .unwrap();
         let mut child = TestProcess(
             crate::store::spawn_with_input(
                 Command::new(std::env::current_exe().unwrap())
@@ -198,9 +194,8 @@ fn servers_end_when_the_fixture_process_is_killed_without_dropping_it() {
             .unwrap(),
         );
         let mut message = [0; 8192];
-        let size = events
-            .recv(&mut message)
-            .expect("the fixture's server must become ready");
+        let size = event_of(&events, &mut child.0, &mut message)
+            .unwrap_or_else(|why| panic!("{route}: the fixture's server must become ready: {why}"));
         let (dir, data, running): (PathBuf, String, Running) =
             serde_json::from_slice(&message[..size]).unwrap();
         assert!(rpc::healthy(&running.addr), "{route}: server is ready");
@@ -233,9 +228,6 @@ fn fixture_descendants_release_the_slot_while_the_server_is_running() {
     fs::create_dir_all(&dir).unwrap();
     let slot = dir.join("slot.lock");
     let events = UdpSocket::bind("127.0.0.1:0").unwrap();
-    events
-        .set_read_timeout(Some(Duration::from_secs(20)))
-        .unwrap();
     let mut child = TestProcess(
         crate::store::spawn_with_input(
             Command::new(std::env::current_exe().unwrap())
@@ -266,9 +258,8 @@ fn fixture_descendants_release_the_slot_while_the_server_is_running() {
             .is_ok()
     };
     let mut message = [0; 8192];
-    let size = events
-        .recv(&mut message)
-        .expect("helper must hold the slot");
+    let size = event_of(&events, &mut child.0, &mut message)
+        .unwrap_or_else(|why| panic!("helper must hold the slot: {why}"));
     assert_eq!(&message[..size], b"locked");
     assert!(
         !can_lock(),
@@ -276,9 +267,8 @@ fn fixture_descendants_release_the_slot_while_the_server_is_running() {
     );
     child.0.stdin.as_mut().unwrap().write_all(b"g").unwrap();
 
-    let size = events
-        .recv(&mut message)
-        .expect("fixture server must become ready");
+    let size = event_of(&events, &mut child.0, &mut message)
+        .unwrap_or_else(|why| panic!("fixture server must become ready: {why}"));
     let (_, _, running): (PathBuf, String, Running) =
         serde_json::from_slice(&message[..size]).unwrap();
     assert!(
