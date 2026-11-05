@@ -1,5 +1,6 @@
-//! MockupEmbedTest and ModelEmbedTest: an `.html` mockup or a `.glb` model in a document is a media
-//! item the client draws, not markup; every other picture and link stays what markdown made of it.
+//! MockupEmbedTest: an `.html` mockup in a document is a media item the client draws, not markup;
+//! every other picture and link stays what markdown made of it (`drawn.rs` has the files a plugin's
+//! renderer draws).
 
 use symphony::render::{MOCKUP_NATIVE, MOCKUP_SANDBOX, Media, Render, is_mockup};
 
@@ -18,14 +19,6 @@ fn mockup(src: &str, label: &str) -> Media {
     Media::Mockup {
         src: src.into(),
         label: label.into(),
-    }
-}
-
-fn model(src: &str, label: &str) -> Media {
-    Media::Model {
-        src: src.into(),
-        label: label.into(),
-        poster: None,
     }
 }
 
@@ -118,79 +111,4 @@ fn which_pictures_are_mockups() {
     for no in ["/a.png", "/a.html.png", "/htmlx", "https://x/a.js"] {
         assert!(!is_mockup(no), "{no}");
     }
-}
-
-#[test]
-fn an_image_to_a_glb_is_a_model_not_an_img() {
-    let (html, items) = media("![Pendant](/view/models/lamps/NOR-L01.glb)\n", "docs/A.md");
-    assert_eq!(items, [model("/view/models/lamps/NOR-L01.glb", "Pendant")]);
-    assert!(!html.contains("<img"), "{html}");
-    assert!(html.contains("data-kind=\"model\""));
-}
-
-#[test]
-fn an_image_is_one_model_and_a_link_is_one_model() {
-    assert_eq!(media("![F](/a.glb)\n", "docs/A.md").1.len(), 1);
-    assert_eq!(
-        media("[F](/a.glb)\n", "docs/A.md").1,
-        [model("/a.glb", "F")]
-    );
-}
-
-#[test]
-fn a_link_to_a_glb_takes_its_text_as_the_caption_without_markup() {
-    assert_eq!(
-        media("[the **Lumen** model](/a.glb)\n", "docs/A.md").1,
-        [model("/a.glb", "the Lumen model")]
-    );
-}
-
-#[test]
-fn a_model_without_a_caption_is_named_by_its_file() {
-    assert_eq!(
-        media("![](/view/a%20b.glb)\n", "docs/A.md").1,
-        [model("/view/a%20b.glb", "a b.glb")]
-    );
-}
-
-#[test]
-fn a_relative_and_a_worktree_model_resolve_like_an_image() {
-    assert_eq!(
-        media("![f](../a.glb)\n", "docs/lamps/x.md").1,
-        [model("/docs/a.glb", "f")]
-    );
-    let worktree = ".claude/worktrees/picture-x/view/models/lamps/NOR-L01.glb";
-    assert_eq!(
-        media(&format!("![f](/{worktree})\n"), "docs/A.md").1,
-        [model(&format!("/{worktree}"), "f")]
-    );
-}
-
-#[test]
-fn a_glb_in_a_code_span_stays_text() {
-    assert!(
-        media("write `![f](a.glb)` to embed\n", "docs/A.md")
-            .1
-            .is_empty()
-    );
-}
-
-#[test]
-fn a_model_in_a_card_thread_message_is_media_of_the_threads_fragment() {
-    let tree = Tree::new();
-    let text =
-        "- [ ] **lamp** — x\n  [2026-10-06 10:00] agent — ![f](/view/models/lamps/NOR-L01.glb)\n";
-    let threads = Render::new(&tree.root).history(text, "docs/A.md");
-    assert_eq!(
-        threads["lamp"].media,
-        [model("/view/models/lamps/NOR-L01.glb", "f")]
-    );
-}
-
-#[test]
-fn a_models_and_a_mockups_indexes_are_the_fragments_own() {
-    let (html, items) = media("![m](/a.glb) and ![h](/b.html)\n", "docs/A.md");
-    assert_eq!(items, [model("/a.glb", "m"), mockup("/b.html", "h")]);
-    assert!(html.contains("data-media=\"0\" data-kind=\"model\""));
-    assert!(html.contains("data-media=\"1\" data-kind=\"mockup\""));
 }

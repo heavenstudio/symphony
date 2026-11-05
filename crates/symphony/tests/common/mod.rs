@@ -5,6 +5,7 @@
 use std::path::{Path, PathBuf};
 
 pub mod candidates;
+pub mod items;
 mod tree;
 pub use tree::Tree;
 

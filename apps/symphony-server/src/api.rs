@@ -908,7 +908,7 @@ async fn plugin_response(shared: &Shared, root: &Path, path: &str, request: &Req
             let Ok(base) = tokio::fs::canonicalize(root).await else {
                 return error(StatusCode::NOT_FOUND, "no such file");
             };
-            crate::media_files::contained(shared, &base, &file, request).await
+            crate::media_files::contained(shared, &base, &base, &file, request).await
         }
     }
 }

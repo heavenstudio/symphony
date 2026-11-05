@@ -529,7 +529,7 @@ mod tests {
     #[test]
     fn a_path_through_a_link_below_its_base_is_neither_walked_nor_restamped_but_a_linked_base_is() {
         let tree = Tree::new();
-        tree.write("outside/models/lamps/X.glb", "outside model");
+        tree.write("outside/models/lamps/X.item", "outside model");
         tree.write("checkout/docs/a.md", "a");
         std::fs::create_dir_all(tree.path("checkout/view")).unwrap();
         let checkout = tree.path("checkout");
@@ -568,7 +568,7 @@ mod tests {
             sweep.stamps.keys().cloned().collect::<BTreeSet<_>>(),
             BTreeSet::from([checkout.join("docs/a.md")])
         );
-        sweep.restamp(&[checkout.join("view/models/lamps/X.glb")]);
+        sweep.restamp(&[checkout.join("view/models/lamps/X.item")]);
         assert_eq!(sweep.stamps.len(), 1);
         assert!(sweep.next(&roots).is_empty());
     }
