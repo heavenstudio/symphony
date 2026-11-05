@@ -90,11 +90,12 @@ impl OneServer {
             .unwrap();
         let stdout = child.stdout.take().unwrap();
         let (send, recv) = std::sync::mpsc::channel();
+        // A server with a home stamps each line of its output with the time.
         std::thread::spawn(move || {
             for line in BufReader::new(stdout).lines().map_while(Result::ok) {
                 if let Some(url) = line
-                    .strip_prefix("→ Symphony at ")
-                    .and_then(|s| s.split_whitespace().next())
+                    .split_once("→ Symphony at ")
+                    .and_then(|(_, said)| said.split_whitespace().next())
                 {
                     let _ = send.send(url.split('/').take(3).collect::<Vec<_>>().join("/"));
                 }
