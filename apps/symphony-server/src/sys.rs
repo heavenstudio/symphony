@@ -7,7 +7,7 @@ use std::path::PathBuf;
 use std::process::Output;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant, SystemTime};
-use tasks::sys::{Child, Command, Stdio};
+use symphony_board::sys::{Child, Command, Stdio};
 
 /// The arguments of our serve process in ps's unquoted command line. The executable's path may
 /// contain spaces too, so recognize its basename before reading any argument.
@@ -111,12 +111,12 @@ impl Drop for CommandGroup {
 }
 
 /// Start a tokio `command`, under the helpers' lock for its spawn alone as every std spawn beside
-/// them: a pipe's first ends are inheritable until reopened under it ([`tasks::sys::pipe`]), and a
+/// them: a pipe's first ends are inheritable until reopened under it ([`symphony_board::sys::pipe`]), and a
 /// child keeps such an end for its life.
 pub(crate) fn spawn_async(
     command: &mut tokio::process::Command,
 ) -> std::io::Result<tokio::process::Child> {
-    let _spawning = tasks::sys::spawning();
+    let _spawning = symphony_board::sys::spawning();
     command.spawn()
 }
 
@@ -246,7 +246,8 @@ mod tests {
             });
             let mut answers = 0;
             while !spawned.load(Ordering::Relaxed) {
-                let mut child = tasks::sys::spawn_piped(&mut Command::new("true")).unwrap();
+                let mut child =
+                    symphony_board::sys::spawn_piped(&mut Command::new("true")).unwrap();
                 let mut input = child.stdin.take().unwrap();
                 assert!(child.wait().unwrap().success());
                 let refused = input.write_all(b"unread").unwrap_err();
@@ -255,7 +256,8 @@ mod tests {
                     std::io::ErrorKind::BrokenPipe,
                     "answer {answers}"
                 );
-                let done = tasks::sys::output(Command::new("/bin/echo").arg("answer")).unwrap();
+                let done =
+                    symphony_board::sys::output(Command::new("/bin/echo").arg("answer")).unwrap();
                 assert_eq!(done.stdout, b"answer\n");
                 answers += 1;
             }
@@ -324,8 +326,8 @@ mod tests {
 
         // The descendant reads this pipe, which only the test's end finishes: it holds the
         // command's stdout and stderr until something ends it. A child another test spawns holds
-        // neither end (tasks::sys::pipe).
-        let (held, mut test_end) = tasks::sys::pipe().unwrap();
+        // neither end (symphony_board::sys::pipe).
+        let (held, mut test_end) = symphony_board::sys::pipe().unwrap();
         let timeout = Duration::from_secs(30);
         let fd = held.as_raw_fd();
         let mut command = Command::new("sh");
@@ -366,8 +368,8 @@ mod tests {
         use std::io::ErrorKind;
         use std::os::fd::AsRawFd;
 
-        let (reader, writer) = tasks::sys::pipe().unwrap();
-        tasks::sys::set_nonblocking(&reader, true).unwrap();
+        let (reader, writer) = symphony_board::sys::pipe().unwrap();
+        symphony_board::sys::set_nonblocking(&reader, true).unwrap();
         let fd = writer.as_raw_fd();
         let mut command = Command::new("sh");
         command.args([

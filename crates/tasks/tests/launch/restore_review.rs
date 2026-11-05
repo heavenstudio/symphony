@@ -32,7 +32,8 @@ fn a_departed_reviewer_without_a_launch_is_flagged_but_never_started_automatical
                 .is_empty()
         );
         w.f.advance(29.0 * 60.0);
-        let digest = || tasks::cli::pull::digest(w.store(), &[], None, w.f.now(), &[]).unwrap();
+        let digest =
+            || symphony_board::cli::pull::digest(w.store(), &[], None, w.f.now(), &[]).unwrap();
         assert_eq!(digest().count("unanswered"), 0);
         w.f.advance(2.0 * 60.0);
         let d = digest();
@@ -106,7 +107,8 @@ fn a_departed_replacement_keeps_its_role_posts_without_reviving_its_predecessor(
                 }
                 w.f.advance(31.0 * 60.0);
                 let digest =
-                    tasks::cli::pull::digest(w.store(), &[], None, w.f.now(), &[]).unwrap();
+                    symphony_board::cli::pull::digest(w.store(), &[], None, w.f.now(), &[])
+                        .unwrap();
                 let lines = digest.lines().join("\n");
                 assert_eq!(digest.count("unanswered"), 1, "{lines}");
                 assert!(
@@ -192,7 +194,8 @@ fn an_unanswered_review_post_resumes_its_instruction_conversation() {
                 .unwrap();
             w.f.advance(31.0 * 60.0);
             let command = format!("just tasks restore {} {}", s.slug, s.handle);
-            let digest = tasks::cli::pull::digest(w.store(), &[], None, w.f.now(), &[]).unwrap();
+            let digest =
+                symphony_board::cli::pull::digest(w.store(), &[], None, w.f.now(), &[]).unwrap();
             assert_eq!(digest.count("unanswered"), 1);
             assert!(digest.lines().iter().any(|line| line.contains(&command)));
             let mut warnings = Vec::new();

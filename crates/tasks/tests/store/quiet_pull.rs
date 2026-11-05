@@ -63,7 +63,7 @@ fn native_unanswered_lines_survive_fresh_dispatchers_without_repeating_a_post() 
     // Inspect the age cutoff without scheduling a periodic PULL at minute 29. The first due
     // stream observation below is minute 31, rather than ten minutes after an intervening check.
     assert_eq!(
-        tasks::cli::pull::digest(&f.store, &[], None, f.now(), &[])
+        symphony_board::cli::pull::digest(&f.store, &[], None, f.now(), &[])
             .unwrap()
             .count("unanswered"),
         0

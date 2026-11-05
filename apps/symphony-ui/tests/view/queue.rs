@@ -3,7 +3,7 @@ use std::{cell::RefCell, collections::BTreeMap, rc::Rc};
 use symphony_ui::{platform::Platform, queue::WaitingQueue, queue_filter};
 
 fn cards() -> Vec<symphony_api::Card> {
-    [("art", 30), ("engineering", 3)]
+    [("pictures", 30), ("engineering", 3)]
         .into_iter()
         .flat_map(|(folder, count)| {
             (0..count).map(move |n| {
@@ -31,33 +31,35 @@ fn category_counts_sum_to_the_section_and_filtering_keeps_only_its_rows() {
     let counts = queue_filter::counts(cards.iter().map(|c| c.doc.as_str()));
     assert_eq!(
         counts,
-        BTreeMap::from([("art".into(), 30), ("engineering".into(), 3)])
+        BTreeMap::from([("pictures".into(), 30), ("engineering".into(), 3)])
     );
     assert_eq!(counts.values().sum::<usize>(), cards.len());
     let all = render("");
     assert_eq!(all.matches("data-card=").count(), 33);
     assert!(
-        all.contains("All (33)") && all.contains("art (30)") && all.contains("engineering (3)")
+        all.contains("All (33)")
+            && all.contains("pictures (30)")
+            && all.contains("engineering (3)")
     );
-    let art = render("art");
-    assert_eq!(art.matches("data-card=").count(), 30);
-    assert!(!art.contains("data-card=\"docs/engineering/"));
-    assert!(art.contains("Showing 30 of 33"));
+    let picture = render("pictures");
+    assert_eq!(picture.matches("data-card=").count(), 30);
+    assert!(!picture.contains("data-card=\"docs/engineering/"));
+    assert!(picture.contains("Showing 30 of 33"));
     let engineering = render("engineering");
     assert_eq!(engineering.matches("data-card=").count(), 3);
-    assert!(!engineering.contains("data-card=\"docs/art/"));
+    assert!(!engineering.contains("data-card=\"docs/pictures/"));
     assert_eq!(
         render("removed-folder"),
         all,
         "a vanished saved category falls back to All"
     );
     assert_eq!(
-        symphony_api::queue_category("@proposal~topic/docs/art/CARDS.md"),
-        "art"
+        symphony_api::queue_category("@proposal~topic/docs/pictures/CARDS.md"),
+        "pictures"
     );
     assert_eq!(symphony_api::queue_category("docs/ROOT.md"), "docs");
     let mut empty = VirtualDom::new(
-        || rsx! { WaitingQueue { items: vec![], selected: "art", onselect: |_| {} } },
+        || rsx! { WaitingQueue { items: vec![], selected: "pictures", onselect: |_| {} } },
     );
     empty.rebuild_in_place();
     let empty = dioxus_ssr::render(&empty);
@@ -80,7 +82,7 @@ impl Platform for Device {
 
 fn chips(device: Device) -> Element {
     rsx! { queue_filter::CategoryChips {
-        counts: BTreeMap::from([("art".into(), 30), ("engineering".into(), 3)]),
+        counts: BTreeMap::from([("pictures".into(), 30), ("engineering".into(), 3)]),
         selected: queue_filter::load(&device),
         onselect: move |category: String| queue_filter::remember(&device, &category)
     } }
@@ -116,8 +118,8 @@ fn tapping_a_chip_remembers_this_device_and_all_clears_the_filter() {
         dom.runtime()
             .handle_event("click", Event::new(data, true), id);
     };
-    click(buttons["art"]);
-    assert_eq!(queue_filter::load(&device), "art");
+    click(buttons["pictures"]);
+    assert_eq!(queue_filter::load(&device), "pictures");
     let mut other_dom = VirtualDom::new_with_props(chips, other.clone());
     other_dom.rebuild_in_place();
     let other_html = dioxus_ssr::render(&other_dom);

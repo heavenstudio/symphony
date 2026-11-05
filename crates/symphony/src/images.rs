@@ -7,7 +7,7 @@
 //! header, not the whole file) to every local `<img>` lacking them; the page's `img { height:auto }`
 //! turns the pair into an aspect ratio.
 //!
-//! A big picture is also drawn from a small copy: the concept art is 2-3 MB a picture, which a phone on a
+//! A big picture is also drawn from a small copy: a concept picture is 2-3 MB, which a phone on a
 //! mobile link cannot take by the dozen. [`reserve`] points a PNG over [`THUMB_MIN_BYTES`] at
 //! `/thumb/<width>/<token>/<path>.jpg` (`data-full` keeps the original for the viewer), and [`thumbnail`]
 //! makes that copy once, into `artifacts/docs-thumbs/`, named by a token of the file's path, time and
@@ -25,7 +25,7 @@ use std::time::{Duration, Instant};
 
 use regex::{Captures, Regex};
 use sha2::{Digest, Sha256};
-use tasks::sys::{Command, Stdio};
+use symphony_board::sys::{Command, Stdio};
 
 use crate::markup::{normpath, quote, unquote};
 
@@ -145,7 +145,7 @@ fn part_file(dest: &Path) -> std::io::Result<PathBuf> {
 }
 
 /// Run the converter, publish only a complete output, and reap it when it exceeds its time budget.
-/// It starts without a fork and inherits only its streams (tasks::sys::Command), so a connection
+/// It starts without a fork and inherits only its streams (symphony_board::sys::Command), so a connection
 /// the server has accepted but not yet marked close-on-exec stays out of it.
 fn convert(mut command: Command, dest: &Path, timeout: Duration) -> bool {
     let Ok(part) = part_file(dest) else {

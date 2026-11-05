@@ -3,7 +3,10 @@
 use symphony::register::{Group, resolve};
 
 use crate::card;
-use crate::common::{plain, star_foundry};
+use symphony::plugins::Plugins;
+use symphony_plugin::{Card, CardKind, Plugin};
+
+use crate::common::plain;
 
 fn group(lines: &[&str]) -> Group {
     card(lines).group(&plain())
@@ -135,42 +138,42 @@ fn plain_approval_and_resolved_are_resolved() {
 }
 
 #[test]
-fn golden_approvals_wait_for_application_and_survive_tidy() {
-    let head = "- [x] **golden-change** — Review the captured frame. *Golden:* frame";
+fn approvals_an_agent_applies_wait_for_it_and_survive_tidy() {
+    let head = "- [x] **applied-change** — Apply the change. *Applies:* agent";
     let approved = "  [2026-10-28 12:00] owner · approved";
     let lines = [head, approved];
-    let sf = &star_foundry();
+    let plugins = &applying();
     let found = card(&lines);
-    assert_eq!(found.group(sf), Group::Agent);
-    assert!(found.open(sf));
-    assert!(!found.resolvable(sf));
-    let (tidied, changed) = resolve(&(lines.join("\n") + "\n"), "2026-10-28 12:05", sf);
+    assert_eq!(found.group(plugins), Group::Agent);
+    assert!(found.open(plugins));
+    assert!(!found.resolvable(plugins));
+    let (tidied, changed) = resolve(&(lines.join("\n") + "\n"), "2026-10-28 12:05", plugins);
     assert!(changed.is_empty());
-    assert!(tidied.contains("- [x] **golden-change**"));
+    assert!(tidied.contains("- [x] **applied-change**"));
     let applied = card(&[
         head,
         approved,
-        "  [2026-10-28 12:10] agent — Blessed the reviewed frame.",
+        "  [2026-10-28 12:10] agent — Applied the change.",
     ]);
-    assert_eq!(applied.group(sf), Group::Resolved);
-    assert!(!applied.open(sf));
-    assert!(applied.resolvable(sf));
+    assert_eq!(applied.group(plugins), Group::Resolved);
+    assert!(!applied.open(plugins));
+    assert!(applied.resolvable(plugins));
     for (mark, verdict, group) in [
         ("-", "rejected", Group::Agent),
         ("?", "question", Group::Agent),
         ("~", "dismissed", Group::Resolved),
         ("r", "resolved", Group::Resolved),
     ] {
-        let head = format!("- [{mark}] **golden-change** — Frame. *Golden:* frame");
+        let head = format!("- [{mark}] **applied-change** — Change. *Applies:* agent");
         let owner = format!("  [2026-10-28 12:00] owner · {verdict}");
-        assert_eq!(card(&[&head, &owner]).group(sf), group, "{verdict}");
+        assert_eq!(card(&[&head, &owner]).group(plugins), group, "{verdict}");
     }
 }
 
 #[test]
-fn a_project_without_the_golden_frame_kind_settles_an_approved_golden_card() {
+fn a_project_without_the_applying_kind_settles_the_approved_card() {
     let lines = [
-        "- [x] **golden-change** — Review the captured frame. *Golden:* frame",
+        "- [x] **applied-change** — Apply the change. *Applies:* agent",
         "  [2026-10-28 12:00] owner · approved",
     ];
     let found = card(&lines);
@@ -178,8 +181,8 @@ fn a_project_without_the_golden_frame_kind_settles_an_approved_golden_card() {
     assert!(!found.open(&plain()));
     assert!(found.resolvable(&plain()));
     let (tidied, changed) = resolve(&(lines.join("\n") + "\n"), "2026-10-28 12:05", &plain());
-    assert_eq!(changed, ["golden-change"]);
-    assert!(tidied.contains("- [r] **golden-change**"), "{tidied}");
+    assert_eq!(changed, ["applied-change"]);
+    assert!(tidied.contains("- [r] **applied-change**"), "{tidied}");
 }
 
 #[test]
@@ -352,4 +355,42 @@ fn open_means_agent_work() {
         found.iter().map(|c| c.open(&plain())).collect::<Vec<_>>(),
         vec![true, false]
     );
+}
+
+/// What ends the card text of [`Applying`]'s kind.
+const APPLIES: &str = "*Applies:* agent";
+
+/// A project's plugin with one card kind, a card ending [`APPLIES`]: its approval waits for the
+/// agent that applies it.
+struct Applying;
+
+static APPLYING: Applying = Applying;
+
+impl Plugin for Applying {
+    fn name(&self) -> &str {
+        "fixture-applying"
+    }
+
+    fn card_kinds(&self) -> Vec<&dyn CardKind> {
+        vec![self]
+    }
+}
+
+impl CardKind for Applying {
+    fn name(&self) -> &str {
+        "applied"
+    }
+
+    fn recognises(&self, card: &Card<'_>) -> bool {
+        card.text.ends_with(APPLIES)
+    }
+
+    fn approval_needs_agent(&self, card: &Card<'_>) -> bool {
+        self.recognises(card)
+    }
+}
+
+/// [`Applying`] alone.
+fn applying() -> Plugins {
+    Plugins::new(vec![&APPLYING])
 }

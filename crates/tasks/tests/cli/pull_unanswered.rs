@@ -10,12 +10,12 @@ fn leaving_after_answering_does_not_hide_a_replacements_reply() {
     let b = c.f.session("reviewer");
     c.f.store.take_role("sim/a", &a, "reviewer").unwrap();
     c.f.store
-        .record_launch(&tasks::NewLaunch::new("sim/a", &a, "reviewer"))
+        .record_launch(&symphony_board::NewLaunch::new("sim/a", &a, "reviewer"))
         .unwrap();
     c.f.store.release("sim/a", &a, Some("reviewer")).unwrap();
     c.f.store.take_role("sim/a", &b, "reviewer").unwrap();
     c.f.store
-        .record_launch(&tasks::NewLaunch::new("sim/a", &b, "reviewer"))
+        .record_launch(&symphony_board::NewLaunch::new("sim/a", &b, "reviewer"))
         .unwrap();
     c.f.store
         .say("sim/a", "owner", "review", Some("@reviewer"))
@@ -78,9 +78,9 @@ fn a_closed_reviewer_and_a_left_recorded_executor_are_detected() {
         (&reviewer, "reviewer", "codex:thread"),
     ] {
         c.f.store
-            .record_launch(&tasks::NewLaunch {
+            .record_launch(&symphony_board::NewLaunch {
                 claude_session: conversation.into(),
-                ..tasks::NewLaunch::new("sim/a", handle, role)
+                ..symphony_board::NewLaunch::new("sim/a", handle, role)
             })
             .unwrap();
         c.f.store

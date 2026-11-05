@@ -1,4 +1,4 @@
-//! The task board's move from SQLite to SurrealDB, run once (`just tasks-cutover`, [`tasks::cutover`]):
+//! The task board's move from SQLite to SurrealDB, run once (`just tasks-cutover`, [`symphony_board::cutover`]):
 //!
 //!     tasks-cutover
 //!
@@ -8,9 +8,9 @@ use std::process::ExitCode;
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    let code = tasks::cutover::main(
+    let code = symphony_board::cutover::main(
         &args,
-        &tasks::cli::Env::of_process(),
+        &symphony_board::cli::Env::of_process(),
         &mut std::io::stdout(),
         &mut std::io::stderr(),
     );

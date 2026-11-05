@@ -11,8 +11,8 @@ The containing project's [guide](../AGENTS.md) owns landing and shared-service r
 settings and dependency versions. The containing project's thin host and board-only
 packages consume these libraries through path dependencies. A project's settings are
 its `symphony.toml` (generic defaults in `crates/symphony/src/project.rs`), and its
-game code is a plugin: the traits and block vocabulary in `crates/symphony-plugin`,
-Star Foundry's implementation in `crates/symphony/src/star_foundry/`, selected by
+own code is a plugin: the traits and block vocabulary in `crates/symphony-plugin`,
+the implementation in a crate of the project's that its host links, selected by
 the manifest's `[plugins] crates`. A plugin renders to generic blocks, never HTML,
 and the client draws each block with one component. Only the plugins a project
 selects answer for it: its card kinds, watches, pages and actions. A project's

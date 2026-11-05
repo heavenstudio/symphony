@@ -8,11 +8,12 @@
 pub mod board;
 #[path = "../../../crates/symphony/tests/common/tree.rs"]
 mod tree;
+pub use crate::shelf;
 pub use tree::Tree;
 
 pub fn git(root: &std::path::Path, args: &[&str]) {
-    let done = tasks::sys::output(
-        tasks::sys::Command::new("git")
+    let done = symphony_board::sys::output(
+        symphony_board::sys::Command::new("git")
             .args(args)
             .current_dir(root)
             .env_remove("GIT_DIR")

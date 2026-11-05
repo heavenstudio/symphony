@@ -3,10 +3,12 @@
 use crate::common::refused;
 use crate::{Hooked, World, git};
 use std::path::Path;
-use tasks::launch::herdr::Herdr;
-use tasks::launch::{Ask, PROMPT_ENTERS, PROMPT_WAIT, Started, restore, restore_unanswered};
-use tasks::rows::TaskSessionRow;
-use tasks::{Error, NewLaunch};
+use symphony_board::launch::herdr::Herdr;
+use symphony_board::launch::{
+    Ask, PROMPT_ENTERS, PROMPT_WAIT, Started, restore, restore_unanswered,
+};
+use symphony_board::rows::TaskSessionRow;
+use symphony_board::{Error, NewLaunch};
 
 #[path = "restore_review.rs"]
 mod review_instructions;
@@ -48,7 +50,7 @@ fn recovery_resumes_once_per_post_for_closed_or_missing_open_conversations() {
             .say(&s.slug, "owner", "reconcile", Some("@executor"))
             .unwrap();
         let mut warnings = Vec::new();
-        let recover = |store: &tasks::Store, warnings: &mut Vec<u8>| {
+        let recover = |store: &symphony_board::Store, warnings: &mut Vec<u8>| {
             restore_unanswered(store, &w.herdr(), &w.machine(), warnings).unwrap()
         };
         w.f.advance(29.0 * 60.0);
@@ -129,7 +131,8 @@ fn a_departed_executor_replacement_resumes_without_reviving_its_predecessor() {
         );
         assert_eq!(w.store().task_sessions(&b.slug).unwrap().len(), 2);
         w.f.advance(31.0 * 60.0);
-        let digest = tasks::cli::pull::digest(w.store(), &[], None, w.f.now(), &[]).unwrap();
+        let digest =
+            symphony_board::cli::pull::digest(w.store(), &[], None, w.f.now(), &[]).unwrap();
         let lines = digest.lines().join("\n");
         assert_eq!(digest.count("unanswered"), 1, "{lines}");
         assert!(
@@ -216,7 +219,8 @@ fn recovery_leaves_answered_present_and_unrecorded_conversations_alone() {
             post.id
         );
         assert!(warnings.is_empty());
-        let digest = tasks::cli::pull::digest(w.store(), &[], None, w.f.now(), &[]).unwrap();
+        let digest =
+            symphony_board::cli::pull::digest(w.store(), &[], None, w.f.now(), &[]).unwrap();
         if case == "unrecorded" {
             assert!(
                 digest

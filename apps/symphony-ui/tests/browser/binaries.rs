@@ -29,12 +29,13 @@ pub(super) fn tasks() -> &'static Path {
     })
 }
 
-/// The Symphony server, once for this run, as `tools/rs-bin.sh` builds it: the release build the
-/// server ships as. The runner hands none. The case's child is this binary itself, never a compiler
-/// wrapper whose PID can change or leave builders behind.
-pub(super) fn symphony_server() -> &'static Path {
+/// The Symphony server holding the shelf fixture plugin (`symphony-shelf`), once for this run, as
+/// `tools/rs-bin.sh` builds it: a release build, as the server is. The runner hands none. The
+/// case's child is this binary itself, never a compiler wrapper whose PID can change or leave
+/// builders behind.
+pub(super) fn shelf_server() -> &'static Path {
     static BINARY: OnceLock<PathBuf> = OnceLock::new();
-    BINARY.get_or_init(|| built("symphony-server"))
+    BINARY.get_or_init(|| built("symphony-shelf"))
 }
 
 /// `name` built through `tools/rs-bin.sh --build`, which leaves the hooks' `.target/bin/` links alone.

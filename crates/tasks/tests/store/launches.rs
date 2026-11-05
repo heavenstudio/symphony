@@ -1,8 +1,8 @@
 //! What `just tasks launch` records on a task, so a closed session can be restored later.
 
 use crate::common::{Fixture, NOW, refused};
-use tasks::NewLaunch;
-use tasks::rows::TaskSessionRow;
+use symphony_board::NewLaunch;
+use symphony_board::rows::TaskSessionRow;
 
 fn launch(f: &Fixture, slug: &str, role: &str) -> TaskSessionRow {
     let handle = f.session("worker");

@@ -1,4 +1,4 @@
-//! The document reader's semantic components. Their markup ships with the client; the API supplies
+//! The document reader's semantic components. Their markup comes with the client; the API supplies
 //! content and state. Keeping forms outside these components preserves drafts as prose changes.
 
 use dioxus::prelude::*;

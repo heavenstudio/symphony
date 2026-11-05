@@ -3,8 +3,9 @@ use super::callbacks::Listener;
 use super::common::Fixture;
 use serde_json::json;
 use std::os::unix::fs::MetadataExt;
-use tasks::NewTask;
-use tasks::sys::{Command, Spawning as _};
+use symphony_board::NewTask;
+use symphony_board::sys::{Command, Spawning as _};
+use symphony_board::{Health, NewLaunch, cli, sys};
 
 const EMPTY_PULL: &str = "PULL executing=0 ready_unstaffed=0 in_progress_orphaned=0 review_unreviewed=0 landed_open=0 idle=0";
 const BUSY_PULL: &str = "PULL executing=1 ready_unstaffed=0 in_progress_orphaned=0 review_unreviewed=0 landed_open=0 idle=0";
@@ -84,7 +85,7 @@ fn a_stale_child_running_a_test_leaves_idle_callback_rows_unchanged() {
                 .unwrap()
                 .success()
         );
-        let output = tasks::sys::output(Command::new(std::env::current_exe().unwrap())
+        let output = sys::output(Command::new(std::env::current_exe().unwrap())
             .args([
                 "--exact",
                 "quiet_callbacks::a_stale_child_running_a_test_leaves_idle_callback_rows_unchanged",
@@ -130,7 +131,7 @@ fn a_stale_child_running_a_test_leaves_idle_callback_rows_unchanged() {
     slot.lock().unwrap();
     let o = listen_orchestrator(&f, "parent", BUSY_PULL);
     f.advance(91.0);
-    assert_eq!(f.health("child"), tasks::Health::Stale);
+    assert_eq!(f.health("child"), Health::Stale);
     f.store.dispatch_callbacks().unwrap();
     assert_eq!(
         callback_state(&f, "parent")["seen"]["children"]["child"],
@@ -326,7 +327,7 @@ fn addressed_messages_verdicts_owner_messages_and_plain_bytes() {
         .take_role("tools/quiet", &launched, "reviewer")
         .unwrap();
     f.store
-        .record_launch(&tasks::NewLaunch::new("tools/quiet", &launched, "reviewer"))
+        .record_launch(&NewLaunch::new("tools/quiet", &launched, "reviewer"))
         .unwrap();
     f.store
         .verdict("tools/quiet", &rev, "approve", "all clear")
@@ -601,11 +602,11 @@ fn due_ticks_probe_once_and_idle_cursor_changes_do_not_probe() {
         .query(
             "UPDATE type::record('callback_state', $handle) SET host = $host, pull = 0 RETURN NONE;
          UPDATE type::record('callback_lease', $handle) SET pull = 0 RETURN NONE;",
-            json!({"handle":orch,"host":tasks::sys::hostname()}),
+            json!({"handle":orch,"host":sys::hostname()}),
         )
         .unwrap();
     let dispatch = || {
-        let output = tasks::sys::output(
+        let output = sys::output(
             Command::new(env!("CARGO_BIN_EXE_tasks"))
                 .args([
                     "callback",
@@ -1145,10 +1146,9 @@ fn a_legacy_upgrade_baselines_once_across_older_seen_writes_and_keeps_retries() 
         if pending {
             assert!(!f.store.send_agent(&exe, &orch, "still pending").unwrap());
         }
-        let mut legacy = serde_json::to_value(
-            tasks::cli::attach::observe(&f.store, &orch, "orchestrator").unwrap(),
-        )
-        .unwrap();
+        let mut legacy =
+            serde_json::to_value(cli::attach::observe(&f.store, &orch, "orchestrator").unwrap())
+                .unwrap();
         let object = legacy.as_object_mut().unwrap();
         object.remove("latest_message");
         object.remove("self_created");
@@ -1263,7 +1263,7 @@ fn codex_steering_requires_opt_in_and_preserves_queue_and_retry_without_a_live_d
     std::fs::create_dir_all(&dir).unwrap();
     let directory = CommandDirectory(dir.clone());
     let config = |args: &[&str]| {
-        let output = tasks::sys::output(
+        let output = sys::output(
             Command::new("git")
                 .args(args)
                 .current_dir(&dir)
@@ -1323,7 +1323,7 @@ done
     let path = format!("{}:{}", dir.display(), std::env::var("PATH").unwrap());
     // Initialize the prepared interpreter and the fixture's jq before the transport starts;
     // every delivery below still has the production deadline and exact argument assertions.
-    let ready = tasks::sys::output(
+    let ready = sys::output(
         Command::new(&fake)
             .arg("--fixture-ready")
             .env("PATH", &path),
@@ -1361,7 +1361,7 @@ done
         command
     };
     let run = |state: &str, args: &[&str]| {
-        let output = tasks::sys::output(&mut command(state, args)).unwrap();
+        let output = sys::output(&mut command(state, args)).unwrap();
         assert!(
             output.status.success(),
             "{}",
@@ -1450,8 +1450,8 @@ done
         "stdout-held",
         &["agent-send", &worker, "inherited stdout", "--as", &sender],
     )
-    .stdout(tasks::sys::Stdio::null())
-    .stderr(tasks::sys::Stdio::null())
+    .stdout(sys::Stdio::null())
+    .stderr(sys::Stdio::null())
     .spawn()
     .unwrap();
     let began = std::time::Instant::now();

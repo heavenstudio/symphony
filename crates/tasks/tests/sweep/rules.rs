@@ -10,9 +10,10 @@ use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::time::SystemTime;
-use tasks::health::LIVE_SECONDS;
-use tasks::rows::SessionRow;
-use tasks::sweep::process;
+use symphony_board::health::LIVE_SECONDS;
+use symphony_board::rows::SessionRow;
+use symphony_board::sweep::process;
+use symphony_board::{NewLaunch, NewSession, sweep, sys};
 
 const LIVE: [&str; 6] = [
     "concept",
@@ -501,7 +502,7 @@ fn an_owner_verdict_no_commit_has_keeps_a_merged_worktree_and_says_why() {
         result.spared
     );
     git(&wt, &["commit", "-qam", "verdict"]); // committed, the line no longer keeps it here
-    assert!(tasks::sweep::git::owner_lines_left(&wt).is_empty());
+    assert!(sweep::git::owner_lines_left(&wt).is_empty());
 }
 
 #[test]
@@ -509,7 +510,7 @@ fn foreign_worktree_reads_preserve_stale_merged_and_unmerged_indexes() {
     use std::fs;
     use std::io::Write;
     use std::time::Duration;
-    use tasks::sys::Command;
+    use symphony_board::sys::Command;
 
     let r = Repo::new();
     write(&r.root, "docs/OWNER.md", "# Owner\n");
@@ -558,7 +559,7 @@ fn foreign_worktree_reads_preserve_stale_merged_and_unmerged_indexes() {
         let before = fs::read(&index).unwrap();
         let modified = fs::metadata(&index).unwrap().modified().unwrap();
 
-        assert_eq!(tasks::sweep::git::owner_lines_left(&wt), ["docs/OWNER.md"]);
+        assert_eq!(sweep::git::owner_lines_left(&wt), ["docs/OWNER.md"]);
         assert_eq!(
             fs::read(&index).unwrap(),
             before,
@@ -569,7 +570,7 @@ fn foreign_worktree_reads_preserve_stale_merged_and_unmerged_indexes() {
         if unmerged {
             expected.insert(0, "docs/CONFLICT.md");
         }
-        assert_eq!(tasks::sweep::git::left_behind(&wt, false), expected);
+        assert_eq!(sweep::git::left_behind(&wt, false), expected);
         assert_eq!(
             fs::read(&index).unwrap(),
             before,
@@ -1015,18 +1016,18 @@ fn a_session_or_launch_registered_during_the_sweep_keeps_its_tree() {
             o.pause = at(stage, &wt, move || {
                 let place = if binding == "session" { &there } else { &root };
                 let handle = store
-                    .register(&tasks::NewSession {
+                    .register(&NewSession {
                         worktree: place.to_string_lossy().into_owned(),
-                        ..tasks::NewSession::new("worker")
+                        ..NewSession::new("worker")
                     })
                     .unwrap()
                     .row
                     .handle;
                 if binding == "launch" {
                     store
-                        .record_launch(&tasks::NewLaunch {
+                        .record_launch(&NewLaunch {
                             worktree: there.to_string_lossy().into_owned(),
-                            ..tasks::NewLaunch::new("sim/starting", &handle, "executor")
+                            ..NewLaunch::new("sim/starting", &handle, "executor")
                         })
                         .unwrap();
                 }
@@ -1144,9 +1145,9 @@ fn a_detached_agent_bound_just_before_ref_deletion_keeps_its_ref() {
         o.pause = Box::new(move |stage, name| {
             if stage == "delete" && name == "worktree-agent-starting" {
                 let handle = store
-                    .register(&tasks::NewSession {
+                    .register(&NewSession {
                         worktree: root.to_string_lossy().into_owned(),
-                        ..tasks::NewSession::new("reviewer")
+                        ..NewSession::new("reviewer")
                     })
                     .unwrap()
                     .row
@@ -1221,9 +1222,9 @@ fn an_agents_tree_recreated_after_removal_keeps_its_ref() {
                     ],
                 );
                 let handle = store
-                    .register(&tasks::NewSession {
+                    .register(&NewSession {
                         worktree: root.to_string_lossy().into_owned(),
-                        ..tasks::NewSession::new("reviewer")
+                        ..NewSession::new("reviewer")
                     })
                     .unwrap()
                     .row
@@ -1335,12 +1336,8 @@ fn head_and_its_branch_stay_locked_during_the_final_process_probe_and_release_af
                     vec!["update-ref", "HEAD", &attempted],
                     vec!["symbolic-ref", "HEAD", "refs/heads/other"],
                 ] {
-                    let done = tasks::sys::output(
-                        tasks::sys::Command::new("git")
-                            .args(&args)
-                            .current_dir(path),
-                    )
-                    .unwrap();
+                    let done = sys::output(sys::Command::new("git").args(&args).current_dir(path))
+                        .unwrap();
                     assert!(
                         !done.status.success(),
                         "writer succeeded under removal guard: {args:?}"
@@ -1453,7 +1450,7 @@ fn replacement_worktree_locks_survive_every_dead_lock_release_interval() {
                     if stage == "clock" && times.get() == 2 {
                         replace_clock();
                     }
-                    tasks::sweep::trigger::now()
+                    sweep::trigger::now()
                 });
                 let replace_probe = Rc::clone(&replace);
                 let probes = Cell::new(0);

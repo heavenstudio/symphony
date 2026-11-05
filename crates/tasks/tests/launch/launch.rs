@@ -7,9 +7,9 @@ use serde_json::{Value, json};
 use std::cell::Cell;
 use std::fs;
 use std::path::Path;
-use tasks::Error;
-use tasks::launch::herdr::Herdr;
-use tasks::launch::{Ask, LaunchError, PROMPT_ENTERS, PROMPT_WAIT, START_TRIES};
+use symphony_board::Error;
+use symphony_board::launch::herdr::Herdr;
+use symphony_board::launch::{Ask, LaunchError, PROMPT_ENTERS, PROMPT_WAIT, START_TRIES};
 
 fn flag_value<'a>(call: &'a [String], flag: &str) -> &'a str {
     let at = call
@@ -239,7 +239,7 @@ fn codex_is_the_default_and_records_the_conversation_from_the_prompt_check() {
             model: model.into(),
             ..w.ask("sim/jump")
         };
-        let s = tasks::launch::launch(w.store(), &herdr, &w.machine(), &ask)
+        let s = symphony_board::launch::launch(w.store(), &herdr, &w.machine(), &ask)
             .unwrap()
             .row;
         assert_eq!(s.claude_session, "codex:codex-conversation");
@@ -337,7 +337,7 @@ fn failed_startup_keys_reap_the_pending_cli_and_leave_no_launch_or_prompt() {
     let why = w.try_launch(&w.ask("sim/jump")).unwrap_err().to_string();
     assert!(why.contains("herdr pane send-keys failed"), "{why}");
     let pid: i64 = std::fs::read_to_string(pid_file).unwrap().parse().unwrap();
-    assert!(!tasks::sys::pid_alive(pid));
+    assert!(!symphony_board::sys::pid_alive(pid));
     assert_eq!(w.calls_of(&["agent", "start"]).len(), 1);
     assert!(w.calls_of(&["agent", "prompt"]).is_empty());
     assert!(w.store().task_sessions("sim/jump").unwrap().is_empty());
@@ -579,9 +579,9 @@ fn a_regular_subtask_owns_its_branch_even_while_the_parent_is_checked_out() {
         .row;
     assert_eq!(parent.branch, "sim/jump-root");
     w.store()
-        .create(&tasks::NewTask {
+        .create(&symphony_board::NewTask {
             parent: Some("sim/jump".into()),
-            ..tasks::NewTask::new("sim/jump/build", "Build", "owner")
+            ..symphony_board::NewTask::new("sim/jump/build", "Build", "owner")
         })
         .unwrap();
     let s = w.launch("sim/jump/build").row;
@@ -925,12 +925,12 @@ fn a_prompt_left_in_the_input_line_is_sent_with_enter() {
 }
 
 /// A launch of `sim/jump` through `herdr`.
-fn launch_through(w: &World, herdr: &Hooked<'_>) -> tasks::launch::Started {
-    tasks::launch::launch(w.store(), herdr, &w.machine(), &w.ask("sim/jump")).unwrap()
+fn launch_through(w: &World, herdr: &Hooked<'_>) -> symphony_board::launch::Started {
+    symphony_board::launch::launch(w.store(), herdr, &w.machine(), &w.ask("sim/jump")).unwrap()
 }
 
 /// A failed confirmation must undo every resource the new launch owned.
-fn refused_launch(w: &World, result: Result<tasks::launch::Started, Error>) -> String {
+fn refused_launch(w: &World, result: Result<symphony_board::launch::Started, Error>) -> String {
     let why = refused(result);
     let [start] = <[_; 1]>::try_from(w.calls_of(&["agent", "start"])).unwrap();
     let pane = flag_value(&start, "--pane").to_string();
@@ -971,7 +971,7 @@ fn a_prompt_still_there_after_the_last_enter_refuses_the_launch_and_cleans_up() 
     };
     let pane = refused_launch(
         &w,
-        tasks::launch::launch(w.store(), &herdr, &w.machine(), &w.ask("sim/jump")),
+        symphony_board::launch::launch(w.store(), &herdr, &w.machine(), &w.ask("sim/jump")),
     );
     assert_eq!(enters.get(), PROMPT_ENTERS);
     assert_eq!(
@@ -1032,7 +1032,7 @@ fn missing_prompt_text_or_unreadable_observations_cannot_confirm_either_agent() 
             };
             refused_launch(
                 &w,
-                tasks::launch::launch(w.store(), &herdr, &w.machine(), &ask),
+                symphony_board::launch::launch(w.store(), &herdr, &w.machine(), &ask),
             );
             assert_eq!(w.calls_of(&["agent", "prompt"]).len(), 1, "{kind}: {fail}");
             assert_eq!(
@@ -1104,7 +1104,7 @@ fn delayed_activity_after_ambiguous_looks_confirms_the_launch_without_another_en
                 prompt: "a long reviewer prompt that wraps beyond twelve lines ".repeat(80),
                 ..w.ask("sim/jump")
             };
-            let started = tasks::launch::launch(w.store(), &herdr, &w.machine(), &ask)
+            let started = symphony_board::launch::launch(w.store(), &herdr, &w.machine(), &ask)
                 .unwrap_or_else(|why| panic!("{kind}: {observation}, look {ready}: {why}"));
             assert!(!started.stuck);
             assert!(w.has_pane(&started.row.pane));
@@ -1164,7 +1164,7 @@ fn an_agent_herdr_no_longer_lists_cannot_leave_a_live_launch_record() {
     };
     refused_launch(
         &w,
-        tasks::launch::launch(w.store(), &herdr, &w.machine(), &w.ask("sim/jump")),
+        symphony_board::launch::launch(w.store(), &herdr, &w.machine(), &w.ask("sim/jump")),
     );
     assert_eq!(w.calls_of(&["agent", "list"]).len(), PROMPT_ENTERS + 1);
     assert_eq!(*w.sleeps.borrow(), vec![PROMPT_WAIT; PROMPT_ENTERS + 1]);

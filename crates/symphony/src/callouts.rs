@@ -1,4 +1,4 @@
-//! Review callouts: `> [!dislike] Too many hulls`, open until an agent nests `> > [!resolved] …`.
+//! Review callouts: `> [!dislike] Too many lamps`, open until an agent nests `> > [!resolved] …`.
 
 use crate::register::{CALLOUT, KINDS, NESTED_RESOLVED, QUOTE, is_fence};
 use crate::text::{rstrip, strip};
