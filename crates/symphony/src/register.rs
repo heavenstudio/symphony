@@ -37,12 +37,6 @@ pub(crate) static CALLOUT: LazyLock<Regex> =
 pub(crate) static QUOTE: LazyLock<Regex> = LazyLock::new(|| pattern(r"^{S}*>{S}?(?P<rest>.*)$"));
 pub(crate) static NESTED_RESOLVED: LazyLock<Regex> =
     LazyLock::new(|| pattern(r"(?i)^{S}*>{S}*\[!resolved\]{S}*(?P<text>.*)$"));
-/// A dated line, for the history merge (`commit`); a card's entries are read by `syntax::entries`.
-pub(crate) static ENTRY: LazyLock<Regex> = LazyLock::new(|| {
-    pattern(
-        r"^{S}+\[(?P<ts>\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2})?)\]{S}+(?P<who>owner|agent)(?:{S}+·{S}+(?P<verdict>[a-z]+(?:-[a-z]+)*))?(?:{S}+—{S}*(?P<text>.*))?{S}*$",
-    )
-});
 static TOPIC: LazyLock<Regex> = LazyLock::new(|| pattern(r"^###{S}+(?P<topic>.+?){S}*$"));
 static GROUP_HEADING: LazyLock<Regex> = LazyLock::new(|| pattern(r"^##{S}+(?P<name>.+?){S}*$"));
 pub(crate) static REPLACES: LazyLock<Regex> =
