@@ -21,6 +21,8 @@ use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 use tasks::sys::{Child, Command, Stdio};
 
+mod discovery;
+
 /// The one server's folder in the git common dir.
 pub const FOLDER: &str = "sf-symphony";
 const LEGACY_FOLDER: &str = "sf-docs";
@@ -224,13 +226,11 @@ impl Home {
         self.parse(pid, String::from_utf8_lossy(&out.stdout).trim())
     }
 
-    /// A server of this folder that the record does not name (its starter was killed between its
-    /// answer and its record, or the record was lost): it holds the port, so no other could start.
-    /// The process table is read only while something holds this folder's port or the record's, or
-    /// when the port is the server's own pick; a start or a stop on a free port reads none.
+    /// A server this folder's record does not name. Known free ports need no process table read;
+    /// unknown startup history keeps the recovery scan rather than guessing a server is absent.
     fn unrecorded(&self) -> Option<Running> {
-        let ports = [Some(self.port), self.recorded().map(|running| running.port)];
-        if !ports.contains(&Some(0)) && !ports.into_iter().flatten().any(held) {
+        let (ports, unknown) = self.discovery_ports();
+        if !unknown && !ports.into_iter().any(held) {
             return None;
         }
         let mut ps = Command::new("ps");
@@ -368,7 +368,9 @@ impl Home {
         // Port 0 is the server's to pick: it binds first and says which it got, so nothing else
         // can take a port between a probe and the bind.
         let port = if self.port == 0 {
-            match self.announced(&log, from, pid, &mut child) {
+            match crate::cli::startup("detached server port announcement", || {
+                self.announced(&log, from, pid, &mut child)
+            }) {
                 Some(port) => port,
                 None => {
                     if child.try_wait().ok().flatten().is_none() {
@@ -390,7 +392,9 @@ impl Home {
             pid,
             root: self.root.display().to_string(),
         };
-        if !self.came_up(&running, &mut child) {
+        if !crate::cli::startup("detached server HTTP readiness", || {
+            self.came_up(&running, &mut child)
+        }) {
             if child.try_wait().ok().flatten().is_none() {
                 self.end(running.pid)?;
                 let _ = child.wait();

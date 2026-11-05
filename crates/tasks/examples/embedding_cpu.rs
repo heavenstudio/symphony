@@ -4,6 +4,7 @@ use std::fs;
 use std::path::PathBuf;
 use std::time::Instant;
 use tasks::embedding::{Bge, Embedder, text_hash};
+use tasks::sys::Spawning as _;
 
 fn cpu() -> std::io::Result<f64> {
     let mut time = libc::timespec {
@@ -19,7 +20,7 @@ fn cpu() -> std::io::Result<f64> {
 
 fn load() -> String {
     std::process::Command::new("uptime")
-        .output()
+        .output_locked()
         .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
         .unwrap_or_else(|e| e.to_string())
 }

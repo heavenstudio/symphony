@@ -10,15 +10,15 @@ fn fixture(name: &str) -> String {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
     let reader =
         repository_read::Reader::process(root.clone()).expect("a valid repository audit context");
-    fixture::read(&reader, &root, name).unwrap_or_else(|err| panic!("{name}: {err}"))
+    fixture::read(&reader, &root, name).expect(name)
 }
 
 /// The fixture read into `T` and written back, as JSON values, beside the fixture itself.
 fn round_trip<T: serde::de::DeserializeOwned + serde::Serialize>(name: &str) -> (Value, Value) {
     let text = fixture(name);
-    let typed: T = serde_json::from_str(&text).unwrap_or_else(|err| panic!("{name}: {err}"));
-    let written = serde_json::to_value(&typed).unwrap();
-    (written, serde_json::from_str(&text).unwrap())
+    let typed: T = serde_json::from_str(&text).expect(name);
+    let written = serde_json::to_value(&typed).expect("a wire type serializes");
+    (written, serde_json::from_str(&text).expect(name))
 }
 
 #[test]
@@ -52,7 +52,7 @@ fn an_empty_board_without_a_task_board_reads_and_writes_back_as_the_same_json() 
     let (written, fixture) = round_trip::<Board>("board-empty.json");
     assert_eq!(written, fixture);
     let board: Board = serde_json::from_str(&self::fixture("board-empty.json")).unwrap();
-    assert!(board.next.is_empty());
+    assert_eq!(board.next, Vec::<symphony_api::Card>::new());
     assert_eq!(
         board.counts.tasks, None,
         "a server with no task board sends null"

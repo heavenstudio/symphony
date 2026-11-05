@@ -4,15 +4,15 @@
 //! Also how a child is started and its input and output read ([`Command`], [`output`],
 //! [`spawn_output`], [`spawn_piped`], [`pipe`]): without a fork and through pipes no child another
 //! thread spawns can hold open, from the leaf the cwd scans share ([`process_cwd::spawn`]), and
-//! the lock a std spawn beside them takes ([`spawning`]); and a TCP connection no spawn copies
-//! ([`connect`]).
+//! the lock a std spawn beside them takes ([`spawning`], [`Spawning`]); and a TCP connection no
+//! spawn copies ([`connect`]).
 
 use std::ffi::{c_char, c_int, c_long};
 use std::fs::File;
 
 pub use process_cwd::spawn::{
-    Child, Command, Stdio, connect, output, pipe, set_nonblocking, spawn_output, spawn_piped,
-    spawning, wait_output,
+    Child, Command, Spawning, Stdio, connect, output, pipe, set_nonblocking, spawn_output,
+    spawn_piped, spawning, wait_output,
 };
 
 unsafe extern "C" {
@@ -156,6 +156,68 @@ mod tests {
         let pid = i64::from(child.id());
         child.wait().unwrap();
         assert!(!pid_alive(pid));
+    }
+
+    /// Children killed and reaped however the test ends.
+    struct Racers(Vec<std::process::Child>);
+
+    impl Drop for Racers {
+        fn drop(&mut self) {
+            for racer in &mut self.0 {
+                let _ = racer.kill();
+                let _ = racer.wait();
+            }
+        }
+    }
+
+    /// The board's long std children, each spawned under the helpers' lock ([`Spawning`]), keep
+    /// none of the pipes made beside them: an answer ends with its child, and a piped child's input
+    /// refuses a write once it ends, while every racer still lives.
+    #[test]
+    fn std_spawns_racing_the_helpers_hold_none_of_their_pipes() {
+        use std::io::Write as _;
+        use std::sync::atomic::{AtomicBool, Ordering};
+        let spawned = AtomicBool::new(false);
+        std::thread::scope(|scope| {
+            let racers = scope.spawn(|| {
+                let racers = Racers(
+                    (0..32)
+                        .map(|_| {
+                            std::process::Command::new("sleep")
+                                .arg("60")
+                                .stdin(std::process::Stdio::null())
+                                .stdout(std::process::Stdio::null())
+                                .stderr(std::process::Stdio::null())
+                                .spawn_locked()
+                                .unwrap()
+                        })
+                        .collect(),
+                );
+                spawned.store(true, Ordering::Relaxed);
+                racers
+            });
+            let mut answers = 0;
+            while !spawned.load(Ordering::Relaxed) {
+                let mut child = spawn_piped(&mut Command::new("true")).unwrap();
+                let mut input = child.stdin.take().unwrap();
+                assert!(child.wait().unwrap().success());
+                let refused = input.write_all(b"unread").unwrap_err();
+                assert_eq!(
+                    refused.kind(),
+                    std::io::ErrorKind::BrokenPipe,
+                    "answer {answers}"
+                );
+                let done = output(Command::new("/bin/echo").arg("answer")).unwrap();
+                assert_eq!(done.stdout, b"answer\n");
+                answers += 1;
+            }
+            let mut racers = racers.join().unwrap();
+            // A wait some racer held would have ended only with that racer, 60 s on.
+            for racer in &mut racers.0 {
+                assert!(racer.try_wait().unwrap().is_none(), "a racer ended first");
+            }
+            assert!(answers > 0, "no answer was waited for beside the spawns");
+        });
     }
 
     #[test]

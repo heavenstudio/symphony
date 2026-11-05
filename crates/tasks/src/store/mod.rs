@@ -14,7 +14,6 @@ use crate::rows::{Dump, LinkRow, MessageRow, RoleRow, SessionRow, TaskRow};
 use crate::rpc::{Client, DbError};
 use crate::schema;
 use serde::Deserialize;
-use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt;
@@ -32,6 +31,7 @@ mod launches;
 mod messages;
 pub(crate) mod search;
 mod sessions;
+mod transaction;
 mod work;
 
 pub use callbacks::Callback;
@@ -872,49 +872,6 @@ impl Store {
         (read, vars)
     }
 
-    /// `body`'s statements in one transaction; the last of them is a `RETURN` of the answer. A null
-    /// among `vars` is left out, so it reads as NONE: SurrealDB's NULL is a value an `option` field
-    /// refuses, and that is never equal to NONE.
-    #[track_caller]
-    fn transact<T: DeserializeOwned>(&self, body: &str, vars: Value) -> Result<T, Failure> {
-        self.transact_dispatch(body, vars, true)
-    }
-
-    /// A task write returns recipient presence in its snapshot and dispatches after decoding it.
-    /// Other writes keep the normal post-commit dispatch path.
-    #[track_caller]
-    fn transact_dispatch<T: DeserializeOwned>(
-        &self,
-        body: &str,
-        mut vars: Value,
-        dispatch: bool,
-    ) -> Result<T, Failure> {
-        unset_nulls(&mut vars);
-        let results = self.client.query(
-            &format!("BEGIN TRANSACTION;\n{body}\nCOMMIT TRANSACTION;"),
-            vars,
-        )?;
-        // The write has committed. Delivery failure must never turn it into a failed write that a
-        // caller might repeat. The shared server also drains this durable outbox after a crash.
-        if dispatch
-            && body.contains("CREATE type::record('message',")
-            && let Err(error) = self.dispatch_callbacks()
-        {
-            eprintln!("CALLBACK deferred: {error}");
-        }
-        let answer = results
-            .len()
-            .checked_sub(2)
-            .and_then(|last| results.into_iter().nth(last));
-        let answer = answer
-            .ok_or_else(|| Failure::Stop(Error::Db("a transaction gave no answer".into())))?;
-        serde_json::from_value(answer).map_err(|e| {
-            Failure::Stop(Error::Db(format!(
-                "an answer not in the board's shape: {e}"
-            )))
-        })
-    }
-
     fn retrying<T>(&self, mut once: impl FnMut() -> Result<T, Failure>) -> Result<T, Error> {
         let began = Instant::now();
         let mut attempt = 0;
@@ -1383,17 +1340,6 @@ LET $ts = $counted.ts;
 CREATE type::record('message', [{slug}, $sid]) SET sid = $sid, slug = {slug}, sender = {sender}, recipient = {recipient},
     kind = {kind}, text = {text}, ts = $ts RETURN NONE;"
     )
-}
-
-fn unset_nulls(value: &mut Value) {
-    match value {
-        Value::Object(fields) => {
-            fields.retain(|_, field| !field.is_null());
-            fields.values_mut().for_each(unset_nulls);
-        }
-        Value::Array(items) => items.iter_mut().for_each(unset_nulls),
-        _ => {}
-    }
 }
 
 fn message(row: MessageRow) -> Message {
