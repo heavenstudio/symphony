@@ -728,7 +728,13 @@ fn installations_and_stand_ins_link_the_files_setup_ran() {
     let image = f.home.join("bin/symphony-server");
     assert_eq!(resolved(&image), resolved(first_run::server_image()));
     let driver = resolved(&f.root.join("tools/rs-bin.sh"));
-    assert!(!driver.starts_with(&f.dir), "{}", driver.display());
+    // Not the compile output rustc writes in the logs folder, but the machine copy of its bytes:
+    // the one file machine_copy hands out for them under the compile's name, already run.
+    let logs = f.dir.parent().unwrap();
+    assert!(!driver.starts_with(logs), "{}", driver.display());
+    let bytes = f.dir.join("reload-driver");
+    fs::copy(&driver, &bytes).unwrap();
+    assert_eq!(resolved(&first_run::stand_in(&bytes)), driver);
     for name in ["just", "ps", "tailscale"] {
         assert_eq!(resolved(&f.dir.join("bin").join(name)), driver, "{name}");
     }
