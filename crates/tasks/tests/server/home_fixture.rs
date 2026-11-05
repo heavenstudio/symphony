@@ -5,7 +5,8 @@
 //! takes for its server, rather than about SurrealDB, starts this instead, so the case waits on
 //! that server's own listener, not on a SurrealDB start or shutdown that load stretches.
 
-use crate::common::{answer_healthy, event_of, script};
+use crate::common::{answer_healthy, script};
+use crate::helper::{answer, event_of};
 use std::io::Read;
 use std::net::{SocketAddr, TcpListener, TcpStream, UdpSocket};
 use std::path::{Path, PathBuf};
@@ -169,7 +170,7 @@ fn helper_unresponsive() {
                 drop(connection);
             }
         });
-        events.send(format!("READY {addr}").as_bytes()).unwrap();
+        answer(events, format!("READY {addr}").as_bytes());
         let mut byte = [0];
         assert_eq!(std::io::stdin().read(&mut byte).unwrap(), 0);
         stopping.store(true, Ordering::SeqCst);

@@ -6,7 +6,7 @@
 
 use std::convert::Infallible;
 use std::io::{Read, Write};
-use std::net::{SocketAddr, TcpListener, TcpStream, UdpSocket};
+use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::ExitStatus;
 use std::sync::OnceLock;
@@ -216,131 +216,6 @@ impl Drop for Scratch {
 
 pub fn exists(path: &Path) -> bool {
     path.try_exists().unwrap()
-}
-
-/// How long [`event_of`] reads before it looks at its helper again.
-const LOOK: Duration = Duration::from_millis(50);
-
-/// The next datagram on `events`, written into `message`: its size; or, once `helper` has exited
-/// without sending one, how it ended. A helper process says it is ready with that datagram, and
-/// load can stretch its start past any wall-clock bound, so a live helper is waited on for as long
-/// as it lives, while one that exits first (a panic, a refused start, a signal) ends the wait at
-/// once. A datagram it sent before it exited is still its answer. Leaves `events` blocking, with no
-/// read timeout.
-pub fn event_of(
-    events: &UdpSocket,
-    helper: &mut Child,
-    message: &mut [u8],
-) -> Result<usize, String> {
-    use std::io::ErrorKind::{TimedOut, WouldBlock};
-    let pid = helper.id();
-    let got = loop {
-        if let Some(status) = helper.try_wait().unwrap() {
-            events.set_nonblocking(true).unwrap();
-            break match events.recv(message) {
-                Ok(size) => Ok(size),
-                Err(error) if error.kind() == WouldBlock => {
-                    Err(format!("helper {pid} exited before it answered: {status}"))
-                }
-                Err(error) => Err(format!("receiving helper {pid}'s datagram: {error}")),
-            };
-        }
-        events.set_read_timeout(Some(LOOK)).unwrap();
-        match events.recv(message) {
-            Ok(size) => break Ok(size),
-            Err(error) if matches!(error.kind(), WouldBlock | TimedOut) => {}
-            Err(error) => break Err(format!("receiving helper {pid}'s datagram: {error}")),
-        }
-    };
-    events.set_nonblocking(false).unwrap();
-    events.set_read_timeout(None).unwrap();
-    got
-}
-
-/// A stand-in helper for [`event_of`]: `cat`, alive until its input is dropped, saying nothing.
-fn quiet_helper() -> Child {
-    crate::store::spawn_with_input(
-        Command::new("cat")
-            .stdout(Stdio::null())
-            .stderr(Stdio::null()),
-    )
-    .unwrap()
-}
-
-#[test]
-fn a_live_helper_that_never_answers_is_waited_on_until_it_ends_and_its_end_is_named() {
-    let events = UdpSocket::bind("127.0.0.1:0").unwrap();
-    let mut helper = quiet_helper();
-    let pid = i64::from(helper.id());
-    let patience = Duration::from_secs(1);
-    let began = Instant::now();
-    // Twenty looks pass with the helper alive and silent; only its end stops the wait.
-    let killer = std::thread::spawn(move || {
-        std::thread::sleep(patience);
-        signal(pid, "KILL");
-    });
-    let why = event_of(&events, &mut helper, &mut [0; 64]).unwrap_err();
-    killer.join().unwrap();
-    assert!(began.elapsed() >= patience, "{:?}", began.elapsed());
-    assert!(why.contains(&format!("helper {pid} exited")), "{why}");
-    assert!(why.contains("signal: 9"), "{why}");
-}
-
-#[test]
-fn a_helper_that_exits_before_it_answers_fails_the_wait_naming_its_exit() {
-    let events = UdpSocket::bind("127.0.0.1:0").unwrap();
-    let mut helper = Command::new("sh")
-        .args(["-c", "exit 3"])
-        .stdin(Stdio::null())
-        .spawn()
-        .unwrap();
-    let why = event_of(&events, &mut helper, &mut [0; 64]).unwrap_err();
-    assert_eq!(
-        why,
-        format!(
-            "helper {} exited before it answered: exit status: 3",
-            helper.id()
-        )
-    );
-}
-
-#[test]
-fn a_helper_that_answers_late_is_heard_and_left_running() {
-    let events = UdpSocket::bind("127.0.0.1:0").unwrap();
-    let to = events.local_addr().unwrap();
-    let mut helper = quiet_helper();
-    let answer = std::thread::spawn(move || {
-        std::thread::sleep(LOOK * 10);
-        let from = UdpSocket::bind("127.0.0.1:0").unwrap();
-        from.send_to(b"ready", to).unwrap();
-    });
-    let mut message = [0; 64];
-    let size = event_of(&events, &mut helper, &mut message).unwrap();
-    answer.join().unwrap();
-    assert_eq!(&message[..size], b"ready");
-    assert!(
-        helper.try_wait().unwrap().is_none(),
-        "the helper still runs"
-    );
-    assert_eq!(events.read_timeout().unwrap(), None);
-    drop(helper.stdin.take());
-    assert!(helper.wait().unwrap().success());
-}
-
-#[test]
-fn an_answer_sent_before_the_helper_exited_is_still_its_answer() {
-    let events = UdpSocket::bind("127.0.0.1:0").unwrap();
-    let mut helper = quiet_helper();
-    UdpSocket::bind("127.0.0.1:0")
-        .unwrap()
-        .send_to(b"ready", events.local_addr().unwrap())
-        .unwrap();
-    drop(helper.stdin.take());
-    assert!(helper.wait().unwrap().success());
-    let mut message = [0; 64];
-    let size = event_of(&events, &mut helper, &mut message).unwrap();
-    assert_eq!(&message[..size], b"ready");
-    assert_eq!(events.read_timeout().unwrap(), None);
 }
 
 /// Installs `body` behind the prepared shell image and checks that it exits with no arguments,

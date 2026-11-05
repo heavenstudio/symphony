@@ -2,7 +2,8 @@
 //! the move, on disk) in a repository's git dir, reached from the repository as every agent reaches
 //! them, with no `TASKS_*` variable naming either.
 
-use crate::common::{GuardedSurreal, Scratch, command_of, event_of, gone, signal};
+use crate::common::{GuardedSurreal, Scratch, command_of, gone, signal};
+use crate::helper::{answer, event_of};
 use crate::sqlite;
 use std::fs;
 use std::io::{Read, Write};
@@ -308,7 +309,7 @@ fn helper_fixture_process() {
         // slot, as real fixture descendants do; the outer test never owns a copy of its lock.
         // SAFETY: F_SETFD is 2 on both supported systems, and this process owns the descriptor.
         assert_eq!(unsafe { fcntl(file.as_raw_fd(), 2, 0) }, 0);
-        events.send(b"locked").unwrap();
+        answer(&events, b"locked");
         let mut go = [0];
         std::io::stdin().read_exact(&mut go).unwrap();
         assert_eq!(&go, b"g");
@@ -316,9 +317,7 @@ fn helper_fixture_process() {
     });
     let hold = |dir: &Path, data: String, running: Running| {
         drop(slot);
-        events
-            .send(&serde_json::to_vec(&(dir, data, running)).unwrap())
-            .unwrap();
+        answer(&events, &serde_json::to_vec(&(dir, data, running)).unwrap());
         let mut byte = [0];
         assert_eq!(std::io::stdin().read(&mut byte).unwrap(), 0);
     };
