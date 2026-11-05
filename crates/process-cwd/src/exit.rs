@@ -38,24 +38,37 @@ struct Watched {
     waker: Option<Waker>,
 }
 
+/// The shared state, poisoned or not. A poisoned state is still one the guard and the future may
+/// act on: each holder's writes are single field assignments that cannot panic midway, and the
+/// one that reaps sets `over` in the statement after its reap, before anything else, so no
+/// state ever says unreaped of a reaped child. A panic elsewhere under the lock leaves at worst
+/// an answer not yet stored, which a poll waits for and a drop never needs.
 fn lock(watched: &Mutex<Watched>) -> MutexGuard<'_, Watched> {
     watched.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
 impl Exit {
     /// `child`'s end, its input closed first as std's `wait` closes it. Its output pipes, if it
-    /// has any, are kept with it until it ends: take them first to read them. Fails only when no
-    /// thread can be started to wait on it; the child is then killed and reaped before the error.
+    /// has any, are kept with it until it ends: take them first to read them. A child already
+    /// waited for, or that has ended, answers its status at once, and its pid is never asked or
+    /// signalled. Fails only when no thread can be started to wait on it; the child is then
+    /// killed and reaped before the error.
     pub fn of(mut child: Child) -> io::Result<Self> {
         drop(child.stdin.take());
         let pid = child.id();
+        // The child's own cached end first: once reaped, its pid may already be another's.
+        let ended = child.try_wait();
+        let over = !matches!(ended, Ok(None));
         let watched = Arc::new(Mutex::new(Watched {
             child,
-            over: false,
-            outcome: None,
+            over,
+            outcome: ended.transpose(),
             answered: false,
             waker: None,
         }));
+        if over {
+            return Ok(Self { watched });
+        }
         let watching = Arc::clone(&watched);
         let started = std::thread::Builder::new()
             .name("child exit".into())
@@ -76,16 +89,13 @@ fn watch(watched: &Mutex<Watched>, pid: u32) {
     let ended = ended(pid);
     let waker = {
         let mut held = lock(watched);
-        let reaped = match ended {
-            Ok(()) => held.child.try_wait().and_then(|status| {
-                status.ok_or_else(|| {
-                    io::Error::other(format!("child {pid} ended but could not be reaped"))
-                })
-            }),
-            Err(error) => Err(error),
-        };
-        held.outcome = Some(reaped);
+        let reaped = ended.and_then(|()| held.child.try_wait());
         held.over = true;
+        held.outcome = Some(reaped.and_then(|status| {
+            status.ok_or_else(|| {
+                io::Error::other(format!("child {pid} ended but could not be reaped"))
+            })
+        }));
         held.waker.take()
     };
     if let Some(waker) = waker {
@@ -238,6 +248,38 @@ mod tests {
         );
         // Answered, so over: the drop sends nothing to a pid that is no longer this child's.
         assert!(lock(&exit.watched).over);
+    }
+
+    /// A child whose end its owner already has answers that end on the first poll, from its cache:
+    /// its pid, perhaps another process's by then, is never waited on or signalled.
+    #[test]
+    fn a_child_already_waited_for_answers_its_cached_status_at_once() {
+        let waited = |code: i32| {
+            Command::new("/bin/sh")
+                .args(["-c", &format!("exit {code}")])
+                .spawn()
+                .unwrap()
+        };
+        let mut by_wait = waited(7);
+        assert_eq!(by_wait.wait().unwrap().code(), Some(7));
+        let mut by_try = waited(9);
+        let began = Instant::now();
+        while by_try.try_wait().unwrap().is_none() {
+            assert!(began.elapsed() < Duration::from_secs(30), "never ended");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        for (child, code) in [(by_wait, 7), (by_try, 9)] {
+            let mut exit = Exit::of(child).unwrap();
+            assert!(
+                lock(&exit.watched).over,
+                "{code}: its pid is not this child's"
+            );
+            let answered = poll(&mut exit, &unpark());
+            assert!(
+                matches!(&answered, Poll::Ready(Ok(status)) if status.code() == Some(code)),
+                "{code}: {answered:?}"
+            );
+        }
     }
 
     #[test]
