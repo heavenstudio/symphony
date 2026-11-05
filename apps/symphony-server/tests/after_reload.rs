@@ -14,6 +14,8 @@ use symphony_board::port::Start;
 use symphony_board::sys::{Child, Command};
 use symphony_board::{Store, port, rpc, sys};
 
+#[path = "after_reload/first_run.rs"]
+mod first_run;
 #[path = "after_reload/gate.rs"]
 mod gate;
 #[path = "after_reload/lines.rs"]
@@ -71,10 +73,16 @@ impl Drop for OwnedChild {
 
 /// This native fixture stands at the compiler/generator boundary, never at the HTTP or persistence
 /// boundary. It executes the actual server after the startup handshake. No script files are made.
+/// The stand-ins run the machine's copy of its bytes, already run (`first_run::stand_in`).
 fn driver(logs: &Path) -> &'static Path {
     static DRIVER: OnceLock<PathBuf> = OnceLock::new();
     DRIVER.get_or_init(|| {
-        let output = logs.join(format!("reload-driver-{}", std::process::id()));
+        // The linker names its signature after the output file, so one name for every compile
+        // gives an unchanged source the same bytes, and every run the same machine copy. The
+        // folder's name is one no earlier run's driver file took.
+        let folder = logs.join(format!("reload-driver-build-{}", std::process::id()));
+        fs::create_dir_all(&folder).unwrap();
+        let output = folder.join("reload-driver");
         // rustc reads the whole source before it says anything, so the source is written first.
         let mut compiler = OwnedChild(
             sys::spawn_piped(
@@ -110,7 +118,9 @@ fn driver(logs: &Path) -> &'static Path {
             compiler.0.wait().unwrap().success(),
             "driver compile: {diagnostic}"
         );
-        output
+        let copy = first_run::stand_in(&output);
+        fs::remove_dir_all(&folder).unwrap();
+        copy
     })
 }
 
@@ -153,7 +163,10 @@ fn main() {
             assert_eq!(action, "install");
             let home = PathBuf::from(args.last().unwrap());
             let next = home.join("bin/next");
-            fs::copy(env::current_exe().unwrap(), &next).unwrap();
+            // A link to this driver, already run: a copy would be a new file, its first run the
+            // replacement's, inside the case's startup wait.
+            let _ = fs::remove_file(&next);
+            std::os::unix::fs::symlink(env::current_exe().unwrap().canonicalize().unwrap(), &next).unwrap();
             fs::rename(next, home.join("bin/symphony-server")).unwrap();
         }
         Some("serve") => {
@@ -322,11 +335,9 @@ impl Fixture {
         let home = dir.join("installation");
         fs::create_dir_all(home.join("bin")).unwrap();
         fs::create_dir(dir.join("tmp")).unwrap();
-        fs::copy(
-            env!("CARGO_BIN_EXE_symphony-server"),
-            home.join("bin/symphony-server"),
-        )
-        .unwrap();
+        // A link, as a copy would be a new file whose first run is this case's start.
+        std::os::unix::fs::symlink(first_run::server_image(), home.join("bin/symphony-server"))
+            .unwrap();
         let fingerprint = symphony::reload::fingerprint(&root).unwrap();
         let binary: String = Sha256::digest(fs::read(home.join("bin/symphony-server")).unwrap())
             .iter()
@@ -463,7 +474,7 @@ impl Fixture {
         let mut command = Command::new(if installed {
             self.home.join("bin/symphony-server")
         } else {
-            env!("CARGO_BIN_EXE_symphony-server").into()
+            first_run::server_image().into()
         });
         for (key, _) in std::env::vars_os() {
             let name = key.to_string_lossy();
@@ -494,10 +505,7 @@ impl Fixture {
             .env("SF_AFTER_RELOAD_CENSUS", self.dir.join("census-read"))
             .env("SF_AFTER_RELOAD_COMMANDS", self.dir.join("commands.log"))
             .env("SF_AFTER_RELOAD_ROOT", &self.root)
-            .env(
-                "SF_AFTER_RELOAD_SERVER",
-                env!("CARGO_BIN_EXE_symphony-server"),
-            )
+            .env("SF_AFTER_RELOAD_SERVER", first_run::server_image())
             .env("SF_SYMPHONY_TEST_PID", std::process::id().to_string())
             .env("TASKS_SERVER", &self.board_address)
             .env("TASKS_DATABASE", "after_reload")
@@ -708,6 +716,41 @@ fn accepted(address: SocketAddr, route: &str, size: usize) -> TcpStream {
         "the old generation accepted this body"
     );
     stream
+}
+
+/// What a case's waits run is a file setup already ran, never a copy of it made for the case: the
+/// installation links the built image, every stand-in the driver's one copy, and an install links
+/// that copy too (`first_run`).
+#[test]
+fn installations_and_stand_ins_link_the_files_setup_ran() {
+    let f = Fixture::new("first-runs");
+    let resolved = |path: &Path| fs::canonicalize(path).unwrap();
+    let image = f.home.join("bin/symphony-server");
+    assert_eq!(resolved(&image), resolved(first_run::server_image()));
+    let driver = resolved(&f.root.join("tools/rs-bin.sh"));
+    // Not the compile output rustc writes in the logs folder, but the machine copy of its bytes:
+    // the one file machine_copy hands out for them under the compile's name, already run.
+    let logs = f.dir.parent().unwrap();
+    assert!(!driver.starts_with(logs), "{}", driver.display());
+    let bytes = f.dir.join("reload-driver");
+    fs::copy(&driver, &bytes).unwrap();
+    assert_eq!(resolved(&first_run::stand_in(&bytes)), driver);
+    for name in ["just", "ps", "tailscale"] {
+        assert_eq!(resolved(&f.dir.join("bin").join(name)), driver, "{name}");
+    }
+    let mut install = OwnedChild(
+        sys::spawn_output(
+            Command::new(f.root.join("tools/rs-bin.sh"))
+                .args(["sf-slots", "cargo", "install", "--root"])
+                .arg(&f.home)
+                .env("SF_AFTER_RELOAD_GATE", f.gate.path()),
+        )
+        .unwrap(),
+    );
+    f.gate.entered("build").release("install");
+    install.wait();
+    assert_eq!(resolved(&image), driver, "the install links the stand-in");
+    assert!(!f.home.join("bin/next").exists());
 }
 
 #[test]
