@@ -103,6 +103,14 @@ mod tests {
     }
 
     #[test]
+    #[should_panic(expected = "the scan's waiter ended without its end")]
+    fn a_waiter_gone_without_the_scan_end_is_not_a_pass() {
+        let (send, receive) = channel::<Scan>();
+        drop(send);
+        scan_end(&receive);
+    }
+
+    #[test]
     #[should_panic(expected = "ended with 3 in flight")]
     fn a_scan_that_ends_early_fails_with_its_count_and_output() {
         let (send, receive) = channel();
