@@ -108,10 +108,10 @@ fn one_oversees_the_roles_below_what_it_orchestrates_and_its_children() {
         latest_message: 0,
     };
     assert_eq!(
-        overseen(&board, "orch"),
+        overseen(&board, "orch").sessions,
         BTreeSet::from(["deep", "deeper", "kid"])
     );
-    assert_eq!(overseen(&board, "deep"), BTreeSet::new());
+    assert_eq!(overseen(&board, "deep").sessions, BTreeSet::new());
 }
 
 #[test]
@@ -138,8 +138,11 @@ fn a_subtree_another_orchestrator_holds_is_that_ones_to_see() {
             .collect(),
         latest_message: 0,
     };
-    assert_eq!(overseen(&board, "orch"), BTreeSet::from(["mine"]));
-    assert_eq!(overseen(&board, "other"), BTreeSet::from(["theirs"]));
+    assert_eq!(overseen(&board, "orch").sessions, BTreeSet::from(["mine"]));
+    assert_eq!(
+        overseen(&board, "other").sessions,
+        BTreeSet::from(["theirs"])
+    );
     let orch = seen(&board, "orch", "orchestrator");
     // Its own, and the unclaimed task every orchestrator follows; never other's subtree.
     assert_eq!(
@@ -255,4 +258,40 @@ fn with_nothing_launched_herdr_is_not_asked_and_the_watch_forgets() {
         &mut |line| panic!("said {line}"),
     );
     assert_eq!(after, PaneWatch::default());
+}
+
+#[test]
+fn a_blocked_pane_is_said_only_to_the_orchestrator_of_the_task_it_was_launched_for() {
+    let orchestrator = |handle: &str| {
+        let mut session = session(handle, None);
+        session.row.kind = "orchestrator".into();
+        session
+    };
+    // One worker on a's task and on b's, launched for b's.
+    let board = Board {
+        tasks: vec![
+            task(
+                "scratch/a",
+                None,
+                &[("a", "orchestrator"), ("w", "executor")],
+            ),
+            task(
+                "scratch/b",
+                None,
+                &[("b", "orchestrator"), ("w", "executor")],
+            ),
+        ],
+        sessions: vec![orchestrator("a"), orchestrator("b"), session("w", None)],
+        latest_message: 0,
+    };
+    let open = [launched("w", "scratch/b", "w1:p1", "")];
+    let heard = |who: &str| {
+        let panes = Ok(vec![pane("w1:p1", "blocked", "")]);
+        look(&board, who, &open, panes, &PaneWatch::default()).1
+    };
+    let blocked = "BLOCKED w scratch/b w1:p1 — its pane waits on an approval or a question";
+    assert_eq!(
+        [heard("a"), heard("b")],
+        [vec![], vec![blocked.to_string()]]
+    );
 }

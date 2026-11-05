@@ -579,7 +579,7 @@ RETURN NONE;");
         board: &super::Board,
         callbacks: &BTreeMap<String, Callback>,
     ) -> Result<(), Error> {
-        let recipients: Vec<(&Callback, BTreeSet<&str>)> = callbacks
+        let recipients: Vec<(&Callback, attach::Overseen)> = callbacks
             .values()
             .filter(|c| c.host == self.host)
             .map(|c| (c, attach::overseen(board, &c.handle)))

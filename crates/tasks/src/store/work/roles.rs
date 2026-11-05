@@ -120,7 +120,8 @@ impl Store {
             let task = view.task(slug)?;
             let mine = |r: &&RoleRow| r.handle == handle && role.is_none_or(|role| r.role == role);
             let mut change = Change::default();
-            for held in view.snap.roles.iter().filter(mine) {
+            let letting_go = view.snap.roles.iter().filter(mine);
+            for held in letting_go {
                 change.drop(&held.handle, &held.role);
             }
             if change.drop.is_empty() {

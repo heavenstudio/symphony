@@ -69,9 +69,9 @@ pub fn reports_to(owners: &Owners, work: &[&Task], parent: Option<&str>, handle:
         .any(|task| hears(owners, &task.slug, parent, handle))
 }
 
-/// Whether `handle` hears of a quiet session's work on `slug`: that task's orchestrator, or, for a
-/// task nobody orchestrates, the session's `parent`.
-fn hears(owners: &Owners, slug: &str, parent: Option<&str>, handle: &str) -> bool {
+/// Whether `handle` hears of a quiet or waiting session's work on `slug`: that task's orchestrator,
+/// or, for a task nobody orchestrates, the session's `parent`.
+pub fn hears(owners: &Owners, slug: &str, parent: Option<&str>, handle: &str) -> bool {
     let owners = owners.of(slug);
     if owners.is_empty() {
         parent == Some(handle)

@@ -429,7 +429,8 @@ a claimed one's. A post to `@orchestrator`, and a
 verdict, go to the nearest holder still there, passing one gone quiet. A
 session gone stale or lost, or waiting in its pane, is said to the
 orchestrator of the work it holds, its LOST line naming only that
-orchestrator's tasks; a session whose work is nobody's, or who holds none, is
+orchestrator's tasks and its BLOCKED line only a launch for one of them; a
+session whose work is nobody's, or who holds none, is
 said to its parent, as before. The digest's idle sessions leave out the
 children of another orchestrator still there. Another orchestrator's task
 reaches it only in a post to its own handle. `just tasks list --doubled` lists the tasks

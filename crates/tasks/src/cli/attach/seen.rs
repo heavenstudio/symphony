@@ -122,7 +122,8 @@ fn followed<'b>(
     let mut below: HashSet<&str> = HashSet::new();
     let orchestrated =
         |t: &&&Task| (t.roles.iter()).any(|r| r.handle == handle && r.role == "orchestrator");
-    for task in mine.iter().filter(orchestrated) {
+    let orchestrating = mine.iter().filter(orchestrated);
+    for task in orchestrating {
         let mut todo = kids
             .get(&Some(task.slug.as_str()))
             .cloned()
@@ -137,8 +138,11 @@ fn followed<'b>(
     }
     let mut unclaimed: BTreeSet<&str> = BTreeSet::new();
     if orchestrator {
-        let open = (board.tasks.iter()).filter(|t| !FINISHED.contains(&t.status.as_str()));
-        for task in open.filter(|t| owners.of(&t.slug).is_empty()) {
+        let open = |t: &&Task| !FINISHED.contains(&t.status.as_str());
+        let nobodys = (board.tasks.iter())
+            .filter(open)
+            .filter(|t| owners.of(&t.slug).is_empty());
+        for task in nobodys {
             if let Entry::Vacant(entry) = watched.entry(&task.slug) {
                 entry.insert(task);
                 unclaimed.insert(&task.slug);

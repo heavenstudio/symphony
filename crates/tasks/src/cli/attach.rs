@@ -13,7 +13,7 @@ mod seen;
 mod watch;
 
 pub use events::diff;
-pub use panes::{Blocked, PaneWatch, overseen, pane_watch};
+pub use panes::{Blocked, Overseen, PaneWatch, overseen, pane_watch};
 pub use seen::{Seen, observe};
 pub(crate) use seen::{pull_changed, seen};
 pub use watch::{Watch, watch};
