@@ -37,3 +37,36 @@ pub trait Renderer: Send + Sync {
     /// How `file` is drawn on `page`, or why it cannot be, shown in its place.
     fn draw(&self, page: &Page<'_>, file: &File<'_>) -> Result<Drawing, String>;
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct Plain;
+
+    impl Renderer for Plain {
+        fn name(&self) -> &str {
+            "plain"
+        }
+        fn extensions(&self) -> &[&str] {
+            &["plain"]
+        }
+        fn draw(&self, _: &Page<'_>, file: &File<'_>) -> Result<Drawing, String> {
+            Err(format!("{} is plain", file.src))
+        }
+    }
+
+    #[test]
+    fn a_renderer_naming_no_type_serves_its_files_as_bytes() {
+        assert_eq!(Plain.content_type(), "application/octet-stream");
+        let page = Page::new(std::path::Path::new("/project"), "docs/A.md");
+        let file = File {
+            src: "/a.plain",
+            label: "",
+        };
+        assert_eq!(
+            Plain.draw(&page, &file),
+            Err("/a.plain is plain".to_string())
+        );
+    }
+}
