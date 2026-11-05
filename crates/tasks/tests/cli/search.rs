@@ -2,7 +2,7 @@
 
 use crate::{Case, Ran};
 use serde_json::Value;
-use tasks::NewTask;
+use symphony_board::NewTask;
 
 /// What a run printed, for an assertion's message.
 fn said(ran: &Ran) -> String {
@@ -47,7 +47,7 @@ fn embedding_maintenance_validates_session_batch_size_and_task_before_loading_a_
 
 #[test]
 fn embedding_maintenance_reuses_current_chunks_without_loading_a_model_or_requiring_an_agent() {
-    use tasks::embedding::{DIMENSIONS, MODEL_ID, REVISION, text_hash};
+    use symphony_board::embedding::{DIMENSIONS, MODEL_ID, REVISION, text_hash};
     let mut c = Case::new();
     let root = crate::scratch("embedding-maintenance");
     c.env.cwd = crate::repository(&root);
@@ -81,7 +81,7 @@ fn embedding_maintenance_reuses_current_chunks_without_loading_a_model_or_requir
     let key = text_hash(&format!(
         "{}\n{}\n{}",
         store.client().addr(),
-        tasks::NAMESPACE,
+        symphony_board::NAMESPACE,
         store.client().database()
     ));
     let writer = std::fs::OpenOptions::new()
@@ -359,7 +359,11 @@ fn search_caps_query_bytes_and_terms_including_analyzer_boundaries() {
 
 #[test]
 fn search_help_names_query_limits_and_every_status_without_a_board() {
-    let ran = crate::run(&tasks::cli::Env::default(), &["search", "--help"], "");
+    let ran = crate::run(
+        &symphony_board::cli::Env::default(),
+        &["search", "--help"],
+        "",
+    );
     assert_eq!(ran.code, 0);
     assert!(ran.err.is_empty());
     for text in [

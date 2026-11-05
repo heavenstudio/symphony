@@ -36,7 +36,7 @@ fn an_empty_document_has_no_blocks() {
 const CARD: &str = concat!(
     "- [?] **pilot** — Choose the method.\n",
     "  [2026-10-05 10:55] agent — Intro.\n",
-    "  [2026-10-05 12:17] agent — **COA-F01: exports.**\n",
+    "  [2026-10-05 12:17] agent — **SOU-L03: exports.**\n",
     "\n",
     "    | Method | IoU |\n",
     "    |---|---|\n",

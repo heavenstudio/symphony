@@ -1,0 +1,11 @@
+# The docs checks every Symphony project's docs build runs, and the Markdown syntax every reader of
+# the docs shares. Std only, so a build script links it without the Symphony library.
+[package]
+name = "symphony-docs"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true

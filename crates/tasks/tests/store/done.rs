@@ -1,7 +1,7 @@
 //! `done`, which closes an instruction subtask with a note.
 
 use crate::common::{Fixture, Seed, refused, task};
-use tasks::rows::TaskRow;
+use symphony_board::rows::TaskRow;
 
 /// `a`, and under it `a/m`, an instruction subtask in progress that `amber-heron` executes.
 fn instruction() -> Fixture {

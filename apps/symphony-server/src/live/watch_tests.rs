@@ -1,11 +1,11 @@
 //! Watch updates use one backend transaction, with no restart for an unchanged path set.
 
 use super::*;
-use crate::testing::{Tree, repository};
+use crate::testing::{Tree, repository, shelf};
 use notify::{Config, EventHandler, PathsMut, WatcherKind};
 
-/// A project using the plugin that watches the hull models.
-const MANIFEST: &str = "[plugins]\ncrates = [\"star-foundry-symphony\"]\n";
+/// A project using the plugin that watches its shelf.
+const MANIFEST: &str = shelf::MANIFEST;
 
 #[derive(Default)]
 struct Watch {
@@ -68,6 +68,7 @@ impl PathsMut for Update<'_> {
 
 #[test]
 fn watches_are_batched_and_unchanged_inputs_do_not_restart_the_stream() {
+    shelf::install().unwrap();
     let tree = Tree::new();
     let root = repository(&tree);
     tree.write("main/symphony.toml", MANIFEST);
@@ -88,12 +89,12 @@ fn watches_are_batched_and_unchanged_inputs_do_not_restart_the_stream() {
     assert_eq!((watcher.batches, watcher.commits), (1, 1));
 
     std::fs::rename(root.join("docs"), root.join("retired-docs")).unwrap();
-    tree.write("main/view/models/hulls/A.glb", "model");
+    tree.write("main/room/shelf/items/A.item", "item");
     hub.watch(&mut watcher, &mut watched);
     assert_eq!((watcher.batches, watcher.commits), (2, 2));
     assert!(!watcher.active.contains_key(&root.join("docs")));
     assert_eq!(
-        watcher.active[&root.join("view/models")],
+        watcher.active[&root.join("room/shelf")],
         RecursiveMode::Recursive
     );
     assert_eq!(watched, watcher.active.keys().cloned().collect());
@@ -101,6 +102,7 @@ fn watches_are_batched_and_unchanged_inputs_do_not_restart_the_stream() {
 
 #[test]
 fn failed_adds_are_retried_and_a_failed_commit_is_not_marked_watched() {
+    shelf::install().unwrap();
     let tree = Tree::new();
     let root = repository(&tree);
     tree.write("main/symphony.toml", MANIFEST);
@@ -121,20 +123,21 @@ fn failed_adds_are_retried_and_a_failed_commit_is_not_marked_watched() {
     assert!(watcher.active.contains_key(&docs));
     assert_eq!((watcher.batches, watcher.commits), (2, 2));
 
-    tree.write("main/view/models/hulls/A.glb", "model");
+    tree.write("main/room/shelf/items/A.item", "item");
     watcher.fail_commit = true;
     hub.watch(&mut watcher, &mut watched);
     assert!(watched.is_empty());
     watcher.fail_commit = false;
     hub.watch(&mut watcher, &mut watched);
     assert!(watched.contains(&docs));
-    assert!(watched.contains(&root.join("view/models")));
+    assert!(watched.contains(&root.join("room/shelf")));
     assert_eq!(watched, watcher.active.keys().cloned().collect());
     assert_eq!((watcher.batches, watcher.commits), (4, 4));
 }
 
 #[test]
 fn the_watch_follows_the_projects_entrypoints() {
+    shelf::install().unwrap();
     let tree = Tree::new();
     let root = repository(&tree);
     tree.write(
@@ -169,6 +172,7 @@ fn the_watch_follows_the_projects_entrypoints() {
 
 #[test]
 fn gallery_paths_include_input_directories_and_deleted_files_but_not_neighbours() {
+    shelf::install().unwrap();
     let tree = Tree::new();
     tree.write("main/symphony.toml", MANIFEST);
     tree.write(
@@ -178,12 +182,12 @@ fn gallery_paths_include_input_directories_and_deleted_files_but_not_neighbours(
     let (main, plain) = (tree.path("main"), tree.path("main/plain"));
     let roots = [main.clone(), plain.clone()];
     for relative in [
-        "view/models",
-        "view/models/hulls/A.glb",
-        "artifacts/concepts",
-        "artifacts/concepts/redraw/A.png",
-        "docs/data/hull-outlines",
-        "docs/data/hull-outlines/A.notes.json",
+        "room/shelf",
+        "room/shelf/items/A.item",
+        "posters",
+        "posters/redraw/A.png",
+        "docs/labels",
+        "docs/labels/A.notes.json",
     ] {
         assert_eq!(
             watched_root(&roots, &main.join(relative)),
@@ -199,9 +203,9 @@ fn gallery_paths_include_input_directories_and_deleted_files_but_not_neighbours(
     }
     for relative in [
         "docs/TOPIC.md",
-        "view/models-old/A.glb",
-        "artifacts/concepts-other/A.png",
-        "docs/data/hull-outlines-other/A.svg",
+        "room/shelf-old/A.item",
+        "posters-other/A.png",
+        "docs/labels-other/A.svg",
     ] {
         assert_eq!(
             watched_root(&roots, &main.join(relative)),
@@ -213,6 +217,7 @@ fn gallery_paths_include_input_directories_and_deleted_files_but_not_neighbours(
 
 #[test]
 fn a_tree_watches_its_projects_documents_folder_and_what_its_plugins_watch_outside_it() {
+    shelf::install().unwrap();
     let tree = Tree::new();
     let manual = "[project]\nregister = \"manual/DECISIONS.md\"\nartifacts = \"output\"\n\
                   [[entrypoints]]\nurl = \"/docs/\"\nfolder = \"manual\"\nhistory = [\"past\"]\n";
@@ -229,17 +234,12 @@ fn a_tree_watches_its_projects_documents_folder_and_what_its_plugins_watch_outsi
     tree.write("game/symphony.toml", &format!("{manual}{MANIFEST}"));
     assert_eq!(
         below("game"),
-        recursive(&[
-            "manual",
-            "artifacts/concepts",
-            "docs/data/hull-outlines",
-            "view/models"
-        ])
+        recursive(&["manual", "docs/labels", "posters", "room/shelf"])
     );
     // a watched folder inside the documents folder is watched with it
     tree.write("default/symphony.toml", MANIFEST);
     assert_eq!(
         below("default"),
-        recursive(&["docs", "artifacts/concepts", "view/models"])
+        recursive(&["docs", "posters", "room/shelf"])
     );
 }

@@ -9,7 +9,7 @@ use std::os::fd::AsRawFd;
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::Path;
-use tasks::sys::Command;
+use symphony_board::sys::Command;
 
 use crate::test_tree::Tree;
 
@@ -95,7 +95,7 @@ fn a_build_runs_from_the_root_in_a_group_of_its_own_without_the_session_or_conte
         return;
     }
     let tree = Tree::new();
-    let done = tasks::sys::output(
+    let done = symphony_board::sys::output(
         Command::new(std::env::current_exe().unwrap())
             .args([
                 "--exact",

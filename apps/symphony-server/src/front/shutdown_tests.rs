@@ -3,7 +3,7 @@
 use super::*;
 use crate::testing::{Tree, board, entered, fifo, repository};
 use std::io::Write;
-use tasks::sys::Command;
+use symphony_board::sys::Command;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 const TEST: &str =
@@ -54,7 +54,7 @@ exec "$SF_REAL_SQLITE" "$@" <<< "$script"
             false,
         );
         let client = board::client();
-        tasks::Store::open(tasks::rpc::Client::new(
+        symphony_board::Store::open(symphony_board::rpc::Client::new(
             client.addr(),
             "sf",
             client.database(),
@@ -65,7 +65,7 @@ exec "$SF_REAL_SQLITE" "$@" <<< "$script"
                 .chain(std::env::split_paths(&std::env::var_os("PATH").unwrap())),
         )
         .unwrap();
-        let done = tasks::sys::output(
+        let done = symphony_board::sys::output(
             Command::new(std::env::current_exe().unwrap())
                 .args(["--exact", TEST, "--nocapture"])
                 .env(CHILD, &root)

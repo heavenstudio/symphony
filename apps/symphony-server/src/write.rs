@@ -211,8 +211,8 @@ async fn upload(shared: &Arc<Shared>, request: Request) -> Response {
 /// A preview's copied board may hold real pane identities. Only the shared installation
 /// closes sessions and triggers the same detached sweep as the CLI's finished-task path.
 fn finish_cancel(root: &std::path::Path, slug: &str) {
-    match tasks::sys::output(
-        tasks::sys::Command::new(root.join("tools/rs-bin.sh"))
+    match symphony_board::sys::output(
+        symphony_board::sys::Command::new(root.join("tools/rs-bin.sh"))
             .args(["tasks", "finish", slug])
             .current_dir(root)
             .env_remove("TASKS_SESSION")
@@ -245,11 +245,16 @@ fn finish_cancel(root: &std::path::Path, slug: &str) {
         ),
         Err(error) => cancel_failed(root, slug, &format!("could not run tasks finish: {error}")),
     }
-    let mut env = tasks::cli::Env::of_process();
+    let mut env = symphony_board::cli::Env::of_process();
     env.vars.remove("TASKS_SESSION");
     env.vars.remove("HERDR_PANE_ID");
-    if tasks::sweep::trigger::enabled(&env)
-        && !tasks::sweep::trigger::trigger(&env, root, &format!("{slug} is cancelled"), Some(slug))
+    if symphony_board::sweep::trigger::enabled(&env)
+        && !symphony_board::sweep::trigger::trigger(
+            &env,
+            root,
+            &format!("{slug} is cancelled"),
+            Some(slug),
+        )
     {
         cancel_failed(root, slug, "could not start the cleanup sweep");
     }
@@ -271,9 +276,9 @@ fn cancel_failed(root: &std::path::Path, slug: &str, why: &str) {
             Some(session) => session.row.handle,
             None => {
                 board
-                    .register(&tasks::NewSession {
+                    .register(&symphony_board::NewSession {
                         model: "review-app".into(),
-                        ..tasks::NewSession::new("app")
+                        ..symphony_board::NewSession::new("app")
                     })
                     .map_err(|e| e.to_string())?
                     .row

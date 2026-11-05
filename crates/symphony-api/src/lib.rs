@@ -145,18 +145,18 @@ pub struct Card {
     pub doc: String,
     /// The document's title.
     pub doc_title: String,
-    /// A picture card by the slot it fills ("Republic · frigate picture"); any other card by its
+    /// A picture card by the slot it fills ("North · cover picture"); any other card by its
     /// first sentence, cut short.
     pub title: String,
     /// The words the title did not already say, cut short; empty when there are none.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub summary: String,
-    /// The triage's reason, without its zero counts: "design · gates 11 hulls".
+    /// The triage's reason, without its zero counts: "design · gates 11 items".
     pub why: String,
     /// When it was posted, as the register writes it: `YYYY-MM-DD HH:MM` or `YYYY-MM-DD`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub posted: Option<String>,
-    /// Its pictures in the card's order: the candidates (up to four) or the hulls it names (up
+    /// Its pictures in the card's order: the candidates (up to four) or the items it names (up
     /// to six). The first one is its thumbnail.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub pictures: Vec<Picture>,
@@ -175,10 +175,10 @@ impl Card {
 /// One picture a card shows.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Picture {
-    /// Where the picture is served; `None` for a hull not drawn yet ("picture coming").
+    /// Where the picture is served; `None` for an item not drawn yet ("picture coming").
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub src: Option<String>,
-    /// The candidate's letter ("A"), or the hull's name.
+    /// The candidate's letter ("A"), or the item's name.
     pub caption: String,
     /// The picture still waits on the owner's review.
     #[serde(default, skip_serializing_if = "is_false")]
@@ -227,7 +227,7 @@ pub struct Region {
     /// The region's id among the project's regions, stable across snapshots.
     pub id: String,
     pub title: String,
-    /// The line under the headline's percentage (`21 of 31 hulls approved`).
+    /// The line under the headline's percentage (`21 of 31 items approved`).
     pub note: String,
     pub bars: Vec<ProgressBar>,
     /// The legend's words for done, waiting and remaining, in that order.
@@ -369,11 +369,11 @@ pub const PROJECT_ELEMENT: &str = "symphony-project";
 /// A plugin's entry in the header and in the home's links.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NavItem {
-    /// The header's word (`⬡ hulls`), also the last crumb on its page.
+    /// The header's word (`▤ shelf`), also the last crumb on its page.
     pub label: String,
-    /// The home's link text (`Hull models`).
+    /// The home's link text (`Shelf items`).
     pub title: String,
-    /// The path it opens (`/hulls`), a client page.
+    /// The path it opens (`/shelf`), a client page.
     pub href: String,
     /// The document that page shows, a project-relative path.
     pub document: String,

@@ -8,11 +8,11 @@ use std::convert::Infallible;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
-use tasks::port::{ATTEMPTS, Start, in_use, listens, start_on_free_port};
-use tasks::rpc::{self, Client};
-use tasks::server::{FOLDER, Home, Running, SURREAL_VERSION, ServerError};
-use tasks::sys::{self, Command, pid_alive};
-use tasks::{NewTask, Store};
+use symphony_board::port::{ATTEMPTS, Start, in_use, listens, start_on_free_port};
+use symphony_board::rpc::{self, Client};
+use symphony_board::server::{FOLDER, Home, Running, SURREAL_VERSION, ServerError};
+use symphony_board::sys::{self, Command, pid_alive};
+use symphony_board::{NewTask, Store};
 
 fn board(running: &Running) -> Store {
     Store::open(Client::new(&running.addr, "sf", "tasks")).unwrap()
@@ -594,7 +594,7 @@ fn helper_start_and_exit() {
 fn a_server_outlives_the_process_that_started_it_and_holds_none_of_its_pipes() {
     let s = Scratch::new("outlive");
     // `output` returns only once nothing holds the child's stdout and stderr open.
-    let out = tasks::sys::output(
+    let out = symphony_board::sys::output(
         Command::new(std::env::current_exe().unwrap())
             .args([
                 "--ignored",

@@ -133,9 +133,9 @@ fn reply_html_renders_an_agent_answer_like_a_card_reply() {
 #[test]
 fn relative_links_are_left_for_the_browser() {
     let html = super::page_at(
-        "![a](../../artifacts/x.png) and [b](SHIP_ROSTER.md)\n",
+        "![a](../../artifacts/x.png) and [b](LAMP_CATALOGUE.md)\n",
         "docs/concepts/README.md",
     );
     assert!(html.contains("src=\"../../artifacts/x.png\""), "{html}");
-    assert!(html.contains("href=\"SHIP_ROSTER.md\""));
+    assert!(html.contains("href=\"LAMP_CATALOGUE.md\""));
 }

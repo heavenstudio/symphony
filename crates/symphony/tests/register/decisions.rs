@@ -8,10 +8,10 @@ use crate::{card, cards};
 #[test]
 fn each_checkbox_state() {
     let found = cards(&[
-        "- [ ] **pending-one** — Five civilizations.",
+        "- [ ] **pending-one** — Five workshops.",
         "- [x] **approved-one** — Star lanes.",
         "- [X] **approved-two** — Capital X too.",
-        "- [-] **rejected-one** — 141 hulls.",
+        "- [-] **rejected-one** — 141 lamps.",
         "- [?] **question-one** — Five station bands.",
     ]);
     assert_eq!(
@@ -25,7 +25,7 @@ fn each_checkbox_state() {
         ]
     );
     assert_eq!(found[0].slug, "pending-one");
-    assert_eq!(found[0].text, "Five civilizations.");
+    assert_eq!(found[0].text, "Five workshops.");
     assert_eq!(found[0].line, 1);
 }
 
@@ -42,7 +42,7 @@ fn unknown_marker_is_not_a_decision() {
 #[test]
 fn indented_lines_under_an_item_are_the_note() {
     let found = cards(&[
-        "- [-] **too-many** — 141 hulls.",
+        "- [-] **too-many** — 141 lamps.",
         "  Show me 30 first.",
         "  Then we talk.",
         "- [ ] **next** — x",
@@ -106,7 +106,7 @@ fn an_agent_reply_after_the_last_note_closes_it() {
     let found = cards(&[
         "- [x] **a** — 1",
         "  at least 21",
-        "  ↳ Roster now says at least 21 per faction.",
+        "  ↳ Lineup now says at least 21 per maker.",
         "- [-] **b** — 2",
         "  ↳ Replaced by **c**.",
         "- [?] **d** — 3",

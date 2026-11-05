@@ -1,8 +1,8 @@
 //! Making tasks, finding them by document, and the tree of subtasks.
 
 use crate::common::{Fixture, NOW, Seed, refused};
-use tasks::health::LIVE_SECONDS;
-use tasks::{Health, NewTask};
+use symphony_board::health::LIVE_SECONDS;
+use symphony_board::{Health, NewTask};
 
 fn jump() -> NewTask {
     NewTask::new("sim/jump", "Jump departure", "owner")
@@ -15,7 +15,7 @@ fn under(slug: &str, parent: &str) -> NewTask {
     }
 }
 
-fn slugs(tasks: Vec<tasks::Task>) -> Vec<String> {
+fn slugs(tasks: Vec<symphony_board::Task>) -> Vec<String> {
     tasks.into_iter().map(|t| t.slug).collect()
 }
 

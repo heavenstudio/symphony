@@ -4,9 +4,9 @@ use crate::{Ran, env, run};
 use serde_json::{Value, json};
 use std::fs;
 use std::path::PathBuf;
-use tasks::cli::{Env, connect};
-use tasks::sys::Command;
-use tasks::{NewLaunch, NewSession, NewTask, Store};
+use symphony_board::cli::{Env, connect};
+use symphony_board::sys::Command;
+use symphony_board::{NewLaunch, NewSession, NewTask, Store};
 
 const FAKE: &str = env!("CARGO_BIN_EXE_fake-herdr");
 const TASKS: &str = env!("CARGO_BIN_EXE_tasks");
@@ -23,7 +23,7 @@ fn outside(name: &str) -> PathBuf {
 }
 
 fn git(dir: &PathBuf, args: &[&str]) {
-    let done = tasks::sys::output(
+    let done = symphony_board::sys::output(
         Command::new("git")
             .args(["-c", "user.email=t@t", "-c", "user.name=t", "-C"])
             .arg(dir)
@@ -43,7 +43,7 @@ struct Panes {
 impl Panes {
     fn new(name: &str) -> Panes {
         let dir = outside(name);
-        let repo = dir.join("star-foundry");
+        let repo = dir.join("lamp-works");
         fs::create_dir_all(&repo).unwrap();
         git(&repo, &["init", "-q", "-b", "main"]);
         git(&repo, &["commit", "-q", "--allow-empty", "-m", "x"]);
@@ -554,7 +554,7 @@ impl Panes {
     /// `tasks ARGS` as its own process, at `TASKS_NOW` `now`: the binary sweeps on one thread, so
     /// no process this test binary's other threads spawn holds a copy of its lock.
     fn binary(&self, now: f64, args: &[&str]) -> Ran {
-        let done = tasks::sys::output(
+        let done = symphony_board::sys::output(
             Command::new(TASKS)
                 .args(args)
                 .env_clear()
@@ -617,7 +617,7 @@ fn a_reap_closes_an_agent_idle_for_two_sweeps_where_tasks_reap_state_names_its_s
         )
     );
     assert!(state.exists());
-    let later = now + tasks::launch::reap::REAP_SECONDS;
+    let later = now + symphony_board::launch::reap::REAP_SECONDS;
     assert_eq!(
         said(p.binary(later, &["reap", "--dry-run"])),
         (0, format!("would close w1:p1 ({worker})\n"), String::new())
@@ -639,7 +639,7 @@ fn a_reap_while_another_sweep_holds_the_lock_says_so() {
     let mut p = Panes::new("reap-held");
     let state = p.dir.join("reap.json");
     p.set("TASKS_REAP_STATE", &state.display().to_string());
-    let held = fs::File::create(tasks::launch::reap::lock_path(&state)).unwrap();
+    let held = fs::File::create(symphony_board::launch::reap::lock_path(&state)).unwrap();
     held.try_lock().unwrap();
     let ran = p.binary(crate::common::NOW, &["reap"]);
     assert_eq!(

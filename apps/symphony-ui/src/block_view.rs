@@ -242,7 +242,7 @@ fn ComponentView(kind: String, blocks: Vec<Block>, #[props(default)] inline: boo
     rsx! { div { "data-component": kind, BlocksView { blocks } } }
 }
 
-/// A picture with its caption. A hull's sizes (`small`, `row`, `large`, `tile`) draw a link
+/// A picture with its caption. An item's sizes (`small`, `row`, `large`, `tile`) draw a link
 /// card, its badge standing in for a missing picture; the others draw a figure, `missing`
 /// without one.
 #[component]

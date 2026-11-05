@@ -5,9 +5,9 @@ mod inbox;
 
 use crate::common::{Fixture, HOST, NOW, Seed, refused};
 use std::collections::BTreeSet;
-use tasks::health::LIVE_SECONDS;
-use tasks::rpc::Client;
-use tasks::{Health, LANDS_FROM, Message, NewLaunch, NewTask, Store};
+use symphony_board::health::LIVE_SECONDS;
+use symphony_board::rpc::Client;
+use symphony_board::{Health, LANDS_FROM, Message, NewLaunch, NewTask, Store};
 
 fn texts(messages: Vec<Message>) -> Vec<String> {
     messages.into_iter().map(|m| m.text).collect()

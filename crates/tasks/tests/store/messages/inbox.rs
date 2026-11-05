@@ -2,8 +2,8 @@
 
 use super::texts;
 use crate::common::{Fixture, HOST, NOW, Seed};
-use tasks::rpc::Client;
-use tasks::{Message, Store};
+use symphony_board::rpc::Client;
+use symphony_board::{Message, Store};
 
 #[test]
 fn ack_empties_the_inbox_and_new_messages_arrive_again() {
@@ -23,7 +23,7 @@ fn ack_empties_the_inbox_and_new_messages_arrive_again() {
 
 #[test]
 fn acknowledgements_keep_adjacent_large_integer_ids_and_recipients_distinct() {
-    use tasks::rows::{DeliveryRow, MessageRow};
+    use symphony_board::rows::{DeliveryRow, MessageRow};
 
     let ids = [
         1,
@@ -113,7 +113,7 @@ fn measured_inbox(f: &Fixture, handle: &str) -> (Vec<Message>, usize) {
             drop(reader);
             head.truncate(head.len() - 2);
             head.push_str("Connection: close\r\n\r\n");
-            let mut server = tasks::sys::connect(&upstream, wait)?;
+            let mut server = symphony_board::sys::connect(&upstream, wait)?;
             server.set_read_timeout(Some(wait))?;
             server.set_write_timeout(Some(wait))?;
             server.write_all(head.as_bytes())?;
@@ -140,7 +140,7 @@ fn measured_inbox(f: &Fixture, handle: &str) -> (Vec<Message>, usize) {
 
 #[test]
 fn acknowledged_and_unaddressed_history_does_not_travel_as_message_bodies() {
-    use tasks::rows::{DeliveryRow, MessageRow};
+    use symphony_board::rows::{DeliveryRow, MessageRow};
 
     let mut seed = Seed::default()
         .session("amber-heron")
