@@ -210,7 +210,7 @@ fn a_store_holding_a_name_the_board_cannot_say_is_left_as_it_was_and_served_agai
     let not_plain = |store: &Store| {
         store
             .client()
-            .unscoped("DEFINE NAMESPACE `not-plain`;", json!({}))
+            .query("DEFINE NAMESPACE `not-plain`;", json!({}))
             .unwrap();
     };
     refused_and_served_again("reclaim-refused", "tasks", not_plain, &["\"not-plain\""]);

@@ -135,12 +135,6 @@ impl Client {
         self.call(sql, vars, true)
     }
 
-    /// `sql` in no namespace or database: a statement about the server itself (`INFO FOR ROOT`), or
-    /// one that enters its own with `USE`. Each statement's result, in order.
-    pub fn unscoped(&self, sql: &str, vars: Value) -> Result<Vec<Value>, DbError> {
-        self.call(sql, vars, false)
-    }
-
     /// The namespace and the database, made if they are not there yet, then `sql` in them, in one
     /// request: each statement's result, the four that make and enter them first.
     pub fn define_then(&self, sql: &str, vars: Value) -> Result<Vec<Value>, DbError> {
@@ -152,7 +146,7 @@ impl Client {
     }
 
     /// `scoped`: in this client's namespace and database, which must exist.
-    fn call(&self, sql: &str, vars: Value, scoped: bool) -> Result<Vec<Value>, DbError> {
+    pub(crate) fn call(&self, sql: &str, vars: Value, scoped: bool) -> Result<Vec<Value>, DbError> {
         self.requests.fetch_add(1, Ordering::SeqCst);
         let body = cbor::encode(&json!({"id": 1, "method": "query", "params": [sql, vars]}));
         let scope = if scoped {
