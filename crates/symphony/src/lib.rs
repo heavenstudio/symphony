@@ -44,7 +44,7 @@ pub mod register;
 pub mod reload;
 pub mod render;
 pub mod save;
-pub mod schema;
+pub use symphony_schema as schema;
 pub mod taskcli;
 pub mod taskview;
 pub mod text;
