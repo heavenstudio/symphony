@@ -246,7 +246,10 @@ pub(crate) async fn answer(shared: &Arc<Shared>, request: Request) -> Option<Res
                         .into_iter()
                         .map(|hit| (hit.slug, hit.score))
                         .collect::<std::collections::BTreeMap<_, _>>(),
-                    Ok(Err(why)) => return Some(error(StatusCode::SERVICE_UNAVAILABLE, why)),
+                    Ok(Err(why)) => {
+                        let (status, said) = unavailable(&why, "");
+                        return Some(error(status, said));
+                    }
                     Err(why) => {
                         return Some(error(StatusCode::INTERNAL_SERVER_ERROR, why.to_string()));
                     }
@@ -436,10 +439,10 @@ pub(crate) async fn answer(shared: &Arc<Shared>, request: Request) -> Option<Res
                         no_store(Json(tasks))
                     }
                 }
-                Err(e) => error(
-                    StatusCode::SERVICE_UNAVAILABLE,
-                    format!("the task board cannot be reached: {e}"),
-                ),
+                Err(e) => {
+                    let (status, said) = unavailable(&e, "the task board cannot be reached: ");
+                    error(status, said)
+                }
             }
         }
         "/api/agents" | "/api/agent-page" | "/api/task-thread" | "/api/task-page"
@@ -464,11 +467,10 @@ pub(crate) async fn answer(shared: &Arc<Shared>, request: Request) -> Option<Res
             let query_from = query(&request, "from").and_then(|n| n.parse::<usize>().ok());
             let offer = path == "/api/task-offer";
             match tokio::task::spawn_blocking(move || {
-                let store = symphony::taskview::connect(&root)
-                    .map_err(|e| (StatusCode::SERVICE_UNAVAILABLE, e))?;
+                let store = symphony::taskview::connect(&root).map_err(|e| unavailable(&e, ""))?;
                 if agents {
                     let mut view = symphony::taskview::agents(&store, &root)
-                        .map_err(|e| (StatusCode::SERVICE_UNAVAILABLE, e))?;
+                        .map_err(|e| unavailable(&e, ""))?;
                     if agent_page {
                         view.agents.retain(|a| {
                             if lost {
@@ -489,7 +491,7 @@ pub(crate) async fn answer(shared: &Arc<Shared>, request: Request) -> Option<Res
                             .filter(|_| view.agents.len() == 20)
                             .map(|a| a.handle.clone());
                         let (mut tasks, _) = symphony::taskview::snapshot(&store)
-                            .map_err(|e| (StatusCode::SERVICE_UNAVAILABLE, e.to_string()))?;
+                            .map_err(|e| unavailable(&e.to_string(), ""))?;
                         let mut shown = std::collections::BTreeSet::new();
                         for agent in &view.agents {
                             let mut finished: Vec<_> = tasks
@@ -533,7 +535,7 @@ pub(crate) async fn answer(shared: &Arc<Shared>, request: Request) -> Option<Res
                     let plugins = symphony::plugins::Plugins::of(&root);
                     symphony::taskview::owner_offer(&store, &plugins, &slug, &root)
                         .map(|offer| no_store(Json(offer)))
-                        .map_err(|e| (StatusCode::SERVICE_UNAVAILABLE, e))
+                        .map_err(|e| unavailable(&e, ""))
                 } else if brief {
                     let record = store.get(&slug).map_err(task_failure)?;
                     let from = query_from.unwrap_or(0);
@@ -545,7 +547,7 @@ pub(crate) async fn answer(shared: &Arc<Shared>, request: Request) -> Option<Res
                     symphony::taskview::page(&store, &record, &root)
                         .map(Json)
                         .map(no_store)
-                        .map_err(|e| (StatusCode::SERVICE_UNAVAILABLE, e))
+                        .map_err(|e| unavailable(&e, ""))
                 } else {
                     symphony::taskview::history(&store, &slug, before, after, &root)
                         .map(Json)
@@ -594,11 +596,18 @@ pub(crate) async fn answer(shared: &Arc<Shared>, request: Request) -> Option<Res
 }
 
 fn task_failure(error: symphony_board::Error) -> (StatusCode, String) {
-    let status = match error {
-        symphony_board::Error::Refused(_) => StatusCode::NOT_FOUND,
-        symphony_board::Error::Db(_) => StatusCode::SERVICE_UNAVAILABLE,
-    };
-    (status, error.to_string())
+    match error {
+        symphony_board::Error::Refused(_) => (StatusCode::NOT_FOUND, error.to_string()),
+        symphony_board::Error::Db(_) => unavailable(&error.to_string(), ""),
+    }
+}
+
+/// A read route's board failure ([`symphony::taskview::read_failure`]): a board that answered too
+/// late is slow, 504; any other failure is 503, its words after `unreachable`.
+fn unavailable(error: &str, unreachable: &str) -> (StatusCode, String) {
+    let (status, said) = symphony::taskview::read_failure(error, unreachable);
+    let status = StatusCode::from_u16(status).unwrap_or(StatusCode::SERVICE_UNAVAILABLE);
+    (status, said)
 }
 
 fn document_response(
