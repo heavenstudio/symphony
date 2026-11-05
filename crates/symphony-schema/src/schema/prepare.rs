@@ -1,7 +1,12 @@
-use super::{
-    BTreeMap, Draft, Keyword, Location, Map, OnceLock, STRICT, SchemaError, ValidationError,
-    Validator, Value, repr_str,
-};
+//! Prepare local schemas and enforce the supported Draft 2020-12 vocabulary.
+
+use super::types::{STRICT, SchemaError};
+use crate::text::repr as repr_str;
+use jsonschema::paths::Location;
+use jsonschema::{Draft, Keyword, ValidationError, Validator};
+use serde_json::{Map, Value};
+use std::collections::BTreeMap;
+use std::sync::OnceLock;
 
 /// Every keyword draft 2020-12's meta-schema names: its vocabularies' and the four its top schema
 /// keeps for older drafts. A subschema that breaks the meta-schema loses its annotations, so the
