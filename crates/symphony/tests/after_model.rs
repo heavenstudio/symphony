@@ -6,8 +6,7 @@ mod items;
 mod tree;
 
 use serde_json::{Value, json};
-use symphony::render::Render;
-use symphony::{blocks, register, schema};
+use symphony::{blocks, register, render::Render, schema};
 use symphony_api::{
     Block, CalloutKind, CardGroup, CardState, ContainerKind, FigureSize, Image, Media,
     Presentation, Span, ThreadAuthor,
