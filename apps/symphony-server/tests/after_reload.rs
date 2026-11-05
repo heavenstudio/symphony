@@ -9,10 +9,14 @@ use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::os::fd::AsRawFd;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, OnceLock, mpsc};
+use std::sync::{OnceLock, mpsc};
 use std::time::{Duration, Instant};
 use tasks::port::Start;
 use tasks::sys::{Child, Command};
+
+#[path = "after_reload/lines.rs"]
+mod lines;
+use lines::Lines;
 
 const LIMIT: Duration = Duration::from_secs(45);
 const DOC: &str = "# Reload fixture\n\n<!-- register:start -->\n- [ ] **one** — A proposal.\n<!-- register:end -->\n";
@@ -59,80 +63,6 @@ impl Drop for OwnedChild {
     fn drop(&mut self) {
         let _ = self.0.kill();
         let _ = self.0.wait();
-    }
-}
-
-/// Readiness and diagnostics are consumed as events. Both streams stay drained even when the
-/// caller is waiting on a build/publication socket instead of a log line.
-struct Lines {
-    receive: mpsc::Receiver<String>,
-    history: Vec<String>,
-}
-impl Lines {
-    fn of(child: &mut Child, path: &Path) -> Self {
-        let log = Arc::new(Mutex::new(File::create(path).unwrap()));
-        let (send, receive) = mpsc::channel();
-        let streams: Vec<Box<dyn Read + Send>> = vec![
-            Box::new(child.stdout.take().unwrap()),
-            Box::new(child.stderr.take().unwrap()),
-        ];
-        for stream in streams {
-            let log = log.clone();
-            let send = send.clone();
-            std::thread::spawn(move || {
-                for line in BufReader::new(stream).lines() {
-                    let line = line.unwrap();
-                    writeln!(log.lock().unwrap(), "{line}").unwrap();
-                    let _ = send.send(line);
-                }
-            });
-        }
-        Self {
-            receive,
-            history: Vec::new(),
-        }
-    }
-    fn until(&mut self, needle: &str) -> String {
-        self.until_before(needle, Instant::now() + LIMIT)
-    }
-    fn until_before(&mut self, needle: &str, deadline: Instant) -> String {
-        self.seen_before(needle, deadline)
-            .unwrap_or_else(|e| panic!("waiting for {needle}: {e}; {:?}", self.history))
-    }
-    /// The first line holding `needle` by `deadline`, or why none came: both streams closed, or
-    /// the time ran out.
-    fn seen_before(
-        &mut self,
-        needle: &str,
-        deadline: Instant,
-    ) -> Result<String, mpsc::RecvTimeoutError> {
-        loop {
-            let line = self
-                .receive
-                .recv_timeout(deadline.saturating_duration_since(Instant::now()))?;
-            self.history.push(line.clone());
-            if line.contains(needle) {
-                return Ok(line);
-            }
-        }
-    }
-    /// Everything the child said, once both its streams have closed.
-    fn said(&mut self) -> String {
-        self.closed();
-        self.history.join("\n")
-    }
-    fn closed(&mut self) {
-        let began = Instant::now();
-        loop {
-            match self
-                .receive
-                .recv_timeout(LIMIT.saturating_sub(began.elapsed()))
-            {
-                Ok(line) => self.history.push(line),
-                Err(mpsc::RecvTimeoutError::Disconnected) => return,
-                Err(e) => panic!("generation pipes stayed open: {e}; {:?}", self.history),
-            }
-        }
     }
 }
 
@@ -1154,8 +1084,14 @@ fn failed_build_and_startup_keep_serving_then_module_and_main_handover_preserve_
             "fixture app source changes before publication",
         ],
     );
+    let released = Instant::now();
     output.release("publish");
     lines.until("· Symphony server stopped");
+    // The old generation's stop, each stage it named after the seconds since the release.
+    eprintln!(
+        "after_reload: the drained generation's stop after its publication:\n{}",
+        lines.since(released)
+    );
     original.wait();
     f.published();
     assert_eq!(

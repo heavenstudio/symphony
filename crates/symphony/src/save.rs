@@ -10,6 +10,9 @@ use serde_json::{Value, json};
 
 use crate::{Who, asks, branches, clock, commit, edit, register, taskview};
 
+mod failure;
+pub use failure::Failure;
+
 pub const ROUTES: [&str; 13] = [
     "/api/postpone",
     "/api/decision",
@@ -25,45 +28,6 @@ pub const ROUTES: [&str; 13] = [
     "/api/ask-reply",
     symphony_api::TASK_ACTION_ROUTE,
 ];
-
-pub struct Failure {
-    pub status: u16,
-    pub error: String,
-}
-impl From<String> for Failure {
-    fn from(error: String) -> Self {
-        Self { status: 400, error }
-    }
-}
-impl From<edit::EditError> for Failure {
-    fn from(e: edit::EditError) -> Self {
-        e.0.into()
-    }
-}
-impl From<asks::AskError> for Failure {
-    fn from(e: asks::AskError) -> Self {
-        let error = e.to_string();
-        Self {
-            status: if error.starts_with("no ask") {
-                404
-            } else {
-                400
-            },
-            error,
-        }
-    }
-}
-impl From<tasks::Error> for Failure {
-    fn from(e: tasks::Error) -> Self {
-        match e {
-            tasks::Error::Refused(error) => error.into(),
-            tasks::Error::Db(error) => Self {
-                status: 503,
-                error: format!("the task board cannot be reached: {error}"),
-            },
-        }
-    }
-}
 
 fn string<'a>(payload: &'a Value, key: &str) -> &'a str {
     payload[key].as_str().unwrap_or("")
