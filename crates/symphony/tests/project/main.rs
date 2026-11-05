@@ -9,6 +9,7 @@ mod common;
 #[allow(dead_code)]
 mod board;
 
+mod entrypoints;
 mod fields;
 mod folders;
 mod manifest;

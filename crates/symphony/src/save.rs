@@ -150,7 +150,7 @@ impl Saves {
     fn scope(&self, scope: &str, rel: &str) -> Result<(PathBuf, String), Failure> {
         let (scope, rel) = if let Some(path) = rel.trim_start_matches('/').strip_prefix('@') {
             path.split_once('/')
-                .ok_or("path must be a markdown file under docs/".to_string())?
+                .ok_or_else(|| crate::project::Project::of(&self.root).not_a_document())?
         } else {
             (scope, rel.trim_start_matches('/'))
         };
@@ -169,11 +169,11 @@ impl Saves {
         Ok((root, rel.to_string()))
     }
 
-    /// The file the document name `rel` (`docs/…`) stands for in the project's documents folder,
-    /// as the document view reads it ([`crate::docview::target`]).
+    /// The file the document name `rel` (`docs/…`) stands for in its entrypoint's folder, as the
+    /// document view reads it ([`crate::docview::target`]).
     fn target(root: &Path, rel: &str) -> Result<PathBuf, Failure> {
         crate::docview::target(root, rel, true)
-            .map_err(|_| Failure::from("path must be a markdown file under docs/".to_string()))
+            .map_err(|_| Failure::from(crate::project::Project::of(root).not_a_document()))
     }
 
     fn page(&self, root: &Path, rel: &str, anchor: &str) -> Result<String, Failure> {
@@ -591,12 +591,9 @@ impl Saves {
                 &self.root,
                 std::env::var("ASKS_DB").ok().as_deref(),
             ))?;
+            let readme = crate::project::Project::of(&self.root).entrypoints[0].route("README.md");
             let id = store.ask(
-                if doc.is_empty() {
-                    "docs/README.md"
-                } else {
-                    &doc
-                },
+                if doc.is_empty() { &readme } else { &doc },
                 &text,
                 if doc.is_empty() { "" } else { anchor },
                 "",

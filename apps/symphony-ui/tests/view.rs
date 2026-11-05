@@ -340,6 +340,7 @@ fn the_home_links_the_projects_own_pages_and_its_register() {
                 document: "docs/audio/CUES.md".into(),
             },
         ],
+        entrypoints: vec!["notes".into()],
     };
     let board = board("board.json");
     let html = dioxus_ssr::render_element(rsx! { BoardView { board, now, project } });
@@ -353,6 +354,10 @@ fn the_home_links_the_projects_own_pages_and_its_register() {
     let register = links
         .find(r#"<a class="pill" href="/notes/register.md">Decision register</a>"#)
         .expect("the register pill");
+    assert!(
+        links.contains(r#"<a class="pill" href="/notes/">All docs</a>"#),
+        "all docs open the first entrypoint: {links}"
+    );
     assert!(
         links.find("All docs").unwrap() < hulls && hulls < cues && cues < register,
         "{links}"

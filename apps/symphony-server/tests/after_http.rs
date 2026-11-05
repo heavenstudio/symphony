@@ -450,7 +450,11 @@ fn manual_fixture() -> tree::Tree {
     repository(&root, &["config", "user.name", "HTTP fixture"]);
     repository(&root, &["config", "user.email", "http@example.invalid"]);
     repository(&root, &["config", "core.hooksPath", "/dev/null"]);
-    write(&root, "symphony.toml", "[project]\ndocs = \"manual\"\n");
+    write(
+        &root,
+        "symphony.toml",
+        "[[entrypoints]]\nurl = \"/docs/\"\nfolder = \"manual\"\n",
+    );
     write(&root, "manual/TOPIC.md", DOC);
     write(&root, "manual/OTHER.md", "# Other\n");
     write(&root, "manual/art/a.png", b"PNG in the manual");
@@ -720,6 +724,7 @@ fn contracts(f: &Fixture) {
             "name": f.root.file_name().unwrap().to_str().unwrap(),
             "register": "docs/DECISIONS.md",
             "nav": [{"label": "⬡ hulls", "title": "Hull models", "href": "/hulls", "document": "docs/ships/HULLS.md"}],
+            "entrypoints": ["docs"],
         })
     );
     assert!(shell.text().starts_with(&project), "{}", shell.text());

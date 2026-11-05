@@ -11,7 +11,8 @@ commands always run committed main's build, preserving the calling worktree's
 working directory. `sf-cargo/tasks-main/TREE` in the common dir records the
 binary for main's tree id. A warm call checks that executable and runs it with
 no export, build or source hashing. On a miss, an ancestor main build serves
-immediately when its committed schema and supported RPC server versions match.
+immediately when its committed schema, supported RPC server and `tasks api`
+versions match (`cli/api.rs`'s `VERSION`, raised when a caller relies on a change).
 One background builder exports committed Rust sources and atomically publishes
 the new pointer after success. It owns a separate process group, so maintenance
 callers ending their groups leave the refresh running. A changed or unreadable

@@ -8,7 +8,7 @@ use std::io::{BufRead, BufReader, Write};
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 use std::time::{Duration, Instant};
-use tasks::sys::Command;
+use tasks::sys::{Command, Spawning as _};
 
 use common::Tree;
 use serde_json::json;
@@ -377,7 +377,7 @@ fn a_branch_card_in_a_projects_own_folder_is_linked_read_and_saved_by_its_route(
             // is spelled as a person may write it
             tree.write(
                 "symphony.toml",
-                "[project]\ndocs = \"./manual\"\n[plugins]\ncrates = [\"star-foundry-symphony\"]\n",
+                "[[entrypoints]]\nurl = \"/docs/\"\nfolder = \"./manual\"\n[plugins]\ncrates = [\"star-foundry-symphony\"]\n",
             );
             tree.write(file, &register(&card("alpha")));
             commit(&tree.root, "base", 1);
@@ -1061,7 +1061,7 @@ fn scan_225_worktrees_has_bounded_commands_and_parallel_waits() {
     for fifo in ["arrived", "release"] {
         let done = std::process::Command::new("mkfifo")
             .arg(tree.path(fifo))
-            .status()
+            .status_locked()
             .unwrap();
         assert!(done.success());
     }

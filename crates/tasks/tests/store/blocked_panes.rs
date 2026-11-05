@@ -7,7 +7,7 @@ use super::quiet_callbacks::listen;
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 use tasks::NewLaunch;
-use tasks::sys::Command;
+use tasks::sys::{Command, Spawning as _};
 
 const IN_CHILD: &str = "SF_BLOCKED_PANES_CHILD";
 const BUSY_PULL: &str = "PULL executing=1 ready_unstaffed=0 in_progress_orphaned=0 review_unreviewed=0 landed_open=0 idle=0";
@@ -45,7 +45,7 @@ fn in_child_with_herdr(name: &str) -> bool {
         std::process::Command::new("git")
             .args(["init", "-q"])
             .arg(&dir)
-            .status()
+            .status_locked()
             .unwrap()
             .success()
     );
