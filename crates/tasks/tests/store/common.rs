@@ -7,8 +7,9 @@
 //! so it goes with the test binary however that ends, and that ends as soon as the server does, so a
 //! server whose port was taken before it bound it is started again at once on another
 //! (`symphony_board::port`), every start within one readiness bound; one that ends for any other reason
-//! fails the tests with its log. The shell says the server's pid, so an answer on the port counts
-//! only once that process itself listens there. At a normal exit the binary also waits for the
+//! fails the tests with its exit status and its log, which also holds what the shell said. The
+//! fixture makes the log's folder itself ([`launch`]). The shell says the server's pid, so an
+//! answer on the port counts only once that process itself listens there. At a normal exit the binary also waits for the
 //! shell, so the server's CPU is counted in the rusage of whoever ran the tests, as a child's,
 //! rather than lost with an orphan's, and removes the server's log.
 
@@ -16,12 +17,12 @@ use std::collections::HashSet;
 use std::convert::Infallible;
 use std::io::{BufRead, BufReader, Read};
 use std::os::fd::OwnedFd;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 use symphony_board::health::{LIVE_SECONDS, STALE_SECONDS};
-use symphony_board::port::Start;
+use symphony_board::port::{NotStarted, Start};
 use symphony_board::rows::{Dump, LinkRow, RoleRow, SessionRow, TaskRow};
 use symphony_board::rpc::{self, Client, DbError};
 use symphony_board::sys::{Child, Command};
@@ -161,13 +162,40 @@ pub fn spawn_with_input(command: &mut Command) -> std::io::Result<Child> {
 }
 
 fn start() -> Server {
-    let binary = surreal();
     let log = option_env!("CARGO_TARGET_TMPDIR")
         .map_or_else(std::env::temp_dir, PathBuf::from)
         .join(format!("surreal-{}.log", std::process::id()));
+    let (addr, shell) = launch(&surreal(), &log).unwrap_or_else(|why| {
+        panic!(
+            "the SurrealDB server did not come up: {why}; its log is {}",
+            log.display()
+        )
+    });
+    assert_eq!(unsafe { atexit(stop_server) }, 0, "the server's end is set");
+    Server {
+        addr,
+        shell: Mutex::new(shell),
+        log,
+    }
+}
+
+/// `binary` started as the tests' server, in memory on a free local port: its address and the shell
+/// it runs under, which stops it once the shell's input closes. The shell's own output and the
+/// server's go to `log`, made here with its folder: Cargo makes `CARGO_TARGET_TMPDIR` only while it
+/// compiles a test, so a test binary built earlier can find it gone. A server that ends before it
+/// answers is reported with its exit status and its log.
+pub fn launch(binary: &Path, log: &Path) -> Result<(String, Child), NotStarted<Infallible>> {
+    if let Some(folder) = log.parent() {
+        std::fs::create_dir_all(folder).unwrap_or_else(|error| {
+            panic!(
+                "the SurrealDB server's log folder {} cannot be made: {error}",
+                folder.display()
+            )
+        });
+    }
     let said = || {
         let mut said = String::new();
-        let _ = std::fs::File::open(&log).and_then(|mut f| f.read_to_string(&mut said));
+        let _ = std::fs::File::open(log).and_then(|mut f| f.read_to_string(&mut said));
         said
     };
     // Up once it answers and the server itself listens there (the shell says its pid), every start
@@ -178,29 +206,38 @@ fn start() -> Server {
         until,
         |reserved| {
             let addr = reserved.to_string();
+            let output = std::fs::File::create(log).unwrap_or_else(|error| {
+                panic!(
+                    "the SurrealDB server's log {} cannot be written: {error}",
+                    log.display()
+                )
+            });
             let (announced, announcer) =
                 symphony_board::sys::pipe().expect("a pipe for the server's pid");
             let mut shell = spawn_with_input(
             Command::new("bash")
                 .arg("-c")
                 .arg(concat!(
-                    r#". "$3"; fixture_close_fds; exec 3<&0; "$0" start --unauthenticated --bind "$1" --log error memory >"$2" 2>&1 3<&- & s=$!; "#,
+                    r#". "$2"; fixture_close_fds; exec 3<&0; "$0" start --unauthenticated --bind "$1" --log error memory >&2 3<&- & s=$!; "#,
                     r#"echo "$s"; exec >/dev/null; "#,
-                    r#"(fixture_wait_eof <&3; kill $s 2>/dev/null) & c=$!; exec 3<&-; wait $s; kill $c 2>/dev/null; wait $c 2>/dev/null"#,
+                    r#"(fixture_wait_eof <&3; kill $s 2>/dev/null) & c=$!; exec 3<&-; wait $s; r=$?; kill $c 2>/dev/null; wait $c 2>/dev/null; exit $r"#,
                 ))
-                .arg(&binary)
+                .arg(binary)
                 .arg(&addr)
-                .arg(&log)
                 .arg(project_root().join("tools/fixture_process.sh"))
-                .stdout(announcer),
+                .stdout(announcer)
+                .stderr(output),
         )
         .expect("sh starts the server");
             let mut line = String::new();
             let _ = BufReader::new(announced).read_line(&mut line);
             let server: Option<u32> = line.trim().parse().ok();
             while Instant::now() < until {
-                if shell.try_wait().unwrap().is_some() {
-                    return Ok::<_, Infallible>(Start::Ended(said()));
+                if let Some(status) = shell.try_wait().unwrap() {
+                    return Ok::<_, Infallible>(Start::Ended(format!(
+                        "{status}; it said: {}",
+                        said()
+                    )));
                 }
                 if rpc::healthy(&addr)
                     && server.is_some_and(|pid| {
@@ -221,18 +258,7 @@ fn start() -> Server {
             );
         },
     );
-    let ((addr, shell), _) = started.unwrap_or_else(|why| {
-        panic!(
-            "the SurrealDB server did not come up: {why}; its log is {}",
-            log.display()
-        )
-    });
-    assert_eq!(unsafe { atexit(stop_server) }, 0, "the server's end is set");
-    Server {
-        addr,
-        shell: Mutex::new(shell),
-        log,
-    }
+    started.map(|(up, _)| up)
 }
 
 /// A database of its own on the shared server.
