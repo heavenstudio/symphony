@@ -12,6 +12,7 @@ use serde_json::{Value, json};
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 const ALPHA: &str = "[project]\nname = \"Alpha\"\nid = \"alpha\"\n\
                      [theme.tokens]\nprimary = \"#7a2e8f\"\n[theme.layouts]\nhome = \"focus\"\n";
@@ -29,10 +30,14 @@ struct OneServer {
 
 impl OneServer {
     fn start(board: &str) -> Self {
+        // Each server its own folder: the cases of this binary run on threads side by side.
+        static STARTED: AtomicUsize = AtomicUsize::new(0);
         let binary = binaries::shelf_server();
-        let scratch = fresh(
-            &std::env::temp_dir().join(format!("sf-browser-projects-{}", std::process::id())),
-        );
+        let scratch = fresh(&std::env::temp_dir().join(format!(
+            "sf-browser-projects-{}-{}",
+            std::process::id(),
+            STARTED.fetch_add(1, Ordering::Relaxed)
+        )));
         let machine = scratch.join("machine");
         let install = scratch.join("install");
         std::fs::create_dir_all(install.join("client")).unwrap();
