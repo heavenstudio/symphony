@@ -5,10 +5,11 @@ use symphony::plugins::Plugins;
 use symphony::project::Project;
 use symphony_plugin::Plugin;
 
+use super::renderers::TWIN;
 use super::{Bare, FIRST, SECOND, Tree};
 
 /// The plugins the project tests' process holds, as a host would compile them in.
-static COMPILED: &[&dyn Plugin] = &[&FIRST, &SECOND, &Bare];
+static COMPILED: &[&dyn Plugin] = &[&FIRST, &SECOND, &Bare, &TWIN];
 
 /// A tree whose `symphony.toml` names `plugins`, in that order; the process holds [`COMPILED`].
 pub(super) fn naming(plugins: &[&str]) -> Tree {
@@ -72,12 +73,12 @@ fn a_process_keeps_the_plugins_it_was_given_and_refuses_another_list() {
         .iter()
         .map(|p| p.name())
         .collect();
-    assert_eq!(names, ["first", "second", "bare"]);
+    assert_eq!(names, ["first", "second", "bare", "twin"]);
     static OTHER: &[&dyn Plugin] = &[&Bare];
     assert_eq!(
         symphony::plugins::install(OTHER),
         Err(
-            "this process already holds the plugins [first, second, bare]; it cannot hold [bare] instead"
+            "this process already holds the plugins [first, second, bare, twin]; it cannot hold [bare] instead"
                 .into()
         )
     );
@@ -88,16 +89,16 @@ fn a_process_keeps_the_plugins_it_was_given_and_refuses_another_list() {
         versioned: false,
         markers: &[],
     };
-    static SAME_NAMES: &[&dyn Plugin] = &[&IMPOSTOR, &SECOND, &Bare];
+    static SAME_NAMES: &[&dyn Plugin] = &[&IMPOSTOR, &SECOND, &Bare, &TWIN];
     assert_eq!(
         symphony::plugins::install(SAME_NAMES),
         Err(
-            "this process already holds the plugins [first, second, bare]; another value of the same names cannot replace them"
+            "this process already holds the plugins [first, second, bare, twin]; another value of the same names cannot replace them"
                 .into()
         )
     );
     // Another list of the very same values is the same plugins.
-    static AGAIN: &[&dyn Plugin] = &[&FIRST, &SECOND, &Bare];
+    static AGAIN: &[&dyn Plugin] = &[&FIRST, &SECOND, &Bare, &TWIN];
     assert!(symphony::plugins::install(AGAIN).is_ok());
     assert!(std::ptr::eq(
         symphony::plugins::compiled()[0],

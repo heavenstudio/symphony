@@ -25,7 +25,7 @@ pub(crate) fn use_runtime(shown: Signal<bool>) {
     let _ = shown;
 }
 
-/// Only project assets may run in an embedded frame or model viewer.
+/// Only project assets may run in an embedded frame or a file viewer.
 pub fn local_asset(src: &str) -> bool {
     src.starts_with('/')
         && !src.starts_with("//")
@@ -161,18 +161,24 @@ fn GalleryRow(
 ) -> Element {
     let (shown, reveal) = crate::viewport::use_visibility(false);
     let name = item.name.clone();
+    let says = if open {
+        viewer.close_label.as_deref().unwrap_or("Close")
+    } else {
+        viewer.open_label.as_deref().unwrap_or("Open")
+    }
+    .to_string();
     rsx! {
         article { class: if open { "gallery-card gallery-open" } else { "gallery-card" }, "data-busy": open,
             ..reveal,
             if shown() {
-                crate::components::button::Button { class: "gallery-pick", r#type: "button", "aria-expanded": open, "aria-controls": "model-{item.name}", onclick: move |_| on_select.call(name.clone()),
+                crate::components::button::Button { class: "gallery-pick", r#type: "button", "aria-expanded": open, "aria-controls": "viewer-{item.name}", onclick: move |_| on_select.call(name.clone()),
                     if let Some(poster) = item.poster {
                         img { src: poster, width: "80", height: "80", alt: item.name.clone(), loading: "lazy", "data-no-lightbox": "true" }
                     }
-                    span { strong { "{item.name}" } small { if open { "Close model" } else { "Open 3D model" } } }
+                    span { strong { "{item.name}" } small { "{says}" } }
                 }
                 if open {
-                    div { id: "model-{item.name}", FileViewer { src: item.src, caption: item.name.clone(), viewer } }
+                    div { id: "viewer-{item.name}", FileViewer { src: item.src, caption: item.name.clone(), viewer } }
                 }
             }
         }
@@ -238,6 +244,23 @@ mod tests {
             "{gallery}"
         );
         assert!(gallery.contains("FIRST") && gallery.contains("/first.png"));
+        assert_eq!(gallery.matches(">Open<").count(), 2, "{gallery}");
+        let labelled = Media::Gallery {
+            items: vec![GalleryItem {
+                name: "FIRST".into(),
+                src: "/first.item".into(),
+                poster: None,
+            }],
+            viewer: Viewer {
+                open_label: Some("Take it down".into()),
+                ..viewer.clone()
+            },
+        };
+        let labelled = dioxus_ssr::render_element(rsx! { MediaView { media: labelled } });
+        assert!(
+            labelled.contains(">Take it down<") && !labelled.contains(">Open<"),
+            "{labelled}"
+        );
         assert!(
             !gallery.contains("<orbit-view") && !gallery.contains("/first.item"),
             "{gallery}"

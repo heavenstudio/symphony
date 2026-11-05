@@ -44,10 +44,17 @@ fn mime(path: &str) -> Option<&'static str> {
             "ogg" => "audio/ogg",
             "mp4" => "video/mp4",
             "webm" => "video/webm",
-            // A type a plugin's renderer draws, served with the type it names.
-            _ => return symphony::renderers::content_type(path),
+            _ => return None,
         },
     )
+}
+
+/// The type the file `path` of the project at `root` is served as: its own kind's, else the type
+/// the renderer of the project's plugins that draws it names, else bytes.
+fn content_type(root: &Path, path: &str) -> &'static str {
+    mime(path)
+        .or_else(|| symphony::renderers::content_type(&symphony::plugins::Plugins::of(root), path))
+        .unwrap_or("application/octet-stream")
 }
 
 /// The script-free sandbox every stored upload is served in, whether it opens or downloads: no
@@ -150,13 +157,15 @@ pub(crate) async fn answer(
     if !base.starts_with(&root) {
         return StatusCode::NOT_FOUND.into_response();
     }
-    contained(shared, &base, &base.join(relative), request).await
+    contained(shared, &root, &base, &base.join(relative), request).await
 }
 
 /// The file `wanted` as served media when it resolves inside `base` (canonical) and outside the
-/// repository's metadata, its type read from its own name; not found otherwise.
+/// repository's metadata, its type read from its own name and the plugins of the project at
+/// `root`; not found otherwise.
 pub(crate) async fn contained(
     shared: &crate::front::Shared,
+    root: &Path,
     base: &Path,
     wanted: &Path,
     request: &axum::http::Request<()>,
@@ -192,7 +201,7 @@ pub(crate) async fn contained(
     for (name, value) in [
         (
             header::CONTENT_TYPE,
-            mime(&wanted.to_string_lossy()).unwrap_or("application/octet-stream"),
+            content_type(root, &wanted.to_string_lossy()),
         ),
         (header::CONTENT_SECURITY_POLICY, "sandbox allow-scripts"),
         (header::X_CONTENT_TYPE_OPTIONS, "nosniff"),
@@ -208,17 +217,31 @@ pub(crate) async fn contained(
 
 #[cfg(test)]
 mod tests {
-    use super::{handles, mime};
+    use super::{content_type, handles};
+    use crate::testing::Tree;
 
     #[test]
-    fn a_plugin_drawn_file_is_served_with_its_renderers_type_and_others_with_their_own() {
+    fn a_plugin_drawn_file_is_served_as_its_projects_renderer_names_and_others_as_their_own() {
         crate::shelf::install().unwrap();
+        let shelf = Tree::new();
+        shelf.write(symphony::project::FILE, crate::shelf::MANIFEST);
+        let plain = Tree::new();
         for path in ["/room/shelf/items/A.item", "/A.ITEM"] {
-            assert_eq!(mime(path), Some(crate::shelf::ITEM_TYPE), "{path}");
-            assert!(handles(path), "{path}");
+            let types = (
+                content_type(&shelf.root, path),
+                content_type(&plain.root, path),
+            );
+            assert_eq!(
+                types,
+                (crate::shelf::ITEM_TYPE, "application/octet-stream"),
+                "{path}"
+            );
         }
-        assert_eq!(mime("/a.png"), Some("image/png"));
-        assert_eq!(mime("/a.lantern"), None);
-        assert!(!handles("/a.lantern"), "a file no renderer draws is served");
+        let png = content_type(&plain.root, "/a.png");
+        assert_eq!(png, "image/png");
+        assert!(
+            handles("/a.png") && !handles("/a.item"),
+            "the Symphony's own kinds"
+        );
     }
 }

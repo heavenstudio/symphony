@@ -54,6 +54,12 @@ pub struct Viewer {
     /// The download link's text; none leaves the link out.
     #[serde(default)]
     pub download: Option<String>,
+    /// What a gallery's button says to open a file in the viewer, and to close it again; none
+    /// says `Open` and `Close`.
+    #[serde(default)]
+    pub open_label: Option<String>,
+    #[serde(default)]
+    pub close_label: Option<String>,
 }
 
 /// A button under a viewer: pressing it sets attributes on the element, then calls one of its
@@ -163,6 +169,7 @@ mod tests {
             ],
             views: Vec::new(),
             download: None,
+            ..Viewer::default()
         }
     }
 

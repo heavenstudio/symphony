@@ -136,3 +136,46 @@ fn an_items_and_a_mockups_indexes_are_the_fragments_own() {
         "{html}"
     );
 }
+
+#[test]
+fn a_query_and_fragment_stay_url_parts_while_the_path_is_quoted() {
+    let (_, items) = media("[A](/a%20b.item?v=1#part)\n", "docs/A.md");
+    assert_eq!(items, [item("/a%20b.item?v=1#part", "A")]);
+}
+
+#[test]
+fn a_link_to_another_sites_file_stays_a_link_no_renderer_draws() {
+    let text = "[A](https://example.com/a.item) ![B](//example.com/b.item)\n";
+    let (html, items) = media(text, "docs/A.md");
+    assert!(items.is_empty(), "{items:?}");
+    assert!(
+        html.contains("href=\"https://example.com/a.item\"")
+            && html.contains("src=\"//example.com/b.item\""),
+        "{html}"
+    );
+}
+
+#[test]
+fn a_branchs_viewer_loads_its_files_and_its_script_from_that_branch() {
+    let (mut html, mut items) = media("[A](/a.item)\n", "docs/A.md");
+    items.push(Media::Gallery {
+        items: Vec::new(),
+        viewer: viewer(),
+    });
+    symphony::docview::scope_fragment(&mut html, &mut items, "topic");
+    let scoped = viewer().script.replacen('/', "/@topic/", 1);
+    let [
+        Media::Viewer {
+            src, viewer: shown, ..
+        },
+        Media::Gallery { viewer: listed, .. },
+    ] = &items[..]
+    else {
+        panic!("{items:?}")
+    };
+    let scripts = (src.as_str(), shown.script.as_str(), listed.script.as_str());
+    assert_eq!(
+        scripts,
+        ("/@topic/a.item", scoped.as_str(), scoped.as_str())
+    );
+}

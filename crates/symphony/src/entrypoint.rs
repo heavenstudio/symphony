@@ -50,8 +50,9 @@ pub struct Entrypoint {
     /// The files shown, as patterns over their path in the folder; see [`matches`].
     pub include: Vec<String>,
     pub exclude: Vec<String>,
-    /// The renderers that show its files, by name.
-    pub types: Vec<String>,
+    /// The renderers that show its files, in the order its `types` names them: the Symphony's and
+    /// its project's plugins', resolved when the project loads.
+    pub types: Vec<Renderer>,
     /// Folders inside it, relative to it, served and listed but never read as documents.
     pub history: Vec<String>,
 }
@@ -64,7 +65,7 @@ impl Entrypoint {
             folder: DOCS.into(),
             include: vec!["**".into()],
             exclude: Vec::new(),
-            types: vec![MARKDOWN.name.into()],
+            types: vec![MARKDOWN],
             history: vec![HISTORY.into()],
         }
     }
@@ -150,9 +151,7 @@ impl Entrypoint {
 
     /// The entrypoint's renderers, in the order it names them: the Symphony's and its plugins'.
     pub fn renderers(&self) -> impl Iterator<Item = Renderer> + '_ {
-        self.types
-            .iter()
-            .filter_map(|name| crate::renderers::named(name))
+        self.types.iter().copied()
     }
 
     /// How a message names it: its URL as the browser shows it.
@@ -289,7 +288,7 @@ mod tests {
             folder: "spec".into(),
             include: vec!["**".into()],
             exclude: vec!["drafts/**".into()],
-            types: vec!["markdown".into(), "media".into()],
+            types: vec![MARKDOWN, MEDIA],
             history: vec!["old".into()],
         };
         assert_eq!(entry.renderer("index.md"), Some(MARKDOWN));

@@ -87,12 +87,21 @@ pub(super) fn embed_mockups(body: &str, ctx: &Ctx<'_>) -> String {
         .into_owned()
 }
 
+/// `src` with its path written as a URL path, its query and fragment kept as they are.
+fn file_url(src: &str) -> String {
+    let (path, rest) = src.split_at(src.find(['?', '#']).unwrap_or(src.len()));
+    format!("{}{rest}", quote(&unquote(path), "/:"))
+}
+
 /// The file `src` (resolved against the page) captioned `label`, as the renderer of the page's
-/// plugins that lists its extension draws it; `None` when none does. A renderer's problem is shown
-/// in the file's place.
+/// plugins that lists its extension draws it; `None` when none does or `src` is another site's,
+/// which stays a link. A renderer's problem is shown in the file's place.
 fn drawn(src: &str, label: &str, ctx: &Ctx<'_>) -> Option<String> {
-    let drawer = crate::renderers::drawing(ctx.plugins, src)?;
-    let path = quote(&unquote(src), "/:");
+    if is_external(src) {
+        return None;
+    }
+    let renderer = crate::renderers::renderer_of(ctx.plugins, src)?;
+    let path = file_url(src);
     let label = if label.is_empty() {
         file_name(&unquote(src))
     } else {
@@ -102,7 +111,7 @@ fn drawn(src: &str, label: &str, ctx: &Ctx<'_>) -> Option<String> {
         src: &path,
         label: &label,
     };
-    Some(match drawer.draw(&ctx.page, &file) {
+    Some(match renderer.draw(&ctx.page, &file) {
         Ok(Drawing::Viewer(viewer)) => placeholder(
             "viewer",
             ctx.add_media(Media::Viewer {
@@ -112,8 +121,8 @@ fn drawn(src: &str, label: &str, ctx: &Ctx<'_>) -> Option<String> {
                 viewer,
             }),
         ),
-        Ok(Drawing::Blocks(blocks)) => blocks_html(ctx, drawer.name(), blocks),
-        Err(problem) => blocks_html(ctx, drawer.name(), vec![crate::plugins::error(&problem)]),
+        Ok(Drawing::Blocks(blocks)) => blocks_html(ctx, renderer.name(), blocks),
+        Err(problem) => blocks_html(ctx, renderer.name(), vec![crate::plugins::error(&problem)]),
     })
 }
 

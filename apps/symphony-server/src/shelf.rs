@@ -95,6 +95,8 @@ pub fn viewer() -> Viewer {
         ],
         views: vec![view("Turn", "90"), view("Back", "0")],
         download: Some(".item".into()),
+        open_label: Some("Take it down".into()),
+        close_label: Some("Put it back".into()),
     }
 }
 

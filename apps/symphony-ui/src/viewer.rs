@@ -66,6 +66,7 @@ mod tests {
                 call: Some("settle".into()),
             }],
             download: Some(".item".into()),
+            ..Viewer::default()
         }
     }
 

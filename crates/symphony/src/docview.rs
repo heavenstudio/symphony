@@ -15,6 +15,9 @@ use symphony_api::{
 use crate::render::Render;
 
 mod comparison;
+mod legacy;
+
+pub use legacy::legacy_html;
 
 /// Resolve only routes an entrypoint serves (`docs/…`) to the file the entrypoint's walk would
 /// list there, links resolved ([`crate::project::Project::serving`],
@@ -481,88 +484,6 @@ pub fn prepare_fragment(
     scope_fragment(html, media, scope);
 }
 
-/// Existing pages consume string HTML from section/history reads. The SPA requests
-/// `format=fragments` (or the document snapshot) for structured media instead.
-pub fn legacy_html(fragment: &Fragment) -> String {
-    let mut html = fragment.html.clone();
-    for (index, item) in fragment.media.iter().enumerate() {
-        let (kind, replacement) = match item {
-            Media::Viewer {
-                src,
-                label,
-                poster,
-                viewer,
-            } => ("viewer", viewer_html(viewer, src, label, poster.as_deref())),
-            Media::Mockup { src, label } => (
-                "mockup",
-                format!(
-                    "<span class=\"mockup\" data-w=\"1280\" data-h=\"800\"><span class=\"mockup-frame\"><iframe src=\"{0}\" sandbox=\"allow-scripts\" loading=\"lazy\" width=\"1280\" height=\"800\" title=\"{1}\" tabindex=\"-1\"></iframe><a class=\"mockup-open\" href=\"{0}\" target=\"_blank\" rel=\"noopener\" aria-label=\"Open {1} full size\"></a></span><span class=\"mockup-bar\"><span class=\"mockup-name\">{1}</span><a href=\"{0}\" target=\"_blank\" rel=\"noopener\">full size</a></span></span>",
-                    crate::markup::escape(src),
-                    crate::markup::escape(label)
-                ),
-            ),
-            Media::Gallery { items, .. } => (
-                "gallery",
-                items
-                    .iter()
-                    .map(|item| {
-                        format!(
-                            "<a href=\"{}\" download>{}</a>",
-                            crate::markup::escape(&item.src),
-                            crate::markup::escape(&item.name)
-                        )
-                    })
-                    .collect::<Vec<_>>()
-                    .join(" · "),
-            ),
-        };
-        html = html.replace(
-            &format!("<span class=\"media\" data-media=\"{index}\" data-kind=\"{kind}\"></span>"),
-            &replacement,
-        );
-    }
-    html
-}
-
-/// A file in its viewer, as string HTML: the element in its stage (which names the script that
-/// defines it), then its caption, a button for each view and the download link.
-fn viewer_html(
-    viewer: &symphony_api::Viewer,
-    src: &str,
-    label: &str,
-    poster: Option<&str>,
-) -> String {
-    let escape = crate::markup::escape;
-    let element = viewer.element_html(src, label, poster).unwrap_or_default();
-    let views: String = viewer
-        .views
-        .iter()
-        .map(|view| {
-            let call = view.call.as_deref().map_or(String::new(), |call| {
-                format!(" data-viewer-call=\"{}\"", escape(call))
-            });
-            let title = view.title.as_deref().map_or(String::new(), |title| {
-                format!(" title=\"{}\"", escape(title))
-            });
-            format!(
-                "<button type=\"button\" data-viewer-set=\"{}\"{call}{title}>{}</button>",
-                escape(&view.encoded()),
-                escape(&view.label)
-            )
-        })
-        .collect();
-    let download = viewer.download.as_deref().map_or(String::new(), |text| {
-        format!("<a href=\"{}\" download>{}</a>", escape(src), escape(text))
-    });
-    format!(
-        "<span class=\"media-viewer\"><span class=\"viewer-stage\" data-viewer-script=\"{}\">\
-         {element}</span><span class=\"viewer-bar\"><span class=\"viewer-name\">{}</span>{views}\
-         {download}</span></span>",
-        escape(&viewer.script),
-        escape(label)
-    )
-}
-
 pub fn scope_fragment(html: &mut String, media: &mut [Media], scope: &str) {
     if scope.is_empty() {
         return;
@@ -580,15 +501,26 @@ pub fn scope_fragment(html: &mut String, media: &mut [Media], scope: &str) {
     }
 }
 
+/// Every URL a media item loads: its files, their posters and its viewer's script, which a branch's
+/// page loads from that branch's checkout as it does the files.
 fn media_urls(media: &mut Media) -> Vec<&mut String> {
     match media {
         Media::Mockup { src, .. } => vec![src],
-        Media::Viewer { src, poster, .. } => {
-            std::iter::once(src).chain(poster.iter_mut()).collect()
-        }
-        Media::Gallery { items, .. } => items
-            .iter_mut()
-            .flat_map(|item| std::iter::once(&mut item.src).chain(item.poster.iter_mut()))
+        Media::Viewer {
+            src,
+            poster,
+            viewer,
+            ..
+        } => [src, &mut viewer.script]
+            .into_iter()
+            .chain(poster.iter_mut())
+            .collect(),
+        Media::Gallery { items, viewer } => std::iter::once(&mut viewer.script)
+            .chain(
+                items
+                    .iter_mut()
+                    .flat_map(|item| std::iter::once(&mut item.src).chain(item.poster.iter_mut())),
+            )
             .collect(),
     }
 }

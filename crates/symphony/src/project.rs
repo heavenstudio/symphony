@@ -872,11 +872,12 @@ impl Project {
 }
 
 /// The `[[entrypoints]]` tables checked, their types against the renderers of the Symphony and of
-/// `plugins`, or the convention when there are none.
+/// `plugins` (refused when two of those share a name), or the convention when there are none.
 fn entrypoints(
     written: Option<Vec<FileEntrypoint>>,
     plugins: &[String],
 ) -> Result<Vec<Entrypoint>, String> {
+    let renderers = crate::renderers::of_project(plugins)?;
     let Some(written) = written else {
         return Ok(vec![Entrypoint::convention()]);
     };
@@ -892,11 +893,12 @@ fn entrypoints(
             folder: String::new(),
             include: table.include.unwrap_or_else(|| vec!["**".into()]),
             exclude: table.exclude,
-            types: table
-                .types
-                .unwrap_or_else(|| vec![crate::entrypoint::MARKDOWN.name.into()]),
+            types: Vec::new(),
             history: Vec::new(),
         };
+        let types = table
+            .types
+            .unwrap_or_else(|| vec![crate::entrypoint::MARKDOWN.name.into()]);
         let label = entry.label();
         entry.folder = path_in(
             &format!("[[entrypoints]] {label} folder"),
@@ -913,12 +915,12 @@ fn entrypoints(
                 "[[entrypoints]] {label} include is empty: it would show nothing"
             ));
         }
-        if entry.types.is_empty() {
+        if types.is_empty() {
             return Err(format!(
                 "[[entrypoints]] {label} types is empty: it would show nothing"
             ));
         }
-        crate::renderers::check_types(&label, &entry.types, plugins)?;
+        entry.types = crate::renderers::resolve(&label, &types, &renderers)?;
         if let Some(other) = found.iter().find(|other| other.url == entry.url) {
             return Err(format!(
                 "[[entrypoints]] {label} is named twice, over {} and {}",
