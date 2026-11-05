@@ -2,7 +2,7 @@
 
 #[path = "../common/mod.rs"]
 mod common;
-#[path = "../../../../../tools/gate/tests/verify/script.rs"]
+#[path = "../../../../../tools/gate/tests/verify/script_board.rs"]
 mod fixture_script;
 
 /// The task store's test server, as its own tests run on it: a database of its own per test.
