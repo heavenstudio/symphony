@@ -5,7 +5,7 @@
 mod common;
 mod copy;
 mod cutover;
-#[path = "../../../../../tools/gate/tests/verify/script.rs"]
+#[path = "../../../../../tools/gate/tests/verify/script_process_cwd.rs"]
 mod fixture_script;
 mod git;
 mod helper;

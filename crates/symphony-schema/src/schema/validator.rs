@@ -1,4 +1,4 @@
-//! Draft 2020-12 JSON Schema checks for docs/data and content settings.
+//! Draft 2020-12 JSON Schema checks for document settings.
 //! Files name local schemas with $schema; jsonschema has no default features.
 //! References resolve within that schema: nothing is fetched or read externally.
 //!
@@ -14,327 +14,24 @@
 //! `dependentRequired`, `required`, then members in file order. A reference target's lines are ordered
 //! with the node's own. These semantics keep diagnostics and file checks stable.
 
-use std::collections::{BTreeMap, BTreeSet};
-use std::fmt;
-use std::sync::{Arc, LazyLock, Mutex, OnceLock};
-
-use jsonschema::error::{TypeKind, ValidationErrorKind};
-use jsonschema::paths::Location;
-use jsonschema::{Draft, Keyword, ValidationError, Validator};
-use serde_json::{Map, Value};
-
+use super::prepare::{
+    DRAFT_KEYWORDS, integer_token, nonfinite_numbers, prepare_schema, python_type_keyword, strict,
+};
+use super::types::SchemaError;
 use crate::text::repr as repr_str;
-
-/// A schema the check cannot enforce as written: one the draft does not take, or a keyword it lacks.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SchemaError(pub String);
-
-impl fmt::Display for SchemaError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.0)
-    }
-}
-
-/// Draft 2020-12's meta-schema, but no keyword it does not know, at any depth: its vocabularies reach
-/// every subschema through `$dynamicRef: "#meta"`, which this schema's own `$dynamicAnchor` takes over,
-/// so each subschema is held to `unevaluatedProperties: false` as the top one is.
-pub const STRICT: &str = r#"{
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "urn:symphony:schema:draft-2020-12-strict",
-  "$dynamicAnchor": "meta",
-  "$ref": "https://json-schema.org/draft/2020-12/schema",
-  "unevaluatedProperties": false
-}"#;
-
-/// Every keyword draft 2020-12's meta-schema names: its vocabularies' and the four its top schema
-/// keeps for older drafts. A subschema that breaks the meta-schema loses its annotations, so the
-/// strict check also calls each keyword of the nodes above it unevaluated; only a name outside this
-/// list is one the draft lacks.
-const DRAFT_KEYWORDS: &[&str] = &[
-    // core
-    "$id",
-    "$schema",
-    "$ref",
-    "$anchor",
-    "$dynamicRef",
-    "$dynamicAnchor",
-    "$vocabulary",
-    "$comment",
-    "$defs",
-    // applicator
-    "prefixItems",
-    "items",
-    "contains",
-    "additionalProperties",
-    "properties",
-    "patternProperties",
-    "dependentSchemas",
-    "propertyNames",
-    "if",
-    "then",
-    "else",
-    "allOf",
-    "anyOf",
-    "oneOf",
-    "not",
-    // unevaluated
-    "unevaluatedItems",
-    "unevaluatedProperties",
-    // validation
-    "type",
-    "const",
-    "enum",
-    "multipleOf",
-    "maximum",
-    "exclusiveMaximum",
-    "minimum",
-    "exclusiveMinimum",
-    "maxLength",
-    "minLength",
-    "pattern",
-    "maxItems",
-    "minItems",
-    "uniqueItems",
-    "maxContains",
-    "minContains",
-    "maxProperties",
-    "minProperties",
-    "required",
-    "dependentRequired",
-    // meta-data
-    "title",
-    "description",
-    "default",
-    "deprecated",
-    "readOnly",
-    "writeOnly",
-    "examples",
-    // format annotation
-    "format",
-    // content
-    "contentEncoding",
-    "contentMediaType",
-    "contentSchema",
-    // the top schema's, for older drafts
-    "definitions",
-    "dependencies",
-    "$recursiveAnchor",
-    "$recursiveRef",
-];
-
-fn strict() -> &'static Validator {
-    static BUILT: OnceLock<Validator> = OnceLock::new();
-    BUILT.get_or_init(|| {
-        let meta: Value = serde_json::from_str(STRICT).expect("STRICT is JSON");
-        jsonschema::options()
-            .with_draft(Draft::Draft202012)
-            .build(&meta)
-            .expect("STRICT is a draft 2020-12 schema")
-    })
-}
-
-/// `type` with an integer what Python's `json` reads as an `int` (no fraction, no exponent: `1.0` is a
-/// float), and a boolean no number.
-struct PythonType {
-    names: Vec<String>,
-}
-
-fn integer_token(number: &serde_json::Number) -> bool {
-    !number.as_str().contains(['.', 'e', 'E'])
-}
-
-fn nonfinite_numbers(value: &Value, at: &str, errors: &mut Vec<String>) {
-    match value {
-        // With arbitrary precision, as_f64 returns None for a token that overflows to infinity.
-        Value::Number(number) if !integer_token(number) && number.as_f64().is_none() => {
-            errors.push(format!("{at}: invalid number (must be finite)"));
-        }
-        Value::Array(items) => {
-            for (index, item) in items.iter().enumerate() {
-                nonfinite_numbers(item, &format!("{at}[{index}]"), errors);
-            }
-        }
-        Value::Object(members) => {
-            for (name, value) in members {
-                nonfinite_numbers(value, &format!("{at}.{name}"), errors);
-            }
-        }
-        _ => {}
-    }
-}
-
-fn python_is(name: &str, value: &Value) -> bool {
-    match name {
-        "string" => value.is_string(),
-        "integer" => value.as_number().is_some_and(integer_token),
-        "number" => value.is_number(),
-        "boolean" => value.is_boolean(),
-        "array" => value.is_array(),
-        "object" => value.is_object(),
-        "null" => value.is_null(),
-        _ => false,
-    }
-}
-
-impl<'i> Keyword<'i> for PythonType {
-    fn validate(&self, instance: &'i Value) -> Result<(), ValidationError<'i>> {
-        if self.is_valid(instance) {
-            Ok(())
-        } else {
-            Err(ValidationError::custom("wrong type"))
-        }
-    }
-
-    fn is_valid(&self, instance: &'i Value) -> bool {
-        self.names.iter().any(|name| python_is(name, instance))
-    }
-}
-
-fn python_type_keyword<'a>(
-    _parent: &'a Map<String, Value>,
-    value: &'a Value,
-    _path: Location,
-) -> Result<Box<dyn for<'i> Keyword<'i>>, ValidationError<'a>> {
-    let names = match value {
-        Value::String(name) => vec![name.clone()],
-        Value::Array(names) => names
-            .iter()
-            .filter_map(|name| name.as_str().map(str::to_string))
-            .collect(),
-        _ => Vec::new(),
-    };
-    Ok(Box::new(PythonType { names }))
-}
-
-/// `pattern` with each `$` that ends the text (one outside a class, not escaped) also taking one final
-/// newline, as Python's `re` does: `\n?$`.
-fn python_dollar(pattern: &str) -> String {
-    let mut out = String::with_capacity(pattern.len() + 4);
-    let (mut escaped, mut in_class) = (false, false);
-    for c in pattern.chars() {
-        match c {
-            _ if escaped => escaped = false,
-            '\\' => escaped = true,
-            '[' if !in_class => in_class = true,
-            ']' if in_class => in_class = false,
-            '$' if !in_class => {
-                out.push_str("\\n?$");
-                continue;
-            }
-            _ => {}
-        }
-        out.push(c);
-    }
-    out
-}
-
-/// Refuse unenforced keywords and formats at every schema node, even an unused definition, and read
-/// each `pattern` as Python's `re` reads it ([`python_dollar`]). A `const` or `enum` is data, left as
-/// it is.
-fn prepare_schema(
-    schema: &mut Value,
-    at: &str,
-    pointer: &str,
-    types: &mut BTreeMap<String, String>,
-) -> Result<(), SchemaError> {
-    let Value::Object(node) = schema else {
-        return Ok(());
-    };
-    let unsupported: Vec<&str> = [
-        "$recursiveRef",
-        "contentEncoding",
-        "contentMediaType",
-        "contentSchema",
-    ]
-    .into_iter()
-    .filter(|name| node.contains_key(*name))
-    .collect();
-    if !unsupported.is_empty() {
-        return Err(SchemaError(format!(
-            "unsupported keyword(s): {} (at {at})",
-            unsupported.join(", ")
-        )));
-    }
-    if let Some(Value::String(name)) = node.get("format")
-        && !jsonschema::options().is_known_format(Draft::Draft202012, name)
-    {
-        return Err(SchemaError(format!(
-            "unsupported format {} (at {at})",
-            repr_str(name)
-        )));
-    }
-    if let Some(Value::String(pattern)) = node.get_mut("pattern") {
-        *pattern = python_dollar(pattern);
-    }
-    for (keyword, value) in node.iter_mut() {
-        match keyword.as_str() {
-            "properties" | "patternProperties" | "$defs" | "definitions" | "dependentSchemas" => {
-                if let Value::Object(schemas) = value {
-                    for (name, schema) in schemas {
-                        let escaped = name.replace('~', "~0").replace('/', "~1");
-                        prepare_schema(
-                            schema,
-                            &format!("{at}.{keyword}.{name}"),
-                            &format!("{pointer}/{keyword}/{escaped}"),
-                            types,
-                        )?;
-                    }
-                }
-            }
-            "allOf" | "anyOf" | "oneOf" | "prefixItems" => {
-                if let Value::Array(schemas) = value {
-                    for (index, schema) in schemas.iter_mut().enumerate() {
-                        prepare_schema(
-                            schema,
-                            &format!("{at}.{keyword}[{index}]"),
-                            &format!("{pointer}/{keyword}/{index}"),
-                            types,
-                        )?;
-                    }
-                }
-            }
-            "additionalProperties"
-            | "items"
-            | "not"
-            | "propertyNames"
-            | "contains"
-            | "if"
-            | "then"
-            | "else"
-            | "unevaluatedItems"
-            | "unevaluatedProperties" => prepare_schema(
-                value,
-                &format!("{at}.{keyword}"),
-                &format!("{pointer}/{keyword}"),
-                types,
-            )?,
-            _ => {}
-        }
-    }
-    // Custom keyword errors do not carry the crate's reference traversal. A native double `not`
-    // reports the same validity with that traversal intact, so stopping at a wrong type also works
-    // through references. Keep its location mapped to the original `type` for the diagnostic.
-    if let Some(kind) = node.remove("type") {
-        let all = node
-            .entry("allOf")
-            .or_insert_with(|| Value::Array(Vec::new()));
-        if let Value::Array(all) = all {
-            types.insert(
-                format!("{pointer}/allOf/{}/not", all.len()),
-                format!("{pointer}/type"),
-            );
-            all.push(serde_json::json!({"not": {"not": {"type": kind}}}));
-        }
-    }
-    Ok(())
-}
+use jsonschema::error::{TypeKind, ValidationErrorKind};
+use jsonschema::{Draft, ValidationError, Validator};
+use serde_json::Value;
+use std::collections::{BTreeMap, BTreeSet};
+use std::fmt::Write as _;
+use std::sync::{Arc, LazyLock, Mutex};
 
 /// A schema checked and built once, for checking many files against it.
 pub struct Schema {
     validator: Validator,
     /// As written, for what a line names that the crate's error does not carry (a `type` list in its
     /// order, a pattern as written, the fields of a `dependentRequired` rule).
-    schema: Value,
+    source: Value,
     /// Each native wrapper's location and the `type` keyword it reports for.
     types: BTreeMap<String, String>,
 }
@@ -487,7 +184,7 @@ impl Schema {
             .map_err(|e| SchemaError(format!("not a schema the check can build: {e}")))?;
         Ok(Schema {
             validator,
-            schema: schema.clone(),
+            source: schema.clone(),
             types,
         })
     }
@@ -690,11 +387,11 @@ impl Schema {
 
     /// The schema's node at `pointer`, a local `$ref` on the way followed.
     fn node(&self, pointer: &str) -> Option<&Value> {
-        let mut node = &self.schema;
+        let mut node = &self.source;
         for step in steps(pointer) {
             node = if step == "$ref" {
                 let target = node.get("$ref")?.as_str()?.strip_prefix('#')?;
-                self.schema.pointer(target)?
+                self.source.pointer(target)?
             } else {
                 match node {
                     Value::Object(members) => members.get(&step)?,
@@ -765,7 +462,12 @@ pub fn validate(instance: &Value, schema: &Value) -> Result<Vec<String>, SchemaE
     static COMPILED: LazyLock<Mutex<BTreeMap<String, Arc<Schema>>>> =
         LazyLock::new(|| Mutex::new(BTreeMap::new()));
     let key = serde_json::to_string(schema).expect("a JSON schema serializes");
-    let mut compiled = COMPILED.lock().unwrap_or_else(|e| e.into_inner());
+    // Only complete validators are inserted. A panic during compilation leaves the cache unchanged;
+    // clearing can remove entries but cannot leave a partially built validator. A poisoned cache
+    // therefore holds reusable entries, and a missing schema is compiled on its next lookup.
+    let mut compiled = COMPILED
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let validator = if let Some(validator) = compiled.get(&key) {
         validator.clone()
     } else {
@@ -814,7 +516,7 @@ pub fn dollar_path(root: &Value, pointer: &str) -> String {
     for step in steps(pointer) {
         node = match node {
             Some(Value::Array(items)) => {
-                path.push_str(&format!("[{step}]"));
+                let _ = write!(path, "[{step}]");
                 step.parse::<usize>().ok().and_then(|i| items.get(i))
             }
             Some(Value::Object(members)) => {

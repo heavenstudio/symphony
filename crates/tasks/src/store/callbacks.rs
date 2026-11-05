@@ -17,7 +17,7 @@ use std::time::{Duration, Instant};
 mod codex;
 
 #[cfg(test)]
-#[path = "../../../../../tools/gate/tests/verify/script.rs"]
+#[path = "../../../../../tools/gate/tests/verify/script_process_cwd.rs"]
 mod fixture_script;
 
 const CALLBACK_LEASE_SECONDS: u64 = 60;
