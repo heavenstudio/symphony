@@ -166,3 +166,80 @@ fn the_watch_follows_the_projects_entrypoints() {
         "the project's root itself"
     );
 }
+
+#[test]
+fn gallery_paths_include_input_directories_and_deleted_files_but_not_neighbours() {
+    let tree = Tree::new();
+    tree.write("main/symphony.toml", MANIFEST);
+    tree.write(
+        "main/plain/README.md",
+        "a checkout inside main, its project plain",
+    );
+    let (main, plain) = (tree.path("main"), tree.path("main/plain"));
+    let roots = [main.clone(), plain.clone()];
+    for relative in [
+        "view/models",
+        "view/models/hulls/A.glb",
+        "artifacts/concepts",
+        "artifacts/concepts/redraw/A.png",
+        "docs/data/hull-outlines",
+        "docs/data/hull-outlines/A.notes.json",
+    ] {
+        assert_eq!(
+            watched_root(&roots, &main.join(relative)),
+            Some(main.as_path()),
+            "{relative}"
+        );
+        // The plain project's plugins watch nothing, so its paths belong to none.
+        assert_eq!(
+            watched_root(&roots, &plain.join(relative)),
+            None,
+            "{relative}"
+        );
+    }
+    for relative in [
+        "docs/TOPIC.md",
+        "view/models-old/A.glb",
+        "artifacts/concepts-other/A.png",
+        "docs/data/hull-outlines-other/A.svg",
+    ] {
+        assert_eq!(
+            watched_root(&roots, &main.join(relative)),
+            None,
+            "{relative}"
+        );
+    }
+}
+
+#[test]
+fn a_tree_watches_its_projects_documents_folder_and_what_its_plugins_watch_outside_it() {
+    let tree = Tree::new();
+    let manual = "[project]\nregister = \"manual/DECISIONS.md\"\nartifacts = \"output\"\n\
+                  [[entrypoints]]\nurl = \"/docs/\"\nfolder = \"manual\"\nhistory = [\"past\"]\n";
+    tree.write("plain/symphony.toml", manual);
+    let below =
+        |root: &str| -> Vec<(String, notify::RecursiveMode)> { tree_inputs(&tree.path(root)) };
+    let recursive = |paths: &[&str]| -> Vec<(String, notify::RecursiveMode)> {
+        paths
+            .iter()
+            .map(|path| (path.to_string(), notify::RecursiveMode::Recursive))
+            .collect()
+    };
+    assert_eq!(below("plain"), recursive(&["manual"]));
+    tree.write("game/symphony.toml", &format!("{manual}{MANIFEST}"));
+    assert_eq!(
+        below("game"),
+        recursive(&[
+            "manual",
+            "artifacts/concepts",
+            "docs/data/hull-outlines",
+            "view/models"
+        ])
+    );
+    // a watched folder inside the documents folder is watched with it
+    tree.write("default/symphony.toml", MANIFEST);
+    assert_eq!(
+        below("default"),
+        recursive(&["docs", "artifacts/concepts", "view/models"])
+    );
+}

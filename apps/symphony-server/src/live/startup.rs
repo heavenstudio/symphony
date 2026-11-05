@@ -1,0 +1,178 @@
+//! The hub's start and its first board read: armed when the hub is built, activated once the URL
+//! is announced or a data request needs it, run in the hub's owned worker, awaited by data reads,
+//! released by stop.
+
+use super::{Hub, measured, run};
+use crate::backstop::Sweep;
+use notify::Watcher;
+use std::collections::BTreeSet;
+use std::path::Path;
+use std::sync::{Arc, Weak, mpsc};
+use std::time::{Duration, Instant};
+use symphony::taskview;
+
+impl Hub {
+    pub fn start(root: &Path, ui_dist: &Path, drain_chat: bool) -> Result<Arc<Self>, String> {
+        Self::start_watching::<notify::RecommendedWatcher>(
+            root,
+            ui_dist,
+            drain_chat,
+            crate::backstop::PERIOD,
+            taskview::connect,
+        )
+    }
+
+    /// Install watcher `W` and documents. The owned worker starts its board read when activated,
+    /// then sweeps the watched files on its own every `period`.
+    pub(super) fn start_watching<W: Watcher + Send + 'static>(
+        root: &Path,
+        ui_dist: &Path,
+        drain_chat: bool,
+        period: Duration,
+        mut connect: impl FnMut(&Path) -> Result<tasks::Store, String> + Send + 'static,
+    ) -> Result<Arc<Self>, String> {
+        let started = Instant::now();
+        let mut hub = measured("hub new", || Self::new(root, ui_dist));
+        if drain_chat {
+            *hub.callbacks.get_mut().unwrap_or_else(|e| e.into_inner()) =
+                Some(symphony::callbacks::Flusher::new(root));
+            eprintln!("→ chat journal: draining enabled for the shared server");
+        } else {
+            eprintln!("→ chat journal: left untouched by this private server");
+        }
+        let starting = hub.arm_initial_board();
+        let hub = Arc::new(hub);
+        // Install watches before the first read, so an edit during that read is queued too.
+        let (send, recv) = mpsc::sync_channel(1);
+        let changed_hub = Arc::downgrade(&hub);
+        let mut watcher = W::new(
+            move |event: notify::Result<notify::Event>| {
+                if let Some(hub) = changed_hub.upgrade()
+                    && hub.record_event(event)
+                {
+                    let _ = send.try_send(());
+                }
+            },
+            notify::Config::default(),
+        )
+        .map_err(|e| format!("cannot watch Symphony data: {e}"))?;
+        let mut watched = BTreeSet::new();
+        measured("initial watches", || hub.watch(&mut watcher, &mut watched));
+        // The sweep's first stamps come before the first read too.
+        *hub.swept.lock().unwrap_or_else(|e| e.into_inner()) =
+            measured("initial sweep", || Sweep::new(&hub.swept_paths()));
+        measured("initial documents", || hub.refresh_docs(None))?;
+        let docs_ready = started.elapsed();
+        let weak = Arc::downgrade(&hub);
+        let backstop = crate::backstop::Backstop::new(period);
+        *hub.worker.lock().unwrap_or_else(|e| e.into_inner()) =
+            Some(std::thread::spawn(move || {
+                let first = initial_board(&weak, &starting, &mut connect, docs_ready, started);
+                if let Some(board) = first {
+                    run(weak, recv, watcher, watched, backstop, board, connect);
+                }
+            }));
+        Ok(hub)
+    }
+
+    /// Arm the activation the owned worker waits on; data reads wait until its first result.
+    fn arm_initial_board(&mut self) -> mpsc::Receiver<()> {
+        let (start, starting) = mpsc::channel();
+        // Each holder of this lock only takes or puts the sender, so a panic under it leaves either
+        // the sender or nothing: both are a whole state, and the poisoned value is used as it is.
+        *self
+            .initial_start
+            .get_mut()
+            .unwrap_or_else(|e| e.into_inner()) = Some(start);
+        self.initial_board.send_replace(false);
+        starting
+    }
+
+    /// Activate the owned read once, after announcement or when a data caller needs it.
+    pub(crate) fn start_initial_board(&self) {
+        // A panic under this lock leaves the sender or nothing (see `arm_initial_board`).
+        if let Some(start) = self
+            .initial_start
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .take()
+        {
+            let _ = start.send(());
+        }
+    }
+
+    /// Data requests wait for the first board attempt; shutdown releases them with an error.
+    pub(crate) async fn wait_initial_board(&self) -> Result<(), String> {
+        let mut ready = self.initial_board.subscribe();
+        let mut draining = self.draining.subscribe();
+        tokio::select! {
+            biased;
+            _ = draining.wait_for(|stopping| *stopping) => Err("the Symphony server is stopping".into()),
+            _ = ready.wait_for(|ready| *ready) => Ok(()),
+        }
+    }
+
+    /// Drop an activation that never came, so a worker still waiting on it ends.
+    pub(super) fn disarm_initial_board(&self) {
+        // A panic under this lock leaves the sender or nothing (see `arm_initial_board`).
+        self.initial_start
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .take();
+    }
+}
+
+/// The board's error after a panic in the first board read.
+pub(super) const PANICKED: &str = "the first board read panicked; restart the Symphony server";
+
+/// What a panic in the first board read (connecting, reading, probing agents) leaves: the board's
+/// error, and the waiting reads released to answer it, as a failed read does. It acts only while
+/// unwinding; a read that returns sets its own result.
+struct Unwinding<'a>(&'a Hub);
+
+impl Drop for Unwinding<'_> {
+    fn drop(&mut self) {
+        if std::thread::panicking() {
+            self.0.board_error(PANICKED.into());
+            self.0.initial_board.send_replace(true);
+        }
+    }
+}
+
+/// The owned worker's first board read, once activated: `None` when the hub stopped or went
+/// before it was, else the store the read opened (`None` inside when it failed).
+fn initial_board(
+    weak: &Weak<Hub>,
+    starting: &mpsc::Receiver<()>,
+    connect: &mut impl FnMut(&Path) -> Result<tasks::Store, String>,
+    docs_ready: Duration,
+    started: Instant,
+) -> Option<Option<tasks::Store>> {
+    starting.recv().ok()?;
+    let hub = weak.upgrade()?;
+    if *hub.draining.borrow() {
+        return None;
+    }
+    let board_started = Instant::now();
+    let unwinding = Unwinding(&hub);
+    let board = match connect(&hub.root).and_then(|store| {
+        hub.board_read(&store)?;
+        Ok(store)
+    }) {
+        Ok(store) => Some(store),
+        Err(error) => {
+            hub.board_error(error);
+            None
+        }
+    };
+    drop(unwinding);
+    // Logged before the waiters are released, so the log orders this read against what waited.
+    eprintln!(
+        "→ native read data warmed: documents {:.1} ms, board {:.1} ms, total {:.1} ms",
+        docs_ready.as_secs_f64() * 1000.0,
+        board_started.elapsed().as_secs_f64() * 1000.0,
+        started.elapsed().as_secs_f64() * 1000.0
+    );
+    hub.initial_board.send_replace(true);
+    Some(board)
+}
