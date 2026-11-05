@@ -103,14 +103,14 @@ or cancelled) the record stays and says why and how to bring it back,
 `just tasks restore SLUG [HANDLE]`, which resumes the conversation in the same
 worktree. See the [tasks skill](../../.agents/skills/tasks/SKILL.md#launch-restore-clean-up-herdr).
 
-**Reviewers come from the other agent family than the branch's author:** create
-the review instruction subtask, then
-`just tasks launch SLUG --role reviewer --kind K`. Launch registers its handle
-and records its session in its own pane and worktree. K is `codex`
-(`gpt-6.1-sol` or better, `xhigh`) for a branch a Claude executor wrote, `claude`
-for a branch a Codex executor wrote. Never use an in-process reviewer subagent,
-including outside herdr. Executors are kept about half Claude and half Codex
-([standing rule](../../RULES.md#workflowreviewer-from-the-other-family)).
+**Which agent starts where** is a [standing rule](../../RULES.md#workflowclaude-first-agents):
+executors and reviewers are Claude, started as in-process subagents or
+`claude -p`, with a handle registered for them and a subtask made `--for` it. A
+pane, `just tasks launch SLUG --kind K` (`--role reviewer` for a reviewer),
+holds work that needs one: Codex's adversarial review of a branch a Claude
+executor wrote (`gpt-6.1-sol` or better, `xhigh`), its image generation and 3D
+modelling, or an agent that must be watched or outlive its orchestrator
+([task-orchestrator](../../.agents/skills/task-orchestrator/SKILL.md#which-way-an-agent-starts)).
 
 **Optional automatic staffing:** `just tasks staff [--dry-run]` makes one pass, highest
 priority first. Enable it in [task_staff.json](../../tools/task_staff.json): `enabled`
@@ -216,8 +216,8 @@ command. A handle anywhere else
 in a command (a grep pattern, text inside a quoted argument, another recipe
 such as `just land` run under someone's `TASKS_SESSION`) binds nothing. From
 then on each of its tool calls beats for that handle, until a later board
-command names another. A full session with no agent id (one started in a herdr pane)
-is bound and beats the same way, keyed by its session id, but keeps the first handle
+command names another. A full session with no agent id (one started in a herdr pane, or a
+`claude -p` run) is bound and beats the same way, keyed by its session id, but keeps the first handle
 it names: naming another (registering or relaying for a child) moves nothing. A handle
 with a monitor of its own (an orchestrator) is never bound: its monitor beats for it,
 and a session that names such a handle is barred from binding at all, so the calls of
