@@ -77,7 +77,7 @@ fn manifest(r: &Repo, command: &[&str]) {
         &r.root,
         MANIFEST,
         &format!(
-            "[project]\nname = \"Star Foundry\"\n\n[board]\nexport = \"docs/tasks.md\"\non_review = [{}]\n",
+            "[project]\nname = \"Lamp Works\"\n\n[board]\nexport = \"docs/tasks.md\"\non_review = [{}]\n",
             quoted.join(", ")
         ),
     );
