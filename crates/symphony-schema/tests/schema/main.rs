@@ -4,7 +4,7 @@ use serde_json::{Value, json};
 use symphony_schema::{Schema, SchemaError, validate};
 
 fn errors(instance: &Value, schema: &Value) -> Vec<String> {
-    validate(instance, schema).unwrap_or_else(|e| panic!("the schema was refused: {e}"))
+    validate(instance, schema).expect("fixture schema is accepted")
 }
 
 fn valid(instance: &Value, schema: &Value) -> bool {
@@ -12,10 +12,7 @@ fn valid(instance: &Value, schema: &Value) -> bool {
 }
 
 fn refused(schema: &Value) -> SchemaError {
-    match validate(&json!(1), schema) {
-        Err(problem) => problem,
-        Ok(found) => panic!("{schema} was taken as a schema (errors: {found:?})"),
-    }
+    validate(&json!(1), schema).expect_err("invalid fixture schema is refused")
 }
 
 // --- types ---
@@ -250,7 +247,7 @@ fn dependent_required_and_not() {
 }
 
 fn parsed(text: &str) -> Value {
-    serde_json::from_str(text).unwrap()
+    serde_json::from_str(text).expect("fixture JSON is valid")
 }
 
 mod diagnostics;

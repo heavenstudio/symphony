@@ -1,8 +1,9 @@
 //! The Markdown syntax every reader of the docs shares, against the rules the docs are read by.
 
 use symphony_docs::syntax::{
-    LineIndex, anchors, card_line, cards, code_ranges, components, entries, entry_line, heading,
-    heading_anchor, line_links, line_of, lines, links, mask_code_spans, pictures, wikilinks,
+    LineIndex, WikiLink, anchors, card_line, cards, code_ranges, components, entries, entry_line,
+    heading, heading_anchor, line_links, line_of, lines, links, mask_code_spans, pictures,
+    wikilinks,
 };
 
 #[test]
@@ -12,7 +13,7 @@ fn lines_split_like_python_splitlines() {
     assert_eq!(lines("a\n"), ["a"]);
     assert_eq!(lines("a\n\n"), ["a", ""]);
     assert_eq!(lines("\u{2028}x"), ["", "x"]);
-    assert!(lines("").is_empty());
+    assert_eq!(lines(""), Vec::<&str>::new());
 }
 
 #[test]
@@ -100,11 +101,11 @@ fn a_link_target_runs_to_the_bracket_or_a_title() {
         ["two.md#second", "/a.png"]
     );
     assert_eq!(line_links(r#"[a](b.md "The title")"#), ["b.md"]);
-    assert!(line_links("[a](b c)").is_empty());
-    assert!(line_links("[a] (b.md)").is_empty());
+    assert_eq!(line_links("[a](b c)"), Vec::<&str>::new());
+    assert_eq!(line_links("[a] (b.md)"), Vec::<&str>::new());
     assert_eq!(line_links("[a] [b](c.md)"), ["c.md"]);
     assert_eq!(line_links("[a [b](c.md)"), ["c.md"]);
-    assert!(line_links("[a]()").is_empty());
+    assert_eq!(line_links("[a]()"), Vec::<&str>::new());
 }
 
 #[test]
@@ -119,17 +120,23 @@ fn links_skip_fences_and_code_but_not_code_link_text() {
 #[test]
 fn code_ranges_cover_fenced_blocks_and_inline_spans() {
     let text = "a `b` c\n```\n[[x]]\n```\nd ``e`f`` g\n";
-    let ranges: Vec<&str> = code_ranges(text).into_iter().map(|r| &text[r]).collect();
+    let ranges: Vec<&str> = code_ranges(text)
+        .into_iter()
+        .map(|r| text.get(r).unwrap())
+        .collect();
     assert_eq!(ranges, ["`b`", "```\n[[x]]\n```", "``e`f``"]);
 }
 
 #[test]
 fn an_indented_or_unclosed_fence_is_not_a_block() {
     let text = "  ```\n[[x]]\n  ```\n";
-    let ranges: Vec<&str> = code_ranges(text).into_iter().map(|r| &text[r]).collect();
+    let ranges: Vec<&str> = code_ranges(text)
+        .into_iter()
+        .map(|r| text.get(r).unwrap())
+        .collect();
     assert_eq!(ranges, ["``", "``"]);
     let unclosed = "~~~\n[[y]]\n";
-    assert!(code_ranges(unclosed).is_empty());
+    assert_eq!(code_ranges(unclosed), Vec::<std::ops::Range<usize>>::new());
 }
 
 #[test]
@@ -169,8 +176,14 @@ fn a_document_link_has_a_target_a_heading_and_a_label() {
 
 #[test]
 fn a_document_link_in_code_or_malformed_is_none() {
-    assert!(wikilinks("`[[two]]` and\n```\n[[three]]\n```\n").is_empty());
-    assert!(wikilinks("[[]] [[a#]] [[a|]] [[a#|b]]").is_empty());
+    assert_eq!(
+        wikilinks("`[[two]]` and\n```\n[[three]]\n```\n"),
+        Vec::<WikiLink>::new()
+    );
+    assert_eq!(
+        wikilinks("[[]] [[a#]] [[a|]] [[a#|b]]"),
+        Vec::<WikiLink>::new()
+    );
     assert_eq!(wikilinks("[[[two]]]").len(), 1);
 }
 
@@ -306,4 +319,40 @@ fn pictures_are_image_sources() {
         pictures("A ![H item A](/a.png) B ![](/b.png) [not](/c.png) ![bad](d e)"),
         ["/a.png", "/b.png"]
     );
+}
+
+#[test]
+fn the_readers_keep_whole_characters_around_text_outside_ascii() {
+    let link = wikilinks("é [[café#séance|légende]] ü");
+    assert_eq!(link.len(), 1);
+    assert_eq!(link[0].whole, "[[café#séance|légende]]");
+    assert_eq!(
+        (
+            link[0].target.as_str(),
+            link[0].heading.as_deref(),
+            link[0].label.as_deref()
+        ),
+        ("café", Some("séance"), Some("légende"))
+    );
+    let component = components("ü [[slot:Öl · tür|Größe]] é");
+    assert_eq!(component.len(), 1);
+    assert_eq!(component[0].whole, "[[slot:Öl · tür|Größe]]");
+    assert_eq!(
+        (component[0].arg.as_str(), component[0].option.as_deref()),
+        ("Öl · tür", Some("Größe"))
+    );
+    assert_eq!(mask_code_spans("à `é` ü"), "à xxx ü");
+    assert_eq!(
+        line_links("ë [à](é.md) [ö](ü.md \"tïtle\")"),
+        ["é.md", "ü.md"]
+    );
+    assert_eq!(pictures("![é](à.png) ![ü](ö.png)"), ["à.png", "ö.png"]);
+    assert_eq!(card_line("- [x] **é** — ü"), Some(('x', "é", "ü")));
+}
+
+#[test]
+fn a_date_cut_through_a_character_is_no_stamp() {
+    // Sixteen bytes, the tenth inside the `é`: no whole date comes before the time.
+    assert_eq!(entry_line("  [2026-09-2é 1:00] owner"), None);
+    assert!(entry_line("  [2026-09-25 10:00] owner").is_some());
 }

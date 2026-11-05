@@ -8,6 +8,7 @@
 
 mod api;
 mod backstop;
+pub mod binary;
 pub mod cli;
 pub mod development;
 mod file_body;

@@ -20,12 +20,21 @@
 //! the same reading of the tree ([`Docs`]).
 
 use std::cell::RefCell;
-use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::ffi::OsString;
 use std::fmt;
 use std::path::{Component, Path, PathBuf};
 
 use crate::syntax;
+
+mod links;
+mod lists;
+mod prose;
+
+use links::{links, reachable, wikilinks};
+use lists::{folders_list, guides};
+use prose::{prose, unknown_components};
+pub use prose::{prose_lines, runs};
 
 /// One reference that does not resolve, at its file and line (0 when the whole file is meant).
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -137,7 +146,7 @@ pub fn check(root: &Path, checks: &[&dyn DocCheck]) -> Result<Index, Vec<Problem
 pub struct Docs {
     root: PathBuf,
     /// Every document, sorted by its project-relative path.
-    docs: Vec<String>,
+    documents: Vec<String>,
     texts: HashMap<String, String>,
     /// Each document's heading anchors, sorted; each live document's cards.
     anchors: HashMap<String, Vec<String>>,
@@ -154,7 +163,7 @@ impl Docs {
         let root = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
         let mut tree = Docs {
             root: root.clone(),
-            docs: Vec::new(),
+            documents: Vec::new(),
             texts: HashMap::new(),
             anchors: HashMap::new(),
             cards: HashMap::new(),
@@ -162,10 +171,13 @@ impl Docs {
             unreadable: Vec::new(),
             listings: RefCell::new(HashMap::new()),
         };
-        tree.walk(&root.join(DOCS), DOCS.to_string(), false);
-        tree.docs.sort();
+        tree.walk(&root.join(DOCS), DOCS, false);
+        tree.documents.sort();
         tree.media.sort();
-        for (rel, text) in &tree.texts {
+        for rel in &tree.documents {
+            let Some(text) = tree.texts.get(rel) else {
+                continue;
+            };
             tree.anchors.insert(rel.clone(), syntax::anchors(text));
             if !is_history(rel) {
                 tree.cards
@@ -182,12 +194,12 @@ impl Docs {
 
     /// Every document, history included, by its project-relative path, sorted.
     pub fn paths(&self) -> &[String] {
-        &self.docs
+        &self.documents
     }
 
     /// A document's text; empty for one the tree does not hold.
     pub fn text(&self, rel: &str) -> &str {
-        self.texts.get(rel).map(String::as_str).unwrap_or("")
+        self.texts.get(rel).map_or("", String::as_str)
     }
 
     /// Whether the tree holds the document `rel`.
@@ -197,12 +209,12 @@ impl Docs {
 
     /// A live document's cards (none for a history document).
     pub fn cards(&self, rel: &str) -> &[syntax::Card] {
-        self.cards.get(rel).map(Vec::as_slice).unwrap_or(&[])
+        self.cards.get(rel).map_or(&[], Vec::as_slice)
     }
 
     /// Every component the docs build checks, with its document: those outside `docs/history/`.
     pub fn components(&self) -> Vec<(&str, syntax::Component)> {
-        self.docs
+        self.documents
             .iter()
             .filter(|rel| !rel.starts_with("docs/history/"))
             .flat_map(|rel| {
@@ -214,14 +226,18 @@ impl Docs {
     }
 
     fn doc_anchors(&self, rel: &str) -> &[String] {
-        self.anchors.get(rel).map(Vec::as_slice).unwrap_or(&[])
+        self.anchors.get(rel).map_or(&[], Vec::as_slice)
     }
 
     fn doc_cards(&self, rel: &str) -> &[syntax::Card] {
         self.cards(rel)
     }
 
-    fn walk(&mut self, dir: &Path, rel: String, hidden: bool) {
+    #[expect(
+        clippy::case_sensitive_file_extension_comparisons,
+        reason = "a document is a `.md` file in lower case, as the Symphony serves one"
+    )]
+    fn walk(&mut self, dir: &Path, rel: &str, hidden: bool) {
         let Ok(entries) = std::fs::read_dir(dir) else {
             return;
         };
@@ -239,12 +255,12 @@ impl Docs {
             let child = format!("{rel}/{name}");
             let quiet = hidden || name.starts_with('.');
             if is_dir {
-                self.walk(&dir.join(&name), child, quiet);
+                self.walk(&dir.join(&name), &child, quiet);
             } else if name.ends_with(".md") {
                 match std::fs::read_to_string(dir.join(&name)) {
                     Ok(text) => {
                         self.texts.insert(child.clone(), text);
-                        self.docs.push(child);
+                        self.documents.push(child);
                     }
                     Err(error) => self.unreadable.push(Problem {
                         file: child,
@@ -263,13 +279,13 @@ impl Docs {
     }
 
     fn live(&self) -> impl Iterator<Item = &String> {
-        self.docs.iter().filter(|rel| !is_history(rel))
+        self.documents.iter().filter(|rel| !is_history(rel))
     }
 
     /// The documents in the order a document link searches them: live ones, then history.
     fn search_order(&self) -> Vec<&str> {
-        let live = self.docs.iter().filter(|rel| !is_history(rel));
-        let past = self.docs.iter().filter(|rel| is_history(rel));
+        let live = self.documents.iter().filter(|rel| !is_history(rel));
+        let past = self.documents.iter().filter(|rel| is_history(rel));
         live.chain(past).map(String::as_str).collect()
     }
 
@@ -308,7 +324,7 @@ impl Docs {
 
     fn index(&self, watch: Vec<PathBuf>) -> Index {
         let docs: Vec<DocInfo> = self
-            .docs
+            .documents
             .iter()
             .map(|rel| DocInfo {
                 path: rel.clone(),
@@ -316,7 +332,7 @@ impl Docs {
             })
             .collect();
         let place: HashMap<&str, usize> = self
-            .docs
+            .documents
             .iter()
             .enumerate()
             .map(|(at, rel)| (rel.as_str(), at))
@@ -358,8 +374,8 @@ fn normalize(path: &Path) -> PathBuf {
     let mut out = PathBuf::new();
     for part in path.components() {
         match part {
-            std::path::Component::CurDir => {}
-            std::path::Component::ParentDir => {
+            Component::CurDir => {}
+            Component::ParentDir => {
                 if !out.pop() {
                     out.push("..");
                 }
@@ -485,467 +501,5 @@ impl Anchors<'_> {
                 .map(|text| syntax::anchors(&text))
                 .unwrap_or_default()
         })
-    }
-}
-
-// --- reachable through READMEs ---
-
-fn reachable(tree: &Docs, problems: &mut Vec<Problem>) {
-    if !tree.has_doc(ROOT_README) {
-        problem(
-            problems,
-            ROOT_README,
-            0,
-            "missing, nothing can be reached from it".to_string(),
-        );
-        return;
-    }
-    let mut seen: HashSet<String> = HashSet::from([ROOT_README.to_string()]);
-    let mut queue = VecDeque::from([ROOT_README.to_string()]);
-    while let Some(rel) = queue.pop_front() {
-        let folder = tree
-            .root
-            .join(&rel)
-            .parent()
-            .map(Path::to_path_buf)
-            .unwrap_or_default();
-        for (_, target) in syntax::links(tree.text(&rel)) {
-            let Some((path, _)) = resolve(tree, &rel, &target) else {
-                continue;
-            };
-            let Some(page) = page_for(tree, &path) else {
-                continue;
-            };
-            if seen.contains(&page) {
-                continue;
-            }
-            let path = tree.root.join(&page);
-            let readme = path.file_name().is_some_and(|n| n == "README.md");
-            let parent = path.parent().unwrap_or(&tree.root);
-            if parent == folder || (readme && parent.parent() == Some(folder.as_path())) {
-                seen.insert(page.clone());
-                if readme {
-                    queue.push_back(page);
-                }
-            }
-        }
-    }
-    for rel in &tree.docs {
-        if seen.contains(rel) {
-            continue;
-        }
-        let mut parts: Vec<&str> = rel.split('/').collect();
-        parts.pop();
-        if rel.ends_with("/README.md") {
-            parts.pop();
-        }
-        let owner = format!("{}/README.md", parts.join("/"));
-        problem(
-            problems,
-            rel,
-            0,
-            format!(
-                "not reachable from {ROOT_README}: {owner} must link it (a link in a README, not in another page)"
-            ),
-        );
-    }
-}
-
-// --- links ---
-
-fn links(tree: &Docs, problems: &mut Vec<Problem>, watch: &mut BTreeSet<PathBuf>) {
-    let mut anchors = Anchors {
-        tree,
-        cache: HashMap::new(),
-    };
-    let artifacts = tree.root.join("artifacts");
-    let docs = tree.root.join(DOCS);
-    for rel in tree.live() {
-        for (line, target) in syntax::links(tree.text(rel)) {
-            let Some((path, anchor)) = resolve(tree, rel, &target) else {
-                continue;
-            };
-            if !tree.exists(&path) {
-                if !(path.starts_with(&artifacts) && path != artifacts) {
-                    problem(problems, rel, line, format!("[{target}]: no such file"));
-                }
-                continue;
-            }
-            if !path.starts_with(&docs) && !path.starts_with(&artifacts) {
-                if is_dir(&path) {
-                    // Cargo watches docs/ and each file named here; a folder outside docs/ moved away
-                    // would leave the build green until some document changed.
-                    problem(
-                        problems,
-                        rel,
-                        line,
-                        format!(
-                            "[{target}]: a folder outside docs/, which the build cannot watch; \
-                             link a file in it (its README.md or AGENTS.md)"
-                        ),
-                    );
-                    continue;
-                }
-                watch.insert(path.clone());
-            }
-            if anchor.is_empty() {
-                continue;
-            }
-            let doc = if is_dir(&path) {
-                path.join("README.md")
-            } else {
-                path
-            };
-            if extension(&doc) == ".md"
-                && tree.exists(&doc)
-                && doc.is_file()
-                && !anchors.of(&doc).contains(&anchor)
-            {
-                problem(
-                    problems,
-                    rel,
-                    line,
-                    format!("[{target}]: no heading '{anchor}' in {}", tree.rel(&doc)),
-                );
-            }
-        }
-    }
-}
-
-/// The document a `[[NAME]]` names: the path it spells from the linking page if that exists, else the
-/// first document whose path ends with it (live ones before history), so a document can move folders.
-fn find_doc<'a>(target: &str, from: &str, order: &[&'a str]) -> Option<&'a str> {
-    let mut name = target.trim_matches(syntax::is_space).to_string();
-    if !name.ends_with(".md") {
-        name.push_str(".md");
-    }
-    let folder = from.rsplit_once('/').map(|(dir, _)| dir).unwrap_or("");
-    let direct = if name.starts_with('/') {
-        normpath(&name)
-    } else {
-        normpath(&format!("{folder}/{name}"))
-    };
-    if let Some(found) = order.iter().find(|p| **p == direct) {
-        return Some(found);
-    }
-    let tail = format!("/{}", name.trim_start_matches('/'));
-    order.iter().find(|p| p.ends_with(&tail)).copied()
-}
-
-fn wikilinks(tree: &Docs, problems: &mut Vec<Problem>) {
-    let order = tree.search_order();
-    for rel in tree.live() {
-        for link in syntax::wikilinks(tree.text(rel)) {
-            if link.target.contains(':') {
-                continue; // a task or a component, not a document
-            }
-            let target = link.target.trim_matches(syntax::is_space);
-            let Some(found) = find_doc(target, rel, &order) else {
-                problem(
-                    problems,
-                    rel,
-                    link.line,
-                    format!("{}: no document called {target}", link.whole),
-                );
-                continue;
-            };
-            if let Some(heading) = &link.heading
-                && !tree
-                    .doc_anchors(found)
-                    .contains(&syntax::heading_anchor(heading))
-            {
-                problem(
-                    problems,
-                    rel,
-                    link.line,
-                    format!("{}: no heading '{heading}' in {found}", link.whole),
-                );
-            }
-        }
-    }
-}
-
-// --- the Folders list and the list READMEs ---
-
-/// A list row: a bullet (`-`, `*` or `+` and a space) or a table row (`|`), after any indent.
-fn is_row(line: &str) -> bool {
-    let body = line.trim_start_matches(syntax::is_space);
-    body.starts_with('|')
-        || (body.starts_with(['-', '*', '+']) && body[1..].starts_with(syntax::is_space))
-}
-
-fn subfolders(path: &Path) -> Vec<String> {
-    let mut found: Vec<String> = std::fs::read_dir(path)
-        .map(|entries| {
-            entries
-                .flatten()
-                .filter(|e| e.file_type().is_ok_and(|t| t.is_dir()))
-                .map(|e| e.file_name().to_string_lossy().into_owned())
-                .filter(|name| !name.starts_with('.'))
-                .collect()
-        })
-        .unwrap_or_default();
-    found.sort();
-    found
-}
-
-fn folders_list(tree: &Docs, problems: &mut Vec<Problem>) {
-    if !tree.has_doc(ROOT_README) {
-        return;
-    }
-    let mut listed: BTreeSet<String> = BTreeSet::new();
-    let mut inside = false;
-    for line in syntax::lines(tree.text(ROOT_README)) {
-        if let Some(rest) = line.strip_prefix("##")
-            && rest.starts_with(syntax::is_space)
-            && rest.trim_matches(syntax::is_space) == "Folders"
-        {
-            inside = true;
-        } else if line.starts_with('#') {
-            inside = false;
-        } else if inside && is_row(line) {
-            listed.extend(
-                syntax::line_links(line)
-                    .into_iter()
-                    .map(|t| t.split('/').next().unwrap_or("").to_string()),
-            );
-        }
-    }
-    let real: BTreeSet<String> = subfolders(&tree.root.join(DOCS)).into_iter().collect();
-    for name in real.difference(&listed) {
-        problem(
-            problems,
-            ROOT_README,
-            0,
-            format!("the Folders list is missing {name}/ (a folder under docs/)"),
-        );
-    }
-    for name in listed.difference(&real) {
-        problem(
-            problems,
-            ROOT_README,
-            0,
-            format!("the Folders list names {name}/, but there is no such folder under docs/"),
-        );
-    }
-}
-
-fn holds_docs(tree: &Docs, folder: &Path) -> bool {
-    let prefix = format!("{}/", tree.rel(folder));
-    tree.docs.iter().any(|rel| rel.starts_with(&prefix))
-}
-
-fn guides(tree: &Docs, problems: &mut Vec<Problem>) {
-    for rel in tree
-        .docs
-        .iter()
-        .filter(|rel| rel.ends_with("/README.md") && rel.as_str() != ROOT_README)
-    {
-        let folder = tree
-            .root
-            .join(rel)
-            .parent()
-            .map(Path::to_path_buf)
-            .unwrap_or_default();
-        let mut listed: HashSet<PathBuf> = HashSet::new();
-        let mut dead: Vec<(usize, &str)> = Vec::new();
-        let text = tree.text(rel);
-        let lines = syntax::lines(text);
-        for (index, line) in syntax::outside_fences(&lines).into_iter().enumerate() {
-            let Some(line) = line.filter(|l| is_row(l)) else {
-                continue;
-            };
-            let Some(first) = syntax::line_links(line).into_iter().next() else {
-                continue;
-            };
-            let Some((mut path, _)) = resolve(tree, rel, first) else {
-                continue;
-            };
-            if path.file_name().is_some_and(|n| n == "README.md")
-                && path.parent().and_then(Path::parent) == Some(folder.as_path())
-            {
-                path.pop();
-            }
-            let ext = extension(&path);
-            if path.parent() != Some(folder.as_path()) || !(ext.is_empty() || ext == ".md") {
-                continue;
-            }
-            if tree.exists(&path) {
-                listed.insert(path);
-            } else {
-                dead.push((index + 1, first));
-            }
-        }
-        if listed.is_empty() && dead.is_empty() {
-            continue; // prose: it says what the folder holds without listing it
-        }
-        for (line, target) in dead {
-            problem(
-                problems,
-                rel,
-                line,
-                format!("lists {target}, which does not exist"),
-            );
-        }
-        let prefix = format!("{}/", tree.rel(&folder));
-        let mut wanted: Vec<(PathBuf, bool)> = tree
-            .docs
-            .iter()
-            .filter_map(|doc| doc.strip_prefix(&prefix))
-            .filter(|name| !name.contains('/') && *name != "README.md")
-            .map(|name| (folder.join(name), false))
-            .collect();
-        wanted.extend(
-            subfolders(&folder)
-                .into_iter()
-                .map(|name| folder.join(name))
-                .filter(|p| holds_docs(tree, p))
-                .map(|p| (p, true)),
-        );
-        for (path, dir) in wanted {
-            if !listed.contains(&path) {
-                let name = path
-                    .file_name()
-                    .map(|n| n.to_string_lossy().into_owned())
-                    .unwrap_or_default();
-                problem(
-                    problems,
-                    rel,
-                    0,
-                    format!(
-                        "does not list {name}{} (add a row for it)",
-                        if dir { "/" } else { "" }
-                    ),
-                );
-            }
-        }
-    }
-}
-
-// --- prose: card slugs ---
-
-/// The lines of a page outside its fences and register regions, numbered from 1: the page's prose.
-pub fn prose_lines(text: &str) -> Vec<(usize, &str)> {
-    let mut found = Vec::new();
-    let (mut fenced, mut register) = (false, false);
-    for (index, line) in syntax::lines(text).into_iter().enumerate() {
-        let trimmed = line.trim_matches(syntax::is_space);
-        if syntax::is_fence(line) {
-            fenced = !fenced;
-        } else if trimmed == syntax::REGION_START || trimmed == syntax::REGION_END {
-            register = trimmed == syntax::REGION_START;
-        } else if !fenced && !register {
-            found.push((index + 1, line));
-        }
-    }
-    found
-}
-
-/// The maximal runs of `keep` characters in `line`, each with the character before it.
-pub fn runs(line: &str, keep: impl Fn(char) -> bool) -> Vec<(Option<char>, &str)> {
-    let mut found = Vec::new();
-    let mut before = None;
-    let mut start = None;
-    for (at, c) in line.char_indices() {
-        match (keep(c), start) {
-            (true, None) => start = Some(at),
-            (false, Some(from)) => {
-                found.push((before, &line[from..at]));
-                start = None;
-            }
-            _ => {}
-        }
-        if start.is_none() {
-            before = Some(c);
-        }
-    }
-    if let Some(from) = start {
-        found.push((before, &line[from..]));
-    }
-    found
-}
-
-/// The card slugs a line names: a slug standing alone, `(?<![\w/#-])slug(?![\w-])`, so an anchor
-/// (`#slug`), a path part (`/slug`) and a longer word are not mentions.
-fn mentions<'a>(line: &'a str, slugs: &HashSet<&str>, odd: &[&str]) -> Vec<&'a str> {
-    let word = |c: char| syntax::is_word(c) || c == '-';
-    let mut found: Vec<(usize, &str)> = runs(line, word)
-        .into_iter()
-        .filter(|(before, run)| !matches!(before, Some('/' | '#')) && slugs.contains(run))
-        .map(|(_, run)| (run.as_ptr() as usize - line.as_ptr() as usize, run))
-        .collect();
-    for slug in odd {
-        for (at, _) in line.match_indices(slug) {
-            let before = line[..at].chars().next_back();
-            let after = line[at + slug.len()..].chars().next();
-            if !before.is_some_and(|c| word(c) || c == '/' || c == '#') && !after.is_some_and(word)
-            {
-                found.push((at, &line[at..at + slug.len()]));
-            }
-        }
-    }
-    found.sort();
-    found.into_iter().map(|(_, slug)| slug).collect()
-}
-
-fn prose(tree: &Docs, problems: &mut Vec<Problem>) {
-    let scanned: Vec<&String> = tree
-        .docs
-        .iter()
-        .filter(|rel| !rel.split('/').any(|p| p == "history" || p.starts_with('.')))
-        .collect();
-    let slugs: HashSet<&str> = scanned
-        .iter()
-        .flat_map(|rel| tree.doc_cards(rel))
-        .map(|card| card.slug.as_str())
-        .collect();
-    let word = |c: char| syntax::is_word(c) || c == '-';
-    let plain: HashSet<&str> = slugs
-        .iter()
-        .copied()
-        .filter(|s| !s.is_empty() && s.chars().all(word))
-        .collect();
-    let odd: Vec<&str> = slugs
-        .iter()
-        .copied()
-        .filter(|s| !s.is_empty() && !s.chars().all(word))
-        .collect();
-    for rel in scanned {
-        if matches!(rel.split('/').nth(1), Some("history" | "analysis")) {
-            continue; // the ledger and the evidence may say why and when
-        }
-        for (line, text) in prose_lines(tree.text(rel)) {
-            for slug in mentions(text, &plain, &odd) {
-                problem(
-                    problems,
-                    rel,
-                    line,
-                    format!(
-                        "card slug {slug} in prose: say what the design is; why and when belong on the card and in {LEDGER}"
-                    ),
-                );
-            }
-        }
-    }
-}
-
-// --- components ---
-
-/// A component neither built in nor named by a check.
-fn unknown_components(tree: &Docs, checks: &[&dyn DocCheck], problems: &mut Vec<Problem>) {
-    let known: HashSet<String> = checks
-        .iter()
-        .flat_map(|check| check.components(tree))
-        .chain([TASK.to_string()])
-        .collect();
-    for (rel, component) in tree.components() {
-        if !known.contains(&component.name) {
-            problem(
-                problems,
-                rel,
-                component.line,
-                format!("{}: unknown component {}", component.whole, component.name),
-            );
-        }
     }
 }

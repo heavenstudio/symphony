@@ -11,7 +11,7 @@ axum = { version = "0.8", default-features = false, features = ["http1", "json",
 libc = "0.2"
 symphony-api = { path = "../../crates/symphony-api" }
 symphony = { path = "../../crates/symphony" }
-# The plugins a host binary installs before it serves (`cli::run`).
+# The plugins a host binary installs before it serves (`binary::run`).
 symphony-plugin = { path = "../../crates/symphony-plugin" }
 symphony-board = { path = "../../crates/tasks" }
 notify = "8"
