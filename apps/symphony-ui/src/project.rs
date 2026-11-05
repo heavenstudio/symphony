@@ -37,6 +37,15 @@ fn read() -> ProjectView {
         .unwrap_or_default()
 }
 
+/// The browser's page in the project: its path under the base, with its fragment.
+#[cfg(target_arch = "wasm32")]
+pub fn page() -> Option<String> {
+    let location = web_sys::window()?.location();
+    let path = location.pathname().ok()?;
+    let hash = location.hash().unwrap_or_default();
+    Some(format!("{}{hash}", current().strip(&path)))
+}
+
 /// Off the browser there is no served page: the plain project.
 #[cfg(not(target_arch = "wasm32"))]
 pub fn current() -> ProjectView {

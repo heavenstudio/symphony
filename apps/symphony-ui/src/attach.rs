@@ -442,7 +442,7 @@ mod runtime {
         init.set_headers(&headers);
         let url = format!(
             "{}?name={}",
-            symphony_api::UPLOAD_PATH,
+            crate::project::current().here(symphony_api::UPLOAD_PATH),
             String::from(js_sys::encode_uri_component(&file.name()))
         );
         let operation = async {

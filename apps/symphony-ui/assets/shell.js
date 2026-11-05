@@ -58,7 +58,8 @@ function styles(spec) {
                         reject(new Error(`Styles could not load: ${href}`));
                     }, { once: true });
                 });
-                if (fresh) { link.rel = "stylesheet"; link.href = href; document.head.append(link); }
+                // Page styles go before the project's theme package, which wins the cascade.
+                if (fresh) { link.rel = "stylesheet"; link.href = href; document.head.insertBefore(link, document.head.querySelector("[data-symphony-theme]")); }
             }
             styleLoads.set(href, loaded);
         }
@@ -115,8 +116,17 @@ function project() {
     try { return JSON.parse(document.getElementById("symphony-project")?.textContent || "{}"); } catch { return {}; }
 }
 
+// The page's path under the project's base (ProjectView::here): the one server serves each
+// project at `/<id>/`, a server of its own at `/`.
+function here(path) {
+    const base = project().base || "";
+    return !base || path === base || path.startsWith(`${base}/`) ? path : base + path;
+}
+
 function route(path) {
     try { path = decodeURIComponent(path); } catch { return null; }
+    const base = project().base || "";
+    if (base && (path === base || path.startsWith(`${base}/`))) path = path.slice(base.length) || "/";
     // Keep module selection aligned with navigation.rs for scoped URLs and repeated slashes.
     // The empty task route below uses the board module.
     path = path.replace(/\/{2,}/g, "/").replace(/^\//, "").replace(/^app\//, "");
@@ -230,7 +240,9 @@ document.addEventListener("click", event => {
     const link = event.target instanceof Element && event.target.closest("a[href]");
     if (!link || link.hasAttribute("download") || link.dataset.native === "true" || (link.target && link.target !== "_self")) return;
     const url = new URL(link.href, location.href);
-    if (url.origin !== location.origin || !route(url.pathname)) return;
+    if (url.origin !== location.origin) return;
+    url.pathname = here(url.pathname);
+    if (!route(url.pathname)) return;
     event.preventDefault();
     if (document.querySelector("[data-posting=true]")) return;
     history.pushState(null, "", url);

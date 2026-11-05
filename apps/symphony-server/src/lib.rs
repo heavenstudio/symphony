@@ -1,10 +1,12 @@
 //! The native Symphony server and Dioxus client host.
 //!
-//! `symphony-server` owns the app's port. There is one per machine: its lock and its address live in
-//! `sf-symphony/` in the git common dir ([`home::Home::ensure`], the shape of the board's server in
-//! `symphony/crates/tasks` on `tools/rust-port-s3`), so starters at once start one, and every checkout finds it. It serves the main
-//! checkout, and every branch's worktree under `/@<tree id>/`. Axum serves the client at `/`,
-//! the JSON read and save APIs, media and their shared SSE feed. No interpreter or proxy is used.
+//! `symphony-server` owns the app's port. There is one per machine: its record, lock, log and the
+//! registry of the projects it serves live in the machine folder ([`home::Home::ensure`],
+//! `symphony::machine`), so starters at once start one, and every project's checkouts find it. It
+//! serves each registered project under `/<id>/` and each project's worktrees under
+//! `/<id>/@<tree id>/` ([`projects`]); which build serves them is the host rule ([`host`]). Axum
+//! serves the client, the JSON read and save APIs, media and their shared SSE feed. No
+//! interpreter or proxy is used.
 
 mod api;
 mod backstop;
@@ -15,14 +17,18 @@ mod file_body;
 pub mod front;
 pub mod gate;
 pub mod home;
+pub mod host;
 mod live;
 pub mod log;
 mod media_files;
 pub mod orphans;
 pub mod probe;
+mod projects;
 mod reload;
 pub mod repo;
 pub mod shelf;
+mod shell;
+mod starter;
 pub mod sys;
 mod write;
 

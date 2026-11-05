@@ -483,13 +483,7 @@ fn QuickPanel(route: Route, mut draft: Signal<Draft>) -> Element {
         let route = route.clone();
         spawn(async move {
             let result = if d.task {
-                let page = web_sys::window()
-                    .and_then(|w| {
-                        w.location().pathname().ok().map(|path| {
-                            format!("{path}{}", w.location().hash().unwrap_or_default())
-                        })
-                    })
-                    .unwrap_or_default();
+                let page = crate::project::page().unwrap_or_default();
                 // The legacy quick-add API recognizes canonical document paths when linking a
                 // task to its document; the client URL has an additional /app prefix.
                 let page = if route.document && !route.folder {

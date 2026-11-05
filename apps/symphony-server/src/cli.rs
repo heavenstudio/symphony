@@ -1,6 +1,5 @@
 //! `symphony-server`'s command line, `just symphony ARGS`.
 
-use crate::home::Home;
 use crate::repo;
 use std::cell::Cell;
 use std::io::IsTerminal;
@@ -46,22 +45,28 @@ pub(crate) fn startup<T>(name: &str, run: impl FnOnce() -> T) -> T {
 pub const USAGE: &str = "\
 usage: symphony-server [--open] [--if-up] [--host H]... [--root DIR] [--port N | PORT]
        symphony-server --stop
+       symphony-server project add [DIR]
 
-The Symphony (`just symphony`): one server per machine, under a lock in the git common dir, serving
-every worktree. A start finds the running one and prints its URL (`/@<tree id>/` from a branch's
-worktree), or starts it, detached, and prints that.
+The Symphony (`just symphony`): one server per machine, under a lock in the machine folder, serving
+every registered project at `/<id>/` and each of its worktrees at `/<id>/@<tree id>/`. A start
+registers its checkout's project, finds the running server and prints the project's URL, or
+starts the server, detached, and prints that. A running server that lacks the project's plugins
+is replaced by this build, its sockets handed over, every project kept registered.
 
   --open       open the URL in the browser (interactive human terminals only)
   --if-up      a start of the one server only finds the running one: prints (and opens) its URL,
-               or exits 3 having started nothing; a stop or a port of its own is done at once
+               or exits 3 having started nothing, as it does when this build must replace it; a
+               stop or a port of its own is done at once
   --host H     the address it listens on, repeatable (default: every interface, each request
                judged by its client address: this machine or a confirmed tailnet peer)
   --port N     a server of its own on port N, not the one server: it runs in the foreground and
-               ends with the process that started it (PORT alone is the same). Like the one server
-               it serves the current checkout; --root selects another folder. The one server's
-               port is refused, on every address
+               ends with the process that started it (PORT alone is the same). It serves the
+               current checkout at `/`; --root selects another folder. The one server's port is
+               refused, on every address
   --root DIR   the project it serves; a root outside this repository is a server of its own too
   --stop       stop the one server
+  project add  register DIR's project (default: here) with the one server, and say whether the
+               running server can serve it
 
 The one server ignores --host and an in-repository --root; use --port to customize a server.
 ";
@@ -75,7 +80,10 @@ pub enum Action {
     Help,
     Start(Options),
     Stop(Options),
-    /// The server itself, as a start runs it: `serve --home DIR --root DIR --port N`.
+    /// `project add [DIR]`.
+    AddProject(PathBuf),
+    /// The server itself, as a start runs it:
+    /// `serve --home MACHINE --root DIR --port N [--host H]... [--install DIR]`.
     Serve(Serve),
 }
 
@@ -90,21 +98,42 @@ pub struct Options {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Serve {
-    /// The one server's folder; none for a server of its own, which ends with its parent instead.
+    /// The one server's folder, the machine folder; none for a server of its own, which ends with
+    /// its parent instead.
     pub home: Option<PathBuf>,
+    /// The project that started it: today's paths redirect to its `/<id>/`.
     pub root: PathBuf,
     pub port: u16,
     pub hosts: Vec<String>,
+    /// The folder holding its build and its client (`sf-symphony/` in the starter's git common
+    /// dir); the home when none is named.
+    pub install: Option<PathBuf>,
+}
+
+impl Serve {
+    /// Where its build and its client are: [`Serve::install`], else the home.
+    pub fn installed(&self) -> Option<&Path> {
+        self.install.as_deref().or(self.home.as_deref())
+    }
 }
 
 /// `args` without the program name.
 pub fn parse(args: &[String]) -> Result<Action, String> {
+    if args.first().is_some_and(|word| word == "project") {
+        return match &args[1..] {
+            [add] if add == "add" => Ok(Action::AddProject(PathBuf::from("."))),
+            [add, dir] if add == "add" && !dir.starts_with('-') => {
+                Ok(Action::AddProject(PathBuf::from(dir)))
+            }
+            _ => Err("project takes `add [DIR]`".into()),
+        };
+    }
     let (serve, args) = match args.split_first() {
         Some((first, rest)) if first == "serve" => (true, rest),
         _ => (false, args),
     };
     let mut options = Options::default();
-    let mut home = None;
+    let (mut home, mut install) = (None, None);
     let mut stop = false;
     let mut words = args.iter();
     while let Some(word) = words.next() {
@@ -121,6 +150,7 @@ pub fn parse(args: &[String]) -> Result<Action, String> {
             "--stop" => stop = true,
             "--root" => options.root = Some(PathBuf::from(value()?)),
             "--home" if serve => home = Some(PathBuf::from(value()?)),
+            "--install" if serve => install = Some(PathBuf::from(value()?)),
             "--host" => options.hosts.push(value()?),
             "--port" => options.port = Some(port(&value()?)?),
             other if !other.starts_with('-') && options.port.is_none() => {
@@ -133,11 +163,21 @@ pub fn parse(args: &[String]) -> Result<Action, String> {
         let (Some(root), Some(port)) = (options.root, options.port) else {
             return Err("serve needs --root and --port".into());
         };
+        // A generation from before the machine folder hands over to its successor with its git
+        // common dir's folder as the home: that folder stays the install, the machine's is the home.
+        if install.is_none()
+            && let Some(old) =
+                home.take_if(|home: &mut PathBuf| home.ends_with(crate::home::FOLDER))
+        {
+            install = Some(old);
+            home = Some(symphony::machine::dir()?);
+        }
         return Ok(Action::Serve(Serve {
             home,
             root,
             port,
             hosts: options.hosts,
+            install,
         }));
     }
     Ok(if stop {
@@ -201,6 +241,11 @@ pub fn main(args: &[String]) -> i32 {
         Ok(Action::Serve(serve)) => crate::front::serve(serve),
         Ok(Action::Start(options)) => start(options),
         Ok(Action::Stop(_)) => stop(),
+        Ok(Action::AddProject(dir)) => symphony::machine::command::main(
+            &["add".into(), dir.display().to_string()],
+            &mut std::io::stdout(),
+            &mut std::io::stderr(),
+        ),
         Err(why) => {
             eprintln!("✖ symphony-server: {why}\n\n{USAGE}");
             2
@@ -219,7 +264,7 @@ fn hosts(named: Vec<String>) -> Vec<String> {
 }
 
 /// The one server's port: `SF_SYMPHONY_PORT` (a test's own), else the app's.
-fn one_port() -> u16 {
+pub(crate) fn one_port() -> u16 {
     std::env::var("SF_SYMPHONY_PORT")
         .ok()
         .and_then(|v| v.parse().ok())
@@ -281,6 +326,7 @@ fn start(options: Options) -> i32 {
             root,
             port: options.port.unwrap_or(0),
             hosts: hosts(options.hosts),
+            install: None,
         };
         drop(trace);
         return crate::front::run(serve, options.open);
@@ -304,30 +350,23 @@ fn start(options: Options) -> i32 {
             "· --host and an in-repository --root are ignored for the one server; use --port"
         );
     }
-    let home = Home::new(
-        &checkout.common.join(crate::home::FOLDER),
-        &exe,
-        &checkout.main,
-        one_port(),
-        hosts(Vec::new()),
-    );
-    let found = if options.if_up {
-        home.up().ok_or(None)
-    } else {
-        startup("ensure shared server", || home.ensure()).map_err(Some)
-    };
-    let running = match found {
-        Ok(running) => running,
-        Err(None) => return NOT_UP,
-        Err(Some(why)) => {
+    let started = crate::starter::home(&checkout, &exe, one_port(), hosts(Vec::new()))
+        .and_then(|home| Ok((crate::starter::one(&checkout, &home, options.if_up)?, home)));
+    let (running, project, home) = match started {
+        Ok((crate::starter::Started::Serving(running, project), home)) => (running, project, home),
+        Ok((crate::starter::Started::NotUp, _)) => return NOT_UP,
+        Err(why) => {
             eprintln!("✖ Symphony: {why}");
             return 2;
         }
     };
-    let page = checkout
-        .tree_id
-        .map(|id| format!("@{id}/"))
-        .unwrap_or_default();
+    let page: String = [
+        (!project.is_empty()).then(|| format!("{project}/")),
+        checkout.tree_id.map(|id| format!("@{id}/")),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
     let url = format!("http://127.0.0.1:{}/{page}", running.port);
     let front = crate::probe::front(running.port, Duration::from_secs(5));
     let mut urls = url.clone();
@@ -375,13 +414,13 @@ fn stop() -> i32 {
             return 2;
         }
     };
-    let home = Home::new(
-        &checkout.common.join(crate::home::FOLDER),
-        Path::new(""),
-        &checkout.main,
-        one_port(),
-        Vec::new(),
-    );
+    let home = match crate::starter::home(&checkout, Path::new(""), one_port(), Vec::new()) {
+        Ok(home) => home,
+        Err(why) => {
+            eprintln!("✖ Symphony: {why}");
+            return 2;
+        }
+    };
     match home.stop() {
         Ok(Some(running)) => {
             println!(
@@ -432,168 +471,4 @@ fn opener(url: &str) -> symphony_board::sys::Command {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn args(text: &str) -> Vec<String> {
-        text.split_whitespace().map(str::to_string).collect()
-    }
-
-    /// Set in this test binary's own child, run by the case below: the server a scratch run starts.
-    const SCRATCH_SERVER: &str = "SF_SCRATCH_RUN_SERVER";
-
-    /// Only in that child: a scratch run on the streams and folder the case gave it, ending with its code.
-    #[test]
-    fn scratch_run_in_a_child() {
-        if let Some(server) = std::env::var_os(SCRATCH_SERVER) {
-            let args = ["--port".to_owned(), "an argument".to_owned()];
-            let code = scratch(
-                Path::new(&server),
-                &args,
-                "scratchdb",
-                Path::new("/asks.db"),
-            );
-            std::process::exit(code);
-        }
-    }
-
-    /// A scratch run starts the server with its arguments, its own board and this process's
-    /// environment, folder and streams, and ends with its code; one that cannot start or ends on a
-    /// signal is 2.
-    #[test]
-    fn a_scratch_run_keeps_its_arguments_board_folder_streams_and_exit() {
-        use std::os::unix::fs::PermissionsExt;
-        let dir = std::env::temp_dir().join(format!("scratch-run-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let dir = dir.canonicalize().unwrap();
-        let script = |name: &str, body: &str| {
-            let path = dir.join(name);
-            std::fs::write(&path, format!("#!/bin/sh\n{body}")).unwrap();
-            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
-            path
-        };
-        let server = script(
-            "server",
-            "IFS= read -r line\n\
-             printf '%s\\n' \"$line\" \"$PWD\" \"$TASKS_DATABASE\" \"$ASKS_DB\" \"$TASKS_SWEEP\" \"$KEPT\" \"$@\"\n\
-             printf 'diagnostic\\n' >&2\nexit 7\n",
-        );
-        let killed = script("killed", "kill -TERM $$\n");
-        std::fs::write(dir.join("input"), "request\n").unwrap();
-        let run = |server: &Path| {
-            let file = |name: &str| std::fs::File::create(dir.join(name)).unwrap();
-            let status = symphony_board::sys::Command::new(std::env::current_exe().unwrap())
-                .args(["--exact", "cli::tests::scratch_run_in_a_child"])
-                .args(["--nocapture", "--test-threads=1"])
-                .env(SCRATCH_SERVER, server)
-                .env("KEPT", "inherited")
-                .current_dir(&dir)
-                .stdin(std::fs::File::open(dir.join("input")).unwrap())
-                .stdout(file("out"))
-                .stderr(file("err"))
-                .spawn()
-                .unwrap()
-                .wait()
-                .unwrap();
-            let read = |name: &str| std::fs::read_to_string(dir.join(name)).unwrap();
-            (status.code(), read("out"), read("err"))
-        };
-        let (code, out, err) = run(&server);
-        let said = format!(
-            "request\n{}\nscratchdb\n/asks.db\noff\ninherited\n--port\nan argument\n",
-            dir.display()
-        );
-        assert_eq!(code, Some(7), "{out}{err}");
-        assert!(out.ends_with(&said), "{out}");
-        assert!(err.ends_with("diagnostic\n"), "{err}");
-        assert_eq!(run(&dir.join("missing")).0, Some(2));
-        assert_eq!(run(&killed).0, Some(2));
-        std::fs::remove_dir_all(&dir).unwrap();
-    }
-
-    #[test]
-    fn the_opener_is_the_systems_own_given_the_url_alone() {
-        let url = "http://127.0.0.1:8765/@tools~branch/";
-        let opener = opener(url);
-        let system = if cfg!(target_os = "macos") {
-            "open"
-        } else {
-            "xdg-open"
-        };
-        assert_eq!(opener.get_program(), system);
-        assert_eq!(opener.get_args().collect::<Vec<_>>(), [url]);
-        assert_eq!(opener.get_current_dir(), None);
-    }
-
-    #[test]
-    fn no_arguments_start_the_one_server() {
-        assert_eq!(parse(&[]), Ok(Action::Start(Options::default())));
-    }
-
-    #[test]
-    fn a_port_alone_or_named_and_hosts_are_read() {
-        let want = Options {
-            open: true,
-            port: Some(9000),
-            ..Options::default()
-        };
-        assert_eq!(parse(&args("--open 9000")), Ok(Action::Start(want.clone())));
-        assert_eq!(parse(&args("--port 9000 --open")), Ok(Action::Start(want)));
-        let Ok(Action::Start(hosts)) = parse(&args("--host 127.0.0.1 --host ::1 --root /x")) else {
-            panic!("not a start");
-        };
-        assert_eq!(hosts.hosts, ["127.0.0.1", "::1"]);
-        assert_eq!(hosts.root, Some(PathBuf::from("/x")));
-    }
-
-    #[test]
-    fn if_up_asks_for_the_running_server_alone() {
-        let Ok(Action::Start(options)) = parse(&args("--if-up --open")) else {
-            panic!("not a start");
-        };
-        assert!(options.if_up && options.open);
-        assert!(USAGE.contains("--if-up"));
-    }
-
-    #[test]
-    fn stop_and_help_are_their_own_actions() {
-        assert!(matches!(
-            parse(&args("--host 127.0.0.1 --stop")),
-            Ok(Action::Stop(_))
-        ));
-        assert_eq!(parse(&args("--help")), Ok(Action::Help));
-        assert_eq!(parse(&args("-h")), Ok(Action::Help));
-        assert!(USAGE.contains("--port"));
-    }
-
-    #[test]
-    fn a_server_of_its_own_is_refused_the_one_servers_port_and_the_apps() {
-        // The one server on a test's port: that port and the app's are both refused.
-        for taken in [41000, crate::home::DEFAULT_PORT] {
-            let why = reserved(taken, 41000).expect("a reserved port");
-            assert!(
-                why.starts_with(&format!("port {taken} is the one server's")),
-                "{why}"
-            );
-        }
-        assert_eq!(reserved(41001, 41000), None);
-        // The server picks its own port; a one server on a picked port reserves none.
-        assert_eq!(reserved(0, 41000), None);
-        assert_eq!(reserved(41000, 0), None);
-        assert!(reserved(crate::home::DEFAULT_PORT, 0).is_some());
-    }
-
-    #[test]
-    fn a_bad_line_is_refused() {
-        for bad in [
-            "--port x",
-            "--port",
-            "--bogus",
-            "1 2",
-            "--port 70000",
-            "--root",
-        ] {
-            assert!(parse(&args(bad)).is_err(), "{bad}");
-        }
-    }
-}
+mod tests;

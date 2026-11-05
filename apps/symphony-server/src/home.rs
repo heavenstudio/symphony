@@ -1,6 +1,8 @@
-//! The one Symphony server of a repository, and the folder it is found by: `sf-symphony/` in the git common
-//! dir, which every worktree shares (the shape of the board's server, `Home` in
-//! `symphony/crates/tasks/src/server.rs`).
+//! The one Symphony server of the machine, and the folder it is found by: the machine folder
+//! (`symphony::machine::dir`), which every project and every worktree shares (the shape of the
+//! board's server, `Home` in `symphony/crates/tasks/src/server.rs`). The server's build and client
+//! stay in the project's `sf-symphony/` in its git common dir, its install folder, and a record a
+//! server before the machine folder left there is read once, to find that server.
 //!
 //! It holds the server's record (its port and pid), the lock its starters take, and its log. A start
 //! that finds the recorded server answering prints it and starts nothing ([`Home::ensure`]); one that
@@ -21,9 +23,9 @@ use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 use symphony_board::sys::{Child, Command, Stdio};
 
-/// The one server's folder in the git common dir.
+/// The project's install folder in its git common dir: the server's build and its client, and
+/// the record of a server started before the machine folder.
 pub const FOLDER: &str = "sf-symphony";
-const LEGACY_FOLDER: &str = "sf-docs";
 /// The app's port: the owner's bookmarks, and the phone's.
 pub const DEFAULT_PORT: u16 = 8765;
 /// In the folder: where the server answers, the lock its starters take, its log.
@@ -40,8 +42,16 @@ const LOOK: Duration = Duration::from_secs(2);
 const CENSUS: Duration = Duration::from_secs(30);
 /// The starter's environment the one server and its app keep: whichever checkout, agent or test
 /// starts it, it serves every one, so it is no one's (an agent's `TASKS_SESSION` would sign the
-/// owner's board writes). The test's pid, which a test's server ends with, is kept.
-const KEPT: [&str; 5] = ["HOME", "PATH", "USER", "LANG", crate::front::TEST_PID];
+/// owner's board writes). The test's pid, which a test's server ends with, and a test's machine
+/// folder, whose registry that server reads, are kept.
+const KEPT: [&str; 6] = [
+    "HOME",
+    "PATH",
+    "USER",
+    "LANG",
+    crate::front::TEST_PID,
+    symphony::machine::DIR_ENV,
+];
 
 /// Why the one server cannot be had.
 #[derive(Debug, Clone, PartialEq)]
@@ -78,6 +88,7 @@ pub struct Home {
     dir: PathBuf,
     legacy: Option<PathBuf>,
     legacy_record: OnceLock<Option<Running>>,
+    install: Option<PathBuf>,
     exe: PathBuf,
     root: PathBuf,
     port: u16,
@@ -90,15 +101,32 @@ impl Home {
     pub fn new(dir: &Path, exe: &Path, root: &Path, port: u16, hosts: Vec<String>) -> Home {
         Home {
             dir: dir.into(),
-            legacy: (dir.file_name().is_some_and(|name| name == FOLDER))
-                .then(|| dir.parent().map(|parent| parent.join(LEGACY_FOLDER)))
-                .flatten(),
+            legacy: None,
             legacy_record: OnceLock::new(),
+            install: None,
             exe: exe.into(),
             root: root.into(),
             port,
             hosts,
             patience: PATIENCE,
+        }
+    }
+
+    /// The folder whose record a server started before this one's folder left: read once, when
+    /// this folder has none, to find that server.
+    pub fn legacy(self, dir: &Path) -> Home {
+        Home {
+            legacy: Some(dir.into()),
+            ..self
+        }
+    }
+
+    /// The folder holding the server's build and client (`--install`), which a server it starts
+    /// serves its client from and rebuilds into.
+    pub fn install(self, dir: &Path) -> Home {
+        Home {
+            install: Some(dir.into()),
+            ..self
         }
     }
 
@@ -267,13 +295,11 @@ impl Home {
         })
     }
 
-    /// Whether the server at `running`'s port answers, as `running`'s pid.
+    /// Whether the server at `running`'s port answers, as `running`'s pid serving its root: the
+    /// project that started it, whichever project asks.
     fn healthy(&self, running: &Running) -> bool {
-        probe::front(running.port, LOOK).is_some_and(|front| {
-            front.pid == running.pid
-                && front.root == running.root
-                && Path::new(&front.root) == self.root
-        })
+        probe::front(running.port, LOOK)
+            .is_some_and(|front| front.pid == running.pid && front.root == running.root)
     }
 
     /// Whether `running` answers within the patience, while it runs.
@@ -345,6 +371,9 @@ impl Home {
         for host in &self.hosts {
             command.arg("--host").arg(host);
         }
+        if let Some(install) = &self.install {
+            command.arg("--install").arg(install);
+        }
         command
             .current_dir(&self.root)
             .stdin(Stdio::null())
@@ -356,7 +385,8 @@ impl Home {
                 command.env(name, value);
             }
         }
-        let temp = self.root.join("artifacts/docs-tmp");
+        let artifacts = symphony::project::Project::of(&self.root).artifact("docs-tmp");
+        let temp = self.root.join(artifacts);
         fs::create_dir_all(&temp).map_err(io("could not make a temp directory in", &self.root))?;
         command.env("TMPDIR", temp);
         // A session of its own: no terminal's hangup reaches it, and it outlives the starter, reaped
@@ -506,319 +536,4 @@ fn since(log: &Path, from: u64) -> String {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn server_records_prefer_the_symphony_home_and_read_the_predecessor_once() {
-        let tree = crate::testing::Tree::new();
-        let home = Home::new(
-            &tree.path(FOLDER),
-            Path::new("/bin/symphony-server"),
-            Path::new("/r"),
-            0,
-            vec![],
-        );
-        assert_eq!(home.recorded(), None);
-        let old = Running {
-            port: 41001,
-            pid: 41,
-            root: "/r".into(),
-        };
-        let new = Running {
-            port: 41002,
-            pid: 42,
-            root: "/r".into(),
-        };
-        let legacy = format!("{LEGACY_FOLDER}/{ADDRESS}");
-        tree.write(&legacy, &serde_json::to_string(&old).unwrap());
-        assert_eq!(
-            home.recorded(),
-            None,
-            "an absent predecessor is read only once"
-        );
-        let reader = Home::new(
-            &tree.path(FOLDER),
-            Path::new("/bin/symphony-server"),
-            Path::new("/r"),
-            0,
-            vec![],
-        );
-        assert_eq!(reader.recorded(), Some(old.clone()));
-        tree.write(&legacy, &serde_json::to_string(&new).unwrap());
-        assert_eq!(
-            reader.recorded(),
-            Some(old),
-            "the predecessor record is cached"
-        );
-        tree.write(
-            &format!("{FOLDER}/{ADDRESS}"),
-            &serde_json::to_string(&new).unwrap(),
-        );
-        assert_eq!(
-            reader.recorded(),
-            Some(new.clone()),
-            "the primary record wins"
-        );
-        tree.write(&format!("{FOLDER}/{ADDRESS}"), "broken");
-        assert_eq!(
-            reader.recorded(),
-            None,
-            "a corrupt primary must not select an old record"
-        );
-        fs::remove_file(tree.path(&format!("{FOLDER}/{ADDRESS}"))).unwrap();
-        assert_eq!(reader.recorded().unwrap().pid, 41);
-        let arbitrary = Home::new(
-            &tree.path("private-home"),
-            Path::new("/bin/symphony-server"),
-            Path::new("/r"),
-            0,
-            vec![],
-        );
-        assert_eq!(
-            arbitrary.recorded(),
-            None,
-            "private homes do not adopt unrelated records"
-        );
-    }
-
-    #[test]
-    fn a_predecessor_record_is_up_only_when_its_private_server_answers_as_recorded() {
-        let tree = crate::testing::Tree::new();
-        let (port, looking) = statuses(vec![status(41, 0, false), status(99, 0, false)]);
-        tree.write(
-            &format!("{LEGACY_FOLDER}/{ADDRESS}"),
-            &serde_json::to_string(&Running {
-                port,
-                pid: 41,
-                root: "/r".into(),
-            })
-            .unwrap(),
-        );
-        let home = Home::new(
-            &tree.path(FOLDER),
-            Path::new("/bin/symphony-server"),
-            Path::new("/r"),
-            port,
-            vec![],
-        );
-        assert_eq!(home.up().unwrap().pid, 41);
-        assert_eq!(
-            home.up(),
-            None,
-            "a different process cannot satisfy the record"
-        );
-        drop(TcpStream::connect(("127.0.0.1", port)).unwrap());
-        assert_eq!(looking.join().unwrap(), 2);
-        assert_eq!(home.up(), None, "a dead listener is not a live predecessor");
-        let command = format!(
-            "/old/bin/review-server serve --home {} --root /r --port {port}",
-            tree.path(LEGACY_FOLDER).display()
-        );
-        assert_eq!(home.parse(41, &command).unwrap().port, port);
-        tree.write(
-            &format!("{LEGACY_FOLDER}/{LOG}"),
-            &format!("→ Symphony at http://127.0.0.1:{port}/  (pid 41)\n"),
-        );
-        assert_eq!(
-            home.parse(41, &command.replace(&format!("--port {port}"), "--port 0"))
-                .unwrap()
-                .port,
-            port
-        );
-        assert_eq!(
-            home.parse(
-                41,
-                &command.replace("/old/bin/review-server", "/old/bin/other")
-            ),
-            None
-        );
-        assert_eq!(
-            home.parse(41, &command.replace("/sf-docs ", "/unrelated ")),
-            None
-        );
-    }
-
-    /// A server on loopback whose status answers are `answers`, one per look, in turn; a look past
-    /// the last is closed unanswered. A connection that sends nothing ends it, with the looks it had.
-    fn statuses(answers: Vec<symphony_api::Front>) -> (u16, std::thread::JoinHandle<usize>) {
-        use std::io::Write;
-        let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
-        let port = listener.local_addr().unwrap().port();
-        let looking = std::thread::spawn(move || {
-            let mut answers = answers.into_iter();
-            let mut looks = 0;
-            for stream in listener.incoming() {
-                let mut stream = stream.unwrap();
-                let mut request = Vec::new();
-                let mut byte = [0];
-                while !request.ends_with(b"\r\n\r\n") {
-                    match stream.read(&mut byte) {
-                        Ok(1) => request.push(byte[0]),
-                        _ => break,
-                    }
-                }
-                if request.is_empty() {
-                    return looks;
-                }
-                looks += 1;
-                if let Some(front) = answers.next() {
-                    let body = serde_json::to_string(&front).unwrap();
-                    write!(
-                        stream,
-                        "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-                        body.len()
-                    )
-                    .unwrap();
-                }
-            }
-            looks
-        });
-        (port, looking)
-    }
-
-    /// The status of the server `pid`, up, with `orphans` counted or still `uncounted`.
-    fn status(pid: i64, orphans: usize, uncounted: bool) -> symphony_api::Front {
-        symphony_api::Front {
-            pid,
-            port: 1,
-            root: "/r".into(),
-            ready: true,
-            app: None,
-            tailnet: None,
-            orphans,
-            uncounted,
-            census_pending: false,
-        }
-    }
-
-    /// What `home.counted` returns for the server `pid` whose looks are answered `answers`, and how
-    /// many looks it took.
-    fn counted_of(
-        home: Home,
-        pid: i64,
-        answers: Vec<symphony_api::Front>,
-    ) -> (Option<symphony_api::Front>, usize) {
-        let (port, looking) = statuses(answers);
-        let running = Running {
-            port,
-            pid,
-            root: "/r".into(),
-        };
-        let found = home.counted(&running);
-        drop(TcpStream::connect(("127.0.0.1", port)).unwrap());
-        (found, looking.join().unwrap())
-    }
-
-    #[test]
-    fn a_start_reads_the_leftovers_once_the_first_census_has_counted_within_its_patience() {
-        let home = || Home::new(Path::new("/h"), Path::new("/x"), Path::new("/r"), 0, vec![]);
-        // Looked at until it says it has counted: that answer, and no look after it.
-        let (found, looks) = counted_of(
-            home(),
-            7,
-            vec![status(7, 0, true), status(7, 0, true), status(7, 2, false)],
-        );
-        assert_eq!(found, Some(status(7, 2, false)));
-        assert_eq!(looks, 3);
-        // A zero patience takes the first answer, counted or not: the wait is the patience's.
-        let (found, looks) = counted_of(
-            home().patience(Duration::ZERO),
-            7,
-            vec![status(7, 0, true), status(7, 2, false)],
-        );
-        assert_eq!(found, Some(status(7, 0, true)));
-        assert_eq!(looks, 1);
-        // Another server on the port is no count of this one's to wait for.
-        let (found, looks) = counted_of(home(), 7, vec![status(8, 0, true), status(7, 2, false)]);
-        assert_eq!(found, Some(status(8, 0, true)));
-        assert_eq!(looks, 1);
-        // The census's start event releases the starter without needing its completion event.
-        let mut pending = status(7, 0, true);
-        pending.census_pending = true;
-        let (found, looks) = counted_of(home(), 7, vec![pending.clone(), status(7, 2, false)]);
-        assert_eq!(found, Some(pending));
-        assert_eq!(looks, 1);
-    }
-
-    #[test]
-    fn the_announced_port_is_the_last_line_of_that_pid() {
-        let said = "→ Symphony at http://127.0.0.1:41000/  (pid 7)\n\
-                    → Symphony at http://127.0.0.1:41001/  (pid 8)\n\
-                    → Symphony at http://127.0.0.1:41002/  (pid 7)\n\
-                    → Symphony at http://127.0.0.1:x/  (pid 9)\n\
-                    mentions http://127.0.0.1:42000/ (pid 10) and goes on\n";
-        assert_eq!(announced_port(said, 7), Some(41002));
-        assert_eq!(announced_port(said, 8), Some(41001));
-        assert_eq!(announced_port(said, 9), None);
-        assert_eq!(announced_port(said, 10), None);
-        assert_eq!(announced_port(said, 11), None);
-        assert_eq!(announced_port("", 7), None);
-    }
-
-    #[test]
-    fn a_port_is_held_unless_a_connection_to_it_is_refused() {
-        let listening = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
-        let port = listening.local_addr().unwrap().port();
-        assert!(held(port));
-        // The local end of a connection this test holds: bound, and listened on by nothing.
-        let connected = TcpStream::connect(("127.0.0.1", port)).unwrap();
-        assert!(!held(connected.local_addr().unwrap().port()));
-    }
-
-    #[test]
-    fn recovery_of_a_server_on_a_picked_port_reads_the_port_from_its_log() {
-        let dir = std::env::temp_dir().join(format!("home-picked-{}", std::process::id()));
-        fs::create_dir_all(&dir).unwrap();
-        fs::write(
-            dir.join(LOG),
-            "→ Symphony at http://127.0.0.1:43210/  (pid 42)\n",
-        )
-        .unwrap();
-        let home = Home::new(
-            &dir,
-            Path::new("/bin/symphony-server"),
-            Path::new("/r"),
-            0,
-            vec![],
-        );
-        let command = format!(
-            "{0}/bin/symphony-server serve --home {0} --root /r --port 0 --host 127.0.0.1",
-            dir.display()
-        );
-        let found = home.parse(42, &command).map(|running| running.port);
-        // Another pid, with nothing in the log, has no port to name.
-        let other = home.parse(43, &command);
-        fs::remove_dir_all(&dir).unwrap();
-        assert_eq!(found, Some(43210));
-        assert_eq!(other, None);
-    }
-
-    #[test]
-    fn recovery_reads_whole_paths_and_only_this_homes_server() {
-        let home = Home::new(
-            Path::new("/repo with spaces/.git/sf-symphony"),
-            Path::new("/bin/symphony-server"),
-            Path::new("/repo with spaces"),
-            8765,
-            Vec::new(),
-        );
-        let command = "/repo with spaces/.git/sf-symphony/bin/symphony-server serve --home /repo with spaces/.git/sf-symphony --root /repo with spaces --port 8765 --host 127.0.0.1 --app stub";
-        assert_eq!(
-            home.parse(42, command),
-            Some(Running {
-                port: 8765,
-                pid: 42,
-                root: "/repo with spaces".into(),
-            })
-        );
-        for bad in [
-            command.replace("/bin/symphony-server serve", "/bin/other serve"),
-            command.replace("--home /repo with spaces/.git/sf-symphony", "--home /other"),
-            command.replace("--port 8765", "--port invalid"),
-            command.replace(" --root /repo with spaces", ""),
-        ] {
-            assert_eq!(home.parse(42, &bad), None, "{bad}");
-        }
-    }
-}
+mod tests;

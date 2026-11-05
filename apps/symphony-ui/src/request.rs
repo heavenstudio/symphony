@@ -53,8 +53,10 @@ async fn send(url: &str, payload: Option<JsValue>) -> Result<JsValue, String> {
             .map_err(describe)?;
         init.set_headers(&headers);
     }
+    // Every API path is the page's project's, under its base on the one server.
+    let url = crate::project::current().here(url);
     let operation = async {
-        let response: Response = JsFuture::from(window.fetch_with_str_and_init(url, &init))
+        let response: Response = JsFuture::from(window.fetch_with_str_and_init(&url, &init))
             .await
             .map_err(describe)?
             .unchecked_into();

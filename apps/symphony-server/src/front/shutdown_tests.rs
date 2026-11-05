@@ -328,6 +328,7 @@ async fn a_started_server_keeps_every_worker_it_owns_until_it_returns() {
             root: root.clone(),
             port: 0,
             hosts: vec!["127.0.0.1".into()],
+            install: None,
         },
         false,
     )
@@ -349,10 +350,10 @@ async fn a_started_server_keeps_every_worker_it_owns_until_it_returns() {
             "the {name} worker is not kept for the join: {owned:?}"
         );
     }
-    assert!(root.join(PORT_FILE).is_file());
+    assert!(port_file(&root).is_file());
     assert_eq!(started.serve_until_stopped(std::future::ready(())).await, 0);
     assert!(
-        !root.join(PORT_FILE).exists(),
+        !port_file(&root).exists(),
         "the server returned without clearing its port record"
     );
 }
@@ -413,8 +414,10 @@ async fn a_server_stopped_during_a_pending_census_drops_the_scan_and_returns_aft
             root,
             port: 0,
             hosts: Vec::new(),
+            install: None,
         },
         shared: shared.clone(),
+        projects: None,
         background: Background {
             shared: shared.clone(),
             workers: Vec::new(),

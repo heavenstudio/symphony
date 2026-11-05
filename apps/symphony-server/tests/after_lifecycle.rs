@@ -21,7 +21,7 @@ use symphony_server::home::{Home, ServerError};
 #[test]
 fn symphony_recipes_find_and_stop_a_live_predecessor_record_on_a_private_port() {
     let repo = Repo::new("symphony-predecessor-record");
-    let legacy = repo.main.join(".git/sf-docs");
+    let legacy = repo.main.join(".git/sf-symphony");
     fs::create_dir_all(&legacy).unwrap();
     let mut command = repo.command(&repo.main);
     command.args([
@@ -117,7 +117,7 @@ fn build_fixtures_reuse_the_built_image_and_replace_old_outputs_without_writing_
     let original = fs::metadata(fixture::APP).unwrap();
     for install in [false, true] {
         let out = if install {
-            repo.home.join("bin/symphony-server")
+            repo.install.join("bin/symphony-server")
         } else {
             repo.tree.join(".target/debug/symphony-server")
         };
@@ -131,7 +131,7 @@ fn build_fixtures_reuse_the_built_image_and_replace_old_outputs_without_writing_
                 .env("SF_LIFECYCLE_LOG", &repo.builds)
                 .args(["sf-slots", "cargo"]);
             if install {
-                command.arg("install").arg("--root").arg(&repo.home);
+                command.arg("install").arg("--root").arg(&repo.install);
             } else {
                 command.arg("build");
             }
@@ -266,9 +266,9 @@ fn recipe_builds_main_for_shared_starts_and_reuses_the_installed_copy() {
             "{builds:?}"
         );
         assert!(builds[1].contains("cargo install"));
-        assert!(repo.home.join("bin/symphony-server").is_file());
+        assert!(repo.install.join("bin/symphony-server").is_file());
         assert_eq!(
-            get(repo.port(), "/").unwrap().1,
+            get(repo.port(), &repo.page(repo.port(), "/")).unwrap().1,
             "<!doctype html><html>lifecycle client</html>\n"
         );
         repo.start(&repo.main, true);

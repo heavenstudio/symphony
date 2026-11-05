@@ -69,6 +69,7 @@ pub fn main(
         Some("triage") => triage_main(&args[1..], out, err),
         Some("verdict-tasks") => verdict_tasks_main(&args[1..], out, err),
         Some("ask") => asks::main(&args[1..], &std::env::vars().collect(), out, err),
+        Some("project") => crate::machine::command::main(&args[1..], out, err),
         Some(other) => commands::plugin(other, &args[1..], out, err),
         None => commands::usage(err),
     }

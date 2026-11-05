@@ -9,12 +9,15 @@ use futures_channel::mpsc::{UnboundedSender, unbounded};
 use futures_util::StreamExt;
 use wasm_bindgen::closure::Closure;
 use wasm_bindgen::{JsCast, JsValue};
-// The request helpers at the end serve the document page's asks alone.
-#[cfg(feature = "page-docs")]
-use wasm_bindgen_futures::JsFuture;
 use web_sys::{Element as DomElement, Event, MutationObserver, ResizeObserver};
 
 use crate::media::local_asset;
+
+// The request helpers serve the document page's asks alone.
+#[cfg(feature = "page-docs")]
+mod requests;
+#[cfg(feature = "page-docs")]
+pub(crate) use requests::{fetch, field, post, sleep};
 
 const STYLE: Asset = asset!(
     "/assets/media.css",
@@ -628,78 +631,4 @@ impl Drop for Controller {
             });
         }
     }
-}
-
-#[cfg(feature = "page-docs")]
-pub(crate) async fn fetch(path: &str) -> Result<JsValue, String> {
-    let window = web_sys::window().ok_or("no browser")?;
-    let response: web_sys::Response = JsFuture::from(window.fetch_with_str(path))
-        .await
-        .map_err(describe)?
-        .unchecked_into();
-    response_json(response, path).await
-}
-
-#[cfg(feature = "page-docs")]
-pub(crate) async fn post(path: &str, fields: &[(&str, &str)]) -> Result<JsValue, String> {
-    let object = js_sys::Object::new();
-    for (name, value) in fields {
-        js_sys::Reflect::set(&object, &JsValue::from_str(name), &JsValue::from_str(value))
-            .map_err(describe)?;
-    }
-    let init = web_sys::RequestInit::new();
-    init.set_method("POST");
-    init.set_body(&js_sys::JSON::stringify(&object).map_err(describe)?.into());
-    let headers = web_sys::Headers::new().map_err(describe)?;
-    headers
-        .set("Content-Type", "application/json")
-        .map_err(describe)?;
-    init.set_headers(&headers);
-    let window = web_sys::window().ok_or("no browser")?;
-    let response: web_sys::Response = JsFuture::from(window.fetch_with_str_and_init(path, &init))
-        .await
-        .map_err(describe)?
-        .unchecked_into();
-    response_json(response, path).await
-}
-
-#[cfg(feature = "page-docs")]
-async fn response_json(response: web_sys::Response, path: &str) -> Result<JsValue, String> {
-    let value = JsFuture::from(response.json().map_err(describe)?)
-        .await
-        .map_err(describe)?;
-    if response.ok() {
-        Ok(value)
-    } else {
-        Err(js_sys::Reflect::get(&value, &JsValue::from_str("error"))
-            .ok()
-            .and_then(|v| v.as_string())
-            .unwrap_or_else(|| format!("{path}: {}", response.status())))
-    }
-}
-
-#[cfg(feature = "page-docs")]
-pub(crate) fn field<T: serde::de::DeserializeOwned>(
-    value: &JsValue,
-    name: &str,
-) -> Result<T, String> {
-    serde_wasm_bindgen::from_value(
-        js_sys::Reflect::get(value, &JsValue::from_str(name)).map_err(describe)?,
-    )
-    .map_err(|e| e.to_string())
-}
-
-#[cfg(feature = "page-docs")]
-pub(crate) async fn sleep(ms: i32) {
-    let promise = js_sys::Promise::new(&mut |resolve, _| {
-        if let Some(window) = web_sys::window() {
-            let _ = window.set_timeout_with_callback_and_timeout_and_arguments_0(&resolve, ms);
-        }
-    });
-    let _ = JsFuture::from(promise).await;
-}
-
-#[cfg(feature = "page-docs")]
-fn describe(value: JsValue) -> String {
-    value.as_string().unwrap_or_else(|| format!("{value:?}"))
 }
