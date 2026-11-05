@@ -8,8 +8,10 @@ use std::process::Output;
 use std::sync::mpsc;
 use std::time::Duration;
 
+mod close_on_fork;
 pub mod spawn;
 
+pub use close_on_fork::close_on_fork;
 pub use spawn::Command;
 
 /// How long lsof may take to list every process's working directory.

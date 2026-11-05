@@ -47,11 +47,6 @@ use std::time::Duration;
 #[cfg(target_vendor = "apple")]
 use std::time::Instant;
 
-/// `O_CLOFORK`, which the libc crate does not name for Apple (`sys/fcntl.h`): a descriptor no spawn
-/// or fork copies. Only `open` sets it; macOS's `F_SETFD` and `F_DUPFD_CLOFORK` do not.
-#[cfg(target_vendor = "apple")]
-const O_CLOFORK: libc::c_int = 0x0800_0000;
-
 static SPAWNING: Mutex<()> = Mutex::new(());
 
 /// Held while this process holds a descriptor for a child that any spawn would copy: the copies
@@ -425,7 +420,7 @@ fn reopened(fd: std::os::fd::BorrowedFd<'_>, read: bool, write: bool) -> io::Res
     File::options()
         .read(read)
         .write(write)
-        .custom_flags(O_CLOFORK)
+        .custom_flags(crate::close_on_fork::O_CLOFORK)
         .open(format!("/dev/fd/{}", fd.as_raw_fd()))
 }
 
