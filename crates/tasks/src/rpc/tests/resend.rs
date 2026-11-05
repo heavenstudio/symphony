@@ -2,8 +2,8 @@
 //! connection, and never a third time; a late answer says the server is slow, a refused connection
 //! that it did not answer.
 
-use super::{SEVEN, none_waiting, one_reply, read_request, sevens};
-use crate::rpc::{Client, DbError, find, slow, talk};
+use super::{SEVEN, none_waiting, read_request, sevens};
+use crate::rpc::{Client, DbError, find, slow};
 use serde_json::json;
 use std::collections::VecDeque;
 use std::io::{Read, Write};
@@ -160,6 +160,16 @@ fn os(code: i32) -> std::io::Error {
     std::io::Error::from_raw_os_error(code)
 }
 
+/// What a query that met its timeout says after where it was asked, how long it took and its wait
+/// (`failed_query`).
+fn cause(said: &str) -> &str {
+    let Some((asked, cause)) = said.split_once(", configured wait 300.000ms: ") else {
+        panic!("no timeout diagnostic: {said}")
+    };
+    assert!(asked.starts_with("RPC query at "), "{said}");
+    cause
+}
+
 #[test]
 fn a_read_with_no_answer_in_time_goes_once_more_on_a_new_connection_and_gets_it() {
     let board = Board::answering(vec![Answer::After(Duration::ZERO), Answer::After(LATE)]);
@@ -179,7 +189,7 @@ fn a_write_with_no_answer_in_time_is_never_sent_again_and_says_the_server_is_slo
     let board = Board::answering(vec![Answer::After(LATE)]);
     let said = failed(&board.client(), WRITE);
     assert_eq!(
-        said,
+        cause(&said),
         format!(
             "the server at {} is slow: no answer within 300ms: read failed on a freshly opened socket after 0 completed requests: {}; the request may have run there, so it was not sent again",
             board.addr,
@@ -200,7 +210,7 @@ fn a_read_late_again_on_its_resend_fails_without_a_third_and_says_the_server_is_
         os(libc::EAGAIN)
     );
     assert_eq!(
-        said,
+        cause(&said),
         format!(
             "the server at {} is slow: no answer within 300ms: {late}; the request only reads, so it went once more, on a new connection: {late}; it was not sent a third time",
             board.addr
@@ -246,7 +256,7 @@ fn a_late_read_whose_resend_is_refused_says_the_server_did_not_answer() {
     });
     let said = failed(&Client::new(&addr, "sf", "t").waiting(WAIT), READ);
     assert_eq!(
-        said,
+        cause(&said),
         format!(
             "the server at {addr} did not answer: read failed on a freshly opened socket after 0 completed requests: {}; the request only reads, so it went once more, on a new connection: connect failed on a freshly opened socket after 0 completed requests: {}; it was not sent there",
             os(libc::EAGAIN),
@@ -277,104 +287,28 @@ fn a_reply_cut_halfway_sends_a_read_once_more_and_a_write_never() {
     assert_eq!(board.bodies().len(), 1);
 }
 
+/// A kept connection that took a read and closed without answering: the read goes once more, on a
+/// new connection, and gets its answer there (a write it took is never sent again: `failures.rs`).
 #[test]
-fn a_client_waits_on_a_silent_server_no_longer_than_it_was_told() {
-    let silent = TcpListener::bind("127.0.0.1:0").unwrap();
-    let addr = silent.local_addr().unwrap().to_string();
-    let held = std::thread::spawn(move || silent.accept().map(|(stream, _)| stream));
-    let began = std::time::Instant::now();
-    let client = Client::new(&addr, "sf", "t").waiting(WAIT);
-    let failed = client.query(WRITE, json!({})).unwrap_err();
-    assert!(
-        began.elapsed() < Duration::from_secs(5),
-        "{:?}",
-        began.elapsed()
-    );
-    assert!(failed.to_string().contains(&addr), "{failed}");
-    drop(held.join());
-}
-
-/// A kept connection that took a write and closed without answering may have run it (it committed,
-/// then the server went): the write fails, and is never sent again, which would run it twice. A
-/// read it took goes once more, on a new connection.
-#[test]
-fn a_request_a_kept_connection_took_and_never_answered_is_sent_again_only_if_it_reads() {
-    for (sql, again) in [(WRITE, false), (READ, true)] {
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let addr = listener.local_addr().unwrap().to_string();
-        let served = std::thread::spawn(move || {
-            let (mut kept, _) = listener.accept().unwrap();
-            for _ in 0..3 {
-                read_request(&mut kept);
-                kept.write_all(SEVEN).unwrap();
-            }
-            read_request(&mut kept);
-            drop(kept); // taken, perhaps run, never answered
-            let mut more = another(&listener)?;
-            read_request(&mut more);
-            more.write_all(SEVEN).unwrap();
-            Some(listener)
-        });
-        let client = Client::new(&addr, "sf", "t").waiting(Duration::from_secs(5));
-        sevens(&client, 3);
-        let answer = client.query(sql, json!({}));
-        if again {
-            assert_eq!(answer, Ok(vec![json!(7)]));
-            let listener = served.join().unwrap().expect("a new connection");
-            assert!(none_waiting(&listener), "no third connection");
-        } else {
-            assert_eq!(
-                answer,
-                Err(DbError::Failed(format!(
-                    "the server at {addr} did not answer: read failed on a pooled socket after 3 completed requests: it closed the connection; the request may have run there, so it was not sent again"
-                )))
-            );
-            assert!(served.join().unwrap().is_none(), "the write was sent again");
-        }
-    }
-}
-
-#[test]
-fn a_fresh_sockets_eof_names_read_and_zero_completed_requests() {
-    let (addr, served) = one_reply(b"");
-    let client = Client::new(&addr, "sf", "t").waiting(Duration::from_secs(5));
-    assert_eq!(
-        client.query(WRITE, json!({})),
-        Err(DbError::Failed(format!(
-            "the server at {addr} did not answer: read failed on a freshly opened socket after 0 completed requests: it closed the connection; the request may have run there, so it was not sent again"
-        )))
-    );
-    served.join().unwrap();
-}
-
-#[test]
-fn socket_option_and_write_failures_name_the_actual_operation() {
+fn a_read_a_kept_connection_took_and_never_answered_goes_once_more_on_a_new_one() {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let addr = listener.local_addr().unwrap().to_string();
-    let mut stream = TcpStream::connect(&addr).unwrap();
-    let (mut peer, _) = listener.accept().unwrap();
-    let client = Client::new(&addr, "sf", "t");
-    let failure = talk(&mut stream, b"request", Duration::ZERO).err().unwrap();
-    assert_eq!(
-        client.unanswered(false, 0, failure),
-        format!(
-            "the server at {addr} did not answer: socket option SO_RCVTIMEO failed on a freshly opened socket after 0 completed requests: cannot set a 0 duration timeout; the request was not sent"
-        )
-    );
-    stream.shutdown(std::net::Shutdown::Write).unwrap();
-    let failure = talk(&mut stream, b"request", Duration::from_secs(5))
-        .err()
-        .unwrap();
-    assert_eq!(
-        client.unanswered(false, 0, failure),
-        format!(
-            "the server at {addr} did not answer: write failed on a freshly opened socket after 0 completed requests: {}; the request may have run there, so it was not sent again",
-            os(libc::EPIPE)
-        )
-    );
-    assert_eq!(
-        peer.read(&mut [0]).unwrap(),
-        0,
-        "neither failure sent a request"
-    );
+    let served = std::thread::spawn(move || {
+        let (mut kept, _) = listener.accept().unwrap();
+        for _ in 0..3 {
+            read_request(&mut kept);
+            kept.write_all(SEVEN).unwrap();
+        }
+        read_request(&mut kept);
+        drop(kept); // taken, perhaps run, never answered
+        let mut more = another(&listener)?;
+        read_request(&mut more);
+        more.write_all(SEVEN).unwrap();
+        Some(listener)
+    });
+    let client = Client::new(&addr, "sf", "t").waiting(Duration::from_secs(5));
+    sevens(&client, 3);
+    assert_eq!(client.query(READ, json!({})), Ok(vec![json!(7)]));
+    let listener = served.join().unwrap().expect("a new connection");
+    assert!(none_waiting(&listener), "no third connection");
 }

@@ -7,7 +7,7 @@ mod fixture;
 #[path = "common/bash_env.rs"]
 mod bash_env;
 
-#[path = "../../../../tools/gate/tests/verify/script.rs"]
+#[path = "../../../../tools/gate/tests/verify/script_board.rs"]
 mod fixture_script;
 
 use fixture::{Fixture, Server};

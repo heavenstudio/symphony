@@ -135,12 +135,14 @@ impl Client {
 
     /// Each statement's result, in order. The first statement that failed decides the error; a
     /// conflict anywhere decides it first, since the whole transaction can then be retried.
+    #[track_caller]
     pub fn query(&self, sql: &str, vars: Value) -> Result<Vec<Value>, DbError> {
         self.call(sql, vars, true)
     }
 
     /// The namespace and the database, made if they are not there yet, then `sql` in them, in one
     /// request: each statement's result, the four that make and enter them first.
+    #[track_caller]
     pub fn define_then(&self, sql: &str, vars: Value) -> Result<Vec<Value>, DbError> {
         let (ns, db) = (&self.ns, &self.db);
         let sql = format!(
@@ -150,6 +152,7 @@ impl Client {
     }
 
     /// `scoped`: in this client's namespace and database, which must exist.
+    #[track_caller]
     fn call(&self, sql: &str, vars: Value, scoped: bool) -> Result<Vec<Value>, DbError> {
         self.requests.fetch_add(1, Ordering::SeqCst);
         let body = cbor::encode(&json!({"id": 1, "method": "query", "params": [sql, vars]}));
@@ -179,25 +182,36 @@ impl Client {
     }
 }
 
+/// Failure diagnostics identify the query's source without logging SQL or its variables.
+fn failed_query(source: &str, elapsed: Duration, timeout: Duration, error: &str) -> String {
+    format!("RPC query at {source}, elapsed {elapsed:.3?}, configured wait {timeout:.3?}: {error}")
+}
+
 impl Client {
     /// `request` on a connection the server kept open, else on a new one: the reply's status and body.
     /// Each connection is checked ([`check`]) before anything is written on it, every kind of request
     /// alike: a kept one the server has closed, or that is drained, is dropped for another, and the
     /// request was not sent on it; a new one that is drained is dropped for one more new one, once.
     /// A request written on a connection that then gave back nothing, part
-    /// of a reply, or nothing before the timeout is the request's failure and is never sent again:
-    /// the server may have run it, and a write run twice is a message said twice. Only a request
-    /// `kind` proves a read goes once more, on a new connection ([`Client::resend`]).
+    /// of a reply, or nothing before the timeout is the request's failure and is never sent again,
+    /// whatever it says: the server may have run it, and a write run twice is a message said twice.
+    /// Only a request `kind` proves a read goes once more, on a new connection ([`Client::resend`]).
+    /// A request that met its timeout on either sending names where it was asked, how long it took
+    /// and the wait ([`failed_query`]).
+    #[track_caller]
     fn send(&self, request: &[u8], kind: Kind) -> Result<(u16, Vec<u8>), String> {
         self.send_checked(request, kind, check)
     }
 
+    #[track_caller]
     fn send_checked(
         &self,
         request: &[u8],
         kind: Kind,
         mut check: impl FnMut(&TcpStream) -> Result<(), Failure>,
     ) -> Result<(u16, Vec<u8>), String> {
+        let began = Instant::now();
+        let caller = std::panic::Location::caller();
         let kept = loop {
             let kept = self
                 .kept
@@ -228,13 +242,26 @@ impl Client {
                 .fresh(&mut check)
                 .map_err(|failure| self.unanswered(false, 0, failure))?,
         };
-        match self.over(connection, request) {
-            Ok(answer) => Ok(answer),
+        let (timed_out, error) = match self.over(connection, request) {
+            Ok(answer) => return Ok(answer),
             Err((served, failure)) if kind == Kind::Read && failure.written() => {
-                self.resend(request, &mut check, pooled, served, failure)
+                match self.resend(request, &mut check, pooled, served, failure) {
+                    Ok(answer) => return Ok(answer),
+                    Err(failed) => failed,
+                }
             }
-            Err((served, failure)) => Err(self.unanswered(pooled, served, failure)),
-        }
+            Err((served, failure)) => (failure.timed_out, self.unanswered(pooled, served, failure)),
+        };
+        Err(if timed_out {
+            failed_query(
+                &format!("{}:{}", caller.file(), caller.line()),
+                began.elapsed(),
+                self.timeout,
+                &error,
+            )
+        } else {
+            error
+        })
     }
 
     /// `request` on `connection`: the reply, the connection kept when the server leaves it open; or
@@ -711,6 +738,7 @@ fn results(reply: Value) -> Result<Vec<Value>, DbError> {
 
 #[cfg(test)]
 mod tests {
+    mod failures;
     mod resend;
 
     use super::*;

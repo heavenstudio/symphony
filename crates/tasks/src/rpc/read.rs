@@ -138,7 +138,8 @@ impl Client {
 
     /// `request`, a read whose first sending got no answer (`first`, on a `pooled` socket after
     /// `served` requests), once more on a new connection: its answer, or both sendings' failures,
-    /// the second deciding whether the server is slow. There is no third.
+    /// the second deciding whether the server is slow, and whether either sending met its timeout.
+    /// There is no third.
     pub(super) fn resend(
         &self,
         request: &[u8],
@@ -146,7 +147,7 @@ impl Client {
         pooled: bool,
         served: usize,
         first: Failure,
-    ) -> Result<(u16, Vec<u8>), String> {
+    ) -> Result<(u16, Vec<u8>), (bool, String)> {
         let (again, second) = match self.fresh(check) {
             Ok(connection) => match self.over(connection, request) {
                 Ok(answer) => return Ok(answer),
@@ -160,13 +161,14 @@ impl Client {
             "it was not sent there"
         };
         let resent_pooled = false; // the second sending always has a new connection
-        Err(format!(
+        let said = format!(
             "the server at {} {}: {}; the request only reads, so it went once more, on a new connection: {}; {outcome}",
             self.addr,
             self.verdict(&second),
             first.on(pooled, served),
             second.on(resent_pooled, again)
-        ))
+        );
+        Err((first.timed_out || second.timed_out, said))
     }
 }
 

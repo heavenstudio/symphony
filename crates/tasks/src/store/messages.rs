@@ -18,21 +18,28 @@ pub const BOARD: &str = "board";
 
 /// What an inbox is worked out from: the session's roles, the tree, and the messages since it
 /// connected that are not its own, that it has not acknowledged, and that could reach it (not
-/// addressed to another handle or the owner). The acknowledged ids are read once rather than looked
-/// up per message, which on the live board halves the read for a session days old.
-const INBOX: &str = "
+/// addressed to another handle or the owner). Acknowledgement markers overwrite decimal integer
+/// keys during tree construction, then one marker filter selects the unread record references.
+/// Their bodies are fetched within the same transaction snapshot.
+const INBOX: &str = concat!(
+    "
 LET $me = (SELECT connected FROM ONLY type::record('session', $handle));
-LET $acked = (SELECT VALUE message FROM delivery WHERE handle = $handle AND message > $since);
+LET $candidates = IF $me = NONE { [] } ELSE {
+    (SELECT VALUE [<string>sid, id] FROM message
+        WHERE sid > $since AND ts >= $me.connected AND kind IN $delivered AND sender != $handle
+        AND (sender = 'owner' OR recipient = $handle OR (recipient != NONE AND string::starts_with(recipient, '@')) OR kind = 'verdict'))
+};
+LET $acked = (SELECT VALUE [<string>message, NULL] FROM delivery WHERE handle = $handle AND message > $since);
+",
+    include_str!("inbox_unread.surql"),
+    "
 RETURN {
     known: $me != NONE,
     roles: (SELECT slug, role FROM role WHERE handle = $handle),
     tree: (SELECT VALUE [slug, parent] FROM task),
-    messages: IF $me = NONE { [] } ELSE {
-        (SELECT * OMIT id FROM message WHERE sid > $since AND ts >= $me.connected AND kind IN $delivered AND sender != $handle
-            AND (sender = 'owner' OR recipient = NONE OR recipient = $handle OR string::starts_with(recipient, '@') OR kind = 'verdict')
-            AND sid NOTINSIDE $acked ORDER BY sid)
-    },
-};";
+    messages: (SELECT * OMIT id FROM $wanted ORDER BY sid),
+};"
+);
 
 impl Store {
     /// Post to a task's thread. Only addressed messages and owner messages enter inboxes.

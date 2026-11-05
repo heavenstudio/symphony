@@ -132,7 +132,11 @@ fn a_page_whose_read_is_answered_late_twice_says_the_board_is_slow_not_unreachab
     let (status, said) = read_failure(&failed, UNREACHABLE);
     assert_eq!(status, 504, "{said}");
     assert!(
-        said.starts_with("the task board is slow: SurrealDB: the server at "),
+        said.starts_with("the task board is slow: SurrealDB: RPC query at "),
+        "{said}"
+    );
+    assert!(
+        said.contains(", configured wait 300.000ms: the server at "),
         "{said}"
     );
     assert!(said.contains("it was not sent a third time"), "{said}");
