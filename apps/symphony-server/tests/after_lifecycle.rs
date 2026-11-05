@@ -95,8 +95,10 @@ fn bash_env_does_not_add_output_to_build_fixtures() {
 #[test]
 fn build_fixtures_reuse_the_built_image_and_replace_old_outputs_without_writing_through_links() {
     let repo = Repo::new("build-image");
-    // Commands also share their executable images, including the checkout made by git. Copying
-    // fresh scripts per case sends each one through first-exec validation on a loaded macOS host.
+    // Commands also share their executable images, including the checkout made by git, and with
+    // every other checkout on the machine. Copying fresh scripts per case, or linking a verify
+    // run's freshly checked-out sources, sends each one through first-exec validation on a loaded
+    // macOS host.
     for (source, command) in [
         ("build.sh", repo.main.join("tools/fixture-build")),
         ("build.sh", repo.tree.join("tools/rs-bin.sh")),
@@ -104,18 +106,15 @@ fn build_fixtures_reuse_the_built_image_and_replace_old_outputs_without_writing_
         ("open.sh", repo.bin.join("open")),
         ("open.sh", repo.bin.join("xdg-open")),
     ] {
-        let source = fs::metadata(
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-                .join("tests/after_lifecycle")
-                .join(source),
-        )
-        .unwrap();
-        let installed = fs::metadata(command).unwrap();
+        let source = fixture::script_source(source);
+        let shared = fs::metadata(fixture::machine_copy::machine_copy(&source)).unwrap();
+        let installed = fs::metadata(&command).unwrap();
         assert_eq!(
             (installed.dev(), installed.ino()),
-            (source.dev(), source.ino()),
-            "fixture commands must reuse the executable source"
+            (shared.dev(), shared.ino()),
+            "fixture commands must reuse the machine's copy of the executable source"
         );
+        assert_eq!(fs::read(&command).unwrap(), fs::read(&source).unwrap());
     }
     let original = fs::metadata(fixture::APP).unwrap();
     for install in [false, true] {
