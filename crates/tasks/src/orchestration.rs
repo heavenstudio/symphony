@@ -6,6 +6,7 @@
 //! a lost or left orchestrator's work reads unclaimed until another takes the role over. An
 //! orchestrator hears its own tasks and the unclaimed ones only ([`Owners::reaches`]).
 
+use crate::rows::SessionRow;
 use crate::{Board, Task};
 use std::collections::{BTreeMap, HashMap, HashSet};
 
@@ -64,14 +65,51 @@ pub fn reports_to(owners: &Owners, work: &[&Task], parent: Option<&str>, handle:
     if work.is_empty() {
         return parent == Some(handle);
     }
-    work.iter().any(|t| {
-        let owners = owners.of(&t.slug);
-        if owners.is_empty() {
-            parent == Some(handle)
-        } else {
-            owners.contains(&handle)
-        }
+    work.iter()
+        .any(|task| hears(owners, &task.slug, parent, handle))
+}
+
+/// Whether `handle` hears of a quiet session's work on `slug`: that task's orchestrator, or, for a
+/// task nobody orchestrates, the session's `parent`.
+fn hears(owners: &Owners, slug: &str, parent: Option<&str>, handle: &str) -> bool {
+    let owners = owners.of(slug);
+    if owners.is_empty() {
+        parent == Some(handle)
+    } else {
+        owners.contains(&handle)
+    }
+}
+
+/// Whether `handle` is told when `session` goes quiet or waits in its pane: its parent is; an
+/// orchestrator ([`claimable_work`] given as `work`) only by [`reports_to`].
+pub fn told_of(
+    owners: &Owners,
+    work: Option<&HashMap<&str, Vec<&Task>>>,
+    session: &SessionRow,
+    handle: &str,
+) -> bool {
+    let parent = session.parent.as_deref();
+    work.map_or(parent == Some(handle), |work| {
+        let held = work
+            .get(session.handle.as_str())
+            .map_or(&[][..], Vec::as_slice);
+        reports_to(owners, held, parent, handle)
     })
+}
+
+/// Of `held`, quiet session `child`'s claimable work, what `handle` is told of: an orchestrator
+/// hears its own tasks', and those nobody orchestrates when it is `child`'s parent; any other
+/// session, all of it, as a parent always has.
+pub fn told(board: &Board, child: &str, handle: &str, held: Vec<String>) -> Vec<String> {
+    let row = |h: &str| board.sessions.iter().find(|s| s.row.handle == h);
+    if row(handle).is_none_or(|s| s.row.kind != "orchestrator") {
+        return held;
+    }
+    let parent = row(child).and_then(|s| s.row.parent.as_deref());
+    let owners = Owners::new(&board.tasks);
+    held.into_iter()
+        .filter(|slug| hears(&owners, slug, parent, handle))
+        .collect()
 }
 
 /// The status of each unfinished task orchestrator `handle` hears, by slug: what schedules its
@@ -116,7 +154,7 @@ pub fn handed_line(from: &str, to: &str) -> String {
 pub fn took_line(to: &str, from: &[(String, &str)]) -> String {
     let from: Vec<String> = from
         .iter()
-        .map(|(h, health)| format!("{h} ({health})"))
+        .map(|(handle, health)| format!("{handle} ({health})"))
         .collect();
     format!("{to} took orchestrator over from {}", from.join(", "))
 }
@@ -141,7 +179,18 @@ mod tests {
     use super::*;
     use crate::{Health, Role, Session};
 
-    fn task(slug: &str, parent: Option<&str>, roles: &[(&str, &str, Health)]) -> Task {
+    /// A role `handle` holds as `role`, its holder of `health`.
+    fn held(handle: &str, role: &str, health: Health) -> Role {
+        Role {
+            handle: handle.to_string(),
+            role: role.to_string(),
+            since: 0.0,
+            expires: None,
+            health,
+        }
+    }
+
+    fn task(slug: &str, parent: Option<&str>, roles: Vec<Role>) -> Task {
         Task {
             id: 0,
             slug: slug.into(),
@@ -155,16 +204,7 @@ mod tests {
             updated: 0.0,
             links: Vec::new(),
             depends: Vec::new(),
-            roles: roles
-                .iter()
-                .map(|(handle, role, health)| Role {
-                    handle: handle.to_string(),
-                    role: role.to_string(),
-                    since: 0.0,
-                    expires: None,
-                    health: *health,
-                })
-                .collect(),
+            roles,
             instruction: false,
             fields: Default::default(),
         }
@@ -181,89 +221,97 @@ mod tests {
     #[test]
     fn a_task_is_its_nearest_holding_orchestrators_and_unclaimed_without_one() {
         let tasks = vec![
-            task("a", None, &[("amber", "orchestrator", Health::Live)]),
-            task("a/b", Some("a"), &[]),
+            task("a", None, vec![held("amber", "orchestrator", Health::Live)]),
+            task("a/b", Some("a"), Vec::new()),
             task(
                 "a/c",
                 Some("a"),
-                &[("cobalt", "orchestrator", Health::Stale)],
+                vec![held("cobalt", "orchestrator", Health::Stale)],
             ),
-            task("a/c/d", Some("a/c"), &[("w", "executor", Health::Live)]),
-            task("gone", None, &[("ghost", "orchestrator", Health::Left)]),
+            task(
+                "a/c/d",
+                Some("a/c"),
+                vec![held("w", "executor", Health::Live)],
+            ),
+            task(
+                "gone",
+                None,
+                vec![held("ghost", "orchestrator", Health::Left)],
+            ),
             task(
                 "gone/x",
                 Some("gone"),
-                &[("lost", "orchestrator", Health::Lost)],
+                vec![held("lost", "orchestrator", Health::Lost)],
             ),
-            task("free", None, &[]),
+            task("free", None, Vec::new()),
         ];
         let owners = Owners::new(&tasks);
+        let nobody: [&str; 0] = [];
         assert_eq!(owners.of("a/b"), ["amber"]);
         assert_eq!(owners.of("a/c/d"), ["cobalt"]);
-        assert!(owners.of("gone/x").is_empty());
-        assert!(owners.of("free").is_empty());
-        assert!(owners.of("not-on-the-board").is_empty());
-        assert!(owners.reaches("a/b", "amber") && !owners.reaches("a/b", "cobalt"));
-        assert!(owners.elsewhere("a/c/d", "amber"));
-        assert!(owners.reaches("free", "amber") && owners.reaches("free", "cobalt"));
+        assert_eq!(owners.of("gone/x"), nobody);
+        assert_eq!(owners.of("free"), nobody);
+        assert_eq!(owners.of("not-on-the-board"), nobody);
+        let reach = |slug: &str| ["amber", "cobalt"].map(|handle| owners.reaches(slug, handle));
+        assert_eq!(reach("a/b"), [true, false]);
+        assert_eq!(reach("free"), [true, true]);
+        let elsewhere = ["amber", "cobalt"].map(|handle| owners.elsewhere("a/c/d", handle));
+        assert_eq!(elsewhere, [true, false]);
     }
 
     #[test]
     fn a_loop_in_the_tree_ends_the_walk() {
-        let tasks = vec![task("x", Some("y"), &[]), task("y", Some("x"), &[])];
-        assert!(Owners::new(&tasks).of("x").is_empty());
+        let tasks = vec![
+            task("x", Some("y"), Vec::new()),
+            task("y", Some("x"), Vec::new()),
+        ];
+        assert_eq!(Owners::new(&tasks).of("x"), [""; 0]);
     }
 
     #[test]
     fn a_double_belongs_to_both_until_it_is_settled() {
-        let tasks = vec![task(
-            "a",
-            None,
-            &[
-                ("amber", "orchestrator", Health::Live),
-                ("cobalt", "orchestrator", Health::Live),
-                ("teal", "orchestrator", Health::Left),
-            ],
-        )];
+        let roles = vec![
+            held("amber", "orchestrator", Health::Live),
+            held("cobalt", "orchestrator", Health::Live),
+            held("teal", "orchestrator", Health::Left),
+        ];
+        let tasks = vec![task("a", None, roles)];
         let owners = Owners::new(&tasks);
         assert_eq!(owners.of("a"), ["amber", "cobalt"]);
         let found: Vec<&str> = doubled(&tasks).map(|t| t.slug.as_str()).collect();
         assert_eq!(found, ["a"]);
-        let single = vec![task("b", None, &[("amber", "orchestrator", Health::Left)])];
+        let single = vec![task(
+            "b",
+            None,
+            vec![held("amber", "orchestrator", Health::Left)],
+        )];
         assert_eq!(doubled(&single).count(), 0);
     }
 
     #[test]
     fn a_quiet_session_reports_to_the_orchestrator_of_its_work_else_its_parent() {
-        let mut ready = task("free", None, &[("w2", "executor", Health::Lost)]);
+        let mut ready = task("free", None, vec![held("w2", "executor", Health::Lost)]);
         ready.status = "ready".into();
-        let mut reviewed = task("done-one", None, &[("w3", "executor", Health::Lost)]);
+        let mut reviewed = task("done-one", None, vec![held("w3", "executor", Health::Lost)]);
         reviewed.status = "review".into();
-        let b = board(vec![
-            task(
-                "a",
-                None,
-                &[
-                    ("amber", "orchestrator", Health::Live),
-                    ("w", "executor", Health::Lost),
-                ],
-            ),
-            ready,
-            reviewed,
-        ]);
+        let amber = vec![
+            held("amber", "orchestrator", Health::Live),
+            held("w", "executor", Health::Lost),
+        ];
+        let b = board(vec![task("a", None, amber), ready, reviewed]);
         let owners = Owners::new(&b.tasks);
         let work = claimable_work(&b);
         let of = |h: &str| work.get(h).cloned().unwrap_or_default();
-        assert!(of("w3").is_empty());
+        assert_eq!(of("w3").len(), 0, "work in review is nobody's to take");
+        let told = |child: &str, parent: Option<&str>| {
+            ["amber", "cobalt"].map(|handle| reports_to(&owners, &of(child), parent, handle))
+        };
         // Launched by cobalt, working amber's task: amber hears it.
-        assert!(reports_to(&owners, &of("w"), Some("cobalt"), "amber"));
-        assert!(!reports_to(&owners, &of("w"), Some("cobalt"), "cobalt"));
-        // Work nobody orchestrates: the parent.
-        assert!(reports_to(&owners, &of("w2"), Some("cobalt"), "cobalt"));
-        assert!(!reports_to(&owners, &of("w2"), Some("cobalt"), "amber"));
-        // Nothing claimable: the parent.
-        assert!(reports_to(&owners, &of("w3"), Some("cobalt"), "cobalt"));
-        assert!(!reports_to(&owners, &of("w3"), None, "cobalt"));
+        assert_eq!(told("w", Some("cobalt")), [true, false]);
+        // Work nobody orchestrates, or nothing claimable: the parent.
+        assert_eq!(told("w2", Some("cobalt")), [false, true]);
+        assert_eq!(told("w3", Some("cobalt")), [false, true]);
+        assert_eq!(told("w3", None), [false, false]);
     }
 
     #[test]

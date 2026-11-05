@@ -1,9 +1,12 @@
 //! The attach monitor's unit tests: what a session sees of the board, and the pane watch.
 
 use super::*;
-use crate::rows::SessionRow;
-use crate::{Role, Session};
+use crate::cli::agents::{Answer, Pane};
+use crate::health::Health;
+use crate::rows::{SessionRow, TaskSessionRow};
+use crate::{Board, Role, Session, Task};
 use serde_json::json;
+use std::collections::{BTreeMap, BTreeSet};
 
 fn task(slug: &str, parent: Option<&str>, roles: &[(&str, &str)]) -> Task {
     Task {
@@ -138,9 +141,10 @@ fn a_subtree_another_orchestrator_holds_is_that_ones_to_see() {
     assert_eq!(overseen(&board, "orch"), BTreeSet::from(["mine"]));
     assert_eq!(overseen(&board, "other"), BTreeSet::from(["theirs"]));
     let orch = seen(&board, "orch", "orchestrator");
+    // Its own, and the unclaimed task every orchestrator follows; never other's subtree.
     assert_eq!(
         orch.statuses.keys().collect::<Vec<_>>(),
-        ["t/root", "t/root/a"]
+        ["t/free", "t/root", "t/root/a"]
     );
     assert_eq!(orch.ready.keys().collect::<Vec<_>>(), ["t/free"]);
     let theirs = seen(&board, "other", "orchestrator");
@@ -151,7 +155,8 @@ fn a_subtree_another_orchestrator_holds_is_that_ones_to_see() {
     // A worker's children stay its parent's to hear, whatever orchestrates their work.
     let mut board = board;
     board.sessions.push(session("sub", Some("mine")));
-    assert!(seen(&board, "mine", "worker").children.contains_key("sub"));
+    let children = seen(&board, "mine", "worker").children;
+    assert_eq!(children.get("sub"), Some(&Health::Live), "{children:?}");
 }
 
 #[test]

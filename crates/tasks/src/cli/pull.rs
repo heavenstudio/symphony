@@ -20,9 +20,8 @@
 
 use crate::health::EXECUTING;
 use crate::orchestration::{Owners, claimable_work};
-use crate::rows::SessionRow;
 use crate::sys::local_minute;
-use crate::{Board, Error, Store, Task};
+use crate::{Board, Error, Session, Store, Task};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 /// How many of a category are listed.
@@ -92,36 +91,35 @@ impl Digest {
     }
 
     /// The digest as orchestrator `handle` hears it: the rows of its own tasks and of unclaimed
-    /// ones ([`Owners::reaches`]), and the idle sessions but another orchestrator's children.
-    /// Staffing was judged on the whole board, so work on a subtask still staffs its parent.
+    /// ones ([`Owners::reaches`]), and the idle sessions but the children of another orchestrator
+    /// still here. Staffing was judged on the whole board, so work on a subtask still staffs its
+    /// parent.
     pub fn only_for(mut self, board: &Board, handle: &str) -> Digest {
         let owners = Owners::new(&board.tasks);
         for listed in self.tasks.values_mut() {
-            listed.retain(|t| owners.reaches(&t.slug, handle));
+            listed.retain(|task| owners.reaches(&task.slug, handle));
         }
         self.tasks.retain(|_, listed| !listed.is_empty());
         self.running.retain(|slug| owners.reaches(slug, handle));
         self.executing = self.running.len();
         self.notes.retain(|slug, _| owners.reaches(slug, handle));
-        let sessions: HashMap<&str, &SessionRow> = (board.sessions.iter())
-            .map(|s| (s.row.handle.as_str(), &s.row))
+        let sessions: HashMap<&str, &Session> = (board.sessions.iter())
+            .map(|s| (s.row.handle.as_str(), s))
             .collect();
         let elsewhere = |parent: &str| {
-            parent != handle
-                && sessions
-                    .get(parent)
-                    .is_some_and(|p| p.kind == "orchestrator")
+            let orchestrator = |p: &&Session| p.row.kind == "orchestrator" && p.health.holds();
+            parent != handle && sessions.get(parent).is_some_and(orchestrator)
         };
-        self.idle.retain(|h| {
-            !(sessions.get(h.as_str()))
-                .and_then(|s| s.parent.as_deref())
-                .is_some_and(elsewhere)
+        self.idle.retain(|idle| {
+            let parent = sessions
+                .get(idle.as_str())
+                .and_then(|s| s.row.parent.as_deref());
+            !parent.is_some_and(elsewhere)
         });
         let work = claimable_work(board);
-        self.liveness_unknown.retain(|h| {
-            (work.get(h.as_str()))
-                .is_some_and(|held| held.iter().any(|t| owners.reaches(&t.slug, handle)))
-        });
+        let heard = |held: &Vec<&Task>| held.iter().any(|t| owners.reaches(&t.slug, handle));
+        self.liveness_unknown
+            .retain(|quiet| work.get(quiet.as_str()).is_some_and(heard));
         self
     }
 

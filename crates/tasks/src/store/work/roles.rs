@@ -31,7 +31,8 @@ impl Store {
             // One orchestrator a task: a holder still there refuses, one lost or left is dropped.
             let mut took = Vec::new();
             let single = role == "orchestrator";
-            for other in view.holders(role).filter(|r| single && r.handle != handle) {
+            let others = view.holders(role).filter(|r| single && r.handle != handle);
+            for other in others {
                 let health = view.health(&other.handle);
                 if health.holds() {
                     if holding {
@@ -80,19 +81,20 @@ impl Store {
             if to == from {
                 return Err(refused(format!("{from} already orchestrates {slug}")));
             }
-            match view.session(to) {
-                None => {
-                    return Err(refused(format!(
-                        "no session {} to hand {slug} to",
-                        repr(to)
-                    )));
-                }
-                Some(row) if row.left_at.is_some() => {
-                    return Err(refused(format!(
-                        "{to} has left; hand {slug} to a session still here"
-                    )));
-                }
-                Some(_) => {}
+            if view.session(to).is_none() {
+                return Err(refused(format!(
+                    "no session {} to hand {slug} to",
+                    repr(to)
+                )));
+            }
+            // Only to a session still there, or the task would be nobody's. Leaving between this
+            // read and the write is refused by the write itself (`WRITE`), then decided again.
+            let health = view.health(to);
+            if !health.holds() {
+                return Err(refused(format!(
+                    "{to} is {}; hand {slug} to a session still here",
+                    health.as_str()
+                )));
             }
             let mut change = Change::default();
             change.drop(from, "orchestrator");

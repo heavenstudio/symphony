@@ -106,9 +106,9 @@ fn launch(f: &Fixture, slug: &str, handle: &str, pane: &str) {
 }
 
 #[test]
-fn a_blocked_pane_reaches_its_orchestrator_and_parent_once_an_episode() {
+fn a_blocked_pane_reaches_the_orchestrator_of_its_work_once_an_episode() {
     if !in_child_with_herdr(
-        "blocked_panes::a_blocked_pane_reaches_its_orchestrator_and_parent_once_an_episode",
+        "blocked_panes::a_blocked_pane_reaches_the_orchestrator_of_its_work_once_an_episode",
     ) {
         return;
     }
@@ -161,8 +161,9 @@ fn a_blocked_pane_reaches_its_orchestrator_and_parent_once_an_episode() {
     tick(&f);
     tick(&f);
     let blocked = std::slice::from_ref(&blocked);
-    let once: [&[String]; 4] = [blocked, blocked, &[], &[]];
-    assert_eq!(heard(), once, "its orchestrator and its parent, once");
+    // Not its parent, another orchestrator: the work is orch's, as LOST would say.
+    let once: [&[String]; 4] = [blocked, &[], &[], &[]];
+    assert_eq!(heard(), once, "the orchestrator of its work, once");
 
     panes(Some(json!([pane("w1:p2", "working")])));
     tick(&f);

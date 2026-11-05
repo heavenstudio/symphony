@@ -62,7 +62,8 @@ fn the_doubled_listing_names_each_task_two_orchestrators_hold() {
     assert_eq!(out.lines().count(), 1, "{out}");
     assert!(out.contains("scratch/double"), "{out}");
     assert!(out.contains(&a) && out.contains(&b), "{out}");
-    assert!(c.ok(&a, &["list"]).contains("scratch/single"));
+    let listing = c.ok(&a, &["list"]);
+    assert!(listing.contains("scratch/single"), "{listing}");
     c.ok(&b, &["handover", "scratch/double", &a]);
     assert_eq!(c.ok(&a, &["list", "--doubled"]), "");
 }

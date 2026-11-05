@@ -2,12 +2,15 @@
 //! and landings on the record.
 
 use super::work::{OWNER, ROLES, Tree, above, no_task};
-use super::{ACT, Error, Message, REFUSED, Store, acting, logged, message, refused, repr};
-use crate::health::Health;
-use crate::rows::MessageRow;
+use super::{
+    ACT, Error, Message, NativePresence, REFUSED, Store, acting, logged, message, native_health,
+    refused, repr,
+};
+use crate::health::{self, Health};
+use crate::rows::{MessageRow, SessionRow};
 use serde::Deserialize;
 use serde_json::{Value, json};
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 /// The kinds of message that reach an inbox; `system` is the record only.
 pub const DELIVERED: [&str; 2] = ["msg", "verdict"];
@@ -25,6 +28,9 @@ LET $me = (SELECT connected FROM ONLY type::record('session', $handle));
 LET $acked = (SELECT VALUE message FROM delivery WHERE handle = $handle AND message > $since);
 RETURN {
     orchestrators: (SELECT VALUE [slug, handle] FROM role WHERE role = 'orchestrator'),
+    orchestrator_sessions: (SELECT * OMIT id FROM session
+        WHERE handle IN (SELECT VALUE handle FROM role WHERE role = 'orchestrator')),
+    native_presence: (SELECT handle, confirmed_until ?? 0 AS until FROM callback_state WHERE string::starts_with(address ?? '', 'codex:')),
     known: $me != NONE,
     roles: (SELECT slug, role FROM role WHERE handle = $handle),
     tree: (SELECT VALUE [slug, parent] FROM task),
@@ -165,6 +171,8 @@ RETURN [$sid, $ts];",
         #[derive(Deserialize)]
         struct Read {
             orchestrators: Vec<(String, String)>,
+            orchestrator_sessions: Vec<SessionRow>,
+            native_presence: Vec<NativePresence>,
             known: bool,
             roles: Vec<Held>,
             tree: Vec<(String, Option<String>)>,
@@ -180,12 +188,26 @@ RETURN [$sid, $ts];",
         for held in &read.roles {
             holds.entry(&held.slug).or_default().push(&held.role);
         }
+        // Holders whose session still holds, as `Owners::of` counts them (`crate::orchestration`).
+        let now = (self.clock)();
+        let native: HashMap<&str, f64> = (read.native_presence.iter())
+            .map(|n| (n.handle.as_str(), n.until))
+            .collect();
+        let holding: HashSet<&str> = (read.orchestrator_sessions.iter())
+            .filter(|row| {
+                let health = health::health(row, now, &self.host, &*self.pid_alive, false);
+                let until = native.get(row.handle.as_str()).copied();
+                native_health(row, health, now, until).holds()
+            })
+            .map(|row| row.handle.as_str())
+            .collect();
         let mut orchestrators: HashMap<&str, Vec<&str>> = HashMap::new();
-        for (slug, who) in &read.orchestrators {
+        let held = (read.orchestrators.iter()).filter(|(_, who)| holding.contains(who.as_str()));
+        for (slug, who) in held {
             orchestrators.entry(slug).or_default().push(who);
         }
         // @orchestrator and verdicts go to the orchestrator of the nearest task, at or above the
-        // message's, that has one: one orchestrator a task, never every one up the tree.
+        // message's, that has one still there: one orchestrator a task, never every one up the tree.
         let nearest = |slug: &str| {
             std::iter::once(slug)
                 .chain(above(&tree, slug))

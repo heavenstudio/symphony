@@ -912,7 +912,7 @@ fn a_blocked_pane_is_said_once_until_it_is_answered_and_blocks_again() {
 }
 
 #[test]
-fn only_a_blocked_sessions_orchestrators_and_parent_hear_it() {
+fn only_the_orchestrator_of_a_blocked_sessions_work_hears_it() {
     let mut m = Monitor::new("blocked-who");
     let (parent, child) = launched_child(&m);
     let orch = m.register("orchestrator");
@@ -930,7 +930,7 @@ fn only_a_blocked_sessions_orchestrators_and_parent_hear_it() {
         format!("BLOCKED {child} sim/a w1:p1 — its pane waits on an approval or a question");
     for (who, heard) in [
         (&other, vec![]),
-        (&parent, vec![blocked.clone()]),
+        (&parent, vec![]), // its parent, another orchestrator: the work is orch's, as for LOST
         (&orch, vec![blocked]),
     ] {
         m.lines.borrow_mut().clear();

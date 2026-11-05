@@ -137,7 +137,7 @@ fn retaking_a_role_drops_a_left_double_and_keeps_a_live_one() {
     let mut held = task.holders("orchestrator");
     held.sort_unstable();
     assert_eq!(held, ["cobalt", "solar"]);
-    assert!(f.said("scratch/both").is_empty());
+    assert_eq!(f.said("scratch/both"), Vec::<String>::new());
     let task = f
         .store
         .hand_over("scratch/both", "cobalt", "solar")
@@ -169,12 +169,29 @@ fn a_hand_over_moves_the_role_in_one_write_naming_the_new_orchestrator() {
     f.store.leave(&a).unwrap();
     assert_eq!(
         refused(f.store.hand_over("scratch/one", &b, &a)),
-        format!("{a} has left; hand scratch/one to a session still here")
+        format!("{a} is left; hand scratch/one to a session still here")
     );
     f.store.move_to("scratch/one", "cancelled", &b).unwrap();
     assert_eq!(
         refused(f.store.hand_over("scratch/one", &b, "nobody")),
         "scratch/one is cancelled"
+    );
+}
+
+#[test]
+fn a_hand_over_to_a_session_gone_quiet_or_leaving_meanwhile_is_refused() {
+    let (f, a, b) = two_orchestrators();
+    let gone = format!("{b} is left; hand scratch/one to a session still here");
+    go_quiet_but(&f, &[&a]);
+    assert_eq!(refused(f.store.hand_over("scratch/one", &a, &b)), gone);
+    // Back, then leaving between the hand-over's read and its write: the write refuses it.
+    f.store.touch(&b).unwrap();
+    let (other, leaving) = (f.other(), b.clone());
+    let late = f.late(move || other.leave(&leaving).unwrap());
+    assert_eq!(refused(late.hand_over("scratch/one", &a, &b)), gone);
+    assert_eq!(
+        f.store.get("scratch/one").unwrap().holders("orchestrator"),
+        [a.as_str()]
     );
 }
 
@@ -206,6 +223,20 @@ fn a_hand_over_sends_one_role_event_to_each_side() {
         heard(&f, &w, &[(&la, &a), (&lb, &b)]),
         [Vec::<String>::new(), vec![]]
     );
+}
+
+#[test]
+fn a_hand_over_to_a_reviewer_of_the_task_is_still_one_role_event() {
+    let (f, a, b) = two_orchestrators();
+    let w = f.session("worker");
+    f.store.claim("scratch/one", &w).unwrap();
+    f.store.take_role("scratch/one", &b, "reviewer").unwrap();
+    let (la, lb) = (listen(&f, &a), listen(&f, &b));
+    let ears = [(&la, a.as_str()), (&lb, b.as_str())];
+    heard(&f, &w, &ears);
+    f.store.hand_over("scratch/one", &a, &b).unwrap();
+    let role = format!("ROLE scratch/one {b} orchestrator, in_progress (from {a})");
+    assert_eq!(heard(&f, &w, &ears), [vec![role.clone()], vec![role]]);
 }
 
 #[test]
@@ -294,6 +325,114 @@ fn each_orchestrator_hears_its_own_tasks_and_the_unclaimed_ones_only() {
     );
 }
 
+/// Orchestrators `a` on `scratch/a` and `b` on `scratch/b`, both listening, and one worker on
+/// each of those and on unclaimed `scratch/free`.
+struct SharedWorker {
+    f: Fixture,
+    a: String,
+    b: String,
+    worker: String,
+    ears: [Listener; 2],
+}
+
+impl SharedWorker {
+    fn new() -> SharedWorker {
+        let f = Fixture::empty();
+        let (a, b) = (f.session("orchestrator"), f.session("orchestrator"));
+        let worker = f.session("worker");
+        let tasks = [
+            ("scratch/a", Some(&a)),
+            ("scratch/b", Some(&b)),
+            ("scratch/free", None),
+        ];
+        for (slug, orch) in tasks {
+            f.task(slug);
+            if let Some(orch) = orch {
+                f.store.take_role(slug, orch, "orchestrator").unwrap();
+            }
+            f.store.claim(slug, &worker).unwrap();
+        }
+        let ears = [listen(&f, &a), listen(&f, &b)];
+        let shared = SharedWorker {
+            f,
+            a,
+            b,
+            worker,
+            ears,
+        };
+        shared.heard(&shared.worker); // the first digests
+        shared
+    }
+
+    /// What reached `a` and `b` since the last look, through a barrier `sender` sends.
+    fn heard(&self, sender: &str) -> Vec<Vec<String>> {
+        let [la, lb] = &self.ears;
+        heard(
+            &self.f,
+            sender,
+            &[(la, self.a.as_str()), (lb, self.b.as_str())],
+        )
+    }
+}
+
+#[test]
+fn a_lost_session_s_work_is_told_to_each_orchestrator_as_far_as_it_is_its_own() {
+    let shared = SharedWorker::new();
+    let (f, w) = (&shared.f, &shared.worker);
+    let bystander = f.session("worker");
+    go_quiet_but(f, &[&shared.a, &shared.b, &bystander]);
+    assert_eq!(f.health(w), Health::Lost);
+    let lost = |lines: &Vec<String>| -> Vec<String> {
+        (lines.iter())
+            .filter(|l| l.starts_with("LOST "))
+            .cloned()
+            .collect()
+    };
+    let lines = shared.heard(&bystander);
+    // Its parent is nobody, so the unclaimed task is said to neither.
+    assert_eq!(
+        [lost(&lines[0]), lost(&lines[1])],
+        [
+            vec![format!("LOST {w} — its work is claimable: scratch/a")],
+            vec![format!("LOST {w} — its work is claimable: scratch/b")],
+        ]
+    );
+}
+
+#[test]
+fn a_status_move_on_unclaimed_work_reaches_every_orchestrator() {
+    let shared = SharedWorker::new();
+    let w = &shared.worker;
+    shared
+        .f
+        .store
+        .move_to("scratch/free", "blocked", w)
+        .unwrap();
+    let status = "STATUS scratch/free in_progress → blocked".to_string();
+    assert_eq!(shared.heard(w), [vec![status.clone()], vec![status]]);
+}
+
+#[test]
+fn a_post_to_at_orchestrator_passes_a_holder_gone_quiet_for_the_one_above() {
+    let (f, a, b) = two_orchestrators();
+    f.task_with(NewTask {
+        parent: Some("scratch/one".into()),
+        ..NewTask::new("scratch/one/b", "B's part", "owner")
+    });
+    f.store
+        .take_role("scratch/one/b", &b, "orchestrator")
+        .unwrap();
+    let w = f.session("worker");
+    go_quiet_but(&f, &[&a, &w]);
+    assert_eq!(f.health(&b), Health::Left);
+    let post = f
+        .store
+        .say("scratch/one/b", &w, "anyone?", Some("@orchestrator"))
+        .unwrap();
+    let ids: Vec<i64> = (f.store.inbox(&a).unwrap().iter()).map(|m| m.id).collect();
+    assert_eq!(ids, [post.id], "the task is a's while b is gone");
+}
+
 #[test]
 fn a_post_to_at_orchestrator_reaches_the_nearest_orchestrator_only() {
     let (f, a, b) = two_orchestrators();
@@ -338,10 +477,15 @@ fn a_post_to_at_orchestrator_reaches_the_nearest_orchestrator_only() {
 fn each_digest_lists_its_own_and_the_unclaimed_tasks() {
     let f = Fixture::empty();
     let (a, b) = (f.session("orchestrator"), f.session("orchestrator"));
-    let idle_b = f.session_with(NewSession {
-        parent: Some(b.clone()),
-        ..NewSession::new("worker")
-    });
+    let gone = f.session("orchestrator");
+    let child_of = |parent: &str| {
+        f.session_with(NewSession {
+            parent: Some(parent.to_string()),
+            ..NewSession::new("worker")
+        })
+    };
+    let (idle_b, idle_orphan) = (child_of(&b), child_of(&gone));
+    f.store.leave(&gone).unwrap();
     let idle_free = f.session("worker");
     for (slug, orch) in [
         ("scratch/a", Some(&a)),
@@ -353,7 +497,7 @@ fn each_digest_lists_its_own_and_the_unclaimed_tasks() {
             f.store.take_role(slug, orch, "orchestrator").unwrap();
         }
     }
-    let idle = [idle_b.clone(), idle_free.clone()];
+    let idle = [idle_b.clone(), idle_orphan.clone(), idle_free.clone()];
     let digest = tasks::cli::pull::digest(&f.store, &idle, None, f.now(), &[]).unwrap();
     let board = f.store.board().unwrap();
     let entries = |handle: &str| -> BTreeSet<(String, String)> {
@@ -365,6 +509,7 @@ fn each_digest_lists_its_own_and_the_unclaimed_tasks() {
         BTreeSet::from([
             entry("ready_unstaffed", "scratch/a"),
             entry("ready_unstaffed", "scratch/free"),
+            entry("idle", &idle_orphan),
             entry("idle", &idle_free),
         ])
     );
@@ -374,8 +519,9 @@ fn each_digest_lists_its_own_and_the_unclaimed_tasks() {
             entry("ready_unstaffed", "scratch/b"),
             entry("ready_unstaffed", "scratch/free"),
             entry("idle", &idle_b),
+            entry("idle", &idle_orphan),
             entry("idle", &idle_free),
         ])
     );
-    assert_eq!(digest.entries().len(), 5, "the whole board, unscoped");
+    assert_eq!(digest.entries().len(), 6, "the whole board, unscoped");
 }

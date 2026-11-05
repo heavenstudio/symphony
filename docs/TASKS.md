@@ -412,19 +412,27 @@ holds while it is live, stale or of unknown liveness is refused, naming the
 holder and the command that moves it: `just tasks handover SLUG HANDLE`, run by
 the holder, drops its role and gives the role to HANDLE in one write. The
 thread says `A handed orchestrator over to B; address B or @orchestrator`,
-and each of the two hears one `ROLE SLUG B orchestrator, STATUS (from A)`.
-Taking the role over a holder that is lost or left drops that one in the same
-write, and the thread says `B took orchestrator over from A (lost)`; so does
-taking it again where a left holder still sits beside you. A task is its
-orchestrator's when that session holds the role on it, or on the nearest task
-above it that has a holder still there; a task with none is **unclaimed**, as
-are a lost or left orchestrator's tasks until another takes them over. Each
-orchestrator hears its own tasks and the unclaimed ones only
-(`symphony/crates/tasks/src/orchestration.rs`): its NEW lines, STATUS lines,
-PULL digest rows and pane watch, and the LOST or STALE of a session holding
-claimable work on its tasks (a session whose work is nobody's, or who holds
-none, is said to its parent, as before). Another orchestrator's task reaches it
-only in a post to its own handle. `just tasks list --doubled` lists the tasks
+and each of the two hears one `ROLE SLUG B orchestrator, STATUS (from A)`,
+whatever other role B holds there. HANDLE must still be there (live, stale or
+of unknown liveness); a hand-over to a session gone quiet, or leaving as it is
+written, is refused, naming its health. Taking the role over a holder that is
+lost or left drops that one in the same write, and the thread says `B took
+orchestrator over from A (lost)`; so does taking it again where a left holder
+still sits beside you. A task is its orchestrator's when that session holds the
+role on it, or on the nearest task above it that has a holder still there; a
+task with none is **unclaimed**, as are a lost or left orchestrator's tasks
+until another takes them over. Each orchestrator hears its own tasks and the
+unclaimed ones only (`symphony/crates/tasks/src/orchestration.rs`): every
+orchestrator hears an unclaimed task's NEW lines, PULL digest rows and the
+STATUS of its move to `blocked`, which no digest row shows, and only its owner
+a claimed one's. A post to `@orchestrator`, and a
+verdict, go to the nearest holder still there, passing one gone quiet. A
+session gone stale or lost, or waiting in its pane, is said to the
+orchestrator of the work it holds, its LOST line naming only that
+orchestrator's tasks; a session whose work is nobody's, or who holds none, is
+said to its parent, as before. The digest's idle sessions leave out the
+children of another orchestrator still there. Another orchestrator's task
+reaches it only in a post to its own handle. `just tasks list --doubled` lists the tasks
 that still hold two orchestrators from before the rule; one of them settles it
 with `handover` or `release SLUG --role orchestrator`. No board data is
 rewritten for them.
