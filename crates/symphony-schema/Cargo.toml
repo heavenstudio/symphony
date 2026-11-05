@@ -1,0 +1,13 @@
+[package]
+name = "symphony-schema"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+jsonschema = { workspace = true, features = ["arbitrary-precision"] }
+serde_json = { version = "1", features = ["preserve_order", "arbitrary_precision"] }
