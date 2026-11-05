@@ -7,6 +7,8 @@
 //! The client holds no plugin code: a component renders to [`vocabulary::Block`]s, which every
 //! project's client draws with the same generic components.
 
+#![forbid(unsafe_code)]
+
 use std::any::Any;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
