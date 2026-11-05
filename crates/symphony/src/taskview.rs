@@ -406,7 +406,8 @@ pub fn activity(store: &symphony_board::Store) -> Result<Vec<ActivityItem>, symp
 
 /// How long the server waits on each board request: its board tick shares the data worker's thread
 /// with every document refresh, and a page gives up on an answer after 15 s (`symphony-ui`'s
-/// `request.rs`). A read with no answer in that time goes once more ([`symphony_board::rpc::Kind`]).
+/// `request.rs`). A read with no whole answer in that time goes once more
+/// ([`symphony_board::rpc::Kind`]), and so waits at most twice this.
 const BOARD_WAIT: std::time::Duration = std::time::Duration::from_secs(3);
 
 /// A page read's board failure: a board that took the request and answered too late is slow (504),

@@ -76,8 +76,8 @@ A missing task returns 404; an unavailable board returns 503 while the document
 board continues without task counts. A board that took a read and answered it
 later than the 3 s wait, on its one resend too, is slow: 504, "the task board is
 slow", never "cannot be reached". The wait bounds the board tick, which shares the
-data worker's thread with document refreshes, and stays inside the client's 15 s
-request limit. Native routes apply both
+data worker's thread with document refreshes, and bounds each sending's whole
+answer, so a read sent twice stays inside the client's 15 s request limit. Native routes apply both
 the peer gate and the Host check; sandboxed frames cannot read the API.
 
 `just symphony` installs the release client with the shared server, in

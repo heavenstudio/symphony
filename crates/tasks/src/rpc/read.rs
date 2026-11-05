@@ -29,22 +29,32 @@ const WRITES: [&str; 13] = [
     "CREATE", "UPDATE", "UPSERT", "DELETE", "INSERT", "RELATE", "DEFINE", "REMOVE", "ALTER",
     "REBUILD", "KILL", "LIVE", "ACCESS",
 ];
-/// The function namespaces a call can change something through: a defined function or a module,
-/// a request beyond the server, a sequence's next value, a stored file.
-const EFFECTS: [&str; 7] = ["fn", "mod", "silo", "http", "api", "sequence", "file"];
+/// The function namespaces a read may call, each of whose functions only computes from what it is
+/// given and what it reads. Any other (a defined function's `fn`, a module, a request beyond the
+/// server, a sequence, a file, one this list has not met) may change something.
+const PURE: [&str; 9] = [
+    "array", "crypto", "math", "object", "record", "search", "string", "type", "vector",
+];
+
+fn word(c: char) -> bool {
+    c.is_ascii_alphanumeric() || c == '_'
+}
+
+fn among(words: &[&str], found: &str) -> bool {
+    words.iter().any(|w| found.eq_ignore_ascii_case(w))
+}
 
 impl Kind {
     /// `sql`'s kind, from its text alone: a read when it has a statement, every statement starts
-    /// with one of [`READS`], no word anywhere in it is one of [`WRITES`], and it calls nothing in
-    /// [`EFFECTS`]. The board's schema computes nothing a read could run (no function, no future;
-    /// its events run on writes), so such a request changes nothing. This reads words, not
-    /// SurrealQL, and so errs one way only: a write's word in a string, a comment or a name, or a
-    /// statement that starts otherwise (`IF`, `FOR`, a block), makes a write of a request that
-    /// only reads, which is then never sent again. A write is never taken for a read.
+    /// with one of [`READS`], no word anywhere in it is one of [`WRITES`], and every `::` in it is
+    /// a call in a namespace of [`PURE`], written so that the words read it ([`namespace`]). The
+    /// board's schema computes nothing a read could run (no function, no parameter, no future; its
+    /// events run on writes), so such a request changes nothing. This reads words, not SurrealQL,
+    /// and so errs one way only: a write's word or a `::` in a string, a comment or a name, a call
+    /// in a namespace not on the list, or a statement that starts otherwise (`IF`, `FOR`, a block),
+    /// makes a write of a request that only reads, which is then never sent again. A write is never
+    /// taken for a read.
     pub fn of(sql: &str) -> Kind {
-        let word = |c: char| c.is_ascii_alphanumeric() || c == '_';
-        let among =
-            |words: &[&str], found: &str| words.iter().any(|w| found.eq_ignore_ascii_case(w));
         let mut statements = sql
             .split(';')
             .map(str::trim_start)
@@ -53,16 +63,33 @@ impl Kind {
         let reads = statements.peek().is_some()
             && statements.all(|s| among(&READS, s.split(|c| !word(c)).next().unwrap_or("")));
         let writes = sql.split(|c| !word(c)).any(|found| among(&WRITES, found));
-        let effects = sql.match_indices("::").any(|(at, _)| {
-            among(
-                &EFFECTS,
-                sql[..at].rsplit(|c| !word(c)).next().unwrap_or(""),
-            )
+        let calls_compute = sql.match_indices("::").all(|(at, _)| {
+            sql[at + 2..].starts_with(word)
+                && namespace(&sql[..at]).is_some_and(|first| among(&PURE, first))
         });
-        if reads && !writes && !effects {
+        if reads && !writes && calls_compute {
             Kind::Read
         } else {
             Kind::Write
+        }
+    }
+}
+
+/// The first word of the path whose last `::` comes right after `before`, back over each `word::`
+/// before it: `vector` of `vector::similarity::cosine`. None when no word stands right against a
+/// `::` of it: SurrealQL takes the space, the line or the comment in `fn ::bump()` or
+/// `fn/**/::bump()` for nothing, and the call is `fn::bump`, whose namespace the words cannot see.
+fn namespace(before: &str) -> Option<&str> {
+    let mut rest = before;
+    loop {
+        let earlier = rest.trim_end_matches(word);
+        let name = &rest[earlier.len()..];
+        if name.is_empty() {
+            return None;
+        }
+        match earlier.strip_suffix("::") {
+            Some(path) => rest = path,
+            None => return Some(name),
         }
     }
 }
@@ -132,12 +159,13 @@ impl Client {
         } else {
             "it was not sent there"
         };
+        let resent_pooled = false; // the second sending always has a new connection
         Err(format!(
             "the server at {} {}: {}; the request only reads, so it went once more, on a new connection: {}; {outcome}",
             self.addr,
             self.verdict(&second),
             first.on(pooled, served),
-            second.on(false, again)
+            second.on(resent_pooled, again)
         ))
     }
 }
@@ -165,8 +193,41 @@ mod tests {
             "BEGIN; RETURN 1; CANCEL;",
             "SELECT created, updated, deleted_by FROM task;",
             "  \n RETURN 1 ;  ;\n",
+            "SELECT * OMIT id FROM array::distinct(SELECT VALUE slug FROM link\n    WHERE kind = 'doc' AND \
+             (target = $doc OR string::starts_with(target, $doc + '#')))\n    .map(|$s| type::record('task', $s));",
+            "SELECT slug, vector::similarity::cosine(embedding, $query) AS score, search::score(1) FROM task_chunk;",
+            "RETURN [math::max($a), string::concat($b, '-'), crypto::sha256(<string> $c), !record::exists($d)];",
         ] {
             assert_eq!(Kind::of(sql), Kind::Read, "{sql}");
+        }
+    }
+
+    /// A call SurrealQL reads past a space, a line or a comment before or after its `::` is a call
+    /// the words cannot see the namespace of, and so a write, as is one in a namespace not known
+    /// to only compute.
+    #[test]
+    fn a_call_whose_namespace_the_words_cannot_read_as_pure_is_a_write() {
+        for sql in [
+            "RETURN fn ::bump();",
+            "RETURN fn\n::bump();",
+            "RETURN fn\t::bump();",
+            "RETURN fn/**/::bump();",
+            "RETURN fn /* a comment */ ::bump();",
+            "RETURN fn -- a comment\n::bump();",
+            "RETURN fn # a comment\n::bump();",
+            "RETURN fn // a comment\n::bump();",
+            "RETURN fn:: bump();",
+            "RETURN fn::/**/bump();",
+            "RETURN `fn`::bump();",
+            "RETURN ⟨fn⟩::bump();",
+            "RETURN FN::bump();",
+            "RETURN ::bump();",
+            "RETURN type:: record('task', 'a');",
+            "RETURN type::record('task', 'a') + fn ::bump();",
+            "RETURN time::now();",
+            "RETURN 'a::b';",
+        ] {
+            assert_eq!(Kind::of(sql), Kind::Write, "{sql:?}");
         }
     }
 
@@ -232,8 +293,9 @@ mod tests {
         let late = "the server at 127.0.0.1:1 is slow: no answer within 3s: read failed on a pooled \
                     socket after 4 completed requests: Resource temporarily unavailable (os error 35); \
                     the request may have run there, so it was not sent again";
-        assert!(slow(late));
-        assert!(slow(&format!("SurrealDB: {late}")));
+        assert!(slow(late), "{late}");
+        let wrapped = format!("SurrealDB: {late}");
+        assert!(slow(&wrapped), "{wrapped}");
         for other in [
             "the server at 127.0.0.1:1 did not answer: connect failed on a freshly opened socket after 0 completed requests: Connection refused (os error 61); the request was not sent",
             "the task board is starting",

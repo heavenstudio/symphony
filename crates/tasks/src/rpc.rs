@@ -12,7 +12,7 @@ use std::io::{Read, Write};
 use std::net::{TcpStream, ToSocketAddrs};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Mutex, PoisonError};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 mod descriptor;
 mod read;
@@ -113,7 +113,8 @@ impl Client {
         }
     }
 
-    /// This client, waiting at most `timeout` for the server to connect and to answer each request.
+    /// This client, waiting at most `timeout` for the server to connect and to answer each request
+    /// whole. A read sent once more ([`Kind`]) waits as long again, no longer.
     pub fn waiting(mut self, timeout: Duration) -> Client {
         self.timeout = timeout;
         self
@@ -393,8 +394,11 @@ impl Failure {
 }
 
 /// Write `request` on `stream` and read one reply off it, by its length, its chunks, or, with neither, to
-/// the end of the connection.
+/// the end of the connection: the whole reply within `timeout` of the start. Each read waits only
+/// what is left of it, so a reply that comes a few bytes at a time, each before a wait would run
+/// out, is late all the same.
 fn talk(stream: &mut TcpStream, request: &[u8], timeout: Duration) -> Result<Reply, Failure> {
+    let deadline = Instant::now() + timeout;
     stream
         .set_nodelay(true)
         .map_err(|error| Failure::io(Step::SocketOption("TCP_NODELAY"), error))?;
@@ -411,6 +415,18 @@ fn talk(stream: &mut TcpStream, request: &[u8], timeout: Duration) -> Result<Rep
     let mut raw = Vec::new();
     let mut chunk = [0u8; 16 * 1024];
     loop {
+        let left = deadline.saturating_duration_since(Instant::now());
+        if left.is_zero() {
+            let mut late = read_failed(format!(
+                "the wait ran out with {} bytes of the reply in",
+                raw.len()
+            ));
+            late.timed_out = true;
+            return Err(late);
+        }
+        stream
+            .set_read_timeout(Some(left))
+            .map_err(|error| Failure::io(Step::Read, error))?;
         let n = stream
             .read(&mut chunk)
             .map_err(|error| Failure::io(Step::Read, error))?;

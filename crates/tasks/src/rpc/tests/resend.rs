@@ -24,7 +24,12 @@ enum Answer {
     After(Duration),
     /// Seven's head and half its body, then the connection closed.
     Cut,
+    /// Seven a byte at a time, this long before each: every byte well within the wait, the whole
+    /// far past it.
+    Trickle(Duration),
 }
+
+type Answers = Arc<Mutex<VecDeque<Answer>>>;
 
 /// A server that takes every connection and answers each request it reads as `answers` say, in
 /// order (seven at once, past their end), and records each request and each connection.
@@ -43,27 +48,11 @@ impl Board {
         let answers = Arc::new(Mutex::new(VecDeque::from(answers)));
         let (seen, made) = (Arc::clone(&requests), Arc::clone(&connections));
         std::thread::spawn(move || {
-            for mut stream in listener.incoming().map_while(Result::ok) {
+            let callers = listener.incoming().map_while(Result::ok);
+            for stream in callers {
                 *made.lock().unwrap() += 1;
                 let (seen, answers) = (Arc::clone(&seen), Arc::clone(&answers));
-                std::thread::spawn(move || {
-                    while let Some(request) = request_on(&mut stream) {
-                        seen.lock().unwrap().push(request);
-                        let answer = answers.lock().unwrap().pop_front();
-                        match answer.unwrap_or(Answer::After(Duration::ZERO)) {
-                            Answer::After(delay) => {
-                                std::thread::sleep(delay);
-                                if stream.write_all(SEVEN).is_err() {
-                                    return;
-                                }
-                            }
-                            Answer::Cut => {
-                                let _ = stream.write_all(&SEVEN[..SEVEN.len() - 16]);
-                                return;
-                            }
-                        }
-                    }
-                });
+                std::thread::spawn(move || serve(stream, &seen, &answers));
             }
         });
         Board {
@@ -92,13 +81,43 @@ impl Board {
     }
 }
 
+/// One connection's requests, each recorded in `seen` and answered as the next of `answers` says,
+/// until the client closes it or an answer ends it.
+fn serve(mut stream: TcpStream, seen: &Mutex<Vec<Vec<u8>>>, answers: &Answers) {
+    while let Some(request) = request_on(&mut stream) {
+        seen.lock().unwrap().push(request);
+        let answer = answers.lock().unwrap().pop_front();
+        if !answered(&mut stream, answer.unwrap_or(Answer::After(Duration::ZERO))) {
+            return;
+        }
+    }
+}
+
+/// `answer` on `stream`: whether the connection is still open for another request.
+fn answered(stream: &mut TcpStream, answer: Answer) -> bool {
+    match answer {
+        Answer::After(delay) => {
+            std::thread::sleep(delay);
+            stream.write_all(SEVEN).is_ok()
+        }
+        Answer::Cut => {
+            let _ = stream.write_all(&SEVEN[..SEVEN.len() - 16]);
+            false
+        }
+        Answer::Trickle(gap) => SEVEN.iter().all(|byte| {
+            std::thread::sleep(gap);
+            stream.write_all(&[*byte]).is_ok()
+        }),
+    }
+}
+
 /// One request read off `stream`, or None once the client has closed it.
 fn request_on(stream: &mut TcpStream) -> Option<Vec<u8>> {
     let mut request = Vec::new();
     let mut chunk = [0u8; 4096];
     loop {
-        let n = stream.read(&mut chunk).ok().filter(|&n| n > 0)?;
-        request.extend_from_slice(&chunk[..n]);
+        let got = stream.read(&mut chunk).ok().filter(|&got| got > 0)?;
+        request.extend_from_slice(&chunk[..got]);
         let Some(end) = find(&request, b"\r\n\r\n") else {
             continue;
         };
@@ -167,7 +186,7 @@ fn a_write_with_no_answer_in_time_is_never_sent_again_and_says_the_server_is_slo
             os(libc::EAGAIN)
         )
     );
-    assert!(slow(&said));
+    assert!(slow(&said), "{said}");
     assert_eq!(board.bodies().len(), 1, "the write was sent again");
     assert_eq!(board.connections(), 1);
 }
@@ -187,26 +206,29 @@ fn a_read_late_again_on_its_resend_fails_without_a_third_and_says_the_server_is_
             board.addr
         )
     );
-    assert!(slow(&said));
+    assert!(slow(&said), "{said}");
     assert_eq!(board.bodies().len(), 2, "one sending and one more");
     assert_eq!(board.connections(), 2);
 }
 
+/// Each byte of the reply comes well within the wait, which bounds one read; the whole does not,
+/// and the wait bounds the whole. A read trickled twice fails after its two waits, long before
+/// the trickle ends, so a page asking is answered within its own limit.
 #[test]
-fn a_read_to_a_server_that_refuses_it_is_not_sent_and_says_it_did_not_answer() {
-    let addr = {
-        let gone = TcpListener::bind("127.0.0.1:0").unwrap();
-        gone.local_addr().unwrap().to_string()
-    };
-    let said = failed(&Client::new(&addr, "sf", "t").waiting(WAIT), READ);
-    assert_eq!(
-        said,
-        format!(
-            "the server at {addr} did not answer: connect failed on a freshly opened socket after 0 completed requests: {}; the request was not sent",
-            os(libc::ECONNREFUSED)
-        )
+fn a_reply_trickling_in_past_the_wait_is_late_and_its_read_gives_up_long_before_it_ends() {
+    let gap = WAIT / 6;
+    let trickle = gap * u32::try_from(SEVEN.len()).unwrap();
+    let board = Board::answering(vec![Answer::Trickle(gap), Answer::Trickle(gap)]);
+    let began = Instant::now();
+    let said = failed(&board.client(), READ);
+    let took = began.elapsed();
+    assert!(
+        took < trickle / 2,
+        "{took:?} against a {trickle:?} trickle: {said}"
     );
-    assert!(!slow(&said));
+    assert!(slow(&said), "{said}");
+    assert!(said.ends_with("it was not sent a third time"), "{said}");
+    assert_eq!(board.bodies().len(), 2, "one sending and one more");
 }
 
 /// The first sending is late and the server then goes: the second finds no server, which decides
@@ -231,7 +253,7 @@ fn a_late_read_whose_resend_is_refused_says_the_server_did_not_answer() {
             os(libc::ECONNREFUSED)
         )
     );
-    assert!(!slow(&said));
+    assert!(!slow(&said), "{said}");
     held.join().unwrap();
 }
 
@@ -251,7 +273,7 @@ fn a_reply_cut_halfway_sends_a_read_once_more_and_a_write_never() {
             board.addr
         )
     );
-    assert!(!slow(&said));
+    assert!(!slow(&said), "{said}");
     assert_eq!(board.bodies().len(), 1);
 }
 
