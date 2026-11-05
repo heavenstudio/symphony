@@ -3,6 +3,7 @@
 
 use super::callbacks::Listener;
 use super::common::{Fixture, Seed, refused, session};
+use super::mixed_dispatchers::{older_fields, older_record};
 use super::quiet_callbacks::listen;
 use std::collections::BTreeSet;
 use symphony_board::health::{LIVE_SECONDS, STALE_SECONDS};
@@ -237,6 +238,76 @@ fn a_hand_over_to_a_reviewer_of_the_task_is_still_one_role_event() {
     f.store.hand_over("scratch/one", &a, &b).unwrap();
     let role = format!("ROLE scratch/one {b} orchestrator, in_progress (from {a})");
     assert_eq!(heard(&f, &w, &ears), [vec![role.clone()], vec![role]]);
+}
+
+#[test]
+fn a_new_or_pull_waiting_out_an_outage_names_no_task_handed_away_meanwhile() {
+    for nobodys_too in [false, true] {
+        let (fixture, former, successor) = two_orchestrators();
+        let worker = fixture.session("worker");
+        let row = |slug: &str| format!("ready_unstaffed p2 {slug} — Jump departure");
+        let pull = |ready: u8| {
+            EMPTY_PULL.replace("ready_unstaffed=0", &format!("ready_unstaffed={ready}"))
+        };
+        let gone = listen(&fixture, &former);
+        assert_eq!(gone.text(), [pull(1), row("scratch/one")].join("\n"));
+        drop(gone);
+        // The former orchestrator cannot be reached: what it is told of its new subtask waits in
+        // its outbox.
+        fixture.task_with(NewTask {
+            parent: Some("scratch/one".into()),
+            ..NewTask::new("scratch/one/sub", "Jump departure", "owner")
+        });
+        if nobodys_too {
+            fixture.task("scratch/nobodys");
+        }
+        let waiting: Vec<String> = (fixture.store.callback_inbox(&former).unwrap().into_iter())
+            .map(|(_, text)| text)
+            .collect();
+        let names_sub = |text: &String| text.contains("scratch/one/sub");
+        assert!(
+            waiting
+                .iter()
+                .any(|text| text.starts_with("NEW ") && names_sub(text))
+                && waiting
+                    .iter()
+                    .any(|text| text.starts_with("PULL ") && names_sub(text)),
+            "{waiting:?}"
+        );
+        fixture
+            .store
+            .hand_over("scratch/one", &former, &successor)
+            .unwrap();
+        let back = Listener::new(&format!("{}-back", fixture.store.client().database()));
+        let address = format!("uds:{}", back.path.display());
+        fixture
+            .store
+            .callback(&former, Some(&address), false, false)
+            .unwrap();
+        let mut told = vec![format!(
+            "ROLE scratch/one {successor} orchestrator, ready (from {former})"
+        )];
+        if nobodys_too {
+            // The PULL is built again of what the former one hears; the subtask is the successor's.
+            told.insert(0, "NEW scratch/nobodys ready — Jump departure".into());
+            told.extend([pull(1), row("scratch/nobodys")]);
+        }
+        assert_eq!(back.drain(&fixture, &worker, &former), told);
+        // What older dispatchers read still records the subtask as said, so they never say it.
+        assert_eq!(
+            older_fields(&fixture, &former),
+            older_record(&fixture, &former)
+        );
+        // Nor is any of it said at the next periodic look, while the successor holds the task.
+        fixture.advance(601.0);
+        for handle in [&former, &successor, &worker] {
+            fixture.store.touch(handle).unwrap();
+        }
+        assert_eq!(
+            heard(&fixture, &worker, &[(&back, &former)]),
+            [Vec::<String>::new()]
+        );
+    }
 }
 
 #[test]

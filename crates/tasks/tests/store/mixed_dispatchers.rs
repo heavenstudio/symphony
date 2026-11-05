@@ -14,8 +14,8 @@ use symphony_board::{Health, NewSession, NewTask, Task};
 /// and told: its look of the whole board (every ready task, every task below what it orchestrates
 /// and the whole board's staffing; its children by parent), every open task's status, and every
 /// entry of the whole digest as delivered. Reckoned here by those rules, from the board as it is.
-fn older_record(f: &Fixture, handle: &str) -> Value {
-    let board = f.store.board().unwrap();
+pub(super) fn older_record(fixture: &Fixture, handle: &str) -> Value {
+    let board = fixture.store.board().unwrap();
     let open = |slug: &str| {
         (board.tasks.iter()).any(|t| t.slug == slug && !FINISHED.contains(&t.status.as_str()))
     };
@@ -31,7 +31,8 @@ fn older_record(f: &Fixture, handle: &str) -> Value {
         .map(|t| t.slug.clone())
         .collect();
     while let Some(slug) = todo.pop() {
-        for child in (board.tasks.iter()).filter(|t| t.parent.as_deref() == Some(slug.as_str())) {
+        let children = (board.tasks.iter()).filter(|t| t.parent.as_deref() == Some(slug.as_str()));
+        for child in children {
             if below.insert(child.slug.clone()) {
                 todo.push(child.slug.clone());
             }
@@ -86,7 +87,8 @@ fn older_record(f: &Fixture, handle: &str) -> Value {
         .filter(|t| open(&t.slug))
         .map(|t| (t.slug.clone(), t.status.clone()))
         .collect();
-    let digest = symphony_board::cli::pull::digest(&f.store, &[], None, f.now(), &[]).unwrap();
+    let digest =
+        symphony_board::cli::pull::digest(&fixture.store, &[], None, fixture.now(), &[]).unwrap();
     json!({
         "seen": {
             "latest_message": board.latest_message, "verdict_tasks": verdict_tasks,
@@ -100,8 +102,8 @@ fn older_record(f: &Fixture, handle: &str) -> Value {
 
 /// The fields of `handle`'s callback state older dispatchers read: its record, every open status
 /// and the delivered digest entries (as a set: their order is the store's).
-fn older_fields(f: &Fixture, handle: &str) -> Value {
-    let state = f
+pub(super) fn older_fields(fixture: &Fixture, handle: &str) -> Value {
+    let state = fixture
         .store
         .client()
         .query(
@@ -116,82 +118,100 @@ fn older_fields(f: &Fixture, handle: &str) -> Value {
 }
 
 /// An older dispatcher's look and write: what it told is in what it records.
-fn written_by_an_older_dispatcher(f: &Fixture, handle: &str) {
-    f.store
+fn written_by_an_older_dispatcher(fixture: &Fixture, handle: &str) {
+    fixture.store
         .client()
         .query(
             "UPDATE type::record('callback_state', $handle) SET seen = $record.seen, statuses = $record.statuses,
                 pull_entries = $record.pull_entries, pull_queued = NONE RETURN NONE;",
-            json!({"handle":handle, "record":older_record(f, handle)}),
+            json!({"handle":handle, "record":older_record(fixture, handle)}),
         )
         .unwrap();
 }
 
 #[test]
 fn an_older_dispatcher_between_newer_ones_repeats_no_line_and_widens_none() {
-    let f = Fixture::empty();
-    let (a, b) = (f.session("orchestrator"), f.session("orchestrator"));
+    let fixture = Fixture::empty();
+    let (orchestrator, other) = (
+        fixture.session("orchestrator"),
+        fixture.session("orchestrator"),
+    );
     let child = |kind: &str, parent: &str| {
-        f.session_with(NewSession {
+        fixture.session_with(NewSession {
             parent: Some(parent.to_string()),
             ..NewSession::new(kind)
         })
     };
-    // kid is a's, reviewing b's work; hand is b's, executing a's; w works on nobody's.
-    let (kid, hand) = (child("reviewer", &a), child("worker", &b));
-    let w = f.session("worker");
+    // kid is the orchestrator's, reviewing the other's work; hand is the other's, executing
+    // the orchestrator's; the worker works on nobody's.
+    let (kid, hand) = (child("reviewer", &orchestrator), child("worker", &other));
+    let worker = fixture.session("worker");
     let sub = |slug: &str, parent: &str| {
-        f.task_with(NewTask {
+        fixture.task_with(NewTask {
             parent: Some(parent.into()),
             ..NewTask::new(slug, "Jump departure", "owner")
         })
     };
-    f.task("scratch/a");
-    f.store.take_role("scratch/a", &a, "orchestrator").unwrap();
-    f.store.claim("scratch/a", &hand).unwrap();
-    sub("scratch/a/b", "scratch/a");
-    f.store
-        .take_role("scratch/a/b", &b, "orchestrator")
+    fixture.task("scratch/a");
+    fixture
+        .store
+        .take_role("scratch/a", &orchestrator, "orchestrator")
         .unwrap();
-    f.task("scratch/b");
-    f.store.take_role("scratch/b", &b, "orchestrator").unwrap();
+    fixture.store.claim("scratch/a", &hand).unwrap();
+    sub("scratch/a/b", "scratch/a");
+    fixture
+        .store
+        .take_role("scratch/a/b", &other, "orchestrator")
+        .unwrap();
+    fixture.task("scratch/b");
+    fixture
+        .store
+        .take_role("scratch/b", &other, "orchestrator")
+        .unwrap();
     sub("scratch/b/1", "scratch/b");
     sub("scratch/b/rev", "scratch/b");
-    f.store.claim("scratch/b/rev", &w).unwrap();
-    f.store.move_to("scratch/b/rev", "review", &w).unwrap();
-    f.store
+    fixture.store.claim("scratch/b/rev", &worker).unwrap();
+    fixture
+        .store
+        .move_to("scratch/b/rev", "review", &worker)
+        .unwrap();
+    fixture
+        .store
         .take_role("scratch/b/rev", &kid, "reviewer")
         .unwrap();
-    f.task("scratch/free");
-    f.store.claim("scratch/free", &w).unwrap();
-    let la = listen(&f, &a);
-    let ears = [(&la, a.as_str())];
+    fixture.task("scratch/free");
+    fixture.store.claim("scratch/free", &worker).unwrap();
+    let listener = listen(&fixture, &orchestrator);
+    let ears = [(&listener, orchestrator.as_str())];
     let pull = |executing: u8, orphaned: u8| {
         format!(
             "PULL executing={executing} ready_unstaffed=0 in_progress_orphaned={orphaned} review_unreviewed=0 landed_open=0 idle=0"
         )
     };
     assert_eq!(
-        heard(&f, &w, &ears),
+        heard(&fixture, &worker, &ears),
         [vec![pull(2, 0)]],
-        "b's ready and unreviewed work is b's"
+        "the other's ready and unreviewed work is its own"
     );
-    // The newer dispatcher looks first as kid and hand go quiet: a hears of hand only.
-    go_quiet_but(&f, &[&a, &b, &w]);
-    let mut rounds = vec![heard(&f, &w, &ears).remove(0)];
+    // The newer dispatcher looks first as kid and hand go quiet: the orchestrator hears of
+    // hand only.
+    go_quiet_but(&fixture, &[&orchestrator, &other, &worker]);
+    let mut rounds = vec![heard(&fixture, &worker, &ears).remove(0)];
     let mut joined = String::new();
     // Writes on another host, which leave this host's recipient to the next dispatch here.
-    let elsewhere = f.elsewhere();
+    let elsewhere = fixture.elsewhere();
     for round in 1..=6 {
         assert_eq!(
-            older_fields(&f, &a),
-            older_record(&f, &a),
+            older_fields(&fixture, &orchestrator),
+            older_record(&fixture, &orchestrator),
             "the fields older dispatchers read keep their meaning, round {round}"
         );
         // An older dispatcher looks first, and what it says is its own: this listener hears the
         // newer dispatcher alone.
         if round == 2 {
-            elsewhere.move_to("scratch/free", "blocked", &w).unwrap();
+            elsewhere
+                .move_to("scratch/free", "blocked", &worker)
+                .unwrap();
         } else if round == 3 {
             let next = NewTask {
                 parent: Some("scratch/a".into()),
@@ -201,15 +221,18 @@ fn an_older_dispatcher_between_newer_ones_repeats_no_line_and_widens_none() {
             let r2 = elsewhere.register(&NewSession::new("reviewer")).unwrap();
             (elsewhere.take_role("scratch/a", &r2.row.handle, "reviewer")).unwrap();
         }
-        written_by_an_older_dispatcher(&f, &a);
+        written_by_an_older_dispatcher(&fixture, &orchestrator);
         if round == 4 {
-            // The newer dispatcher looks first. b's new row in the whole digest is recorded as
-            // withheld, so an older dispatcher never sends it.
+            // The newer dispatcher looks first. The other's new row in the whole digest is
+            // recorded as withheld, so an older dispatcher never sends it.
             sub("scratch/b/2", "scratch/b");
-            joined = f.session("reviewer");
-            f.store.take_role("scratch/a", &joined, "reviewer").unwrap();
+            joined = fixture.session("reviewer");
+            fixture
+                .store
+                .take_role("scratch/a", &joined, "reviewer")
+                .unwrap();
         }
-        rounds.push(heard(&f, &w, &ears).remove(0));
+        rounds.push(heard(&fixture, &worker, &ears).remove(0));
     }
     let none = Vec::<String>::new;
     assert_eq!(
@@ -229,6 +252,6 @@ fn an_older_dispatcher_between_newer_ones_repeats_no_line_and_widens_none() {
             none(),
             none(),
         ],
-        "never kid, b's work, or a line twice"
+        "never kid, the other's work, or a line twice"
     );
 }

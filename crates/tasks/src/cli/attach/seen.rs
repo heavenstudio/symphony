@@ -124,23 +124,23 @@ fn look(board: &Board, handle: &str, kind: &str, scope: Scope) -> Seen {
 
 /// The tasks whose status a session follows, those of them it follows only from above, and those
 /// it follows only because nobody orchestrates them.
-struct Followed<'b> {
-    watched: BTreeMap<&'b str, &'b Task>,
-    below: HashSet<&'b str>,
-    unclaimed: BTreeSet<&'b str>,
+struct Followed<'board> {
+    watched: BTreeMap<&'board str, &'board Task>,
+    below: HashSet<&'board str>,
+    unclaimed: BTreeSet<&'board str>,
 }
 
 /// Its own tasks; for each it orchestrates, everything below but what another orchestrator holds;
 /// for an orchestrator, every unfinished task nobody orchestrates that it holds no role on. A look
 /// at the whole board follows everything below, and nothing for being nobody's.
-fn followed<'b>(
-    board: &'b Board,
+fn followed<'board>(
+    board: &'board Board,
     owners: &Owners,
-    mine: &[&'b Task],
+    mine: &[&'board Task],
     handle: &str,
     orchestrator: bool,
     scope: Scope,
-) -> Followed<'b> {
+) -> Followed<'board> {
     let mut kids: HashMap<Option<&str>, Vec<&Task>> = HashMap::new();
     for task in &board.tasks {
         kids.entry(task.parent.as_deref()).or_default().push(task);

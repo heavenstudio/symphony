@@ -87,6 +87,10 @@ In the same way an orchestrator's `seen`, `statuses` and PULL entries keep the w
 binaries older than one orchestrator per task read (`attach::legacy_seen`, every open status, every
 digest entry); what it hears lives in `narrowing` and `pull_withheld`, which they ignore, read over
 that record, so neither generation repeats a NEW, LOST or PULL the other said.
+A NEW or PULL still queued when a hand-over takes a task it names from the recipient is dropped,
+or the PULL built again of what the recipient hears (`callback_state::Queued`; a PULL's
+`pull_told` names its rows, an older dispatcher's every entry it records), while those fields
+keep counting it as said.
 A finished idle pane still closes under the original cleanup rules, retiring its
 registration; an executor of a task in review is not finished, and keeps its pane.
 A post or changes verdict to `@executor`, or a post to the executor by handle, that no

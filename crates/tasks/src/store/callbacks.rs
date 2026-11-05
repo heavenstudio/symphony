@@ -2,7 +2,7 @@
 //! clock drains retries and observes actionable PULL/STALE/LOST changes. No agent keeps a monitor alive.
 
 use super::callback_peer::{self as peer, Owner};
-use super::callback_state::{State, stored_seen};
+use super::callback_state::{Queued, State, stored_seen};
 use super::{ACT, Error, Store, acting, logged, refused};
 use crate::cli::agents::{Answer, Pane, Probe, Probes};
 use crate::cli::{attach, pull};
@@ -67,6 +67,9 @@ struct Event {
     sequence: u64,
     #[serde(default)]
     pull_entries: Option<BTreeSet<(String, String)>>,
+    /// Of a PULL's `pull_entries`, those its rows name ([`Queued`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pull_told: Option<BTreeSet<(String, String)>>,
 }
 
 #[derive(Clone, Deserialize)]
@@ -584,6 +587,7 @@ RETURN NONE;");
                         attempts: 0,
                         sequence: 0,
                         pull_entries: None,
+                        pull_told: None,
                     })
                     .collect();
                 self.retrying(|| self.transact::<Value>(
@@ -712,9 +716,11 @@ RETURN NONE;");
         if lease.is_some() {
             (*board, *sequence) = self.callback_board()?;
         }
-        let (state, checked_pull): (Option<State>, f64) = self.retrying(|| {
+        let (state, checked_pull, queued): (Option<State>, f64, Vec<Queued>) = self.retrying(|| {
             self.transact(
-                "RETURN [(SELECT * OMIT id FROM ONLY type::record('callback_state', $handle)), type::record('callback_lease', $handle).pull ?? 0];",
+                "RETURN [(SELECT * OMIT id FROM ONLY type::record('callback_state', $handle)), type::record('callback_lease', $handle).pull ?? 0,
+                    (SELECT key, text, pull_entries, pull_told FROM callback_event WHERE handle = $handle AND delivered != true
+                        AND (string::starts_with(key, 'pull-') OR (string::starts_with(key, 'event-') AND string::starts_with(text, 'NEW '))))];",
                 json!({"handle":handle}),
             )
         })?;
@@ -783,12 +789,23 @@ RETURN NONE;");
         };
         let owners = crate::orchestration::Owners::new(&board.tasks);
         let hears = |statuses| crate::orchestration::heard_statuses(&owners, statuses, handle);
+        // A NEW or PULL queued before a hand-over can name a task the recipient no longer hears.
+        let reaches = |slug: &str| owners.reaches(slug, handle);
+        let unheard_new: Vec<&str> = (queued.iter())
+            .filter(|queued| orchestrator && !queued.is_pull())
+            .filter(|queued| queued.unheard(&reaches, &BTreeSet::new()))
+            .map(|queued| queued.key.as_str())
+            .collect();
+        let unheard_pull = |withheld: &BTreeSet<(String, String)>| {
+            (queued.iter()).any(|queued| queued.is_pull() && queued.unheard(&reaches, withheld))
+        };
         let last_pull = state.pull.max(checked_pull);
         let scheduled = orchestrator
             && (initializing
                 || (state.pull_entries.is_none() && state.pull_queued.is_none())
                 || self.now() - last_pull >= 600.0
-                || hears(&statuses) != hears(&state.statuses));
+                || hears(&statuses) != hears(&state.statuses)
+                || unheard_pull(&BTreeSet::new()));
         let changed = orchestrator && attach::pull_changed(before.as_ref(), &compact(&seen));
         let quiet = (seen.children.values())
             .chain(legacy.children.values())
@@ -867,6 +884,7 @@ RETURN NONE;");
         let mut pull_withheld = state.pull_withheld.clone();
         let mut pull_current = BTreeSet::new();
         let mut pull_event = None;
+        let mut pull_dropped = false;
         if due {
             let root = crate::cli::probes::repo_root(&env.cwd);
             let landed = |task: &crate::Task| {
@@ -877,16 +895,25 @@ RETURN NONE;");
             let entries = digest.entries();
             let digest = digest.only_for(board, handle);
             let heard = digest.entries();
+            pull_withheld = entries.difference(&heard).cloned().collect();
+            // A queued PULL naming what the recipient no longer hears is built again from what it
+            // hears, or dropped when the recipient was told all of that already.
+            let unheard = !legacy_upgrade && unheard_pull(&pull_withheld);
             pull_entries.retain(|entry| entries.contains(entry));
             if let Some(queued) = &mut pull_queued {
                 queued.retain(|entry| entries.contains(entry));
             }
+            let told = state.pull_entries.is_some() && heard.is_subset(&state.told(&pull_entries));
             if legacy_upgrade {
                 pull_entries = entries.clone();
-            } else if (state.pull_entries.is_none() || !heard.is_subset(&state.told(&pull_entries)))
-                && pull_queued
-                    .as_ref()
-                    .is_none_or(|queued| !heard.is_subset(&state.told(queued)))
+            } else if unheard && told {
+                pull_queued = None;
+                pull_dropped = true;
+            } else if unheard
+                || (!told
+                    && pull_queued
+                        .as_ref()
+                        .is_none_or(|queued| !heard.is_subset(&state.told(queued))))
             {
                 let text = digest
                     .event_lines()
@@ -895,9 +922,8 @@ RETURN NONE;");
                     .collect::<Vec<_>>()
                     .join("\n");
                 pull_queued = Some(entries.clone());
-                pull_event = Some((text, entries.clone()));
+                pull_event = Some((text, entries.clone(), heard));
             }
-            pull_withheld = entries.difference(&heard).cloned().collect();
             if state.pull_entries.is_some() {
                 pull_entries.extend(pull_withheld.iter().cloned());
             }
@@ -916,9 +942,10 @@ RETURN NONE;");
                 attempts: 0,
                 sequence: 0,
                 pull_entries: None,
+                pull_told: None,
             })
             .collect();
-        if let Some((text, entries)) = pull_event {
+        if let Some((text, entries, told)) = pull_event {
             events.push(Event {
                 key: format!("pull-{revision}"),
                 handle: handle.to_string(),
@@ -928,6 +955,7 @@ RETURN NONE;");
                 attempts: 0,
                 sequence: 0,
                 pull_entries: Some(entries),
+                pull_told: Some(told),
             });
         }
         let legacy = compact(&legacy);
@@ -964,6 +992,7 @@ RETURN NONE;");
                 attempts: 0,
                 sequence: 0,
                 pull_entries: None,
+                pull_told: None,
             });
         }
         if callback.chat {
@@ -989,6 +1018,7 @@ RETURN NONE;");
                     attempts: 0,
                     sequence: 0,
                     pull_entries: None,
+                    pull_told: None,
                 });
             }
         }
@@ -1013,6 +1043,8 @@ RETURN NONE;");
             && pull_queued == state.pull_queued
             && pull_entries == state.pull_entries.clone().unwrap_or_default()
             && pull_withheld == state.pull_withheld
+            && unheard_new.is_empty()
+            && !pull_dropped
         {
             if due {
                 // Fresh command Stores share this deadline even when the digest has no new
@@ -1053,6 +1085,7 @@ RETURN NONE;");
                     WHERE handle = $handle AND delivered != true AND pull_entries != NONE RETURN NONE;
              };
              IF $replace_pull { DELETE callback_event WHERE handle = $handle AND delivered != true AND string::starts_with(key, 'pull-') RETURN NONE; };
+             FOR $key IN $unheard_new { DELETE type::record('callback_event', [$handle, $key]) WHERE delivered != true RETURN NONE; };
              FOR $new IN $events.filter(|$event| string::starts_with($event.key, 'event-') AND string::starts_with($event.text, 'NEW ')) {
                 LET $prefix = string::concat('NEW ', string::split($new.text, ' ')[1], ' ready — ');
                 DELETE callback_event WHERE handle = $handle AND delivered != true AND string::starts_with(key, 'event-') AND string::starts_with(text, $prefix) RETURN NONE;
@@ -1084,8 +1117,8 @@ RETURN NONE;");
                 "pull":if due {self.now()} else {state.pull}, "pull_queued":pull_queued,
                 "legacy_upgrade":legacy_upgrade, "pull_entries":pull_entries, "pull_withheld":pull_withheld,
                 "message_cursor":board.latest_message, "inbox_cursor":board.latest_message,
-                "computed":due, "pull_current":pull_current,
-                "replace_pull":events.iter().any(|event| event.pull_entries.is_some())}),
+                "computed":due, "pull_current":pull_current, "unheard_new":unheard_new,
+                "replace_pull":pull_dropped || events.iter().any(|event| event.pull_entries.is_some())}),
         ))?;
         self.deliver_pending(handle, callback, lease.expect("writes hold a lease").0)
             .map(|()| (true, pull_at))

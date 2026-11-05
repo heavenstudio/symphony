@@ -123,11 +123,11 @@ pub fn open_statuses(board: &Board) -> BTreeMap<String, String> {
 
 /// Of `statuses`, those of the tasks orchestrator `handle` hears: what schedules its PULL digest,
 /// so another orchestrator's tasks moving schedule nothing for it.
-pub fn heard_statuses<'s>(
+pub fn heard_statuses<'statuses>(
     owners: &Owners,
-    statuses: &'s BTreeMap<String, String>,
+    statuses: &'statuses BTreeMap<String, String>,
     handle: &str,
-) -> BTreeMap<&'s str, &'s str> {
+) -> BTreeMap<&'statuses str, &'statuses str> {
     (statuses.iter())
         .filter(|(slug, _)| owners.reaches(slug, handle))
         .map(|(slug, status)| (slug.as_str(), status.as_str()))

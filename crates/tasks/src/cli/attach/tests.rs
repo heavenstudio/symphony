@@ -352,7 +352,9 @@ fn the_legacy_look_takes_in_the_whole_board_as_dispatchers_before_the_narrowing_
     assert!(
         legacy
             .staffing
-            .contains(r#"["t/root/b/rev","kid","reviewer",true]"#)
+            .contains(r#"["t/root/b/rev","kid","reviewer",true]"#),
+        "the whole board's staffing: {}",
+        legacy.staffing
     );
     // Its record has the shape older dispatchers write: no field they do not know.
     let record = serde_json::to_value(&legacy).unwrap();
