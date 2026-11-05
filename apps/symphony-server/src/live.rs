@@ -120,6 +120,8 @@ pub(crate) struct Hub {
     pub changed: watch::Sender<u64>,
     pub draining: watch::Sender<bool>,
     pub server_notice: watch::Sender<String>,
+    initial_board: watch::Sender<bool>,
+    initial_start: Mutex<Option<mpsc::Sender<()>>>,
     invalid: RwLock<BTreeMap<String, String>>,
     trees: RwLock<BTreeMap<String, PathBuf>>,
     tasks: Mutex<TaskState>,
@@ -202,6 +204,8 @@ impl Hub {
             changed: watch::Sender::new(0),
             draining: watch::Sender::new(false),
             server_notice: watch::Sender::new(String::new()),
+            initial_board: watch::Sender::new(true),
+            initial_start: Mutex::new(None),
             invalid: RwLock::new(BTreeMap::new()),
             trees: RwLock::new(
                 measured("hub branch trees", || branches::trees(root))
@@ -232,83 +236,10 @@ impl Hub {
         }
     }
 
-    pub fn start(root: &Path, ui_dist: &Path, drain_chat: bool) -> Result<Arc<Self>, String> {
-        Self::start_watching::<notify::RecommendedWatcher>(
-            root,
-            ui_dist,
-            drain_chat,
-            crate::backstop::PERIOD,
-        )
-    }
-
-    /// [`Self::start`] with watcher `W`, sweeping the watched files on its own every `period`.
-    fn start_watching<W: Watcher + Send + 'static>(
-        root: &Path,
-        ui_dist: &Path,
-        drain_chat: bool,
-        period: Duration,
-    ) -> Result<Arc<Self>, String> {
-        let started = Instant::now();
-        let mut hub = measured("hub new", || Self::new(root, ui_dist));
-        if drain_chat {
-            *hub.callbacks.get_mut().unwrap_or_else(|e| e.into_inner()) =
-                Some(symphony::callbacks::Flusher::new(root));
-            eprintln!("→ chat journal: draining enabled for the shared server");
-        } else {
-            eprintln!("→ chat journal: left untouched by this private server");
-        }
-        let hub = Arc::new(hub);
-        // Install watches before the first read, so an edit during that read is queued too.
-        let (send, recv) = mpsc::sync_channel(1);
-        let changed_hub = Arc::downgrade(&hub);
-        let mut watcher = W::new(
-            move |event: notify::Result<notify::Event>| {
-                if let Some(hub) = changed_hub.upgrade()
-                    && hub.record_event(event)
-                {
-                    let _ = send.try_send(());
-                }
-            },
-            notify::Config::default(),
-        )
-        .map_err(|e| format!("cannot watch Symphony data: {e}"))?;
-        let mut watched = BTreeSet::new();
-        measured("initial watches", || hub.watch(&mut watcher, &mut watched));
-        // The sweep's first stamps come before the first read too.
-        *hub.swept.lock().unwrap_or_else(|e| e.into_inner()) =
-            measured("initial sweep", || Sweep::new(&hub.swept_paths()));
-        measured("initial documents", || hub.refresh_docs(None))?;
-        let docs_ready = started.elapsed();
-        let board_started = Instant::now();
-        let board = taskview::connect(&hub.root).and_then(|store| {
-            hub.board_read(&store)?;
-            Ok(store)
-        });
-        let board = match board {
-            Ok(store) => Some(store),
-            Err(e) => {
-                hub.board_error(e);
-                None
-            }
-        };
-        let weak = Arc::downgrade(&hub);
-        eprintln!(
-            "→ native read data warmed: documents {:.1} ms, board {:.1} ms, total {:.1} ms",
-            docs_ready.as_secs_f64() * 1000.0,
-            board_started.elapsed().as_secs_f64() * 1000.0,
-            started.elapsed().as_secs_f64() * 1000.0
-        );
-        let backstop = crate::backstop::Backstop::new(period);
-        *hub.worker.lock().unwrap_or_else(|e| e.into_inner()) =
-            Some(std::thread::spawn(move || {
-                run(weak, recv, watcher, watched, backstop, board)
-            }));
-        Ok(hub)
-    }
-
     /// Finish the current refresh (including its children), then release the watcher and board.
     pub fn stop(&self) {
         self.draining.send_replace(true);
+        self.disarm_initial_board();
         let mut worker = self.worker.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(worker) = worker.take()
             && worker.join().is_err()
@@ -1354,6 +1285,7 @@ fn run(
     mut watched: BTreeSet<PathBuf>,
     mut backstop: Backstop,
     mut board: Option<symphony_board::Store>,
+    mut connect: impl FnMut(&Path) -> Result<symphony_board::Store, String>,
 ) {
     let mut last_board = Instant::now() - BOARD_INTERVAL;
     let mut expiry = OrderExpiry::default();
@@ -1370,7 +1302,7 @@ fn run(
                 hub.refresh_order("")
             });
             if board.is_none() {
-                board = taskview::connect(&hub.root).ok();
+                board = connect(&hub.root).ok();
             }
             if let Some(store) = &board
                 && let Err(e) = measured("board tick", || hub.board_read(store))
@@ -1523,6 +1455,8 @@ fn task_changes(changes: &mut Vec<Value>, old: &[symphony_api::Task], new: &[sym
     }
 }
 
+mod startup;
+
 #[cfg(test)]
 mod gallery_tests;
 
@@ -1537,6 +1471,9 @@ mod chat_tests;
 
 #[cfg(test)]
 mod backstop_tests;
+
+#[cfg(test)]
+mod startup_tests;
 
 #[cfg(test)]
 mod tests {

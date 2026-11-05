@@ -1,6 +1,6 @@
 //! Exercise notified and swept gallery changes through an owned, ephemeral listener.
 
-use super::{Hub, Sweep, tree_inputs, watched_root};
+use super::{Hub, Sweep};
 use crate::backstop::Backstop;
 use crate::front::{Shared, router};
 use crate::gate::Gate;
@@ -372,7 +372,15 @@ async fn watcher_refreshes_gallery_picture_but_reuses_it_for_document_events() {
     let weak = Arc::downgrade(&hub);
     let backstop = Backstop::new(Duration::from_millis(500));
     *hub.worker.lock().unwrap() = Some(std::thread::spawn(move || {
-        super::run(weak, recv, watcher, BTreeSet::new(), backstop, None);
+        super::run(
+            weak,
+            recv,
+            watcher,
+            BTreeSet::new(),
+            backstop,
+            None,
+            symphony::taskview::connect,
+        );
     }));
     struct StopWorker(Arc<Hub>);
     impl Drop for StopWorker {
@@ -591,80 +599,6 @@ fn the_sweep_follows_only_trees_with_pages_and_a_page_that_goes_leaves_its_galle
     assert!(hub.watch_changes.lock().unwrap().is_empty());
     assert!(!hub.sweep());
     assert!(hub.dirty.lock().unwrap().is_empty());
-}
-
-#[test]
-fn gallery_paths_include_input_directories_and_deleted_files_but_not_neighbours() {
-    shelf::install().unwrap();
-    let tree = Tree::new();
-    tree.write("main/symphony.toml", MANIFEST);
-    tree.write(
-        "main/plain/README.md",
-        "a checkout inside main, its project plain",
-    );
-    let (main, plain) = (tree.path("main"), tree.path("main/plain"));
-    let roots = [main.clone(), plain.clone()];
-    for relative in [
-        "room/shelf",
-        "room/shelf/items/A.item",
-        "posters",
-        "posters/redraw/A.png",
-        "docs/labels",
-        "docs/labels/A.notes.json",
-    ] {
-        assert_eq!(
-            watched_root(&roots, &main.join(relative)),
-            Some(main.as_path()),
-            "{relative}"
-        );
-        // The plain project's plugins watch nothing, so its paths belong to none.
-        assert_eq!(
-            watched_root(&roots, &plain.join(relative)),
-            None,
-            "{relative}"
-        );
-    }
-    for relative in [
-        "docs/TOPIC.md",
-        "room/shelf-old/A.item",
-        "posters-other/A.png",
-        "docs/labels-other/A.svg",
-    ] {
-        assert_eq!(
-            watched_root(&roots, &main.join(relative)),
-            None,
-            "{relative}"
-        );
-    }
-}
-
-#[test]
-fn a_tree_watches_its_projects_documents_folder_and_what_its_plugins_watch_outside_it() {
-    shelf::install().unwrap();
-    let tree = Tree::new();
-    let manual = "[project]\nregister = \"manual/DECISIONS.md\"\nartifacts = \"output\"\n\
-                  [[entrypoints]]\nurl = \"/docs/\"\nfolder = \"manual\"\nhistory = [\"past\"]\n";
-    tree.write("plain/symphony.toml", manual);
-    let below =
-        |root: &str| -> Vec<(String, notify::RecursiveMode)> { tree_inputs(&tree.path(root)) };
-    let recursive = |paths: &[&str]| -> Vec<(String, notify::RecursiveMode)> {
-        paths
-            .iter()
-            .map(|path| (path.to_string(), notify::RecursiveMode::Recursive))
-            .collect()
-    };
-    assert_eq!(below("plain"), recursive(&["manual"]));
-    tree.write("game/symphony.toml", &format!("{manual}{MANIFEST}"));
-    assert_eq!(
-        below("game"),
-        recursive(&["manual", "docs/labels", "posters", "room/shelf"])
-    );
-    // a watched folder inside the documents folder is watched with it
-    tree.write("default/symphony.toml", MANIFEST);
-    assert_eq!(
-        below("default"),
-        recursive(&["docs", "posters", "room/shelf"])
-    );
 }
 
 #[test]
