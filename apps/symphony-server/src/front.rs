@@ -464,9 +464,17 @@ impl Drop for Background {
 /// Names each wait of a stopping server as it begins, so a stop that never ends names its wait.
 type Stages = Arc<dyn Fn(&str) + Send + Sync>;
 
-/// [`Stages`] on stderr, where the shared server's log stamps each line with its time.
-fn stages_on_stderr() -> Stages {
-    Arc::new(|stage| eprintln!("· Symphony server stopping: {stage}"))
+/// [`Stages`] writing each stage's line to `log`, naming the generation `pid` that stops: a
+/// generation can reload into the next while the one before it still drains, and every
+/// generation writes to the one log it inherited.
+fn stages_of(pid: i64, log: impl Fn(String) + Send + Sync + 'static) -> Stages {
+    Arc::new(move |stage| log(format!("· Symphony server pid {pid} stopping: {stage}")))
+}
+
+/// [`Stages`] of generation `pid` on stderr, where the shared server's log stamps each line
+/// with its time.
+fn stages_on_stderr(pid: i64) -> Stages {
+    stages_of(pid, |line| eprintln!("{line}"))
 }
 
 fn records(root: &Path, port: u16) -> bool {
@@ -831,13 +839,14 @@ async fn start(mut serve: Serve, open: bool) -> Result<Started, i32> {
     if open {
         crate::cli::open(&url);
     }
+    let stages = stages_on_stderr(shared.pid);
     Ok(Started {
         serve,
         shared,
         background,
         serving,
         record,
-        stages: stages_on_stderr(),
+        stages,
     })
 }
 

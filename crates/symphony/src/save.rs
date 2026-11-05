@@ -13,6 +13,9 @@ use crate::{Who, asks, branches, clock, commit, edit, register, taskview};
 mod failure;
 pub use failure::Failure;
 
+#[cfg(test)]
+mod close_tests;
+
 pub const ROUTES: [&str; 13] = [
     "/api/postpone",
     "/api/decision",
@@ -63,20 +66,19 @@ impl Saves {
             committer.close();
         }
         self.filer.lock().unwrap_or_else(|e| e.into_inner()).take();
-        let filing = self
-            .filing_worker
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .take();
-        if let Some(worker) = filing {
-            stage("the verdict filing");
-            if worker.join().is_err() {
-                let _ = std::io::Write::write_all(
-                    &mut std::io::stderr(),
-                    b"Symphony: verdict filing worker panicked while closing\n",
-                );
-            }
+        // The worker's lock is held through its join, so a concurrent close waits here for the
+        // same worker to end instead of returning while it still files.
+        stage("the verdict filing");
+        let mut filing = self.filing_worker.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(worker) = filing.take()
+            && worker.join().is_err()
+        {
+            let _ = std::io::Write::write_all(
+                &mut std::io::stderr(),
+                b"Symphony: verdict filing worker panicked while closing\n",
+            );
         }
+        drop(filing);
     }
     pub fn start(root: &Path) -> Self {
         let writes = Arc::new(Mutex::new(()));
