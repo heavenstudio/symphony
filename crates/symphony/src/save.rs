@@ -10,6 +10,12 @@ use serde_json::{Value, json};
 
 use crate::{Who, asks, branches, clock, commit, edit, register, taskview};
 
+mod failure;
+pub use failure::Failure;
+
+#[cfg(test)]
+mod close_tests;
+
 pub const ROUTES: [&str; 13] = [
     "/api/postpone",
     "/api/decision",
@@ -25,45 +31,6 @@ pub const ROUTES: [&str; 13] = [
     "/api/ask-reply",
     symphony_api::TASK_ACTION_ROUTE,
 ];
-
-pub struct Failure {
-    pub status: u16,
-    pub error: String,
-}
-impl From<String> for Failure {
-    fn from(error: String) -> Self {
-        Self { status: 400, error }
-    }
-}
-impl From<edit::EditError> for Failure {
-    fn from(e: edit::EditError) -> Self {
-        e.0.into()
-    }
-}
-impl From<asks::AskError> for Failure {
-    fn from(e: asks::AskError) -> Self {
-        let error = e.to_string();
-        Self {
-            status: if error.starts_with("no ask") {
-                404
-            } else {
-                400
-            },
-            error,
-        }
-    }
-}
-impl From<symphony_board::Error> for Failure {
-    fn from(e: symphony_board::Error) -> Self {
-        match e {
-            symphony_board::Error::Refused(error) => error.into(),
-            symphony_board::Error::Db(error) => Self {
-                status: 503,
-                error: format!("the task board cannot be reached: {error}"),
-            },
-        }
-    }
-}
 
 fn string<'a>(payload: &'a Value, key: &str) -> &'a str {
     payload[key].as_str().unwrap_or("")
@@ -82,20 +49,28 @@ pub struct Saves {
 
 impl Saves {
     pub fn close(&self) {
+        self.close_saying(|_| {});
+    }
+
+    /// Close, naming each wait through `stage` as it begins: the save in flight, the queued
+    /// verdict publications, then the verdict filing. A close that never ends names its wait.
+    pub fn close_saying(&self, stage: impl Fn(&str)) {
+        stage("the save in flight");
         let committer = {
             let _held = self.writes.lock().unwrap_or_else(|e| e.into_inner());
             self.closed.store(true, Ordering::Release);
             self.committer.get()
         };
         if let Some(committer) = committer {
+            stage("the queued verdict publications");
             committer.close();
         }
         self.filer.lock().unwrap_or_else(|e| e.into_inner()).take();
-        if let Some(worker) = self
-            .filing_worker
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .take()
+        // The worker's lock is held through its join, so a concurrent close waits here for the
+        // same worker to end instead of returning while it still files.
+        stage("the verdict filing");
+        let mut filing = self.filing_worker.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(worker) = filing.take()
             && worker.join().is_err()
         {
             let _ = std::io::Write::write_all(
@@ -103,6 +78,7 @@ impl Saves {
                 b"Symphony: verdict filing worker panicked while closing\n",
             );
         }
+        drop(filing);
     }
     pub fn start(root: &Path) -> Self {
         let writes = Arc::new(Mutex::new(()));
