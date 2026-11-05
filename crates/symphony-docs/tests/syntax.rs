@@ -354,5 +354,9 @@ fn the_readers_keep_whole_characters_around_text_outside_ascii() {
 fn a_date_cut_through_a_character_is_no_stamp() {
     // Sixteen bytes, the tenth inside the `é`: no whole date comes before the time.
     assert_eq!(entry_line("  [2026-09-2é 1:00] owner"), None);
-    assert!(entry_line("  [2026-09-25 10:00] owner").is_some());
+    let whole = entry_line("  [2026-09-25 10:00] owner").unwrap();
+    assert_eq!(
+        (whole.ts.as_deref(), whole.who, whole.text.as_str()),
+        (Some("2026-09-25 10:00"), "owner", "")
+    );
 }
