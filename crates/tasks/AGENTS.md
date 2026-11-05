@@ -217,7 +217,14 @@ database of its own. The server is the pinned SurrealDB `tools/surreal.sh`
 fetches once per machine into `sf-surreal/` in the git common dir, refused
 unless its SHA-256 is the one pinned there; `SF_SURREAL` names another binary.
 The client speaks the RPC in CBOR, never JSON, whose variables lose any string
-that starts like a record id, a datetime or a UUID. `tasks-copy` copies a whole
+that starts like a record id, a datetime or a UUID. A request written on a
+connection that then gave no answer may have run, so a write is never sent
+again; a request whose text proves it a read (`rpc::Kind::of`: only `SELECT`,
+`RETURN`, `LET`, `INFO` and transaction statements, no write word anywhere, no
+`fn::` or other effectful call) goes once more on a new connection, never a
+third time. A late answer on a working connection says the server is slow
+(`rpc::slow`), which the Symphony's read routes answer with 504, not the 503 of
+a board that cannot be reached. `tasks-copy` copies a whole
 board into a server, replacing what it held, in one transaction: `tasks-copy ADDR
 [DATABASE] < dump.json`, or `tasks-copy --board` for the board this run reaches;
 `tasks-copy --board --out` writes that board's dump, in the shape the copy reads,

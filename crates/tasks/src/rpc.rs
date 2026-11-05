@@ -15,6 +15,9 @@ use std::sync::{Mutex, PoisonError};
 use std::time::Duration;
 
 mod descriptor;
+mod read;
+
+pub use read::{Kind, slow};
 
 /// How long a request may wait on the server: a whole board's copy, on a loaded machine, is the longest.
 /// Every request waits as long, a rule's and a read's too, but the heartbeat, which a hook waits on
@@ -162,7 +165,9 @@ impl Client {
         )
         .into_bytes();
         request.extend(body);
-        let (status, reply) = self.send(&request).map_err(DbError::Failed)?;
+        let (status, reply) = self
+            .send(&request, Kind::of(sql))
+            .map_err(DbError::Failed)?;
         let reply = cbor::decode(&reply).map_err(|e| {
             DbError::Failed(format!(
                 "HTTP {status} with a body that is not CBOR ({e}): {}",
@@ -179,15 +184,17 @@ impl Client {
     /// alike: a kept one the server has closed, or that is drained, is dropped for another, and the
     /// request was not sent on it; a new one that is drained is dropped for one more new one, once.
     /// A request written on a connection that then gave back nothing, part
-    /// of a reply, or nothing before the timeout is the request's failure and is never sent again,
-    /// whatever it says: the server may have run it, and a write run twice is a message said twice.
-    fn send(&self, request: &[u8]) -> Result<(u16, Vec<u8>), String> {
-        self.send_checked(request, check)
+    /// of a reply, or nothing before the timeout is the request's failure and is never sent again:
+    /// the server may have run it, and a write run twice is a message said twice. Only a request
+    /// `kind` proves a read goes once more, on a new connection ([`Client::resend`]).
+    fn send(&self, request: &[u8], kind: Kind) -> Result<(u16, Vec<u8>), String> {
+        self.send_checked(request, kind, check)
     }
 
     fn send_checked(
         &self,
         request: &[u8],
+        kind: Kind,
         mut check: impl FnMut(&TcpStream) -> Result<(), Failure>,
     ) -> Result<(u16, Vec<u8>), String> {
         let kept = loop {
@@ -214,18 +221,34 @@ impl Client {
             }
         };
         let pooled = kept.is_some();
-        let mut connection = match kept {
+        let connection = match kept {
             Some(connection) => connection,
-            None => self.fresh(&mut check)?,
+            None => self
+                .fresh(&mut check)
+                .map_err(|failure| self.unanswered(false, 0, failure))?,
         };
+        match self.over(connection, request) {
+            Ok(answer) => Ok(answer),
+            Err((served, failure)) if kind == Kind::Read && failure.written() => {
+                self.resend(request, &mut check, pooled, served, failure)
+            }
+            Err((served, failure)) => Err(self.unanswered(pooled, served, failure)),
+        }
+    }
+
+    /// `request` on `connection`: the reply, the connection kept when the server leaves it open; or
+    /// why there was none, and how many requests the connection had carried.
+    fn over(
+        &self,
+        mut connection: Connection,
+        request: &[u8],
+    ) -> Result<(u16, Vec<u8>), (usize, Failure)> {
         match talk(&mut connection.stream, request, self.timeout) {
             Ok(reply) => {
                 connection.served += 1;
                 Ok(self.keep(connection, reply))
             }
-            Err(failure) => {
-                Err(self.unanswered(pooled, connection.served, connection.failure(failure)))
-            }
+            Err(failure) => Err((connection.served, connection.failure(failure))),
         }
     }
 
@@ -235,7 +258,7 @@ impl Client {
     fn fresh(
         &self,
         check: &mut impl FnMut(&TcpStream) -> Result<(), Failure>,
-    ) -> Result<Connection, String> {
+    ) -> Result<Connection, Failure> {
         let mut first: Option<String> = None;
         loop {
             let connection = self.connect()?;
@@ -243,7 +266,7 @@ impl Client {
                 return Ok(connection);
             };
             if !failure.bad_descriptor {
-                return Err(self.unanswered(false, 0, failure));
+                return Err(failure);
             }
             let step = failure.step;
             match (connection.drained(failure), first) {
@@ -258,17 +281,17 @@ impl Client {
                     let why = format!(
                         "a new connection and one more were both drained: [{first}] then [{second}]"
                     );
-                    return Err(self.unanswered(false, 0, Failure::new(step, why)));
+                    return Err(Failure::new(step, why));
                 }
-                (Err(failure), _) => return Err(self.unanswered(false, 0, failure)),
+                (Err(failure), _) => return Err(failure),
             }
         }
     }
 
     /// A new connection to the server, its socket close-on-fork from the moment it exists
     /// ([`crate::sys::connect`]), read for its evidence on its own number.
-    fn connect(&self) -> Result<Connection, String> {
-        let connect_failed = |why| self.unanswered(false, 0, Failure::new(Step::Connect, why));
+    fn connect(&self) -> Result<Connection, Failure> {
+        let connect_failed = |why| Failure::new(Step::Connect, why);
         let to = self
             .addr
             .to_socket_addrs()
@@ -296,14 +319,16 @@ impl Client {
     }
 
     fn unanswered(&self, pooled: bool, served: usize, failure: Failure) -> String {
-        let origin = if pooled { "pooled" } else { "freshly opened" };
-        let outcome = match failure.step {
-            Step::Connect | Step::SocketOption(_) | Step::Check(_) => "the request was not sent",
-            Step::Write | Step::Read => "the request may have run there, so it was not sent again",
+        let outcome = if failure.written() {
+            "the request may have run there, so it was not sent again"
+        } else {
+            "the request was not sent"
         };
         format!(
-            "the server at {} did not answer: {} failed on a {origin} socket after {served} completed requests: {}; {outcome}",
-            self.addr, failure.step, failure.why
+            "the server at {} {}: {}; {outcome}",
+            self.addr,
+            self.verdict(&failure),
+            failure.on(pooled, served)
         )
     }
 }
@@ -341,6 +366,7 @@ struct Failure {
     step: Step,
     why: String,
     bad_descriptor: bool,
+    timed_out: bool,
 }
 
 impl Failure {
@@ -349,6 +375,7 @@ impl Failure {
             step,
             why: why.to_string(),
             bad_descriptor: false,
+            timed_out: false,
         }
     }
 
@@ -356,6 +383,10 @@ impl Failure {
         Self {
             step,
             bad_descriptor: descriptor::bad_descriptor(&error),
+            timed_out: matches!(
+                error.kind(),
+                std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+            ),
             why: error.to_string(),
         }
     }
@@ -664,28 +695,13 @@ fn results(reply: Value) -> Result<Vec<Value>, DbError> {
 
 #[cfg(test)]
 mod tests {
+    mod resend;
+
     use super::*;
     use serde_json::json;
 
     fn ok(result: Value) -> Value {
         json!({"result": result, "status": "OK", "time": "1ms"})
-    }
-
-    #[test]
-    fn a_client_waits_on_a_silent_server_no_longer_than_it_was_told() {
-        let silent = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let addr = silent.local_addr().unwrap().to_string();
-        let held = std::thread::spawn(move || silent.accept().map(|(stream, _)| stream));
-        let began = std::time::Instant::now();
-        let client = Client::new(&addr, "sf", "t").waiting(Duration::from_millis(300));
-        let failed = client.query("RETURN 1;", json!({})).unwrap_err();
-        assert!(
-            began.elapsed() < Duration::from_secs(5),
-            "{:?}",
-            began.elapsed()
-        );
-        assert!(failed.to_string().contains(&addr), "{failed}");
-        drop(held.join());
     }
 
     fn not_executed() -> Value {
@@ -951,15 +967,18 @@ mod tests {
             fresh
         });
         let mut checks = 0;
-        let answer =
-            client.send_checked(b"POST /rpc HTTP/1.1\r\nContent-Length: 0\r\n\r\n", |_| {
+        let answer = client.send_checked(
+            b"POST /rpc HTTP/1.1\r\nContent-Length: 0\r\n\r\n",
+            Kind::Write,
+            |_| {
                 checks += 1;
                 if checks == 1 {
                     Err(bad_descriptor_at_peek())
                 } else {
                     Ok(())
                 }
-            });
+            },
+        );
         assert_eq!(answer.map(|(status, _)| status), Ok(200));
         assert_eq!(checks, 2, "the drained one, then the new one");
         let _fresh = served.join().unwrap();
@@ -987,7 +1006,7 @@ mod tests {
         client.kept.lock().unwrap().push(connection);
         let mut checks = 0;
         let error = client
-            .send_checked(b"must not be sent", |_| {
+            .send_checked(b"must not be sent", Kind::Write, |_| {
                 checks += 1;
                 Err(bad_descriptor_at_peek())
             })
@@ -1029,15 +1048,18 @@ mod tests {
             (drained, more, listener)
         });
         let mut checks = 0;
-        let answer =
-            client.send_checked(b"POST /rpc HTTP/1.1\r\nContent-Length: 0\r\n\r\n", |_| {
+        let answer = client.send_checked(
+            b"POST /rpc HTTP/1.1\r\nContent-Length: 0\r\n\r\n",
+            Kind::Write,
+            |_| {
                 checks += 1;
                 if checks == 1 {
                     Err(bad_descriptor_at_peek())
                 } else {
                     Ok(())
                 }
-            });
+            },
+        );
         assert_eq!(answer.map(|(status, _)| status), Ok(200));
         assert_eq!(checks, 2, "the drained one, then one more");
         let (mut drained, _more, listener) = served.join().unwrap();
@@ -1057,7 +1079,7 @@ mod tests {
         let client = Client::new(&addr, "sf", "t").waiting(Duration::from_secs(5));
         let mut checks = 0;
         let error = client
-            .send_checked(b"must not be sent", |_| {
+            .send_checked(b"must not be sent", Kind::Write, |_| {
                 checks += 1;
                 Err(bad_descriptor_at_peek())
             })
@@ -1094,7 +1116,7 @@ mod tests {
         let client = Client::new(&addr, "sf", "t").waiting(Duration::from_secs(5));
         let mut checks = 0;
         let error = client
-            .send_checked(b"must not be sent", |_| {
+            .send_checked(b"must not be sent", Kind::Write, |_| {
                 checks += 1;
                 Err(Failure::new(
                     Step::Check("peek"),
@@ -1127,7 +1149,7 @@ mod tests {
         let other = TcpStream::connect(elsewhere.local_addr().unwrap()).unwrap();
         let mut checks = 0;
         let error = client
-            .send_checked(b"must not be sent", |stream| {
+            .send_checked(b"must not be sent", Kind::Write, |stream| {
                 checks += 1;
                 // SAFETY: both numbers belong to streams alive for this whole call; dup2 makes the
                 // client's number hold the other socket in one step, so it is never free to reuse.
@@ -1427,85 +1449,6 @@ mod tests {
             client.kept.lock().unwrap()[0].served,
             1,
             "the count belongs to the replacement socket"
-        );
-    }
-
-    /// A kept connection that took a request and closed without answering may have run it (a write
-    /// committed, then the server went): the request fails, and is never sent again, which would run a
-    /// write twice.
-    #[test]
-    fn a_request_a_kept_connection_took_and_never_answered_is_not_sent_again() {
-        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let addr = listener.local_addr().unwrap().to_string();
-        let served = std::thread::spawn(move || {
-            let (mut kept, _) = listener.accept().unwrap();
-            for _ in 0..3 {
-                read_request(&mut kept);
-                kept.write_all(SEVEN).unwrap();
-            }
-            read_request(&mut kept);
-            drop(kept); // taken, perhaps run, never answered
-            listener.set_nonblocking(true).unwrap();
-            std::thread::sleep(Duration::from_millis(500));
-            listener.accept().is_ok()
-        });
-        let client = Client::new(&addr, "sf", "t").waiting(Duration::from_secs(5));
-        sevens(&client, 3);
-        let failed = client.query("RETURN 7;", json!({}));
-        let Err(DbError::Failed(said)) = failed else {
-            panic!("{failed:?}")
-        };
-        assert_eq!(
-            said,
-            format!(
-                "the server at {addr} did not answer: read failed on a pooled socket after 3 completed requests: it closed the connection; the request may have run there, so it was not sent again"
-            )
-        );
-        assert!(!served.join().unwrap(), "the request was sent again");
-    }
-
-    #[test]
-    fn a_fresh_sockets_eof_names_read_and_zero_completed_requests() {
-        let (addr, served) = one_reply(b"");
-        let client = Client::new(&addr, "sf", "t").waiting(Duration::from_secs(5));
-        assert_eq!(
-            client.query("RETURN 7;", json!({})),
-            Err(DbError::Failed(format!(
-                "the server at {addr} did not answer: read failed on a freshly opened socket after 0 completed requests: it closed the connection; the request may have run there, so it was not sent again"
-            )))
-        );
-        served.join().unwrap();
-    }
-
-    #[test]
-    fn socket_option_and_write_failures_name_the_actual_operation() {
-        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let addr = listener.local_addr().unwrap().to_string();
-        let mut stream = TcpStream::connect(&addr).unwrap();
-        let (mut peer, _) = listener.accept().unwrap();
-        let client = Client::new(&addr, "sf", "t");
-        let failure = talk(&mut stream, b"request", Duration::ZERO).err().unwrap();
-        assert_eq!(
-            client.unanswered(false, 0, failure),
-            format!(
-                "the server at {addr} did not answer: socket option SO_RCVTIMEO failed on a freshly opened socket after 0 completed requests: cannot set a 0 duration timeout; the request was not sent"
-            )
-        );
-        stream.shutdown(std::net::Shutdown::Write).unwrap();
-        let failure = talk(&mut stream, b"request", Duration::from_secs(5))
-            .err()
-            .unwrap();
-        assert_eq!(
-            client.unanswered(false, 0, failure),
-            format!(
-                "the server at {addr} did not answer: write failed on a freshly opened socket after 0 completed requests: {}; the request may have run there, so it was not sent again",
-                std::io::Error::from_raw_os_error(libc::EPIPE)
-            )
-        );
-        assert_eq!(
-            peer.read(&mut [0]).unwrap(),
-            0,
-            "neither failure sent a request"
         );
     }
 
