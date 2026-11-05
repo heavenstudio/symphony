@@ -23,6 +23,11 @@ mod scratch;
 #[path = "../../../../../tools/gate/tests/verify/machine_copy.rs"]
 pub mod machine_copy;
 
+/// A machine copy's first run starts under the spawn lock the board's `sys` takes for every spawn.
+fn run_fixture(command: &mut std::process::Command) -> std::io::Result<std::process::ExitStatus> {
+    symphony_board::sys::Spawning::status_locked(command)
+}
+
 #[cfg(test)]
 #[path = "scratch_tests.rs"]
 mod scratch_tests;
