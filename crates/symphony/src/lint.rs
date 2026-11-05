@@ -4,9 +4,6 @@
 use std::collections::{BTreeSet, HashMap};
 use std::io::Write;
 use std::path::Path;
-use std::sync::LazyLock;
-
-use regex::Regex;
 
 use crate::board::scan;
 use crate::register::{REGION_END, REGION_START, ReviewError, is_fence};
@@ -17,9 +14,6 @@ pub type Finding = (String, usize, String);
 
 /// The ledger and the evidence may say why and when: the first folder under `docs/` exempt.
 const PROSE_EXEMPT: [&str; 2] = ["history", "analysis"];
-static VERDICT: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?i)approved|rejected|superseded|dismissed").expect("the verdict words")
-});
 
 /// Python's `re.escape`: the characters a pattern could read as syntax, each behind a backslash.
 fn re_escape(text: &str) -> String {
@@ -134,22 +128,6 @@ pub fn history_in_prose(root: &Path) -> Result<Vec<Finding>, ReviewError> {
     Ok(found)
 }
 
-/// Every verdict word in `text`'s prose, by 1-based line: what a page that shows the design as it
-/// is never says (its register records which picture or trait was approved, rejected or replaced).
-pub fn verdict_words(text: &str) -> Vec<(usize, String)> {
-    let mut found = Vec::new();
-    for (number, line) in prose(text) {
-        for word in VERDICT.find_iter(line) {
-            let before = line[..word.start()].chars().last();
-            let after = line[word.end()..].chars().next();
-            if before.is_none_or(|c| !is_word(c)) && after.is_none_or(|c| !is_word(c)) {
-                found.push((number, word.as_str().to_lowercase()));
-            }
-        }
-    }
-    found
-}
-
 /// What the project's plugins' prose rules find in its documents: (path, line, what), with the
 /// name of each rule that found something.
 pub fn rule_findings(root: &Path) -> (Vec<Finding>, Vec<String>) {
@@ -184,12 +162,18 @@ pub fn rule_findings(root: &Path) -> (Vec<Finding>, Vec<String>) {
 pub fn check_findings(root: &Path) -> (Vec<String>, Vec<String>) {
     let mut found = Vec::new();
     let mut names = Vec::new();
-    for check in crate::plugins::Plugins::of(root).doc_checks() {
-        let problems = check.check(root);
+    let checks = crate::plugins::Plugins::of(root);
+    let checks = checks.doc_checks();
+    if checks.is_empty() {
+        return (found, names);
+    }
+    let docs = symphony_plugin::Docs::read(root);
+    for check in checks {
+        let problems = check.check(&docs);
         if !problems.is_empty() {
             names.push(check.name().to_string());
         }
-        found.extend(problems);
+        found.extend(problems.iter().map(ToString::to_string));
     }
     (found, names)
 }
@@ -263,7 +247,7 @@ pub fn main(root: &Path, out: &mut dyn Write, err: &mut dyn Write) -> i32 {
     }
     let _ = writeln!(
         out,
-        "✅ docs describe the current design (no card slugs in prose, no verdicts on faction pages)"
+        "✅ docs describe the current design (no card slugs in prose, nothing the plugins' rules and checks refuse)"
     );
     0
 }

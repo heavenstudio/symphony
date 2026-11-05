@@ -1,7 +1,7 @@
 //! Priority edits use the real store and a scratch database for each case.
 
 use super::common::{Fixture, Seed, refused};
-use tasks::NewTask;
+use symphony_board::NewTask;
 
 #[test]
 fn every_priority_is_recorded_with_its_actor_and_previous_value_only() {

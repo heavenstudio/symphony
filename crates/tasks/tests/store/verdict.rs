@@ -1,7 +1,7 @@
 //! `verdict`, on a task in review and on an instruction subtask.
 
 use crate::common::{Fixture, NOW, Seed, refused};
-use tasks::health::LIVE_SECONDS;
+use symphony_board::health::LIVE_SECONDS;
 
 /// `sim/jump` in review: `ochre-owl` orchestrates, `amber-heron` executed it, `brisk-finch` reviews it.
 fn in_review() -> Fixture {
@@ -154,7 +154,7 @@ fn an_instruction_subtask_never_in_review_has_nothing_to_approve() {
             .session("amber-heron")
             .session("brisk-finch")
             .task("a", "ready")
-            .task_row(tasks::rows::TaskRow { id: 2, ..subtask })
+            .task_row(symphony_board::rows::TaskRow { id: 2, ..subtask })
             .role("a/m", "amber-heron", "executor")
             .role("a/m", "brisk-finch", "reviewer"),
     );
@@ -177,19 +177,20 @@ fn concurrent_verdicts_land_once() {
             .role("sim/jump", "coral-hare", "reviewer"),
     );
     let barrier = std::sync::Barrier::new(2);
-    let outcomes: Vec<Result<tasks::Task, tasks::Error>> = std::thread::scope(|scope| {
-        let reviews: Vec<_> = [("brisk-finch", "approve"), ("coral-hare", "changes")]
-            .into_iter()
-            .map(|(who, verdict)| {
-                let (store, barrier) = (f.other(), &barrier);
-                scope.spawn(move || {
-                    barrier.wait();
-                    store.verdict("sim/jump", who, verdict, "")
+    let outcomes: Vec<Result<symphony_board::Task, symphony_board::Error>> =
+        std::thread::scope(|scope| {
+            let reviews: Vec<_> = [("brisk-finch", "approve"), ("coral-hare", "changes")]
+                .into_iter()
+                .map(|(who, verdict)| {
+                    let (store, barrier) = (f.other(), &barrier);
+                    scope.spawn(move || {
+                        barrier.wait();
+                        store.verdict("sim/jump", who, verdict, "")
+                    })
                 })
-            })
-            .collect();
-        reviews.into_iter().map(|r| r.join().unwrap()).collect()
-    });
+                .collect();
+            reviews.into_iter().map(|r| r.join().unwrap()).collect()
+        });
     assert_eq!(
         outcomes.iter().filter(|o| o.is_ok()).count(),
         1,

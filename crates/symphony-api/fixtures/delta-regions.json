@@ -22,7 +22,7 @@
       "region": "progress",
       "data": {
         "regions": [
-          {"id":"ship-art","title":"Ship art","note":"22 of 31 hulls approved","bars":[{"key":"republic","name":"Republic","page":"docs/ships/republic.md","title":"22 approved, 3 waiting on review, 6 not drawn yet","done":22,"waiting":3,"total":31}],"legend":["approved","waiting on you","not drawn"]}
+          {"id":"lamp-pictures","title":"Lamp pictures","note":"22 of 31 lamps approved","bars":[{"key":"north","name":"North","page":"docs/lamps/north.md","title":"22 approved, 3 waiting on review, 6 not drawn yet","done":22,"waiting":3,"total":31}],"legend":["approved","waiting on you","not drawn"]}
         ],
         "docs": 64,
         "decisions_waiting": 40

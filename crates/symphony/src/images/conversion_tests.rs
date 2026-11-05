@@ -1,7 +1,7 @@
 //! The real process boundary: overlapping conversions, complete publication, failure and timeout.
 
 use std::time::{Duration, Instant};
-use tasks::sys::Command;
+use symphony_board::sys::Command;
 
 use crate::test_tree::Tree;
 
@@ -115,7 +115,7 @@ fn the_system_converter_receives_sips_arguments_and_publishes_its_output() {
         "#!/bin/bash\nprintf '%s\\n' \"$@\" > \"$SF_SYMPHONY_SIPS_ARGS\"\nprintf jpeg > \"${!#}\"\n",
     );
     std::fs::set_permissions(script, std::fs::Permissions::from_mode(0o755)).unwrap();
-    let done = tasks::sys::output(Command::new(std::env::current_exe().unwrap())
+    let done = symphony_board::sys::output(Command::new(std::env::current_exe().unwrap())
         .args(["--exact", "images::conversion_tests::the_system_converter_receives_sips_arguments_and_publishes_its_output"])
         .env(CASE, &tree.root)
         .env("PATH", &tree.root)

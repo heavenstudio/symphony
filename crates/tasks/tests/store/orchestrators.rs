@@ -5,8 +5,8 @@ use super::callbacks::Listener;
 use super::common::{Fixture, Seed, refused, session};
 use super::quiet_callbacks::listen;
 use std::collections::BTreeSet;
-use tasks::health::{LIVE_SECONDS, STALE_SECONDS};
-use tasks::{Health, NewSession, NewTask};
+use symphony_board::health::{LIVE_SECONDS, STALE_SECONDS};
+use symphony_board::{Health, NewSession, NewTask};
 
 const EMPTY_PULL: &str = "PULL executing=0 ready_unstaffed=0 in_progress_orphaned=0 review_unreviewed=0 landed_open=0 idle=0";
 const BUSY_PULL: &str = "PULL executing=1 ready_unstaffed=0 in_progress_orphaned=0 review_unreviewed=0 landed_open=0 idle=0";
@@ -498,7 +498,7 @@ fn each_digest_lists_its_own_and_the_unclaimed_tasks() {
         }
     }
     let idle = [idle_b.clone(), idle_orphan.clone(), idle_free.clone()];
-    let digest = tasks::cli::pull::digest(&f.store, &idle, None, f.now(), &[]).unwrap();
+    let digest = symphony_board::cli::pull::digest(&f.store, &idle, None, f.now(), &[]).unwrap();
     let board = f.store.board().unwrap();
     let entries = |handle: &str| -> BTreeSet<(String, String)> {
         digest.clone().only_for(&board, handle).entries()

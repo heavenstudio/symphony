@@ -550,19 +550,19 @@ impl Controller {
         let resized_observer = resize.clone();
         let tracked = targets.clone();
         let toggle = Closure::new(move |event: Event| {
-            let Some(hull) = event
+            let Some(details) = event
                 .target()
                 .and_then(|e| e.dyn_into::<DomElement>().ok())
                 .filter(|e| e.tag_name() == "DETAILS")
             else {
                 return;
             };
-            if hull.has_attribute("open") {
-                let _ = hull.set_attribute("data-busy", "true");
+            if details.has_attribute("open") {
+                let _ = details.set_attribute("data-busy", "true");
                 scan(&resized_observer, &tracked);
             } else {
-                let _ = hull.remove_attribute("data-busy");
-                each(&hull, "[data-media-kind=model]", |stage| {
+                let _ = details.remove_attribute("data-busy");
+                each(&details, "[data-media-kind=model]", |stage| {
                     stage.set_text_content(Some("3D model · drag to orbit"));
                     let _ = stage.remove_attribute("data-media-active");
                 });

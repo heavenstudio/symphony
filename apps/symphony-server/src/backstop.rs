@@ -529,17 +529,17 @@ mod tests {
     #[test]
     fn a_path_through_a_link_below_its_base_is_neither_walked_nor_restamped_but_a_linked_base_is() {
         let tree = Tree::new();
-        tree.write("outside/models/hulls/X.glb", "outside model");
+        tree.write("outside/models/lamps/X.glb", "outside model");
         tree.write("checkout/docs/a.md", "a");
         std::fs::create_dir_all(tree.path("checkout/view")).unwrap();
         let checkout = tree.path("checkout");
         std::os::unix::fs::symlink(tree.path("outside/models"), checkout.join("view/models"))
             .unwrap();
-        std::os::unix::fs::symlink(tree.path("outside"), checkout.join("art")).unwrap();
+        std::os::unix::fs::symlink(tree.path("outside"), checkout.join("media")).unwrap();
         let under = |below: &str| unlinked(&checkout, &checkout.join(below));
         assert!(!under("view/models"), "a linked root");
-        assert!(!under("view/models/hulls"), "a folder behind a linked root");
-        assert!(!under("art/models"), "a linked parent");
+        assert!(!under("view/models/lamps"), "a folder behind a linked root");
+        assert!(!under("media/models"), "a linked parent");
         assert!(under("docs"));
         assert!(
             under("artifacts/concepts"),
@@ -568,7 +568,7 @@ mod tests {
             sweep.stamps.keys().cloned().collect::<BTreeSet<_>>(),
             BTreeSet::from([checkout.join("docs/a.md")])
         );
-        sweep.restamp(&[checkout.join("view/models/hulls/X.glb")]);
+        sweep.restamp(&[checkout.join("view/models/lamps/X.glb")]);
         assert_eq!(sweep.stamps.len(), 1);
         assert!(sweep.next(&roots).is_empty());
     }

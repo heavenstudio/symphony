@@ -103,11 +103,11 @@ fn a_card_without_pictures_summary_or_date_leaves_them_out() {
         bare.get("pictures").is_none(),
         "no pictures, no field: {bare}"
     );
-    let cruiser = &board.next[4].pictures[2];
+    let lantern = &board.next[4].pictures[2];
     assert_eq!(
-        (cruiser.src.as_deref(), cruiser.waiting),
+        (lantern.src.as_deref(), lantern.waiting),
         (None, false),
-        "a hull not drawn yet"
+        "a lamp not drawn yet"
     );
 }
 
@@ -175,29 +175,29 @@ fn the_project_the_page_inlines_reads_and_writes_back_as_the_same_json() {
 
 #[test]
 fn a_route_is_a_document_page_under_an_entrypoint_unless_the_symphony_answers_it() {
-    let star_foundry: symphony_api::ProjectView =
+    let project: symphony_api::ProjectView =
         serde_json::from_str(&fixture("project.json")).unwrap();
     for (path, page) in [
         ("docs", true),
         ("docs/", true),
         ("docs/game", true),
         ("docs/game/SPEC.md", true),
-        ("docs/art/a.png", false),
+        ("docs/pictures/a.png", false),
         ("docs/v1.0", false),
         ("docs/v1.0/", true),
-        ("docs/art/a.png/", true),
+        ("docs/pictures/a.png/", true),
         ("docsx/A.md", false),
         ("", false),
         ("tasks", false),
         ("tasks/", false),
-        ("hulls", false),
+        ("lamps", false),
         ("README.md", false),
     ] {
-        assert_eq!(star_foundry.is_document_route(path), page, "{path}");
+        assert_eq!(project.is_document_route(path), page, "{path}");
     }
     let dotted = symphony_api::ProjectView {
         entrypoints: vec!["v1.0".into()],
-        ..star_foundry.clone()
+        ..project.clone()
     };
     for (path, page) in [
         ("v1.0", true),
@@ -211,7 +211,7 @@ fn a_route_is_a_document_page_under_an_entrypoint_unless_the_symphony_answers_it
     // a page keeps its kind: a folder whatever its name, a document only as Markdown with no slash
     let markdown_named = symphony_api::ProjectView {
         entrypoints: vec!["guide.md".into(), "docs".into()],
-        ..star_foundry.clone()
+        ..project.clone()
     };
     for (path, folder) in [
         ("guide.md", true),
@@ -226,11 +226,11 @@ fn a_route_is_a_document_page_under_an_entrypoint_unless_the_symphony_answers_it
     ] {
         assert_eq!(markdown_named.is_folder_route(path), folder, "{path}");
     }
-    assert_eq!(star_foundry.documents_href(), "/docs/");
-    assert_eq!(star_foundry.readme_route(), "docs/README.md");
+    assert_eq!(project.documents_href(), "/docs/");
+    assert_eq!(project.readme_route(), "docs/README.md");
     let spec = symphony_api::ProjectView {
         entrypoints: vec![String::new(), "notes".into()],
-        ..star_foundry
+        ..project
     };
     for (path, page) in [
         ("", true),
@@ -239,7 +239,7 @@ fn a_route_is_a_document_page_under_an_entrypoint_unless_the_symphony_answers_it
         ("guide/START.md", true),
         ("notes/A.md", true),
         ("artifacts/A.md", true),
-        ("art/a.png", false),
+        ("pictures/a.png", false),
         ("tasks", false),
         ("task/a/b", false),
         ("agents", false),
@@ -247,8 +247,8 @@ fn a_route_is_a_document_page_under_an_entrypoint_unless_the_symphony_answers_it
         ("api/docs", false),
         ("artifacts/uploads/a.md", false),
         ("favicon.ico", false),
-        ("hulls", false),
-        ("hullsx", true),
+        ("lamps", false),
+        ("lampsx", true),
     ] {
         assert_eq!(spec.is_document_route(path), page, "{path}");
     }

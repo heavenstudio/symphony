@@ -13,6 +13,9 @@ use serde_json::json;
 use crate::front::Shared;
 use crate::live::Hub;
 
+mod warm;
+pub(crate) use warm::{start, warm};
+
 /// Where a plugin's routes answer: `/x/<route>/<rest>`.
 const PLUGIN_ROUTES: &str = "/x/";
 
@@ -39,40 +42,11 @@ const READS: &[&str] = &[
     "/api/history",
     "/api/versions",
     "/api/diff",
-    "/api/hulls",
     "/api/asks",
     "/api/ask",
 ];
 
 type Request = axum::http::Request<()>;
-
-pub(crate) async fn warm(shared: &Arc<Shared>) -> Result<Arc<Hub>, String> {
-    if !shared.stopping()
-        && let Some(hub) = shared.api.get()
-    {
-        return Ok(hub.clone());
-    }
-    let shared = shared.clone();
-    tokio::task::spawn_blocking(move || {
-        let _held = shared.lifecycle.lock().unwrap_or_else(|e| e.into_inner());
-        if shared.stopping() {
-            return Err("the Symphony server is stopping".into());
-        }
-        if let Some(hub) = shared.api.get() {
-            return Ok(hub.clone());
-        }
-        // Only --home servers hold the shared lease. A preview must never send the owner's
-        // journal to its board, even when that board is a copied scratch database.
-        let hub = Hub::start(&shared.root, &shared.ui_dist, shared.installed_ui)?;
-        assert!(
-            shared.api.set(hub.clone()).is_ok(),
-            "hub startup is serialized"
-        );
-        Ok(hub)
-    })
-    .await
-    .map_err(|e| e.to_string())?
-}
 
 pub(crate) async fn answer(shared: &Arc<Shared>, request: Request) -> Option<Response> {
     let Some(decoded) = decode_path(request.uri().path()) else {
@@ -163,12 +137,6 @@ pub(crate) async fn answer(shared: &Arc<Shared>, request: Request) -> Option<Res
     {
         return Some(error(StatusCode::BAD_REQUEST, "slug is required"));
     }
-    if path == "/api/hulls" {
-        return Some(error(
-            StatusCode::GONE,
-            "hulls are document content; use /api/document?path=docs/ships/HULLS.md",
-        ));
-    }
     if !scope.is_empty() && shared.api.get().and_then(|hub| hub.tree(scope)).is_none() {
         return Some(error(StatusCode::NOT_FOUND, "no worktree for this branch"));
     }
@@ -235,7 +203,6 @@ pub(crate) async fn answer(shared: &Arc<Shared>, request: Request) -> Option<Res
                 | "/api/history"
                 | "/api/versions"
                 | "/api/diff"
-                | "/api/hulls"
                 | "/api/asks"
                 | "/api/ask"
         )
@@ -456,7 +423,10 @@ pub(crate) async fn answer(shared: &Arc<Shared>, request: Request) -> Option<Res
                             .expect("a task paging key serializes")
                         });
                         no_store(Json(symphony_api::TaskListing {
-                            statuses: tasks::STATUSES.iter().map(|s| (*s).to_string()).collect(),
+                            statuses: symphony_board::STATUSES
+                                .iter()
+                                .map(|s| (*s).to_string())
+                                .collect(),
                             next,
                             tasks: tasks.tasks,
                             signoff,
@@ -623,10 +593,10 @@ pub(crate) async fn answer(shared: &Arc<Shared>, request: Request) -> Option<Res
     Some(response)
 }
 
-fn task_failure(error: tasks::Error) -> (StatusCode, String) {
+fn task_failure(error: symphony_board::Error) -> (StatusCode, String) {
     let status = match error {
-        tasks::Error::Refused(_) => StatusCode::NOT_FOUND,
-        tasks::Error::Db(_) => StatusCode::SERVICE_UNAVAILABLE,
+        symphony_board::Error::Refused(_) => StatusCode::NOT_FOUND,
+        symphony_board::Error::Db(_) => StatusCode::SERVICE_UNAVAILABLE,
     };
     (status, error.to_string())
 }
@@ -651,7 +621,7 @@ fn document_response(
         return error(StatusCode::BAD_REQUEST, "id must be a number");
     }
     let project = symphony::project::Project::of(root);
-    if !matches!(path, "/api/folder" | "/api/hulls" | "/api/ask")
+    if !matches!(path, "/api/folder" | "/api/ask")
         && (symphony::asks::check_path(rel).is_err()
             || project
                 .serving(rel)
@@ -1368,7 +1338,7 @@ fn client_unbuilt(shared: &Shared) -> Response {
     )
 }
 
-/// The project at `root` as the client reads it: its navigation (`/hulls`) and its entrypoints.
+/// The project at `root` as the client reads it: its plugins' navigation and its entrypoints.
 pub(crate) fn project_view(root: &Path) -> symphony_api::ProjectView {
     symphony::project::Project::of(root).view()
 }
@@ -1424,10 +1394,10 @@ mod tests {
     fn the_client_draws_the_symphonys_pages_and_each_entrypoints_documents() {
         let convention = symphony_api::ProjectView {
             nav: vec![symphony_api::NavItem {
-                label: "⬡ hulls".into(),
-                title: "Hull models".into(),
-                href: "/hulls".into(),
-                document: "docs/ships/HULLS.md".into(),
+                label: "▤ shelf".into(),
+                title: "Shelf items".into(),
+                href: "/shelf".into(),
+                document: "docs/SHELF.md".into(),
             }],
             ..symphony_api::ProjectView::default()
         };
@@ -1439,7 +1409,7 @@ mod tests {
             ("/", true, true),
             ("/tasks", true, true),
             ("/task/tools/x", true, true),
-            ("/hulls/", true, true),
+            ("/shelf/", true, true),
             ("/docs/", true, true),
             ("/docs/game/SPEC.md", true, true),
             ("/index.md", false, true),
@@ -1449,7 +1419,7 @@ mod tests {
             ("/v1.0/", false, true),
             ("/tasks/", true, true),
             ("/api/", false, false),
-            ("/art/a.png", false, false),
+            ("/media/a.png", false, false),
             ("/api/document", false, false),
             ("/assets/app.js", false, false),
         ] {

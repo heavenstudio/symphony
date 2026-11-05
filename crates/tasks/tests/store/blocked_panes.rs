@@ -6,8 +6,8 @@ use super::common::Fixture;
 use super::quiet_callbacks::listen;
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
-use tasks::NewLaunch;
-use tasks::sys::{Command, Spawning as _};
+use symphony_board::NewLaunch;
+use symphony_board::sys::{Command, Spawning as _};
 
 const IN_CHILD: &str = "SF_BLOCKED_PANES_CHILD";
 const EMPTY_PULL: &str = "PULL executing=0 ready_unstaffed=0 in_progress_orphaned=0 review_unreviewed=0 landed_open=0 idle=0";
@@ -50,7 +50,7 @@ fn in_child_with_herdr(name: &str) -> bool {
             .unwrap()
             .success()
     );
-    let output = tasks::sys::output(
+    let output = symphony_board::sys::output(
         Command::new(std::env::current_exe().unwrap())
             .args(["--exact", name, "--nocapture"])
             .current_dir(&dir)
@@ -116,7 +116,7 @@ fn a_blocked_pane_reaches_the_orchestrator_of_its_work_once_an_episode() {
     let orch = f.session("orchestrator");
     let parent = f.session("orchestrator");
     let other = f.session("orchestrator");
-    let mut child = tasks::NewSession::new("worker");
+    let mut child = symphony_board::NewSession::new("worker");
     child.parent = Some(parent.clone());
     let worker = f.session_with(child);
     f.task("tests/pane");
@@ -298,15 +298,16 @@ fn a_tick_asks_herdr_once_for_its_watch_its_pull_and_its_agents_view() {
     let (orch, worker, o) = waiting_worker(&f);
     let log = Path::new(&std::env::var("FAKE_HERDR_LOG").unwrap()).to_path_buf();
     let asked = || std::fs::read_to_string(&log).map_or(0, |text| text.lines().count());
-    let env = tasks::cli::Env::of_process();
+    let env = symphony_board::cli::Env::of_process();
     for wait in [0.0, 601.0] {
         // The second tick also owes the orchestrator its periodic PULL, whose view reads the panes.
         f.advance(wait);
         let before = asked();
         // A tick as the server runs it: its callbacks, then its agents view.
         let board = f.store.dispatch_callbacks_snapshot().unwrap().unwrap();
-        let probes = tasks::cli::probes::machine(&env);
-        tasks::cli::agents::describe_board(&f.store, &probes, f.now(), false, &board).unwrap();
+        let probes = symphony_board::cli::probes::machine(&env);
+        symphony_board::cli::agents::describe_board(&f.store, &probes, f.now(), false, &board)
+            .unwrap();
         assert_eq!(asked() - before, 1, "after {wait} s");
     }
     assert!(o.drain(&f, &worker, &orch).contains(&format!(

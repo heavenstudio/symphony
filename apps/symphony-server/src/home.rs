@@ -19,7 +19,9 @@ use std::net::{SocketAddr, TcpStream};
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
-use tasks::sys::{Child, Command, Stdio};
+use symphony_board::sys::{Child, Command, Stdio};
+
+mod discovery;
 
 /// The one server's folder in the git common dir.
 pub const FOLDER: &str = "sf-symphony";
@@ -224,13 +226,11 @@ impl Home {
         self.parse(pid, String::from_utf8_lossy(&out.stdout).trim())
     }
 
-    /// A server of this folder that the record does not name (its starter was killed between its
-    /// answer and its record, or the record was lost): it holds the port, so no other could start.
-    /// The process table is read only while something holds this folder's port or the record's, or
-    /// when the port is the server's own pick; a start or a stop on a free port reads none.
+    /// A server this folder's record does not name. Known free ports need no process table read;
+    /// unknown startup history keeps the recovery scan rather than guessing a server is absent.
     fn unrecorded(&self) -> Option<Running> {
-        let ports = [Some(self.port), self.recorded().map(|running| running.port)];
-        if !ports.contains(&Some(0)) && !ports.into_iter().flatten().any(held) {
+        let (ports, unknown) = self.discovery_ports();
+        if !unknown && !ports.into_iter().any(held) {
             return None;
         }
         let mut ps = Command::new("ps");

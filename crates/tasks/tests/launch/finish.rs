@@ -3,9 +3,9 @@
 //! their worktrees is the worktree sweep's: `tasks sweep --task SLUG`.)
 
 use crate::World;
-use tasks::Store;
-use tasks::launch::finish;
-use tasks::rpc::Client;
+use symphony_board::Store;
+use symphony_board::launch::finish;
+use symphony_board::rpc::Client;
 
 impl World {
     pub fn finish(&self, slug: &str) -> Vec<String> {

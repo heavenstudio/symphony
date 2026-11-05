@@ -179,8 +179,7 @@ form input, form textarea, .filters input { font:inherit; font-size:var(--fs-sm)
 .why { color:var(--decision); background:rgba(74,63,158,.09); border-radius:var(--r-pill); padding:2px 10px; }
 a.go { display:inline-flex; align-items:center; gap:10px; background:var(--primary); color:var(--primary-foreground); text-decoration:none; font-weight:600; font-size:1.05em; padding:12px 22px; border-radius:var(--r-md); box-shadow:0 2px 8px rgba(47,93,158,.3); transition:transform .12s ease, box-shadow .12s ease; }
 a.go:hover { transform:translateY(-1px); box-shadow:0 6px 18px rgba(47,93,158,.35); }
-.hero .pics { display:grid; grid-template-columns:repeat(auto-fit, minmax(96px, 1fr)); gap:10px; }
-.hero .pics:not(.hulls) { grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); }
+.hero .pics { display:grid; grid-template-columns:repeat(auto-fit, minmax(160px, 1fr)); gap:10px; }
 .hero .pics figure { margin:0; min-width:0; }
 .hero .pics img, .hero .pics .nopic { width:100%; aspect-ratio:1; object-fit:contain; background:#0b0b10; border-radius:var(--r-md); display:block; border:1px solid var(--border); }
 .hero .pics figure.waiting img { outline:2px dashed var(--question); outline-offset:-2px; }
@@ -240,6 +239,5 @@ a.bar:hover { background:var(--background); }
   a.tile { padding:12px 14px; } a.tile b { font-size:1.7em; }
   a.tile:last-child:nth-child(odd) { grid-column:1 / -1; }
   .hero { padding:18px; } .hero-title { font-size:1.35em !important; }
-  .hero .pics { grid-template-columns:repeat(3, minmax(0, 1fr)); }
   a.go { width:100%; justify-content:center; box-sizing:border-box; }
 }

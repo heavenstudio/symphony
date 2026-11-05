@@ -9,7 +9,7 @@ use symphony_api::{Board, Card, Counts, Picture, Progress, ProgressBar, ProjectV
 use crate::media::PictureView;
 use crate::words::{Moment, age, greeting, lead, plural};
 
-/// How many pictures the hero shows: a picture card's candidates, or the hulls a card names.
+/// How many pictures the hero shows: a picture card's candidates, or the items a card names.
 const HERO_PICTURES: usize = 6;
 
 /// The body of `/`.

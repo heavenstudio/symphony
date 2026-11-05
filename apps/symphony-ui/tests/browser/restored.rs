@@ -7,6 +7,8 @@ use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+mod model;
+
 pub(super) struct Native {
     child: Child,
     root: PathBuf,
@@ -21,7 +23,7 @@ impl Native {
 
     pub(super) fn start_with_board(board: Option<&str>) -> Self {
         // Had before the readiness clock below starts; the owned child is this server itself.
-        let binary = binaries::symphony_server();
+        let binary = binaries::shelf_server();
         static NEXT: AtomicUsize = AtomicUsize::new(0);
         let root = std::env::temp_dir().join(format!(
             "sf-browser-{}-{}",
@@ -29,9 +31,9 @@ impl Native {
             NEXT.fetch_add(1, Ordering::Relaxed)
         ));
         for dir in [
-            "docs/ships",
+            "docs",
             "ui",
-            "view/models/hulls",
+            "room/shelf/items",
             "artifacts",
             "tools/static",
         ] {
@@ -47,14 +49,10 @@ impl Native {
         .unwrap();
         std::fs::write(
             root.join("symphony.toml"),
-            "[plugins]\ncrates = [\"star-foundry-symphony\"]\n",
+            "[plugins]\ncrates = [\"fixture-shelf\"]\n",
         )
         .unwrap();
-        std::fs::write(
-            root.join("docs/ships/HULLS.md"),
-            "# Hulls\n\n[[hull-gallery:all]]\n",
-        )
-        .unwrap();
+        std::fs::write(root.join("docs/SHELF.md"), "# Shelf\n\n[[shelf:all]]\n").unwrap();
         std::fs::write(root.join("ui/probe.html"), r#"<!doctype html><h1>Probe</h1><script>
             const result = {ran:true, framed:top!==window};
             for (const [key, action] of Object.entries({
@@ -81,7 +79,7 @@ impl Native {
         let outside = root.with_extension("outside.html");
         std::fs::write(&outside, "outside root").unwrap();
         std::fs::write(
-            root.join("view/models/hulls/FIRST.glb"),
+            root.join("room/shelf/items/FIRST.item"),
             "gallery record, never selected",
         )
         .unwrap();
@@ -393,14 +391,14 @@ fn restored_mockups_keep_opaque_origins_in_frames_full_size_and_svg_hops() {
                 .any(|r| r.url.contains("/app/assets/"))
         );
     }
-    browser.open(&site.url("/hulls"));
+    browser.open(&site.url("/shelf"));
     assert!(browser.wait_for(
         "document.querySelectorAll('.gallery-pick').length===1",
         SHOWN
     ));
     assert_eq!(texts(&mut browser, ".gallery-pick strong"), ["FIRST"]);
     std::fs::write(
-        site.root.join("view/models/hulls/SECOND.glb"),
+        site.root.join("room/shelf/items/SECOND.item"),
         "new gallery record",
     )
     .unwrap();
@@ -416,12 +414,12 @@ fn restored_mockups_keep_opaque_origins_in_frames_full_size_and_svg_hops() {
         texts(&mut browser, ".gallery-pick strong"),
         ["FIRST", "SECOND"]
     );
-    std::fs::remove_file(site.root.join("view/models/hulls/FIRST.glb")).unwrap();
+    std::fs::remove_file(site.root.join("room/shelf/items/FIRST.item")).unwrap();
     assert!(
         browser.wait_for("document.querySelectorAll('.gallery-pick').length===1 && document.querySelector('.gallery-pick strong')?.textContent==='SECOND'", SHOWN),
-        "removed hull remains: page={}; server={}; log={}",
+        "removed item remains: page={}; server={}; log={}",
         browser.eval("document.body.innerHTML"),
-        browser.eval("fetch('/api/document?path=docs/ships/HULLS.md').then(r=>r.json())"),
+        browser.eval("fetch('/api/document?path=docs/SHELF.md').then(r=>r.json())"),
         std::fs::read_to_string(site.root.join("artifacts/server.log")).unwrap()
     );
     assert_eq!(
@@ -1053,7 +1051,7 @@ fn restored_gallery_loads_only_the_selected_model_and_lightbox_uses_originals_an
         std::fs::read(root.join("tools/static/model-viewer.min.js")).unwrap(),
         "text/javascript",
     );
-    let model = std::fs::read(root.join("view/models/hulls/EMP-DD01.glb")).unwrap();
+    let model = model::triangle_glb();
     for path in ["/first.glb", "/second.glb"] {
         site.set_file(path, model.clone(), "model/gltf-binary");
     }

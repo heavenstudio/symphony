@@ -14,9 +14,9 @@ fn names(entries: &[symphony::page::Entry]) -> Vec<&str> {
 fn a_folder_lists_its_subfolders_then_its_documents_by_title_and_summary() {
     let tree = docs();
     let folder = Render::new(&tree.root).folder("docs").unwrap();
-    assert_eq!(names(&folder.entries), ["docs/ships", "docs/SPEC.md"]);
+    assert_eq!(names(&folder.entries), ["docs/lamps", "docs/SPEC.md"]);
     assert_eq!(folder.entries[0].kind, EntryKind::Folder);
-    assert_eq!(folder.entries[0].summary, "Every hull, by faction."); // a subfolder is summarised by its README
+    assert_eq!(folder.entries[0].summary, "Every lamp, by maker."); // a subfolder is summarised by its README
     assert_eq!(folder.entries[1].kind, EntryKind::Doc);
     assert_eq!(folder.entries[1].title, "The game");
     assert_eq!(folder.entries[1].summary, "What the game is, in one place.");
@@ -50,21 +50,21 @@ fn a_folder_lists_only_documents_and_folders_that_hold_documents() {
 #[test]
 fn a_listed_document_shows_what_waits_on_the_owner() {
     let tree = docs();
-    let folder = Render::new(&tree.root).folder("docs/ships").unwrap();
-    let empire = folder
+    let folder = Render::new(&tree.root).folder("docs/lamps").unwrap();
+    let east = folder
         .entries
         .iter()
-        .find(|e| e.path == "docs/ships/empire.md")
+        .find(|e| e.path == "docs/lamps/east.md")
         .unwrap();
-    assert_eq!(empire.waiting, 1);
-    assert_eq!(empire.title, "Empire ships");
+    assert_eq!(east.waiting, 1);
+    assert_eq!(east.title, "East lamps");
 }
 
 #[test]
 fn a_document_without_a_heading_is_listed_by_its_file_name() {
     let tree = docs();
-    let folder = Render::new(&tree.root).folder("docs/ships/old").unwrap();
-    assert_eq!(folder.entries[0].path, "docs/ships/old/notes.md");
+    let folder = Render::new(&tree.root).folder("docs/lamps/old").unwrap();
+    assert_eq!(folder.entries[0].path, "docs/lamps/old/notes.md");
     assert_eq!(folder.entries[0].title, "notes");
     assert_eq!(folder.title, "old");
 }
@@ -72,7 +72,7 @@ fn a_document_without_a_heading_is_listed_by_its_file_name() {
 #[test]
 fn folders_outside_docs_are_not_listed() {
     let tree = docs();
-    assert!(is_folder(&tree.root, "docs/ships"));
+    assert!(is_folder(&tree.root, "docs/lamps"));
     assert!(is_folder(&tree.root, "docs"));
     assert!(!is_folder(&tree.root, "artifacts"));
     assert!(!is_folder(&tree.root, "docs/../artifacts"));
@@ -82,7 +82,7 @@ fn folders_outside_docs_are_not_listed() {
 #[test]
 fn a_document_shows_the_breadcrumbs_back_to_the_root() {
     let tree = docs();
-    let found = crumbs(&tree.root, "docs/ships/old/notes.md");
+    let found = crumbs(&tree.root, "docs/lamps/old/notes.md");
     let crumb = |name: &str, href: Option<&str>| Crumb {
         name: name.into(),
         href: href.map(Into::into),
@@ -91,8 +91,8 @@ fn a_document_shows_the_breadcrumbs_back_to_the_root() {
         found,
         [
             crumb("docs", Some("/docs/")),
-            crumb("Ships", Some("/docs/ships/")), // a folder crumb is named by its README
-            crumb("old", Some("/docs/ships/old/")),
+            crumb("Lamps", Some("/docs/lamps/")), // a folder crumb is named by its README
+            crumb("old", Some("/docs/lamps/old/")),
             crumb("notes", None),
         ]
     );
@@ -101,12 +101,12 @@ fn a_document_shows_the_breadcrumbs_back_to_the_root() {
 #[test]
 fn a_folder_shows_the_breadcrumbs_to_itself() {
     let tree = docs();
-    let found = crumbs(&tree.root, "docs/ships/");
+    let found = crumbs(&tree.root, "docs/lamps/");
     assert_eq!(found.len(), 2);
     assert_eq!(found[0].href.as_deref(), Some("/docs/"));
     assert_eq!(
         (found[1].name.as_str(), found[1].href.as_deref()),
-        ("Ships", None)
+        ("Lamps", None)
     );
 }
 
@@ -132,8 +132,8 @@ fn a_folders_children_are_the_cards_of_a_grid() {
 fn a_listed_folder_counts_its_documents_but_not_its_readme() {
     let tree = docs();
     let render = Render::new(&tree.root);
-    assert_eq!(render.folder("docs").unwrap().entries[0].docs, 2); // empire.md and old/notes.md
-    assert_eq!(render.folder("docs/ships").unwrap().docs, 1);
+    assert_eq!(render.folder("docs").unwrap().entries[0].docs, 2); // east.md and old/notes.md
+    assert_eq!(render.folder("docs/lamps").unwrap().docs, 1);
     assert_eq!(render.folder("docs").unwrap().docs, 1);
 }
 
@@ -142,7 +142,7 @@ fn a_folders_readme_sits_in_cards_like_a_document() {
     let tree = docs();
     tree.write(
         "docs/README.md",
-        "# Star Foundry docs\n\nStart here.\n\n## Folders\n\nGame.\n",
+        "# Lamp Works docs\n\nStart here.\n\n## Folders\n\nGame.\n",
     );
     let intro = Render::new(&tree.root)
         .folder("docs")
@@ -169,9 +169,9 @@ fn the_index_order_is_the_readme_then_each_folder_then_the_documents_by_lowercas
         index_order(&tree.root, "docs"),
         [
             "docs/README.md",
-            "docs/ships/README.md",
-            "docs/ships/old/notes.md",
-            "docs/ships/empire.md",
+            "docs/lamps/README.md",
+            "docs/lamps/old/notes.md",
+            "docs/lamps/east.md",
             "docs/Zoo/README.md",
             "docs/B.md",
             "docs/SPEC.md",

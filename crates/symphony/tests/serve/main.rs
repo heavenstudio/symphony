@@ -270,18 +270,6 @@ fn help_is_the_usage_on_stdout_and_exit_zero() {
             "usage: symphony ask [-h] [--root ROOT] [--db PATH] {list,show,answer} ...",
         ),
         (
-            "relationships",
-            "usage: symphony relationships [-h] [--root ROOT] --check",
-        ),
-        (
-            "screens",
-            "usage: symphony screens [-h] [--root ROOT] --check",
-        ),
-        (
-            "ship-art",
-            "usage: symphony ship-art [-h] [--root ROOT] [--write] [--check]",
-        ),
-        (
             "docs-audit",
             "usage: symphony docs-audit [-h] [--root ROOT] [--check]",
         ),
@@ -379,8 +367,8 @@ fn a_flag_may_be_given_with_an_equals_sign_or_shortened() {
 /// of its input, and the test waits for it.
 fn serve_from(dir: &std::path::Path, requests: &[Value]) -> Vec<Value> {
     use std::io::Write;
-    use tasks::sys::Command;
-    let mut child = tasks::sys::spawn_piped(
+    use symphony_board::sys::Command;
+    let mut child = symphony_board::sys::spawn_piped(
         Command::new(env!("CARGO_BIN_EXE_symphony"))
             .arg("serve")
             .current_dir(dir),
@@ -394,7 +382,7 @@ fn serve_from(dir: &std::path::Path, requests: &[Value]) -> Vec<Value> {
                 writeln!(input, "{request}").expect("a request");
             }
         });
-        tasks::sys::wait_output(child).expect("its answers")
+        symphony_board::sys::wait_output(child).expect("its answers")
     });
     assert!(
         output.status.success(),
