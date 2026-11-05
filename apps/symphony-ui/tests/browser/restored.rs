@@ -7,6 +7,7 @@ use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+mod activity;
 mod model;
 
 pub(super) struct Native {
