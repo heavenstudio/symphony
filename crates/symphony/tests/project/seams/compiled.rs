@@ -11,7 +11,7 @@ use super::{Bare, FIRST, SECOND, Tree};
 static COMPILED: &[&dyn Plugin] = &[&FIRST, &SECOND, &Bare];
 
 /// A tree whose `symphony.toml` names `plugins`, in that order; the process holds [`COMPILED`].
-fn naming(plugins: &[&str]) -> Tree {
+pub(super) fn naming(plugins: &[&str]) -> Tree {
     symphony::plugins::install(COMPILED).unwrap();
     let tree = Tree::new();
     let names: Vec<String> = plugins.iter().map(|name| format!("\"{name}\"")).collect();

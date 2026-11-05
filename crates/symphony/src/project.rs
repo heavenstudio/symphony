@@ -19,7 +19,7 @@ use serde::Deserialize;
 mod board;
 
 pub use crate::entrypoint::Entrypoint;
-use crate::entrypoint::{RENDERERS, SYMPHONY_ROUTES, below, join};
+use crate::entrypoint::{SYMPHONY_ROUTES, below, join};
 pub use board::Board;
 use board::FileBoard;
 
@@ -306,7 +306,7 @@ impl Project {
                 "[project] id {id:?} is not a slug (lowercase letters, digits and dashes)"
             ));
         }
-        let entrypoints = entrypoints(file.entrypoints)?;
+        let entrypoints = entrypoints(file.entrypoints, &file.plugins.crates)?;
         let register = inside(
             "[project] register",
             p.register
@@ -871,8 +871,12 @@ impl Project {
     }
 }
 
-/// The `[[entrypoints]]` tables checked, or the convention when there are none.
-fn entrypoints(written: Option<Vec<FileEntrypoint>>) -> Result<Vec<Entrypoint>, String> {
+/// The `[[entrypoints]]` tables checked, their types against the renderers of the Symphony and of
+/// `plugins`, or the convention when there are none.
+fn entrypoints(
+    written: Option<Vec<FileEntrypoint>>,
+    plugins: &[String],
+) -> Result<Vec<Entrypoint>, String> {
     let Some(written) = written else {
         return Ok(vec![Entrypoint::convention()]);
     };
@@ -914,17 +918,7 @@ fn entrypoints(written: Option<Vec<FileEntrypoint>>) -> Result<Vec<Entrypoint>, 
                 "[[entrypoints]] {label} types is empty: it would show nothing"
             ));
         }
-        if let Some(unknown) = entry
-            .types
-            .iter()
-            .find(|name| !RENDERERS.iter().any(|r| r.name == name.as_str()))
-        {
-            return Err(format!(
-                "[[entrypoints]] {label} type {unknown:?}: no renderer handles it (the renderers \
-                 are {})",
-                RENDERERS.map(|r| r.name).join(", ")
-            ));
-        }
+        crate::renderers::check_types(&label, &entry.types, plugins)?;
         if let Some(other) = found.iter().find(|other| other.url == entry.url) {
             return Err(format!(
                 "[[entrypoints]] {label} is named twice, over {} and {}",

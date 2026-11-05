@@ -42,6 +42,7 @@ pub mod project;
 pub mod register;
 pub mod reload;
 pub mod render;
+pub mod renderers;
 pub mod save;
 pub mod schema;
 pub mod taskcli;

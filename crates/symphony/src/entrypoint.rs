@@ -25,16 +25,17 @@ pub const MARKDOWN: Renderer = Renderer {
     extensions: &["md"],
 };
 
-/// What the Symphony draws where a page shows it: pictures, `.html` mockups and `.glb` models.
-/// Their files are served as they are and listed in the folder pages.
+/// What the Symphony draws where a page shows it: pictures and `.html` mockups. Their files are
+/// served as they are and listed in the folder pages, as the files a plugin's renderer draws are.
 pub const MEDIA: Renderer = Renderer {
     name: "media",
     extensions: &[
-        "png", "jpg", "jpeg", "gif", "webp", "avif", "svg", "html", "htm", "glb",
+        "png", "jpg", "jpeg", "gif", "webp", "avif", "svg", "html", "htm",
     ],
 };
 
-/// Every renderer the Symphony has, by the name an entrypoint's `types` gives it.
+/// Every renderer the Symphony has, by the name an entrypoint's `types` gives it. A project's
+/// plugins add theirs ([`crate::renderers`]).
 pub const RENDERERS: [Renderer; 2] = [MARKDOWN, MEDIA];
 
 pub use symphony_api::SYMPHONY_ROUTES;
@@ -147,11 +148,11 @@ impl Entrypoint {
         self.page(inside) && !self.in_history(inside)
     }
 
-    /// The entrypoint's renderers, in the order it names them.
+    /// The entrypoint's renderers, in the order it names them: the Symphony's and its plugins'.
     pub fn renderers(&self) -> impl Iterator<Item = Renderer> + '_ {
         self.types
             .iter()
-            .filter_map(|name| RENDERERS.iter().find(|r| r.name == name).copied())
+            .filter_map(|name| crate::renderers::named(name))
     }
 
     /// How a message names it: its URL as the browser shows it.

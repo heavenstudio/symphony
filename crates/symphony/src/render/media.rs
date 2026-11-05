@@ -1,12 +1,16 @@
-//! Pictures that markup cannot draw: an `.html` mockup and a `.glb` model, held as [`Media`] items.
+//! Pictures that markup cannot draw: an `.html` mockup, held as a [`Media`] item, and a file a
+//! renderer of the page's plugins draws, as its viewer item or its blocks.
 //!
 //! `![Flight HUD A](/ui/mockups/hud-a.html)` is a mockup: a sandboxed frame at its native size,
-//! scaled to the card's width by the client. `![Lumen](lumen.glb)` and `[Lumen](lumen.glb)` are a model the
-//! viewer orbits. Both leave `<span class="media" data-media="N" data-kind="…">` in the fragment.
+//! scaled to the card's width by the client. `![Lumen](lumen.item)` and `[Lumen](lumen.item)` are
+//! drawn by the renderer of the page's plugins that lists the extension `item`, captioned `Lumen`.
+//! A media item leaves `<span class="media" data-media="N" data-kind="…">` in the fragment.
 
 use std::sync::LazyLock;
 
 use regex::{Captures, Regex};
+use symphony_api::Block;
+use symphony_plugin::{Drawing, File};
 
 use crate::markup::{is_external, quote, target, unescape, unquote};
 
@@ -21,12 +25,12 @@ static MOCKUP_IMG: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r#"(?i)<img\b[^>]*?\bsrc="(?P<src>[^"]*\.html?(?:[?#][^"]*)?)"[^>]*?>"#)
         .expect("the mockup pattern")
 });
-static MODEL_IMG: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r#"(?i)<img\b[^>]*?\bsrc="(?P<src>[^"]*\.glb)"[^>]*?>"#).expect("the model pattern")
+static FILE_IMG: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r#"(?i)<img\b[^>]*?\bsrc="(?P<src>[^"]*)"[^>]*?>"#).expect("the picture pattern")
 });
-static MODEL_LINK: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r#"(?is)<a\b[^>]*?\bhref="(?P<src>[^"]*\.glb)"[^>]*>(?P<text>.*?)</a>"#)
-        .expect("the model link pattern")
+static FILE_LINK: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r#"(?is)<a\b[^>]*?\bhref="(?P<src>[^"]*)"[^>]*>(?P<text>.*?)</a>"#)
+        .expect("the link pattern")
 });
 static ALT: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r#"\balt="([^"]*)""#).expect("the alt pattern"));
@@ -44,6 +48,25 @@ fn file_name(url: &str) -> String {
 
 fn placeholder(kind: &str, n: usize) -> String {
     format!("<span class=\"media\" data-media=\"{n}\" data-kind=\"{kind}\"></span>")
+}
+
+/// `blocks` of the component or renderer `name` as the fragment holds them: written as HTML, in a
+/// typed render inside the `<sf-component>` the parser reads back as [`Block::Component`].
+pub(super) fn blocks_html(ctx: &Ctx<'_>, name: &str, blocks: Vec<Block>) -> String {
+    let mut media = |item| ctx.add_media(item);
+    if ctx.typed {
+        crate::blocks::write::html(
+            &[Block::Component {
+                kind: name.into(),
+                blocks,
+            }],
+            &mut media,
+        )
+    } else if let [Block::Paragraph { spans }] = blocks.as_slice() {
+        crate::blocks::write::spans_html(spans, &mut media)
+    } else {
+        crate::blocks::write::html(&blocks, &mut media)
+    }
 }
 
 /// `body` (rendered markdown) with each local image of an `.html` file replaced by a mockup item.
@@ -64,44 +87,63 @@ pub(super) fn embed_mockups(body: &str, ctx: &Ctx<'_>) -> String {
         .into_owned()
 }
 
-fn model(src: &str, label: &str, ctx: &Ctx<'_>) -> String {
+/// The file `src` (resolved against the page) captioned `label`, as the renderer of the page's
+/// plugins that lists its extension draws it; `None` when none does. A renderer's problem is shown
+/// in the file's place.
+fn drawn(src: &str, label: &str, ctx: &Ctx<'_>) -> Option<String> {
+    let drawer = crate::renderers::drawing(ctx.plugins, src)?;
     let path = quote(&unquote(src), "/:");
     let label = if label.is_empty() {
         file_name(&unquote(src))
     } else {
         label.to_string()
     };
-    placeholder(
-        "model",
-        ctx.add_media(Media::Model {
-            src: path,
-            label,
-            poster: None,
-        }),
-    )
+    let file = File {
+        src: &path,
+        label: &label,
+    };
+    Some(match drawer.draw(&ctx.page, &file) {
+        Ok(Drawing::Viewer(viewer)) => placeholder(
+            "viewer",
+            ctx.add_media(Media::Viewer {
+                src: path,
+                label,
+                poster: None,
+                viewer,
+            }),
+        ),
+        Ok(Drawing::Blocks(blocks)) => blocks_html(ctx, drawer.name(), blocks),
+        Err(problem) => blocks_html(ctx, drawer.name(), vec![crate::plugins::error(&problem)]),
+    })
 }
 
-/// `body` with each image and link to a `.glb` replaced by a model item.
-fn embed_models(body: &str, ctx: &Ctx<'_>) -> String {
-    // Links first: an image's viewer carries a download link of its own, which a later link pass would embed again.
-    let linked = MODEL_LINK.replace_all(body, |found: &Captures<'_>| {
+/// `body` with each image and link to a file a plugin's renderer draws replaced by its drawing.
+fn embed_files(body: &str, ctx: &Ctx<'_>) -> String {
+    if ctx.plugins.list().iter().all(|p| p.renderers().is_empty()) {
+        return body.to_string();
+    }
+    // Links first: a viewer may carry a download link of its own, which a later link pass would
+    // draw again.
+    let linked = FILE_LINK.replace_all(body, |found: &Captures<'_>| {
         let text = unescape(&TAGS.replace_all(&found["text"], ""));
-        model(&target(&found["src"], ctx.doc_path), &text, ctx)
+        drawn(&target(&found["src"], ctx.doc_path), &text, ctx)
+            .unwrap_or_else(|| found[0].to_string())
     });
-    MODEL_IMG
+    FILE_IMG
         .replace_all(&linked, |found: &Captures<'_>| {
             let alt = ALT
                 .captures(&found[0])
                 .map(|a| unescape(&a[1]))
                 .unwrap_or_default();
-            model(&target(&found["src"], ctx.doc_path), &alt, ctx)
+            drawn(&target(&found["src"], ctx.doc_path), &alt, ctx)
+                .unwrap_or_else(|| found[0].to_string())
         })
         .into_owned()
 }
 
-/// The rendered markdown with its models and mockups held as media.
+/// The rendered markdown with its mockups held as media and its plugin-drawn files drawn.
 pub(super) fn embed(body: &str, ctx: &Ctx<'_>) -> String {
-    embed_mockups(&embed_models(body, ctx), ctx)
+    embed_mockups(&embed_files(body, ctx), ctx)
 }
 
 /// Whether the picture at `src` is an `.html` mockup, which an `<img>` cannot draw.

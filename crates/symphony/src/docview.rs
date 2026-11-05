@@ -487,14 +487,12 @@ pub fn legacy_html(fragment: &Fragment) -> String {
     let mut html = fragment.html.clone();
     for (index, item) in fragment.media.iter().enumerate() {
         let (kind, replacement) = match item {
-            Media::Model { src, label, .. } => (
-                "model",
-                format!(
-                    "<span class=\"glb-viewer\"><model-viewer src=\"{0}\" alt=\"{1}\" camera-controls touch-action=\"pan-y\" environment-image=\"neutral\" shadow-intensity=\"0\" interaction-prompt=\"none\" exposure=\"1\" camera-orbit=\"-45deg 60deg auto\" loading=\"lazy\"></model-viewer><span class=\"glb-bar\"><span class=\"glb-name\">{1}</span><button type=\"button\" data-glb-view=\"tilt\" title=\"The game's top-down camera, slightly tilted\">Top-down tilt</button><button type=\"button\" data-glb-view=\"reset\">Reset</button><a href=\"{0}\" download>.glb</a></span></span>",
-                    crate::markup::escape(src),
-                    crate::markup::escape(label)
-                ),
-            ),
+            Media::Viewer {
+                src,
+                label,
+                poster,
+                viewer,
+            } => ("viewer", viewer_html(viewer, src, label, poster.as_deref())),
             Media::Mockup { src, label } => (
                 "mockup",
                 format!(
@@ -503,7 +501,7 @@ pub fn legacy_html(fragment: &Fragment) -> String {
                     crate::markup::escape(label)
                 ),
             ),
-            Media::Gallery { items } => (
+            Media::Gallery { items, .. } => (
                 "gallery",
                 items
                     .iter()
@@ -526,6 +524,45 @@ pub fn legacy_html(fragment: &Fragment) -> String {
     html
 }
 
+/// A file in its viewer, as string HTML: the element in its stage (which names the script that
+/// defines it), then its caption, a button for each view and the download link.
+fn viewer_html(
+    viewer: &symphony_api::Viewer,
+    src: &str,
+    label: &str,
+    poster: Option<&str>,
+) -> String {
+    let escape = crate::markup::escape;
+    let element = viewer.element_html(src, label, poster).unwrap_or_default();
+    let views: String = viewer
+        .views
+        .iter()
+        .map(|view| {
+            let call = view.call.as_deref().map_or(String::new(), |call| {
+                format!(" data-viewer-call=\"{}\"", escape(call))
+            });
+            let title = view.title.as_deref().map_or(String::new(), |title| {
+                format!(" title=\"{}\"", escape(title))
+            });
+            format!(
+                "<button type=\"button\" data-viewer-set=\"{}\"{call}{title}>{}</button>",
+                escape(&view.encoded()),
+                escape(&view.label)
+            )
+        })
+        .collect();
+    let download = viewer.download.as_deref().map_or(String::new(), |text| {
+        format!("<a href=\"{}\" download>{}</a>", escape(src), escape(text))
+    });
+    format!(
+        "<span class=\"media-viewer\"><span class=\"viewer-stage\" data-viewer-script=\"{}\">\
+         {element}</span><span class=\"viewer-bar\"><span class=\"viewer-name\">{}</span>{views}\
+         {download}</span></span>",
+        escape(&viewer.script),
+        escape(label)
+    )
+}
+
 pub fn scope_fragment(html: &mut String, media: &mut [Media], scope: &str) {
     if scope.is_empty() {
         return;
@@ -546,8 +583,10 @@ pub fn scope_fragment(html: &mut String, media: &mut [Media], scope: &str) {
 fn media_urls(media: &mut Media) -> Vec<&mut String> {
     match media {
         Media::Mockup { src, .. } => vec![src],
-        Media::Model { src, poster, .. } => std::iter::once(src).chain(poster.iter_mut()).collect(),
-        Media::Gallery { items } => items
+        Media::Viewer { src, poster, .. } => {
+            std::iter::once(src).chain(poster.iter_mut()).collect()
+        }
+        Media::Gallery { items, .. } => items
             .iter_mut()
             .flat_map(|item| std::iter::once(&mut item.src).chain(item.poster.iter_mut()))
             .collect(),

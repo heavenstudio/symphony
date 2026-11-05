@@ -2,8 +2,8 @@
 //! rendered to an HTML fragment with source lines, a key and a content hash.
 //! comrak renders Markdown. links interprets cards (- [ ] **slug**), callouts
 //! (> [!comment]), document/card links and [[name:arg]] components.
-//! HTML mockups and GLB models are Media items indexed by placeholders in the
-//! fragment, for the client to draw.
+//! HTML mockups and files a plugin's renderer draws in a viewer are Media items
+//! indexed by placeholders in the fragment, for the client to draw.
 
 mod cards;
 mod links;
@@ -31,8 +31,8 @@ pub(crate) use cards::compare_pictures;
 pub(crate) use links::{doc_paths, find_doc};
 pub use media::{MOCKUP_NATIVE, MOCKUP_SANDBOX, is_mockup};
 
-/// What the renderer cannot draw as markup: a picture that is an `.html` file, a `.glb` model, a
-/// component's gallery. The fragment holds `<span class="media" data-media="N" data-kind="…">` where
+/// What the renderer cannot draw as markup: a picture that is an `.html` file, a file in a plugin's
+/// viewer, a component's gallery. The fragment holds `<span class="media" data-media="N" data-kind="…">` where
 /// it goes; `N` indexes the fragment's `media`.
 pub use symphony_api::Media;
 
@@ -156,20 +156,7 @@ impl Ctx<'_> {
     /// inside the `<sf-component>` the parser reads back as [`symphony_api::Block::Component`].
     fn component_html(&self, name: &str, argument: &str, option: Option<&str>) -> String {
         let blocks = self.plugins.render(&self.page, name, argument, option);
-        let mut media = |item| self.add_media(item);
-        if self.typed {
-            crate::blocks::write::html(
-                &[symphony_api::Block::Component {
-                    kind: name.into(),
-                    blocks,
-                }],
-                &mut media,
-            )
-        } else if let [symphony_api::Block::Paragraph { spans }] = blocks.as_slice() {
-            crate::blocks::write::spans_html(spans, &mut media)
-        } else {
-            crate::blocks::write::html(&blocks, &mut media)
-        }
+        media::blocks_html(self, name, blocks)
     }
 
     /// `text` as the converter is handed it, components held out as tokens and document and card

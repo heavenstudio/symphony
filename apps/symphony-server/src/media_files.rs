@@ -1,4 +1,4 @@
-//! Project media and the vendored viewer, served by the native server. Raw documents (including
+//! Project media and the vendored viewers, served by the native server. Raw documents (including
 //! SVG/XML and mockups opened full size) keep the frame's opaque-origin sandbox in their response.
 
 use std::path::{Component, Path};
@@ -33,7 +33,6 @@ fn mime(path: &str) -> Option<&'static str> {
             "woff2" => "font/woff2",
             "ttf" => "font/ttf",
             "otf" => "font/otf",
-            "glb" => "model/gltf-binary",
             "gltf" | "json" => "application/json",
             "md" | "txt" | "toml" | "yaml" | "yml" | "rs" | "gd" | "sh" => {
                 "text/plain; charset=utf-8"
@@ -45,7 +44,8 @@ fn mime(path: &str) -> Option<&'static str> {
             "ogg" => "audio/ogg",
             "mp4" => "video/mp4",
             "webm" => "video/webm",
-            _ => return None,
+            // A type a plugin's renderer draws, served with the type it names.
+            _ => return symphony::renderers::content_type(path),
         },
     )
 }
@@ -204,4 +204,21 @@ pub(crate) async fn contained(
             .insert(name, value.parse().expect("media response header"));
     }
     response
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{handles, mime};
+
+    #[test]
+    fn a_plugin_drawn_file_is_served_with_its_renderers_type_and_others_with_their_own() {
+        crate::shelf::install().unwrap();
+        for path in ["/room/shelf/items/A.item", "/A.ITEM"] {
+            assert_eq!(mime(path), Some(crate::shelf::ITEM_TYPE), "{path}");
+            assert!(handles(path), "{path}");
+        }
+        assert_eq!(mime("/a.png"), Some("image/png"));
+        assert_eq!(mime("/a.lantern"), None);
+        assert!(!handles("/a.lantern"), "a file no renderer draws is served");
+    }
 }
