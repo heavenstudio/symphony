@@ -43,6 +43,34 @@ impl Store {
         text: &str,
         to: Option<&str>,
     ) -> Result<Message, Error> {
+        self.post(slug, sender, text, to, None)
+    }
+
+    /// Post to a task's thread once per `key`: the first post under a key on a thread is made, and
+    /// every later one answers that message and writes nothing, whatever it says
+    /// (`delivery_key:[slug, key]`, read and written in the post's transaction, so two at once make
+    /// one line). A caller whose post may have committed without its answer (its run stopped)
+    /// repeats the call rather than reads the thread, and a request of its that outlived it cannot
+    /// post twice.
+    pub fn say_keyed(
+        &self,
+        slug: &str,
+        sender: &str,
+        text: &str,
+        to: Option<&str>,
+        key: &str,
+    ) -> Result<Message, Error> {
+        self.post(slug, sender, text, to, Some(key))
+    }
+
+    fn post(
+        &self,
+        slug: &str,
+        sender: &str,
+        text: &str,
+        to: Option<&str>,
+        key: Option<&str>,
+    ) -> Result<Message, Error> {
         let text = text.trim();
         if text.is_empty() {
             return Err(refused("an empty message says nothing".into()));
@@ -54,40 +82,59 @@ impl Store {
         });
         let handle = to.filter(|to| *to != OWNER && role.is_none());
         let act = if sender == OWNER { "" } else { ACT };
+        let line = logged("$slug", "$actor", "'msg'", "$text", "$to");
+        // The answer is the line on the record and whether it was there before this post.
+        let said = match key {
+            None => format!(
+                "{line}
+RETURN [(SELECT * OMIT id FROM ONLY type::record('message', [$slug, $sid])), false];"
+            ),
+            Some(_) => format!(
+                "LET $had = (SELECT message FROM ONLY type::record('delivery_key', [$slug, $key]));
+IF $had = NONE {{
+    {line}
+    CREATE type::record('delivery_key', [$slug, $key]) SET slug = $slug, key = $key, message = $sid, ts = $ts RETURN NONE;
+}};
+LET $made = (SELECT message FROM ONLY type::record('delivery_key', [$slug, $key]));
+RETURN [(SELECT * OMIT id FROM ONLY type::record('message', [$slug, $made.message])), $had != NONE];"
+            ),
+        };
         let body = format!(
             "{act}
 IF !record::exists(type::record('task', $slug)) {{ THROW $no_task }};
 IF $no_role != NONE {{ THROW $no_role }};
 IF $handle != NONE AND !record::exists(type::record('session', $handle)) {{ THROW $nobody }};
-{}
-RETURN [$sid, $ts];",
-            logged("$slug", "$actor", "'msg'", "$text", "$to")
+{said}"
         );
         let now = (self.clock)();
         let vars = acting(
             sender,
             now,
             json!({
-                "slug": slug, "text": text, "to": to, "handle": handle, "no_role": no_role,
+                "slug": slug, "text": text, "to": to, "handle": handle, "no_role": no_role, "key": key,
                 "no_task": format!("{REFUSED}{}", no_task(slug)),
                 "nobody": handle.map(|h| format!("{REFUSED}no session {} to send to", repr(h))),
             }),
         );
-        let (id, ts): (i64, f64) = self.retrying(|| self.transact(&body, vars.clone()))?;
-        if role == Some("executor") {
-            self.tell_if_unread(slug, None, &format!("#{id} from {sender} to @executor"));
-        } else if let Some(to) = handle {
-            self.tell_if_unread(slug, Some(to), &format!("#{id} from {sender} to {to}"));
+        let (row, repeated): (MessageRow, bool) =
+            self.retrying(|| self.transact(&body, vars.clone()))?;
+        if repeated {
+            return Ok(message(row));
         }
-        Ok(Message {
-            id,
-            slug: slug.into(),
-            sender: sender.into(),
-            recipient: to.map(String::from),
-            kind: "msg".into(),
-            text: text.into(),
-            ts,
-        })
+        if role == Some("executor") {
+            self.tell_if_unread(
+                slug,
+                None,
+                &format!("#{} from {sender} to @executor", row.id),
+            );
+        } else if let Some(to) = handle {
+            self.tell_if_unread(
+                slug,
+                Some(to),
+                &format!("#{} from {sender} to {to}", row.id),
+            );
+        }
+        Ok(message(row))
     }
 
     /// `what` (a post or a changes verdict to `slug`'s executor, or to `only` when that handle

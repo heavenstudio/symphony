@@ -22,6 +22,7 @@ pub struct Dump {
     pub deliveries: Vec<DeliveryRow>,
     pub barred_keys: Vec<BarredKeyRow>,
     pub task_sessions: Vec<TaskSessionRow>,
+    pub delivery_keys: Vec<DeliveryKeyRow>,
 }
 
 impl Dump {
@@ -45,6 +46,7 @@ impl Dump {
             deliveries: table(&mut tables, "deliveries")?,
             barred_keys: table(&mut tables, "barred_keys")?,
             task_sessions: table(&mut tables, "task_sessions")?,
+            delivery_keys: table(&mut tables, "delivery_keys")?,
         };
         match tables.keys().next() {
             Some(name) => Err(format!(
@@ -174,6 +176,17 @@ pub struct DeliveryRow {
 #[serde(deny_unknown_fields)]
 pub struct BarredKeyRow {
     pub key: String,
+}
+
+/// A post made once per key on a thread (`Store::say_keyed`): the message it made, and when. Never a
+/// SQLite table; a dump from before it has none.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DeliveryKeyRow {
+    pub slug: String,
+    pub key: String,
+    pub message: i64,
+    pub ts: f64,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]

@@ -6,6 +6,7 @@ mod callbacks;
 mod claim;
 mod common;
 mod copy;
+mod copy_marker;
 mod cutover;
 mod depends;
 mod done;
@@ -14,6 +15,7 @@ mod fields;
 #[path = "../../../../../tools/gate/tests/verify/script.rs"]
 mod fixture_script;
 mod health;
+mod keyed;
 mod launches;
 mod messages;
 mod next;

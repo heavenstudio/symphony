@@ -90,6 +90,11 @@ executor can read (no callback, and its launch record closed or no live beat) ad
 `board` post to `@orchestrator` on the
 thread after the write commits (`store/messages.rs`, `tell_if_unread`); its failure is
 said on stderr, never turned into a failed write.
+A post under a key (`Store::say_keyed`; `tasks api` `say` with `key`) is made once per key on
+a thread: its transaction makes the first post's line and `delivery_key:[slug, key]`, and
+answers that line to every later post under the key, writing nothing, so a caller that may have
+posted without reading its answer repeats the call rather than reading the thread, and a request
+of its that outlived it cannot post twice. The copy carries the keys with the board.
 Restore prompts re-register the resumed process's callback first.
 Neither channel checks nor delivery fabricate tool calls.
 Outbox rows are indexed by handle
