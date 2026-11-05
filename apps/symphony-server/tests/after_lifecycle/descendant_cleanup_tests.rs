@@ -49,11 +49,16 @@ fn cleanup_waits_for_orphaned_fixture_descendants_before_removing_scratch() {
         let released = Instant::now();
         writeln!(input, "finish").unwrap();
         let ended = completion.recv_timeout(PATIENCE);
+        // A cleanup still running at the deadline fails here: joining it would wait unbounded.
+        if matches!(ended, Err(std::sync::mpsc::RecvTimeoutError::Timeout)) {
+            panic!("cleanup (repository {repository}) did not end within {PATIENCE:?} of release");
+        }
+        // It sent or ended without sending: the join returns at once and carries its panic.
         if let Err(failure) = cleanup.join() {
             std::panic::resume_unwind(failure);
         }
         let (waited, end) = ended.unwrap_or_else(|error| {
-            panic!("cleanup (repository {repository}) did not end after release: {error:?}")
+            panic!("cleanup (repository {repository}) ended without its report: {error:?}")
         });
         // The descendant's write follows the release, so a cleanup that waited for it ends later.
         assert!(
