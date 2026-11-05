@@ -10,11 +10,14 @@ use symphony_plugin::vocabulary::{
     Block, FieldValue, InlineKind, NavItem, ProgressBar, Region, Span, TaskOffer,
 };
 use symphony_plugin::{
-    BoardAction, BoardField, Card, CardKind, Component, DocCheck, FieldKind, Generator, HomeRegion,
-    Page, Plugin, ProseRule, Route, Submission, Submitted, TaskRef, Watch, check_kind,
+    BoardAction, BoardField, Card, CardKind, Component, DocCheck, Docs, FieldKind, Generator,
+    HomeRegion, Page, Plugin, Problem, ProseRule, Route, Submission, Submitted, TaskRef, Watch,
+    check_kind,
 };
 
 use super::Tree;
+
+mod compiled;
 
 /// A plugin that only has a name: every seam takes its default.
 struct Bare;
@@ -30,22 +33,27 @@ struct Fixture {
     plugin: &'static str,
     word: &'static str,
     versioned: bool,
+    /// The card markers its kind reads.
+    markers: &'static [&'static str],
 }
 
 static FIRST: Fixture = Fixture {
     plugin: "first",
     word: "one",
     versioned: true,
+    markers: &["One"],
 };
 static SECOND: Fixture = Fixture {
     plugin: "second",
     word: "two",
     versioned: true,
+    markers: &["Two"],
 };
 static UNVERSIONED: Fixture = Fixture {
     plugin: "unversioned",
     word: "live",
     versioned: false,
+    markers: &[],
 };
 
 impl Plugin for Fixture {
@@ -122,6 +130,9 @@ impl CardKind for Fixture {
     }
     fn recognises(&self, card: &Card<'_>) -> bool {
         card.text.contains(self.word)
+    }
+    fn markers(&self) -> &[&str] {
+        self.markers
     }
 }
 
@@ -211,9 +222,9 @@ impl DocCheck for Fixture {
     fn name(&self) -> &str {
         self.word
     }
-    fn check(&self, root: &Path) -> Vec<String> {
-        if root.join(self.word).exists() {
-            vec![format!("{}: present", self.word)]
+    fn check(&self, docs: &Docs) -> Vec<Problem> {
+        if docs.root().join(self.word).exists() {
+            vec![Problem::new(self.word, 0, "present".into())]
         } else {
             Vec::new()
         }
@@ -384,12 +395,12 @@ fn every_list_seam_gathers_each_plugin_in_the_projects_order() {
     );
     let submission = |payload: &str| Submission {
         payload: payload.into(),
-        note: "ship it".into(),
+        note: "send it".into(),
     };
     assert_eq!(
         plugins.board_actions()[1].submit(root, &task, &submission("two:sim/jump")),
         Ok(Submitted {
-            said: "two sim/jump: ship it".into(),
+            said: "two sim/jump: send it".into(),
             released: vec!["sim/jump".into()],
         })
     );
@@ -568,63 +579,4 @@ fn a_value_is_stored_as_its_fields_kind_reads_it() {
     ] {
         assert_eq!(check_kind(&kind, &value), stored, "{kind:?} {value:?}");
     }
-}
-
-#[test]
-fn a_projects_plugins_are_the_compiled_ones_its_file_names() {
-    let plain = Tree::new();
-    assert!(Plugins::of(&plain.root).list().is_empty());
-    let star_foundry = Tree::star_foundry();
-    let plugins = Plugins::of(&star_foundry.root);
-    assert_eq!(
-        plugins.list().iter().map(|p| p.name()).collect::<Vec<_>>(),
-        ["star-foundry-symphony"]
-    );
-    assert_eq!(
-        plugins
-            .nav()
-            .iter()
-            .map(|n| n.href.as_str())
-            .collect::<Vec<_>>(),
-        ["/hulls"]
-    );
-    assert!(plugins.route("hulls").is_some());
-    assert!(plugins.component("ship").is_some());
-    assert!(Plugins::of(&plain.root).component("ship").is_none());
-}
-
-#[test]
-fn the_lint_runs_the_projects_document_checks_and_prose_rules() {
-    let tree = Tree::star_foundry();
-    tree.write(
-        "docs/factions/republic.md",
-        "# Republic\n\nThe hull was approved.\n",
-    );
-    tree.write("docs/data/screens.json", "not json");
-    let (prose, rules) = symphony::lint::rule_findings(&tree.root);
-    assert_eq!(rules.len(), 1, "{prose:?}");
-    assert_eq!(prose[0].0, "docs/factions/republic.md");
-    assert_eq!(prose[0].1, 3);
-    let (problems, checks) = symphony::lint::check_findings(&tree.root);
-    assert_eq!(checks, ["screens"]);
-    assert!(
-        problems[0].starts_with("docs/data/screens.json: "),
-        "{problems:?}"
-    );
-    let (mut out, mut err) = (Vec::new(), Vec::new());
-    assert_eq!(symphony::lint::main(&tree.root, &mut out, &mut err), 1);
-    let said = String::from_utf8(err).unwrap();
-    assert!(
-        said.contains("✖ 1 document check problem(s): screens."),
-        "{said}"
-    );
-    // A plain project has no plugin, so neither runs.
-    let plain = Tree::new();
-    plain.write(
-        "docs/factions/republic.md",
-        "# Republic\n\nThe hull was approved.\n",
-    );
-    plain.write("docs/data/screens.json", "not json");
-    assert!(symphony::lint::rule_findings(&plain.root).0.is_empty());
-    assert!(symphony::lint::check_findings(&plain.root).0.is_empty());
 }

@@ -2,9 +2,9 @@
 //! it (the clock, the process table, the work a session holds).
 
 use crate::common::{Fixture, GONE, HOST, NOW, Seed, refused, session};
-use tasks::Health;
-use tasks::health::{LIVE_SECONDS, STALE_SECONDS};
-use tasks::rows::SessionRow;
+use symphony_board::Health;
+use symphony_board::health::{LIVE_SECONDS, STALE_SECONDS};
+use symphony_board::rows::SessionRow;
 
 #[test]
 fn health_ages_from_live_to_stale_to_lost() {

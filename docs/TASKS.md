@@ -239,12 +239,10 @@ reads live for as long as its timeout allows (at most 10 minutes), so a long
 one that may run longest keeps the mark, and only its own end clears it. A
 subagent that stops makes no more calls, and ages to stale and lost as before.
 
-Two orchestrators share the board. The **concepts** one holds design, art
-and review (`design/`, `art/`, the docs); the **game** one holds `sim/`,
-`view/`, `game/`, `perf/` and the engine's `tools/`. A design decision that
-needs code becomes a short board task for the game side, and the concepts
-side commits approved docs regularly, because worktree agents see only what
-is committed.
+Orchestrators can share the board, each holding its own slug prefixes. A decision
+one side makes that the other must act on becomes a short board task for that side,
+and a side that approves documents commits them regularly, because worktree agents
+see only what is committed.
 
 ## The agents API
 
@@ -261,7 +259,7 @@ panes and the test-slot locks are probes that say what each agent is doing now, 
    "handle": "amber-heron", "kind": "worker", "model": "sonnet", "parent": "cobalt-otter",
    "task": "sim/jump", "role": "executor",           # the task it works now (an open one first)
    "tasks": [{"slug": "sim/jump", "role": "executor", "status": "in_progress"}],
-   "worktree": "/…/star-foundry-wt/sim-jump", "branch": "sim/jump",   # where it really works
+   "worktree": "/…/lamp-works-wt/sim-jump", "branch": "sim/jump",   # where it really works
    "agent": "claude", "session_id": "9aa0…", "pane": "w1:p5",
    "callback": "uds:/tmp/cc-socks/1234.sock", "chat": false,
    "state": "running_test",

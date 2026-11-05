@@ -1,4 +1,4 @@
-//! `tasks::port`: a child started on a reserved loopback port, and again on another port only when
+//! `symphony_board::port`: a child started on a reserved loopback port, and again on another port only when
 //! it ends saying its port was taken, a bounded number of times within one deadline; and whether a
 //! process itself listens on an address. The fake children are shells that say what the case needs
 //! and end, or say they listen and run until their input closes; two cases give the pinned SurrealDB
@@ -11,9 +11,9 @@ use std::io::{BufRead, BufReader, Read};
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
-use tasks::port::{ATTEMPTS, NotStarted, Start, in_use, listens, start_on_free_port};
-use tasks::sys;
-use tasks::sys::{Child, Command, Stdio};
+use symphony_board::port::{ATTEMPTS, NotStarted, Start, in_use, listens, start_on_free_port};
+use symphony_board::sys;
+use symphony_board::sys::{Child, Command, Stdio};
 
 /// The deadline of a case whose starts are all quick: one it never comes near.
 fn later() -> Instant {
@@ -389,7 +389,7 @@ fn surreal_on_a_port_taken_by(occupier: Occupier, name: &str) {
                 endings.push(said.clone());
                 return Ok::<_, Infallible>(Start::Ended(said));
             }
-            if tasks::rpc::healthy(&addr.to_string())
+            if symphony_board::rpc::healthy(&addr.to_string())
                 && listens(server.0.id(), addr, sys::output).unwrap()
             {
                 return Ok(Start::Up(server));
@@ -410,7 +410,7 @@ fn surreal_on_a_port_taken_by(occupier: Occupier, name: &str) {
         occupier == Occupier::Answers,
         "the occupier was asked whether it was up"
     );
-    assert!(tasks::rpc::healthy(&addr.to_string()));
+    assert!(symphony_board::rpc::healthy(&addr.to_string()));
     assert!(listens(server.0.id(), addr, sys::output).unwrap());
     drop(server);
     let _ = std::fs::remove_dir_all(&dir);

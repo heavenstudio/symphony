@@ -2,8 +2,8 @@
 
 use crate::common::{Fixture, NOW, Seed, refused};
 use std::collections::BTreeSet;
-use tasks::health::RESERVE_SECONDS;
-use tasks::{LANDS_FROM, NewTask};
+use symphony_board::health::RESERVE_SECONDS;
+use symphony_board::{LANDS_FROM, NewTask};
 
 /// An orchestrator, an executor and a reviewer on `sim/jump`, in review, each joined through the store.
 fn in_review() -> (Fixture, String, String, String) {
@@ -353,7 +353,7 @@ fn concurrent_owner_cancellations_record_exactly_one_transition() {
     for result in results {
         if let Err(error) = result {
             assert_eq!(
-                refused::<tasks::Task>(Err(error)),
+                refused::<symphony_board::Task>(Err(error)),
                 "sim/jump cannot go from cancelled to cancelled"
             );
         }

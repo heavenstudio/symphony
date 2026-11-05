@@ -2,10 +2,10 @@
 
 use crate::common::{Fixture, NOW};
 use std::collections::BTreeSet;
-use tasks::cli::pull::{Digest, digest};
-use tasks::health::{LIVE_SECONDS, RESERVE_SECONDS, STALE_SECONDS};
-use tasks::sys::local_minute;
-use tasks::{NewTask, Task};
+use symphony_board::cli::pull::{Digest, digest};
+use symphony_board::health::{LIVE_SECONDS, RESERVE_SECONDS, STALE_SECONDS};
+use symphony_board::sys::local_minute;
+use symphony_board::{NewTask, Task};
 
 struct Case {
     f: Fixture,

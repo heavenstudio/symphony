@@ -3,10 +3,10 @@
 use crate::World;
 use serde_json::json;
 use std::os::unix::fs::PermissionsExt;
-use tasks::Error;
-use tasks::launch::herdr::Herdr;
-use tasks::launch::procs::{busy_reason, descendants_by};
-use tasks::launch::{Closure, LaunchError, cleanup};
+use symphony_board::Error;
+use symphony_board::launch::herdr::Herdr;
+use symphony_board::launch::procs::{busy_reason, descendants_by};
+use symphony_board::launch::{Closure, LaunchError, cleanup};
 
 pub const SESSION_ID: &str = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee";
 
@@ -429,15 +429,15 @@ fn a_command_line_that_is_not_utf8_is_read_and_the_pids_still_parse() {
     .unwrap();
     std::fs::set_permissions(&ps, std::fs::Permissions::from_mode(0o755)).unwrap();
     assert_eq!(
-        descendants_by(tasks::sys::Command::new(&ps), 10).unwrap(),
+        descendants_by(symphony_board::sys::Command::new(&ps), 10).unwrap(),
         ["sleep \u{fffd}", "tail"]
     );
     std::fs::write(&ps, b"#!/bin/sh\nexit 0\n").unwrap();
     assert_eq!(
-        descendants_by(tasks::sys::Command::new(&ps), 10),
+        descendants_by(symphony_board::sys::Command::new(&ps), 10),
         Err(LaunchError("ps printed nothing".into()))
     );
-    let missing = descendants_by(tasks::sys::Command::new(w.dir().join("no-ps")), 10);
+    let missing = descendants_by(symphony_board::sys::Command::new(w.dir().join("no-ps")), 10);
     assert!(
         matches!(&missing, Err(LaunchError(why)) if why.starts_with("ps: ")),
         "{missing:?}"

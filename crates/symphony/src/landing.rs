@@ -4,14 +4,15 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
-use tasks::sys::Command;
+use symphony_board::sys::Command;
 
 /// Retry diagnostics shared by the lander and the app that keeps verified verdicts queued.
 pub const RETRY_LAND: &str = "retry just land";
 pub const DIRTY_MAIN: &str = "has staged or tracked edits; refusing publication";
 
 fn git(root: &Path, args: &[&str]) -> Option<Vec<u8>> {
-    let done = tasks::sys::output(Command::new("git").args(args).current_dir(root)).ok()?;
+    let done =
+        symphony_board::sys::output(Command::new("git").args(args).current_dir(root)).ok()?;
     done.status.success().then_some(done.stdout)
 }
 
@@ -31,7 +32,7 @@ pub fn owner_lines_left(root: &Path) -> Vec<String> {
     let project = crate::project::Project::of(root);
     // This is another agent's checkout, unlike the generators' private worktrees. A diff may
     // refresh its index despite GIT_OPTIONAL_LOCKS, so disable that refresh explicitly.
-    let diff = tasks::sys::output(
+    let diff = symphony_board::sys::output(
         Command::new("git")
             .env("GIT_OPTIONAL_LOCKS", "0")
             .args(["-c", "diff.autoRefreshIndex=false"])
@@ -94,7 +95,7 @@ impl PrivateWorktree {
             retained: false,
         };
         let _held = WORKTREES.lock().unwrap_or_else(|e| e.into_inner());
-        let done = tasks::sys::output(
+        let done = symphony_board::sys::output(
             Command::new("git")
                 .args(["worktree", "add", "--detach"])
                 .arg(&held.path)
@@ -151,7 +152,7 @@ impl Drop for PrivateWorktree {
             return;
         }
         let _held = WORKTREES.lock().unwrap_or_else(|e| e.into_inner());
-        let _ = tasks::sys::output(
+        let _ = symphony_board::sys::output(
             Command::new("git")
                 .args(["worktree", "remove", "--force"])
                 .arg(&self.path)
@@ -294,7 +295,7 @@ fn regenerates_inner(
             continue;
         }
         let (program, args) = generator.command.split_first()?;
-        if !tasks::sys::output(Command::new(program).args(args).current_dir(&wt.path))
+        if !symphony_board::sys::output(Command::new(program).args(args).current_dir(&wt.path))
             .ok()?
             .status
             .success()

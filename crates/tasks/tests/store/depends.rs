@@ -1,11 +1,11 @@
 //! `change_depends`: what a task waits on after it was made, and leaving a cancellation's block.
 
 use crate::common::{Fixture, NOW, Seed, refused};
-use tasks::rows::MessageRow;
+use symphony_board::rows::MessageRow;
 
 const HANDLE: &str = "amber-heron";
 
-fn change(f: &Fixture, slug: &str, add: &[&str], remove: &[&str]) -> tasks::Task {
+fn change(f: &Fixture, slug: &str, add: &[&str], remove: &[&str]) -> symphony_board::Task {
     f.store
         .change_depends(slug, &owned(add), &owned(remove), HANDLE)
         .unwrap()

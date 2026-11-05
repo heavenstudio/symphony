@@ -8,9 +8,11 @@
 use crate::common::Scratch;
 use crate::store::{NOW, session, task};
 use serde_json::{Value, json};
-use tasks::Store;
-use tasks::rows::{DeliveryRow, Dump, LinkRow, MessageRow, RoleRow, TaskRow, TaskSessionRow};
-use tasks::rpc::Client;
+use symphony_board::Store;
+use symphony_board::rows::{
+    DeliveryRow, Dump, LinkRow, MessageRow, RoleRow, TaskRow, TaskSessionRow,
+};
+use symphony_board::rpc::Client;
 
 const TASKS: usize = 480;
 const SESSIONS: usize = 560;
@@ -179,14 +181,14 @@ fn a_refused_copy_of_a_quarter_board_leaves_the_board_and_its_index_as_they_were
         .client()
         .query(
             "CREATE task_chunk SET slug = 'sim/jump', source = 'brief', source_hash = 'old', text_hash = 'old', model = 'fake', text = 'cached board text', embedding = $vector;",
-            json!({"vector": vec![1.0_f32; tasks::embedding::DIMENSIONS]}),
+            json!({"vector": vec![1.0_f32; symphony_board::embedding::DIMENSIONS]}),
         )
         .unwrap();
     let marker = one(&store, "RETURN counter:board.last;");
     let mut bad = quarter_board();
     bad.messages.last_mut().unwrap().kind = "shout".into();
     match store.copy(&bad) {
-        Err(tasks::Error::Db(why)) => assert!(why.contains("shout"), "{why}"),
+        Err(symphony_board::Error::Db(why)) => assert!(why.contains("shout"), "{why}"),
         other => panic!("expected the server to refuse the copy, got {other:?}"),
     }
     assert_eq!(store.dump().unwrap(), small);

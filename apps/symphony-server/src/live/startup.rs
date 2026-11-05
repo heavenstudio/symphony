@@ -29,7 +29,7 @@ impl Hub {
         ui_dist: &Path,
         drain_chat: bool,
         period: Duration,
-        mut connect: impl FnMut(&Path) -> Result<tasks::Store, String> + Send + 'static,
+        mut connect: impl FnMut(&Path) -> Result<symphony_board::Store, String> + Send + 'static,
     ) -> Result<Arc<Self>, String> {
         let started = Instant::now();
         let mut hub = measured("hub new", || Self::new(root, ui_dist));
@@ -144,10 +144,10 @@ impl Drop for Unwinding<'_> {
 fn initial_board(
     weak: &Weak<Hub>,
     starting: &mpsc::Receiver<()>,
-    connect: &mut impl FnMut(&Path) -> Result<tasks::Store, String>,
+    connect: &mut impl FnMut(&Path) -> Result<symphony_board::Store, String>,
     docs_ready: Duration,
     started: Instant,
-) -> Option<Option<tasks::Store>> {
+) -> Option<Option<symphony_board::Store>> {
     starting.recv().ok()?;
     let hub = weak.upgrade()?;
     if *hub.draining.borrow() {

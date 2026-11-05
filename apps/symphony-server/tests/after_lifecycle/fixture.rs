@@ -1,5 +1,5 @@
 //! Owned processes, scratch repositories and build/opener fixtures for the lifecycle boundary.
-//! Every child starts through the board's forkless `tasks::sys::Command`: a child std forks
+//! Every child starts through the board's forkless `symphony_board::sys::Command`: a child std forks
 //! holds every descriptor this process has until its exec, a sibling case's pipes among them.
 
 use std::ffi::OsString;
@@ -15,7 +15,7 @@ use std::process::{ExitStatus, Output};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Mutex, Once, OnceLock};
 use std::time::{Duration, Instant};
-use tasks::sys::{Child, Command, Stdio};
+use symphony_board::sys::{Child, Command, Stdio};
 
 #[path = "../../../../../tools/gate/tests/gate/scratch.rs"]
 mod scratch;
@@ -148,8 +148,8 @@ fn command_fixture(path: &Path, name: &str) {
 }
 
 pub fn repository(root: &Path, args: &[&str]) {
-    let done = tasks::sys::output(
-        tasks::sys::Command::new("git")
+    let done = symphony_board::sys::output(
+        symphony_board::sys::Command::new("git")
             .args([
                 "-c",
                 "user.name=Lifecycle fixture",

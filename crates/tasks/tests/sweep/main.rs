@@ -22,10 +22,10 @@ use std::process::{Command, Stdio};
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, SystemTime};
-use tasks::cli::Env;
-use tasks::sweep::{Options, Sweep, sweep};
-use tasks::sys::Spawning as _;
-use tasks::{NewSession, NewTask};
+use symphony_board::cli::Env;
+use symphony_board::sweep::{Options, Sweep, sweep};
+use symphony_board::sys::Spawning as _;
+use symphony_board::{NewSession, NewTask};
 
 /// Past the sweep's two-hour window of recent activity.
 pub const IDLE_HOURS: f64 = 3.0;
@@ -76,8 +76,12 @@ fn template() -> &'static Path {
 
 /// `git ARGS` in `dir`, which must succeed: its output, trimmed.
 pub fn git(dir: &Path, args: &[&str]) -> String {
-    let done =
-        tasks::sys::output(tasks::sys::Command::new("git").args(args).current_dir(dir)).unwrap();
+    let done = symphony_board::sys::output(
+        symphony_board::sys::Command::new("git")
+            .args(args)
+            .current_dir(dir),
+    )
+    .unwrap();
     assert!(
         done.status.success(),
         "git {args:?} in {}: {}",
@@ -106,7 +110,7 @@ impl HeldCwd {
             .stderr(Stdio::null());
         // Under the lock, as every std spawn beside the helpers: outside it, the process could keep
         // a pipe's first ends, made in another thread, for its whole life.
-        let _spawning = tasks::sys::spawning();
+        let _spawning = symphony_board::sys::spawning();
         Self(cat.spawn().unwrap())
     }
 }
@@ -128,8 +132,8 @@ pub fn dead_pid() -> i64 {
 /// `date`, BSD's else GNU's, with `args` for each, in zone `tz`: its output, trimmed.
 fn date(tz: &str, bsd: &[&str], gnu: &[&str]) -> String {
     for args in [bsd, gnu] {
-        let done = tasks::sys::output(
-            tasks::sys::Command::new("date")
+        let done = symphony_board::sys::output(
+            symphony_board::sys::Command::new("date")
                 .args(args)
                 .env("TZ", tz)
                 .env("LC_ALL", "C"),
@@ -146,8 +150,8 @@ fn date(tz: &str, bsd: &[&str], gnu: &[&str]) -> String {
 /// 2026`). Read from `ps` in a zone that is not UTC (-03, like the owner's machine) and converted by
 /// `date`, so the sweep's own reading of `ps` is not what a test compares with.
 pub fn started(pid: i64) -> String {
-    let local = tasks::sys::output(
-        tasks::sys::Command::new("ps")
+    let local = symphony_board::sys::output(
+        symphony_board::sys::Command::new("ps")
             .args(["-o", "lstart=", "-p", &pid.to_string()])
             .env("LC_ALL", "C")
             .env("TZ", NOT_UTC),

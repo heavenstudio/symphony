@@ -7,7 +7,7 @@
 //! their questions an agent has answered, then the cards only the owner signs off, then pictures
 //! nobody could decide, each with a link that scrolls the Symphony to the card. The project's card
 //! kinds say which card is which and what a card gates besides the cards waiting on it. `auto-approve`
-//! and its roster-variety check go with tools/python-zero/art-cards.
+//! is the project's own.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::net::{SocketAddr, TcpStream};
@@ -17,7 +17,6 @@ use std::time::Duration;
 
 use regex::Regex;
 
-use crate::art::{self, ArtError};
 use crate::board::Doc;
 use crate::plugins::Plugins;
 use crate::register::{Decision, Group, REPLACES, Who};
@@ -61,7 +60,7 @@ pub struct Stats {
     pub redraw: Bucket,
     pub approvals: u32,
     pub with_note: u32,
-    pub art_letters: BTreeMap<String, u32>,
+    pub picture_letters: BTreeMap<String, u32>,
     pub design_letters: BTreeMap<String, u32>,
     pub decided: u32,
     pub asked: u32,
@@ -77,8 +76,8 @@ pub struct Item {
 }
 
 /// A picture card: one of the project's card kinds names the slot it fills. A picture on a design
-/// card does not make it art.
-pub fn is_art(plugins: &Plugins, card: &Decision) -> bool {
+/// card does not make it a picture card.
+pub fn is_picture(plugins: &Plugins, card: &Decision) -> bool {
     plugins.slot(card).is_some()
 }
 
@@ -127,38 +126,16 @@ pub fn first_verdict(card: &Decision) -> Option<String> {
     marker_verdict(card.state.as_str()).map(str::to_string)
 }
 
-/// Letter to picture for a card's candidates, in the order posted; a single picture is A.
-fn letters(card: &Decision) -> Vec<(String, String)> {
-    let found = art::candidates(card);
-    if found.len() == 1 {
-        return vec![("A".to_string(), found[0].1.clone())];
-    }
-    let mut out: Vec<(String, String)> = Vec::new();
-    for (alt, src) in found {
-        if alt.len() >= 2
-            && alt.ends_with(|c: char| c.is_ascii_uppercase())
-            && alt[..alt.len() - 1].ends_with(' ')
-        {
-            let letter = alt[alt.len() - 1..].to_string();
-            match out.iter_mut().find(|(l, _)| *l == letter) {
-                Some(held) => held.1 = src,
-                None => out.push((letter, src)),
-            }
-        }
-    }
-    out
-}
-
 /// An approval note is still work when it says more than which letter.
 fn is_note(text: &str) -> bool {
     NOTE.is_match(&LETTER.replace_all(text, ""))
 }
 
-/// ("art" or "design", letter) the owner picked on an approved card, or `None`.
+/// ("picture" or "design", letter) the owner picked on an approved card, or `None`.
 fn picked_letter(
     plugins: &Plugins,
     card: &Decision,
-) -> Result<Option<(&'static str, String)>, ArtError> {
+) -> Result<Option<(&'static str, String)>, String> {
     let entries = card.entries();
     let approved = |e: &&crate::register::Entry| {
         e.who == Who::Owner && e.verdict.as_deref() == Some("approved")
@@ -168,16 +145,8 @@ fn picked_letter(
     {
         return Ok(None);
     }
-    if is_art(plugins, card) {
-        let letters = letters(card);
-        if letters.len() < 2 {
-            return Ok(None);
-        }
-        let chosen = art::picture(card)?;
-        return Ok(letters
-            .into_iter()
-            .find(|(_, src)| Some(src) == chosen.as_ref())
-            .map(|(l, _)| ("art", l)));
+    if is_picture(plugins, card) {
+        return Ok(plugins.chosen(card)?.map(|letter| ("picture", letter)));
     }
     if !OFFERS_LETTERS.is_match(&card.text) {
         return Ok(None);
@@ -200,14 +169,14 @@ fn cards_of(docs: &[Doc]) -> Vec<(String, Decision)> {
         .collect()
 }
 
-pub fn stats(plugins: &Plugins, docs: &[Doc]) -> Result<Stats, ArtError> {
+pub fn stats(plugins: &Plugins, docs: &[Doc]) -> Result<Stats, String> {
     let mut found = Stats {
         categories: BTreeMap::new(),
         first_post: Bucket::default(),
         redraw: Bucket::default(),
         approvals: 0,
         with_note: 0,
-        art_letters: BTreeMap::new(),
+        picture_letters: BTreeMap::new(),
         design_letters: BTreeMap::new(),
         decided: 0,
         asked: 0,
@@ -243,8 +212,8 @@ pub fn stats(plugins: &Plugins, docs: &[Doc]) -> Result<Stats, ArtError> {
             }
         }
         if let Some((kind, letter)) = picked_letter(plugins, &card)? {
-            let counts = if kind == "art" {
-                &mut found.art_letters
+            let counts = if kind == "picture" {
+                &mut found.picture_letters
             } else {
                 &mut found.design_letters
             };
@@ -303,7 +272,7 @@ pub fn render_stats(found: &Stats) -> String {
         collapse(&rate(found.with_note, found.approvals))
     ));
     for (kind, picks) in [
-        ("art", &found.art_letters),
+        ("picture", &found.picture_letters),
         ("design", &found.design_letters),
     ] {
         let listed = picks
@@ -374,7 +343,7 @@ pub fn queue(plugins: &Plugins, docs: &[Doc], n: usize, app: &str) -> Vec<Item> 
     let cards = cards_of(docs);
     let mut design: Vec<(usize, String, Item)> = Vec::new();
     let mut answered: Vec<(String, Item)> = Vec::new();
-    let mut art_cards: Vec<(String, Item)> = Vec::new();
+    let mut picture_cards: Vec<(String, Item)> = Vec::new();
     let mut sign_offs: Vec<(String, Item)> = Vec::new();
     for (doc, card) in &cards {
         let posted = card.posted_at().unwrap_or_default();
@@ -396,7 +365,7 @@ pub fn queue(plugins: &Plugins, docs: &[Doc], n: usize, app: &str) -> Vec<Item> 
                 posted,
                 item(format!("{} · {why}", category(plugins, doc, card))),
             ));
-        } else if thread.group == Group::Decide && !is_art(plugins, card) {
+        } else if thread.group == Group::Decide && !is_picture(plugins, card) {
             let (counted, waiting) = gates(plugins, doc, card, &cards);
             let total = waiting + counted.iter().map(|(n, _)| n).sum::<usize>();
             let mut reason = if total > 0 {
@@ -427,7 +396,7 @@ pub fn queue(plugins: &Plugins, docs: &[Doc], n: usize, app: &str) -> Vec<Item> 
             } else {
                 "the triage left it for you"
             };
-            art_cards.push((
+            picture_cards.push((
                 posted,
                 item(format!("{} · {why}", category(plugins, doc, card))),
             ));
@@ -436,11 +405,11 @@ pub fn queue(plugins: &Plugins, docs: &[Doc], n: usize, app: &str) -> Vec<Item> 
     design.sort_by(|a, b| (a.0, &a.1).cmp(&(b.0, &b.1)));
     answered.sort_by(|a, b| a.0.cmp(&b.0));
     sign_offs.sort_by(|a, b| a.0.cmp(&b.0));
-    art_cards.sort_by(|a, b| a.0.cmp(&b.0));
+    picture_cards.sort_by(|a, b| a.0.cmp(&b.0));
     let mut ranked: Vec<Item> = design.into_iter().map(|(_, _, i)| i).collect();
     ranked.extend(answered.into_iter().map(|(_, i)| i));
     ranked.extend(sign_offs.into_iter().map(|(_, i)| i));
-    ranked.extend(art_cards.into_iter().map(|(_, i)| i));
+    ranked.extend(picture_cards.into_iter().map(|(_, i)| i));
     ranked.truncate(n);
     ranked
 }

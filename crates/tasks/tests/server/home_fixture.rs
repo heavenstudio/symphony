@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 use std::process::ExitStatus;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
-use tasks::sys::{Child, Command, Stdio};
+use symphony_board::sys::{Child, Command, Stdio};
 
 /// A `surreal` for `Home` whose server is up as soon as it listens: given a server's arguments
 /// (`start … --bind ADDR DATA`), it runs this test binary's `helper_healthy` on ADDR, with the data
@@ -138,7 +138,7 @@ fn dropping_the_fixture_reaps_its_live_child() {
     let pid = server.pid();
     drop(server);
     assert!(
-        !tasks::sys::pid_alive(pid),
+        !symphony_board::sys::pid_alive(pid),
         "the owned child must be reaped"
     );
 }
@@ -194,7 +194,7 @@ fn helper_healthy() {
             answer_healthy(stream);
         }
     });
-    while tasks::sys::pid_alive(owner) {
+    while symphony_board::sys::pid_alive(owner) {
         std::thread::sleep(Duration::from_millis(50));
     }
 }

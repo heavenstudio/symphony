@@ -5,9 +5,9 @@
 use crate::common::{Scratch, exists};
 use serde_json::{Value, json};
 use std::path::Path;
-use tasks::rpc::Client;
-use tasks::server::{Home, Running, ServerError, Storage, bytes};
-use tasks::{NewSession, NewTask, Store};
+use symphony_board::rpc::Client;
+use symphony_board::server::{Home, Running, ServerError, Storage, bytes};
+use symphony_board::{NewSession, NewTask, Store};
 
 /// A memtable small enough that a test's writes flush and compact many times over.
 const MEMTABLE: u64 = 2 << 20;
@@ -164,7 +164,7 @@ fn a_store_that_grew_under_the_value_log_is_rebuilt_with_every_database_task_and
     );
     assert_eq!(home.recorded(), Some(reclaimed.running.clone()));
     assert_eq!(home.ensure().unwrap(), reclaimed.running);
-    assert!(!tasks::sys::pid_alive(before_running.pid));
+    assert!(!symphony_board::sys::pid_alive(before_running.pid));
     let (live, scratch) = (
         board(&reclaimed.running, "tasks"),
         board(&reclaimed.running, "scratch_board"),
@@ -264,13 +264,13 @@ fn tasks_reclaim_with_a_folder_rebuilds_that_board_and_says_what_it_did() {
     board(&running, "tasks")
         .create(&NewTask::new("sim/jump", "Jump departure", "owner"))
         .unwrap();
-    let env = tasks::cli::Env {
+    let env = symphony_board::cli::Env {
         vars: [("SF_SURREAL".to_string(), s.surreal().display().to_string())].into(),
         cwd: std::env::current_dir().unwrap(),
     };
     let args = ["--dir".to_string(), s.dir.display().to_string()];
     let (mut out, mut err) = (Vec::new(), Vec::new());
-    let code = tasks::reclaim_main(&args, &env, &mut out, &mut err);
+    let code = symphony_board::reclaim_main(&args, &env, &mut out, &mut err);
     assert_eq!(code, 0, "{}", String::from_utf8_lossy(&err));
     let said = String::from_utf8(out).unwrap();
     let again = s.home().recorded().unwrap();
@@ -296,8 +296,8 @@ fn tasks_reclaim_with_a_folder_rebuilds_that_board_and_says_what_it_did() {
 fn tasks_reclaim_in_a_repository_rebuilds_the_board_in_its_common_dir() {
     let s = Scratch::new("reclaim-repository");
     let repo = s.dir.join("repo");
-    let made = tasks::sys::output(
-        tasks::sys::Command::new("git")
+    let made = symphony_board::sys::output(
+        symphony_board::sys::Command::new("git")
             .args(["init", "-q"])
             .arg(&repo),
     )
@@ -308,12 +308,12 @@ fn tasks_reclaim_in_a_repository_rebuilds_the_board_in_its_common_dir() {
     board(&home.ensure().unwrap(), "tasks")
         .create(&NewTask::new("sim/jump", "Jump departure", "owner"))
         .unwrap();
-    let env = tasks::cli::Env {
+    let env = symphony_board::cli::Env {
         vars: [("SF_SURREAL".to_string(), s.surreal().display().to_string())].into(),
         cwd: repo.clone(),
     };
     let (mut out, mut err) = (Vec::new(), Vec::new());
-    let code = tasks::reclaim_main(&[], &env, &mut out, &mut err);
+    let code = symphony_board::reclaim_main(&[], &env, &mut out, &mut err);
     assert_eq!(code, 0, "{}", String::from_utf8_lossy(&err));
     let said = String::from_utf8(out).unwrap();
     let exports = common.join("sf-tasks").join("reclaim").join("exports");

@@ -21,7 +21,7 @@
 //! the whole transaction. Callback readers use that marker to reuse unchanged board inputs.
 
 #[cfg(test)]
-extern crate self as tasks;
+extern crate self as symphony_board;
 
 pub mod cbor;
 pub mod cli;

@@ -1,7 +1,7 @@
 use super::common::{Fixture, RawWrite, Seed};
 use serde_json::json;
-use tasks::embedding::{Chunk, DIMENSIONS, Embedder};
-use tasks::{EmbeddingStats, Store};
+use symphony_board::embedding::{Chunk, DIMENSIONS, Embedder};
+use symphony_board::{EmbeddingStats, Store};
 
 struct Fake {
     model: String,
@@ -68,7 +68,7 @@ fn repeated_neighbours_overfetch_until_the_requested_number_of_tasks_is_found() 
 #[test]
 fn briefs_larger_than_the_database_concat_limit_are_kept_in_full() {
     let f = Fixture::empty();
-    let mut task = tasks::NewTask::new("large/brief", "Large brief", "owner");
+    let mut task = symphony_board::NewTask::new("large/brief", "Large brief", "owner");
     // Over 1 MiB of source text plus 1,001 vectors exceeds the 4 MiB RPC ceiling.
     let line = "a".repeat(1100);
     task.body = format!("{line}\n").repeat(1000);
@@ -297,7 +297,7 @@ fn maintenance_finds_tasks_and_messages_created_after_the_previous_pass() {
     catch_up(&f.store, &mut fake);
     let before = fake.inputs;
     f.store
-        .create(&tasks::NewTask::new(
+        .create(&symphony_board::NewTask::new(
             "new/task",
             "engine new task",
             "worker",

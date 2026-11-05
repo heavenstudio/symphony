@@ -3,8 +3,8 @@
 use crate::common::NOW;
 use crate::{Case, git, scratch};
 use std::fs;
-use tasks::sys::local_minute;
-use tasks::{Message, NewLaunch, Role, Session, Task};
+use symphony_board::sys::local_minute;
+use symphony_board::{Message, NewLaunch, Role, Session, Task};
 
 #[test]
 fn each_command_says_what_it_did_in_one_line() {

@@ -32,8 +32,7 @@ symphony-api = { path = "../symphony-api" }
 # The plugin seams the game modules implement, and the project file (symphony.toml) they are chosen by.
 symphony-plugin = { path = "../symphony-plugin" }
 toml.workspace = true
-tasks = { path = "../tasks" }
-docs-index = { path = "../../../crates/docs-index" }
+symphony-board = { path = "../tasks" }
 gix = { version = "0.87", default-features = false, features = ["basic", "blob-diff", "revision", "sha1"] }
 
 # The board the verdict filing's tests run on: the store's own test server (SurrealDB, in memory), a
