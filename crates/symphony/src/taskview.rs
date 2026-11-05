@@ -404,29 +404,42 @@ pub fn activity(store: &symphony_board::Store) -> Result<Vec<ActivityItem>, symp
         .collect())
 }
 
+/// The board of the project at `root`, as this process's environment reaches it.
 pub fn connect(root: &Path) -> Result<symphony_board::Store, String> {
-    let mut env = symphony_board::cli::Env::of_process();
+    connect_in(root, symphony_board::cli::Env::of_process())
+}
+
+/// The board of the project at `root` as `env` reaches it, opened to read by the schema rule: a
+/// board one version ahead is read and never written, and a write on it is refused naming the
+/// project and `just symphony`.
+pub fn connect_in(
+    root: &Path,
+    mut env: symphony_board::cli::Env,
+) -> Result<symphony_board::Store, String> {
     env.cwd = root.to_path_buf();
     // A read-only web request is never a board session or a launcher.
     env.vars.remove("TASKS_SESSION");
-    let client =
-        symphony_board::cli::board_client(&env)?.waiting(std::time::Duration::from_secs(3));
-    if let Some(text) = env.vars.get("TASKS_NOW") {
-        let now = text
-            .parse::<f64>()
-            .ok()
-            .filter(|n| n.is_finite())
-            .ok_or_else(|| format!("TASKS_NOW={text} is not a time in seconds"))?;
-        symphony_board::Store::with(
-            client,
-            Box::new(move || now),
-            Box::new(symphony_board::sys::pid_alive),
-            &symphony_board::sys::hostname(),
-        )
-        .map_err(|e| e.to_string())
-    } else {
-        symphony_board::Store::open(client).map_err(|e| e.to_string())
+    let reached = symphony_board::cli::board(&env)?;
+    let client = reached.client.waiting(std::time::Duration::from_secs(3));
+    let how = symphony_board::Opening::read().of(reached.project.as_deref());
+    match env.vars.get("TASKS_NOW") {
+        Some(text) => {
+            let now = text
+                .parse::<f64>()
+                .ok()
+                .filter(|n| n.is_finite())
+                .ok_or_else(|| format!("TASKS_NOW={text} is not a time in seconds"))?;
+            symphony_board::Store::opening(
+                client,
+                Box::new(move || now),
+                Box::new(symphony_board::sys::pid_alive),
+                &symphony_board::sys::hostname(),
+                &how,
+            )
+        }
+        None => symphony_board::Store::open_as(client, &how),
     }
+    .map_err(|e| e.to_string())
 }
 
 pub fn agents(store: &symphony_board::Store, root: &Path) -> Result<symphony_api::Agents, String> {

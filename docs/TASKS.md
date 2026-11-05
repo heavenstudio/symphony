@@ -21,6 +21,22 @@ The heartbeat hook never starts it. `TASKS_SERVER` (an address) and
 history: `just tasks export` writes a readable snapshot to
 `docs/history/tasks.md` when one is worth keeping.
 
+Each project has a board of its own. A run's project is named by the nearest
+`symphony.toml` from its folder up, never past the top of the checkout it is in;
+with none, by the machine registry's entry for its repository's main checkout,
+else by that checkout's folder name. Its board is that repository's, in its
+common dir, under the same namespace and database. The Symphony serves each
+registered project's board, and reconnects to one whose server restarted. A
+project's heartbeat keys, sweep state and staffing lock stay in its common dir.
+
+Each build of the board writes one schema version, which the board records. A
+build opens a board at its own version with one read and no write. A newer
+build migrates an older board forward once, its additive steps and the new
+version in one transaction before any other write. An older build is refused
+before it writes, naming the project and `just symphony`. A Symphony one version
+behind still reads the board, and every write it would send is refused the same
+way. A store opened before a newer build migrated is refused at its next write.
+
 The command is the `tasks` binary (`symphony/crates/tasks`), built from this tree's
 sources once for every worktree that shares them (`tools/rs-bin.sh`): the
 first command after a change to them builds it, which takes a minute or two.

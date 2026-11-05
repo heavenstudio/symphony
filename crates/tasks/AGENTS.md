@@ -30,9 +30,34 @@ To run branch code, explicitly select a non-live database with `TASKS_DATABASE`
 or a leading `--database NAME`; a leading option overrides the environment.
 With the live `tasks` database, `TASKS_SERVER` selects branch code only when its
 validated TCP port differs from the canonical local listener in
-`sf-tasks/server.json`. The exact live address runs main. Different spellings
-on that port, invalid ports and missing or malformed records refuse the
-override; explicitly name a scratch database to use branch code there.
+`sf-tasks/server.json`, in the launcher's own common dir and in that of the
+repository the caller's folder is in. The exact live address runs main.
+Different spellings on that port, invalid ports and missing or malformed
+records refuse the override; explicitly name a scratch database to use branch
+code there.
+
+A run's board is its project's (`src/project.rs`): the nearest `symphony.toml`
+from its working directory up, never past the top of the checkout it is in (the
+first folder holding `.git`), names the project by its `[project] id`; with
+none, or none naming an id, the machine registry (`projects.json` in
+`SYMPHONY_MACHINE_DIR`, else the platform's Symphony folder) names it by the
+entry for the repository's main checkout, else that checkout's folder name
+does. The board is the repository's own, its server in that common dir and its
+namespace and database unchanged. The heartbeat keys, the idle sweep's state
+and the staffing lock stay there too. A fixture repository under a checkout's
+`artifacts/` is its own project, so no test reaches the board around it.
+
+The schema rule (`src/schema.rs`, `Store::opening`): a store opens with one
+read of `meta:schema`. A writer opens only a board at its own version. A newer
+one migrates an older board, or one not made yet, forward once: its additive
+steps and the new version in one transaction, before any other write, which
+one of several openers commits while the others find it done. An older writer
+is refused before any write, naming the project and `just symphony`. A reader
+(the Symphony's `taskview::connect_in`) one version behind reads; more than
+one behind, it is refused before it reads. Every write transaction starts with
+the schema guard, which refuses a write to a board at another version in the
+same transaction, so a reader's writes and those of a store opened before a
+newer build migrated are refused there, the same way.
 `TASKS_DB` is the old SQLite cutover input, not a scratch selector. Never run
 `tools/rs-bin.sh tasks` directly against the live board from a branch.
 The crate's tests keep running their own binary; `SF_TASKS_CLI` continues to

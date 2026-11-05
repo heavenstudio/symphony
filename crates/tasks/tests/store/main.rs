@@ -21,6 +21,7 @@ mod priority;
 mod quiet_callbacks;
 mod reserve;
 mod roles;
+mod schema;
 mod sessions;
 mod sqlite;
 mod start;

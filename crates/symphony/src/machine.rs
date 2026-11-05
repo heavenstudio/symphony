@@ -18,7 +18,7 @@ pub use folder::dir;
 pub use registry::{Added, Entry, Registry};
 
 /// Names the machine folder in place of the platform's: a test's own, never the owner's.
-pub const DIR_ENV: &str = "SYMPHONY_MACHINE_DIR";
+pub const DIR_ENV: &str = symphony_board::project::MACHINE_DIR;
 /// The registry, in the machine folder.
 pub const PROJECTS: &str = "projects.json";
 /// The lock every writer of the registry takes, in the machine folder.

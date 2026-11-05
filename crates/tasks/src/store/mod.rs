@@ -14,7 +14,6 @@ use crate::rows::{Dump, LinkRow, MessageRow, RoleRow, SessionRow, TaskRow};
 use crate::rpc::{Client, DbError};
 use crate::schema;
 use serde::Deserialize;
-use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt;
@@ -30,15 +29,19 @@ mod embeddings;
 mod fields;
 mod launches;
 mod messages;
+mod opening;
 pub(crate) mod search;
 mod sessions;
+mod transaction;
 mod work;
 
 pub use callbacks::Callback;
 pub use embeddings::{EmbeddingStats, VectorHit, VectorSearchProfile};
 pub use launches::NewLaunch;
+pub use opening::Opening;
 pub use search::SearchHit;
 pub use sessions::{Beat, KINDS, NewSession, Pick};
+use transaction::Run;
 pub use work::{
     BEFORE_WORK, LANDS_FROM, Landed, NewTask, PIPELINE, PULLABLE, ROLES, STATUSES, can_transition,
 };
@@ -151,6 +154,10 @@ pub struct Store {
     clock: Clock,
     pid_alive: Probe,
     host: String,
+    /// The schema version this store writes, which every write's [`schema::GUARD`] checks.
+    schema: i64,
+    /// What a write on a board at another version is refused with, naming the board's project.
+    refusal: schema::Refusal,
     /// Where new sessions' handles come from.
     pick: Mutex<Box<dyn Pick>>,
     callback_snapshot: Mutex<Option<Snapshot>>,
@@ -160,58 +167,6 @@ pub struct Store {
 }
 
 impl Store {
-    /// The board in `client`'s database, its tables made if they are not there yet, read with this
-    /// machine's clock, host name and process table.
-    pub fn open(client: Client) -> Result<Store, Error> {
-        let host = crate::sys::hostname();
-        Store::with(
-            client,
-            Box::new(now),
-            Box::new(crate::sys::pid_alive),
-            &host,
-        )
-    }
-
-    /// As `open`, with the clock, the process probe and the host name given (the tests' own).
-    pub fn with(
-        client: Client,
-        clock: Clock,
-        pid_alive: Probe,
-        host: &str,
-    ) -> Result<Store, Error> {
-        let store = Store::unchecked(client, clock, pid_alive, host);
-        store.retrying(|| {
-            let found = store.client.define_then(
-                "RETURN IF (INFO FOR DB).tables.meta = NONE { NONE } ELSE { (SELECT VALUE version FROM ONLY meta:schema) };",
-                json!({}),
-            )?;
-            if found.last() != Some(&json!(schema::VERSION)) {
-                store.client.query(schema::ANALYZERS, json!({}))?;
-                // One transaction: a definition that fails, or loses to another open's at once, takes the
-                // version with it, so no open takes a board missing it for made.
-                let define = format!("{}\nUPSERT meta:schema SET version = $version RETURN NONE;\nRETURN NONE;", schema::DEFINE);
-                store.transact::<Value>(&define, json!({"version": schema::VERSION}))?;
-            }
-            Ok(())
-        })?;
-        Ok(store)
-    }
-
-    /// As `with`, taking the board's tables as they are, without the request that checks them: the
-    /// heartbeat's, one request on every tool call, on a board any other command has opened.
-    pub fn unchecked(client: Client, clock: Clock, pid_alive: Probe, host: &str) -> Store {
-        Store {
-            client,
-            clock,
-            pid_alive,
-            host: host.into(),
-            pick: Mutex::new(Box::new(sessions::Random::seeded())),
-            callback_snapshot: Mutex::new(None),
-            callback_idle: Mutex::new(None),
-            clock_panes: Mutex::new(None),
-        }
-    }
-
     pub fn client(&self) -> &Client {
         &self.client
     }
@@ -376,7 +331,8 @@ impl Store {
 
     /// Every row of `tables` into schemaless tables named `{staging}_{table}`, each request at most
     /// `CHUNK_BYTES`: a board is bigger than the server takes in one. The copy's one transaction then
-    /// moves them in.
+    /// moves them in. The tables are made behind the schema guard, so a board at another version
+    /// than this store's is refused before anything is staged in it.
     fn stage(&self, staging: &str, tables: &[(&str, Vec<Value>)]) -> Result<(), Error> {
         let send = |sql: &str, vars: Value| {
             self.retrying(|| Ok(self.client.query(sql, vars.clone())?))
@@ -386,7 +342,13 @@ impl Store {
             .iter()
             .map(|(table, _)| format!("DEFINE TABLE {staging}_{table} SCHEMALESS;"))
             .collect();
-        send(&define, json!({}))?;
+        self.retrying(|| {
+            self.run_transaction::<Value>(
+                &format!("{define}\nRETURN NONE;"),
+                json!({}),
+                Run::Guarded { dispatch: false },
+            )
+        })?;
         for (table, rows) in tables {
             let insert = format!("INSERT INTO {staging}_{table} $rows RETURN NONE;");
             let (mut chunk, mut bytes) = (Vec::new(), 0);
@@ -870,47 +832,6 @@ impl Store {
         (read, vars)
     }
 
-    /// `body`'s statements in one transaction; the last of them is a `RETURN` of the answer. A null
-    /// among `vars` is left out, so it reads as NONE: SurrealDB's NULL is a value an `option` field
-    /// refuses, and that is never equal to NONE.
-    fn transact<T: DeserializeOwned>(&self, body: &str, vars: Value) -> Result<T, Failure> {
-        self.transact_dispatch(body, vars, true)
-    }
-
-    /// A task write returns recipient presence in its snapshot and dispatches after decoding it.
-    /// Other writes keep the normal post-commit dispatch path.
-    fn transact_dispatch<T: DeserializeOwned>(
-        &self,
-        body: &str,
-        mut vars: Value,
-        dispatch: bool,
-    ) -> Result<T, Failure> {
-        unset_nulls(&mut vars);
-        let results = self.client.query(
-            &format!("BEGIN TRANSACTION;\n{body}\nCOMMIT TRANSACTION;"),
-            vars,
-        )?;
-        // The write has committed. Delivery failure must never turn it into a failed write that a
-        // caller might repeat. The shared server also drains this durable outbox after a crash.
-        if dispatch
-            && body.contains("CREATE type::record('message',")
-            && let Err(error) = self.dispatch_callbacks()
-        {
-            eprintln!("CALLBACK deferred: {error}");
-        }
-        let answer = results
-            .len()
-            .checked_sub(2)
-            .and_then(|last| results.into_iter().nth(last));
-        let answer = answer
-            .ok_or_else(|| Failure::Stop(Error::Db("a transaction gave no answer".into())))?;
-        serde_json::from_value(answer).map_err(|e| {
-            Failure::Stop(Error::Db(format!(
-                "an answer not in the board's shape: {e}"
-            )))
-        })
-    }
-
     fn retrying<T>(&self, mut once: impl FnMut() -> Result<T, Failure>) -> Result<T, Error> {
         let began = Instant::now();
         let mut attempt = 0;
@@ -1379,17 +1300,6 @@ LET $ts = $counted.ts;
 CREATE type::record('message', [{slug}, $sid]) SET sid = $sid, slug = {slug}, sender = {sender}, recipient = {recipient},
     kind = {kind}, text = {text}, ts = $ts RETURN NONE;"
     )
-}
-
-fn unset_nulls(value: &mut Value) {
-    match value {
-        Value::Object(fields) => {
-            fields.retain(|_, field| !field.is_null());
-            fields.values_mut().for_each(unset_nulls);
-        }
-        Value::Array(items) => items.iter_mut().for_each(unset_nulls),
-        _ => {}
-    }
 }
 
 fn message(row: MessageRow) -> Message {

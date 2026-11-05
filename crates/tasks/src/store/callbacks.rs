@@ -1229,9 +1229,9 @@ RETURN NONE;");
                     );
                     // No reentrant dispatch from a delivery diagnostic.
                     self.retrying(|| {
-                        self.client.query(&format!("BEGIN TRANSACTION; {body} COMMIT TRANSACTION;"), json!({
+                        self.run_transaction::<Value>(&body, json!({
                             "slug":slug, "now":self.now(), "text":format!("CALLBACK {handle} failed after 3 attempts: {why}; retained in inbox ({command} inbox --as {handle})"),
-                        }))?;
+                        }), super::Run::Guarded { dispatch: false })?;
                         Ok(())
                     })?;
                 }

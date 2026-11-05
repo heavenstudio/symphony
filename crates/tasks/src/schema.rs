@@ -22,11 +22,190 @@
 //! every row the move left, so a move into a board written since is refused.
 //!
 //! `meta:schema` names the version defined, so opening a board already in this shape writes nothing.
+//!
+//! The rule for writers of different versions on one board ([`decide`]): a build opens a board for
+//! writing only at its own version. A board at an older version, or none, is migrated forward once
+//! by the first newer build to open it: the analyzer, then the version's steps and its record in one
+//! transaction that first checks the version it read is still the board's, before any other write.
+//! An older build refuses a newer board before any mutation, naming the project and `just
+//! symphony`; a reader one version behind reads it. Every write transaction starts with the
+//! [`guard`], so a store opened before a newer build migrated stops at its next write.
 
-/// Bumped when `DEFINE` gains a table, field, index or event: a board at another version runs `DEFINE`
-/// again, and its `IF NOT EXISTS` adds what is new but leaves every definition already there as it
-/// was. Changing one (a field's type, an assertion, an index) also needs `DEFINE … OVERWRITE` for it.
+/// Bumped when `DEFINE` gains a table, field, index or event: a board at an older version runs
+/// `DEFINE` once, and its `IF NOT EXISTS` adds what is new but leaves every definition already there
+/// as it was. Changing one (a field's type, an assertion, an index) also needs `DEFINE … OVERWRITE`
+/// for it. The steps are additive, so a reader one version behind still reads what a newer build
+/// writes.
 pub const VERSION: i64 = 11;
+
+/// A board schema: its version, and the steps that bring a board of any older version to it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Schema {
+    version: i64,
+    steps: String,
+}
+
+impl Schema {
+    /// This build's: [`VERSION`], by [`DEFINE`].
+    pub fn this_build() -> Schema {
+        Schema {
+            version: VERSION,
+            steps: DEFINE.into(),
+        }
+    }
+
+    pub fn version(&self) -> i64 {
+        self.version
+    }
+
+    /// The schema one version on, `step` run after this one's: a newer build's.
+    pub fn then(&self, step: &str) -> Schema {
+        Schema {
+            version: self.version + 1,
+            steps: format!("{}\n{step}", self.steps),
+        }
+    }
+
+    /// The schema one version back, by the same steps: an older build's, as far as the rule goes.
+    pub fn before(&self) -> Schema {
+        Schema {
+            version: self.version - 1,
+            steps: self.steps.clone(),
+        }
+    }
+
+    pub(crate) fn steps(&self) -> &str {
+        &self.steps
+    }
+}
+
+/// What a store opens a board for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Access {
+    /// Reads and writes, at the store's own version only.
+    Write,
+    /// Reads, of a board at the store's own version or one ahead. Its writes still meet the
+    /// [`guard`], so one version behind it writes nothing.
+    Read,
+}
+
+/// What opening a board at `found` (none: no board yet) takes, for a build of version `own`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum Opened {
+    /// The board is at this build's version: nothing to write.
+    Current,
+    /// The board is one version ahead and the store only reads it.
+    Ahead,
+    /// The board is older, or none: this build migrates it forward.
+    Migrate,
+    /// Refused, in these words, before anything is read or written.
+    Refused(String),
+}
+
+/// The schema rule for a build of version `own` opening, for `access`, a board at `found` of the
+/// project `project` (none: a board no project names, such as a scratch one).
+pub(crate) fn decide(
+    found: Option<i64>,
+    own: i64,
+    access: Access,
+    project: Option<&str>,
+) -> Opened {
+    match found {
+        None => Opened::Migrate,
+        Some(found) if found == own => Opened::Current,
+        Some(found) if found < own => Opened::Migrate,
+        Some(found) if found == own + 1 && access == Access::Read => Opened::Ahead,
+        Some(found) => Opened::Refused(match access {
+            Access::Write => {
+                let refusal = Refusal::of(project, own);
+                format!("{}{found}{}", refusal.before, refusal.after)
+            }
+            Access::Read => {
+                let named = Named::of(project);
+                format!(
+                    "{} is at schema {found}, more than one ahead of this build's {own}: nothing \
+                     was read; `just symphony` in {} brings its Symphony to the board's schema",
+                    named.board, named.project
+                )
+            }
+        }),
+    }
+}
+
+/// How a refusal names the board and its project.
+struct Named {
+    board: String,
+    project: String,
+}
+
+impl Named {
+    fn of(project: Option<&str>) -> Named {
+        match project {
+            Some(project) => Named {
+                board: format!("the {project} board"),
+                project: project.into(),
+            },
+            None => Named {
+                board: "this board".into(),
+                project: "its project".into(),
+            },
+        }
+    }
+}
+
+/// A write's refusal around the board's version, which only the [`guard`] reads at the write.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct Refusal {
+    pub before: String,
+    pub after: String,
+}
+
+impl Refusal {
+    pub(crate) fn of(project: Option<&str>, own: i64) -> Refusal {
+        let named = Named::of(project);
+        Refusal {
+            before: format!("{} is at schema ", named.board),
+            after: format!(
+                ", and this build writes only a board at its own schema, {own}: nothing was \
+                 written; `just symphony` in {} brings its Symphony to the board's schema",
+                named.project
+            ),
+        }
+    }
+}
+
+/// The statements every write transaction starts with: it throws the refusal (`$board_schema_*`,
+/// [`guard_vars`]) unless the board is at this store's version, before the write's own statements.
+pub(crate) const GUARD: &str = "LET $board_schema_found = (SELECT VALUE version FROM ONLY meta:schema);
+IF $board_schema_found != $board_schema { THROW string::concat($board_schema_before, <string> $board_schema_found, $board_schema_after) };";
+
+/// [`GUARD`]'s variables, for a store of version `own` refusing in `refusal`'s words: added to a
+/// write's own (`vars`, an object, or nothing).
+pub(crate) fn guard_vars(vars: &mut serde_json::Value, own: i64, refusal: &Refusal, refused: &str) {
+    if !vars.is_object() {
+        *vars = serde_json::json!({});
+    }
+    vars["board_schema"] = own.into();
+    vars["board_schema_before"] = format!("{refused}{}", refusal.before).into();
+    vars["board_schema_after"] = refusal.after.clone().into();
+}
+
+/// The statements that change a database: a transaction holding one is a write.
+const MUTATING: [&str; 10] = [
+    "ALTER", "CREATE", "DEFINE", "DELETE", "INSERT", "REBUILD", "RELATE", "REMOVE", "UPDATE",
+    "UPSERT",
+];
+
+/// Whether `sql` can change the database: it names one of the statements that do, as a whole word in
+/// any case. The board's statements are this crate's own text, every value a variable beside it.
+pub(crate) fn mutates(sql: &str) -> bool {
+    sql.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+        .any(|word| {
+            MUTATING
+                .iter()
+                .any(|statement| statement.eq_ignore_ascii_case(word))
+        })
+}
 
 // Full-text index construction needs a committed analyzer, installed before the schema transaction.
 pub const ANALYZERS: &str = "DEFINE ANALYZER IF NOT EXISTS task_words TOKENIZERS blank, class, punct FILTERS lowercase, ascii;";
@@ -170,3 +349,7 @@ DEFINE EVENT OVERWRITE board_changed ON callback_state
     THEN { IF record::exists(counter:board) { UPDATE counter:board SET last = (last ?? 0) + 1 RETURN NONE; } ELSE { CREATE counter:board SET last = 1 RETURN NONE; }; };
 DEFINE EVENT OVERWRITE board_changed ON chat_event WHEN $before != $after THEN { IF record::exists(counter:board) { UPDATE counter:board SET last = (last ?? 0) + 1 RETURN NONE; } ELSE { CREATE counter:board SET last = 1 RETURN NONE; }; };
 ";
+
+#[cfg(test)]
+#[path = "schema_tests.rs"]
+mod tests;

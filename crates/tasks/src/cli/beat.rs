@@ -325,8 +325,12 @@ pub fn run(input: &mut dyn std::io::Read, env: &Env) -> i32 {
             .and_then(Value::as_str)
             .filter(|cwd| !cwd.is_empty())
             .map_or_else(|| env.cwd.clone(), PathBuf::from);
-        let client = super::reach(env, &cwd, false).ok()?.waiting(WAIT);
-        let store = super::open_unchecked(client, &super::Clock::of(env).ok()?);
+        let reached = super::reach(env, &cwd, false).ok()?;
+        let reached = super::Reached {
+            client: reached.client.waiting(WAIT),
+            ..reached
+        };
+        let store = super::open_unchecked(reached, &super::Clock::of(env).ok()?);
         let (key, bound) = beat_event(&store, event).ok()??;
         mark(&keys_folder(env, &cwd)?, &key, bound);
         Some(())
