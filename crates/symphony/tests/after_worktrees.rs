@@ -2,6 +2,8 @@
 //! command counts rather than host wall-clock speed.
 
 mod common;
+#[path = "after_worktrees/in_flight.rs"]
+mod in_flight;
 #[path = "after_worktrees/owner_save.rs"]
 mod owner_save;
 #[path = "after_worktrees/routes.rs"]
@@ -15,6 +17,7 @@ use std::time::{Duration, Instant};
 use symphony_board::sys::{Command, Spawning as _};
 
 use common::Tree;
+use in_flight::{Scan, ended_early, in_flight, scan_end};
 use serde_json::json;
 use symphony::{branches, docview, render::Render, versions};
 use symphony_api::{Document, DocumentChange};
@@ -995,12 +998,13 @@ fn scan_225_worktrees_has_bounded_commands_and_parallel_waits() {
     let mut arrivals_guard = arrivals.try_clone().unwrap();
     let mut release = open_fifo("release");
     let (send, receive) = std::sync::mpsc::channel();
+    let send_end = send.clone();
     let reader = std::thread::spawn(move || {
         let mut reader = BufReader::new(arrivals);
         for _ in 0..8 {
             let mut line = String::new();
             reader.read_line(&mut line).unwrap();
-            send.send(line).unwrap();
+            send.send(Scan::Arrived(line)).unwrap();
         }
     });
     executable(
@@ -1039,7 +1043,7 @@ exec /usr/bin/git "$@"
             .chain(std::env::split_paths(&std::env::var_os("PATH").unwrap())),
     )
     .unwrap();
-    let mut child = symphony_board::sys::spawn_output(
+    let child = symphony_board::sys::spawn_output(
         Command::new(std::env::current_exe().unwrap())
             .args([
                 "--exact",
@@ -1051,33 +1055,27 @@ exec /usr/bin/git "$@"
             .env("PATH", path),
     )
     .unwrap();
-    let mut active = std::collections::BTreeSet::new();
-    for _ in 0..8 {
-        match receive.recv_timeout(Duration::from_secs(30)) {
-            Ok(path) => {
-                active.insert(path);
-            }
-            Err(error) => {
-                // Unblock our intercepted children and the reader even when concurrency regresses.
-                release
-                    .write_all(b"go\ngo\ngo\ngo\ngo\ngo\ngo\ngo\ngo\ngo\n")
-                    .unwrap();
-                child.kill().unwrap();
-                let _ = child.wait();
-                arrivals_guard
-                    .write_all(b"abort\nabort\nabort\nabort\nabort\nabort\nabort\nabort\n")
-                    .unwrap();
-                reader.join().unwrap();
-                panic!("scan must start eight independent worktrees before awaiting any: {error}");
-            }
-        }
-    }
+    let waiter = std::thread::spawn(move || {
+        let _ = send_end.send(Scan::Ended(symphony_board::sys::wait_output(child)));
+    });
+    // No deadline: nothing is released before eight distinct worktrees arrive (`in_flight`). A
+    // serial scan never brings a second, so it shows as the suite's budget timeout, its last
+    // stderr line naming the held worktree ("scan: 1 of 8 worktrees in flight ...: <path>").
+    let active = in_flight(&receive, 8);
     // Release the first eight and the two remaining workers, with no timing sleeps.
     release
         .write_all(b"go\ngo\ngo\ngo\ngo\ngo\ngo\ngo\ngo\ngo\n")
         .unwrap();
+    if active.is_err() {
+        // Unblock the reader, which still waits for the arrivals that never came.
+        arrivals_guard
+            .write_all(b"abort\nabort\nabort\nabort\nabort\nabort\nabort\nabort\n")
+            .unwrap();
+    }
     reader.join().unwrap();
-    let done = symphony_board::sys::wait_output(child).unwrap();
+    let active = active.unwrap_or_else(ended_early);
+    let done = scan_end(&receive);
+    waiter.join().unwrap();
     assert_eq!(active.len(), 8);
     assert!(
         done.status.success(),
