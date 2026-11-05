@@ -49,11 +49,18 @@ fn mime(path: &str) -> Option<&'static str> {
     )
 }
 
-/// The type the file `path` of the project at `root` is served as: its own kind's, else the type
-/// the renderer of the project's plugins that draws it names, else bytes.
+/// The type the file `path` of the project at `root` is served as ([`served_type`]).
 fn content_type(root: &Path, path: &str) -> &'static str {
-    mime(path)
-        .or_else(|| symphony::renderers::content_type(&symphony::plugins::Plugins::of(root), path))
+    let plugins = symphony::plugins::Plugins::of(root);
+    served_type(symphony::renderers::content_type(&plugins, path), path)
+}
+
+/// The type a file is served as: the one the renderer that draws it names (`drawn`), whatever its
+/// extension's own kind, else that kind's, else bytes. The Symphony's pictures and mockups are
+/// never a renderer's, so they keep their own.
+fn served_type(drawn: Option<&'static str>, path: &str) -> &'static str {
+    drawn
+        .or_else(|| mime(path))
         .unwrap_or("application/octet-stream")
 }
 
@@ -217,8 +224,23 @@ pub(crate) async fn contained(
 
 #[cfg(test)]
 mod tests {
-    use super::{content_type, handles};
+    use super::{content_type, handles, served_type};
     use crate::testing::Tree;
+
+    #[test]
+    fn a_file_a_renderer_draws_takes_its_type_over_its_extensions_own() {
+        const PROBE: &str = "application/vnd.probe+json";
+        for path in ["/data/a.json", "/notes/a.txt", "/a.GLTF"] {
+            let served = (served_type(Some(PROBE), path), served_type(None, path));
+            assert_ne!(served.1, PROBE, "{path}");
+            assert_eq!(served.0, PROBE, "{path}");
+        }
+        let undrawn = (
+            served_type(None, "/a.json"),
+            served_type(None, "/a.lantern"),
+        );
+        assert_eq!(undrawn, ("application/json", "application/octet-stream"));
+    }
 
     #[test]
     fn a_plugin_drawn_file_is_served_as_its_projects_renderer_names_and_others_as_their_own() {
@@ -237,7 +259,15 @@ mod tests {
                 "{path}"
             );
         }
-        let png = content_type(&plain.root, "/a.png");
+        let ledger = (
+            content_type(&shelf.root, "/room/ledger.csv"),
+            content_type(&plain.root, "/room/ledger.csv"),
+        );
+        assert_eq!(
+            ledger,
+            (crate::shelf::LEDGER_TYPE, "text/csv; charset=utf-8")
+        );
+        let png = content_type(&shelf.root, "/a.png");
         assert_eq!(png, "image/png");
         assert!(
             handles("/a.png") && !handles("/a.item"),

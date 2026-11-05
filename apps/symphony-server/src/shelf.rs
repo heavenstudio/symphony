@@ -3,14 +3,15 @@
 //! shelf, each with the poster its label names, else its label's own picture. The gallery is cached
 //! per root and its watch drops and warms it, as a project's gallery would. Its page is `/shelf`, and
 //! `/x/shelf/NAME.item` serves an item's file. Its renderer, `shelf-item`, draws an `.item` file in
-//! the fixture viewer [`viewer`], in the gallery and wherever a page links or pictures one.
+//! the fixture viewer [`viewer`], in the gallery and wherever a page links or pictures one; its
+//! `shelf-ledger` draws a `.csv` file as a line of text.
 
 use std::collections::HashMap;
 use std::path::{Component as Part, Path, PathBuf};
 use std::sync::{LazyLock, Mutex};
 
 use sha2::{Digest, Sha256};
-use symphony_plugin::vocabulary::{Block, GalleryItem, Media, NavItem, View, Viewer};
+use symphony_plugin::vocabulary::{Block, GalleryItem, Media, NavItem, Span, View, Viewer};
 use symphony_plugin::{Component, Drawing, File, Page, Plugin, Renderer, Reply, Route, Watch};
 
 /// The plugin's name, as a project's `[plugins] crates` lists it.
@@ -52,7 +53,7 @@ impl Plugin for Shelf {
     }
 
     fn renderers(&self) -> Vec<&dyn Renderer> {
-        vec![self]
+        vec![self, &Ledger]
     }
 
     fn watches(&self) -> Vec<&dyn Watch> {
@@ -115,6 +116,34 @@ impl Renderer for Shelf {
 
     fn draw(&self, _page: &Page<'_>, _file: &File<'_>) -> Result<Drawing, String> {
         Ok(Drawing::Viewer(viewer()))
+    }
+}
+
+/// The shelf's ledger, a `.csv` file drawn as a line of text and served as [`LEDGER_TYPE`]: a
+/// renderer of an extension the server knows a kind of its own for.
+struct Ledger;
+
+pub const LEDGER_TYPE: &str = "text/vnd.shelf-ledger";
+
+impl Renderer for Ledger {
+    fn name(&self) -> &str {
+        "shelf-ledger"
+    }
+
+    fn extensions(&self) -> &[&str] {
+        &["csv"]
+    }
+
+    fn content_type(&self) -> &str {
+        LEDGER_TYPE
+    }
+
+    fn draw(&self, _page: &Page<'_>, file: &File<'_>) -> Result<Drawing, String> {
+        Ok(Drawing::Blocks(vec![Block::Paragraph {
+            spans: vec![Span::Text {
+                text: format!("ledger {}", file.label),
+            }],
+        }]))
     }
 }
 
