@@ -5221,6 +5221,7 @@ dependencies = [
  "sha2",
  "symphony-api",
  "symphony-board",
+ "symphony-docs",
  "symphony-plugin",
  "toml",
  "unicode-normalization",

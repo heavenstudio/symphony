@@ -34,6 +34,40 @@ fn entries_parse_time_author_verdict_and_text() {
 }
 
 #[test]
+fn a_hidden_unseen_owner_line_breaks_no_continuation() {
+    let entries = card(&[
+        "- [x] **a**",
+        "  [2026-11-04] agent — A",
+        "  <!-- review:unseen-owner a b -->",
+        "    B",
+    ])
+    .entries();
+    assert_eq!(
+        entries,
+        vec![entry(Some("2026-11-04"), Who::Agent, None, "A\nB")]
+    );
+}
+
+#[test]
+fn a_hidden_unseen_owner_line_outside_an_entry_is_no_entry() {
+    let found = card(&[
+        "- [x] **a**",
+        "  <!-- review:unseen-owner k1 k2 -->",
+        "  [2026-11-04] owner · approved — fine",
+    ]);
+    assert_eq!(
+        found.entries(),
+        vec![entry(
+            Some("2026-11-04"),
+            Who::Owner,
+            Some("approved"),
+            "fine"
+        )]
+    );
+    assert_eq!(found.note, vec!["[2026-11-04] owner · approved — fine"]);
+}
+
+#[test]
 fn legacy_lines_become_undated_entries() {
     let entries = card(&["- [x] **a** — 1", "  owner words", "  ↳ agent words"]).entries();
     assert_eq!(
