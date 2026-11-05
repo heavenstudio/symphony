@@ -425,12 +425,14 @@ pub fn connect(root: &Path) -> Result<tasks::Store, String> {
 }
 
 /// A quick-task outcome read must identify the owner's intended task before confirming it.
-pub(crate) fn is_quick_task(task: &tasks::Task, new: &tasks::NewTask) -> bool {
+pub(crate) fn is_quick_task(task: &tasks::Task, receipt: &str) -> bool {
     task.created_by == "owner"
-        && task.title == new.title.trim()
-        && task.body == new.body
-        && task.priority == new.priority
-        && task.links == new.links
+        && task
+            .fields
+            .get("_symphony")
+            .and_then(|fields| fields.get("owner_save"))
+            .and_then(serde_json::Value::as_str)
+            == Some(receipt)
 }
 
 pub fn agents(store: &tasks::Store, root: &Path) -> Result<symphony_api::Agents, String> {

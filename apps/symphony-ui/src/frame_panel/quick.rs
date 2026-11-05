@@ -145,10 +145,10 @@ pub(super) fn QuickPanel(route: Route, mut draft: Signal<Draft>) -> Element {
                 save_draft(&draft());
                 let url = docs::scoped(&d.request_scope, "/api/quick-task");
                 let fields = [
-                    ("request", d.request.clone().into()),
-                    ("title", d.title.clone().into()),
+                    ("request", d.request.into()),
+                    ("title", d.title.into()),
                     ("body", attach.compose(&d.text).into()),
-                    ("slug", d.slug.clone().into()),
+                    ("slug", d.slug.into()),
                     ("priority", d.priority.parse::<f64>().unwrap_or(2.0).into()),
                     ("page", page.into()),
                 ];

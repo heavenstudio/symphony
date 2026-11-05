@@ -77,12 +77,20 @@ fn an_uncertain_task_save_keeps_its_draft_and_identity_until_confirmation() {
         .iter()
         .filter(|(path, body)| path == "/api/quick-task" && body["title"] == "Second task")
         .collect();
-    assert!(checks.len() >= 3, "pending, unavailable, then confirmed");
+    assert!(
+        checks.len() >= 3,
+        "pending, unavailable, then confirmed: {} checks",
+        checks.len()
+    );
     assert!(
         checks.iter().all(|(_, body)| body == &original),
         "every check must use the original identity and payload: {checks:?}"
     );
 
+    known_refusals(&mut page);
+}
+
+fn known_refusals(page: &mut super::chrome::Chrome) {
     page.call(
         "Fetch.enable",
         json!({"patterns":[{"urlPattern":"*api/quick-task","requestStage":"Request"}]}),
@@ -95,5 +103,14 @@ fn an_uncertain_task_save_keeps_its_draft_and_identity_until_confirmation() {
     page.call("Fetch.fulfillRequest", json!({"requestId":held[0]["requestId"],"responseCode":400,"responseHeaders":[{"name":"Content-Type","value":"application/json"}],"body":body}));
     assert!(page.wait_for("document.querySelector('#quick-sheet [role=alert]')?.textContent==='Task slug already exists'", SHOWN));
     assert_eq!(page.eval("({title:document.getElementById('quick-title').value,text:document.getElementById('quick-text').value,locked:document.getElementById('quick-title').disabled,oldSuccess:!!document.querySelector('#quick-sheet a[href=\"/task/inbox/second\"]')})"), json!({"title":"Third task","text":"Keep the rejected text","locked":false,"oldSuccess":false}));
+    page.eval("document.querySelector('#quick-sheet form').requestSubmit()");
+    // The browser harness retains the first refusal's event in its protocol history.
+    let held = page.wait_for_protocol_events("Fetch.requestPaused", 2, SHOWN);
+    assert_eq!(held.len(), 2);
+    assert_ne!(held[0]["requestId"], held[1]["requestId"]);
+    let body = page.eval("btoa(JSON.stringify({error:'Board unavailable before dispatch'}))");
+    page.call("Fetch.fulfillRequest", json!({"requestId":held[1]["requestId"],"responseCode":422,"responseHeaders":[{"name":"Content-Type","value":"application/json"}],"body":body}));
+    assert!(page.wait_for("document.querySelector('#quick-sheet [role=alert]')?.textContent==='Board unavailable before dispatch'", SHOWN));
+    assert_eq!(page.eval("({text:document.getElementById('quick-text').value,locked:document.getElementById('quick-title').disabled})"), json!({"text":"Keep the rejected text","locked":false}));
     page.call("Fetch.disable", json!({}));
 }

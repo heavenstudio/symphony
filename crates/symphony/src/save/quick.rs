@@ -19,7 +19,7 @@ impl Saves {
         payload: &Value,
     ) -> Result<Value, Failure> {
         let title = string(payload, "title").trim();
-        let identity = if route == "/api/quick-task" {
+        if route == "/api/quick-task" {
             if title.chars().count() > symphony_api::QUICK_TASK_TITLE_MAX {
                 return Err(format!(
                     "Use at most {} characters for the task title",
@@ -27,39 +27,86 @@ impl Saves {
                 )
                 .into());
             }
-            Some(quick_task::identity(payload)?)
-        } else {
-            None
-        };
-        if let Some(identity) = identity.as_deref()
-            && let Some(record) = quick_task::load(&self.root, identity, scope, payload)?
-        {
+            let identity = quick_task::identity(payload)?;
+            let mut receipt = quick_task::Receipt::open(&self.root, &identity, scope, payload)?;
+            if let Some(result) = receipt.completed() {
+                return result;
+            }
+            let result = self.quick_task(scope, payload, &identity, &receipt);
+            return receipt.finish(result);
+        }
+        let PageContext { page, doc, anchor } = self.quick_context(scope, payload)?;
+        let mut text = string(payload, "text").trim().to_string();
+        if doc.is_empty() && !page.is_empty() && !text.is_empty() {
+            text.push_str(&format!("\n\n(sent from {page})"));
+        }
+        let store = asks::AskStore::open(&asks::default_path(
+            &self.root,
+            std::env::var("ASKS_DB").ok().as_deref(),
+        ))?;
+        let readme = crate::project::Project::of(&self.root).entrypoints[0].route("README.md");
+        let id = store.ask(
+            if doc.is_empty() { &readme } else { &doc },
+            &text,
+            if doc.is_empty() { "" } else { &anchor },
+            "",
+        )?;
+        Ok(json!({"id":id}))
+    }
+
+    fn quick_task(
+        &self,
+        scope: &str,
+        payload: &Value,
+        identity: &str,
+        receipt: &quick_task::Receipt,
+    ) -> Result<Value, Failure> {
+        let record = quick_task::load(&self.root, identity, scope, payload).map_err(|error| {
+            if receipt.fresh {
+                before_dispatch(error)
+            } else {
+                error
+            }
+        })?;
+        if let Some(record) = record {
             return match self.store() {
-                Ok(store) => quick_task::create(&store, &record.task(), quick_task::Attempt::Check),
+                Ok(store) => quick_task::create(
+                    &store,
+                    &record.task(),
+                    &receipt.fingerprint,
+                    quick_task::Attempt::Check,
+                ),
                 Err(error) => Ok(quick_task::pending(&error.error)),
             };
         }
-        let PageContext { page, doc, anchor } = self.quick_context(scope, payload)?;
-        if route == "/api/quick-chat" {
-            let mut text = string(payload, "text").trim().to_string();
-            if doc.is_empty() && !page.is_empty() && !text.is_empty() {
-                text.push_str(&format!("\n\n(sent from {page})"));
-            }
-            let store = asks::AskStore::open(&asks::default_path(
-                &self.root,
-                std::env::var("ASKS_DB").ok().as_deref(),
-            ))?;
-            let readme = crate::project::Project::of(&self.root).entrypoints[0].route("README.md");
-            let id = store.ask(
-                if doc.is_empty() { &readme } else { &doc },
-                &text,
-                if doc.is_empty() { "" } else { &anchor },
-                "",
-            )?;
-            return Ok(json!({"id":id}));
+        if !receipt.fresh {
+            return Err(Failure {
+                status: 422,
+                error: "This task save stopped before dispatch; your text is kept for another try"
+                    .into(),
+            });
         }
-        let identity = identity.expect("the quick-task route has a save identity");
-        let store = self.store()?;
+        let context = self.quick_context(scope, payload)?;
+        let store = self.store().map_err(before_dispatch)?;
+        let new = self.quick_task_fields(payload, context, &store)?;
+        let record = quick_task::reserve(&self.root, identity, scope, payload, &new)
+            .map_err(before_dispatch)?;
+        quick_task::create(
+            &store,
+            &record.task(),
+            &receipt.fingerprint,
+            quick_task::Attempt::First,
+        )
+    }
+
+    fn quick_task_fields(
+        &self,
+        payload: &Value,
+        context: PageContext,
+        store: &tasks::Store,
+    ) -> Result<tasks::NewTask, Failure> {
+        let PageContext { page, doc, anchor } = context;
+        let title = string(payload, "title").trim();
         let mut slug = string(payload, "slug").trim().to_string();
         if slug.is_empty() {
             let title = regex::Regex::new("[^a-z0-9]+")
@@ -86,7 +133,7 @@ impl Saves {
                         slug = format!("{base}-{n}");
                     }
                     Err(tasks::Error::Refused(_)) => break,
-                    Err(e) => return Err(e.into()),
+                    Err(e) => return Err(before_dispatch(e.into())),
                 }
             }
         }
@@ -105,7 +152,7 @@ impl Saves {
                 .or_else(|| payload["priority"].as_str().and_then(|s| s.parse().ok()))
                 .ok_or("priority must be a number".to_string())?
         };
-        let new = tasks::NewTask {
+        Ok(tasks::NewTask {
             slug,
             title: title.into(),
             body,
@@ -122,9 +169,7 @@ impl Saves {
                 }]
             },
             ..tasks::NewTask::default()
-        };
-        let record = quick_task::reserve(&self.root, &identity, scope, payload, &new)?;
-        quick_task::create(&store, &record.task(), quick_task::Attempt::First)
+        })
     }
 
     fn quick_context(&self, scope: &str, payload: &Value) -> Result<PageContext, Failure> {
@@ -158,6 +203,17 @@ impl Saves {
             doc,
             anchor: anchor.into(),
         })
+    }
+}
+
+fn before_dispatch(error: Failure) -> Failure {
+    Failure {
+        status: if error.status >= 500 {
+            422
+        } else {
+            error.status
+        },
+        error: error.error,
     }
 }
 

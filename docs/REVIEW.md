@@ -278,8 +278,14 @@ document and heading; from any other page (board, queue, tasks) it lands on
 `docs/README.md` and names the page it came from. The answer shows in the
 sheet. *Add task* files a task on the board as the owner, in `concept`,
 priority 2 unless you pick one, slug `inbox/<title>` unless you give one, with
-the page linked. The draft is kept in the browser's session storage, so a
-reload loses nothing. Routes: `POST /api/quick-chat`, `POST /api/quick-task`.
+the page linked. The draft is kept in this browser, so a
+reload loses nothing. While a task's outcome is uncertain, the sheet shows
+**Checking save…** and keeps the draft locked until it confirms the task or
+shows a refusal. After a reload, open the sheet and use **Check save** to
+resolve that same submission. A refusal keeps the text editable for another
+try; a confirmed save clears it and links to the task. The server retains
+pending task text until confirmation, then keeps only a small receipt.
+Routes: `POST /api/quick-chat`, `POST /api/quick-task`.
 
 ## Attaching files
 
