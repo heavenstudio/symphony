@@ -948,27 +948,27 @@ fn canonical_register(
 impl<'a> Histories<'a> {
     fn read(text: &'a str) -> Option<Self> {
         use crate::register::{card_line, unseen_reply};
-        use symphony_docs::syntax::{cards as shared_cards, entry_line};
+        use std::collections::BTreeSet;
+        use symphony_docs::syntax::{cards as shared_cards, entry_line, is_continuation};
 
         let mut skeleton = Vec::new();
         let mut cards = BTreeMap::new();
-        // The card lines are the shared reading's: a fence under a card is its thread's.
-        let plain: Vec<_> = text.split('\n').collect();
-        let openers: std::collections::BTreeSet<_> = shared_cards(&plain)
-            .iter()
-            .map(|card| card.line - 1)
-            .collect();
+        // Lines are classified as the shared reading reads them, without their `\n` or `\r\n`
+        // (the merge keeps their bytes), and a fence under a card is its thread's.
+        let bare = |line: &'a str| {
+            let line = line.strip_suffix('\n').unwrap_or(line);
+            line.strip_suffix('\r').unwrap_or(line)
+        };
+        let plain: Vec<_> = text.split_inclusive('\n').map(bare).collect();
+        let openers: BTreeSet<_> = shared_cards(&plain).iter().map(|c| c.line - 1).collect();
         let dated = |line: &'a str| {
             let at = line.find('[')? + 1;
-            Some(&line[at..at + entry_line(line.trim_end_matches('\n'))?.ts?.len()])
+            Some(&line[at..at + entry_line(bare(line))?.ts?.len()])
         };
+        let hidden = |line: &'a str| unseen_reply(bare(line)).is_some();
         let mut lines = text.split_inclusive('\n').enumerate().peekable();
         while let Some((index, line)) = lines.next() {
-            let card = openers
-                .contains(&index)
-                .then(|| card_line(line.trim_end_matches('\n')))
-                .flatten();
-            let Some(card) = card else {
+            let Some(card) = card_line(bare(line)).filter(|_| openers.contains(&index)) else {
                 skeleton.push(HistoryPart::Text(line.to_string()));
                 continue;
             };
@@ -986,7 +986,7 @@ impl<'a> Histories<'a> {
             let mut entries = Vec::new();
             let mut metadata = Vec::new();
             while let Some(&(_, next)) = lines.peek() {
-                if unseen_reply(next).is_some() {
+                if hidden(next) {
                     metadata.push(lines.next()?.1);
                     continue;
                 }
@@ -994,15 +994,15 @@ impl<'a> Histories<'a> {
                     break;
                 };
                 let mut raw = lines.next()?.1.to_string();
-                // A continuation belongs to its dated entry and moves with it unchanged; a hidden
-                // marker between them, as the shared reading skips it, joins the card's metadata.
+                // A continuation (`is_continuation`, even a dated-looking one) moves unchanged with
+                // its entry; a hidden marker between them, skipped when read, joins the metadata.
                 loop {
                     let mut following = lines.clone();
                     let mut gap = String::new();
-                    let mut hidden = Vec::new();
+                    let mut markers = Vec::new();
                     while let Some(&(_, line)) = following.peek() {
-                        if unseen_reply(line).is_some() {
-                            hidden.push(line);
+                        if hidden(line) {
+                            markers.push(line);
                         } else if line.trim().is_empty() {
                             gap.push_str(line);
                         } else {
@@ -1012,13 +1012,13 @@ impl<'a> Histories<'a> {
                     }
                     if !following
                         .peek()
-                        .is_some_and(|&(_, line)| line.starts_with("   ") && dated(line).is_none())
+                        .is_some_and(|&(_, line)| is_continuation(bare(line)))
                     {
                         break;
                     }
                     raw.push_str(&gap);
                     raw.push_str(following.next()?.1);
-                    metadata.extend(hidden);
+                    metadata.extend(markers);
                     lines = following;
                 }
                 entries.push((timestamp, raw));

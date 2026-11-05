@@ -13,7 +13,7 @@ mod wiki;
 
 pub use card::{
     Card, Entry, REGION_END, REGION_START, card_end, card_line, card_state, cards, entries,
-    entry_line, is_indented, unseen_owner, unseen_owner_line,
+    entry_line, is_continuation, is_indented, unseen_owner, unseen_owner_line,
 };
 use fold::fold;
 pub use wiki::{Component, WikiLink, components, wikilinks};

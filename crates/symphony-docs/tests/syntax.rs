@@ -2,8 +2,8 @@
 
 use symphony_docs::syntax::{
     LineIndex, WikiLink, anchors, card_end, card_line, cards, code_ranges, components, entries,
-    entry_line, heading, heading_anchor, is_indented, line_links, line_of, lines, links,
-    mask_code_spans, pictures, unseen_owner, unseen_owner_line, wikilinks,
+    entry_line, heading, heading_anchor, is_continuation, is_indented, line_links, line_of, lines,
+    links, mask_code_spans, pictures, unseen_owner, unseen_owner_line, wikilinks,
 };
 
 #[test]
@@ -336,6 +336,58 @@ fn a_hidden_unseen_owner_line_is_no_entry_and_breaks_no_continuation() {
         found,
         [(Some("2026-11-04".to_string()), "agent", "A\nB".to_string())]
     );
+}
+
+#[test]
+fn a_continuation_is_any_indent_deeper_than_two_characters() {
+    assert!(is_continuation("   x") && is_continuation("\t  x") && is_continuation("\t\t\tx"));
+    assert!(!is_continuation("  x") && !is_continuation("\tx") && !is_continuation("      "));
+    assert!(is_continuation("    [2026-10-30 07:00] owner — quoted"));
+}
+
+#[test]
+fn a_deeper_line_continues_a_dated_entry_tabbed_or_dated_looking() {
+    let raw = [
+        "  [2026-11-04] agent — Example:",
+        "\t  B",
+        "    [2026-10-30 07:00] owner — Literal example.",
+        "  [2026-11-05] owner · approved",
+        "    [2026-11-01] owner — under a dated entry, a continuation",
+    ];
+    let found: Vec<_> = entries(&raw)
+        .into_iter()
+        .map(|e| (e.ts, e.who, e.text))
+        .collect();
+    assert_eq!(
+        found,
+        [
+            (
+                Some("2026-11-04".to_string()),
+                "agent",
+                "Example:\nB\n[2026-10-30 07:00] owner — Literal example.".to_string()
+            ),
+            (
+                Some("2026-11-05".to_string()),
+                "owner",
+                "[2026-11-01] owner — under a dated entry, a continuation".to_string()
+            )
+        ]
+    );
+    // Under no dated entry, a deeper dated line still starts one.
+    let first = entries(&["    [2026-11-01] owner — first"]);
+    assert_eq!(first[0].ts.as_deref(), Some("2026-11-01"));
+}
+
+#[test]
+fn crlf_lines_read_as_lf_ones_hidden_marker_included() {
+    let text = "- [x] **a**\r\n  [2026-11-04] agent — A\r\n  <!-- review:unseen-owner a b -->\r\n    B\r\n";
+    let found: Vec<_> = cards(&lines(text))
+        .remove(0)
+        .entries()
+        .into_iter()
+        .map(|e| e.text)
+        .collect();
+    assert_eq!(found, ["A\nB"]);
 }
 
 #[test]

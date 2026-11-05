@@ -262,10 +262,18 @@ fn tail_ends(rest: &str) -> Option<&str> {
     Some(after.strip_prefix('—')?.trim_start_matches(is_space))
 }
 
+/// Whether `line` is deeper-indented than an entry's two spaces, by more than two whitespace
+/// characters of any kind: under a dated entry it continues that entry, even when it reads as a dated
+/// line itself (REVIEW.md, "Deeper-indented lines continue the entry above").
+pub fn is_continuation(line: &str) -> bool {
+    let body = line.trim_start_matches(is_space);
+    !body.trim_matches(is_space).is_empty() && line.chars().count() - body.chars().count() > 2
+}
+
 /// A card's lines as entries: a dated line starts one, a deeper-indented line continues it (a blank
-/// line between making a new paragraph), a `↳` line is an agent's undated answer, a hidden
-/// `review:unseen-owner` line ([`unseen_owner`]) is skipped, and anything else is an owner's undated
-/// note.
+/// line between making a new paragraph; [`is_continuation`]), a `↳` line is an agent's undated
+/// answer, a hidden `review:unseen-owner` line ([`unseen_owner`]) is skipped, and anything else is an
+/// owner's undated note.
 pub fn entries<L: AsRef<str>>(raw: &[L]) -> Vec<Entry> {
     let mut found: Vec<Entry> = Vec::new();
     let mut paragraph = false;
@@ -275,14 +283,13 @@ pub fn entries<L: AsRef<str>>(raw: &[L]) -> Vec<Entry> {
             continue;
         }
         let text = line.trim_matches(is_space);
+        let continues = found.last().is_some_and(|e| e.ts.is_some()) && is_continuation(line);
         if text.is_empty() {
             paragraph = found.last().is_some_and(|e| e.ts.is_some());
-        } else if let Some(dated) = entry_line(line) {
+        } else if !continues && let Some(dated) = entry_line(line) {
             paragraph = false;
             found.push(dated);
-        } else if found.last().is_some_and(|e| e.ts.is_some())
-            && line.chars().count() - line.trim_start_matches(is_space).chars().count() > 2
-        {
+        } else if continues {
             let last = found.last_mut().expect("a dated entry");
             let joined = format!(
                 "{}{}{}",

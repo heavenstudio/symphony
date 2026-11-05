@@ -220,3 +220,43 @@ fn a_hidden_marker_inside_an_entry_joins_the_metadata_and_keeps_the_continuation
         Some(format!("{base}{NOTE}{REPLY}"))
     );
 }
+
+/// The merge of NOTE and REPLY appended after `base`, and the app's entries of its one card.
+fn appended_and_read(base: &str, eol: &str) -> (Option<String>, Vec<String>) {
+    let (note, reply) = (NOTE.replace('\n', eol), REPLY.replace('\n', eol));
+    let merged = merge_history(&format!("{base}{reply}"), base, &format!("{base}{note}"));
+    let lines = crate::text::splitlines(base);
+    let read = crate::register::parse_decisions(&lines)[0].entries();
+    (merged, read.into_iter().map(|e| e.text).collect())
+}
+
+#[test]
+fn a_tabbed_continuation_stays_with_its_entry_in_the_merge_as_in_the_app() {
+    let base = "- [ ] **c** — Card.\n  [2026-10-30 07:40] agent — A\n\t  B\n";
+    let (merged, read) = appended_and_read(base, "\n");
+    assert_eq!(merged, Some(format!("{base}{NOTE}{REPLY}")));
+    assert_eq!(read, ["A\nB"]);
+}
+
+#[test]
+fn crlf_lines_are_classified_like_lf_ones_and_keep_their_bytes() {
+    let header = "- [ ] **c** — Card.\r\n";
+    let marker = "  <!-- review:unseen-owner k1 k2 -->\r\n";
+    let entry = "  [2026-10-30 07:40] agent — A\r\n";
+    let base = format!("{header}{entry}{marker}    B\r\n");
+    let (merged, read) = appended_and_read(&base, "\r\n");
+    let (note, reply) = (NOTE.replace('\n', "\r\n"), REPLY.replace('\n', "\r\n"));
+    assert_eq!(
+        merged,
+        Some(format!("{header}{marker}{entry}    B\r\n{note}{reply}"))
+    );
+    assert_eq!(read, ["A\nB"]);
+}
+
+#[test]
+fn a_deeper_dated_looking_line_continues_its_entry_in_the_merge_as_in_the_app() {
+    let base = "- [ ] **c** — Card.\n  [2026-10-30 07:40] agent — Example:\n    [2026-10-30 07:00] owner — Literal.\n";
+    let (merged, read) = appended_and_read(base, "\n");
+    assert_eq!(merged, Some(format!("{base}{NOTE}{REPLY}")));
+    assert_eq!(read, ["Example:\n[2026-10-30 07:00] owner — Literal."]);
+}
