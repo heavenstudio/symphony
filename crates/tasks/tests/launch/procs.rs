@@ -1,9 +1,12 @@
 //! What runs under a pane, read: `ps`'s table walked, and each pattern as Python's `re` reads it,
 //! matched by hand (the protected work, `harmless`, `shell`, `helper` and `board`).
 
+use crate::World;
+use std::os::unix::fs::PermissionsExt;
+use symphony_board::launch::LaunchError;
 use symphony_board::launch::procs::{
-    board, busy_reason, harmless, helper, land, named, reap_busy_reason, shell, symphony_app,
-    test_run, under, verify,
+    board, busy_reason, descendants_by, harmless, helper, land, named, reap_busy_reason, shell,
+    symphony_app, test_run, under, verify,
 };
 
 fn all(commands: &[&str]) -> Vec<String> {
@@ -322,4 +325,39 @@ fn the_name_flag_is_the_first_one_named() {
     assert_eq!(named("claude -n   "), None);
     assert_eq!(named("claude x-n y"), None);
     assert_eq!(named("claude -name y"), None);
+}
+
+#[test]
+fn a_command_line_that_is_not_utf8_is_read_and_the_pids_still_parse() {
+    let w = World::new();
+    let ps = w.dir().join("ps");
+    std::fs::write(
+        &ps,
+        b"#!/bin/sh\nprintf '  10     1 bash\\n  11    10 sleep \\377\\n  12    11 tail\\n  13     1 x\\n'\n",
+    )
+    .unwrap();
+    std::fs::set_permissions(&ps, std::fs::Permissions::from_mode(0o755)).unwrap();
+    assert_eq!(
+        descendants_by(symphony_board::sys::Command::new(&ps), 10).unwrap(),
+        ["sleep \u{fffd}", "tail"]
+    );
+    std::fs::write(&ps, b"#!/bin/sh\nexit 0\n").unwrap();
+    assert_eq!(
+        descendants_by(symphony_board::sys::Command::new(&ps), 10),
+        Err(LaunchError("ps printed nothing".into()))
+    );
+    let missing = descendants_by(symphony_board::sys::Command::new(w.dir().join("no-ps")), 10);
+    assert!(
+        matches!(&missing, Err(LaunchError(why)) if why.starts_with("ps: ")),
+        "{missing:?}"
+    );
+}
+
+#[test]
+fn a_shell_started_command_that_mentions_mcp_is_still_work() {
+    assert!(busy_reason(&["/bin/zsh -c 'node /x/mcp-server.js'".into()]).is_some());
+    assert_eq!(
+        busy_reason(&["node /x/mcp-server.js".into(), "claude --model x".into()]),
+        None
+    );
 }

@@ -1,19 +1,14 @@
-//! Answer only the observed Codex hooks chooser while Herdr's original startup is pending.
+//! Answer only the observed Codex hooks chooser while a launched Codex has not taken its first
+//! message.
 
-use crate::sys::{self, Child, Command};
-use std::io::Read;
-use std::os::fd::AsFd;
-use std::process::Output;
-use std::time::{Duration, Instant};
-
-pub(super) fn codex_pane<'a>(args: &'a [&str]) -> Option<&'a str> {
-    let options = &args[..args.iter().position(|s| *s == "--").unwrap_or(args.len())];
-    if !options.starts_with(&["agent", "start"])
-        || !options.windows(2).any(|s| s == ["--kind", "codex"])
-    {
-        return None;
-    }
-    options.windows(2).find(|s| s[0] == "--pane").map(|s| s[1])
+/// The keys that answer the hooks chooser the bottom of `screen` shows, if it shows one: the
+/// chooser from its title to the end of the screen, nothing after it ([`hooks_choice`]).
+pub(super) fn bottom_choice(screen: &str) -> Option<Vec<&'static str>> {
+    let lines: Vec<&str> = screen.lines().collect();
+    let title = lines
+        .iter()
+        .rposition(|line| line.trim() == "Hooks need review")?;
+    hooks_choice(&lines[title..].join("\n"))
 }
 
 /// Require the whole current chooser, including its selected item. Historical/quoted text and
@@ -62,98 +57,9 @@ pub(super) fn hooks_choice(screen: &str) -> Option<Vec<&'static str>> {
     Some(keys)
 }
 
-struct Owned(Child);
-impl Drop for Owned {
-    fn drop(&mut self) {
-        // The CLI child remains ours until reaped, including observer failures and unwinding.
-        let _ = self.0.kill();
-        let _ = self.0.wait();
-    }
-}
-
-/// Preserve the existing call deadline and output while observing the owned pane during startup.
-/// The CLI's own startup deadline is unchanged; it alone confirms readiness and session identity.
-pub(super) fn within(
-    command: &mut Command,
-    limit: Duration,
-    observe: impl FnMut(Duration) -> Result<(), String>,
-) -> Result<Output, String> {
-    let mut child = sys::spawn_output(command).map_err(|e| e.to_string())?;
-    let (stdout, stderr) = (child.stdout.take(), child.stderr.take());
-    collect(
-        child,
-        stdout.expect("spawn_output reads stdout"),
-        stderr.expect("spawn_output reads stderr"),
-        limit,
-        observe,
-    )
-}
-
-fn collect(
-    child: Child,
-    mut stdout: impl Read + AsFd,
-    mut stderr: impl Read + AsFd,
-    limit: Duration,
-    mut observe: impl FnMut(Duration) -> Result<(), String>,
-) -> Result<Output, String> {
-    let mut owned = Owned(child);
-    sys::set_nonblocking(&stdout, true).map_err(|e| e.to_string())?;
-    sys::set_nonblocking(&stderr, true).map_err(|e| e.to_string())?;
-    let (mut out, mut err) = (Vec::new(), Vec::new());
-    let started = Instant::now();
-    let mut next_observation = Duration::from_millis(250);
-    loop {
-        let out_closed = drain(&mut stdout, &mut out)?;
-        let err_closed = drain(&mut stderr, &mut err)?;
-        let status = owned.0.try_wait().map_err(|e| e.to_string())?;
-        if let Some(status) = status
-            && out_closed
-            && err_closed
-        {
-            return Ok(Output {
-                status,
-                stdout: out,
-                stderr: err,
-            });
-        }
-        let elapsed = started.elapsed();
-        let remaining = limit.saturating_sub(elapsed);
-        if remaining.is_zero() {
-            return Err(format!("no answer in {} s", limit.as_secs()));
-        }
-        if status.is_none() && elapsed >= next_observation {
-            observe(remaining)?;
-            next_observation = started.elapsed() + Duration::from_millis(250);
-        }
-        std::thread::sleep(Duration::from_millis(10).min(remaining));
-    }
-}
-
-/// One bounded read per iteration, so even a busy inherited writer cannot starve the deadline.
-fn drain(stream: &mut impl Read, output: &mut Vec<u8>) -> Result<bool, String> {
-    let mut buffer = [0; 8192];
-    match stream.read(&mut buffer) {
-        Ok(0) => Ok(true),
-        Ok(n) => {
-            output.extend_from_slice(&buffer[..n]);
-            Ok(false)
-        }
-        Err(e)
-            if matches!(
-                e.kind(),
-                std::io::ErrorKind::WouldBlock | std::io::ErrorKind::Interrupted
-            ) =>
-        {
-            Ok(false)
-        }
-        Err(e) => Err(e.to_string()),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::os::unix::net::UnixStream;
     const SCREEN: &str = include_str!("../../tests/launch/fixtures/codex-hooks.txt");
 
     #[test]
@@ -190,113 +96,24 @@ mod tests {
     }
 
     #[test]
-    fn only_a_codex_start_observes_the_pane_and_native_arguments_cannot_change_it() {
+    fn a_whole_screen_answers_only_for_the_chooser_at_its_bottom() {
+        let banner = ">_ OpenAI Codex (v0.167.0)\n   ~/somewhere\n\n";
         assert_eq!(
-            codex_pane(&[
-                "agent", "start", "probe", "--kind", "codex", "--pane", "ours", "--", "--pane",
-                "other"
-            ]),
-            Some("ours")
+            bottom_choice(&format!("{banner}{SCREEN}\n\n")),
+            Some(vec!["down", "down", "enter"])
         );
-        for args in [
-            vec!["agent", "prompt", "probe", "text"],
-            vec![
-                "agent", "start", "probe", "--kind", "claude", "--pane", "ours", "--", "--kind",
-                "codex",
-            ],
-            vec!["agent", "start", "probe", "--kind", "codex"],
+        // A quoted chooser above the live one does not count; the one at the bottom does.
+        let earlier = SCREEN.replace("› 1.", "  1.").replace("  3.", "› 3.");
+        assert_eq!(
+            bottom_choice(&format!("{earlier}\n{SCREEN}")),
+            Some(vec!["down", "down", "enter"])
+        );
+        for screen in [
+            format!("{banner}{SCREEN}\n› Ask Codex to do anything"),
+            format!("{banner}› Ask Codex to do anything"),
+            String::new(),
         ] {
-            assert_eq!(codex_pane(&args), None);
+            assert_eq!(bottom_choice(&screen), None, "{screen}");
         }
-    }
-
-    #[test]
-    fn an_unresponsive_start_is_bounded_by_the_existing_call_deadline() {
-        let result = within(
-            Command::new("sleep").arg("60"),
-            Duration::from_millis(20),
-            |_| Ok(()),
-        );
-        assert!(
-            matches!(result, Err(ref why) if why == "no answer in 0 s"),
-            "{result:?}"
-        );
-    }
-
-    #[test]
-    fn inherited_output_writers_cannot_hold_a_finished_start_past_its_deadline() {
-        let (stdout, out_writer) = sys::pipe().unwrap();
-        let (stderr, err_writer) = sys::pipe().unwrap();
-        let child = Command::new("true").spawn().unwrap();
-        // These owned endpoints model a wrapper descendant retaining stdout/stderr after its
-        // parent exits. No EOF will arrive until this test drops them; collection must not join.
-        let result = collect(child, stdout, stderr, Duration::from_millis(20), |_| Ok(()));
-        assert!(
-            matches!(result, Err(ref why) if why == "no answer in 0 s"),
-            "{result:?}"
-        );
-        drop((out_writer, err_writer));
-    }
-
-    #[test]
-    fn startup_success_and_error_cleanup_preserve_unrelated_socket_owners() {
-        use std::io::Write;
-
-        fn round_trip(pair: &mut (UnixStream, UnixStream)) {
-            pair.0
-                .set_read_timeout(Some(Duration::from_secs(2)))
-                .unwrap();
-            pair.1
-                .set_read_timeout(Some(Duration::from_secs(2)))
-                .unwrap();
-            let mut byte = [0];
-            pair.0.write_all(b"a").unwrap();
-            pair.1.read_exact(&mut byte).unwrap();
-            assert_eq!(byte, *b"a");
-            pair.1.write_all(b"b").unwrap();
-            pair.0.read_exact(&mut byte).unwrap();
-            assert_eq!(byte, *b"b");
-        }
-
-        let mut unrelated = UnixStream::pair().unwrap();
-        for (program, args, succeeds) in [
-            ("sh", vec!["-c", "printf out; printf err >&2"], true),
-            ("/no/such/sf-startup-command", vec![], false),
-            ("sleep", vec!["60"], false),
-        ] {
-            let mut command = Command::new(program);
-            command.args(args);
-            let limit = if program == "sleep" {
-                Duration::from_millis(20)
-            } else {
-                Duration::from_secs(2)
-            };
-            let result = within(&mut command, limit, |_| Ok(()));
-            if succeeds {
-                let output = result.unwrap();
-                assert!(output.status.success());
-                assert_eq!(output.stdout, b"out");
-                assert_eq!(output.stderr, b"err");
-            } else {
-                assert!(result.is_err(), "{result:?}");
-            }
-            round_trip(&mut unrelated);
-            drop(command);
-            round_trip(&mut unrelated);
-        }
-
-        // The observer allocates sockets after Command releases its configured writer fds.
-        // Keep these new owners across child teardown and Command drop, too.
-        let mut observed = None;
-        let mut command = Command::new("sleep");
-        command.arg("60");
-        let result = within(&mut command, Duration::from_secs(2), |_| {
-            observed = Some(UnixStream::pair().unwrap());
-            Err("observer stopped startup".into())
-        });
-        assert_eq!(result.unwrap_err(), "observer stopped startup");
-        drop(command);
-        round_trip(observed.as_mut().expect("observer ran"));
-        round_trip(&mut unrelated);
     }
 }

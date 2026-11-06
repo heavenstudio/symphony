@@ -65,15 +65,17 @@ never connect or retire registrations. A refused or full socket is retryable
 while the stored process identity is alive; it does not lose its registration.
 The sweep alone confirms presence (never a delivery
 or an accepted Codex queue). Its STALE/LOST suppression lasts REAP_SECONDS plus
-LIVE_SECONDS, across the next sweep. Sockets are checked even without Herdr;
-Codex presence uses thread identities across all workspaces, while pane cleanup
-remains scoped to its caller. Dry runs change neither board nor sweep files. A
+LIVE_SECONDS, across the next sweep. Sockets are checked even without hc;
+Codex presence uses thread identities across every live hc terminal: a thread is
+present while an open launch record puts it in a live codex terminal or its
+registered terminal still runs codex, while terminal cleanup remains scoped to
+this board's terminals (`sf.board`). Dry runs change neither board nor sweep files. A
 Codex registration whose presence confirmation expired reads `unknown` and retains its work:
 the presence sweep failed or is overdue, rather than having established the agent's absence.
 That grace lasts at most ten minutes after confirmation expires; then ordinary heartbeat health
-applies again, making unfinished work claimable without a beat. Each confirmed pane resets it.
-The next successful sweep confirms the pane or retires the registration.
-An incomplete pane inventory still confirms its identified threads; it withholds retirement of
+applies again, making unfinished work claimable without a beat. Each confirmed terminal resets it.
+The next successful sweep confirms the terminal or retires the registration.
+An incomplete terminal inventory still confirms its identified threads; it withholds retirement of
 unmatched registrations until an inventory establishes absence. PULL lists unknown handles only
 while they hold claimable work, just as the per-child warning does.
 The shared server sweeps once on startup, then every five minutes. Each command has a four-minute
@@ -83,8 +85,8 @@ cursor advances only with the persisted observation and queued events.
 Unknown observations keep the heartbeat health older binaries derive in `seen`, with separate
 metadata restoring Unknown for newer readers. Both old and new writers must share that baseline
 past the ten-minute lost threshold, or alternating dispatchers repeat liveness notices.
-A finished idle pane still closes under the original cleanup rules, retiring its
-registration; an executor of a task in review is not finished, and keeps its pane.
+A finished idle terminal still closes under the original cleanup rules, retiring its
+registration; an executor of a task in review is not finished, and keeps its terminal.
 A post or changes verdict to `@executor`, or a post to the executor by handle, that no
 executor can read (no callback, and its launch record closed or no live beat) adds a
 `board` post to `@orchestrator` on the
@@ -108,11 +110,12 @@ survive retirement and pruning so a revision is never reused. A completed period
 records its time in that small row even when the digest adds no entry, rearming the deadline
 across fresh Stores without moving the board marker. A tick with no changed observation, due
 delivery or due periodic check writes nothing. The clock's tick, never a write's dispatch, also
-watches panes (`attach::pane_watch`): while a recipient oversees a session with an open launch
-record, it lists herdr's panes once a tick and queues BLOCKED once an episode, or WATCH once while
-herdr cannot be asked; what it last said is `callback_state.pane_watch`, off the board marker.
+watches terminals (`attach::pane_watch`): while a recipient oversees a session with an open launch
+record, it lists hc's live terminals (`hc ls`) once a tick and queues BLOCKED once an episode
+(status `blocked`), or WATCH once while hc cannot be asked; what it last said is
+`callback_state.pane_watch`, off the board marker.
 It looks before the tick's dispatch, and the tick's PULL view and the clock's agents view read
-its sample (`Store::clock_panes`), so a tick asks herdr once. It plans from the stored
+its sample (`Store::clock_panes`), so a tick asks hc once. It plans from the stored
 `pane_watch` and looks again under the lease, so two clocks on one board say an episode once.
 The legacy monitor runs the same watch on its own looks. Observation state is checkpointed
 with newly queued events, before transport. Finished tasks leave its status, role and verdict
@@ -151,17 +154,30 @@ one JSON call per line on stdin and answers each on its own line (a line that
 is a list of calls gets a list of answers), the methods being the store's, plus
 `threads` and `snapshot`, which read several things in one round trip.
 `launch`, `restore`, `cleanup`, `finish` and `reap` (the Symphony's idle
-sweep, every five minutes) drive herdr's panes and git's worktrees from
-`src/launch/`; after a launch's prompt it looks at the pane again and sends
-enter while the prompt still sits in the input line. Its tests' handles:
+sweep, every five minutes) drive hc's terminals and git's worktrees from
+`src/launch/`, through `launch::hc::Hc` alone; the crate calls no `herdr`.
+A launch is one `hc run --bg --outlive-parent --keep`, its first message in
+the run, labelled `sf.board` (the main checkout's folder and the board's
+database), `sf.handle`, and `herdr.space`/`herdr.tab`: the stream tab (`code`,
+`review`, `3d`, `infra`) of the project's space in the Herdr app, found by name
+(`herdr-app ls`, else the layout `hc connect` keeps) and made when missing,
+never an owner's tab or another project's terminal. It is confirmed by `hc get`
+(`first_message.sent`, then a `working`, `done` or `blocked` status), never by
+reading the screen; a launch hc did not send fails naming the terminal, which
+is killed and removed. Codex runs with `--no-daemon`. A close is `hc kill`
+then `hc rm`, never of the caller's terminal (`HC_TERMINAL_ID`). A record
+naming a herdr pane (`w1:p…`) is a gone terminal: cleanup records it closed
+with its restore line, and restore brings it back in an hc terminal. Its tests' handles:
 `TASKS_SERVER` and `TASKS_DATABASE` reach a board of the test's own
 (`tasks.Server`, one in-memory server per test process, a database per test);
 `TASKS_NOW` pins the clock, and a monitor's waits step it (each says `STEP
 <now>` and reads a line); `TASKS_PULL_SECONDS` sets how often an
 orchestrator's monitor computes its PULL digest (only a new actionable entry
 prints one); `TASKS_REAP_STATE` is where the
-idle sweep keeps what it saw; `HERDR_BIN` names a fake herdr (the crate's
-`fake-herdr` binary, its panes a JSON file `FAKE_HERDR_STATE` names).
+idle sweep keeps what it saw; `HC_BIN` and `HERDR_APP_BIN` name a fake hc
+and window (the crate's `fake-hc` binary, its terminals and the window's layout
+a JSON file `FAKE_HC_STATE` names, each call a line of `FAKE_HC_LOG`, and the
+calls `FAKE_HC_FAIL` names refused).
 
 A child's input and output go through `sys::output` (or `sys::spawn_output`,
 `sys::spawn_piped` for one that reads stdin, and `sys::wait_output`), never
@@ -172,7 +188,7 @@ handed what runs its `lsof`: `sys::output` from those sources, `Command::output`
 from `apps/symphony-ui`'s browser test, which compiles `port.rs` alone. On macOS std
 makes a pipe or socket pair and sets close-on-exec in a second call, so a
 spawn on another thread between the two keeps the writer and holds the
-reader's EOF off for that child's whole life: a herdr answer then reads as
+reader's EOF off for that child's whole life: an hc answer then reads as
 unanswered. `sys::pipe` is a real pipe, its ends reopened close-on-exec and
 close-on-fork under `sys::spawning()`, so no spawn under that lock copies them;
 an end reaches a child only through a `sys::Command` (a std spawn handed one

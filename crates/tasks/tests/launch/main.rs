@@ -1,4 +1,5 @@
-//! Agent launch lifecycle on private board and pane fixtures.
+//! Agent launch lifecycle on private board and terminal fixtures: hc and the Herdr app are the
+//! crate's `fake-hc`.
 
 #[path = "../store/common.rs"]
 #[allow(dead_code)]
@@ -6,14 +7,14 @@ mod common;
 
 mod cleanup;
 mod finish;
-mod herdr;
+mod hc;
 mod launch;
 mod procs;
 mod reap;
 mod restore;
 
 use common::Fixture;
-use serde_json::{Value, json};
+use serde_json::{Map, Value, json};
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::fs;
@@ -21,12 +22,12 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use symphony_board::cli::Env;
-use symphony_board::launch::herdr::{Binary, Herdr};
+use symphony_board::launch::hc::{Binary, Hc};
 use symphony_board::launch::{Ask, LaunchError, Machine, Started};
 use symphony_board::sys::Command;
 use symphony_board::{Error, NewTask, Store};
 
-pub const FAKE: &str = env!("CARGO_BIN_EXE_fake-herdr");
+pub const FAKE: &str = env!("CARGO_BIN_EXE_fake-hc");
 
 static FOLDERS: AtomicUsize = AtomicUsize::new(0);
 /// A folder of its own in the temp dir, outside any repository, emptied first and removed after.
@@ -73,8 +74,9 @@ pub type Instead<'a> = Box<dyn Fn(&[&str]) -> Option<Result<String, LaunchError>
 /// What a hook does after a call the fake answered.
 pub type After<'a> = Box<dyn Fn(&[&str]) + 'a>;
 
-/// The fake herdr with hooks: `instead` may answer a call in its place (the call is then not in the
-/// fake's log), and `after` runs after each call the fake answered.
+/// The fake hc with hooks: `instead` may answer an hc call in its place (the call is then not in the
+/// fake's log), and `after` runs after each hc call the fake answered. The window's calls go to the
+/// fake as they are.
 pub struct Hooked<'a> {
     pub inner: Binary,
     pub instead: Instead<'a>,
@@ -84,14 +86,14 @@ pub struct Hooked<'a> {
 impl<'a> Hooked<'a> {
     pub fn new(world: &World) -> Hooked<'a> {
         Hooked {
-            inner: world.herdr(),
+            inner: world.hc(),
             instead: Box::new(|_| None),
             after: Box::new(|_| {}),
         }
     }
 }
 
-impl Herdr for Hooked<'_> {
+impl Hc for Hooked<'_> {
     fn run(&self, args: &[&str]) -> Result<String, LaunchError> {
         if let Some(answer) = (self.instead)(args) {
             return answer;
@@ -101,13 +103,28 @@ impl Herdr for Hooked<'_> {
         answer
     }
 
-    fn workspace(&self) -> Option<String> {
-        self.inner.workspace()
+    fn feed(&self, args: &[&str], input: &str) -> Result<String, LaunchError> {
+        self.inner.feed(args, input)
+    }
+
+    fn app(&self, args: &[&str]) -> Result<String, LaunchError> {
+        self.inner.app(args)
+    }
+
+    fn caller(&self) -> Option<String> {
+        self.inner.caller()
+    }
+
+    fn board(&self) -> String {
+        self.inner.board()
     }
 }
 
-/// A board, a repository with `main` and the fake herdr's state, with an orchestrator and a task
-/// `sim/jump` the owner made.
+/// The id of the project's space in a new world's Herdr app.
+pub const SPACE: &str = "sp-lamp";
+
+/// A board, a repository `lamp-works` with `main` and the fake hc's state (the Herdr app showing
+/// the space `lamp-works`, with no tabs), with an orchestrator and a task `sim/jump` the owner made.
 pub struct World {
     pub folder: Folder,
     pub repo: PathBuf,
@@ -142,19 +159,17 @@ impl World {
         f.task("sim/jump");
         let mut env = Env {
             vars: Default::default(),
-            cwd: folder.0.clone(),
+            cwd: repo.clone(),
         };
         for (key, value) in [
             ("PATH", std::env::var("PATH").unwrap_or_default()),
-            ("HERDR_BIN", FAKE.to_string()),
+            ("HC_BIN", FAKE.to_string()),
+            ("HERDR_APP_BIN", format!("'{FAKE}' app")),
             (
-                "FAKE_HERDR_STATE",
-                folder.0.join("herdr.json").display().to_string(),
+                "FAKE_HC_STATE",
+                folder.0.join("hc.json").display().to_string(),
             ),
-            (
-                "FAKE_HERDR_LOG",
-                folder.0.join("herdr.log").display().to_string(),
-            ),
+            ("FAKE_HC_LOG", folder.0.join("hc.log").display().to_string()),
         ] {
             env.vars.insert(key.into(), value);
         }
@@ -170,7 +185,10 @@ impl World {
             ids: Rc::default(),
             next_pid: Cell::new(5000),
         };
-        world.set_state(json!({"tabs": [], "panes": [], "next": 100}));
+        world.set_state(json!({
+            "terminals": [],
+            "layout": {"spaces": [{"id": SPACE, "name": "lamp-works", "tabs": []}]},
+        }));
         world
     }
 
@@ -186,8 +204,13 @@ impl World {
         self.env.vars.insert(key.into(), value.into());
     }
 
-    pub fn herdr(&self) -> Binary {
+    pub fn hc(&self) -> Binary {
         Binary::of(&self.env)
+    }
+
+    /// The `sf.board` label of this world's terminals.
+    pub fn board(&self) -> String {
+        self.hc().board()
     }
 
     /// The launcher's machine: this world's repository, worktree folder, ps table and waits, and the
@@ -210,6 +233,7 @@ impl World {
                 Ok(procs.borrow().get(&pid).cloned().unwrap_or_default())
             }),
             mode: "auto".into(),
+            board_env: Vec::new(),
         }
     }
 
@@ -218,7 +242,7 @@ impl World {
     }
 
     pub fn try_launch(&self, ask: &Ask) -> Result<Started, Error> {
-        symphony_board::launch::launch(self.store(), &self.herdr(), &self.machine(), ask)
+        symphony_board::launch::launch(self.store(), &self.hc(), &self.machine(), ask)
     }
 
     /// An executor launched on `slug`.
@@ -246,50 +270,73 @@ impl World {
             .unwrap();
     }
 
-    // -- the fake herdr's state and log ---------------------------------------------------
+    // -- the fake hc's state and log ------------------------------------------------------
 
     pub fn state(&self) -> Value {
-        let text = fs::read_to_string(&self.env.vars["FAKE_HERDR_STATE"]).unwrap();
+        let text = fs::read_to_string(&self.env.vars["FAKE_HC_STATE"]).unwrap();
         serde_json::from_str(&text).unwrap()
     }
 
     pub fn set_state(&self, state: Value) {
-        fs::write(&self.env.vars["FAKE_HERDR_STATE"], state.to_string()).unwrap();
+        fs::write(&self.env.vars["FAKE_HC_STATE"], state.to_string()).unwrap();
     }
 
-    /// Change the state's panes.
-    pub fn edit_panes(&self, edit: impl FnOnce(&mut Vec<Value>)) {
+    /// Change the state's terminals.
+    pub fn edit_terminals(&self, edit: impl FnOnce(&mut Vec<Value>)) {
         let mut state = self.state();
-        edit(state["panes"].as_array_mut().unwrap());
+        edit(state["terminals"].as_array_mut().unwrap());
         self.set_state(state);
     }
 
-    /// Change one pane, by id.
-    pub fn edit_pane(&self, id: &str, edit: impl FnOnce(&mut serde_json::Map<String, Value>)) {
-        self.edit_panes(|panes| {
-            let pane = panes
+    /// Change one terminal, by address.
+    pub fn edit_terminal(&self, address: &str, edit: impl FnOnce(&mut Map<String, Value>)) {
+        self.edit_terminals(|all| {
+            let terminal = all
                 .iter_mut()
-                .find(|p| p["pane_id"] == id)
-                .expect("the pane is there");
-            edit(pane.as_object_mut().unwrap());
+                .find(|t| t["address"] == address)
+                .expect("the terminal is there");
+            edit(terminal.as_object_mut().unwrap());
         });
     }
 
-    pub fn pane_ids(&self) -> Vec<String> {
-        self.state()["panes"]
+    /// One terminal, by address, as the state holds it.
+    pub fn terminal(&self, address: &str) -> Value {
+        self.state()["terminals"]
             .as_array()
             .unwrap()
             .iter()
-            .map(|p| p["pane_id"].as_str().unwrap().to_string())
+            .find(|t| t["address"] == address)
+            .cloned()
+            .expect("the terminal is there")
+    }
+
+    /// Every terminal hc knows, live or finished.
+    pub fn addresses(&self) -> Vec<String> {
+        self.state()["terminals"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|t| t["address"].as_str().unwrap().to_string())
             .collect()
     }
 
-    pub fn has_pane(&self, id: &str) -> bool {
-        self.pane_ids().iter().any(|p| p == id)
+    /// The live terminals.
+    pub fn live(&self) -> Vec<String> {
+        self.state()["terminals"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|t| t["state"] == "live")
+            .map(|t| t["address"].as_str().unwrap().to_string())
+            .collect()
+    }
+
+    pub fn has_terminal(&self, address: &str) -> bool {
+        self.addresses().iter().any(|a| a == address)
     }
 
     pub fn calls(&self) -> Vec<Vec<String>> {
-        let Ok(text) = fs::read_to_string(&self.env.vars["FAKE_HERDR_LOG"]) else {
+        let Ok(text) = fs::read_to_string(&self.env.vars["FAKE_HC_LOG"]) else {
             return Vec::new();
         };
         text.lines()
@@ -305,54 +352,76 @@ impl World {
             .collect()
     }
 
-    pub fn add_tab(&self, tab: &str, label: &str, panes: usize) {
-        let mut state = self.state();
-        state["tabs"]
-            .as_array_mut()
-            .unwrap()
-            .push(json!({"tab_id": tab, "label": label, "workspace_id": "w1"}));
-        for n in 0..panes {
-            state["panes"].as_array_mut().unwrap().push(json!({
-                "pane_id": format!("{tab}-p{n}"), "tab_id": tab, "cwd": "/", "agent_status": "unknown",
-            }));
-        }
-        self.set_state(state);
+    /// The calls that would change a terminal or the window: what a test of a read-only path
+    /// expects none of.
+    pub fn changes(&self) -> Vec<Vec<String>> {
+        self.calls()
+            .into_iter()
+            .filter(|c| {
+                ["run", "kill", "rm", "keys", "send", "do"]
+                    .iter()
+                    .any(|word| c.iter().take(2).any(|w| w == word))
+            })
+            .collect()
     }
 
-    /// A pane of its own, an agent's (`claude -n HANDLE` when a handle is given) unless `agent` is
-    /// false, idle, with a shell whose pid the ps table knows: its id.
-    pub fn add_pane(&self, agent: bool, handle: Option<&str>, extra: Value) -> String {
-        let pid = self.next_pid.get() + 1;
-        self.next_pid.set(pid);
-        let id = format!("w1:p{pid}");
-        let mut pane = json!({
-            "pane_id": id, "tab_id": "w1:t1", "cwd": "/somewhere", "agent_status": "idle",
-            "shell_pid": pid,
-        });
-        if agent {
-            let cmdline = match handle {
-                Some(handle) => format!("claude --model sonnet -n {handle}"),
-                None => "claude".into(),
-            };
-            pane["agent"] = json!("claude");
-            pane["agent_session"] =
-                json!({"agent": "claude", "kind": "id", "value": format!("sess-{id}")});
-            pane["foreground"] = json!([{"cmdline": cmdline, "argv0": "claude"}]);
-        }
-        for (key, value) in extra.as_object().into_iter().flatten() {
-            pane[key] = value.clone();
-        }
+    /// A tab `name` in the project's space with `terminals` live shells in it: its id.
+    pub fn add_tab(&self, name: &str, terminals: usize) -> String {
         let mut state = self.state();
-        if state["tabs"].as_array().unwrap().is_empty() {
-            state["tabs"] = json!([{"tab_id": "w1:t1", "label": "x", "workspace_id": "w1"}]);
-        }
-        state["panes"].as_array_mut().unwrap().push(pane);
+        let id = format!("tb-{name}");
+        state["layout"]["spaces"][0]["tabs"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({"id": id, "name": name}));
         self.set_state(state);
-        self.procs.borrow_mut().insert(pid, Vec::new());
+        for _ in 0..terminals {
+            self.add_terminal(
+                false,
+                None,
+                json!({"labels": {"herdr.space": SPACE, "herdr.tab": id}}),
+            );
+        }
         id
     }
 
-    /// A shell pid of its own for a pane, with nothing under it yet.
+    /// A live terminal of this board, an idle Claude agent's (`claude -n HANDLE` when a handle is
+    /// given, labelled with it) unless `agent` is false (a shell), whose pid the ps table knows
+    /// with nothing under it; `extra` replaces its fields: its address.
+    pub fn add_terminal(&self, agent: bool, handle: Option<&str>, extra: Value) -> String {
+        let pid = self.new_pid();
+        let address = format!("t{pid}");
+        let mut labels = json!({"sf.board": self.board()});
+        let mut terminal = json!({
+            "address": address, "cwd": "/somewhere", "name": handle, "pid": pid, "state": "live",
+            "status": null, "turn": 0, "agent": "zsh", "argv": ["zsh"],
+        });
+        if agent {
+            let mut argv = vec!["env".to_string(), "TASKS_SESSION=x".into(), "claude".into()];
+            argv.extend(["--session-id".into(), format!("sess-{address}")]);
+            if let Some(handle) = handle {
+                argv.extend(["-n".into(), handle.to_string()]);
+                labels["sf.handle"] = json!(handle);
+            }
+            argv.push("/work sim/jump x".into());
+            terminal["agent"] = json!("claude-code");
+            terminal["status"] = json!("idle");
+            terminal["argv"] = json!(argv);
+        }
+        terminal["labels"] = labels;
+        for (key, value) in extra.as_object().into_iter().flatten() {
+            if key == "labels" {
+                for (k, v) in value.as_object().into_iter().flatten() {
+                    terminal["labels"][k] = v.clone();
+                }
+            } else {
+                terminal[key] = value.clone();
+            }
+        }
+        self.edit_terminals(|all| all.push(terminal));
+        address
+    }
+
+    /// A pid of its own, with nothing under it yet.
     pub fn new_pid(&self) -> i64 {
         let pid = self.next_pid.get() + 1;
         self.next_pid.set(pid);
@@ -366,13 +435,34 @@ impl World {
             .insert(pid, commands.iter().map(|c| c.to_string()).collect());
     }
 
-    pub fn shell_pid(&self, pane: &str) -> i64 {
-        self.state()["panes"]
+    pub fn pid_of(&self, address: &str) -> i64 {
+        self.terminal(address)["pid"].as_i64().unwrap()
+    }
+
+    /// The program a launch started in its terminal: its argv past `env` and its settings.
+    pub fn program(&self, address: &str) -> Vec<String> {
+        let argv: Vec<String> = self.terminal(address)["argv"]
             .as_array()
             .unwrap()
             .iter()
-            .find(|p| p["pane_id"] == pane)
-            .and_then(|p| p["shell_pid"].as_i64())
-            .unwrap()
+            .map(|a| a.as_str().unwrap().to_string())
+            .collect();
+        symphony_board::launch::hc::program(&argv).to_vec()
+    }
+
+    /// The name of the Herdr app tab holding `tab`, and its space's.
+    pub fn tab_name(&self, tab: &str) -> (String, String) {
+        let state = self.state();
+        for space in state["layout"]["spaces"].as_array().unwrap() {
+            for t in space["tabs"].as_array().unwrap() {
+                if t["id"] == tab {
+                    return (
+                        space["name"].as_str().unwrap().to_string(),
+                        t["name"].as_str().unwrap().to_string(),
+                    );
+                }
+            }
+        }
+        panic!("no tab {tab}")
     }
 }

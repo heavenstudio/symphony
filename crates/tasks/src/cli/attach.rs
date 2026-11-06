@@ -4,7 +4,7 @@
 //! or lost with work another could take. An orchestrator also hears the PULL digest
 //! ([`super::pull`]) only for actionable entries absent from its last delivered digest. The pane
 //! watch ([`pane_watch`]) tells an orchestrator or a parent once when a session it oversees waits on
-//! an approval in its herdr pane, and once when herdr cannot be asked. What an orchestrator hears
+//! an approval in its hc terminal, and once when hc cannot be asked. What an orchestrator hears
 //! is its own tasks and the ones nobody orchestrates ([`crate::orchestration`]).
 
 mod events;

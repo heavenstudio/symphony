@@ -58,10 +58,15 @@ fn launched(handle: &str, slug: &str, pane: &str, conversation: &str) -> TaskSes
     }
 }
 
+/// Terminal `id` as `hc get` describes it: a codex resuming `conversation`, or a shell given "".
 fn pane(id: &str, status: &str, conversation: &str) -> Pane {
-    Pane::from_json(&json!({"pane_id": id, "agent_status": status,
-                            "agent_session": {"value": conversation}}))
-    .unwrap()
+    let argv = if conversation.is_empty() {
+        json!(["zsh"])
+    } else {
+        json!(["codex", "--no-daemon", "resume", conversation])
+    };
+    let terminal = json!({"address": id, "status": status, "argv": argv});
+    Pane::from_hc(terminal.as_object().unwrap()).unwrap()
 }
 
 /// One look, and the lines it said.
@@ -163,7 +168,7 @@ fn a_subtree_another_orchestrator_holds_is_that_ones_to_see() {
 }
 
 #[test]
-fn a_launched_pane_is_found_by_its_conversation_once_its_recorded_id_is_gone() {
+fn a_launched_terminal_is_found_by_its_conversation_once_its_recorded_address_is_gone() {
     let board = Board {
         tasks: vec![task(
             "t/a",
@@ -173,23 +178,23 @@ fn a_launched_pane_is_found_by_its_conversation_once_its_recorded_id_is_gone() {
         sessions: vec![session("orch", None), session("w", None)],
         latest_message: 0,
     };
-    let open = [launched("w", "t/a", "w1:p1", "codex:thread-1")];
+    let open = [launched("w", "t/a", "t1", "codex:thread-1")];
     let (after, said) = look(
         &board,
         "orch",
         &open,
-        Ok(vec![pane("w1:p7", "blocked", "thread-1")]),
+        Ok(vec![pane("t7", "blocked", "thread-1")]),
         &PaneWatch::default(),
     );
     assert_eq!(
         said,
-        ["BLOCKED w t/a w1:p7 — its pane waits on an approval or a question"]
+        ["BLOCKED w t/a t7 — its terminal waits on an approval or a question"]
     );
-    assert_eq!(after.blocked["w"].pane, "w1:p7");
+    assert_eq!(after.blocked["w"].pane, "t7");
 }
 
 #[test]
-fn a_session_no_longer_launched_is_forgotten_while_herdr_cannot_be_asked() {
+fn a_session_no_longer_launched_is_forgotten_while_hc_cannot_be_asked() {
     let board = Board {
         tasks: vec![task(
             "t/a",
@@ -212,21 +217,18 @@ fn a_session_no_longer_launched_is_forgotten_while_herdr_cannot_be_asked() {
         pane: pane.into(),
     };
     let before = PaneWatch {
-        blocked: BTreeMap::from([
-            ("w".into(), blocked("w1:p1")),
-            ("v".into(), blocked("w1:p2")),
-        ]),
+        blocked: BTreeMap::from([("w".into(), blocked("t1")), ("v".into(), blocked("t2"))]),
         unanswered: false,
     };
     // v's pane closed: only w is still launched.
-    let open = [launched("w", "t/a", "w1:p1", "")];
+    let open = [launched("w", "t/a", "t1", "")];
     let (after, said) = look(&board, "orch", &open, Err("down".into()), &before);
     assert_eq!(
         said,
-        ["WATCH herdr unanswered: down — blocked panes go unreported until it answers"]
+        ["WATCH hc unanswered: down — blocked terminals go unreported until it answers"]
     );
     let expected = PaneWatch {
-        blocked: BTreeMap::from([("w".into(), blocked("w1:p1"))]),
+        blocked: BTreeMap::from([("w".into(), blocked("t1"))]),
         unanswered: true,
     };
     assert_eq!(after, expected);
@@ -235,7 +237,7 @@ fn a_session_no_longer_launched_is_forgotten_while_herdr_cannot_be_asked() {
 }
 
 #[test]
-fn with_nothing_launched_herdr_is_not_asked_and_the_watch_forgets() {
+fn with_nothing_launched_hc_is_not_asked_and_the_watch_forgets() {
     let board = Board {
         tasks: vec![task(
             "t/a",
@@ -253,7 +255,7 @@ fn with_nothing_launched_herdr_is_not_asked_and_the_watch_forgets() {
         &board,
         &overseen(&board, "orch"),
         &[],
-        &|| panic!("herdr asked with nothing to watch"),
+        &|| panic!("hc asked with nothing to watch"),
         &before,
         &mut |line| panic!("said {line}"),
     );
@@ -261,7 +263,7 @@ fn with_nothing_launched_herdr_is_not_asked_and_the_watch_forgets() {
 }
 
 #[test]
-fn a_blocked_pane_is_said_only_to_the_orchestrator_of_the_task_it_was_launched_for() {
+fn a_blocked_terminal_is_said_only_to_the_orchestrator_of_the_task_it_was_launched_for() {
     let orchestrator = |handle: &str| {
         let mut session = session(handle, None);
         session.row.kind = "orchestrator".into();
@@ -284,12 +286,12 @@ fn a_blocked_pane_is_said_only_to_the_orchestrator_of_the_task_it_was_launched_f
         sessions: vec![orchestrator("a"), orchestrator("b"), session("w", None)],
         latest_message: 0,
     };
-    let open = [launched("w", "scratch/b", "w1:p1", "")];
+    let open = [launched("w", "scratch/b", "t1", "")];
     let heard = |who: &str| {
-        let panes = Ok(vec![pane("w1:p1", "blocked", "")]);
+        let panes = Ok(vec![pane("t1", "blocked", "")]);
         look(&board, who, &open, panes, &PaneWatch::default()).1
     };
-    let blocked = "BLOCKED w scratch/b w1:p1 — its pane waits on an approval or a question";
+    let blocked = "BLOCKED w scratch/b t1 — its terminal waits on an approval or a question";
     assert_eq!(
         [heard("a"), heard("b")],
         [vec![], vec![blocked.to_string()]]

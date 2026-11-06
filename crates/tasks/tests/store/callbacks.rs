@@ -213,30 +213,24 @@ fn plain_orchestrators_receive_queued_chat_and_preserve_explicit_priority() {
 }
 
 fn sweep_callbacks(f: &Fixture, listener: &Listener) {
-    use symphony_board::launch::LaunchError;
-    use symphony_board::launch::herdr::Herdr;
     use symphony_board::launch::reap::{self, REAP_SECONDS, Reap};
 
-    struct EmptyPanes;
-    impl Herdr for EmptyPanes {
-        fn run(&self, _args: &[&str]) -> Result<String, LaunchError> {
-            Ok(r#"{"result":{"agents":[]}}"#.into())
-        }
-        fn workspace(&self) -> Option<String> {
-            None
-        }
-    }
-
+    // An hc with no terminal: whatever it is asked, it lists none.
+    let no_terminals = symphony_board::launch::hc::Binary::of(&symphony_board::cli::Env {
+        vars: [("HC_BIN", r#"/bin/sh -c 'echo "{\"terminals\":[]}"'"#)]
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .into(),
+        cwd: std::env::temp_dir(),
+    });
     let sweep = Reap {
         state: listener.path.with_extension("reap.json"),
         apply: true,
-        processes: &|_| panic!("no pane needs a process inventory"),
-        current_pane: None,
+        processes: &|_| panic!("no terminal needs a process inventory"),
         caller: None,
         min_idle: REAP_SECONDS,
     };
     assert!(
-        reap::sweep(&f.store, &EmptyPanes, &sweep, &mut Vec::new())
+        reap::sweep(&f.store, &no_terminals, &sweep, &mut Vec::new())
             .unwrap()
             .is_some()
     );

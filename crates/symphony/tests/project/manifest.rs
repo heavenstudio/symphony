@@ -128,8 +128,8 @@ fn each_key_left_out_takes_its_default_beside_those_given() {
         [("notes", "notes"), ("", "spec")],
         "in the file's order"
     );
-    let project = parsed("[agents]\npanes = \"herdr\"\n").unwrap();
-    assert_eq!(project.agents.panes, "herdr");
+    let project = parsed("[agents]\npanes = \"hc\"\n").unwrap();
+    assert_eq!(project.agents.panes, "hc");
     assert_eq!(project.agents.transports, TRANSPORTS);
     let project = parsed("[agents]\ntransports = []\n").unwrap();
     assert!(project.agents.transports.is_empty());
@@ -148,7 +148,7 @@ fn an_unknown_table_or_key_is_refused_by_its_name() {
         ("[project]\nnmae = \"x\"\n", "nmae"),
         ("[plugins]\ncrate = [\"a\"]\n", "crate"),
         ("[theme]\ncolour = \"red\"\n", "colour"),
-        ("[agents]\npane = \"herdr\"\n", "pane"),
+        ("[agents]\npane = \"hc\"\n", "pane"),
         ("[agents.launch]\nreasoning = \"high\"\n", "reasoning"),
         ("[verdicts]\nlands = [\"x\"]\n", "lands"),
         (
