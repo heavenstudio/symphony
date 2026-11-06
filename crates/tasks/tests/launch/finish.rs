@@ -2,7 +2,7 @@
 //! the sessions launched below it; it never fails, since the status change must stand. (What becomes
 //! of their worktrees is the worktree sweep's: `tasks sweep --task SLUG`.)
 
-use crate::World;
+use crate::{Hooked, World};
 use symphony_board::Store;
 use symphony_board::launch::{LaunchError, finish};
 use symphony_board::rpc::Client;
@@ -91,6 +91,22 @@ fn a_finish_whose_process_table_cannot_be_read_keeps_the_terminal_and_says_why()
             .closed
             .is_none()
     );
+}
+
+#[test]
+fn a_terminal_gone_between_its_listing_and_its_read_is_nothing_to_close() {
+    let w = World::new();
+    let (_, terminal) = w.worker("sim/jump", Some("done"));
+    let mut hooked = Hooked::new(&w);
+    hooked.instead = Box::new(|args| {
+        (args[0] == "get").then(|| Err(LaunchError(format!("hc get {}: not_found: gone", args[1]))))
+    });
+    let m = w.machine();
+    assert_eq!(
+        finish(w.store(), &hooked, &*m.processes, "sim/jump"),
+        Vec::<String>::new()
+    );
+    assert!(w.calls_of(&["kill"]).is_empty() && w.has_terminal(&terminal));
 }
 
 #[test]

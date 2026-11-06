@@ -30,14 +30,16 @@
 //! - nothing runs under its agent but what is known to be harmless ([`procs::reap_busy_reason`]):
 //!   MCP helpers, caffeinate, a board command or monitor (`just tasks…`, the `tasks` binary).
 //!   Anything else, whatever it is, is work. A terminal whose processes cannot be read is kept.
+//! - the owner is not looking at it ([`super::screen`]): not in the tab the Herdr app shows, not
+//!   the agent it shows, not held over them; when the window cannot say, it is kept.
 //!
 //! Native channels are checked during the sweep, independently of tool activity: a Codex thread is
 //! present while hc runs Codex in its terminal ([`crate::Presence`]). That does not exempt a
 //! finished idle worker's terminal from the rules above.
 //!
-//! Right before the close, the program, owner, status, processes and board work are read again: an
-//! unconfirmed or changed occupant restarts the idle wait; a prompt, work or a claim that came
-//! during the sweep keeps the terminal. The close is recorded first, on the handle's open task
+//! Right before the close, the program, owner, status, processes, board work and screen are read
+//! again: an unconfirmed or changed occupant restarts the idle wait; a prompt, work, a claim or the
+//! owner's look that came during the sweep keeps the terminal. The close is recorded first, on the handle's open task
 //! sessions (`closed the pane of …; restore: just tasks restore …`), else on the last task it held a
 //! role on, as a session found and closed in that one line; a record that fails leaves the terminal
 //! open, and a close hc refuses reopens the session. A sweep interrupted after recording a close
@@ -45,7 +47,7 @@
 
 use super::cleanup::{restore_line, stored_session};
 use super::hc::{self, Hc, Object, text_of};
-use super::{Processes, procs};
+use super::{Processes, procs, screen};
 use crate::cli::Env;
 use crate::sys::FileLock;
 use crate::{Error, NewLaunch, Presence, Store, git};
@@ -243,6 +245,9 @@ pub fn sweep(
             Ok(commands) if procs::reap_busy_reason(&commands).is_none() => {}
             _ => continue, // work, or `ps` could not say: never closed on no information
         }
+        if !matches!(screen::on_screen(hc, &terminal), Ok(false)) {
+            continue; // the owner may be looking at it: its idle wait starts again
+        }
         let key = format!("{address} {handle} {pid}");
         let since = *seen.get(&key).unwrap_or(&now);
         idle_now.insert(key.clone(), since);
@@ -434,6 +439,7 @@ fn still_idle(
         .is_none_or(|s| NOT_REAPED_KINDS.contains(&s.row.kind.as_str()))
         || live_work(store)?.contains(&current_handle)
         || !(how.processes)(pid).is_ok_and(|commands| procs::reap_busy_reason(&commands).is_none())
+        || !matches!(screen::on_screen(hc, &now), Ok(false))
     {
         return Ok(None);
     }

@@ -12,6 +12,7 @@ mod launch;
 mod procs;
 mod reap;
 mod restore;
+mod screen;
 
 use common::Fixture;
 use serde_json::{Map, Value, json};

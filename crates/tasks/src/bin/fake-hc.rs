@@ -4,11 +4,12 @@
 //!
 //! State is a JSON file named by `$FAKE_HC_STATE`: `terminals` (each as `hc get` shows it, its
 //! `status` the bare word), `layout` (the Herdr app's spaces and tabs, as `herdr-app ls` and the
-//! core's `herdr-app` document show them) and counters. Every call is appended, as one JSON list of
+//! core's `herdr-app` document show them), `screen` (what `herdr-app status` says the window shows)
+//! and counters. Every call is appended, as one JSON list of
 //! its arguments per line (`app` first for the window's), to `$FAKE_HC_LOG`. It speaks the slice of
 //! hc the board uses, with hc's JSON shapes: `ls`, `get`, `run`, `read`, `keys`, `send`, `kill`,
-//! `rm`, `connect` (a `doc.get` of the layout), and the window's `ls` and `do tab.rename` /
-//! `space.rename`. A terminal `run` labels into a space and tab the layout lacks joins it, as the
+//! `rm`, `connect` (a `doc.get` of the layout), and the window's `ls`, `status` and `do tab.rename`
+//! / `space.rename`. A terminal `run` labels into a space and tab the layout lacks joins it, as the
 //! window adopts it.
 //!
 //! An agent `run` starts (its program, past `env` and its settings, is `claude` or `codex`) has
@@ -499,10 +500,20 @@ fn connect(state: &Map<String, Value>) -> Answer {
     Answer::Kept(out.join("\n"))
 }
 
-/// `herdr-app ls` and `herdr-app do space.rename|tab.rename --id ID --name NAME`.
+/// `herdr-app ls`, `herdr-app status` (the state's `screen`, else a window showing no tab) and
+/// `herdr-app do space.rename|tab.rename --id ID --name NAME`.
 fn app(argv: &[String], state: &mut Map<String, Value>) -> Answer {
     match argv.first().map(String::as_str) {
         Some("ls") => Answer::Kept(state["layout"].to_string()),
+        Some("status") => Answer::Kept(
+            state
+                .get("screen")
+                .cloned()
+                .unwrap_or_else(|| {
+                    json!({"tab": null, "agent": null, "overlays": [], "floats": {}, "errors": []})
+                })
+                .to_string(),
+        ),
         Some("do") => {
             let (id, name) = (flag(argv, "--id").unwrap_or(""), flag(argv, "--name"));
             let Some(name) = name else {

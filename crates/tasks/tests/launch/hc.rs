@@ -1,6 +1,6 @@
 //! The hc client (`Binary`, `Hc`'s calls) against the fake as a real binary, and the fake itself.
 
-use crate::{FAKE, SPACE, World};
+use crate::{FAKE, Hooked, SPACE, World};
 use serde_json::json;
 use std::collections::BTreeMap;
 use symphony_board::cli::Env;
@@ -134,6 +134,41 @@ fn close_kills_a_live_terminal_then_removes_it_and_a_gone_one_is_already_closed(
             ["get", "t404"]
         ]
         .map(|c| c.map(String::from).to_vec())
+    );
+}
+
+#[test]
+fn a_terminal_hc_forgets_while_it_closes_is_closed() {
+    let w = World::new();
+    let live = w.add_terminal(true, None, json!({}));
+    let ended = w.add_terminal(true, None, json!({"state": "finished"}));
+    let mut hooked = Hooked::new(&w);
+    hooked.instead = Box::new(|args| {
+        let gone = |t: &str| LaunchError(format!("hc {} {t}: not_found: no terminal", args[0]));
+        matches!(args[0], "kill" | "rm").then(|| Err(gone(args[1])))
+    });
+    hooked.close(&live).unwrap();
+    hooked.close(&ended).unwrap();
+    assert_eq!(w.calls_of(&["get"]).len(), 2);
+}
+
+#[test]
+fn a_get_answered_with_no_object_or_a_rename_the_window_answers_with_an_error_is_named() {
+    assert_eq!(
+        binary(r#"sh -c 'echo "[1]"'"#).get("t1"),
+        Err(LaunchError("hc get t1 answered no object".into()))
+    );
+    let w = World::new();
+    let mut env = w.env.clone();
+    env.vars.insert(
+        "HERDR_APP_BIN".into(),
+        r#"sh -c 'echo "{\"error\":\"no such space\"}"'"#.into(),
+    );
+    assert_eq!(
+        Binary::of(&env).rename("space", "sp-x", "y"),
+        Err(LaunchError(
+            "herdr-app do space.rename: no such space".into()
+        ))
     );
 }
 

@@ -166,7 +166,12 @@ never an owner's tab or another project's terminal. It is confirmed by `hc get`
 (`first_message.sent`, then a `working`, `done` or `blocked` status), never by
 reading the screen; a launch hc did not send fails naming the terminal, which
 is killed and removed. Codex runs with `--no-daemon`. A close is `hc kill`
-then `hc rm`, never of the caller's terminal (`HC_TERMINAL_ID`). A record
+then `hc rm`, never of the caller's terminal (`HC_TERMINAL_ID`) nor of one the
+owner may be looking at (`launch/screen.rs`, from `herdr-app status`: its
+`herdr.tab` label the tab the window shows, the agent it shows, or held by an
+overlay or float); cleanup, finish and the idle sweep read the window right
+before each close, and a window that cannot say (the call fails, it reports
+errors, or an overlay or float names no terminal) keeps the terminal. A record
 naming a herdr pane (`w1:p…`) is a gone terminal: cleanup records it closed
 with its restore line, and restore brings it back in an hc terminal. Its tests' handles:
 `TASKS_SERVER` and `TASKS_DATABASE` reach a board of the test's own
@@ -176,16 +181,17 @@ with its restore line, and restore brings it back in an hc terminal. Its tests' 
 orchestrator's monitor computes its PULL digest (only a new actionable entry
 prints one); `TASKS_REAP_STATE` is where the
 idle sweep keeps what it saw; `HC_BIN` and `HERDR_APP_BIN` name a fake hc
-and window (the crate's `fake-hc` binary, its terminals and the window's layout
-a JSON file `FAKE_HC_STATE` names, each call a line of `FAKE_HC_LOG`, and the
-calls `FAKE_HC_FAIL` names refused);
+and window (the crate's `fake-hc` binary, its terminals, the window's layout
+and what the window shows (`screen`) a JSON file `FAKE_HC_STATE` names, each
+call a line of `FAKE_HC_LOG`, and the calls `FAKE_HC_FAIL` names refused);
 `TASKS_PS_TABLE` names a file of `ps -axo pid=,ppid=,command=` lines the commands
 read in place of `ps` (`procs::table`), so no command-line case reads this
 machine's process table; it is read only with a `TASKS_DATABASE` other than the
 live one, never on the live board. A table, the file's or `ps`'s, that lists no
 row for the terminal's process says nothing of it. A terminal the board would
-close whose `hc get` or table cannot be read stays, and cleanup and finish print
-`kept pane T [of H] (never closed on no information: WHY)`.
+close whose `hc get`, table or window cannot be read stays, and cleanup and
+finish print `kept pane T [of H] (never closed on no information: WHY)`; one on
+screen prints `kept pane T [of H] (on screen in the Herdr app)`.
 
 A child's input and output go through `sys::output` (or `sys::spawn_output`,
 `sys::spawn_piped` for one that reads stdin, and `sys::wait_output`), never

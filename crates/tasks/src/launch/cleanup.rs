@@ -4,7 +4,7 @@
 
 use super::hc::{self, Hc, Object, text_of};
 use super::procs::{busy_reason, named};
-use super::{GONE, LaunchError, Processes, READY_STATES, gone};
+use super::{GONE, LaunchError, Processes, READY_STATES, gone, screen};
 use crate::health::FINISHED;
 use crate::rows::TaskSessionRow;
 use crate::{Error, NewLaunch, Store, Task};
@@ -26,10 +26,11 @@ pub struct Closure {
     pub restore: String,
     /// False for a dry run, when hc refused, and for a kept terminal.
     pub closed: bool,
-    /// True for a terminal left as it is because a call that says whether it is idle failed: `why`
-    /// names the call and its error. Never closed on no information, and never silently. Its
-    /// handle is the session the board would have closed it for; none when `hc get` failed, before
-    /// the terminal's session was looked for.
+    /// True for a terminal left as it is because a call that says whether it is idle failed (`why`
+    /// names the call and its error), or because the owner may be looking at it: on screen in the
+    /// Herdr app, or the window could not say ([`super::screen`]). Never closed on no information,
+    /// and never silently. Its handle is the session the board would have closed it for; none when
+    /// `hc get` failed, before the terminal's session was looked for.
     pub kept: bool,
 }
 
@@ -37,14 +38,37 @@ impl Closure {
     /// `terminal` left as it is, of no known session: `problem`, the failed call's error, said in
     /// `why`.
     fn kept(terminal: &str, problem: &LaunchError) -> Closure {
+        Closure::left(
+            terminal,
+            format!("never closed on no information: {problem}"),
+        )
+    }
+
+    /// `terminal` left as it is, of no known session, for the reason `why`.
+    fn left(terminal: &str, why: String) -> Closure {
         Closure {
             pane: terminal.into(),
             handle: None,
-            why: format!("never closed on no information: {problem}"),
+            why,
             restore: String::new(),
             closed: false,
             kept: true,
         }
+    }
+
+    /// None when the owner is not looking at `terminal`; else it stays, of `handle`, saying why: on
+    /// screen, or the window could not say.
+    fn on_screen(hc: &dyn Hc, terminal: &Object, handle: Option<&str>) -> Option<Closure> {
+        let address = text_of(terminal, "address");
+        let left = match screen::on_screen(hc, terminal) {
+            Ok(false) => return None,
+            Ok(true) => Closure::left(&address, "on screen in the Herdr app".into()),
+            Err(problem) => Closure::kept(&address, &problem),
+        };
+        Some(Closure {
+            handle: handle.map(str::to_string),
+            ..left
+        })
     }
 }
 
@@ -55,7 +79,7 @@ pub(super) fn restore_line(slug: &str, handle: &str) -> String {
 /// Close the terminals nobody needs; with `only` slugs, only those of those tasks' open sessions.
 /// The caller's terminal is never closed. A record whose pane is gone is recorded closed first. A
 /// terminal whose `hc get` or process table could not be read stays, as a [`Closure`] that is
-/// `kept`, naming the call that failed.
+/// `kept`, naming the call that failed; so does one the owner may be looking at ([`screen`]).
 pub fn cleanup(
     store: &Store,
     hc: &dyn Hc,
@@ -133,6 +157,10 @@ pub fn cleanup(
         let handle = handle_of(&terminal, store, &handles, &by_pane, &by_session)?;
         if ended {
             // Its program ended: nothing in it to lose, and any record of it was closed above.
+            if let Some(kept) = Closure::on_screen(hc, &terminal, handle.as_deref()) {
+                result.push(kept);
+                continue;
+            }
             let mut closure = Closure {
                 pane: address.clone(),
                 handle,
@@ -189,6 +217,10 @@ pub fn cleanup(
                 });
                 continue;
             }
+        }
+        if let Some(kept) = Closure::on_screen(hc, &terminal, handle.as_deref()) {
+            result.push(kept);
+            continue;
         }
         let slug = open
             .iter()

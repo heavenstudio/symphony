@@ -107,8 +107,11 @@ terminal (`hc get`: its first message sent and its agent at work), never by read
 screen; a launch hc did not send fails naming the terminal, which is killed and removed.
 It writes its handle, role, agent session
 id, worktree, branch, terminal and start time; `just tasks show` lists them under
-`Sessions:`. When a terminal is closed (`just tasks cleanup`, or the task becoming done
-or cancelled: `hc kill`, then `hc rm`) the record stays and says why and how to bring it back,
+`Sessions:`. No terminal the owner may be looking at is closed: one in the tab the Herdr
+app shows, the agent it shows, or held over them (`herdr-app status`); when the window
+cannot say, the terminal stays and cleanup names why. When a terminal is closed (`just
+tasks cleanup`, or the task becoming done or cancelled: `hc kill`, then `hc rm`) the
+record stays and says why and how to bring it back,
 `just tasks restore SLUG [HANDLE]`, which resumes the conversation in the same
 worktree, in a new terminal. A record from before hc names a herdr pane (`w1:p…`): that
 terminal is gone, so cleanup records it closed with its restore line, and restore brings
@@ -165,9 +168,10 @@ idle (or stuck on the folder-trust prompt) at two sweeps at least five minutes a
 however many apps sweep, when neither its handle nor a subagent session under it holds
 an executor role on an in-progress or blocked task or a reviewer role on a task in
 review, and nothing runs under it but MCP helpers, caffeinate and board commands:
-anything else is work. Status and roles are read again right before the close. Never an
-unnamed terminal or another board's (it may be the owner's), an orchestrator, or the
-caller's (`HC_TERMINAL_ID`).
+anything else is work. Status, roles and the window are read again right before the
+close. Never an unnamed terminal or another board's (it may be the owner's), an
+orchestrator, the caller's (`HC_TERMINAL_ID`), or one on screen in the Herdr app, which
+starts its idle wait again (as does a window that cannot say what it shows).
 Each close is one line on the handle's task thread, with its restore line, written
 before the terminal is closed. `just tasks reap --dry-run` names what the next sweep would close.
 Code: `symphony/crates/tasks/src/launch/reap.rs`.
