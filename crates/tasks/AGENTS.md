@@ -101,6 +101,22 @@ presence grace and reservation state against the current clock. The Symphony ser
 cached inputs even without a callback recipient; machine/test probes and the agents view still
 run each tick. Unchanged live observations skip planning until the periodic PULL check; health
 changes invalidate that shortcut, and due outbox retries are checked every tick.
+A command line's write answers once its own write commits: the `tasks` binary
+(`cli::main_detaching`) gives its stores a hand-off (`Store::dispatching_by`) that starts
+`tasks dispatch` of the same executable detached, in a session of its own (`cli/detached.rs`;
+its lines go to `sf-tasks/dispatch.log` beside the repository's own board, nowhere for a
+`TASKS_SERVER` board). One dispatcher runs a board at a time (`Store::dispatch_detached`), under
+the board-wide `callback_lease:['dispatch']` row (60 s, renewed on each pass it is asked for): one
+that finds it held sets its `again` flag and ends, and the holder passes until a pass ends with no
+ask standing, so 40 writes at once make a few passes, not 40. A holder whose lease lapsed and was
+taken ends after its pass and leaves the row to the new holder. A hand-off that cannot start the
+process dispatches in the write, as every library store does (the Symphony server's, the tests',
+`cli::main` in-process). A pass reads the delivered messages after the lowest recipient cursor
+once (`messages::Pool`) and each recipient's inbox filters that pool, looking its deliveries up by
+key, where each recipient scanned the message and delivery tables itself; the plan before a
+recipient's lease no longer reads its inbox, since one it would read always goes on to the lease,
+which reads it. `examples/dispatch_load.rs` measures 40 concurrent `tasks say` against a scratch
+database seeded from a dump of the live board.
 Dispatch plans before leasing and refreshes its inputs and observation again after acquiring
 the small `callback_lease` record. Its revision identifies the holder, including on release;
 taking or releasing it never rewrites `seen` or `statuses` or allocates a counter. Lease rows

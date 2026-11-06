@@ -1,5 +1,8 @@
-//! Native session channels and a durable outbox. Writes deliver immediately; the Symphony server's
-//! clock drains retries and observes actionable PULL/STALE/LOST changes. No agent keeps a monitor alive.
+//! Native session channels and a durable outbox. Writes deliver immediately: a library store's in
+//! the write; a command line's through the detached dispatcher it starts, one a board at a time
+//! ([`Store::dispatching_by`], [`Store::dispatch_detached`]), so the command answers once its own
+//! write commits. The Symphony server's clock drains retries and observes actionable
+//! PULL/STALE/LOST changes. No agent keeps a monitor alive.
 
 use super::callback_peer::{self as peer, Owner};
 use super::{ACT, Error, Store, acting, logged, refused};
@@ -21,6 +24,9 @@ mod codex;
 mod fixture_script;
 
 const CALLBACK_LEASE_SECONDS: u64 = 60;
+/// How long a detached dispatcher holds the board's dispatch lease without a word: past it, the next
+/// takes the board ([`Store::dispatch_detached`]). Each pass it is asked for renews it.
+const DISPATCH_LEASE_SECONDS: u64 = 60;
 
 fn sampled<'a, T: Clone + 'a>(probe: Probe<'a, T>) -> Probe<'a, T> {
     let sample = std::cell::OnceCell::new();
@@ -259,7 +265,7 @@ RETURN NONE;");
                 ),
             )
         })?;
-        self.dispatch_callbacks()
+        self.dispatch_or_hand_off()
     }
 
     pub fn chat_recipient(&self) -> Result<Option<String>, Error> {
@@ -475,7 +481,88 @@ RETURN NONE;");
              }; RETURN NONE;",
             json!({"key":key, "text":text}),
         ))?;
+        self.dispatch_or_hand_off()
+    }
+
+    /// This store, its writes sending their callback dispatch to `hand_off` instead of making it
+    /// before they answer: a command line's, whose hand-off starts a detached dispatcher
+    /// ([`Store::dispatch_detached`]). A hand-off that says it started nothing leaves the dispatch to
+    /// the write, as a store without one does (the Symphony server's, whose clock dispatches too).
+    pub fn dispatching_by(mut self, hand_off: super::HandOff) -> Store {
+        self.hand_off = Some(hand_off);
+        self
+    }
+
+    /// What a committed write that may concern a recipient does: hands the dispatch over, or makes
+    /// it. Never fails the write: what went wrong goes to stderr, and the outbox keeps the rest for
+    /// the next dispatch.
+    pub(super) fn after_write(&self) {
+        if let Err(error) = self.dispatch_or_hand_off() {
+            eprintln!("CALLBACK deferred: {error}");
+        }
+    }
+
+    fn dispatch_or_hand_off(&self) -> Result<(), Error> {
+        if self.hand_off.as_ref().is_some_and(|hand_off| hand_off()) {
+            return Ok(());
+        }
         self.dispatch_callbacks()
+    }
+
+    /// A detached dispatcher's work: the board's dispatch passes, by one dispatcher at a time. It
+    /// takes the board's dispatch lease, unless another dispatcher holds it: then it asks that one for
+    /// one more pass and ends, since a pass begun before its write committed may not have seen it.
+    /// The holder passes until a pass ends with no ask standing, then lets the lease go. One whose
+    /// lease lapsed (stalled past [`DISPATCH_LEASE_SECONDS`]) and was taken ends after its pass,
+    /// leaving the lease and the asks to the new holder. The passes it made, 0 when another held it.
+    /// Two passes at once stay safe, as they always were: each recipient's own lease and the
+    /// outbox's keys keep every event to one delivery.
+    pub fn dispatch_detached(&self) -> Result<usize, Error> {
+        let taken: Option<u64> = self.retrying(|| {
+            self.transact(
+                "LET $lease = (SELECT until, revision FROM ONLY type::record('callback_lease', ['dispatch']));
+                 IF ($lease.until ?? 0) > $now {
+                     UPDATE type::record('callback_lease', ['dispatch']) SET again = true RETURN NONE;
+                     RETURN NONE;
+                 };
+                 LET $revision = ($lease.revision ?? 0) + 1;
+                 UPSERT type::record('callback_lease', ['dispatch']) SET until = $now + $lease_seconds, revision = $revision, again = false RETURN NONE;
+                 RETURN $revision;",
+                json!({"now": self.now(), "lease_seconds": DISPATCH_LEASE_SECONDS}),
+            )
+        })?;
+        let Some(revision) = taken else {
+            return Ok(0);
+        };
+        let mut passes = 0;
+        loop {
+            passes += 1;
+            if let Err(error) = self.dispatch_callbacks() {
+                // The next dispatcher, or the server's clock, delivers what this one could not. A
+                // lease this cannot let go lapses.
+                let _ = self.retrying(|| self.transact::<Value>(
+                    "UPDATE type::record('callback_lease', ['dispatch']) SET until = 0 WHERE revision = $revision RETURN NONE; RETURN NONE;",
+                    json!({"revision": revision}),
+                ));
+                return Err(error);
+            }
+            let next: String = self.retrying(|| {
+                self.transact(
+                    "LET $lease = (SELECT revision, again FROM ONLY type::record('callback_lease', ['dispatch']));
+                     IF $lease.revision != $revision { RETURN 'lapsed'; };
+                     IF $lease.again = true {
+                         UPDATE type::record('callback_lease', ['dispatch']) SET again = false, until = $now + $lease_seconds RETURN NONE;
+                         RETURN 'again';
+                     };
+                     UPDATE type::record('callback_lease', ['dispatch']) SET until = 0 RETURN NONE;
+                     RETURN 'done';",
+                    json!({"revision": revision, "now": self.now(), "lease_seconds": DISPATCH_LEASE_SECONDS}),
+                )
+            })?;
+            if next != "again" {
+                return Ok(passes);
+            }
+        }
     }
 
     pub fn dispatch_callbacks(&self) -> Result<(), Error> {
@@ -513,6 +600,8 @@ RETURN NONE;");
         &self,
         callbacks: &BTreeMap<String, Callback>,
     ) -> Result<super::Board, Error> {
+        // Each pass reads the messages afresh, once for every recipient ([`super::messages::Pool`]).
+        *self.inbox_pool.lock().unwrap_or_else(|e| e.into_inner()) = None;
         let (mut board, mut sequence) = self.callback_board()?;
         let health: Vec<_> = board
             .sessions
@@ -967,14 +1056,17 @@ RETURN NONE;");
         seen = compact(&seen);
         // Message, role and task-tree writes append a board message. Once the inbox is durably
         // copied, an unchanged observation needs only outbox retries, not another history scan.
-        let inbox = if state.inbox_cursor == Some(board.latest_message)
-            && state.seen.as_ref() == Some(&seen)
+        // A plan that would read it goes on to the lease below whatever it finds (the cursor or the
+        // observation has moved), and the leased pass reads it again: the plan leaves it to that one.
+        let inbox = if lease.is_none()
+            || (state.inbox_cursor == Some(board.latest_message)
+                && state.seen.as_ref() == Some(&seen))
         {
             Vec::new()
         } else if first_observation {
             self.inbox(handle)?
         } else {
-            self.inbox_after(handle, message_floor)?
+            self.inbox_pooled(handle, message_floor, board.latest_message)?
         };
         for message in inbox.into_iter().filter(|message| {
             message.id > message_floor

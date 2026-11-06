@@ -33,11 +33,8 @@ impl Store {
         )?;
         // The write has committed. Delivery failure must never turn it into a failed write that a
         // caller might repeat. The shared server also drains this durable outbox after a crash.
-        if dispatch
-            && body.contains("CREATE type::record('message',")
-            && let Err(error) = self.dispatch_callbacks()
-        {
-            eprintln!("CALLBACK deferred: {error}");
+        if dispatch && body.contains("CREATE type::record('message',") {
+            self.after_write();
         }
         let answer = results
             .len()

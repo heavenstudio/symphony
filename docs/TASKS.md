@@ -72,7 +72,10 @@ asks, follow-ups, card messages, verdict notes and callouts directly; an outbox
 beside the asks preserves them across a board outage. No file watcher discovers
 chat. `--off` or leaving the board unregisters delivery.
 
-Board writes dispatch addressed messages and role/status/new-work changes.
+Board writes dispatch addressed messages and role/status/new-work changes. A
+command line's write answers once it commits and leaves the dispatch to a
+detached `tasks dispatch`, one a board at a time, which makes one more pass for
+each write that commits while it runs.
 The shared Symphony server schedules PULL digests and STALE/LOST transitions and
 retries failed deliveries. Per-recipient leases prevent concurrent writers
 from sending the same queued event. A successful native send acknowledges the
