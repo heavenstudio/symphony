@@ -2,21 +2,24 @@
 //! lays it out 78 columns wide (a pipe, where agents run it), taken from it once when the command line
 //! moved to Rust. A flag added to a command adds itself here too.
 
+mod launch;
+
 /// The usage line of `just tasks` itself.
 pub const USAGE: &str = r#"usage: just tasks [-h] [--as ACTOR]
-                  {callback,register,attach,list,search,embed,next,create,priority,field,claim,reserve,release,show,parent,depends,done,role,move,verdict,say,launch,restore,cleanup,reap,staff,agents,who,inbox,leave,beat,export,finish,sweep} ...
+                  {callback,register,attach,list,search,embed,next,create,priority,field,claim,reserve,release,show,parent,depends,done,role,handover,move,verdict,say,launch,restore,cleanup,reap,staff,agents,who,inbox,leave,beat,export,finish,sweep} ...
 "#;
 
 /// `just tasks --help`.
 pub const HELP: &str = r#"usage: just tasks [-h] [--as ACTOR]
-                  {callback,register,attach,list,search,embed,next,create,priority,field,claim,reserve,release,show,parent,depends,done,role,move,verdict,say,launch,restore,cleanup,reap,staff,agents,who,inbox,leave,beat,export,finish,sweep} ...
+                  {callback,register,attach,list,search,embed,next,create,priority,field,claim,reserve,release,show,parent,depends,done,role,handover,move,verdict,say,launch,restore,cleanup,reap,staff,agents,who,inbox,leave,beat,export,finish,sweep} ...
 
 The task board from the terminal — `just tasks …` and `just tasks-attach`.
 
 positional arguments:
-  {callback,register,attach,list,search,embed,next,create,priority,field,claim,reserve,release,show,parent,depends,done,role,move,verdict,say,launch,restore,cleanup,reap,staff,agents,who,inbox,leave,beat,export,finish,sweep}
+  {callback,register,attach,list,search,embed,next,create,priority,field,claim,reserve,release,show,parent,depends,done,role,handover,move,verdict,say,launch,restore,cleanup,reap,staff,agents,who,inbox,leave,beat,export,finish,sweep}
     callback            register a native channel or --off for inbox fallback
     depends             change what a task waits on
+    handover            hand a task's orchestrator role to another session
     beat               a hook: read one Claude Code tool event on stdin and
                         beat for the subagent making it
     finish              close the panes of a finished task's sessions
@@ -84,17 +87,18 @@ options:
         "list",
         r#"usage: just tasks list [-h] [--as ACTOR]
                        [--status {backlog,concept,design,ready,in_progress,review,done,blocked,cancelled}]
-                       [--mine] [--json]
+                       [--mine] [--doubled] [--json]
 "#,
         r#"usage: just tasks list [-h] [--as ACTOR]
                        [--status {backlog,concept,design,ready,in_progress,review,done,blocked,cancelled}]
-                       [--mine] [--json]
+                       [--mine] [--doubled] [--json]
 
 options:
   -h, --help            show this help message and exit
   --as ACTOR
   --status {backlog,concept,design,ready,in_progress,review,done,blocked,cancelled}
   --mine
+  --doubled             only tasks holding two or more orchestrators
   --json
 "#,
     ),
@@ -348,6 +352,24 @@ options:
 "#,
     ),
     (
+        "handover",
+        r#"usage: just tasks handover [-h] [--as ACTOR] slug to
+"#,
+        r#"usage: just tasks handover [-h] [--as ACTOR] slug to
+
+Move the orchestrator role on a task you orchestrate to another session, in one
+step: the thread names the new orchestrator and both of you hear one ROLE event.
+
+positional arguments:
+  slug
+  to          the handle of the new orchestrator
+
+options:
+  -h, --help  show this help message and exit
+  --as ACTOR
+"#,
+    ),
+    (
         "move",
         r#"usage: just tasks move [-h] [--as ACTOR]
                        slug
@@ -398,41 +420,7 @@ options:
   --to TO
 "#,
     ),
-    (
-        "launch",
-        r#"usage: just tasks launch [-h] [--as ACTOR] [--model MODEL]
-                         [--kind {codex,claude,worker,reviewer}]
-                         [--role {executor,reviewer}] [--branch BRANCH |
-                         --detached] [--worktree WORKTREE] [--tab TAB]
-                         [--prompt PROMPT]
-                         slug
-"#,
-        r#"usage: just tasks launch [-h] [--as ACTOR] [--model MODEL]
-                         [--kind {codex,claude,worker,reviewer}]
-                         [--role {executor,reviewer}] [--branch BRANCH |
-                         --detached] [--worktree WORKTREE] [--tab TAB]
-                         [--prompt PROMPT]
-                         slug
-
-positional arguments:
-  slug
-
-options:
-  -h, --help            show this help message and exit
-  --as ACTOR
-  --model MODEL        default gpt-6.1-sol (sonnet for --kind claude)
-  --kind {codex,claude,worker,reviewer}
-                        agent kind, default codex; worker/reviewer retain Claude compatibility
-  --role {executor,reviewer}
-  --branch BRANCH
-  --detached
-  --worktree WORKTREE   use this worktree instead of making one under
-                        <repo>-wt/
-  --tab TAB             the herdr tab (stream) for its pane; default code for
-                        an executor, review for a reviewer
-  --prompt PROMPT       text sent after /work SLUG HANDLE
-"#,
-    ),
+    ("launch", launch::USAGE, launch::HELP),
     (
         "restore",
         r#"usage: just tasks restore [-h] [--as ACTOR] slug [handle]

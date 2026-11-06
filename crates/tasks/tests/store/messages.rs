@@ -1,6 +1,8 @@
 //! Threads: saying, inboxes and acknowledging them, what reaches the owner, each sender's last word,
 //! and landings on the record.
 
+mod inbox;
+
 use crate::common::{Fixture, HOST, NOW, Seed, refused};
 use std::collections::BTreeSet;
 use symphony_board::health::LIVE_SECONDS;
@@ -217,22 +219,6 @@ fn only_the_owner_broadcast_reaches_participants() {
         ["please keep the golden"]
     );
     assert!(f.store.inbox(&outsider).unwrap().is_empty());
-}
-
-#[test]
-fn ack_empties_the_inbox_and_new_messages_arrive_again() {
-    let f = Fixture::empty();
-    let a = f.session("worker");
-    f.task("sim/jump");
-    f.store.claim("sim/jump", &a).unwrap();
-    f.store.say("sim/jump", "owner", "one", None).unwrap();
-    let ids: Vec<i64> = f.store.inbox(&a).unwrap().iter().map(|m| m.id).collect();
-    f.store.ack(&a, &ids).unwrap();
-    f.store.ack(&a, &ids).unwrap(); // again: nothing new
-    assert!(f.store.inbox(&a).unwrap().is_empty());
-    f.store.say("sim/jump", "owner", "two", None).unwrap();
-    assert_eq!(texts(f.store.inbox(&a).unwrap()), ["two"]);
-    assert_eq!(f.store.dump().unwrap().deliveries.len(), 1);
 }
 
 #[test]
