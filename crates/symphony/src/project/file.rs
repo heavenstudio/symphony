@@ -1,7 +1,8 @@
 //! `symphony.toml` as written: every table and key optional, and a table or key this build does
 //! not know kept by name ([`File::unknown`]) instead of refused where it is read, so
 //! [`Project::load`] refuses it by name and [`Project::of`] leaves it out, reads the rest and names
-//! it.
+//! it. An `[[entrypoints]]` table stays strict, as a generator's does: a misspelt key there would
+//! change what is served, so it refuses the file where it is read.
 //!
 //! [`Project::load`]: super::Project::load
 //! [`Project::of`]: super::Project::of
@@ -13,6 +14,7 @@ use serde::Deserialize;
 use super::FILE;
 use super::board::FileBoard;
 use crate::landing::Generator;
+use toml::de::DeTable;
 
 /// The keys of one table this build does not know, by name, with what they hold.
 pub(super) type Unknown = BTreeMap<String, toml::Value>;
@@ -34,37 +36,45 @@ pub(super) struct File {
 }
 
 impl File {
-    /// Every table and key of the file this build does not know, each named where it stands
-    /// (`[projct]`, `[board] on_review`, `[[entrypoints]] /docs/ folders`): the top of the file
-    /// first, then table by table in the file's shape, sorted within each.
-    pub(super) fn unknown(&self) -> Vec<String> {
+    /// Every table and key of the file this build does not know, each named where it stands and
+    /// on its line (`[projct] (line 3)`, `[board] on_review (line 41)`): the top of the file first,
+    /// then table by table in the file's shape, sorted within each. A key [`line`] does not reach is
+    /// named without its line.
+    pub(super) fn unknown(&self, text: &str) -> Vec<String> {
+        let parsed = DeTable::parse(text).ok();
+        let root = parsed.as_ref().map(|spanned| spanned.get_ref());
+        let named = |path: &[&str], key: &str, stands: String| match root
+            .and_then(|root| line(text, root, path, key))
+        {
+            Some(line) => format!("{stands} (line {line})"),
+            None => stands,
+        };
         let mut names: Vec<String> = self
             .unknown
             .iter()
             .map(|(key, value)| match value {
-                toml::Value::Table(_) => format!("[{key}]"),
-                _ => key.clone(),
+                toml::Value::Table(_) => named(&[], key, format!("[{key}]")),
+                _ => named(&[], key, key.clone()),
             })
             .collect();
-        let tables = [
-            ("[project]", &self.project.unknown),
-            ("[plugins]", &self.plugins.unknown),
-            ("[theme]", &self.theme.unknown),
-            ("[agents]", &self.agents.unknown),
-            ("[agents.launch]", &self.agents.launch.unknown),
-            ("[verdicts]", &self.verdicts.unknown),
-            ("[board]", &self.board.unknown),
+        let tables: [(&str, &[&str], &Unknown); 7] = [
+            ("[project]", &["project"], &self.project.unknown),
+            ("[plugins]", &["plugins"], &self.plugins.unknown),
+            ("[theme]", &["theme"], &self.theme.unknown),
+            ("[agents]", &["agents"], &self.agents.unknown),
+            (
+                "[agents.launch]",
+                &["agents", "launch"],
+                &self.agents.launch.unknown,
+            ),
+            ("[verdicts]", &["verdicts"], &self.verdicts.unknown),
+            ("[board]", &["board"], &self.board.unknown),
         ];
-        for (table, unknown) in tables {
-            names.extend(unknown.keys().map(|key| format!("{table} {key}")));
-        }
-        for entry in self.entrypoints.iter().flatten() {
-            let url = &entry.url;
+        for (table, path, unknown) in tables {
             names.extend(
-                entry
-                    .unknown
+                unknown
                     .keys()
-                    .map(|key| format!("[[entrypoints]] {url} {key}")),
+                    .map(|key| named(path, key, format!("{table} {key}"))),
             );
         }
         names
@@ -81,6 +91,23 @@ impl File {
     }
 }
 
+/// The line `key` is written on in the table `path` leads to from `root`, the file as written
+/// ([`DeTable::parse`]), when every table on the path is there.
+fn line(text: &str, root: &DeTable<'_>, path: &[&str], key: &str) -> Option<usize> {
+    let mut table = root;
+    for name in path {
+        let (_, value) = table.iter().find(|(k, _)| **k.get_ref() == **name)?;
+        table = value.get_ref().as_table()?;
+    }
+    let start = table
+        .iter()
+        .find(|(k, _)| **k.get_ref() == *key)?
+        .0
+        .span()
+        .start;
+    Some(text[..start].matches('\n').count() + 1)
+}
+
 /// The `[project]` table.
 #[derive(Default, Deserialize)]
 #[serde(default)]
@@ -94,8 +121,10 @@ pub(super) struct FileProject {
     pub(super) unknown: Unknown,
 }
 
-/// One `[[entrypoints]]` table: its URL and folder named, the rest defaulted.
+/// One `[[entrypoints]]` table: its URL and folder named, the rest defaulted, and nothing else
+/// allowed, since a misspelt key would change what is served.
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(super) struct FileEntrypoint {
     pub(super) url: String,
     pub(super) folder: String,
@@ -107,8 +136,6 @@ pub(super) struct FileEntrypoint {
     pub(super) types: Option<Vec<String>>,
     #[serde(default)]
     pub(super) history: Vec<String>,
-    #[serde(flatten)]
-    pub(super) unknown: Unknown,
 }
 
 /// The `[plugins]` table.

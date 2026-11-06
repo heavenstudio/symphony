@@ -8,9 +8,11 @@
 //! name where the project is loaded or linted ([`Project::load`]) and, where the Symphony runs with
 //! the file as it is ([`Project::of`]), left out by name with the rest read, so a misspelt setting
 //! never passes for its default unsaid, and a file a newer Symphony wrote keeps its settings under
-//! an older one. An unknown renderer, a path outside the project (an entrypoint's folder leading
-//! out of it through a link too), and an entrypoint or a file of one on a route another answers are
-//! refused by name, so no file is hidden.
+//! an older one. An `[[entrypoints]]` table and a generator's are strict: a key there the Symphony
+//! does not know refuses the file wherever it is read, since a misspelt one would change what is
+//! served or built. An unknown renderer, a path outside the project (an entrypoint's folder
+//! leading out of it through a link too), and an entrypoint or a file of one on a route another
+//! answers are refused by name, so no file is hidden.
 
 use std::collections::BTreeMap;
 use std::path::{Component, Path, PathBuf};
@@ -112,12 +114,7 @@ impl Project {
     /// wrong.
     pub fn load(root: &Path) -> Result<Project, String> {
         let project = match Self::read(root)? {
-            Some(file) => {
-                if let Some(refusal) = File::refusal(&file.unknown()) {
-                    return Err(refusal);
-                }
-                Self::resolve(root, file).map_err(|e| format!("{FILE}: {e}"))?
-            }
+            Some(text) => Self::parse(root, &text)?,
             None => Self::plain(root),
         };
         project
@@ -127,10 +124,10 @@ impl Project {
     }
 
     /// The file at `root` as written, `None` when there is none.
-    fn read(root: &Path) -> Result<Option<File>, String> {
+    fn read(root: &Path) -> Result<Option<String>, String> {
         let path = root.join(FILE);
         match std::fs::read_to_string(&path) {
-            Ok(text) => Self::written(&text).map(Some),
+            Ok(text) => Ok(Some(text)),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
             Err(e) => Err(crate::text::os_error(&e, &path)),
         }
@@ -142,10 +139,11 @@ impl Project {
     }
 
     /// `text` as the `symphony.toml` of the project at `root`, a table or key the Symphony does not
-    /// know refused by name. The files its entrypoints hold are [`Project::load`]'s to look at.
+    /// know refused by name and line. The files its entrypoints hold are [`Project::load`]'s to
+    /// look at.
     pub fn parse(root: &Path, text: &str) -> Result<Project, String> {
         let file = Self::written(text)?;
-        if let Some(refusal) = File::refusal(&file.unknown()) {
+        if let Some(refusal) = File::refusal(&file.unknown(text)) {
             return Err(refusal);
         }
         Self::resolve(root, file).map_err(|e| format!("{FILE}: {e}"))
@@ -155,10 +153,11 @@ impl Project {
     /// at: the project of the settings this build knows, and the names of the tables and keys it
     /// does not, left out ([`File::unknown`]).
     fn read_known(root: &Path) -> Result<(Project, Vec<String>), String> {
-        let Some(file) = Self::read(root)? else {
+        let Some(text) = Self::read(root)? else {
             return Ok((Self::plain(root), Vec::new()));
         };
-        let unknown = file.unknown();
+        let file = Self::written(&text)?;
+        let unknown = file.unknown(&text);
         let project = Self::resolve(root, file).map_err(|e| format!("{FILE}: {e}"))?;
         Ok((project, unknown))
     }
