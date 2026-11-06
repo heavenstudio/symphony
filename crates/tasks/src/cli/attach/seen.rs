@@ -36,6 +36,26 @@ pub struct Seen {
     pub children: BTreeMap<String, Health>,
 }
 
+/// Whom a look's lines go to. A dispatch says a line to a recipient only where its look hears the
+/// line's subject, and judges a line queued for it by the same test again at delivery.
+impl Seen {
+    /// Whether a STATUS move of `slug` to `status` is said: a task it follows, but one nobody
+    /// orchestrates only as it blocks.
+    pub fn hears_move(&self, slug: &str, status: &str) -> bool {
+        self.statuses.contains_key(slug) && (!self.unclaimed.contains(slug) || status == "blocked")
+    }
+
+    /// Whether a ROLE change on `slug` is said: a task the session holds a role on.
+    pub fn hears_roles(&self, slug: &str) -> bool {
+        (self.roles.iter()).any(|(on, _, _)| on == slug)
+    }
+
+    /// Whether `session` going quiet is said: a child it is told of ([`told_of`]).
+    pub fn hears_quiet(&self, session: &str) -> bool {
+        self.children.contains_key(session)
+    }
+}
+
 /// The session's view of the board, in one read however many tasks it orchestrates.
 pub fn observe(store: &Store, handle: &str, kind: &str) -> Result<Seen, Error> {
     Ok(seen(&store.board()?, handle, kind))

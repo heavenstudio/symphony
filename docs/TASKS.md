@@ -309,9 +309,11 @@ Its upgrade marker and message cursor are separate callback-state fields that ol
 The fields writers older than that scoping read (the observation, the open-status map and the delivered PULL entries)
 keep their whole-board meaning; the scoped observation and the entries it withheld are kept beside them, in fields
 those writers ignore, and read over them: a line either writer said is not said again by the other.
-A line still waiting for delivery when a hand-over takes a task it names from its recipient (a NEW, STATUS, ROLE,
-BLOCKED, STALE, LIVENESS UNKNOWN, LOST or PULL) is dropped, or said again of what the recipient hears now; the
-hand-over's own ROLE line is kept. Posts and verdicts are kept: they were said to whoever held the role then.
+A line still waiting for delivery to an orchestrator (a NEW, STATUS, ROLE, BLOCKED, STALE, LIVENESS UNKNOWN, LOST or
+PULL) is said only if a dispatch would tell it that line now, by the same test, so one a hand-over or a released claim
+took from it meanwhile is dropped, or said again of what it hears now; the hand-over's own ROLE line is kept, and a
+quiet child holding no work is still its parent's to hear of. Posts and verdicts are kept: they were said to
+whoever held the role then.
 Codex callbacks use the queue by default; `git config sf.codexSteer true` opts in to
 active-turn steering. The owner decides its first live use.
 

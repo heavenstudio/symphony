@@ -87,12 +87,13 @@ In the same way an orchestrator's `seen`, `statuses` and PULL entries keep the w
 binaries older than one orchestrator per task read (`attach::legacy_seen`, every open status, every
 digest entry); what it hears lives in `narrowing` and `pull_withheld`, which they ignore, read over
 that record, so neither generation repeats a NEW, LOST or PULL the other said.
-An orchestrator's queued line about a task a hand-over took from it meanwhile is dropped, or said
-again of the work it still hears (`queued_lines`): NEW and STATUS of a task it no longer hears,
-ROLE on one it holds nothing on (but the move itself), BLOCKED of a session it no longer
-oversees there, STALE or LIVENESS UNKNOWN of a child whose work is all elsewhere now, LOST naming
-the work still told it, and the PULL built of what it hears (a PULL's `pull_told` names its
-rows, an older dispatcher's every entry it records), while those fields keep counting it as said.
+An orchestrator's queued lines are judged at delivery by the test a dispatch makes of whom to tell
+each one (`queued_lines`, a table of each kind and the `Seen`, `Owners`, `Overseen` or
+`orchestration` call it shares with `attach::diff` and the pane watch), on its look now, so a
+hand-over or a released claim meanwhile takes back what it would no longer be told: such a line
+is dropped, a LOST names only the work still told it, and the PULL is built of what it hears (a
+PULL's `pull_told` names its rows, an older dispatcher's every entry it records), while those
+fields keep counting it as said. A new kind of task-naming line takes its test from there too.
 Posts, verdicts and AGENT lines stay: they were said to whoever held the role then, and a new
 holder hears no backlog.
 A finished idle pane still closes under the original cleanup rules, retiring its

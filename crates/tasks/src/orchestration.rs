@@ -170,6 +170,12 @@ pub fn took_line(to: &str, from: &[(String, &str)]) -> String {
     format!("{to} took orchestrator over from {}", from.join(", "))
 }
 
+/// Whether a move of the orchestrator role from `from` to `to` is said to `handle`: each session it
+/// left, and the one it reached.
+pub fn moved_for(from: &[&str], to: &str, handle: &str) -> bool {
+    to == handle || from.contains(&handle)
+}
+
 /// A move of the orchestrator role, read back from its thread line: the handles it left, and the
 /// one it reached.
 pub fn moved(text: &str) -> Option<(Vec<&str>, &str)> {

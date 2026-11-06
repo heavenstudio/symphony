@@ -1,17 +1,30 @@
 //! The lines queued for an orchestrator and not yet delivered, judged again against what it hears
-//! now: a hand-over since they were queued can take a task they name away from it. A line about
-//! work it no longer hears is dropped, a LOST is said again of the work it still hears
-//! ([`Queued::rescope`]), and a PULL naming such work is built again by the dispatcher
-//! ([`Queued::unheard`]). Addressed messages and verdicts stay: they are their sender's words to
-//! whoever held the role when they were sent, and a session taking a role over hears no earlier
-//! ones, so dropping one would leave it said to nobody.
+//! now: a hand-over since they were queued can take what they name away from it. Each line is put
+//! to the test a dispatch makes of whom to tell it ([`Queued::rescope`]), on the recipient's look
+//! now: one it would not be told now is dropped, a LOST is said again of the work it is still told
+//! of, and a PULL naming work it no longer hears is built again by the dispatcher
+//! ([`Queued::unheard`]).
+//!
+//! | Line | Said to the recipient now when |
+//! |---|---|
+//! | NEW | it hears the task ([`Owners::reaches`], as its look takes in ready work) |
+//! | STATUS | its look hears the move ([`Seen::hears_move`]) |
+//! | ROLE | it holds a role on the task ([`Seen::hears_roles`]) |
+//! | ROLE of a move | it is a party to the move ([`moved_for`]) |
+//! | BLOCKED | it oversees the session on that task ([`Overseen::hears_of`]) |
+//! | STALE, LIVENESS UNKNOWN | it is told of the session going quiet ([`Seen::hears_quiet`]) |
+//! | LOST | that, and of the work named, what it is told of ([`told`]) |
+//!
+//! Addressed messages and verdicts stay: they are their sender's words to whoever held the role
+//! when they were sent, and a session taking a role over hears no earlier ones, so dropping one
+//! would leave it said to nobody.
 
 use super::callback_state::Entry;
+use crate::Board;
 use crate::cli::attach::{Overseen, Seen, overseen};
-use crate::orchestration::{Owners, claimable_work, told};
-use crate::{Board, Task};
+use crate::orchestration::{Owners, moved_for, told};
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeSet, HashMap};
+use std::collections::BTreeSet;
 
 /// An event queued for a recipient and not yet delivered.
 #[derive(Debug, Deserialize)]
@@ -48,49 +61,35 @@ enum Now {
 }
 
 /// What an orchestrator hears now, to judge its queued lines by.
-pub(super) struct Hearing<'b> {
-    board: &'b Board,
-    handle: &'b str,
-    owners: Owners<'b>,
-    /// Its look now ([`crate::cli::attach::seen`]): the tasks whose status it follows and the roles
-    /// on those it holds one on.
-    seen: &'b Seen,
-    work: HashMap<&'b str, Vec<&'b Task>>,
-    overseen: Overseen<'b>,
+pub(super) struct Hearing<'board> {
+    board: &'board Board,
+    handle: &'board str,
+    owners: Owners<'board>,
+    /// Its look now ([`crate::cli::attach::seen`]), as a dispatch now takes it.
+    seen: &'board Seen,
+    overseen: Overseen<'board>,
 }
 
-impl<'b> Hearing<'b> {
-    pub(super) fn of(board: &'b Board, handle: &'b str, seen: &'b Seen) -> Hearing<'b> {
+impl<'board> Hearing<'board> {
+    pub(super) fn of(
+        board: &'board Board,
+        handle: &'board str,
+        seen: &'board Seen,
+    ) -> Hearing<'board> {
         Hearing {
             board,
             handle,
             owners: Owners::new(&board.tasks),
             seen,
-            work: claimable_work(board),
             overseen: overseen(board, handle),
         }
-    }
-
-    /// Of `child`'s work, `held`, what the orchestrator is told of when it goes quiet.
-    fn told(&self, child: &str, held: Vec<String>) -> Vec<String> {
-        told(self.board, child, self.handle, held)
-    }
-
-    /// The work `child` holds that another could take.
-    fn held(&self, child: &str) -> Vec<String> {
-        let held = self.work.get(child).map_or(&[][..], Vec::as_slice);
-        held.iter().map(|task| task.slug.clone()).collect()
-    }
-
-    /// Whether the orchestrator holds a role on `slug`.
-    fn holds(&self, slug: &str) -> bool {
-        (self.seen.roles.iter()).any(|(on, who, _)| on == slug && who == self.handle)
     }
 
     /// The queued lines, but PULL, that a hand-over took from it or narrowed.
     pub(super) fn rescope(&self, queued: &[Queued]) -> Rescoped {
         let mut rescoped = Rescoped::default();
-        for line in queued.iter().filter(|line| !line.is_pull()) {
+        let lines = queued.iter().filter(|line| !line.is_pull());
+        for line in lines {
             match line.rescope(self) {
                 Now::Kept => {}
                 Now::Dropped => rescoped.dropped.push(line.key.clone()),
@@ -116,29 +115,32 @@ impl Queued {
         (told.into_iter().flatten()).any(|entry| withheld.contains(entry) || unheard(entry))
     }
 
-    /// What this line comes to for the orchestrator `now` hears: each kind as its dispatch decides
-    /// whom to tell ([`crate::cli::attach::diff`], [`crate::cli::attach::pane_watch`]).
+    /// What this line comes to for the orchestrator `now` hears: whether a dispatch would tell it
+    /// this line now, by the test that dispatch makes ([`crate::cli::attach::diff`],
+    /// [`crate::cli::attach::pane_watch`]); the table above names each.
     fn rescope(&self, now: &Hearing) -> Now {
         let kept = |kept: bool| if kept { Now::Kept } else { Now::Dropped };
         let words: Vec<&str> = self.text.split(' ').collect();
         match words.as_slice() {
             ["NEW", slug, ..] => kept(now.owners.reaches(slug, now.handle)),
-            ["STATUS", slug, ..] => kept(now.seen.statuses.contains_key(*slug)),
-            ["ROLE", slug, ..] => kept(now.holds(slug) || self.moved_for(now.handle)),
+            ["STATUS", slug, .., status] => kept(now.seen.hears_move(slug, status)),
+            ["ROLE", slug, ..] => kept(match self.role_move() {
+                Some((from, to)) => moved_for(&from, to, now.handle),
+                None => now.seen.hears_roles(slug),
+            }),
             ["BLOCKED", who, slug, ..] => {
                 kept(now.overseen.hears_of(now.board, &now.owners, who, slug))
             }
             ["STALE", child, ..] | ["LIVENESS", "UNKNOWN", child, ..] => {
-                let held = now.held(child);
-                kept(held.is_empty() || !now.told(child, held).is_empty())
+                kept(now.seen.hears_quiet(child))
             }
             ["LOST", child, ..] => {
                 let Some((head, named)) = self.text.split_once(CLAIMABLE) else {
-                    return Now::Kept;
+                    return kept(now.seen.hears_quiet(child));
                 };
                 let named: Vec<String> = named.split(", ").map(str::to_owned).collect();
-                let heard = now.told(child, named.clone());
-                if heard.is_empty() {
+                let heard = told(now.board, child, now.handle, named.clone());
+                if !now.seen.hears_quiet(child) || heard.is_empty() {
                     Now::Dropped
                 } else if heard == named {
                     Now::Kept
@@ -150,14 +152,12 @@ impl Queued {
         }
     }
 
-    /// Whether this ROLE line says the orchestrator role moved to or from `handle`:
-    /// `ROLE slug to orchestrator, status (from a, b)`.
-    fn moved_for(&self, handle: &str) -> bool {
-        let Some((line, from)) = self.text.rsplit_once(" (from ") else {
-            return false;
-        };
+    /// The move of the orchestrator role a ROLE line says, as the sessions it left and the one it
+    /// reached: `ROLE slug to orchestrator, status (from a, b)`. None for any other ROLE line.
+    fn role_move(&self) -> Option<(Vec<&str>, &str)> {
+        let (line, from) = self.text.rsplit_once(" (from ")?;
         let from = from.strip_suffix(')').unwrap_or(from);
-        line.split(' ').nth(2) == Some(handle) || from.split(", ").any(|who| who == handle)
+        Some((from.split(", ").collect(), line.split(' ').nth(2)?))
     }
 }
 
@@ -165,7 +165,7 @@ impl Queued {
 mod tests {
     use super::*;
     use crate::rows::SessionRow;
-    use crate::{Health, Role, Session};
+    use crate::{Health, Role, Session, Task};
     use serde_json::json;
 
     fn queued(event: serde_json::Value) -> Queued {
@@ -204,7 +204,7 @@ mod tests {
 
     /// `orch` handed `gone` to `next`, and kept `kept`; nobody orchestrates `free`. `kid`,
     /// its child, executes `gone` and `kept`; `quiet`, its child too, executes `gone` alone;
-    /// `idle`, its child, holds nothing.
+    /// `idle`, its child, holds nothing, and so does `theirs`, the child of `next`.
     fn handed_over() -> Board {
         let task = |slug: &str, status: &str, roles: &[(&str, &str)]| Task {
             id: 0,
@@ -262,6 +262,7 @@ mod tests {
                 session("kid", "worker", Some("orch")),
                 session("quiet", "worker", Some("orch")),
                 session("idle", "worker", Some("orch")),
+                session("theirs", "worker", Some("next")),
             ],
             latest_message: 9,
         }
@@ -277,6 +278,9 @@ mod tests {
             ("NEW free ready — T", Now::Kept),
             ("STATUS gone ready → in_progress", Now::Dropped),
             ("STATUS kept ready → in_progress", Now::Kept),
+            // Work nobody orchestrates is heard only as it blocks.
+            ("STATUS free backlog → ready", Now::Dropped),
+            ("STATUS free ready → blocked", Now::Kept),
             ("ROLE gone kid executor, in_progress", Now::Dropped),
             ("ROLE kept kid executor, in_progress", Now::Kept),
             (
@@ -287,6 +291,11 @@ mod tests {
                 "ROLE gone orch orchestrator, in_progress (from next, other)",
                 Now::Kept,
             ),
+            // A move is said to its parties, not to every holder of a role on the task.
+            (
+                "ROLE kept other orchestrator, in_progress (from next)",
+                Now::Dropped,
+            ),
             ("BLOCKED quiet gone w1:p2 — its pane waits", Now::Dropped),
             ("BLOCKED kid kept w1:p3 — its pane waits", Now::Kept),
             ("STALE quiet — no sign of it for 90 s", Now::Dropped),
@@ -295,13 +304,19 @@ mod tests {
                 "LIVENESS UNKNOWN quiet — native presence sweep overdue",
                 Now::Dropped,
             ),
+            // A child holding no work is its parent's to hear of, and nobody else's.
             ("STALE idle — no sign of it for 90 s", Now::Kept),
+            ("STALE theirs — no sign of it for 90 s", Now::Dropped),
             ("LOST quiet — its work is claimable: gone", Now::Dropped),
+            // Work it named that `orch` still holds, but its work now is another's.
+            ("LOST quiet — its work is claimable: kept", Now::Dropped),
             (
                 "LOST kid — its work is claimable: gone, kept",
                 Now::Said("LOST kid — its work is claimable: kept".into()),
             ),
             ("LOST kid — its work is claimable: kept", Now::Kept),
+            ("LOST idle — its work is claimable: free", Now::Kept),
+            ("LOST theirs — its work is claimable: free", Now::Dropped),
             ("MSG #7 gone from w — to @orchestrator", Now::Kept),
             ("VERDICT #8 gone from w — approve", Now::Kept),
             ("AGENT from w to orch — hello", Now::Kept),
@@ -329,6 +344,7 @@ mod tests {
             )],
         };
         assert_eq!(rescoped, expected);
-        assert!(!rescoped.is_empty() && Rescoped::default().is_empty());
+        let empty = (rescoped.is_empty(), Rescoped::default().is_empty());
+        assert_eq!(empty, (false, true), "{rescoped:?}");
     }
 }
