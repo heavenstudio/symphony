@@ -15,14 +15,14 @@ use std::io::{BufRead, Read, Write};
 
 /// What a caller of these methods may rely on beyond the schema and the server's RPC: one more each
 /// time a method takes or does something an earlier build refused or did otherwise (1: `landed`'s
-/// `from`, before which a build declares none). The live launcher (`tools/tasks.sh`) serves an
+/// `from`, before which a build declares none; 2: `say`'s `key`). The live launcher (`tools/tasks.sh`) serves an
 /// earlier main build only while this matches main's, so no caller reaches a build without what it
 /// relies on.
 #[expect(
     dead_code,
     reason = "tools/tasks.sh reads it from the committed source; no Rust code compares builds"
 )]
-pub const VERSION: i64 = 1;
+pub const VERSION: i64 = 3;
 
 /// Why a call has no result.
 enum Fail {
@@ -449,10 +449,19 @@ fn dispatch<F: FnOnce() -> Result<Store, String>>(
         }
         // Messages
         "say" => {
-            args!(slug: need, sender: actor, text: need, to: take);
-            let (slug, sender, text, to): (String, String, String, Option<String>) =
-                (slug, sender, text, to);
-            shape::message(&board.get()?.say(&slug, &sender, &text, to.as_deref())?)
+            args!(slug: need, sender: actor, text: need, to: take, key: take, adopt: or(false));
+            let (slug, sender, text): (String, String, String) = (slug, sender, text);
+            let (to, key): (Option<String>, Option<String>) = (to, key);
+            let adopt: bool = adopt;
+            let board = board.get()?;
+            let said = match key.as_deref() {
+                Some(key) if adopt => {
+                    board.adopt_or_say(&slug, &sender, &text, to.as_deref(), key)?
+                }
+                Some(key) => board.say_keyed(&slug, &sender, &text, to.as_deref(), key)?,
+                None => board.say(&slug, &sender, &text, to.as_deref())?,
+            };
+            shape::message(&said)
         }
         "last_messages" => {
             args!();
