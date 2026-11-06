@@ -85,9 +85,9 @@ metadata restoring Unknown for newer readers. Both old and new writers must shar
 past the ten-minute lost threshold, or alternating dispatchers repeat liveness notices.
 In the same way an orchestrator's `seen`, `statuses` and PULL entries keep the whole-board meaning
 binaries older than one orchestrator per task read (`attach::legacy_seen`, every open status, every
-digest entry); what it hears and was told lives in `narrowing`, `pull_withheld` and
-`pull_awaiting`, which they ignore, read over that record, so neither generation repeats a NEW,
-LOST or PULL the other said.
+digest entry); what it hears and was told lives in `narrowing`, `pull_withheld`,
+`pull_awaiting` and `pull_withheld_revision`, which they ignore and keep, read over that record,
+so neither generation repeats a NEW, LOST or PULL the other said.
 An orchestrator's queued lines are judged at delivery by the test a dispatch makes of whom to tell
 each one (`queued_lines`, a table of each kind and the `Seen`, `Owners`, `Overseen` or
 `orchestration` call it shares with `attach::diff` and the pane watch), on its look now, so a
@@ -102,6 +102,19 @@ told changes only when a PULL is acknowledged: this generation's acknowledgement
 PULL left untold, and `pull_awaiting` reads an older one's, which records only its entries
 (`pending_pull`, a table of each change while a PULL waits). A new kind
 of task-naming line takes its test from there too.
+The contract while an older dispatcher interleaves: no line is said twice, no PULL counts an
+entry a PULL the orchestrator acknowledged already told it, and an entry it hears that no
+acknowledged PULL recorded is always counted by one. What was told is read only from an
+acknowledgement that can be attributed (`State::acknowledged`). Only a dispatch writes
+`revision`, and an older one queues its own PULL only then; so while `pull_withheld_revision`
+still equals it, an acknowledgement since is of the PULL left awaiting, and while a PULL this
+generation queued waits, none was made. Otherwise the last PULL acknowledged may be an older
+one's, which told every entry it records, and all of them count as told. The bound: once an
+older dispatcher writes the record (an observation is enough) and no PULL of this generation
+waits at the next digest, work withheld from the orchestrator as another's counts as told; if
+it becomes the orchestrator's, the hand-over's ROLE line names it and no PULL counts it until
+something new is due. An older acknowledgement of a modern PULL and one of its own PULL with
+the same entries leave the same record, so telling them apart needs the older binary changed.
 Posts, verdicts and AGENT lines stay: they were said to whoever held the role then, and a new
 holder hears no backlog.
 A finished idle pane still closes under the original cleanup rules, retiring its

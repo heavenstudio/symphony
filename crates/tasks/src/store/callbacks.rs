@@ -421,7 +421,8 @@ RETURN NONE;");
             .collect();
         self.retrying(|| self.transact::<Value>(
             &format!("{ACT}\nLET $pull = (SELECT pull_entries, pull_withheld, sequence FROM callback_event WHERE handle = $actor AND key IN $keys AND pull_entries != NONE ORDER BY sequence DESC LIMIT 1)[0];
-                IF $pull != NONE {{ UPDATE type::record('callback_state', $actor) SET pull_entries = $pull.pull_entries, pull_withheld = $pull.pull_withheld ?? [], pull_awaiting = NONE, pull_queued = NONE RETURN NONE; }};
+                IF $pull != NONE {{ UPDATE type::record('callback_state', $actor) SET pull_entries = $pull.pull_entries, pull_withheld = $pull.pull_withheld ?? [], pull_awaiting = NONE,
+                    pull_withheld_revision = revision, pull_queued = NONE RETURN NONE; }};
                 FOR $key IN $keys {{ UPDATE type::record('callback_event', [$actor, $key]) SET delivered = true RETURN NONE; }};
                 FOR $key IN $chats {{ UPDATE type::record('chat_event', $key) SET delivered = true, text = '' RETURN NONE; }};
                 UPDATE callback_event SET text = '' WHERE handle = $actor AND delivered = true AND string::starts_with(key, 'chat-') RETURN NONE; RETURN NONE;"),
@@ -1089,7 +1090,7 @@ RETURN NONE;");
                 };
              };
              IF $computed { UPDATE type::record('callback_lease', $handle) SET pull = $pull WHERE revision = $revision RETURN NONE; };
-             LET $before = (SELECT seen, narrowing, unknown_children, statuses, pull_queued, inbox_cursor, message_cursor, delivery_version, registration_revision, observed_registration FROM ONLY type::record('callback_state', $handle));
+             LET $before = (SELECT seen, narrowing, unknown_children, statuses, pull_queued, inbox_cursor, message_cursor, delivery_version, registration_revision, observed_registration, revision FROM ONLY type::record('callback_state', $handle));
              IF $before.seen != $seen OR $before.narrowing != $narrowing OR $before.unknown_children != $unknown_children OR $before.statuses != $statuses
                 OR $before.pull_queued != $pull_queued OR $before.inbox_cursor != $inbox_cursor
                 OR ($before.message_cursor ?? 0) < $message_cursor OR $before.delivery_version = NONE
@@ -1100,6 +1101,7 @@ RETURN NONE;");
                     ELSE IF $computed AND pull_entries != NONE { array::union(pull_entries.filter(|$entry| $entry IN $pull_current), $pull_account.unheard) } ELSE { pull_entries },
                 pull_withheld = IF $computed { $pull_account.withheld } ELSE { pull_withheld },
                 pull_awaiting = IF $computed { $pull_awaiting } ELSE { pull_awaiting },
+                pull_withheld_revision = IF $computed OR (pull_withheld_revision != NONE AND pull_withheld_revision = $before.revision) { $revision } ELSE { pull_withheld_revision },
                 message_cursor = math::max([message_cursor ?? 0, $message_cursor]),
                 inbox_cursor = $inbox_cursor,
                 delivery_version = delivery_version ?? 1 RETURN NONE;
@@ -1182,7 +1184,8 @@ RETURN NONE;");
                     capacity_limited = $capacity OR (capacity_limited ?? false) RETURN NONE;
              };
              IF $success {
-                IF $pull != NONE { UPDATE type::record('callback_state', $handle) SET pull_entries = $pull.pull_entries, pull_withheld = $pull.pull_withheld ?? [], pull_awaiting = NONE, pull_queued = NONE RETURN NONE; };
+                IF $pull != NONE { UPDATE type::record('callback_state', $handle) SET pull_entries = $pull.pull_entries, pull_withheld = $pull.pull_withheld ?? [], pull_awaiting = NONE,
+                    pull_withheld_revision = revision, pull_queued = NONE RETURN NONE; };
                 FOR $message IN $messages { UPSERT type::record('delivery', [$message, $handle]) SET message = $message, handle = $handle, acked = $now RETURN NONE; };
                 FOR $key IN $chat { UPDATE type::record('chat_event', $key) SET delivered = true, text = '' RETURN NONE; };
                 UPDATE callback_event SET text = '' WHERE handle = $handle AND delivered = true AND string::starts_with(key, 'chat-') RETURN NONE;
