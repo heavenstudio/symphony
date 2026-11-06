@@ -208,12 +208,16 @@ impl Place<'_> {
         subs
     }
 
-    /// The folder's own files the entrypoint shows with `renderer`, by name.
-    fn files(&self, renderer: crate::entrypoint::Renderer) -> Vec<String> {
+    /// The folder's own files the entrypoint shows with a renderer `wanted` takes, by name.
+    fn files(&self, wanted: impl Fn(crate::entrypoint::Renderer) -> bool) -> Vec<String> {
         let mut found = Vec::new();
         self.project
             .walk_files(self.root, self.entry, &self.inside, &mut |name| {
-                if self.entry.renderer(&join(&self.inside, name)) == Some(renderer) {
+                if self
+                    .entry
+                    .renderer(&join(&self.inside, name))
+                    .is_some_and(&wanted)
+                {
                     found.push(name.to_string());
                 }
             });
@@ -223,7 +227,7 @@ impl Place<'_> {
     /// The folder's own documents but the README, by lowercase title.
     pub(crate) fn documents(&self) -> Vec<String> {
         let mut docs: Vec<String> = self
-            .files(crate::entrypoint::MARKDOWN)
+            .files(|renderer| renderer == crate::entrypoint::MARKDOWN)
             .into_iter()
             .filter(|name| name != "README.md")
             .collect();
@@ -231,9 +235,10 @@ impl Place<'_> {
         docs
     }
 
-    /// The folder's own media files, by lowercase name.
+    /// The folder's own files shown as they are (pictures, mockups and the files a plugin's
+    /// renderer draws), by lowercase name.
     pub(crate) fn media(&self) -> Vec<String> {
-        let mut media = self.files(crate::entrypoint::MEDIA);
+        let mut media = self.files(|renderer| renderer != crate::entrypoint::MARKDOWN);
         media.sort_by_key(|name| name.to_lowercase());
         media
     }

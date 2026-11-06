@@ -87,16 +87,17 @@ pub(super) fn cleanup(store: &Store, c: &mut Context) -> Result<(), Stop> {
     let closures = launch::cleanup(
         store,
         &Binary::of(c.env),
-        &procs::descendants,
+        &*procs::table(c.env),
         dry_run,
         c.env.var("HERDR_PANE_ID"),
         &[],
     )?;
     for closure in &closures {
-        let verb = match (dry_run, closure.closed) {
-            (true, _) => "would close",
-            (false, true) => "closed",
-            (false, false) => "could not close",
+        let verb = match (closure.kept, dry_run, closure.closed) {
+            (true, _, _) => "kept",
+            (false, true, _) => "would close",
+            (false, false, true) => "closed",
+            (false, false, false) => "could not close",
         };
         let of = closure
             .handle
@@ -140,10 +141,11 @@ pub(super) fn reap(store: &Store, c: &mut Context) -> Result<(), Stop> {
         }
     }
     let caller = c.actor().ok();
+    let processes = procs::table(c.env);
     let how = Reap {
         state: reap::state_path(c.env, &c.env.cwd).map_err(Stop::Board)?,
         apply: !dry_run,
-        processes: &procs::descendants,
+        processes: &*processes,
         current_pane: c.env.var("HERDR_PANE_ID"),
         caller: caller.as_deref(),
         min_idle: REAP_SECONDS,
@@ -195,7 +197,7 @@ pub(super) fn close_finished(store: &Store, c: &mut Context, slug: &str) {
     let lines = launch::finish(
         store,
         &herdr,
-        &procs::descendants,
+        &*procs::table(c.env),
         slug,
         c.env.var("HERDR_PANE_ID"),
     );

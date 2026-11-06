@@ -244,7 +244,9 @@ impl Hub {
         if let Some(worker) = worker.take()
             && worker.join().is_err()
         {
-            eprintln!("· Symphony data worker panicked while stopping");
+            crate::front::tell(format_args!(
+                "· Symphony data worker panicked while stopping"
+            ));
         }
     }
 
@@ -2046,7 +2048,7 @@ mod tests {
                 ],
             );
         }
-        tree.write("served/view/models/lamps/A.glb", "model fixture");
+        tree.write("served/view/models/lamps/A.item", "model fixture");
         let hub = Hub::new(&root, &root.join("build/client"));
         *hub.swept.lock().unwrap() = Sweep::new(&hub.swept_paths());
         hub.refresh_docs(None).unwrap();

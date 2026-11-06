@@ -10,6 +10,7 @@ use symphony_board::NewLaunch;
 use symphony_board::sys::{Command, Spawning as _};
 
 const IN_CHILD: &str = "SF_BLOCKED_PANES_CHILD";
+const EMPTY_PULL: &str = "PULL executing=0 ready_unstaffed=0 in_progress_orphaned=0 review_unreviewed=0 landed_open=0 idle=0";
 const BUSY_PULL: &str = "PULL executing=1 ready_unstaffed=0 in_progress_orphaned=0 review_unreviewed=0 landed_open=0 idle=0";
 
 /// A folder removed when the case ends.
@@ -105,9 +106,9 @@ fn launch(f: &Fixture, slug: &str, handle: &str, pane: &str) {
 }
 
 #[test]
-fn a_blocked_pane_reaches_its_orchestrator_and_parent_once_an_episode() {
+fn a_blocked_pane_reaches_the_orchestrator_of_its_work_once_an_episode() {
     if !in_child_with_herdr(
-        "blocked_panes::a_blocked_pane_reaches_its_orchestrator_and_parent_once_an_episode",
+        "blocked_panes::a_blocked_pane_reaches_the_orchestrator_of_its_work_once_an_episode",
     ) {
         return;
     }
@@ -133,8 +134,10 @@ fn a_blocked_pane_reaches_its_orchestrator_and_parent_once_an_episode() {
     ])));
     let (o, p, x) = (listen(&f, &orch), listen(&f, &parent), listen(&f, &other));
     let w = listen(&f, &worker);
-    for listener in [&o, &p, &x] {
-        assert_eq!(listener.text(), BUSY_PULL);
+    // The work is orch's: only its digest counts it.
+    assert_eq!(o.text(), BUSY_PULL);
+    for listener in [&p, &x] {
+        assert_eq!(listener.text(), EMPTY_PULL);
     }
     tick(&f);
     let quiet: [&[String]; 4] = [&[], &[], &[], &[]];
@@ -158,8 +161,9 @@ fn a_blocked_pane_reaches_its_orchestrator_and_parent_once_an_episode() {
     tick(&f);
     tick(&f);
     let blocked = std::slice::from_ref(&blocked);
-    let once: [&[String]; 4] = [blocked, blocked, &[], &[]];
-    assert_eq!(heard(), once, "its orchestrator and its parent, once");
+    // Not its parent, another orchestrator: the work is orch's, as LOST would say.
+    let once: [&[String]; 4] = [blocked, &[], &[], &[]];
+    assert_eq!(heard(), once, "the orchestrator of its work, once");
 
     panes(Some(json!([pane("w1:p2", "working")])));
     tick(&f);
@@ -309,4 +313,34 @@ fn a_tick_asks_herdr_once_for_its_watch_its_pull_and_its_agents_view() {
     assert!(o.drain(&f, &worker, &orch).contains(&format!(
         "BLOCKED {worker} tests/pane w1:p2 — its pane waits on an approval or a question"
     )));
+}
+
+#[test]
+fn a_block_waiting_out_an_outage_is_not_said_once_a_hand_over_took_its_task_away() {
+    if !in_child_with_herdr(
+        "blocked_panes::a_block_waiting_out_an_outage_is_not_said_once_a_hand_over_took_its_task_away",
+    ) {
+        return;
+    }
+    let f = Fixture::empty();
+    let successor = f.session("orchestrator");
+    let (orch, worker, o) = waiting_worker(&f);
+    // The orchestrator cannot be reached when the watch sees the pane wait.
+    drop(o);
+    tick(&f);
+    let waiting = f.store.callback_inbox(&orch).unwrap();
+    assert!(
+        (waiting.iter()).any(|(_, text)| text.starts_with(&format!("BLOCKED {worker} "))),
+        "{waiting:?}"
+    );
+    f.store.hand_over("tests/pane", &orch, &successor).unwrap();
+    let back = super::callbacks::Listener::new(&format!("{}-back", f.store.client().database()));
+    let address = format!("uds:{}", back.path.display());
+    (f.store.callback(&orch, Some(&address), false, false)).unwrap();
+    assert_eq!(
+        back.drain(&f, &worker, &orch),
+        [format!(
+            "ROLE tests/pane {successor} orchestrator, in_progress (from {orch})"
+        )]
+    );
 }

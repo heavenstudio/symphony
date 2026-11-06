@@ -4,24 +4,46 @@
 
 use super::herdr::{Herdr, Object, text, truthy};
 use super::procs::{busy_reason, named};
-use super::{Processes, READY_STATES};
+use super::{LaunchError, Processes, READY_STATES};
 use crate::health::FINISHED;
 use crate::rows::TaskSessionRow;
 use crate::{Error, NewLaunch, Store, Task};
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
 
-/// A pane cleanup closed, or for a dry run would close.
+/// A pane cleanup closed, or for a dry run would close; or one it kept (`kept`) because a call
+/// that says whether it is idle failed.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Closure {
     pub pane: String,
-    /// The board session it belongs to; none for an idle shell.
+    /// The board session it belongs to; none for an idle shell, or a kept pane of no known session.
     pub handle: Option<String>,
+    /// Why it closes; for a kept pane, why it stays: the failed call and its error.
     pub why: String,
-    /// The line that brings it back; empty when there is no task to bring it back on.
+    /// The line that brings it back; empty when there is no task to bring it back on, and for a
+    /// kept pane.
     pub restore: String,
-    /// False for a dry run, or when herdr refused.
+    /// False for a dry run, when herdr refused, and for a kept pane.
     pub closed: bool,
+    /// True for a pane left as it is because a call that says whether it is idle failed: `why`
+    /// names the call and its error. Never closed on no information, and never silently. Its
+    /// handle is the session the board would have closed it for; none when herdr's process-info
+    /// failed, before the pane's session was looked for.
+    pub kept: bool,
+}
+
+impl Closure {
+    /// `pane` left as it is, of no known session: `problem`, the failed call's error, said in `why`.
+    fn kept(pane: &str, problem: &LaunchError) -> Closure {
+        Closure {
+            pane: pane.into(),
+            handle: None,
+            why: format!("never closed on no information: {problem}"),
+            restore: String::new(),
+            closed: false,
+            kept: true,
+        }
+    }
 }
 
 pub(super) fn restore_line(slug: &str, handle: &str) -> String {
@@ -29,7 +51,8 @@ pub(super) fn restore_line(slug: &str, handle: &str) -> String {
 }
 
 /// Close the panes nobody needs; with `only` slugs, only the panes of those tasks' open sessions.
-/// `current_pane` (the caller's) is never closed.
+/// `current_pane` (the caller's) is never closed. A pane whose herdr process-info or process table
+/// could not be read stays, as a [`Closure`] that is `kept`, naming the call that failed.
 pub fn cleanup(
     store: &Store,
     herdr: &dyn Herdr,
@@ -81,16 +104,18 @@ pub fn cleanup(
         if is_agent && !READY_STATES.contains(&text(pane.get("agent_status")).as_str()) {
             continue;
         }
-        let Ok(info) = herdr.process_info(&pane_id) else {
-            continue;
+        let info = match herdr.process_info(&pane_id) {
+            Ok(info) => info,
+            Err(problem) => {
+                result.push(Closure::kept(&pane_id, &problem));
+                continue;
+            }
         };
         let Some(shell_pid) = pid(info.get("shell_pid")) else {
-            continue; // nothing to look under: not known to be idle
+            continue; // herdr knows no shell: nothing to look under, not known to be idle
         };
-        match processes(shell_pid) {
-            Ok(commands) if busy_reason(&commands).is_none() => {}
-            _ => continue, // work, or `ps` could not say: never closed on no information
-        }
+        // What the board says first, so a table that cannot be read is said only of a pane it
+        // would otherwise close.
         let (handle, why, mine) = if is_agent {
             let Some(handle) = handle_of(&pane, &info, store, &handles, &by_pane, &by_session)?
             else {
@@ -112,6 +137,17 @@ pub fn cleanup(
         } else {
             (None, "an idle shell", Vec::new())
         };
+        match processes(shell_pid) {
+            Ok(commands) if busy_reason(&commands).is_none() => {}
+            Ok(_) => continue, // work
+            Err(problem) => {
+                result.push(Closure {
+                    handle,
+                    ..Closure::kept(&pane_id, &problem)
+                });
+                continue;
+            }
+        }
         let slug = open
             .iter()
             .find(|s| Some(s.handle.as_str()) == handle.as_deref())
@@ -127,6 +163,7 @@ pub fn cleanup(
             why: why.into(),
             restore,
             closed: false,
+            kept: false,
         };
         if !dry_run {
             if herdr.close(&pane_id).is_err() {
@@ -288,15 +325,24 @@ pub fn finish(
         )],
         Ok(closures) => closures
             .iter()
-            .filter(|c| c.closed)
-            .map(|c| {
-                format!(
-                    "closed pane {} of {} ({}); restore: {}",
-                    c.pane,
-                    c.handle.as_deref().unwrap_or("None"),
-                    c.why,
-                    c.restore
-                )
+            .filter_map(|c| {
+                if c.kept {
+                    let of = c
+                        .handle
+                        .as_ref()
+                        .map_or(String::new(), |h| format!(" of {h}"));
+                    Some(format!("kept pane {}{of} ({})", c.pane, c.why))
+                } else if c.closed {
+                    Some(format!(
+                        "closed pane {} of {} ({}); restore: {}",
+                        c.pane,
+                        c.handle.as_deref().unwrap_or("None"),
+                        c.why,
+                        c.restore
+                    ))
+                } else {
+                    None
+                }
             })
             .collect(),
     }

@@ -4,14 +4,14 @@
 
 use crate::common::{Fixture, NOW, Seed, client, server_addr, session, task};
 use symphony_board::rows::{
-    BarredKeyRow, DeliveryRow, Dump, LinkRow, MessageRow, RoleRow, SessionRow, TaskRow,
-    TaskSessionRow,
+    BarredKeyRow, DeliveryKeyRow, DeliveryRow, Dump, LinkRow, MessageRow, RoleRow, SessionRow,
+    TaskRow, TaskSessionRow,
 };
 use symphony_board::sys::{self, Command};
 use symphony_board::{Error, Store, cli, copy_main};
 
 /// One row of every table, each optional column both set and not, in key order.
-fn everything() -> Dump {
+pub fn everything() -> Dump {
     Dump {
         tasks: vec![
             TaskRow {
@@ -109,6 +109,12 @@ fn everything() -> Dump {
             closed_why: "done".into(),
             restore: "r".into(),
         }],
+        delivery_keys: vec![DeliveryKeyRow {
+            slug: "sim/jump".into(),
+            key: "main-red:3e0c".into(),
+            message: 4,
+            ts: NOW + 2.0,
+        }],
     }
 }
 
@@ -189,7 +195,7 @@ fn the_copy_command_reads_a_dump_and_says_what_it_copied() {
     assert_eq!(
         String::from_utf8(out).unwrap(),
         format!(
-            "tasks-copy: 2 tasks, 2 links, 2 sessions, 2 roles, 2 messages, 1 deliveries, 1 barred keys, 1 task sessions into sf/{} at {}\n",
+            "tasks-copy: 2 tasks, 2 links, 2 sessions, 2 roles, 2 messages, 1 deliveries, 1 barred keys, 1 task sessions, 1 delivery keys into sf/{} at {}\n",
             db.database(),
             server_addr()
         )
@@ -390,7 +396,7 @@ fn tables(f: &Fixture) -> Vec<String> {
     names
 }
 
-const BOARD_TABLES: [&str; 18] = [
+const BOARD_TABLES: [&str; 19] = [
     "barred_key",
     "callback_event",
     "callback_lease",
@@ -398,6 +404,7 @@ const BOARD_TABLES: [&str; 18] = [
     "chat_event",
     "counter",
     "delivery",
+    "delivery_key",
     "link",
     "message",
     "meta",
@@ -433,81 +440,6 @@ fn copy_replaces_derived_vectors_only_when_the_board_swap_commits() {
     f.store.copy(&Dump::default()).unwrap();
     assert_eq!(f.store.dump().unwrap(), Dump::default());
     assert_eq!(counts(), vec![serde_json::json!(0); 3]);
-}
-
-/// The tables whose writes advance `counter:board` (`board_changed`).
-const MARKED_TABLES: [&str; 9] = [
-    "task",
-    "session",
-    "role",
-    "link",
-    "message",
-    "delivery",
-    "task_session",
-    "callback_state",
-    "chat_event",
-];
-
-fn marker(f: &Fixture) -> serde_json::Value {
-    f.store
-        .client()
-        .query("RETURN counter:board.last;", serde_json::json!({}))
-        .unwrap()
-        .remove(0)
-}
-
-#[test]
-fn a_copy_advances_the_board_marker_once_a_row_from_a_board_without_one() {
-    // 2 tasks, links, sessions, roles and messages, a delivery and a task session; barred keys none.
-    let f = Fixture::new(Seed { dump: everything() });
-    assert_eq!(marker(&f), serde_json::json!(12));
-    f.store.copy(&everything()).unwrap();
-    assert_eq!(marker(&f), serde_json::json!(36), "12 removed, 12 written");
-}
-
-/// Schema 10's events UPSERT the marker: on a record that exists that tries a create and rolls it
-/// back, and SurrealKV's rollback walks every key the transaction wrote, so the copy's one
-/// transaction cost time quadratic in its rows. This schema's open redefines them, moving no row.
-#[test]
-fn a_board_of_schema_ten_has_its_marker_events_redefined_and_its_rows_kept() {
-    let f = Fixture::new(Seed { dump: everything() });
-    let events = || -> Vec<String> {
-        MARKED_TABLES
-            .iter()
-            .map(|table| {
-                let sql = format!("RETURN (INFO FOR TABLE {table}).events.board_changed;");
-                let found = f.store.client().query(&sql, serde_json::json!({}));
-                serde_json::from_value(found.unwrap().remove(0)).unwrap()
-            })
-            .collect()
-    };
-    let old: String = MARKED_TABLES
-        .iter()
-        .map(|table| format!("DEFINE EVENT OVERWRITE board_changed ON {table} WHEN $before != $after THEN {{ UPSERT counter:board SET last = (last ?? 0) + 1; }};"))
-        .collect();
-    f.store
-        .client()
-        .query(
-            &format!(
-                "BEGIN TRANSACTION; {old} UPSERT meta:schema SET version = 10; COMMIT TRANSACTION;"
-            ),
-            serde_json::json!({}),
-        )
-        .unwrap();
-    assert!(events().iter().all(|e| e.contains("UPSERT counter:board")));
-    let before = marker(&f);
-    let reopened = f.other();
-    let redefined = events();
-    assert!(
-        redefined
-            .iter()
-            .all(|e| e.contains("UPDATE counter:board") && !e.contains("UPSERT")),
-        "{redefined:#?}"
-    );
-    assert_eq!(reopened.dump().unwrap(), everything());
-    assert_eq!(marker(&f), before, "redefining moves no row");
-    reopened.copy(&everything()).unwrap();
-    assert_eq!(marker(&f), serde_json::json!(36));
 }
 
 #[test]

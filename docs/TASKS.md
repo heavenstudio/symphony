@@ -114,14 +114,14 @@ or cancelled) the record stays and says why and how to bring it back,
 `just tasks restore SLUG [HANDLE]`, which resumes the conversation in the same
 worktree. See the [tasks skill](../../.agents/skills/tasks/SKILL.md#launch-restore-clean-up-herdr).
 
-**Reviewers come from the other agent family than the branch's author:** create
-the review instruction subtask, then
-`just tasks launch SLUG --role reviewer --kind K`. Launch registers its handle
-and records its session in its own pane and worktree. K is `codex`
-(`gpt-6.1-sol` or better, `xhigh`) for a branch a Claude executor wrote, `claude`
-for a branch a Codex executor wrote. Never use an in-process reviewer subagent,
-including outside herdr. Executors are kept about half Claude and half Codex
-([standing rule](../../RULES.md#workflowreviewer-from-the-other-family)).
+**Which agent starts where** is a [standing rule](../../RULES.md#workflowclaude-first-agents):
+executors and reviewers are Claude, started as in-process subagents or
+`claude -p`, with a handle registered for them and a subtask made `--for` it. A
+pane, `just tasks launch SLUG --kind K` (`--role reviewer` for a reviewer),
+holds work that needs one: Codex's adversarial review of a branch a Claude
+executor wrote (`gpt-6.1-sol` or better, `xhigh`), its image generation and 3D
+modelling, or an agent that must be watched or outlive its orchestrator
+([task-orchestrator](../../.agents/skills/task-orchestrator/SKILL.md#which-way-an-agent-starts)).
 
 **Optional automatic staffing:** `just tasks staff [--dry-run]` makes one pass, highest
 priority first. Enable it in [task_staff.json](../../tools/task_staff.json): `enabled`
@@ -227,8 +227,8 @@ command. A handle anywhere else
 in a command (a grep pattern, text inside a quoted argument, another recipe
 such as `just land` run under someone's `TASKS_SESSION`) binds nothing. From
 then on each of its tool calls beats for that handle, until a later board
-command names another. A full session with no agent id (one started in a herdr pane)
-is bound and beats the same way, keyed by its session id, but keeps the first handle
+command names another. A full session with no agent id (one started in a herdr pane, or a
+`claude -p` run) is bound and beats the same way, keyed by its session id, but keeps the first handle
 it names: naming another (registering or relaying for a child) moves nothing. A handle
 with a monitor of its own (an orchestrator) is never bound: its monitor beats for it,
 and a session that names such a handle is barred from binding at all, so the calls of
@@ -311,12 +311,30 @@ place in the pool's FIFO line, `<prefix>-<12-digit sequence>.place`, in the pool
 An orchestrator's callback uses it: it does not call an agent stale or lost while `running_test`, and it receives a PULL
 digest (`symphony/crates/tasks/src/cli/pull.rs`) once at its first dispatch, even when empty, then only when an actionable list gains an entry absent from the last delivered PULL after forgetting entries absent from any computed digest: ready tasks with no live executor
 (one on a subtask still to be executed counts), in-progress with none, review with no reviewer, tasks that landed
-(the branch is on main, or `landed <slug> on main` is on the task's thread) and are still open (a status change on the task after that line voids it, whether a move, a verdict such as `changes`, or a re-claim: the task is new work, not a landing left open), and idle agents. An executor
+(the branch is on main, or `landed <slug> on main` is on the task's thread) and are still open (a status change on the task after that line voids it, whether a move, a verdict such as `changes`, or a re-claim: the task is new work, not a landing left open), and idle agents, each scoped to the orchestrator's own and unclaimed tasks (an idle agent another orchestrator launched is left out). An executor
 or reviewer that is `running_test` counts as present however quiet the board says it is.
 Counts and the clock do not trigger delivery. A departure alone pushes nothing;
 an entry that stays present is never re-sent, and an entry that leaves and returns pushes once.
 A legacy native observer starts from the current board on upgrade rather than replaying its history.
 Its upgrade marker and message cursor are separate callback-state fields that older writers leave intact.
+The fields writers older than that scoping read (the observation, the open-status map and the delivered PULL entries)
+keep their whole-board meaning; the scoped observation and the entries it withheld are kept beside them, in fields
+those writers ignore, and read over them: a line either writer said is not said again by the other.
+A line still waiting for delivery to an orchestrator (a NEW, STATUS, ROLE, BLOCKED, STALE, LIVENESS UNKNOWN or LOST)
+is said only if a dispatch would tell it that line now, by the same test, so one a hand-over or a released claim took
+from it meanwhile is dropped, or a LOST said again of the work it still hears; the hand-over's own ROLE line is kept,
+and a quiet child holding no work is still its parent's to hear of. A PULL still waiting is never delivered as it was
+written: the digest is built again for its recipient, counts included, and said in its place, by one rule over what
+the recipient hears now, what the PULLs it acknowledged told it and what the waiting PULL tells. With nothing heard
+beyond what it acknowledged, the waiting PULL is taken back; an entry beyond both, shown or only counted, makes a new
+PULL with a retry budget of its own; otherwise the waiting PULL keeps its key and attempts and says the digest as it
+is now. What it was told changes only when it acknowledges a PULL, whichever writer records that, so work it gains
+while one waits is said and work that only departs renews no budget. Work it hears is told once a PULL naming it is
+acknowledged, whatever older dispatchers write, queue or acknowledge after. Only what was withheld from it is
+ambiguous, since an older dispatcher's own PULL told it the whole board and reads the same as the waiting one:
+withheld work counts as untold, so when a hand-over makes it the recipient's, one PULL counts it, once more at most
+for that hand-over and never left out, and nothing repeats on its own. Posts and verdicts are kept: they were said to
+whoever held the role then.
 Codex callbacks use the queue by default; `git config sf.codexSteer true` opts in to
 active-turn steering. The owner decides its first live use.
 
@@ -401,7 +419,7 @@ can hold one task at once, one role each:
 
 | role | how | may |
 |---|---|---|
-| orchestrator | `just tasks role SLUG orchestrator` | coordinate: spawn the others, follow the thread |
+| orchestrator | `just tasks role SLUG orchestrator` | coordinate: spawn the others, follow the thread; one a task |
 | executor | `just tasks claim SLUG` | do the work, move it to `review` |
 | reviewer | `just tasks role SLUG reviewer` | give the verdict: `approve` (done) or `changes` (back to the executor) |
 | reserved | `just tasks reserve SLUG` | hold it for later, for an hour, so nobody else claims it |
@@ -415,6 +433,37 @@ tier 3 change). The landing then finishes the task in review for it: no board
 `approve` is needed. A branch with no task gets `review/BRANCH` from
 `just land-request BRANCH`, and the session that ran that (or the task's
 executor) is the one that lands it.
+
+**A task has one orchestrator.** Taking the role on a task another session
+holds while it is live, stale or of unknown liveness is refused, naming the
+holder and the command that moves it: `just tasks handover SLUG HANDLE`, run by
+the holder, drops its role and gives the role to HANDLE in one write. The
+thread says `A handed orchestrator over to B; address B or @orchestrator`,
+and each of the two hears one `ROLE SLUG B orchestrator, STATUS (from A)`,
+whatever other role B holds there. HANDLE must still be there (live, stale or
+of unknown liveness); a hand-over to a session gone quiet, or leaving as it is
+written, is refused, naming its health. Taking the role over a holder that is
+lost or left drops that one in the same write, and the thread says `B took
+orchestrator over from A (lost)`; so does taking it again where a left holder
+still sits beside you. A task is its orchestrator's when that session holds the
+role on it, or on the nearest task above it that has a holder still there; a
+task with none is **unclaimed**, as are a lost or left orchestrator's tasks
+until another takes them over. Each orchestrator hears its own tasks and the
+unclaimed ones only (`symphony/crates/tasks/src/orchestration.rs`): every
+orchestrator hears an unclaimed task's NEW lines, PULL digest rows and the
+STATUS of its move to `blocked`, which no digest row shows, and only its owner
+a claimed one's. A post to `@orchestrator`, and a
+verdict, go to the nearest holder still there, passing one gone quiet. A
+session gone stale or lost, or waiting in its pane, is said to the
+orchestrator of the work it holds, its LOST line naming only that
+orchestrator's tasks and its BLOCKED line only a launch for one of them; a
+session whose work is nobody's, or who holds none, is
+said to its parent, as before. The digest's idle sessions leave out the
+children of another orchestrator still there. Another orchestrator's task
+reaches it only in a post to its own handle. `just tasks list --doubled` lists the tasks
+that still hold two orchestrators from before the rule; one of them settles it
+with `handover` or `release SLUG --role orchestrator`. No board data is
+rewritten for them.
 
 The executor can never review its own task, and the reviewer cannot claim it.
 Of any number of simultaneous claims exactly one wins. `just tasks next` picks
@@ -461,9 +510,10 @@ A second hook (`sf-hook wait-guard`) refuses a loop waiting on machine-wide proc
   `just tasks list` and the Symphony's **tasks** page show the same tree, at
   any depth.
 - Events climb: a message to `@orchestrator`, any verdict and any
-  status change on a subtask reaches every session holding the orchestrator
-  role on any ancestor of it, so the orchestrator takes the role on the root
-  only. A message to a handle or to another role stays with them.
+  status change on a subtask reaches the orchestrator of the nearest task, at
+  or above it, that has one, so the orchestrator takes the role on the root
+  only. A subtask handed to another orchestrator is that one's, with what is
+  below it. A message to a handle or to another role stays with them.
 
 ## Talking on a task
 

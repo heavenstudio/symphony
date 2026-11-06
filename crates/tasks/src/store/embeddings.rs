@@ -1,6 +1,8 @@
 //! Catch-up is explicit, never a side effect of a board write. Hashes are checked again on reads,
 //! so an edit racing inference cannot make obsolete text appear as a current vector hit.
+use super::copy::CHUNK_BYTES;
 use super::*;
+use crate::cbor;
 use crate::embedding::{Chunk, DIMENSIONS, Embedder, text_hash};
 use serde::Serialize;
 

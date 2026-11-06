@@ -18,6 +18,7 @@ use symphony_plugin::{
 use super::Tree;
 
 mod compiled;
+mod renderers;
 
 /// A plugin that only has a name: every seam takes its default.
 struct Bare;
@@ -96,6 +97,9 @@ impl Plugin for Fixture {
         vec![self]
     }
     fn generators(&self) -> Vec<&dyn Generator> {
+        vec![self]
+    }
+    fn renderers(&self) -> Vec<&dyn symphony_plugin::Renderer> {
         vec![self]
     }
 }
@@ -492,8 +496,8 @@ fn a_route_is_found_by_its_path_and_answers_or_finds_nothing() {
         Some(Reply::Json("{\"two\":1}".into()))
     );
     assert_eq!(
-        route.serve(root, "a.glb"),
-        Some(Reply::File(root.join("a.glb")))
+        route.serve(root, "a.bin"),
+        Some(Reply::File(root.join("a.bin")))
     );
     assert_eq!(route.serve(root, ""), None);
     assert!(plugins.route("three").is_none());
