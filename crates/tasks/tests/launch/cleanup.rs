@@ -457,14 +457,20 @@ fn a_terminal_hc_cannot_describe_or_whose_processes_cannot_be_read_is_kept_and_s
 fn a_process_table_that_fails_is_said_only_of_a_terminal_the_board_would_close() {
     let w = World::new();
     let (handle, held) = w.worker("sim/jump", None);
-    w.store().claim("sim/jump", &handle).unwrap();
-    let broken =
-        |_: i64| -> Result<Vec<String>, LaunchError> { Err(LaunchError("ps failed".into())) };
+    w.store().claim("sim/jump", &handle).unwrap(); // live work: kept whatever runs there
+    let orchestrator = w.add_terminal(true, Some(&w.orch), json!({}));
+    let asked = std::rc::Rc::new(std::cell::Cell::new(0));
+    let counted = std::rc::Rc::clone(&asked);
+    let broken = move |_: i64| -> Result<Vec<String>, LaunchError> {
+        counted.set(counted.get() + 1);
+        Err(LaunchError("ps failed".into()))
+    };
     assert_eq!(
         cleanup(w.store(), &w.hc(), &broken, false, &[]).unwrap(),
         []
     );
-    assert!(w.has_terminal(&held));
+    assert_eq!(asked.get(), 0, "the board said first: no table asked for");
+    assert!(w.has_terminal(&held) && w.has_terminal(&orchestrator));
 }
 
 #[test]

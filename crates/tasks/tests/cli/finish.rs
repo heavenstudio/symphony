@@ -122,6 +122,76 @@ fn nothing_is_asked_of_hc_for_a_task_no_session_was_launched_on_or_one_still_ope
 }
 
 #[test]
+fn a_finish_that_cannot_read_the_process_table_keeps_the_terminal_and_names_the_failure() {
+    for (on, args, status) in [
+        ("sim/a", &["move", "sim/a", "cancelled"][..], "cancelled"),
+        ("sim/a/do", &["done", "sim/a/do", "it is"][..], "done"),
+    ] {
+        for table in [None, Some("    1     0 /sbin/launchd\n")] {
+            let p = Terminals::new("finish-no-table");
+            let worker = launched_on(&p, on);
+            let why = no_table(&p, table);
+            let ran = p.as_(&worker, args);
+            assert_eq!(
+                (ran.code, ran.out, ran.err.as_str()),
+                (
+                    0,
+                    format!(
+                        "{on} is {status}\n→ kept pane t1 of {worker} (never closed on no information: {why})\n"
+                    ),
+                    ""
+                ),
+                "{args:?} {table:?}"
+            );
+            assert_eq!(p.addresses(), ["t1"]);
+            assert_eq!(p.board().get(on).unwrap().status, status);
+        }
+    }
+}
+
+/// The process table the commands read made useless: none (`table` is None), or `table`, which
+/// lists no process of the terminal's. What each kept terminal's line says of it.
+fn no_table(p: &Terminals, table: Option<&str>) -> String {
+    let file = p.ps_table();
+    match table {
+        None => {
+            std::fs::remove_file(&file).unwrap();
+            format!(
+                "ps table {}: No such file or directory (os error 2)",
+                file.display()
+            )
+        }
+        Some(text) => {
+            std::fs::write(&file, text).unwrap();
+            format!("ps table {} lists no process 99999999", file.display())
+        }
+    }
+}
+
+#[test]
+fn a_cleanup_that_cannot_read_the_process_table_keeps_the_terminal_and_names_the_failure() {
+    for table in [None, Some("garbage only\n")] {
+        let p = Terminals::new("cleanup-no-table");
+        let worker = launched_on(&p, "sim/a");
+        p.board().move_to("sim/a", "cancelled", &worker).unwrap(); // on the board itself
+        let why = no_table(&p, table);
+        for args in [&["cleanup", "--dry-run"][..], &["cleanup"]] {
+            let ran = p.run(args);
+            assert_eq!(
+                (ran.code, ran.out, ran.err.as_str()),
+                (
+                    0,
+                    format!("kept pane t1 of {worker} (never closed on no information: {why})\n"),
+                    ""
+                ),
+                "{args:?} {table:?}"
+            );
+        }
+        assert_eq!(p.addresses(), ["t1"]);
+    }
+}
+
+#[test]
 fn a_cleanup_that_fails_is_said_and_the_status_change_stands() {
     for (key, value, why) in [
         ("FAKE_HC_FAIL", "ls", "hc ls: fake_failure: ls failed"),

@@ -4,7 +4,7 @@
 
 use crate::World;
 use symphony_board::Store;
-use symphony_board::launch::finish;
+use symphony_board::launch::{LaunchError, finish};
 use symphony_board::rpc::Client;
 
 impl World {
@@ -70,6 +70,27 @@ fn sessions_already_closed_ask_nothing_of_hc() {
     let before = w.calls().len();
     assert_eq!(w.finish("sim/jump"), Vec::<String>::new());
     assert_eq!(w.calls().len(), before);
+}
+
+#[test]
+fn a_finish_whose_process_table_cannot_be_read_keeps_the_terminal_and_says_why() {
+    let w = World::new();
+    let (handle, terminal) = w.worker("sim/jump", Some("done"));
+    let broken = |_: i64| -> Result<Vec<String>, LaunchError> {
+        Err(LaunchError("ps: no answer in 30 s".into()))
+    };
+    assert_eq!(
+        finish(w.store(), &w.hc(), &broken, "sim/jump"),
+        [format!(
+            "kept pane {terminal} of {handle} (never closed on no information: ps: no answer in 30 s)"
+        )]
+    );
+    assert!(w.has_terminal(&terminal));
+    assert!(
+        w.store().task_sessions("sim/jump").unwrap()[0]
+            .closed
+            .is_none()
+    );
 }
 
 #[test]

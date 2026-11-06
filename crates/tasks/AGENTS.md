@@ -177,7 +177,14 @@ prints one); `TASKS_REAP_STATE` is where the
 idle sweep keeps what it saw; `HC_BIN` and `HERDR_APP_BIN` name a fake hc
 and window (the crate's `fake-hc` binary, its terminals and the window's layout
 a JSON file `FAKE_HC_STATE` names, each call a line of `FAKE_HC_LOG`, and the
-calls `FAKE_HC_FAIL` names refused).
+calls `FAKE_HC_FAIL` names refused);
+`TASKS_PS_TABLE` names a file of `ps -axo pid=,ppid=,command=` lines the commands
+read in place of `ps` (`procs::table`), so no command-line case reads this
+machine's process table; it is read only with a `TASKS_DATABASE` other than the
+live one, never on the live board. A table, the file's or `ps`'s, that lists no
+row for the terminal's process says nothing of it. A terminal the board would
+close whose `hc get` or table cannot be read stays, and cleanup and finish print
+`kept pane T [of H] (never closed on no information: WHY)`.
 
 A child's input and output go through `sys::output` (or `sys::spawn_output`,
 `sys::spawn_piped` for one that reads stdin, and `sys::wait_output`), never

@@ -86,7 +86,7 @@ impl From<LaunchError> for Error {
     }
 }
 
-/// The processes running under a pid (`procs::descendants`, or a test's table).
+/// The processes running under a pid (`procs::descendants`, `procs::table`'s, or a test's table).
 pub type Processes = dyn Fn(i64) -> Result<Vec<String>, LaunchError>;
 
 /// What the launcher runs with besides the board and hc: the main checkout and the folder of
@@ -122,7 +122,7 @@ impl Machine {
                     std::time::Duration::try_from_secs_f64(seconds).unwrap_or_default(),
                 )
             }),
-            processes: Box::new(procs::descendants),
+            processes: procs::table(env),
             mode: PERMISSION_MODE.into(),
             board_env: board_env(env),
         }

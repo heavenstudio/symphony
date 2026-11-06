@@ -2,11 +2,11 @@
 //! matched by hand (the protected work, `harmless`, `shell`, `helper` and `board`).
 
 use crate::World;
-use std::os::unix::fs::PermissionsExt;
+use symphony_board::cli::Env;
 use symphony_board::launch::LaunchError;
 use symphony_board::launch::procs::{
-    board, busy_reason, descendants_by, harmless, helper, land, named, reap_busy_reason, shell,
-    symphony_app, test_run, under, verify,
+    board, busy_reason, descendants_by, harmless, helper, land, listed, named, reap_busy_reason,
+    shell, symphony_app, table, table_file, test_run, under, verify,
 };
 
 fn all(commands: &[&str]) -> Vec<String> {
@@ -22,6 +22,81 @@ fn the_table_is_walked_from_the_pid_down_each_child_before_its_own() {
     );
     assert_eq!(under(table, 14), Vec::<String>::new());
     assert_eq!(under(" 20 1\n 21 20 \n", 20), Vec::<String>::new());
+}
+
+#[test]
+fn a_table_whose_parents_loop_is_walked_once_and_ends() {
+    let table = " 1 3 a\n 2 1 b\n 3 2 c\n 4 4 self\n";
+    assert_eq!(under(table, 1), ["b", "c"]);
+    assert_eq!(under(table, 4), Vec::<String>::new());
+}
+
+/// An environment with `vars`, in the temp dir.
+fn env_of(vars: &[(&str, &str)]) -> Env {
+    Env {
+        vars: vars
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect(),
+        cwd: std::env::temp_dir(),
+    }
+}
+
+#[test]
+fn tasks_ps_table_stands_in_for_ps_on_a_scratch_board_only() {
+    let file = "/somewhere/ps.txt";
+    for (database, read) in [
+        (None, false),
+        (Some(symphony_board::DATABASE), false),
+        (Some(""), false),
+        (Some("scratch-1"), true),
+    ] {
+        let mut vars = vec![("TASKS_PS_TABLE", file)];
+        vars.extend(database.map(|db| ("TASKS_DATABASE", db)));
+        assert_eq!(
+            table_file(&env_of(&vars)),
+            read.then(|| std::path::PathBuf::from(file)),
+            "{database:?}"
+        );
+    }
+    assert_eq!(
+        table_file(&env_of(&[("TASKS_DATABASE", "scratch-1")])),
+        None
+    );
+}
+
+#[test]
+fn a_table_file_that_cannot_be_read_or_lists_no_such_process_is_an_error() {
+    let folder = crate::Folder::new();
+    let file = folder.0.join("ps.txt");
+    let path = file.display().to_string();
+    let processes = table(&env_of(&[
+        ("TASKS_DATABASE", "scratch-1"),
+        ("TASKS_PS_TABLE", &path),
+    ]));
+    let missing = processes(10);
+    assert!(
+        matches!(&missing, Err(LaunchError(why)) if why.starts_with(&format!("ps table {path}: "))),
+        "{missing:?}"
+    );
+    let absent = Err(LaunchError(format!("ps table {path} lists no process 10")));
+    // Blank, garbage only, and a table that is about other processes: none describes pid 10, so
+    // none says nothing runs there.
+    for text in [
+        &b" \n"[..],
+        b"PID PPID COMMAND\nnot a row\n 10\n x 1 y\n",
+        b" 9 1 zsh\n 11 9 x\n",
+    ] {
+        std::fs::write(&file, text).unwrap();
+        assert_eq!(processes(10), absent, "{text:?}");
+    }
+    std::fs::write(
+        &file,
+        b"  10     1 bash\n  11    10 sleep \xff\n  12    11 tail\n",
+    )
+    .unwrap();
+    assert_eq!(processes(10).unwrap(), ["sleep \u{fffd}", "tail"]);
+    assert_eq!(listed(&file, 12).unwrap(), Vec::<String>::new());
 }
 
 #[test]
@@ -327,25 +402,47 @@ fn the_name_flag_is_the_first_one_named() {
     assert_eq!(named("claude -name y"), None);
 }
 
+/// A stand-in for `ps` that runs `script` in the system's `sh`, never a freshly written file: macOS
+/// assesses a new executable on its first run, in one machine-wide queue, which under load has
+/// taken the whole of `ps`'s 30 s. The flags `descendants_by` adds are the script's `$0` and `$1`.
+fn sh_ps(script: &str) -> symphony_board::sys::Command {
+    let mut ps = symphony_board::sys::Command::new("/bin/sh");
+    ps.args(["-c", script]);
+    ps
+}
+
 #[test]
 fn a_command_line_that_is_not_utf8_is_read_and_the_pids_still_parse() {
     let w = World::new();
-    let ps = w.dir().join("ps");
-    std::fs::write(
-        &ps,
-        b"#!/bin/sh\nprintf '  10     1 bash\\n  11    10 sleep \\377\\n  12    11 tail\\n  13     1 x\\n'\n",
-    )
-    .unwrap();
-    std::fs::set_permissions(&ps, std::fs::Permissions::from_mode(0o755)).unwrap();
     assert_eq!(
-        descendants_by(symphony_board::sys::Command::new(&ps), 10).unwrap(),
+        descendants_by(
+            sh_ps(
+                r"printf '  10     1 bash\n  11    10 sleep \377\n  12    11 tail\n  13     1 x\n'"
+            ),
+            10
+        )
+        .unwrap(),
         ["sleep \u{fffd}", "tail"]
     );
-    std::fs::write(&ps, b"#!/bin/sh\nexit 0\n").unwrap();
     assert_eq!(
-        descendants_by(symphony_board::sys::Command::new(&ps), 10),
+        descendants_by(sh_ps("exit 0"), 10),
         Err(LaunchError("ps printed nothing".into()))
     );
+    assert_eq!(
+        descendants_by(sh_ps("echo '  10     1 bash'; exit 1"), 10),
+        Err(LaunchError("ps printed nothing".into()))
+    );
+    // A table that does not list the terminal's process says nothing of what runs under it.
+    for table in [
+        r"printf '   9     1 zsh\n  11     9 x\n'",
+        "echo 'not a table'",
+    ] {
+        assert_eq!(
+            descendants_by(sh_ps(table), 10),
+            Err(LaunchError("ps lists no process 10".into())),
+            "{table}"
+        );
+    }
     let missing = descendants_by(symphony_board::sys::Command::new(w.dir().join("no-ps")), 10);
     assert!(
         matches!(&missing, Err(LaunchError(why)) if why.starts_with("ps: ")),

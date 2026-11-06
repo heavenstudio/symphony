@@ -72,7 +72,13 @@ pub(super) fn restore(store: &Store, c: &mut Context) -> Result<(), Stop> {
 /// `cleanup [--dry-run]`.
 pub(super) fn cleanup(store: &Store, c: &mut Context) -> Result<(), Stop> {
     let dry_run = c.parsed.flag("dry_run");
-    let closures = launch::cleanup(store, &Binary::of(c.env), &procs::descendants, dry_run, &[])?;
+    let closures = launch::cleanup(
+        store,
+        &Binary::of(c.env),
+        &*procs::table(c.env),
+        dry_run,
+        &[],
+    )?;
     for closure in &closures {
         let verb = match (closure.kept, dry_run, closure.closed) {
             (true, _, _) => "kept",
@@ -122,10 +128,11 @@ pub(super) fn reap(store: &Store, c: &mut Context) -> Result<(), Stop> {
         }
     }
     let caller = c.actor().ok();
+    let processes = procs::table(c.env);
     let how = Reap {
         state: reap::state_path(c.env, &c.env.cwd).map_err(Stop::Board)?,
         apply: !dry_run,
-        processes: &procs::descendants,
+        processes: &*processes,
         caller: caller.as_deref(),
         min_idle: REAP_SECONDS,
     };
@@ -172,7 +179,7 @@ pub(super) fn finish(store: &Store, c: &mut Context) -> Result<(), Stop> {
 /// The terminals of the sessions launched on finished `slug` or under it close
 /// ([`launch::finish`]), each closed one a line; what went wrong is said, and nothing fails.
 pub(super) fn close_finished(store: &Store, c: &mut Context, slug: &str) {
-    let lines = launch::finish(store, &Binary::of(c.env), &procs::descendants, slug);
+    let lines = launch::finish(store, &Binary::of(c.env), &*procs::table(c.env), slug);
     for line in lines {
         c.say(&format!("→ {line}"));
     }

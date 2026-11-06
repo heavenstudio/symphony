@@ -56,15 +56,29 @@ impl Terminals {
             ("FAKE_HC_STATE", dir.join("hc.json").display().to_string()),
             ("FAKE_HC_LOG", dir.join("hc.log").display().to_string()),
             ("SF_WT_DIR", dir.join("wt").display().to_string()),
+            ("TASKS_PS_TABLE", dir.join("ps.txt").display().to_string()),
         ] {
             env.vars.insert(key.into(), value);
         }
         env.cwd = repo;
+        // The process table the commands read: never this machine's `ps`, whose transient failures
+        // under load would keep a terminal these cases close. NO_PID is a shell with nothing under
+        // it.
+        fs::write(
+            dir.join("ps.txt"),
+            format!("    1     0 /sbin/launchd\n{NO_PID}     1 -zsh\n"),
+        )
+        .unwrap();
         let terminals = Terminals { dir, env };
         terminals.set_state(json!({"terminals": [], "layout": {"spaces": [
             {"id": "sp-lamp", "name": "lamp-works", "tabs": []},
         ]}}));
         terminals
+    }
+
+    /// The process table the commands read in place of `ps` (`TASKS_PS_TABLE`).
+    pub(crate) fn ps_table(&self) -> PathBuf {
+        self.dir.join("ps.txt")
     }
 
     pub(crate) fn set(&mut self, key: &str, value: &str) {
@@ -667,6 +681,9 @@ fn idle_manual_staffing_reports_disabled_configuration() {
 fn a_staffing_pass_launches_codex_for_ready_work_into_the_code_tab_and_says_so_on_its_thread() {
     let p = Terminals::new("staff");
     let orch = p.orchestrator();
+    p.board()
+        .take_role("sim/jump", &orch, "orchestrator")
+        .unwrap();
     let tools = p.env.cwd.join("tools");
     fs::create_dir_all(&tools).unwrap();
     fs::write(
@@ -676,7 +693,8 @@ fn a_staffing_pass_launches_codex_for_ready_work_into_the_code_tab_and_says_so_o
     .unwrap();
     let ran = p.binary(crate::common::NOW, &["staff"]);
     assert_eq!((ran.code, ran.err.as_str()), (0, ""), "{}", ran.out);
-    let [s] = <[_; 1]>::try_from(p.board().task_sessions("sim/jump").unwrap()).unwrap();
+    let sessions = p.board().task_sessions("sim/jump").unwrap();
+    let [s] = <[_; 1]>::try_from(sessions).unwrap_or_else(|s| panic!("{s:?}: {}", ran.out));
     let line = format!(
         "staff sim/jump: launched {} as executor, pane {}, worktree {}, prompt $work sim/jump {}",
         s.handle, s.pane, s.worktree, s.handle
