@@ -2,7 +2,8 @@
 //! clock drains retries and observes actionable PULL/STALE/LOST changes. No agent keeps a monitor alive.
 
 use super::callback_peer::{self as peer, Owner};
-use super::callback_state::{Queued, State, stored_seen};
+use super::callback_state::{Entry, State, stored_seen};
+use super::queued_lines::{Hearing, Queued, Rescoped};
 use super::{ACT, Error, Store, acting, logged, refused};
 use crate::cli::agents::{Answer, Pane, Probe, Probes};
 use crate::cli::{attach, pull};
@@ -69,7 +70,23 @@ struct Event {
     pull_entries: Option<BTreeSet<(String, String)>>,
     /// Of a PULL's `pull_entries`, those its rows name ([`Queued`]).
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pull_told: Option<BTreeSet<(String, String)>>,
+    pull_told: Option<BTreeSet<Entry>>,
+}
+
+/// A recipient's callback state as a dispatch reads it, with when its PULL was last checked and
+/// the lines still queued for it, which a hand-over can take back ([`Hearing::rescope`]).
+#[derive(Deserialize)]
+struct Stored {
+    state: Option<State>,
+    checked_pull: f64,
+    queued: Vec<Queued>,
+}
+
+/// A PULL a dispatch queues: its text, every entry it records, and those its rows name.
+struct PullEvent {
+    text: String,
+    entries: BTreeSet<Entry>,
+    told: BTreeSet<Entry>,
 }
 
 #[derive(Clone, Deserialize)]
@@ -716,11 +733,15 @@ RETURN NONE;");
         if lease.is_some() {
             (*board, *sequence) = self.callback_board()?;
         }
-        let (state, checked_pull, queued): (Option<State>, f64, Vec<Queued>) = self.retrying(|| {
+        let Stored {
+            state,
+            checked_pull,
+            queued,
+        } = self.retrying(|| {
             self.transact(
-                "RETURN [(SELECT * OMIT id FROM ONLY type::record('callback_state', $handle)), type::record('callback_lease', $handle).pull ?? 0,
-                    (SELECT key, text, pull_entries, pull_told FROM callback_event WHERE handle = $handle AND delivered != true
-                        AND (string::starts_with(key, 'pull-') OR (string::starts_with(key, 'event-') AND string::starts_with(text, 'NEW '))))];",
+                "RETURN { state: (SELECT * OMIT id FROM ONLY type::record('callback_state', $handle)), checked_pull: type::record('callback_lease', $handle).pull ?? 0,
+                    queued: (SELECT key, text, pull_entries, pull_told FROM callback_event WHERE handle = $handle AND delivered != true
+                        AND (string::starts_with(key, 'pull-') OR string::starts_with(key, 'event-') OR (string::starts_with(key, 'pane-') AND string::starts_with(text, 'BLOCKED ')))) };",
                 json!({"handle":handle}),
             )
         })?;
@@ -789,13 +810,13 @@ RETURN NONE;");
         };
         let owners = crate::orchestration::Owners::new(&board.tasks);
         let hears = |statuses| crate::orchestration::heard_statuses(&owners, statuses, handle);
-        // A NEW or PULL queued before a hand-over can name a task the recipient no longer hears.
+        // A line queued before a hand-over can name work the recipient no longer hears.
+        let rescoped = if orchestrator && queued.iter().any(|line| !line.is_pull()) {
+            Hearing::of(board, handle, &seen).rescope(&queued)
+        } else {
+            Rescoped::default()
+        };
         let reaches = |slug: &str| owners.reaches(slug, handle);
-        let unheard_new: Vec<&str> = (queued.iter())
-            .filter(|queued| orchestrator && !queued.is_pull())
-            .filter(|queued| queued.unheard(&reaches, &BTreeSet::new()))
-            .map(|queued| queued.key.as_str())
-            .collect();
         let unheard_pull = |withheld: &BTreeSet<(String, String)>| {
             (queued.iter()).any(|queued| queued.is_pull() && queued.unheard(&reaches, withheld))
         };
@@ -883,7 +904,7 @@ RETURN NONE;");
         let mut pull_entries = state.pull_entries.clone().unwrap_or_default();
         let mut pull_withheld = state.pull_withheld.clone();
         let mut pull_current = BTreeSet::new();
-        let mut pull_event = None;
+        let mut pull_event: Option<PullEvent> = None;
         let mut pull_dropped = false;
         if due {
             let root = crate::cli::probes::repo_root(&env.cwd);
@@ -922,7 +943,11 @@ RETURN NONE;");
                     .collect::<Vec<_>>()
                     .join("\n");
                 pull_queued = Some(entries.clone());
-                pull_event = Some((text, entries.clone(), heard));
+                pull_event = Some(PullEvent {
+                    text,
+                    entries: entries.clone(),
+                    told: heard,
+                });
             }
             if state.pull_entries.is_some() {
                 pull_entries.extend(pull_withheld.iter().cloned());
@@ -945,7 +970,12 @@ RETURN NONE;");
                 pull_told: None,
             })
             .collect();
-        if let Some((text, entries, told)) = pull_event {
+        if let Some(PullEvent {
+            text,
+            entries,
+            told,
+        }) = pull_event
+        {
             events.push(Event {
                 key: format!("pull-{revision}"),
                 handle: handle.to_string(),
@@ -1043,7 +1073,7 @@ RETURN NONE;");
             && pull_queued == state.pull_queued
             && pull_entries == state.pull_entries.clone().unwrap_or_default()
             && pull_withheld == state.pull_withheld
-            && unheard_new.is_empty()
+            && rescoped.is_empty()
             && !pull_dropped
         {
             if due {
@@ -1085,7 +1115,8 @@ RETURN NONE;");
                     WHERE handle = $handle AND delivered != true AND pull_entries != NONE RETURN NONE;
              };
              IF $replace_pull { DELETE callback_event WHERE handle = $handle AND delivered != true AND string::starts_with(key, 'pull-') RETURN NONE; };
-             FOR $key IN $unheard_new { DELETE type::record('callback_event', [$handle, $key]) WHERE delivered != true RETURN NONE; };
+             FOR $key IN $rescoped.dropped { DELETE type::record('callback_event', [$handle, $key]) WHERE delivered != true RETURN NONE; };
+             FOR $line IN $rescoped.rewritten { UPDATE type::record('callback_event', [$handle, $line[0]]) SET text = $line[1] WHERE delivered != true RETURN NONE; };
              FOR $new IN $events.filter(|$event| string::starts_with($event.key, 'event-') AND string::starts_with($event.text, 'NEW ')) {
                 LET $prefix = string::concat('NEW ', string::split($new.text, ' ')[1], ' ready — ');
                 DELETE callback_event WHERE handle = $handle AND delivered != true AND string::starts_with(key, 'event-') AND string::starts_with(text, $prefix) RETURN NONE;
@@ -1117,7 +1148,7 @@ RETURN NONE;");
                 "pull":if due {self.now()} else {state.pull}, "pull_queued":pull_queued,
                 "legacy_upgrade":legacy_upgrade, "pull_entries":pull_entries, "pull_withheld":pull_withheld,
                 "message_cursor":board.latest_message, "inbox_cursor":board.latest_message,
-                "computed":due, "pull_current":pull_current, "unheard_new":unheard_new,
+                "computed":due, "pull_current":pull_current, "rescoped":rescoped,
                 "replace_pull":pull_dropped || events.iter().any(|event| event.pull_entries.is_some())}),
         ))?;
         self.deliver_pending(handle, callback, lease.expect("writes hold a lease").0)

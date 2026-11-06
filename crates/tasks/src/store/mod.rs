@@ -30,6 +30,7 @@ mod embeddings;
 mod fields;
 mod launches;
 mod messages;
+mod queued_lines;
 pub(crate) mod search;
 mod sessions;
 mod transaction;

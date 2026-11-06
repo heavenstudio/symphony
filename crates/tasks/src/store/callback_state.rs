@@ -69,42 +69,6 @@ impl State {
     }
 }
 
-/// A NEW or PULL event queued for the recipient and not yet delivered. It told what the recipient
-/// heard when it was queued; a hand-over since can take some of that away, and then a newer
-/// dispatcher drops the NEW and builds the PULL again ([`Queued::unheard`]).
-#[derive(Deserialize)]
-pub(super) struct Queued {
-    pub(super) key: String,
-    #[serde(default)]
-    text: String,
-    #[serde(default)]
-    pull_entries: Option<BTreeSet<Entry>>,
-    /// The entries a PULL's rows name. Older dispatchers name every entry they record.
-    #[serde(default)]
-    pull_told: Option<BTreeSet<Entry>>,
-}
-
-impl Queued {
-    pub(super) fn is_pull(&self) -> bool {
-        self.key.starts_with("pull-")
-    }
-
-    /// Whether it tells the recipient of a task it does not hear (`hears`) or of a PULL entry
-    /// `withheld` from it. An idle row names a session, which only `withheld` judges.
-    pub(super) fn unheard(&self, hears: &dyn Fn(&str) -> bool, withheld: &BTreeSet<Entry>) -> bool {
-        let Some(told) = (self.pull_told.as_ref()).or(self.pull_entries.as_ref()) else {
-            let slug = self
-                .text
-                .strip_prefix("NEW ")
-                .and_then(|new| new.split(' ').next());
-            return slug.is_some_and(|slug| !hears(slug));
-        };
-        let unheard = |(list, name): &Entry| list != "idle" && !hears(name);
-        told.iter()
-            .any(|entry| withheld.contains(entry) || unheard(entry))
-    }
-}
-
 /// Older dispatchers deserialize Seen's health enum. Keep their existing values in that record,
 /// and retain the richer observation in a field they ignore, so mixed binary versions still read it.
 /// The value must match their heartbeat observation, or each writer's diff repeats the other's notice.
@@ -222,36 +186,5 @@ mod tests {
         assert_eq!(state.heard(), state.seen);
         assert_eq!(state.told(&recorded), recorded);
         assert_eq!(State::default().heard(), None);
-    }
-
-    #[test]
-    fn a_queued_line_is_unheard_when_it_names_a_task_or_entry_kept_from_the_recipient() {
-        let queued =
-            |event: serde_json::Value| -> Queued { serde_json::from_value(event).unwrap() };
-        let hears = |slug: &str| slug.starts_with("t/mine");
-        let none = BTreeSet::new();
-        let new =
-            |slug: &str| queued(json!({"key":"event-1-0", "text":format!("NEW {slug} ready — T")}));
-        assert!(!new("t/mine").is_pull() && !new("t/mine").unheard(&hears, &none));
-        assert!(new("t/theirs").unheard(&hears, &none));
-        let entry = |list: &str, name: &str| (list.to_string(), name.to_string());
-        let (mine, theirs, idle) = (
-            entry("ready_unstaffed", "t/mine"),
-            entry("ready_unstaffed", "t/theirs"),
-            entry("idle", "calm-vole"),
-        );
-        // A newer dispatcher's PULL names only what it told; an older one's, every entry.
-        let pull = queued(
-            json!({"key":"pull-1", "pull_entries":[mine, theirs, idle], "pull_told":[mine, idle]}),
-        );
-        assert!(pull.is_pull() && !pull.unheard(&hears, &none));
-        assert!(pull.unheard(&hears, &BTreeSet::from([idle.clone()])));
-        let older = queued(json!({"key":"pull-1", "pull_entries":[mine, idle]}));
-        assert!(
-            !older.unheard(&hears, &none),
-            "a session is judged by `withheld` alone"
-        );
-        let older = queued(json!({"key":"pull-1", "text":"PULL", "pull_entries":[mine, theirs]}));
-        assert!(older.unheard(&hears, &none));
     }
 }

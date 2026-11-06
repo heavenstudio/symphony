@@ -87,8 +87,15 @@ pub(super) fn older_record(fixture: &Fixture, handle: &str) -> Value {
         .filter(|t| open(&t.slug))
         .map(|t| (t.slug.clone(), t.status.clone()))
         .collect();
+    // With no pane to read, the agents view calls a stale worker idle.
+    let idle: Vec<String> = (board.sessions.iter())
+        .filter(|s| {
+            s.health == Health::Stale && !matches!(s.row.kind.as_str(), "orchestrator" | "chat")
+        })
+        .map(|s| s.row.handle.clone())
+        .collect();
     let digest =
-        symphony_board::cli::pull::digest(&fixture.store, &[], None, fixture.now(), &[]).unwrap();
+        symphony_board::cli::pull::digest(&fixture.store, &idle, None, fixture.now(), &[]).unwrap();
     json!({
         "seen": {
             "latest_message": board.latest_message, "verdict_tasks": verdict_tasks,
@@ -129,58 +136,75 @@ fn written_by_an_older_dispatcher(fixture: &Fixture, handle: &str) {
         .unwrap();
 }
 
+/// `slug`, below `parent`.
+fn subtask(fixture: &Fixture, slug: &str, parent: &str) {
+    fixture.task_with(NewTask {
+        parent: Some(parent.into()),
+        ..NewTask::new(slug, "Jump departure", "owner")
+    });
+}
+
+/// The board two orchestrators share: `orchestrator` holds `scratch/a`, which `hand` executes, and
+/// `other` holds `scratch/a/b` below it and `scratch/b`, whose `scratch/b/1` is ready and whose
+/// `scratch/b/rev` the worker has in review, reviewed by `kid`. The worker also works on
+/// `scratch/free`, nobody's. `kid` is the orchestrator's child, `hand` the other's.
+struct TwoOrchestrators {
+    fixture: Fixture,
+    orchestrator: String,
+    other: String,
+    hand: String,
+    worker: String,
+}
+
+impl TwoOrchestrators {
+    fn new() -> TwoOrchestrators {
+        let fixture = Fixture::empty();
+        let orchestrator = fixture.session("orchestrator");
+        let other = fixture.session("orchestrator");
+        let child = |kind: &str, parent: &str| {
+            fixture.session_with(NewSession {
+                parent: Some(parent.to_string()),
+                ..NewSession::new(kind)
+            })
+        };
+        let (kid, hand) = (child("reviewer", &orchestrator), child("worker", &other));
+        let worker = fixture.session("worker");
+        let role = |slug: &str, handle: &str, role: &str| {
+            fixture.store.take_role(slug, handle, role).unwrap();
+        };
+        fixture.task("scratch/a");
+        role("scratch/a", &orchestrator, "orchestrator");
+        fixture.store.claim("scratch/a", &hand).unwrap();
+        subtask(&fixture, "scratch/a/b", "scratch/a");
+        role("scratch/a/b", &other, "orchestrator");
+        fixture.task("scratch/b");
+        role("scratch/b", &other, "orchestrator");
+        subtask(&fixture, "scratch/b/1", "scratch/b");
+        subtask(&fixture, "scratch/b/rev", "scratch/b");
+        fixture.store.claim("scratch/b/rev", &worker).unwrap();
+        (fixture.store.move_to("scratch/b/rev", "review", &worker)).unwrap();
+        role("scratch/b/rev", &kid, "reviewer");
+        fixture.task("scratch/free");
+        fixture.store.claim("scratch/free", &worker).unwrap();
+        TwoOrchestrators {
+            fixture,
+            orchestrator,
+            other,
+            hand,
+            worker,
+        }
+    }
+}
+
 #[test]
 fn an_older_dispatcher_between_newer_ones_repeats_no_line_and_widens_none() {
-    let fixture = Fixture::empty();
-    let (orchestrator, other) = (
-        fixture.session("orchestrator"),
-        fixture.session("orchestrator"),
-    );
-    let child = |kind: &str, parent: &str| {
-        fixture.session_with(NewSession {
-            parent: Some(parent.to_string()),
-            ..NewSession::new(kind)
-        })
-    };
-    // kid is the orchestrator's, reviewing the other's work; hand is the other's, executing
-    // the orchestrator's; the worker works on nobody's.
-    let (kid, hand) = (child("reviewer", &orchestrator), child("worker", &other));
-    let worker = fixture.session("worker");
-    let sub = |slug: &str, parent: &str| {
-        fixture.task_with(NewTask {
-            parent: Some(parent.into()),
-            ..NewTask::new(slug, "Jump departure", "owner")
-        })
-    };
-    fixture.task("scratch/a");
-    fixture
-        .store
-        .take_role("scratch/a", &orchestrator, "orchestrator")
-        .unwrap();
-    fixture.store.claim("scratch/a", &hand).unwrap();
-    sub("scratch/a/b", "scratch/a");
-    fixture
-        .store
-        .take_role("scratch/a/b", &other, "orchestrator")
-        .unwrap();
-    fixture.task("scratch/b");
-    fixture
-        .store
-        .take_role("scratch/b", &other, "orchestrator")
-        .unwrap();
-    sub("scratch/b/1", "scratch/b");
-    sub("scratch/b/rev", "scratch/b");
-    fixture.store.claim("scratch/b/rev", &worker).unwrap();
-    fixture
-        .store
-        .move_to("scratch/b/rev", "review", &worker)
-        .unwrap();
-    fixture
-        .store
-        .take_role("scratch/b/rev", &kid, "reviewer")
-        .unwrap();
-    fixture.task("scratch/free");
-    fixture.store.claim("scratch/free", &worker).unwrap();
+    let TwoOrchestrators {
+        fixture,
+        orchestrator,
+        other,
+        hand,
+        worker,
+    } = TwoOrchestrators::new();
     let listener = listen(&fixture, &orchestrator);
     let ears = [(&listener, orchestrator.as_str())];
     let pull = |executing: u8, orphaned: u8| {
@@ -225,7 +249,7 @@ fn an_older_dispatcher_between_newer_ones_repeats_no_line_and_widens_none() {
         if round == 4 {
             // The newer dispatcher looks first. The other's new row in the whole digest is
             // recorded as withheld, so an older dispatcher never sends it.
-            sub("scratch/b/2", "scratch/b");
+            subtask(&fixture, "scratch/b/2", "scratch/b");
             joined = fixture.session("reviewer");
             fixture
                 .store
