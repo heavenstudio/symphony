@@ -156,8 +156,9 @@ is a list of calls gets a list of answers), the methods being the store's, plus
 `launch`, `restore`, `cleanup`, `finish` and `reap` (the Symphony's idle
 sweep, every five minutes) drive hc's terminals and git's worktrees from
 `src/launch/`, through `launch::hc::Hc` alone; the crate calls no `herdr`.
-A launch is one `hc run --bg --outlive-parent --keep`, its first message in
-the run, labelled `sf.board` (the main checkout's folder and the board's
+A launch is one `hc run --bg --no-parent --outlive-parent --keep`, its first
+message in the run (no child of the caller's terminal, which the app would show
+under it rather than in a tab), labelled `sf.board` (the main checkout's folder and the board's
 database), `sf.handle`, and `herdr.space`/`herdr.tab`: the stream tab (`code`,
 `review`, `3d`, `infra`) of the project's space in the Herdr app, found by name
 (`herdr-app ls`, else the layout `hc connect` keeps) and made when missing,

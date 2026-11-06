@@ -370,10 +370,18 @@ fn start(argv: &[String], state: &mut Map<String, Value>) -> Answer {
         None => "zsh".into(),
     };
     let is_agent = agent == "claude-code" || agent == "codex";
+    // As hc: the terminal it is started from (`HC_TERMINAL_ID`) is its parent, unless named or none.
+    let parent = if options.iter().any(|a| a == "--no-parent") {
+        None
+    } else {
+        flag(options, "--parent")
+            .map(str::to_string)
+            .or_else(|| Some(var("HC_TERMINAL_ID")).filter(|t| !t.is_empty()))
+    };
     let mut t = json!({
         "address": format!("t{n}"), "argv": command, "cwd": flag(options, "--cwd").unwrap_or("/"),
         "name": name, "labels": labels, "pid": pid, "state": "live", "status": Value::Null,
-        "turn": 0, "agent": agent, "parent": Value::Null, "first_message": Value::Null,
+        "turn": 0, "agent": agent, "parent": parent, "first_message": Value::Null,
         "keep": options.iter().any(|a| a == "--keep"),
         "outlive_parent": options.iter().any(|a| a == "--outlive-parent"),
         "notify": !options.iter().any(|a| a == "--no-notify"),
@@ -399,7 +407,9 @@ fn start(argv: &[String], state: &mut Map<String, Value>) -> Answer {
             t["first_message"] = json!({"sent": false, "reason": unsent});
         }
     }
-    adopt(state, &labels);
+    if parent.is_none() {
+        adopt(state, &labels); // the window shows a child under its parent, never in a tab
+    }
     let said = shown(t.as_object().expect("an object"));
     terminals(state).push(t);
     Answer::Saved(said.to_string())

@@ -96,8 +96,9 @@ its asks in `artifacts/callbacks-NAME/asks.db`.
 
 **Agent sessions behind a task** (`task_sessions`): `just tasks launch SLUG` starts a
 Codex agent (`--no-daemon`; default model `gpt-6.1-sol`, effort `xhigh`, workspace-write
-with network access) in an hc terminal of its own, `hc run --bg --outlive-parent --keep`
-with its first message in the run. `--kind claude --model sonnet` selects Claude. The
+with network access) in an hc terminal of its own, `hc run --bg --no-parent --outlive-parent
+--keep` with its first message in the run: no child of the caller's terminal, which the app
+would show under it rather than in a tab. `--kind claude --model sonnet` selects Claude. The
 terminal shows in its stream tab (`code` for an executor, `review` for a reviewer, or
 `--tab` such as `3d` or `infra`) of the project's space in the Herdr app, found by name and
 made when missing (the labels `herdr.space` and `herdr.tab`); the owner's tabs and other

@@ -228,7 +228,13 @@ fn the_agent_runs_in_an_hc_terminal_that_outlives_its_launcher_and_is_kept() {
     assert_eq!(flag_value(&run, "--name"), s.handle);
     assert_eq!(flag_value(&run, "--cwd"), s.worktree);
     let options = &run[..run.iter().position(|a| a == "--").unwrap()];
-    for flag in ["--outlive-parent", "--keep", "--no-notify", "--json"] {
+    for flag in [
+        "--no-parent",
+        "--outlive-parent",
+        "--keep",
+        "--no-notify",
+        "--json",
+    ] {
         assert!(options.contains(&flag.to_string()), "{flag}: {run:?}");
     }
     let labels = flag_values(&run, "--label");
@@ -247,6 +253,17 @@ fn the_agent_runs_in_an_hc_terminal_that_outlives_its_launcher_and_is_kept() {
         (t["keep"].clone(), t["outlive_parent"].clone()),
         (json!(true), json!(true))
     );
+}
+
+#[test]
+fn a_launch_from_inside_a_terminal_is_no_child_of_it_and_shows_in_the_streams_tab() {
+    let mut w = World::new();
+    let caller = w.add_terminal(true, Some(&w.orch), json!({}));
+    w.set("HC_TERMINAL_ID", &caller);
+    let s = w.launch("sim/jump").row;
+    assert_eq!(w.terminal(&s.pane)["parent"], json!(null));
+    let tab = flag_values(&the_run(&w), "--label")[1].replace("herdr.tab=", "");
+    assert_eq!(w.tab_name(&tab), ("lamp-works".into(), "code".into()));
 }
 
 #[test]

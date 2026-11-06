@@ -518,7 +518,15 @@ fn start_confirmed(
     for label in &labels {
         call.extend(["--label", label]);
     }
-    call.extend(["--outlive-parent", "--keep", "--no-notify", "--"]);
+    // The board's, not the caller's: a child of the caller's terminal would show under it, never
+    // in the stream's tab.
+    call.extend([
+        "--no-parent",
+        "--outlive-parent",
+        "--keep",
+        "--no-notify",
+        "--",
+    ]);
     call.extend(argv.iter().map(String::as_str));
     let made = hc.json(&call)?;
     *terminal = made

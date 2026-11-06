@@ -288,6 +288,7 @@ fn the_fake_runs_a_terminal_into_the_window_and_refuses_a_name_taken() {
             "herdr.space=sp-new",
             "--label",
             "herdr.tab=tb-new",
+            "--no-parent",
             "--outlive-parent",
             "--keep",
             "--no-notify",
@@ -319,6 +320,27 @@ fn the_fake_runs_a_terminal_into_the_window_and_refuses_a_name_taken() {
         Err(LaunchError(
             "hc run: name_taken: amber-heron is taken".into()
         ))
+    );
+    // Run from a terminal, it is that terminal's child, which the window shows under it: no tab.
+    let mut w = w;
+    w.set("HC_TERMINAL_ID", address);
+    let label = [
+        "--label",
+        "herdr.space=sp-new",
+        "--label",
+        "herdr.tab=tb-kid",
+    ];
+    let child = w
+        .hc()
+        .json(&[&["run", "--bg"], &label[..], &["--", "zsh"]].concat());
+    let child = w.terminal(child.unwrap()["address"].as_str().unwrap());
+    assert_eq!(child["parent"], address);
+    assert_eq!(
+        w.state()["layout"]["spaces"][1]["tabs"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
     );
 }
 
