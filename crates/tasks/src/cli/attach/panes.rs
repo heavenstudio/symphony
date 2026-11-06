@@ -44,14 +44,20 @@ impl Overseen<'_> {
     /// Whether the recipient hears of `launch`: a session it oversees, launched for a task it is
     /// told of (an orchestrator's own, or nobody's when it is the session's parent).
     fn hears(&self, board: &Board, owners: &Owners, launch: &TaskSessionRow) -> bool {
-        if !self.sessions.contains(launch.handle.as_str()) {
+        self.hears_of(board, owners, &launch.handle, &launch.slug)
+    }
+
+    /// Whether the recipient hears of session `who`, launched for task `slug`: a session it
+    /// oversees, on a task it is told of.
+    pub fn hears_of(&self, board: &Board, owners: &Owners, who: &str, slug: &str) -> bool {
+        if !self.sessions.contains(who) {
             return false;
         }
-        let row = (board.sessions.iter()).find(|s| s.row.handle == launch.handle);
+        let row = (board.sessions.iter()).find(|s| s.row.handle == who);
         let parent = row.and_then(|s| s.row.parent.as_deref());
         !self.orchestrator
-            || self.orchestrating.contains(launch.slug.as_str())
-            || hears(owners, &launch.slug, parent, self.recipient)
+            || self.orchestrating.contains(slug)
+            || hears(owners, slug, parent, self.recipient)
     }
 }
 

@@ -345,6 +345,19 @@ impl Fixture {
         open(&self.db, &self.clock, &self.alive)
     }
 
+    /// Another store on the same board, clock and process table, on another host: its writes
+    /// dispatch no callback registered on this one, which hears them from the next dispatch here.
+    pub fn elsewhere(&self) -> Store {
+        let (clock, alive) = (Arc::clone(&self.clock), Arc::clone(&self.alive));
+        Store::with(
+            self.other_client(),
+            Box::new(move || *clock.lock().unwrap()),
+            Box::new(move |pid| alive.lock().unwrap().contains(&pid)),
+            "another-host",
+        )
+        .expect("the store opens")
+    }
+
     /// Another store on the same board whose clock, read between a rule's read and its write, first
     /// lets `meanwhile` act once: the board moves under a rule that has already decided.
     pub fn late(&self, meanwhile: impl Fn() + Send + Sync + 'static) -> Store {
@@ -541,4 +554,44 @@ pub fn refused<T: std::fmt::Debug>(result: Result<T, symphony_board::Error>) -> 
         Err(symphony_board::Error::Refused(message)) => message,
         other => panic!("expected a refusal, got {other:?}"),
     }
+}
+
+/// The public presence sweep `store` runs over an hc that lists no terminal, keeping its round in
+/// `state`: it looks up no terminal or process, and refreshes and prunes the board's callbacks as
+/// ever.
+pub fn sweep_presence(store: &Store, state: PathBuf) {
+    use symphony_board::launch::LaunchError;
+    use symphony_board::launch::hc::Hc;
+    use symphony_board::launch::reap::{self, REAP_SECONDS, Reap};
+
+    struct NoTerminals;
+    impl Hc for NoTerminals {
+        fn run(&self, _args: &[&str]) -> Result<String, LaunchError> {
+            Ok(r#"{"terminals":[]}"#.into())
+        }
+        fn feed(&self, _args: &[&str], _input: &str) -> Result<String, LaunchError> {
+            panic!("no terminal needs the core's documents")
+        }
+        fn app(&self, _args: &[&str]) -> Result<String, LaunchError> {
+            panic!("no terminal needs the window")
+        }
+        fn caller(&self) -> Option<String> {
+            None
+        }
+        fn board(&self) -> String {
+            "lamp-works/tasks".into()
+        }
+    }
+
+    let sweep = Reap {
+        state,
+        apply: true,
+        processes: &|_| panic!("no terminal needs a process inventory"),
+        caller: None,
+        min_idle: REAP_SECONDS,
+    };
+    let swept = reap::sweep(store, &NoTerminals, &sweep, &mut Vec::new());
+    assert!(swept.unwrap().is_some());
+    std::fs::remove_file(&sweep.state).unwrap();
+    std::fs::remove_file(reap::lock_path(&sweep.state)).unwrap();
 }

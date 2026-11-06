@@ -297,3 +297,117 @@ fn a_blocked_terminal_is_said_only_to_the_orchestrator_of_the_task_it_was_launch
         [vec![], vec![blocked.to_string()]]
     );
 }
+
+/// `orch` orchestrates t/root, and `other` t/root/b below it; t/free is nobody's. `kid`, orch's
+/// child, reviews other's t/root/b/rev; `hand`, other's child, executes orch's t/root/a. Both lost.
+fn two_orchestrators_and_a_lost_child_on_each_side() -> Board {
+    let with = |mut task: Task, status: &str| {
+        task.status = status.into();
+        task
+    };
+    let lost = |handle: &str, parent: &str| {
+        let mut session = session(handle, Some(parent));
+        session.health = Health::Lost;
+        session
+    };
+    Board {
+        tasks: vec![
+            task("t/root", None, &[("orch", "orchestrator")]),
+            task("t/root/a", Some("t/root"), &[("hand", "executor")]),
+            task("t/root/b", Some("t/root"), &[("other", "orchestrator")]),
+            with(task("t/root/b/ready", Some("t/root/b"), &[]), "ready"),
+            with(
+                task("t/root/b/rev", Some("t/root/b"), &[("kid", "reviewer")]),
+                "review",
+            ),
+            with(task("t/free", None, &[]), "ready"),
+        ],
+        sessions: vec![
+            session("orch", None),
+            session("other", None),
+            lost("kid", "orch"),
+            lost("hand", "other"),
+        ],
+        latest_message: 7,
+    }
+}
+
+#[test]
+fn the_legacy_look_takes_in_the_whole_board_as_dispatchers_before_the_narrowing_did() {
+    let board = two_orchestrators_and_a_lost_child_on_each_side();
+    let legacy = legacy_seen(&board, "orch", "orchestrator");
+    fn keys<V>(map: &BTreeMap<String, V>) -> Vec<&str> {
+        map.keys().map(String::as_str).collect()
+    }
+    // Every ready task, everything below what it orchestrates, its children by parent.
+    assert_eq!(keys(&legacy.ready), ["t/free", "t/root/b/ready"]);
+    let below = [
+        "t/root",
+        "t/root/a",
+        "t/root/b",
+        "t/root/b/ready",
+        "t/root/b/rev",
+    ];
+    assert_eq!(keys(&legacy.statuses), below);
+    assert_eq!(legacy.verdict_tasks, below.map(String::from).into());
+    assert_eq!(keys(&legacy.children), ["kid"]);
+    assert!(
+        legacy
+            .staffing
+            .contains(r#"["t/root/b/rev","kid","reviewer",true]"#),
+        "the whole board's staffing: {}",
+        legacy.staffing
+    );
+    // Its record has the shape older dispatchers write: no field they do not know.
+    let record = serde_json::to_value(&legacy).unwrap();
+    assert_eq!(record.get("unclaimed"), None);
+    let heard = seen(&board, "orch", "orchestrator");
+    assert_eq!(keys(&heard.ready), ["t/free"]);
+    assert_eq!(keys(&heard.statuses), ["t/free", "t/root", "t/root/a"]);
+    assert_eq!(keys(&heard.children), ["hand"]);
+    assert_eq!(heard.staffing, r#"[["t/root/a","hand","executor",true]]"#);
+}
+
+#[test]
+fn the_heard_look_is_the_legacy_record_as_it_stands_with_its_narrowing_on_it() {
+    let board = two_orchestrators_and_a_lost_child_on_each_side();
+    let legacy = legacy_seen(&board, "orch", "orchestrator");
+    let heard = seen(&board, "orch", "orchestrator");
+    let narrowing = Narrowing::between(&legacy, &heard);
+    let stored: Narrowing =
+        serde_json::from_value(serde_json::to_value(&narrowing).unwrap()).unwrap();
+    assert_eq!(stored.over(&legacy), heard);
+    // A worker's looks agree, but for nothing.
+    let worker = legacy_seen(&board, "hand", "worker");
+    assert_eq!(worker, seen(&board, "hand", "worker"));
+    assert_eq!(Narrowing::between(&worker, &worker).over(&worker), worker);
+
+    // An older dispatcher rewrote the record from a later board: it said NEW for t/root/next and
+    // LOST for kid, and t/free went blocked, which it does not follow.
+    let mut later = board.clone();
+    later.tasks[5].status = "blocked".into();
+    let mut next = task("t/root/next", Some("t/root"), &[]);
+    next.status = "ready".into();
+    later.tasks.push(next);
+    let older = legacy_seen(&later, "orch", "orchestrator");
+    let baseline = narrowing.over(&older);
+    assert!(baseline.ready.contains_key("t/root/next"), "said by it");
+    assert!(
+        !baseline.ready.contains_key("t/root/b/ready"),
+        "never heard"
+    );
+    assert!(!baseline.children.contains_key("kid"), "never heard");
+    assert_eq!(baseline.children.get("hand"), Some(&Health::Lost));
+    assert_eq!(
+        baseline.statuses.get("t/free").map(String::as_str),
+        Some("ready"),
+        "a status it does not follow stays as this narrowing last heard it"
+    );
+    // A record that holds what the narrowing added keeps its own value.
+    let mut holding = older.clone();
+    holding.children.insert("hand".into(), Health::Live);
+    assert_eq!(
+        narrowing.over(&holding).children.get("hand"),
+        Some(&Health::Live)
+    );
+}

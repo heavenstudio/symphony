@@ -60,6 +60,22 @@ fn no_file_and_an_empty_file_are_the_plain_project_of_every_default() {
 }
 
 #[test]
+fn the_board_table_names_its_guide_and_what_a_review_starts() {
+    let project = parsed(
+        "[board]\nguide = \"docs/TASKS.md\"\non_review = [\"tools/rs-bin.sh\", \"sf-land\", \"review\"]\n",
+    )
+    .unwrap();
+    assert_eq!(project.board.guide(), "docs/TASKS.md");
+    assert_eq!(
+        project.board.on_review,
+        ["tools/rs-bin.sh", "sf-land", "review"]
+    );
+    let plain = parsed("").unwrap();
+    assert_eq!(plain.board.guide(), symphony::project::Board::GUIDE);
+    assert!(plain.board.on_review.is_empty());
+}
+
+#[test]
 fn a_folder_whose_name_makes_no_slug_is_still_a_plain_project() {
     let tree = Tree::new();
     for root in [Path::new(""), Path::new("/"), &folder(&tree, "★ ★")] {
