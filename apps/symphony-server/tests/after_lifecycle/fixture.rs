@@ -28,6 +28,10 @@ fn run_fixture(command: &mut std::process::Command) -> std::io::Result<std::proc
     symphony_board::sys::Spawning::status_locked(command)
 }
 
+#[path = "stand_ins.rs"]
+mod stand_ins;
+use stand_ins::{STAND_IN_LIFETIME, StandIns};
+
 #[cfg(test)]
 #[path = "scratch_tests.rs"]
 mod scratch_tests;
@@ -477,65 +481,6 @@ fn above_shell_descriptors(file: File) -> File {
     );
     // SAFETY: fcntl just returned this new descriptor; ownership is transferred once.
     unsafe { File::from_raw_fd(raised) }
-}
-
-/// The FIFO, below a case's scratch (its fixture `HOME`), that a stand-in opens for writing before
-/// it writes anything (`ps.sh`).
-const STAND_IN_LIFETIME: &str = "stand-ins/lifetime";
-
-/// The end of every fixture stand-in a server starts itself. A server starts its census `ps`
-/// without a fork, handing it none of the case's [`Descendants`] endpoints, and its stop kills
-/// that shell alone: a child the shell had started (`mv`) still renamed a file into scratch after
-/// the server had ended. The stand-in holds this FIFO's writer instead, as does everything it
-/// starts, so its reader's EOF proves they have all ended.
-struct StandIns {
-    fifo: PathBuf,
-    lifetime: Descendants,
-    closed: bool,
-}
-
-impl StandIns {
-    fn open(home: &Path) -> Self {
-        let fifo = home.join(STAND_IN_LIFETIME);
-        fs::create_dir(fifo.parent().unwrap()).unwrap();
-        mkfifo(&fifo);
-        // Held until the case ends, so a stand-in's open never waits for a reader.
-        let reader = fs::OpenOptions::new()
-            .read(true)
-            .custom_flags(libc::O_NONBLOCK)
-            .open(&fifo)
-            .unwrap();
-        Self {
-            lifetime: Descendants {
-                reader,
-                origin: format!("fixture stand-ins holding {}", fifo.display()),
-                wait_elapsed: Box::new(Instant::elapsed),
-            },
-            fifo,
-            closed: false,
-        }
-    }
-
-    /// Remove the FIFO and its folder, so a stand-in starting later cannot open it, nor create it,
-    /// and writes nothing; then wait for every one that did to end.
-    fn close(&mut self) {
-        if !std::mem::replace(&mut self.closed, true)
-            && let Err(error) = fs::remove_file(&self.fifo)
-                .and_then(|()| fs::remove_dir(self.fifo.parent().unwrap()))
-        {
-            cleanup_failed(&format!(
-                "cannot close the stand-in lifetime {}: {error}",
-                self.fifo.display()
-            ));
-        }
-        self.lifetime.wait();
-    }
-}
-
-impl Drop for StandIns {
-    fn drop(&mut self) {
-        self.close();
-    }
 }
 
 impl Process {
@@ -1083,7 +1028,11 @@ impl Repo {
     /// Once no server or command of this case runs, refuse every later stand-in and wait for
     /// those that started to end ([`StandIns`]).
     fn close_stand_ins(&self) {
-        self.stand_ins.lock().unwrap().close();
+        // Also run while unwinding, when an earlier panic may have poisoned the lock.
+        self.stand_ins
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .close();
     }
 }
 

@@ -4,10 +4,12 @@ set -euo pipefail
 # Before any write, hold the stand-in lifetime in the case's scratch (the fixture's HOME), which
 # everything this script starts inherits. A server starts its census without a fork, handing this
 # shell none of the case's endpoints, and its stop kills the shell alone, so a child already
-# started (env, mv) still writes after the server has ended. The case waits for the lifetime's end
-# before removing its scratch; once the case has closed it, this open fails and the script writes
-# nothing.
-exec 9>"$HOME/stand-ins/lifetime"
+# started (env, mv) still writes after the server has ended. The case waits until no stand-in holds
+# the lifetime before removing its scratch. It is opened for reading, which never creates a path,
+# and found still in place after: once the case has withdrawn it, the open or that check fails and
+# the script writes nothing.
+exec 9<"$HOME/stand-ins/lifetime"
+[ -p "$HOME/stand-ins/lifetime" ] || exit 1
 fixture_root="${0%/*}/.."
 {
     printf 'parent=%s\ncwd=%s\n' "$PPID" "$PWD"
