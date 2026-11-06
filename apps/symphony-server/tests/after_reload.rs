@@ -6,8 +6,7 @@ use sha2::{Digest, Sha256};
 use std::convert::Infallible;
 use std::fs::{self, File};
 use std::io::{BufRead, BufReader, Read, Write};
-use std::net::{SocketAddr, TcpListener, TcpStream};
-use std::os::fd::AsRawFd;
+use std::net::{SocketAddr, TcpStream};
 use std::path::{Path, PathBuf};
 use std::sync::{OnceLock, mpsc};
 use std::time::{Duration, Instant};
@@ -15,8 +14,13 @@ use symphony_board::port::Start;
 use symphony_board::sys::{Child, Command};
 use symphony_board::{Store, port, rpc, sys};
 
+#[path = "after_reload/first_run.rs"]
+mod first_run;
+#[path = "after_reload/gate.rs"]
+mod gate;
 #[path = "after_reload/lines.rs"]
 mod lines;
+use gate::{Entry, Gate};
 use lines::Lines;
 
 const LIMIT: Duration = Duration::from_secs(45);
@@ -67,78 +71,18 @@ impl Drop for OwnedChild {
     }
 }
 
-struct Gate(TcpListener);
-impl Gate {
-    fn new() -> Self {
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        assert_ne!(listener.local_addr().unwrap().port(), 8765);
-        listener.set_nonblocking(true).unwrap();
-        Self(listener)
-    }
-    fn address(&self) -> String {
-        self.0.local_addr().unwrap().to_string()
-    }
-    fn entered(&self, kind: &str) -> Entry {
-        let began = Instant::now();
-        let mut stream = loop {
-            let mut fd = libc::pollfd {
-                fd: self.0.as_raw_fd(),
-                events: libc::POLLIN,
-                revents: 0,
-            };
-            let remaining = LIMIT.saturating_sub(began.elapsed());
-            let timeout = i32::try_from(remaining.as_millis()).unwrap();
-            // SAFETY: poll receives one live descriptor and a writable pollfd for this call.
-            let ready = unsafe { libc::poll(&mut fd, 1, timeout) };
-            if ready < 0 {
-                let error = std::io::Error::last_os_error();
-                if error.kind() == std::io::ErrorKind::Interrupted {
-                    continue;
-                }
-                panic!("waiting for a {kind} handshake: {error}");
-            }
-            // poll sets no error when it times out, so the last one would name an unrelated call.
-            assert!(
-                ready > 0,
-                "no {kind} handshake within {LIMIT:?}: the deadline passed"
-            );
-            match self.0.accept() {
-                Ok((stream, _)) => break stream,
-                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                    assert!(began.elapsed() < LIMIT, "no {kind} handshake");
-                }
-                Err(e) => panic!("{kind}: {e}"),
-            }
-        };
-        // macOS inherits O_NONBLOCK from the accepting listener.
-        stream.set_nonblocking(false).unwrap();
-        stream.set_read_timeout(Some(LIMIT)).unwrap();
-        let mut line = String::new();
-        BufReader::new(&mut stream).read_line(&mut line).unwrap();
-        let fields: Vec<_> = line.split_whitespace().collect();
-        assert_eq!(fields[0], kind, "{line}");
-        Entry {
-            stream,
-            pid: fields[1].parse().unwrap(),
-        }
-    }
-}
-struct Entry {
-    stream: TcpStream,
-    pid: i64,
-}
-impl Entry {
-    fn release(mut self, action: &str) {
-        writeln!(self.stream, "{action}").unwrap();
-    }
-}
-
 /// This native fixture stands at the compiler/generator boundary, never at the HTTP or persistence
 /// boundary. It executes the actual server after the startup handshake. No script files are made.
+/// The stand-ins run the machine's copy of its bytes, already run (`first_run::stand_in`).
 fn driver(logs: &Path) -> &'static Path {
     static DRIVER: OnceLock<PathBuf> = OnceLock::new();
     DRIVER.get_or_init(|| {
-        let output = logs.join(format!("reload-driver-{}", std::process::id()));
+        // The linker names its signature after the output file, so one name for every compile
+        // gives an unchanged source the same bytes, and every run the same machine copy. The
+        // folder's name is one no earlier run's driver file took.
+        let folder = logs.join(format!("reload-driver-build-{}", std::process::id()));
+        fs::create_dir_all(&folder).unwrap();
+        let output = folder.join("reload-driver");
         // rustc reads the whole source before it says anything, so the source is written first.
         let mut compiler = OwnedChild(
             sys::spawn_piped(
@@ -174,16 +118,18 @@ fn driver(logs: &Path) -> &'static Path {
             compiler.0.wait().unwrap().success(),
             "driver compile: {diagnostic}"
         );
-        output
+        let copy = first_run::stand_in(&output);
+        fs::remove_dir_all(&folder).unwrap();
+        copy
     })
 }
 
 const DRIVER_SOURCE: &str = r#"
-use std::{env, fs, io::{BufRead, BufReader, Write}, net::TcpStream, path::PathBuf, process::Command};
+use std::{env, fs, io::{BufRead, BufReader, Write}, os::unix::net::UnixStream, path::PathBuf, process::Command};
 use std::os::unix::process::CommandExt;
 const DIRTY_MAIN: &str = __DIRTY_MAIN__;
 fn event(kind: &str) -> String {
-    let mut s = TcpStream::connect(env::var("SF_AFTER_RELOAD_GATE").unwrap()).unwrap();
+    let mut s = UnixStream::connect(env::var_os("SF_AFTER_RELOAD_GATE").unwrap()).unwrap();
     s.set_read_timeout(Some(std::time::Duration::from_secs(45))).unwrap();
     writeln!(s, "{kind} {}", std::process::id()).unwrap();
     let mut answer = String::new();
@@ -217,7 +163,10 @@ fn main() {
             assert_eq!(action, "install");
             let home = PathBuf::from(args.last().unwrap());
             let next = home.join("bin/next");
-            fs::copy(env::current_exe().unwrap(), &next).unwrap();
+            // A link to this driver, already run: a copy would be a new file, its first run the
+            // replacement's, inside the case's startup wait.
+            let _ = fs::remove_file(&next);
+            std::os::unix::fs::symlink(env::current_exe().unwrap().canonicalize().unwrap(), &next).unwrap();
             fs::rename(next, home.join("bin/symphony-server")).unwrap();
         }
         Some("serve") => {
@@ -386,11 +335,9 @@ impl Fixture {
         let home = dir.join("installation");
         fs::create_dir_all(home.join("bin")).unwrap();
         fs::create_dir(dir.join("tmp")).unwrap();
-        fs::copy(
-            env!("CARGO_BIN_EXE_symphony-server"),
-            home.join("bin/symphony-server"),
-        )
-        .unwrap();
+        // A link, as a copy would be a new file whose first run is this case's start.
+        std::os::unix::fs::symlink(first_run::server_image(), home.join("bin/symphony-server"))
+            .unwrap();
         let fingerprint = symphony::reload::fingerprint(&root).unwrap();
         let binary: String = Sha256::digest(fs::read(home.join("bin/symphony-server")).unwrap())
             .iter()
@@ -527,7 +474,7 @@ impl Fixture {
         let mut command = Command::new(if installed {
             self.home.join("bin/symphony-server")
         } else {
-            env!("CARGO_BIN_EXE_symphony-server").into()
+            first_run::server_image().into()
         });
         for (key, _) in std::env::vars_os() {
             let name = key.to_string_lossy();
@@ -553,15 +500,12 @@ impl Fixture {
             .arg(&self.root)
             .args(["--port", "0", "--host", "127.0.0.1"])
             .env("PATH", path)
-            .env("SF_AFTER_RELOAD_GATE", self.gate.address())
+            .env("SF_AFTER_RELOAD_GATE", self.gate.path())
             .env("SF_AFTER_RELOAD_PROCESSES", self.dir.join("processes"))
             .env("SF_AFTER_RELOAD_CENSUS", self.dir.join("census-read"))
             .env("SF_AFTER_RELOAD_COMMANDS", self.dir.join("commands.log"))
             .env("SF_AFTER_RELOAD_ROOT", &self.root)
-            .env(
-                "SF_AFTER_RELOAD_SERVER",
-                env!("CARGO_BIN_EXE_symphony-server"),
-            )
+            .env("SF_AFTER_RELOAD_SERVER", first_run::server_image())
             .env("SF_SYMPHONY_TEST_PID", std::process::id().to_string())
             .env("TASKS_SERVER", &self.board_address)
             .env("TASKS_DATABASE", "after_reload")
@@ -601,13 +545,15 @@ impl Fixture {
         entry
     }
     fn edit(&self, file: &str, text: &str) {
-        write(
-            &self
-                .root
-                .join("symphony/apps/symphony-server/src")
-                .join(file),
-            text,
-        );
+        self.source(&format!("symphony/apps/symphony-server/src/{file}"), text);
+    }
+    /// A watched source replaced whole by a rename, as an editor saves it. Written in place, it
+    /// can be hashed truncated; the watcher then builds again for the finished file
+    /// (`reload::watch_with`), and a second client build meets the case waiting for a startup.
+    fn source(&self, relative: &str, text: &str) {
+        let staged = self.dir.join("tmp/fixture-source");
+        fs::write(&staged, text).unwrap();
+        fs::rename(&staged, self.root.join(relative)).unwrap();
     }
     fn published(&self) {
         let commands = fs::read_to_string(self.dir.join("commands.log")).unwrap();
@@ -770,6 +716,41 @@ fn accepted(address: SocketAddr, route: &str, size: usize) -> TcpStream {
         "the old generation accepted this body"
     );
     stream
+}
+
+/// What a case's waits run is a file setup already ran, never a copy of it made for the case: the
+/// installation links the built image, every stand-in the driver's one copy, and an install links
+/// that copy too (`first_run`).
+#[test]
+fn installations_and_stand_ins_link_the_files_setup_ran() {
+    let f = Fixture::new("first-runs");
+    let resolved = |path: &Path| fs::canonicalize(path).unwrap();
+    let image = f.home.join("bin/symphony-server");
+    assert_eq!(resolved(&image), resolved(first_run::server_image()));
+    let driver = resolved(&f.root.join("tools/rs-bin.sh"));
+    // Not the compile output rustc writes in the logs folder, but the machine copy of its bytes:
+    // the one file machine_copy hands out for them under the compile's name, already run.
+    let logs = f.dir.parent().unwrap();
+    assert!(!driver.starts_with(logs), "{}", driver.display());
+    let bytes = f.dir.join("reload-driver");
+    fs::copy(&driver, &bytes).unwrap();
+    assert_eq!(resolved(&first_run::stand_in(&bytes)), driver);
+    for name in ["just", "ps", "tailscale"] {
+        assert_eq!(resolved(&f.dir.join("bin").join(name)), driver, "{name}");
+    }
+    let mut install = OwnedChild(
+        sys::spawn_output(
+            Command::new(f.root.join("tools/rs-bin.sh"))
+                .args(["sf-slots", "cargo", "install", "--root"])
+                .arg(&f.home)
+                .env("SF_AFTER_RELOAD_GATE", f.gate.path()),
+        )
+        .unwrap(),
+    );
+    f.gate.entered("build").release("install");
+    install.wait();
+    assert_eq!(resolved(&image), driver, "the install links the stand-in");
+    assert!(!f.home.join("bin/next").exists());
 }
 
 #[test]
@@ -1138,10 +1119,7 @@ fn client_only_and_shared_edits_publish_once_and_failures_preserve_the_serving_b
     let old_binary = Sha256::digest(fs::read(f.home.join("bin/symphony-server")).unwrap());
     assert_eq!(client_page(address), "initial client");
 
-    write(
-        &f.root.join("symphony/apps/symphony-ui/src/main.rs"),
-        "refused client",
-    );
+    f.source("symphony/apps/symphony-ui/src/main.rs", "refused client");
     let client = f.gate.entered("client");
     assert_front(address, original_pid);
     assert_eq!(
@@ -1175,10 +1153,7 @@ fn client_only_and_shared_edits_publish_once_and_failures_preserve_the_serving_b
         1
     );
 
-    write(
-        &f.root.join("symphony/apps/symphony-ui/src/main.rs"),
-        "incomplete bundle",
-    );
+    f.source("symphony/apps/symphony-ui/src/main.rs", "incomplete bundle");
     f.gate.entered("client").release("empty");
     lines.until("client build has no index.html");
     assert_front(address, original_pid);
@@ -1189,10 +1164,7 @@ fn client_only_and_shared_edits_publish_once_and_failures_preserve_the_serving_b
     );
 
     // A successful bundle followed by a failed replacement must also restore the client.
-    write(
-        &f.root.join("symphony/apps/symphony-ui/src/main.rs"),
-        "unready client",
-    );
+    f.source("symphony/apps/symphony-ui/src/main.rs", "unready client");
     f.gate.entered("client").release("bundle");
     let build = f.gate.entered("build");
     assert_eq!(client_page(address), "initial client");
@@ -1214,10 +1186,7 @@ fn client_only_and_shared_edits_publish_once_and_failures_preserve_the_serving_b
         old_stamp
     );
 
-    write(
-        &f.root.join("symphony/apps/symphony-ui/src/main.rs"),
-        "shipped client",
-    );
+    f.source("symphony/apps/symphony-ui/src/main.rs", "shipped client");
     f.gate.entered("client").release("bundle");
     f.gate.entered("build").release("install");
     let startup = f.startup();
@@ -1252,8 +1221,8 @@ fn client_only_and_shared_edits_publish_once_and_failures_preserve_the_serving_b
 
     // One dependency is an input to both products: exactly one client build, one server build
     // and one handover must cover that event, without a second reload from the new generation.
-    write(
-        &f.root.join("symphony/crates/symphony-api/src/lib.rs"),
+    f.source(
+        "symphony/crates/symphony-api/src/lib.rs",
         "// changed shared contract\n",
     );
     f.gate.entered("client").release("bundle");
@@ -1290,10 +1259,7 @@ fn client_only_and_shared_edits_publish_once_and_failures_preserve_the_serving_b
 fn startup_rebuilds_an_older_client_even_when_the_server_stamp_is_current() {
     let mut f = Fixture::new("startup-client-stamp");
     let old_source = symphony::reload::installed_client_source(&f.home).unwrap();
-    write(
-        &f.root.join("symphony/apps/symphony-ui/src/main.rs"),
-        "current client",
-    );
+    f.source("symphony/apps/symphony-ui/src/main.rs", "current client");
     // Model a partial installation: the binary/source stamp is current, while the client
     // stamp still correctly identifies the old bundle. Only its source identity is stale.
     let installed_path = f.home.join("installed.json");
@@ -1337,10 +1303,7 @@ fn shutdown_cancels_build_or_startup_and_releases_the_lease() {
         let (mut server, mut lines, address) = f.server(true);
         let pid = i64::from(server.0.id());
         let build = if phase == "client" {
-            write(
-                &f.root.join("symphony/apps/symphony-ui/src/main.rs"),
-                "cancelled client",
-            );
+            f.source("symphony/apps/symphony-ui/src/main.rs", "cancelled client");
             f.gate.entered("client")
         } else {
             f.edit("main.rs", "fn main() { /* cancelled replacement */ }\n");

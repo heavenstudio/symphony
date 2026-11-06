@@ -1,7 +1,8 @@
 //! Working-directory scans shared by the board's worktree sweep and the cargo cache sweep.
 //! Unreadable scans keep trees; an empty global listing is unreadable. Partial listings remain useful.
 //! Their `lsof` starts without a fork and is read through close-on-exec pipes ([`spawn`]), the
-//! helper the board's children share, since this leaf is the one crate both sides link.
+//! helper the board's children share, since this leaf is the one crate both sides link. An async
+//! caller awaits such a child's end, killed if the wait is dropped first, through [`exit`].
 
 use std::path::{Path, PathBuf};
 use std::process::Output;
@@ -9,6 +10,7 @@ use std::sync::mpsc;
 use std::time::Duration;
 
 mod close_on_fork;
+pub mod exit;
 pub mod spawn;
 
 pub use close_on_fork::close_on_fork;

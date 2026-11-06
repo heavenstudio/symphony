@@ -12,9 +12,12 @@ use std::io::{Read, Write};
 use std::net::{TcpStream, ToSocketAddrs};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Mutex, PoisonError};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 mod descriptor;
+mod read;
+
+pub use read::{Kind, slow};
 
 /// How long a request may wait on the server: a whole board's copy, on a loaded machine, is the longest.
 /// Every request waits as long, a rule's and a read's too, but the heartbeat, which a hook waits on
@@ -110,7 +113,8 @@ impl Client {
         }
     }
 
-    /// This client, waiting at most `timeout` for the server to connect and to answer each request.
+    /// This client, waiting at most `timeout` for the server to connect and to answer each request
+    /// whole. A read sent once more ([`Kind`]) waits as long again, no longer.
     pub fn waiting(mut self, timeout: Duration) -> Client {
         self.timeout = timeout;
         self
@@ -131,12 +135,14 @@ impl Client {
 
     /// Each statement's result, in order. The first statement that failed decides the error; a
     /// conflict anywhere decides it first, since the whole transaction can then be retried.
+    #[track_caller]
     pub fn query(&self, sql: &str, vars: Value) -> Result<Vec<Value>, DbError> {
         self.call(sql, vars, true)
     }
 
     /// The namespace and the database, made if they are not there yet, then `sql` in them, in one
     /// request: each statement's result, the four that make and enter them first.
+    #[track_caller]
     pub fn define_then(&self, sql: &str, vars: Value) -> Result<Vec<Value>, DbError> {
         let (ns, db) = (&self.ns, &self.db);
         let sql = format!(
@@ -146,6 +152,7 @@ impl Client {
     }
 
     /// `scoped`: in this client's namespace and database, which must exist.
+    #[track_caller]
     fn call(&self, sql: &str, vars: Value, scoped: bool) -> Result<Vec<Value>, DbError> {
         self.requests.fetch_add(1, Ordering::SeqCst);
         let body = cbor::encode(&json!({"id": 1, "method": "query", "params": [sql, vars]}));
@@ -162,7 +169,9 @@ impl Client {
         )
         .into_bytes();
         request.extend(body);
-        let (status, reply) = self.send(&request).map_err(DbError::Failed)?;
+        let (status, reply) = self
+            .send(&request, Kind::of(sql))
+            .map_err(DbError::Failed)?;
         let reply = cbor::decode(&reply).map_err(|e| {
             DbError::Failed(format!(
                 "HTTP {status} with a body that is not CBOR ({e}): {}",
@@ -173,6 +182,11 @@ impl Client {
     }
 }
 
+/// Failure diagnostics identify the query's source without logging SQL or its variables.
+fn failed_query(source: &str, elapsed: Duration, timeout: Duration, error: &str) -> String {
+    format!("RPC query at {source}, elapsed {elapsed:.3?}, configured wait {timeout:.3?}: {error}")
+}
+
 impl Client {
     /// `request` on a connection the server kept open, else on a new one: the reply's status and body.
     /// Each connection is checked ([`check`]) before anything is written on it, every kind of request
@@ -181,15 +195,23 @@ impl Client {
     /// A request written on a connection that then gave back nothing, part
     /// of a reply, or nothing before the timeout is the request's failure and is never sent again,
     /// whatever it says: the server may have run it, and a write run twice is a message said twice.
-    fn send(&self, request: &[u8]) -> Result<(u16, Vec<u8>), String> {
-        self.send_checked(request, check)
+    /// Only a request `kind` proves a read goes once more, on a new connection ([`Client::resend`]).
+    /// A request that met its timeout on either sending names where it was asked, how long it took
+    /// and the wait ([`failed_query`]).
+    #[track_caller]
+    fn send(&self, request: &[u8], kind: Kind) -> Result<(u16, Vec<u8>), String> {
+        self.send_checked(request, kind, check)
     }
 
+    #[track_caller]
     fn send_checked(
         &self,
         request: &[u8],
+        kind: Kind,
         mut check: impl FnMut(&TcpStream) -> Result<(), Failure>,
     ) -> Result<(u16, Vec<u8>), String> {
+        let began = Instant::now();
+        let caller = std::panic::Location::caller();
         let kept = loop {
             let kept = self
                 .kept
@@ -214,18 +236,47 @@ impl Client {
             }
         };
         let pooled = kept.is_some();
-        let mut connection = match kept {
+        let connection = match kept {
             Some(connection) => connection,
-            None => self.fresh(&mut check)?,
+            None => self
+                .fresh(&mut check)
+                .map_err(|failure| self.unanswered(false, 0, failure))?,
         };
+        let (timed_out, error) = match self.over(connection, request) {
+            Ok(answer) => return Ok(answer),
+            Err((served, failure)) if kind == Kind::Read && failure.written() => {
+                match self.resend(request, &mut check, pooled, served, failure) {
+                    Ok(answer) => return Ok(answer),
+                    Err(failed) => failed,
+                }
+            }
+            Err((served, failure)) => (failure.timed_out, self.unanswered(pooled, served, failure)),
+        };
+        Err(if timed_out {
+            failed_query(
+                &format!("{}:{}", caller.file(), caller.line()),
+                began.elapsed(),
+                self.timeout,
+                &error,
+            )
+        } else {
+            error
+        })
+    }
+
+    /// `request` on `connection`: the reply, the connection kept when the server leaves it open; or
+    /// why there was none, and how many requests the connection had carried.
+    fn over(
+        &self,
+        mut connection: Connection,
+        request: &[u8],
+    ) -> Result<(u16, Vec<u8>), (usize, Failure)> {
         match talk(&mut connection.stream, request, self.timeout) {
             Ok(reply) => {
                 connection.served += 1;
                 Ok(self.keep(connection, reply))
             }
-            Err(failure) => {
-                Err(self.unanswered(pooled, connection.served, connection.failure(failure)))
-            }
+            Err(failure) => Err((connection.served, connection.failure(failure))),
         }
     }
 
@@ -235,7 +286,7 @@ impl Client {
     fn fresh(
         &self,
         check: &mut impl FnMut(&TcpStream) -> Result<(), Failure>,
-    ) -> Result<Connection, String> {
+    ) -> Result<Connection, Failure> {
         let mut first: Option<String> = None;
         loop {
             let connection = self.connect()?;
@@ -243,7 +294,7 @@ impl Client {
                 return Ok(connection);
             };
             if !failure.bad_descriptor {
-                return Err(self.unanswered(false, 0, failure));
+                return Err(failure);
             }
             let step = failure.step;
             match (connection.drained(failure), first) {
@@ -258,17 +309,17 @@ impl Client {
                     let why = format!(
                         "a new connection and one more were both drained: [{first}] then [{second}]"
                     );
-                    return Err(self.unanswered(false, 0, Failure::new(step, why)));
+                    return Err(Failure::new(step, why));
                 }
-                (Err(failure), _) => return Err(self.unanswered(false, 0, failure)),
+                (Err(failure), _) => return Err(failure),
             }
         }
     }
 
     /// A new connection to the server, its socket close-on-fork from the moment it exists
     /// ([`crate::sys::connect`]), read for its evidence on its own number.
-    fn connect(&self) -> Result<Connection, String> {
-        let connect_failed = |why| self.unanswered(false, 0, Failure::new(Step::Connect, why));
+    fn connect(&self) -> Result<Connection, Failure> {
+        let connect_failed = |why| Failure::new(Step::Connect, why);
         let to = self
             .addr
             .to_socket_addrs()
@@ -296,14 +347,16 @@ impl Client {
     }
 
     fn unanswered(&self, pooled: bool, served: usize, failure: Failure) -> String {
-        let origin = if pooled { "pooled" } else { "freshly opened" };
-        let outcome = match failure.step {
-            Step::Connect | Step::SocketOption(_) | Step::Check(_) => "the request was not sent",
-            Step::Write | Step::Read => "the request may have run there, so it was not sent again",
+        let outcome = if failure.written() {
+            "the request may have run there, so it was not sent again"
+        } else {
+            "the request was not sent"
         };
         format!(
-            "the server at {} did not answer: {} failed on a {origin} socket after {served} completed requests: {}; {outcome}",
-            self.addr, failure.step, failure.why
+            "the server at {} {}: {}; {outcome}",
+            self.addr,
+            self.verdict(&failure),
+            failure.on(pooled, served)
         )
     }
 }
@@ -341,6 +394,7 @@ struct Failure {
     step: Step,
     why: String,
     bad_descriptor: bool,
+    timed_out: bool,
 }
 
 impl Failure {
@@ -349,6 +403,7 @@ impl Failure {
             step,
             why: why.to_string(),
             bad_descriptor: false,
+            timed_out: false,
         }
     }
 
@@ -356,14 +411,21 @@ impl Failure {
         Self {
             step,
             bad_descriptor: descriptor::bad_descriptor(&error),
+            timed_out: matches!(
+                error.kind(),
+                std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+            ),
             why: error.to_string(),
         }
     }
 }
 
 /// Write `request` on `stream` and read one reply off it, by its length, its chunks, or, with neither, to
-/// the end of the connection.
+/// the end of the connection: the whole reply within `timeout` of the start. Each read waits only
+/// what is left of it, so a reply that comes a few bytes at a time, each before a wait would run
+/// out, is late all the same.
 fn talk(stream: &mut TcpStream, request: &[u8], timeout: Duration) -> Result<Reply, Failure> {
+    let deadline = Instant::now() + timeout;
     stream
         .set_nodelay(true)
         .map_err(|error| Failure::io(Step::SocketOption("TCP_NODELAY"), error))?;
@@ -380,6 +442,18 @@ fn talk(stream: &mut TcpStream, request: &[u8], timeout: Duration) -> Result<Rep
     let mut raw = Vec::new();
     let mut chunk = [0u8; 16 * 1024];
     loop {
+        let left = deadline.saturating_duration_since(Instant::now());
+        if left.is_zero() {
+            let mut late = read_failed(format!(
+                "the wait ran out with {} bytes of the reply in",
+                raw.len()
+            ));
+            late.timed_out = true;
+            return Err(late);
+        }
+        stream
+            .set_read_timeout(Some(left))
+            .map_err(|error| Failure::io(Step::Read, error))?;
         let n = stream
             .read(&mut chunk)
             .map_err(|error| Failure::io(Step::Read, error))?;
@@ -664,28 +738,14 @@ fn results(reply: Value) -> Result<Vec<Value>, DbError> {
 
 #[cfg(test)]
 mod tests {
+    mod failures;
+    mod resend;
+
     use super::*;
     use serde_json::json;
 
     fn ok(result: Value) -> Value {
         json!({"result": result, "status": "OK", "time": "1ms"})
-    }
-
-    #[test]
-    fn a_client_waits_on_a_silent_server_no_longer_than_it_was_told() {
-        let silent = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let addr = silent.local_addr().unwrap().to_string();
-        let held = std::thread::spawn(move || silent.accept().map(|(stream, _)| stream));
-        let began = std::time::Instant::now();
-        let client = Client::new(&addr, "sf", "t").waiting(Duration::from_millis(300));
-        let failed = client.query("RETURN 1;", json!({})).unwrap_err();
-        assert!(
-            began.elapsed() < Duration::from_secs(5),
-            "{:?}",
-            began.elapsed()
-        );
-        assert!(failed.to_string().contains(&addr), "{failed}");
-        drop(held.join());
     }
 
     fn not_executed() -> Value {
@@ -951,15 +1011,18 @@ mod tests {
             fresh
         });
         let mut checks = 0;
-        let answer =
-            client.send_checked(b"POST /rpc HTTP/1.1\r\nContent-Length: 0\r\n\r\n", |_| {
+        let answer = client.send_checked(
+            b"POST /rpc HTTP/1.1\r\nContent-Length: 0\r\n\r\n",
+            Kind::Write,
+            |_| {
                 checks += 1;
                 if checks == 1 {
                     Err(bad_descriptor_at_peek())
                 } else {
                     Ok(())
                 }
-            });
+            },
+        );
         assert_eq!(answer.map(|(status, _)| status), Ok(200));
         assert_eq!(checks, 2, "the drained one, then the new one");
         let _fresh = served.join().unwrap();
@@ -987,7 +1050,7 @@ mod tests {
         client.kept.lock().unwrap().push(connection);
         let mut checks = 0;
         let error = client
-            .send_checked(b"must not be sent", |_| {
+            .send_checked(b"must not be sent", Kind::Write, |_| {
                 checks += 1;
                 Err(bad_descriptor_at_peek())
             })
@@ -1029,15 +1092,18 @@ mod tests {
             (drained, more, listener)
         });
         let mut checks = 0;
-        let answer =
-            client.send_checked(b"POST /rpc HTTP/1.1\r\nContent-Length: 0\r\n\r\n", |_| {
+        let answer = client.send_checked(
+            b"POST /rpc HTTP/1.1\r\nContent-Length: 0\r\n\r\n",
+            Kind::Write,
+            |_| {
                 checks += 1;
                 if checks == 1 {
                     Err(bad_descriptor_at_peek())
                 } else {
                     Ok(())
                 }
-            });
+            },
+        );
         assert_eq!(answer.map(|(status, _)| status), Ok(200));
         assert_eq!(checks, 2, "the drained one, then one more");
         let (mut drained, _more, listener) = served.join().unwrap();
@@ -1057,7 +1123,7 @@ mod tests {
         let client = Client::new(&addr, "sf", "t").waiting(Duration::from_secs(5));
         let mut checks = 0;
         let error = client
-            .send_checked(b"must not be sent", |_| {
+            .send_checked(b"must not be sent", Kind::Write, |_| {
                 checks += 1;
                 Err(bad_descriptor_at_peek())
             })
@@ -1094,7 +1160,7 @@ mod tests {
         let client = Client::new(&addr, "sf", "t").waiting(Duration::from_secs(5));
         let mut checks = 0;
         let error = client
-            .send_checked(b"must not be sent", |_| {
+            .send_checked(b"must not be sent", Kind::Write, |_| {
                 checks += 1;
                 Err(Failure::new(
                     Step::Check("peek"),
@@ -1127,7 +1193,7 @@ mod tests {
         let other = TcpStream::connect(elsewhere.local_addr().unwrap()).unwrap();
         let mut checks = 0;
         let error = client
-            .send_checked(b"must not be sent", |stream| {
+            .send_checked(b"must not be sent", Kind::Write, |stream| {
                 checks += 1;
                 // SAFETY: both numbers belong to streams alive for this whole call; dup2 makes the
                 // client's number hold the other socket in one step, so it is never free to reuse.
@@ -1427,85 +1493,6 @@ mod tests {
             client.kept.lock().unwrap()[0].served,
             1,
             "the count belongs to the replacement socket"
-        );
-    }
-
-    /// A kept connection that took a request and closed without answering may have run it (a write
-    /// committed, then the server went): the request fails, and is never sent again, which would run a
-    /// write twice.
-    #[test]
-    fn a_request_a_kept_connection_took_and_never_answered_is_not_sent_again() {
-        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let addr = listener.local_addr().unwrap().to_string();
-        let served = std::thread::spawn(move || {
-            let (mut kept, _) = listener.accept().unwrap();
-            for _ in 0..3 {
-                read_request(&mut kept);
-                kept.write_all(SEVEN).unwrap();
-            }
-            read_request(&mut kept);
-            drop(kept); // taken, perhaps run, never answered
-            listener.set_nonblocking(true).unwrap();
-            std::thread::sleep(Duration::from_millis(500));
-            listener.accept().is_ok()
-        });
-        let client = Client::new(&addr, "sf", "t").waiting(Duration::from_secs(5));
-        sevens(&client, 3);
-        let failed = client.query("RETURN 7;", json!({}));
-        let Err(DbError::Failed(said)) = failed else {
-            panic!("{failed:?}")
-        };
-        assert_eq!(
-            said,
-            format!(
-                "the server at {addr} did not answer: read failed on a pooled socket after 3 completed requests: it closed the connection; the request may have run there, so it was not sent again"
-            )
-        );
-        assert!(!served.join().unwrap(), "the request was sent again");
-    }
-
-    #[test]
-    fn a_fresh_sockets_eof_names_read_and_zero_completed_requests() {
-        let (addr, served) = one_reply(b"");
-        let client = Client::new(&addr, "sf", "t").waiting(Duration::from_secs(5));
-        assert_eq!(
-            client.query("RETURN 7;", json!({})),
-            Err(DbError::Failed(format!(
-                "the server at {addr} did not answer: read failed on a freshly opened socket after 0 completed requests: it closed the connection; the request may have run there, so it was not sent again"
-            )))
-        );
-        served.join().unwrap();
-    }
-
-    #[test]
-    fn socket_option_and_write_failures_name_the_actual_operation() {
-        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let addr = listener.local_addr().unwrap().to_string();
-        let mut stream = TcpStream::connect(&addr).unwrap();
-        let (mut peer, _) = listener.accept().unwrap();
-        let client = Client::new(&addr, "sf", "t");
-        let failure = talk(&mut stream, b"request", Duration::ZERO).err().unwrap();
-        assert_eq!(
-            client.unanswered(false, 0, failure),
-            format!(
-                "the server at {addr} did not answer: socket option SO_RCVTIMEO failed on a freshly opened socket after 0 completed requests: cannot set a 0 duration timeout; the request was not sent"
-            )
-        );
-        stream.shutdown(std::net::Shutdown::Write).unwrap();
-        let failure = talk(&mut stream, b"request", Duration::from_secs(5))
-            .err()
-            .unwrap();
-        assert_eq!(
-            client.unanswered(false, 0, failure),
-            format!(
-                "the server at {addr} did not answer: write failed on a freshly opened socket after 0 completed requests: {}; the request may have run there, so it was not sent again",
-                std::io::Error::from_raw_os_error(libc::EPIPE)
-            )
-        );
-        assert_eq!(
-            peer.read(&mut [0]).unwrap(),
-            0,
-            "neither failure sent a request"
         );
     }
 

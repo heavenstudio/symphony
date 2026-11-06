@@ -19,7 +19,7 @@ use serde::Deserialize;
 mod board;
 
 pub use crate::entrypoint::Entrypoint;
-use crate::entrypoint::{RENDERERS, SYMPHONY_ROUTES, below, join};
+use crate::entrypoint::{SYMPHONY_ROUTES, below, join};
 pub use board::Board;
 use board::FileBoard;
 
@@ -306,7 +306,7 @@ impl Project {
                 "[project] id {id:?} is not a slug (lowercase letters, digits and dashes)"
             ));
         }
-        let entrypoints = entrypoints(file.entrypoints)?;
+        let entrypoints = entrypoints(file.entrypoints, &file.plugins.crates)?;
         let register = inside(
             "[project] register",
             p.register
@@ -871,8 +871,13 @@ impl Project {
     }
 }
 
-/// The `[[entrypoints]]` tables checked, or the convention when there are none.
-fn entrypoints(written: Option<Vec<FileEntrypoint>>) -> Result<Vec<Entrypoint>, String> {
+/// The `[[entrypoints]]` tables checked, their types against the renderers of the Symphony and of
+/// `plugins` (refused when two of those share a name), or the convention when there are none.
+fn entrypoints(
+    written: Option<Vec<FileEntrypoint>>,
+    plugins: &[String],
+) -> Result<Vec<Entrypoint>, String> {
+    let renderers = crate::renderers::of_project(plugins)?;
     let Some(written) = written else {
         return Ok(vec![Entrypoint::convention()]);
     };
@@ -888,11 +893,12 @@ fn entrypoints(written: Option<Vec<FileEntrypoint>>) -> Result<Vec<Entrypoint>, 
             folder: String::new(),
             include: table.include.unwrap_or_else(|| vec!["**".into()]),
             exclude: table.exclude,
-            types: table
-                .types
-                .unwrap_or_else(|| vec![crate::entrypoint::MARKDOWN.name.into()]),
+            types: Vec::new(),
             history: Vec::new(),
         };
+        let types = table
+            .types
+            .unwrap_or_else(|| vec![crate::entrypoint::MARKDOWN.name.into()]);
         let label = entry.label();
         entry.folder = path_in(
             &format!("[[entrypoints]] {label} folder"),
@@ -909,22 +915,12 @@ fn entrypoints(written: Option<Vec<FileEntrypoint>>) -> Result<Vec<Entrypoint>, 
                 "[[entrypoints]] {label} include is empty: it would show nothing"
             ));
         }
-        if entry.types.is_empty() {
+        if types.is_empty() {
             return Err(format!(
                 "[[entrypoints]] {label} types is empty: it would show nothing"
             ));
         }
-        if let Some(unknown) = entry
-            .types
-            .iter()
-            .find(|name| !RENDERERS.iter().any(|r| r.name == name.as_str()))
-        {
-            return Err(format!(
-                "[[entrypoints]] {label} type {unknown:?}: no renderer handles it (the renderers \
-                 are {})",
-                RENDERERS.map(|r| r.name).join(", ")
-            ));
-        }
+        entry.types = crate::renderers::resolve(&label, &types, &renderers)?;
         if let Some(other) = found.iter().find(|other| other.url == entry.url) {
             return Err(format!(
                 "[[entrypoints]] {label} is named twice, over {} and {}",

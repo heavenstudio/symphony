@@ -1,4 +1,4 @@
-//! Project media and the vendored viewer, served by the native server. Raw documents (including
+//! Project media and the vendored viewers, served by the native server. Raw documents (including
 //! SVG/XML and mockups opened full size) keep the frame's opaque-origin sandbox in their response.
 
 use std::path::{Component, Path};
@@ -33,7 +33,6 @@ fn mime(path: &str) -> Option<&'static str> {
             "woff2" => "font/woff2",
             "ttf" => "font/ttf",
             "otf" => "font/otf",
-            "glb" => "model/gltf-binary",
             "gltf" | "json" => "application/json",
             "md" | "txt" | "toml" | "yaml" | "yml" | "rs" | "gd" | "sh" => {
                 "text/plain; charset=utf-8"
@@ -48,6 +47,21 @@ fn mime(path: &str) -> Option<&'static str> {
             _ => return None,
         },
     )
+}
+
+/// The type the file `path` of the project at `root` is served as ([`served_type`]).
+fn content_type(root: &Path, path: &str) -> &'static str {
+    let plugins = symphony::plugins::Plugins::of(root);
+    served_type(symphony::renderers::content_type(&plugins, path), path)
+}
+
+/// The type a file is served as: the one the renderer that draws it names (`drawn`), whatever its
+/// extension's own kind, else that kind's, else bytes. The Symphony's pictures and mockups are
+/// never a renderer's, so they keep their own.
+fn served_type(drawn: Option<&'static str>, path: &str) -> &'static str {
+    drawn
+        .or_else(|| mime(path))
+        .unwrap_or("application/octet-stream")
 }
 
 /// The script-free sandbox every stored upload is served in, whether it opens or downloads: no
@@ -150,13 +164,15 @@ pub(crate) async fn answer(
     if !base.starts_with(&root) {
         return StatusCode::NOT_FOUND.into_response();
     }
-    contained(shared, &base, &base.join(relative), request).await
+    contained(shared, &root, &base, &base.join(relative), request).await
 }
 
 /// The file `wanted` as served media when it resolves inside `base` (canonical) and outside the
-/// repository's metadata, its type read from its own name; not found otherwise.
+/// repository's metadata, its type read from its own name and the plugins of the project at
+/// `root`; not found otherwise.
 pub(crate) async fn contained(
     shared: &crate::front::Shared,
+    root: &Path,
     base: &Path,
     wanted: &Path,
     request: &axum::http::Request<()>,
@@ -192,7 +208,7 @@ pub(crate) async fn contained(
     for (name, value) in [
         (
             header::CONTENT_TYPE,
-            mime(&wanted.to_string_lossy()).unwrap_or("application/octet-stream"),
+            content_type(root, &wanted.to_string_lossy()),
         ),
         (header::CONTENT_SECURITY_POLICY, "sandbox allow-scripts"),
         (header::X_CONTENT_TYPE_OPTIONS, "nosniff"),
@@ -204,4 +220,58 @@ pub(crate) async fn contained(
             .insert(name, value.parse().expect("media response header"));
     }
     response
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{content_type, handles, served_type};
+    use crate::testing::Tree;
+
+    #[test]
+    fn a_file_a_renderer_draws_takes_its_type_over_its_extensions_own() {
+        const PROBE: &str = "application/vnd.probe+json";
+        for path in ["/data/a.json", "/notes/a.txt", "/a.GLTF"] {
+            let served = (served_type(Some(PROBE), path), served_type(None, path));
+            assert_ne!(served.1, PROBE, "{path}");
+            assert_eq!(served.0, PROBE, "{path}");
+        }
+        let undrawn = (
+            served_type(None, "/a.json"),
+            served_type(None, "/a.lantern"),
+        );
+        assert_eq!(undrawn, ("application/json", "application/octet-stream"));
+    }
+
+    #[test]
+    fn a_plugin_drawn_file_is_served_as_its_projects_renderer_names_and_others_as_their_own() {
+        crate::shelf::install().unwrap();
+        let shelf = Tree::new();
+        shelf.write(symphony::project::FILE, crate::shelf::MANIFEST);
+        let plain = Tree::new();
+        for path in ["/room/shelf/items/A.item", "/A.ITEM"] {
+            let types = (
+                content_type(&shelf.root, path),
+                content_type(&plain.root, path),
+            );
+            assert_eq!(
+                types,
+                (crate::shelf::ITEM_TYPE, "application/octet-stream"),
+                "{path}"
+            );
+        }
+        let ledger = (
+            content_type(&shelf.root, "/room/ledger.csv"),
+            content_type(&plain.root, "/room/ledger.csv"),
+        );
+        assert_eq!(
+            ledger,
+            (crate::shelf::LEDGER_TYPE, "text/csv; charset=utf-8")
+        );
+        let png = content_type(&shelf.root, "/a.png");
+        assert_eq!(png, "image/png");
+        assert!(
+            handles("/a.png") && !handles("/a.item"),
+            "the Symphony's own kinds"
+        );
+    }
 }

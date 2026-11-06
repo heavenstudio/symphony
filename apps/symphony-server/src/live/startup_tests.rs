@@ -26,7 +26,12 @@ enum Board {
     Fails,
     /// It panics, as a defect in connecting, reading or probing would.
     Panics,
+    /// It returns [`SLOW`], as a board that took a read and answered it late, twice, does.
+    Slow,
 }
+
+/// A board read's failure on a server that took the request and gave no answer within the wait.
+const SLOW: &str = "SurrealDB: the server at 127.0.0.1:1 is slow: no answer within 3s: read failed on a freshly opened socket after 0 completed requests: Resource temporarily unavailable (os error 35); the request only reads, so it went once more, on a new connection: read failed on a freshly opened socket after 0 completed requests: Resource temporarily unavailable (os error 35); it was not sent a third time";
 
 struct Held {
     hub: Arc<Hub>,
@@ -74,6 +79,9 @@ impl Held {
                     }
                     if matches!(board, Board::Panics) {
                         panic!("the held first board read panicked");
+                    }
+                    if matches!(board, Board::Slow) {
+                        return Err(SLOW.into());
                     }
                     store
                         .take()
@@ -215,7 +223,18 @@ async fn status_is_ready_while_data_reads_wait_for_the_initial_board_result() {
         assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{board:?}");
         let body = String::from_utf8_lossy(&body);
         assert!(body.contains(error), "{board:?}: {body}");
+        assert!(body.contains("the task board cannot be reached"), "{body}");
     }
+
+    let mut held = Held::entered(Board::Slow).await;
+    let (status, body) = tasks_read_across_the_held_board(&mut held).await;
+    assert_eq!(status, StatusCode::GATEWAY_TIMEOUT);
+    let body = String::from_utf8_lossy(&body);
+    assert!(
+        body.contains(&format!("the task board is slow: {SLOW}")),
+        "{body}"
+    );
+    assert!(!body.contains("cannot be reached"), "{body}");
 }
 
 #[tokio::test]
