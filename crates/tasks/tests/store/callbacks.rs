@@ -1,4 +1,4 @@
-use super::common::Fixture;
+use super::common::{Fixture, sweep_presence};
 use serde_json::{Value, json};
 use std::io::Read;
 use std::os::unix::net::UnixListener;
@@ -213,35 +213,7 @@ fn plain_orchestrators_receive_queued_chat_and_preserve_explicit_priority() {
 }
 
 fn sweep_callbacks(f: &Fixture, listener: &Listener) {
-    use symphony_board::launch::LaunchError;
-    use symphony_board::launch::herdr::Herdr;
-    use symphony_board::launch::reap::{self, REAP_SECONDS, Reap};
-
-    struct EmptyPanes;
-    impl Herdr for EmptyPanes {
-        fn run(&self, _args: &[&str]) -> Result<String, LaunchError> {
-            Ok(r#"{"result":{"agents":[]}}"#.into())
-        }
-        fn workspace(&self) -> Option<String> {
-            None
-        }
-    }
-
-    let sweep = Reap {
-        state: listener.path.with_extension("reap.json"),
-        apply: true,
-        processes: &|_| panic!("no pane needs a process inventory"),
-        current_pane: None,
-        caller: None,
-        min_idle: REAP_SECONDS,
-    };
-    assert!(
-        reap::sweep(&f.store, &EmptyPanes, &sweep, &mut Vec::new())
-            .unwrap()
-            .is_some()
-    );
-    std::fs::remove_file(&sweep.state).unwrap();
-    std::fs::remove_file(reap::lock_path(&sweep.state)).unwrap();
+    sweep_presence(&f.store, listener.path.with_extension("reap.json"));
 }
 
 #[test]

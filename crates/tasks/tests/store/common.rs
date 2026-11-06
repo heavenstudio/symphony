@@ -555,3 +555,34 @@ pub fn refused<T: std::fmt::Debug>(result: Result<T, symphony_board::Error>) -> 
         other => panic!("expected a refusal, got {other:?}"),
     }
 }
+
+/// The public presence sweep `store` runs over an empty pane inventory, keeping its round in
+/// `state`: it looks up no pane or process, and refreshes and prunes the board's callbacks as ever.
+pub fn sweep_presence(store: &Store, state: PathBuf) {
+    use symphony_board::launch::LaunchError;
+    use symphony_board::launch::herdr::Herdr;
+    use symphony_board::launch::reap::{self, REAP_SECONDS, Reap};
+
+    struct EmptyPanes;
+    impl Herdr for EmptyPanes {
+        fn run(&self, _args: &[&str]) -> Result<String, LaunchError> {
+            Ok(r#"{"result":{"agents":[]}}"#.into())
+        }
+        fn workspace(&self) -> Option<String> {
+            None
+        }
+    }
+
+    let sweep = Reap {
+        state,
+        apply: true,
+        processes: &|_| panic!("no pane needs a process inventory"),
+        current_pane: None,
+        caller: None,
+        min_idle: REAP_SECONDS,
+    };
+    let swept = reap::sweep(store, &EmptyPanes, &sweep, &mut Vec::new());
+    assert!(swept.unwrap().is_some());
+    std::fs::remove_file(&sweep.state).unwrap();
+    std::fs::remove_file(reap::lock_path(&sweep.state)).unwrap();
+}

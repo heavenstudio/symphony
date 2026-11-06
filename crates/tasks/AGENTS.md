@@ -117,8 +117,9 @@ acknowledged, which told them. So an entry the orchestrator hears is told once i
 whoever acknowledged and whatever older dispatchers queue and acknowledge after, and untold
 while it is not, even when an older one took this generation's PULL back unsaid for its own.
 `revision`, which every older write moves, is not read. An inbox acknowledgement takes no lease,
-so a dispatch writes its account only if no PULL it read as waiting was acknowledged since, and
-otherwise reads and decides again.
+nor does a presence sweep pruning what was delivered, so a dispatch writes its account only if
+every PULL it read as waiting is still there undelivered (no key is used twice), and otherwise
+reads and decides again.
 What was withheld is the one ambiguity: an older dispatcher's own PULL tells the whole board,
 and its acknowledgement of that PULL and of this generation's with the same entries leave the
 same record; telling them apart needs the older binary changed. So withheld work stays untold

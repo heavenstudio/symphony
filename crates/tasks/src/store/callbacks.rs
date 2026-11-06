@@ -1069,13 +1069,16 @@ RETURN NONE;");
                 .map(|handled| (handled, pull_at));
         }
         // An inbox acknowledgement takes no lease: one of a PULL read as waiting may have come in
-        // since, and what the recipient was told with it. Then nothing is written, and the
-        // dispatch reads and decides again.
+        // since, and what the recipient was told with it. A PULL still waits only while its event
+        // is there undelivered: a presence sweep, which takes no lease either, prunes delivered
+        // ones, and no key is used twice. Otherwise nothing is written, and the dispatch reads and
+        // decides again.
         let waiting: Vec<&str> = (queued.iter().filter(|line| line.is_pull()))
             .map(|line| line.key.as_str())
             .collect();
         let current = self.retrying(|| self.transact::<bool>(
-            "LET $current = array::len($waiting.filter(|$key| type::record('callback_event', [$handle, $key]).delivered = true)) = 0;
+            "LET $current = array::len($waiting.filter(|$key| record::exists(type::record('callback_event', [$handle, $key]))
+                AND type::record('callback_event', [$handle, $key]).delivered != true)) = array::len($waiting);
              IF $current {
              IF $pull_kept != NONE {
                 DELETE callback_event WHERE handle = $handle AND delivered != true AND string::starts_with(key, 'pull-') AND key != $pull_kept RETURN NONE;
