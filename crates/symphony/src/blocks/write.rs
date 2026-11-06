@@ -280,7 +280,7 @@ impl Writer<'_> {
     fn media(&mut self, media: &Media) {
         let kind = match media {
             Media::Mockup { .. } => "mockup",
-            Media::Model { .. } => "model",
+            Media::Viewer { .. } => "viewer",
             Media::Gallery { .. } => "gallery",
         };
         let index = (self.media)(media.clone());

@@ -11,6 +11,7 @@ mod common;
 
 mod cli;
 mod finished;
+mod on_review;
 mod rules;
 mod triggers;
 

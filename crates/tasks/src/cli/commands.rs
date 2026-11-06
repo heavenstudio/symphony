@@ -4,9 +4,9 @@
 use super::agents::{describe, table};
 use super::args::Parsed;
 use super::attach::{Watch, watch};
-use super::text::{event, export_markdown, message_line, roles_text, tree_order};
+use super::text::{event, export_markdown, message_line, roles_text};
 use super::{Clock, Env, probes, shape};
-use crate::health::{FINISHED, RESERVE_SECONDS};
+use crate::health::RESERVE_SECONDS;
 use crate::pyjson::{self, Py};
 use crate::sweep::{self, git::Listed, trigger};
 use crate::sys::{self, Command};
@@ -20,6 +20,8 @@ const EXPORT_PATH: &str = "docs/history/tasks.md";
 /// How often an orchestrator's monitor prints the PULL digest, unless `TASKS_PULL_SECONDS` says.
 const PULL_SECONDS: f64 = 600.0;
 
+mod finish;
+mod list;
 mod panes;
 
 /// Why a command stopped short.
@@ -214,34 +216,7 @@ pub fn run(store: &Store, c: &mut Context) -> Result<(), Stop> {
                 ));
             }
         }
-        "list" => {
-            let mut tasks = store.tasks(p.get("status"))?;
-            if p.flag("mine") {
-                let me = c.actor()?;
-                tasks.retain(|t| t.roles.iter().any(|r| r.handle == me));
-            }
-            if p.flag("json") {
-                let json = Py::obj(vec![("tasks", shape::tasks(&tasks))]);
-                c.say(&pyjson::dumps(&json));
-                return Ok(());
-            }
-            for (depth, t) in tree_order(&tasks) {
-                let roles = roles_text(t);
-                let roles = if roles.is_empty() {
-                    String::new()
-                } else {
-                    format!("  [{roles}]")
-                };
-                c.say(&format!(
-                    "{}p{} {:<11} {:<28} {}{roles}",
-                    "  ".repeat(depth),
-                    t.priority,
-                    t.status,
-                    t.slug,
-                    t.title
-                ));
-            }
-        }
+        "list" => list::run(store, c)?,
         "search" => super::search::run(store, c)?,
         "embed" => {
             // Only the cache-only maintenance mode may run without an agent. Explicit actors
@@ -296,7 +271,7 @@ pub fn run(store: &Store, c: &mut Context) -> Result<(), Stop> {
             let slug = c.arg("slug");
             let t = store.done(&slug, &c.actor()?, &c.arg("note"))?;
             c.say(&format!("{slug} is {}", t.status));
-            after_finish(store, c, &t);
+            finish::after_finish(store, c, &t);
         }
         "claim" => {
             let t = store.claim(&c.arg("slug"), &c.actor()?)?;
@@ -316,17 +291,22 @@ pub fn run(store: &Store, c: &mut Context) -> Result<(), Stop> {
             store.take_role(&slug, &c.actor()?, &role)?;
             c.say(&format!("{role} on {slug}"));
         }
+        "handover" => {
+            let (slug, to) = (c.arg("slug"), c.arg("to"));
+            store.hand_over(&slug, &c.actor()?, &to)?;
+            c.say(&format!("handed {slug} to {to} (orchestrator)"));
+        }
         "move" => {
             let slug = c.arg("slug");
             let t = store.move_to(&slug, &c.arg("status"), &c.actor()?)?;
             c.say(&format!("{slug} is {}", t.status));
-            after_finish(store, c, &t);
+            finish::after_move(store, c, &t);
         }
         "verdict" => {
             let slug = c.arg("slug");
             let t = store.verdict(&slug, &c.actor()?, &c.arg("verdict"), &c.arg("text"))?;
             c.say(&format!("{slug} is {}", t.status));
-            after_finish(store, c, &t);
+            finish::after_finish(store, c, &t);
         }
         "say" => {
             let m = store.say(&c.arg("slug"), &c.actor()?, &c.arg("text"), p.get("to"))?;
@@ -417,15 +397,6 @@ pub fn run(store: &Store, c: &mut Context) -> Result<(), Stop> {
 /// close ([`panes::close_finished`]), and then a sweep starts, detached, in which their worktrees go
 /// without the window when merged and clean ([`trigger`]). The status change stands whatever happens
 /// here; what went wrong closing panes is said, and the sweep says nothing.
-fn after_finish(store: &Store, c: &mut Context, task: &Task) {
-    if !FINISHED.contains(&task.status.as_str()) {
-        return;
-    }
-    panes::close_finished(store, c, &task.slug);
-    let why = format!("{} is {}", task.slug, task.status);
-    trigger::trigger(c.env, &c.env.cwd, &why, Some(&task.slug));
-}
-
 fn create(store: &Store, c: &mut Context) -> Result<(), Stop> {
     let p = c.parsed;
     let body = match p.get("body_file") {

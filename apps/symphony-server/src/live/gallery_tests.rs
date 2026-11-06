@@ -64,7 +64,7 @@ fn section_items(sections: &[symphony_api::Section]) -> &[GalleryItem] {
         })
         .find_map(|block| match block {
             Block::Media {
-                media: Media::Gallery { items },
+                media: Media::Gallery { items, .. },
             } => Some(items.as_slice()),
             _ => None,
         })

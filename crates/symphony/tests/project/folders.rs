@@ -46,7 +46,7 @@ fn a_document_is_named_by_its_route_and_its_route_by_the_projects_folder() {
     }
     assert_eq!(project.file("docs/guide/START.md"), "manual/guide/START.md");
     assert_eq!(project.file("docs"), "manual");
-    for other in ["view/models/A.glb", "docsx/A.md", "artifacts/a.png"] {
+    for other in ["view/models/A.item", "docsx/A.md", "artifacts/a.png"] {
         assert_eq!(project.file(other), other);
     }
     // the default project's folder is its route

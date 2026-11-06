@@ -20,9 +20,12 @@ pub mod vocabulary {
     pub use symphony_api::{
         Block, Cell, ContainerKind, FieldValue, FigureSize, GalleryItem, Image, InlineKind,
         LinkTarget, Media, NavItem, Picture, Presentation, ProgressBar, Region, Span, TaskOffer,
-        VectorKind, VectorShape,
+        VectorKind, VectorShape, View, Viewer,
     };
 }
+
+mod renderer;
+pub use renderer::{Drawing, File, Renderer};
 
 use vocabulary::{Block, FieldValue, NavItem, Picture, Region, TaskOffer};
 
@@ -36,6 +39,10 @@ pub trait Plugin: Send + Sync {
         Vec::new()
     }
     fn card_kinds(&self) -> Vec<&dyn CardKind> {
+        Vec::new()
+    }
+    /// The file types it draws, beside the Symphony's `markdown` and `media`.
+    fn renderers(&self) -> Vec<&dyn Renderer> {
         Vec::new()
     }
     /// Answers under `/x/<path>/`.

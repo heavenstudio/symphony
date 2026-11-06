@@ -282,6 +282,7 @@ pub fn sample() -> Dump {
                 restore: "claude --resume claude-2".into(),
             },
         ],
+        delivery_keys: Vec::new(),
     }
 }
 
