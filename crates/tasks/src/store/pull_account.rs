@@ -89,9 +89,7 @@ impl Account {
     /// of the whole digest's `entries`. What left the digest is forgotten, so it pushes once more
     /// if it returns.
     pub(super) fn of(state: &State, queued: &[Queued], entries: &Entries, heard: &Entries) -> Self {
-        // Only this generation records what a PULL withholds, even of none.
-        let ours_waits = (queued.iter()).any(|line| line.is_pull() && line.pull_withheld.is_some());
-        let acknowledged = state.acknowledged(ours_waits).map(|told| &told & entries);
+        let acknowledged = state.acknowledged().map(|told| &told & entries);
         let none = Entries::new();
         let told = acknowledged.as_ref().unwrap_or(&none);
         let unheard = entries - heard;
@@ -128,8 +126,7 @@ impl Account {
         }
     }
 
-    /// Whether writing this account, with `text` the PULL of the digest now, changes nothing. Once
-    /// an older dispatcher wrote since this generation did, it does: it records the revision.
+    /// Whether writing this account, with `text` the PULL of the digest now, changes nothing.
     pub(super) fn changes_nothing(&self, state: &State, queued: &[Queued], text: &str) -> bool {
         let none = Entries::new();
         let recorded = self.recorded.as_ref().unwrap_or(&none);
@@ -141,8 +138,7 @@ impl Account {
                 && line.pull_withheld.as_ref() == awaiting.map(|a| &a.withheld)
         };
         let waiting: Vec<&Queued> = queued.iter().filter(|line| line.is_pull()).collect();
-        state.pull_withheld_revision == Some(state.revision)
-            && self.queued == state.pull_queued
+        self.queued == state.pull_queued
             && recorded == state.pull_entries.as_ref().unwrap_or(&none)
             && self.withheld == state.pull_withheld
             && self.awaiting == state.pull_awaiting
@@ -280,14 +276,13 @@ mod tests {
     #[test]
     fn an_account_records_the_whole_digest_and_takes_in_what_was_told_only_when_acknowledged() {
         // Told t/a; t/b was withheld from it and is its own now; t/gone left the digest.
-        let told_a = |pull_withheld_revision| State {
+        let state = State {
             pull_entries: Some(entries(&["t/a", "t/b", "t/gone"])),
             pull_withheld: entries(&["t/b"]),
-            pull_withheld_revision: Some(pull_withheld_revision),
             ..State::default()
         };
         let all = entries(&["t/a", "t/b", "t/c"]);
-        let account = Account::of(&told_a(0), &[], &all, &entries(&["t/a", "t/b"]));
+        let account = Account::of(&state, &[], &all, &entries(&["t/a", "t/b"]));
         let awaiting = Awaiting {
             entries: all.clone(),
             withheld: entries(&["t/c"]),
@@ -301,19 +296,12 @@ mod tests {
             awaiting: Some(awaiting),
         };
         assert_eq!(account, expected);
-        // Once an older dispatcher wrote since, the PULL last acknowledged may be its own, which
-        // told t/b: it counts as told, and nothing is new.
-        let older = Account::of(&told_a(1), &[], &all, &entries(&["t/a", "t/b"]));
-        let unchanged = (PullPlan::Unchanged, entries(&["t/c"]));
-        assert_eq!((older.plan, older.withheld), unchanged);
-        // Before the PULL is acknowledged, t/b stays untold, so the PULL waiting stays, even once
-        // an older dispatcher wrote: it would have queued its own in that one's place.
+        // Before the PULL is acknowledged, t/b stays untold, so the PULL waiting stays.
         let state = State {
             pull_entries: account.recorded.clone(),
             pull_queued: account.queued.clone(),
             pull_withheld: account.withheld.clone(),
             pull_awaiting: account.awaiting.clone(),
-            revision: 1,
             ..State::default()
         };
         let pull = Queued {
@@ -336,23 +324,5 @@ mod tests {
             (upgrade.plan, upgrade.queued),
             (PullPlan::Unchanged, Some(all))
         );
-    }
-
-    #[test]
-    fn an_account_already_recorded_changes_nothing_until_an_older_dispatcher_writes() {
-        let all = entries(&["t/a", "t/b"]);
-        let recorded = |pull_withheld_revision| State {
-            pull_entries: Some(all.clone()),
-            pull_withheld_revision,
-            revision: 4,
-            ..State::default()
-        };
-        for (marker, changes_nothing) in [(Some(4), true), (Some(3), false), (None, false)] {
-            let state = recorded(marker);
-            let account = Account::of(&state, &[], &all, &all);
-            assert_eq!(account.plan, PullPlan::Unchanged, "{marker:?}");
-            let unchanged = account.changes_nothing(&state, &[], "");
-            assert_eq!(unchanged, changes_nothing, "{marker:?}");
-        }
     }
 }

@@ -22,6 +22,7 @@ mod next;
 mod orchestrators;
 mod pending_pull;
 mod priority;
+mod pull_acknowledgements;
 mod quiet_callbacks;
 mod reserve;
 mod roles;
