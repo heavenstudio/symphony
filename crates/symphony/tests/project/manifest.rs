@@ -500,3 +500,41 @@ fn the_page_inlines_the_projects_view_as_json_no_value_can_close_or_comment_out(
         hostile
     );
 }
+
+#[test]
+fn a_table_or_key_this_build_does_not_know_is_left_out_of_the_running_project_and_the_rest_read() {
+    let tree = Tree::new();
+    let root = folder(&tree, "Night Shift");
+    std::fs::write(
+        root.join(FILE),
+        "[project]\nname = \"Lamp Works\"\n\n[board]\nexport = \"docs/tasks.md\"\n\
+         disposable = [\"artifacts/*\"]\non_review = [\"x\"]\nguide = \"docs/TASKS.md\"\n\
+         starts = [\"y\"]\n\n[theme]\ncolour = \"red\"\n\n[hooks]\nbeat = 1\n",
+    )
+    .unwrap();
+    // loading and linting refuse them all by name, where they stand
+    let refusal = "symphony.toml: [hooks], [theme] colour, [board] starts are not settings the Symphony knows";
+    assert_eq!(Project::load(&root).unwrap_err(), refusal);
+    assert_eq!(project_problems(&root), [refusal]);
+    // the running project leaves them out and keeps every setting it knows
+    let project = Project::of(&root);
+    assert_eq!(project.name, "Lamp Works");
+    assert_eq!(project.board.export.as_deref(), Some("docs/tasks.md"));
+    assert_eq!(project.board.disposable, ["artifacts/*"]);
+    assert_eq!(project.board.on_review, ["x"]);
+    assert_eq!(project.board.guide(), "docs/TASKS.md");
+    assert_ne!(*project, Project::plain(&root));
+    // one is named alone, an entrypoint's with the entrypoint, and before any other refusal
+    assert_eq!(
+        refused("[board]\nexports = \"x\"\n"),
+        "symphony.toml: [board] exports is not a setting the Symphony knows"
+    );
+    assert_eq!(
+        refused("[[entrypoints]]\nurl = \"/\"\nfolder = \".\"\nfolders = [\"x\"]\n"),
+        "symphony.toml: [[entrypoints]] / folders is not a setting the Symphony knows"
+    );
+    assert_eq!(
+        refused("[agents]\npanes = \"tmux\"\npane = \"herdr\"\n"),
+        "symphony.toml: [agents] pane is not a setting the Symphony knows"
+    );
+}
