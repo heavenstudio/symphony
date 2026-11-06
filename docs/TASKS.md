@@ -110,7 +110,8 @@ which is killed and removed. It writes its handle, role, agent session
 id, worktree, branch, terminal and start time; `just tasks show` lists them under
 `Sessions:`. No terminal the owner may be looking at is closed: one in the tab the Herdr
 app shows, the agent it shows, or held over them (`herdr-app status`, read last, right
-before the kill); when the window cannot say, the terminal stays and cleanup names why. When a terminal is closed (`just
+before the kill, after a last `hc get` that must still find it finished); when the window
+cannot say or the terminal works again, it stays and cleanup names why. When a terminal is closed (`just
 tasks cleanup`, or the task becoming done or cancelled: `hc kill`, then `hc rm`) the
 record stays and says why and how to bring it back,
 `just tasks restore SLUG [HANDLE]`, which resumes the conversation in the same
@@ -170,8 +171,9 @@ however many apps sweep, when neither its handle nor a subagent session under it
 an executor role on an in-progress or blocked task or a reviewer role on a task in
 review, and nothing runs under it but MCP helpers (Codex's configured `node_repl` among
 them, by its path), caffeinate and board commands: anything else is work. Status, roles
-and the window are read again right before the close, and the window once more after the
-close is recorded, right before the kill: a look then reopens the record. Never an unnamed terminal or another board's (it may be the owner's), an
+and the window are read again right before the close, and the terminal and the window once
+more after the close is recorded, right before the kill: work resumed by then (its agent
+working, or work under it) or the window showing it reopens the record. Never an unnamed terminal or another board's (it may be the owner's), an
 orchestrator, the caller's (`HC_TERMINAL_ID`), or one on screen in the Herdr app, which
 starts its idle wait again (as does a window that cannot say what it shows).
 Each close is one line on the handle's task thread, with its restore line, written

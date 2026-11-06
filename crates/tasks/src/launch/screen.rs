@@ -5,7 +5,8 @@
 //! is the agent the window shows (`agent`), or when an overlay or a float holds it (`overlays`,
 //! `floats`, each naming its `terminal`). The window cannot say when `herdr-app status` fails or
 //! reports an error, or when an overlay or float does not name the terminal it holds. The look that
-//! decides is the last call before the kill ([`close_unseen`]).
+//! decides is the last call before the kill ([`close_unseen`]), after the last `hc get`, which must
+//! still find the terminal finished.
 
 use super::LaunchError;
 use super::hc::{self, Hc, Object, text, text_of};
@@ -86,21 +87,29 @@ pub fn no_information(problem: &LaunchError) -> String {
 /// Why [`close_unseen`] did not close a terminal.
 #[derive(Debug, Clone, PartialEq)]
 pub enum NotClosed {
-    /// Left as it is, saying why: on screen ([`ON_SCREEN`]), or [`no_information`].
+    /// Left as it is, saying why: it works again, it is on screen ([`ON_SCREEN`]), or
+    /// [`no_information`].
     Kept(String),
     /// hc refused to kill or remove it.
     Refused(LaunchError),
 }
 
-/// Close `terminal` (killed while live, then removed) unless the owner may be looking at it, judged
-/// last, right before the kill: by a fresh `hc get`, which may wait long, and then the window. A
-/// terminal hc no longer knows is closed already; one it cannot answer for stays.
-pub fn close_unseen(hc: &dyn Hc, terminal: &str) -> Result<(), NotClosed> {
+/// Close `terminal` (killed while live, then removed) only as the last look before the kill finds
+/// it: a fresh `hc get`, which may wait long, still showing it finished (`finished` checks that
+/// answer, and the processes under it, and says why it stays when it works again), and then the
+/// window not showing it. A terminal hc no longer knows is closed already; one it cannot answer
+/// for stays.
+pub fn close_unseen(
+    hc: &dyn Hc,
+    terminal: &str,
+    finished: &dyn Fn(&Object) -> Result<(), String>,
+) -> Result<(), NotClosed> {
     let found = match hc.get(terminal) {
         Ok(None) => return Ok(()),
         Ok(Some(found)) => found,
         Err(problem) => return Err(NotClosed::Kept(no_information(&problem))),
     };
+    finished(&found).map_err(NotClosed::Kept)?;
     match on_screen(hc, &found) {
         Ok(false) => {}
         Ok(true) => return Err(NotClosed::Kept(ON_SCREEN.into())),

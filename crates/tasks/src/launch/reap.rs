@@ -43,9 +43,10 @@
 //! owner's look that came during the sweep keeps the terminal. The close is recorded first, on the handle's open task
 //! sessions (`closed the pane of …; restore: just tasks restore …`), else on the last task it held a
 //! role on, as a session found and closed in that one line; a record that fails leaves the terminal
-//! open, and a close hc refuses reopens the session. The window is read once more after the record,
-//! right before the kill ([`screen::close_unseen`]): a terminal on screen then, or one it cannot
-//! say of, stays, its session reopened and its idle wait started again. A sweep interrupted after
+//! open, and a close hc refuses reopens the session. After the record, the close looks once more,
+//! right before the kill ([`screen::close_unseen`]): a terminal whose agent works again (its
+//! status, or work under it), that is on screen then, or that a call cannot say of, stays, its
+//! session reopened and its idle wait started again. A sweep interrupted after
 //! recording a close reuses that record when it retries closing the same terminal and conversation.
 
 use super::cleanup::{restore_line, stored_session};
@@ -288,15 +289,16 @@ pub fn sweep(
                 continue;
             }
         };
-        match screen::close_unseen(hc, &address) {
+        let finished = |now: &Object| still_finished(hc, how, &address, pid, now);
+        match screen::close_unseen(hc, &address, &finished) {
             Ok(()) => {}
             Err(screen::NotClosed::Refused(_)) => {
                 reopen(store, &handle, &closed_before, &address)?;
                 continue;
             }
             Err(screen::NotClosed::Kept(_)) => {
-                // The owner looked, or the window could not say, after the record: its idle wait
-                // starts again.
+                // Work resumed, the owner looked, or a call could not say, after the record: its
+                // idle wait starts again.
                 reopen(store, &handle, &closed_before, &address)?;
                 idle_now.remove(&key);
                 continue;
@@ -457,6 +459,34 @@ fn still_idle(
         return Ok(None);
     }
     Ok(Some(now))
+}
+
+/// Whether the terminal, as the close's own `hc get` finds it (`now`), is still the idle agent the
+/// sweep confirmed: its program ended (nothing to lose), or the same agent under `pid`, ready
+/// ([`ready`]), with nothing under it that is work. Else why it stays.
+fn still_finished(
+    hc: &dyn Hc,
+    how: &Reap<'_>,
+    address: &str,
+    pid: i64,
+    now: &Object,
+) -> Result<(), String> {
+    if text_of(now, "state") != "live" {
+        return Ok(());
+    }
+    if top_pid(now) != Some(pid) || hc::agent(now).is_none() {
+        return Err("another program runs in it now".into());
+    }
+    let status = hc::status(now);
+    if !ready(hc, address, &status) {
+        let status = if status.is_empty() { "silent" } else { &status };
+        return Err(format!("its agent is {status} now"));
+    }
+    match (how.processes)(pid) {
+        Ok(commands) => procs::reap_busy_reason(&commands)
+            .map_or(Ok(()), |why| Err(format!("work started under it: {why}"))),
+        Err(problem) => Err(screen::no_information(&problem)),
+    }
 }
 
 /// One line on a task thread for the close: the restore line, or "" when the handle had no task.

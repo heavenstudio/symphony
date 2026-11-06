@@ -70,16 +70,52 @@ impl Closure {
     }
 }
 
-/// Close the terminal `closure` is about, the owner's look judged last ([`screen::close_unseen`]):
-/// whether it closed, false when hc refused; or `closure` as it stays, saying why.
-fn closed(hc: &dyn Hc, address: &str, closure: &Closure) -> Result<bool, Closure> {
-    match screen::close_unseen(hc, address) {
+/// Close the terminal `closure` is about as the last look before the kill finds it
+/// ([`screen::close_unseen`]): still `finished`, then out of the owner's sight. Whether it closed,
+/// false when hc refused; or `closure` as it stays, saying why.
+fn closed(
+    hc: &dyn Hc,
+    address: &str,
+    closure: &Closure,
+    finished: &dyn Fn(&Object) -> Result<(), String>,
+) -> Result<bool, Closure> {
+    match screen::close_unseen(hc, address, finished) {
         Ok(()) => Ok(true),
         Err(NotClosed::Refused(_)) => Ok(false),
         Err(NotClosed::Kept(why)) => Err(Closure {
             handle: closure.handle.clone(),
             ..Closure::left(address, why)
         }),
+    }
+}
+
+/// Whether `terminal`, as the close's own `hc get` finds it, still closes, else why it stays. One
+/// whose program has ended has nothing to lose. One that had `ended` stays if its program runs
+/// again; a live one stays if its agent is no longer idle or done, or if what runs under it now is
+/// work ([`busy_reason`]), or if that cannot be read.
+fn still_finished(terminal: &Object, processes: &Processes, ended: bool) -> Result<(), String> {
+    if text_of(terminal, "state") != "live" {
+        return Ok(());
+    }
+    if ended {
+        return Err("its program runs again".into());
+    }
+    let status = hc::status(terminal);
+    if hc::agent(terminal).is_some() && !READY_STATES.contains(&status.as_str()) {
+        let status = if status.is_empty() { "silent" } else { &status };
+        return Err(format!("its agent is {status} now"));
+    }
+    let Some(pid) = terminal
+        .get("pid")
+        .and_then(serde_json::Value::as_i64)
+        .filter(|p| *p > 0)
+    else {
+        return Err("hc knows no pid for it now".into());
+    };
+    match processes(pid) {
+        Ok(commands) => busy_reason(&commands)
+            .map_or(Ok(()), |why| Err(format!("work started under it: {why}"))),
+        Err(problem) => Err(screen::no_information(&problem)),
     }
 }
 
@@ -181,7 +217,9 @@ pub fn cleanup(
                 kept: false,
             };
             if !dry_run {
-                match closed(hc, &address, &closure) {
+                match closed(hc, &address, &closure, &|t| {
+                    still_finished(t, processes, true)
+                }) {
                     Ok(done) => closure.closed = done,
                     Err(kept) => closure = kept,
                 }
@@ -254,7 +292,9 @@ pub fn cleanup(
             kept: false,
         };
         if !dry_run {
-            match closed(hc, &address, &closure) {
+            match closed(hc, &address, &closure, &|t| {
+                still_finished(t, processes, false)
+            }) {
                 Ok(true) => closure.closed = true,
                 Ok(false) => {
                     result.push(closure);
