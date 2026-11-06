@@ -77,7 +77,7 @@ fn failed_or_incomplete_presence_rounds_hold_work_until_the_cap_and_confirmation
     release.send(()).unwrap();
     server.join().unwrap();
     assert!(began.elapsed() < Duration::from_secs(5));
-    assert!(error.to_string().contains("did not answer"), "{error}");
+    assert!(symphony_board::rpc::slow(&error.to_string()), "{error}");
 
     w.f.advance(601.0);
     for (slug, handle) in &workers {

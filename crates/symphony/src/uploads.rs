@@ -633,7 +633,7 @@ mod tests {
             ("module.mjs", b"export {}".as_slice()),
             ("data.xml", b"<?xml version='1.0'?>".as_slice()),
             ("run.sh", b"#!/bin/sh".as_slice()),
-            ("model.glb", b"glTF".as_slice()),
+            ("model.item", b"item".as_slice()),
         ] {
             let refused = sniff(name, bytes).unwrap_err();
             assert_eq!(refused.status(), 415, "{name}");

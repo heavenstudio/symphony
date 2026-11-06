@@ -8,6 +8,7 @@ mod cutover;
 #[path = "../../../../../tools/gate/tests/verify/script_process_cwd.rs"]
 mod fixture_script;
 mod git;
+mod helper;
 mod home;
 mod home_fixture;
 mod port;
