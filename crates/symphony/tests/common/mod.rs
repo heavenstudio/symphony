@@ -75,15 +75,41 @@ pub fn build_tasks(root: &Path) -> String {
 
 /// The CLI for this tree's scratch boards: the one the workspace's test run built
 /// (`SF_TEST_TASKS_BINARY`, from `sf-rust-tests`), else built once here without changing the
-/// heartbeat link.
+/// heartbeat link. Either is a freshly linked file, so it is run once ([`run_once`]) before it
+/// is handed out.
 pub fn tasks_binary() -> &'static str {
     static BINARY: std::sync::OnceLock<String> = std::sync::OnceLock::new();
     BINARY.get_or_init(|| {
-        std::env::var("SF_TEST_TASKS_BINARY")
+        let binary = std::env::var("SF_TEST_TASKS_BINARY")
             .ok()
             .filter(|binary| !binary.is_empty())
-            .unwrap_or_else(|| build_tasks(&repo()))
+            .unwrap_or_else(|| build_tasks(&repo()));
+        run_once(Path::new(&binary));
+        binary
     })
+}
+
+/// Run `binary --help` to its end, with no input and a bare environment (no board is named, so
+/// none is reached). macOS assesses an executable file at its first run, one file at a time
+/// machine-wide; under a land's load, behind every other new binary, that has held the CLI's
+/// first run inside a case past its watchdog. Run here, in setup, it is paid before any case's
+/// clock starts, and every later run of the same file starts at once.
+pub fn run_once(binary: &Path) {
+    let done = symphony_board::sys::output(
+        symphony_board::sys::Command::new(binary)
+            .arg("--help")
+            .env_clear()
+            .env("PATH", "/usr/bin:/bin")
+            .stdin(symphony_board::sys::Stdio::Null),
+    )
+    .unwrap_or_else(|error| panic!("cannot run {} once: {error}", binary.display()));
+    assert!(
+        done.status.success(),
+        "{} --help: {}{}",
+        binary.display(),
+        String::from_utf8_lossy(&done.stdout),
+        String::from_utf8_lossy(&done.stderr)
+    );
 }
 
 /// Resolve a setup-built CLI by this checkout's source hash, without building inside a test.
