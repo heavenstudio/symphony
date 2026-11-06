@@ -167,12 +167,16 @@ that finds it held sets its `again` flag and ends, and the holder passes until a
 ask standing, so 40 writes at once make a few passes, not 40. A holder whose lease lapsed and was
 taken ends after its pass and leaves the row to the new holder. A hand-off that cannot start the
 process dispatches in the write, as every library store does (the Symphony server's, the tests',
-`cli::main` in-process). A pass reads the delivered messages after the lowest recipient cursor
-once (`messages::Pool`) and each recipient's inbox filters that pool, looking its deliveries up by
-key, where each recipient scanned the message and delivery tables itself; the plan before a
-recipient's lease no longer reads its inbox, since one it would read always goes on to the lease,
-which reads it. `examples/dispatch_load.rs` measures 40 concurrent `tasks say` against a scratch
-database seeded from a dump of the live board.
+`cli::main` in-process), and so does the binary under `TASKS_DISPATCH=inline`, for a test that
+reads what a command delivered once it has ended. A pass reads the delivered messages after the
+lowest recipient cursor once (`messages::Pool`) and each recipient's inbox filters that pool,
+looking its deliveries up by key, where each recipient scanned the message and delivery tables
+itself; the plan before a recipient's lease no longer reads its inbox, since one it would read
+always goes on to the lease, which reads it. The pass's dispatch is otherwise the one a write made:
+under each recipient's lease it reads the board and its account again, and its final transaction
+still re-decides when a PULL it read as waiting was acknowledged or pruned.
+`examples/dispatch_load.rs` measures 40 concurrent `tasks say` against a scratch database seeded
+from a dump of the live board.
 Dispatch plans before leasing and refreshes its inputs and observation again after acquiring
 the small `callback_lease` record. Its revision identifies the holder, including on release;
 taking or releasing it never rewrites `seen` or `statuses` or allocates a counter. Lease rows

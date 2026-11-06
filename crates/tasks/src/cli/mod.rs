@@ -186,11 +186,15 @@ pub fn connect(env: &Env) -> Result<Store, String> {
     open(reach(env, &env.cwd, true)?, &Clock::of(env)?)
 }
 
-/// `store`, its writes handing their dispatch to a detached `program dispatch` when a `program` runs.
+/// `store`, its writes handing their dispatch to a detached `program dispatch` when a `program` runs,
+/// unless `TASKS_DISPATCH=inline` asks each write to dispatch before it answers (a test that reads
+/// what the command delivered once it has ended).
 fn detaching(store: Store, env: &Env, program: Option<&Path>) -> Store {
     match program {
-        Some(program) => store.dispatching_by(detached::hand_off(env, program)),
-        None => store,
+        Some(program) if env.var(detached::INLINE.0) != Some(detached::INLINE.1) => {
+            store.dispatching_by(detached::hand_off(env, program))
+        }
+        _ => store,
     }
 }
 

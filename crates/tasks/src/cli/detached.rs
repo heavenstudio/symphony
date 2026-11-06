@@ -16,6 +16,9 @@ use std::path::Path;
 /// The command a detached dispatcher runs: `tasks dispatch`, which no usage lists.
 pub(super) const COMMAND: &str = "dispatch";
 
+/// The setting that keeps the dispatch in the write: `TASKS_DISPATCH=inline`.
+pub(super) const INLINE: (&str, &str) = ("TASKS_DISPATCH", "inline");
+
 /// What the detached dispatchers of the repository's own board say, beside its server in
 /// `sf-tasks/` in the git common dir.
 pub const LOG: &str = "dispatch.log";
