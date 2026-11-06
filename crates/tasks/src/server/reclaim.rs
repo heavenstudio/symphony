@@ -20,7 +20,8 @@ pub struct Reclaimed {
     pub after: u64,
     /// Every database carried, as `namespace/database`.
     pub databases: Vec<String>,
-    /// Where the exports stay, one SurrealQL file a database.
+    /// Where the exports stay, one SurrealQL file a database, named by its place among them and its
+    /// names (`0002.sf.tasks.surql`).
     pub exports: PathBuf,
     /// The board's server, on the new store.
     pub running: Running,
@@ -42,7 +43,8 @@ impl Home {
     /// and compare each export byte for byte, and the root's and every namespace's users and
     /// accesses; then swap the stores, start the board's server on the new one, and remove the old.
     /// Until the swap the old store is untouched, and a failure starts the board's server on it
-    /// again. The exports stay in `reclaim/exports/`, until the next reclaim.
+    /// again; a failure after it ends every server on the new store, then moves the old one back
+    /// and does the same. The exports stay in `reclaim/exports/`, until the next reclaim.
     pub fn reclaim(&self) -> Result<Reclaimed, ServerError> {
         if !self.surreal.is_file() {
             return Err(ServerError::NoSurreal(self.surreal.clone()));
@@ -80,6 +82,17 @@ impl Home {
         {
             Ok(running) => running,
             Err(problem) => {
+                // No server on the new store outlives its move aside: one there would be adopted
+                // later in place of the old store's, and what was written meanwhile lost with it.
+                if let Err(running_on) = self.halt() {
+                    return Err(ServerError::NotUp(format!(
+                        "the reclaim's new store is the board's at {}, its old store is at {}, and a \
+                         server on the new one did not end: {running_on}. The board's server did not \
+                         start on the new store: {problem}",
+                        data.display(),
+                        old.display()
+                    )));
+                }
                 if data.exists() {
                     fs::rename(&data, &fresh).map_err(io("could not move", &data))?;
                 }
@@ -161,7 +174,6 @@ impl Home {
         check: &Path,
         halted: &[u16],
     ) -> Result<Vec<String>, ServerError> {
-        let file = |ns: &str, db: &str| format!("{ns}.{db}.surql");
         let old = self.spawn(&store(data), halted)?;
         let board = (crate::NAMESPACE.to_string(), crate::DATABASE.to_string());
         let read = layout(&old).and_then(|held| {
@@ -179,8 +191,8 @@ impl Home {
                     named.join(", ")
                 )));
             }
-            for (ns, db) in &held.databases {
-                self.transfer("export", &old, ns, db, &exports.join(file(ns, db)))?;
+            for (at, (ns, db)) in held.databases.iter().enumerate() {
+                self.transfer("export", &old, ns, db, &exports.join(file(at, ns, db)))?;
             }
             Ok(held)
         });
@@ -188,11 +200,12 @@ impl Home {
         let held = read?;
         let new = self.spawn(&store(fresh), halted)?;
         let built = (|| {
-            for (ns, db) in &held.databases {
-                self.transfer("import", &new, ns, db, &exports.join(file(ns, db)))?;
+            for (at, (ns, db)) in held.databases.iter().enumerate() {
+                self.transfer("import", &new, ns, db, &exports.join(file(at, ns, db)))?;
             }
-            for (ns, db) in &held.databases {
-                let (first, again) = (exports.join(file(ns, db)), check.join(file(ns, db)));
+            for (at, (ns, db)) in held.databases.iter().enumerate() {
+                let name = file(at, ns, db);
+                let (first, again) = (exports.join(&name), check.join(&name));
                 self.transfer("export", &new, ns, db, &again)?;
                 let read = |path: &Path| fs::read(path).map_err(io("could not read", path));
                 if read(&first)? != read(&again)? {
@@ -271,6 +284,15 @@ impl Home {
             String::from_utf8_lossy(&out.stderr).trim()
         )))
     }
+}
+
+/// The file of database `ns`/`db`, the `at`-th of a store's sorted databases, in a reclaim's
+/// `exports/` and `check/`: `0002.sf.tasks.surql`. The place keeps every database's file its own on
+/// a filesystem that folds case, as macOS's does: by their names alone `sf/CaseProbe` and
+/// `sf/caseprobe` would share one file, the second export overwriting the first, and both imports
+/// and both checks would read the same database.
+fn file(at: usize, ns: &str, db: &str) -> String {
+    format!("{at:04}.{ns}.{db}.surql")
 }
 
 /// The bytes `path` takes on disk, every file in it counted by the blocks it holds, as `du` counts
@@ -365,6 +387,23 @@ mod tests {
                 "{said}"
             );
         }
+    }
+
+    #[test]
+    fn databases_whose_names_differ_only_in_case_never_share_a_file_where_case_folds() {
+        let held = [
+            ("sf", "CaseProbe"),
+            ("sf", "caseprobe"),
+            ("SF", "tasks"),
+            ("sf", "tasks"),
+        ];
+        let folded: std::collections::BTreeSet<String> = held
+            .iter()
+            .enumerate()
+            .map(|(at, (ns, db))| file(at, ns, db).to_lowercase())
+            .collect();
+        assert_eq!(folded.len(), held.len(), "{folded:?}");
+        assert_eq!(file(2, "sf", "tasks"), "0002.sf.tasks.surql");
     }
 
     #[test]

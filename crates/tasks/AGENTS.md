@@ -321,15 +321,20 @@ set `SURREAL_SURREALKV_ENABLE_VLOG=false`: a store with values in its log then
 cannot read them. `tasks-reclaim` (`just tasks-reclaim`, the owner's) is
 `Home::reclaim`. Under the starters' lock it ends the board's server and starts
 an unrecorded one on the store. It exports every namespace's every database with
-`surreal export` and imports them into `reclaim/data` under `Storage`. Then it
-re-exports, compares each file byte for byte along with the root's and
+`surreal export` and imports them into `reclaim/data` under `Storage`, each
+database's file named by its place among them (`0002.sf.tasks.surql`), so two
+names differing only in case never share one on macOS's case-folding
+filesystem. Then it re-exports, compares each file byte for byte along with the root's and
 namespaces' users and accesses, swaps the stores, starts the board's server and
 removes the old store; the exports stay. It refuses a store without `sf/tasks`
 and an `INFO` answer without its namespaces or databases object, which would
 otherwise carry nothing and remove the store. Its private servers never take a
 port the halted server had, which a monitor may still hold as the board's. A
 failure before the swap restarts the old store untouched, and says the restart's
-own failure beside the reclaim's. A start refuses while the store sits in `reclaim/old`
+own failure beside the reclaim's. A failure after it ends every server on the
+new store before the stores move back: a start whose address record fails ends
+the server it started, since the next `ensure` would adopt one left
+unrecorded. A start refuses while the store sits in `reclaim/old`
 without a successor, and the next reclaim puts it back before starting over.
 Without arguments it reclaims the board of the repository it runs in; `--dir
 FOLDER` reclaims a board folder elsewhere, as its tests and a rehearsal on a

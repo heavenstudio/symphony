@@ -309,7 +309,10 @@ impl Home {
     }
 
     /// Start the board's server ([`Home::spawn`]) and record it. Under the lock. A store a reclaim
-    /// moved aside and never replaced is refused, never started anew and empty in its place.
+    /// moved aside and never replaced is refused, never started anew and empty in its place. A
+    /// server whose record fails is ended before the failure is said: left running, nobody's, the
+    /// next [`Home::ensure`] would adopt it ([`Home::unrecorded`]) on whatever store it holds, one a
+    /// reclaim's rollback has since moved aside among them.
     fn start(&self) -> Result<Running, ServerError> {
         let old = self.dir.join(RECLAIM).join(OLD);
         if !self.dir.join(DATA).exists() && old.exists() {
@@ -320,7 +323,12 @@ impl Home {
             )));
         }
         let running = self.spawn(&self.data(), &[])?;
-        self.record(&running)?;
+        if let Err(problem) = self.record(&running) {
+            return Err(match self.end(running.pid) {
+                Ok(()) => problem,
+                Err(again) => ServerError::NotUp(format!("{problem}; and then {again}")),
+            });
+        }
         Ok(running)
     }
 

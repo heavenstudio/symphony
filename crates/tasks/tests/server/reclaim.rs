@@ -1,8 +1,10 @@
 //! What the board's store takes on disk: a row rewritten in place many times leaves the store about
 //! the size of what it holds, and a store that grew under SurrealKV's own value log is rebuilt from
-//! an export of itself, with every database, task and thread it held.
+//! an export of itself, with every database, task and thread it held: two databases whose names
+//! differ only in case each keep their own, and a rollback leaves no server on the store it moves
+//! aside.
 
-use crate::common::{Scratch, exists};
+use crate::common::{Scratch, exists, script};
 use serde_json::{Value, json};
 use std::path::Path;
 use symphony_board::rpc::Client;
@@ -174,7 +176,17 @@ fn a_store_that_grew_under_the_value_log_is_rebuilt_with_every_database_task_and
     assert_eq!(live.thread("sim/task-07").unwrap(), thread);
     assert_eq!(slugs(&live), found);
     let work = home.dir().join("reclaim");
-    assert!(exists(&work.join("exports").join("sf.tasks.surql")));
+    let exported: Vec<String> = std::fs::read_dir(work.join("exports"))
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    assert_eq!(exported.len(), reclaimed.databases.len(), "{exported:?}");
+    assert!(
+        exported
+            .iter()
+            .any(|name| name.ends_with(".sf.tasks.surql")),
+        "{exported:?}"
+    );
     assert!(!exists(&work.join("old")) && !exists(&work.join("check")));
     // What the board writes after the reclaim stays beside its keys too.
     rewrite(&live, 64);
@@ -254,6 +266,104 @@ fn a_reclaim_stopped_between_its_moves_is_never_served_empty_and_finished_by_the
     let reclaimed = home.reclaim().unwrap();
     assert_eq!(holdings(&board(&reclaimed.running, "tasks")), held);
     assert!(!exists(&old));
+}
+
+/// The board's server on the new store starts and its address cannot be recorded (here a folder
+/// takes the address file's place): that server is ended before the stores move back, so the old
+/// store's server is the only one, and what the board writes after the rollback stays the board's
+/// through a stop and the next start.
+#[test]
+fn a_replacement_whose_record_fails_is_ended_and_no_task_written_after_the_rollback_is_lost() {
+    let s = Scratch::new("reclaim-record");
+    let running = s.home().ensure().unwrap();
+    board(&running, "tasks")
+        .create(&NewTask::new("sim/jump", "Jump departure", "owner"))
+        .unwrap();
+    let quoted = |path: &Path| format!("'{}'", path.display().to_string().replace('\'', "'\\''"));
+    let (old, address) = (s.dir.join("reclaim").join("old"), s.dir.join("server.json"));
+    let (failed, replacement) = (s.dir.join("record-failed"), s.dir.join("replacement"));
+    // Past the swap (the old store moved aside), the first start makes the address a folder and
+    // says its pid, which `exec` keeps; every later start takes the folder away again.
+    let surreal = script(
+        &s.dir.join("record-fails-surreal"),
+        &format!(
+            r#"if [ "$1" = start ]; then
+    if [ -d {old} ] && [ ! -e {failed} ]; then
+        : > {failed}
+        mkdir {address}
+        printf '%s\n' "$$" > {replacement}
+    elif [ -e {failed} ]; then
+        rmdir {address} 2>/dev/null || true
+    fi
+fi
+exec {real} "$@""#,
+            old = quoted(&old),
+            failed = quoted(&failed),
+            address = quoted(&address),
+            replacement = quoted(&replacement),
+            real = quoted(s.surreal()),
+        ),
+    );
+    let home = Home::new(&s.dir, &surreal);
+    let error = home.reclaim().unwrap_err();
+    assert!(
+        matches!(&error, ServerError::Reclaim(said) if said.contains("server.json")),
+        "{error}"
+    );
+    let replacement: i64 = std::fs::read_to_string(&replacement)
+        .unwrap()
+        .trim()
+        .parse()
+        .unwrap();
+    assert!(
+        !symphony_board::sys::pid_alive(replacement),
+        "the server on the new store, pid {replacement}, still runs"
+    );
+    let again = home.recorded().expect("the board's server runs again");
+    board(&again, "tasks")
+        .create(&NewTask::new(
+            "sim/after",
+            "Written after the rollback",
+            "owner",
+        ))
+        .unwrap();
+    home.stop().unwrap();
+    let reopened = board(&home.ensure().unwrap(), "tasks");
+    for (slug, title) in [
+        ("sim/jump", "Jump departure"),
+        ("sim/after", "Written after the rollback"),
+    ] {
+        assert_eq!(reopened.get(slug).unwrap().title, title, "{slug}");
+    }
+}
+
+/// Two databases whose names differ only in case, on a filesystem that folds case as macOS's
+/// does: each comes out of the reclaim holding what it held, never the other's.
+#[test]
+fn databases_whose_names_differ_only_in_case_each_keep_their_own_tasks_through_a_reclaim() {
+    let s = Scratch::new("reclaim-case");
+    let home = s.home();
+    let running = home.ensure().unwrap();
+    board(&running, "tasks")
+        .create(&NewTask::new("sim/jump", "Jump departure", "owner"))
+        .unwrap();
+    let cases = [
+        ("CaseProbe", "The upper-case database's own"),
+        ("caseprobe", "The lower-case database's own"),
+    ];
+    for (db, title) in cases {
+        board(&running, db)
+            .create(&NewTask::new("probe/own", title, "owner"))
+            .unwrap();
+    }
+    let held = cases.map(|(db, _)| holdings(&board(&running, db)));
+    assert_ne!(held[0], held[1]);
+    let reclaimed = home.reclaim().unwrap();
+    for ((db, title), held) in cases.into_iter().zip(held) {
+        let after = board(&reclaimed.running, db);
+        assert_eq!(after.get("probe/own").unwrap().title, title, "{db}");
+        assert_eq!(holdings(&after), held, "{db}");
+    }
 }
 
 /// The command with `--dir` rebuilds the board in that folder, never the one of its repository.
