@@ -83,7 +83,9 @@ pub(super) struct Account {
     /// them waits (`pull_queued` keeps older dispatchers from sending them), so one found there
     /// later came with a PULL someone acknowledged.
     pub(super) untold: Entries,
-    /// `pull_withheld`: of the entries recorded, those it was not told.
+    /// `pull_withheld`: the entries it does not hear and was not told, from its first PULL on. An
+    /// older dispatcher's acknowledgement records every entry of the PULL as told, the first one
+    /// too, and leaves this as it was.
     pub(super) withheld: Entries,
     /// `pull_awaiting`, and the record of the PULL left waiting.
     pub(super) awaiting: Option<Awaiting>,
@@ -99,12 +101,12 @@ impl Account {
         let told = acknowledged.as_ref().unwrap_or(&none);
         let unheard = entries - heard;
         let recorded = (state.pull_entries.as_ref()).map(|_| told | &unheard);
-        let withheld = (recorded.as_ref()).map_or_else(Entries::new, |recorded| recorded - told);
+        let withheld = &unheard - told;
         let plan = pull_plan(queued, heard, acknowledged.as_ref());
         let waits = matches!(plan, PullPlan::Kept(_) | PullPlan::Queued);
         let awaiting = waits.then(|| Awaiting {
             entries: entries.clone(),
-            withheld: &unheard - told,
+            withheld: withheld.clone(),
         });
         Account {
             plan,
@@ -323,10 +325,9 @@ mod tests {
         };
         let again = Account::of(&state, &[pull()], &all, &heard);
         assert_eq!(again.plan, PullPlan::Kept("pull-2".into()));
-        assert_eq!(
-            (&again.recorded, &again.withheld, &again.awaiting),
-            (&expected.recorded, &expected.withheld, &expected.awaiting)
-        );
+        assert_eq!(again.recorded, expected.recorded);
+        assert_eq!(again.withheld, expected.withheld);
+        assert_eq!(again.awaiting, expected.awaiting);
         // An older dispatcher acknowledged it, then queued its own for work the recipient does not
         // hear: that PULL says nothing new to it, and is taken back.
         let older = Queued {
@@ -344,9 +345,32 @@ mod tests {
         // An upgrade counts what it hears as told, and leaves what is queued.
         let upgrade = Account::upgrade(&acknowledged, &all, &entries(&["t/a"]));
         assert_eq!(upgrade.withheld, entries(&["t/b", "t/c"]));
-        assert_eq!(
-            (upgrade.plan, upgrade.queued),
-            (PullPlan::Unchanged, Some(all))
-        );
+        assert_eq!(upgrade.plan, PullPlan::Unchanged);
+        assert_eq!(upgrade.queued, Some(all));
+    }
+
+    #[test]
+    fn the_first_pull_withholds_what_the_recipient_does_not_hear_whoever_acknowledges_it() {
+        // Before any acknowledgement nothing is recorded as told, and t/c is withheld.
+        let all = entries(&["t/a", "t/b", "t/c"]);
+        let heard = entries(&["t/a", "t/b"]);
+        let first = Account::of(&State::default(), &[], &all, &heard);
+        assert_eq!(first.plan, PullPlan::Queued);
+        assert_eq!(first.recorded, None);
+        assert_eq!(first.withheld, entries(&["t/c"]));
+        let awaiting = first.awaiting.clone().expect("the first PULL waits");
+        assert_eq!(awaiting.withheld, first.withheld);
+        // An older dispatcher acknowledges it: it records every entry of that PULL, t/c too, and
+        // leaves what this generation wrote. Once t/c is the recipient's, it is new.
+        let acknowledged = State {
+            pull_entries: Some(all.clone()),
+            pull_withheld: first.withheld,
+            pull_awaiting: first.awaiting,
+            ..State::default()
+        };
+        assert_eq!(acknowledged.acknowledged(), Some(heard));
+        let after = Account::of(&acknowledged, &[], &all, &all);
+        assert_eq!(after.plan, PullPlan::Queued);
+        assert_eq!(after.untold, entries(&["t/c"]));
     }
 }

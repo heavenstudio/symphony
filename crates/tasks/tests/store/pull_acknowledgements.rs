@@ -1,18 +1,24 @@
 //! What an orchestrator was told, whichever generation acknowledged its PULL: this one's
 //! acknowledgement records what the PULL withheld, an older one's only the entries it records,
-//! read over the PULL this one left awaiting. Work it hears and was not told stays out of that
-//! record until a PULL naming it is acknowledged, so whatever an older dispatcher writes or queues
-//! after, it is never counted again. Only an older dispatcher's own PULL of the same entries
-//! reads as the one awaited, so work withheld from the orchestrator is counted once more after
-//! one when a hand-over makes it its own, never lost, and nothing repeats after.
+//! read over what this one withheld from its first PULL on and the PULL it left awaiting. Work it
+//! hears and was not told stays out of that record until a PULL naming it is acknowledged, so
+//! whatever an older dispatcher writes or queues after, it is never counted again; nor is work
+//! acknowledged from the inbox, which takes no lease, while a dispatch builds the digest again.
+//! Only an older dispatcher's own PULL of the same entries reads as the one awaited, so work
+//! withheld from the orchestrator is counted once more after one when a hand-over makes it its
+//! own, never lost, and nothing repeats after.
 
 use super::hand_over_outage::Outage;
+use super::mixed_dispatchers::{older_fields, older_record};
 use super::orchestrators::heard;
 use super::pending_pull::{Attempts, pull_lines, said_once, waited, waiting_pull};
+use super::quiet_callbacks::listen;
 use serde::Deserialize;
 use serde_json::json;
 use std::collections::BTreeSet;
+use std::sync::{Arc, Mutex};
 use symphony_board::NewTask;
+use symphony_board::rpc::Client;
 
 /// A digest entry: its list, and the slug or handle it names.
 type Entry = (String, String);
@@ -183,17 +189,15 @@ fn work_handed_to_the_orchestrator_is_counted_once_whatever_an_older_dispatcher_
     }
 }
 
-#[test]
-fn an_older_observation_never_hides_work_withheld_from_the_orchestrator_until_it_is_its_own() {
-    let outage = Outage::new();
+/// The former orchestrator's task is executing, and the successor's has a child awaiting review;
+/// neither of those is the former's.
+fn theirs_in_review(outage: &Outage) {
     let Outage {
         fixture,
-        elsewhere,
-        former,
         successor,
         sender,
-    } = &outage;
-    // The successor's task has a child awaiting review; neither is the former's.
+        ..
+    } = outage;
     fixture.store.claim("scratch/one", sender).unwrap();
     fixture.task("scratch/theirs");
     let theirs = fixture
@@ -212,6 +216,33 @@ fn an_older_observation_never_hides_work_withheld_from_the_orchestrator_until_it
         .store
         .move_to("scratch/theirs/review", "review", sender))
     .unwrap();
+}
+
+/// What the former orchestrator hears once the successor's task is its own: the ROLE, and a PULL
+/// that counts the task and its child.
+fn handed_over(outage: &Outage) -> [String; 4] {
+    let Outage {
+        former, successor, ..
+    } = outage;
+    [
+        format!("ROLE scratch/theirs {former} orchestrator, ready (from {successor})"),
+        "PULL executing=1 ready_unstaffed=1 in_progress_orphaned=0 review_unreviewed=1 landed_open=0 idle=0".into(),
+        "ready_unstaffed p2 scratch/theirs — Jump departure".into(),
+        "review_unreviewed p2 scratch/theirs/review — Needs review".into(),
+    ]
+}
+
+#[test]
+fn an_older_observation_never_hides_work_withheld_from_the_orchestrator_until_it_is_its_own() {
+    let outage = Outage::new();
+    let Outage {
+        fixture,
+        elsewhere,
+        former,
+        successor,
+        sender,
+    } = &outage;
+    theirs_in_review(&outage);
     outage.cut();
     let waiting = waiting_pull(&outage);
     assert!(waiting.is_none(), "{waiting:?}");
@@ -225,16 +256,60 @@ fn an_older_observation_never_hides_work_withheld_from_the_orchestrator_until_it
     (elsewhere.hand_over("scratch/theirs", successor, former)).unwrap();
     let back = outage.back();
     let told = heard(fixture, sender, &[(&back, former)]).remove(0);
-    let moved = format!("ROLE scratch/theirs {former} orchestrator, ready (from {successor})");
-    let pull = "PULL executing=1 ready_unstaffed=1 in_progress_orphaned=0 review_unreviewed=1 landed_open=0 idle=0";
-    let expected = [
-        moved.as_str(),
-        pull,
-        "ready_unstaffed p2 scratch/theirs — Jump departure",
-        "review_unreviewed p2 scratch/theirs/review — Needs review",
-    ];
-    assert_eq!(told, expected);
+    assert_eq!(told, handed_over(&outage));
     said_once(&outage, &back);
+}
+
+/// Which generation acknowledges the former orchestrator's first PULL.
+#[derive(Clone, Copy, Debug)]
+enum FirstReceipt {
+    /// This one, from the inbox: it records what the PULL withheld.
+    ThisGeneration,
+    /// An older one, which records every entry of the PULL as told.
+    Older,
+}
+
+#[test]
+fn work_the_first_pull_withheld_is_counted_after_a_hand_over_whoever_acknowledged_it() {
+    for first in [FirstReceipt::ThisGeneration, FirstReceipt::Older] {
+        let outage = Outage::new();
+        let Outage {
+            fixture,
+            elsewhere,
+            former,
+            successor,
+            sender,
+        } = &outage;
+        theirs_in_review(&outage);
+        // Another dispatcher holds the former's lease while it registers, and its listener is
+        // gone before the first PULL is sent: that PULL waits, and nothing is recorded as told.
+        let client = fixture.store.client();
+        let lease =
+            "UPSERT type::record('callback_lease', $handle) SET until = $until RETURN NONE;";
+        let held = json!({"handle":former, "until":fixture.now() + 60.0});
+        client.query(lease, held).unwrap();
+        drop(listen(fixture, former));
+        client
+            .query(lease, json!({"handle":former, "until":0}))
+            .unwrap();
+        fixture.store.dispatch_callbacks_snapshot().unwrap();
+        let pull = waiting_pull(&outage).expect("the first PULL waits");
+        assert!(!pull.text.contains("scratch/theirs"), "{first:?}: {pull:?}");
+        match first {
+            FirstReceipt::ThisGeneration => {
+                let inbox = fixture.store.callback_inbox(former).unwrap();
+                let keys: Vec<String> = inbox.into_iter().map(|(key, _)| key).collect();
+                fixture.store.ack_callbacks(former, &keys).unwrap();
+            }
+            FirstReceipt::Older => older_acknowledges(&outage),
+        }
+        // The successor's task becomes the former's: the PULL counts it and its child, once.
+        (elsewhere.hand_over("scratch/theirs", successor, former)).unwrap();
+        let back = outage.back();
+        let told = heard(fixture, sender, &[(&back, former)]).remove(0);
+        assert_eq!(told, handed_over(&outage), "{first:?}");
+        said_once(&outage, &back);
+    }
 }
 
 #[test]
@@ -259,6 +334,105 @@ fn an_inbox_receipt_of_a_pull_keeps_what_it_withheld_untold() {
     let head = "PULL executing=0 ready_unstaffed=10 ";
     assert!(pull.starts_with(head), "{told:?}");
     said_once(&outage, &back);
+}
+
+/// The entries `handle`'s callback record holds as told, of either generation's acknowledgement.
+fn recorded(client: &Client, handle: &str) -> BTreeSet<Entry> {
+    let found = client.query(
+        "RETURN type::record('callback_state', $handle).pull_entries;",
+        json!({"handle":handle}),
+    );
+    serde_json::from_value(found.unwrap().remove(0)).unwrap()
+}
+
+/// What a leased dispatch met: the entries an inbox receipt during it recorded as told, and
+/// whether it read the board again after that receipt.
+#[derive(Default)]
+struct Receipt {
+    recorded: Option<BTreeSet<Entry>>,
+    read_again: bool,
+}
+
+#[test]
+fn an_inbox_receipt_while_a_dispatch_builds_the_digest_again_is_never_undone() {
+    let outage = Outage::new();
+    let Outage {
+        fixture,
+        elsewhere,
+        former,
+        successor,
+        sender,
+    } = &outage;
+    fixture.task("scratch/foreign");
+    let foreign = fixture
+        .store
+        .take_role("scratch/foreign", successor, "orchestrator");
+    foreign.unwrap();
+    outage.cut();
+    // A PULL of new work waits, and the former reads it from its inbox.
+    let free = NewTask::new("scratch/free", "A heard row", "owner");
+    elsewhere.create(&free).unwrap();
+    fixture.store.dispatch_callbacks_snapshot().unwrap();
+    let pull = waiting_pull(&outage).expect("a PULL waits");
+    assert!(pull.text.contains("scratch/free"), "{pull:?}");
+    let inbox = fixture.store.callback_inbox(former).unwrap();
+    let keys: Vec<String> = inbox.into_iter().map(|(key, _)| key).collect();
+    // The successor's new work has the next dispatch build the digest again. Once that dispatch
+    // holds the former's lease and has read its record (past its board's read), the former
+    // acknowledges what it read, taking no lease.
+    let new = NewTask {
+        parent: Some("scratch/foreign".into()),
+        ..NewTask::new("scratch/foreign/new", "Another row", "owner")
+    };
+    elsewhere.create(&new).unwrap();
+    let (client, ack) = (fixture.other_client(), fixture.elsewhere());
+    let met = Arc::new(Mutex::new(Receipt::default()));
+    let (recipient, during) = (former.clone(), Arc::clone(&met));
+    let dispatcher = fixture.busy(move || {
+        let mut during = during.lock().unwrap();
+        let lease = || {
+            let until = client.query(
+                "RETURN type::record('callback_lease', $handle).until ?? 0;",
+                json!({"handle":recipient}),
+            );
+            until.unwrap().remove(0).as_f64() != Some(0.0)
+        };
+        if during.read_again || !lease() {
+            return;
+        }
+        let trace = std::backtrace::Backtrace::force_capture().to_string();
+        let board = trace.contains("callback_board");
+        match during.recorded {
+            None if trace.contains("dispatch_one") && !board => {
+                ack.ack_callbacks(&recipient, &keys).unwrap();
+                during.recorded = Some(recorded(&client, &recipient));
+            }
+            Some(_) => during.read_again = board,
+            None => {}
+        }
+    });
+    dispatcher.dispatch_callbacks_snapshot().unwrap();
+    let Receipt {
+        recorded: at_receipt,
+        read_again,
+    } = std::mem::take(&mut *met.lock().unwrap());
+    let at_receipt = at_receipt.expect("the former acknowledged during the leased dispatch");
+    let row = ("ready_unstaffed".to_string(), "scratch/free".to_string());
+    assert!(at_receipt.contains(&row), "{at_receipt:?}");
+    // The dispatch had read what it was told before the receipt: it reads and decides again.
+    assert!(read_again, "the dispatch never read the board again");
+    // What the receipt recorded stands: no PULL waits, and none says that row again.
+    let after = recorded(fixture.store.client(), former);
+    assert!(after.contains(&row), "{after:?}");
+    let waiting = waiting_pull(&outage);
+    assert!(waiting.is_none(), "{waiting:?}");
+    let back = outage.back();
+    let told = heard(fixture, sender, &[(&back, former)]);
+    assert_eq!(told, [Vec::<String>::new()]);
+    outage.pass(601.0, &[]);
+    let later = heard(fixture, sender, &[(&back, former)]);
+    assert_eq!(later, [Vec::<String>::new()]);
+    assert_eq!(older_fields(fixture, former), older_record(fixture, former));
 }
 
 /// What the former orchestrator heard of the successor's task before it was handed over.

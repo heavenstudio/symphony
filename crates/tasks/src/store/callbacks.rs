@@ -1068,8 +1068,16 @@ RETURN NONE;");
                 })
                 .map(|handled| (handled, pull_at));
         }
-        self.retrying(|| self.transact::<Value>(
-            "IF $pull_kept != NONE {
+        // An inbox acknowledgement takes no lease: one of a PULL read as waiting may have come in
+        // since, and what the recipient was told with it. Then nothing is written, and the
+        // dispatch reads and decides again.
+        let waiting: Vec<&str> = (queued.iter().filter(|line| line.is_pull()))
+            .map(|line| line.key.as_str())
+            .collect();
+        let current = self.retrying(|| self.transact::<bool>(
+            "LET $current = array::len($waiting.filter(|$key| type::record('callback_event', [$handle, $key]).delivered = true)) = 0;
+             IF $current {
+             IF $pull_kept != NONE {
                 DELETE callback_event WHERE handle = $handle AND delivered != true AND string::starts_with(key, 'pull-') AND key != $pull_kept RETURN NONE;
                 UPDATE type::record('callback_event', [$handle, $pull_kept]) SET text = $pull_text, pull_entries = $pull_awaiting.entries,
                     pull_withheld = $pull_awaiting.withheld WHERE delivered != true RETURN NONE;
@@ -1106,8 +1114,9 @@ RETURN NONE;");
                 inbox_cursor = $inbox_cursor,
                 delivery_version = delivery_version ?? 1 RETURN NONE;
              };
-             RETURN NONE;",
-            json!({"handle":handle, "events":events, "seen":stored_seen, "narrowing":narrowing, "unknown_children":unknown_children, "snapshot_sequence":sequence, "statuses":statuses, "revision":revision,
+             };
+             RETURN $current;",
+            json!({"handle":handle, "waiting":waiting, "events":events, "seen":stored_seen, "narrowing":narrowing, "unknown_children":unknown_children, "snapshot_sequence":sequence, "statuses":statuses, "revision":revision,
                 "pull":if due {self.now()} else {state.pull}, "legacy_upgrade":legacy_upgrade,
                 "pull_queued":account.as_ref().map_or(&state.pull_queued, |a| &a.queued),
                 "pull_awaiting":account.as_ref().and_then(|a| a.awaiting.as_ref()),
@@ -1116,6 +1125,9 @@ RETURN NONE;");
                 "computed":due, "pull_current":pull_current, "rescoped":rescoped,
                 "pull_kept":pull_kept, "pull_text":pull_text, "replace_pull":pull_replaced}),
         ))?;
+        if !current {
+            return self.dispatch_one(handle, callback, board, sequence, probes, lease);
+        }
         self.deliver_pending(handle, callback, lease.expect("writes hold a lease").0)
             .map(|()| (true, pull_at))
     }

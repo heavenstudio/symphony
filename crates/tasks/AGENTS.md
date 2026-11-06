@@ -107,14 +107,18 @@ lost, for one no PULL it acknowledged told it is counted by the next; no line is
 but that work withheld from it, once a hand-over makes it its own, may be counted in one PULL
 more, at most once for that hand-over; and nothing repeats on its own.
 What was told is `pull_entries` but `pull_withheld` (`State::acknowledged`). This generation
-records there what was told and every entry the orchestrator does not hear, and leaves out
-each entry it hears and was not told while the PULL telling it waits (`pull_queued`, the whole
-digest, keeps older dispatchers from sending it). An older write only ever takes entries out of
+records in `pull_entries` what was told and every entry the orchestrator does not hear, and
+leaves out each entry it hears and was not told while the PULL telling it waits (`pull_queued`,
+the whole digest, keeps older dispatchers from sending it). `pull_withheld` holds each entry it
+does not hear and was not told from its first PULL on, since an older acknowledgement records
+every entry of a PULL, the first one's too. An older write only ever takes entries out of
 `pull_entries`, and every generation's acknowledgement puts in the entries of the PULL it
 acknowledged, which told them. So an entry the orchestrator hears is told once it is there,
 whoever acknowledged and whatever older dispatchers queue and acknowledge after, and untold
 while it is not, even when an older one took this generation's PULL back unsaid for its own.
-`revision`, which every older write moves, is not read.
+`revision`, which every older write moves, is not read. An inbox acknowledgement takes no lease,
+so a dispatch writes its account only if no PULL it read as waiting was acknowledged since, and
+otherwise reads and decides again.
 What was withheld is the one ambiguity: an older dispatcher's own PULL tells the whole board,
 and its acknowledgement of that PULL and of this generation's with the same entries leave the
 same record; telling them apart needs the older binary changed. So withheld work stays untold

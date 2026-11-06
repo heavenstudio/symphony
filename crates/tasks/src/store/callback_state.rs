@@ -25,9 +25,11 @@ pub(super) struct State {
     pub(super) pull: f64,
     pub(super) pull_entries: Option<BTreeSet<Entry>>,
     pub(super) pull_queued: Option<BTreeSet<Entry>>,
-    /// Of `pull_entries`, those no PULL the recipient acknowledged told it: withheld from it, and
-    /// recorded there all the same, so an older dispatcher never sends them. An entry it hears and
-    /// was not told is left out of `pull_entries` instead, while the PULL telling it waits.
+    /// The entries the recipient does not hear and no PULL it acknowledged told it: withheld from
+    /// it, and recorded in `pull_entries` all the same, so an older dispatcher never sends them.
+    /// Kept from its first PULL on, since an older one's acknowledgement records every entry of
+    /// the PULL, the first's too. An entry it hears and was not told is left out of
+    /// `pull_entries` instead, while the PULL telling it waits.
     pub(super) pull_withheld: BTreeSet<Entry>,
     /// The PULL this generation left queued, as its acknowledgement records it.
     pub(super) pull_awaiting: Option<Awaiting>,
