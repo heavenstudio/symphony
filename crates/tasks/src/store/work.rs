@@ -6,13 +6,14 @@ use super::{
     refused, repr, unknown_actor,
 };
 use crate::health::Health;
-use crate::rows::RoleRow;
 use serde::Deserialize;
 use serde_json::{Value, json};
 use std::cell::RefCell;
 use std::collections::{BTreeSet, HashMap, HashSet};
 
 mod owner_task;
+
+mod roles;
 
 /// Who makes a task or posts to a thread without a session of its own.
 pub(super) const OWNER: &str = "owner";
@@ -388,69 +389,6 @@ LET $said = $actor + ' changed priority p' + <string>$task.priority + ' → p' +
     /// Tasks linked to `doc` itself or to one of its headings (`doc#Heading`), by priority then slug.
     pub fn linked_to(&self, doc: &str) -> Result<Vec<Task>, Error> {
         Ok(self.retrying(|| self.view(&Which::Linked(doc)))?.tasks())
-    }
-
-    /// Join a task as `orchestrator` or `reviewer` (executor is `claim`, reserved is `reserve`).
-    pub fn take_role(&self, slug: &str, handle: &str, role: &str) -> Result<Task, Error> {
-        if role != "orchestrator" && role != "reviewer" {
-            return Err(refused(format!(
-                "take_role is for orchestrator or reviewer; use claim or reserve for {}",
-                repr(role)
-            )));
-        }
-        self.rule(slug, handle, |view| {
-            view.actor(handle)?;
-            let task = view.task(slug)?;
-            if task.status == "done" || task.status == "cancelled" {
-                return Err(refused(format!("{slug} is {}", task.status)));
-            }
-            if role == "reviewer" && view.holds(handle, "executor") {
-                return Err(refused(format!(
-                    "{handle} executes {slug} and cannot review its own work"
-                )));
-            }
-            let mut change = Change::default();
-            if !view.holds(handle, role) {
-                change.add = Some(RoleRow {
-                    slug: slug.into(),
-                    handle: handle.into(),
-                    role: role.into(),
-                    since: view.now,
-                    expires: None,
-                });
-                change.say = Say::system(format!("{handle} joined as {role}"));
-            }
-            Ok(change)
-        })
-    }
-
-    /// Let go of `role` on a task, or of every role it holds there. Work in progress with no executor
-    /// left is ready again.
-    pub fn release(&self, slug: &str, handle: &str, role: Option<&str>) -> Result<Task, Error> {
-        self.rule(slug, handle, |view| {
-            view.actor(handle)?;
-            let task = view.task(slug)?;
-            let mine = |r: &&RoleRow| r.handle == handle && role.is_none_or(|role| r.role == role);
-            let mut change = Change::default();
-            for held in view.snap.roles.iter().filter(mine) {
-                change.drop(&held.handle, &held.role);
-            }
-            if change.drop.is_empty() {
-                return Err(refused(format!(
-                    "{handle} holds no {} on {slug}",
-                    role.unwrap_or("role")
-                )));
-            }
-            let executing = view.holders("executor").any(|r| !mine(&r));
-            if task.status == "in_progress" && !executing {
-                change.status = Some("ready".into());
-            }
-            change.say = Say::system(format!(
-                "{handle} released {} (released)",
-                role.unwrap_or("every role")
-            ));
-            Ok(change)
-        })
     }
 
     /// Move a task along (`can_transition`). Work started, or held by an executor, is moved only by a

@@ -24,14 +24,16 @@ impl Forward {
         let mut chosen = self.chosen.lock().unwrap();
         let applies = match self.phase {
             "open" => sql.contains("INFO FOR DB"),
-            "lookup" => lookup,
+            // Both read attempts must time out before the save has a pre-dispatch refusal.
+            "lookup" => lookup && *chosen < 2,
             "create" | "message" | "reply" | "edited" | "wipe" => create,
             "check" => create && *chosen == 0 || lookup && matches!(*chosen, 1 | 2),
             "reopen" => create && *chosen == 0 || sql.contains("INFO FOR DB") && *chosen == 1,
             "journal" | "concurrent" | "receipt-write" | "journal-write" | "interrupted" => false,
             _ => unreachable!(),
         };
-        let delay = applies && (*chosen == 0 || matches!(self.phase, "check" | "reopen"));
+        let delay =
+            applies && (*chosen == 0 || matches!(self.phase, "lookup" | "check" | "reopen"));
         if delay {
             *chosen += 1;
             call["params"][0] = json!(match self.phase {

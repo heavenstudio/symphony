@@ -11,12 +11,13 @@ mod depends;
 mod done;
 mod embeddings;
 mod fields;
-#[path = "../../../../../tools/gate/tests/verify/script.rs"]
+#[path = "../../../../../tools/gate/tests/verify/script_process_cwd.rs"]
 mod fixture_script;
 mod health;
 mod launches;
 mod messages;
 mod next;
+mod orchestrators;
 mod priority;
 mod quiet_callbacks;
 mod reserve;

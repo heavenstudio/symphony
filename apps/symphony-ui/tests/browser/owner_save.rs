@@ -50,7 +50,7 @@ fn an_uncertain_task_save_keeps_its_draft_and_identity_until_confirmation() {
     assert_eq!(dialogs[0]["type"], "beforeunload");
     page.call("Page.handleJavaScriptDialog", json!({"accept":true}));
     assert!(page.wait_for(
-        "location.pathname==='/tasks' && document.documentElement.dataset.navigation==='ready'",
+        "location.pathname==='/tasks' && document.documentElement?.dataset.navigation==='ready'",
         SHOWN
     ));
     components::open_panel(&mut page);

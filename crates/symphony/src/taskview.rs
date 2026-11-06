@@ -404,13 +404,28 @@ pub fn activity(store: &symphony_board::Store) -> Result<Vec<ActivityItem>, symp
         .collect())
 }
 
+/// How long the server waits on each board request: its board tick shares the data worker's thread
+/// with every document refresh, and a page gives up on an answer after 15 s (`symphony-ui`'s
+/// `request.rs`). A read with no whole answer in that time goes once more
+/// ([`symphony_board::rpc::Kind`]), and so waits at most twice this.
+const BOARD_WAIT: std::time::Duration = std::time::Duration::from_secs(3);
+
+/// A page read's board failure: a board that took the request and answered too late is slow (504),
+/// any other failure 503, said after `unreachable` (the words a route puts before it).
+pub fn read_failure(error: &str, unreachable: &str) -> (u16, String) {
+    if symphony_board::rpc::slow(error) {
+        (504, format!("the task board is slow: {error}"))
+    } else {
+        (503, format!("{unreachable}{error}"))
+    }
+}
+
 pub fn connect(root: &Path) -> Result<symphony_board::Store, String> {
     let mut env = symphony_board::cli::Env::of_process();
     env.cwd = root.to_path_buf();
     // A read-only web request is never a board session or a launcher.
     env.vars.remove("TASKS_SESSION");
-    let client =
-        symphony_board::cli::board_client(&env)?.waiting(std::time::Duration::from_secs(3));
+    let client = symphony_board::cli::board_client(&env)?.waiting(BOARD_WAIT);
     if let Some(text) = env.vars.get("TASKS_NOW") {
         let now = text
             .parse::<f64>()

@@ -42,10 +42,44 @@ fn passed(done: Output) -> String {
     String::from_utf8(done.stdout).unwrap()
 }
 
+/// The files above a workspace that tools/rs-bin.sh takes into a binary's identity, as cargo reads
+/// them there: each folder's cargo config and toolchain pin.
+const ABOVE: [&str; 4] = [
+    ".cargo/config.toml",
+    ".cargo/config",
+    "rust-toolchain.toml",
+    "rust-toolchain",
+];
+
+/// Where a capture's scratch folder goes, so the copy has the folders above it that `source` has.
+/// Cargo reads the config of every folder above the one it runs in, so a tree nested in the main
+/// checkout (the Agent tool's `.claude/worktrees/agent-*`) builds with the main checkout's config,
+/// and rs-bin's identity takes it. A copy in the temporary folder has none above it: its identity
+/// differs, rightly. Beside `source` the copy has the same folders above it from `source`'s parent
+/// up, and the scratch and checkout folders between hold none. With nothing above `source`, the
+/// temporary folder has the same nothing and keeps the scratch out of the source's neighbours.
+fn scratch_base(source: &Path) -> PathBuf {
+    let parent = source
+        .parent()
+        .expect("the source tree is not the root folder");
+    let read_above = parent
+        .ancestors()
+        .any(|folder| ABOVE.iter().any(|file| folder.join(file).is_file()));
+    if read_above {
+        parent.to_path_buf()
+    } else {
+        std::env::temp_dir()
+    }
+}
+
 impl Checkout {
     fn capture() -> Self {
         static NEXT: AtomicUsize = AtomicUsize::new(0);
-        let scratch = std::env::temp_dir().join(format!(
+        let source = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../..")
+            .canonicalize()
+            .unwrap();
+        let scratch = scratch_base(&source).join(format!(
             "sf-symphony-folder-{}-{}",
             std::process::id(),
             NEXT.fetch_add(1, Ordering::Relaxed)
@@ -55,7 +89,6 @@ impl Checkout {
         let root = scratch.join("clean checkout with spaces");
         fs::create_dir(&root).unwrap();
         let owned = Self { scratch, root };
-        let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
         // Capture current sources without changing the real index or any branch/ref. This
         // also works before the author's source changes have been committed.
         let index = owned.scratch.join("capture-index");
@@ -192,6 +225,9 @@ fn a_cold_committed_main_pointer_exports_both_workspaces_and_lists_only_the_priv
         .command("bash")
         .arg(checkout.root.join("tools/tasks.sh"))
         .arg("list")
+        // Main's export goes in TMPDIR; in the scratch it has the folders above it the cached
+        // build's tree has (scratch_base), so its identity is the cached one.
+        .env("TMPDIR", &checkout.scratch)
         .env("TASKS_SERVER", board.address())
         .env("TASKS_SWEEP", "off")
         .output()

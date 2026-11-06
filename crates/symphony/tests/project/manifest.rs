@@ -105,7 +105,7 @@ fn each_key_left_out_takes_its_default_beside_those_given() {
             folder: "notes".into(),
             include: vec!["**".into()],
             exclude: Vec::new(),
-            types: vec!["markdown".into()],
+            types: vec![symphony::entrypoint::MARKDOWN],
             history: Vec::new(),
         }]
     );

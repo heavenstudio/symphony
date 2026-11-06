@@ -305,7 +305,7 @@ fn phase(phase: &'static str) {
     );
     let delays = match phase {
         "check" => 3,
-        "reopen" => 2,
+        "lookup" | "reopen" => 2,
         "journal" | "concurrent" | "receipt-write" | "journal-write" | "interrupted" => 0,
         _ => 1,
     };
