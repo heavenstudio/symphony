@@ -14,6 +14,7 @@
 //! | BLOCKED | it oversees the session on that task ([`Overseen::hears_of`]) |
 //! | STALE, LIVENESS UNKNOWN | it is told of the session going quiet ([`Seen::hears_quiet`]) |
 //! | LOST | that, and of the work named, what it is told of ([`told`]) |
+//! | PULL | each row, counted task and session is in its digest's scope ([`Queued::unheard`]) |
 //!
 //! Addressed messages and verdicts stay: they are their sender's words to whoever held the role
 //! when they were sent, and a session taking a role over hears no earlier ones, so dropping one
@@ -37,7 +38,14 @@ pub(super) struct Queued {
     /// The entries a PULL's rows name. Older dispatchers name every entry they record.
     #[serde(default)]
     pull_told: Option<BTreeSet<Entry>>,
+    /// What a PULL counts or names beside its rows ([`crate::cli::pull::Digest::counted`]).
+    /// Older dispatchers record none.
+    #[serde(default)]
+    pull_counted: Option<BTreeSet<Entry>>,
 }
+
+/// The lists of a PULL's entries that name a session, not a task.
+const SESSIONS: [&str; 2] = ["idle", "liveness_unknown"];
 
 /// The queued lines a dispatch takes back (`dropped`) or says again (`rewritten`, key and text).
 #[derive(Debug, Default, PartialEq, Serialize)]
@@ -107,12 +115,16 @@ impl Queued {
         self.key.starts_with("pull-")
     }
 
-    /// Whether a PULL tells the recipient of a task it does not hear (`hears`) or of an entry
-    /// `withheld` from it. An idle row names a session, which only `withheld` judges.
+    /// Whether a PULL names or counts what the recipient would not be told now: a task it does not
+    /// hear (`hears`), in a row or in its `executing` count, or anything [`Digest::only_for`] now
+    /// keeps from it (`withheld`). A session, idle or of unknown liveness, only `withheld` judges.
+    ///
+    /// [`Digest::only_for`]: crate::cli::pull::Digest::only_for
     pub(super) fn unheard(&self, hears: &dyn Fn(&str) -> bool, withheld: &BTreeSet<Entry>) -> bool {
         let told = (self.pull_told.as_ref()).or(self.pull_entries.as_ref());
-        let unheard = |(list, name): &Entry| list != "idle" && !hears(name);
-        (told.into_iter().flatten()).any(|entry| withheld.contains(entry) || unheard(entry))
+        let mut named = (told.into_iter().flatten()).chain(self.pull_counted.iter().flatten());
+        let unheard = |(list, name): &Entry| !SESSIONS.contains(&list.as_str()) && !hears(name);
+        named.any(|entry| withheld.contains(entry) || unheard(entry))
     }
 
     /// What this line comes to for the orchestrator `now` hears: whether a dispatch would tell it
@@ -200,6 +212,22 @@ mod tests {
         );
         let older = queued(json!({"key":"pull-1", "pull_entries":[mine, theirs]}));
         assert!(older.unheard(&hears, &none), "{older:?} names t/theirs");
+        // What it counts beside its rows: a running task by `hears`, a session by `withheld`.
+        let (running, quiet) = (
+            entry("executing", "t/theirs"),
+            entry("liveness_unknown", "elm"),
+        );
+        let counts = |counted: &[&Entry]| {
+            queued(
+                json!({"key":"pull-1", "pull_entries":[mine], "pull_told":[mine], "pull_counted":counted}),
+            )
+        };
+        let pull = counts(&[&running]);
+        assert!(pull.unheard(&hears, &none), "{pull:?} counts t/theirs");
+        let pull = counts(&[&quiet]);
+        assert!(!pull.unheard(&hears, &none), "{pull:?}");
+        let withheld = BTreeSet::from([quiet.clone()]);
+        assert!(pull.unheard(&hears, &withheld), "{pull:?}, {withheld:?}");
     }
 
     /// `orch` handed `gone` to `next`, and kept `kept`; nobody orchestrates `free`. `kid`,

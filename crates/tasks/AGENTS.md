@@ -92,8 +92,9 @@ each one (`queued_lines`, a table of each kind and the `Seen`, `Owners`, `Overse
 `orchestration` call it shares with `attach::diff` and the pane watch), on its look now, so a
 hand-over or a released claim meanwhile takes back what it would no longer be told: such a line
 is dropped, a LOST names only the work still told it, and the PULL is built of what it hears (a
-PULL's `pull_told` names its rows, an older dispatcher's every entry it records), while those
-fields keep counting it as said. A new kind of task-naming line takes its test from there too.
+PULL's `pull_told` names its rows, an older dispatcher's every entry it records, and its
+`pull_counted` the tasks its `executing` count counts and the sessions its liveness line names),
+while those fields keep counting it as said. A new kind of task-naming line takes its test from there too.
 Posts, verdicts and AGENT lines stay: they were said to whoever held the role then, and a new
 holder hears no backlog.
 A finished idle pane still closes under the original cleanup rules, retiring its

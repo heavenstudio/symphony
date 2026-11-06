@@ -71,6 +71,9 @@ struct Event {
     /// Of a PULL's `pull_entries`, those its rows name ([`Queued`]).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pull_told: Option<BTreeSet<Entry>>,
+    /// What a PULL counts or names beside its rows ([`pull::Digest::counted`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pull_counted: Option<BTreeSet<Entry>>,
 }
 
 /// A recipient's callback state as a dispatch reads it, with when its PULL was last checked and
@@ -82,11 +85,13 @@ struct Stored {
     queued: Vec<Queued>,
 }
 
-/// A PULL a dispatch queues: its text, every entry it records, and those its rows name.
+/// A PULL a dispatch queues: its text, every entry it records, those its rows name, and what it
+/// counts or names beside them.
 struct PullEvent {
     text: String,
     entries: BTreeSet<Entry>,
     told: BTreeSet<Entry>,
+    counted: BTreeSet<Entry>,
 }
 
 #[derive(Clone, Deserialize)]
@@ -605,6 +610,7 @@ RETURN NONE;");
                         sequence: 0,
                         pull_entries: None,
                         pull_told: None,
+                pull_counted: None,
                     })
                     .collect();
                 self.retrying(|| self.transact::<Value>(
@@ -740,7 +746,7 @@ RETURN NONE;");
         } = self.retrying(|| {
             self.transact(
                 "RETURN { state: (SELECT * OMIT id FROM ONLY type::record('callback_state', $handle)), checked_pull: type::record('callback_lease', $handle).pull ?? 0,
-                    queued: (SELECT key, text, pull_entries, pull_told FROM callback_event WHERE handle = $handle AND delivered != true
+                    queued: (SELECT key, text, pull_entries, pull_told, pull_counted FROM callback_event WHERE handle = $handle AND delivered != true
                         AND (string::starts_with(key, 'pull-') OR string::starts_with(key, 'event-') OR (string::starts_with(key, 'pane-') AND string::starts_with(text, 'BLOCKED ')))) };",
                 json!({"handle":handle}),
             )
@@ -913,13 +919,15 @@ RETURN NONE;");
                     .is_some_and(|root| crate::cli::probes::landed(root, &task.slug))
             };
             let digest = pull::digest(self, &idle, Some(&landed), self.now(), &busy)?;
-            let entries = digest.entries();
+            let (entries, counted) = (digest.entries(), digest.counted());
             let digest = digest.only_for(board, handle);
             let heard = digest.entries();
             pull_withheld = entries.difference(&heard).cloned().collect();
-            // A queued PULL naming what the recipient no longer hears is built again from what it
-            // hears, or dropped when the recipient was told all of that already.
-            let unheard = !legacy_upgrade && unheard_pull(&pull_withheld);
+            // A queued PULL naming or counting what the recipient no longer hears is built again
+            // from what it hears, or dropped when the recipient was told all of that already.
+            let mut kept_from = pull_withheld.clone();
+            kept_from.extend(counted.difference(&digest.counted()).cloned());
+            let unheard = !legacy_upgrade && unheard_pull(&kept_from);
             pull_entries.retain(|entry| entries.contains(entry));
             if let Some(queued) = &mut pull_queued {
                 queued.retain(|entry| entries.contains(entry));
@@ -947,6 +955,7 @@ RETURN NONE;");
                     text,
                     entries: entries.clone(),
                     told: heard,
+                    counted: digest.counted(),
                 });
             }
             if state.pull_entries.is_some() {
@@ -968,12 +977,14 @@ RETURN NONE;");
                 sequence: 0,
                 pull_entries: None,
                 pull_told: None,
+                pull_counted: None,
             })
             .collect();
         if let Some(PullEvent {
             text,
             entries,
             told,
+            counted,
         }) = pull_event
         {
             events.push(Event {
@@ -986,6 +997,7 @@ RETURN NONE;");
                 sequence: 0,
                 pull_entries: Some(entries),
                 pull_told: Some(told),
+                pull_counted: Some(counted),
             });
         }
         let legacy = compact(&legacy);
@@ -1023,6 +1035,7 @@ RETURN NONE;");
                 sequence: 0,
                 pull_entries: None,
                 pull_told: None,
+                pull_counted: None,
             });
         }
         if callback.chat {
@@ -1049,6 +1062,7 @@ RETURN NONE;");
                     sequence: 0,
                     pull_entries: None,
                     pull_told: None,
+                    pull_counted: None,
                 });
             }
         }

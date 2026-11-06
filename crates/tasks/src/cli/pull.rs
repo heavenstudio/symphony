@@ -70,6 +70,15 @@ impl Digest {
             })
             .collect()
     }
+    /// What the digest counts or names beside its rows, which [`Digest::only_for`] scopes as it does
+    /// them: each task `executing` counts, and each session its liveness line names.
+    pub fn counted(&self) -> BTreeSet<(String, String)> {
+        let running = (self.running.iter()).map(|slug| ("executing".to_string(), slug.clone()));
+        let quiet = (self.liveness_unknown.iter())
+            .map(|handle| ("liveness_unknown".to_string(), handle.clone()));
+        running.chain(quiet).collect()
+    }
+
     /// Stable event content, independent of when the board was observed.
     pub fn event_lines(&self) -> Vec<String> {
         let mut lines = self.lines();

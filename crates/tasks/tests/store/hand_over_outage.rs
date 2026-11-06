@@ -75,7 +75,8 @@ impl Outage {
     fn pass(&self, seconds: f64, beating: &[&str]) {
         self.fixture.advance(seconds);
         let always = [&self.former, &self.successor, &self.sender].map(String::as_str);
-        for handle in always.iter().chain(beating) {
+        let signs = always.iter().chain(beating);
+        for handle in signs {
             self.elsewhere.touch(handle).unwrap();
         }
     }
@@ -305,4 +306,42 @@ fn a_child_quiet_meanwhile_is_said_after_a_hand_over_only_to_an_orchestrator_tol
         let heard = (told.iter()).any(|line| line.starts_with(&notice));
         assert_eq!(heard, said, "{case}: {told:?}");
     }
+}
+
+#[test]
+fn a_pull_waiting_out_an_outage_counts_no_running_work_a_hand_over_took_away() {
+    let outage = Outage::new();
+    let Outage {
+        fixture,
+        elsewhere,
+        former,
+        successor,
+        sender,
+    } = &outage;
+    let child = outage.child(former);
+    fixture.store.claim("scratch/one", &child).unwrap();
+    outage.cut();
+    // While it cannot be reached, work nobody orchestrates comes up: its PULL counts its own
+    // running task beside it.
+    let free = NewTask::new("scratch/free", "Jump departure", "owner");
+    elsewhere.create(&free).unwrap();
+    let pull = |executing: u8| {
+        format!(
+            "PULL executing={executing} ready_unstaffed=1 in_progress_orphaned=0 review_unreviewed=0 landed_open=0 idle=0"
+        )
+    };
+    let waiting = outage.waiting();
+    let counted = (waiting.iter()).any(|text| text.starts_with(&pull(1)));
+    assert!(counted, "{waiting:?}");
+    (elsewhere.hand_over("scratch/one", former, successor)).unwrap();
+    assert_eq!(
+        outage.back().drain(fixture, sender, former),
+        [
+            "NEW scratch/free ready — Jump departure".to_string(),
+            format!("ROLE scratch/one {successor} orchestrator, in_progress (from {former})"),
+            pull(0),
+            "ready_unstaffed p2 scratch/free — Jump departure".to_string(),
+        ]
+    );
+    assert_eq!(older_fields(fixture, former), older_record(fixture, former));
 }
