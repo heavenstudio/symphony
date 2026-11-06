@@ -13,6 +13,7 @@ mod beat;
 mod board_beat;
 mod commands;
 mod detached;
+mod finish;
 mod handover;
 mod launch;
 mod monitor;

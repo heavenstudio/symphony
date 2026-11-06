@@ -83,6 +83,52 @@ cursor advances only with the persisted observation and queued events.
 Unknown observations keep the heartbeat health older binaries derive in `seen`, with separate
 metadata restoring Unknown for newer readers. Both old and new writers must share that baseline
 past the ten-minute lost threshold, or alternating dispatchers repeat liveness notices.
+In the same way an orchestrator's `seen`, `statuses` and PULL entries keep the whole-board meaning
+binaries older than one orchestrator per task read (`attach::legacy_seen`, every open status, every
+digest entry); what it hears and was told lives in `narrowing`, `pull_withheld` and
+`pull_awaiting`, which they ignore and keep, read over that record, so neither generation repeats
+a NEW, LOST or PULL the other said.
+An orchestrator's queued lines are judged at delivery by the test a dispatch makes of whom to tell
+each one (`queued_lines`, a table of each kind and the `Seen`, `Owners`, `Overseen` or
+`orchestration` call it shares with `attach::diff` and the pane watch), on its look now, so a
+hand-over or a released claim meanwhile takes back what it would no longer be told: such a line
+is dropped, and a LOST names only the work still told it. A queued PULL, whichever dispatcher
+wrote it, is never judged by its text but by one rule (`pull_account`) over what the recipient
+hears now, what the PULLs it acknowledged told it and what the PULL waiting tells: with nothing
+heard beyond what was acknowledged it is taken back; an entry beyond both queues a new PULL, with
+a key and retry budget of its own; otherwise it keeps its key and attempts and says the digest
+as it is now. Whichever, the queued and event entries become the whole digest now, and what was
+told changes only when a PULL is acknowledged: this generation's acknowledgement records what the
+PULL left untold, and `pull_awaiting` reads an older one's, which records only its entries
+(`pending_pull`, a table of each change while a PULL waits; `pull_acknowledgements`, each
+generation's acknowledgement). A new kind of task-naming line takes its test from there too.
+The contract while an older dispatcher interleaves: no entry the orchestrator hears is ever
+lost, for one no PULL it acknowledged told it is counted by the next; no line is said twice,
+but that work withheld from it, once a hand-over makes it its own, may be counted in one PULL
+more, at most once for that hand-over; and nothing repeats on its own.
+What was told is `pull_entries` but `pull_withheld` (`State::acknowledged`). This generation
+records in `pull_entries` what was told and every entry the orchestrator does not hear, and
+leaves out each entry it hears and was not told while the PULL telling it waits (`pull_queued`,
+the whole digest, keeps older dispatchers from sending it). `pull_withheld` holds each entry it
+does not hear and was not told from its first PULL on, since an older acknowledgement records
+every entry of a PULL, the first one's too. An older write only ever takes entries out of
+`pull_entries`, and every generation's acknowledgement puts in the entries of the PULL it
+acknowledged, which told them. So an entry the orchestrator hears is told once it is there,
+whoever acknowledged and whatever older dispatchers queue and acknowledge after, and untold
+while it is not, even when an older one took this generation's PULL back unsaid for its own.
+`revision`, which every older write moves, is not read. An inbox acknowledgement takes no lease,
+nor does a presence sweep pruning what was delivered, so a dispatch writes its account only if
+every PULL it read as waiting is still there undelivered (no key is used twice), and otherwise
+reads and decides again.
+What was withheld is the one ambiguity: an older dispatcher's own PULL tells the whole board,
+and its acknowledgement of that PULL and of this generation's with the same entries leave the
+same record; telling them apart needs the older binary changed. So withheld work stays untold
+until a hand-over makes it the orchestrator's: then one PULL counts it, the one repeat when an
+older PULL had told it, and once a PULL naming it is acknowledged it is in `pull_entries`, told
+for good. A record naming an entry the PULL this generation left awaiting (`pull_awaiting`) did
+not is an older one's own PULL acknowledged, which told every entry, withheld ones too.
+Posts, verdicts and AGENT lines stay: they were said to whoever held the role then, and a new
+holder hears no backlog.
 A finished idle pane still closes under the original cleanup rules, retiring its
 registration; an executor of a task in review is not finished, and keeps its pane.
 A post or changes verdict to `@executor`, or a post to the executor by handle, that no
@@ -90,6 +136,16 @@ executor can read (no callback, and its launch record closed or no live beat) ad
 `board` post to `@orchestrator` on the
 thread after the write commits (`store/messages.rs`, `tell_if_unread`); its failure is
 said on stderr, never turned into a failed write.
+A post under a key (`Store::say_keyed`; `tasks api` `say` with `key`) is made once per key on
+a thread: its transaction makes the first post's line and `delivery_key:[slug, key]`, and
+answers that line to every later post under the key, writing nothing, so a caller that may have
+posted without reading its answer repeats the call rather than reading the thread, and a request
+of its that outlived it cannot post twice. Asked to adopt (`Store::adopt_or_say`; `say` with
+`adopt`), a key naming no line yet takes the thread's earliest line reading exactly the text to
+the recipient, one made under no key, and writes nothing. The board's notice that no executor
+reads a line is itself under the line's key (`unread:<id>`, taking a notice of the line made under
+no key), so a post repeated under a key, or one that took a line, says it when nothing said so
+yet, and never twice. The copy carries the keys with the board.
 Restore prompts re-register the resumed process's callback first.
 Neither channel checks nor delivery fabricate tool calls.
 Outbox rows are indexed by handle
@@ -177,7 +233,14 @@ enter while the prompt still sits in the input line. Its tests' handles:
 orchestrator's monitor computes its PULL digest (only a new actionable entry
 prints one); `TASKS_REAP_STATE` is where the
 idle sweep keeps what it saw; `HERDR_BIN` names a fake herdr (the crate's
-`fake-herdr` binary, its panes a JSON file `FAKE_HERDR_STATE` names).
+`fake-herdr` binary, its panes a JSON file `FAKE_HERDR_STATE` names);
+`TASKS_PS_TABLE` names a file of `ps -axo pid=,ppid=,command=` lines the commands
+read in place of `ps` (`procs::table`), so no command-line case reads this
+machine's process table; it is read only with a `TASKS_DATABASE` other than the
+live one, never on the live board. A table, the file's or `ps`'s, that lists no
+row for the pane's shell says nothing of it. A pane the board would close whose
+process-info or table cannot be read stays, and cleanup and finish print `kept
+pane P [of H] (never closed on no information: WHY)`.
 
 A child's input and output go through `sys::output` (or `sys::spawn_output`,
 `sys::spawn_piped` for one that reads stdin, and `sys::wait_output`), never
@@ -227,6 +290,14 @@ tests never sweep this repository; the sweep's own tests (`tests/sweep/`) build
 real repositories in a temporary folder, and spawn the binary `TASKS_BIN` names
 for the triggers, which stands in for the main checkout's build only on a
 board `TASKS_SERVER` names.
+`on_review.rs` owns the command a task moving to review starts: `[board]
+on_review` in the main checkout's `symphony.toml`, read by the board itself
+there (the default is none), run detached from the main checkout with the
+task's slug, its branch (the slug, or what follows a `review/` or `review-N/`
+prefix) and that branch's tip appended, its output appended to
+`sf-tasks/on-review.log`; a slug naming no branch starts nothing and the log
+says so. A board `TASKS_SERVER` names starts none unless `TASKS_ON_REVIEW=on`,
+and `off` starts none anywhere (`tests/sweep/on_review.rs`).
 
 Its store tests start one in-memory server per test binary and give each test a
 database of its own. The server is the pinned SurrealDB `tools/surreal.sh`
