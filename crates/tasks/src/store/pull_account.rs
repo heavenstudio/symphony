@@ -9,7 +9,8 @@
 //!
 //! Whatever the plan, the queued and event records become the digest now, every entry of the
 //! whole board's as dispatchers built before one orchestrator per task keep them, and what the
-//! recipient was told changes only when it acknowledges a PULL ([`Account`]).
+//! recipient was told changes only when it acknowledges a PULL ([`Account`]): until then, an
+//! entry it hears and was not told stays out of what it was told, whoever writes the record.
 
 use super::callback_state::{Awaiting, Entry, State};
 use super::queued_lines::Queued;
@@ -74,10 +75,14 @@ pub(super) struct Account {
     pub(super) plan: PullPlan,
     /// `pull_queued`: every entry of the digest, while a PULL waits.
     pub(super) queued: Option<Entries>,
-    /// `pull_entries`, which takes in each entry the recipient does not hear (`unheard`), as an
-    /// older dispatcher would have told it them: nothing before its first acknowledgement.
+    /// `pull_entries`: what it was told, and each entry it does not hear (`unheard`), as an older
+    /// dispatcher would have told it them; nothing before its first acknowledgement.
     pub(super) recorded: Option<Entries>,
     pub(super) unheard: Entries,
+    /// The entries it hears and was not told, left out of `pull_entries` while the PULL telling
+    /// them waits (`pull_queued` keeps older dispatchers from sending them), so one found there
+    /// later came with a PULL someone acknowledged.
+    pub(super) untold: Entries,
     /// `pull_withheld`: of the entries recorded, those it was not told.
     pub(super) withheld: Entries,
     /// `pull_awaiting`, and the record of the PULL left waiting.
@@ -93,8 +98,7 @@ impl Account {
         let none = Entries::new();
         let told = acknowledged.as_ref().unwrap_or(&none);
         let unheard = entries - heard;
-        let recorded =
-            (state.pull_entries.as_ref()).map(|recorded| &(recorded & entries) | &unheard);
+        let recorded = (state.pull_entries.as_ref()).map(|_| told | &unheard);
         let withheld = (recorded.as_ref()).map_or_else(Entries::new, |recorded| recorded - told);
         let plan = pull_plan(queued, heard, acknowledged.as_ref());
         let waits = matches!(plan, PullPlan::Kept(_) | PullPlan::Queued);
@@ -106,6 +110,7 @@ impl Account {
             plan,
             queued: waits.then(|| entries.clone()),
             recorded,
+            untold: heard - told,
             unheard,
             withheld,
             awaiting,
@@ -120,6 +125,7 @@ impl Account {
             plan: PullPlan::Unchanged,
             queued: state.pull_queued.clone(),
             recorded: Some(entries.clone()),
+            untold: Entries::new(),
             withheld: unheard.clone(),
             unheard,
             awaiting: None,
@@ -282,17 +288,21 @@ mod tests {
             ..State::default()
         };
         let all = entries(&["t/a", "t/b", "t/c"]);
-        let account = Account::of(&state, &[], &all, &entries(&["t/a", "t/b"]));
+        let heard = entries(&["t/a", "t/b"]);
+        let account = Account::of(&state, &[], &all, &heard);
         let awaiting = Awaiting {
             entries: all.clone(),
             withheld: entries(&["t/c"]),
         };
+        // It records t/c, withheld, and leaves t/b out until a PULL naming it is acknowledged;
+        // the PULL waiting, queued as the whole digest, keeps older dispatchers from sending it.
         let expected = Account {
             plan: PullPlan::Queued,
             queued: Some(all.clone()),
-            recorded: Some(all.clone()),
+            recorded: Some(entries(&["t/a", "t/c"])),
+            untold: entries(&["t/b"]),
             unheard: entries(&["t/c"]),
-            withheld: entries(&["t/b", "t/c"]),
+            withheld: entries(&["t/c"]),
             awaiting: Some(awaiting),
         };
         assert_eq!(account, expected);
@@ -304,21 +314,35 @@ mod tests {
             pull_awaiting: account.awaiting.clone(),
             ..State::default()
         };
-        let pull = Queued {
+        let pull = || Queued {
             key: "pull-2".into(),
             text: "PULL".into(),
             pull_entries: Some(all.clone()),
             pull_withheld: Some(entries(&["t/c"])),
             ..Queued::default()
         };
-        let again = Account::of(&state, &[pull], &all, &entries(&["t/a", "t/b"]));
+        let again = Account::of(&state, &[pull()], &all, &heard);
         assert_eq!(again.plan, PullPlan::Kept("pull-2".into()));
         assert_eq!(
-            (again.withheld, again.awaiting),
-            (expected.withheld, expected.awaiting)
+            (&again.recorded, &again.withheld, &again.awaiting),
+            (&expected.recorded, &expected.withheld, &expected.awaiting)
         );
+        // An older dispatcher acknowledged it, then queued its own for work the recipient does not
+        // hear: that PULL says nothing new to it, and is taken back.
+        let older = Queued {
+            key: "pull-7".into(),
+            pull_withheld: None,
+            ..pull()
+        };
+        let acknowledged = State {
+            pull_entries: Some(all.clone()),
+            ..state
+        };
+        let after = Account::of(&acknowledged, &[older], &all, &heard);
+        assert_eq!(after.plan, PullPlan::Dropped);
+        assert_eq!(after.recorded, Some(all.clone()));
         // An upgrade counts what it hears as told, and leaves what is queued.
-        let upgrade = Account::upgrade(&state, &all, &entries(&["t/a"]));
+        let upgrade = Account::upgrade(&acknowledged, &all, &entries(&["t/a"]));
         assert_eq!(upgrade.withheld, entries(&["t/b", "t/c"]));
         assert_eq!(
             (upgrade.plan, upgrade.queued),

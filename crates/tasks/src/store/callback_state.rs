@@ -25,9 +25,9 @@ pub(super) struct State {
     pub(super) pull: f64,
     pub(super) pull_entries: Option<BTreeSet<Entry>>,
     pub(super) pull_queued: Option<BTreeSet<Entry>>,
-    /// Of `pull_entries`, those no PULL the recipient acknowledged told it: withheld from it, or
-    /// heard since and not yet told. Recorded there all the same, so an older dispatcher never
-    /// sends them.
+    /// Of `pull_entries`, those no PULL the recipient acknowledged told it: withheld from it, and
+    /// recorded there all the same, so an older dispatcher never sends them. An entry it hears and
+    /// was not told is left out of `pull_entries` instead, while the PULL telling it waits.
     pub(super) pull_withheld: BTreeSet<Entry>,
     /// The PULL this generation left queued, as its acknowledgement records it.
     pub(super) pull_awaiting: Option<Awaiting>,
@@ -67,24 +67,22 @@ impl State {
 
     /// The digest entries the PULLs the recipient acknowledged told it, or fewer, never more; none
     /// before the first. Every generation's acknowledgement records the PULL's entries in
-    /// `pull_entries` and ends `pull_queued`; only this one's records what it did not tell. While a
-    /// PULL waits, none was acknowledged since this one's record. Once an older one acknowledged
-    /// a PULL naming an entry the one left awaiting did not, it was its own, which told every
-    /// entry; otherwise it may be the one awaited, so what that one withheld counts as untold. An
-    /// older write that queues no PULL of its own leaves this exact (`revision` is not read). Once
-    /// one did, its PULL of the same entries leaves the same record: work it told is told again
-    /// once it is the recipient's, and never lost.
+    /// `pull_entries` and ends `pull_queued`; only this one's records what it withheld. An older
+    /// write only ever takes entries out of `pull_entries`, and this one leaves out each entry the
+    /// recipient hears and was not told: one there was in the record this one wrote, or came with
+    /// a PULL someone acknowledged since, which told it. So all but what was withheld count as
+    /// told, whoever acknowledged and whatever was queued after (`revision` is not read). Once the
+    /// record names an entry the PULL this one left awaiting did not, the PULL acknowledged was an
+    /// older one's own, which told every entry. Otherwise an older one's own PULL of the same
+    /// entries, which also told what was withheld, reads as the awaited one: work withheld from
+    /// the recipient is told again once a hand-over makes it its own, and never lost.
     pub(super) fn acknowledged(&self) -> Option<BTreeSet<Entry>> {
         let recorded = self.pull_entries.as_ref()?;
-        let untold = match &self.pull_awaiting {
-            Some(awaited) if self.pull_queued.is_none() => {
-                (recorded.is_subset(&awaited.entries)).then_some(&awaited.withheld)
-            }
-            _ => Some(&self.pull_withheld),
-        };
-        Some(match untold {
-            Some(untold) => recorded.difference(untold).cloned().collect(),
-            None => recorded.clone(),
+        let older_own = (self.pull_awaiting.as_ref())
+            .is_some_and(|awaited| !recorded.is_subset(&awaited.entries));
+        Some(match older_own {
+            true => recorded.clone(),
+            false => recorded - &self.pull_withheld,
         })
     }
 }
@@ -224,7 +222,7 @@ mod tests {
     struct Acknowledgement {
         /// `pull_entries` as the acknowledgement recorded them.
         recorded: &'static [&'static str],
-        /// Whether `pull_queued` is still set: no acknowledgement since this generation's write.
+        /// Whether `pull_queued` is set: a PULL of either generation waits.
         queued: bool,
         /// The entries this generation's `pull_withheld` keeps untold.
         withheld: &'static [&'static str],
@@ -235,13 +233,16 @@ mod tests {
 
     #[test]
     fn what_was_told_changes_only_with_an_acknowledgement_and_never_takes_in_what_may_be_untold() {
+        // Told t/a, the recipient hears t/b too, and t/c is withheld from it: the PULL awaited
+        // tells t/b, which this generation's record leaves out until a PULL naming it is
+        // acknowledged.
         let awaited: Option<(&[&str], &[&str])> = Some((&["t/a", "t/b", "t/c"], &["t/c"]));
         let cases = [
-            // Nothing acknowledged since: the untold entries stay untold, whatever is heard now.
+            // Nothing acknowledged since: t/b stays untold.
             Acknowledgement {
-                recorded: &["t/a", "t/b", "t/c"],
+                recorded: &["t/a", "t/c"],
                 queued: true,
-                withheld: &["t/b", "t/c"],
+                withheld: &["t/c"],
                 awaiting: awaited,
                 told: &["t/a"],
             },
@@ -251,23 +252,48 @@ mod tests {
             Acknowledgement {
                 recorded: &["t/a", "t/b", "t/c"],
                 queued: false,
-                withheld: &["t/b", "t/c"],
+                withheld: &["t/c"],
                 awaiting: awaited,
                 told: &["t/a", "t/b"],
+            },
+            // It acknowledged the PULL awaited, then queued its own for work the recipient does
+            // not hear: t/b was told all the same, and that PULL says nothing new.
+            Acknowledgement {
+                recorded: &["t/a", "t/b", "t/c"],
+                queued: true,
+                withheld: &["t/c"],
+                awaiting: awaited,
+                told: &["t/a", "t/b"],
+            },
+            // It took the PULL awaited back unsaid for one of its own: t/b is still untold.
+            Acknowledgement {
+                recorded: &["t/a", "t/c"],
+                queued: true,
+                withheld: &["t/c"],
+                awaiting: awaited,
+                told: &["t/a"],
             },
             // An entry departed before it acknowledged: the awaited PULL still told the rest.
             Acknowledgement {
                 recorded: &["t/a", "t/b"],
                 queued: false,
-                withheld: &["t/b", "t/c"],
+                withheld: &["t/c"],
                 awaiting: awaited,
                 told: &["t/a", "t/b"],
             },
-            // Its own PULL, queued in the awaited one's place for an entry it lacked, named all.
+            // Its own PULL, queued in the awaited one's place for an entry it lacked, named all,
+            // whatever it queued after.
             Acknowledgement {
                 recorded: &["t/a", "t/b", "t/c", "t/d"],
                 queued: false,
-                withheld: &["t/b", "t/c"],
+                withheld: &["t/c"],
+                awaiting: awaited,
+                told: &["t/a", "t/b", "t/c", "t/d"],
+            },
+            Acknowledgement {
+                recorded: &["t/a", "t/b", "t/c", "t/d"],
+                queued: true,
+                withheld: &["t/c"],
                 awaiting: awaited,
                 told: &["t/a", "t/b", "t/c", "t/d"],
             },

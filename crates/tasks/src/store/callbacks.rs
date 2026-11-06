@@ -1097,7 +1097,9 @@ RETURN NONE;");
              UPDATE type::record('callback_state', $handle) SET seen = $seen, narrowing = $narrowing, unknown_children = $unknown_children, snapshot_sequence = $snapshot_sequence, statuses = $statuses, revision = $revision, pull = $pull, pull_queued = $pull_queued,
                 observed_registration = registration_revision ?? 0,
                 pull_entries = IF $legacy_upgrade { $pull_account.recorded ?? pull_entries ?? [] }
-                    ELSE IF $computed AND pull_entries != NONE { array::union(pull_entries.filter(|$entry| $entry IN $pull_current), $pull_account.unheard) } ELSE { pull_entries },
+                    ELSE IF $computed AND pull_entries != NONE {
+                        array::union(pull_entries.filter(|$entry| $entry IN $pull_current AND $entry NOT IN $pull_account.untold), $pull_account.unheard)
+                    } ELSE { pull_entries },
                 pull_withheld = IF $computed { $pull_account.withheld } ELSE { pull_withheld },
                 pull_awaiting = IF $computed { $pull_awaiting } ELSE { pull_awaiting },
                 message_cursor = math::max([message_cursor ?? 0, $message_cursor]),
@@ -1109,7 +1111,7 @@ RETURN NONE;");
                 "pull":if due {self.now()} else {state.pull}, "legacy_upgrade":legacy_upgrade,
                 "pull_queued":account.as_ref().map_or(&state.pull_queued, |a| &a.queued),
                 "pull_awaiting":account.as_ref().and_then(|a| a.awaiting.as_ref()),
-                "pull_account":account.as_ref().map(|a| json!({"recorded":a.recorded, "unheard":a.unheard, "withheld":a.withheld})),
+                "pull_account":account.as_ref().map(|a| json!({"recorded":a.recorded, "unheard":a.unheard, "untold":a.untold, "withheld":a.withheld})),
                 "message_cursor":board.latest_message, "inbox_cursor":board.latest_message,
                 "computed":due, "pull_current":pull_current, "rescoped":rescoped,
                 "pull_kept":pull_kept, "pull_text":pull_text, "replace_pull":pull_replaced}),

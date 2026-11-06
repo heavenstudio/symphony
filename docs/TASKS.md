@@ -318,11 +318,12 @@ the recipient hears now, what the PULLs it acknowledged told it and what the wai
 beyond what it acknowledged, the waiting PULL is taken back; an entry beyond both, shown or only counted, makes a new
 PULL with a retry budget of its own; otherwise the waiting PULL keeps its key and attempts and says the digest as it
 is now. What it was told changes only when it acknowledges a PULL, whichever writer records that, so work it gains
-while one waits is said and work that only departs renews no budget. An older dispatcher that queues no PULL of its
-own leaves what it was told exact, whatever it acknowledges. Only once it queued one of its own and a PULL was
-acknowledged can the record read the same as an acknowledgement of the waiting PULL; then what the waiting PULL
-withheld still counts as untold, so work a hand-over makes the recipient's is counted in one PULL more rather than
-never, and nothing repeats on its own. Posts and verdicts are kept: they were said to whoever held the role then.
+while one waits is said and work that only departs renews no budget. Work it hears is told once a PULL naming it is
+acknowledged, whatever older dispatchers write, queue or acknowledge after. Only what was withheld from it is
+ambiguous, since an older dispatcher's own PULL told it the whole board and reads the same as the waiting one:
+withheld work counts as untold, so when a hand-over makes it the recipient's, one PULL counts it, once more at most
+for that hand-over and never left out, and nothing repeats on its own. Posts and verdicts are kept: they were said to
+whoever held the role then.
 Codex callbacks use the queue by default; `git config sf.codexSteer true` opts in to
 active-turn steering. The owner decides its first live use.
 

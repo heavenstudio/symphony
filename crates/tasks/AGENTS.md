@@ -104,26 +104,24 @@ PULL left untold, and `pull_awaiting` reads an older one's, which records only i
 generation's acknowledgement). A new kind of task-naming line takes its test from there too.
 The contract while an older dispatcher interleaves: no entry the orchestrator hears is ever
 lost, for one no PULL it acknowledged told it is counted by the next; no line is said twice,
-but for the one ambiguous case below; and nothing repeats on its own.
-What was told is read from the last acknowledgement (`State::acknowledged`). While a PULL
-waits, none is taken as made since this generation's record, and what that withheld is untold.
-Once one was acknowledged, what the PULL this generation left awaiting withheld is untold,
-unless the record names an entry that PULL did not: then it was an older one's own, which told
-every entry it records. `revision`, which every older write moves, is not read. So an older
-write that queues no PULL of its own leaves what was told exact, whatever it acknowledges: an
-observation changes neither `pull_entries` nor `pull_queued` (the event counter stays put too,
-but the rule needs no baseline of it), and its acknowledgement of this generation's PULL
-records that PULL's entries, which `pull_awaiting` reads.
-The ambiguous case: an older dispatcher queued a PULL of its own and a PULL was acknowledged
-since this generation last wrote the record. Its acknowledgement of its own PULL, told the
-whole board, and of this generation's PULL with the same entries leave the same record; its
-acknowledgement of this generation's PULL followed by a PULL of its own can read the same as
-that PULL replaced unsaid. Telling them apart needs the older binary changed. There what this
-generation's PULL withheld still counts as untold, so work withheld from the orchestrator as
-another's, which the older PULL told as the whole board, is counted in one PULL more when a
-hand-over makes it its own: at most one repeated row per inherited entry for each such older
-queue and acknowledgement. Once this generation's own PULL is acknowledged, what was told is
-exact again.
+but that work withheld from it, once a hand-over makes it its own, may be counted in one PULL
+more, at most once for that hand-over; and nothing repeats on its own.
+What was told is `pull_entries` but `pull_withheld` (`State::acknowledged`). This generation
+records there what was told and every entry the orchestrator does not hear, and leaves out
+each entry it hears and was not told while the PULL telling it waits (`pull_queued`, the whole
+digest, keeps older dispatchers from sending it). An older write only ever takes entries out of
+`pull_entries`, and every generation's acknowledgement puts in the entries of the PULL it
+acknowledged, which told them. So an entry the orchestrator hears is told once it is there,
+whoever acknowledged and whatever older dispatchers queue and acknowledge after, and untold
+while it is not, even when an older one took this generation's PULL back unsaid for its own.
+`revision`, which every older write moves, is not read.
+What was withheld is the one ambiguity: an older dispatcher's own PULL tells the whole board,
+and its acknowledgement of that PULL and of this generation's with the same entries leave the
+same record; telling them apart needs the older binary changed. So withheld work stays untold
+until a hand-over makes it the orchestrator's: then one PULL counts it, the one repeat when an
+older PULL had told it, and once a PULL naming it is acknowledged it is in `pull_entries`, told
+for good. A record naming an entry the PULL this generation left awaiting (`pull_awaiting`) did
+not is an older one's own PULL acknowledged, which told every entry, withheld ones too.
 Posts, verdicts and AGENT lines stay: they were said to whoever held the role then, and a new
 holder hears no backlog.
 A finished idle pane still closes under the original cleanup rules, retiring its

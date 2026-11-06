@@ -1,9 +1,10 @@
 //! What an orchestrator was told, whichever generation acknowledged its PULL: this one's
 //! acknowledgement records what the PULL withheld, an older one's only the entries it records,
-//! read over the PULL this one left awaiting. An older write that queues no PULL of its own leaves
-//! that exact; only an older dispatcher's own PULL of the same entries leaves the same record, so
-//! work withheld from the orchestrator is counted once more after one when a hand-over makes it
-//! its own, never lost, and nothing repeats after.
+//! read over the PULL this one left awaiting. Work it hears and was not told stays out of that
+//! record until a PULL naming it is acknowledged, so whatever an older dispatcher writes or queues
+//! after, it is never counted again. Only an older dispatcher's own PULL of the same entries
+//! reads as the one awaited, so work withheld from the orchestrator is counted once more after
+//! one when a hand-over makes it its own, never lost, and nothing repeats after.
 
 use super::hand_over_outage::Outage;
 use super::orchestrators::heard;
@@ -212,12 +213,14 @@ fn an_older_observation_never_hides_work_withheld_from_the_orchestrator_until_it
         .move_to("scratch/theirs/review", "review", sender))
     .unwrap();
     outage.cut();
-    assert!(waiting_pull(&outage).is_none());
+    let waiting = waiting_pull(&outage);
+    assert!(waiting.is_none(), "{waiting:?}");
     // A post has an older dispatcher write its observation: it queues no PULL, and none is
     // acknowledged.
     (elsewhere.say("scratch/one", sender, "An ordinary thread note", None)).unwrap();
     older_dispatch(&outage, Older::Observes);
-    assert!(waiting_pull(&outage).is_none());
+    let waiting = waiting_pull(&outage);
+    assert!(waiting.is_none(), "{waiting:?}");
     // The successor's task becomes the former's: the ROLE names it, and the PULL its child too.
     (elsewhere.hand_over("scratch/theirs", successor, former)).unwrap();
     let back = outage.back();
@@ -256,4 +259,70 @@ fn an_inbox_receipt_of_a_pull_keeps_what_it_withheld_untold() {
     let head = "PULL executing=0 ready_unstaffed=10 ";
     assert!(pull.starts_with(head), "{told:?}");
     said_once(&outage, &back);
+}
+
+/// What the former orchestrator heard of the successor's task before it was handed over.
+#[derive(Clone, Copy, Debug)]
+enum Before {
+    /// Nothing: the PULL an older dispatcher delivered was this generation's, which withheld it.
+    Withheld,
+    /// An older dispatcher's own PULL, queued for the task's departure and return, told it the
+    /// whole board: the PULL after the hand-over is the one repeat.
+    ToldByAnOlderPull,
+}
+
+#[test]
+fn work_a_hand_over_brings_is_counted_in_one_pull_however_many_an_older_dispatcher_queues_after() {
+    for before in [Before::Withheld, Before::ToldByAnOlderPull] {
+        let outage = waited(Attempts::One);
+        let Outage {
+            fixture,
+            elsewhere,
+            former,
+            successor,
+            sender,
+        } = &outage;
+        if let Before::ToldByAnOlderPull = before {
+            (elsewhere.move_to("scratch/theirs", "backlog", sender)).unwrap();
+            older_dispatch(&outage, Older::Computes);
+            (elsewhere.move_to("scratch/theirs", "ready", sender)).unwrap();
+            older_dispatch(&outage, Older::Computes);
+        }
+        older_acknowledges(&outage);
+        // The successor orchestrates other work too, which the former never hears.
+        let foreign = NewTask::new("scratch/foreign", "Jump departure", "owner");
+        elsewhere.create(&foreign).unwrap();
+        (elsewhere.take_role("scratch/foreign", successor, "orchestrator")).unwrap();
+        // One hand-over: one PULL counts the task, and an older dispatcher delivers it.
+        (elsewhere.hand_over("scratch/theirs", successor, former)).unwrap();
+        fixture.store.dispatch_callbacks_snapshot().unwrap();
+        let counted = waiting_pull(&outage).expect("a PULL waits");
+        let head = "PULL executing=0 ready_unstaffed=10 ";
+        assert!(counted.text.starts_with(head), "{before:?}: {counted:?}");
+        older_acknowledges(&outage);
+        // Before this generation looks again, it queues a PULL of its own for the successor's new
+        // work, and again each time more comes: none says anything new to the former, and each is
+        // taken back.
+        for cycle in 0..3 {
+            let new = NewTask {
+                parent: Some("scratch/foreign".into()),
+                ..NewTask::new(&format!("scratch/foreign/{cycle}"), "A row", "owner")
+            };
+            elsewhere.create(&new).unwrap();
+            older_dispatch(&outage, Older::Computes);
+            let own = waiting_pull(&outage).expect("its own PULL waits");
+            let whole = format!(" ready_unstaffed={} ", 12 + cycle);
+            assert!(
+                own.text.contains(&whole),
+                "{before:?}, cycle {cycle}: {own:?}"
+            );
+            fixture.store.dispatch_callbacks_snapshot().unwrap();
+            let waiting = waiting_pull(&outage);
+            assert!(waiting.is_none(), "{before:?}, cycle {cycle}: {waiting:?}");
+        }
+        let back = outage.back();
+        let told = heard(fixture, sender, &[(&back, former)]).remove(0);
+        assert_eq!(told, Vec::<String>::new(), "{before:?}");
+        said_once(&outage, &back);
+    }
 }
