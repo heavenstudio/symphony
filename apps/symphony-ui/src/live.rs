@@ -101,7 +101,7 @@ pub fn App() -> Element {
         "tasks" => rsx! { crate::board_live::TasksPage { key: "{current.scope}" } },
         #[cfg(feature = "page-docs")]
         _ if current.document => {
-            rsx! { main { "data-notices": "",
+            rsx! { main {
                 if !current.folder {
                     crate::docs_live::DocumentPage { key: "{current.scope}/{current.path}", path: current.path.clone(), scope: current.scope.clone() }
                 } else {
@@ -126,7 +126,7 @@ pub fn App() -> Element {
     };
     rsx! {
         crate::frame::Frame { route: current.clone(),
-        SuspenseBoundary { fallback: |_| rsx! { main { "data-notices": "", p { "Loading page…" } PageNotices { reconnecting: false } } },
+        SuspenseBoundary { fallback: |_| rsx! { main { p { "Loading page…" } PageNotices { reconnecting: false } } },
         {page}
         }
         }

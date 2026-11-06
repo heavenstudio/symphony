@@ -24,6 +24,7 @@ mod common;
 mod components;
 mod folder;
 mod look_parity;
+mod notice_layout;
 mod owner_controls;
 mod restored;
 mod site;
@@ -1029,112 +1030,6 @@ fn one_feed_event_changes_one_card_in_place_with_no_page_fetch() {
         "the other cards stay as they were"
     );
     assert_eq!(texts(&mut chrome, ".tile b")[0], "37");
-}
-
-#[test]
-fn a_stale_notice_leaves_header_and_fixed_controls_uncovered() {
-    let site = site();
-    site.set_json(
-        "/api/pending",
-        &json!({"docs":["docs/PROBE.md"],"items":[{"path":"docs/PROBE.md","slug":"probe","href":"/docs/PROBE.md#probe","branch":null}]}),
-    );
-    let Some(mut chrome) = chrome() else { return };
-    chrome.open(&site.url("/"));
-    wait_for_board(&mut chrome);
-    assert!(chrome.wait_for(
-        "document.querySelector('#quick-open') !== null && document.querySelector('.frame-pending') !== null",
-        SHOWN
-    ));
-    assert!(wait_for_feed(&site), "the page never followed the feed");
-    site.fail_feeds(usize::MAX);
-    site.drop_feeds();
-    assert!(chrome.wait_for(
-        "document.querySelector('main[data-feed=stale] .stale') !== null",
-        SHOWN
-    ));
-    for width in [320, 390, 1024] {
-        chrome.call(
-            "Emulation.setDeviceMetricsOverride",
-            json!({"width":width,"height":900,"deviceScaleFactor":1,"mobile":false}),
-        );
-        chrome.eval("scrollTo(0,0); new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))");
-        assert_eq!(
-            chrome.eval(r#"(() => {
-                const pill = document.querySelector('main[data-feed=stale] .stale').getBoundingClientRect();
-                const links = [...document.querySelectorAll('.app-header a')];
-                const controls = [...links, ...document.querySelectorAll('.app-header button, #quick-open, .frame-pending')];
-                const overlaps = controls.filter(control => {
-                    const box = control.getBoundingClientRect();
-                    return box.width > 0 && box.height > 0 && pill.left < box.right && pill.right > box.left && pill.top < box.bottom && pill.bottom > box.top;
-                }).map(control => control.id || control.textContent.trim());
-                return {
-                    visible: pill.width > 0 && pill.height > 0 && pill.left >= 0 && pill.right <= innerWidth && pill.top >= 0 && pill.bottom <= innerHeight,
-                    headerLinksPresent: links.length >= 5 && links.every(link => { const box = link.getBoundingClientRect(); return box.width > 0 && box.height > 0 && box.top >= 0 && box.bottom <= innerHeight; }),
-                    overlaps
-                };
-            })()"#),
-            json!({"visible":true,"headerLinksPresent":true,"overlaps":[]}),
-            "at {width}px, the stale notice must leave visible header links and fixed controls uncovered"
-        );
-    }
-}
-
-#[test]
-fn a_stale_notice_leaves_the_task_composer_clear_at_page_end_without_scroll_clamping() {
-    let site = site();
-    let responses = look_parity::responses();
-    for path in ["/api/task-page", "/api/task-history"] {
-        site.set_json(path, &responses[path]);
-    }
-    let Some(mut chrome) = chrome() else { return };
-    chrome.open(&site.url("/task/visual/in-progress"));
-    assert!(chrome.wait_for("document.querySelector('article.task') !== null", SHOWN));
-    for width in [320, 390, 1024] {
-        chrome.call(
-            "Emulation.setDeviceMetricsOverride",
-            json!({"width":width,"height":900,"deviceScaleFactor":1,"mobile":false}),
-        );
-        chrome.eval("scrollTo(0,document.documentElement.scrollHeight)");
-        assert!(chrome.wait_for(
-            "document.querySelector('#task-send [role=combobox]') !== null && document.querySelector('#task-send button[type=submit]') !== null",
-            SHOWN
-        ));
-        chrome.eval("scrollTo(0,document.documentElement.scrollHeight); new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))");
-        chrome.eval("window.pageEndScroll=scrollY; window.pageEndHeight=document.documentElement.scrollHeight");
-        assert!(wait_for_feed(&site), "the page never followed the feed");
-        site.fail_feeds(usize::MAX);
-        site.drop_feeds();
-        assert!(chrome.wait_for(
-            "document.querySelector('main[data-feed=stale] .stale') !== null",
-            SHOWN
-        ));
-        assert_eq!(
-            chrome.eval(r#"(() => {
-                const notice = document.querySelector('main[data-feed=stale] .stale'), pill = notice.getBoundingClientRect();
-                const controls = [document.querySelector('#task-send [role=combobox]'), document.querySelector('#task-send button[type=submit]')];
-                return {
-                    atEnd: scrollY === Math.max(0, document.documentElement.scrollHeight - innerHeight),
-                    unchanged: scrollY === pageEndScroll && document.documentElement.scrollHeight === pageEndHeight,
-                    composerClear: controls.every(control => { const box = control.getBoundingClientRect(); return box.width > 0 && box.height > 0 && box.top >= 0 && box.bottom <= innerHeight && (box.right <= pill.left || box.left >= pill.right || box.bottom <= pill.top || box.top >= pill.bottom); }),
-                    noticeCatchesTap: document.elementFromPoint(pill.left + pill.width/2, pill.top + pill.height/2)?.closest('.stale') === notice
-                };
-            })()"#),
-            json!({"atEnd":true,"unchanged":true,"composerClear":true,"noticeCatchesTap":true}),
-            "at {width}px, a stale page-end composer must stay visible and clear without moving the reading position"
-        );
-        site.fail_feeds(0);
-        assert!(chrome.wait_for(
-            "document.querySelector('main')?.dataset.feed==='live'",
-            SHOWN
-        ));
-        assert_eq!(
-            chrome.eval(
-                "scrollY===pageEndScroll && document.documentElement.scrollHeight===pageEndHeight"
-            ),
-            json!(true),
-            "at {width}px, going live must retain the page-end reserve and never clamp scroll"
-        );
-    }
 }
 
 #[test]

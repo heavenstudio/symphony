@@ -5,11 +5,12 @@
 //! [`spawn_output`], [`spawn_piped`], [`pipe`]): without a fork and through pipes no child another
 //! thread spawns can hold open, from the leaf the cwd scans share ([`process_cwd::spawn`]), and
 //! the lock a std spawn beside them takes ([`spawning`], [`Spawning`]); and a TCP connection no
-//! spawn copies ([`connect`]).
+//! spawn copies ([`connect`]). An async caller awaits a child's end through [`Exit`].
 
 use std::ffi::{c_char, c_int, c_long};
 use std::fs::File;
 
+pub use process_cwd::exit::Exit;
 pub use process_cwd::spawn::{
     Child, Command, Spawning, Stdio, connect, output, pipe, set_nonblocking, spawn_output,
     spawn_piped, spawning, wait_output,

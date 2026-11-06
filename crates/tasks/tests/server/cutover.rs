@@ -3,13 +3,13 @@
 //! them, with no `TASKS_*` variable naming either.
 
 use crate::common::{GuardedSurreal, Scratch, command_of, gone, signal};
+use crate::helper::{answer, event_of};
 use crate::sqlite;
 use std::fs;
 use std::io::{Read, Write};
 use std::net::UdpSocket;
 use std::os::unix::process::ExitStatusExt;
 use std::path::{Path, PathBuf};
-use std::time::Duration;
 use symphony_board::cli::Env;
 use symphony_board::server::{FOLDER, Home, Running};
 use symphony_board::sys::{Child, Command, Stdio};
@@ -175,9 +175,6 @@ impl Drop for TestProcess {
 fn servers_end_when_the_fixture_process_is_killed_without_dropping_it() {
     for route in ["cutover", "own-server", "home"] {
         let events = UdpSocket::bind("127.0.0.1:0").unwrap();
-        events
-            .set_read_timeout(Some(Duration::from_secs(20)))
-            .unwrap();
         let mut child = TestProcess(
             crate::store::spawn_with_input(
                 Command::new(std::env::current_exe().unwrap())
@@ -198,9 +195,8 @@ fn servers_end_when_the_fixture_process_is_killed_without_dropping_it() {
             .unwrap(),
         );
         let mut message = [0; 8192];
-        let size = events
-            .recv(&mut message)
-            .expect("the fixture's server must become ready");
+        let size = event_of(&events, &mut child.0, &mut message)
+            .unwrap_or_else(|why| panic!("{route}: the fixture's server must become ready: {why}"));
         let (dir, data, running): (PathBuf, String, Running) =
             serde_json::from_slice(&message[..size]).unwrap();
         assert!(rpc::healthy(&running.addr), "{route}: server is ready");
@@ -233,9 +229,6 @@ fn fixture_descendants_release_the_slot_while_the_server_is_running() {
     fs::create_dir_all(&dir).unwrap();
     let slot = dir.join("slot.lock");
     let events = UdpSocket::bind("127.0.0.1:0").unwrap();
-    events
-        .set_read_timeout(Some(Duration::from_secs(20)))
-        .unwrap();
     let mut child = TestProcess(
         crate::store::spawn_with_input(
             Command::new(std::env::current_exe().unwrap())
@@ -266,9 +259,8 @@ fn fixture_descendants_release_the_slot_while_the_server_is_running() {
             .is_ok()
     };
     let mut message = [0; 8192];
-    let size = events
-        .recv(&mut message)
-        .expect("helper must hold the slot");
+    let size = event_of(&events, &mut child.0, &mut message)
+        .unwrap_or_else(|why| panic!("helper must hold the slot: {why}"));
     assert_eq!(&message[..size], b"locked");
     assert!(
         !can_lock(),
@@ -276,9 +268,8 @@ fn fixture_descendants_release_the_slot_while_the_server_is_running() {
     );
     child.0.stdin.as_mut().unwrap().write_all(b"g").unwrap();
 
-    let size = events
-        .recv(&mut message)
-        .expect("fixture server must become ready");
+    let size = event_of(&events, &mut child.0, &mut message)
+        .unwrap_or_else(|why| panic!("fixture server must become ready: {why}"));
     let (_, _, running): (PathBuf, String, Running) =
         serde_json::from_slice(&message[..size]).unwrap();
     assert!(
@@ -318,7 +309,7 @@ fn helper_fixture_process() {
         // slot, as real fixture descendants do; the outer test never owns a copy of its lock.
         // SAFETY: F_SETFD is 2 on both supported systems, and this process owns the descriptor.
         assert_eq!(unsafe { fcntl(file.as_raw_fd(), 2, 0) }, 0);
-        events.send(b"locked").unwrap();
+        answer(&events, b"locked");
         let mut go = [0];
         std::io::stdin().read_exact(&mut go).unwrap();
         assert_eq!(&go, b"g");
@@ -326,9 +317,7 @@ fn helper_fixture_process() {
     });
     let hold = |dir: &Path, data: String, running: Running| {
         drop(slot);
-        events
-            .send(&serde_json::to_vec(&(dir, data, running)).unwrap())
-            .unwrap();
+        answer(&events, &serde_json::to_vec(&(dir, data, running)).unwrap());
         let mut byte = [0];
         assert_eq!(std::io::stdin().read(&mut byte).unwrap(), 0);
     };
