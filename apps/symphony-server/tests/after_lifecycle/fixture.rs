@@ -296,6 +296,11 @@ fn wait_cleanup(
         Some(Err(error)) => format!("{}: {error}", why()),
         None => format!("timed out: {}", why()),
     };
+    cleanup_failed(&message);
+}
+
+/// Fail a passing case with `message`; beside an original failure, report it and keep that one.
+fn cleanup_failed(message: &str) {
     if std::thread::panicking() {
         eprintln!("{message}");
     } else {
@@ -380,7 +385,8 @@ impl Executable {
 }
 
 /// Every descendant inherits the writer. EOF proves even an orphaned fixture command has
-/// stopped using scratch, including subprocesses of a census shell cancelled by the server.
+/// stopped using scratch. A server starts its own children without it: those stand-ins hold
+/// [`StandIns`] instead.
 struct Descendants {
     reader: File,
     origin: String,
@@ -471,6 +477,65 @@ fn above_shell_descriptors(file: File) -> File {
     );
     // SAFETY: fcntl just returned this new descriptor; ownership is transferred once.
     unsafe { File::from_raw_fd(raised) }
+}
+
+/// The FIFO, below a case's scratch (its fixture `HOME`), that a stand-in opens for writing before
+/// it writes anything (`ps.sh`).
+const STAND_IN_LIFETIME: &str = "stand-ins/lifetime";
+
+/// The end of every fixture stand-in a server starts itself. A server starts its census `ps`
+/// without a fork, handing it none of the case's [`Descendants`] endpoints, and its stop kills
+/// that shell alone: a child the shell had started (`mv`) still renamed a file into scratch after
+/// the server had ended. The stand-in holds this FIFO's writer instead, as does everything it
+/// starts, so its reader's EOF proves they have all ended.
+struct StandIns {
+    fifo: PathBuf,
+    lifetime: Descendants,
+    closed: bool,
+}
+
+impl StandIns {
+    fn open(home: &Path) -> Self {
+        let fifo = home.join(STAND_IN_LIFETIME);
+        fs::create_dir(fifo.parent().unwrap()).unwrap();
+        mkfifo(&fifo);
+        // Held until the case ends, so a stand-in's open never waits for a reader.
+        let reader = fs::OpenOptions::new()
+            .read(true)
+            .custom_flags(libc::O_NONBLOCK)
+            .open(&fifo)
+            .unwrap();
+        Self {
+            lifetime: Descendants {
+                reader,
+                origin: format!("fixture stand-ins holding {}", fifo.display()),
+                wait_elapsed: Box::new(Instant::elapsed),
+            },
+            fifo,
+            closed: false,
+        }
+    }
+
+    /// Remove the FIFO and its folder, so a stand-in starting later cannot open it, nor create it,
+    /// and writes nothing; then wait for every one that did to end.
+    fn close(&mut self) {
+        if !std::mem::replace(&mut self.closed, true)
+            && let Err(error) = fs::remove_file(&self.fifo)
+                .and_then(|()| fs::remove_dir(self.fifo.parent().unwrap()))
+        {
+            cleanup_failed(&format!(
+                "cannot close the stand-in lifetime {}: {error}",
+                self.fifo.display()
+            ));
+        }
+        self.lifetime.wait();
+    }
+}
+
+impl Drop for StandIns {
+    fn drop(&mut self) {
+        self.close();
+    }
 }
 
 impl Process {
@@ -703,6 +768,7 @@ pub struct Repo {
     pub builds: PathBuf,
     detached: Mutex<Vec<i64>>,
     descendants: Mutex<Vec<Descendants>>,
+    stand_ins: Mutex<StandIns>,
     next: AtomicUsize,
     _scratch: Scratch,
 }
@@ -710,6 +776,8 @@ pub struct Repo {
 impl Repo {
     pub fn new(name: &str) -> Self {
         let scratch = Scratch::new(name);
+        // Before the first command: preparation runs the ps stand-in too.
+        let stand_ins = StandIns::open(&scratch.path);
         prepare_app(&scratch.path.join("prepare-app"));
         let base = scratch.path.clone();
         let main = base.join("main with spaces");
@@ -775,6 +843,7 @@ impl Repo {
             bin,
             detached: Mutex::new(Vec::new()),
             descendants: Mutex::new(Vec::new()),
+            stand_ins: Mutex::new(stand_ins),
             next: AtomicUsize::new(0),
             _scratch: scratch,
         };
@@ -1010,6 +1079,12 @@ impl Repo {
             );
         }
     }
+
+    /// Once no server or command of this case runs, refuse every later stand-in and wait for
+    /// those that started to end ([`StandIns`]).
+    fn close_stand_ins(&self) {
+        self.stand_ins.lock().unwrap().close();
+    }
 }
 
 impl Drop for Repo {
@@ -1018,6 +1093,7 @@ impl Drop for Repo {
         for descendants in self.descendants.lock().unwrap().iter_mut() {
             descendants.wait();
         }
+        self.close_stand_ins();
         profile_warm(&fs::read_to_string(self.home.join("server.log")).unwrap_or_default());
     }
 }
