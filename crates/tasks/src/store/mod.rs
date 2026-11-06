@@ -7,10 +7,9 @@
 //! could make a session healthier moves its `last_seen`). A write that meets another's (SurrealDB's
 //! optimistic conflict) or finds itself stale reads and decides again.
 
-use crate::cbor;
 use crate::health::{self, EXECUTING, Health};
 pub(crate) use crate::pyjson::repr;
-use crate::rows::{Dump, LinkRow, MessageRow, RoleRow, SessionRow, TaskRow};
+use crate::rows::{LinkRow, MessageRow, RoleRow, SessionRow, TaskRow};
 use crate::rpc::{Client, DbError};
 use crate::schema;
 use serde::Deserialize;
@@ -24,6 +23,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 mod callback_peer;
 mod callbacks;
+mod copy;
 mod depends;
 mod embeddings;
 mod fields;
@@ -35,6 +35,8 @@ mod transaction;
 mod work;
 
 pub use callbacks::Callback;
+pub use copy::Moved;
+pub(crate) use copy::WRITTEN_SINCE;
 pub use embeddings::{EmbeddingStats, VectorHit, VectorSearchProfile};
 pub use launches::NewLaunch;
 pub use search::SearchHit;
@@ -219,197 +221,6 @@ impl Store {
     /// The time by this store's clock.
     pub fn now(&self) -> f64 {
         (self.clock)()
-    }
-
-    /// Make the board `dump`, replacing whatever was there. The rows go up in requests the server takes
-    /// and land in one transaction: a dump that cannot be written leaves the board as it was.
-    pub fn copy(&self, dump: &Dump) -> Result<(), Error> {
-        self.copy_into(dump, None)
-    }
-
-    /// As [`Store::copy`], for the move from the SQLite board at `from`: in the copy's one transaction,
-    /// refused, changing nothing, if the board holds a move and was written since ([`Store::moved`]),
-    /// and recording this move, with a hash of the rows it leaves.
-    pub fn move_in(&self, dump: &Dump, from: &str) -> Result<(), Error> {
-        self.copy_into(dump, Some(from))
-    }
-
-    /// The move from SQLite this board holds, if it holds one ([`Store::move_in`]).
-    pub fn moved(&self) -> Result<Option<Moved>, Error> {
-        let sql = format!(
-            "LET $was = (SELECT * FROM ONLY moved:sqlite);
-             RETURN IF $was = NONE {{ NONE }} ELSE {{ {{ board: $was.board, at: $was.at, written_since: $was.rows != {ROWS} }} }};"
-        );
-        self.retrying(|| self.transact(&sql, json!({})))
-    }
-
-    /// Remove every copy's staging table (`copy_…`): what a copy killed while it staged leaves. Only for
-    /// a caller that knows no copy runs meanwhile (the move, under its lock).
-    pub fn remove_staging(&self) -> Result<(), Error> {
-        let tables: Vec<String> = self
-            .retrying(|| self.transact("RETURN object::keys((INFO FOR DB).tables);", json!({})))?;
-        let remove: String = tables
-            .iter()
-            .filter(|table| {
-                table.starts_with("copy_")
-                    && table.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
-            })
-            .map(|table| format!("REMOVE TABLE IF EXISTS {table};"))
-            .collect();
-        if !remove.is_empty() {
-            self.retrying(|| Ok(self.client.query(&remove, json!({}))?))?;
-        }
-        Ok(())
-    }
-
-    fn copy_into(&self, dump: &Dump, from: Option<&str>) -> Result<(), Error> {
-        let keyed = |rows: Vec<Value>, key: &dyn Fn(&Value) -> Value| -> Vec<Value> {
-            rows.into_iter()
-                .map(|mut row| {
-                    row["id"] = key(&row);
-                    row
-                })
-                .collect()
-        };
-        // SQLite's row id is the record's `sid`.
-        let with_sid = |mut row: Value| {
-            row["sid"] = row["id"].clone();
-            row
-        };
-        let tables = [
-            (
-                "task",
-                keyed(
-                    values(&dump.tasks).into_iter().map(with_sid).collect(),
-                    &|r| r["slug"].clone(),
-                ),
-            ),
-            (
-                "link",
-                keyed(values(&dump.task_links), &|r| {
-                    json!([r["slug"], r["kind"], r["target"]])
-                }),
-            ),
-            (
-                "session",
-                keyed(values(&dump.sessions), &|r| r["handle"].clone()),
-            ),
-            (
-                "role",
-                keyed(values(&dump.roles), &|r| {
-                    json!([r["slug"], r["handle"], r["role"]])
-                }),
-            ),
-            (
-                "message",
-                keyed(
-                    values(&dump.messages).into_iter().map(with_sid).collect(),
-                    &|r| json!([r["slug"], r["sid"]]),
-                ),
-            ),
-            (
-                "delivery",
-                keyed(values(&dump.deliveries), &|r| {
-                    json!([r["message"], r["handle"]])
-                }),
-            ),
-            (
-                "barred_key",
-                keyed(values(&dump.barred_keys), &|r| r["key"].clone()),
-            ),
-            (
-                "task_session",
-                keyed(values(&dump.task_sessions), &|r| {
-                    json!([r["slug"], r["handle"]])
-                }),
-            ),
-        ];
-        let last = dump.messages.iter().map(|m| m.id).max().unwrap_or(0);
-        let last_task = dump.tasks.iter().map(|t| t.id).max().unwrap_or(0);
-        let last_ts = dump.messages.iter().map(|m| m.ts).reduce(f64::max);
-        let staging = format!(
-            "copy_{:016x}",
-            RandomState::new().hash_one(std::process::id())
-        );
-        let copied = self.stage(&staging, &tables).and_then(|()| {
-            let mut swap = String::new();
-            if from.is_some() {
-                let _ = writeln!(
-                    swap,
-                    "LET $was = (SELECT * FROM ONLY moved:sqlite);
-                     IF $was != NONE AND $was.rows != {ROWS} {{ THROW string::concat($refused, $was.board, $since) }};"
-                );
-            }
-            for (table, _) in &tables {
-                let _ = writeln!(
-                    swap,
-                    "DELETE {table}; INSERT INTO {table} (SELECT VALUE row FROM {staging}_{table}) RETURN NONE; REMOVE TABLE {staging}_{table};"
-                );
-            }
-            // These caches describe the replaced board and are rebuilt by catch-up. Keep the
-            // reset in the swap transaction so a refused copy preserves the current index.
-            swap.push_str("DELETE task_chunk RETURN NONE; DELETE task_embedding_source RETURN NONE; DELETE task_embedding_checkpoint RETURN NONE;\n");
-            swap.push_str("UPSERT counter:message SET last = $last, ts = $last_ts RETURN NONE;\nUPSERT counter:task SET last = $last_task RETURN NONE;\n");
-            if from.is_some() {
-                let _ = writeln!(
-                    swap,
-                    "UPSERT moved:sqlite SET board = $from, at = $at, rows = {ROWS} RETURN NONE;"
-                );
-            }
-            swap.push_str("RETURN NONE;");
-            let vars = json!({
-                "last": last, "last_ts": last_ts, "last_task": last_task,
-                "from": from, "at": self.now(),
-                "refused": format!("{REFUSED}{}", WRITTEN_SINCE.0), "since": WRITTEN_SINCE.1,
-            });
-            self.retrying(|| self.transact::<Value>(&swap, vars.clone())).map(|_| ())
-        });
-        if copied.is_err() {
-            let remove: String = tables
-                .iter()
-                .map(|(table, _)| format!("REMOVE TABLE IF EXISTS {staging}_{table};"))
-                .collect();
-            let _ = self.client.query(&remove, json!({}));
-        }
-        copied
-    }
-
-    /// Every row of `tables` into schemaless tables named `{staging}_{table}`, each request at most
-    /// `CHUNK_BYTES`: a board is bigger than the server takes in one. The copy's one transaction then
-    /// moves them in.
-    fn stage(&self, staging: &str, tables: &[(&str, Vec<Value>)]) -> Result<(), Error> {
-        let send = |sql: &str, vars: Value| {
-            self.retrying(|| Ok(self.client.query(sql, vars.clone())?))
-                .map(|_| ())
-        };
-        let define: String = tables
-            .iter()
-            .map(|(table, _)| format!("DEFINE TABLE {staging}_{table} SCHEMALESS;"))
-            .collect();
-        send(&define, json!({}))?;
-        for (table, rows) in tables {
-            let insert = format!("INSERT INTO {staging}_{table} $rows RETURN NONE;");
-            let (mut chunk, mut bytes) = (Vec::new(), 0);
-            for row in rows {
-                let size = cbor::encode(row).len();
-                if bytes + size > CHUNK_BYTES && !chunk.is_empty() {
-                    send(&insert, json!({"rows": std::mem::take(&mut chunk)}))?;
-                    bytes = 0;
-                }
-                chunk.push(json!({"row": row}));
-                bytes += size;
-            }
-            if !chunk.is_empty() {
-                send(&insert, json!({"rows": chunk}))?;
-            }
-        }
-        Ok(())
-    }
-
-    /// Every row of the board, in the shape the copy reads, each table in the order of its key: what a
-    /// copy wrote, read back.
-    pub fn dump(&self) -> Result<Dump, Error> {
-        self.retrying(|| self.transact(DUMP, json!({})))
     }
 
     /// Every task and session, with health, in one round trip.
@@ -685,11 +496,8 @@ impl Store {
             })
         })?;
         if verdict == "changes" {
-            self.tell_if_unread(
-                slug,
-                None,
-                &format!("the changes verdict from {handle} to @executor"),
-            );
+            let what = format!("the changes verdict from {handle} to @executor");
+            self.tell_if_unread(slug, None, &what, None);
         }
         Ok(task)
     }
@@ -893,48 +701,6 @@ impl Store {
             }
         }
     }
-}
-
-/// The most a copy sends in one request: the server takes 4 MiB (`SURREAL_HTTP_MAX_RPC_BODY_SIZE`).
-const CHUNK_BYTES: usize = 1 << 20;
-
-const DUMP: &str = "RETURN {
-    tasks: (SELECT * OMIT id, version FROM task ORDER BY sid),
-    task_links: (SELECT * OMIT id FROM link ORDER BY slug, kind, target),
-    sessions: (SELECT * OMIT id FROM session ORDER BY handle),
-    roles: (SELECT * OMIT id FROM role ORDER BY slug, handle, role),
-    messages: (SELECT * OMIT id FROM message ORDER BY sid),
-    deliveries: (SELECT * OMIT id FROM delivery ORDER BY message, handle),
-    barred_keys: (SELECT * OMIT id FROM barred_key ORDER BY key),
-    task_sessions: (SELECT * OMIT id FROM task_session ORDER BY slug, handle),
-};";
-
-/// Every row the copy writes, the counters with them, in the order of their keys, as one hash: the same
-/// as long as nothing is written.
-const ROWS: &str = "crypto::sha256(<string> [
-    (SELECT * FROM task ORDER BY id), (SELECT * FROM link ORDER BY id),
-    (SELECT * FROM session ORDER BY id), (SELECT * FROM role ORDER BY id),
-    (SELECT * FROM message ORDER BY id), (SELECT * FROM delivery ORDER BY id),
-    (SELECT * FROM barred_key ORDER BY id), (SELECT * FROM task_session ORDER BY id),
-    (SELECT * FROM counter ORDER BY id),
-])";
-
-/// What a move into a board written since its move is refused with, before and after that move's board.
-pub(crate) const WRITTEN_SINCE: (&str, &str) = (
-    "the SurrealDB board holds the move of ",
-    " and was written since, which a move into it would lose",
-);
-
-/// The move from SQLite a board holds ([`Store::move_in`]).
-#[derive(Debug, Clone, PartialEq, Deserialize)]
-pub struct Moved {
-    /// The SQLite board it moved.
-    #[serde(rename = "board")]
-    pub from: String,
-    /// When, by the clock of the store that moved it.
-    pub at: f64,
-    /// Whether a row changed since: a move into the board now would lose it.
-    pub written_since: bool,
 }
 
 /// One session, `$handle`, and whether it holds work another could take over (a `Found`). Needs

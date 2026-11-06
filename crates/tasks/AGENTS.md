@@ -90,6 +90,16 @@ executor can read (no callback, and its launch record closed or no live beat) ad
 `board` post to `@orchestrator` on the
 thread after the write commits (`store/messages.rs`, `tell_if_unread`); its failure is
 said on stderr, never turned into a failed write.
+A post under a key (`Store::say_keyed`; `tasks api` `say` with `key`) is made once per key on
+a thread: its transaction makes the first post's line and `delivery_key:[slug, key]`, and
+answers that line to every later post under the key, writing nothing, so a caller that may have
+posted without reading its answer repeats the call rather than reading the thread, and a request
+of its that outlived it cannot post twice. Asked to adopt (`Store::adopt_or_say`; `say` with
+`adopt`), a key naming no line yet takes the thread's earliest line reading exactly the text to
+the recipient, one made under no key, and writes nothing. The board's notice that no executor
+reads a line is itself under the line's key (`unread:<id>`, taking a notice of the line made under
+no key), so a post repeated under a key, or one that took a line, says it when nothing said so
+yet, and never twice. The copy carries the keys with the board.
 Restore prompts re-register the resumed process's callback first.
 Neither channel checks nor delivery fabricate tool calls.
 Outbox rows are indexed by handle
@@ -218,6 +228,14 @@ tests never sweep this repository; the sweep's own tests (`tests/sweep/`) build
 real repositories in a temporary folder, and spawn the binary `TASKS_BIN` names
 for the triggers, which stands in for the main checkout's build only on a
 board `TASKS_SERVER` names.
+`on_review.rs` owns the command a task moving to review starts: `[board]
+on_review` in the main checkout's `symphony.toml`, read by the board itself
+there (the default is none), run detached from the main checkout with the
+task's slug, its branch (the slug, or what follows a `review/` or `review-N/`
+prefix) and that branch's tip appended, its output appended to
+`sf-tasks/on-review.log`; a slug naming no branch starts nothing and the log
+says so. A board `TASKS_SERVER` names starts none unless `TASKS_ON_REVIEW=on`,
+and `off` starts none anywhere (`tests/sweep/on_review.rs`).
 
 Its store tests start one in-memory server per test binary and give each test a
 database of its own. The server is the pinned SurrealDB `tools/surreal.sh`
