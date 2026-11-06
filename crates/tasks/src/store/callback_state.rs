@@ -4,7 +4,7 @@
 //! line either generation said is never said again by the other.
 
 use crate::cli::attach;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
 /// A digest entry: its list, and the slug or handle it names.
@@ -13,9 +13,9 @@ pub(super) type Entry = (String, String);
 /// Dispatchers built before one orchestrator per task read and write `seen`, `statuses`,
 /// `pull_entries` and `pull_queued` in their whole-board meaning: the legacy look
 /// ([`attach::legacy_seen`]), every open task's status and every digest entry. A newer one keeps
-/// those as they would, and what its orchestrator hears in fields they ignore, `narrowing` and
-/// `pull_withheld`, read over them ([`State::heard`], [`State::told`]); otherwise each writer's
-/// diff repeats the other's lines.
+/// those as they would, and what its orchestrator hears and was told in fields they ignore,
+/// `narrowing`, `pull_withheld` and `pull_awaiting`, read over them ([`State::heard`],
+/// [`State::acknowledged`]); otherwise each writer's diff repeats the other's lines.
 #[derive(Default, Deserialize)]
 #[serde(default)]
 pub(super) struct State {
@@ -25,9 +25,12 @@ pub(super) struct State {
     pub(super) pull: f64,
     pub(super) pull_entries: Option<BTreeSet<Entry>>,
     pub(super) pull_queued: Option<BTreeSet<Entry>>,
-    /// The entries the heard digest left out of the whole one when last computed. They are
-    /// recorded in `pull_entries` too, so an older dispatcher never sends them.
+    /// Of `pull_entries`, those no PULL the recipient acknowledged told it: withheld from it, or
+    /// heard since and not yet told. Recorded there all the same, so an older dispatcher never
+    /// sends them.
     pub(super) pull_withheld: BTreeSet<Entry>,
+    /// The PULL this generation left queued, as its acknowledgement records it.
+    pub(super) pull_awaiting: Option<Awaiting>,
     // Legacy dispatchers replace Seen wholesale. They leave these stream fields untouched.
     pub(super) message_cursor: Option<i64>,
     pub(super) delivery_version: Option<u32>,
@@ -62,11 +65,33 @@ impl State {
         self.seen.as_ref().map(narrowed)
     }
 
-    /// Of the entries `recorded` as delivered or queued, those the recipient was told: all but the
-    /// ones withheld from it when they were recorded.
-    pub(super) fn told(&self, recorded: &BTreeSet<Entry>) -> BTreeSet<Entry> {
-        recorded.difference(&self.pull_withheld).cloned().collect()
+    /// The digest entries the PULLs the recipient acknowledged told it; none before the first.
+    /// Every generation's acknowledgement records the PULL's entries in `pull_entries` and ends
+    /// `pull_queued`; only this one's records what it did not tell. Once an older one acknowledged
+    /// a PULL this one left awaiting, that PULL's untold entries are those; once it acknowledged
+    /// one of its own, which names every entry it records (and holds one the awaited PULL did not,
+    /// or it would not have been queued in its place), none are.
+    pub(super) fn acknowledged(&self) -> Option<BTreeSet<Entry>> {
+        let recorded = self.pull_entries.as_ref()?;
+        let untold = match &self.pull_awaiting {
+            Some(awaited) if self.pull_queued.is_none() => {
+                (recorded.is_subset(&awaited.entries)).then_some(&awaited.withheld)
+            }
+            _ => Some(&self.pull_withheld),
+        };
+        Some(match untold {
+            Some(untold) => recorded.difference(untold).cloned().collect(),
+            None => recorded.clone(),
+        })
     }
+}
+
+/// A PULL left queued, as its acknowledgement records it: every entry of the whole digest, and of
+/// those, the ones it does not tell (withheld from its recipient and not told before).
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+pub(super) struct Awaiting {
+    pub(super) entries: BTreeSet<Entry>,
+    pub(super) withheld: BTreeSet<Entry>,
 }
 
 /// Older dispatchers deserialize Seen's health enum. Keep their existing values in that record,
@@ -166,25 +191,103 @@ mod tests {
         // The newer dispatcher heard t/mine of the whole board's t/mine and t/theirs.
         let narrowing =
             attach::Narrowing::between(&look(&["t/mine", "t/theirs"]), &look(&["t/mine"]));
-        let entry = |slug: &str| ("ready_unstaffed".to_string(), slug.to_string());
+        let recorded = entries(&["t/mine", "t/theirs", "t/said"]);
         let mut state: State = serde_json::from_value(json!({
             "seen": look(&["t/mine", "t/theirs", "t/said"]), "narrowing": narrowing,
-            "pull_withheld": [entry("t/theirs")],
+            "pull_entries": recorded, "pull_withheld": entries(&["t/theirs"]),
         }))
         .unwrap();
         // An older dispatcher said NEW t/said since: it is told; t/theirs never is.
         let heard = state.heard().unwrap();
         assert_eq!(heard.ready.keys().collect::<Vec<_>>(), ["t/mine", "t/said"]);
-        let recorded = BTreeSet::from([entry("t/mine"), entry("t/theirs"), entry("t/said")]);
-        assert_eq!(
-            state.told(&recorded),
-            BTreeSet::from([entry("t/mine"), entry("t/said")])
-        );
+        let told = state.acknowledged();
+        assert_eq!(told, Some(entries(&["t/mine", "t/said"])));
         // A record no newer dispatcher narrowed is its own baseline, with nothing withheld.
         state.narrowing = None;
         state.pull_withheld.clear();
         assert_eq!(state.heard(), state.seen);
-        assert_eq!(state.told(&recorded), recorded);
+        assert_eq!(state.acknowledged(), Some(recorded));
         assert_eq!(State::default().heard(), None);
+        assert_eq!(State::default().acknowledged(), None);
+    }
+
+    fn entries(slugs: &[&str]) -> BTreeSet<Entry> {
+        let entry = |slug: &&str| ("ready_unstaffed".to_string(), slug.to_string());
+        slugs.iter().map(entry).collect()
+    }
+
+    /// The record an acknowledgement left, beside the PULL this generation left awaiting.
+    #[derive(Debug)]
+    struct Acknowledgement {
+        /// `pull_entries` as the acknowledgement recorded them.
+        recorded: &'static [&'static str],
+        /// Whether `pull_queued` is still set: no acknowledgement since this generation's write.
+        queued: bool,
+        /// The entries this generation's `pull_withheld` keeps untold.
+        withheld: &'static [&'static str],
+        /// The PULL it left awaiting: its entries, and those it does not tell.
+        awaiting: Option<(&'static [&'static str], &'static [&'static str])>,
+        told: &'static [&'static str],
+    }
+
+    #[test]
+    fn what_was_told_changes_only_with_an_acknowledgement_whoever_records_it() {
+        let cases = [
+            // Nothing acknowledged since: the untold entries stay untold, whatever is heard now.
+            Acknowledgement {
+                recorded: &["t/a", "t/b", "t/c"],
+                queued: true,
+                withheld: &["t/b", "t/c"],
+                awaiting: Some((&["t/a", "t/b", "t/c"], &["t/c"])),
+                told: &["t/a"],
+            },
+            // An older dispatcher acknowledged the PULL awaited: it told all but what it withheld.
+            Acknowledgement {
+                recorded: &["t/a", "t/b", "t/c"],
+                queued: false,
+                withheld: &["t/b", "t/c"],
+                awaiting: Some((&["t/a", "t/b", "t/c"], &["t/c"])),
+                told: &["t/a", "t/b"],
+            },
+            // An entry departed before it acknowledged: the awaited PULL still told the rest.
+            Acknowledgement {
+                recorded: &["t/a", "t/b"],
+                queued: false,
+                withheld: &["t/b", "t/c"],
+                awaiting: Some((&["t/a", "t/b", "t/c"], &["t/c"])),
+                told: &["t/a", "t/b"],
+            },
+            // Its own PULL, queued in the awaited one's place for an entry it lacked, named all.
+            Acknowledgement {
+                recorded: &["t/a", "t/b", "t/c", "t/d"],
+                queued: false,
+                withheld: &["t/b", "t/c"],
+                awaiting: Some((&["t/a", "t/b", "t/c"], &["t/c"])),
+                told: &["t/a", "t/b", "t/c", "t/d"],
+            },
+            // This generation's acknowledgement took the awaited PULL's untold entries already.
+            Acknowledgement {
+                recorded: &["t/a", "t/b", "t/c"],
+                queued: false,
+                withheld: &["t/c"],
+                awaiting: None,
+                told: &["t/a", "t/b"],
+            },
+        ];
+        for case in cases {
+            let awaiting = case.awaiting.map(|(all, withheld)| Awaiting {
+                entries: entries(all),
+                withheld: entries(withheld),
+            });
+            let state = State {
+                pull_entries: Some(entries(case.recorded)),
+                pull_queued: case.queued.then(|| entries(case.recorded)),
+                pull_withheld: entries(case.withheld),
+                pull_awaiting: awaiting,
+                ..State::default()
+            };
+            let told = state.acknowledged();
+            assert_eq!(told, Some(entries(case.told)), "{case:?}");
+        }
     }
 }

@@ -85,16 +85,22 @@ metadata restoring Unknown for newer readers. Both old and new writers must shar
 past the ten-minute lost threshold, or alternating dispatchers repeat liveness notices.
 In the same way an orchestrator's `seen`, `statuses` and PULL entries keep the whole-board meaning
 binaries older than one orchestrator per task read (`attach::legacy_seen`, every open status, every
-digest entry); what it hears lives in `narrowing` and `pull_withheld`, which they ignore, read over
-that record, so neither generation repeats a NEW, LOST or PULL the other said.
+digest entry); what it hears and was told lives in `narrowing`, `pull_withheld` and
+`pull_awaiting`, which they ignore, read over that record, so neither generation repeats a NEW,
+LOST or PULL the other said.
 An orchestrator's queued lines are judged at delivery by the test a dispatch makes of whom to tell
 each one (`queued_lines`, a table of each kind and the `Seen`, `Owners`, `Overseen` or
 `orchestration` call it shares with `attach::diff` and the pane watch), on its look now, so a
 hand-over or a released claim meanwhile takes back what it would no longer be told: such a line
 is dropped, and a LOST names only the work still told it. A queued PULL, whichever dispatcher
-wrote it, is never judged by its text: a dispatch finding one computes the recipient's digest
-again and queues that in its place, or nothing when the PULL last delivered named every entry of
-it (`queued_lines::pull_plan`), while the whole-board fields keep counting it as said. A new kind
+wrote it, is never judged by its text but by one rule (`pull_account`) over what the recipient
+hears now, what the PULLs it acknowledged told it and what the PULL waiting tells: with nothing
+heard beyond what was acknowledged it is taken back; an entry beyond both queues a new PULL, with
+a key and retry budget of its own; otherwise it keeps its key and attempts and says the digest
+as it is now. Whichever, the queued and event entries become the whole digest now, and what was
+told changes only when a PULL is acknowledged: this generation's acknowledgement records what the
+PULL left untold, and `pull_awaiting` reads an older one's, which records only its entries
+(`pending_pull`, a table of each change while a PULL waits). A new kind
 of task-naming line takes its test from there too.
 Posts, verdicts and AGENT lines stay: they were said to whoever held the role then, and a new
 holder hears no backlog.

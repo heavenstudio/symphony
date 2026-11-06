@@ -1,7 +1,8 @@
 //! What waited for an orchestrator that could not be reached, when a hand-over took a task it names
 //! away meanwhile: each line is said only if a dispatch would tell it the line now, a LOST of the
 //! work it is still told of, and what older dispatchers read still counts it as said. The pane
-//! watch's BLOCKED is in `blocked_panes`, whose cases run with a herdr.
+//! watch's BLOCKED is in `blocked_panes`, whose cases run with a herdr; a PULL waiting while the
+//! digest changes beneath it, in `pending_pull`.
 
 use super::callbacks::Listener;
 use super::common::{Fixture, HOST};
@@ -14,13 +15,13 @@ use symphony_board::{Health, NewSession, NewTask, Store};
 
 /// The board of one outage: `former` orchestrates `scratch/one`, `successor` is another
 /// orchestrator, and `sender` speaks for the board.
-struct Outage {
-    fixture: Fixture,
+pub(super) struct Outage {
+    pub(super) fixture: Fixture,
     /// Writes on another host, which wait for the next dispatch here.
-    elsewhere: Store,
-    former: String,
-    successor: String,
-    sender: String,
+    pub(super) elsewhere: Store,
+    pub(super) former: String,
+    pub(super) successor: String,
+    pub(super) sender: String,
 }
 
 /// What the first case's outage left: the former orchestrator's lost child, and the post to
@@ -31,7 +32,7 @@ struct Missed {
 }
 
 impl Outage {
-    fn new() -> Outage {
+    pub(super) fn new() -> Outage {
         let fixture = Fixture::empty();
         let former = fixture.session("orchestrator");
         let successor = fixture.session("orchestrator");
@@ -66,14 +67,14 @@ impl Outage {
     }
 
     /// The former orchestrator's callback, heard once and then gone.
-    fn cut(&self) {
+    pub(super) fn cut(&self) {
         let gone = listen(&self.fixture, &self.former);
         let first = gone.text();
         assert!(first.starts_with("PULL "), "{first}");
     }
 
     /// `seconds` pass in which only the orchestrators, the sender and `beating` show a sign.
-    fn pass(&self, seconds: f64, beating: &[&str]) {
+    pub(super) fn pass(&self, seconds: f64, beating: &[&str]) {
         self.fixture.advance(seconds);
         let always = [&self.former, &self.successor, &self.sender].map(String::as_str);
         let signs = always.iter().chain(beating);
@@ -144,7 +145,7 @@ impl Outage {
     }
 
     /// The former orchestrator's callback again, at a new listener: what waited is delivered.
-    fn back(&self) -> Listener {
+    pub(super) fn back(&self) -> Listener {
         let back = Listener::new(&format!("{}-back", self.fixture.store.client().database()));
         let address = format!("uds:{}", back.path.display());
         let callback = (self.fixture.store).callback(&self.former, Some(&address), false, false);
@@ -190,7 +191,12 @@ fn what_waited_out_an_outage_says_nothing_of_the_work_a_hand_over_took_away() {
         let back = outage.back();
         let mut told = Vec::new();
         if keeps_work {
-            told.push(format!("LOST {lost} — its work is claimable: scratch/kept"));
+            // The PULL, in its place, says the work it still hears.
+            told.extend([
+                format!("LOST {lost} — its work is claimable: scratch/kept"),
+                "PULL executing=0 ready_unstaffed=0 in_progress_orphaned=1 review_unreviewed=0 landed_open=0 idle=0".to_string(),
+                "in_progress_orphaned p2 scratch/kept — Jump departure".to_string(),
+            ]);
         }
         // A post was said to whoever held the role then; the hand-over is said to both sides.
         told.push(format!(
@@ -199,13 +205,6 @@ fn what_waited_out_an_outage_says_nothing_of_the_work_a_hand_over_took_away() {
         told.push(format!(
             "ROLE scratch/one {successor} orchestrator, in_progress (from {former})"
         ));
-        if keeps_work {
-            // The PULL is built again of the work it still hears.
-            told.extend([
-                "PULL executing=0 ready_unstaffed=0 in_progress_orphaned=1 review_unreviewed=0 landed_open=0 idle=0".to_string(),
-                "in_progress_orphaned p2 scratch/kept — Jump departure".to_string(),
-            ]);
-        }
         assert_eq!(back.drain(fixture, sender, former), told);
         // What older dispatchers read still records what it was told, so they never say it.
         assert_eq!(older_fields(fixture, former), older_record(fixture, former));
@@ -310,23 +309,24 @@ fn a_child_quiet_meanwhile_is_said_after_a_hand_over_only_to_an_orchestrator_tol
 }
 
 /// The head of a PULL with one ready task nobody staffs, and `executing` running.
-fn pull(executing: u8) -> String {
+pub(super) fn pull(executing: u8) -> String {
     format!(
         "PULL executing={executing} ready_unstaffed=1 in_progress_orphaned=0 review_unreviewed=0 landed_open=0 idle=0"
     )
 }
 
 /// What the lines waiting for the former orchestrator after a hand-over of `scratch/one` come to,
-/// with `scratch/free` (nobody's) made during the outage: its NEW, the move, and a PULL of it.
+/// with `scratch/free` (nobody's) made during the outage: its NEW, the PULL of it, which keeps its
+/// place, and the move.
 fn after_hand_over(outage: &Outage, status: &str) -> Vec<String> {
     let Outage {
         successor, former, ..
     } = outage;
     vec![
         "NEW scratch/free ready — Jump departure".to_string(),
-        format!("ROLE scratch/one {successor} orchestrator, {status} (from {former})"),
         pull(0),
         "ready_unstaffed p2 scratch/free — Jump departure".to_string(),
+        format!("ROLE scratch/one {successor} orchestrator, {status} (from {former})"),
     ]
 }
 
@@ -343,7 +343,7 @@ fn as_an_older_dispatcher_wrote_it(outage: &Outage) {
     let text = lines.collect::<Vec<_>>().join("\n");
     assert!(text.contains("scratch/theirs"), "{text}");
     fixture.store.client().query(
-        "UPDATE callback_event SET text = $text, pull_entries = $entries WHERE handle = $handle AND delivered != true AND string::starts_with(key, 'pull-') RETURN NONE;",
+        "UPDATE callback_event SET text = $text, pull_entries = $entries, pull_withheld = NONE WHERE handle = $handle AND delivered != true AND string::starts_with(key, 'pull-') RETURN NONE;",
         json!({"handle":former, "text":text, "entries":whole.entries()}),
     ).unwrap();
 }

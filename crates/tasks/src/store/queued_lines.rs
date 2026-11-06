@@ -5,6 +5,8 @@
 //! told of. A PULL is never judged by what it says: the dispatcher builds it again from the
 //! recipient's digest now, and says that or nothing ([`pull_plan`]).
 //!
+//! [`pull_plan`]: super::pull_account::pull_plan
+//!
 //! | Line | Said to the recipient now when |
 //! |---|---|
 //! | NEW | it hears the task ([`Owners::reaches`], as its look takes in ready work) |
@@ -14,52 +16,30 @@
 //! | BLOCKED | it oversees the session on that task ([`Overseen::hears_of`]) |
 //! | STALE, LIVENESS UNKNOWN | it is told of the session going quiet ([`Seen::hears_quiet`]) |
 //! | LOST | that, and of the work named, what it is told of ([`told`]) |
-//! | PULL | its digest now names an entry it was not delivered ([`pull_plan`]) |
+//! | PULL | its digest now names an entry no PULL it acknowledged told it ([`pull_plan`]) |
 //!
 //! Addressed messages and verdicts stay: they are their sender's words to whoever held the role
 //! when they were sent, and a session taking a role over hears no earlier ones, so dropping one
 //! would leave it said to nobody.
 
+use super::callback_state::Entry;
 use crate::Board;
 use crate::cli::attach::{Overseen, Seen, overseen};
 use crate::orchestration::{Owners, moved_for, told};
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeSet;
 
-/// An event queued for a recipient and not yet delivered.
-#[derive(Debug, Deserialize)]
+/// An event queued for a recipient and not yet delivered. A PULL also carries the entries its
+/// acknowledgement records: every entry of the whole digest, and, as this generation writes it,
+/// those it does not tell.
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
 pub(super) struct Queued {
     pub(super) key: String,
-    #[serde(default)]
-    text: String,
-}
-
-/// What a dispatch does with the PULL it built of an orchestrator's digest now.
-#[derive(Debug, PartialEq)]
-pub(super) enum PullPlan {
-    /// Leave the queue as it is: nothing to say, or the PULL queued says just this.
-    Unchanged,
-    /// Take back the PULL queued: everything it would say now was delivered already.
-    Dropped,
-    /// Queue this PULL, in place of any queued.
-    Queued,
-}
-
-/// What becomes of `text`, the PULL of the recipient's digest now, beside what is `queued` for it.
-/// `delivered`: whether the PULL last delivered named every entry of this one; `pending`: whether
-/// the PULL the state records as queued does. A queued PULL, written by any dispatcher in any
-/// encoding, is never said as written: in its place goes this one, or nothing once `delivered`.
-pub(super) fn pull_plan(queued: &[Queued], text: &str, delivered: bool, pending: bool) -> PullPlan {
-    let waiting: Vec<&str> = (queued.iter())
-        .filter(|line| line.is_pull())
-        .map(|line| line.text.as_str())
-        .collect();
-    match waiting.as_slice() {
-        [] if delivered || pending => PullPlan::Unchanged,
-        [] => PullPlan::Queued,
-        _ if delivered => PullPlan::Dropped,
-        [said] if *said == text => PullPlan::Unchanged,
-        _ => PullPlan::Queued,
-    }
+    pub(super) text: String,
+    pub(super) sequence: u64,
+    pub(super) pull_entries: Option<BTreeSet<Entry>>,
+    pub(super) pull_withheld: Option<BTreeSet<Entry>>,
 }
 
 /// The queued lines a dispatch takes back (`dropped`) or says again (`rewritten`, key and text).
@@ -185,36 +165,6 @@ mod tests {
 
     fn queued(event: serde_json::Value) -> Queued {
         serde_json::from_value(event).unwrap()
-    }
-
-    #[test]
-    fn a_queued_pull_gives_way_to_the_digest_now_or_to_nothing_once_all_of_it_was_delivered() {
-        let now = "PULL executing=0";
-        let line = json!({"key":"event-1-0", "text":"NEW t/a ready — T"});
-        // An older dispatcher's PULL, in the encoding it writes, and one saying just this.
-        let older = json!({"key":"pull-1", "text":"PULL executing=1", "pull_entries":[]});
-        let same = json!({"key":"pull-2", "text":now});
-        let cases = [
-            // Nothing queued: a PULL only of an entry neither delivered nor queued.
-            (vec![], false, false, PullPlan::Queued),
-            (vec![], true, false, PullPlan::Unchanged),
-            (vec![], false, true, PullPlan::Unchanged),
-            (vec![line.clone()], false, false, PullPlan::Queued),
-            // A PULL queued is said as the digest is now, or not at all.
-            (vec![line, older.clone()], false, true, PullPlan::Queued),
-            (vec![older.clone()], true, false, PullPlan::Dropped),
-            (vec![same.clone()], false, false, PullPlan::Unchanged),
-            (vec![same.clone()], true, false, PullPlan::Dropped),
-            (vec![older, same], false, true, PullPlan::Queued),
-        ];
-        for (events, delivered, pending, expected) in cases {
-            let lines: Vec<Queued> = events.iter().cloned().map(queued).collect();
-            let plan = pull_plan(&lines, now, delivered, pending);
-            assert_eq!(
-                plan, expected,
-                "{events:?}, delivered {delivered}, pending {pending}"
-            );
-        }
     }
 
     /// `orch` handed `gone` to `next`, and kept `kept`; nobody orchestrates `free`. `kid`,
