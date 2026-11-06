@@ -7,7 +7,7 @@ use std::cell::Cell;
 use std::slice::from_ref;
 use symphony_board::launch::hc::{Hc, Object};
 use symphony_board::launch::reap::{self, REAP_SECONDS, Reap, Sweep};
-use symphony_board::launch::screen::Screen;
+use symphony_board::launch::screen::{ON_SCREEN, Screen};
 use symphony_board::launch::{Closure, LaunchError};
 
 /// A window showing no tab, no agent and nothing over them.
@@ -19,12 +19,20 @@ impl World {
     /// The window shows what `shown` says over a window showing nothing.
     fn shows(&self, shown: Value) {
         let mut screen = nothing_shown();
-        for (key, value) in shown.as_object().into_iter().flatten() {
-            screen[key] = value.clone();
+        if let Some(shown) = shown.as_object() {
+            for (key, value) in shown {
+                screen[key] = value.clone();
+            }
         }
         let mut state = self.state();
         state["screen"] = screen;
         self.set_state(state);
+    }
+
+    /// One cleanup through `hc`, closing what it would.
+    pub(crate) fn clean_through(&self, hc: &dyn Hc) -> Vec<Closure> {
+        let m = self.machine();
+        symphony_board::launch::cleanup(self.store(), hc, &*m.processes, false, &[]).unwrap()
     }
 
     fn tab_of(&self, terminal: &str) -> String {
@@ -35,7 +43,7 @@ impl World {
     }
 
     /// One idle sweep through `hc`, then the timer's interval.
-    fn sweep_through(&self, hc: &dyn Hc) -> Sweep {
+    pub(crate) fn sweep_through(&self, hc: &dyn Hc) -> Sweep {
         let m = self.machine();
         let how = Reap {
             state: self.dir().join("reap.json"),
@@ -59,6 +67,41 @@ fn left(terminal: &str, handle: Option<&str>, why: &str) -> Closure {
         restore: String::new(),
         closed: false,
         kept: true,
+    }
+}
+
+/// An hc through which the owner looks at what `looked` shows while the `nth` `hc get` waits: the
+/// window shows it by the time that call answers. `gets` counts the calls.
+fn looks_during_get<'w>(
+    w: &'w World,
+    nth: usize,
+    looked: Value,
+    gets: &'w Cell<usize>,
+) -> Hooked<'w> {
+    let mut hooked = Hooked::new(w);
+    hooked.after = Box::new(move |args| {
+        if args[0] == "get" {
+            gets.set(gets.get() + 1);
+            if gets.get() == nth {
+                w.shows(looked.clone());
+            }
+        }
+    });
+    hooked
+}
+
+/// What the owner may come to look at: the terminal itself, or a window that cannot say.
+const LOOKS: [fn(&str) -> Value; 2] = [
+    |terminal| json!({"agent": terminal}),
+    |_| json!({"errors": ["broken"]}),
+];
+
+/// Why a terminal stays when the window shows `looked`.
+fn kept_for(looked: &Value) -> String {
+    if looked["errors"].is_null() {
+        ON_SCREEN.into()
+    } else {
+        "never closed on no information: herdr-app status reports errors: broken".into()
     }
 }
 
@@ -145,13 +188,13 @@ fn cleanup_keeps_a_terminal_the_owner_is_looking_at_dry_run_or_not_and_closes_it
         w.shows(shown.clone());
         assert_eq!(w.clean(true, &[]), from_ref(&on_screen), "{shown}");
         assert_eq!(w.clean(false, &[]), from_ref(&on_screen), "{shown}");
-        assert!(w.has_terminal(&terminal));
+        assert!(w.has_terminal(&terminal), "{terminal} was closed");
     }
-    assert!(w.calls_of(&["kill"]).is_empty());
+    assert_eq!(w.calls_of(&["kill"]), Vec::<Vec<String>>::new());
     w.shows(json!({"tab": "tb-elsewhere", "agent": "t-other"}));
     let [closed] = <[_; 1]>::try_from(w.clean(false, &[])).unwrap();
     assert!(closed.closed, "{closed:?}");
-    assert!(!w.has_terminal(&terminal));
+    assert!(!w.has_terminal(&terminal), "{terminal} stayed");
 }
 
 #[test]
@@ -170,8 +213,8 @@ fn cleanup_keeps_a_terminal_when_the_window_cannot_say_what_it_shows() {
         w.clean(false, &[]),
         unknown(" reports errors: mods/x: broken")
     );
-    assert!(w.has_terminal(&terminal));
-    assert!(w.calls_of(&["kill"]).is_empty());
+    assert!(w.has_terminal(&terminal), "{terminal} was closed");
+    assert_eq!(w.calls_of(&["kill"]), Vec::<Vec<String>>::new());
 }
 
 #[test]
@@ -183,14 +226,14 @@ fn an_ended_terminal_on_screen_stays_until_the_owner_looks_away() {
         w.clean(false, &[]),
         [left(&ended, None, "on screen in the Herdr app")]
     );
-    assert!(w.has_terminal(&ended));
+    assert!(w.has_terminal(&ended), "{ended} was closed");
     w.shows(json!({}));
     let [closed] = <[_; 1]>::try_from(w.clean(false, &[])).unwrap();
     assert_eq!(
         (closed.why.as_str(), closed.closed),
         ("its program ended", true)
     );
-    assert!(!w.has_terminal(&ended));
+    assert!(!w.has_terminal(&ended), "{ended} stayed");
 }
 
 #[test]
@@ -204,7 +247,7 @@ fn finish_names_the_terminal_it_leaves_on_screen() {
             "kept pane {terminal} of {handle} (on screen in the Herdr app)"
         )]
     );
-    assert!(w.has_terminal(&terminal));
+    assert!(w.has_terminal(&terminal), "{terminal} was closed");
     let [open] = <[_; 1]>::try_from(w.store().task_sessions("sim/jump").unwrap()).unwrap();
     assert!(open.closed.is_none());
 }
@@ -225,37 +268,122 @@ fn the_idle_sweep_never_closes_a_terminal_on_screen_and_waits_again_once_the_own
     w.shows(json!({}));
     assert_eq!(w.sweep_through(&w.hc()).idle, from_ref(&handle));
     assert_eq!(w.sweep_through(&w.hc()).closed.len(), 1);
-    assert!(!w.has_terminal(&terminal));
+    assert!(!w.has_terminal(&terminal), "{terminal} stayed");
 }
 
 #[test]
 fn the_idle_sweep_keeps_a_terminal_the_owner_looks_at_or_cannot_be_told_of_right_before_its_close()
 {
-    let shown: [fn(&str) -> Value; 2] = [
-        |terminal| json!({"agent": terminal}),
-        |_| json!({"errors": ["broken"]}),
-    ];
-    for shown in shown {
+    for shown in LOOKS {
         let w = World::new();
         let (handle, terminal) = w.worker("sim/jump", Some("done"));
         let looked = shown(&terminal);
         assert_eq!(w.sweep_through(&w.hc()).idle, from_ref(&handle));
-        // The second sweep reads it twice: once as it looks, once right before the close.
+        // The second sweep reads it as it looks, then once more to confirm it right before the
+        // close: the owner looks while that call waits.
         let gets = Cell::new(0);
-        let mut hooked = Hooked::new(&w);
-        hooked.after = Box::new(|args| {
-            if args[0] == "get" {
-                gets.set(gets.get() + 1);
-                if gets.get() == 2 {
-                    w.shows(looked.clone());
-                }
-            }
-        });
+        let hooked = looks_during_get(&w, 2, looked.clone(), &gets);
         assert_eq!(w.sweep_through(&hooked), Sweep::default(), "{looked}");
-        assert!(w.has_terminal(&terminal));
-        assert!(w.calls_of(&["kill"]).is_empty());
+        assert!(w.has_terminal(&terminal), "{terminal} was closed");
+        assert_eq!(w.calls_of(&["kill"]), Vec::<Vec<String>>::new());
         // Its idle wait starts again.
         w.shows(json!({}));
         assert_eq!(w.sweep_through(&w.hc()).idle, [handle]);
     }
+}
+
+#[test]
+fn the_idle_sweep_keeps_a_terminal_the_owner_looks_at_after_its_closure_is_recorded_reopened() {
+    for shown in LOOKS {
+        let w = World::new();
+        let (handle, terminal) = w.worker("sim/jump", Some("done"));
+        let looked = shown(&terminal);
+        assert_eq!(w.sweep_through(&w.hc()).idle, from_ref(&handle));
+        // The third look is the close's own, after the closure is recorded: the last call before
+        // the kill, which may wait long.
+        let gets = Cell::new(0);
+        let hooked = looks_during_get(&w, 3, looked.clone(), &gets);
+        assert_eq!(w.sweep_through(&hooked), Sweep::default(), "{looked}");
+        assert_eq!(gets.get(), 3, "{looked}");
+        assert!(w.has_terminal(&terminal), "{terminal} was closed");
+        assert_eq!(w.calls_of(&["kill"]), Vec::<Vec<String>>::new());
+        // The record it wrote is open again, on the same terminal.
+        let [open] = <[_; 1]>::try_from(w.store().task_sessions("sim/jump").unwrap()).unwrap();
+        assert_eq!((open.closed, open.pane.as_str()), (None, terminal.as_str()));
+        // Its idle wait starts again; out of sight, it closes after a whole one.
+        w.shows(json!({}));
+        assert_eq!(w.sweep_through(&w.hc()).idle, from_ref(&handle));
+        assert_eq!(w.sweep_through(&w.hc()).closed.len(), 1);
+        assert!(!w.has_terminal(&terminal), "{terminal} stayed");
+    }
+}
+
+#[test]
+fn cleanup_keeps_a_terminal_the_owner_looks_at_while_the_close_looks_it_up_ended_or_idle() {
+    for (shown, ended) in LOOKS.into_iter().flat_map(|s| [(s, false), (s, true)]) {
+        let w = World::new();
+        let (handle, terminal) = if ended {
+            (
+                None,
+                w.add_terminal(false, None, json!({"state": "finished"})),
+            )
+        } else {
+            let (handle, terminal) = w.worker("sim/jump", Some("done"));
+            (Some(handle), terminal)
+        };
+        let looked = shown(&terminal);
+        // The first look is cleanup's own; the second the close's, right before the kill.
+        let gets = Cell::new(0);
+        let closures = w.clean_through(&looks_during_get(&w, 2, looked.clone(), &gets));
+        let kept = left(&terminal, handle.as_deref(), &kept_for(&looked));
+        assert_eq!(closures, [kept], "{looked} ended {ended}");
+        assert!(w.has_terminal(&terminal), "{terminal} was closed");
+        assert_eq!(w.calls_of(&["kill"]), Vec::<Vec<String>>::new());
+        let sessions = w.store().task_sessions("sim/jump").unwrap();
+        assert!(sessions.iter().all(|s| s.closed.is_none()), "{sessions:?}");
+    }
+}
+
+#[test]
+fn cleanup_keeps_a_terminal_whose_last_look_hc_cannot_answer() {
+    let w = World::new();
+    let (handle, terminal) = w.worker("sim/jump", Some("done"));
+    let gets = Cell::new(0);
+    let hooked = Hooked {
+        instead: Box::new(|args| {
+            if args[0] != "get" {
+                return None;
+            }
+            gets.set(gets.get() + 1);
+            (gets.get() == 2).then(|| Err(LaunchError(format!("hc get {}: no answer", args[1]))))
+        }),
+        ..Hooked::new(&w)
+    };
+    let why = format!("never closed on no information: hc get {terminal}: no answer");
+    assert_eq!(
+        w.clean_through(&hooked),
+        [left(&terminal, Some(&handle), &why)]
+    );
+    assert!(w.has_terminal(&terminal), "{terminal} was closed");
+    assert_eq!(w.calls_of(&["kill"]), Vec::<Vec<String>>::new());
+}
+
+#[test]
+fn a_terminal_gone_before_the_close_looks_it_up_is_closed_already_with_no_kill() {
+    let w = World::new();
+    let ended = w.add_terminal(false, None, json!({"state": "finished"}));
+    let mut hooked = Hooked::new(&w);
+    hooked.after = Box::new(|args| {
+        if args[0] == "get" {
+            w.edit_terminals(|all| all.clear());
+        }
+    });
+    let [closed] = <[_; 1]>::try_from(w.clean_through(&hooked)).unwrap();
+    assert_eq!(
+        (closed.pane.as_str(), closed.closed, closed.kept),
+        (ended.as_str(), true, false)
+    );
+    assert_eq!(w.calls_of(&["get", &ended]).len(), 2);
+    assert_eq!(w.calls_of(&["kill"]), Vec::<Vec<String>>::new());
+    assert_eq!(w.calls_of(&["rm"]), Vec::<Vec<String>>::new());
 }

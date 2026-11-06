@@ -1,3 +1,8 @@
+//! The staffing pass's own cases on a scratch store: an idle agent reused for a job (`hc send` to
+//! its terminal, confirmed only by the turn hc saw start or later work), a review dispatch that
+//! fails and cancels its instruction, and an ended pass freeing its lock while a forked child still
+//! holds the descriptor. hc is a stand-in here (`NoHc`, `ReusedTerminal`): no terminal is started.
+
 use super::store_fixture::{Fixture, Seed};
 use super::*;
 use std::cell::Cell;

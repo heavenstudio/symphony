@@ -127,6 +127,12 @@ impl Terminals {
         symphony_board::launch::hc::program(&argv).to_vec()
     }
 
+    /// The first message the one `hc send` gave.
+    fn sent(&self) -> String {
+        let [send] = <[_; 1]>::try_from(self.calls_of("send")).unwrap();
+        send[2].clone()
+    }
+
     pub(crate) fn addresses(&self) -> Vec<String> {
         self.state()["terminals"]
             .as_array()
@@ -215,10 +221,7 @@ fn a_launch_says_who_it_started_where() {
             "{program:?}"
         );
         let work = if agent == "codex" { "$work" } else { "/work" };
-        assert_eq!(
-            program.last().unwrap(),
-            &format!("{work} sim/jump {}", s.handle)
-        );
+        assert_eq!(p.sent(), format!("{work} sim/jump {}", s.handle));
         // The agent reaches the board its launcher does.
         let [run] = <[_; 1]>::try_from(p.calls_of("run")).unwrap();
         let database = format!("TASKS_DATABASE={}", p.env.vars["TASKS_DATABASE"]);
@@ -260,17 +263,14 @@ fn a_launch_hands_each_flag_to_the_launcher() {
     );
     assert_eq!(p.board().session(&s.handle).unwrap().row.kind, "reviewer");
     assert_eq!(p.state()["layout"]["spaces"][0]["tabs"][0]["name"], "t");
-    assert_eq!(
-        p.program().last().unwrap(),
-        &format!("/work sim/jump {} go", s.handle)
-    );
+    assert_eq!(p.sent(), format!("/work sim/jump {} go", s.handle));
 }
 
 #[test]
-fn a_launch_whose_first_message_hc_did_not_send_exits_one_and_leaves_nothing() {
+fn a_launch_blocked_on_the_folder_trust_dialog_exits_one_and_leaves_nothing() {
     let mut p = Terminals::new("unsent");
     let orch = p.orchestrator();
-    p.set("FAKE_HC_UNSENT", "the agent never asked for input");
+    p.set("FAKE_HC_BLOCKED", "1");
     let ran = p.as_(
         &orch,
         &[
@@ -285,11 +285,13 @@ fn a_launch_whose_first_message_hc_did_not_send_exits_one_and_leaves_nothing() {
             1,
             "",
             format!(
-                "✖ hc did not send the first message to terminal {terminal}: the agent never asked for input\n"
+                "✖ the agent in terminal {terminal} waits on a person before it took its first \
+                 message: Quick safety check: Is this a project you created or one you trust?\n"
             )
             .as_str()
         )
     );
+    assert_eq!(p.calls_of("send"), Vec::<Vec<String>>::new());
     assert_eq!(p.calls_of("kill").len(), 1);
     assert!(p.board().task_sessions("sim/jump").unwrap().is_empty());
     assert!(p.addresses().is_empty());

@@ -97,19 +97,20 @@ its asks in `artifacts/callbacks-NAME/asks.db`.
 **Agent sessions behind a task** (`task_sessions`): `just tasks launch SLUG` starts a
 Codex agent (`--no-daemon`; default model `gpt-6.1-sol`, effort `xhigh`, workspace-write
 with network access) in an hc terminal of its own, `hc run --bg --no-parent --outlive-parent
---keep` with its first message in the run: no child of the caller's terminal, which the app
-would show under it rather than in a tab. `--kind claude --model sonnet` selects Claude. The
+--keep`: no child of the caller's terminal, which the app would show under it rather than in
+a tab. `--kind claude --model sonnet` selects Claude. The
 terminal shows in its stream tab (`code` for an executor, `review` for a reviewer, or
 `--tab` such as `3d` or `infra`) of the project's space in the Herdr app, found by name and
 made when missing (the labels `herdr.space` and `herdr.tab`); the owner's tabs and other
-projects' terminals are never a destination. The launch is confirmed by hc's record of the
-terminal (`hc get`: its first message sent and its agent at work), never by reading the
-screen; a launch hc did not send fails naming the terminal, which is killed and removed.
-It writes its handle, role, agent session
+projects' terminals are never a destination. Once hc calls the agent ready (`idle` or
+`done`), its first message goes in by `hc send`, never forced, and the launch is confirmed
+only by that send's receipt (`started`): an agent waiting on a person (a folder-trust
+dialog), never ready, or not starting on the message fails the launch naming the terminal,
+which is killed and removed. It writes its handle, role, agent session
 id, worktree, branch, terminal and start time; `just tasks show` lists them under
 `Sessions:`. No terminal the owner may be looking at is closed: one in the tab the Herdr
-app shows, the agent it shows, or held over them (`herdr-app status`); when the window
-cannot say, the terminal stays and cleanup names why. When a terminal is closed (`just
+app shows, the agent it shows, or held over them (`herdr-app status`, read last, right
+before the kill); when the window cannot say, the terminal stays and cleanup names why. When a terminal is closed (`just
 tasks cleanup`, or the task becoming done or cancelled: `hc kill`, then `hc rm`) the
 record stays and says why and how to bring it back,
 `just tasks restore SLUG [HANDLE]`, which resumes the conversation in the same
@@ -167,9 +168,10 @@ then `hc rm`) one of this board's terminals (label `sf.board`) whose named agent
 idle (or stuck on the folder-trust prompt) at two sweeps at least five minutes apart,
 however many apps sweep, when neither its handle nor a subagent session under it holds
 an executor role on an in-progress or blocked task or a reviewer role on a task in
-review, and nothing runs under it but MCP helpers, caffeinate and board commands:
-anything else is work. Status, roles and the window are read again right before the
-close. Never an unnamed terminal or another board's (it may be the owner's), an
+review, and nothing runs under it but MCP helpers (Codex's configured `node_repl` among
+them, by its path), caffeinate and board commands: anything else is work. Status, roles
+and the window are read again right before the close, and the window once more after the
+close is recorded, right before the kill: a look then reopens the record. Never an unnamed terminal or another board's (it may be the owner's), an
 orchestrator, the caller's (`HC_TERMINAL_ID`), or one on screen in the Herdr app, which
 starts its idle wait again (as does a window that cannot say what it shows).
 Each close is one line on the handle's task thread, with its restore line, written

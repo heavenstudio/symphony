@@ -5,11 +5,12 @@
 use crate::common::refused;
 use crate::{Hooked, SPACE, World, git};
 use serde_json::json;
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::fs;
 use std::path::Path;
 use symphony_board::Error;
 use symphony_board::launch::Started;
+use symphony_board::launch::hc::Hc;
 use symphony_board::launch::{Ask, CONFIRM_LOOKS, LaunchError, PROMPT_WAIT};
 
 fn flag_value<'a>(call: &'a [String], flag: &str) -> &'a str {
@@ -292,9 +293,9 @@ fn claude_starts_with_a_session_id_chosen_up_front_the_model_and_its_first_messa
             "auto",
             "--model",
             "sonnet",
-            &format!("/work sim/jump {}", s.handle),
         ]
     );
+    assert_eq!(w.sent(&s.pane), [format!("/work sim/jump {}", s.handle)]);
 }
 
 #[test]
@@ -326,9 +327,9 @@ fn codex_is_the_default_without_its_daemon_and_its_thread_is_recorded_once_it_re
                 "sandbox_workspace_write.network_access=true",
                 "-c",
                 &format!("shell_environment_policy.set.TASKS_SESSION=\"{handle}\""),
-                &format!("$work sim/jump {handle}"),
             ]
         );
+        assert_eq!(w.sent(&s.pane), [format!("$work sim/jump {handle}")]);
         // The thread is the agent's to say: its callback fills the record, from its terminal.
         w.store()
             .callback_in(handle, Some("codex:0abc-12"), false, false, Some(&s.pane))
@@ -410,11 +411,10 @@ fn the_first_message_is_work_slug_handle_alone_or_followed_by_a_given_prompt() {
             ..w.ask("sim/dock")
         };
         let dock = w.try_launch(&ask).unwrap().row;
-        let last = |pane: &str| w.program(pane).last().unwrap().clone();
-        assert_eq!(last(&s.pane), format!("{work} sim/jump {}", s.handle));
+        assert_eq!(w.sent(&s.pane), [format!("{work} sim/jump {}", s.handle)]);
         assert_eq!(
-            last(&dock.pane),
-            format!("{work} sim/dock {} Read the brief.", dock.handle)
+            w.sent(&dock.pane),
+            [format!("{work} sim/dock {} Read the brief.", dock.handle)]
         );
     }
 }
@@ -742,13 +742,20 @@ fn a_layout_neither_the_window_nor_the_core_gives_fails_before_a_terminal_starts
 // -- how the launch is confirmed ----------------------------------------------------------------
 
 #[test]
-fn the_launch_is_confirmed_by_hcs_record_without_reading_the_screen_or_pressing_keys() {
+fn the_first_message_is_sent_once_hc_calls_the_agent_ready_and_its_receipt_confirms_the_launch() {
     let w = World::new();
-    let s = w.launch("sim/jump");
-    assert_eq!(w.calls_of(&["get", &s.row.pane]).len(), 1);
-    assert!(w.calls_of(&["read"]).is_empty());
-    assert!(w.calls_of(&["keys"]).is_empty());
-    assert!(w.calls_of(&["send"]).is_empty());
+    let s = w.launch("sim/jump").row;
+    let calls: Vec<Vec<String>> = w
+        .calls()
+        .into_iter()
+        .filter(|c| c.get(1) == Some(&s.pane))
+        .collect();
+    let words: Vec<&str> = calls.iter().map(|c| c[0].as_str()).collect();
+    // One look shows it ready; then the message, never forced; nothing read, no key pressed.
+    assert_eq!(words, ["get", "send"], "{calls:?}");
+    assert_eq!(calls[1][3..], ["--json"], "{calls:?}");
+    assert_eq!(w.sent(&s.pane), [format!("$work sim/jump {}", s.handle)]);
+    assert_eq!(w.terminal(&s.pane)["status"], "working");
     assert_eq!(*w.sleeps.borrow(), [PROMPT_WAIT]);
 }
 
@@ -774,32 +781,131 @@ fn failed_launch(w: &World, result: Result<Started, Error>, why: &str) -> String
 }
 
 #[test]
-fn a_first_message_hc_did_not_send_fails_naming_the_terminal_and_kills_and_removes_it() {
+fn claudes_folder_trust_dialog_fails_the_launch_unsent_naming_the_terminal_and_its_question() {
     let mut w = World::new();
-    w.set("FAKE_HC_UNSENT", "startup settle timed out");
+    w.set("FAKE_HC_BLOCKED", "1");
+    let ask = Ask {
+        kind: Some("claude".into()),
+        ..w.ask("sim/jump")
+    };
+    let seen = RefCell::new(Vec::new());
+    let hc = Hooked {
+        instead: Box::new(|args| {
+            if args[0] != "get" || !args[1].starts_with('t') {
+                return None;
+            }
+            let answer = w.hc().run(args);
+            seen.borrow_mut().push(answer.clone());
+            Some(answer)
+        }),
+        ..Hooked::new(&w)
+    };
+    let launched = symphony_board::launch::launch(w.store(), &hc, &w.machine(), &ask);
     let address = failed_launch(
         &w,
-        w.try_launch(&w.ask("sim/jump")),
-        "hc did not send the first message to terminal {t}: startup settle timed out",
+        launched,
+        "the agent in terminal {t} waits on a person before it took its first message: \
+         Quick safety check: Is this a project you created or one you trust?",
     );
+    // hc called it blocked, and as for any run with no template, recorded no first message.
+    let looked: serde_json::Value =
+        serde_json::from_str(&seen.borrow()[0].clone().unwrap()).unwrap();
+    assert_eq!(
+        (&looked["status"]["state"], &looked["first_message"]),
+        (&json!("blocked"), &json!(null)),
+        "{looked}"
+    );
+    assert_eq!(w.calls_of(&["send"]), Vec::<Vec<String>>::new());
+    assert_eq!(w.calls_of(&["keys"]), Vec::<Vec<String>>::new());
     assert_eq!(w.calls_of(&["kill", &address]).len(), 1);
+    assert_eq!(*w.sleeps.borrow(), [PROMPT_WAIT]);
 }
 
 #[test]
-fn an_agent_that_never_starts_its_turn_fails_after_its_looks() {
-    for (knob, last) in [("FAKE_HC_SILENT", "none"), ("FAKE_HC_IDLE", "idle")] {
+fn a_message_the_agent_never_starts_working_on_fails_the_launch_and_is_never_sent_again() {
+    let mut w = World::new();
+    w.set("FAKE_HC_DEAF", "1");
+    let address = failed_launch(
+        &w,
+        w.try_launch(&w.ask("sim/jump")),
+        "the agent in terminal {t} did not start working on its first message (its status when \
+         it went in: idle)",
+    );
+    assert_eq!(w.calls_of(&["send", &address]).len(), 1);
+    assert_eq!(w.calls_of(&["kill", &address]).len(), 1);
+}
+
+/// A launch through `hc`, whose terminal hc made: (the refusal, the terminal).
+fn launch_through(w: &World, hc: &Hooked<'_>) -> (String, String) {
+    let launched = symphony_board::launch::launch(w.store(), hc, &w.machine(), &w.ask("sim/jump"));
+    let [run] = <[_; 1]>::try_from(w.calls_of(&["run"])).unwrap();
+    let name = flag_value(&run, "--name").to_string();
+    let address = w.calls_of(&["rm"]).pop().map(|c| c[1].clone());
+    let address = address.unwrap_or_else(|| panic!("{name}'s terminal was not removed"));
+    assert!(!w.has_terminal(&address), "{address} was left");
+    assert_eq!(w.store().task_sessions("sim/jump").unwrap(), vec![]);
+    assert_eq!(workers(w), ["left"]);
+    (refused(launched), address)
+}
+
+#[test]
+fn a_send_hc_refuses_or_cannot_tell_of_fails_the_launch_naming_the_terminal() {
+    // Blocked on a person between the look and the send: hc refuses, and it is never forced.
+    let w = World::new();
+    let hc = Hooked {
+        after: Box::new(|args| {
+            if args[0] == "get" && args[1].starts_with('t') {
+                w.edit_terminal(args[1], |t| {
+                    t.insert("status".into(), json!("blocked"));
+                });
+            }
+        }),
+        ..Hooked::new(&w)
+    };
+    let (why, t) = launch_through(&w, &hc);
+    assert_eq!(
+        why,
+        format!(
+            "terminal {t} did not take its first message: hc send {t}: blocked: it waits on a person"
+        )
+    );
+    let [send] = <[_; 1]>::try_from(w.calls_of(&["send"])).unwrap();
+    assert!(!send.contains(&"--force".to_string()), "{send:?}");
+    // A program that reports no status: hc cannot say whether it took the message.
+    let w = World::new();
+    let hc = Hooked {
+        instead: Box::new(|args| {
+            (args[0] == "send").then(|| Ok(r#"{"started":null,"status":null,"turn":0}"#.into()))
+        }),
+        ..Hooked::new(&w)
+    };
+    let (why, t) = launch_through(&w, &hc);
+    assert_eq!(
+        why,
+        format!(
+            "hc cannot say whether the agent in terminal {t} took its first message: it reports \
+             no status"
+        )
+    );
+}
+
+#[test]
+fn an_agent_never_ready_for_its_first_message_fails_after_its_looks_unsent() {
+    for (knob, last) in [("FAKE_HC_SILENT", "none"), ("FAKE_HC_BUSY", "working")] {
         let mut w = World::new();
         w.set(knob, "1");
         let address = failed_launch(
             &w,
             w.try_launch(&w.ask("sim/jump")),
             &format!(
-                "could not confirm that the agent in terminal {{t}} took its first message (its last status: {last})"
+                "the agent in terminal {{t}} was never ready for its first message (its last \
+                 status: {last})"
             ),
         );
         assert_eq!(w.calls_of(&["get", &address]).len(), CONFIRM_LOOKS + 1);
         assert_eq!(w.sleeps.borrow().len(), CONFIRM_LOOKS);
-        assert!(w.calls_of(&["keys"]).is_empty(), "{knob}");
+        assert_eq!(w.calls_of(&["keys"]), Vec::<Vec<String>>::new(), "{knob}");
+        assert_eq!(w.calls_of(&["send"]), Vec::<Vec<String>>::new(), "{knob}");
     }
 }
 
@@ -810,7 +916,7 @@ fn looks_hc_never_answers_fail_naming_the_last_problem_and_still_close_the_termi
     let address = failed_launch(
         &w,
         w.try_launch(&w.ask("sim/jump")),
-        "could not confirm that the agent in terminal {t} took its first message \
+        "the agent in terminal {t} was never ready for its first message \
          (its last status: unanswered: hc get {t}: fake_failure: get failed)",
     );
     assert_eq!(w.calls_of(&["kill", &address]).len(), 1);
@@ -856,7 +962,7 @@ fn a_terminal_hc_no_longer_knows_fails_at_once_and_leaves_nothing() {
 }
 
 #[test]
-fn a_look_hc_cannot_answer_is_no_evidence_and_later_activity_confirms() {
+fn a_look_hc_cannot_answer_is_no_evidence_and_a_later_look_finds_it_ready() {
     let mut w = World::new();
     w.set("FAKE_HC_SILENT", "1");
     let looks = Cell::new(0);
@@ -871,7 +977,7 @@ fn a_look_hc_cannot_answer_is_no_evidence_and_later_activity_confirms() {
         after: Box::new(|args| {
             if args[0] == "get" && looks.get() == 2 {
                 w.edit_terminal(args[1], |t| {
-                    t.insert("status".into(), json!("working"));
+                    t.insert("status".into(), json!("idle"));
                 });
             }
         }),
@@ -880,28 +986,32 @@ fn a_look_hc_cannot_answer_is_no_evidence_and_later_activity_confirms() {
     let s =
         symphony_board::launch::launch(w.store(), &hc, &w.machine(), &w.ask("sim/jump")).unwrap();
     assert_eq!(looks.get(), 3);
-    assert_eq!(w.live(), [s.row.pane]);
+    assert_eq!(w.live(), [s.row.pane.as_str()]);
+    assert_eq!(w.sent(&s.row.pane).len(), 1);
 }
 
 #[test]
-fn an_agent_that_is_done_or_asks_a_person_has_taken_its_first_message() {
-    for status in ["done", "blocked"] {
-        let mut w = World::new();
-        w.set("FAKE_HC_SILENT", "1");
-        let hc = Hooked {
-            after: Box::new(|args| {
-                if args[0] == "run" {
-                    let address = w.addresses().pop().unwrap();
-                    w.edit_terminal(&address, |t| {
-                        t.insert("status".into(), json!(status));
-                    });
-                }
-            }),
-            ..Hooked::new(&w)
-        };
+fn an_agent_done_is_ready_for_its_first_message_like_an_idle_one() {
+    let mut w = World::new();
+    w.set("FAKE_HC_SILENT", "1");
+    let hc = Hooked {
+        after: Box::new(|args| {
+            if args[0] == "run" {
+                let address = w.addresses().pop().unwrap();
+                w.edit_terminal(&address, |t| {
+                    t.insert("status".into(), json!("done"));
+                });
+            }
+        }),
+        ..Hooked::new(&w)
+    };
+    let s =
         symphony_board::launch::launch(w.store(), &hc, &w.machine(), &w.ask("sim/jump")).unwrap();
-        assert_eq!(*w.sleeps.borrow(), [PROMPT_WAIT], "{status}");
-    }
+    assert_eq!(*w.sleeps.borrow(), [PROMPT_WAIT]);
+    assert_eq!(
+        w.sent(&s.row.pane),
+        [format!("$work sim/jump {}", s.row.handle)]
+    );
 }
 
 #[test]
@@ -985,10 +1095,56 @@ fn a_dropped_down_never_confirms_trust_and_the_launch_fails() {
     failed_launch(
         &w,
         w.try_launch(&w.ask("sim/jump")),
-        "could not confirm that the agent in terminal {t} took its first message (its last status: none)",
+        "the agent in terminal {t} was never ready for its first message (its last status: none)",
     );
     // The navigation only: the look after it showed trust selected, and no enter followed.
     assert_eq!(keys(&w), [vec!["down", "down"]]);
+    assert_eq!(w.calls_of(&["send"]), Vec::<Vec<String>>::new());
+}
+
+#[test]
+fn a_chooser_hc_calls_blocked_is_answered_and_only_the_look_right_after_enter_waits() {
+    for ready_after in [true, false] {
+        let w = chooser(3);
+        let gets = Cell::new(0);
+        let block = |t: &str| {
+            w.edit_terminal(t, |t| {
+                t.insert("status".into(), json!("blocked"));
+            })
+        };
+        let hc = Hooked {
+            after: Box::new(|args| match args[0] {
+                "run" => block(&w.addresses().pop().unwrap()),
+                // Still blocked when the look right after enter comes.
+                "keys" => block(args[1]),
+                "get" if args[1].starts_with('t') => {
+                    gets.set(gets.get() + 1);
+                    if ready_after && gets.get() == 2 {
+                        w.edit_terminal(args[1], |t| {
+                            t.insert("status".into(), json!("idle"));
+                        });
+                    }
+                }
+                _ => {}
+            }),
+            ..Hooked::new(&w)
+        };
+        let launched =
+            symphony_board::launch::launch(w.store(), &hc, &w.machine(), &w.ask("sim/jump"));
+        assert_eq!(keys(&w), [vec!["enter"]], "{ready_after}");
+        if ready_after {
+            let s = launched.unwrap().row;
+            assert_eq!(w.sent(&s.pane), [format!("$work sim/jump {}", s.handle)]);
+        } else {
+            failed_launch(
+                &w,
+                launched,
+                "the agent in terminal {t} waits on a person before it took its first message",
+            );
+            assert_eq!(w.calls_of(&["send"]), Vec::<Vec<String>>::new());
+        }
+        assert_eq!(w.sleeps.borrow().len(), 3, "{ready_after}");
+    }
 }
 
 #[test]

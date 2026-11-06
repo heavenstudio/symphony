@@ -4,7 +4,8 @@
 
 use super::hc::{self, Hc, Object, text_of};
 use super::procs::{busy_reason, named};
-use super::{GONE, LaunchError, Processes, READY_STATES, gone, screen};
+use super::screen::{self, NotClosed};
+use super::{GONE, LaunchError, Processes, READY_STATES, gone};
 use crate::health::FINISHED;
 use crate::rows::TaskSessionRow;
 use crate::{Error, NewLaunch, Store, Task};
@@ -38,10 +39,7 @@ impl Closure {
     /// `terminal` left as it is, of no known session: `problem`, the failed call's error, said in
     /// `why`.
     fn kept(terminal: &str, problem: &LaunchError) -> Closure {
-        Closure::left(
-            terminal,
-            format!("never closed on no information: {problem}"),
-        )
+        Closure::left(terminal, screen::no_information(problem))
     }
 
     /// `terminal` left as it is, of no known session, for the reason `why`.
@@ -62,13 +60,26 @@ impl Closure {
         let address = text_of(terminal, "address");
         let left = match screen::on_screen(hc, terminal) {
             Ok(false) => return None,
-            Ok(true) => Closure::left(&address, "on screen in the Herdr app".into()),
+            Ok(true) => Closure::left(&address, screen::ON_SCREEN.into()),
             Err(problem) => Closure::kept(&address, &problem),
         };
         Some(Closure {
             handle: handle.map(str::to_string),
             ..left
         })
+    }
+}
+
+/// Close the terminal `closure` is about, the owner's look judged last ([`screen::close_unseen`]):
+/// whether it closed, false when hc refused; or `closure` as it stays, saying why.
+fn closed(hc: &dyn Hc, address: &str, closure: &Closure) -> Result<bool, Closure> {
+    match screen::close_unseen(hc, address) {
+        Ok(()) => Ok(true),
+        Err(NotClosed::Refused(_)) => Ok(false),
+        Err(NotClosed::Kept(why)) => Err(Closure {
+            handle: closure.handle.clone(),
+            ..Closure::left(address, why)
+        }),
     }
 }
 
@@ -170,7 +181,10 @@ pub fn cleanup(
                 kept: false,
             };
             if !dry_run {
-                closure.closed = hc.close(&address).is_ok();
+                match closed(hc, &address, &closure) {
+                    Ok(done) => closure.closed = done,
+                    Err(kept) => closure = kept,
+                }
             }
             result.push(closure);
             continue;
@@ -240,11 +254,17 @@ pub fn cleanup(
             kept: false,
         };
         if !dry_run {
-            if hc.close(&address).is_err() {
-                result.push(closure);
-                continue;
+            match closed(hc, &address, &closure) {
+                Ok(true) => closure.closed = true,
+                Ok(false) => {
+                    result.push(closure);
+                    continue;
+                }
+                Err(kept) => {
+                    result.push(kept);
+                    continue;
+                }
             }
-            closure.closed = true;
             if let Some(handle) = &handle {
                 record_closure(store, handle, &terminal, why)?;
             }

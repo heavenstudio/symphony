@@ -1,5 +1,146 @@
-//! Answer only the observed Codex hooks chooser while a launched Codex has not taken its first
-//! message.
+//! A launched agent's start: started with no message, it is given its first one once hc calls it
+//! ready, and the launch is confirmed only by hc's receipt of that message. On the way, only the
+//! observed Codex hooks chooser is answered.
+//!
+//! hc records a first message only for a template run (`first_message`); the board runs the agent's
+//! own command line, so the receipt is `hc send`'s: never forced (hc refuses a program blocked on a
+//! person), its `started` saying whether the agent went to work on the text.
+
+use super::hc::{self, Hc, Object, text_of};
+use super::{CONFIRM_LOOKS, LaunchError, PROMPT_WAIT, READY_STATES};
+use serde_json::Value;
+
+/// Give the agent in `terminal` (`claude` or `codex`) its first message, `text`, once it is
+/// [`ready`], and take hc's word that it started working on it: `hc send` answering `started`. A
+/// send hc refuses (a program blocked on a person), or whose turn did not start, or that hc cannot
+/// tell of (a program that reports no status), fails naming the terminal. `look` runs before each
+/// look at the terminal.
+pub(super) fn first_message(
+    hc: &dyn Hc,
+    terminal: &str,
+    agent: &str,
+    text: &str,
+    look: &mut dyn FnMut(),
+    sleep: &dyn Fn(f64),
+) -> Result<(), LaunchError> {
+    ready(hc, terminal, agent, look, sleep)?;
+    let said = hc.json(&["send", terminal, text]).map_err(|problem| {
+        LaunchError(format!(
+            "terminal {terminal} did not take its first message: {problem}"
+        ))
+    })?;
+    match said.get("started") {
+        Some(Value::Bool(true)) => Ok(()),
+        Some(Value::Bool(false)) => {
+            let status = hc::text(said.get("status"));
+            Err(LaunchError(format!(
+                "the agent in terminal {terminal} did not start working on its first message (its \
+                 status when it went in: {})",
+                if status.is_empty() { "none" } else { &status }
+            )))
+        }
+        _ => Err(LaunchError(format!(
+            "hc cannot say whether the agent in terminal {terminal} took its first message: it \
+             reports no status"
+        ))),
+    }
+}
+
+/// Wait until hc calls the agent in `terminal` ready for a message (`idle` or `done`). A look hc
+/// cannot answer is no evidence; a terminal that ended, or that hc no longer knows, fails at once,
+/// as does an agent blocked on a person (a folder-trust dialog), and one still not ready after
+/// [`CONFIRM_LOOKS`]. A Codex start that shows its hooks chooser is answered "Continue without
+/// trusting", the one answer that keeps the hooks off: navigation first, then enter only once a
+/// fresh look shows that item selected. The look right after a key press is not yet judged blocked.
+fn ready(
+    hc: &dyn Hc,
+    terminal: &str,
+    agent: &str,
+    look: &mut dyn FnMut(),
+    sleep: &dyn Fn(f64),
+) -> Result<(), LaunchError> {
+    let mut last = String::from("unknown");
+    let (mut moved, mut answered, mut pressed) = (false, false, false);
+    for _ in 0..CONFIRM_LOOKS {
+        sleep(PROMPT_WAIT);
+        look();
+        let found = match hc.get(terminal) {
+            Ok(Some(found)) => found,
+            Ok(None) => {
+                return Err(LaunchError(format!(
+                    "terminal {terminal} is gone before its agent took its first message"
+                )));
+            }
+            Err(problem) => {
+                last = format!("unanswered: {problem}");
+                continue;
+            }
+        };
+        if text_of(&found, "state") != "live" {
+            let code = Some(text_of(&found, "exit_code")).filter(|c| !c.is_empty());
+            return Err(LaunchError(format!(
+                "the agent in terminal {terminal} ended (exit code {}) before it took its first message",
+                code.as_deref().unwrap_or("none")
+            )));
+        }
+        let status = hc::status(&found);
+        if READY_STATES.contains(&status.as_str()) {
+            return Ok(());
+        }
+        last = if status.is_empty() {
+            "none".into()
+        } else {
+            status.clone()
+        };
+        let settling = std::mem::take(&mut pressed);
+        if agent == "codex"
+            && !answered
+            && let Ok(screen) = hc.read(terminal, 0)
+            && let Some(mut keys) = bottom_choice(&screen)
+        {
+            if moved {
+                // A fresh look must show the no-trust item selected. A dropped key can leave
+                // another one selected: never confirm that, nor try correcting it.
+                answered = true;
+                if keys == ["enter"] {
+                    hc.keys(terminal, &keys)?;
+                    pressed = true;
+                }
+            } else {
+                if keys.len() > 1 {
+                    keys.pop(); // navigation only; confirming needs the next look
+                    moved = true;
+                } else {
+                    answered = true; // this first look already shows no-trust selected
+                }
+                hc.keys(terminal, &keys)?;
+                pressed = true;
+            }
+            continue;
+        }
+        if status == "blocked" && !settling {
+            return Err(LaunchError(format!(
+                "the agent in terminal {terminal} waits on a person before it took its first \
+                 message{}",
+                asks(&found)
+            )));
+        }
+    }
+    Err(LaunchError(format!(
+        "the agent in terminal {terminal} was never ready for its first message (its last status: \
+         {last})"
+    )))
+}
+
+/// What a blocked program asks, as hc's status record says (`msg`), if it says.
+fn asks(terminal: &Object) -> String {
+    match terminal.get("status") {
+        Some(Value::Object(status)) if !text_of(status, "msg").is_empty() => {
+            format!(": {}", text_of(status, "msg"))
+        }
+        _ => String::new(),
+    }
+}
 
 /// The keys that answer the hooks chooser the bottom of `screen` shows, if it shows one: the
 /// chooser from its title to the end of the screen, nothing after it ([`hooks_choice`]).

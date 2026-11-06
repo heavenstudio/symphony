@@ -28,7 +28,8 @@
 //!   reviewer role on a task in `review`: an executor in review waits on its reviewers, whose
 //!   changes must reach it, and [`super::finish`] closes it once the task is done;
 //! - nothing runs under its agent but what is known to be harmless ([`procs::reap_busy_reason`]):
-//!   MCP helpers, caffeinate, a board command or monitor (`just tasks…`, the `tasks` binary).
+//!   MCP helpers (Codex's REPL helper by its configured path), caffeinate, a board command or
+//!   monitor (`just tasks…`, the `tasks` binary).
 //!   Anything else, whatever it is, is work. A terminal whose processes cannot be read is kept.
 //! - the owner is not looking at it ([`super::screen`]): not in the tab the Herdr app shows, not
 //!   the agent it shows, not held over them; when the window cannot say, it is kept.
@@ -42,8 +43,10 @@
 //! owner's look that came during the sweep keeps the terminal. The close is recorded first, on the handle's open task
 //! sessions (`closed the pane of …; restore: just tasks restore …`), else on the last task it held a
 //! role on, as a session found and closed in that one line; a record that fails leaves the terminal
-//! open, and a close hc refuses reopens the session. A sweep interrupted after recording a close
-//! reuses that record when it retries closing the same terminal and conversation.
+//! open, and a close hc refuses reopens the session. The window is read once more after the record,
+//! right before the kill ([`screen::close_unseen`]): a terminal on screen then, or one it cannot
+//! say of, stays, its session reopened and its idle wait started again. A sweep interrupted after
+//! recording a close reuses that record when it retries closing the same terminal and conversation.
 
 use super::cleanup::{restore_line, stored_session};
 use super::hc::{self, Hc, Object, text_of};
@@ -285,9 +288,19 @@ pub fn sweep(
                 continue;
             }
         };
-        if hc.close(&address).is_err() {
-            reopen(store, &handle, &closed_before, &address)?;
-            continue;
+        match screen::close_unseen(hc, &address) {
+            Ok(()) => {}
+            Err(screen::NotClosed::Refused(_)) => {
+                reopen(store, &handle, &closed_before, &address)?;
+                continue;
+            }
+            Err(screen::NotClosed::Kept(_)) => {
+                // The owner looked, or the window could not say, after the record: its idle wait
+                // starts again.
+                reopen(store, &handle, &closed_before, &address)?;
+                idle_now.remove(&key);
+                continue;
+            }
         }
         if let Some(callback) = callbacks.get(&handle) {
             store.clear_callback(callback, "finished idle terminal closed")?;

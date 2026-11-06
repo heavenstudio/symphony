@@ -52,7 +52,7 @@ pub trait Hc {
         all.insert(at, "--json");
         let out = self.run(&all)?;
         serde_json::from_str(out.trim())
-            .map_err(|_| LaunchError(format!("hc {} printed no JSON", words(args))))
+            .map_err(|why| LaunchError(format!("hc {} printed no JSON: {why}", words(args))))
     }
 
     /// The terminals `hc ls` lists with these labels (and finished ones too with `all`).
@@ -124,13 +124,20 @@ pub trait Hc {
     }
 
     /// End the terminal and remove it: killed while live (or when hc could not say), then removed.
-    /// One hc no longer knows is already gone.
+    /// One hc no longer knows is already gone. What the board started and could not use; a terminal
+    /// the owner may be looking at closes only through [`super::screen::close_unseen`].
     fn close(&self, terminal: &str) -> Result<(), LaunchError> {
         let live = match self.get(terminal) {
             Ok(None) => return Ok(()),
             Ok(Some(found)) => text(found.get("state")) == "live",
             Err(_) => true,
         };
+        self.end(terminal, live)
+    }
+
+    /// Kill the terminal when it is `live`, then remove it, with no look first: one hc no longer
+    /// knows is already gone.
+    fn end(&self, terminal: &str, live: bool) -> Result<(), LaunchError> {
         if live {
             match self.json(&["kill", terminal]) {
                 Err(e) if is_not_found(&e) => return Ok(()),

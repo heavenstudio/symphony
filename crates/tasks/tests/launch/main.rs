@@ -451,6 +451,12 @@ impl World {
         symphony_board::launch::hc::program(&argv).to_vec()
     }
 
+    /// Every message `hc send` gave the terminal, in order.
+    pub fn sent(&self, address: &str) -> Vec<String> {
+        let sent = self.terminal(address)["sent"].clone();
+        serde_json::from_value(sent).unwrap_or_default()
+    }
+
     /// The name of the Herdr app tab holding `tab`, and its space's.
     pub fn tab_name(&self, tab: &str) -> (String, String) {
         let state = self.state();

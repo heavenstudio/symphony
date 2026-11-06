@@ -212,22 +212,29 @@ is a list of calls gets a list of answers), the methods being the store's, plus
 `launch`, `restore`, `cleanup`, `finish` and `reap` (the Symphony's idle
 sweep, every five minutes) drive hc's terminals and git's worktrees from
 `src/launch/`, through `launch::hc::Hc` alone; the crate calls no `herdr`.
-A launch is one `hc run --bg --no-parent --outlive-parent --keep`, its first
-message in the run (no child of the caller's terminal, which the app would show
-under it rather than in a tab), labelled `sf.board` (the main checkout's folder and the board's
+A launch is one `hc run --bg --no-parent --outlive-parent --keep` of the
+agent's own command line, with no message (no child of the caller's terminal,
+which the app would show under it rather than in a tab), labelled `sf.board` (the main checkout's folder and the board's
 database), `sf.handle`, and `herdr.space`/`herdr.tab`: the stream tab (`code`,
 `review`, `3d`, `infra`) of the project's space in the Herdr app, found by name
 (`herdr-app ls`, else the layout `hc connect` keeps) and made when missing,
-never an owner's tab or another project's terminal. It is confirmed by `hc get`
-(`first_message.sent`, then a `working`, `done` or `blocked` status), never by
-reading the screen; a launch hc did not send fails naming the terminal, which
-is killed and removed. Codex runs with `--no-daemon`. A close is `hc kill`
-then `hc rm`, never of the caller's terminal (`HC_TERMINAL_ID`) nor of one the
-owner may be looking at (`launch/screen.rs`, from `herdr-app status`: its
-`herdr.tab` label the tab the window shows, the agent it shows, or held by an
-overlay or float); cleanup, finish and the idle sweep read the window right
-before each close, and a window that cannot say (the call fails, it reports
-errors, or an overlay or float names no terminal) keeps the terminal. A record
+never an owner's tab or another project's terminal. Once `hc get` calls the
+agent `idle` or `done`, its first message goes in by `hc send`, never
+`--force`, and only that send's `started: true` confirms the launch
+(`launch/startup.rs`): hc records `first_message` for template runs alone. An
+agent blocked on a person (Claude's folder-trust dialog), never ready, ended,
+gone, or whose send hc refuses, does not start, or cannot tell of, fails the
+launch naming the terminal, which is killed and removed; only Codex's hooks
+chooser is answered on the way. Codex runs with `--no-daemon`; its configured
+REPL helper (`procs::CODEX_REPL`, that exact path) is not work under it. A
+close is `hc kill` then `hc rm`, never of the caller's terminal
+(`HC_TERMINAL_ID`) nor of one the owner may be looking at (`launch/screen.rs`,
+from `herdr-app status`: its `herdr.tab` label the tab the window shows, the
+agent it shows, or held by an overlay or float); cleanup, finish and the idle
+sweep read the window last, after the close's own `hc get` and after the idle
+sweep records the closure, right before the kill (`screen::close_unseen`), and
+a window that cannot say (the call fails, it reports errors, or an overlay or
+float names no terminal) keeps the terminal, the sweep's record reopened. A record
 naming a herdr pane (`w1:p…`) is a gone terminal: cleanup records it closed
 with its restore line, and restore brings it back in an hc terminal. Its tests' handles:
 `TASKS_SERVER` and `TASKS_DATABASE` reach a board of the test's own

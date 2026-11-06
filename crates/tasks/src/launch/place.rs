@@ -20,7 +20,7 @@ pub(super) struct Place {
 }
 
 /// The tabs of `stream` (`code`, `code-2`, ...) with their numbers, in order.
-fn stream_tabs<'t>(tabs: &'t [Object], stream: &str) -> Vec<(u64, &'t Object)> {
+fn stream_tabs<'layout>(tabs: &'layout [Object], stream: &str) -> Vec<(u64, &'layout Object)> {
     let mut found: Vec<(u64, &Object)> = tabs
         .iter()
         .filter_map(|tab| {

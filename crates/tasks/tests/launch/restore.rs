@@ -63,9 +63,9 @@ fn restore_resumes_the_recorded_conversation_in_a_new_terminal_in_the_recorded_w
             "auto",
             "--model",
             "sonnet",
-            &told(&s.handle),
         ]
     );
+    assert_eq!(w.sent(&again.row.pane), [told(&s.handle)]);
     assert_ne!(again.row.pane, s.pane);
     assert_eq!(w.live(), [again.row.pane.as_str()]);
     let t = w.terminal(&again.row.pane);
@@ -117,9 +117,9 @@ fn a_codex_conversation_resumes_with_its_thread_without_the_daemon() {
             ),
             "resume",
             "0abc-def",
-            &told(&s.handle),
         ]
     );
+    assert_eq!(w.sent(&again.row.pane), [told(&s.handle)]);
     assert_eq!(again.row.claude_session, "codex:0abc-def");
     assert_eq!(again.row.closed, None);
     assert_eq!(w.live(), [again.row.pane]);
@@ -383,14 +383,22 @@ fn a_failed_run_starts_nothing_and_reopens_nothing() {
 fn an_unconfirmed_restore_kills_and_removes_its_new_terminal_and_keeps_the_record_closed() {
     for (knob, value, why) in [
         (
-            "FAKE_HC_UNSENT",
-            "startup settle timed out",
-            "hc did not send the first message to terminal {t}: startup settle timed out",
+            "FAKE_HC_BLOCKED",
+            "1",
+            "the agent in terminal {t} waits on a person before it took its first message: Quick \
+             safety check: Is this a project you created or one you trust?",
+        ),
+        (
+            "FAKE_HC_DEAF",
+            "1",
+            "the agent in terminal {t} did not start working on its first message (its status \
+             when it went in: idle)",
         ),
         (
             "FAKE_HC_SILENT",
             "1",
-            "could not confirm that the agent in terminal {t} took its first message (its last status: none)",
+            "the agent in terminal {t} was never ready for its first message (its last status: \
+             none)",
         ),
     ] {
         let mut w = World::new();

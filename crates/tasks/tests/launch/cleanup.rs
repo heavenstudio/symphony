@@ -64,7 +64,7 @@ fn an_idle_agent_of_a_finished_task_is_killed_removed_and_its_closure_recorded()
         let closing: Vec<String> = w
             .changes()
             .into_iter()
-            .filter(|c| c[0] != "run" && c[0] != "app")
+            .filter(|c| !["run", "send", "app"].contains(&c[0].as_str()))
             .map(|c| c[0].clone())
             .collect();
         assert_eq!(closing, ["kill", "rm"]);

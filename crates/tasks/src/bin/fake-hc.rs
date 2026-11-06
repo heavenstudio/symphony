@@ -12,17 +12,25 @@
 //! / `space.rename`. A terminal `run` labels into a space and tab the layout lacks joins it, as the
 //! window adopts it.
 //!
-//! An agent `run` starts (its program, past `env` and its settings, is `claude` or `codex`) has
-//! taken its first message: `working`. `FAKE_HC_IDLE=N` leaves the first N `idle` instead, and
-//! `FAKE_HC_SILENT=N` the first N saying nothing; `FAKE_HC_EXIT=N` ends the first N at once;
-//! `FAKE_HC_UNSENT=WHY` records a first message hc did not send. `FAKE_HC_START_SCREEN=FILE` makes a
-//! codex start show FILE as its hooks chooser, silent until a `keys` press confirms a choice
-//! (`FAKE_HC_START_SELECTED` picks the highlighted one, `FAKE_HC_DROP_DOWN=1` loses the first down).
+//! An agent `run` starts (its program, past `env` and its settings, is `claude` or `codex`) waits
+//! at its prompt, `idle`, as hc runs one with no template: no `first_message`. `send` gives it its
+//! next message as hc does: refused while it is `blocked` (unless `--force`), else it goes
+//! `working` and the answer says `started` (null for a program that reports no status), `status`
+//! (its word when the text went in) and `turn`. `FAKE_HC_SILENT=N` leaves the first N agents saying
+//! nothing, `FAKE_HC_BUSY=N` `working` before any message, `FAKE_HC_BLOCKED=N` `blocked` on Claude's
+//! folder-trust dialog (its status `msg` the question), and `FAKE_HC_DEAF=N` never starting a turn
+//! on what is sent (`started` false); `FAKE_HC_EXIT=N` ends the first N at once.
+//! `FAKE_HC_START_SCREEN=FILE` makes a codex start show FILE as its hooks chooser, silent until a
+//! `keys` press confirms a choice (`FAKE_HC_START_SELECTED` picks the highlighted one,
+//! `FAKE_HC_DROP_DOWN=1` loses the first down).
 //! `FAKE_HC_FAIL=WORDS[,WORDS]` makes those calls exit 1 with hc's error on stderr: a command's
 //! first word (`get`, `run`), or `app` and its first word (`app ls`, `app do`).
 
 use serde_json::{Map, Value, json};
 use std::io::{BufRead, Write};
+
+/// What Claude's folder-trust dialog asks.
+const TRUST_QUESTION: &str = "Quick safety check: Is this a project you created or one you trust?";
 
 fn main() {
     let argv: Vec<String> = std::env::args().skip(1).collect();
@@ -211,11 +219,15 @@ fn shown(t: &Map<String, Value>) -> Value {
     let agent = t.get("agent").cloned().unwrap_or(Value::Null);
     view.insert(
         "status".into(),
-        match t.get("status") {
-            Some(Value::String(word)) => json!({"app": agent, "state": word}),
+        match (t.get("status"), t.get("status_msg")) {
+            (Some(Value::String(word)), Some(msg)) => {
+                json!({"app": agent, "state": word, "msg": msg})
+            }
+            (Some(Value::String(word)), None) => json!({"app": agent, "state": word}),
             _ => Value::Null,
         },
     );
+    view.remove("status_msg");
     if t["state"] == "live" && !t.contains_key("foreground") {
         let argv: Vec<String> = t["argv"]
             .as_array()
@@ -308,10 +320,17 @@ fn answer(argv: &[String], state: &mut Map<String, Value>) -> Answer {
             if let Some(sent) = sent.as_array_mut() {
                 sent.push(json!(text));
             }
-            if t.get("deaf").is_none_or(|d| d != true) {
+            let before = t.get("status").cloned().unwrap_or(Value::Null);
+            // hc's `started`: whether it went working; null when it says nothing of its status.
+            let started = if before.is_null() {
+                Value::Null
+            } else if t.get("deaf").is_some_and(|d| d == true) {
+                json!(false)
+            } else {
                 t.insert("status".into(), json!("working"));
-            }
-            let said = json!({"started": true, "status": t["status"], "turn": t["turn"]});
+                json!(true)
+            };
+            let said = json!({"started": started, "status": before, "turn": t["turn"]});
             Answer::Saved(said.to_string())
         }
         "kill" => {
@@ -398,14 +417,21 @@ fn start(argv: &[String], state: &mut Map<String, Value>) -> Answer {
             t["selection"] = json!(count("FAKE_HC_START_SELECTED").max(1));
             t["screen"] = json!(std::fs::read_to_string(&screen).unwrap_or_default());
         } else if knob(state, "FAKE_HC_SILENT") {
-        } else if knob(state, "FAKE_HC_IDLE") {
-            t["status"] = json!("idle");
-        } else {
+        } else if knob(state, "FAKE_HC_BUSY") {
             t["status"] = json!("working");
-        }
-        let unsent = var("FAKE_HC_UNSENT");
-        if !unsent.is_empty() {
-            t["first_message"] = json!({"sent": false, "reason": unsent});
+        } else if knob(state, "FAKE_HC_BLOCKED") {
+            t["status"] = json!("blocked");
+            t["status_msg"] = json!(TRUST_QUESTION);
+            t["screen"] = json!(format!(
+                "Accessing workspace:\n\n{}\n\n{TRUST_QUESTION}\n\n❯ 1. Yes, I trust this folder\n  \
+                 2. No, exit\n\nEnter to confirm · Esc to cancel",
+                flag(options, "--cwd").unwrap_or("/")
+            ));
+        } else {
+            t["status"] = json!("idle");
+            if knob(state, "FAKE_HC_DEAF") {
+                t["deaf"] = json!(true);
+            }
         }
     }
     if parent.is_none() {
@@ -455,7 +481,7 @@ fn press(t: &mut Map<String, Value>, keys: &[String]) -> Result<(), String> {
                 t.insert("chooser".into(), json!(false));
                 if selection == 3 {
                     t.insert("screen".into(), json!("› Ask Codex to do anything"));
-                    t.insert("status".into(), json!("working"));
+                    t.insert("status".into(), json!("idle"));
                 }
                 break;
             }

@@ -90,8 +90,14 @@ fn the_binary_comes_from_hc_bin_split_as_a_shell_splits_it() {
 #[test]
 fn an_answer_that_is_not_json_or_no_list_is_named() {
     for (named, why) in [
-        ("echo not-json", "hc ls printed no JSON"),
-        ("true", "hc ls printed no JSON"),
+        (
+            "echo not-json",
+            "hc ls printed no JSON: expected ident at line 1 column 2",
+        ),
+        (
+            "true",
+            "hc ls printed no JSON: EOF while parsing a value at line 1 column 0",
+        ),
         ("sh -c 'echo {}'", "hc ls answered no list of terminals"),
         (
             r#"sh -c 'echo "{\"terminals\":[1]}"'"#,
@@ -338,7 +344,7 @@ fn the_fake_runs_a_terminal_into_the_window_and_refuses_a_name_taken() {
     let t = w.terminal(address);
     assert_eq!(
         (t["agent"].clone(), t["status"].clone(), t["keep"].clone()),
-        (json!("codex"), json!("working"), json!(true))
+        (json!("codex"), json!("idle"), json!(true))
     );
     assert_eq!(t["outlive_parent"], true);
     assert_eq!(t["notify"], false);
@@ -401,4 +407,31 @@ fn the_fake_keeps_a_live_terminal_from_rm_and_a_blocked_agent_from_send() {
             "hc attach {t}: unsupported: fake hc has no attach"
         )))
     );
+    // Forced, as hc, it types into the dialog.
+    assert!(w.hc().json(&["send", &t, "1", "--force"]).is_ok());
+}
+
+#[test]
+fn the_fakes_send_answers_as_hcs_whether_the_turn_started_and_the_status_it_went_in_at() {
+    let w = World::new();
+    let ready = w.add_terminal(true, None, json!({"turn": 4}));
+    let deaf = w.add_terminal(true, None, json!({"deaf": true}));
+    let shell = w.add_terminal(false, None, json!({}));
+    for (t, started, now) in [
+        (&ready, json!(true), json!("working")),
+        (&deaf, json!(false), json!("idle")),
+        (&shell, json!(null), json!(null)),
+    ] {
+        let before = w.terminal(t)["status"].clone();
+        let turn = w.terminal(t)["turn"].clone();
+        assert_eq!(
+            w.hc().json(&["send", t, "go"]).unwrap(),
+            json!({"started": started, "status": before, "turn": turn}),
+            "{t}"
+        );
+        assert_eq!(
+            (w.terminal(t)["status"].clone(), w.sent(t)),
+            (now, vec!["go".to_string()])
+        );
+    }
 }

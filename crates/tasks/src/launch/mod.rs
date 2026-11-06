@@ -3,19 +3,19 @@
 //! [`launch`] registers a handle, makes the worktree under `<repo>-wt/` (an executor on its task's
 //! branch: its slug; an instruction or reviewer on a detached checkout of main) unless
 //! `--worktree` gives one, and starts Codex by default, or Claude when selected, in an hc terminal
-//! of its own (`hc run`), its first message (`$work SLUG HANDLE`; Claude: `/work`) given in the run.
-//! The terminal outlives whoever launched it (`--outlive-parent`), is kept (`--keep`), and shows
-//! in the stream tab of its role (`code` for an executor, `review` for a reviewer, or `--tab`; at
-//! most four terminals, then `code-2`) of the project's space in the Herdr app, found by name and
-//! made when missing (the labels `herdr.space` and `herdr.tab`): never one of the owner's tabs. The
-//! launch is confirmed by hc's record of the terminal (`hc get`: its first message sent, its agent
-//! at work), never by reading the screen and pressing enter; one that cannot be confirmed fails,
-//! naming the terminal, which is killed and removed. The launch is recorded on the task: handle,
-//! role, conversation id, worktree, branch, terminal, model, start time. [`restore`] reopens the
-//! recorded conversation in its worktree, in a new terminal. [`cleanup`] closes unneeded terminals
-//! (killed, then removed), each closure recorded on its task with the restore line; [`finish`] is the
-//! same for one task that just became done or cancelled (its worktree is the worktree sweep's, `tasks
-//! sweep --task`). [`reap`] is the periodic sweep of idle agents.
+//! of its own (`hc run`), then gives it its first message (`$work SLUG HANDLE`; Claude: `/work`)
+//! once it is ready. The terminal outlives whoever launched it (`--outlive-parent`), is kept
+//! (`--keep`), and shows in the stream tab of its role (`code` for an executor, `review` for a
+//! reviewer, or `--tab`; at most four terminals, then `code-2`) of the project's space in the Herdr
+//! app, found by name and made when missing (the labels `herdr.space` and `herdr.tab`): never one of
+//! the owner's tabs. The launch is confirmed only by hc's receipt of that message (`startup`); one
+//! that cannot be confirmed fails, naming the terminal, which is killed and removed. The launch is
+//! recorded on the task: handle, role, conversation id, worktree, branch, terminal, model, start
+//! time. [`restore`] reopens the recorded conversation in its worktree, in a new terminal, the same
+//! way. [`cleanup`] closes unneeded terminals (killed, then removed), each closure recorded on its
+//! task with the restore line; [`finish`] is the same for one task that just became done or
+//! cancelled (its worktree is the worktree sweep's, `tasks sweep --task`). [`reap`] is the periodic
+//! sweep of idle agents.
 //!
 //! A terminal is closed only when all of these hold: it is this board's (`sf.board`); its agent is
 //! idle (or it is a shell with nothing in it, or its program ended) and has no process running under
@@ -40,7 +40,7 @@ pub mod staff;
 mod startup;
 
 pub use cleanup::{Closure, cleanup, finish};
-use place::{Place, name_place, place, stream};
+use place::{name_place, place, stream};
 
 use crate::cli::{Env, probes};
 use crate::health::{FINISHED, RESERVE_SECONDS};
@@ -483,19 +483,20 @@ fn take_up(
 }
 
 /// What one terminal starts: in `cwd`, for `handle`, in the tab of `stream`, the `agent` (`claude`
-/// or `codex`) with its `args`, and `text` its first message.
-struct Start<'a> {
-    cwd: &'a str,
-    handle: &'a str,
-    stream: &'a str,
+/// or `codex`) with its `args`, and `text` its first message. It borrows them from the launch or
+/// restore that fills it.
+struct Start<'launch> {
+    cwd: &'launch str,
+    handle: &'launch str,
+    stream: &'launch str,
     agent: &'static str,
     args: Vec<String>,
-    text: &'a str,
+    text: &'launch str,
 }
 
-/// A terminal for `start.handle`, placed in its stream's tab, its agent started with its first
-/// message, and that message confirmed taken. The terminal, once there is one, is left in
-/// `terminal` for the caller to close if this fails.
+/// A terminal for `start.handle`, placed in its stream's tab, its agent started and given its first
+/// message once ready, and hc's receipt of that message taken (`startup`). The terminal, once there
+/// is one, is left in `terminal` for the caller to close if this fails.
 fn start_confirmed(
     hc: &dyn Hc,
     m: &Machine,
@@ -507,7 +508,6 @@ fn start_confirmed(
     argv.extend(m.board_env.iter().map(|(k, v)| format!("{k}={v}")));
     argv.push(start.agent.into());
     argv.extend(start.args.iter().cloned());
-    argv.push(start.text.into());
     let labels = [
         format!("herdr.space={}", place.space),
         format!("herdr.tab={}", place.tab),
@@ -535,7 +535,14 @@ fn start_confirmed(
         .filter(|a| !a.is_empty())
         .ok_or_else(|| LaunchError("hc run answered no terminal address".into()))?
         .to_string();
-    confirmed(hc, terminal, start.agent, &mut place, &*m.sleep)
+    startup::first_message(
+        hc,
+        terminal,
+        start.agent,
+        start.text,
+        &mut || name_place(hc, &mut place),
+        &*m.sleep,
+    )
 }
 
 /// Reopen every closed session of `slug` (or `handle`'s), and every open one whose pane is gone,
@@ -730,91 +737,6 @@ fn claude_args(model: &str, handle: &str, mode: &str, identity: [&str; 2]) -> Ve
         args.extend(["--model".to_string(), model.to_string()]);
     }
     args
-}
-
-/// Whether the agent in `terminal` took the first message it was started with, by hc's record of
-/// it (`hc get`): hc sent it (a run that records `first_message` says whether), and the agent is at
-/// work (`working`, `done`, or `blocked` asking a person). A look that hc cannot answer is no
-/// evidence; a terminal that ended, or that hc no longer knows, fails at once. A Codex start that
-/// shows its hooks chooser is answered "Continue without trusting", the one answer that keeps the
-/// hooks off: navigation first, then enter only once a fresh look shows that item selected.
-fn confirmed(
-    hc: &dyn Hc,
-    terminal: &str,
-    agent: &str,
-    place: &mut Place,
-    sleep: &dyn Fn(f64),
-) -> Result<(), LaunchError> {
-    let (mut last, mut moved, mut answered) = (String::from("unknown"), false, false);
-    for _ in 0..CONFIRM_LOOKS {
-        sleep(PROMPT_WAIT);
-        name_place(hc, place);
-        let found = match hc.get(terminal) {
-            Ok(Some(found)) => found,
-            Ok(None) => {
-                return Err(LaunchError(format!(
-                    "terminal {terminal} is gone before its agent took its first message"
-                )));
-            }
-            Err(problem) => {
-                last = format!("unanswered: {problem}");
-                continue;
-            }
-        };
-        if text_of(&found, "state") != "live" {
-            let code = Some(text_of(&found, "exit_code")).filter(|c| !c.is_empty());
-            return Err(LaunchError(format!(
-                "the agent in terminal {terminal} ended (exit code {}) before it took its first message",
-                code.as_deref().unwrap_or("none")
-            )));
-        }
-        if let Some(first) = found.get("first_message").and_then(Value::as_object)
-            && first.get("sent") == Some(&Value::Bool(false))
-        {
-            return Err(LaunchError(format!(
-                "hc did not send the first message to terminal {terminal}: {}",
-                text_of(first, "reason")
-            )));
-        }
-        let status = hc::status(&found);
-        last = if status.is_empty() {
-            "none".into()
-        } else {
-            status.clone()
-        };
-        if status == "working" || status == "done" {
-            return Ok(());
-        }
-        if agent == "codex"
-            && !answered
-            && let Ok(screen) = hc.read(terminal, 0)
-            && let Some(mut keys) = startup::bottom_choice(&screen)
-        {
-            if moved {
-                // A fresh look must show the no-trust item selected. A dropped key can leave
-                // another one selected: never confirm that, nor try correcting it.
-                answered = true;
-                if keys == ["enter"] {
-                    hc.keys(terminal, &keys)?;
-                }
-            } else if keys.len() > 1 {
-                keys.pop(); // navigation only; confirming needs the next look
-                moved = true;
-                hc.keys(terminal, &keys)?;
-            } else {
-                answered = true; // this first look already shows no-trust selected
-                hc.keys(terminal, &keys)?;
-            }
-            continue;
-        }
-        if status == "blocked" {
-            return Ok(());
-        }
-    }
-    name_place(hc, place);
-    Err(LaunchError(format!(
-        "could not confirm that the agent in terminal {terminal} took its first message (its last status: {last})"
-    )))
 }
 
 // -- git -------------------------------------------------------------------------------------
