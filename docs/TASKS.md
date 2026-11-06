@@ -306,6 +306,24 @@ Counts and the clock do not trigger delivery. A departure alone pushes nothing;
 an entry that stays present is never re-sent, and an entry that leaves and returns pushes once.
 A legacy native observer starts from the current board on upgrade rather than replaying its history.
 Its upgrade marker and message cursor are separate callback-state fields that older writers leave intact.
+The fields writers older than that scoping read (the observation, the open-status map and the delivered PULL entries)
+keep their whole-board meaning; the scoped observation and the entries it withheld are kept beside them, in fields
+those writers ignore, and read over them: a line either writer said is not said again by the other.
+A line still waiting for delivery to an orchestrator (a NEW, STATUS, ROLE, BLOCKED, STALE, LIVENESS UNKNOWN or LOST)
+is said only if a dispatch would tell it that line now, by the same test, so one a hand-over or a released claim took
+from it meanwhile is dropped, or a LOST said again of the work it still hears; the hand-over's own ROLE line is kept,
+and a quiet child holding no work is still its parent's to hear of. A PULL still waiting is never delivered as it was
+written: the digest is built again for its recipient, counts included, and said in its place, by one rule over what
+the recipient hears now, what the PULLs it acknowledged told it and what the waiting PULL tells. With nothing heard
+beyond what it acknowledged, the waiting PULL is taken back; an entry beyond both, shown or only counted, makes a new
+PULL with a retry budget of its own; otherwise the waiting PULL keeps its key and attempts and says the digest as it
+is now. What it was told changes only when it acknowledges a PULL, whichever writer records that, so work it gains
+while one waits is said and work that only departs renews no budget. Work it hears is told once a PULL naming it is
+acknowledged, whatever older dispatchers write, queue or acknowledge after. Only what was withheld from it is
+ambiguous, since an older dispatcher's own PULL told it the whole board and reads the same as the waiting one:
+withheld work counts as untold, so when a hand-over makes it the recipient's, one PULL counts it, once more at most
+for that hand-over and never left out, and nothing repeats on its own. Posts and verdicts are kept: they were said to
+whoever held the role then.
 Codex callbacks use the queue by default; `git config sf.codexSteer true` opts in to
 active-turn steering. The owner decides its first live use.
 

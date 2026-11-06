@@ -48,6 +48,36 @@ RETURN {
 };"
 );
 
+/// `line`, a message's write, made once per `$key` on `$slug`'s thread: the first write under the
+/// key makes the line and `delivery_key:[slug, key]`, which names that line to every later one,
+/// and a later write makes nothing. Given `same`, a condition on the thread's lines, the first
+/// write under the key instead takes the earliest line meeting it when the thread holds one (a
+/// line made under no key), binding the key to that line and writing nothing. `$had` is the key's
+/// record before this write.
+fn once(line: &str, same: Option<&str>) -> String {
+    let make = format!(
+        "{line}
+    CREATE type::record('delivery_key', [$slug, $key]) SET slug = $slug, key = $key, message = $sid, ts = $ts RETURN NONE;"
+    );
+    let write = match same {
+        None => make,
+        Some(same) => format!(
+            "LET $same = array::first((SELECT VALUE sid FROM message:[$slug, NONE]..[$slug, ..] WHERE {same} LIMIT 1));
+    IF $same != NONE {{
+        CREATE type::record('delivery_key', [$slug, $key]) SET slug = $slug, key = $key, message = $same, ts = $now RETURN NONE;
+    }} ELSE {{
+        {make}
+    }};"
+        ),
+    };
+    format!(
+        "LET $had = (SELECT message FROM ONLY type::record('delivery_key', [$slug, $key]));
+IF $had = NONE {{
+    {write}
+}};"
+    )
+}
+
 impl Store {
     /// Post to a task's thread. Only addressed messages and owner messages enter inboxes.
     pub fn say(
@@ -57,7 +87,7 @@ impl Store {
         text: &str,
         to: Option<&str>,
     ) -> Result<Message, Error> {
-        self.post(slug, sender, sender, text, to)
+        self.post(slug, sender, sender, text, to, None)
     }
 
     /// A tool's addressed notification, authorized as `actor` and authored by the board so even
@@ -72,9 +102,43 @@ impl Store {
         if handle == OWNER || handle.starts_with('@') {
             return Err(refused("a notice needs a literal session handle".into()));
         }
-        self.post(slug, actor, BOARD, text, Some(handle))
+        self.post(slug, actor, BOARD, text, Some(handle), None)
     }
 
+    /// Post to a task's thread once per `key`: the first post under a key on a thread is made, and
+    /// every later one answers that message and writes nothing, whatever it says
+    /// (`delivery_key:[slug, key]`, read and written in the post's transaction, so two at once make
+    /// one line). A caller whose post may have committed without its answer (its run stopped)
+    /// repeats the call rather than reads the thread, and a request of its that outlived it cannot
+    /// post twice.
+    pub fn say_keyed(
+        &self,
+        slug: &str,
+        sender: &str,
+        text: &str,
+        to: Option<&str>,
+        key: &str,
+    ) -> Result<Message, Error> {
+        self.post(slug, sender, sender, text, to, Some((key, false)))
+    }
+
+    /// `say_keyed`, but a key that names no line yet takes the thread's earliest line reading
+    /// exactly `text` to `to` when there is one (a post made under no key, before keys were) and
+    /// writes nothing: that line is answered, and told of as a repeat's is.
+    pub fn adopt_or_say(
+        &self,
+        slug: &str,
+        sender: &str,
+        text: &str,
+        to: Option<&str>,
+        key: &str,
+    ) -> Result<Message, Error> {
+        self.post(slug, sender, sender, text, to, Some((key, true)))
+    }
+
+    /// A post authorized as `actor` and authored by `sender` (the board's own, [`BOARD`], for a
+    /// notice), made once per key when `keyed` gives one, with whether that key adopts a line made
+    /// under no key ([`Store::adopt_or_say`]).
     fn post(
         &self,
         slug: &str,
@@ -82,6 +146,7 @@ impl Store {
         sender: &str,
         text: &str,
         to: Option<&str>,
+        keyed: Option<(&str, bool)>,
     ) -> Result<Message, Error> {
         let text = text.trim();
         if text.is_empty() {
@@ -103,55 +168,92 @@ IF $me.left_at != NONE { THROW $left_actor };"
         } else {
             ACT
         };
+        let line = logged("$slug", "$sender", "'msg'", "$text", "$to");
+        // The answer is the line on the record: this post's, or the one its key names.
+        let said = match keyed {
+            None => format!(
+                "{line}
+RETURN (SELECT * OMIT id FROM ONLY type::record('message', [$slug, $sid]));"
+            ),
+            Some((_, adopt)) => format!(
+                "{}
+LET $made = (SELECT message FROM ONLY type::record('delivery_key', [$slug, $key]));
+RETURN (SELECT * OMIT id FROM ONLY type::record('message', [$slug, $made.message]));",
+                once(
+                    &line,
+                    adopt.then_some("kind = 'msg' AND text = $text AND recipient = $to")
+                )
+            ),
+        };
         let body = format!(
             "{act}
 IF !record::exists(type::record('task', $slug)) {{ THROW $no_task }};
 IF $no_role != NONE {{ THROW $no_role }};
 IF $handle != NONE AND !record::exists(type::record('session', $handle)) {{ THROW $nobody }};
-{}
-RETURN [$sid, $ts];",
-            logged("$slug", "$sender", "'msg'", "$text", "$to")
+{said}"
         );
         let now = (self.clock)();
+        let key = keyed.map(|(key, _)| key);
         let vars = acting(
             actor,
             now,
             json!({
-                "slug": slug, "sender": sender, "text": text, "to": to, "handle": handle, "no_role": no_role,
+                "slug": slug, "sender": sender, "text": text, "to": to, "handle": handle, "no_role": no_role, "key": key,
                 "no_task": format!("{REFUSED}{}", no_task(slug)),
                 "nobody": handle.map(|h| format!("{REFUSED}no session {} to send to", repr(h))),
             }),
         );
-        let (id, ts): (i64, f64) = self.retrying(|| self.transact(&body, vars.clone()))?;
-        if role == Some("executor") {
-            self.tell_if_unread(slug, None, &format!("#{id} from {sender} to @executor"));
-        } else if let Some(to) = handle {
-            self.tell_if_unread(slug, Some(to), &format!("#{id} from {sender} to {to}"));
+        let row: MessageRow = self.retrying(|| self.transact(&body, vars.clone()))?;
+        // Told of the line's recipient, not this call's: a post repeated under a key, or one that
+        // took a line made under no key, answers that line, and says once that no executor reads
+        // it when nothing said so yet (the board's notice goes under the line's own key,
+        // `unread:<id>`, which takes a notice of the line said under no key, so it is said once
+        // per line, whichever post says it).
+        let unread = format!("unread:{}", row.id);
+        match row.recipient.as_deref() {
+            Some("@executor") => self.tell_if_unread(
+                slug,
+                None,
+                &format!("#{} from {} to @executor", row.id, row.sender),
+                Some(&unread),
+            ),
+            Some(to) if to != OWNER && !to.starts_with('@') => self.tell_if_unread(
+                slug,
+                Some(to),
+                &format!("#{} from {} to {to}", row.id, row.sender),
+                Some(&unread),
+            ),
+            _ => {}
         }
-        Ok(Message {
-            id,
-            slug: slug.into(),
-            sender: sender.into(),
-            recipient: to.map(String::from),
-            kind: "msg".into(),
-            text: text.into(),
-            ts,
-        })
+        Ok(message(row))
     }
 
     /// `what` (a post or a changes verdict to `slug`'s executor, or to `only` when that handle
     /// executes it) has no executor to read it now: none has a native callback, and each has its
     /// pane recorded closed or no live beat. The task's orchestrators hear it at once on the
     /// thread, with the restore line of each executor whose pane was closed. A post to a handle
-    /// that does not execute `slug` is left alone. Never fails the write it follows: what went
-    /// wrong goes to stderr.
-    pub(super) fn tell_if_unread(&self, slug: &str, only: Option<&str>, what: &str) {
-        if let Err(problem) = self.unread(slug, only, what) {
+    /// that does not execute `slug` is left alone. Under `key`, it is said once per key on the
+    /// thread however often it is asked. Never fails the write it follows: what went wrong goes to
+    /// stderr.
+    pub(super) fn tell_if_unread(
+        &self,
+        slug: &str,
+        only: Option<&str>,
+        what: &str,
+        key: Option<&str>,
+    ) {
+        if let Err(problem) = self.unread(slug, only, what, key) {
             eprintln!("could not tell @orchestrator that no executor reads {what}: {problem}");
         }
     }
 
-    fn unread(&self, slug: &str, only: Option<&str>, what: &str) -> Result<(), Error> {
+    fn unread(
+        &self,
+        slug: &str,
+        only: Option<&str>,
+        what: &str,
+        key: Option<&str>,
+    ) -> Result<(), Error> {
         let task = self.get(slug)?;
         let executors: Vec<_> = task
             .roles
@@ -187,11 +289,21 @@ RETURN [$sid, $ts];",
             gone.push("no session holds the role".into());
         }
         let text = format!("{what} reaches no live executor: {}", gone.join("; "));
+        let line = logged("$slug", "$sender", "'msg'", "$text", "$to");
         let body = format!(
             "{}\nRETURN NONE;",
-            logged("$slug", "$sender", "'msg'", "$text", "$to")
+            match key {
+                Some(_) => once(
+                    &line,
+                    Some("sender = $sender AND string::starts_with(text, $said)")
+                ),
+                None => line,
+            }
         );
-        let vars = json!({"slug": slug, "sender": BOARD, "text": text, "to": "@orchestrator", "now": (self.clock)()});
+        let vars = json!({
+            "slug": slug, "sender": BOARD, "text": text, "to": "@orchestrator", "key": key,
+            "said": format!("{what} reaches no live executor"), "now": (self.clock)(),
+        });
         self.retrying(|| self.transact::<Value>(&body, vars.clone()))
             .map(|_| ())
     }

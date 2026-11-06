@@ -20,7 +20,8 @@ serde_json = { version = "1", features = ["float_roundtrip"] }
 # migrated to rust". Bundled, so the SQLite it links is the one pinned here on every machine, not the
 # system's; no default features (the statement cache and the wasm build).
 rusqlite = { version = "0.40", default-features = false, features = ["bundled"] }
-# The project file's `[project] id`, which names the SQLite board the move reads (src/cutover.rs).
+# The project file: `[project] id`, which names the SQLite board the move reads (src/cutover.rs), and
+# `[board] on_review`, the command a task moving to review starts (src/on_review.rs).
 toml.workspace = true
 # Local meaning search, approved by tasks-search-embedding-model (A, 2026-10-29).
 tokenizers.workspace = true

@@ -6,7 +6,7 @@ use std::fs;
 use std::path::PathBuf;
 use symphony_board::cli::{Env, connect};
 use symphony_board::sys::Command;
-use symphony_board::{NewLaunch, NewSession, NewTask, Store};
+use symphony_board::{NewSession, NewTask, Store};
 
 const FAKE: &str = env!("CARGO_BIN_EXE_fake-herdr");
 const TASKS: &str = env!("CARGO_BIN_EXE_tasks");
@@ -35,13 +35,13 @@ fn git(dir: &PathBuf, args: &[&str]) {
 
 /// A board of its own, a repository with `main` to run in, its worktrees in a folder of their own,
 /// and the fake herdr's state and log.
-struct Panes {
+pub(crate) struct Panes {
     dir: PathBuf,
     env: Env,
 }
 
 impl Panes {
-    fn new(name: &str) -> Panes {
+    pub(crate) fn new(name: &str) -> Panes {
         let dir = outside(name);
         let repo = dir.join("lamp-works");
         fs::create_dir_all(&repo).unwrap();
@@ -60,30 +60,43 @@ impl Panes {
                 dir.join("herdr.log").display().to_string(),
             ),
             ("SF_WT_DIR", dir.join("wt").display().to_string()),
+            ("TASKS_PS_TABLE", dir.join("ps.txt").display().to_string()),
         ] {
             env.vars.insert(key.into(), value);
         }
         env.cwd = repo;
+        // The process table the commands read: never this machine's `ps`, whose transient failures
+        // under load would keep a pane these cases close. NO_PID is a shell with nothing under it.
+        fs::write(
+            dir.join("ps.txt"),
+            format!("    1     0 /sbin/launchd\n{NO_PID}     1 -zsh\n"),
+        )
+        .unwrap();
         let panes = Panes { dir, env };
         panes.set_state(json!({"tabs": [], "panes": [], "next": 100}));
         panes
     }
 
-    fn set(&mut self, key: &str, value: &str) {
+    /// The process table the commands read in place of `ps` (`TASKS_PS_TABLE`).
+    pub(crate) fn ps_table(&self) -> PathBuf {
+        self.dir.join("ps.txt")
+    }
+
+    pub(crate) fn set(&mut self, key: &str, value: &str) {
         self.env.vars.insert(key.into(), value.into());
     }
 
-    fn run(&self, args: &[&str]) -> Ran {
+    pub(crate) fn run(&self, args: &[&str]) -> Ran {
         run(&self.env, args, "")
     }
 
-    fn as_(&self, who: &str, args: &[&str]) -> Ran {
+    pub(crate) fn as_(&self, who: &str, args: &[&str]) -> Ran {
         let mut env = self.env.clone();
         env.vars.insert("TASKS_SESSION".into(), who.into());
         run(&env, args, "")
     }
 
-    fn board(&self) -> Store {
+    pub(crate) fn board(&self) -> Store {
         connect(&self.env).unwrap()
     }
 
@@ -95,7 +108,7 @@ impl Panes {
         serde_json::from_str(&fs::read_to_string(self.dir.join("herdr.json")).unwrap()).unwrap()
     }
 
-    fn calls(&self) -> Vec<Vec<String>> {
+    pub(crate) fn calls(&self) -> Vec<Vec<String>> {
         fs::read_to_string(self.dir.join("herdr.log"))
             .unwrap_or_default()
             .lines()
@@ -103,7 +116,7 @@ impl Panes {
             .collect()
     }
 
-    fn pane_ids(&self) -> Vec<String> {
+    pub(crate) fn pane_ids(&self) -> Vec<String> {
         self.state()["panes"]
             .as_array()
             .unwrap()
@@ -127,7 +140,7 @@ impl Panes {
     }
 
     /// An idle claude pane `w1:p1`, its session `c`, nothing running under it.
-    fn idle_pane(&self, handle: &str) {
+    pub(crate) fn idle_pane(&self, handle: &str) {
         self.set_state(json!({"next": 100, "tabs": [{"tab_id": "w1:t1", "label": "code", "workspace_id": "w1"}],
             "panes": [{
                 "pane_id": "w1:p1", "tab_id": "w1:t1", "agent": "claude", "agent_status": "idle",
@@ -651,162 +664,4 @@ fn a_reap_while_another_sweep_holds_the_lock_says_so() {
         )
     );
     assert_eq!(p.calls(), Vec::<Vec<String>>::new());
-}
-
-// -- finish, and the cleanup after a task finishes ----------------------------------------
-
-/// A task `sim/a` with a session launched on `on` (it, or an instruction subtask under it), in the
-/// idle pane `w1:p1`, and claimed there: the worker that runs it.
-fn launched_on(p: &Panes, on: &str) -> String {
-    let board = p.board();
-    let orch = board
-        .register(&NewSession::new("orchestrator"))
-        .unwrap()
-        .row
-        .handle;
-    let worker = board
-        .register(&NewSession::new("worker"))
-        .unwrap()
-        .row
-        .handle;
-    board.create(&NewTask::new("sim/a", "A", &orch)).unwrap();
-    if on != "sim/a" {
-        board
-            .create(&NewTask {
-                parent: Some("sim/a".into()),
-                instruction: true,
-                ..NewTask::new(on, "Do", &orch)
-            })
-            .unwrap();
-    }
-    board
-        .record_launch(&NewLaunch {
-            slug: on.into(),
-            handle: worker.clone(),
-            role: "executor".into(),
-            claude_session: "c".into(),
-            pane: "w1:p1".into(),
-            ..NewLaunch::default()
-        })
-        .unwrap();
-    board.claim(on, &worker).unwrap();
-    p.idle_pane(&worker);
-    worker
-}
-
-fn closed_line(on: &str, worker: &str) -> String {
-    format!(
-        "→ closed pane w1:p1 of {worker} (its tasks are finished); restore: just tasks restore {on} {worker}\n"
-    )
-}
-
-#[test]
-fn a_task_that_finishes_with_a_session_launched_on_it_is_cleaned_up_after() {
-    for (on, args, status) in [
-        ("sim/a", &["move", "sim/a", "cancelled"][..], "cancelled"),
-        ("sim/a/do", &["done", "sim/a/do", "it is"][..], "done"),
-    ] {
-        let p = Panes::new("finish");
-        let worker = launched_on(&p, on);
-        let ran = p.as_(&worker, args);
-        assert_eq!(
-            (ran.code, ran.out, ran.err.as_str()),
-            (
-                0,
-                format!("{on} is {status}\n{}", closed_line(on, &worker)),
-                ""
-            ),
-            "{args:?}"
-        );
-        assert_eq!(p.pane_ids(), Vec::<String>::new());
-    }
-}
-
-#[test]
-fn a_verdict_that_finishes_a_task_is_cleaned_up_after() {
-    let p = Panes::new("verdict");
-    let worker = launched_on(&p, "sim/a");
-    let board = p.board();
-    board.move_to("sim/a", "review", &worker).unwrap();
-    let reviewer = board
-        .register(&NewSession::new("reviewer"))
-        .unwrap()
-        .row
-        .handle;
-    board.take_role("sim/a", &reviewer, "reviewer").unwrap();
-    let ran = p.as_(&reviewer, &["verdict", "sim/a", "approve", "fine"]);
-    assert_eq!(
-        ran.out,
-        format!("sim/a is done\n{}", closed_line("sim/a", &worker))
-    );
-}
-
-#[test]
-fn a_session_launched_on_a_task_below_counts_for_the_one_that_finishes() {
-    let p = Panes::new("below");
-    let worker = launched_on(&p, "sim/a/do");
-    p.board().done("sim/a/do", &worker, "did it").unwrap(); // on the board itself: no cleanup yet
-    let orch = p.board().get("sim/a").unwrap().created_by;
-    let ran = p.as_(&orch, &["move", "sim/a", "cancelled"]);
-    assert_eq!(
-        ran.out,
-        format!("sim/a is cancelled\n{}", closed_line("sim/a/do", &worker))
-    );
-}
-
-#[test]
-fn nothing_is_asked_of_herdr_for_a_task_no_session_was_launched_on_or_one_still_open() {
-    let p = Panes::new("quiet");
-    let worker = launched_on(&p, "sim/a");
-    let board = p.board();
-    board.create(&NewTask::new("sim/b", "B", &worker)).unwrap();
-    board.claim("sim/b", &worker).unwrap();
-    assert_eq!(
-        p.as_(&worker, &["move", "sim/b", "cancelled"]).out,
-        "sim/b is cancelled\n"
-    );
-    assert_eq!(
-        p.as_(&worker, &["move", "sim/a", "review"]).out,
-        "sim/a is review\n"
-    );
-    assert_eq!(p.calls(), Vec::<Vec<String>>::new());
-}
-
-#[test]
-fn a_cleanup_that_fails_is_said_and_the_status_change_stands() {
-    for (key, value, why) in [
-        ("FAKE_HERDR_FAIL", "pane list", "herdr pane list failed: "),
-        ("HERDR_BIN", "/no/such/herdr", "herdr pane list: "),
-    ] {
-        let mut p = Panes::new("fails");
-        let worker = launched_on(&p, "sim/a");
-        p.set(key, value);
-        let ran = p.as_(&worker, &["move", "sim/a", "cancelled"]);
-        assert_eq!((ran.code, ran.err.as_str()), (0, ""));
-        let start =
-            format!("sim/a is cancelled\n→ could not clean up the sessions of sim/a: {why}");
-        assert!(
-            ran.out.starts_with(&start) && ran.out.matches('\n').count() == 2,
-            "{}",
-            ran.out
-        );
-        assert_eq!(p.board().get("sim/a").unwrap().status, "cancelled");
-    }
-}
-
-#[test]
-fn finish_closes_what_a_finished_task_left_and_needs_no_session() {
-    let p = Panes::new("finish-command");
-    let worker = launched_on(&p, "sim/a");
-    p.board().move_to("sim/a", "cancelled", &worker).unwrap(); // on the board itself, as `just land` does
-    let ran = p.run(&["finish", "sim/a"]);
-    assert_eq!(
-        (ran.code, ran.out, ran.err.as_str()),
-        (0, closed_line("sim/a", &worker), "")
-    );
-    let again = p.run(&["finish", "sim/a"]);
-    assert_eq!(
-        (again.code, again.out.as_str(), again.err.as_str()),
-        (0, "", "")
-    );
 }

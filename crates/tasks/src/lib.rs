@@ -30,6 +30,7 @@ pub mod embedding;
 pub mod git;
 pub mod health;
 pub mod launch;
+pub mod on_review;
 pub mod orchestration;
 pub mod port;
 pub mod pyjson;
@@ -118,7 +119,7 @@ fn copy(
     let store = Store::open(client).map_err(|e| e.to_string())?;
     store.copy(&dump).map_err(|e| e.to_string())?;
     Ok(Some(format!(
-        "{} tasks, {} links, {} sessions, {} roles, {} messages, {} deliveries, {} barred keys, {} task sessions into {NAMESPACE}/{db} at {addr}",
+        "{} tasks, {} links, {} sessions, {} roles, {} messages, {} deliveries, {} barred keys, {} task sessions, {} delivery keys into {NAMESPACE}/{db} at {addr}",
         dump.tasks.len(),
         dump.task_links.len(),
         dump.sessions.len(),
@@ -127,5 +128,6 @@ fn copy(
         dump.deliveries.len(),
         dump.barred_keys.len(),
         dump.task_sessions.len(),
+        dump.delivery_keys.len(),
     )))
 }

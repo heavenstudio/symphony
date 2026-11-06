@@ -314,3 +314,33 @@ fn a_tick_asks_herdr_once_for_its_watch_its_pull_and_its_agents_view() {
         "BLOCKED {worker} tests/pane w1:p2 — its pane waits on an approval or a question"
     )));
 }
+
+#[test]
+fn a_block_waiting_out_an_outage_is_not_said_once_a_hand_over_took_its_task_away() {
+    if !in_child_with_herdr(
+        "blocked_panes::a_block_waiting_out_an_outage_is_not_said_once_a_hand_over_took_its_task_away",
+    ) {
+        return;
+    }
+    let f = Fixture::empty();
+    let successor = f.session("orchestrator");
+    let (orch, worker, o) = waiting_worker(&f);
+    // The orchestrator cannot be reached when the watch sees the pane wait.
+    drop(o);
+    tick(&f);
+    let waiting = f.store.callback_inbox(&orch).unwrap();
+    assert!(
+        (waiting.iter()).any(|(_, text)| text.starts_with(&format!("BLOCKED {worker} "))),
+        "{waiting:?}"
+    );
+    f.store.hand_over("tests/pane", &orch, &successor).unwrap();
+    let back = super::callbacks::Listener::new(&format!("{}-back", f.store.client().database()));
+    let address = format!("uds:{}", back.path.display());
+    (f.store.callback(&orch, Some(&address), false, false)).unwrap();
+    assert_eq!(
+        back.drain(&f, &worker, &orch),
+        [format!(
+            "ROLE tests/pane {successor} orchestrator, in_progress (from {orch})"
+        )]
+    );
+}
