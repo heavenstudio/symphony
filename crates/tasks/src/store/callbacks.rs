@@ -3,7 +3,7 @@
 
 use super::callback_peer::{self as peer, Owner};
 use super::callback_state::{Entry, State, stored_seen};
-use super::queued_lines::{Hearing, Queued, Rescoped};
+use super::queued_lines::{Hearing, PullPlan, Queued, Rescoped, pull_plan};
 use super::{ACT, Error, Store, acting, logged, refused};
 use crate::cli::agents::{Answer, Pane, Probe, Probes};
 use crate::cli::{attach, pull};
@@ -68,12 +68,6 @@ struct Event {
     sequence: u64,
     #[serde(default)]
     pull_entries: Option<BTreeSet<(String, String)>>,
-    /// Of a PULL's `pull_entries`, those its rows name ([`Queued`]).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pull_told: Option<BTreeSet<Entry>>,
-    /// What a PULL counts or names beside its rows ([`pull::Digest::counted`]).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pull_counted: Option<BTreeSet<Entry>>,
 }
 
 /// A recipient's callback state as a dispatch reads it, with when its PULL was last checked and
@@ -85,13 +79,10 @@ struct Stored {
     queued: Vec<Queued>,
 }
 
-/// A PULL a dispatch queues: its text, every entry it records, those its rows name, and what it
-/// counts or names beside them.
+/// A PULL a dispatch queues: its text, and every entry of the whole digest, which it records.
 struct PullEvent {
     text: String,
     entries: BTreeSet<Entry>,
-    told: BTreeSet<Entry>,
-    counted: BTreeSet<Entry>,
 }
 
 #[derive(Clone, Deserialize)]
@@ -609,8 +600,6 @@ RETURN NONE;");
                         attempts: 0,
                         sequence: 0,
                         pull_entries: None,
-                        pull_told: None,
-                pull_counted: None,
                     })
                     .collect();
                 self.retrying(|| self.transact::<Value>(
@@ -746,7 +735,7 @@ RETURN NONE;");
         } = self.retrying(|| {
             self.transact(
                 "RETURN { state: (SELECT * OMIT id FROM ONLY type::record('callback_state', $handle)), checked_pull: type::record('callback_lease', $handle).pull ?? 0,
-                    queued: (SELECT key, text, pull_entries, pull_told, pull_counted FROM callback_event WHERE handle = $handle AND delivered != true
+                    queued: (SELECT key, text FROM callback_event WHERE handle = $handle AND delivered != true
                         AND (string::starts_with(key, 'pull-') OR string::starts_with(key, 'event-') OR (string::starts_with(key, 'pane-') AND string::starts_with(text, 'BLOCKED ')))) };",
                 json!({"handle":handle}),
             )
@@ -822,17 +811,14 @@ RETURN NONE;");
         } else {
             Rescoped::default()
         };
-        let reaches = |slug: &str| owners.reaches(slug, handle);
-        let unheard_pull = |withheld: &BTreeSet<(String, String)>| {
-            (queued.iter()).any(|queued| queued.is_pull() && queued.unheard(&reaches, withheld))
-        };
         let last_pull = state.pull.max(checked_pull);
+        // A PULL still queued is never said as it was written, but built again ([`pull_plan`]).
         let scheduled = orchestrator
             && (initializing
                 || (state.pull_entries.is_none() && state.pull_queued.is_none())
                 || self.now() - last_pull >= 600.0
                 || hears(&statuses) != hears(&state.statuses)
-                || unheard_pull(&BTreeSet::new()));
+                || queued.iter().any(Queued::is_pull));
         let changed = orchestrator && attach::pull_changed(before.as_ref(), &compact(&seen));
         let quiet = (seen.children.values())
             .chain(legacy.children.values())
@@ -919,44 +905,30 @@ RETURN NONE;");
                     .is_some_and(|root| crate::cli::probes::landed(root, &task.slug))
             };
             let digest = pull::digest(self, &idle, Some(&landed), self.now(), &busy)?;
-            let (entries, counted) = (digest.entries(), digest.counted());
+            let entries = digest.entries();
             let digest = digest.only_for(board, handle);
             let heard = digest.entries();
             pull_withheld = entries.difference(&heard).cloned().collect();
-            // A queued PULL naming or counting what the recipient no longer hears is built again
-            // from what it hears, or dropped when the recipient was told all of that already.
-            let mut kept_from = pull_withheld.clone();
-            kept_from.extend(counted.difference(&digest.counted()).cloned());
-            let unheard = !legacy_upgrade && unheard_pull(&kept_from);
             pull_entries.retain(|entry| entries.contains(entry));
             if let Some(queued) = &mut pull_queued {
                 queued.retain(|entry| entries.contains(entry));
             }
-            let told = state.pull_entries.is_some() && heard.is_subset(&state.told(&pull_entries));
-            if legacy_upgrade {
-                pull_entries = entries.clone();
-            } else if unheard && told {
-                pull_queued = None;
-                pull_dropped = true;
-            } else if unheard
-                || (!told
-                    && pull_queued
-                        .as_ref()
-                        .is_none_or(|queued| !heard.is_subset(&state.told(queued))))
-            {
-                let text = digest
-                    .event_lines()
-                    .iter()
-                    .map(|line| event_line(line))
-                    .collect::<Vec<_>>()
-                    .join("\n");
-                pull_queued = Some(entries.clone());
-                pull_event = Some(PullEvent {
-                    text,
-                    entries: entries.clone(),
-                    told: heard,
-                    counted: digest.counted(),
-                });
+            let said: Vec<String> = digest.event_lines().iter().map(|l| event_line(l)).collect();
+            let text = said.join("\n");
+            let delivered =
+                state.pull_entries.is_some() && heard.is_subset(&state.told(&pull_entries));
+            let pending = (pull_queued.as_ref()).is_some_and(|q| heard.is_subset(&state.told(q)));
+            // A legacy observer's upgrade counts every entry as told, and says no PULL.
+            let plan = (!legacy_upgrade).then(|| pull_plan(&queued, &text, delivered, pending));
+            match plan {
+                None => pull_entries = entries.clone(),
+                Some(PullPlan::Unchanged) => {}
+                Some(PullPlan::Dropped) => (pull_queued, pull_dropped) = (None, true),
+                Some(PullPlan::Queued) => {
+                    pull_queued = Some(entries.clone());
+                    let entries = entries.clone();
+                    pull_event = Some(PullEvent { text, entries });
+                }
             }
             if state.pull_entries.is_some() {
                 pull_entries.extend(pull_withheld.iter().cloned());
@@ -976,17 +948,9 @@ RETURN NONE;");
                 attempts: 0,
                 sequence: 0,
                 pull_entries: None,
-                pull_told: None,
-                pull_counted: None,
             })
             .collect();
-        if let Some(PullEvent {
-            text,
-            entries,
-            told,
-            counted,
-        }) = pull_event
-        {
+        if let Some(PullEvent { text, entries }) = pull_event {
             events.push(Event {
                 key: format!("pull-{revision}"),
                 handle: handle.to_string(),
@@ -996,8 +960,6 @@ RETURN NONE;");
                 attempts: 0,
                 sequence: 0,
                 pull_entries: Some(entries),
-                pull_told: Some(told),
-                pull_counted: Some(counted),
             });
         }
         let legacy = compact(&legacy);
@@ -1034,8 +996,6 @@ RETURN NONE;");
                 attempts: 0,
                 sequence: 0,
                 pull_entries: None,
-                pull_told: None,
-                pull_counted: None,
             });
         }
         if callback.chat {
@@ -1061,8 +1021,6 @@ RETURN NONE;");
                     attempts: 0,
                     sequence: 0,
                     pull_entries: None,
-                    pull_told: None,
-                    pull_counted: None,
                 });
             }
         }

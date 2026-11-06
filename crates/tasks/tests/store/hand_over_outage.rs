@@ -4,10 +4,11 @@
 //! watch's BLOCKED is in `blocked_panes`, whose cases run with a herdr.
 
 use super::callbacks::Listener;
-use super::common::Fixture;
+use super::common::{Fixture, HOST};
 use super::mixed_dispatchers::{older_fields, older_record};
 use super::orchestrators::heard;
 use super::quiet_callbacks::listen;
+use serde_json::json;
 use symphony_board::health::{LIVE_SECONDS, STALE_SECONDS};
 use symphony_board::{Health, NewSession, NewTask, Store};
 
@@ -308,8 +309,88 @@ fn a_child_quiet_meanwhile_is_said_after_a_hand_over_only_to_an_orchestrator_tol
     }
 }
 
+/// The head of a PULL with one ready task nobody staffs, and `executing` running.
+fn pull(executing: u8) -> String {
+    format!(
+        "PULL executing={executing} ready_unstaffed=1 in_progress_orphaned=0 review_unreviewed=0 landed_open=0 idle=0"
+    )
+}
+
+/// What the lines waiting for the former orchestrator after a hand-over of `scratch/one` come to,
+/// with `scratch/free` (nobody's) made during the outage: its NEW, the move, and a PULL of it.
+fn after_hand_over(outage: &Outage, status: &str) -> Vec<String> {
+    let Outage {
+        successor, former, ..
+    } = outage;
+    vec![
+        "NEW scratch/free ready — Jump departure".to_string(),
+        format!("ROLE scratch/one {successor} orchestrator, {status} (from {former})"),
+        pull(0),
+        "ready_unstaffed p2 scratch/free — Jump departure".to_string(),
+    ]
+}
+
+/// The former orchestrator's queued PULL as a dispatcher built before one orchestrator per task
+/// writes it: the whole board's digest, and every entry of it.
+fn as_an_older_dispatcher_wrote_it(outage: &Outage) {
+    let Outage {
+        fixture, former, ..
+    } = outage;
+    let whole = symphony_board::cli::pull::digest(&fixture.store, &[], None, fixture.now(), &[]);
+    let whole = whole.unwrap();
+    let lines = (whole.event_lines().into_iter())
+        .map(|line| line.split_whitespace().collect::<Vec<_>>().join(" "));
+    let text = lines.collect::<Vec<_>>().join("\n");
+    assert!(text.contains("scratch/theirs"), "{text}");
+    fixture.store.client().query(
+        "UPDATE callback_event SET text = $text, pull_entries = $entries WHERE handle = $handle AND delivered != true AND string::starts_with(key, 'pull-') RETURN NONE;",
+        json!({"handle":former, "text":text, "entries":whole.entries()}),
+    ).unwrap();
+}
+
 #[test]
-fn a_pull_waiting_out_an_outage_counts_no_running_work_a_hand_over_took_away() {
+fn a_pull_waiting_out_an_outage_is_said_as_the_digest_is_at_delivery_whoever_wrote_it() {
+    for older in [false, true] {
+        let outage = Outage::new();
+        let Outage {
+            fixture,
+            elsewhere,
+            former,
+            successor,
+            sender,
+        } = &outage;
+        // The successor's ready work, which only an older dispatcher's PULL names.
+        fixture.task("scratch/theirs");
+        let theirs = fixture
+            .store
+            .take_role("scratch/theirs", successor, "orchestrator");
+        theirs.unwrap();
+        let child = outage.child(former);
+        fixture.store.claim("scratch/one", &child).unwrap();
+        outage.cut();
+        // While it cannot be reached, work nobody orchestrates comes up: its PULL counts its own
+        // running task beside it.
+        let free = NewTask::new("scratch/free", "Jump departure", "owner");
+        elsewhere.create(&free).unwrap();
+        let waiting = outage.waiting();
+        let counted = (waiting.iter()).any(|text| text.starts_with(&pull(1)));
+        assert!(counted, "{waiting:?}");
+        if older {
+            as_an_older_dispatcher_wrote_it(&outage);
+        }
+        (elsewhere.hand_over("scratch/one", former, successor)).unwrap();
+        let told = outage.back().drain(fixture, sender, former);
+        assert_eq!(
+            told,
+            after_hand_over(&outage, "in_progress"),
+            "older: {older}"
+        );
+        assert_eq!(older_fields(fixture, former), older_record(fixture, former));
+    }
+}
+
+#[test]
+fn a_pull_waiting_out_an_outage_names_no_session_whose_work_a_hand_over_took_away() {
     let outage = Outage::new();
     let Outage {
         fixture,
@@ -318,30 +399,34 @@ fn a_pull_waiting_out_an_outage_counts_no_running_work_a_hand_over_took_away() {
         successor,
         sender,
     } = &outage;
-    let child = outage.child(former);
-    fixture.store.claim("scratch/one", &child).unwrap();
+    // The former's child reviews its task.
+    let reviewer = outage.child(former);
+    fixture.store.claim("scratch/one", sender).unwrap();
+    (fixture.store.move_to("scratch/one", "review", sender)).unwrap();
+    let reviews = fixture
+        .store
+        .take_role("scratch/one", &reviewer, "reviewer");
+    reviews.unwrap();
     outage.cut();
-    // While it cannot be reached, work nobody orchestrates comes up: its PULL counts its own
-    // running task beside it.
+    // Its presence goes unconfirmed, as a native callback's sweep overdue leaves it, while it
+    // shows no sign: its liveness is unknown, and its work stays held.
+    fixture.store.client().query(
+        "UPSERT type::record('callback_state', $handle) SET handle = $handle, address = 'codex:abcdef01', host = $host, confirmed_until = $until, lease = $lease RETURN NONE;
+         UPDATE type::record('session', $handle) SET last_seen = $seen RETURN NONE;",
+        json!({"handle":reviewer, "host":HOST, "until":fixture.now() - 1.0,
+            "lease":fixture.now() + 1_000_000.0, "seen":fixture.now() - 500.0}),
+    ).unwrap();
+    assert_eq!(fixture.health(&reviewer), Health::Unknown);
     let free = NewTask::new("scratch/free", "Jump departure", "owner");
     elsewhere.create(&free).unwrap();
-    let pull = |executing: u8| {
-        format!(
-            "PULL executing={executing} ready_unstaffed=1 in_progress_orphaned=0 review_unreviewed=0 landed_open=0 idle=0"
-        )
-    };
     let waiting = outage.waiting();
-    let counted = (waiting.iter()).any(|text| text.starts_with(&pull(1)));
-    assert!(counted, "{waiting:?}");
+    let held = format!("work remains held: {reviewer}");
+    let named = (waiting.iter()).any(|text| text.starts_with("PULL ") && text.contains(&held));
+    assert!(named, "{waiting:?}");
+    // The review is the successor's, and the reviewer shows a sign again.
     (elsewhere.hand_over("scratch/one", former, successor)).unwrap();
-    assert_eq!(
-        outage.back().drain(fixture, sender, former),
-        [
-            "NEW scratch/free ready — Jump departure".to_string(),
-            format!("ROLE scratch/one {successor} orchestrator, in_progress (from {former})"),
-            pull(0),
-            "ready_unstaffed p2 scratch/free — Jump departure".to_string(),
-        ]
-    );
-    assert_eq!(older_fields(fixture, former), older_record(fixture, former));
+    elsewhere.touch(&reviewer).unwrap();
+    assert_eq!(fixture.health(&reviewer), Health::Live);
+    let told = outage.back().drain(fixture, sender, former);
+    assert_eq!(told, after_hand_over(&outage, "review"));
 }
