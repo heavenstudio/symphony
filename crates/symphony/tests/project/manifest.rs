@@ -500,3 +500,57 @@ fn the_page_inlines_the_projects_view_as_json_no_value_can_close_or_comment_out(
         hostile
     );
 }
+
+#[test]
+fn a_table_or_key_this_build_does_not_know_is_left_out_of_the_running_project_and_the_rest_read() {
+    let tree = Tree::new();
+    let root = folder(&tree, "Night Shift");
+    std::fs::write(
+        root.join(FILE),
+        "[project]\nname = \"Lamp Works\"\n\n[board]\nexport = \"docs/tasks.md\"\n\
+         disposable = [\"artifacts/*\"]\non_review = [\"x\"]\nguide = \"docs/TASKS.md\"\n\
+         starts = [\"y\"]\n\n[theme]\ncolour = \"red\"\n\n[hooks]\nbeat = 1\n",
+    )
+    .unwrap();
+    // loading and linting refuse them all by name, where they stand
+    let refusal = "symphony.toml: [hooks] (line 14), [theme] colour (line 12), [board] starts (line 9) are not settings the Symphony knows";
+    assert_eq!(Project::load(&root).unwrap_err(), refusal);
+    assert_eq!(project_problems(&root), [refusal]);
+    // the running project leaves them out and keeps every setting it knows
+    let project = Project::of(&root);
+    assert_eq!(project.name, "Lamp Works");
+    assert_eq!(project.board.export.as_deref(), Some("docs/tasks.md"));
+    assert_eq!(project.board.disposable, ["artifacts/*"]);
+    assert_eq!(project.board.on_review, ["x"]);
+    assert_eq!(project.board.guide(), "docs/TASKS.md");
+    assert_ne!(*project, Project::plain(&root));
+    // one is named alone, and before any other refusal
+    assert_eq!(
+        refused("[board]\nexports = \"x\"\n"),
+        "symphony.toml: [board] exports (line 2) is not a setting the Symphony knows"
+    );
+    // an entrypoint's table stays strict: a misspelt key there refuses the file where it is read,
+    // and the running project is the plain one
+    let why = refused("[[entrypoints]]\nurl = \"/\"\nfolder = \".\"\nfolders = [\"x\"]\n");
+    assert!(why.contains("line 4") && why.contains("folders"), "{why}");
+    let strict = folder(&tree, "Strict");
+    std::fs::write(
+        strict.join(FILE),
+        "[project]\nname = \"Lamp Works\"\n\n[[entrypoints]]\nurl = \"/\"\nfolder = \".\"\nfolders = [\"x\"]\n",
+    )
+    .unwrap();
+    assert_eq!(*Project::of(&strict), Project::plain(&strict));
+    assert_eq!(
+        refused("[agents]\npanes = \"tmux\"\npane = \"herdr\"\n"),
+        "symphony.toml: [agents] pane (line 3) is not a setting the Symphony knows"
+    );
+    // a dotted key and a dotted table header lead to their tables too
+    assert_eq!(
+        refused("board.starts = [1]\n"),
+        "symphony.toml: [board] starts (line 1) is not a setting the Symphony knows"
+    );
+    assert_eq!(
+        refused("[agents.launch]\nreasoning = \"high\"\n"),
+        "symphony.toml: [agents.launch] reasoning (line 2) is not a setting the Symphony knows"
+    );
+}
