@@ -477,7 +477,8 @@ thread says `A handed orchestrator over to B; address B or @orchestrator`,
 and each of the two hears one `ROLE SLUG B orchestrator, STATUS (from A)`,
 whatever other role B holds there. HANDLE must still be there (live, stale or
 of unknown liveness); a hand-over to a session gone quiet, or leaving as it is
-written, is refused, naming its health. Taking the role over a holder that is
+written, is refused, naming its health; under a cap, so is one that would raise
+HANDLE's open tasks past it ([Slots](#slots)). Taking the role over a holder that is
 lost or left drops that one in the same write, and the thread says `B took
 orchestrator over from A (lost)`; so does taking it again where a left holder
 still sits beside you. A task is its orchestrator's when that session holds the
@@ -580,7 +581,8 @@ capped. A value that does not parse, or one below 1, is said on stderr
   or `review` from a status that holds no slot, blocked work going back to
   review included; a dependency change that sends blocked work back to
   `in_progress` or `review`; taking the `orchestrator` role on a task with
-  open work at or below it; and a change of parent that brings open work at
+  open work at or below it, or being handed it (`handover`, refused as the
+  receiver's take would be); and a change of parent that brings open work at
   or below the task under an orchestrator's tree. Each is refused when it would raise an
   orchestrator's open tasks past the cap, naming them and their status, a
   shared slot's tasks joined by `with`:
@@ -597,12 +599,14 @@ capped. A value that does not parse, or one below 1, is said on stderr
   slot, shown as `(blocked, held)`, so its move
   back to review starts nothing and is never refused. The hold is the record
   `counter:['hold', SLUG]`, stamped with the task's `updated` as the hold left
-  it, and ends with the task's next move, change of parent or of dependencies.
+  it, and ends with the task's next move (a landing's close and the owner's
+  moves included: every status write deletes it), change of parent or of
+  dependencies.
   Work blocked by any other move holds no slot, and takes one to come back.
   The PULL header and the agents API do not read holds: they count a held task
   as the blocked task it is.
-- **What it leaves alone.** The owner's moves and changes of parent, and a
-  hand-over, are not capped.
+- **What it leaves alone.** The owner's moves, changes of parent and
+  hand-overs are not capped.
 - **Not retroactive.** An orchestrator above the cap keeps every task and
   works them; it starts nothing new until it is below the cap.
 

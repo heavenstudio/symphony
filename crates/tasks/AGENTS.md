@@ -379,7 +379,8 @@ and after the change (`slots::started`) and, for every orchestrator whose open
 tasks it changes, checks and bumps `counter:['slots', HANDLE]` in the write, so
 two starts at once are one retry, not two slots (`tests/store/slots.rs` and its
 `moves` and `cost` modules, `tests/cli/slots.rs`). A change of parent of open
-work is decided the same way (`set_parent`). A hold (`Store::hold_blocked`,
+work and a hand-over of its orchestrator role are decided the same way
+(`set_parent`, `hand_over`), but for the owner's. A hold (`Store::hold_blocked`,
 `tasks api`'s `hold` from api 4, land's while stamps wait) keeps blocked work's slot: it is a record, not a task
 field, since a reader built before it refuses a task row with a field it does
 not know, and every write that moves the task, changes its parent or its

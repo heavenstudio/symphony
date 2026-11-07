@@ -1,9 +1,12 @@
 //! The cap where work moves back into an open status: from blocked, through a changed dependency,
-//! from a landing's hold; where a change of parent brings open work under an orchestrator; on a
-//! task two orchestrators hold; and a start racing the close of the slot it joins.
+//! from a landing's hold; where a change of parent or a hand-over brings open work under an
+//! orchestrator; on a task two orchestrators hold; and a start racing the close of the slot it
+//! joins.
 
 use super::{EIGHT, HOLDS_EIGHT, K, O, P, W, board, capped, eight_and, open, sessions, with};
 use crate::common::{Fixture, refused, task};
+use serde_json::json;
+use symphony_board::Store;
 use symphony_board::rows::TaskRow;
 
 /// `slugs` as `change_depends` takes them.
@@ -80,6 +83,38 @@ fn a_landings_hold_keeps_its_tasks_slot_and_returns_it_to_review_at_the_cap() {
     assert_eq!(
         refused(store.hold_blocked("work/h", O)),
         "work/h is blocked: only work in progress or in review is held"
+    );
+}
+
+/// Whether the board keeps a hold on `slug`.
+fn hold_kept(store: &Store, slug: &str) -> bool {
+    let sql = "RETURN record::exists(type::record('counter', ['hold', $slug]));";
+    let answer = store.client().query(sql, json!({"slug": slug})).unwrap();
+    answer == [json!(true)]
+}
+
+#[test]
+fn a_landing_of_held_work_deletes_its_hold_as_every_status_write_does() {
+    let f = eight_and(&[]);
+    let store = capped(&f, 8);
+    store.hold_blocked("work/h", O).unwrap();
+    store.hold_blocked("work/f", O).unwrap();
+    assert!(hold_kept(&store, "work/h") && hold_kept(&store, "work/f"));
+    let landed = store
+        .landed("work/h", O, "landed", false, &["review", "blocked"])
+        .unwrap();
+    assert_eq!(
+        (landed.task.status.as_str(), landed.from.as_str()),
+        ("done", "blocked")
+    );
+    assert!(
+        !hold_kept(&store, "work/h"),
+        "the landing left its hold behind"
+    );
+    store.move_to("work/f", "cancelled", "owner").unwrap();
+    assert!(
+        !hold_kept(&store, "work/f"),
+        "the owner's cancel left its hold behind"
     );
 }
 
@@ -166,6 +201,50 @@ fn a_change_of_parent_that_would_bring_open_work_under_a_full_orchestrator_is_re
     // A change that leaves every count as it was is not refused, nor is the owner's.
     store.set_parent("work/next", Some("work/a"), O).unwrap();
     store.set_parent("loose", Some("work/b"), "owner").unwrap();
+}
+
+#[test]
+fn open_work_handed_back_and_forth_between_orchestrators_is_refused_at_the_cap() {
+    let mut seed = sessions().session("owner");
+    for slug in ["work/a", "work/b"] {
+        seed = with(seed, slug, "in_progress", None, Some(O));
+    }
+    seed = with(seed, "work/next", "ready", None, Some(O));
+    seed = with(seed, "pine/x", "in_progress", None, Some(P));
+    seed = with(seed, "owned", "review", None, Some("owner"));
+    let f = Fixture::new(seed);
+    let store = capped(&f, 2);
+    let full = |tasks: &str| {
+        format!(
+            "olive-orch holds 2 open tasks, the cap of 2 an orchestrator holds: {tasks}; a slot frees when one of them is done or cancelled"
+        )
+    };
+    assert_eq!(
+        refused(store.hand_over("pine/x", P, O)),
+        format!(
+            "pine-orch cannot hand pine/x, which is in_progress, to olive-orch: {}",
+            full("work/a (in_progress), work/b (in_progress)")
+        )
+    );
+    assert_eq!(store.get("pine/x").unwrap().holders("orchestrator"), [P]);
+    // The way round the cap a review found: hand open work to another orchestrator, start new work
+    // in the slot that frees, and have it handed back.
+    store.hand_over("work/a", O, P).unwrap();
+    assert_eq!(store.claim("work/next", K).unwrap().status, "in_progress");
+    let holds = full("work/b (in_progress), work/next (in_progress)");
+    assert_eq!(
+        refused(store.hand_over("work/a", P, O)),
+        format!("pine-orch cannot hand work/a, which is in_progress, to olive-orch: {holds}")
+    );
+    assert_eq!(store.get("work/a").unwrap().holders("orchestrator"), [P]);
+    // Taking it is refused before the cap, pointing to a hand-over the cap decides the same way.
+    assert_eq!(
+        refused(store.take_role("work/a", O, "orchestrator")),
+        "work/a is orchestrated by pine-orch (live); pine-orch hands it over with: just tasks handover work/a olive-orch, which olive-orch's cap decides as it does a take"
+    );
+    // The owner's hand-over is not capped, as the owner's moves are not.
+    store.hand_over("owned", "owner", O).unwrap();
+    assert_eq!(store.get("owned").unwrap().holders("orchestrator"), [O]);
 }
 
 #[test]
