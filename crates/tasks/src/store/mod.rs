@@ -26,10 +26,12 @@ mod callback_state;
 mod callbacks;
 mod copy;
 mod depends;
+mod dispatcher;
 mod embeddings;
 mod fields;
 mod launches;
 mod messages;
+mod pool;
 mod pull_account;
 mod queued_lines;
 pub(crate) mod search;
@@ -169,8 +171,8 @@ pub struct Store {
     clock_panes: Mutex<Option<crate::cli::agents::Answer<Vec<crate::cli::agents::Pane>>>>,
     /// Where this store's writes send their callback dispatch; none dispatches in the write.
     hand_off: Option<HandOff>,
-    /// The messages a dispatch pass reads every recipient's inbox from ([`messages::Pool`]).
-    inbox_pool: Mutex<Option<messages::Pool>>,
+    /// The messages a dispatch pass reads every recipient's inbox from ([`pool::Pool`]).
+    inbox_pool: Mutex<Option<pool::Pool>>,
 }
 
 impl Store {

@@ -17,6 +17,27 @@ impl Store {
         self.transact_dispatch(body, vars, true)
     }
 
+    /// `body`, one statement that reads and writes nothing, answered outside an explicit
+    /// transaction: a statement reads one snapshot of the board on its own, and a transaction's
+    /// commit syncs the store even when nothing was written (about 5 ms on the board's server, paid
+    /// for each recipient of each write that reads this way).
+    #[track_caller]
+    pub(super) fn read<T: DeserializeOwned>(
+        &self,
+        body: &str,
+        mut vars: Value,
+    ) -> Result<T, Failure> {
+        unset_nulls(&mut vars);
+        let answer = self.client.query(body, vars)?.pop();
+        let answer =
+            answer.ok_or_else(|| Failure::Stop(Error::Db("a read gave no answer".into())))?;
+        serde_json::from_value(answer).map_err(|e| {
+            Failure::Stop(Error::Db(format!(
+                "an answer not in the board's shape: {e}"
+            )))
+        })
+    }
+
     /// A task write returns recipient presence in its snapshot and dispatches after decoding it.
     /// Other writes keep the normal post-commit dispatch path.
     #[track_caller]

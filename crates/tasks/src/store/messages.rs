@@ -23,7 +23,7 @@ pub const BOARD: &str = "board";
 /// Whether a message could reach `$handle`'s inbox after `$since`: delivered, sent since the session
 /// connected, not its own, and from the owner, to it, to a role or a verdict (not addressed to another
 /// handle or the owner). Its fields are read under `m`: `""` for a row of the table, `"$m."` for a row
-/// of a [`Pool`]. The roles and the tree decide the rest ([`Store::inbox_read`]).
+/// of a [`super::pool::Pool`]. The roles and the tree decide the rest ([`Store::inbox_read`]).
 fn could_reach(m: &str) -> String {
     format!(
         "{m}sid > $since AND {m}ts >= $me.connected AND {m}kind IN $delivered AND {m}sender != $handle
@@ -33,11 +33,13 @@ fn could_reach(m: &str) -> String {
 
 /// What an inbox is worked out from: the session's roles, the tree, and the messages since it
 /// connected that are not its own, that it has not acknowledged, and that could reach it. Read from
-/// the message table, or from `$pool`, a dispatch pass's rows of it ([`Pool`]), when one is given:
+/// the message table, or from `$pool`, a dispatch pass's rows of it ([`super::pool::Pool`]), when one is given:
 /// then acknowledgements are looked up for those rows alone, not scanned for. Acknowledgement markers
 /// overwrite decimal integer keys during tree construction, then one marker filter selects the
 /// unread record references. Their bodies are fetched within the same transaction snapshot, and the
-/// roles and the tree only when one is wanted.
+/// roles and the tree only when one is wanted. The orchestrators' sessions are fetched by id from
+/// their roles: a `session WHERE handle IN (SELECT ... FROM role)` runs the role scan again for each
+/// session, seconds on a board of thousands of each, for every inbox a message could reach.
 static INBOX: LazyLock<String> = LazyLock::new(|| {
     format!(
         "
@@ -54,10 +56,10 @@ LET $acked = IF $pool = NONE {{
 }};
 {unread}
 LET $placing = array::len($wanted) > 0;
+LET $orchestrators = IF $placing {{ (SELECT VALUE [slug, handle] FROM role WHERE role = 'orchestrator') }} ELSE {{ [] }};
 RETURN {{
-    orchestrators: IF $placing {{ (SELECT VALUE [slug, handle] FROM role WHERE role = 'orchestrator') }} ELSE {{ [] }},
-    orchestrator_sessions: IF $placing {{ (SELECT * OMIT id FROM session
-        WHERE handle IN (SELECT VALUE handle FROM role WHERE role = 'orchestrator')) }} ELSE {{ [] }},
+    orchestrators: $orchestrators,
+    orchestrator_sessions: (SELECT * OMIT id FROM array::distinct($orchestrators.map(|$held| type::record('session', $held[1])))),
     native_presence: IF $placing {{ (SELECT handle, confirmed_until ?? 0 AS until FROM callback_state WHERE string::starts_with(address ?? '', 'codex:')) }} ELSE {{ [] }},
     known: $me != NONE,
     roles: IF $placing {{ (SELECT slug, role FROM role WHERE handle = $handle) }} ELSE {{ [] }},
@@ -69,20 +71,6 @@ RETURN {{
         unread = include_str!("inbox_unread.surql"),
     )
 });
-
-/// How far behind the newest message a recipient's cursor may be for a dispatch pass to read its
-/// inbox from the pass's [`Pool`]: one further behind (a session long unobserved) reads the table, so
-/// no pool grows to carry it for every recipient.
-const POOL_SPAN: i64 = 2000;
-
-/// The delivered messages after `floor`, as of message `latest`, that one dispatch pass reads every
-/// recipient's inbox from: one scan of the message table a pass, where each recipient's own read
-/// scanned it, and the deliveries, twice. Only the fields [`could_reach`] reads and the row's id.
-pub(super) struct Pool {
-    floor: i64,
-    latest: i64,
-    rows: Value,
-}
 
 /// `line`, a message's write, made once per `$key` on `$slug`'s thread: the first write under the
 /// key makes the line and `delivery_key:[slug, key]`, which names that line to every later one,
@@ -322,46 +310,9 @@ IF $handle != NONE AND !record::exists(type::record('session', $handle)) {{ THRO
         self.inbox_read(handle, i64::MIN, None)
     }
 
-    /// Native dispatch has already copied older messages to its durable outbox. Newly acquired
-    /// roles must not backfill that history; manual inbox reads still use the complete history.
-    /// A dispatch pass reads it from the pass's [`Pool`], made or widened here when it does not
-    /// reach back to `since` or forward to `latest`, the newest message of the board the pass
-    /// dispatches from: every message that board holds is in the pool, and none is read twice.
-    pub(super) fn inbox_pooled(
-        &self,
-        handle: &str,
-        since: i64,
-        latest: i64,
-    ) -> Result<Vec<Message>, Error> {
-        if latest - since > POOL_SPAN {
-            return self.inbox_read(handle, since, None);
-        }
-        let mut pool = self.inbox_pool.lock().unwrap_or_else(|e| e.into_inner());
-        if !pool
-            .as_ref()
-            .is_some_and(|pool| pool.floor <= since && pool.latest >= latest)
-        {
-            let floor = pool.as_ref().map_or(since, |pool| pool.floor.min(since));
-            let (latest, rows): (i64, Value) = self.retrying(|| {
-                self.transact(
-                    "RETURN [(SELECT VALUE last FROM ONLY counter:message) ?? 0,
-                        (SELECT sid, slug, sender, recipient, kind, ts FROM message WHERE sid > $floor AND kind IN $delivered)];",
-                    json!({"floor": floor, "delivered": DELIVERED}),
-                )
-            })?;
-            *pool = Some(Pool {
-                floor,
-                latest,
-                rows,
-            });
-        }
-        let rows = pool.as_ref().map(|pool| pool.rows.clone());
-        drop(pool);
-        self.inbox_read(handle, since, rows)
-    }
-
-    /// The inbox after `since` from the message table, or from `pool`'s rows of it.
-    fn inbox_read(
+    /// The inbox after `since` from the message table, or from `pool`'s rows of it
+    /// ([`super::pool::Pool`]).
+    pub(super) fn inbox_read(
         &self,
         handle: &str,
         since: i64,

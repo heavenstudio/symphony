@@ -168,13 +168,21 @@ fn quiet_children(
     handle: &str,
     emit: &mut dyn FnMut(&str),
 ) -> Result<(), Error> {
-    let confirmed = store.confirmed_callbacks()?;
+    // The confirmed registrations are read only for a child that went quiet since the last look:
+    // every look whose board moved diffs, and reading every registration for each recipient of
+    // each write is what made many writes at once wait on the database.
+    let mut confirmed = None;
     let mut board = None;
     for (child, &health) in &now.children {
-        if confirmed.contains(child)
-            || before.children.get(child) == Some(&health)
+        if before.children.get(child) == Some(&health)
             || matches!(health, Health::Live | Health::Left)
         {
+            continue;
+        }
+        if confirmed.is_none() {
+            confirmed = Some(store.confirmed_callbacks()?);
+        }
+        if (confirmed.as_ref().expect("read just above")).contains(child) {
             continue;
         }
         if board.is_none() {

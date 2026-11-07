@@ -9,6 +9,7 @@ mod copy;
 mod copy_marker;
 mod cutover;
 mod depends;
+mod dispatch_commit;
 mod dispatch_later;
 mod done;
 mod embeddings;

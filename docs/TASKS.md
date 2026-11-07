@@ -73,9 +73,11 @@ beside the asks preserves them across a board outage. No file watcher discovers
 chat. `--off` or leaving the board unregisters delivery.
 
 Board writes dispatch addressed messages and role/status/new-work changes. A
-command line's write answers once it commits and leaves the dispatch to a
-detached `tasks dispatch`, one a board at a time, which makes one more pass for
-each write that commits while it runs.
+command line's write queues what each recipient hears, as the write left the
+board, and answers without delivering it: a detached `tasks dispatch` delivers,
+one a host at a time, which makes one more pass for each write that commits
+while it runs. One that finds another running waits for that pass, and takes
+over if the other's lease lapses.
 The shared Symphony server schedules PULL digests and STALE/LOST transitions and
 retries failed deliveries. Per-recipient leases prevent concurrent writers
 from sending the same queued event. A successful native send acknowledges the

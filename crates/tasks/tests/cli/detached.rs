@@ -1,6 +1,7 @@
-//! A write run as the `tasks` binary (`cli::main_detaching`) answers before its callback dispatch,
-//! which the detached `tasks dispatch` it starts makes once the command has ended; one that cannot
-//! start it, or that `TASKS_DISPATCH=inline` asks to, leaves the dispatch to the command, as before.
+//! A write run as the `tasks` binary (`cli::main_detaching`) queues what each recipient hears and
+//! answers before delivering it, which the detached `tasks dispatch` it starts does once the
+//! command has ended; one that cannot start it, or that `TASKS_DISPATCH=inline` asks to, leaves the
+//! delivery to the command, as before.
 
 use crate::common::NOW;
 use crate::{Case, Ran};
@@ -10,6 +11,7 @@ use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 use symphony_board::cli::{Env, main_detaching};
+use symphony_board::sys::hostname;
 
 /// A socket of the test's own that keeps every frame sent to it.
 struct Listener {
@@ -36,7 +38,8 @@ impl Listener {
         while Instant::now() < deadline {
             match self.socket.accept() {
                 Ok((stream, _)) => {
-                    for frame in frames(stream).lines() {
+                    let sent = frames(stream);
+                    for frame in sent.lines() {
                         let frame: serde_json::Value = serde_json::from_str(frame).unwrap();
                         let content = frame["message"]["content"].as_str().unwrap();
                         lines.extend(content.lines().map(String::from));
@@ -116,30 +119,40 @@ fn say(case: &Case, program: &Path, args: &[&str]) -> Ran {
     run_as(&case.env, program, args)
 }
 
-/// The board's dispatch lease as it stands.
+/// This host's dispatch lease as it stands.
 fn lease(case: &Case) -> Value {
     case.store()
         .client()
         .query(
-            "RETURN SELECT until, again FROM ONLY type::record('callback_lease', ['dispatch']);",
-            json!({}),
+            "RETURN SELECT until, asked, served FROM ONLY type::record('callback_lease', ['dispatch', $host]);",
+            json!({"host": hostname()}),
         )
         .unwrap()
         .remove(0)
 }
 
+/// Wait until `done`, which a detached dispatcher brings about.
+fn until(done: impl Fn() -> bool, what: &str) {
+    let deadline = Instant::now() + Duration::from_secs(60);
+    while !done() {
+        assert!(Instant::now() < deadline, "{what} not within a minute");
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
 #[test]
-fn a_post_hands_its_dispatch_to_the_dispatcher_it_starts_and_answers_without_it() {
+fn a_post_queues_its_line_answers_and_the_dispatcher_it_starts_outwaits_a_dead_holder() {
     let case = Case::new();
     let listener = Listener::new("handed");
     let (recipient, writer) = board(&case, "tools/handed", &listener);
     let tasks = Path::new(env!("CARGO_BIN_EXE_tasks"));
-    // Another dispatcher holds the board: the one the post starts can only ask it for a pass.
+    // A dispatcher that died holding this host's lease: the one the post starts asks it for a
+    // pass and waits.
     case.store()
         .client()
         .query(
-            "UPSERT type::record('callback_lease', ['dispatch']) SET until = $now + 3600, revision = 1, again = false RETURN NONE;",
-            json!({"now": NOW}),
+            "UPSERT type::record('callback_lease', ['dispatch', $host]) SET until = $now + 3600, revision = 1, asked = 0, served = 0 RETURN NONE;",
+            json!({"host": hostname(), "now": NOW}),
         )
         .unwrap();
     let ran = say(
@@ -156,43 +169,45 @@ fn a_post_hands_its_dispatch_to_the_dispatcher_it_starts_and_answers_without_it(
         ],
     );
     assert_eq!(ran.code, 0, "{}", ran.err);
-    // Nothing of the post was delivered or queued by the command: a direct message sent now,
-    // which delivers only what is queued, arrives alone.
-    case.store()
-        .send_agent(&writer, &recipient, "barrier")
-        .unwrap();
-    let lines = listener.until("barrier", Duration::from_secs(10));
-    assert!(
-        !lines.iter().any(|line| line.contains("after the answer")),
-        "{lines:?}"
+    let id = ran
+        .out
+        .strip_prefix("sent #")
+        .and_then(|rest| rest.split_whitespace().next())
+        .unwrap()
+        .to_string();
+    // The command queued the post for its recipient before it answered, and delivered nothing.
+    let queued = case
+        .store()
+        .client()
+        .query(
+            "RETURN type::record('callback_event', [$handle, $key]).delivered ?? false;",
+            json!({"handle": recipient, "key": format!("message-{id}")}),
+        )
+        .unwrap()
+        .remove(0);
+    assert_eq!(queued, json!(false));
+    until(
+        || lease(&case)["asked"] == json!(1),
+        "the post's dispatcher's ask",
     );
-    // The dispatcher the post started asked the holder for one more pass.
-    let deadline = Instant::now() + Duration::from_secs(60);
-    while lease(&case)["again"] != json!(true) {
-        assert!(
-            Instant::now() < deadline,
-            "no dispatcher asked: {}",
-            lease(&case)
-        );
-        std::thread::sleep(Duration::from_millis(20));
-    }
-    // Once the board is free, `tasks dispatch` makes that pass and delivers the post, once.
+    // The dead holder's lease lapses: the waiting dispatcher takes the host over and delivers.
     case.store()
         .client()
         .query(
-            "UPDATE type::record('callback_lease', ['dispatch']) SET until = 0 RETURN NONE;",
-            json!({}),
+            "UPDATE type::record('callback_lease', ['dispatch', $host]) SET until = 0 RETURN NONE;",
+            json!({"host": hostname()}),
         )
         .unwrap();
-    let dispatched = run_as(&case.env, tasks, &["dispatch"]);
-    assert_eq!(dispatched.code, 0, "{}", dispatched.err);
-    let lines = listener.until("after the answer", Duration::from_secs(10));
+    let lines = listener.until(&format!("MSG #{id} "), Duration::from_secs(60));
     let delivered = lines
         .iter()
         .filter(|l| l.contains("after the answer"))
         .count();
     assert_eq!(delivered, 1, "{lines:?}");
-    assert_eq!(lease(&case), json!({"until": 0, "again": false}));
+    until(
+        || lease(&case)["until"] == json!(0) && lease(&case)["served"] == json!(1),
+        "the taken lease's release",
+    );
 }
 
 #[test]

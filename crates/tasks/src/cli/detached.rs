@@ -1,8 +1,8 @@
-//! A command's callback dispatch, off its path. Run as the `tasks` binary ([`super::main_detaching`]),
-//! a write that asks for a dispatch hands it to a detached `tasks dispatch` it starts
-//! ([`Store::dispatching_by`]): the command answers once its own write commits, never after
-//! deliveries to every recipient on the board. One dispatcher runs a board at a time
-//! ([`Store::dispatch_detached`]); one that finds another running leaves it its ask and ends.
+//! A command's callback delivery, off its path. Run as the `tasks` binary ([`super::main_detaching`]),
+//! a write queues what each recipient hears and hands the delivery to a detached `tasks dispatch` it
+//! starts ([`Store::dispatching_by`]): the command answers without waiting on any recipient. One
+//! dispatcher runs a host at a time ([`Store::dispatch_detached`]); one that finds another running
+//! asks it for a pass and waits for it, and takes the host over if that one's lease lapses.
 
 use super::{Clock, Env, open_unchecked, reach};
 use crate::git::common_dir;
