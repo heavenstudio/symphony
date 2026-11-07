@@ -4,7 +4,7 @@
 use super::work::{OWNER, ROLES, Tree, above, no_task};
 use super::{
     ACT, Error, Message, NATIVE_PRESENCE, NativePresence, REFUSED, Store, acting, logged, message,
-    native_health, refused, repr,
+    native_bounds, native_health, refused, repr,
 };
 use crate::health::{self, Health};
 use crate::rows::{MessageRow, SessionRow};
@@ -342,7 +342,9 @@ IF $handle != NONE AND !record::exists(type::record('session', $handle)) {{ THRO
             tree: Vec<(String, Option<String>)>,
             messages: Vec<MessageRow>,
         }
-        let vars = json!({"handle": handle, "delivered": DELIVERED, "since":since, "pool": pool});
+        let mut vars =
+            json!({"handle": handle, "delivered": DELIVERED, "since":since, "pool": pool});
+        native_bounds(&mut vars);
         let read: Read = self.retrying(|| self.transact(&INBOX, vars.clone()))?;
         if !read.known {
             return Err(refused(format!("no session {}", repr(handle))));

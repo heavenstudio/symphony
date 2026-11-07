@@ -702,6 +702,7 @@ impl Store {
             _ => ("[]", "[]"),
         };
         vars["executing"] = json!(EXECUTING);
+        native_bounds(&mut vars);
         let read = format!(
             "LET $tasks = ({pick});
              LET $slugs = $tasks.slug;
@@ -790,8 +791,17 @@ LET $held = array::distinct((SELECT handle, role, slug FROM role WHERE slug IN a
     .map(|$r| $r.handle));";
 
 /// The Codex registrations' presence, through `callback_state_address`: an address starting
-/// `codex:` is one from `codex:` up to `codex;`, the character after the colon.
-pub(super) const NATIVE_PRESENCE: &str = "(SELECT handle, confirmed_until ?? 0 AS until FROM callback_state WHERE address >= 'codex:' AND address < 'codex;')";
+/// `codex:` is one from `$codex` up to `$codex_after`, the bounds [`native_bounds`] gives. They
+/// are variables, not text: the client takes a request for a read only when no `;` but those
+/// between its statements is in it (`rpc::Kind::of` splits on every one, quoted or not), and a
+/// read it took for a write would never be sent again when late.
+pub(super) const NATIVE_PRESENCE: &str = "(SELECT handle, confirmed_until ?? 0 AS until FROM callback_state WHERE address >= $codex AND address < $codex_after)";
+
+/// `vars` with [`NATIVE_PRESENCE`]'s bounds: `codex:`, and `codex;`, the character after the colon.
+pub(super) fn native_bounds(vars: &mut Value) {
+    vars["codex"] = json!("codex:");
+    vars["codex_after"] = json!("codex;");
+}
 
 /// The tasks `$handle` holds that another could take over (`health::claimable`, in the database).
 const CLAIMABLE: &str = "(SELECT VALUE slug FROM role WHERE handle = $handle
@@ -1261,6 +1271,34 @@ mod tests {
     #[test]
     fn the_schema_version_check_is_a_read() {
         assert_eq!(crate::rpc::Kind::of(SCHEMA_VERSION), crate::rpc::Kind::Read);
+    }
+
+    /// Each snapshot a page or a list reads is a read, so a late answer to it goes once more: its
+    /// bounds are variables, so no `;` stands in it but between its statements.
+    #[test]
+    fn every_snapshot_read_is_a_read_and_binds_its_bounds() {
+        let slugs = ["p/a".to_string()];
+        for which in [
+            Which::All,
+            Which::Status("ready"),
+            Which::Slug("p/a"),
+            Which::Slugs(&slugs),
+            Which::Children("p/a"),
+            Which::Linked("docs/x.md"),
+            Which::Pullable("someone"),
+        ] {
+            let (read, vars) = Store::reading(&which);
+            assert_eq!(
+                crate::rpc::Kind::of(&read),
+                crate::rpc::Kind::Read,
+                "{read}"
+            );
+            assert_eq!(
+                (vars["codex"].as_str(), vars["codex_after"].as_str()),
+                (Some("codex:"), Some("codex;")),
+                "{vars}"
+            );
+        }
     }
 
     #[test]
