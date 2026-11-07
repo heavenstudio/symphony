@@ -10,6 +10,14 @@ use serde_json::{Value, json};
 
 use crate::{Who, asks, branches, clock, commit, edit, register, taskview};
 
+mod failure;
+mod quick;
+mod quick_task;
+pub use failure::Failure;
+
+#[cfg(test)]
+mod close_tests;
+
 pub const ROUTES: [&str; 13] = [
     "/api/postpone",
     "/api/decision",
@@ -25,45 +33,6 @@ pub const ROUTES: [&str; 13] = [
     "/api/ask-reply",
     symphony_api::TASK_ACTION_ROUTE,
 ];
-
-pub struct Failure {
-    pub status: u16,
-    pub error: String,
-}
-impl From<String> for Failure {
-    fn from(error: String) -> Self {
-        Self { status: 400, error }
-    }
-}
-impl From<edit::EditError> for Failure {
-    fn from(e: edit::EditError) -> Self {
-        e.0.into()
-    }
-}
-impl From<asks::AskError> for Failure {
-    fn from(e: asks::AskError) -> Self {
-        let error = e.to_string();
-        Self {
-            status: if error.starts_with("no ask") {
-                404
-            } else {
-                400
-            },
-            error,
-        }
-    }
-}
-impl From<symphony_board::Error> for Failure {
-    fn from(e: symphony_board::Error) -> Self {
-        match e {
-            symphony_board::Error::Refused(error) => error.into(),
-            symphony_board::Error::Db(error) => Self {
-                status: 503,
-                error: format!("the task board cannot be reached: {error}"),
-            },
-        }
-    }
-}
 
 fn string<'a>(payload: &'a Value, key: &str) -> &'a str {
     payload[key].as_str().unwrap_or("")
@@ -82,20 +51,28 @@ pub struct Saves {
 
 impl Saves {
     pub fn close(&self) {
+        self.close_saying(|_| {});
+    }
+
+    /// Close, naming each wait through `stage` as it begins: the save in flight, the queued
+    /// verdict publications, then the verdict filing. A close that never ends names its wait.
+    pub fn close_saying(&self, stage: impl Fn(&str)) {
+        stage("the save in flight");
         let committer = {
             let _held = self.writes.lock().unwrap_or_else(|e| e.into_inner());
             self.closed.store(true, Ordering::Release);
             self.committer.get()
         };
         if let Some(committer) = committer {
+            stage("the queued verdict publications");
             committer.close();
         }
         self.filer.lock().unwrap_or_else(|e| e.into_inner()).take();
-        if let Some(worker) = self
-            .filing_worker
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .take()
+        // The worker's lock is held through its join, so a concurrent close waits here for the
+        // same worker to end instead of returning while it still files.
+        stage("the verdict filing");
+        let mut filing = self.filing_worker.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(worker) = filing.take()
             && worker.join().is_err()
         {
             let _ = std::io::Write::write_all(
@@ -103,6 +80,7 @@ impl Saves {
                 b"Symphony: verdict filing worker panicked while closing\n",
             );
         }
+        drop(filing);
     }
     pub fn start(root: &Path) -> Self {
         let writes = Arc::new(Mutex::new(()));
@@ -555,125 +533,6 @@ impl Saves {
             Ok(json!({"ok":true,"id":id}))
         }
     }
-
-    fn quick(&self, scope: &str, route: &str, payload: &Value) -> Result<Value, Failure> {
-        let raw: String = string(payload, "page").chars().take(500).collect();
-        let raw = raw.split_once("://").map_or(raw.as_str(), |(_, tail)| {
-            tail.find('/').map_or("/", |at| &tail[at..])
-        });
-        let (path, anchor) = raw.split_once('#').unwrap_or((raw, ""));
-        let path = path.split('?').next().unwrap_or("");
-        let path = decode(path).unwrap_or_else(|| path.to_string());
-        let mut page = format!(
-            "{path}{}",
-            if anchor.is_empty() {
-                String::new()
-            } else {
-                format!("#{anchor}")
-            }
-        );
-        let (root, rel) = self.scope(scope, &path)?;
-        if root != self.root {
-            page = self.page(&root, &rel, anchor)?;
-        }
-        // Keep the branch page's full URL when resolving its quick-chat fallback.
-        let doc = if root == self.root && Self::target(&root, &rel).is_ok() {
-            rel
-        } else {
-            String::new()
-        };
-        if route == "/api/quick-chat" {
-            let mut text = string(payload, "text").trim().to_string();
-            if doc.is_empty() && !page.is_empty() && !text.is_empty() {
-                text.push_str(&format!("\n\n(sent from {page})"));
-            }
-            let store = asks::AskStore::open(&asks::default_path(
-                &self.root,
-                std::env::var("ASKS_DB").ok().as_deref(),
-            ))?;
-            let readme = crate::project::Project::of(&self.root).entrypoints[0].route("README.md");
-            let id = store.ask(
-                if doc.is_empty() { &readme } else { &doc },
-                &text,
-                if doc.is_empty() { "" } else { anchor },
-                "",
-            )?;
-            return Ok(json!({"id":id}));
-        }
-        let title = string(payload, "title").trim();
-        if title.chars().count() > symphony_api::QUICK_TASK_TITLE_MAX {
-            return Err(format!(
-                "Use at most {} characters for the task title",
-                symphony_api::QUICK_TASK_TITLE_MAX
-            )
-            .into());
-        }
-        let store = self.store()?;
-        let mut slug = string(payload, "slug").trim().to_string();
-        if slug.is_empty() {
-            let title = regex::Regex::new("[^a-z0-9]+")
-                .expect("slug pattern")
-                .replace_all(&title.to_lowercase(), "-")
-                .trim_matches('-')
-                .chars()
-                .take(40)
-                .collect::<String>();
-            let base = format!(
-                "inbox/{}",
-                if title.is_empty() {
-                    "task"
-                } else {
-                    title.trim_matches('-')
-                }
-            );
-            slug.clone_from(&base);
-            let mut n = 1;
-            loop {
-                match store.get(&slug) {
-                    Ok(_) => {
-                        n += 1;
-                        slug = format!("{base}-{n}");
-                    }
-                    Err(symphony_board::Error::Refused(_)) => break,
-                    Err(e) => return Err(e.into()),
-                }
-            }
-        }
-        let mut body = string(payload, "body").trim().to_string();
-        if !page.is_empty() {
-            if !body.is_empty() {
-                body.push_str("\n\n");
-            }
-            body.push_str(&format!("Sent from [{page}]({page})"));
-        }
-        let priority = if payload["priority"].is_null() {
-            2
-        } else {
-            payload["priority"]
-                .as_i64()
-                .or_else(|| payload["priority"].as_str().and_then(|s| s.parse().ok()))
-                .ok_or("priority must be a number".to_string())?
-        };
-        store.create(&symphony_board::NewTask {
-            slug: slug.clone(),
-            title: title.into(),
-            body,
-            by: "owner".into(),
-            priority,
-            status: "concept".into(),
-            links: if doc.is_empty() {
-                vec![]
-            } else {
-                vec![if anchor.is_empty() {
-                    doc
-                } else {
-                    format!("{doc}#{anchor}")
-                }]
-            },
-            ..symphony_board::NewTask::default()
-        })?;
-        Ok(json!({"slug":slug}))
-    }
 }
 
 /// The files the owner attached to a post, as paths the receiving agent opens: an upload line
@@ -690,21 +549,4 @@ fn attached(root: &Path, payload: &Value) -> String {
     } else {
         format!("\nAttached files: {}", files.join(", "))
     }
-}
-
-fn decode(value: &str) -> Option<String> {
-    let mut bytes = value.bytes();
-    let mut out = Vec::new();
-    while let Some(b) = bytes.next() {
-        out.push(if b == b'%' {
-            u8::try_from(
-                char::from(bytes.next()?).to_digit(16)? * 16
-                    + char::from(bytes.next()?).to_digit(16)?,
-            )
-            .ok()?
-        } else {
-            b
-        });
-    }
-    String::from_utf8(out).ok()
 }

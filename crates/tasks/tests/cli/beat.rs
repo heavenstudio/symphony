@@ -254,7 +254,7 @@ mod beats {
 
     #[test]
     fn a_main_session_with_no_monitor_is_bound_by_its_session_id() {
-        // A full session started in a herdr pane has no agent_id and no monitor: its session id is its key.
+        // A full session started in an hc terminal has no agent_id and no monitor: its session id is its key.
         let b = Clocked::new();
         let h = b.register("worker");
         b.beat(&bash(&inbox(&h)).0);

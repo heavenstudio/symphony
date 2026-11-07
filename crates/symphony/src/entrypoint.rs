@@ -25,16 +25,17 @@ pub const MARKDOWN: Renderer = Renderer {
     extensions: &["md"],
 };
 
-/// What the Symphony draws where a page shows it: pictures, `.html` mockups and `.glb` models.
-/// Their files are served as they are and listed in the folder pages.
+/// What the Symphony draws where a page shows it: pictures and `.html` mockups. Their files are
+/// served as they are and listed in the folder pages, as the files a plugin's renderer draws are.
 pub const MEDIA: Renderer = Renderer {
     name: "media",
     extensions: &[
-        "png", "jpg", "jpeg", "gif", "webp", "avif", "svg", "html", "htm", "glb",
+        "png", "jpg", "jpeg", "gif", "webp", "avif", "svg", "html", "htm",
     ],
 };
 
-/// Every renderer the Symphony has, by the name an entrypoint's `types` gives it.
+/// Every renderer the Symphony has, by the name an entrypoint's `types` gives it. A project's
+/// plugins add theirs ([`crate::renderers`]).
 pub const RENDERERS: [Renderer; 2] = [MARKDOWN, MEDIA];
 
 pub use symphony_api::SYMPHONY_ROUTES;
@@ -49,8 +50,9 @@ pub struct Entrypoint {
     /// The files shown, as patterns over their path in the folder; see [`matches`].
     pub include: Vec<String>,
     pub exclude: Vec<String>,
-    /// The renderers that show its files, by name.
-    pub types: Vec<String>,
+    /// The renderers that show its files, in the order its `types` names them: the Symphony's and
+    /// its project's plugins', resolved when the project loads.
+    pub types: Vec<Renderer>,
     /// Folders inside it, relative to it, served and listed but never read as documents.
     pub history: Vec<String>,
 }
@@ -63,7 +65,7 @@ impl Entrypoint {
             folder: DOCS.into(),
             include: vec!["**".into()],
             exclude: Vec::new(),
-            types: vec![MARKDOWN.name.into()],
+            types: vec![MARKDOWN],
             history: vec![HISTORY.into()],
         }
     }
@@ -147,11 +149,9 @@ impl Entrypoint {
         self.page(inside) && !self.in_history(inside)
     }
 
-    /// The entrypoint's renderers, in the order it names them.
+    /// The entrypoint's renderers, in the order it names them: the Symphony's and its plugins'.
     pub fn renderers(&self) -> impl Iterator<Item = Renderer> + '_ {
-        self.types
-            .iter()
-            .filter_map(|name| RENDERERS.iter().find(|r| r.name == name).copied())
+        self.types.iter().copied()
     }
 
     /// How a message names it: its URL as the browser shows it.
@@ -288,7 +288,7 @@ mod tests {
             folder: "spec".into(),
             include: vec!["**".into()],
             exclude: vec!["drafts/**".into()],
-            types: vec!["markdown".into(), "media".into()],
+            types: vec![MARKDOWN, MEDIA],
             history: vec!["old".into()],
         };
         assert_eq!(entry.renderer("index.md"), Some(MARKDOWN));

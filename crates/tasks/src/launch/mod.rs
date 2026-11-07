@@ -1,68 +1,81 @@
-//! Launch, restore and clean up board agent sessions in Herdr panes.
+//! Launch, restore and clean up board agent sessions in hc terminals, shown in the Herdr app.
 //!
 //! [`launch`] registers a handle, makes the worktree under `<repo>-wt/` (an executor on its task's
-//! branch: its slug; an instruction or reviewer on a detached checkout of main)
-//! unless `--worktree` gives one, puts a pane in the herdr tab of its stream (`code` for an executor,
-//! `review` for a reviewer, or `--tab`; at most four panes, then `code-2`) and starts Codex by default,
-//! or Claude when selected. It sends `$work SLUG HANDLE` (Claude: `/work`), waits for the agent to
-//! take it (pressing enter again while the text still sits in its input line), and records on the
-//! task: handle, role, conversation id, worktree, branch, pane, model, start time. [`restore`]
-//! reopens the recorded conversation in its worktree. [`cleanup`] closes unneeded panes, each closure
-//! recorded on its task with the restore line; [`finish`] is the same for one task that just became
-//! done or cancelled (its worktree is the worktree sweep's, `tasks sweep --task`). [`reap`] is the
-//! periodic sweep of idle agents.
+//! branch: its slug; an instruction or reviewer on a detached checkout of main) unless
+//! `--worktree` gives one, and starts Codex by default, or Claude when selected, in an hc terminal
+//! of its own (`hc run`), then gives it its first message (`$work SLUG HANDLE`; Claude: `/work`)
+//! once it is ready. The terminal outlives whoever launched it (`--outlive-parent`), is kept
+//! (`--keep`), and shows in the stream tab of its role (`code` for an executor, `review` for a
+//! reviewer, or `--tab`; at most four terminals, then `code-2`) of the project's space in the Herdr
+//! app, found by name and made when missing (the labels `herdr.space` and `herdr.tab`): never one of
+//! the owner's tabs. The launch is confirmed only by hc's receipt of that message (`startup`); one
+//! that cannot be confirmed fails, naming the terminal, which is killed and removed. The launch is
+//! recorded on the task: handle, role, conversation id, worktree, branch, terminal, model, start
+//! time. [`restore`] reopens the recorded conversation in its worktree, in a new terminal, the same
+//! way. [`cleanup`] closes unneeded terminals (killed, then removed), each closure recorded on its
+//! task with the restore line; [`finish`] is the same for one task that just became done or
+//! cancelled (its worktree is the worktree sweep's, `tasks sweep --task`). [`reap`] is the periodic
+//! sweep of idle agents.
 //!
-//! A pane is closed only when all of these hold: its agent is idle (or it is a shell with nothing in
-//! it) and has no process running under it other than the agent and its helpers (a shell, a monitor,
-//! anything); no `verify`, test run, `land` or Symphony (`just symphony`) runs there; it is not the
-//! calling pane, the focused pane or an orchestrator's; and the session it belongs to is on finished
-//! tasks only or holds nothing live. An agent pane that matches no board session (by recorded pane,
-//! Claude session id, `-n HANDLE` or its title) is kept: closing it would be a guess.
+//! A terminal is closed only when all of these hold: it is this board's (`sf.board`); its agent is
+//! idle (or it is a shell with nothing in it, or its program ended), its foreground is the program it
+//! started (an agent, or for no agent a shell: a program a shell became is no idle shell) and has no
+//! process running under it other than the agent and its helpers (a shell, a monitor, anything);
+//! the last `hc get` before the kill finds that same program, still finished; no `verify`, test run,
+//! `land` or Symphony (`just symphony`) runs there; it is not the calling terminal
+//! (`HC_TERMINAL_ID`), an orchestrator's, or on screen in the Herdr app ([`screen`]); and the
+//! session it belongs to is on finished tasks only or holds nothing live. An agent terminal that
+//! matches no board session (by recorded terminal, `sf.handle`, `-n HANDLE` or its name) is kept:
+//! closing it would be a guess. A recorded pane hc does not run (a herdr pane id from before hc,
+//! `w1:p…`) is gone: cleanup records it closed, with its restore line.
 //!
-//! Every herdr call goes through [`herdr::Herdr`], whose binary is `$HERDR_BIN` (default `herdr`); the
-//! tests point it at the crate's `fake-herdr`. Tests: `symphony/crates/tasks/tests/launch/`.
+//! Every hc call goes through [`hc::Hc`], whose binaries are `$HC_BIN` (default `hc`) and
+//! `$HERDR_APP_BIN` (default `herdr-app`); the tests (`tests/launch/`) point both at `fake-hc`.
 
 mod cleanup;
-pub mod herdr;
-pub mod procs;
-pub mod reap;
+pub mod hc;
+mod place;
 mod recover;
 mod restore;
+pub use recover::restore_unanswered;
+pub use restore::restore;
+pub mod procs;
+pub mod reap;
+pub mod screen;
 pub mod staff;
 mod startup;
 
 pub use cleanup::{Closure, cleanup, finish};
-pub use recover::restore_unanswered;
-pub use restore::restore;
+use place::{name_place, place, stream};
 
 use crate::cli::{Env, probes};
 use crate::health::{FINISHED, RESERVE_SECONDS};
 use crate::rows::TaskSessionRow;
 use crate::sys::{self, Command};
 use crate::{Error, NewLaunch, NewSession, Store};
-use herdr::{Herdr, Object, text};
+use hc::{Hc, text_of};
 use serde_json::Value;
+use std::collections::HashSet;
 use std::fmt;
 use std::hash::{BuildHasher, RandomState};
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
-/// At most this many panes in a stream's tab; the next goes to the stream's next tab.
+/// At most this many terminals in a stream's tab; the next goes to the stream's next tab.
 pub const MAX_PANES: usize = 4;
-/// `agent start` is tried this often, every 2 s, while the new pane's shell is not ready.
-pub const START_TRIES: u32 = 15;
-/// An agent waiting for input; `working`, `blocked` and `unknown` are never closed.
+/// An agent waiting for input; `working`, `blocked` and `error` are never closed.
 pub const READY_STATES: [&str; 2] = ["idle", "done"];
 pub const PERMISSION_MODE: &str = "auto";
-/// After a prompt: how long to wait before each look at the agent, and how often enter is pressed
-/// again while the text still sits in its input line.
+/// After a launch: how long to wait before each look at hc's record of the terminal, and how many
+/// looks the launch is given (a minute) before it fails.
 pub const PROMPT_WAIT: f64 = 2.0;
-pub const PROMPT_ENTERS: usize = 2;
-/// How much of the prompt, and of the bottom of the pane, the look reads.
-const PROMPT_HEAD: usize = 24;
-const PROMPT_LINES: usize = 12;
+pub const CONFIRM_LOOKS: usize = 30;
+/// The looks a message sent to an idle agent is given before it is reported unconfirmed.
+pub const SEND_LOOKS: usize = 3;
+/// Why a record whose pane is gone is closed.
+pub const GONE: &str = "its pane is gone";
 
-/// A herdr or git step failed; whatever it had made is undone as far as it can be. A refusal, at
+/// An hc or git step failed; whatever it had made is undone as far as it can be. A refusal, at
 /// the command line: exit 1.
 #[derive(Debug, Clone, PartialEq)]
 pub struct LaunchError(pub String);
@@ -79,13 +92,15 @@ impl From<LaunchError> for Error {
     }
 }
 
-/// The processes running under a pid (`procs::descendants`, or a test's table).
+/// The processes running under a pid (`procs::descendants`, `procs::table`'s, or a test's table).
 pub type Processes = dyn Fn(i64) -> Result<Vec<String>, LaunchError>;
 
-/// What the launcher runs with besides the board and herdr: the main checkout and the folder of
-/// worktrees beside it, the session ids, the waits and the process table.
+/// What the launcher runs with besides the board and hc: the main checkout and the folder of
+/// worktrees beside it, the session ids, the waits, the process table and the board a launched
+/// agent is to reach.
 pub struct Machine {
-    /// The main checkout, whichever worktree the command runs in.
+    /// The main checkout, whichever worktree the command runs in. Its folder's name is the Herdr
+    /// app space's.
     pub root: PathBuf,
     /// Where new worktrees go: `SF_WT_DIR`, else `<repo>-wt/` beside the main checkout.
     pub wt_base: PathBuf,
@@ -93,6 +108,10 @@ pub struct Machine {
     pub sleep: Box<dyn Fn(f64)>,
     pub processes: Box<Processes>,
     pub mode: String,
+    /// What a launched agent is given besides `TASKS_SESSION` to reach this board: the caller's
+    /// `TASKS_DATABASE` and `TASKS_SERVER`, when it has them. hc starts programs in the login
+    /// session's environment, not the caller's.
+    pub board_env: Vec<(String, String)>,
 }
 
 impl Machine {
@@ -109,10 +128,27 @@ impl Machine {
                     std::time::Duration::try_from_secs_f64(seconds).unwrap_or_default(),
                 )
             }),
-            processes: Box::new(procs::descendants),
+            processes: procs::table(env),
             mode: PERMISSION_MODE.into(),
+            board_env: board_env(env),
         }
     }
+
+    /// The Herdr app space the board's terminals show in: the main checkout's folder name.
+    fn project(&self) -> String {
+        self.root
+            .file_name()
+            .map_or_else(String::new, |n| n.to_string_lossy().into_owned())
+    }
+}
+
+/// The caller's `TASKS_DATABASE` and `TASKS_SERVER`, those it has: what a launched agent needs to
+/// reach the same board.
+pub fn board_env(env: &Env) -> Vec<(String, String)> {
+    ["TASKS_DATABASE", "TASKS_SERVER"]
+        .into_iter()
+        .filter_map(|key| Some((key.to_string(), env.var(key)?.to_string())))
+        .collect()
 }
 
 /// `SF_WT_DIR`, else `<repo>-wt/` beside the main checkout.
@@ -162,22 +198,16 @@ impl Ask {
     }
 }
 
-/// A session whose prompt was confirmed in a pane. The legacy `stuck` flag is false: an
-/// unconfirmed prompt returns an error instead of a live session record.
+/// A session whose first message was confirmed in its terminal: an unconfirmed launch is an error,
+/// never a session record.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Started {
     pub row: TaskSessionRow,
-    pub stuck: bool,
 }
 
-/// The herdr tab (a stream of work) a role's pane goes to.
-fn stream(role: &str) -> &'static str {
-    if role == "reviewer" { "review" } else { "code" }
-}
-
-/// Start a session for `ask.slug`: handle, worktree, pane, claude, `/work SLUG HANDLE`, and the record on
-/// the task.
-pub fn launch(store: &Store, herdr: &dyn Herdr, m: &Machine, ask: &Ask) -> Result<Started, Error> {
+/// Start a session for `ask.slug`: handle, worktree, terminal with its agent and `/work SLUG
+/// HANDLE`, and the record on the task.
+pub fn launch(store: &Store, hc: &dyn Hc, m: &Machine, ask: &Ask) -> Result<Started, Error> {
     let (slug, role) = (ask.slug.as_str(), ask.role.as_str());
     if role != "executor" && role != "reviewer" {
         return Err(Error::Refused(format!(
@@ -289,37 +319,54 @@ pub fn launch(store: &Store, herdr: &dyn Herdr, m: &Machine, ask: &Ask) -> Resul
         }
         return Err(problem);
     }
-    let mut pane = String::new();
+    let mut terminal = String::new();
     let tab = ask.tab.clone().filter(|t| !t.is_empty());
-    let started = start_in_pane(
-        herdr,
+    let agent = agent_kind(ask);
+    let conversation = (m.new_id)();
+    let args = if agent == "codex" {
+        codex_args(&ask.model, &handle, m)
+    } else {
+        claude_args(
+            &ask.model,
+            &handle,
+            &m.mode,
+            ["--session-id", &conversation],
+        )
+    };
+    let started = start_confirmed(
+        hc,
         m,
-        &mut pane,
-        &where_,
-        &handle,
-        tab.as_deref().unwrap_or(stream(role)),
-        &ask.model,
-        agent_kind(ask),
-        &prompt_text(slug, &handle, &ask.prompt, agent_kind(ask)),
+        &mut terminal,
+        &Start {
+            cwd: &where_,
+            handle: &handle,
+            stream: tab.as_deref().unwrap_or(stream(role)),
+            agent,
+            args,
+            text: &prompt_text(slug, &handle, &ask.prompt, agent),
+        },
     );
-    let (claude_session, stuck) = match started {
-        Ok(started) => started,
-        Err(problem) => {
-            if !pane.is_empty() {
-                let _ = herdr.close(&pane);
-            }
-            store.leave(&handle)?;
-            if made_worktree && path.exists() {
-                let _ = sys::output(
-                    Command::new("git")
-                        .arg("-C")
-                        .arg(&m.root)
-                        .args(["worktree", "remove", "--force"])
-                        .arg(&path),
-                );
-            }
-            return Err(problem.into());
+    if let Err(problem) = started {
+        if !terminal.is_empty() {
+            let _ = hc.close(&terminal);
         }
+        store.leave(&handle)?;
+        if made_worktree && path.exists() {
+            let _ = sys::output(
+                Command::new("git")
+                    .arg("-C")
+                    .arg(&m.root)
+                    .args(["worktree", "remove", "--force"])
+                    .arg(&path),
+            );
+        }
+        return Err(problem.into());
+    }
+    let claude_session = if agent == "codex" {
+        // The thread is known once the agent registers its callback (`just tasks callback`).
+        "codex:".to_string()
+    } else {
+        conversation
     };
     let row = store.record_launch(&NewLaunch {
         slug: slug.into(),
@@ -328,11 +375,11 @@ pub fn launch(store: &Store, herdr: &dyn Herdr, m: &Machine, ask: &Ask) -> Resul
         claude_session,
         worktree: where_,
         branch: use_branch,
-        pane,
+        pane: terminal,
         model: ask.model.clone(),
         ..NewLaunch::default()
     })?;
-    Ok(Started { row, stuck })
+    Ok(Started { row })
 }
 
 /// A checkout with unfinished work held by a present executor cannot host another agent.
@@ -382,7 +429,7 @@ pub(super) fn prompt_text(slug: &str, handle: &str, prompt: &str, agent: &str) -
     }
 }
 
-fn agent_kind(ask: &Ask) -> &str {
+fn agent_kind(ask: &Ask) -> &'static str {
     match ask.kind.as_deref() {
         Some("claude" | "worker" | "reviewer") => "claude",
         _ => "codex",
@@ -441,200 +488,99 @@ fn take_up(
     Ok(())
 }
 
-/// A pane for `handle` in `cwd`, the requested agent started in it, and `text` confirmed:
-/// the session id and a false legacy stuck flag. The pane, once there is one, is left in `pane`
-/// for the caller to close if this fails.
-#[expect(
-    clippy::too_many_arguments,
-    reason = "one step of `launch`, named by what it reads"
-)]
-fn start_in_pane(
-    herdr: &dyn Herdr,
+/// What one terminal starts: in `cwd`, for `handle`, in the tab of `stream`, the `agent` (`claude`
+/// or `codex`) with its `args`, and `text` its first message. It borrows them from the launch or
+/// restore that fills it.
+struct Start<'launch> {
+    cwd: &'launch str,
+    handle: &'launch str,
+    stream: &'launch str,
+    agent: &'static str,
+    args: Vec<String>,
+    text: &'launch str,
+}
+
+/// A terminal for `start.handle`, placed in its stream's tab, its agent started and given its first
+/// message once ready, and hc's receipt of that message taken (`startup`). The terminal, once there
+/// is one, is left in `terminal` for the caller to close if this fails.
+fn start_confirmed(
+    hc: &dyn Hc,
     m: &Machine,
-    pane: &mut String,
-    cwd: &str,
-    handle: &str,
-    stream: &str,
-    model: &str,
-    agent: &str,
-    text: &str,
-) -> Result<(String, bool), LaunchError> {
-    *pane = pane_for(herdr, cwd, handle, stream)?;
-    let claude_session = (m.new_id)();
-    let args = if agent == "codex" {
-        codex_args(model, handle)
-    } else {
-        claude_args(model, handle, &m.mode, ["--session-id", &claude_session])
-    };
-    start(herdr, handle, pane, agent, &args, &*m.sleep)?;
-    herdr.call(&["agent", "prompt", handle, text])?;
-    let session = confirmed(herdr, pane, text, &*m.sleep)?;
-    let identity = if agent == "codex" {
-        format!("codex:{session}")
-    } else {
-        claude_session
-    };
-    Ok((identity, false))
-}
-
-// -- herdr placement -------------------------------------------------------------------------
-
-/// The tabs of `stream` (`code`, `code-2`, ...) with their numbers, in order.
-fn stream_tabs<'t>(tabs: &'t [Object], stream: &str) -> Vec<(u64, &'t Object)> {
-    let mut found: Vec<(u64, &Object)> = tabs
-        .iter()
-        .filter_map(|tab| {
-            let label = text(tab.get("label"));
-            if label == stream {
-                return Some((1, tab));
-            }
-            let number = label.strip_prefix(stream)?.strip_prefix('-')?;
-            if number.is_empty() || !number.bytes().all(|b| b.is_ascii_digit()) {
-                return None;
-            }
-            Some((number.parse().ok()?, tab))
-        })
-        .collect();
-    found.sort_by_key(|(number, _)| *number);
-    found
-}
-
-/// Split a stream tab only when the child keeps room for the whole startup chooser. Unknown or
-/// cramped geometry uses the next stream tab; the owner's w1:t1 is never a launch destination.
-fn pane_for(
-    herdr: &dyn Herdr,
-    cwd: &str,
-    handle: &str,
-    stream: &str,
-) -> Result<String, LaunchError> {
-    let env = format!("TASKS_SESSION={handle}");
-    let panes = herdr.panes()?;
-    let tabs = herdr.tabs()?;
-    let ours = stream_tabs(&tabs, stream);
-    for (_, tab) in &ours {
-        if tab.get("tab_id").and_then(Value::as_str) == Some("w1:t1") {
-            continue;
-        }
-        let inside: Vec<&Object> = panes
-            .iter()
-            .filter(|p| p.get("tab_id") == tab.get("tab_id"))
-            .collect();
-        if !inside.is_empty() && inside.len() < MAX_PANES {
-            let Some((target, direction)) = startup_split(herdr, &inside) else {
-                continue;
-            };
-            let made = herdr.call(&[
-                "pane",
-                "split",
-                &target,
-                "--direction",
-                direction,
-                "--cwd",
-                cwd,
-                "--env",
-                &env,
-                "--no-focus",
-            ])?;
-            return pane_id(&made, "pane", "pane split");
-        }
-    }
-    let number = ours.iter().map(|(n, _)| *n).max().unwrap_or(0) + 1;
-    let label = if number == 1 {
-        stream.to_string()
-    } else {
-        format!("{stream}-{number}")
-    };
-    let made = herdr.call(&[
-        "tab",
-        "create",
-        "--label",
-        &label,
-        "--cwd",
-        cwd,
-        "--env",
-        &env,
-        "--no-focus",
-    ])?;
-    pane_id(&made, "root_pane", "tab create")
-}
-
-/// Herdr's layout rectangles use terminal cells. Reserve a normal 80×24 terminal after the split
-/// (and one separator cell), so the exact chooser need not navigate hidden options.
-fn startup_split(herdr: &dyn Herdr, inside: &[&Object]) -> Option<(String, &'static str)> {
-    let first = inside.first()?.get("pane_id")?.as_str()?;
-    let answer = herdr.call(&["pane", "layout", "--pane", first]).ok()?;
-    let layout = answer.get("layout")?.get("panes")?.as_array()?;
-    let directions = if inside.len() == 1 {
-        ["right", "down"]
-    } else {
-        ["down", "right"]
-    };
-    for pane in inside {
-        let id = pane.get("pane_id")?.as_str()?;
-        let Some(rect) = layout
-            .iter()
-            .find(|p| p.get("pane_id") == pane.get("pane_id"))
-            .and_then(|p| p.get("rect"))
-        else {
-            continue;
-        };
-        let (Some(width), Some(height)) = (
-            rect.get("width").and_then(Value::as_u64),
-            rect.get("height").and_then(Value::as_u64),
-        ) else {
-            continue;
-        };
-        for direction in directions {
-            let (columns, rows) = if direction == "right" {
-                (width.saturating_sub(1) / 2, height)
-            } else {
-                (width, height.saturating_sub(1) / 2)
-            };
-            if columns >= 80 && rows >= 24 {
-                return Some((id.into(), direction));
-            }
-        }
-    }
-    None
-}
-
-/// The id of the pane `made[key]` describes.
-fn pane_id(made: &Object, key: &str, call: &str) -> Result<String, LaunchError> {
-    let id = made.get(key).and_then(|pane| pane.get("pane_id"));
-    match id {
-        Some(id) if !id.is_null() => Ok(text(Some(id))),
-        _ => Err(LaunchError(format!("herdr {call} answered no pane id"))),
-    }
-}
-
-/// Start the requested agent, trying again only while its shell is not up (`agent_pane_busy`).
-fn start(
-    herdr: &dyn Herdr,
-    handle: &str,
-    pane: &str,
-    agent: &str,
-    claude_args: &[String],
-    sleep: &dyn Fn(f64),
+    terminal: &mut String,
+    start: &Start<'_>,
 ) -> Result<(), LaunchError> {
-    let mut call = vec![
-        "agent", "start", handle, "--kind", agent, "--pane", pane, "--",
+    let mut place = place(hc, &m.project(), start.stream)?;
+    let mut argv = vec!["env".to_string(), format!("TASKS_SESSION={}", start.handle)];
+    argv.extend(m.board_env.iter().map(|(k, v)| format!("{k}={v}")));
+    argv.push(start.agent.into());
+    argv.extend(start.args.iter().cloned());
+    let labels = [
+        format!("herdr.space={}", place.space),
+        format!("herdr.tab={}", place.tab),
+        format!("{}={}", hc::BOARD_LABEL, hc.board()),
+        format!("{}={}", hc::HANDLE_LABEL, start.handle),
     ];
-    call.extend(claude_args.iter().map(String::as_str));
-    let mut attempt = 1;
-    loop {
-        match herdr.call(&call) {
-            Ok(_) => return Ok(()),
-            Err(problem) if problem.0.contains("agent_pane_busy") && attempt < START_TRIES => {
-                attempt += 1;
-                sleep(2.0);
-            }
-            Err(problem) => return Err(problem),
-        }
+    let mut call = vec!["run", "--bg", "--name", start.handle, "--cwd", start.cwd];
+    for label in &labels {
+        call.extend(["--label", label]);
     }
+    // The board's, not the caller's: a child of the caller's terminal would show under it, never
+    // in the stream's tab.
+    call.extend([
+        "--no-parent",
+        "--outlive-parent",
+        "--keep",
+        "--no-notify",
+        "--",
+    ]);
+    call.extend(argv.iter().map(String::as_str));
+    let made = hc.json(&call)?;
+    *terminal = made
+        .get("address")
+        .and_then(Value::as_str)
+        .filter(|a| !a.is_empty())
+        .ok_or_else(|| LaunchError("hc run answered no terminal address".into()))?
+        .to_string();
+    startup::first_message(
+        hc,
+        terminal,
+        start.agent,
+        start.text,
+        &mut || name_place(hc, &mut place),
+        &*m.sleep,
+    )
 }
 
-fn codex_args(model: &str, handle: &str) -> Vec<String> {
-    [
+/// The addresses of this board's live terminals.
+fn live_addresses(hc: &dyn Hc) -> Result<HashSet<String>, LaunchError> {
+    Ok(hc
+        .terminals()?
+        .iter()
+        .filter(|t| text_of(t, "state") == "live")
+        .map(|t| text_of(t, "address"))
+        .collect())
+}
+
+/// Whether a recorded pane is gone: a herdr pane id (`w1:p3`: herdr is no more), or a terminal of
+/// this board hc no longer runs. A record naming no pane says nothing either way.
+pub(crate) fn gone(pane: &str, running: &HashSet<String>) -> bool {
+    !pane.is_empty() && (pane.contains(':') || !running.contains(pane))
+}
+
+/// The live terminal `handle` still runs in, by its name or its `sf.handle` label, if any.
+fn running_as(hc: &dyn Hc, handle: &str) -> Result<Option<String>, LaunchError> {
+    let labelled = hc.listed(&[format!("{}={handle}", hc::HANDLE_LABEL)], false)?;
+    let named = hc.live()?;
+    Ok(labelled
+        .iter()
+        .chain(named.iter().filter(|t| text_of(t, "name") == handle))
+        .map(|t| text_of(t, "address"))
+        .next())
+}
+
+fn codex_args(model: &str, handle: &str, m: &Machine) -> Vec<String> {
+    let mut args: Vec<String> = [
+        "--no-daemon",
         "-s",
         "workspace-write",
         "-m",
@@ -647,12 +593,19 @@ fn codex_args(model: &str, handle: &str) -> Vec<String> {
         "model_reasoning_effort=\"xhigh\"",
         "-c",
         "sandbox_workspace_write.network_access=true",
-        "-c",
-        &format!("shell_environment_policy.set.TASKS_SESSION=\"{handle}\""),
     ]
     .into_iter()
     .map(String::from)
-    .collect()
+    .collect();
+    let set = std::iter::once(("TASKS_SESSION".to_string(), handle.to_string()))
+        .chain(m.board_env.iter().cloned());
+    for (key, value) in set {
+        args.extend([
+            "-c".into(),
+            format!("shell_environment_policy.set.{key}=\"{value}\""),
+        ]);
+    }
+    args
 }
 
 fn claude_args(model: &str, handle: &str, mode: &str, identity: [&str; 2]) -> Vec<String> {
@@ -662,67 +615,6 @@ fn claude_args(model: &str, handle: &str, mode: &str, identity: [&str; 2]) -> Ve
         args.extend(["--model".to_string(), model.to_string()]);
     }
     args
-}
-
-/// Whether the agent in `pane` took the prompt `text` it was just sent. `agent prompt` sends the text
-/// and an enter, which does not prove the agent started a turn, and a new pane's input box has been
-/// seen to keep the text unsent (umber-ferret-929, 2026-10-08: twice in a day; `herdr pane send-keys
-/// PANE enter` sent it). So: wait, then look. The agent working (or done, or already asking
-/// something) took it; else, while the text's head still sits at the bottom of the pane, press enter
-/// and look again, up to [`PROMPT_ENTERS`] times. Only a positive agent status proves acceptance:
-/// missing agents, unreadable observations and absent prompt text provide no such evidence. Keep
-/// observing these ambiguous states through the remaining rounds without pressing enter: activity
-/// can lag submission, and a long prompt's head can scroll beyond the lines read.
-fn taken(herdr: &dyn Herdr, pane: &str, text: &str, sleep: &dyn Fn(f64)) -> (bool, String) {
-    let head: String = text.chars().take(PROMPT_HEAD).collect();
-    let mut session = String::new();
-    for round in 0..=PROMPT_ENTERS {
-        sleep(PROMPT_WAIT);
-        let Ok(agents) = herdr.agents() else {
-            continue;
-        };
-        let Some(agent) = agents.iter().find(|a| text_of(a, "pane_id") == pane) else {
-            continue;
-        };
-        session = cleanup::session_value(agent);
-        if matches!(
-            text_of(agent, "agent_status").as_str(),
-            "working" | "blocked" | "done"
-        ) {
-            return (true, session);
-        }
-        let Ok(screen) = herdr.read(pane, PROMPT_LINES) else {
-            continue;
-        };
-        if !screen.contains(&head) {
-            continue;
-        }
-        if round == PROMPT_ENTERS || herdr.enter(pane).is_err() {
-            return (false, session);
-        }
-    }
-    (false, session)
-}
-
-/// Unconfirmed submission is a failed start; callers clean up before publishing a live session.
-fn confirmed(
-    herdr: &dyn Herdr,
-    pane: &str,
-    text: &str,
-    sleep: &dyn Fn(f64),
-) -> Result<String, LaunchError> {
-    let (taken, session) = taken(herdr, pane, text, sleep);
-    if taken {
-        Ok(session)
-    } else {
-        Err(LaunchError(format!(
-            "could not confirm that the agent in pane {pane} took its prompt"
-        )))
-    }
-}
-
-fn text_of(object: &Object, key: &str) -> String {
-    text(object.get(key))
 }
 
 // -- git -------------------------------------------------------------------------------------

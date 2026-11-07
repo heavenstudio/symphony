@@ -7,14 +7,12 @@
 //! could make a session healthier moves its `last_seen`). A write that meets another's (SurrealDB's
 //! optimistic conflict) or finds itself stale reads and decides again.
 
-use crate::cbor;
 use crate::health::{self, EXECUTING, Health};
 pub(crate) use crate::pyjson::repr;
-use crate::rows::{Dump, LinkRow, MessageRow, RoleRow, SessionRow, TaskRow};
+use crate::rows::{LinkRow, MessageRow, RoleRow, SessionRow, TaskRow};
 use crate::rpc::{Client, DbError};
 use crate::schema;
 use serde::Deserialize;
-use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt;
@@ -24,18 +22,27 @@ use std::sync::Mutex;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 mod callback_peer;
+mod callback_state;
 mod callbacks;
+mod copy;
 mod depends;
+mod dispatcher;
 mod embeddings;
 mod fields;
 mod launches;
 mod messages;
+mod pool;
+mod pull_account;
+mod queued_lines;
 pub(crate) mod search;
 mod sessions;
+mod transaction;
 pub(crate) mod unanswered;
 mod work;
 
-pub use callbacks::Callback;
+pub use callbacks::{Callback, Presence};
+pub use copy::Moved;
+pub(crate) use copy::WRITTEN_SINCE;
 pub use embeddings::{EmbeddingStats, VectorHit, VectorSearchProfile};
 pub use launches::NewLaunch;
 pub use search::SearchHit;
@@ -47,6 +54,11 @@ pub use work::{
 type Clock = Box<dyn Fn() -> f64 + Send + Sync>;
 type Probe = Box<dyn Fn(i64) -> bool + Send + Sync>;
 
+/// What a write that asks for a callback dispatch does instead of dispatching
+/// ([`Store::dispatching_by`]): starts the dispatch elsewhere and says whether it did. When it did
+/// not, the write dispatches itself.
+pub type HandOff = Box<dyn Fn() -> bool + Send + Sync>;
+
 /// How long a call reads and decides again before it gives up on a board that keeps moving: as long as
 /// the SQLite store waited on its write lock, not a count of tries a busy board spends in two seconds.
 const PATIENCE: Duration = Duration::from_secs(30);
@@ -54,6 +66,17 @@ const PATIENCE: Duration = Duration::from_secs(30);
 const STALE: &str = "stale";
 /// What a write throws to refuse goes before its words: the refusal comes back as `Error::Refused`.
 const REFUSED: &str = "refused: ";
+/// The board's schema version, or NONE before its tables are made: a read ([`crate::rpc::Kind`]).
+const SCHEMA_VERSION: &str = "RETURN IF (INFO FOR DB).tables.meta = NONE { NONE } ELSE { (SELECT VALUE version FROM ONLY meta:schema) };";
+
+/// Whether the server said `said` of a request in a namespace, or in the database `database`, that
+/// it does not hold yet: a board no one has opened. These are the pinned server's words.
+fn undefined(said: &str, database: &str) -> bool {
+    said == format!("The database '{database}' does not exist")
+        || said
+            .strip_prefix("The namespace '")
+            .is_some_and(|name| name.ends_with("' does not exist"))
+}
 
 /// Why a call gave no result.
 #[derive(Debug, Clone, PartialEq)]
@@ -156,8 +179,12 @@ pub struct Store {
     pick: Mutex<Box<dyn Pick>>,
     callback_snapshot: Mutex<Option<Snapshot>>,
     callback_idle: Mutex<Option<callbacks::Idle>>,
-    /// The herdr panes the server clock's current tick sampled, which every view of that tick reads.
+    /// The hc terminals the server clock's current tick sampled, which every view of that tick reads.
     clock_panes: Mutex<Option<crate::cli::agents::Answer<Vec<crate::cli::agents::Pane>>>>,
+    /// Where this store's writes send their callback dispatch; none dispatches in the write.
+    hand_off: Option<HandOff>,
+    /// The messages a dispatch pass reads every recipient's inbox from ([`pool::Pool`]).
+    inbox_pool: Mutex<Option<pool::Pool>>,
 }
 
 impl Store {
@@ -173,7 +200,11 @@ impl Store {
         )
     }
 
-    /// As `open`, with the clock, the process probe and the host name given (the tests' own).
+    /// As `open`, with the clock, the process probe and the host name given (the tests' own). A
+    /// board at this build's version opens on one read of it, which defines and writes nothing, so
+    /// a slow board's late answer to it goes once more ([`crate::rpc::Kind`]) as a page's read
+    /// does. Any other board is defined: its namespace and database first when the server lacks
+    /// either, then its tables and version.
     pub fn with(
         client: Client,
         clock: Clock,
@@ -182,20 +213,35 @@ impl Store {
     ) -> Result<Store, Error> {
         let store = Store::unchecked(client, clock, pid_alive, host);
         store.retrying(|| {
-            let found = store.client.define_then(
-                "RETURN IF (INFO FOR DB).tables.meta = NONE { NONE } ELSE { (SELECT VALUE version FROM ONLY meta:schema) };",
-                json!({}),
-            )?;
-            if found.last() != Some(&json!(schema::VERSION)) {
-                store.client.query(schema::ANALYZERS, json!({}))?;
-                // One transaction: a definition that fails, or loses to another open's at once, takes the
-                // version with it, so no open takes a board missing it for made.
-                let define = format!("{}\nUPSERT meta:schema SET version = $version RETURN NONE;\nRETURN NONE;", schema::DEFINE);
-                store.transact::<Value>(&define, json!({"version": schema::VERSION}))?;
+            let found = store.schema_version()?;
+            if found.as_ref() == Some(&json!(schema::VERSION)) {
+                return Ok(());
             }
+            if found.is_none() {
+                store.client.define_then("RETURN NONE;", json!({}))?;
+            }
+            store.client.query(schema::ANALYZERS, json!({}))?;
+            // One transaction: a definition that fails, or loses to another open's at once, takes the
+            // version with it, so no open takes a board missing it for made.
+            let define = format!(
+                "{}\nUPSERT meta:schema SET version = $version RETURN NONE;\nRETURN NONE;",
+                schema::DEFINE
+            );
+            store.transact::<Value>(&define, json!({"version": schema::VERSION}))?;
             Ok(())
         })?;
         Ok(store)
+    }
+
+    /// The board's schema version (null before its tables are made), or none when the server lacks
+    /// its namespace or its database: one read in them, which defines nothing.
+    fn schema_version(&self) -> Result<Option<Value>, Failure> {
+        match self.read(SCHEMA_VERSION, json!({})) {
+            Err(Failure::Stop(Error::Db(said))) if undefined(&said, self.client.database()) => {
+                Ok(None)
+            }
+            found => found.map(Some),
+        }
     }
 
     /// As `with`, taking the board's tables as they are, without the request that checks them: the
@@ -210,6 +256,8 @@ impl Store {
             callback_snapshot: Mutex::new(None),
             callback_idle: Mutex::new(None),
             clock_panes: Mutex::new(None),
+            hand_off: None,
+            inbox_pool: Mutex::new(None),
         }
     }
 
@@ -220,197 +268,6 @@ impl Store {
     /// The time by this store's clock.
     pub fn now(&self) -> f64 {
         (self.clock)()
-    }
-
-    /// Make the board `dump`, replacing whatever was there. The rows go up in requests the server takes
-    /// and land in one transaction: a dump that cannot be written leaves the board as it was.
-    pub fn copy(&self, dump: &Dump) -> Result<(), Error> {
-        self.copy_into(dump, None)
-    }
-
-    /// As [`Store::copy`], for the move from the SQLite board at `from`: in the copy's one transaction,
-    /// refused, changing nothing, if the board holds a move and was written since ([`Store::moved`]),
-    /// and recording this move, with a hash of the rows it leaves.
-    pub fn move_in(&self, dump: &Dump, from: &str) -> Result<(), Error> {
-        self.copy_into(dump, Some(from))
-    }
-
-    /// The move from SQLite this board holds, if it holds one ([`Store::move_in`]).
-    pub fn moved(&self) -> Result<Option<Moved>, Error> {
-        let sql = format!(
-            "LET $was = (SELECT * FROM ONLY moved:sqlite);
-             RETURN IF $was = NONE {{ NONE }} ELSE {{ {{ board: $was.board, at: $was.at, written_since: $was.rows != {ROWS} }} }};"
-        );
-        self.retrying(|| self.transact(&sql, json!({})))
-    }
-
-    /// Remove every copy's staging table (`copy_…`): what a copy killed while it staged leaves. Only for
-    /// a caller that knows no copy runs meanwhile (the move, under its lock).
-    pub fn remove_staging(&self) -> Result<(), Error> {
-        let tables: Vec<String> = self
-            .retrying(|| self.transact("RETURN object::keys((INFO FOR DB).tables);", json!({})))?;
-        let remove: String = tables
-            .iter()
-            .filter(|table| {
-                table.starts_with("copy_")
-                    && table.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
-            })
-            .map(|table| format!("REMOVE TABLE IF EXISTS {table};"))
-            .collect();
-        if !remove.is_empty() {
-            self.retrying(|| Ok(self.client.query(&remove, json!({}))?))?;
-        }
-        Ok(())
-    }
-
-    fn copy_into(&self, dump: &Dump, from: Option<&str>) -> Result<(), Error> {
-        let keyed = |rows: Vec<Value>, key: &dyn Fn(&Value) -> Value| -> Vec<Value> {
-            rows.into_iter()
-                .map(|mut row| {
-                    row["id"] = key(&row);
-                    row
-                })
-                .collect()
-        };
-        // SQLite's row id is the record's `sid`.
-        let with_sid = |mut row: Value| {
-            row["sid"] = row["id"].clone();
-            row
-        };
-        let tables = [
-            (
-                "task",
-                keyed(
-                    values(&dump.tasks).into_iter().map(with_sid).collect(),
-                    &|r| r["slug"].clone(),
-                ),
-            ),
-            (
-                "link",
-                keyed(values(&dump.task_links), &|r| {
-                    json!([r["slug"], r["kind"], r["target"]])
-                }),
-            ),
-            (
-                "session",
-                keyed(values(&dump.sessions), &|r| r["handle"].clone()),
-            ),
-            (
-                "role",
-                keyed(values(&dump.roles), &|r| {
-                    json!([r["slug"], r["handle"], r["role"]])
-                }),
-            ),
-            (
-                "message",
-                keyed(
-                    values(&dump.messages).into_iter().map(with_sid).collect(),
-                    &|r| json!([r["slug"], r["sid"]]),
-                ),
-            ),
-            (
-                "delivery",
-                keyed(values(&dump.deliveries), &|r| {
-                    json!([r["message"], r["handle"]])
-                }),
-            ),
-            (
-                "barred_key",
-                keyed(values(&dump.barred_keys), &|r| r["key"].clone()),
-            ),
-            (
-                "task_session",
-                keyed(values(&dump.task_sessions), &|r| {
-                    json!([r["slug"], r["handle"]])
-                }),
-            ),
-        ];
-        let last = dump.messages.iter().map(|m| m.id).max().unwrap_or(0);
-        let last_task = dump.tasks.iter().map(|t| t.id).max().unwrap_or(0);
-        let last_ts = dump.messages.iter().map(|m| m.ts).reduce(f64::max);
-        let staging = format!(
-            "copy_{:016x}",
-            RandomState::new().hash_one(std::process::id())
-        );
-        let copied = self.stage(&staging, &tables).and_then(|()| {
-            let mut swap = String::new();
-            if from.is_some() {
-                let _ = writeln!(
-                    swap,
-                    "LET $was = (SELECT * FROM ONLY moved:sqlite);
-                     IF $was != NONE AND $was.rows != {ROWS} {{ THROW string::concat($refused, $was.board, $since) }};"
-                );
-            }
-            for (table, _) in &tables {
-                let _ = writeln!(
-                    swap,
-                    "DELETE {table}; INSERT INTO {table} (SELECT VALUE row FROM {staging}_{table}) RETURN NONE; REMOVE TABLE {staging}_{table};"
-                );
-            }
-            // These caches describe the replaced board and are rebuilt by catch-up. Keep the
-            // reset in the swap transaction so a refused copy preserves the current index.
-            swap.push_str("DELETE task_chunk RETURN NONE; DELETE task_embedding_source RETURN NONE; DELETE task_embedding_checkpoint RETURN NONE;\n");
-            swap.push_str("UPSERT counter:message SET last = $last, ts = $last_ts RETURN NONE;\nUPSERT counter:task SET last = $last_task RETURN NONE;\n");
-            if from.is_some() {
-                let _ = writeln!(
-                    swap,
-                    "UPSERT moved:sqlite SET board = $from, at = $at, rows = {ROWS} RETURN NONE;"
-                );
-            }
-            swap.push_str("RETURN NONE;");
-            let vars = json!({
-                "last": last, "last_ts": last_ts, "last_task": last_task,
-                "from": from, "at": self.now(),
-                "refused": format!("{REFUSED}{}", WRITTEN_SINCE.0), "since": WRITTEN_SINCE.1,
-            });
-            self.retrying(|| self.transact::<Value>(&swap, vars.clone())).map(|_| ())
-        });
-        if copied.is_err() {
-            let remove: String = tables
-                .iter()
-                .map(|(table, _)| format!("REMOVE TABLE IF EXISTS {staging}_{table};"))
-                .collect();
-            let _ = self.client.query(&remove, json!({}));
-        }
-        copied
-    }
-
-    /// Every row of `tables` into schemaless tables named `{staging}_{table}`, each request at most
-    /// `CHUNK_BYTES`: a board is bigger than the server takes in one. The copy's one transaction then
-    /// moves them in.
-    fn stage(&self, staging: &str, tables: &[(&str, Vec<Value>)]) -> Result<(), Error> {
-        let send = |sql: &str, vars: Value| {
-            self.retrying(|| Ok(self.client.query(sql, vars.clone())?))
-                .map(|_| ())
-        };
-        let define: String = tables
-            .iter()
-            .map(|(table, _)| format!("DEFINE TABLE {staging}_{table} SCHEMALESS;"))
-            .collect();
-        send(&define, json!({}))?;
-        for (table, rows) in tables {
-            let insert = format!("INSERT INTO {staging}_{table} $rows RETURN NONE;");
-            let (mut chunk, mut bytes) = (Vec::new(), 0);
-            for row in rows {
-                let size = cbor::encode(row).len();
-                if bytes + size > CHUNK_BYTES && !chunk.is_empty() {
-                    send(&insert, json!({"rows": std::mem::take(&mut chunk)}))?;
-                    bytes = 0;
-                }
-                chunk.push(json!({"row": row}));
-                bytes += size;
-            }
-            if !chunk.is_empty() {
-                send(&insert, json!({"rows": chunk}))?;
-            }
-        }
-        Ok(())
-    }
-
-    /// Every row of the board, in the shape the copy reads, each table in the order of its key: what a
-    /// copy wrote, read back.
-    pub fn dump(&self) -> Result<Dump, Error> {
-        self.retrying(|| self.transact(DUMP, json!({})))
     }
 
     /// Every task and session, with health, in one round trip.
@@ -686,11 +543,8 @@ impl Store {
             })
         })?;
         if verdict == "changes" {
-            self.tell_if_unread(
-                slug,
-                None,
-                &format!("the changes verdict from {handle} to @executor"),
-            );
+            let what = format!("the changes verdict from {handle} to @executor");
+            self.tell_if_unread(slug, None, &what, None);
         }
         Ok(task)
     }
@@ -757,6 +611,7 @@ impl Store {
         })
     }
 
+    #[track_caller]
     fn view(&self, which: &Which) -> Result<View, Failure> {
         let (read, vars) = Self::reading(which);
         let snap: Snapshot = self.transact(&read, vars)?;
@@ -765,6 +620,7 @@ impl Store {
 
     /// `body`'s writes, then `slug` read as `get` reads it, in one transaction: the task as the write
     /// left it, in the write's one round trip. `body` ends without a `RETURN`.
+    #[track_caller]
     fn written(&self, body: &str, mut vars: Value, slug: &str) -> Result<Task, Failure> {
         let (read, more) = Self::reading(&Which::Slug(slug));
         if let (Some(vars), Value::Object(more)) = (vars.as_object_mut(), more) {
@@ -776,10 +632,8 @@ impl Store {
             vars,
             false,
         )?;
-        if snap.has_callbacks
-            && let Err(error) = self.dispatch_callbacks()
-        {
-            eprintln!("CALLBACK deferred: {error}");
+        if snap.has_callbacks {
+            self.after_write();
         }
         let view = View::new(self, snap);
         view.task(slug).map_err(Failure::Stop)?;
@@ -871,47 +725,6 @@ impl Store {
         (read, vars)
     }
 
-    /// `body`'s statements in one transaction; the last of them is a `RETURN` of the answer. A null
-    /// among `vars` is left out, so it reads as NONE: SurrealDB's NULL is a value an `option` field
-    /// refuses, and that is never equal to NONE.
-    fn transact<T: DeserializeOwned>(&self, body: &str, vars: Value) -> Result<T, Failure> {
-        self.transact_dispatch(body, vars, true)
-    }
-
-    /// A task write returns recipient presence in its snapshot and dispatches after decoding it.
-    /// Other writes keep the normal post-commit dispatch path.
-    fn transact_dispatch<T: DeserializeOwned>(
-        &self,
-        body: &str,
-        mut vars: Value,
-        dispatch: bool,
-    ) -> Result<T, Failure> {
-        unset_nulls(&mut vars);
-        let results = self.client.query(
-            &format!("BEGIN TRANSACTION;\n{body}\nCOMMIT TRANSACTION;"),
-            vars,
-        )?;
-        // The write has committed. Delivery failure must never turn it into a failed write that a
-        // caller might repeat. The shared server also drains this durable outbox after a crash.
-        if dispatch
-            && body.contains("CREATE type::record('message',")
-            && let Err(error) = self.dispatch_callbacks()
-        {
-            eprintln!("CALLBACK deferred: {error}");
-        }
-        let answer = results
-            .len()
-            .checked_sub(2)
-            .and_then(|last| results.into_iter().nth(last));
-        let answer = answer
-            .ok_or_else(|| Failure::Stop(Error::Db("a transaction gave no answer".into())))?;
-        serde_json::from_value(answer).map_err(|e| {
-            Failure::Stop(Error::Db(format!(
-                "an answer not in the board's shape: {e}"
-            )))
-        })
-    }
-
     fn retrying<T>(&self, mut once: impl FnMut() -> Result<T, Failure>) -> Result<T, Error> {
         let began = Instant::now();
         let mut attempt = 0;
@@ -933,48 +746,6 @@ impl Store {
             }
         }
     }
-}
-
-/// The most a copy sends in one request: the server takes 4 MiB (`SURREAL_HTTP_MAX_RPC_BODY_SIZE`).
-const CHUNK_BYTES: usize = 1 << 20;
-
-const DUMP: &str = "RETURN {
-    tasks: (SELECT * OMIT id, version FROM task ORDER BY sid),
-    task_links: (SELECT * OMIT id FROM link ORDER BY slug, kind, target),
-    sessions: (SELECT * OMIT id FROM session ORDER BY handle),
-    roles: (SELECT * OMIT id FROM role ORDER BY slug, handle, role),
-    messages: (SELECT * OMIT id FROM message ORDER BY sid),
-    deliveries: (SELECT * OMIT id FROM delivery ORDER BY message, handle),
-    barred_keys: (SELECT * OMIT id FROM barred_key ORDER BY key),
-    task_sessions: (SELECT * OMIT id FROM task_session ORDER BY slug, handle),
-};";
-
-/// Every row the copy writes, the counters with them, in the order of their keys, as one hash: the same
-/// as long as nothing is written.
-const ROWS: &str = "crypto::sha256(<string> [
-    (SELECT * FROM task ORDER BY id), (SELECT * FROM link ORDER BY id),
-    (SELECT * FROM session ORDER BY id), (SELECT * FROM role ORDER BY id),
-    (SELECT * FROM message ORDER BY id), (SELECT * FROM delivery ORDER BY id),
-    (SELECT * FROM barred_key ORDER BY id), (SELECT * FROM task_session ORDER BY id),
-    (SELECT * FROM counter ORDER BY id),
-])";
-
-/// What a move into a board written since its move is refused with, before and after that move's board.
-pub(crate) const WRITTEN_SINCE: (&str, &str) = (
-    "the SurrealDB board holds the move of ",
-    " and was written since, which a move into it would lose",
-);
-
-/// The move from SQLite a board holds ([`Store::move_in`]).
-#[derive(Debug, Clone, PartialEq, Deserialize)]
-pub struct Moved {
-    /// The SQLite board it moved.
-    #[serde(rename = "board")]
-    pub from: String,
-    /// When, by the clock of the store that moved it.
-    pub at: f64,
-    /// Whether a row changed since: a move into the board now would lose it.
-    pub written_since: bool,
 }
 
 /// One session, `$handle`, and whether it holds work another could take over (a `Found`). Needs
@@ -1034,7 +805,7 @@ FOR $s IN $seen {
 };
 UPDATE type::record('session', $actor) SET last_seen = math::max([last_seen, $now]) RETURN NONE;
 FOR $r IN $drop { DELETE type::record('role', [$slug, $r.handle, $r.role]); };
-FOR $r IN $add { UPSERT type::record('role', [$slug, $r.handle, $r.role]) CONTENT $r RETURN NONE; };
+FOR $r IN $add { IF type::record('session', $r.handle).left_at != NONE { THROW 'stale' }; UPSERT type::record('role', [$slug, $r.handle, $r.role]) CONTENT $r RETURN NONE; };
 UPDATE type::record('task', $slug) SET version += 1, status = $status ?? status, updated = $updated ?? updated RETURN NONE;
 IF $say {
     LET $counted = (UPSERT ONLY counter:message SET last += 1, ts = IF ts != NONE AND ts > $now AND ts <= $now + 60 { ts } ELSE { $now });
@@ -1380,17 +1151,6 @@ LET $ts = $counted.ts;
 CREATE type::record('message', [{slug}, $sid]) SET sid = $sid, slug = {slug}, sender = {sender}, recipient = {recipient},
     kind = {kind}, text = {text}, ts = $ts RETURN NONE;"
     )
-}
-
-fn unset_nulls(value: &mut Value) {
-    match value {
-        Value::Object(fields) => {
-            fields.retain(|_, field| !field.is_null());
-            fields.values_mut().for_each(unset_nulls);
-        }
-        Value::Array(items) => items.iter_mut().for_each(unset_nulls),
-        _ => {}
-    }
 }
 
 fn message(row: MessageRow) -> Message {

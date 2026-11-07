@@ -1,4 +1,7 @@
-//! Idle pane sweep with deterministic board-clock intervals.
+//! Idle terminal sweep with deterministic board-clock intervals.
+
+#[path = "reap_pending.rs"]
+mod pending;
 
 use crate::common::RawWrite;
 use crate::{Folder, Hooked, World, git};
@@ -11,7 +14,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 use symphony_board::cli::Env;
 use symphony_board::health::LIVE_SECONDS;
-use symphony_board::launch::herdr::Herdr;
+use symphony_board::launch::hc::Hc;
 use symphony_board::launch::reap::{
     self, Closed, REAP_SECONDS, Reap, Sweep, lock_path, state_path,
 };
@@ -19,8 +22,255 @@ use symphony_board::launch::{Ask, LaunchError, Processes, restore as restore_ses
 use symphony_board::{Error, NewLaunch, NewSession, NewTask, Store};
 use symphony_board::{Health, cli};
 
+/// How an agent's terminal names its handle.
+#[derive(Clone, Copy)]
+enum By {
+    /// Claude's `-n HANDLE`.
+    Flag,
+    /// Its `sf.handle` label.
+    Label,
+    /// Its terminal's name.
+    Name,
+}
+
+/// A claude agent's terminal of this board, as [`World::agent`] makes it.
+struct Agent<'a> {
+    handle: Option<&'a str>,
+    status: &'a str,
+    /// What runs under its agent.
+    procs: &'a [&'a str],
+    by: By,
+    screen: &'a str,
+    extra: Value,
+}
+
+impl<'a> Agent<'a> {
+    fn named(handle: &'a str) -> Agent<'a> {
+        Agent {
+            handle: Some(handle),
+            status: "idle",
+            procs: &[],
+            by: By::Flag,
+            screen: "",
+            extra: json!({}),
+        }
+    }
+
+    fn unnamed() -> Agent<'a> {
+        Agent {
+            handle: None,
+            ..Agent::named("")
+        }
+    }
+}
+
+/// How one sweep runs, besides the world's state file and `ps` table.
+#[derive(Clone, Copy, Default)]
+struct How<'a> {
+    dry: bool,
+    caller: Option<&'a str>,
+    processes: Option<&'a Processes>,
+}
+
+impl World {
+    /// A claude agent's terminal of this board (its program `claude --session-id sess-ADDRESS`),
+    /// under which runs what `a` says: its address.
+    fn agent(&self, a: Agent<'_>) -> String {
+        let address = self.add_terminal(true, None, json!({}));
+        self.edit_terminal(&address, |t| {
+            let mut argv = vec![
+                json!("env"),
+                json!("TASKS_SESSION=x"),
+                json!("claude"),
+                json!("--session-id"),
+                json!(format!("sess-{address}")),
+            ];
+            match (a.handle, a.by) {
+                (Some(handle), By::Flag) => argv.extend([json!("-n"), json!(handle)]),
+                (Some(handle), By::Label) => t["labels"]["sf.handle"] = json!(handle),
+                (Some(handle), By::Name) => {
+                    t.insert("name".into(), json!(handle));
+                }
+                (None, _) => {}
+            }
+            argv.push(json!("/work sim/jump x"));
+            t.insert("argv".into(), Value::Array(argv));
+            t.insert("status".into(), json!(a.status));
+            if !a.screen.is_empty() {
+                t.insert("screen".into(), json!(a.screen));
+            }
+            for (key, value) in a.extra.as_object().into_iter().flatten() {
+                t.insert(key.clone(), value.clone());
+            }
+        });
+        self.run_under(self.pid_of(&address), a.procs);
+        address
+    }
+
+    /// A worker that executed `slug`, which is now `status`: its handle.
+    fn executor_on(&self, status: &str, slug: &str) -> String {
+        let handle = self.f.session("worker");
+        let store = self.store();
+        store.claim(slug, &handle).unwrap();
+        if status == "blocked" {
+            store.move_to(slug, "blocked", &handle).unwrap();
+        } else if status == "review" || status == "done" {
+            store.move_to(slug, "review", &handle).unwrap();
+            if status == "done" {
+                let reviewer = self.f.session("reviewer");
+                store.take_role(slug, &reviewer, "reviewer").unwrap();
+                store.verdict(slug, &reviewer, "approve", "ok").unwrap();
+            }
+        }
+        handle
+    }
+
+    fn sub_session(&self, kind: &str, parent: &str) -> String {
+        self.f.session_with(NewSession {
+            parent: Some(parent.into()),
+            ..NewSession::new(kind)
+        })
+    }
+
+    fn reap_state(&self) -> PathBuf {
+        self.dir().join("reap.json")
+    }
+
+    fn reap_data(&self) -> Value {
+        serde_json::from_slice(&std::fs::read(self.reap_state()).unwrap()).unwrap()
+    }
+
+    fn reap<'a>(&self, how: How<'a>, processes: &'a Processes) -> Reap<'a> {
+        Reap {
+            state: self.reap_state(),
+            apply: !how.dry,
+            processes: how.processes.unwrap_or(processes),
+            caller: how.caller,
+            min_idle: REAP_SECONDS,
+        }
+    }
+
+    /// One sweep through `hc` as `how` says, then, if it swept, the timer's interval: what it
+    /// found (None: the lock was held), and what it warned of.
+    fn once(&self, hc: &dyn Hc, how: How<'_>) -> (Option<Sweep>, String) {
+        let m = self.machine();
+        let reap = self.reap(how, &*m.processes);
+        let mut warn = Vec::new();
+        let swept = reap::sweep(self.store(), hc, &reap, &mut warn).expect("the sweep runs");
+        if swept.is_some() {
+            self.f.advance(REAP_SECONDS);
+        }
+        (swept, String::from_utf8(warn).unwrap())
+    }
+
+    /// Wait for the previous sweep's lock to be released, then complete exactly one round.
+    fn sweep_with(&self, hc: &dyn Hc, how: How<'_>) -> (Sweep, String) {
+        wait_for_sweep(&self.reap_state());
+        let (swept, warned) = self.once(hc, how);
+        (swept.expect("the sweep records its round"), warned)
+    }
+
+    fn sweep(&self) -> Sweep {
+        self.sweep_as(How::default())
+    }
+
+    fn sweep_as(&self, how: How<'_>) -> Sweep {
+        let (swept, warned) = self.sweep_with(&self.hc(), how);
+        assert_eq!(warned, "");
+        swept
+    }
+
+    /// Two sweeps in a row: a terminal idle in both is closed by the second.
+    fn twice(&self, how: How<'_>) -> Sweep {
+        self.sweep_as(how);
+        self.sweep_as(how)
+    }
+
+    /// The terminals removed.
+    fn closes(&self) -> Vec<Vec<String>> {
+        self.calls_of(&["rm"])
+    }
+
+    /// Kept through two sweeps, with nothing closed.
+    fn kept(&self, terminal: &str, how: How<'_>) {
+        self.twice(how);
+        assert!(self.has_terminal(terminal));
+        assert_eq!(self.closes(), Vec::<Vec<String>>::new());
+        assert!(self.calls_of(&["kill"]).is_empty());
+    }
+}
+
+/// The sweep's lock, taken by the test as another sweep would hold it.
+fn sweep_lock(state: &Path) -> File {
+    let held = File::options()
+        .append(true)
+        .create(true)
+        .open(lock_path(state))
+        .unwrap();
+    held.lock().unwrap();
+    held
+}
+
+fn hold_lock(w: &World) -> File {
+    sweep_lock(&w.reap_state())
+}
+
+/// Another test thread can fork while this test holds the lock itself ([`hold_lock`], let go by
+/// closing): the child retains that lock until exec, even after the test drops it. Wait for that
+/// release in the kernel, without retrying a skipped round. Explicitly unlock our barrier so
+/// another fork cannot prolong it in turn. No other sweep runs on this world's state, so the
+/// following sweep can take the released lock.
+fn wait_for_sweep(state: &Path) {
+    sweep_lock(state).unlock().unwrap();
+}
+
+/// A presence assertion needs a completed round, not the legitimate no-op of a contended sweep.
+fn presence_round(
+    store: &Store,
+    hc: &dyn Hc,
+    how: &Reap<'_>,
+    warn: &mut dyn Write,
+) -> Result<Sweep, Error> {
+    wait_for_sweep(&how.state);
+    reap::sweep(store, hc, how, warn).map(|swept| swept.expect("the sweep records its round"))
+}
+
+fn terminals(swept: &Sweep) -> Vec<&str> {
+    swept.closed.iter().map(|c| c.pane.as_str()).collect()
+}
+
+fn restore(slug: &str, handle: &str) -> String {
+    format!("just tasks restore {slug} {handle}")
+}
+
+/// Seed a Codex registration on the board, without invoking the real Codex queue transport: from
+/// `terminal`, if one is given.
+fn register_codex(w: &World, handle: &str, thread: &str, terminal: Option<&str>) {
+    w.store()
+        .client()
+        .query(
+            "UPSERT type::record('callback_state', $handle) SET handle = $handle, address = $address, \
+             host = 'this-host', confirmed_until = $until, lease = $lease, terminal = $terminal RETURN NONE;",
+            json!({"handle": handle, "address": format!("codex:{thread}"), "terminal": terminal,
+                   "until": w.f.now() + 390.0, "lease": w.f.now() + 1_000_000.0}),
+        )
+        .unwrap();
+}
+
+/// A Codex agent's terminal of this board for `handle`, at work.
+fn codex_terminal(w: &World, handle: &str) -> String {
+    w.agent(Agent {
+        status: "working",
+        extra: json!({"agent": "codex", "argv": ["codex", "--no-daemon", "hi"]}),
+        by: By::Label,
+        ..Agent::named(handle)
+    })
+}
+
+// -- native presence ----------------------------------------------------------------------
+
 #[test]
-fn failed_or_incomplete_presence_rounds_hold_work_until_the_cap_and_confirmation_resets_it() {
+fn failed_or_unanswered_presence_rounds_hold_work_until_the_cap_and_confirmation_resets_it() {
     let w = World::new();
     let mut workers = Vec::new();
     for i in 0..2 {
@@ -28,25 +278,13 @@ fn failed_or_incomplete_presence_rounds_hold_work_until_the_cap_and_confirmation
         w.f.task(&slug);
         let handle = w.sub_session("worker", &w.orch);
         w.store().claim(&slug, &handle).unwrap();
-        let thread = format!("abcdef0{i}");
-        w.agent(Agent {
-            status: "working",
-            extra: json!({"agent":"codex", "agent_session":{"agent":"codex", "kind":"id", "value":thread}}),
-            ..Agent::named(&handle)
-        });
-        // Seed the persisted registration, without invoking the real Codex queue transport.
-        w.store().client().query(
-            "UPSERT type::record('callback_state', $handle) SET handle = $handle, address = $address, host = $host, confirmed_until = $until, lease = $lease RETURN NONE;",
-            json!({"handle":handle, "address":format!("codex:{thread}"), "host":"this-host", "until":w.f.now() + 390.0, "lease":w.f.now()+1_000_000.0}),
-        ).unwrap();
+        let terminal = codex_terminal(&w, &handle);
+        register_codex(&w, &handle, &format!("abcdef0{i}"), Some(&terminal));
         workers.push((slug, handle));
     }
     w.f.task("tools/presence-finished");
     let finished = w.executor_on("done", "tools/presence-finished");
-    w.store().client().query(
-        "UPSERT type::record('callback_state', $handle) SET handle = $handle, address = 'codex:abcdef0f', host = 'this-host', confirmed_until = $until, lease = $lease RETURN NONE;",
-        json!({"handle":finished, "until":w.f.now()+390.0, "lease":w.f.now()+1_000_000.0}),
-    ).unwrap();
+    register_codex(&w, &finished, "abcdef0f", None);
     let before = cli::attach::observe(w.store(), &w.orch, "orchestrator").unwrap();
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let addr = listener.local_addr().unwrap().to_string();
@@ -64,20 +302,13 @@ fn failed_or_incomplete_presence_rounds_hold_work_until_the_cap_and_confirmation
         "this-host",
     );
     let m = w.machine();
-    let how = Reap {
-        state: w.reap_state(),
-        apply: true,
-        processes: &*m.processes,
-        current_pane: None,
-        caller: None,
-        min_idle: REAP_SECONDS,
-    };
+    let how = w.reap(How::default(), &*m.processes);
     let began = Instant::now();
-    let error = presence_round(&failed, &w.herdr(), &how, &mut Vec::new()).unwrap_err();
+    let error = presence_round(&failed, &w.hc(), &how, &mut Vec::new()).unwrap_err();
     release.send(()).unwrap();
     server.join().unwrap();
     assert!(began.elapsed() < Duration::from_secs(5));
-    assert!(error.to_string().contains("did not answer"), "{error}");
+    assert!(symphony_board::rpc::slow(&error.to_string()), "{error}");
 
     w.f.advance(601.0);
     for (slug, handle) in &workers {
@@ -179,340 +410,192 @@ fn failed_or_incomplete_presence_rounds_hold_work_until_the_cap_and_confirmation
     assert!(digest.liveness_unknown.is_empty());
 
     // A real confirmation after expiry revives the workers and starts a fresh grace interval.
-    presence_round(w.store(), &w.herdr(), &how, &mut Vec::new()).unwrap();
+    presence_round(w.store(), &w.hc(), &how, &mut Vec::new()).unwrap();
     for (_, handle) in &workers {
         assert_eq!(w.f.health(handle), Health::Live);
     }
+    // A registration from no terminal that no launch records: hc cannot say where it runs.
+    assert!(w.store().callbacks().unwrap().contains_key(&finished));
     w.f.advance(601.0);
     for reply in [
         json!({}),
-        json!({"agents":null}),
-        json!({"agents":{}}),
-        json!({"agents":[null]}),
+        json!({"terminals": null}),
+        json!({"terminals": {}}),
+        json!({"terminals": [null]}),
     ] {
-        let reply = json!({"result":reply}).to_string();
-        let mut incomplete = Hooked::new(&w);
-        incomplete.instead =
-            Box::new(move |args| (args == ["agent", "list"]).then(|| Ok(reply.clone())));
+        let reply = reply.to_string();
+        let mut unanswered = Hooked::new(&w);
+        unanswered.instead = Box::new(move |args| (args[0] == "ls").then(|| Ok(reply.clone())));
         let mut warnings = Vec::new();
-        presence_round(w.store(), &incomplete, &how, &mut warnings).unwrap();
+        presence_round(w.store(), &unanswered, &how, &mut warnings).unwrap();
+        let warned = String::from_utf8(warnings).unwrap();
         assert!(
-            String::from_utf8(warnings)
-                .unwrap()
-                .contains("presence is unknown")
+            warned.starts_with("terminal sweep unavailable: hc ls ")
+                && warned.ends_with("; native sockets checked\n"),
+            "{warned}"
         );
         for (_, handle) in &workers {
             assert_eq!(w.store().session(handle).unwrap().health, Health::Unknown);
             assert!(w.store().callbacks().unwrap().contains_key(handle));
         }
     }
-    let inventory = w.state();
-    for missing in ["agent_session", "pane_id"] {
-        for replace_known in [true, false] {
-            w.set_state(inventory.clone());
-            presence_round(w.store(), &w.herdr(), &how, &mut Vec::new()).unwrap();
-            w.edit_panes(|panes| {
-                let mut anonymous = panes[0].clone();
-                if !replace_known {
-                    anonymous["pane_id"] = json!("w1:anonymous");
-                    anonymous["agent_session"]["value"] = json!("unidentified-session");
-                }
-                anonymous.as_object_mut().unwrap().remove(missing);
-                if replace_known {
-                    panes[0] = anonymous;
-                } else {
-                    panes.push(anonymous);
-                }
-            });
-            w.f.advance(601.0);
-            let mut warnings = Vec::new();
-            presence_round(w.store(), &w.herdr(), &how, &mut warnings).unwrap();
-            assert!(
-                String::from_utf8(warnings)
-                    .unwrap()
-                    .contains("native presence incomplete")
-            );
-            for (i, (_, handle)) in workers.iter().enumerate() {
-                let expected = if replace_known && i == 0 {
-                    Health::Unknown
-                } else {
-                    Health::Live
-                };
-                assert_eq!(
-                    w.store().session(handle).unwrap().health,
-                    expected,
-                    "a partial inventory confirms every identified worker but never retires the missing one"
-                );
-                assert!(w.store().callbacks().unwrap().contains_key(handle));
-            }
-        }
-    }
-    w.set_state(inventory);
-    presence_round(w.store(), &w.herdr(), &how, &mut Vec::new()).unwrap();
+    presence_round(w.store(), &w.hc(), &how, &mut Vec::new()).unwrap();
     for (_, handle) in &workers {
         assert_eq!(w.store().session(handle).unwrap().health, Health::Live);
         assert!(w.store().callbacks().unwrap().contains_key(handle));
     }
-    w.edit_panes(|panes| panes.clear());
+    w.edit_terminals(|all| all.clear());
     w.f.advance(601.0);
-    presence_round(w.store(), &w.herdr(), &how, &mut Vec::new()).unwrap();
+    presence_round(w.store(), &w.hc(), &how, &mut Vec::new()).unwrap();
     for (_, handle) in &workers {
         assert!(!w.store().callbacks().unwrap().contains_key(handle));
         assert_eq!(w.store().session(handle).unwrap().health, Health::Lost);
     }
+    assert!(w.store().callbacks().unwrap().contains_key(&finished));
 }
 
-/// A claude agent's pane, as [`World::agent`] makes it.
-struct Agent<'a> {
-    handle: Option<&'a str>,
-    status: &'a str,
-    /// What runs under its claude process.
-    procs: &'a [&'a str],
-    /// Named by claude's `-n` flag, else by herdr's agent name.
-    by_flag: bool,
-    screen: &'a str,
-    extra: Value,
-}
-
-impl<'a> Agent<'a> {
-    fn named(handle: &'a str) -> Agent<'a> {
-        Agent {
-            handle: Some(handle),
-            status: "idle",
-            procs: &[],
-            by_flag: true,
-            screen: "",
-            extra: json!({}),
-        }
-    }
-
-    fn unnamed() -> Agent<'a> {
-        Agent {
-            handle: None,
-            ..Agent::named("")
-        }
-    }
-}
-
-/// How one sweep runs, besides the world's state file and `ps` table.
-#[derive(Clone, Copy, Default)]
-struct How<'a> {
-    dry: bool,
-    current_pane: Option<&'a str>,
-    caller: Option<&'a str>,
-    processes: Option<&'a Processes>,
-}
-
-impl World {
-    /// A claude pane (with caffeinate beside claude, as a launched one has), whose claude process
-    /// runs what `a` says: its id.
-    fn agent(&self, a: Agent<'_>) -> String {
-        let pid = self.new_pid();
-        let pane = format!("w1:p{pid}");
-        let mut argv = vec!["claude", "--model", "opus"];
-        if let (Some(handle), true) = (a.handle, a.by_flag) {
-            argv.extend(["-n", handle]);
-        }
-        let mut row = json!({
-            "pane_id": pane, "tab_id": "w1:t1", "agent": "claude", "agent_status": a.status,
-            "focused": false, "screen": a.screen, "shell_pid": pid + 50_000,
-            "agent_session": {"agent": "claude", "kind": "id", "value": format!("sess-{pane}")},
-            "foreground": [
-                {"argv": ["caffeinate", "-i", "-t", "300"], "name": "caffeinate", "pid": 1},
-                {"argv": argv, "cmdline": argv.join(" "), "name": "claude", "pid": pid},
-            ],
-        });
-        if let (Some(handle), false) = (a.handle, a.by_flag) {
-            row["name"] = json!(handle);
-        }
-        for (key, value) in a.extra.as_object().into_iter().flatten() {
-            row[key] = value.clone();
-        }
-        self.edit_panes(|panes| panes.push(row));
-        self.run_under(pid, a.procs);
-        pane
-    }
-
-    /// A worker that executed `slug`, which is now `status`: its handle.
-    fn executor_on(&self, status: &str, slug: &str) -> String {
-        let handle = self.f.session("worker");
-        let store = self.store();
-        store.claim(slug, &handle).unwrap();
-        if status == "blocked" {
-            store.move_to(slug, "blocked", &handle).unwrap();
-        } else if status == "review" || status == "done" {
-            store.move_to(slug, "review", &handle).unwrap();
-            if status == "done" {
-                let reviewer = self.f.session("reviewer");
-                store.take_role(slug, &reviewer, "reviewer").unwrap();
-                store.verdict(slug, &reviewer, "approve", "ok").unwrap();
-            }
-        }
-        handle
-    }
-
-    fn sub_session(&self, kind: &str, parent: &str) -> String {
-        self.f.session_with(NewSession {
-            parent: Some(parent.into()),
-            ..NewSession::new(kind)
-        })
-    }
-
-    fn reap_state(&self) -> PathBuf {
-        self.dir().join("reap.json")
-    }
-
-    fn reap_data(&self) -> Value {
-        serde_json::from_slice(&std::fs::read(self.reap_state()).unwrap()).unwrap()
-    }
-
-    /// One sweep through `herdr` as `how` says, then, if it swept, the timer's interval: what it
-    /// found (None: the lock was held), and what it warned of.
-    fn once(&self, herdr: &dyn Herdr, how: How<'_>) -> (Option<Sweep>, String) {
-        let m = self.machine();
-        let reap = Reap {
-            state: self.reap_state(),
-            apply: !how.dry,
-            processes: how.processes.unwrap_or(&*m.processes),
-            current_pane: how.current_pane,
-            caller: how.caller,
-            min_idle: REAP_SECONDS,
-        };
-        let mut warn = Vec::new();
-        let swept = reap::sweep(self.store(), herdr, &reap, &mut warn).expect("the sweep runs");
-        if swept.is_some() {
-            self.f.advance(REAP_SECONDS);
-        }
-        (swept, String::from_utf8(warn).unwrap())
-    }
-
-    /// Wait for the previous sweep's lock to be released, then complete exactly one round.
-    fn sweep_with(&self, herdr: &dyn Herdr, how: How<'_>) -> (Sweep, String) {
-        wait_for_sweep(&self.reap_state());
-        let (swept, warned) = self.once(herdr, how);
-        (swept.expect("the sweep records its round"), warned)
-    }
-
-    fn sweep(&self) -> Sweep {
-        self.sweep_as(How::default())
-    }
-
-    fn sweep_as(&self, how: How<'_>) -> Sweep {
-        let (swept, warned) = self.sweep_with(&self.herdr(), how);
-        assert_eq!(warned, "");
-        swept
-    }
-
-    /// Two sweeps in a row: a pane idle in both is closed by the second.
-    fn twice(&self, how: How<'_>) -> Sweep {
-        self.sweep_as(how);
-        self.sweep_as(how)
-    }
-
-    fn closes(&self) -> Vec<Vec<String>> {
-        self.calls_of(&["pane", "close"])
-    }
-
-    /// Kept through two sweeps, with nothing closed.
-    fn kept(&self, pane: &str, how: How<'_>) {
-        self.twice(how);
-        assert!(self.has_pane(pane));
-        assert_eq!(self.closes(), Vec::<Vec<String>>::new());
-    }
-}
-
-/// The sweep's lock, taken by the test as another sweep would hold it.
-fn sweep_lock(state: &Path) -> File {
-    let held = File::options()
-        .append(true)
-        .create(true)
-        .open(lock_path(state))
+#[test]
+fn a_codex_thread_is_present_in_the_terminal_its_launch_records_or_it_registered_from() {
+    let w = World::new();
+    let m = w.machine();
+    let how = w.reap(How::default(), &*m.processes);
+    w.task("sim/dock", None);
+    // Launched: the record puts its thread in its terminal, whatever terminal it registered from.
+    let s = w.launch("sim/jump").row;
+    w.store()
+        .callback_in(&s.handle, Some("codex:0abc"), false, false, None)
         .unwrap();
-    held.lock().unwrap();
-    held
+    // Registered from its terminal, with no launch record.
+    let found = w.f.session("worker");
+    w.store().claim("sim/dock", &found).unwrap();
+    let terminal = codex_terminal(&w, &found);
+    register_codex(&w, &found, "0def", Some(&terminal));
+    let present = |w: &World| -> Vec<bool> {
+        let callbacks = w.store().callbacks().unwrap();
+        [&s.handle, &found]
+            .map(|h| callbacks.contains_key(h.as_str()))
+            .to_vec()
+    };
+    w.f.advance(601.0);
+    presence_round(w.store(), &w.hc(), &how, &mut Vec::new()).unwrap();
+    assert_eq!(present(&w), [true, true]);
+    assert_eq!(w.f.health(&s.handle), Health::Live);
+    assert_eq!(w.f.health(&found), Health::Live);
+
+    // A terminal that runs something else, or none: the thread no longer occupies it.
+    w.edit_terminal(&terminal, |t| {
+        t.insert("agent".into(), json!("zsh"));
+        t.insert("argv".into(), json!(["zsh"]));
+    });
+    presence_round(w.store(), &w.hc(), &how, &mut Vec::new()).unwrap();
+    assert_eq!(present(&w), [true, false]);
+    w.edit_terminal(&s.pane, |t| {
+        t.insert("state".into(), json!("finished"));
+    });
+    presence_round(w.store(), &w.hc(), &how, &mut Vec::new()).unwrap();
+    assert_eq!(
+        present(&w),
+        [true, false],
+        "registered from no terminal: kept"
+    );
+    w.store()
+        .callback_in(&s.handle, Some("codex:0abc"), false, false, Some(&s.pane))
+        .unwrap();
+    presence_round(w.store(), &w.hc(), &how, &mut Vec::new()).unwrap();
+    assert_eq!(present(&w), [false, false]);
 }
 
-fn hold_lock(w: &World) -> File {
-    sweep_lock(&w.reap_state())
-}
-
-/// Another test thread can fork while this test holds the lock itself ([`hold_lock`], let go by
-/// closing): the child retains that lock until exec, even after the test drops it. Wait for that
-/// release in the kernel, without retrying a skipped round. Explicitly unlock our barrier so
-/// another fork cannot prolong it in turn. No other sweep runs on this world's state, so the
-/// following sweep can take the released lock.
-fn wait_for_sweep(state: &Path) {
-    sweep_lock(state).unlock().unwrap();
-}
-
-/// A presence assertion needs a completed round, not the legitimate no-op of a contended sweep.
-fn presence_round(
-    store: &Store,
-    herdr: &dyn Herdr,
-    how: &Reap<'_>,
-    warn: &mut dyn Write,
-) -> Result<Sweep, Error> {
-    wait_for_sweep(&how.state);
-    reap::sweep(store, herdr, how, warn).map(|swept| swept.expect("the sweep records its round"))
-}
-
-fn panes(swept: &Sweep) -> Vec<&str> {
-    swept.closed.iter().map(|c| c.pane.as_str()).collect()
-}
-
-fn restore(slug: &str, handle: &str) -> String {
-    format!("just tasks restore {slug} {handle}")
+#[test]
+fn a_dry_run_reports_presence_and_changes_no_registration() {
+    let w = World::new();
+    let m = w.machine();
+    let handle = w.f.session("worker");
+    register_codex(&w, &handle, "0abc", Some("t-gone"));
+    let how = w.reap(
+        How {
+            dry: true,
+            ..How::default()
+        },
+        &*m.processes,
+    );
+    presence_round(w.store(), &w.hc(), &how, &mut Vec::new()).unwrap();
+    assert!(w.store().callbacks().unwrap().contains_key(&handle));
 }
 
 // -- what closes ------------------------------------------------------------------------
 
-#[path = "reap_pending.rs"]
-mod pending;
+#[test]
+fn a_finished_idle_agent_is_killed_and_removed_on_the_second_idle_sweep() {
+    let w = World::new();
+    let handle = w.executor_on("done", "sim/jump");
+    let terminal = w.agent(Agent::named(&handle));
+    let first = w.sweep();
+    assert_eq!(
+        first,
+        Sweep {
+            closed: vec![],
+            idle: vec![handle.clone()]
+        }
+    );
+    assert!(w.has_terminal(&terminal));
+    let second = w.sweep();
+    assert_eq!(
+        second.closed,
+        [Closed {
+            pane: terminal.clone(),
+            handle: handle.clone(),
+            restore: restore("sim/jump", &handle),
+        }]
+    );
+    assert!(!w.has_terminal(&terminal));
+    assert_eq!(w.calls_of(&["kill", &terminal]).len(), 1);
+    assert_eq!(w.closes().len(), 1);
+}
 
 #[test]
 fn an_agent_that_worked_between_two_idle_sweeps_starts_its_count_again() {
     let w = World::new();
-    let pane = w.agent(Agent::named(&w.executor_on("done", "sim/jump")));
+    let terminal = w.agent(Agent::named(&w.executor_on("done", "sim/jump")));
     w.sweep();
-    w.edit_pane(&pane, |p| {
-        p.insert("agent_status".into(), "working".into());
+    w.edit_terminal(&terminal, |t| {
+        t.insert("status".into(), "working".into());
     });
     w.sweep();
-    w.edit_pane(&pane, |p| {
-        p.insert("agent_status".into(), "idle".into());
+    w.edit_terminal(&terminal, |t| {
+        t.insert("status".into(), "idle".into());
     });
     w.sweep();
-    assert!(w.has_pane(&pane));
+    assert!(w.has_terminal(&terminal));
     w.sweep();
-    assert!(!w.has_pane(&pane));
+    assert!(!w.has_terminal(&terminal));
 }
 
 #[test]
 fn a_done_status_counts_as_idle() {
     let w = World::new();
     let handle = w.executor_on("done", "sim/jump");
-    let pane = w.agent(Agent {
+    let terminal = w.agent(Agent {
         status: "done",
         ..Agent::named(&handle)
     });
     w.twice(How::default());
-    assert!(!w.has_pane(&pane));
+    assert!(!w.has_terminal(&terminal));
 }
 
 #[test]
 fn an_agent_stuck_on_the_folder_trust_prompt_is_closed() {
     let w = World::new();
     let handle = w.f.session("worker");
-    let pane = w.agent(Agent {
+    let terminal = w.agent(Agent {
         status: "blocked",
         screen: "Do you trust this folder?\n 1. Yes, proceed",
         ..Agent::named(&handle)
     });
     w.twice(How::default());
-    assert!(!w.has_pane(&pane));
+    assert!(!w.has_terminal(&terminal));
     assert!(
         w.calls().contains(
-            &["pane", "read", &pane, "--lines", "30"]
+            &["read", &terminal, "--lines", "30"]
                 .map(String::from)
                 .to_vec()
         )
@@ -523,20 +606,20 @@ fn an_agent_stuck_on_the_folder_trust_prompt_is_closed() {
 fn an_agent_blocked_on_anything_else_is_kept() {
     let w = World::new();
     let handle = w.f.session("worker");
-    let pane = w.agent(Agent {
+    let terminal = w.agent(Agent {
         status: "blocked",
         screen: "Allow this command?",
         ..Agent::named(&handle)
     });
-    w.kept(&pane, How::default());
+    w.kept(&terminal, How::default());
 }
 
 #[test]
 fn the_executor_of_a_task_in_review_waits_for_its_reviewers_and_closes_once_it_is_done() {
     let w = World::new();
     let handle = w.executor_on("review", "sim/jump");
-    let pane = w.agent(Agent::named(&handle));
-    w.kept(&pane, How::default());
+    let terminal = w.agent(Agent::named(&handle));
+    w.kept(&terminal, How::default());
     let reviewer = w.f.session("reviewer");
     w.store()
         .take_role("sim/jump", &reviewer, "reviewer")
@@ -544,11 +627,11 @@ fn the_executor_of_a_task_in_review_waits_for_its_reviewers_and_closes_once_it_i
     w.store()
         .verdict("sim/jump", &reviewer, "approve", "ok")
         .unwrap();
-    assert_eq!(panes(&w.twice(How::default())), [pane.as_str()]);
+    assert_eq!(terminals(&w.twice(How::default())), [terminal.as_str()]);
 }
 
 #[test]
-fn a_post_to_an_executor_whose_pane_was_closed_tells_the_orchestrator_until_it_is_restored() {
+fn a_post_to_an_executor_whose_terminal_was_closed_tells_the_orchestrator_until_it_is_restored() {
     let w = World::new();
     w.store()
         .take_role("sim/jump", &w.orch, "orchestrator")
@@ -562,8 +645,9 @@ fn a_post_to_an_executor_whose_pane_was_closed_tells_the_orchestrator_until_it_i
         .row;
     w.store().claim("sim/jump", &s.handle).unwrap();
     w.store().move_to("sim/jump", "review", &s.handle).unwrap();
-    // As the sweep closed it before an executor in review was kept: the pane goes, then its beat ages.
-    w.edit_panes(|panes| panes.retain(|p| p["pane_id"] != s.pane.as_str()));
+    // As the sweep closed it before an executor in review was kept: the terminal goes, then its
+    // beat ages.
+    w.hc().close(&s.pane).unwrap();
     let why = "idle for two sweeps, its work finished";
     w.store()
         .close_task_session("sim/jump", &s.handle, why, &restore("sim/jump", &s.handle))
@@ -594,7 +678,7 @@ fn a_post_to_an_executor_whose_pane_was_closed_tells_the_orchestrator_until_it_i
             restore("sim/jump", &s.handle)
         )]
     );
-    restore_session(w.store(), &w.herdr(), &w.machine(), "sim/jump", None, None).unwrap();
+    restore_session(w.store(), &w.hc(), &w.machine(), "sim/jump", None, None).unwrap();
     let second = w
         .store()
         .say(
@@ -620,22 +704,24 @@ fn a_post_to_an_executor_whose_pane_was_closed_tells_the_orchestrator_until_it_i
 }
 
 #[test]
-fn a_handle_named_only_by_herdr_is_matched_too() {
-    let w = World::new();
-    let handle = w.executor_on("done", "sim/jump");
-    let pane = w.agent(Agent {
-        by_flag: false,
-        ..Agent::named(&handle)
-    });
-    w.twice(How::default());
-    assert!(!w.has_pane(&pane));
+fn a_handle_named_by_the_terminals_label_or_name_is_matched_too() {
+    for by in [By::Label, By::Name] {
+        let w = World::new();
+        let handle = w.executor_on("done", "sim/jump");
+        let terminal = w.agent(Agent {
+            by,
+            ..Agent::named(&handle)
+        });
+        w.twice(How::default());
+        assert!(!w.has_terminal(&terminal));
+    }
 }
 
 #[test]
 fn a_monitor_and_helpers_under_claude_are_not_work() {
     let w = World::new();
     let handle = w.executor_on("done", "sim/jump");
-    let pane = w.agent(Agent {
+    let terminal = w.agent(Agent {
         procs: &[
             "caffeinate -i -t 300",
             "node /x/mcp-server.js",
@@ -655,7 +741,7 @@ fn a_monitor_and_helpers_under_claude_are_not_work() {
         ..Agent::named(&handle)
     });
     w.twice(How::default());
-    assert!(!w.has_pane(&pane));
+    assert!(!w.has_terminal(&terminal));
 }
 
 // -- what is kept -----------------------------------------------------------------------
@@ -664,19 +750,19 @@ fn a_monitor_and_helpers_under_claude_are_not_work() {
 fn a_working_agent_is_kept() {
     let w = World::new();
     let handle = w.executor_on("done", "sim/jump");
-    let pane = w.agent(Agent {
+    let terminal = w.agent(Agent {
         status: "working",
         ..Agent::named(&handle)
     });
-    w.kept(&pane, How::default());
+    w.kept(&terminal, How::default());
 }
 
 #[test]
 fn an_executor_on_an_in_progress_or_blocked_task_is_kept() {
     for status in ["in_progress", "blocked"] {
         let w = World::new();
-        let pane = w.agent(Agent::named(&w.executor_on(status, "sim/jump")));
-        w.kept(&pane, How::default());
+        let terminal = w.agent(Agent::named(&w.executor_on(status, "sim/jump")));
+        w.kept(&terminal, How::default());
     }
 }
 
@@ -688,12 +774,12 @@ fn a_reviewer_of_a_task_in_review_is_kept() {
     w.store()
         .take_role("sim/jump", &reviewer, "reviewer")
         .unwrap();
-    let pane = w.agent(Agent::named(&reviewer));
-    w.kept(&pane, How::default());
+    let terminal = w.agent(Agent::named(&reviewer));
+    w.kept(&terminal, How::default());
 }
 
 #[test]
-fn a_busy_descendant_keeps_the_pane() {
+fn a_busy_descendant_keeps_the_terminal() {
     let w = World::new();
     let first = w.executor_on("done", "sim/jump");
     for (n, command) in [
@@ -712,135 +798,100 @@ fn a_busy_descendant_keeps_the_pane() {
         } else {
             w.f.session("worker")
         };
-        let pane = w.agent(Agent {
+        let terminal = w.agent(Agent {
             procs: &["/bin/zsh -c x", command],
             ..Agent::named(&handle)
         });
         w.twice(How::default());
-        assert!(w.has_pane(&pane), "{command}");
+        assert!(w.has_terminal(&terminal), "{command}");
     }
     assert_eq!(w.closes(), Vec::<Vec<String>>::new());
 }
 
 #[test]
-fn an_unnamed_pane_is_kept_it_may_be_the_owners() {
+fn an_unnamed_terminal_is_kept_it_may_be_the_owners() {
     let w = World::new();
-    let pane = w.agent(Agent::unnamed());
-    w.kept(&pane, How::default());
+    let terminal = w.agent(Agent::unnamed());
+    w.kept(&terminal, How::default());
 }
 
 #[test]
 fn a_name_that_is_no_board_session_is_kept() {
     let w = World::new();
-    let pane = w.agent(Agent::named("someone-else"));
-    w.kept(&pane, How::default());
+    let terminal = w.agent(Agent::named("someone-else"));
+    w.kept(&terminal, How::default());
 }
 
 #[test]
 fn an_orchestrator_or_a_chat_is_kept() {
     for kind in ["orchestrator", "chat"] {
         let w = World::new();
-        let pane = w.agent(Agent::named(&w.f.session(kind)));
-        w.kept(&pane, How::default());
+        let terminal = w.agent(Agent::named(&w.f.session(kind)));
+        w.kept(&terminal, How::default());
     }
 }
 
 #[test]
-fn the_callers_own_pane_and_handle_are_kept() {
-    let w = World::new();
+fn the_callers_own_terminal_and_handle_are_kept() {
+    let mut w = World::new();
     let mine = w.executor_on("done", "sim/jump");
-    let pane = w.agent(Agent::named(&mine));
+    let terminal = w.agent(Agent::named(&mine));
     w.kept(
-        &pane,
-        How {
-            current_pane: Some(&pane),
-            ..How::default()
-        },
-    );
-    w.kept(
-        &pane,
+        &terminal,
         How {
             caller: Some(&mine),
             ..How::default()
         },
     );
+    w.set("HC_TERMINAL_ID", &terminal);
+    w.kept(&terminal, How::default());
 }
 
 #[test]
-fn the_focused_pane_is_kept() {
+fn a_shell_another_boards_or_projects_terminal_or_an_ended_one_is_never_swept() {
     let w = World::new();
     let handle = w.executor_on("done", "sim/jump");
-    let pane = w.agent(Agent {
-        extra: json!({"focused": true}),
-        ..Agent::named(&handle)
-    });
-    w.kept(&pane, How::default());
-}
-
-#[test]
-fn an_agent_in_another_workspace_is_kept_and_agent_list_takes_no_workspace_flag() {
-    let mut w = World::new();
-    let handle = w.executor_on("done", "sim/jump");
-    let pane = w.agent(Agent {
-        extra: json!({"workspace_id": "w1"}),
-        ..Agent::named(&handle)
-    });
-    w.set("HERDR_WORKSPACE_ID", "w9"); // the real `agent list` refuses --workspace
-    w.kept(&pane, How::default());
-    assert!(
-        w.calls()
-            .contains(&vec!["agent".to_string(), "list".to_string()])
+    let mut others = vec![w.add_terminal(false, Some(&handle), json!({"status": "idle"}))];
+    for (key, value) in [
+        ("labels", json!({"sf.board": "web-bench/tasks"})),
+        ("labels", json!({"sf.board": "lamp-works/scratch"})),
+        ("labels", json!({"sf.board": null})),
+        ("state", json!("finished")),
+    ] {
+        let t = w.agent(Agent::named(&handle));
+        w.edit_terminal(&t, |row| {
+            if key == "labels" {
+                row["labels"]["sf.board"] = value.clone();
+            } else {
+                row.insert(key.into(), value.clone());
+            }
+        });
+        others.push(t);
+    }
+    w.twice(How::default());
+    for t in &others {
+        assert!(w.has_terminal(t), "{t}");
+    }
+    assert_eq!(w.closes(), Vec::<Vec<String>>::new());
+    let looked: Vec<String> = w
+        .calls_of(&["get"])
+        .into_iter()
+        .map(|c| c[1].clone())
+        .collect();
+    assert_eq!(
+        looked,
+        [others[0].clone(), others[0].clone()],
+        "only this board's live ones"
     );
 }
 
 #[test]
-fn alternating_workspace_sweeps_preserve_each_others_first_seen_marks() {
-    let mut w = World::new();
-    let one = w.f.session("worker");
-    let two = w.f.session("worker");
-    let first = w.agent(Agent {
-        extra: json!({"workspace_id": "w1"}),
-        ..Agent::named(&one)
-    });
-    let second = w.agent(Agent {
-        extra: json!({"workspace_id": "w2"}),
-        ..Agent::named(&two)
-    });
-    w.set("HERDR_WORKSPACE_ID", "w1");
-    assert_eq!(w.sweep().idle, [one]);
-    let first_marks = w.reap_data()["idle"].as_object().unwrap().clone();
-    assert_eq!(first_marks.len(), 1);
-
-    w.set("HERDR_WORKSPACE_ID", "w2");
-    assert_eq!(w.sweep().idle, [two]);
-    let both = w.reap_data()["idle"].as_object().unwrap().clone();
-    assert_eq!(both.len(), 2);
-    for (key, since) in &first_marks {
-        assert_eq!(both.get(key), Some(since));
-    }
-    let second_marks: serde_json::Map<String, Value> = both
-        .into_iter()
-        .filter(|(key, _)| !first_marks.contains_key(key))
-        .collect();
-    assert_eq!(second_marks.len(), 1);
-
-    w.set("HERDR_WORKSPACE_ID", "w1");
-    assert_eq!(panes(&w.sweep()), [first.as_str()]);
-    assert!(w.has_pane(&second));
-    assert_eq!(w.reap_data()["idle"], json!(second_marks));
-
-    w.set("HERDR_WORKSPACE_ID", "w2");
-    assert_eq!(panes(&w.sweep()), [second.as_str()]);
-    assert_eq!(w.reap_data()["idle"], json!({}));
-}
-
-#[test]
-fn a_pane_whose_processes_cannot_be_read_is_kept() {
+fn a_terminal_whose_processes_cannot_be_read_is_kept() {
     let w = World::new();
     let broken: &Processes = &|_| Err(LaunchError("ps printed nothing".into()));
-    let pane = w.agent(Agent::named(&w.executor_on("done", "sim/jump")));
+    let terminal = w.agent(Agent::named(&w.executor_on("done", "sim/jump")));
     w.kept(
-        &pane,
+        &terminal,
         How {
             processes: Some(broken),
             ..How::default()
@@ -849,34 +900,47 @@ fn a_pane_whose_processes_cannot_be_read_is_kept() {
 }
 
 #[test]
+fn a_terminal_hc_cannot_describe_or_with_no_pid_is_kept() {
+    let mut w = World::new();
+    let terminal = w.agent(Agent::named(&w.executor_on("done", "sim/jump")));
+    w.set("FAKE_HC_FAIL", "get");
+    w.kept(&terminal, How::default());
+    w.set("FAKE_HC_FAIL", "");
+    w.edit_terminal(&terminal, |t| {
+        t.insert("pid".into(), json!(0));
+    });
+    w.kept(&terminal, How::default());
+}
+
+#[test]
 fn a_dry_run_closes_nothing_and_leaves_the_count_alone() {
     let w = World::new();
-    let pane = w.agent(Agent::named(&w.executor_on("done", "sim/jump")));
+    let terminal = w.agent(Agent::named(&w.executor_on("done", "sim/jump")));
     w.sweep();
     let dry = w.sweep_as(How {
         dry: true,
         ..How::default()
     });
-    assert_eq!(panes(&dry), [pane.as_str()]);
+    assert_eq!(terminals(&dry), [terminal.as_str()]);
     assert_eq!(dry.closed[0].restore, "");
-    assert!(w.has_pane(&pane));
+    assert!(w.has_terminal(&terminal));
     assert_eq!(w.closes(), Vec::<Vec<String>>::new());
     assert!(w.store().all_task_sessions().unwrap().is_empty());
     w.sweep();
-    assert!(!w.has_pane(&pane));
+    assert!(!w.has_terminal(&terminal));
 }
 
 #[test]
 fn a_first_dry_run_does_not_count_as_a_sweep() {
     let w = World::new();
-    let pane = w.agent(Agent::named(&w.executor_on("done", "sim/jump")));
+    let terminal = w.agent(Agent::named(&w.executor_on("done", "sim/jump")));
     w.sweep_as(How {
         dry: true,
         ..How::default()
     });
     assert!(!w.reap_state().exists());
     w.sweep();
-    assert!(w.has_pane(&pane));
+    assert!(w.has_terminal(&terminal));
 }
 
 // -- what the board records -------------------------------------------------------------
@@ -885,16 +949,16 @@ fn a_first_dry_run_does_not_count_as_a_sweep() {
 fn a_close_closes_the_launched_session_with_one_line_on_its_thread() {
     let w = World::new();
     let handle = w.executor_on("done", "sim/jump");
-    let pane = w.agent(Agent::named(&handle));
+    let terminal = w.agent(Agent::named(&handle));
     w.store()
         .record_launch(&NewLaunch {
             slug: "sim/jump".into(),
             handle: handle.clone(),
             role: "executor".into(),
-            claude_session: format!("sess-{pane}"),
+            claude_session: format!("sess-{terminal}"),
             worktree: "/wt".into(),
             branch: "sim/jump".into(),
-            pane: pane.clone(),
+            pane: terminal.clone(),
             ..NewLaunch::default()
         })
         .unwrap();
@@ -926,7 +990,7 @@ fn an_unlaunched_agent_is_recorded_on_its_last_task_in_one_line() {
     w.store()
         .verdict("sim/dock", &reviewer, "approve", "ok")
         .unwrap();
-    let pane = w.agent(Agent::named(&handle));
+    let terminal = w.agent(Agent::named(&handle));
     let (jump, dock) = (w.f.said("sim/jump").len(), w.f.said("sim/dock").len());
     w.twice(How::default());
     assert_eq!(w.f.said("sim/jump").len(), jump);
@@ -939,42 +1003,64 @@ fn an_unlaunched_agent_is_recorded_on_its_last_task_in_one_line() {
     let [s] = <[_; 1]>::try_from(w.store().sessions_of(&handle).unwrap()).unwrap();
     assert_eq!(
         (s.slug.as_str(), s.pane.as_str(), s.claude_session),
-        ("sim/dock", pane.as_str(), format!("sess-{pane}"))
+        ("sim/dock", terminal.as_str(), format!("sess-{terminal}"))
     );
-    assert_eq!(s.role, "executor");
+    assert_eq!(
+        (s.role.as_str(), s.worktree.as_str()),
+        ("executor", "/somewhere")
+    );
 }
 
 #[test]
 fn an_agent_with_no_task_is_closed_with_nothing_to_record() {
     let w = World::new();
     let handle = w.f.session("worker");
-    let pane = w.agent(Agent::named(&handle));
+    let terminal = w.agent(Agent::named(&handle));
     let swept = w.twice(How::default());
     assert_eq!(
         swept.closed,
         [Closed {
-            pane: pane.clone(),
+            pane: terminal.clone(),
             handle,
             restore: String::new(),
         }]
     );
-    assert!(!w.has_pane(&pane));
+    assert!(!w.has_terminal(&terminal));
     assert!(w.store().all_task_sessions().unwrap().is_empty());
 }
 
 #[test]
-fn a_close_herdr_refuses_leaves_its_session_open() {
+fn a_close_hc_refuses_leaves_its_session_open() {
     let mut w = World::new();
     let handle = w.executor_on("done", "sim/jump");
-    let pane = w.agent(Agent::named(&handle));
+    let terminal = w.agent(Agent::named(&handle));
     w.sweep();
-    w.set("FAKE_HERDR_FAIL", "pane close");
+    w.set("FAKE_HC_FAIL", "kill");
     let swept = w.sweep();
     assert_eq!(swept.closed, []);
-    assert!(w.has_pane(&pane));
+    assert!(w.has_terminal(&terminal));
     let sessions = w.store().sessions_of(&handle).unwrap();
     assert!(!sessions.is_empty());
     assert!(sessions.iter().all(|s| s.closed.is_none()), "{sessions:?}");
+    assert!(sessions.iter().all(|s| s.pane == terminal), "{sessions:?}");
+}
+
+#[test]
+fn a_closed_codex_agents_registration_is_retired_with_it() {
+    let w = World::new();
+    let handle = w.executor_on("done", "sim/jump");
+    let terminal = w.agent(Agent {
+        extra: json!({"agent": "codex", "argv": ["codex", "--no-daemon", "hi"]}),
+        by: By::Label,
+        ..Agent::named(&handle)
+    });
+    register_codex(&w, &handle, "0abc", Some(&terminal));
+    assert_eq!(terminals(&w.twice(How::default())), [terminal.as_str()]);
+    assert!(!w.store().callbacks().unwrap().contains_key(&handle));
+    assert_eq!(
+        w.store().sessions_of(&handle).unwrap()[0].claude_session,
+        "codex:"
+    );
 }
 
 #[test]
@@ -982,15 +1068,15 @@ fn an_interrupted_close_is_retried_without_repeating_its_thread_line() {
     for launched in [false, true] {
         let w = World::new();
         let handle = w.executor_on("done", "sim/jump");
-        let pane = w.agent(Agent::named(&handle));
+        let terminal = w.agent(Agent::named(&handle));
         if launched {
             w.store()
                 .record_launch(&NewLaunch {
                     slug: "sim/jump".into(),
                     handle: handle.clone(),
                     role: "executor".into(),
-                    claude_session: format!("sess-{pane}"),
-                    pane: pane.clone(),
+                    claude_session: format!("sess-{terminal}"),
+                    pane: terminal.clone(),
                     log: false,
                     ..NewLaunch::default()
                 })
@@ -1000,8 +1086,8 @@ fn an_interrupted_close_is_retried_without_repeating_its_thread_line() {
         let before = w.f.said("sim/jump").len();
         let mut interrupted = Hooked::new(&w);
         interrupted.instead = Box::new(|args| {
-            if args[..2] == ["pane", "close"] {
-                panic!("sweep stopped before the pane close");
+            if args[0] == "kill" {
+                panic!("sweep stopped before the terminal closed");
             }
             None
         });
@@ -1010,12 +1096,12 @@ fn an_interrupted_close_is_retried_without_repeating_its_thread_line() {
         }));
         assert_eq!(
             stopped.unwrap_err().downcast_ref::<&str>(),
-            Some(&"sweep stopped before the pane close")
+            Some(&"sweep stopped before the terminal closed")
         );
         let recorded = w.store().sessions_of(&handle).unwrap();
         assert_eq!(recorded.len(), 1);
         assert!(recorded[0].closed.is_some());
-        assert!(w.has_pane(&pane));
+        assert!(w.has_terminal(&terminal));
         assert!(w.closes().is_empty());
         assert_eq!(w.f.said("sim/jump").len(), before + 1);
         let original = w.state();
@@ -1023,21 +1109,21 @@ fn an_interrupted_close_is_retried_without_repeating_its_thread_line() {
         assert_eq!(
             w.sweep().closed,
             [Closed {
-                pane: pane.clone(),
+                pane: terminal.clone(),
                 handle: handle.clone(),
                 restore: restore("sim/jump", &handle),
             }]
         );
-        assert!(!w.has_pane(&pane));
+        assert!(!w.has_terminal(&terminal));
         assert_eq!(w.store().sessions_of(&handle).unwrap(), recorded);
         assert_eq!(w.f.said("sim/jump").len(), before + 1);
 
-        // Reusing the pane for a new conversation must write that conversation's own close.
+        // A terminal of the same address running a new conversation writes that one's own close.
         w.set_state(original);
-        w.edit_pane(&pane, |p| {
-            p["agent_session"]["value"] = json!("new-conversation");
+        w.edit_terminal(&terminal, |t| {
+            t["argv"][4] = json!("new-conversation");
         });
-        assert_eq!(panes(&w.twice(How::default())), [pane.as_str()]);
+        assert_eq!(terminals(&w.twice(How::default())), [terminal.as_str()]);
         assert_eq!(w.f.said("sim/jump").len(), before + 2);
         assert_eq!(
             w.store().sessions_of(&handle).unwrap()[0].claude_session,
@@ -1051,42 +1137,42 @@ fn an_interrupted_close_is_retried_without_repeating_its_thread_line() {
 #[test]
 fn a_sweep_while_another_holds_the_lock_does_nothing() {
     let w = World::new();
-    let pane = w.agent(Agent::named(&w.executor_on("done", "sim/jump")));
+    let terminal = w.agent(Agent::named(&w.executor_on("done", "sim/jump")));
     w.sweep();
     let held = hold_lock(&w);
     let calls = w.calls();
     for _ in 0..2 {
-        assert_eq!(w.once(&w.herdr(), How::default()), (None, String::new()));
+        assert_eq!(w.once(&w.hc(), How::default()), (None, String::new()));
     }
-    assert!(w.has_pane(&pane));
+    assert!(w.has_terminal(&terminal));
     assert_eq!(
         w.calls(),
         calls,
-        "a sweep that found the lock held asks herdr nothing"
+        "a sweep that found the lock held asks hc nothing"
     );
     drop(held);
     w.sweep();
-    assert!(!w.has_pane(&pane));
+    assert!(!w.has_terminal(&terminal));
 }
 
 #[test]
-fn two_sweeps_at_once_close_a_pane_once() {
+fn two_sweeps_at_once_close_a_terminal_once() {
     let w = World::new();
-    let pane = w.agent(Agent::named(&w.executor_on("done", "sim/jump")));
+    let terminal = w.agent(Agent::named(&w.executor_on("done", "sim/jump")));
     w.sweep();
     let second: RefCell<Option<Option<Sweep>>> = RefCell::new(None);
     let mut hooked = Hooked::new(&w);
     hooked.instead = Box::new(|args| {
-        if args[..2] == ["agent", "list"] && second.borrow().is_none() {
+        if args[0] == "ls" && second.borrow().is_none() {
             // the first sweep holds the lock, inside its sweep: a second comes at the same time
-            let (swept, _) = w.once(&w.herdr(), How::default());
+            let (swept, _) = w.once(&w.hc(), How::default());
             *second.borrow_mut() = Some(swept);
         }
         None
     });
     let (first, warned) = w.sweep_with(&hooked, How::default());
     assert_eq!((second.borrow().clone(), warned.as_str()), (Some(None), ""));
-    assert_eq!(panes(&first), [pane.as_str()]);
+    assert_eq!(terminals(&first), [terminal.as_str()]);
     assert_eq!(w.closes().len(), 1);
     let closed: Vec<_> = w
         .store()
@@ -1165,6 +1251,19 @@ fn a_board_tasks_server_names_keeps_it_apart_from_the_live_boards() {
 }
 
 #[test]
+fn a_scratch_database_alone_keeps_it_apart_from_the_live_boards_too() {
+    let scratch = state_path(
+        &env_of(&[("TASKS_DATABASE", "scratch")], std::env::temp_dir()),
+        &std::env::temp_dir(),
+    )
+    .unwrap();
+    assert_eq!(
+        scratch.parent(),
+        Some(std::env::temp_dir().join("sf-tasks-reap").as_path())
+    );
+}
+
+#[test]
 fn outside_a_git_repository_with_no_server_named_it_is_an_error() {
     let dir = Folder::new();
     let said = state_path(&env_of(&[], dir.0.clone()), &dir.0);
@@ -1194,12 +1293,12 @@ fn anything_not_known_harmless_under_claude_is_work() {
         "sleep 600",
     ] {
         let handle = w.f.session("worker");
-        let pane = w.agent(Agent {
+        let terminal = w.agent(Agent {
             procs: &["caffeinate -i -t 300", command],
             ..Agent::named(&handle)
         });
         w.twice(How::default());
-        assert!(w.has_pane(&pane), "{command}");
+        assert!(w.has_terminal(&terminal), "{command}");
     }
     assert_eq!(w.closes(), Vec::<Vec<String>>::new());
 }
@@ -1207,28 +1306,29 @@ fn anything_not_known_harmless_under_claude_is_work() {
 #[test]
 fn two_sweeps_with_no_time_between_them_close_nothing() {
     let w = World::new();
-    let pane = w.agent(Agent::named(&w.executor_on("done", "sim/jump")));
+    let terminal = w.agent(Agent::named(&w.executor_on("done", "sim/jump")));
     w.sweep();
     w.f.advance(-(REAP_SECONDS - 1.0)); // a second sweeper, 1 s after the first
     w.sweep();
-    assert!(w.has_pane(&pane));
-    w.f.advance(-2.0); // a third, 299 s after the pane was first seen idle
+    assert!(w.has_terminal(&terminal));
+    w.f.advance(-2.0); // a third, 299 s after the terminal was first seen idle
     w.sweep();
-    assert!(w.has_pane(&pane));
+    assert!(w.has_terminal(&terminal));
     w.sweep(); // an interval and more since it was first seen idle
-    assert!(!w.has_pane(&pane));
+    assert!(!w.has_terminal(&terminal));
 }
 
 #[test]
 fn invalid_idle_state_starts_a_fresh_idle_wait() {
     let w = World::new();
     let handle = w.executor_on("done", "sim/jump");
-    let pane = w.agent(Agent::named(&handle));
+    let terminal = w.agent(Agent::named(&handle));
     w.sweep();
     let initial = w.reap_data();
     let marks = initial["idle"].as_object().unwrap();
     assert_eq!(marks.len(), 1);
     let key = marks.keys().next().unwrap();
+    assert_eq!(key, &format!("{terminal} {handle} {}", w.pid_of(&terminal)));
     let mut invalid_states: Vec<String> = [
         json!(0),
         json!(-1),
@@ -1263,27 +1363,27 @@ fn invalid_idle_state_starts_a_fresh_idle_wait() {
             "{invalid}"
         );
         assert!(swept.closed.is_empty(), "{invalid}");
-        assert!(w.has_pane(&pane), "{invalid}");
+        assert!(w.has_terminal(&terminal), "{invalid}");
         assert_eq!(w.reap_data()["idle"][key], json!(now), "{invalid}");
     }
     assert!(w.closes().is_empty());
-    assert_eq!(panes(&w.sweep()), [pane.as_str()]);
+    assert_eq!(terminals(&w.sweep()), [terminal.as_str()]);
 }
 
 #[test]
-fn a_pane_whose_subagent_holds_live_work_is_kept() {
+fn a_terminal_whose_subagent_holds_live_work_is_kept() {
     let w = World::new();
     w.executor_on("review", "sim/jump");
     let parent = w.f.session("worker");
     let child = w.sub_session("reviewer", &parent);
     w.store().take_role("sim/jump", &child, "reviewer").unwrap();
-    let pane = w.agent(Agent::named(&parent));
+    let terminal = w.agent(Agent::named(&parent));
     w.twice(How::default());
-    assert!(w.has_pane(&pane));
+    assert!(w.has_terminal(&terminal));
 }
 
 #[test]
-fn a_grandchild_holding_live_work_keeps_the_pane_too() {
+fn a_grandchild_holding_live_work_keeps_the_terminal_too() {
     for middle_left in [false, true] {
         for status in ["in_progress", "blocked", "review"] {
             let w = World::new();
@@ -1307,10 +1407,10 @@ fn a_grandchild_holding_live_work_keeps_the_pane_too() {
                 w.store().leave(&child).unwrap();
                 assert!(w.store().session(&child).unwrap().row.left_at.is_some());
             }
-            let pane = w.agent(Agent::named(&parent));
-            w.kept(&pane, How::default());
+            let terminal = w.agent(Agent::named(&parent));
+            w.kept(&terminal, How::default());
             w.store().leave(&grandchild).unwrap();
-            assert_eq!(panes(&w.twice(How::default())), [pane.as_str()]);
+            assert_eq!(terminals(&w.twice(How::default())), [terminal.as_str()]);
         }
     }
 }
@@ -1323,68 +1423,50 @@ fn a_subagent_that_left_holds_nothing() {
     w.store().claim("sim/jump", &child).unwrap();
     w.store().move_to("sim/jump", "review", &child).unwrap();
     w.store().leave(&child).unwrap();
-    let pane = w.agent(Agent::named(&parent));
+    let terminal = w.agent(Agent::named(&parent));
     w.twice(How::default());
-    assert!(!w.has_pane(&pane));
+    assert!(!w.has_terminal(&terminal));
+}
+
+// -- what changes during the sweep ------------------------------------------------------
+
+/// A sweep whose `n`th look at a terminal (`hc get`) is followed by `change`.
+fn sweep_changing(w: &World, n: usize, change: impl Fn()) -> (Sweep, String) {
+    let looks = Cell::new(0);
+    let mut hooked = Hooked::new(w);
+    hooked.after = Box::new(|args| {
+        if args[0] == "get" {
+            looks.set(looks.get() + 1);
+            if looks.get() == n {
+                change();
+            }
+        }
+    });
+    let swept = w.sweep_with(&hooked, How::default());
+    assert!(looks.get() >= n, "the sweep looked {} times", looks.get());
+    swept
 }
 
 #[test]
 fn an_agent_prompted_during_the_sweep_is_kept() {
     let w = World::new();
-    let pane = w.agent(Agent::named(&w.executor_on("done", "sim/jump")));
+    let terminal = w.agent(Agent::named(&w.executor_on("done", "sim/jump")));
     w.sweep();
-    let mut hooked = Hooked::new(&w);
-    hooked.after = Box::new(|args| {
-        if args[..2] == ["pane", "process-info"] {
-            w.edit_pane(&pane, |p| {
-                p.insert("agent_status".into(), "working".into());
-            });
-        }
+    let (swept, _) = sweep_changing(&w, 1, || {
+        w.edit_terminal(&terminal, |t| {
+            t.insert("status".into(), "working".into());
+        });
     });
-    let (swept, _) = w.sweep_with(&hooked, How::default());
     assert_eq!(swept.closed, []);
-    assert!(w.has_pane(&pane));
+    assert!(w.has_terminal(&terminal));
 }
 
 #[test]
-fn a_pane_focused_during_the_sweep_restarts_its_idle_wait() {
-    for focus_after in [1, 2] {
-        let w = World::new();
-        let handle = w.executor_on("done", "sim/jump");
-        let pane = w.agent(Agent::named(&handle));
-        w.sweep();
-        let reads = Cell::new(0);
-        let mut hooked = Hooked::new(&w);
-        hooked.after = Box::new(|args| {
-            if args[..2] == ["pane", "process-info"] {
-                reads.set(reads.get() + 1);
-                if reads.get() == focus_after {
-                    w.edit_pane(&pane, |p| {
-                        p.insert("focused".into(), json!(true));
-                    });
-                }
-            }
-        });
-        let (swept, warned) = w.sweep_with(&hooked, How::default());
-        assert_eq!((swept.closed, warned), (vec![], String::new()));
-        assert!(w.has_pane(&pane));
-        assert!(w.closes().is_empty());
-        assert!(w.store().sessions_of(&handle).unwrap().is_empty());
-        w.edit_pane(&pane, |p| {
-            p.insert("focused".into(), json!(false));
-        });
-        assert_eq!(w.sweep().idle, [handle]);
-        assert!(w.has_pane(&pane));
-        assert_eq!(panes(&w.sweep()), [pane.as_str()]);
-    }
-}
-
-#[test]
-fn a_live_reviewer_replacing_the_candidate_keeps_its_pane() {
+fn a_live_reviewer_replacing_the_candidate_keeps_its_terminal() {
     for new_conversation in [false, true] {
         let w = World::new();
         let finished = w.executor_on("done", "sim/jump");
-        let pane = w.agent(Agent::named(&finished));
+        let terminal = w.agent(Agent::named(&finished));
         w.task("sim/dock", None);
         w.executor_on("review", "sim/dock");
         let reviewer = w.f.session("reviewer");
@@ -1392,94 +1474,50 @@ fn a_live_reviewer_replacing_the_candidate_keeps_its_pane() {
             .take_role("sim/dock", &reviewer, "reviewer")
             .unwrap();
         w.sweep();
-        let replaced = Cell::new(false);
-        let mut hooked = Hooked::new(&w);
-        hooked.after = Box::new(|args| {
-            if args[..2] == ["pane", "process-info"] && !replaced.replace(true) {
-                w.edit_pane(&pane, |p| {
-                    if new_conversation {
-                        p["agent_session"]["value"] = json!("replacement-reviewer");
-                    }
-                    p["foreground"][1]["argv"] = json!(["claude", "-n", reviewer]);
-                    p["foreground"][1]["cmdline"] = json!(format!("claude -n {reviewer}"));
-                });
-            }
+        let (swept, warned) = sweep_changing(&w, 1, || {
+            w.edit_terminal(&terminal, |t| {
+                if new_conversation {
+                    t["argv"][4] = json!("replacement-reviewer");
+                }
+                t["argv"][6] = json!(reviewer);
+            });
         });
-        let (swept, warned) = w.sweep_with(&hooked, How::default());
-        assert!(replaced.get());
         assert_eq!(w.store().get("sim/dock").unwrap().status, "review");
-        assert!(
-            w.store()
-                .get("sim/dock")
-                .unwrap()
-                .roles
-                .iter()
-                .any(|role| { role.handle == reviewer && role.role == "reviewer" })
-        );
         assert!(warned.is_empty(), "{warned}");
         assert!(swept.closed.is_empty(), "{swept:?}");
-        assert!(w.has_pane(&pane));
+        assert!(w.has_terminal(&terminal));
         assert_eq!(w.reap_data()["idle"], json!({}));
         assert!(w.store().sessions_of(&finished).unwrap().is_empty());
-        w.kept(&pane, How::default());
+        w.kept(&terminal, How::default());
         w.store().leave(&reviewer).unwrap();
-        assert_eq!(panes(&w.twice(How::default())), [pane.as_str()]);
+        assert_eq!(terminals(&w.twice(How::default())), [terminal.as_str()]);
     }
 }
 
 #[test]
-fn a_new_conversation_during_the_sweep_restarts_the_idle_wait() {
+fn a_new_program_in_the_terminal_during_the_sweep_restarts_the_idle_wait() {
     let w = World::new();
     let handle = w.executor_on("done", "sim/jump");
-    let pane = w.agent(Agent::named(&handle));
+    let terminal = w.agent(Agent::named(&handle));
     w.sweep();
-    let changed = Cell::new(false);
-    let mut hooked = Hooked::new(&w);
-    hooked.after = Box::new(|args| {
-        if args[..2] == ["pane", "process-info"] && !changed.replace(true) {
-            w.edit_pane(&pane, |p| {
-                p["agent_session"]["value"] = json!("a-new-conversation");
-            });
-        }
+    let pid = w.new_pid();
+    let (swept, warned) = sweep_changing(&w, 1, || {
+        w.edit_terminal(&terminal, |t| {
+            t.insert("pid".into(), json!(pid));
+            t.insert("agent".into(), json!("codex"));
+            t.insert("argv".into(), json!(["codex", "-n", handle, "hi"]));
+        });
     });
-    let (swept, warned) = w.sweep_with(&hooked, How::default());
-    assert!(changed.get());
     assert!(warned.is_empty(), "{warned}");
     assert!(swept.closed.is_empty(), "{swept:?}");
-    assert!(w.has_pane(&pane));
+    assert!(w.has_terminal(&terminal));
     assert!(w.store().sessions_of(&handle).unwrap().is_empty());
     assert_eq!(w.reap_data()["idle"], json!({}));
     assert_eq!(w.sweep().idle.as_slice(), std::slice::from_ref(&handle));
-    assert_eq!(panes(&w.sweep()), [pane.as_str()]);
+    assert_eq!(terminals(&w.sweep()), [terminal.as_str()]);
     assert_eq!(
         w.store().sessions_of(&handle).unwrap()[0].claude_session,
-        "a-new-conversation"
-    );
-}
-
-#[test]
-fn a_different_agent_kind_starts_its_own_idle_wait() {
-    let w = World::new();
-    let handle = w.executor_on("done", "sim/jump");
-    let pane = w.agent(Agent {
-        by_flag: false,
-        ..Agent::named(&handle)
-    });
-    w.sweep();
-    w.edit_pane(&pane, |p| {
-        p["agent"] = json!("codex");
-        p["agent_session"]["agent"] = json!("codex");
-        p["foreground"][1]["name"] = json!("codex");
-        p["foreground"][1]["argv"] = json!(["codex"]);
-        p["foreground"][1]["cmdline"] = json!("codex");
-    });
-    assert_eq!(w.sweep().idle.as_slice(), std::slice::from_ref(&handle));
-    assert!(w.has_pane(&pane));
-    assert!(w.store().sessions_of(&handle).unwrap().is_empty());
-    assert_eq!(panes(&w.sweep()), [pane.as_str()]);
-    assert_eq!(
-        w.store().sessions_of(&handle).unwrap()[0].claude_session,
-        format!("codex:sess-{pane}")
+        "codex:"
     );
 }
 
@@ -1488,106 +1526,74 @@ fn a_worker_becoming_a_protected_session_during_the_sweep_is_kept() {
     for kind in ["orchestrator", "chat"] {
         let w = World::new();
         let handle = w.executor_on("done", "sim/jump");
-        let pane = w.agent(Agent::named(&handle));
+        let terminal = w.agent(Agent::named(&handle));
         w.sweep();
-        let changed = Cell::new(false);
-        let mut hooked = Hooked::new(&w);
-        hooked.after = Box::new(|args| {
-            if args[..2] == ["pane", "process-info"] && !changed.replace(true) {
-                w.f.other_client()
-                    .write(
-                        "UPDATE type::record('session', $handle) SET kind = $kind RETURN NONE;",
-                        json!({"handle":handle, "kind":kind}),
-                    )
-                    .unwrap();
-            }
+        let (swept, warned) = sweep_changing(&w, 1, || {
+            w.f.other_client()
+                .write(
+                    "UPDATE type::record('session', $handle) SET kind = $kind RETURN NONE;",
+                    json!({"handle":handle, "kind":kind}),
+                )
+                .unwrap();
         });
-        let (swept, warned) = w.sweep_with(&hooked, How::default());
-        assert!(changed.get());
         assert_eq!(w.store().session(&handle).unwrap().row.kind, kind);
         assert!(warned.is_empty(), "{warned}");
         assert!(swept.closed.is_empty());
-        assert!(w.has_pane(&pane));
+        assert!(w.has_terminal(&terminal));
         assert!(w.store().sessions_of(&handle).unwrap().is_empty());
         assert_eq!(w.reap_data()["idle"], json!({}));
-        w.kept(&pane, How::default());
+        w.kept(&terminal, How::default());
     }
 }
 
 #[test]
-fn an_unconfirmed_conversation_clears_the_idle_wait() {
-    for unknown in [
-        None,
-        Some(Value::Null),
-        Some(json!("")),
-        Some(json!(12)),
-        Some(json!({})),
-        Some(json!([])),
-    ] {
+fn an_unconfirmed_final_look_restarts_the_idle_wait() {
+    for case in 0..6 {
         let w = World::new();
         let handle = w.executor_on("done", "sim/jump");
-        let pane = w.agent(Agent::named(&handle));
-        let original = w.state();
+        let terminal = w.agent(Agent::named(&handle));
+        let pid = w.pid_of(&terminal);
+        let answer = match case {
+            0 => Err(LaunchError("hc get: no answer in 120 s".into())),
+            1 => Ok("{}".to_string()),
+            // another handle, or the same one with no pid, another pid, or no agent
+            2 => Ok(
+                json!({"state": "live", "pid": pid, "agent": "claude", "status": "idle",
+                           "argv": ["claude", "-n", "x", "hi"]})
+                .to_string(),
+            ),
+            3 | 4 => Ok(
+                json!({"state": "live", "agent": "claude", "status": "idle", "name": handle,
+                           "pid": if case == 3 { Value::Null } else { json!(pid + 1) }})
+                .to_string(),
+            ),
+            _ => Ok(
+                json!({"state": "live", "pid": pid, "status": "idle", "name": handle,
+                           "argv": ["zsh"]})
+                .to_string(),
+            ),
+        };
         w.sweep();
-        let changed = Cell::new(false);
-        let mut hooked = Hooked::new(&w);
-        hooked.after = Box::new(|args| {
-            if args[..2] == ["pane", "process-info"] && !changed.replace(true) {
-                w.edit_pane(&pane, |p| match &unknown {
-                    Some(value) => p["agent_session"]["value"] = value.clone(),
-                    None => {
-                        p.remove("agent_session");
-                    }
-                });
-            }
-        });
-        let (swept, warned) = w.sweep_with(&hooked, How::default());
-        assert!(changed.get());
-        assert!(warned.is_empty(), "{warned}");
-        assert!(swept.closed.is_empty(), "{unknown:?}");
-        assert!(w.has_pane(&pane));
-        assert!(w.store().sessions_of(&handle).unwrap().is_empty());
-        assert_eq!(w.reap_data()["idle"], json!({}));
-        assert!(w.sweep().closed.is_empty());
-        assert_eq!(w.reap_data()["idle"], json!({}));
-        w.set_state(original);
-        assert_eq!(w.sweep().idle.as_slice(), std::slice::from_ref(&handle));
-        assert_eq!(panes(&w.sweep()), [pane.as_str()]);
-    }
-}
-
-#[test]
-fn an_unconfirmed_final_process_owner_restarts_the_idle_wait() {
-    for answer in [
-        Err(LaunchError("process information unavailable".into())),
-        Ok(json!({"result":{"process_info":{"foreground_processes":[]}}}).to_string()),
-        Ok(json!({"result":{"process_info":{"foreground_processes":[{"name":"claude", "argv":["claude"]}]}}}).to_string()),
-        Ok(json!({"result":{"process_info":{"foreground_processes":[{"name":"claude", "argv":["claude"], "pid":12345}]}}}).to_string()),
-    ] {
-        let w = World::new();
-        let handle = w.executor_on("done", "sim/jump");
-        let pane = w.agent(Agent::named(&handle));
-        w.sweep();
-        let reads = Cell::new(0);
+        let looks = Cell::new(0);
         let mut hooked = Hooked::new(&w);
         hooked.instead = Box::new(|args| {
-            if args[..2] == ["pane", "process-info"] {
-                reads.set(reads.get() + 1);
-                if reads.get() == 2 {
+            if args[0] == "get" {
+                looks.set(looks.get() + 1);
+                if looks.get() == 2 {
                     return Some(answer.clone());
                 }
             }
             None
         });
         let (swept, warned) = w.sweep_with(&hooked, How::default());
-        assert_eq!(reads.get(), 2);
+        assert_eq!(looks.get(), 2);
         assert!(warned.is_empty(), "{warned}");
         assert!(swept.closed.is_empty(), "{answer:?}");
-        assert!(w.has_pane(&pane));
+        assert!(w.has_terminal(&terminal));
         assert!(w.store().sessions_of(&handle).unwrap().is_empty());
         assert_eq!(w.reap_data()["idle"], json!({}));
         assert_eq!(w.sweep().idle.as_slice(), std::slice::from_ref(&handle));
-        assert_eq!(panes(&w.sweep()), [pane.as_str()]);
+        assert_eq!(terminals(&w.sweep()), [terminal.as_str()]);
     }
 }
 
@@ -1599,7 +1605,7 @@ fn work_or_unreadable_processes_on_the_final_check_restart_the_idle_wait() {
     ] {
         let w = World::new();
         let handle = w.executor_on("done", "sim/jump");
-        let pane = w.agent(Agent::named(&handle));
+        let terminal = w.agent(Agent::named(&handle));
         w.sweep();
         let reads = Cell::new(0);
         let processes = move |_| {
@@ -1615,11 +1621,11 @@ fn work_or_unreadable_processes_on_the_final_check_restart_the_idle_wait() {
             ..How::default()
         });
         assert!(swept.closed.is_empty());
-        assert!(w.has_pane(&pane));
+        assert!(w.has_terminal(&terminal));
         assert!(w.store().sessions_of(&handle).unwrap().is_empty());
         assert_eq!(w.reap_data()["idle"], json!({}));
         assert_eq!(w.sweep().idle.as_slice(), std::slice::from_ref(&handle));
-        assert_eq!(panes(&w.sweep()), [pane.as_str()]);
+        assert_eq!(terminals(&w.sweep()), [terminal.as_str()]);
     }
 }
 
@@ -1628,24 +1634,15 @@ fn an_agent_that_claims_work_during_the_sweep_is_kept() {
     for claim_after in [1, 2] {
         let w = World::new();
         let handle = w.executor_on("done", "sim/jump");
-        let pane = w.agent(Agent::named(&handle));
+        let terminal = w.agent(Agent::named(&handle));
         w.task("sim/dock", None);
         w.sweep();
-        let reads = Cell::new(0);
-        let mut hooked = Hooked::new(&w);
-        hooked.after = Box::new(|args| {
-            if args[..2] == ["pane", "process-info"] {
-                reads.set(reads.get() + 1);
-                if reads.get() == claim_after {
-                    w.store().claim("sim/dock", &handle).unwrap();
-                }
-            }
+        let (swept, _) = sweep_changing(&w, claim_after, || {
+            w.store().claim("sim/dock", &handle).unwrap();
         });
-        let (swept, _) = w.sweep_with(&hooked, How::default());
-        assert!(reads.get() >= claim_after);
         assert_eq!(w.store().get("sim/dock").unwrap().status, "in_progress");
         assert_eq!(swept.closed, []);
-        assert!(w.has_pane(&pane));
+        assert!(w.has_terminal(&terminal));
     }
 }
 
@@ -1675,13 +1672,13 @@ fn a_close_whose_record_fails_is_not_closed_and_the_sweep_goes_on() {
         (machine.processes)(pid)
     };
     let (swept, warned) = w.sweep_with(
-        &w.herdr(),
+        &w.hc(),
         How {
             processes: Some(&processes),
             ..How::default()
         },
     );
-    assert_eq!(panes(&swept), [second.as_str()]);
+    assert_eq!(terminals(&swept), [second.as_str()]);
     assert!(
         warned.starts_with(&format!(
             "· idle sweep kept {first} ({gone}): the board took no record: "
@@ -1689,8 +1686,8 @@ fn a_close_whose_record_fails_is_not_closed_and_the_sweep_goes_on() {
             && warned.lines().count() == 1,
         "{warned}"
     );
-    assert!(w.has_pane(&first));
-    assert!(!w.has_pane(&second));
+    assert!(w.has_terminal(&first));
+    assert!(!w.has_terminal(&second));
     let [s] = <[_; 1]>::try_from(
         w.store()
             .all_task_sessions()

@@ -1,18 +1,19 @@
-//! Resume recorded agent conversations in their worktrees.
+//! Resume recorded agent conversations through hc.
 
-use super::herdr::Herdr;
+use super::hc::Hc;
 use super::{
-    Machine, Started, branch_exists, claude_args, codex_args, confirmed, git, live_executor_in,
-    pane_for, recover, start, stream,
+    GONE, Machine, Start, Started, branch_exists, claude_args, cleanup, codex_args, git, gone,
+    live_addresses, live_executor_in, running_as, start_confirmed, stream,
 };
 use crate::{Error, Store};
+use std::collections::HashSet;
 use std::path::Path;
 
-/// Reopen every closed session of `slug` (or `handle`'s) where it was and resume its Claude
-/// conversation.
+/// Reopen every closed session of `slug` (or `handle`'s), and every open one whose pane is gone,
+/// where it was, in a new terminal, resuming its conversation.
 pub fn restore(
     store: &Store,
-    herdr: &dyn Herdr,
+    hc: &dyn Hc,
     m: &Machine,
     slug: &str,
     handle: Option<&str>,
@@ -31,28 +32,27 @@ pub fn restore(
             "{slug} has no recorded sessions: it was not launched with `just tasks launch`"
         )));
     }
+    let running: HashSet<String> = if recorded.iter().any(|s| s.closed.is_none()) {
+        live_addresses(hc)?
+    } else {
+        HashSet::new()
+    };
     let mut restored = Vec::new();
     for s in &recorded {
-        if handle.is_some_and(|h| s.handle != h) {
+        if handle.is_some_and(|h| s.handle != h) || (s.closed.is_none() && !gone(&s.pane, &running))
+        {
             continue;
-        }
-        if s.closed.is_none() {
-            let tasks = store.tasks(None)?;
-            if !store.pending_posts(&tasks)?.iter().any(|p| {
-                p.handle == s.handle
-                    && p.overdue(store.now())
-                    && p.launch
-                        .as_ref()
-                        .is_some_and(|launch| launch.slug == s.slug)
-            }) || recover::present(s, &herdr.all_agents()?)
-            {
-                continue;
-            }
         }
         if s.claude_session.is_empty() || s.claude_session == "codex:" {
             return Err(Error::Refused(format!(
                 "{} has no recorded conversation id: its conversation cannot be resumed (start it again \
                  with `just tasks launch`)",
+                s.handle
+            )));
+        }
+        if let Some(terminal) = running_as(hc, &s.handle)? {
+            return Err(Error::Refused(format!(
+                "{} still runs in terminal {terminal}: close it before restoring",
                 s.handle
             )));
         }
@@ -64,6 +64,15 @@ pub fn restore(
                 s.worktree
             )));
         }
+        if s.closed.is_none() {
+            // A pane that is gone (a herdr pane from before hc): its closure is said first.
+            store.close_task_session(
+                slug,
+                &s.handle,
+                GONE,
+                &cleanup::restore_line(slug, &s.handle),
+            )?;
+        }
         if !Path::new(&s.worktree).is_dir() {
             if !s.branch.is_empty() && branch_exists(&m.root, &s.branch) {
                 git(&m.root, &["worktree", "add", &s.worktree, &s.branch])?;
@@ -74,14 +83,12 @@ pub fn restore(
                 )?;
             }
         }
-        let tab = tab.filter(|t| !t.is_empty()).unwrap_or(stream(&s.role));
-        let pane = pane_for(herdr, &s.worktree, &s.handle, tab)?;
         let text = format!(
             "You were restored after your pane was closed. First run `just tasks callback --as {}`, then `just tasks inbox --as {}` and continue /work {slug}.",
             s.handle, s.handle
         );
         let (agent, args) = if let Some(id) = s.claude_session.strip_prefix("codex:") {
-            let mut args = codex_args(&s.model, &s.handle);
+            let mut args = codex_args(&s.model, &s.handle, m);
             args.extend(["resume".into(), id.into()]);
             ("codex", args)
         } else {
@@ -95,16 +102,29 @@ pub fn restore(
                 ),
             )
         };
-        let prompted = start(herdr, &s.handle, &pane, agent, &args, &*m.sleep)
-            .and_then(|()| herdr.call(&["agent", "prompt", &s.handle, &text]))
-            .and_then(|_| confirmed(herdr, &pane, &text, &*m.sleep));
-        if let Err(problem) = prompted {
-            herdr.close(&pane)?;
+        let mut terminal = String::new();
+        let started = start_confirmed(
+            hc,
+            m,
+            &mut terminal,
+            &Start {
+                cwd: &s.worktree,
+                handle: &s.handle,
+                stream: tab.filter(|t| !t.is_empty()).unwrap_or(stream(&s.role)),
+                agent,
+                args,
+                text: &text,
+            },
+        );
+        if let Err(problem) = started {
+            if !terminal.is_empty() {
+                let _ = hc.close(&terminal); // the problem is what the caller must hear
+            }
             return Err(problem.into());
         }
         // cleanup leaves handles that closed: the restored agent must be able to use the board
         store.revive(&s.handle)?;
-        store.reopen_task_session(slug, &s.handle, &pane)?;
+        store.reopen_task_session(slug, &s.handle, &terminal)?;
         let row = store
             .task_sessions(slug)?
             .into_iter()
@@ -112,7 +132,7 @@ pub fn restore(
             .ok_or_else(|| {
                 Error::Refused(format!("{} has no recorded session on {slug}", s.handle))
             })?;
-        restored.push(Started { row, stuck: false });
+        restored.push(Started { row });
     }
     Ok(restored)
 }

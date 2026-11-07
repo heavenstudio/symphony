@@ -1,14 +1,16 @@
-//! Native media views shared by the board, typed documents, asks and model galleries.
+//! Native media views shared by the board, typed documents, asks and galleries.
 
 use dioxus::prelude::*;
-use symphony_api::{GalleryItem, Image, Media};
+use symphony_api::{GalleryItem, Image, Media, Viewer};
+
+use crate::viewer::FileViewer;
 
 const STYLE: Asset = asset!(
     "/assets/media.css",
     AssetOptions::css().with_static_head(true)
 );
 
-fn use_runtime(shown: Signal<bool>) {
+pub(crate) fn use_runtime(shown: Signal<bool>) {
     std::hint::black_box(&STYLE);
     #[cfg(target_arch = "wasm32")]
     use_effect(move || {
@@ -23,7 +25,7 @@ fn use_runtime(shown: Signal<bool>) {
     let _ = shown;
 }
 
-/// Only project assets may run in an embedded frame or model viewer.
+/// Only project assets may run in an embedded frame or a file viewer.
 pub fn local_asset(src: &str) -> bool {
     src.starts_with('/')
         && !src.starts_with("//")
@@ -39,7 +41,7 @@ pub fn is_mockup(src: &str) -> bool {
     path.ends_with(".html") || path.ends_with(".htm")
 }
 
-fn label<'a>(src: &'a str, caption: &'a str) -> &'a str {
+pub(crate) fn label<'a>(src: &'a str, caption: &'a str) -> &'a str {
     if caption.is_empty() {
         src.split(['?', '#'])
             .next()
@@ -78,43 +80,20 @@ pub fn MockupFrame(src: String, caption: String, #[props(default)] thumb: bool) 
     }
 }
 
-#[component]
-pub fn ModelViewer(
-    src: String,
-    caption: String,
-    #[props(default)] poster: Option<String>,
-) -> Element {
-    let (shown, reveal) = crate::viewport::use_visibility(false);
-    use_runtime(shown);
-    if !local_asset(&src) {
-        return rsx! {};
-    }
-    let caption = label(&src, &caption).to_string();
-    let poster = poster.filter(|poster| local_asset(poster));
-    rsx! {
-        span { class: "model-shell",
-            ..reveal,
-            if shown() {
-                span { class: "glb-viewer",
-                    model-viewer { "src": src.clone(), "alt": caption.clone(), "camera-controls": "", "touch-action": "pan-y", "environment-image": "neutral", "shadow-intensity": "0", "interaction-prompt": "none", "exposure": "1", "camera-orbit": "-45deg 60deg auto", "loading": "lazy", "poster": poster }
-                    span { class: "glb-bar", span { "{caption}" }
-                        crate::components::button::Button { r#type: "button", "data-glb-view": "tilt", "Top-down tilt" }
-                        crate::components::button::Button { r#type: "button", "data-glb-view": "reset", "Reset" }
-                        a { href: src.clone(), download: true, ".glb" }
-                    }
-                }
-            }
-        }
-    }
-}
-
 /// The typed document block renderer calls this for every media item.
 #[component]
 pub fn MediaView(media: Media) -> Element {
     match media {
         Media::Mockup { src, label } => rsx! { MockupFrame { src, caption: label } },
-        Media::Model { src, label, poster } => rsx! { ModelViewer { src, caption: label, poster } },
-        Media::Gallery { items } => rsx! { Gallery { items } },
+        Media::Viewer {
+            src,
+            label,
+            poster,
+            viewer,
+        } => {
+            rsx! { FileViewer { src, caption: label, viewer, poster } }
+        }
+        Media::Gallery { items, viewer } => rsx! { Gallery { items, viewer } },
     }
 }
 
@@ -159,36 +138,47 @@ pub fn DocumentPicture(image: Image) -> Element {
     }
 }
 
-/// Models to pick from: a card each, one open at a time.
+/// Files to pick from: a card each, one open at a time, in `viewer`.
 #[component]
-fn Gallery(items: Vec<GalleryItem>) -> Element {
+fn Gallery(items: Vec<GalleryItem>, viewer: Viewer) -> Element {
     let mut selected = use_signal(|| None::<String>);
     rsx! {
         div { class: "gallery-grid",
             for item in items {
                 GalleryRow { key: "{item.name}", open: selected().as_deref() == Some(item.name.as_str()),
-                    on_select: move |name| selected.set(if selected().as_ref() == Some(&name) { None } else { Some(name) }), item }
+                    on_select: move |name| selected.set(if selected().as_ref() == Some(&name) { None } else { Some(name) }), item, viewer: viewer.clone() }
             }
         }
     }
 }
 
 #[component]
-fn GalleryRow(item: GalleryItem, open: bool, on_select: EventHandler<String>) -> Element {
+fn GalleryRow(
+    item: GalleryItem,
+    viewer: Viewer,
+    open: bool,
+    on_select: EventHandler<String>,
+) -> Element {
     let (shown, reveal) = crate::viewport::use_visibility(false);
     let name = item.name.clone();
+    let says = if open {
+        viewer.close_label.as_deref().unwrap_or("Close")
+    } else {
+        viewer.open_label.as_deref().unwrap_or("Open")
+    }
+    .to_string();
     rsx! {
         article { class: if open { "gallery-card gallery-open" } else { "gallery-card" }, "data-busy": open,
             ..reveal,
             if shown() {
-                crate::components::button::Button { class: "gallery-pick", r#type: "button", "aria-expanded": open, "aria-controls": "model-{item.name}", onclick: move |_| on_select.call(name.clone()),
+                crate::components::button::Button { class: "gallery-pick", r#type: "button", "aria-expanded": open, "aria-controls": "viewer-{item.name}", onclick: move |_| on_select.call(name.clone()),
                     if let Some(poster) = item.poster {
                         img { src: poster, width: "80", height: "80", alt: item.name.clone(), loading: "lazy", "data-no-lightbox": "true" }
                     }
-                    span { strong { "{item.name}" } small { if open { "Close model" } else { "Open 3D model" } } }
+                    span { strong { "{item.name}" } small { "{says}" } }
                 }
                 if open {
-                    div { id: "model-{item.name}", ModelViewer { src: item.src, caption: item.name.clone() } }
+                    div { id: "viewer-{item.name}", FileViewer { src: item.src, caption: item.name.clone(), viewer } }
                 }
             }
         }
@@ -222,19 +212,25 @@ mod tests {
             PictureView { src: "/picture.png", caption: "Picture", thumb: true }
         });
         assert!(picture.contains("<img") && picture.contains("loading=\"lazy\""));
+        let viewer = Viewer {
+            element: "orbit-view".into(),
+            script: "/static/orbit.js".into(),
+            ..Viewer::default()
+        };
         let media = Media::Gallery {
             items: vec![
                 GalleryItem {
                     name: "FIRST".into(),
-                    src: "/first.glb".into(),
+                    src: "/first.item".into(),
                     poster: Some("/first.png".into()),
                 },
                 GalleryItem {
                     name: "SECOND".into(),
-                    src: "/second.glb".into(),
+                    src: "/second.item".into(),
                     poster: None,
                 },
             ],
+            viewer: viewer.clone(),
         };
         let gallery = dioxus_ssr::render_element(rsx! { MediaView { media } });
         // the component above the gallery says how many models there are; the gallery does not
@@ -248,25 +244,36 @@ mod tests {
             "{gallery}"
         );
         assert!(gallery.contains("FIRST") && gallery.contains("/first.png"));
-        assert!(!gallery.contains("model-viewer") && !gallery.contains("/first.glb"));
-        let poster = Some("/m.png".to_string());
-        let with = dioxus_ssr::render_element(
-            rsx! { ModelViewer { src: "/m.glb", caption: "M", poster } },
+        assert_eq!(gallery.matches(">Open<").count(), 2, "{gallery}");
+        let labelled = Media::Gallery {
+            items: vec![GalleryItem {
+                name: "FIRST".into(),
+                src: "/first.item".into(),
+                poster: None,
+            }],
+            viewer: Viewer {
+                open_label: Some("Take it down".into()),
+                ..viewer.clone()
+            },
+        };
+        let labelled = dioxus_ssr::render_element(rsx! { MediaView { media: labelled } });
+        assert!(
+            labelled.contains(">Take it down<") && !labelled.contains(">Open<"),
+            "{labelled}"
         );
-        let foreign = Some("https://x/m.png".to_string());
-        let without = dioxus_ssr::render_element(
-            rsx! { ModelViewer { src: "/m.glb", caption: "M", poster: foreign } },
+        assert!(
+            !gallery.contains("<orbit-view") && !gallery.contains("/first.item"),
+            "{gallery}"
         );
-        assert!(with.contains("poster=\"/m.png\""), "{with}");
-        assert!(!without.contains("poster="), "{without}");
         for (media, tag) in [
             (
-                Media::Model {
-                    src: "/model.glb".into(),
+                Media::Viewer {
+                    src: "/model.item".into(),
                     label: "Model".into(),
                     poster: None,
+                    viewer,
                 },
-                "<model-viewer",
+                "<orbit-view src=\"/model.item\"",
             ),
             (
                 Media::Mockup {
@@ -283,7 +290,7 @@ mod tests {
 
     #[test]
     fn executable_media_accepts_only_local_absolute_paths() {
-        for src in ["/ui/hud.html", "/@topic/model.glb?v=2#view", "/a/b.HTM"] {
+        for src in ["/ui/hud.html", "/@topic/model.item?v=2#view", "/a/b.HTM"] {
             assert!(local_asset(src), "{src}");
         }
         for src in [
@@ -295,7 +302,7 @@ mod tests {
             "data:text/html,hi",
             "/\\example.com/a.html",
             "/a\n.html",
-            "/a\u{0}.glb",
+            "/a\u{0}.item",
         ] {
             assert!(!local_asset(src), "{src:?}");
         }
@@ -306,7 +313,7 @@ mod tests {
         for src in ["/a.html", "/a.HTM?version=1", "/a.HTML#view"] {
             assert!(is_mockup(src), "{src}");
         }
-        for src in ["/a.png?x=.html", "/a.glb#x.html", "/html", ""] {
+        for src in ["/a.png?x=.html", "/a.item#x.html", "/html", ""] {
             assert!(!is_mockup(src), "{src}");
         }
         assert_eq!(label("/ui/hud.html?v=2#frame", ""), "hud.html");
@@ -315,10 +322,6 @@ mod tests {
 
     #[test]
     fn unsafe_executable_urls_do_not_mount_and_document_pictures_keep_original_metadata() {
-        for src in ["//external/model.glb", "https://external/model.glb"] {
-            let html = dioxus_ssr::render_element(rsx! { ModelViewer { src, caption:"bad" } });
-            assert!(!html.contains("<model-viewer"), "{html}");
-        }
         let html =
             dioxus_ssr::render_element(rsx! { MockupFrame { src:"/picture.svg", caption:"bad" } });
         assert!(!html.contains("<iframe"), "{html}");

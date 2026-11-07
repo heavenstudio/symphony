@@ -1,10 +1,14 @@
 //! What runs under a pane, read: `ps`'s table walked, and each pattern as Python's `re` reads it,
 //! matched by hand (the protected work, `harmless`, `shell`, `helper` and `board`).
 
+use crate::World;
+use symphony_board::cli::Env;
+use symphony_board::launch::LaunchError;
 use symphony_board::launch::procs::{
-    board, busy_reason, harmless, helper, land, named, reap_busy_reason, shell, symphony_app,
-    test_run, under, verify,
+    CODEX_REPL, board, busy_reason, descendants_by, harmless, helper, land, listed, named,
+    reap_busy_reason, shell, symphony_app, table, table_file, test_run, under, verify,
 };
+use symphony_board::launch::reap::Sweep;
 
 fn all(commands: &[&str]) -> Vec<String> {
     commands.iter().map(|c| c.to_string()).collect()
@@ -19,6 +23,81 @@ fn the_table_is_walked_from_the_pid_down_each_child_before_its_own() {
     );
     assert_eq!(under(table, 14), Vec::<String>::new());
     assert_eq!(under(" 20 1\n 21 20 \n", 20), Vec::<String>::new());
+}
+
+#[test]
+fn a_table_whose_parents_loop_is_walked_once_and_ends() {
+    let table = " 1 3 a\n 2 1 b\n 3 2 c\n 4 4 self\n";
+    assert_eq!(under(table, 1), ["b", "c"]);
+    assert_eq!(under(table, 4), Vec::<String>::new());
+}
+
+/// An environment with `vars`, in the temp dir.
+fn env_of(vars: &[(&str, &str)]) -> Env {
+    Env {
+        vars: vars
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect(),
+        cwd: std::env::temp_dir(),
+    }
+}
+
+#[test]
+fn tasks_ps_table_stands_in_for_ps_on_a_scratch_board_only() {
+    let file = "/somewhere/ps.txt";
+    for (database, read) in [
+        (None, false),
+        (Some(symphony_board::DATABASE), false),
+        (Some(""), false),
+        (Some("scratch-1"), true),
+    ] {
+        let mut vars = vec![("TASKS_PS_TABLE", file)];
+        vars.extend(database.map(|db| ("TASKS_DATABASE", db)));
+        assert_eq!(
+            table_file(&env_of(&vars)),
+            read.then(|| std::path::PathBuf::from(file)),
+            "{database:?}"
+        );
+    }
+    assert_eq!(
+        table_file(&env_of(&[("TASKS_DATABASE", "scratch-1")])),
+        None
+    );
+}
+
+#[test]
+fn a_table_file_that_cannot_be_read_or_lists_no_such_process_is_an_error() {
+    let folder = crate::Folder::new();
+    let file = folder.0.join("ps.txt");
+    let path = file.display().to_string();
+    let processes = table(&env_of(&[
+        ("TASKS_DATABASE", "scratch-1"),
+        ("TASKS_PS_TABLE", &path),
+    ]));
+    let missing = processes(10);
+    assert!(
+        matches!(&missing, Err(LaunchError(why)) if why.starts_with(&format!("ps table {path}: "))),
+        "{missing:?}"
+    );
+    let absent = Err(LaunchError(format!("ps table {path} lists no process 10")));
+    // Blank, garbage only, and a table that is about other processes: none describes pid 10, so
+    // none says nothing runs there.
+    for text in [
+        &b" \n"[..],
+        b"PID PPID COMMAND\nnot a row\n 10\n x 1 y\n",
+        b" 9 1 zsh\n 11 9 x\n",
+    ] {
+        std::fs::write(&file, text).unwrap();
+        assert_eq!(processes(10), absent, "{text:?}");
+    }
+    std::fs::write(
+        &file,
+        b"  10     1 bash\n  11    10 sleep \xff\n  12    11 tail\n",
+    )
+    .unwrap();
+    assert_eq!(processes(10).unwrap(), ["sleep \u{fffd}", "tail"]);
+    assert_eq!(listed(&file, 12).unwrap(), Vec::<String>::new());
 }
 
 #[test]
@@ -322,4 +401,135 @@ fn the_name_flag_is_the_first_one_named() {
     assert_eq!(named("claude -n   "), None);
     assert_eq!(named("claude x-n y"), None);
     assert_eq!(named("claude -name y"), None);
+}
+
+/// A stand-in for `ps` that runs `script` in the system's `sh`, never a freshly written file: macOS
+/// assesses a new executable on its first run, in one machine-wide queue, which under load has
+/// taken the whole of `ps`'s 30 s. The flags `descendants_by` adds are the script's `$0` and `$1`.
+fn sh_ps(script: &str) -> symphony_board::sys::Command {
+    let mut ps = symphony_board::sys::Command::new("/bin/sh");
+    ps.args(["-c", script]);
+    ps
+}
+
+#[test]
+fn a_command_line_that_is_not_utf8_is_read_and_the_pids_still_parse() {
+    let w = World::new();
+    assert_eq!(
+        descendants_by(
+            sh_ps(
+                r"printf '  10     1 bash\n  11    10 sleep \377\n  12    11 tail\n  13     1 x\n'"
+            ),
+            10
+        )
+        .unwrap(),
+        ["sleep \u{fffd}", "tail"]
+    );
+    assert_eq!(
+        descendants_by(sh_ps("exit 0"), 10),
+        Err(LaunchError("ps printed nothing".into()))
+    );
+    assert_eq!(
+        descendants_by(sh_ps("echo '  10     1 bash'; exit 1"), 10),
+        Err(LaunchError("ps printed nothing".into()))
+    );
+    // A table that does not list the terminal's process says nothing of what runs under it.
+    for table in [
+        r"printf '   9     1 zsh\n  11     9 x\n'",
+        "echo 'not a table'",
+    ] {
+        assert_eq!(
+            descendants_by(sh_ps(table), 10),
+            Err(LaunchError("ps lists no process 10".into())),
+            "{table}"
+        );
+    }
+    let missing = descendants_by(symphony_board::sys::Command::new(w.dir().join("no-ps")), 10);
+    assert!(
+        matches!(&missing, Err(LaunchError(why)) if why.starts_with("ps: ")),
+        "{missing:?}"
+    );
+}
+
+#[test]
+fn a_shell_started_command_that_mentions_mcp_is_still_work() {
+    assert!(busy_reason(&["/bin/zsh -c 'node /x/mcp-server.js'".into()]).is_some());
+    assert_eq!(
+        busy_reason(&["node /x/mcp-server.js".into(), "claude --model x".into()]),
+        None
+    );
+}
+
+#[test]
+fn codexs_configured_repl_helper_is_harmless_but_any_other_node_program_is_work() {
+    let codex = "codex --no-daemon -s workspace-write -m gpt-6.1-sol";
+    for idle in [
+        all(&[codex, CODEX_REPL]),
+        all(&[codex, &format!("{CODEX_REPL} --stdio")]),
+    ] {
+        assert_eq!(busy_reason(&idle), None, "{idle:?}");
+        assert_eq!(reap_busy_reason(&idle), None, "{idle:?}");
+    }
+    let node = CODEX_REPL.strip_suffix("_repl").unwrap();
+    for work in [
+        "node script.js".to_string(),
+        "/usr/local/bin/node x.js".into(),
+        format!("{node} x.js"),
+        "node_repl".into(),
+        "/opt/cua_node/bin/node_repl".into(),
+        CODEX_REPL.to_lowercase(),
+        format!("x{CODEX_REPL}"),
+        format!("{CODEX_REPL}x"),
+        format!("/bin/zsh -c {CODEX_REPL}"),
+    ] {
+        assert!(!harmless(&work), "{work}");
+        let expected = Some(format!(
+            "runs {}",
+            work.chars().take(60).collect::<String>()
+        ));
+        assert_eq!(busy_reason(&all(&[codex, CODEX_REPL, &work])), expected);
+        assert_eq!(
+            reap_busy_reason(&all(&[codex, CODEX_REPL, &work])),
+            expected
+        );
+    }
+    // A real job beside the helper is still work; a protected one is named as such.
+    assert_eq!(
+        reap_busy_reason(&all(&[codex, CODEX_REPL, "cargo test -p x"])),
+        Some("runs cargo test -p x".into())
+    );
+    assert_eq!(
+        busy_reason(&all(&[CODEX_REPL, "just verify"])),
+        Some("runs a verify (just verify)".into())
+    );
+}
+
+#[test]
+fn a_finished_codex_with_only_its_repl_helper_under_it_closes_and_another_node_keeps_it() {
+    for sweep in [false, true] {
+        let w = World::new();
+        let (handle, terminal) = w.worker("sim/jump", Some("done"));
+        assert_eq!(w.program(&terminal)[0], "codex");
+        w.run_under(w.pid_of(&terminal), &[CODEX_REPL]);
+        if sweep {
+            assert_eq!(w.sweep_through(&w.hc()).idle, std::slice::from_ref(&handle));
+            assert_eq!(w.sweep_through(&w.hc()).closed.len(), 1);
+        } else {
+            let [closed] = <[_; 1]>::try_from(w.clean(false, &[])).unwrap();
+            assert!(closed.closed, "{closed:?}");
+        }
+        assert!(
+            !w.has_terminal(&terminal),
+            "{terminal} stayed, sweep {sweep}"
+        );
+    }
+    let w = World::new();
+    let (_, terminal) = w.worker("sim/jump", Some("done"));
+    w.run_under(w.pid_of(&terminal), &[CODEX_REPL, "node build.js"]);
+    let closures = w.clean(false, &[]);
+    assert!(closures.is_empty(), "{closures:?}");
+    for _ in 0..3 {
+        assert_eq!(w.sweep_through(&w.hc()), Sweep::default());
+    }
+    assert!(w.has_terminal(&terminal), "{terminal} was closed");
 }

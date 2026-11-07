@@ -36,7 +36,7 @@ fn a_landing_changes_message_keeps_the_reviewer_until_the_fix_is_reviewed() {
         w.store()
             .verdict(slug, &reviewer, "approve", "fixed")
             .unwrap();
-        assert_eq!(panes(&w.twice(How::default())), [pane.as_str()]);
+        assert_eq!(terminals(&w.twice(How::default())), [pane.as_str()]);
     }
 }
 
@@ -56,33 +56,7 @@ fn a_status_answer_does_not_keep_a_finished_agents_pane() {
         .verdict("sim/jump", &reviewer, "approve", "finished")
         .unwrap();
     let pane = w.agent(Agent::named(&handle));
-    assert_eq!(panes(&w.twice(How::default())), [pane.as_str()]);
-}
-
-#[test]
-fn a_finished_idle_agent_is_closed_on_the_second_idle_sweep() {
-    let w = World::new();
-    let handle = w.executor_on("done", "sim/jump");
-    let pane = w.agent(Agent::named(&handle));
-    let first = w.sweep();
-    assert_eq!(
-        first,
-        Sweep {
-            closed: vec![],
-            idle: vec![handle.clone()]
-        }
-    );
-    assert!(w.has_pane(&pane));
-    let second = w.sweep();
-    assert_eq!(
-        second.closed,
-        [Closed {
-            pane: pane.clone(),
-            handle: handle.clone(),
-            restore: restore("sim/jump", &handle),
-        }]
-    );
-    assert!(!w.has_pane(&pane));
+    assert_eq!(terminals(&w.twice(How::default())), [pane.as_str()]);
 }
 
 #[test]
@@ -125,7 +99,7 @@ fn an_unanswered_post_keeps_the_handle_and_its_ancestors_until_it_answers() {
             w.store()
                 .say("sim/jump", &handle, "answered", None)
                 .unwrap();
-            assert_eq!(panes(&w.twice(How::default())), [pane.as_str()]);
+            assert_eq!(terminals(&w.twice(How::default())), [pane.as_str()]);
         }
     }
 }
@@ -149,6 +123,6 @@ fn a_reviewer_waiting_for_its_changes_to_be_fixed_keeps_its_pane() {
         w.store()
             .verdict("sim/jump", &reviewer, "approve", "fixed")
             .unwrap();
-        assert_eq!(panes(&w.twice(How::default())), [pane.as_str()]);
+        assert_eq!(terminals(&w.twice(How::default())), [pane.as_str()]);
     }
 }

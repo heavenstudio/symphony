@@ -1,7 +1,7 @@
 //! The pure half of following the feed: one event applied to the board in place, how long to
 //! wait before trying a lost feed again, and when another client build loads the page again.
 
-use symphony_api::{BOARD_CARDS, Board, Change, Delta};
+use symphony_api::{ActivityItem, BOARD_CARDS, Board, Change, Delta};
 
 /// The first wait before a lost feed is tried again, in ms.
 const FIRST_WAIT_MS: i32 = 1_000;
@@ -120,6 +120,66 @@ impl Backoff {
 /// build never does.
 pub fn reload_for(own: Option<&str>, served: &str, tried: Option<&str>) -> bool {
     own.is_some_and(|own| own != served) && tried != Some(served)
+}
+
+/// Whether a read of `/api/activity` leaves the persistent panel's baseline where it is instead
+/// of moving it to `known`, the ids the page knew before this read. The panel compares its
+/// first activity snapshot with the baseline when it mounts, and toasts what the baseline lacks.
+/// Until the panel is ready, `known` holding an id the baseline lacks means an earlier read
+/// already announced that arrival and is loading the panel for it; moving the baseline then
+/// (another read while the panel's module loads, such as a reconnect's) would make the arrival
+/// look old, and it would never show.
+pub fn keeps_panel_baseline<T: PartialEq>(
+    baseline: Option<&[T]>,
+    known: Option<&[T]>,
+    panel_ready: bool,
+) -> bool {
+    !panel_ready
+        && matches!((baseline, known), (Some(baseline), Some(known))
+            if known.iter().any(|id| !baseline.contains(id)))
+}
+
+/// How long a batch of activity toasts stays up unless dismissed, in ms.
+pub const TOAST_MS: i32 = 7_000;
+/// The most activity toasts up at once; a newer one takes the oldest down.
+pub const TOASTS: usize = 3;
+
+/// The activity toasts on screen, oldest first. The toasts that arrive together are a batch and
+/// leave together, `TOAST_MS` after they arrived: a batch's expiry takes down only its own
+/// toasts, never a later batch's.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Toasts {
+    shown: Vec<(u64, ActivityItem)>,
+    batches: u64,
+}
+
+impl Toasts {
+    /// Put `items` up as one new batch, keeping the newest `TOASTS`, and name the batch for its
+    /// expiry.
+    pub fn arrive(&mut self, items: Vec<ActivityItem>) -> u64 {
+        self.batches += 1;
+        let batch = self.batches;
+        self.shown
+            .extend(items.into_iter().map(|item| (batch, item)));
+        let over = self.shown.len().saturating_sub(TOASTS);
+        self.shown.drain(..over);
+        batch
+    }
+
+    /// Take down what is left of `batch`, its time up.
+    pub fn expire(&mut self, batch: u64) {
+        self.shown.retain(|(shown, _)| *shown != batch);
+    }
+
+    /// Take down the toast for `id`, as its dismiss button does.
+    pub fn dismiss(&mut self, id: &str) {
+        self.shown.retain(|(_, item)| item.id != id);
+    }
+
+    /// The toasts up, oldest first.
+    pub fn items(&self) -> impl Iterator<Item = &ActivityItem> {
+        self.shown.iter().map(|(_, item)| item)
+    }
 }
 
 /// A region of the board that moved.

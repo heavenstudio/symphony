@@ -2,6 +2,12 @@
 //! command counts rather than host wall-clock speed.
 
 mod common;
+#[path = "after_worktrees/in_flight.rs"]
+mod in_flight;
+#[path = "after_worktrees/owner_save.rs"]
+mod owner_save;
+#[path = "after_worktrees/routes.rs"]
+mod routes;
 
 use std::cell::RefCell;
 use std::io::{BufRead, BufReader, Write};
@@ -11,6 +17,7 @@ use std::time::{Duration, Instant};
 use symphony_board::sys::{Command, Spawning as _};
 
 use common::Tree;
+use in_flight::{Scan, ended_early, in_flight, scan_end};
 use serde_json::json;
 use symphony::{branches, docview, render::Render, versions};
 use symphony_api::{Document, DocumentChange};
@@ -365,91 +372,7 @@ fn branch_decisions_share_ranking_counts_and_navigation_with_main() {
 
 #[test]
 fn a_branch_card_in_a_projects_own_folder_is_linked_read_and_saved_by_its_route() {
-    isolated(
-        "a_branch_card_in_a_projects_own_folder_is_linked_read_and_saved_by_its_route",
-        |_| {
-            let tree = repository();
-            let file = "manual/DECISIONS.md";
-            // the candidates a card shows are drawn by the project's card kind; the folder is
-            // spelled as a person may write it
-            tree.write(
-                "symphony.toml",
-                &common::candidates::candidates(
-                    "[[entrypoints]]\nurl = \"/docs/\"\nfolder = \"./manual\"\n",
-                ),
-            );
-            tree.write(file, &register(&card("alpha")));
-            commit(&tree.root, "base", 1);
-            let wt = branch(&tree, "design/policy", "policy");
-            let beta = card("beta").replace("Posted.", "Posted. ![Candidate](proposal.png)");
-            std::fs::write(wt.join(file), register(&(card("alpha") + &beta))).unwrap();
-            let cards = branches::branch_cards(&tree.root);
-            assert_eq!(
-                cards
-                    .iter()
-                    .map(|c| (c.card.slug.as_str(), c.path()))
-                    .collect::<Vec<_>>(),
-                [("beta", "@design~policy/docs/DECISIONS.md".to_string())]
-            );
-            let snapshot = symphony::dashboard::snapshot(&tree.root, &cards, "test").unwrap();
-            let proposed = snapshot
-                .queue
-                .waiting
-                .iter()
-                .find(|c| c.slug == "beta")
-                .unwrap();
-            assert_eq!(proposed.doc_title, "Decisions");
-            assert_eq!(proposed.href(), "/@design~policy/docs/DECISIONS.md#beta");
-            assert_eq!(
-                proposed.pictures[0].src.as_deref(),
-                Some("/@design~policy/docs/proposal.png")
-            );
-            assert_eq!(
-                snapshot
-                    .pending
-                    .items
-                    .iter()
-                    .map(|item| item.href.as_str())
-                    .collect::<Vec<_>>(),
-                [
-                    "/docs/DECISIONS.md#alpha",
-                    "/@design~policy/docs/DECISIONS.md#beta"
-                ]
-            );
-            let read =
-                docview::document(&Render::new(&wt), "docs/DECISIONS.md", "design~policy").unwrap();
-            assert_eq!(
-                read.cards
-                    .iter()
-                    .map(|c| c.slug.as_str())
-                    .collect::<Vec<_>>(),
-                ["alpha", "beta"]
-            );
-            let saves = symphony::save::Saves::start(&tree.root);
-            post(
-                &saves,
-                "",
-                "/api/decision",
-                json!({"path":"@design~policy/docs/DECISIONS.md", "slug":"beta", "state":"approved", "note":"Use this policy"}),
-            );
-            let physical = saves.post(
-                "design~policy",
-                "/api/decision",
-                &json!({"path":file, "slug":"alpha", "state":"approved", "note":""}),
-            );
-            assert_eq!(
-                physical.map_err(|failure| failure.error),
-                Err("path must be a markdown file under docs/".to_string())
-            );
-            saves.close();
-            assert!(
-                std::fs::read_to_string(wt.join(file))
-                    .unwrap()
-                    .contains("owner · approved — Use this policy")
-            );
-            assert!(!tree.read(file).contains("Use this policy"));
-        },
-    );
+    routes::branch_card_in_project_folder();
 }
 
 #[test]
@@ -1075,12 +998,13 @@ fn scan_225_worktrees_has_bounded_commands_and_parallel_waits() {
     let mut arrivals_guard = arrivals.try_clone().unwrap();
     let mut release = open_fifo("release");
     let (send, receive) = std::sync::mpsc::channel();
+    let send_end = send.clone();
     let reader = std::thread::spawn(move || {
         let mut reader = BufReader::new(arrivals);
         for _ in 0..8 {
             let mut line = String::new();
             reader.read_line(&mut line).unwrap();
-            send.send(line).unwrap();
+            send.send(Scan::Arrived(line)).unwrap();
         }
     });
     executable(
@@ -1119,7 +1043,7 @@ exec /usr/bin/git "$@"
             .chain(std::env::split_paths(&std::env::var_os("PATH").unwrap())),
     )
     .unwrap();
-    let mut child = symphony_board::sys::spawn_output(
+    let child = symphony_board::sys::spawn_output(
         Command::new(std::env::current_exe().unwrap())
             .args([
                 "--exact",
@@ -1131,33 +1055,27 @@ exec /usr/bin/git "$@"
             .env("PATH", path),
     )
     .unwrap();
-    let mut active = std::collections::BTreeSet::new();
-    for _ in 0..8 {
-        match receive.recv_timeout(Duration::from_secs(30)) {
-            Ok(path) => {
-                active.insert(path);
-            }
-            Err(error) => {
-                // Unblock our intercepted children and the reader even when concurrency regresses.
-                release
-                    .write_all(b"go\ngo\ngo\ngo\ngo\ngo\ngo\ngo\ngo\ngo\n")
-                    .unwrap();
-                child.kill().unwrap();
-                let _ = child.wait();
-                arrivals_guard
-                    .write_all(b"abort\nabort\nabort\nabort\nabort\nabort\nabort\nabort\n")
-                    .unwrap();
-                reader.join().unwrap();
-                panic!("scan must start eight independent worktrees before awaiting any: {error}");
-            }
-        }
-    }
+    let waiter = std::thread::spawn(move || {
+        let _ = send_end.send(Scan::Ended(symphony_board::sys::wait_output(child)));
+    });
+    // No deadline: nothing is released before eight distinct worktrees arrive (`in_flight`). A
+    // serial scan never brings a second, so it shows as the suite's budget timeout, its last
+    // stderr line naming the held worktree ("scan: 1 of 8 worktrees in flight ...: <path>").
+    let active = in_flight(&receive, 8);
     // Release the first eight and the two remaining workers, with no timing sleeps.
     release
         .write_all(b"go\ngo\ngo\ngo\ngo\ngo\ngo\ngo\ngo\ngo\n")
         .unwrap();
+    if active.is_err() {
+        // Unblock the reader, which still waits for the arrivals that never came.
+        arrivals_guard
+            .write_all(b"abort\nabort\nabort\nabort\nabort\nabort\nabort\nabort\n")
+            .unwrap();
+    }
     reader.join().unwrap();
-    let done = symphony_board::sys::wait_output(child).unwrap();
+    let active = active.unwrap_or_else(ended_early);
+    let done = scan_end(&receive);
+    waiter.join().unwrap();
     assert_eq!(active.len(), 8);
     assert!(
         done.status.success(),

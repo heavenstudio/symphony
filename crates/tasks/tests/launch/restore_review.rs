@@ -1,6 +1,7 @@
 //! Review roles live on the parent, while their resumable instruction conversation lives on a child.
 
 use super::*;
+use symphony_board::launch::restore_unanswered;
 
 #[test]
 fn a_departed_reviewer_without_a_launch_is_flagged_but_never_started_automatically() {
@@ -46,11 +47,11 @@ fn a_departed_reviewer_without_a_launch_is_flagged_but_never_started_automatical
         );
         let mut warnings = Vec::new();
         assert!(
-            restore_unanswered(w.store(), &w.herdr(), &w.machine(), &mut warnings)
+            restore_unanswered(w.store(), &w.hc(), &w.machine(), &mut warnings)
                 .unwrap()
                 .is_empty()
         );
-        assert_eq!(w.calls_of(&["agent", "start"]).len(), 0);
+        assert_eq!(w.calls_of(&["run"]).len(), 0);
         assert!(warnings.is_empty(), "{warnings:?}");
     }
 }
@@ -77,7 +78,7 @@ fn a_departed_replacement_keeps_its_role_posts_without_reviving_its_predecessor(
                 w.store()
                     .release("sim/jump", &a.handle, Some("reviewer"))
                     .unwrap();
-                close_pane(&w, &a);
+                close_terminal(&w, &a);
                 w.task("sim/jump/review-b", Some(parent));
                 let b = w.review("sim/jump/review-b").row;
                 if parent != "sim/jump" {
@@ -95,7 +96,7 @@ fn a_departed_replacement_keeps_its_role_posts_without_reviving_its_predecessor(
                 if before_departure {
                     w.store().leave(&b.handle).unwrap();
                 }
-                close_pane(&w, &b);
+                close_terminal(&w, &b);
                 if another_reviewer {
                     w.task("sim/jump/review-c", Some(parent));
                     let c = w.review("sim/jump/review-c").row;
@@ -116,14 +117,14 @@ fn a_departed_replacement_keeps_its_role_posts_without_reviving_its_predecessor(
                     "{lines}"
                 );
                 assert!(!lines.contains(&a.handle), "{lines}");
-                let starts = w.calls_of(&["agent", "start"]).len();
+                let starts = w.calls_of(&["run"]).len();
                 let mut warnings = Vec::new();
                 let restored =
-                    restore_unanswered(w.store(), &w.herdr(), &w.machine(), &mut warnings).unwrap();
+                    restore_unanswered(w.store(), &w.hc(), &w.machine(), &mut warnings).unwrap();
                 assert_eq!(restored.len(), 1, "{restored:?} {warnings:?}");
                 assert!(restored[0].contains(&b.handle), "{restored:?}");
                 assert!(restored[0].contains(&format!("post #{}", post.id)));
-                assert_eq!(w.calls_of(&["agent", "start"]).len(), starts + 1);
+                assert_eq!(w.calls_of(&["run"]).len(), starts + 1);
                 assert!(
                     w.store().task_sessions(&a.slug).unwrap()[0]
                         .closed
@@ -134,7 +135,7 @@ fn a_departed_replacement_keeps_its_role_posts_without_reviving_its_predecessor(
                 assert_eq!(resumed.claude_session, b.claude_session);
                 assert!(warnings.is_empty(), "{warnings:?}");
                 assert!(
-                    restore_unanswered(w.store(), &w.herdr(), &w.machine(), &mut warnings)
+                    restore_unanswered(w.store(), &w.hc(), &w.machine(), &mut warnings)
                         .unwrap()
                         .is_empty()
                 );
@@ -179,9 +180,9 @@ fn an_unanswered_review_post_resumes_its_instruction_conversation() {
                 }
             }
             if closed {
-                close_pane(&w, &s);
+                close_terminal(&w, &s);
             } else {
-                w.edit_panes(|panes| panes.clear());
+                w.edit_terminals(|panes| panes.clear());
             }
             let post = w
                 .store()
@@ -200,7 +201,7 @@ fn an_unanswered_review_post_resumes_its_instruction_conversation() {
             assert!(digest.lines().iter().any(|line| line.contains(&command)));
             let mut warnings = Vec::new();
             let restored =
-                restore_unanswered(w.store(), &w.herdr(), &w.machine(), &mut warnings).unwrap();
+                restore_unanswered(w.store(), &w.hc(), &w.machine(), &mut warnings).unwrap();
             assert_eq!(
                 restored.len(),
                 1,
@@ -210,16 +211,16 @@ fn an_unanswered_review_post_resumes_its_instruction_conversation() {
             let session = w.store().task_sessions(&s.slug).unwrap().remove(0);
             assert_eq!(session.claude_session, s.claude_session);
             assert!(session.closed.is_none());
-            assert_eq!(w.calls_of(&["agent", "start"]).len(), 2);
+            assert_eq!(w.calls_of(&["run"]).len(), 2);
             assert!(w.store().thread("sim/jump").unwrap().iter().any(|m| {
                 m.sender == "board" && m.text.contains(&format!("post #{}", post.id))
             }));
             assert!(
-                restore_unanswered(w.store(), &w.herdr(), &w.machine(), &mut warnings)
+                restore_unanswered(w.store(), &w.hc(), &w.machine(), &mut warnings)
                     .unwrap()
                     .is_empty()
             );
-            assert_eq!(w.calls_of(&["agent", "start"]).len(), 2);
+            assert_eq!(w.calls_of(&["run"]).len(), 2);
         }
     }
 }

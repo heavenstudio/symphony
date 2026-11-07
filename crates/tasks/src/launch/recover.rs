@@ -1,7 +1,7 @@
 //! Resume a missing conversation once per overdue addressed post, from the periodic reap command.
 
-use super::herdr::{Herdr, Object, text};
-use super::{Machine, cleanup, reap, restore};
+use super::hc::{self, Hc, Object, text_of};
+use super::{Machine, cleanup, restore};
 use crate::rows::TaskSessionRow;
 use crate::store::unanswered::restorable;
 use crate::{Error, Store};
@@ -9,8 +9,9 @@ use std::io::Write;
 
 pub(super) fn present(launch: &TaskSessionRow, agents: &[Object]) -> bool {
     agents.iter().any(|agent| {
-        text(agent.get("pane_id")) == launch.pane
-            || text(agent.get("name")) == launch.handle
+        text_of(agent, "address") == launch.pane
+            || text_of(agent, "name") == launch.handle
+            || hc::label(agent, hc::HANDLE_LABEL) == launch.handle
             || cleanup::stored_session(agent) == launch.claude_session
     })
 }
@@ -20,7 +21,7 @@ pub(super) fn present(launch: &TaskSessionRow, agents: &[Object]) -> bool {
 /// the same post twice. An unsuccessful attempt stays flagged and is not retried automatically.
 pub fn restore_unanswered(
     store: &Store,
-    herdr: &dyn Herdr,
+    hc: &dyn Hc,
     machine: &Machine,
     warn: &mut dyn Write,
 ) -> Result<Vec<String>, Error> {
@@ -32,13 +33,13 @@ pub fn restore_unanswered(
             continue;
         }
         if pending.health.holds() && callbacks.contains_key(&pending.handle) {
-            continue; // a native agent may be alive without a Herdr pane
+            continue; // a native agent may be alive without an hc terminal
         }
         let Some(launch) = pending.launch.as_ref().filter(|s| restorable(s)) else {
             continue;
         };
-        let agents = herdr.all_agents()?;
-        if !reap::native_sessions(&agents).1 || present(launch, &agents) {
+        let agents = hc.live()?;
+        if agents.iter().any(|a| text_of(a, "address").is_empty()) || present(launch, &agents) {
             continue;
         }
         // Re-read before reserving: an answer or task-status change can make recovery obsolete.
@@ -51,7 +52,7 @@ pub fn restore_unanswered(
         }
         match restore(
             store,
-            herdr,
+            hc,
             machine,
             &launch.slug,
             Some(&pending.handle),
@@ -97,19 +98,19 @@ mod tests {
         };
         assert!(!present(&launch, &[]));
         for (expected, agent) in [
-            (true, json!({"pane_id":"old-pane"})),
-            (true, json!({"pane_id":"new-pane", "name":"worker"})),
+            (true, json!({"address":"old-pane"})),
+            (true, json!({"address":"new-pane", "name":"worker"})),
             (
                 true,
-                json!({"pane_id":"new-pane", "agent":"codex", "agent_session":{"value":"thread"}}),
+                json!({"address":"new-pane", "agent":"codex", "argv":["codex","resume","thread"]}),
             ),
             (
                 false,
-                json!({"pane_id":"new-pane", "agent":"codex", "agent_session":{"value":"another-thread"}}),
+                json!({"address":"new-pane", "agent":"codex", "argv":["codex","resume","another-thread"]}),
             ),
             (
                 false,
-                json!({"pane_id":"new-pane", "agent":"claude", "agent_session":{"value":"thread"}}),
+                json!({"address":"new-pane", "agent":"claude", "argv":["claude","--resume","thread"]}),
             ),
         ] {
             assert_eq!(

@@ -158,11 +158,17 @@ pub fn hold(common: &Path) -> Result<sys::FileLock, String> {
     Ok(lock)
 }
 
-/// The log, opened to append, moved aside first when it has grown past `LOG_LIMIT`.
+/// The sweep's log, opened to append, moved aside first when it has grown past `LOG_LIMIT`.
 fn open_log(dir: &Path) -> std::io::Result<File> {
-    let log = dir.join(LOG);
+    append_log(dir, LOG)
+}
+
+/// The log `name` in `dir`, opened to append, moved aside to `name.1` first when it has grown past
+/// `LOG_LIMIT`.
+pub(crate) fn append_log(dir: &Path, name: &str) -> std::io::Result<File> {
+    let log = dir.join(name);
     if fs::metadata(&log).is_ok_and(|m| m.len() > LOG_LIMIT) {
-        let _ = fs::rename(&log, dir.join(format!("{LOG}.1")));
+        let _ = fs::rename(&log, dir.join(format!("{name}.1")));
     }
     OpenOptions::new().append(true).create(true).open(&log)
 }
@@ -195,7 +201,7 @@ fn test_build(env: &Env) -> Option<PathBuf> {
 
 /// The main checkout of the repository whose git common dir is `common`: the folder holding it, when
 /// it is that checkout's `.git`. A bare repository, or a common dir kept elsewhere, has none.
-fn main_checkout(common: &Path) -> Option<&Path> {
+pub(crate) fn main_checkout(common: &Path) -> Option<&Path> {
     if common.file_name().is_some_and(|name| name == ".git") {
         common.parent().filter(|root| !root.as_os_str().is_empty())
     } else {

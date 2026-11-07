@@ -175,3 +175,35 @@ fn the_addressed_agents_status_move_answers_its_post() {
     c.f.advance(31.0 * 60.0);
     assert_eq!(c.digest().count("unanswered"), 0);
 }
+
+#[test]
+fn unanswered_digest_rows_follow_the_tasks_orchestrator() {
+    let c = Case::new();
+    c.task("sim/a", "in_progress");
+    let worker = c.executor("sim/a");
+    let owner = c.f.session("orchestrator");
+    let other = c.f.session("orchestrator");
+    c.f.store
+        .take_role("sim/a", &owner, "orchestrator")
+        .unwrap();
+    let post =
+        c.f.store
+            .say("sim/a", "owner", "continue", Some(&worker))
+            .unwrap();
+    c.f.advance(31.0 * 60.0);
+    // Keep task ownership live while the executor's heartbeat expires.
+    c.f.store.touch(&owner).unwrap();
+    let board = c.f.store.board().unwrap();
+    let heard = c.digest().only_for(&board, &owner);
+    assert_eq!(heard.count("unanswered"), 1);
+    assert!(
+        heard
+            .event_lines()
+            .join("\n")
+            .contains(&format!("post #{}", post.id))
+    );
+    let withheld = c.digest().only_for(&board, &other);
+    assert_eq!(withheld.count("unanswered"), 0);
+    assert!(withheld.entries().iter().all(|e| e.0 != "unanswered"));
+    assert!(!withheld.event_lines().join("\n").contains("unanswered"));
+}

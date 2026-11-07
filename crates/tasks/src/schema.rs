@@ -1,7 +1,8 @@
 //! The board's tables in SurrealDB, one per SQLite table of `tools/tasks_store.py`, typed so a row
 //! the rules would never write is refused rather than kept. A record's id is its SQLite primary key:
 //! `task:⟨slug⟩`, `session:⟨handle⟩`, `role:[slug, handle, role]`, `link:[slug, kind, target]`,
-//! `message:[slug, id]`, `delivery:[message, handle]`, `barred_key:⟨key⟩`, `task_session:[slug, handle]`.
+//! `message:[slug, id]`, `delivery:[message, handle]`, `barred_key:⟨key⟩`, `task_session:[slug, handle]`,
+//! `delivery_key:[slug, key]` (the message a keyed post made once on a thread, `Store::say_keyed`).
 //! A message is keyed by its task first so a thread is one range of keys: an index on `slug` would do
 //! the same, but makes a transaction inserting many messages (the copy's) cost more than linearly
 //! (15k messages: 22 CPU-s with it, 2 without, measured on 3.3.0).
@@ -26,7 +27,7 @@
 /// Bumped when `DEFINE` gains a table, field, index or event: a board at another version runs `DEFINE`
 /// again, and its `IF NOT EXISTS` adds what is new but leaves every definition already there as it
 /// was. Changing one (a field's type, an assertion, an index) also needs `DEFINE … OVERWRITE` for it.
-pub const VERSION: i64 = 11;
+pub const VERSION: i64 = 12;
 
 // Full-text index construction needs a committed analyzer, installed before the schema transaction.
 pub const ANALYZERS: &str = "DEFINE ANALYZER IF NOT EXISTS task_words TOKENIZERS blank, class, punct FILTERS lowercase, ascii;";
@@ -121,6 +122,12 @@ DEFINE TABLE IF NOT EXISTS delivery SCHEMAFULL;
 DEFINE FIELD IF NOT EXISTS message ON delivery TYPE int;
 DEFINE FIELD IF NOT EXISTS handle ON delivery TYPE string;
 DEFINE FIELD IF NOT EXISTS acked ON delivery TYPE float;
+
+DEFINE TABLE IF NOT EXISTS delivery_key SCHEMAFULL;
+DEFINE FIELD IF NOT EXISTS slug ON delivery_key TYPE string;
+DEFINE FIELD IF NOT EXISTS key ON delivery_key TYPE string;
+DEFINE FIELD IF NOT EXISTS message ON delivery_key TYPE int;
+DEFINE FIELD IF NOT EXISTS ts ON delivery_key TYPE float;
 
 DEFINE TABLE IF NOT EXISTS barred_key SCHEMAFULL;
 DEFINE FIELD IF NOT EXISTS key ON barred_key TYPE string;
