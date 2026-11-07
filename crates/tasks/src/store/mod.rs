@@ -482,9 +482,9 @@ impl Store {
                 change.status = Some("in_progress".into());
                 change.opens = Some(Opens {
                     status: change.status.clone(),
-                    orchestrator: None,
                     by: vec![handle.into()],
                     what: format!("{slug} cannot start"),
+                    ..Opens::default()
                 });
             }
             let mut text = format!("{handle} claimed it");
@@ -647,7 +647,8 @@ impl Store {
             let version = view.snap.tasks.first().map_or(0, |t| t.version);
             let mut body = if change.status.is_some() {
                 format!(
-                    "{WRITE}\n{}",
+                    "{WRITE}{}\n{}",
+                    cap::HOLDING,
                     work::block_cancelled_dependencies(
                         change.status.as_deref() == Some("cancelled")
                     )
@@ -1116,19 +1117,24 @@ struct Change {
     drop: Vec<(String, String)>,
     add: Option<RoleRow>,
     status: Option<String>,
+    /// The move is a hold, which keeps the task's slot while it is blocked ([`cap`]).
+    hold: bool,
     say: Option<Say>,
     /// Work it starts, which takes a slot of an orchestrator's under the store's cap.
     opens: Option<Opens>,
 }
 
-/// A start a rule makes: a claim or a move into an open status, or the orchestrator role taken.
-/// Under a cap it is refused when it would raise an orchestrator's open tasks past it
-/// ([`crate::slots::started`]).
+/// A start a rule makes: a claim or a move into an open status, the orchestrator role taken, or a
+/// change of parent of open work. Under a cap it is refused when it would raise an orchestrator's
+/// open tasks past it ([`crate::slots::started`]).
+#[derive(Default)]
 struct Opens {
     /// The status it moves the task to, when it moves it.
     status: Option<String>,
     /// The session taking the orchestrator role on the task, when that is the start.
     orchestrator: Option<String>,
+    /// The task's new parent, or none, when that is the change.
+    parent: Option<Option<String>>,
     /// The sessions whose parents stand in for an orchestrator when none holds the task: its
     /// executor once it starts.
     by: Vec<String>,
@@ -1181,6 +1187,7 @@ impl Change {
             "drop": self.drop.iter().map(|(handle, role)| json!({"handle": handle, "role": role})).collect::<Vec<_>>(),
             "add": self.add.iter().collect::<Vec<_>>(),
             "status": self.status,
+            "hold": self.hold,
             "updated": self.status.as_ref().map(|_| now),
             "say": say,
         })

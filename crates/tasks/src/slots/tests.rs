@@ -6,6 +6,7 @@ fn entry<'a>(slug: &'a str, parent: Option<&'a str>, status: &'a str) -> Entry<'
         parent,
         status,
         instruction: false,
+        held: false,
         orchestrators: Vec::new(),
         executors: Vec::new(),
     }
@@ -128,14 +129,27 @@ fn a_task_nobody_orchestrates_counts_against_its_executors_parents() {
     assert_eq!(keys(&ledger, "p"), ["loose/sub"]);
 }
 
+/// `slug`, blocked under a hold that keeps its slot, of `by`'s.
+fn held<'a>(slug: &'a str, by: &'a str) -> Entry<'a> {
+    Entry {
+        held: true,
+        ..led(slug, None, "blocked", by)
+    }
+}
+
 #[test]
-fn only_in_progress_and_review_hold_a_slot() {
+fn only_in_progress_review_and_held_blocked_work_hold_a_slot() {
     let ledger = Ledger::new(
         [
             led("a", None, "in_progress", "o"),
             entry("a/review", Some("a"), "review"),
             entry("review/a", None, "review"),
             led("b", None, "review", "o"),
+            held("bb", "o"),
+            Entry {
+                held: true,
+                ..led("held-ready", None, "ready", "o")
+            },
             led("c", None, "blocked", "o"),
             led("d", None, "ready", "o"),
             led("e", None, "backlog", "o"),
@@ -149,10 +163,78 @@ fn only_in_progress_and_review_hold_a_slot() {
     );
     assert_eq!(
         named(&ledger.held("o")),
-        "a (in_progress) with a/review (review) with review/a (review), b (review)"
+        "a (in_progress) with a/review (review) with review/a (review), b (review), bb (blocked, held)",
+        "a hold keeps blocked work open, and only blocked work"
     );
     let counts = ledger.counts();
-    assert_eq!((counts["o"], counts["other"], counts.len()), (2, 1, 2));
+    assert_eq!((counts["o"], counts["other"], counts.len()), (3, 1, 2));
+}
+
+#[test]
+fn work_a_hold_keeps_open_returns_without_a_new_slot_and_other_blocked_work_takes_one() {
+    let before = Ledger::new(
+        [
+            held("kept", "o"),
+            led("freed", None, "blocked", "o"),
+            led("busy", None, "in_progress", "o"),
+        ],
+        [],
+    );
+    for status in ["review", "in_progress"] {
+        let kept = before.changed("kept", Some(status), None, &[]);
+        assert_eq!(started(&before, &kept, 2), Ok(vec!["o"]), "{status}");
+        assert!(!kept.tasks["kept"].held, "a move ends the hold");
+        let freed = before.changed("freed", Some(status), None, &[]);
+        assert_eq!(
+            started(&before, &freed, 2).unwrap_err().owner,
+            "o",
+            "{status}"
+        );
+    }
+    let unheld = before.changed("kept", Some("blocked"), None, &[]);
+    assert_eq!(
+        unheld.counts()["o"],
+        1,
+        "blocked again by a move, it holds no slot"
+    );
+}
+
+#[test]
+fn a_change_of_parent_moves_the_open_work_below_to_the_new_tree() {
+    let before = Ledger::new(
+        [
+            led("a", None, "in_progress", "o"),
+            entry("a/part", Some("a"), "in_progress"),
+            entry("loose", None, "ready"),
+            entry("loose/one", Some("loose"), "review"),
+            led("other", None, "ready", "p"),
+            held("kept", "o"),
+        ],
+        [],
+    );
+    let detached = before.reparented("a/part", None);
+    assert_eq!(detached.place("a/part").owners, Vec::<&str>::new());
+    assert_eq!(
+        started(&before, &detached, 1),
+        Ok(vec!["o"]),
+        "a slot freed"
+    );
+    let back = detached.reparented("a/part", Some("a"));
+    assert_eq!(started(&detached, &back, 2).unwrap_err().owner, "o");
+    assert_eq!(started(&detached, &back, 3), Ok(vec!["o"]));
+    let under = before.reparented("loose", Some("other"));
+    assert_eq!(
+        under.place("loose/one").owners,
+        ["p"],
+        "the work below moves"
+    );
+    assert_eq!(started(&before, &under, 0).unwrap_err().owner, "p");
+    assert_eq!(started(&before, &under, 1), Ok(vec!["p"]));
+    let moved = before.reparented("kept", Some("a"));
+    assert!(
+        !moved.tasks["kept"].held,
+        "a hold lasts no change of parent"
+    );
 }
 
 #[test]

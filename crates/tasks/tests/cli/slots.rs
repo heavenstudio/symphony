@@ -1,6 +1,7 @@
 //! The cap on an orchestrator's open tasks as the command line holds to it: the number is the
 //! project's (`[board] orchestrator_slots` in the main checkout's `symphony.toml`), and claims,
-//! moves into in_progress, the orchestrator role and `tasks api` are refused past it.
+//! moves into in_progress, the orchestrator role and `tasks api` are refused past it; the api's
+//! `hold`, a landing's move to blocked, keeps the task's slot.
 
 use crate::{Case, git, repository, run, scratch};
 use serde_json::{Value, json};
@@ -100,6 +101,28 @@ fn the_api_holds_the_same_cap() {
         answer,
         json!({"refused": format!("work/2 cannot start: {}", holds_two(&orch))})
     );
+}
+
+#[test]
+fn the_apis_hold_keeps_a_slot_that_a_move_back_takes_again_at_the_cap() {
+    let (c, _) = in_project("slots-hold", &cap(2));
+    let (orch, worker) = holding(&c, 2);
+    let call = json!({"method": "hold", "args": {"slug": "work/1", "handle": worker}});
+    let answer: Value =
+        serde_json::from_str(&run(&c.env, &["api"], &call.to_string()).out).unwrap();
+    assert_eq!(answer["ok"]["status"], "blocked", "{answer}");
+    let ran = c.run_as(&worker, &["claim", "work/2"], "");
+    assert_eq!(
+        ran.err,
+        format!(
+            "✖ work/2 cannot start: {}\n",
+            holds_two(&orch).replace("work/1 (in_progress)", "work/1 (blocked, held)")
+        )
+    );
+    c.ok(&worker, &["move", "work/1", "in_progress"]);
+    let again = run(&c.env, &["api"], &call.to_string());
+    let answer: Value = serde_json::from_str(&again.out).unwrap();
+    assert_eq!(answer["ok"]["status"], "blocked", "{answer}");
 }
 
 #[test]

@@ -65,13 +65,12 @@ impl Store {
                 // orchestrates: the new orchestrator's slots.
                 if single {
                     change.opens = Some(Opens {
-                        status: None,
                         orchestrator: Some(handle.into()),
-                        by: Vec::new(),
                         what: format!(
                             "{handle} cannot take orchestrator on {slug}, which is {}",
                             task.status
                         ),
+                        ..Opens::default()
                     });
                 }
             }

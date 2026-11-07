@@ -372,14 +372,19 @@ orchestrator_slots`, read from the main checkout's `symphony.toml` from the
 the Symphony opens its store (`cli::capped`, `Store::capping`); a store opened
 without it caps nothing. A rule that may start work reads, in its view's
 transaction (`Which::Starting`, `store/cap.rs`), the slot counters, the open
-tasks through `task_status`, their roles through `role_slug` and the lines
-that blocked the task; then the tasks above them and the tasks they review by
-id, a level a round trip. It decides on the board before and after the change
-(`slots::started`) and, for every orchestrator whose open tasks it changes,
-checks and bumps `counter:['slots', HANDLE]` in the write, so two starts at
-once are one retry, not two slots (`tests/store/slots.rs` and its `moves` and
-`cost` modules, `tests/cli/slots.rs`). Each statement the cap sends is in
-`SLOT_READS`, which `tests/store/slots/cost.rs` has the server plan.
+tasks through `task_status`, the holds (`counter:['hold', SLUG]`) and their
+tasks, and their roles through `role_slug`; then the tasks above them and the
+tasks they review by id, a level a round trip. It decides on the board before
+and after the change (`slots::started`) and, for every orchestrator whose open
+tasks it changes, checks and bumps `counter:['slots', HANDLE]` in the write, so
+two starts at once are one retry, not two slots (`tests/store/slots.rs` and its
+`moves` and `cost` modules, `tests/cli/slots.rs`). A change of parent of open
+work is decided the same way (`set_parent`). A hold (`Store::hold_blocked`,
+`tasks api`'s `hold` from api 4, land's while stamps wait) keeps blocked work's slot: it is a record, not a task
+field, since a reader built before it refuses a task row with a field it does
+not know, and every write that moves the task, changes its parent or its
+dependencies deletes it. Each statement the cap sends is in `SLOT_READS`, which
+`tests/store/slots/cost.rs` has the server plan.
 
 Its store tests start one in-memory server per test binary and give each test a
 database of its own. The server is the pinned SurrealDB `tools/surreal.sh`

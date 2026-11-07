@@ -1,6 +1,6 @@
 //! The cap where work moves back into an open status: from blocked, through a changed dependency,
-//! under a landing's hold; with the tree reshaped; on a task two orchestrators hold; and a start
-//! racing the close of the slot it joins.
+//! from a landing's hold; where a change of parent brings open work under an orchestrator; on a
+//! task two orchestrators hold; and a start racing the close of the slot it joins.
 
 use super::{EIGHT, HOLDS_EIGHT, K, O, P, W, board, capped, eight_and, open, sessions, with};
 use crate::common::{Fixture, refused, task};
@@ -29,20 +29,71 @@ fn work_blocked_from_in_progress_cannot_go_round_the_cap_through_review() {
     );
 }
 
+/// O holding [`EIGHT`] with work/h's place taken by work/next, in progress.
+fn holds_next() -> String {
+    HOLDS_EIGHT.replace("work/h (review)", "work/next (in_progress)")
+}
+
 #[test]
-fn a_landing_holding_work_from_review_returns_it_to_review_at_the_cap() {
+fn work_blocked_from_review_by_a_move_takes_a_slot_to_come_back() {
     let f = eight_and(&[("work/next", "ready")]);
     let store = capped(&f, 8);
-    // land-stamps holds work/h, in review, while nobody makes a stamp it lacks; its slot is free
-    // meanwhile, and taken.
+    // The way round the cap a review found: block a task in review, start new work in its slot,
+    // and move it back.
     store.move_to("work/h", "blocked", O).unwrap();
     assert_eq!(store.claim("work/next", K).unwrap().status, "in_progress");
-    // The stamp arrives: back to review, as it left it, at the cap.
+    assert_eq!(
+        refused(store.move_to("work/h", "review", O)),
+        format!("work/h cannot go from blocked to review: {}", holds_next())
+    );
+    assert_eq!(store.get("work/h").unwrap().status, "blocked");
+    assert_eq!(open(&store).len(), 8);
+}
+
+#[test]
+fn a_landings_hold_keeps_its_tasks_slot_and_returns_it_to_review_at_the_cap() {
+    let f = eight_and(&[("work/next", "ready")]);
+    let store = capped(&f, 8);
+    // land-stamps holds work/h, in review, while nobody makes a stamp it lacks: its slot stays
+    // taken meanwhile.
+    assert_eq!(store.hold_blocked("work/h", O).unwrap().status, "blocked");
+    assert_eq!(
+        refused(store.claim("work/next", K)),
+        format!(
+            "work/next cannot start: {}",
+            HOLDS_EIGHT.replace("work/h (review)", "work/h (blocked, held)")
+        )
+    );
+    // The stamp arrives: back to review, at the cap.
     assert_eq!(
         store.move_to("work/h", "review", O).unwrap().status,
         "review"
     );
-    assert_eq!(open(&store).len(), 9);
+    assert_eq!(open(&store).len(), 8);
+    // That move ended the hold: blocked again by a move, the slot is free and the way back capped.
+    store.move_to("work/h", "blocked", O).unwrap();
+    assert_eq!(store.claim("work/next", K).unwrap().status, "in_progress");
+    assert_eq!(
+        refused(store.move_to("work/h", "review", O)),
+        format!("work/h cannot go from blocked to review: {}", holds_next())
+    );
+    assert_eq!(
+        refused(store.hold_blocked("work/h", O)),
+        "work/h is blocked: only work in progress or in review is held"
+    );
+}
+
+#[test]
+fn a_hold_ends_with_a_change_of_parent_and_frees_the_slot() {
+    let f = eight_and(&[("work/next", "ready")]);
+    let store = capped(&f, 8);
+    store.hold_blocked("work/h", O).unwrap();
+    store.set_parent("work/h", Some("work/a"), O).unwrap();
+    assert_eq!(store.claim("work/next", K).unwrap().status, "in_progress");
+    assert_eq!(
+        refused(store.move_to("work/h", "review", O)),
+        format!("work/h cannot go from blocked to review: {}", holds_next())
+    );
 }
 
 #[test]
@@ -73,11 +124,48 @@ fn a_dependency_change_that_would_start_blocked_work_past_the_cap_is_refused() {
     assert_eq!(store.get("work/held").unwrap().status, "blocked");
     store.move_to("work/a", "cancelled", "owner").unwrap();
     assert_eq!(back().unwrap().status, "in_progress");
-    // Work blocked from review goes back to review as a landing's hold returns it, at the cap.
+    // Work a cancelled prerequisite blocked in review takes a slot to go back to review.
     store.move_to("dep/two", "cancelled", "owner").unwrap();
+    assert_eq!(store.get("work/b").unwrap().status, "blocked");
     assert_eq!(store.claim("work/next", K).unwrap().status, "in_progress");
-    let back = store.change_depends("work/b", &[], &owned(&["dep/two"]), K);
-    assert_eq!(back.unwrap().status, "review");
+    let back = || store.change_depends("work/b", &[], &owned(&["dep/two"]), K);
+    assert_eq!(
+        refused(back()),
+        "work/b cannot go from blocked back to review: olive-orch holds 8 open tasks, the cap of 8 an orchestrator holds: work/c (in_progress), work/d (review), work/e (in_progress), work/f (review), work/g (in_progress), work/h (review), work/held (in_progress), work/next (in_progress); a slot frees when one of them is done or cancelled"
+    );
+    assert_eq!(store.get("work/b").unwrap().status, "blocked");
+    store.move_to("work/c", "cancelled", "owner").unwrap();
+    assert_eq!(back().unwrap().status, "review");
+}
+
+#[test]
+fn a_change_of_parent_that_would_bring_open_work_under_a_full_orchestrator_is_refused() {
+    let mut seed = sessions();
+    for (slug, status) in &EIGHT[..7] {
+        seed = with(seed, slug, status, None, Some(O));
+    }
+    seed = with(seed, "work/a/part", "in_progress", Some("work/a"), None);
+    seed = with(seed, "work/next", "ready", None, Some(O));
+    seed = with(seed, "loose", "review", None, None);
+    let f = Fixture::new(seed.role("work/a/part", K, "executor"));
+    let store = capped(&f, 8);
+    // The way round the cap a review found: take open work from under the orchestrator's tree,
+    // start new work in the slot that frees, and put it back.
+    store.set_parent("work/a/part", None, K).unwrap();
+    assert_eq!(store.claim("work/next", K).unwrap().status, "in_progress");
+    assert_eq!(
+        refused(store.set_parent("work/a/part", Some("work/a"), K)),
+        format!("work/a/part cannot go under work/a: {}", holds_next())
+    );
+    assert_eq!(store.get("work/a/part").unwrap().parent, None);
+    assert_eq!(
+        refused(store.set_parent("loose", Some("work/b"), K)),
+        format!("loose cannot go under work/b: {}", holds_next()),
+        "open work nobody orchestrated comes under O"
+    );
+    // A change that leaves every count as it was is not refused, nor is the owner's.
+    store.set_parent("work/next", Some("work/a"), O).unwrap();
+    store.set_parent("loose", Some("work/b"), "owner").unwrap();
 }
 
 #[test]

@@ -4,6 +4,7 @@
 use super::cap::GUARD;
 use super::work::{BLOCK_LINE, OWNER, no_task};
 use super::{ACT, Error, Failure, Opens, STATUSES, Store, Task, Which, acting, logged, refused};
+use crate::slots::OPEN;
 use serde::Deserialize;
 use serde_json::json;
 use std::collections::{BTreeSet, HashMap, HashSet};
@@ -34,7 +35,8 @@ FOR $target IN $add {
     UPSERT type::record('link', [$slug, 'dep', $target])
         CONTENT { slug: $slug, kind: 'dep', target: $target } RETURN NONE;
 };
-UPDATE type::record('task', $slug) SET status = $status ?? status, updated = $now, version += 1 RETURN NONE;";
+UPDATE type::record('task', $slug) SET status = $status ?? status, updated = $now, version += 1 RETURN NONE;
+DELETE type::record('counter', ['hold', $slug]) RETURN NONE;";
 
 /// What put a blocked task in `blocked`, read back from its thread.
 #[derive(Debug, PartialEq)]
@@ -90,8 +92,9 @@ fn waits_on(deps: &HashMap<&str, Vec<&str>>, from: &str, to: &str) -> bool {
 impl Store {
     /// `slug` waits on `add` too and no longer on `remove`, on its thread. A task a cancelled
     /// prerequisite blocked that then waits on nothing cancelled goes back to the status its block line
-    /// recorded; one blocked by hand stays blocked. Back to in_progress starts it again: the change
-    /// is refused when that raises an orchestrator's open tasks past the cap ([`crate::slots`]).
+    /// recorded; one blocked by hand stays blocked. Back to in_progress or review starts it again: the
+    /// change is refused when that raises an orchestrator's open tasks past the cap
+    /// ([`crate::slots`]). A hold on the task ends.
     pub fn change_depends(
         &self,
         slug: &str,
@@ -199,10 +202,10 @@ impl Store {
                     Blocked::From(_) | Blocked::ByHand => None,
                 }
             };
-            // Back to work it was blocked from starts it again, as a move would: refused past the
-            // cap. Back to review is where it was blocked from, as a landing's hold returns it.
+            // Back to work or review it was blocked from starts it again, as a move would: refused
+            // past the cap.
             let slots = match (back, self.slots) {
-                (Some(("in_progress", _)), Some(cap)) => {
+                (Some((to, _)), Some(cap)) if OPEN.contains(&to) => {
                     let view = self.view(&Which::Starting(slug))?;
                     let mut executing: Vec<String> =
                         view.holders("executor").map(|r| r.handle.clone()).collect();
@@ -210,10 +213,10 @@ impl Store {
                         executing.push(by.into());
                     }
                     let opens = Opens {
-                        status: Some("in_progress".into()),
-                        orchestrator: None,
+                        status: Some(to.into()),
                         by: executing,
-                        what: format!("{slug} cannot go from blocked back to in_progress"),
+                        what: format!("{slug} cannot go from blocked back to {to}"),
+                        ..Opens::default()
                     };
                     self.slots_taken(&view, slug, &opens, cap)?
                 }

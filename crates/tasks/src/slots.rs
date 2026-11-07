@@ -3,9 +3,11 @@
 //! won't be able to start until other tasks truly finish)", and "this max slot can disconsider
 //! tasks that are blocked and not started (before in progress)".
 //!
-//! A task is **open** while it is in progress or in review ([`OPEN`]); blocked work and work not
-//! started hold no slot, and a slot frees only when its task is done or cancelled (or leaves the
-//! open statuses some other way). Each open task holds a slot of its own, of its orchestrator's:
+//! A task is **open** while it is in progress or in review ([`OPEN`]), or blocked under a hold that
+//! keeps its slot (`Store::hold_blocked`, a landing waiting on its stamps: [`Entry::held`]); other blocked
+//! work and work not started hold no slot, and a slot frees only when its task is done or cancelled
+//! (or leaves the open statuses some other way). Each open task holds a slot of its own, of its
+//! orchestrator's:
 //! the session holding the role on it, or on the nearest task above it that has a holder still
 //! there, as [`crate::orchestration`] reads whose a task is. Two kinds of task are no work of their
 //! own and share the slot of the task they serve ([`Ledger::work`]):
@@ -34,6 +36,8 @@ use std::path::Path;
 
 /// The statuses a task holds a slot in.
 pub const OPEN: [&str; 2] = ["in_progress", "review"];
+/// How a refusal names the status of blocked work a hold keeps open.
+pub const HELD: &str = "blocked, held";
 /// The `[board]` key of the project file naming the cap.
 pub const KEY: &str = "orchestrator_slots";
 
@@ -92,10 +96,28 @@ pub struct Entry<'a> {
     pub status: &'a str,
     /// An instruction subtask, which counts with the task it is part of.
     pub instruction: bool,
+    /// Blocked under a hold that keeps its slot (`Store::hold_blocked`): open, as it was before the hold.
+    pub held: bool,
     /// The sessions holding the orchestrator role on it that are still there
     /// ([`crate::Health::holds`]).
     pub orchestrators: Vec<&'a str>,
     pub executors: Vec<&'a str>,
+}
+
+impl<'a> Entry<'a> {
+    /// Whether it holds a slot: in an open status, or blocked under a hold.
+    pub fn open(&self) -> bool {
+        OPEN.contains(&self.status) || (self.held && self.status == "blocked")
+    }
+
+    /// Its status as a refusal names it.
+    fn shown(&self) -> &'a str {
+        if self.held && self.status == "blocked" {
+            HELD
+        } else {
+            self.status
+        }
+    }
 }
 
 /// Whose slot a task takes, and which.
@@ -152,13 +174,15 @@ impl<'a> Ledger<'a> {
         }
     }
 
-    /// The ledger of a whole board as one read gave it.
+    /// The ledger of a whole board as one read gave it, which reads no hold: blocked work a hold
+    /// keeps open is not counted.
     pub fn of_board(board: &'a Board) -> Ledger<'a> {
         let tasks = board.tasks.iter().map(|t| Entry {
             slug: &t.slug,
             parent: t.parent.as_deref(),
             status: &t.status,
             instruction: t.instruction,
+            held: false,
             orchestrators: (t.roles.iter())
                 .filter(|r| r.role == "orchestrator" && r.health.holds())
                 .map(|r| r.handle.as_str())
@@ -173,8 +197,8 @@ impl<'a> Ledger<'a> {
         Ledger::new(tasks, parents)
     }
 
-    /// The ledger once `slug` is in `status` (when given), `orchestrator` alone holds the role on it
-    /// (when given) and `executors` execute it as well as those that do.
+    /// The ledger once `slug` is in `status` (when given: a move ends a hold), `orchestrator` alone
+    /// holds the role on it (when given) and `executors` execute it as well as those that do.
     pub fn changed(
         &self,
         slug: &str,
@@ -186,6 +210,7 @@ impl<'a> Ledger<'a> {
         if let Some(task) = after.tasks.get_mut(slug) {
             if let Some(status) = status {
                 task.status = status;
+                task.held = false;
             }
             if let Some(orchestrator) = orchestrator {
                 task.orchestrators = vec![orchestrator];
@@ -195,6 +220,17 @@ impl<'a> Ledger<'a> {
                     task.executors.push(executor);
                 }
             }
+        }
+        after
+    }
+
+    /// The ledger once `slug` is under `parent`, or at the top with none; the tasks below it move
+    /// with it. A hold lasts no change of parent.
+    pub fn reparented(&self, slug: &str, parent: Option<&'a str>) -> Ledger<'a> {
+        let mut after = self.clone();
+        if let Some(task) = after.tasks.get_mut(slug) {
+            task.parent = parent;
+            task.held = false;
         }
         after
     }
@@ -284,11 +320,11 @@ impl<'a> Ledger<'a> {
     /// Every owner's open slots, in one pass over the open tasks.
     pub fn holdings(&self) -> HashMap<&'a str, Held<'a>> {
         let mut all: HashMap<&'a str, Held<'a>> = HashMap::new();
-        for task in self.tasks.values().filter(|t| OPEN.contains(&t.status)) {
+        for task in self.tasks.values().filter(|t| t.open()) {
             let place = self.place(task.slug);
             for owner in place.owners {
                 let slot = all.entry(owner).or_default().entry(place.key).or_default();
-                slot.push((task.slug, task.status));
+                slot.push((task.slug, task.shown()));
             }
         }
         for slot in all.values_mut().flat_map(BTreeMap::values_mut) {

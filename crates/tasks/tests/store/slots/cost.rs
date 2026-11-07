@@ -77,7 +77,7 @@ fn the_caps_reads_are_planned_on_an_index_and_a_capped_claim_adds_a_round_trip_a
         "slot_statuses": ["in_progress", "review"],
         "slot_wanted": ["work/a", "deep", "old/7", "review/work/a"],
         "slug": "work/next",
-        "slot_block": "blocked: cancelled dependencies: ",
+        "slot_holds": [["work/a", 1800000000.0], ["old/7", 1.0]],
     });
     for statement in SLOT_READS {
         let mut answers = (client.query(&format!("EXPLAIN {statement};"), vars.clone()))
