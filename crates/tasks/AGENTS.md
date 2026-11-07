@@ -353,9 +353,10 @@ workspace's settings whole and then `disallowed-methods`, refuses std's and
 `process_cwd`'s `Command::new` and `env_clear`, and `process_cwd::process_cwds`
 and `occupied`, by the path they resolve to, however they are spelled, imported
 or gated; the two helpers carry `#[expect(clippy::disallowed_methods)]`. The
-library's test build and each integration test target allow it at their root;
-`src/sys/clippy_tests.rs` runs the toolchain's clippy over a probe crate that
-reads the same file. `port.rs` starts nothing: std's `lsof` for its `Lsof` is
+library's test build and each integration test target allow it at their root.
+`sys`'s tests hold the file to the workspace's settings, and the nightly-only
+target `tests/child_guard` (a nested build, so never in the fast plan) runs the
+toolchain's clippy over a probe crate that reads the same file. `port.rs` starts nothing: std's `lsof` for its `Lsof` is
 `apps/symphony-ui`'s browser test's own. The Symphony's
 `children` re-exports the list, `command` and `sessionless`.
 

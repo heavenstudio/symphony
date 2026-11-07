@@ -13,7 +13,7 @@
 //! kept hc's and ran `hc run` would start a terminal under that one, which ends with it (`hc
 //! --skill`), and an hc call would answer for that core and scope alone. Clippy refuses a child
 //! made anywhere else in the crate, however its path is spelled, imported or gated (the crate's
-//! clippy.toml, `disallowed-methods`; tried in `src/sys/clippy_tests.rs`).
+//! clippy.toml, `disallowed-methods`; tried by the nightly's `tests/child_guard`).
 
 use std::collections::BTreeMap;
 use std::ffi::{OsStr, c_char, c_int, c_long};
@@ -194,11 +194,9 @@ pub fn terminate(pid: i64, hard: bool) -> bool {
 }
 
 #[cfg(test)]
-mod clippy_tests;
-
-#[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::Path;
 
     /// The session this test's re-run is started in, as an agent's hc terminal starts a command:
     /// its board handle, and hc's terminal, socket, core and scope; beside one variable of no
@@ -270,6 +268,19 @@ mod tests {
             done.status.success() && said.contains("1 passed"),
             "{said}{}",
             String::from_utf8_lossy(&done.stderr)
+        );
+    }
+
+    /// Clippy reads the nearest clippy.toml alone: the crate's, which refuses a child made past
+    /// [`command`] and [`command_with`], must hold the workspace's settings whole before its own.
+    #[test]
+    fn the_crates_clippy_settings_start_with_the_workspaces() {
+        let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let ours = std::fs::read_to_string(manifest.join("clippy.toml")).unwrap();
+        let workspace = std::fs::read_to_string(manifest.join("../../clippy.toml")).unwrap();
+        assert!(
+            ours.starts_with(&workspace),
+            "symphony/crates/tasks/clippy.toml must start with symphony/clippy.toml whole"
         );
     }
 
