@@ -15,7 +15,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::{Mutex, mpsc};
 use std::time::{Duration, Instant};
-use symphony_board::sys::{self, Command, Stdio};
+use symphony_board::sys::{self, Stdio};
 
 mod stamp;
 use stamp::{installed_source, stamp_install};
@@ -297,7 +297,7 @@ fn replace(
         .chain(transfer.ready)
         .chain(transfer.commit)
         .collect();
-    let mut command = Command::new(exe);
+    let mut command = symphony::children::command(exe);
     command
         .arg("serve")
         .arg("--home")

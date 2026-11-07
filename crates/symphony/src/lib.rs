@@ -23,6 +23,7 @@ pub mod board;
 pub mod branches;
 pub mod callbacks;
 pub mod callouts;
+pub mod children;
 pub mod cli;
 pub mod clock;
 pub mod commit;

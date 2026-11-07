@@ -101,7 +101,7 @@ pub(super) fn responses() -> BTreeMap<String, Value> {
         ),
         (
             "/api/agent-page".into(),
-            json!({"view":{"generated":1.0,"probes":{"herdr":"ok","slots":"ok"},"agents":[agent]},"tasks":[tasks[4]],"total":1,"next":null}),
+            json!({"view":{"generated":1.0,"probes":{"panes":"unavailable","slots":"ok"},"agents":[agent]},"tasks":[tasks[4]],"total":1,"next":null}),
         ),
         (
             "/api/task-page".into(),
@@ -1137,7 +1137,7 @@ fn queue_agent_task_and_chat_surfaces_keep_their_compact_review_treatment() {
     browser.open(&site.url("/agents"));
     assert!(
         browser.wait_for(
-            "document.querySelector('.agents-card .agent') !== null",
+            "document.querySelector('.agents-card .agent') !== null && document.querySelector('h1 + .lead + .muted')?.textContent === 'unavailable · ok'",
             SHOWN
         ),
         "agents: {}",
