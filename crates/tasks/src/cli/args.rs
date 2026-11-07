@@ -326,6 +326,7 @@ const COMMANDS: &[Command] = &[
         pos: &[],
         opts: &[AS, opt("--dry-run", "dry_run", Takes::Bool)],
     },
+    plain("close", &[pos("slug"), pos("handle")]),
     Command {
         name: "reap",
         pos: &[],
@@ -773,7 +774,7 @@ mod tests {
             .unwrap()
     }
 
-    const ALL: &str = "'callback', 'register', 'attach', 'list', 'search', 'embed', 'next', 'create', 'priority', 'field', 'claim', 'reserve', 'release', 'show', 'parent', 'depends', 'done', 'role', 'handover', 'move', 'verdict', 'say', 'launch', 'restore', 'cleanup', 'reap', 'staff', 'agents', 'who', 'inbox', 'leave', 'beat', 'export', 'finish', 'sweep'";
+    const ALL: &str = "'callback', 'register', 'attach', 'list', 'search', 'embed', 'next', 'create', 'priority', 'field', 'claim', 'reserve', 'release', 'show', 'parent', 'depends', 'done', 'role', 'handover', 'move', 'verdict', 'say', 'launch', 'restore', 'cleanup', 'close', 'reap', 'staff', 'agents', 'who', 'inbox', 'leave', 'beat', 'export', 'finish', 'sweep'";
 
     #[test]
     fn every_command_of_the_usage_is_read_and_has_its_help() {
@@ -797,9 +798,11 @@ mod tests {
             (true, Some("amber-heron"))
         );
         assert!(!run(&["reap"]).flag("dry_run"));
-        assert!(usage::USAGE.contains(",cleanup,reap,staff,agents,"));
+        assert!(usage::USAGE.contains(",cleanup,close,reap,staff,agents,"));
         assert_eq!(
-            usage::HELP.matches(",cleanup,reap,staff,agents,").count(),
+            usage::HELP
+                .matches(",cleanup,close,reap,staff,agents,")
+                .count(),
             2
         );
     }

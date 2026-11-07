@@ -15,7 +15,8 @@
 //! way. [`cleanup`] closes unneeded terminals (killed, then removed), each closure recorded on its
 //! task with the restore line; [`finish`] is the same for one task that just became done or
 //! cancelled (its worktree is the worktree sweep's, `tasks sweep --task`). [`reap`] is the periodic
-//! sweep of idle agents.
+//! sweep of idle agents. [`close`] closes one agent's terminal on its orchestrator's word, whatever
+//! it holds, recorded the same way, under the rules its module gives.
 //!
 //! A terminal is closed only when all of these hold: it is this board's (`sf.board`); its agent is
 //! idle (or it is a shell with nothing in it, or its program ended), its foreground is the program it
@@ -33,6 +34,7 @@
 //! `$HERDR_APP_BIN` (default `herdr-app`); the tests (`tests/launch/`) point both at `fake-hc`.
 
 mod cleanup;
+mod close;
 pub mod hc;
 mod place;
 mod recover;
@@ -46,6 +48,7 @@ pub mod staff;
 mod startup;
 
 pub use cleanup::{Closure, cleanup, finish};
+pub use close::close;
 use place::{name_place, place, stream};
 
 use crate::cli::{Env, probes};
@@ -53,7 +56,7 @@ use crate::health::{FINISHED, RESERVE_SECONDS};
 use crate::rows::TaskSessionRow;
 use crate::sys::{self, Command};
 use crate::{Error, NewLaunch, NewSession, Store};
-use hc::{Hc, text_of};
+use hc::Hc;
 use serde_json::Value;
 use std::collections::HashSet;
 use std::fmt;
@@ -551,31 +554,10 @@ fn start_confirmed(
     )
 }
 
-/// The addresses of this board's live terminals.
-fn live_addresses(hc: &dyn Hc) -> Result<HashSet<String>, LaunchError> {
-    Ok(hc
-        .terminals()?
-        .iter()
-        .filter(|t| text_of(t, "state") == "live")
-        .map(|t| text_of(t, "address"))
-        .collect())
-}
-
 /// Whether a recorded pane is gone: a herdr pane id (`w1:p3`: herdr is no more), or a terminal of
 /// this board hc no longer runs. A record naming no pane says nothing either way.
 pub(crate) fn gone(pane: &str, running: &HashSet<String>) -> bool {
     !pane.is_empty() && (pane.contains(':') || !running.contains(pane))
-}
-
-/// The live terminal `handle` still runs in, by its name or its `sf.handle` label, if any.
-fn running_as(hc: &dyn Hc, handle: &str) -> Result<Option<String>, LaunchError> {
-    let labelled = hc.listed(&[format!("{}={handle}", hc::HANDLE_LABEL)], false)?;
-    let named = hc.live()?;
-    Ok(labelled
-        .iter()
-        .chain(named.iter().filter(|t| text_of(t, "name") == handle))
-        .map(|t| text_of(t, "address"))
-        .next())
 }
 
 fn codex_args(model: &str, handle: &str, m: &Machine) -> Vec<String> {

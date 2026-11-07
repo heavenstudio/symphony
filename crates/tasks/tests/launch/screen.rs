@@ -17,7 +17,7 @@ fn nothing_shown() -> Value {
 
 impl World {
     /// The window shows what `shown` says over a window showing nothing.
-    fn shows(&self, shown: Value) {
+    pub(crate) fn shows(&self, shown: Value) {
         let mut screen = nothing_shown();
         if let Some(shown) = shown.as_object() {
             for (key, value) in shown {
@@ -35,7 +35,7 @@ impl World {
         symphony_board::launch::cleanup(self.store(), hc, &*m.processes, false, &[]).unwrap()
     }
 
-    fn tab_of(&self, terminal: &str) -> String {
+    pub(crate) fn tab_of(&self, terminal: &str) -> String {
         self.terminal(terminal)["labels"]["herdr.tab"]
             .as_str()
             .unwrap()

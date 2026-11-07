@@ -3,23 +3,26 @@
 //! moved to Rust. A flag added to a command adds itself here too.
 
 mod launch;
+mod panes;
 
 /// The usage line of `just tasks` itself.
 pub const USAGE: &str = r#"usage: just tasks [-h] [--as ACTOR]
-                  {callback,register,attach,list,search,embed,next,create,priority,field,claim,reserve,release,show,parent,depends,done,role,handover,move,verdict,say,launch,restore,cleanup,reap,staff,agents,who,inbox,leave,beat,export,finish,sweep} ...
+                  {callback,register,attach,list,search,embed,next,create,priority,field,claim,reserve,release,show,parent,depends,done,role,handover,move,verdict,say,launch,restore,cleanup,close,reap,staff,agents,who,inbox,leave,beat,export,finish,sweep} ...
 "#;
 
 /// `just tasks --help`.
 pub const HELP: &str = r#"usage: just tasks [-h] [--as ACTOR]
-                  {callback,register,attach,list,search,embed,next,create,priority,field,claim,reserve,release,show,parent,depends,done,role,handover,move,verdict,say,launch,restore,cleanup,reap,staff,agents,who,inbox,leave,beat,export,finish,sweep} ...
+                  {callback,register,attach,list,search,embed,next,create,priority,field,claim,reserve,release,show,parent,depends,done,role,handover,move,verdict,say,launch,restore,cleanup,close,reap,staff,agents,who,inbox,leave,beat,export,finish,sweep} ...
 
 The task board from the terminal — `just tasks …` and `just tasks-attach`.
 
 positional arguments:
-  {callback,register,attach,list,search,embed,next,create,priority,field,claim,reserve,release,show,parent,depends,done,role,handover,move,verdict,say,launch,restore,cleanup,reap,staff,agents,who,inbox,leave,beat,export,finish,sweep}
+  {callback,register,attach,list,search,embed,next,create,priority,field,claim,reserve,release,show,parent,depends,done,role,handover,move,verdict,say,launch,restore,cleanup,close,reap,staff,agents,who,inbox,leave,beat,export,finish,sweep}
     callback            register a native channel or --off for inbox fallback
     depends             change what a task waits on
     handover            hand a task's orchestrator role to another session
+    close               close an agent's terminal, whatever it holds, and
+                        record it with its restore line
     beat               a hook: read one Claude Code tool event on stdin and
                         beat for the subagent making it
     finish              close the panes of a finished task's sessions
@@ -421,45 +424,10 @@ options:
 "#,
     ),
     ("launch", launch::USAGE, launch::HELP),
-    (
-        "restore",
-        r#"usage: just tasks restore [-h] [--as ACTOR] slug [handle]
-"#,
-        r#"usage: just tasks restore [-h] [--as ACTOR] slug [handle]
-
-positional arguments:
-  slug
-  handle
-
-options:
-  -h, --help  show this help message and exit
-  --as ACTOR
-"#,
-    ),
-    (
-        "cleanup",
-        r#"usage: just tasks cleanup [-h] [--as ACTOR] [--dry-run]
-"#,
-        r#"usage: just tasks cleanup [-h] [--as ACTOR] [--dry-run]
-
-options:
-  -h, --help  show this help message and exit
-  --as ACTOR
-  --dry-run
-"#,
-    ),
-    (
-        "reap",
-        r#"usage: just tasks reap [-h] [--as ACTOR] [--dry-run]
-"#,
-        r#"usage: just tasks reap [-h] [--as ACTOR] [--dry-run]
-
-options:
-  -h, --help  show this help message and exit
-  --as ACTOR
-  --dry-run   name what the next sweep closes; count nothing
-"#,
-    ),
+    ("restore", panes::RESTORE.0, panes::RESTORE.1),
+    ("cleanup", panes::CLEANUP.0, panes::CLEANUP.1),
+    ("close", panes::CLOSE.0, panes::CLOSE.1),
+    ("reap", panes::REAP.0, panes::REAP.1),
     (
         "staff",
         r#"usage: just tasks staff [-h] [--as ACTOR] [--dry-run]

@@ -4,6 +4,65 @@ use super::*;
 use symphony_board::launch::restore_unanswered;
 
 #[test]
+fn recovery_blocked_by_a_close_keeps_its_attempt_reserved_and_allows_manual_restore() {
+    let w = World::new();
+    let session = launched(&w).row;
+    w.store().claim(&session.slug, &session.handle).unwrap();
+    close_terminal(&w, &session);
+    let post = w
+        .store()
+        .say(&session.slug, "owner", "continue", Some("@executor"))
+        .unwrap();
+    w.f.advance(31.0 * 60.0);
+    let hold = w.store().take_session(&session.handle, "a close").unwrap();
+    let mut warnings = Vec::new();
+    assert!(
+        restore_unanswered(w.store(), &w.hc(), &w.machine(), &mut warnings)
+            .unwrap()
+            .is_empty()
+    );
+    let warning = String::from_utf8(warnings).unwrap();
+    assert_eq!(warning.lines().count(), 1, "{warning}");
+    assert!(warning.contains(&format!("post #{}", post.id)), "{warning}");
+    assert!(
+        warning.contains(&format!("a close of {} is under way", session.handle)),
+        "{warning}"
+    );
+    assert!(
+        warning.contains(&format!(
+            "just tasks restore {} {}",
+            session.slug, session.handle
+        )),
+        "{warning}"
+    );
+    assert_eq!(w.calls_of(&["run"]).len(), 1);
+    assert!(
+        w.store().task_sessions(&session.slug).unwrap()[0]
+            .closed
+            .is_some()
+    );
+
+    w.store().release_session(&session.handle, hold).unwrap();
+    let mut warnings = Vec::new();
+    assert!(
+        restore_unanswered(&w.f.other(), &w.hc(), &w.machine(), &mut warnings)
+            .unwrap()
+            .is_empty(),
+        "the failed automatic attempt remains reserved after the close releases its hold"
+    );
+    assert!(warnings.is_empty(), "{warnings:?}");
+    assert_eq!(w.calls_of(&["run"]).len(), 1);
+    let digest = symphony_board::cli::pull::digest(w.store(), &[], None, w.f.now(), &[]).unwrap();
+    assert_eq!(digest.count("unanswered"), 1);
+
+    let resumed = restored(&w, &session.slug, Some(&session.handle)).unwrap();
+    assert_eq!(resumed.len(), 1);
+    assert_eq!(resumed[0].row.claude_session, session.claude_session);
+    assert!(resumed[0].row.closed.is_none());
+    assert_eq!(w.calls_of(&["run"]).len(), 2);
+}
+
+#[test]
 fn recovery_resumes_once_per_post_for_closed_or_missing_open_conversations() {
     for closed in [false, true] {
         let w = World::new();

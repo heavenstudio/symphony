@@ -1,7 +1,10 @@
 //! Idle terminal sweep with deterministic board-clock intervals.
 
+#[path = "reap_codex.rs"]
+mod codex;
 #[path = "reap_pending.rs"]
 mod pending;
+use codex::sweep_stopped_before_its_kill;
 
 use crate::common::RawWrite;
 use crate::{Folder, Hooked, World, git};
@@ -1059,7 +1062,7 @@ fn a_closed_codex_agents_registration_is_retired_with_it() {
     assert!(!w.store().callbacks().unwrap().contains_key(&handle));
     assert_eq!(
         w.store().sessions_of(&handle).unwrap()[0].claude_session,
-        "codex:"
+        "codex:0abc"
     );
 }
 
@@ -1084,20 +1087,7 @@ fn an_interrupted_close_is_retried_without_repeating_its_thread_line() {
         }
         w.sweep();
         let before = w.f.said("sim/jump").len();
-        let mut interrupted = Hooked::new(&w);
-        interrupted.instead = Box::new(|args| {
-            if args[0] == "kill" {
-                panic!("sweep stopped before the terminal closed");
-            }
-            None
-        });
-        let stopped = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            w.sweep_with(&interrupted, How::default())
-        }));
-        assert_eq!(
-            stopped.unwrap_err().downcast_ref::<&str>(),
-            Some(&"sweep stopped before the terminal closed")
-        );
+        sweep_stopped_before_its_kill(&w);
         let recorded = w.store().sessions_of(&handle).unwrap();
         assert_eq!(recorded.len(), 1);
         assert!(recorded[0].closed.is_some());
