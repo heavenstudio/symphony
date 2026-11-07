@@ -556,32 +556,41 @@ pub fn refused<T: std::fmt::Debug>(result: Result<T, symphony_board::Error>) -> 
     }
 }
 
-/// The public presence sweep `store` runs over an empty pane inventory, keeping its round in
-/// `state`: it looks up no pane or process, and refreshes and prunes the board's callbacks as ever.
+/// The public presence sweep `store` runs over an hc that lists no terminal, keeping its round in
+/// `state`: it looks up no terminal or process, and refreshes and prunes the board's callbacks as
+/// ever.
 pub fn sweep_presence(store: &Store, state: PathBuf) {
     use symphony_board::launch::LaunchError;
-    use symphony_board::launch::herdr::Herdr;
+    use symphony_board::launch::hc::Hc;
     use symphony_board::launch::reap::{self, REAP_SECONDS, Reap};
 
-    struct EmptyPanes;
-    impl Herdr for EmptyPanes {
+    struct NoTerminals;
+    impl Hc for NoTerminals {
         fn run(&self, _args: &[&str]) -> Result<String, LaunchError> {
-            Ok(r#"{"result":{"agents":[]}}"#.into())
+            Ok(r#"{"terminals":[]}"#.into())
         }
-        fn workspace(&self) -> Option<String> {
+        fn feed(&self, _args: &[&str], _input: &str) -> Result<String, LaunchError> {
+            panic!("no terminal needs the core's documents")
+        }
+        fn app(&self, _args: &[&str]) -> Result<String, LaunchError> {
+            panic!("no terminal needs the window")
+        }
+        fn caller(&self) -> Option<String> {
             None
+        }
+        fn board(&self) -> String {
+            "lamp-works/tasks".into()
         }
     }
 
     let sweep = Reap {
         state,
         apply: true,
-        processes: &|_| panic!("no pane needs a process inventory"),
-        current_pane: None,
+        processes: &|_| panic!("no terminal needs a process inventory"),
         caller: None,
         min_idle: REAP_SECONDS,
     };
-    let swept = reap::sweep(store, &EmptyPanes, &sweep, &mut Vec::new());
+    let swept = reap::sweep(store, &NoTerminals, &sweep, &mut Vec::new());
     assert!(swept.unwrap().is_some());
     std::fs::remove_file(&sweep.state).unwrap();
     std::fs::remove_file(reap::lock_path(&sweep.state)).unwrap();

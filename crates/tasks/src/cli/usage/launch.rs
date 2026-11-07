@@ -29,7 +29,7 @@ options:
   --detached
   --worktree WORKTREE   use this worktree instead of making one under
                         <repo>-wt/
-  --tab TAB             the herdr tab (stream) for its pane; default code for
-                        an executor, review for a reviewer
+  --tab TAB             the Herdr app tab (stream) for its terminal; default
+                        code for an executor, review for a reviewer
   --prompt PROMPT       text sent after /work SLUG HANDLE
 "#;

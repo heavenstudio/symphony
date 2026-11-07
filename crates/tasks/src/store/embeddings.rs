@@ -39,7 +39,7 @@ struct Parts {
 
 #[derive(Deserialize)]
 struct Checkpoint {
-    snapshot: Value,
+    digest: String,
     current: bool,
 }
 
@@ -86,6 +86,11 @@ impl Store {
     /// message counter and task update stamps agree. The checkpoint precedes inference: a board
     /// write racing the pass therefore remains visible to the next child. Explicit catch-up keeps
     /// its full repair scan, including missing cache parts, even without a board write.
+    ///
+    /// The checkpoint keeps a SHA-256 of those stamps, computed by the server, never the stamps:
+    /// every task's, kept whole, made a 165 KB row that each changed pass rewrote, about once a
+    /// minute on a busy board (tools/tasks-db-space). `CONTENT` replaces a row an older pass left,
+    /// and a row without a digest is never current.
     pub fn maintain_embeddings(
         &self,
         embedder: &mut dyn Embedder,
@@ -94,12 +99,12 @@ impl Store {
     ) -> Result<EmbeddingStats, Error> {
         validate_batch_size(batch_size)?;
         let checkpoint: Checkpoint = self.retrying(|| self.transact(
-            "LET $snapshot = {model: $model,
+            "LET $digest = crypto::sha256(<string> {model: $model,
                 message: {last: (SELECT VALUE last FROM ONLY counter:message) ?? 0,
                     ts: (SELECT VALUE ts FROM ONLY counter:message) ?? 0},
-                tasks: (SELECT slug, updated, version FROM task ORDER BY slug)};
-             RETURN {snapshot: $snapshot,
-                current: (SELECT VALUE snapshot FROM ONLY task_embedding_checkpoint:board) = $snapshot};",
+                tasks: (SELECT slug, updated, version FROM task ORDER BY slug)});
+             RETURN {digest: $digest,
+                current: (SELECT VALUE digest FROM ONLY task_embedding_checkpoint:board) = $digest};",
             json!({"model": embedder.model_id()}),
         ))?;
         if checkpoint.current {
@@ -107,8 +112,8 @@ impl Store {
         }
         let stats = self.catch_up_embeddings(embedder, None, batch_size, progress)?;
         let _: Value = self.retrying(|| self.transact(
-            "UPSERT task_embedding_checkpoint:board SET snapshot = $snapshot RETURN NONE; RETURN NONE;",
-            json!({"snapshot": checkpoint.snapshot}),
+            "UPSERT task_embedding_checkpoint:board CONTENT {digest: $digest} RETURN NONE; RETURN NONE;",
+            json!({"digest": checkpoint.digest}),
         ))?;
         Ok(stats)
     }

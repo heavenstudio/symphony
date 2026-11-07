@@ -21,13 +21,24 @@ The heartbeat hook never starts it. `TASKS_SERVER` (an address) and
 history: `just tasks export` writes a readable snapshot to
 `docs/history/tasks.md` when one is worth keeping.
 
+The store takes about what it holds. Every server the board starts keeps each
+value beside its key, where compaction drops the versions a rewrite leaves, and
+logs at most 256 MiB of writes before it moves them to an sstable. SurrealKV's
+default had sent every value over 4 KiB to a value log that only grows: 102 GiB
+held a board of 0.5 GiB. `just tasks-reclaim`, the owner's to run from the main checkout,
+rebuilds a store that grew that way. It stops the server, exports every
+database, imports them into a new store, and checks that store's exports byte
+for byte against the old ones. Only then does it swap the stores and remove the
+old one. The exports stay in `sf-tasks/reclaim/exports/`. `--dir FOLDER`
+rehearses on a copy of `sf-tasks/` (`cp -c`, a clone).
+
 The command is the `tasks` binary (`symphony/crates/tasks`), built from this tree's
 sources once for every worktree that shares them (`tools/rs-bin.sh`): the
 first command after a change to them builds it, which takes a minute or two.
 The heartbeat hook runs the build its tree last ran (`.target/bin/tasks`) and
 builds nothing. There is no Python board adapter.
-`launch`, `restore`, `cleanup` and `reap` are its own, herdr's panes and all
-(`symphony/crates/tasks/src/launch/`). The server is the pinned SurrealDB, fetched once
+`launch`, `restore`, `cleanup` and `reap` are its own, hc's terminals and all
+(`symphony/crates/tasks/src/launch/`); the board calls no `herdr`. The server is the pinned SurrealDB, fetched once
 per machine into `sf-surreal/` in the git common dir by `bash tools/surreal.sh`
 (the Rust tests fetch it the same way); the board says so when it is missing.
 
@@ -47,7 +58,7 @@ handle is printed by `just tasks register`; later commands take it from
 `TASKS_SESSION` or `--as`. Then run `just tasks callback --as HANDLE`: it detects
 the Claude inbox socket or Codex thread. An explicit `uds:/absolute/socket` or
 `codex:THREAD-UUID` works too. A session with no channel is listed as such and
-keeps the inbox fallback. Herdr panes are for inspection, never delivery.
+keeps the inbox fallback. hc terminals are for inspection, never delivery.
 
 `just agent-send HANDLE "text"` addresses an agent without a task. The sender
 comes from `TASKS_SESSION` or `--as`; delivery is one plain
@@ -100,18 +111,36 @@ For isolated runs use `tasks --database NAME ...` and
 its asks in `artifacts/callbacks-NAME/asks.db`.
 
 **Agent sessions behind a task** (`task_sessions`): `just tasks launch SLUG` starts a
-Codex agent in a herdr pane (default model `gpt-6.1-sol`, effort `xhigh`, workspace-write
-with network access). `--kind claude --model sonnet` selects Claude. It writes its handle, role, agent session
-id, worktree, branch, pane and start time; `just tasks show` lists them under
-`Sessions:`. When a pane is closed (`just tasks cleanup`, or the task becoming done
-or cancelled) the record stays and says why and how to bring it back,
+Codex agent (`--no-daemon`; default model `gpt-6.1-sol`, effort `xhigh`, workspace-write
+with network access) in an hc terminal of its own, `hc run --bg --no-parent --outlive-parent
+--keep`: no child of the caller's terminal, which the app would show under it rather than in
+a tab. `--kind claude --model sonnet` selects Claude. The
+terminal shows in its stream tab (`code` for an executor, `review` for a reviewer, or
+`--tab` such as `3d` or `infra`) of the project's space in the Herdr app, found by name and
+made when missing (the labels `herdr.space` and `herdr.tab`); the owner's tabs and other
+projects' terminals are never a destination. Once hc calls the agent ready (`idle` or
+`done`), its first message goes in by `hc send`, never forced, and the launch is confirmed
+only by that send's receipt (`started`): an agent waiting on a person (a folder-trust
+dialog), never ready, or not starting on the message fails the launch naming the terminal,
+which is killed and removed. It writes its handle, role, agent session
+id, worktree, branch, terminal and start time; `just tasks show` lists them under
+`Sessions:`. No terminal the owner may be looking at is closed: one in the tab the Herdr
+app shows, the agent it shows, or held over them (`herdr-app status`, read last, right
+before the kill, after a last `hc get` that must still find it finished, running the program
+cleanup judged: the same pid and foreground); when the window cannot say or the terminal
+works again, it stays and cleanup names why. A shell closes only with the shell itself in
+its foreground: a job it runs in front, or one it became by `exec`, is work. When a terminal is closed (`just
+tasks cleanup`, or the task becoming done or cancelled: `hc kill`, then `hc rm`) the
+record stays and says why and how to bring it back,
 `just tasks restore SLUG [HANDLE]`, which resumes the conversation in the same
-worktree. See the [tasks skill](../../.agents/skills/tasks/SKILL.md#launch-restore-clean-up-herdr).
+worktree, in a new terminal. A record from before hc names a herdr pane (`w1:p…`): that
+terminal is gone, so cleanup records it closed with its restore line, and restore brings
+the agent back in an hc terminal. See the [tasks skill](../../.agents/skills/tasks/SKILL.md#launch-restore-clean-up-herdr).
 
 **Which agent starts where** is a [standing rule](../../RULES.md#workflowclaude-first-agents):
 executors and reviewers are Claude, started as in-process subagents or
 `claude -p`, with a handle registered for them and a subtask made `--for` it. A
-pane, `just tasks launch SLUG --kind K` (`--role reviewer` for a reviewer),
+terminal, `just tasks launch SLUG --kind K` (`--role reviewer` for a reviewer),
 holds work that needs one: Codex's adversarial review of a branch a Claude
 executor wrote (`gpt-6.1-sol` or better, `xhigh`), its image generation and 3D
 modelling, or an agent that must be watched or outlive its orchestrator
@@ -139,29 +168,34 @@ line beginning `Owner-only:`, `Owner only:`, `Tier: owner` or `Review tier: owne
 Use these explicit markers for owner decisions.
 
 Before launching, the pass prompts an idle worker/reviewer holding no unfinished
-work in a suitable open pane: an executor already on the task's own branch, or an
+work in a suitable open terminal: an executor already on the task's own branch, or an
 instruction worker/reviewer in a detached checkout. A checkout with a live or stale
 executor is never reused. Otherwise it launches Codex in a separate worktree: the
-task's own branch, or detached main for an instruction or review. Live agent panes
-across workspaces and live board agent sessions without panes count toward the cap;
+task's own branch, or detached main for an instruction or review. Live agent terminals
+and live board agent sessions without a terminal count toward the cap;
 reuse adds no session. Memory below the floor defers work. Every proposal, dispatch,
 deferral and failure prints one line. Only a successful ping or launch is posted on
 the task; deferrals and dry runs post nothing. A dry run previews even while
-disabled and creates no task, session or pane.
+disabled and creates no task, session or terminal.
 
 **Idle agents are closed by the board, not by a reminder** (owner, 2026-10-07). A task
 that becomes done or cancelled closes its sessions at once; the rest is a sweep the
 Symphony's process (`just symphony`) runs every five minutes. A lock in `sf-tasks/`,
 beside the board's server, keeps two sweeps (a second app's, or `just tasks reap` by
-hand) from running at once, and nothing goes into any monitor. It closes a herdr pane whose named Claude agent was
+hand) from running at once, and nothing goes into any monitor. It closes (`hc kill`,
+then `hc rm`) one of this board's terminals (label `sf.board`) whose named agent was
 idle (or stuck on the folder-trust prompt) at two sweeps at least five minutes apart,
 however many apps sweep, when neither its handle nor a subagent session under it holds
 an executor role on an in-progress or blocked task or a reviewer role on a task in
-review, and nothing runs under it but MCP helpers, caffeinate and board commands:
-anything else is work. Status and roles are read again right before the close. Never an
-unnamed pane (it may be the owner's), an orchestrator, the focused pane or the caller's.
+review, and nothing runs under it but MCP helpers (Codex's configured `node_repl` among
+them, by its path), caffeinate and board commands: anything else is work. Status, roles
+and the window are read again right before the close, and the terminal and the window once
+more after the close is recorded, right before the kill: work resumed by then (its agent
+working, or work under it) or the window showing it reopens the record. Never an unnamed terminal or another board's (it may be the owner's), an
+orchestrator, the caller's (`HC_TERMINAL_ID`), or one on screen in the Herdr app, which
+starts its idle wait again (as does a window that cannot say what it shows).
 Each close is one line on the handle's task thread, with its restore line, written
-before the pane is closed. `just tasks reap --dry-run` names what the next sweep would close.
+before the terminal is closed. `just tasks reap --dry-run` names what the next sweep would close.
 Code: `symphony/crates/tasks/src/launch/reap.rs`.
 
 **Finished worktrees go by themselves** (owner, 2026-10-21: "do any cleanups for worktrees
@@ -221,7 +255,7 @@ command. A handle anywhere else
 in a command (a grep pattern, text inside a quoted argument, another recipe
 such as `just land` run under someone's `TASKS_SESSION`) binds nothing. From
 then on each of its tool calls beats for that handle, until a later board
-command names another. A full session with no agent id (one started in a herdr pane, or a
+command names another. A full session with no agent id (one started in an hc terminal, or a
 `claude -p` run) is bound and beats the same way, keyed by its session id, but keeps the first handle
 it names: naming another (registering or relaying for a child) moves nothing. A handle
 with a monitor of its own (an orchestrator) is never bound: its monitor beats for it,
@@ -242,9 +276,10 @@ see only what is committed.
 
 The app is the source of truth for who is doing what: `GET /api/agents` of the Symphony and `just tasks agents
 [--json] [--all]` return the same document (`symphony/crates/tasks/src/cli/agents.rs`; these keys are a contract, pinned by
-`symphony/crates/tasks/tests/cli/agents.rs`). The board (sessions, roles, `task_sessions`) is the record; herdr's
-panes and the test-slot locks are probes that say what each agent is doing now, and `probes` names either as
-`unavailable` when it cannot be asked, the rest being built from the board alone.
+`symphony/crates/tasks/tests/cli/agents.rs`). The board (sessions, roles, `task_sessions`) is the record; hc's
+live terminals (`hc ls`) and the test-slot locks are probes that say what each agent is doing now, and `probes` names
+either as `unavailable` when it cannot be asked, the rest being built from the board alone. The hc probe keeps the
+key `herdr` and an agent's terminal the key `pane`: names the wire keeps.
 
 ```
 {"generated": 1790000000.0,
@@ -254,7 +289,7 @@ panes and the test-slot locks are probes that say what each agent is doing now, 
    "task": "sim/jump", "role": "executor",           # the task it works now (an open one first)
    "tasks": [{"slug": "sim/jump", "role": "executor", "status": "in_progress"}],
    "worktree": "/…/lamp-works-wt/sim-jump", "branch": "sim/jump",   # where it really works
-   "agent": "claude", "session_id": "9aa0…", "pane": "w1:p5",
+   "agent": "claude", "session_id": "9aa0…", "pane": "t5",
    "callback": "uds:/tmp/cc-socks/1234.sock", "chat": false,
    "state": "running_test",
    "state_detail": {"recipe": "verify-full", "phase": "waiting", "since": 1789999000.0},
@@ -264,8 +299,8 @@ panes and the test-slot locks are probes that say what each agent is doing now, 
 ```
 
 `state` is `working`, `running_test` (a run of its own holds a test slot, `phase: holding`, or is queued for one,
-`phase: waiting`, `state_detail` naming the recipe and since when), `waiting_on_input` (herdr sees an approval or a
-question), `idle`, or `gone` (no pane and no sign of life). An agent running or queued for its own verify reads
+`phase: waiting`, `state_detail` naming the recipe and since when), `waiting_on_input` (hc sees an approval or a
+question), `idle`, or `gone` (no terminal and no sign of life). An agent running or queued for its own verify reads
 `running_test` and `health: live`, never `lost`. `last_tool_call` is the time of the last tool call of the agent
 (`null` before the first): the monitor's 20 s beat and board commands do not move it.
 `callback` is the native address (`uds:` or `codex:`), or `null` for an inbox-only
@@ -276,16 +311,16 @@ The rules a port must copy, in this order:
 
 - **Who is listed.** A session that ran `leave` (it has `left_at`) is omitted unless `--all`. So is one the board calls
   `left` (quiet, holding nothing another could claim; every session that never ran anything ends so) that has neither a
-  pane nor a run of its own nor a native registration: it is gone. A native
+  terminal nor a run of its own nor a native registration: it is gone. A native
   registration stays visible while idle; its activity health is not fabricated.
-  A quiet one with a pane or a run stays (an executor whose task waits in review,
-  its pane idle). `--all` lists everything and changes nothing else.
+  A quiet one with a terminal or a run stays (an executor whose task waits in review,
+  its terminal idle). `--all` lists everything and changes nothing else.
 - **worktree and branch.** From the agent's task session (`just tasks launch` recorded it; the one for its primary task,
-  else its latest), else from its pane's working directory (and the branch checked out there), else, only with neither,
-  the directory `register` ran in: an agent that was never launched and has no pane.
-- **Which pane.** The task session's pane id if herdr still lists it, else the pane whose agent session is the task
-  session's or the one bound by the heartbeat hook, else the pane titled or named with the handle. A pane without an id
-  is ignored.
+  else its latest), else from its terminal's working directory (and the branch checked out there), else, only with
+  neither, the directory `register` ran in: an agent that was never launched and has no terminal.
+- **Which terminal.** The task session's terminal if hc still lists it live, else the terminal whose program runs the
+  task session's conversation or the one bound by the heartbeat hook (when hc gives its argv), else the terminal titled
+  or named with the handle. A terminal without an address is ignored.
 - **Which run is the agent's.** First a run tagged with its handle (a slot records the `TASKS_SESSION` it ran for), wherever
   it runs: a verify in a trial merge, or by an agent that was never launched. Else, for an agent that is alone in its
   worktree, the run whose worktree is exactly its own (realpath; a slot records its git top level) and that carries no
@@ -293,7 +328,7 @@ The rules a port must copy, in this order:
   exports), never to agents that share a worktree (all those registered in the main checkout); the count of agents sharing a
   worktree takes every session, left ones included, so `--all` never changes who a run belongs to. Several runs: holding
   before waiting, then the oldest.
-- **state.** A matched run is `running_test`. Else the pane's status (`working`, `blocked` is `waiting_on_input`, `idle`
+- **state.** A matched run is `running_test`. Else the terminal's status (`working`, `blocked` is `waiting_on_input`, `idle`
   and `done` are `idle`). Else the board's health: live is `working`, stale `idle`, lost or left `gone`. A matched run also lifts
   `stale` and `lost` to `live`.
 - **A probe that fails** is `unavailable` in `probes`, and the answer is built from the board; a failing branch lookup is an
@@ -448,7 +483,7 @@ orchestrator hears an unclaimed task's NEW lines, PULL digest rows and the
 STATUS of its move to `blocked`, which no digest row shows, and only its owner
 a claimed one's. A post to `@orchestrator`, and a
 verdict, go to the nearest holder still there, passing one gone quiet. A
-session gone stale or lost, or waiting in its pane, is said to the
+session gone stale or lost, or waiting in its terminal, is said to the
 orchestrator of the work it holds, its LOST line naming only that
 orchestrator's tasks and its BLOCKED line only a launch for one of them; a
 session whose work is nobody's, or who holds none, is

@@ -1,14 +1,16 @@
-//! `restore`: a closed session comes back in a new pane, in its worktree, resuming its conversation.
+//! `restore`: a closed session, or one whose terminal is gone (a herdr pane from before hc, or a
+//! terminal closed outside the board), comes back in a new hc terminal, in its worktree, resuming
+//! its conversation.
 
 use crate::common::refused;
-use crate::{Hooked, World, git};
+use crate::{World, git};
 use std::path::Path;
-use symphony_board::launch::herdr::Herdr;
-use symphony_board::launch::{Ask, PROMPT_ENTERS, PROMPT_WAIT, Started, restore};
+use symphony_board::launch::hc::Hc;
+use symphony_board::launch::{Ask, GONE, Started, restore};
 use symphony_board::rows::TaskSessionRow;
 use symphony_board::{Error, NewLaunch};
 
-/// The fake discovers the id requested by Claude; Codex ids are supplied in its resume case.
+/// A Claude executor of sim/jump: its conversation id is the launch's own.
 fn launched(w: &World) -> Started {
     w.try_launch(&Ask {
         kind: Some("claude".into()),
@@ -17,31 +19,42 @@ fn launched(w: &World) -> Started {
     .unwrap()
 }
 
-/// Its pane goes, and the board records the closure.
-fn close_pane(w: &World, s: &TaskSessionRow) {
-    w.edit_panes(|panes| panes.retain(|p| p["pane_id"] != s.pane.as_str()));
+/// Its terminal goes, and the board records the closure.
+fn close_terminal(w: &World, s: &TaskSessionRow) {
+    w.hc().close(&s.pane).unwrap();
     w.store()
         .close_task_session(&s.slug, &s.handle, "idle", "restore line")
         .unwrap();
 }
 
 fn restored(w: &World, slug: &str, handle: Option<&str>) -> Result<Vec<Started>, Error> {
-    restore(w.store(), &w.herdr(), &w.machine(), slug, handle, None)
+    restore(w.store(), &w.hc(), &w.machine(), slug, handle, None)
+}
+
+/// The program the last `hc run` started, past `env` and its settings.
+fn last_program(w: &World) -> Vec<String> {
+    let run = w.calls_of(&["run"]).pop().unwrap();
+    let argv = run[run.iter().position(|a| a == "--").unwrap() + 1..].to_vec();
+    symphony_board::launch::hc::program(&argv).to_vec()
+}
+
+fn told(handle: &str) -> String {
+    format!(
+        "You were restored after your pane was closed. First run `just tasks callback --as {handle}`, \
+         then `just tasks inbox --as {handle}` and continue /work sim/jump."
+    )
 }
 
 #[test]
-fn restore_resumes_the_recorded_session_in_the_recorded_worktree() {
+fn restore_resumes_the_recorded_conversation_in_a_new_terminal_in_the_recorded_worktree() {
     let w = World::new();
     let s = launched(&w).row;
-    close_pane(&w, &s);
+    close_terminal(&w, &s);
     let [again] = <[_; 1]>::try_from(restored(&w, "sim/jump", None).unwrap()).unwrap();
-    assert!(!again.stuck);
-    let start = w.calls_of(&["agent", "start"]).pop().unwrap();
-    assert_eq!(start[2], s.handle);
-    let rest = &start[start.iter().position(|a| a == "--").unwrap() + 1..];
     assert_eq!(
-        rest,
+        last_program(&w),
         [
+            "claude",
             "--resume",
             &s.claude_session,
             "-n",
@@ -49,10 +62,16 @@ fn restore_resumes_the_recorded_session_in_the_recorded_worktree() {
             "--permission-mode",
             "auto",
             "--model",
-            "sonnet"
+            "sonnet",
         ]
     );
-    assert_eq!(w.pane_ids().last(), Some(&again.row.pane));
+    assert_eq!(w.sent(&again.row.pane), [told(&s.handle)]);
+    assert_ne!(again.row.pane, s.pane);
+    assert_eq!(w.live(), [again.row.pane.as_str()]);
+    let t = w.terminal(&again.row.pane);
+    assert_eq!(t["cwd"].as_str(), Some(s.worktree.as_str()));
+    assert_eq!(t["name"].as_str(), Some(s.handle.as_str()));
+    assert_eq!(t["labels"]["sf.handle"].as_str(), Some(s.handle.as_str()));
     let [read] = <[_; 1]>::try_from(w.store().task_sessions("sim/jump").unwrap()).unwrap();
     assert_eq!(
         (read.closed, read.pane.as_str()),
@@ -62,13 +81,13 @@ fn restore_resumes_the_recorded_session_in_the_recorded_worktree() {
 }
 
 #[test]
-fn a_codex_conversation_resumes_with_its_id_and_handle_environment() {
+fn a_codex_conversation_resumes_with_its_thread_without_the_daemon() {
     let w = World::new();
     let s = w.launch("sim/jump").row;
     let s = w
         .store()
         .record_launch(&NewLaunch {
-            claude_session: "codex:thread-to-resume".into(),
+            claude_session: "codex:0abc-def".into(),
             worktree: s.worktree,
             branch: s.branch,
             pane: s.pane,
@@ -76,15 +95,13 @@ fn a_codex_conversation_resumes_with_its_id_and_handle_environment() {
             ..NewLaunch::new("sim/jump", &s.handle, &s.role)
         })
         .unwrap();
-    close_pane(&w, &s);
+    close_terminal(&w, &s);
     let [again] = <[_; 1]>::try_from(restored(&w, "sim/jump", None).unwrap()).unwrap();
-    let start = w.calls_of(&["agent", "start"]).pop().unwrap();
-    assert_eq!(start[2], s.handle);
-    assert_eq!(start[3..5], ["--kind", "codex"]);
-    let rest = &start[start.iter().position(|a| a == "--").unwrap() + 1..];
     assert_eq!(
-        rest,
+        last_program(&w),
         [
+            "codex",
+            "--no-daemon",
             "-s",
             "workspace-write",
             "-m",
@@ -99,66 +116,111 @@ fn a_codex_conversation_resumes_with_its_id_and_handle_environment() {
                 s.handle
             ),
             "resume",
-            "thread-to-resume",
+            "0abc-def",
         ]
     );
-    assert_eq!(again.row.claude_session, "codex:thread-to-resume");
+    assert_eq!(w.sent(&again.row.pane), [told(&s.handle)]);
+    assert_eq!(again.row.claude_session, "codex:0abc-def");
     assert_eq!(again.row.closed, None);
-    assert_eq!(w.pane_ids(), [again.row.pane]);
+    assert_eq!(w.live(), [again.row.pane]);
 }
 
 #[test]
-fn the_restored_pane_opens_in_the_worktree_in_its_streams_tab() {
+fn the_restored_terminal_shows_in_its_streams_tab_or_the_one_given() {
     let w = World::new();
     let s = launched(&w).row;
-    close_pane(&w, &s);
-    restored(&w, "sim/jump", None).unwrap();
-    let state = w.state();
-    let last = state["panes"].as_array().unwrap().last().unwrap().clone();
-    assert_eq!(last["cwd"].as_str(), Some(s.worktree.as_str()));
-    // the stream's first tab is empty now, so a pane of it opens the next one
-    let create = w.calls_of(&["tab", "create"]).pop().unwrap();
-    assert_eq!(create[2..4], ["--label", "code-2"]);
-}
-
-#[test]
-fn the_restored_agent_is_told_what_happened() {
-    let w = World::new();
-    let s = launched(&w).row;
-    close_pane(&w, &s);
-    restored(&w, "sim/jump", None).unwrap();
-    let state = w.state();
-    let last = state["prompts"].as_array().unwrap().last().unwrap().clone();
-    assert_eq!(last[0].as_str(), Some(s.handle.as_str()));
-    assert_eq!(
-        last[1].as_str(),
-        Some(format!(
-            "You were restored after your pane was closed. First run `just tasks callback --as {h}`, then `just tasks inbox --as {h}` and continue /work sim/jump.", h = s.handle
-        ).as_str())
-    );
-}
-
-#[test]
-fn a_restored_prompt_left_in_the_input_line_is_sent_with_enter() {
-    let mut w = World::new();
-    let s = launched(&w).row;
-    close_pane(&w, &s);
-    w.set("FAKE_HERDR_STUCK", "1");
+    let tab = w.terminal(&s.pane)["labels"]["herdr.tab"].clone();
+    close_terminal(&w, &s);
     let [again] = <[_; 1]>::try_from(restored(&w, "sim/jump", None).unwrap()).unwrap();
-    assert!(!again.stuck);
+    // The stream's tab has room again: the terminal joins it, and no tab is made.
+    assert_eq!(w.terminal(&again.row.pane)["labels"]["herdr.tab"], tab);
+    assert_eq!(w.calls_of(&["app", "do"]).len(), 1);
+
+    close_terminal(&w, &again.row);
+    let [elsewhere] = <[_; 1]>::try_from(
+        restore(
+            w.store(),
+            &w.hc(),
+            &w.machine(),
+            "sim/jump",
+            None,
+            Some("infra"),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    let infra = w.terminal(&elsewhere.row.pane)["labels"]["herdr.tab"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert_eq!(w.tab_name(&infra), ("lamp-works".into(), "infra".into()));
+}
+
+#[test]
+fn a_record_of_a_herdr_pane_is_gone_and_restored_into_an_hc_terminal() {
+    let w = World::new();
+    let s = launched(&w).row;
+    // Herdr is no more: the record still names its pane, and hc never ran it.
+    w.edit_terminals(|all| all.clear());
+    w.store()
+        .reopen_task_session("sim/jump", &s.handle, "w1:p3")
+        .unwrap();
+    let [again] = <[_; 1]>::try_from(restored(&w, "sim/jump", None).unwrap()).unwrap();
+    assert!(again.row.pane.starts_with('t'), "{}", again.row.pane);
+    assert_eq!(w.live(), [again.row.pane.as_str()]);
     assert_eq!(
-        w.calls_of(&["pane", "send-keys", &again.row.pane, "enter"])
-            .len(),
-        1
+        (again.row.closed, again.row.claude_session.as_str()),
+        (None, s.claude_session.as_str())
+    );
+    let said = w.f.said("sim/jump");
+    let restore_line = format!("just tasks restore sim/jump {}", s.handle);
+    assert!(
+        said.iter().any(|m| m
+            == &format!(
+                "closed the pane of {} ({GONE}); restore: {restore_line}",
+                s.handle
+            )),
+        "{said:?}"
+    );
+    assert!(
+        said.iter()
+            .any(|m| m == &format!("restored {} in pane {}", s.handle, again.row.pane)),
+        "{said:?}"
     );
 }
 
 #[test]
-fn an_open_session_is_not_restored() {
+fn an_open_record_whose_terminal_was_closed_outside_the_board_is_restored() {
+    let w = World::new();
+    let s = launched(&w).row;
+    w.hc().close(&s.pane).unwrap();
+    let [again] = <[_; 1]>::try_from(restored(&w, "sim/jump", Some(&s.handle)).unwrap()).unwrap();
+    assert_eq!(w.live(), [again.row.pane]);
+}
+
+#[test]
+fn a_session_whose_terminal_runs_is_not_restored() {
     let w = World::new();
     launched(&w);
     assert_eq!(restored(&w, "sim/jump", None).unwrap(), vec![]);
-    assert_eq!(w.calls_of(&["agent", "start"]).len(), 1);
+    assert_eq!(w.calls_of(&["run"]).len(), 1);
+}
+
+#[test]
+fn a_closed_record_whose_handle_still_runs_in_a_terminal_is_refused() {
+    let w = World::new();
+    let s = launched(&w).row;
+    w.store()
+        .close_task_session("sim/jump", &s.handle, "idle", "restore line")
+        .unwrap();
+    assert_eq!(
+        refused(restored(&w, "sim/jump", None)),
+        format!(
+            "{} still runs in terminal {}: close it before restoring",
+            s.handle, s.pane
+        )
+    );
+    assert_eq!(w.calls_of(&["run"]).len(), 1);
 }
 
 #[test]
@@ -166,8 +228,8 @@ fn only_the_named_handle_is_restored_and_every_closed_one_by_default() {
     let w = World::new();
     let a = launched(&w).row;
     let b = w.review("sim/jump").row;
-    close_pane(&w, &a);
-    close_pane(&w, &b);
+    close_terminal(&w, &a);
+    close_terminal(&w, &b);
     let [again] = <[_; 1]>::try_from(restored(&w, "sim/jump", Some(&b.handle)).unwrap()).unwrap();
     assert_eq!(again.row.handle, b.handle);
     let open: Vec<String> = w
@@ -183,8 +245,17 @@ fn only_the_named_handle_is_restored_and_every_closed_one_by_default() {
     let w = World::new();
     let a = launched(&w).row;
     let b = w.review("sim/jump").row;
-    close_pane(&w, &a);
-    close_pane(&w, &b);
+    w.store()
+        .record_launch(&NewLaunch {
+            claude_session: "codex:0abc".into(),
+            worktree: b.worktree.clone(),
+            pane: b.pane.clone(),
+            model: b.model.clone(),
+            ..NewLaunch::new("sim/jump", &b.handle, &b.role)
+        })
+        .unwrap();
+    close_terminal(&w, &a);
+    close_terminal(&w, &b);
     let mut handles: Vec<String> = restored(&w, "sim/jump", None)
         .unwrap()
         .into_iter()
@@ -200,7 +271,7 @@ fn only_the_named_handle_is_restored_and_every_closed_one_by_default() {
 fn a_missing_worktree_is_made_again_on_its_branch_or_detached_without_one() {
     let w = World::new();
     let s = launched(&w).row;
-    close_pane(&w, &s);
+    close_terminal(&w, &s);
     git(&w.repo, &["worktree", "remove", "--force", &s.worktree]);
     restored(&w, "sim/jump", None).unwrap();
     assert_eq!(
@@ -212,8 +283,15 @@ fn a_missing_worktree_is_made_again_on_its_branch_or_detached_without_one() {
     );
 
     let w = World::new();
-    let s = w.review("sim/jump").row;
-    close_pane(&w, &s);
+    let s = w
+        .try_launch(&Ask {
+            role: "reviewer".into(),
+            kind: Some("claude".into()),
+            ..w.ask("sim/jump")
+        })
+        .unwrap()
+        .row;
+    close_terminal(&w, &s);
     git(&w.repo, &["worktree", "remove", "--force", &s.worktree]);
     restored(&w, "sim/jump", None).unwrap();
     assert_eq!(
@@ -249,9 +327,6 @@ fn a_restore_without_a_recorded_conversation_is_refused() {
         let w = World::new();
         let s = launched(&w).row;
         w.store()
-            .close_task_session("sim/jump", &s.handle, "x", "r")
-            .unwrap();
-        w.store()
             .record_launch(&NewLaunch {
                 claude_session: identity.into(),
                 worktree: s.worktree.clone(),
@@ -261,18 +336,17 @@ fn a_restore_without_a_recorded_conversation_is_refused() {
                 ..NewLaunch::new("sim/jump", &s.handle, &s.role)
             })
             .unwrap();
-        w.store()
-            .close_task_session("sim/jump", &s.handle, "x", "r")
-            .unwrap();
+        close_terminal(&w, &s);
         assert_eq!(
             refused(restored(&w, "sim/jump", None)),
             format!(
-                "{} has no recorded conversation id: its conversation cannot be resumed (start it again with \
-             `just tasks launch`)",
+                "{} has no recorded conversation id: its conversation cannot be resumed (start it again \
+                 with `just tasks launch`)",
                 s.handle
-            )
+            ),
+            "{identity:?}"
         );
-        assert_eq!(w.calls_of(&["agent", "start"]).len(), 1);
+        assert_eq!(w.calls_of(&["run"]).len(), 1);
     }
 }
 
@@ -281,21 +355,23 @@ fn a_restored_handle_that_had_left_can_act_again() {
     let w = World::new();
     let s = launched(&w).row;
     w.store().leave(&s.handle).unwrap();
-    close_pane(&w, &s);
+    close_terminal(&w, &s);
     restored(&w, "sim/jump", None).unwrap();
     w.store().touch(&s.handle).unwrap();
     assert_eq!(w.f.health(&s.handle).as_str(), "live");
 }
 
 #[test]
-fn a_failed_start_closes_the_new_pane_and_reopens_nothing() {
+fn a_failed_run_starts_nothing_and_reopens_nothing() {
     let mut w = World::new();
     let s = launched(&w).row;
-    close_pane(&w, &s);
-    w.set("FAKE_HERDR_FAIL", "agent start");
-    let why = refused(restored(&w, "sim/jump", None));
-    assert!(why.starts_with("herdr agent start failed: "), "{why}");
-    assert_eq!(w.pane_ids(), Vec::<String>::new());
+    close_terminal(&w, &s);
+    w.set("FAKE_HC_FAIL", "run");
+    assert_eq!(
+        refused(restored(&w, "sim/jump", None)),
+        "hc run: fake_failure: run failed"
+    );
+    assert!(w.addresses().is_empty());
     assert!(
         w.store().task_sessions("sim/jump").unwrap()[0]
             .closed
@@ -304,63 +380,50 @@ fn a_failed_start_closes_the_new_pane_and_reopens_nothing() {
 }
 
 #[test]
-fn an_unconfirmed_restore_closes_its_new_pane_and_keeps_the_record_closed() {
-    for fail in [
-        "agent list",
-        "pane read",
-        "empty pane",
-        "missing agent",
-        "pane send-keys",
+fn an_unconfirmed_restore_kills_and_removes_its_new_terminal_and_keeps_the_record_closed() {
+    for (knob, value, why) in [
+        (
+            "FAKE_HC_BLOCKED",
+            "1",
+            "the agent in terminal {t} waits on a person before it took its first message: Quick \
+             safety check: Is this a project you created or one you trust?",
+        ),
+        (
+            "FAKE_HC_DEAF",
+            "1",
+            "the agent in terminal {t} did not start working on its first message (its status \
+             when it went in: idle)",
+        ),
+        (
+            "FAKE_HC_SILENT",
+            "1",
+            "the agent in terminal {t} was never ready for its first message (its last status: \
+             none)",
+        ),
     ] {
         let mut w = World::new();
         let s = launched(&w).row;
-        close_pane(&w, &s);
+        close_terminal(&w, &s);
         w.store().leave(&s.handle).unwrap();
         let before = w.store().task_sessions("sim/jump").unwrap();
-        w.set("FAKE_HERDR_STUCK", "1");
-        w.set("FAKE_HERDR_FAIL", fail);
-        let inner = w.herdr();
-        let herdr = Hooked {
-            instead: Box::new(move |args| {
-                if fail == "missing agent" && args == ["agent", "list"] {
-                    inner.run(args).unwrap();
-                    return Some(Ok(r#"{"result": {"agents": []}}"#.into()));
-                }
-                (fail == "empty pane" && args[..2] == ["pane", "read"]).then(|| Ok(String::new()))
-            }),
-            ..Hooked::new(&w)
-        };
-        let why = refused(restore(
-            w.store(),
-            &herdr,
-            &w.machine(),
-            "sim/jump",
-            Some(&s.handle),
-            None,
-        ));
-        let start = w.calls_of(&["agent", "start"]).pop().unwrap();
-        let pane = &start[start.iter().position(|arg| arg == "--pane").unwrap() + 1];
-        assert_eq!(
-            why,
-            format!("could not confirm that the agent in pane {pane} took its prompt"),
-            "{fail}"
-        );
-        assert_eq!(w.calls_of(&["agent", "prompt"]).len(), 2, "{fail}");
-        let looks = if fail == "pane send-keys" {
-            1
-        } else {
-            PROMPT_ENTERS + 1
-        };
-        // The original launch took one look; restore must exhaust its own observation budget.
-        assert_eq!(w.calls_of(&["agent", "list"]).len(), 1 + looks, "{fail}");
-        assert_eq!(*w.sleeps.borrow(), vec![PROMPT_WAIT; 1 + looks]);
-        assert_eq!(w.calls_of(&["pane", "close", pane]).len(), 1, "{fail}");
-        assert_eq!(w.pane_ids(), Vec::<String>::new(), "{fail}");
+        w.set(knob, value);
+        let problem = refused(restored(&w, "sim/jump", Some(&s.handle)));
+        let run = w.calls_of(&["run"]).pop().unwrap();
+        let address = w
+            .calls_of(&["rm"])
+            .pop()
+            .map(|c| c[1].clone())
+            .expect("the new terminal was removed");
+        assert_ne!(address, s.pane);
+        assert_eq!(problem, why.replace("{t}", &address), "{knob}");
+        assert_eq!(run[3], s.handle);
+        assert_eq!(w.calls_of(&["kill", &address]).len(), 1, "{knob}");
+        assert!(w.addresses().is_empty(), "{knob}");
         assert_eq!(
             w.store().task_sessions("sim/jump").unwrap(),
             before,
-            "{fail}"
+            "{knob}"
         );
-        assert_eq!(w.f.health(&s.handle).as_str(), "left", "{fail}");
+        assert_eq!(w.f.health(&s.handle).as_str(), "left", "{knob}");
     }
 }

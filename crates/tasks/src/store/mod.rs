@@ -39,7 +39,7 @@ mod sessions;
 mod transaction;
 mod work;
 
-pub use callbacks::Callback;
+pub use callbacks::{Callback, Presence};
 pub use copy::Moved;
 pub(crate) use copy::WRITTEN_SINCE;
 pub use embeddings::{EmbeddingStats, VectorHit, VectorSearchProfile};
@@ -65,6 +65,17 @@ const PATIENCE: Duration = Duration::from_secs(30);
 const STALE: &str = "stale";
 /// What a write throws to refuse goes before its words: the refusal comes back as `Error::Refused`.
 const REFUSED: &str = "refused: ";
+/// The board's schema version, or NONE before its tables are made: a read ([`crate::rpc::Kind`]).
+const SCHEMA_VERSION: &str = "RETURN IF (INFO FOR DB).tables.meta = NONE { NONE } ELSE { (SELECT VALUE version FROM ONLY meta:schema) };";
+
+/// Whether the server said `said` of a request in a namespace, or in the database `database`, that
+/// it does not hold yet: a board no one has opened. These are the pinned server's words.
+fn undefined(said: &str, database: &str) -> bool {
+    said == format!("The database '{database}' does not exist")
+        || said
+            .strip_prefix("The namespace '")
+            .is_some_and(|name| name.ends_with("' does not exist"))
+}
 
 /// Why a call gave no result.
 #[derive(Debug, Clone, PartialEq)]
@@ -167,7 +178,7 @@ pub struct Store {
     pick: Mutex<Box<dyn Pick>>,
     callback_snapshot: Mutex<Option<Snapshot>>,
     callback_idle: Mutex<Option<callbacks::Idle>>,
-    /// The herdr panes the server clock's current tick sampled, which every view of that tick reads.
+    /// The hc terminals the server clock's current tick sampled, which every view of that tick reads.
     clock_panes: Mutex<Option<crate::cli::agents::Answer<Vec<crate::cli::agents::Pane>>>>,
     /// Where this store's writes send their callback dispatch; none dispatches in the write.
     hand_off: Option<HandOff>,
@@ -188,7 +199,11 @@ impl Store {
         )
     }
 
-    /// As `open`, with the clock, the process probe and the host name given (the tests' own).
+    /// As `open`, with the clock, the process probe and the host name given (the tests' own). A
+    /// board at this build's version opens on one read of it, which defines and writes nothing, so
+    /// a slow board's late answer to it goes once more ([`crate::rpc::Kind`]) as a page's read
+    /// does. Any other board is defined: its namespace and database first when the server lacks
+    /// either, then its tables and version.
     pub fn with(
         client: Client,
         clock: Clock,
@@ -197,20 +212,35 @@ impl Store {
     ) -> Result<Store, Error> {
         let store = Store::unchecked(client, clock, pid_alive, host);
         store.retrying(|| {
-            let found = store.client.define_then(
-                "RETURN IF (INFO FOR DB).tables.meta = NONE { NONE } ELSE { (SELECT VALUE version FROM ONLY meta:schema) };",
-                json!({}),
-            )?;
-            if found.last() != Some(&json!(schema::VERSION)) {
-                store.client.query(schema::ANALYZERS, json!({}))?;
-                // One transaction: a definition that fails, or loses to another open's at once, takes the
-                // version with it, so no open takes a board missing it for made.
-                let define = format!("{}\nUPSERT meta:schema SET version = $version RETURN NONE;\nRETURN NONE;", schema::DEFINE);
-                store.transact::<Value>(&define, json!({"version": schema::VERSION}))?;
+            let found = store.schema_version()?;
+            if found.as_ref() == Some(&json!(schema::VERSION)) {
+                return Ok(());
             }
+            if found.is_none() {
+                store.client.define_then("RETURN NONE;", json!({}))?;
+            }
+            store.client.query(schema::ANALYZERS, json!({}))?;
+            // One transaction: a definition that fails, or loses to another open's at once, takes the
+            // version with it, so no open takes a board missing it for made.
+            let define = format!(
+                "{}\nUPSERT meta:schema SET version = $version RETURN NONE;\nRETURN NONE;",
+                schema::DEFINE
+            );
+            store.transact::<Value>(&define, json!({"version": schema::VERSION}))?;
             Ok(())
         })?;
         Ok(store)
+    }
+
+    /// The board's schema version (null before its tables are made), or none when the server lacks
+    /// its namespace or its database: one read in them, which defines nothing.
+    fn schema_version(&self) -> Result<Option<Value>, Failure> {
+        match self.read(SCHEMA_VERSION, json!({})) {
+            Err(Failure::Stop(Error::Db(said))) if undefined(&said, self.client.database()) => {
+                Ok(None)
+            }
+            found => found.map(Some),
+        }
     }
 
     /// As `with`, taking the board's tables as they are, without the request that checks them: the
@@ -1204,6 +1234,27 @@ mod tests {
         assert_eq!(repr("it's \"x\""), "'it\\'s \"x\"'");
         assert_eq!(repr("a\\b\nc\td\r\u{1}"), "'a\\\\b\\nc\\td\\r\\x01'");
         assert_eq!(repr("sim/jump — ✓"), "'sim/jump — ✓'");
+    }
+
+    #[test]
+    fn only_a_namespace_or_this_database_not_on_the_server_reads_as_a_board_not_made_yet() {
+        assert!(undefined("The namespace 'sf' does not exist", "tasks"));
+        assert!(undefined("The database 'tasks' does not exist", "tasks"));
+        for other in [
+            "The database 'other' does not exist",
+            "The table 'meta' does not exist",
+            "The namespace 'sf' already exists",
+            "The namespace 'sf",
+            "the server at 127.0.0.1:1 is slow: The database 'tasks' does not exist",
+        ] {
+            assert!(!undefined(other, "tasks"), "{other}");
+        }
+    }
+
+    /// The open's check of the version is a read, so a late answer to it goes once more.
+    #[test]
+    fn the_schema_version_check_is_a_read() {
+        assert_eq!(crate::rpc::Kind::of(SCHEMA_VERSION), crate::rpc::Kind::Read);
     }
 
     #[test]

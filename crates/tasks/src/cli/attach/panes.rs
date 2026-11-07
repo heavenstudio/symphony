@@ -1,5 +1,5 @@
-//! The pane watch ([`pane_watch`]): BLOCKED once for a session it oversees ([`overseen`]) whose herdr
-//! pane waits on an approval or a question, and WATCH once while herdr cannot be asked.
+//! The pane watch ([`pane_watch`]): BLOCKED once for a session it oversees ([`overseen`]) whose hc
+//! terminal waits on an approval or a question, and WATCH once while hc cannot be asked.
 
 use crate::cli::agents::{Answer, Pane, find_pane};
 use crate::orchestration::{Owners, claimable_work, hears, told_of};
@@ -7,8 +7,8 @@ use crate::rows::TaskSessionRow;
 use crate::{Board, Task};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
-/// A session whose herdr pane waits on an approval or a question: the task it was launched for,
-/// and the pane.
+/// A session whose hc terminal waits on an approval or a question: the task it was launched for,
+/// and the terminal.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Blocked {
     pub task: String,
@@ -16,7 +16,7 @@ pub struct Blocked {
 }
 
 /// What the pane watch last told a recipient: the sessions it said were blocked, and whether it
-/// said herdr could not be asked. Neither is said again until it ends.
+/// said hc could not be asked. Neither is said again until it ends.
 #[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
 pub struct PaneWatch {
@@ -104,9 +104,9 @@ pub fn overseen<'b>(board: &'b Board, handle: &'b str) -> Overseen<'b> {
 }
 
 /// One look at the panes of the `overseen` sessions launched into one still open (`open`, oldest
-/// first) for a task the recipient hears of: BLOCKED for each whose pane herdr reports `blocked`
-/// and did not at the last look, and WATCH once when herdr cannot be asked. `panes` is asked only
-/// when there is a pane to look at. Returns what the watch remembers for the next look.
+/// first) for a task the recipient hears of: BLOCKED for each whose terminal hc reports `blocked`
+/// and did not at the last look, and WATCH once when hc cannot be asked. `panes` is asked only
+/// when there is a terminal to look at. Returns what the watch remembers for the next look.
 pub fn pane_watch(
     board: &Board,
     overseen: &Overseen,
@@ -130,7 +130,7 @@ pub fn pane_watch(
         Err(why) => {
             if !before.unanswered {
                 emit(&format!(
-                    "WATCH herdr unanswered: {why} — blocked panes go unreported until it answers"
+                    "WATCH hc unanswered: {why} — blocked terminals go unreported until it answers"
                 ));
             }
             let mut blocked = before.blocked.clone();
@@ -162,7 +162,7 @@ pub fn pane_watch(
     for (who, b) in &blocked {
         if !before.blocked.contains_key(who) {
             emit(&format!(
-                "BLOCKED {who} {} {} — its pane waits on an approval or a question",
+                "BLOCKED {who} {} {} — its terminal waits on an approval or a question",
                 b.task, b.pane
             ));
         }
