@@ -28,6 +28,10 @@ fn run_fixture(command: &mut std::process::Command) -> std::io::Result<std::proc
     symphony_board::sys::Spawning::status_locked(command)
 }
 
+#[path = "stand_ins.rs"]
+mod stand_ins;
+use stand_ins::{STAND_IN_LIFETIME, StandIns};
+
 #[cfg(test)]
 #[path = "scratch_tests.rs"]
 mod scratch_tests;
@@ -296,6 +300,11 @@ fn wait_cleanup(
         Some(Err(error)) => format!("{}: {error}", why()),
         None => format!("timed out: {}", why()),
     };
+    cleanup_failed(&message);
+}
+
+/// Fail a passing case with `message`; beside an original failure, report it and keep that one.
+fn cleanup_failed(message: &str) {
     if std::thread::panicking() {
         eprintln!("{message}");
     } else {
@@ -380,7 +389,8 @@ impl Executable {
 }
 
 /// Every descendant inherits the writer. EOF proves even an orphaned fixture command has
-/// stopped using scratch, including subprocesses of a census shell cancelled by the server.
+/// stopped using scratch. A server starts its own children without it: those stand-ins hold
+/// [`StandIns`] instead.
 struct Descendants {
     reader: File,
     origin: String,
@@ -703,6 +713,7 @@ pub struct Repo {
     pub builds: PathBuf,
     detached: Mutex<Vec<i64>>,
     descendants: Mutex<Vec<Descendants>>,
+    stand_ins: Mutex<StandIns>,
     next: AtomicUsize,
     _scratch: Scratch,
 }
@@ -710,6 +721,8 @@ pub struct Repo {
 impl Repo {
     pub fn new(name: &str) -> Self {
         let scratch = Scratch::new(name);
+        // Before the first command: preparation runs the ps stand-in too.
+        let stand_ins = StandIns::open(&scratch.path);
         prepare_app(&scratch.path.join("prepare-app"));
         let base = scratch.path.clone();
         let main = base.join("main with spaces");
@@ -775,6 +788,7 @@ impl Repo {
             bin,
             detached: Mutex::new(Vec::new()),
             descendants: Mutex::new(Vec::new()),
+            stand_ins: Mutex::new(stand_ins),
             next: AtomicUsize::new(0),
             _scratch: scratch,
         };
@@ -1010,6 +1024,16 @@ impl Repo {
             );
         }
     }
+
+    /// Once no server or command of this case runs, refuse every later stand-in and wait for
+    /// those that started to end ([`StandIns`]).
+    fn close_stand_ins(&self) {
+        // Also run while unwinding, when an earlier panic may have poisoned the lock.
+        self.stand_ins
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .close();
+    }
 }
 
 impl Drop for Repo {
@@ -1018,6 +1042,7 @@ impl Drop for Repo {
         for descendants in self.descendants.lock().unwrap().iter_mut() {
             descendants.wait();
         }
+        self.close_stand_ins();
         profile_warm(&fs::read_to_string(self.home.join("server.log")).unwrap_or_default());
     }
 }

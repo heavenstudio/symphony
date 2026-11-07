@@ -202,7 +202,16 @@ pub fn Frame(route: Route, children: Element) -> Element {
                     {
                         platform::current().save("docs-review-seen", &String::from(json));
                     }
-                    remember("reviewPreviousIds", &previous);
+                    let listed = |value: &JsValue| {
+                        js_sys::Array::is_array(value).then(|| js_sys::Array::from(value).to_vec())
+                    };
+                    if !crate::state::keeps_panel_baseline(
+                        listed(&snapshot("reviewPreviousIds")).as_deref(),
+                        listed(&previous).as_deref(),
+                        snapshot("reviewPanelReady").as_bool() == Some(true),
+                    ) {
+                        remember("reviewPreviousIds", &previous);
+                    }
                     remember("reviewKnownIds", ids.as_ref());
                     remember("reviewActivitySnapshot", &activity);
                     remember("reviewPendingSnapshot", &pending);
