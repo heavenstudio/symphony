@@ -1,7 +1,7 @@
 //! What waited for an orchestrator that could not be reached, when a hand-over took a task it names
 //! away meanwhile: each line is said only if a dispatch would tell it the line now, a LOST of the
 //! work it is still told of, and what older dispatchers read still counts it as said. The pane
-//! watch's BLOCKED is in `blocked_panes`, whose cases run with a herdr; a PULL waiting while the
+//! watch's BLOCKED is in `blocked_panes`, whose cases run with an hc; a PULL waiting while the
 //! digest changes beneath it, in `pending_pull`.
 
 use super::callbacks::Listener;

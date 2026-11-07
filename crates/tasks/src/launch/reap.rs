@@ -1,4 +1,4 @@
-//! Close the herdr panes of Claude agents that sit idle with their board work finished: the periodic
+//! Close the hc terminals of agents that sit idle with their board work finished: the periodic
 //! sweep.
 //!
 //! Owner, 2026-10-07: "there seems to be a ton of claude sessions doing nothing. Kill them if the work
@@ -10,59 +10,65 @@
 //! Every sweep holds `reap.json.lock` (`flock`, not waited on), so two sweeps never overlap: a second
 //! app's timer, or `just tasks reap`, that comes while one runs sweeps nothing. Sweeps that follow
 //! each other closely (two apps, one per worktree, or a hand run after the timer) cannot shorten the
-//! wait below: `reap.json` keeps when each pane was first seen idle, by the board's clock. Both are in
-//! `sf-tasks/` of the git common dir, beside the board's server ([`state_path`]). Nothing is printed
-//! into an agent's monitor; each close is one line on a task thread.
+//! wait below: `reap.json` keeps when each terminal was first seen idle, by the board's clock. Both
+//! are in `sf-tasks/` of the git common dir, beside the board's server ([`state_path`]). Nothing is
+//! printed into an agent's monitor; each close is one line on a task thread.
 //!
-//! A pane is closed when every one of these holds at two sweeps in a row, the first at least
-//! [`REAP_SECONDS`] before the second (so an agent just launched, or between two steps, is never
-//! closed):
+//! Only this board's terminals (`sf.board`) are swept. One is closed (killed, then removed) when
+//! every one of these holds at two sweeps in a row, the first at least [`REAP_SECONDS`] before the
+//! second (so an agent just launched, or between two steps, is never closed):
 //!
-//! - herdr calls its agent `idle` or `done`, or `blocked` on the folder-trust prompt (a launch that
+//! - hc calls its agent `idle` or `done`, or `blocked` on the folder-trust prompt (a launch that
 //!   never started);
-//! - it is named (`claude -n HANDLE`, else herdr's agent name) for a board session that is not an
-//!   orchestrator or a chat: an unnamed pane may be the owner's;
-//! - it is not the calling pane, the focused pane or the caller's handle;
+//! - it is named (`claude -n HANDLE`, else its `sf.handle` label, else its terminal name) for a
+//!   board session that is not an orchestrator or a chat;
+//! - it is not the calling terminal (`HC_TERMINAL_ID`) or the caller's handle;
 //! - neither that handle nor any session under it (`parent`, at any depth, including through a
 //!   session that left) holds an executor role on an `in_progress`, `blocked` or `review` task or a
 //!   reviewer role on a task in `review`: an executor in review waits on its reviewers, whose
-//!   changes must reach its pane, and [`super::finish`] closes it once the task is done;
-//! - nothing runs under its claude process but what is known to be harmless
-//!   ([`procs::reap_busy_reason`]): MCP helpers, caffeinate, a board command or monitor (`just
-//!   tasks…`, the `tasks` binary). Anything else, whatever it is, is work. A pane whose processes
-//!   cannot be read is kept.
+//!   changes must reach it, and [`super::finish`] closes it once the task is done;
+//! - nothing runs under its agent but what is known to be harmless ([`procs::reap_busy_reason`]):
+//!   MCP helpers (Codex's REPL helper by its configured path), caffeinate, a board command or
+//!   monitor (`just tasks…`, the `tasks` binary).
+//!   Anything else, whatever it is, is work. A terminal whose processes cannot be read is kept.
+//! - the owner is not looking at it ([`super::screen`]): not in the tab the Herdr app shows, not
+//!   the agent it shows, not held over them; when the window cannot say, it is kept.
 //!
-//! Native channels are checked during the sweep, independently of tool activity. That does not
-//! exempt a finished idle worker's pane from the normal cleanup rules below.
+//! Native channels are checked during the sweep, independently of tool activity: a Codex thread is
+//! present while hc runs Codex in its terminal ([`crate::Presence`]). That does not exempt a
+//! finished idle worker's terminal from the rules above.
 //!
-//! Right before the close, the conversation, owner, status, focus, processes and board work are read
-//! again: an unconfirmed or changed occupant restarts the idle wait; focus, a prompt, work or a claim
-//! that came during the sweep keeps the pane. The close is recorded
-//! first, on the handle's open task sessions (`closed the pane of …; restore: just tasks restore …`),
-//! else on the last task it held a role on, as a session found and closed in that one line; a record that fails
-//! leaves the pane open, and a close herdr refuses reopens the session. A sweep interrupted after
-//! recording a close reuses that record when it retries closing the same pane and conversation.
+//! Right before the close, the program, owner, status, processes, board work and screen are read
+//! again: an unconfirmed or changed occupant restarts the idle wait; a prompt, work, a claim or the
+//! owner's look that came during the sweep keeps the terminal. The close is recorded first, on the handle's open task
+//! sessions (`closed the pane of …; restore: just tasks restore …`), else on the last task it held a
+//! role on, as a session found and closed in that one line; a record that fails leaves the terminal
+//! open, and a close hc refuses reopens the session. After the record, the close looks once more,
+//! right before the kill ([`screen::close_unseen`]): a terminal whose agent works again (its
+//! status, or work under it), that is on screen then, or that a call cannot say of, stays, its
+//! session reopened and its idle wait started again. A sweep interrupted after
+//! recording a close reuses that record when it retries closing the same terminal and conversation.
 
-use super::cleanup::{restore_line, session_value};
-use super::herdr::{Herdr, Object, text};
-use super::{Processes, procs};
+use super::cleanup::{restore_line, stored_session};
+use super::hc::{self, Hc, Object, text_of};
+use super::{Processes, procs, screen};
 use crate::cli::Env;
 use crate::sys::FileLock;
-use crate::{Error, NewLaunch, Store, git};
+use crate::{Error, NewLaunch, Presence, Store, git};
 use serde_json::{Map, Value, json};
-use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs::{File, TryLockError};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-/// The Symphony sweeps this often, and a pane must have been idle this long: 5 to 10 minutes idle.
+/// The Symphony sweeps this often, and a terminal must have been idle this long: 5 to 10 minutes.
 pub const REAP_SECONDS: f64 = 300.0;
 const READY: [&str; 2] = ["idle", "done"];
 const TRUST_PROMPT: &str = "trust this folder";
 const NOT_REAPED_KINDS: [&str; 2] = ["orchestrator", "chat"];
 const WHY: &str = "idle for two sweeps, its work finished";
 
-/// A pane the sweep closed, or for a dry run would close.
+/// A terminal the sweep closed, or for a dry run would close.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Closed {
     pub pane: String,
@@ -85,7 +91,6 @@ pub struct Reap<'a> {
     pub state: PathBuf,
     pub apply: bool,
     pub processes: &'a Processes,
-    pub current_pane: Option<&'a str>,
     pub caller: Option<&'a str>,
     pub min_idle: f64,
 }
@@ -145,11 +150,32 @@ fn lock(state: &Path) -> std::io::Result<Option<FileLock>> {
     }
 }
 
-/// One sweep (the module doc says which panes close); what it could not record goes to `warn`. None
-/// when another sweep holds the lock.
+/// What hc's live terminals say of Codex agents: the terminals running Codex, and the threads the
+/// board's open launch records put in one of them.
+pub fn presence(store: &Store, live: &[Object]) -> Result<Presence, Error> {
+    let terminals: std::collections::BTreeSet<String> = live
+        .iter()
+        .filter(|t| hc::agent(t) == Some("codex"))
+        .map(|t| text_of(t, "address"))
+        .filter(|a| !a.is_empty())
+        .collect();
+    let threads = store
+        .open_task_sessions()?
+        .into_iter()
+        .filter(|s| terminals.contains(&s.pane))
+        .filter_map(|s| {
+            let thread = s.claude_session.strip_prefix("codex:")?;
+            (!thread.is_empty()).then(|| thread.to_string())
+        })
+        .collect();
+    Ok(Presence { terminals, threads })
+}
+
+/// One sweep (the module doc says which terminals close); what it could not record goes to `warn`.
+/// None when another sweep holds the lock.
 pub fn sweep(
     store: &Store,
-    herdr: &dyn Herdr,
+    hc: &dyn Hc,
     how: &Reap<'_>,
     warn: &mut dyn Write,
 ) -> Result<Option<Sweep>, Error> {
@@ -167,79 +193,45 @@ pub fn sweep(
         .into_iter()
         .map(|s| (s.row.handle, s.row.kind))
         .collect();
-    let all_agents = herdr.all_agents();
-    let pane_sessions = all_agents
-        .as_ref()
-        .ok()
-        .map(|agents| native_sessions(agents));
-    // Probe sockets even when Herdr cannot answer: a native Claude inbox needs no pane wrapper.
-    store.callback_presence(
-        pane_sessions
-            .as_ref()
-            .map(|(sessions, complete)| (sessions, *complete)),
-        how.apply,
-    )?;
-    if pane_sessions
-        .as_ref()
-        .is_some_and(|(_, complete)| !*complete)
-    {
-        let _ = writeln!(
-            warn,
-            "native presence incomplete: a Codex pane has no thread or pane identity; known threads confirmed, missing registrations retained"
-        );
-    }
-    // Only panes in this sweep's workspace lose their old idle marks. Other workspaces' marks
-    // must survive so alternating scoped sweeps do not keep resetting each other's idle wait.
-    let workspace = herdr.workspace();
-    let outside: HashSet<String> = all_agents
-        .as_ref()
-        .into_iter()
-        .flatten()
-        .filter(|agent| match (&workspace, agent.get("workspace_id")) {
-            (Some(ours), Some(theirs)) if !theirs.is_null() => {
-                theirs.as_str() != Some(ours.as_str())
-            }
-            _ => false,
-        })
-        .map(|agent| text(agent.get("pane_id")))
-        .collect();
-    let agents = match all_agents.and_then(|_| herdr.agents()) {
-        Ok(agents) => agents,
+    // Probe sockets even when hc cannot answer: a native Claude inbox needs no terminal.
+    let codex = match hc.live() {
+        Ok(live) => Some(presence(store, &live)?),
+        Err(_) => None,
+    };
+    store.callback_presence(codex.as_ref(), how.apply)?;
+    let terminals = match hc.terminals() {
+        Ok(terminals) => terminals,
         Err(error) => {
             let _ = writeln!(
                 warn,
-                "pane sweep unavailable: {error}; native sockets checked"
+                "terminal sweep unavailable: {error}; native sockets checked"
             );
             return Ok(Some(Sweep::default()));
         }
     };
+    let current = hc.caller();
     let callbacks = store.callbacks()?;
     let held = live_work(store)?;
     let now = store.now();
     let seen = read_seen(&how.state, now);
-    let mut idle_now: BTreeMap<String, f64> = seen
-        .iter()
-        .filter(|(key, _)| {
-            key.split_once(' ')
-                .is_some_and(|(pane, _)| outside.contains(pane))
-        })
-        .map(|(key, since)| (key.clone(), *since))
-        .collect();
+    let mut idle_now: BTreeMap<String, f64> = BTreeMap::new();
     let mut result = Sweep::default();
-    for agent in agents {
-        let pane = text(agent.get("pane_id"));
-        if pane.is_empty()
-            || Some(pane.as_str()) == how.current_pane
-            || super::herdr::truthy(agent.get("focused"))
-            || !ready(herdr, &agent)
+    for listed in terminals {
+        let address = text_of(&listed, "address");
+        if address.is_empty()
+            || text_of(&listed, "state") != "live"
+            || Some(&address) == current.as_ref()
+            || !ready(hc, &address, &hc::status(&listed))
         {
             continue;
         }
-        let Ok(info) = herdr.process_info(&pane) else {
+        let Ok(Some(terminal)) = hc.get(&address) else {
             continue;
         };
-        let claude = claude(&info);
-        let Some(handle) = name(&agent, claude.as_ref()) else {
+        if hc::agent(&terminal).is_none() {
+            continue;
+        }
+        let Some(handle) = name(&terminal) else {
             continue;
         };
         if Some(handle.as_str()) == how.caller
@@ -250,30 +242,30 @@ pub fn sweep(
         {
             continue;
         }
-        let Some(pid) = claude.as_ref().and_then(|c| c.pid) else {
+        let Some(pid) = hc::top_pid(&terminal) else {
             continue;
         };
         match (how.processes)(pid) {
             Ok(commands) if procs::reap_busy_reason(&commands).is_none() => {}
             _ => continue, // work, or `ps` could not say: never closed on no information
         }
-        let Some(conversation) = conversation(&agent) else {
-            continue;
-        };
-        let key = format!("{pane} {handle} {conversation}");
+        if !matches!(screen::on_screen(hc, &terminal), Ok(false)) {
+            continue; // the owner may be looking at it: its idle wait starts again
+        }
+        let key = format!("{address} {handle} {pid}");
         let since = *seen.get(&key).unwrap_or(&now);
         idle_now.insert(key.clone(), since);
         if !seen.contains_key(&key) || now - since < how.min_idle {
             result.idle.push(handle);
             continue;
         }
-        let Some(confirmed) = still_idle(store, herdr, how, &agent, &handle)? else {
+        let Some(confirmed) = still_idle(store, hc, how, &address, &handle, pid)? else {
             idle_now.remove(&key);
             continue;
         };
         if !how.apply {
             result.closed.push(Closed {
-                pane,
+                pane: address,
                 handle,
                 restore: String::new(),
             });
@@ -291,22 +283,33 @@ pub fn sweep(
             Err(problem) => {
                 let _ = writeln!(
                     warn,
-                    "· idle sweep kept {pane} ({handle}): the board took no record: {problem}"
+                    "· idle sweep kept {address} ({handle}): the board took no record: {problem}"
                 );
                 let _ = warn.flush();
                 continue;
             }
         };
-        if herdr.close(&pane).is_err() {
-            reopen(store, &handle, &closed_before, &pane)?;
-            continue;
+        let finished = |now: &Object| still_finished(hc, how, &address, pid, now);
+        match screen::close_unseen(hc, &address, &finished) {
+            Ok(()) => {}
+            Err(screen::NotClosed::Refused(_)) => {
+                reopen(store, &handle, &closed_before, &address)?;
+                continue;
+            }
+            Err(screen::NotClosed::Kept(_)) => {
+                // Work resumed, the owner looked, or a call could not say, after the record: its
+                // idle wait starts again.
+                reopen(store, &handle, &closed_before, &address)?;
+                idle_now.remove(&key);
+                continue;
+            }
         }
         if let Some(callback) = callbacks.get(&handle) {
-            store.clear_callback(callback, "finished idle pane closed")?;
+            store.clear_callback(callback, "finished idle terminal closed")?;
         }
         idle_now.remove(&key);
         result.closed.push(Closed {
-            pane,
+            pane: address,
             handle,
             restore,
         });
@@ -321,7 +324,8 @@ pub fn sweep(
     Ok(Some(result))
 }
 
-/// Pane key -> when a sweep first saw it idle (the board's clock); nothing for a state it cannot read.
+/// Terminal key -> when a sweep first saw it idle (the board's clock); nothing for a state it cannot
+/// read.
 fn read_seen(state: &Path, now: f64) -> HashMap<String, f64> {
     let Ok(text) = std::fs::read_to_string(state) else {
         return HashMap::new();
@@ -381,117 +385,57 @@ fn live_work(store: &Store) -> Result<HashSet<String>, Error> {
     Ok(held)
 }
 
-/// The claude process in a pane: its pid and its argv.
-struct Claude {
-    pid: Option<i64>,
-    argv: Vec<String>,
-}
-
-fn claude(info: &Object) -> Option<Claude> {
-    let Some(Value::Array(processes)) = info.get("foreground_processes") else {
-        return None;
-    };
-    processes.iter().find_map(|process| {
-        let argv: Vec<String> = match process.get("argv") {
-            Some(Value::Array(argv)) if !argv.is_empty() => {
-                argv.iter().map(|a| text(Some(a))).collect()
-            }
-            _ => text(process.get("cmdline"))
-                .split(procs::space)
-                .filter(|w| !w.is_empty())
-                .map(str::to_string)
-                .collect(),
-        };
-        let base = argv
-            .first()
-            .map(|first| first.rsplit('/').next().unwrap_or(first));
-        let is_claude = ["claude", "codex"].contains(&text(process.get("name")).as_str())
-            || base.is_some_and(|name| ["claude", "codex"].contains(&name));
-        is_claude.then(|| Claude {
-            pid: process
-                .get("pid")
-                .and_then(Value::as_i64)
-                .filter(|p| *p != 0),
-            argv,
-        })
-    })
-}
-
-/// Its handle: claude's `-n` (or `--name`), else herdr's name for the agent.
-fn name(agent: &Object, claude: Option<&Claude>) -> Option<String> {
-    let argv: &[String] = claude.map_or(&[], |c| &c.argv);
-    let flagged = argv.split_last().map_or(&[][..], |(_, before)| before);
+/// Its handle: claude's `-n` (or `--name`), else its `sf.handle` label, else its terminal's name.
+fn name(terminal: &Object) -> Option<String> {
+    let argv = hc::argv(terminal);
+    let run = hc::program(&argv);
+    let flagged = run.split_last().map_or(&[][..], |(_, before)| before);
     for flag in ["-n", "--name"] {
         if let Some(at) = flagged.iter().position(|a| a == flag) {
-            return Some(argv[at + 1].clone());
+            return Some(run[at + 1].clone());
         }
     }
-    Some(text(agent.get("name"))).filter(|n| !n.is_empty())
+    [
+        hc::label(terminal, hc::HANDLE_LABEL),
+        text_of(terminal, "name"),
+    ]
+    .into_iter()
+    .find(|n| !n.is_empty())
 }
 
-fn ready(herdr: &dyn Herdr, agent: &Object) -> bool {
-    let status = text(agent.get("agent_status"));
-    if READY.contains(&status.as_str()) {
+fn ready(hc: &dyn Hc, address: &str, status: &str) -> bool {
+    if READY.contains(&status) {
         return true;
     }
     if status != "blocked" {
         return false;
     }
-    herdr
-        .read(&text(agent.get("pane_id")), 30)
+    hc.read(address, 30)
         .is_ok_and(|screen| screen.to_lowercase().contains(TRUST_PROMPT))
 }
 
-/// A known conversation, including its agent kind: an unidentified or malformed id cannot confirm
-/// that a pane still holds the same occupant.
-fn conversation(agent: &Object) -> Option<String> {
-    agent
-        .get("agent_session")?
-        .get("value")?
-        .as_str()
-        .filter(|id| !id.is_empty())?;
-    Some(super::cleanup::stored_session(agent))
-}
-
-/// Confirm the same conversation and owner right before closing, then recheck the confirmed
-/// occupant's eligibility. Any missing or changed evidence keeps the pane and resets its idle wait.
+/// Confirm the same program and owner right before closing, then recheck the confirmed occupant's
+/// eligibility. Any missing or changed evidence keeps the terminal and resets its idle wait.
 fn still_idle(
     store: &Store,
-    herdr: &dyn Herdr,
+    hc: &dyn Hc,
     how: &Reap<'_>,
-    candidate: &Object,
+    address: &str,
     handle: &str,
+    pid: i64,
 ) -> Result<Option<Object>, Error> {
-    let pane = text(candidate.get("pane_id"));
-    let Ok(info) = herdr.process_info(&pane) else {
+    let Ok(Some(now)) = hc.get(address) else {
         return Ok(None);
     };
-    let Some(process) = claude(&info) else {
+    let Some(current_handle) = name(&now) else {
         return Ok(None);
     };
-    let Some(pid) = process.pid else {
-        return Ok(None);
-    };
-    // Read the conversation, focus and status after process-info, so changes during that read are
-    // included in the final pane snapshot too.
-    let Ok(agents) = herdr.agents() else {
-        return Ok(None);
-    };
-    let Some(now) = agents.iter().find(|a| text(a.get("pane_id")) == pane) else {
-        return Ok(None);
-    };
-    let Some(current_conversation) = conversation(now) else {
-        return Ok(None);
-    };
-    let Some(current_handle) = name(now, Some(&process)) else {
-        return Ok(None);
-    };
-    if Some(current_conversation) != conversation(candidate)
+    if text_of(&now, "state") != "live"
+        || hc::top_pid(&now) != Some(pid)
+        || hc::agent(&now).is_none()
         || current_handle != handle
-        || Some(pane.as_str()) == how.current_pane
         || Some(current_handle.as_str()) == how.caller
-        || super::herdr::truthy(now.get("focused"))
-        || !ready(herdr, now)
+        || !ready(hc, address, &hc::status(&now))
     {
         return Ok(None);
     }
@@ -502,35 +446,43 @@ fn still_idle(
         .is_none_or(|s| NOT_REAPED_KINDS.contains(&s.row.kind.as_str()))
         || live_work(store)?.contains(&current_handle)
         || !(how.processes)(pid).is_ok_and(|commands| procs::reap_busy_reason(&commands).is_none())
+        || !matches!(screen::on_screen(hc, &now), Ok(false))
     {
         return Ok(None);
     }
-    Ok(Some(now.clone()))
+    Ok(Some(now))
 }
 
-fn native_sessions(agents: &[Object]) -> (BTreeSet<String>, bool) {
-    let mut sessions = BTreeSet::new();
-    let mut complete = true;
-    for agent in agents {
-        let pane = text(agent.get("pane_id"));
-        let session = session_value(agent);
-        let codex = ["agent", "kind"]
-            .iter()
-            .any(|key| text(agent.get(*key)) == "codex");
-        // Herdr may see the pane before its thread identity. That is incomplete evidence, not
-        // evidence that every previously registered thread has disappeared.
-        if codex && (pane.is_empty() || session.is_empty()) {
-            complete = false;
-        }
-        if !pane.is_empty() && !session.is_empty() {
-            sessions.insert(session);
-        }
+/// Whether the terminal, as the close's own `hc get` finds it (`now`), is still the idle agent the
+/// sweep confirmed: its program ended (nothing to lose), or the same agent under `pid`, ready
+/// ([`ready`]), with nothing under it that is work. Else why it stays.
+fn still_finished(
+    hc: &dyn Hc,
+    how: &Reap<'_>,
+    address: &str,
+    pid: i64,
+    now: &Object,
+) -> Result<(), String> {
+    if text_of(now, "state") != "live" {
+        return Ok(());
     }
-    (sessions, complete)
+    if hc::top_pid(now) != Some(pid) || hc::agent(now).is_none() {
+        return Err("another program runs in it now".into());
+    }
+    let status = hc::status(now);
+    if !ready(hc, address, &status) {
+        let status = if status.is_empty() { "silent" } else { &status };
+        return Err(format!("its agent is {status} now"));
+    }
+    match (how.processes)(pid) {
+        Ok(commands) => procs::reap_busy_reason(&commands)
+            .map_or(Ok(()), |why| Err(format!("work started under it: {why}"))),
+        Err(problem) => Err(screen::no_information(&problem)),
+    }
 }
 
 /// One line on a task thread for the close: the restore line, or "" when the handle had no task.
-fn record(store: &Store, handle: &str, agent: &Object) -> Result<String, Error> {
+fn record(store: &Store, handle: &str, terminal: &Object) -> Result<String, Error> {
     let sessions = store.sessions_of(handle)?;
     let still_open: Vec<_> = sessions.iter().filter(|s| s.closed.is_none()).collect();
     if let Some(last) = still_open.last() {
@@ -539,14 +491,15 @@ fn record(store: &Store, handle: &str, agent: &Object) -> Result<String, Error> 
         }
         return Ok(restore_line(&last.slug, handle));
     }
+    let address = text_of(terminal, "address");
     if let Some(recorded) = sessions.iter().rev().find(|s| {
         s.closed.is_some()
             && s.closed_why == WHY
-            && s.pane == text(agent.get("pane_id"))
-            && s.claude_session == super::cleanup::stored_session(agent)
+            && s.pane == address
+            && s.claude_session == stored_session(terminal)
     }) {
-        // A previous sweep may have stopped after the board transaction but before herdr closed
-        // the pane. The durable record already carries its line; do not overwrite and log it again.
+        // A previous sweep may have stopped after the board transaction but before hc closed the
+        // terminal. The durable record already carries its line; do not overwrite and log it again.
         return Ok(recorded.restore.clone());
     }
     let mut roles: Vec<(f64, String, String)> = store
@@ -567,15 +520,15 @@ fn record(store: &Store, handle: &str, agent: &Object) -> Result<String, Error> 
         return Ok(String::new());
     };
     let board = store.session(handle)?.row;
-    let cwd = text(agent.get("cwd"));
+    let cwd = text_of(terminal, "cwd");
     store.record_launch(&NewLaunch {
         slug: slug.clone(),
         handle: handle.into(),
         role,
-        claude_session: super::cleanup::stored_session(agent),
+        claude_session: stored_session(terminal),
         worktree: if cwd.is_empty() { board.worktree } else { cwd },
         branch: board.branch,
-        pane: text(agent.get("pane_id")),
+        pane: address,
         model: board.model,
         how: "found".into(),
         log: false,
@@ -584,7 +537,7 @@ fn record(store: &Store, handle: &str, agent: &Object) -> Result<String, Error> 
     Ok(restore_line(&slug, handle))
 }
 
-/// Herdr refused a close already recorded: the sessions it closed are open again.
+/// hc refused a close already recorded: the sessions it closed are open again.
 fn reopen(store: &Store, handle: &str, before: &HashSet<String>, pane: &str) -> Result<(), Error> {
     for s in store.sessions_of(handle)? {
         if s.closed.is_some() && !before.contains(&s.slug) {

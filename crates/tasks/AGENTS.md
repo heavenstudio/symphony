@@ -65,15 +65,17 @@ never connect or retire registrations. A refused or full socket is retryable
 while the stored process identity is alive; it does not lose its registration.
 The sweep alone confirms presence (never a delivery
 or an accepted Codex queue). Its STALE/LOST suppression lasts REAP_SECONDS plus
-LIVE_SECONDS, across the next sweep. Sockets are checked even without Herdr;
-Codex presence uses thread identities across all workspaces, while pane cleanup
-remains scoped to its caller. Dry runs change neither board nor sweep files. A
+LIVE_SECONDS, across the next sweep. Sockets are checked even without hc;
+Codex presence uses thread identities across every live hc terminal: a thread is
+present while an open launch record puts it in a live codex terminal or its
+registered terminal still runs codex, while terminal cleanup remains scoped to
+this board's terminals (`sf.board`). Dry runs change neither board nor sweep files. A
 Codex registration whose presence confirmation expired reads `unknown` and retains its work:
 the presence sweep failed or is overdue, rather than having established the agent's absence.
 That grace lasts at most ten minutes after confirmation expires; then ordinary heartbeat health
-applies again, making unfinished work claimable without a beat. Each confirmed pane resets it.
-The next successful sweep confirms the pane or retires the registration.
-An incomplete pane inventory still confirms its identified threads; it withholds retirement of
+applies again, making unfinished work claimable without a beat. Each confirmed terminal resets it.
+The next successful sweep confirms the terminal or retires the registration.
+An incomplete terminal inventory still confirms its identified threads; it withholds retirement of
 unmatched registrations until an inventory establishes absence. PULL lists unknown handles only
 while they hold claimable work, just as the per-child warning does.
 The shared server sweeps once on startup, then every five minutes. Each command has a four-minute
@@ -129,8 +131,8 @@ for good. A record naming an entry the PULL this generation left awaiting (`pull
 not is an older one's own PULL acknowledged, which told every entry, withheld ones too.
 Posts, verdicts and AGENT lines stay: they were said to whoever held the role then, and a new
 holder hears no backlog.
-A finished idle pane still closes under the original cleanup rules, retiring its
-registration; an executor of a task in review is not finished, and keeps its pane.
+A finished idle terminal still closes under the original cleanup rules, retiring its
+registration; an executor of a task in review is not finished, and keeps its terminal.
 A post or changes verdict to `@executor`, or a post to the executor by handle, that no
 executor can read (no callback, and its launch record closed or no live beat) adds a
 `board` post to `@orchestrator` on the
@@ -157,6 +159,54 @@ presence grace and reservation state against the current clock. The Symphony ser
 cached inputs even without a callback recipient; machine/test probes and the agents view still
 run each tick. Unchanged live observations skip planning until the periodic PULL check; health
 changes invalidate that shortcut, and due outbox retries are checked every tick.
+A command line's write observes before it answers and leaves the delivery to a detached
+dispatcher: the `tasks` binary (`cli::main_detaching`) gives its stores a hand-off
+(`Store::dispatching_by`). The write still makes the observation every write made
+(`Pass::Observe`), queuing in the outbox what each recipient on its host hears, read against the
+board as the write left it: a hand-over or a move before the delivery neither reroutes nor folds
+it, and a callback registration takes its first look before it answers. It then starts
+`tasks dispatch` of the same executable detached, in a session of its own (`cli/detached.rs`;
+its lines go to `sf-tasks/dispatch.log` beside the repository's own board, nowhere for a
+`TASKS_SERVER` board), which delivers. One dispatcher runs a host at a time
+(`store/dispatcher.rs`, `Store::dispatch_detached`), under the row
+`callback_lease:['dispatch', HOST]` (60 s, renewed on each pass): one that finds it held counts an
+ask (`asked`) and waits until a pass begun after it (`served`) has ended (`completed`), or until
+the holder's lease lapses, when it takes the host over, so the asks of a holder lost before or
+during that pass are not lost; a new holder alone is not that pass. The holder passes
+until no ask stands and every recipient was reached (one whose lease another dispatcher held is
+passed again, for up to a recipient's lease), so 40 writes at once make a few passes, not 40.
+Each host's dispatchers keep a row of their own, so none takes an ask for recipients it cannot
+reach. A holder whose lease lapsed and was taken ends after its pass and leaves the row to the new
+holder. A hand-off that cannot start the process delivers in the write, as every library store
+does (the Symphony server's, the tests', `cli::main` in-process), and so does the binary under
+`TASKS_DISPATCH=inline`, for a test that reads what a command delivered once it has ended. A pass
+reads the delivered messages after the lowest recipient cursor once (`store/pool.rs`) and each
+recipient's inbox filters that pool, looking its deliveries up by key, where each recipient
+scanned the message and delivery tables itself; the plan before a recipient's lease no longer
+reads its inbox, since one it would read always goes on to the lease, which reads it. A
+dispatcher's own writes (an observation, a delivery) read the board marker before and after:
+when nothing else moved it between, its cached snapshot still holds (`adopt`), since a dispatcher
+writes nothing a snapshot reads, and the next recipient's leased read is the marker alone, not
+the whole board again. Under each recipient's lease a delivering pass otherwise reads the board
+and its account again, and its final transaction still re-decides when a PULL it read as waiting
+was acknowledged or pruned. A write's observation reads the account again but keeps the board it
+read once it committed, and leaves a recipient whose recorded observation is at or past that
+board's marker: that one read a board holding the write, and reading the whole board again under
+every lease is what made 40 writers at once take minutes. It also leaves, without its lease, a
+recipient whose look moved by the newest message alone and whose inbox no message since its cursor
+could reach (`Store::could_hear` tests the pass's pool on the client: to it, to a role, from the
+owner, a verdict): the write gave it nothing to hear, its recorded look and cursors stay as when
+another dispatcher held its lease, and the delivering pass moves them. A read of one statement (a plan's
+stored state, the marker, the pending check, the registrations, a waiting dispatcher's look at
+the lease) is answered outside an explicit transaction (`Store::read`): one statement reads one
+snapshot on its own, and every commit syncs the store, about 5 ms on the board's server even when
+nothing was written, paid for each recipient of each write. The inbox fetches the orchestrators'
+sessions by id from their roles: `session WHERE handle IN (SELECT ... FROM role)` runs the role
+scan again for each session, seconds on a board of thousands of each, for every inbox a message
+could reach, which is what made one write on a board that size take minutes. A diff reads the
+confirmed registrations only for a child that went quiet since the last look
+(`attach::events::quiet_children`). `examples/dispatch_load.rs` measures 40
+concurrent `tasks say` against a scratch database seeded from a dump of the live board.
 Dispatch plans before leasing and refreshes its inputs and observation again after acquiring
 the small `callback_lease` record. Its revision identifies the holder, including on release;
 taking or releasing it never rewrites `seen` or `statuses` or allocates a counter. Lease rows
@@ -164,11 +214,12 @@ survive retirement and pruning so a revision is never reused. A completed period
 records its time in that small row even when the digest adds no entry, rearming the deadline
 across fresh Stores without moving the board marker. A tick with no changed observation, due
 delivery or due periodic check writes nothing. The clock's tick, never a write's dispatch, also
-watches panes (`attach::pane_watch`): while a recipient oversees a session with an open launch
-record, it lists herdr's panes once a tick and queues BLOCKED once an episode, or WATCH once while
-herdr cannot be asked; what it last said is `callback_state.pane_watch`, off the board marker.
+watches terminals (`attach::pane_watch`): while a recipient oversees a session with an open launch
+record, it lists hc's live terminals (`hc ls`) once a tick and queues BLOCKED once an episode
+(status `blocked`), or WATCH once while hc cannot be asked; what it last said is
+`callback_state.pane_watch`, off the board marker.
 It looks before the tick's dispatch, and the tick's PULL view and the clock's agents view read
-its sample (`Store::clock_panes`), so a tick asks herdr once. It plans from the stored
+its sample (`Store::clock_panes`), so a tick asks hc once. It plans from the stored
 `pane_watch` and looks again under the lease, so two clocks on one board say an episode once.
 The legacy monitor runs the same watch on its own looks. Observation state is checkpointed
 with newly queued events, before transport. Finished tasks leave its status, role and verdict
@@ -207,24 +258,57 @@ one JSON call per line on stdin and answers each on its own line (a line that
 is a list of calls gets a list of answers), the methods being the store's, plus
 `threads` and `snapshot`, which read several things in one round trip.
 `launch`, `restore`, `cleanup`, `finish` and `reap` (the Symphony's idle
-sweep, every five minutes) drive herdr's panes and git's worktrees from
-`src/launch/`; after a launch's prompt it looks at the pane again and sends
-enter while the prompt still sits in the input line. Its tests' handles:
+sweep, every five minutes) drive hc's terminals and git's worktrees from
+`src/launch/`, through `launch::hc::Hc` alone; the crate calls no `herdr`.
+A launch is one `hc run --bg --no-parent --outlive-parent --keep` of the
+agent's own command line, with no message (no child of the caller's terminal,
+which the app would show under it rather than in a tab), labelled `sf.board` (the main checkout's folder and the board's
+database), `sf.handle`, and `herdr.space`/`herdr.tab`: the stream tab (`code`,
+`review`, `3d`, `infra`) of the project's space in the Herdr app, found by name
+(`herdr-app ls`, else the layout `hc connect` keeps) and made when missing,
+never an owner's tab or another project's terminal. Once `hc get` calls the
+agent `idle` or `done`, its first message goes in by `hc send`, never
+`--force`, and only that send's `started: true` confirms the launch
+(`launch/startup.rs`): hc records `first_message` for template runs alone. An
+agent blocked on a person (Claude's folder-trust dialog), never ready, ended,
+gone, or whose send hc refuses, does not start, or cannot tell of, fails the
+launch naming the terminal, which is killed and removed; only Codex's hooks
+chooser is answered on the way. Codex runs with `--no-daemon`; its configured
+REPL helper (`procs::CODEX_REPL`, that exact path) is not work under it.
+Cleanup closes a live terminal only while its foreground is the program it
+started, and for no agent a shell (`hc get`'s `foreground`: a job a shell runs
+in front, or one it became by `exec`, is work). A
+close is `hc kill` then `hc rm`, never of the caller's terminal
+(`HC_TERMINAL_ID`) nor of one the owner may be looking at (`launch/screen.rs`,
+from `herdr-app status`: its `herdr.tab` label the tab the window shows, the
+agent it shows, or held by an overlay or float); cleanup, finish and the idle
+sweep read the window last, after the close's own `hc get` and after the idle
+sweep records the closure, right before the kill (`screen::close_unseen`). That
+`hc get` must still find the terminal finished (an agent idle or done, the same
+program: its pid, and for cleanup its foreground, which `exec` changes under one
+pid, and nothing under it its busy classifier counts as work), and a window
+that cannot say (the call fails, it reports errors, or an overlay or float names
+no terminal) keeps the terminal; either keeps it, the sweep's record reopened. A record
+naming a herdr pane (`w1:p…`) is a gone terminal: cleanup records it closed
+with its restore line, and restore brings it back in an hc terminal. Its tests' handles:
 `TASKS_SERVER` and `TASKS_DATABASE` reach a board of the test's own
 (`tasks.Server`, one in-memory server per test process, a database per test);
 `TASKS_NOW` pins the clock, and a monitor's waits step it (each says `STEP
 <now>` and reads a line); `TASKS_PULL_SECONDS` sets how often an
 orchestrator's monitor computes its PULL digest (only a new actionable entry
 prints one); `TASKS_REAP_STATE` is where the
-idle sweep keeps what it saw; `HERDR_BIN` names a fake herdr (the crate's
-`fake-herdr` binary, its panes a JSON file `FAKE_HERDR_STATE` names);
+idle sweep keeps what it saw; `HC_BIN` and `HERDR_APP_BIN` name a fake hc
+and window (the crate's `fake-hc` binary, its terminals, the window's layout
+and what the window shows (`screen`) a JSON file `FAKE_HC_STATE` names, each
+call a line of `FAKE_HC_LOG`, and the calls `FAKE_HC_FAIL` names refused);
 `TASKS_PS_TABLE` names a file of `ps -axo pid=,ppid=,command=` lines the commands
 read in place of `ps` (`procs::table`), so no command-line case reads this
 machine's process table; it is read only with a `TASKS_DATABASE` other than the
 live one, never on the live board. A table, the file's or `ps`'s, that lists no
-row for the pane's shell says nothing of it. A pane the board would close whose
-process-info or table cannot be read stays, and cleanup and finish print `kept
-pane P [of H] (never closed on no information: WHY)`.
+row for the terminal's process says nothing of it. A terminal the board would
+close whose `hc get`, table or window cannot be read stays, and cleanup and
+finish print `kept pane T [of H] (never closed on no information: WHY)`; one on
+screen prints `kept pane T [of H] (on screen in the Herdr app)`.
 
 A child's input and output go through `sys::output` (or `sys::spawn_output`,
 `sys::spawn_piped` for one that reads stdin, and `sys::wait_output`), never
@@ -235,7 +319,7 @@ handed what runs its `lsof`: `sys::output` from those sources, `Command::output`
 from `apps/symphony-ui`'s browser test, which compiles `port.rs` alone. On macOS std
 makes a pipe or socket pair and sets close-on-exec in a second call, so a
 spawn on another thread between the two keeps the writer and holds the
-reader's EOF off for that child's whole life: a herdr answer then reads as
+reader's EOF off for that child's whole life: an hc answer then reads as
 unanswered. `sys::pipe` is a real pipe, its ends reopened close-on-exec and
 close-on-fork under `sys::spawning()`, so no spawn under that lock copies them;
 an end reaches a child only through a `sys::Command` (a std spawn handed one
@@ -294,7 +378,12 @@ again; a request whose text proves it a read (`rpc::Kind::of`: only `SELECT`,
 `RETURN`, `LET`, `INFO` and transaction statements, no write word anywhere,
 and every `::` a call in a namespace that only computes, its word right against
 the `::`: `fn ::bump()` is a write) goes once more on a new connection, never a
-third time. Each sending waits the client's wait for its whole answer, however
+third time. A store opens a board at its build's schema version on one such
+read of the version (`Store::with`), defining and writing nothing, so a page's
+open over a slow board goes once more as its read does; a board not made yet,
+or at another version, is defined: its namespace and database first when the
+server lacks either, then its tables and version in one transaction
+(`tests/store/open_read.rs`). Each sending waits the client's wait for its whole answer, however
 it trickles in, so a read waits at most twice that. A late answer on a working
 connection says the server is slow (`rpc::slow`), which the Symphony's read routes answer with 504, not the 503 of
 a board that cannot be reached. `tasks-copy` copies a whole
@@ -309,6 +398,37 @@ old SQLite board into it once, one way, reading SQLite through `rusqlite`
 ([TASKS](../../../docs/workflow/TASKS.md#the-move-to-surrealdb)). On the in-memory
 engine a transaction that big costs more than linearly (the board at the move:
 39 server CPU-s, against 1.5 on `surrealkv://`).
+
+Every server `server::Home` starts gets `server::Storage` as its environment
+(`SURREAL_SURREALKV_VLOG_THRESHOLD`, `SURREAL_SURREALKV_MAX_MEMTABLE_SIZE`).
+Each value stays beside its key in the sstables, where compaction drops the
+versions a rewrite leaves, and the write-ahead log holds at most 256 MiB.
+SurrealKV's own threshold, 4 KiB, sent large values to a value log. It deletes a
+value-log file only once no sstable points into it, so a row rewritten in place
+kept every version: 102 GiB for a 0.5 GiB board (tools/tasks-db-space). Never
+set `SURREAL_SURREALKV_ENABLE_VLOG=false`: a store with values in its log then
+cannot read them. `tasks-reclaim` (`just tasks-reclaim`, the owner's) is
+`Home::reclaim`. Under the starters' lock it ends the board's server and starts
+an unrecorded one on the store. It exports every namespace's every database with
+`surreal export` and imports them into `reclaim/data` under `Storage`, each
+database's file named by its place among them (`0002.sf.tasks.surql`), so two
+names differing only in case never share one on macOS's case-folding
+filesystem. Then it re-exports, compares each file byte for byte along with the root's and
+namespaces' users and accesses, swaps the stores, starts the board's server and
+removes the old store; the exports stay. It refuses a store without `sf/tasks`
+and an `INFO` answer without its namespaces or databases object, which would
+otherwise carry nothing and remove the store. Its private servers never take a
+port the halted server had, which a monitor may still hold as the board's. A
+failure before the swap restarts the old store untouched, and says the restart's
+own failure beside the reclaim's. A failure after it ends every server on the
+new store before the stores move back: a start whose address record fails ends
+the server it started, since the next `ensure` would adopt one left
+unrecorded. A start refuses while the store sits in `reclaim/old`
+without a successor, and the next reclaim puts it back before starting over.
+Without arguments it reclaims the board of the repository it runs in; `--dir
+FOLDER` reclaims a board folder elsewhere, as its tests and a rehearsal on a
+clone do (an APFS clone of `sf-tasks/data`: 102.8 GiB to 1.5 GiB, the server
+down 8 min).
 
 `tasks search` keeps keyword ranking by default, including exact slugs. `--mode
 vector` uses BGE chunk neighbours; `--mode hybrid` offers reciprocal rank fusion;
@@ -337,10 +457,10 @@ become visible after a completed pass, rather than synchronously with writes.
 explicitly supplied identity is still validated. A nonblocking per-database
 file lock admits one embed writer. Unchanged maintenance passes read only the message counter,
 task update stamps and model id against the last successful whole-board checkpoint, never source
-text, chunk manifests, model loading or downloads. A changed board scans hashes and part counts
-and embeds only changed sources. Explicit catch-up also repairs derived cache damage without a
-board write. Manual bulk catch-up uses
-one thread too; `--threads 1..64` explicitly overrides it for bulk work.
+text, chunk manifests, model loading or downloads. The checkpoint is the server's SHA-256 of those
+stamps, never the stamps: kept whole, they were a 165 KB row rewritten by each changed pass. A
+changed board scans hashes and part counts and embeds only changed sources. Explicit catch-up
+also repairs derived cache damage without a board write. Manual bulk catch-up uses one thread too; `--threads 1..64` explicitly overrides it for bulk work.
 Short search queries always use one inference thread.
 
 The approved BAAI/bge-small-en-v1.5 model runs locally through tract-onnx 0.22.5

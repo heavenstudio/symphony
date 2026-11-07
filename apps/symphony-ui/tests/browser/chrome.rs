@@ -11,14 +11,15 @@ use std::os::unix::fs::PermissionsExt;
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
-use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::{Duration, Instant};
 
+use profiles::next_profile;
 use serde_json::{Value, json};
 use tungstenite::stream::MaybeTlsStream;
 use tungstenite::{Message, WebSocket};
 
 mod process;
+mod profiles;
 
 const POLL: Duration = Duration::from_millis(25);
 const PROTOCOL_CPU: Duration = Duration::from_secs(60);
@@ -254,15 +255,6 @@ impl Owner {
     }
 }
 
-fn next_profile() -> PathBuf {
-    static LAUNCHED: AtomicU32 = AtomicU32::new(0);
-    std::env::temp_dir().join(format!(
-        "symphony-ui-chrome-{}-{}",
-        std::process::id(),
-        LAUNCHED.fetch_add(1, Ordering::SeqCst)
-    ))
-}
-
 unsafe extern "C" {
     fn kill(pid: std::ffi::c_int, signal: std::ffi::c_int) -> std::ffi::c_int;
     fn getpgid(pid: std::ffi::c_int) -> std::ffi::c_int;
@@ -409,6 +401,9 @@ fn browser_leash() {
     let mut browser = BrowserGroup(
         Command::new(binary)
             .args(chrome_args(&profile))
+            // Its singleton and fetch folders, which a killed Chrome leaves, go with the profile.
+            .env("MAC_CHROMIUM_TMPDIR", &profile)
+            .env("TMPDIR", &profile)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(std::fs::File::create(profile.with_extension("stderr")).unwrap())
@@ -1231,6 +1226,10 @@ wait "$helper"
                     "{extension} log outlived its leash after {signal}"
                 );
             }
+            // An ended suite took its folder with it; the next run's sweep takes a killed one's.
+            profiles::sweep();
+            let folder = profile.parent().unwrap();
+            assert!(!folder.exists(), "suite's folder outlived {signal}");
             sweep.0 = None;
             if let Some((_, port)) = &protocol {
                 assert!(

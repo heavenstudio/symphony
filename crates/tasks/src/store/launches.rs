@@ -19,7 +19,7 @@ pub struct NewLaunch {
     pub claude_session: String,
     pub worktree: String,
     pub branch: String,
-    /// The herdr pane it runs in.
+    /// The hc terminal it runs in (a herdr pane id, `w1:p3`, in a record from before hc).
     pub pane: String,
     pub model: String,
     /// `launched`, or how else it came to be recorded (`found`: cleanup found it running).

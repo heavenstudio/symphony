@@ -206,15 +206,20 @@ pub fn symphony_app(command: &str) -> bool {
         || first_word_is(command, &["symphony-server"])
 }
 
-/// `^(?:\S*/)?claude(?:\s|$)|(?:^|[\s/@_-])mcp(?:[-_.\s]|$)`, ignoring case: the agent and its
-/// helper servers.
+/// The REPL helper server Codex is configured to keep running (`mcp_servers.node_repl` in
+/// `~/.codex/config.toml`), by that exact path: no other `node_repl`, and no `node`, is a helper.
+pub const CODEX_REPL: &str = "/Applications/ChatGPT.app/Contents/Resources/cua_node/bin/node_repl";
+
+/// `^(?:\S*/)?claude(?:\s|$)|(?:^|[\s/@_-])mcp(?:[-_.\s]|$)`, ignoring case, or [`CODEX_REPL`]:
+/// the agent and its helper servers.
 pub fn harmless(command: &str) -> bool {
     let lower = command.to_ascii_lowercase();
     // Codex exec jobs are work even when their parent agent is idle.
     if codex_exec(&lower) {
         return false;
     }
-    first_word_is(&lower, &["claude", "codex"])
+    command.split(space).next() == Some(CODEX_REPL)
+        || first_word_is(&lower, &["claude", "codex"])
         || starts(&lower, "mcp").any(|at| {
             before(&lower, at).is_none_or(|c| space(c) || "/@_-".contains(c))
                 && after(&lower, at + 3).is_none_or(|c| space(c) || "-_.".contains(c))

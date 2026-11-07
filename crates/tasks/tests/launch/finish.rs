@@ -1,30 +1,30 @@
-//! `finish`: a task that becomes done or cancelled closes its own sessions' panes, and those of the
-//! sessions launched below it; it never fails, since the status change must stand. (What becomes of
-//! their worktrees is the worktree sweep's: `tasks sweep --task SLUG`.)
+//! `finish`: a task that becomes done or cancelled closes its own sessions' terminals, and those of
+//! the sessions launched below it; it never fails, since the status change must stand. (What becomes
+//! of their worktrees is the worktree sweep's: `tasks sweep --task SLUG`.)
 
-use crate::World;
+use crate::{Hooked, World};
 use symphony_board::Store;
-use symphony_board::launch::finish;
+use symphony_board::launch::{LaunchError, finish};
 use symphony_board::rpc::Client;
 
 impl World {
     pub fn finish(&self, slug: &str) -> Vec<String> {
         let m = self.machine();
-        finish(self.store(), &self.herdr(), &*m.processes, slug, None)
+        finish(self.store(), &self.hc(), &*m.processes, slug)
     }
 }
 
 #[test]
-fn the_panes_of_a_done_task_close_and_say_how_to_restore_them() {
+fn the_terminals_of_a_done_task_close_and_say_how_to_restore_them() {
     let w = World::new();
-    let (handle, pane) = w.worker("sim/jump", Some("done"));
+    let (handle, terminal) = w.worker("sim/jump", Some("done"));
     assert_eq!(
         w.finish("sim/jump"),
         [format!(
-            "closed pane {pane} of {handle} (its tasks are finished); restore: just tasks restore sim/jump {handle}"
+            "closed pane {terminal} of {handle} (its tasks are finished); restore: just tasks restore sim/jump {handle}"
         )]
     );
-    assert!(!w.has_pane(&pane));
+    assert!(!w.has_terminal(&terminal));
     let [read] = <[_; 1]>::try_from(w.store().task_sessions("sim/jump").unwrap()).unwrap();
     assert!(read.closed.is_some());
     // Its worktree is the sweep's, which the binary starts next: finishing touches none.
@@ -34,12 +34,12 @@ fn the_panes_of_a_done_task_close_and_say_how_to_restore_them() {
 }
 
 #[test]
-fn a_busy_pane_keeps_its_session() {
+fn a_busy_terminal_keeps_its_session() {
     let w = World::new();
-    let (_, pane) = w.worker("sim/jump", Some("done"));
-    w.run_under(w.shell_pid(&pane), &["just verify"]);
+    let (_, terminal) = w.worker("sim/jump", Some("done"));
+    w.run_under(w.pid_of(&terminal), &["just verify"]);
     assert_eq!(w.finish("sim/jump"), Vec::<String>::new());
-    assert!(w.has_pane(&pane));
+    assert!(w.has_terminal(&terminal));
     assert!(
         w.store().task_sessions("sim/jump").unwrap()[0]
             .closed
@@ -50,37 +50,74 @@ fn a_busy_pane_keeps_its_session() {
 #[test]
 fn a_task_that_is_not_finished_or_had_no_session_is_left_alone() {
     let w = World::new();
-    let (handle, pane) = w.worker("sim/jump", None);
+    let (handle, terminal) = w.worker("sim/jump", None);
     w.store().claim("sim/jump", &handle).unwrap();
     assert_eq!(w.finish("sim/jump"), Vec::<String>::new());
-    assert!(w.has_pane(&pane));
+    assert!(w.has_terminal(&terminal));
     w.task("sim/dock", None);
     w.store().move_to("sim/dock", "cancelled", &w.orch).unwrap();
     let before = w.calls().len();
     assert_eq!(w.finish("sim/dock"), Vec::<String>::new());
-    assert_eq!(w.calls().len(), before, "no session, no herdr call");
+    assert_eq!(w.calls().len(), before, "no session, no hc call");
 }
 
 #[test]
-fn sessions_already_closed_ask_nothing_of_herdr() {
+fn sessions_already_closed_ask_nothing_of_hc() {
     let w = World::new();
-    let (_, pane) = w.worker("sim/jump", Some("done"));
-    w.clean(false, None, &[]);
-    assert!(!w.has_pane(&pane));
+    let (_, terminal) = w.worker("sim/jump", Some("done"));
+    w.clean(false, &[]);
+    assert!(!w.has_terminal(&terminal));
     let before = w.calls().len();
     assert_eq!(w.finish("sim/jump"), Vec::<String>::new());
     assert_eq!(w.calls().len(), before);
 }
 
 #[test]
-fn only_the_finished_tasks_panes_close() {
+fn a_finish_whose_process_table_cannot_be_read_keeps_the_terminal_and_says_why() {
+    let w = World::new();
+    let (handle, terminal) = w.worker("sim/jump", Some("done"));
+    let broken = |_: i64| -> Result<Vec<String>, LaunchError> {
+        Err(LaunchError("ps: no answer in 30 s".into()))
+    };
+    assert_eq!(
+        finish(w.store(), &w.hc(), &broken, "sim/jump"),
+        [format!(
+            "kept pane {terminal} of {handle} (never closed on no information: ps: no answer in 30 s)"
+        )]
+    );
+    assert!(w.has_terminal(&terminal));
+    assert!(
+        w.store().task_sessions("sim/jump").unwrap()[0]
+            .closed
+            .is_none()
+    );
+}
+
+#[test]
+fn a_terminal_gone_between_its_listing_and_its_read_is_nothing_to_close() {
+    let w = World::new();
+    let (_, terminal) = w.worker("sim/jump", Some("done"));
+    let mut hooked = Hooked::new(&w);
+    hooked.instead = Box::new(|args| {
+        (args[0] == "get").then(|| Err(LaunchError(format!("hc get {}: not_found: gone", args[1]))))
+    });
+    let m = w.machine();
+    assert_eq!(
+        finish(w.store(), &hooked, &*m.processes, "sim/jump"),
+        Vec::<String>::new()
+    );
+    assert!(w.calls_of(&["kill"]).is_empty() && w.has_terminal(&terminal));
+}
+
+#[test]
+fn only_the_finished_tasks_terminals_close() {
     let w = World::new();
     w.task("sim/dock", None);
     let (_, jump) = w.worker("sim/jump", Some("done"));
     let (_, dock) = w.worker("sim/dock", Some("done"));
     assert_eq!(w.finish("sim/dock").len(), 1);
-    assert!(w.has_pane(&jump));
-    assert!(!w.has_pane(&dock));
+    assert!(w.has_terminal(&jump));
+    assert!(!w.has_terminal(&dock));
 }
 
 #[test]
@@ -89,20 +126,18 @@ fn a_parent_done_closes_an_idle_executor_launched_on_its_subtask_but_not_a_busy_
         let w = World::new();
         w.task("sim/jump/do", Some("sim/jump"));
         let s = w.launch("sim/jump/do").row;
-        let pid = w.new_pid();
-        w.edit_pane(&s.pane, |p| {
-            p.insert("agent_status".into(), "idle".into());
-            p.insert("shell_pid".into(), pid.into());
+        w.edit_terminal(&s.pane, |t| {
+            t.insert("status".into(), "idle".into());
         });
         if busy {
-            w.run_under(pid, &["just verify"]);
+            w.run_under(w.pid_of(&s.pane), &["just verify"]);
         }
         w.store().claim("sim/jump/do", &s.handle).unwrap();
         w.store().done("sim/jump/do", &s.handle, "did it").unwrap();
         let other = w.f.session("worker");
         w.finish_task("sim/jump", &other, "done");
         let lines = w.finish("sim/jump");
-        assert_eq!(w.has_pane(&s.pane), busy, "{lines:?}");
+        assert_eq!(w.has_terminal(&s.pane), busy, "{lines:?}");
         assert_eq!(
             w.store().task_sessions("sim/jump/do").unwrap()[0]
                 .closed
@@ -113,14 +148,14 @@ fn a_parent_done_closes_an_idle_executor_launched_on_its_subtask_but_not_a_busy_
 }
 
 #[test]
-fn finishing_never_fails_when_herdr_is_down() {
+fn finishing_never_fails_when_hc_is_down() {
     let mut w = World::new();
     w.worker("sim/jump", Some("done"));
-    w.set("FAKE_HERDR_FAIL", "pane list");
+    w.set("FAKE_HC_FAIL", "ls");
     let [line] = <[_; 1]>::try_from(w.finish("sim/jump")).unwrap();
-    assert!(
-        line.starts_with("could not clean up the sessions of sim/jump: herdr pane list failed: "),
-        "{line}"
+    assert_eq!(
+        line,
+        "could not clean up the sessions of sim/jump: hc ls: fake_failure: ls failed"
     );
 }
 
@@ -134,8 +169,7 @@ fn finish_on_a_board_it_cannot_reach_says_so_and_never_fails() {
         crate::common::HOST,
     );
     let m = w.machine();
-    let [line] =
-        <[_; 1]>::try_from(finish(&gone, &w.herdr(), &*m.processes, "sim/jump", None)).unwrap();
+    let [line] = <[_; 1]>::try_from(finish(&gone, &w.hc(), &*m.processes, "sim/jump")).unwrap();
     assert!(
         line.starts_with("could not clean up the sessions of sim/jump: SurrealDB: "),
         "{line}"

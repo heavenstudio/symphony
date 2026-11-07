@@ -12,8 +12,12 @@ mod beat;
 #[path = "../../../../../tools/gate/tests/hooks/board_beat.rs"]
 mod board_beat;
 mod commands;
+mod detached;
 mod finish;
 mod handover;
+// Each run's scratch in a folder of its own under the temp folder, swept when a killed run left it.
+#[path = "../../../../../tools/gate/tests/gate/harness_scratch.rs"]
+mod harness_scratch;
 mod launch;
 mod monitor;
 mod moved;
@@ -22,10 +26,13 @@ mod priority;
 mod probes;
 mod pull;
 mod recipe;
+mod scratch_folder;
 mod search;
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
+use std::sync::atomic::AtomicUsize;
 use symphony_board::Store;
 use symphony_board::cli::{Env, connect};
 
@@ -114,13 +121,48 @@ impl Case {
     }
 }
 
-/// A folder of this process's own outside any repository (the target dir is inside this one),
-/// emptied first.
+/// The folder under the temp folder that holds every run's scratch, and only those.
+pub const SCRATCH_HARNESS: &str = "tasks-cli";
+
+/// This process's folder of scratch, once made.
+static OWN_SCRATCH: OnceLock<PathBuf> = OnceLock::new();
+
+/// This process's folder in the temp folder's [`SCRATCH_HARNESS`] folder, `<pid>-<n>`: made on first
+/// use, once the folders of runs whose process is gone are swept (a killed run cannot remove its
+/// own), and removed with everything in it when the binary exits, its tests passed or not.
+pub fn own_scratch() -> &'static Path {
+    OWN_SCRATCH.get_or_init(|| {
+        static NEXT: AtomicUsize = AtomicUsize::new(0);
+        let root = harness_scratch::harness_root(&std::env::temp_dir(), SCRATCH_HARNESS)
+            .unwrap_or_else(|error| panic!("the tests' scratch folder: {error}"));
+        // Only the harness's folder is listed, so the sweep costs the same whatever the temp folder holds.
+        harness_scratch::reap_dead(&root);
+        let own = harness_scratch::create(&root, &NEXT)
+            .unwrap_or_else(|error| panic!("a scratch folder in {}: {error}", root.display()));
+        // SAFETY: atexit only records a function that takes nothing, to run once at the exit.
+        assert_eq!(
+            unsafe { libc::atexit(remove_own_scratch) },
+            0,
+            "the scratch's end is set"
+        );
+        own.canonicalize().unwrap()
+    })
+}
+
+/// At the binary's exit: this process's scratch goes.
+extern "C" fn remove_own_scratch() {
+    if let Some(own) = OWN_SCRATCH.get() {
+        let _ = std::fs::remove_dir_all(own);
+    }
+}
+
+/// A folder of its own outside any repository (the target dir is inside this one), in this process's
+/// [`own_scratch`], emptied first.
 pub fn scratch(name: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("tasks-cli-{}-{name}", std::process::id()));
+    let dir = own_scratch().join(name);
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
-    dir.canonicalize().unwrap()
+    dir
 }
 
 /// `git ARGS` in `dir`, as a committer named `t`, which must succeed.
