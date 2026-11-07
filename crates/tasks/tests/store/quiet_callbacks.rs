@@ -662,6 +662,8 @@ fn due_ticks_probe_once_and_idle_cursor_changes_do_not_probe() {
                 .env("TASKS_DATABASE", f.store.client().database())
                 .env("TASKS_NOW", f.now().to_string())
                 .env("TASKS_SWEEP", "off")
+                // The command's own dispatch is the one counted: it ends before the count is read.
+                .env("TASKS_DISPATCH", "inline")
                 .env("HERDR_BIN", &herdr)
                 .env("CODEX_THREAD_ID", "")
                 .env("CLAUDE_SESSION_ID", "")
@@ -948,15 +950,11 @@ fn a_pending_digest_keeps_its_retry_budget_until_a_new_action_replaces_it() {
     f.store
         .move_to("tools/pending", "backlog", &sender)
         .unwrap();
+    // A pending digest is said as the digest is when it goes out: with its one entry departed,
+    // nothing is left in it that was not delivered, so it is taken back and pushes nothing.
     let departed = f.store.callback_inbox(&orch).unwrap();
-    assert_eq!(
-        departed
-            .iter()
-            .find(|(_, text)| text.starts_with("PULL "))
-            .unwrap()
-            .0,
-        original_key
-    );
+    let pending_pull = (departed.iter()).find(|(_, text)| text.starts_with("PULL "));
+    assert_eq!(pending_pull, None, "{departed:?}");
     f.store.move_to("tools/pending", "ready", &sender).unwrap();
     let returned = f.store.callback_inbox(&orch).unwrap();
     let pulls: Vec<_> = returned
@@ -966,7 +964,7 @@ fn a_pending_digest_keeps_its_retry_budget_until_a_new_action_replaces_it() {
     assert_eq!(pulls.len(), 1);
     assert_ne!(
         pulls[0].0, original_key,
-        "a returned action supersedes an exhausted pending digest"
+        "a returned action is a digest of its own, with a retry budget of its own"
     );
     f.task("tools/later");
     assert_eq!(
@@ -1391,6 +1389,8 @@ done
             .env("TASKS_DATABASE", f.store.client().database())
             .env("TASKS_NOW", f.now().to_string())
             .env("TASKS_SWEEP", "off")
+            // Each command's deliveries end with it, so the stand-in's log is read after them all.
+            .env("TASKS_DISPATCH", "inline")
             .env("CODEX_THREAD_ID", "")
             .env("CLAUDE_SESSION_ID", "")
             .env("PATH", &path)

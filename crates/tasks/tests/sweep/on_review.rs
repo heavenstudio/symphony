@@ -83,15 +83,17 @@ fn manifest(r: &Repo, command: &[&str]) {
     );
 }
 
-/// A script under `dir` at `path` that records its working directory and arguments in `record`,
-/// then says `said` on its output.
+/// A script under `dir` at `path` that says `said` on its output, then records its working directory
+/// and arguments in `record`. A test waits for the record alone, so it comes last and appears whole,
+/// renamed into place: the shell may write its two lines apart, and [`written`] reads a file that ends
+/// a line as finished.
 fn recorder(dir: &Path, path: &str, record: &Path, said: &str) {
     write(
         dir,
         path,
         &format!(
-            "#!/bin/sh\nprintf '%s\\n' \"$PWD\" \"$*\" > '{}'\necho '{said}'\n",
-            record.display()
+            "#!/bin/sh\necho '{said}'\nprintf '%s\\n' \"$PWD\" \"$*\" > '{record}.part'\nmv '{record}.part' '{record}'\n",
+            record = record.display()
         ),
     );
     let file = dir.join(path);

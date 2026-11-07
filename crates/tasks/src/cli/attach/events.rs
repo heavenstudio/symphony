@@ -3,7 +3,7 @@
 
 use super::Seen;
 use crate::health::{Health, LIVE_SECONDS};
-use crate::orchestration::{moved, told};
+use crate::orchestration::{moved, moved_for, told};
 use crate::{Error, Message, Store};
 use std::collections::BTreeSet;
 
@@ -74,10 +74,9 @@ pub fn diff(
                             && (now.roles.iter()).any(|(s, who, _)| s == slug && who == handle))))
         };
         // Work nobody orchestrates is said only as it blocks; its digest rows say the rest.
-        let heard = !now.unclaimed.contains(slug) || status == "blocked";
         if let Some(old) = before.statuses.get(slug)
             && old != status
-            && heard
+            && now.hears_move(slug, status)
             && !announced.contains(slug.as_str())
             && !latest_status_action(&messages, slug).is_some_and(decided)
         {
@@ -112,7 +111,7 @@ fn role_moves<'m>(
         let Some((from, to)) = moved(&message.text) else {
             continue;
         };
-        if to != handle && !from.contains(&handle) {
+        if !moved_for(&from, to, handle) {
             continue;
         }
         let status = match now.statuses.get(&message.slug) {
@@ -150,7 +149,7 @@ fn role_changes<'s>(
     let mut changed: BTreeSet<(&str, &str)> = BTreeSet::new();
     for (slug, who, _) in now.roles.symmetric_difference(&before.roles) {
         if who != handle
-            && now.roles.iter().any(|(s, _, _)| s == slug)
+            && now.hears_roles(slug)
             && !joined.contains(slug.as_str())
             && !moves.contains(&(slug.as_str(), who.as_str()))
         {
@@ -169,13 +168,21 @@ fn quiet_children(
     handle: &str,
     emit: &mut dyn FnMut(&str),
 ) -> Result<(), Error> {
-    let confirmed = store.confirmed_callbacks()?;
+    // The confirmed registrations are read only for a child that went quiet since the last look:
+    // every look whose board moved diffs, and reading every registration for each recipient of
+    // each write is what made many writes at once wait on the database.
+    let mut confirmed = None;
     let mut board = None;
     for (child, &health) in &now.children {
-        if confirmed.contains(child)
-            || before.children.get(child) == Some(&health)
+        if before.children.get(child) == Some(&health)
             || matches!(health, Health::Live | Health::Left)
         {
+            continue;
+        }
+        if confirmed.is_none() {
+            confirmed = Some(store.confirmed_callbacks()?);
+        }
+        if (confirmed.as_ref().expect("read just above")).contains(child) {
             continue;
         }
         if board.is_none() {

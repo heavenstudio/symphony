@@ -83,6 +83,52 @@ cursor advances only with the persisted observation and queued events.
 Unknown observations keep the heartbeat health older binaries derive in `seen`, with separate
 metadata restoring Unknown for newer readers. Both old and new writers must share that baseline
 past the ten-minute lost threshold, or alternating dispatchers repeat liveness notices.
+In the same way an orchestrator's `seen`, `statuses` and PULL entries keep the whole-board meaning
+binaries older than one orchestrator per task read (`attach::legacy_seen`, every open status, every
+digest entry); what it hears and was told lives in `narrowing`, `pull_withheld` and
+`pull_awaiting`, which they ignore and keep, read over that record, so neither generation repeats
+a NEW, LOST or PULL the other said.
+An orchestrator's queued lines are judged at delivery by the test a dispatch makes of whom to tell
+each one (`queued_lines`, a table of each kind and the `Seen`, `Owners`, `Overseen` or
+`orchestration` call it shares with `attach::diff` and the pane watch), on its look now, so a
+hand-over or a released claim meanwhile takes back what it would no longer be told: such a line
+is dropped, and a LOST names only the work still told it. A queued PULL, whichever dispatcher
+wrote it, is never judged by its text but by one rule (`pull_account`) over what the recipient
+hears now, what the PULLs it acknowledged told it and what the PULL waiting tells: with nothing
+heard beyond what was acknowledged it is taken back; an entry beyond both queues a new PULL, with
+a key and retry budget of its own; otherwise it keeps its key and attempts and says the digest
+as it is now. Whichever, the queued and event entries become the whole digest now, and what was
+told changes only when a PULL is acknowledged: this generation's acknowledgement records what the
+PULL left untold, and `pull_awaiting` reads an older one's, which records only its entries
+(`pending_pull`, a table of each change while a PULL waits; `pull_acknowledgements`, each
+generation's acknowledgement). A new kind of task-naming line takes its test from there too.
+The contract while an older dispatcher interleaves: no entry the orchestrator hears is ever
+lost, for one no PULL it acknowledged told it is counted by the next; no line is said twice,
+but that work withheld from it, once a hand-over makes it its own, may be counted in one PULL
+more, at most once for that hand-over; and nothing repeats on its own.
+What was told is `pull_entries` but `pull_withheld` (`State::acknowledged`). This generation
+records in `pull_entries` what was told and every entry the orchestrator does not hear, and
+leaves out each entry it hears and was not told while the PULL telling it waits (`pull_queued`,
+the whole digest, keeps older dispatchers from sending it). `pull_withheld` holds each entry it
+does not hear and was not told from its first PULL on, since an older acknowledgement records
+every entry of a PULL, the first one's too. An older write only ever takes entries out of
+`pull_entries`, and every generation's acknowledgement puts in the entries of the PULL it
+acknowledged, which told them. So an entry the orchestrator hears is told once it is there,
+whoever acknowledged and whatever older dispatchers queue and acknowledge after, and untold
+while it is not, even when an older one took this generation's PULL back unsaid for its own.
+`revision`, which every older write moves, is not read. An inbox acknowledgement takes no lease,
+nor does a presence sweep pruning what was delivered, so a dispatch writes its account only if
+every PULL it read as waiting is still there undelivered (no key is used twice), and otherwise
+reads and decides again.
+What was withheld is the one ambiguity: an older dispatcher's own PULL tells the whole board,
+and its acknowledgement of that PULL and of this generation's with the same entries leave the
+same record; telling them apart needs the older binary changed. So withheld work stays untold
+until a hand-over makes it the orchestrator's: then one PULL counts it, the one repeat when an
+older PULL had told it, and once a PULL naming it is acknowledged it is in `pull_entries`, told
+for good. A record naming an entry the PULL this generation left awaiting (`pull_awaiting`) did
+not is an older one's own PULL acknowledged, which told every entry, withheld ones too.
+Posts, verdicts and AGENT lines stay: they were said to whoever held the role then, and a new
+holder hears no backlog.
 A finished idle pane still closes under the original cleanup rules, retiring its
 registration; an executor of a task in review is not finished, and keeps its pane.
 A post or changes verdict to `@executor`, or a post to the executor by handle, that no
@@ -111,6 +157,54 @@ presence grace and reservation state against the current clock. The Symphony ser
 cached inputs even without a callback recipient; machine/test probes and the agents view still
 run each tick. Unchanged live observations skip planning until the periodic PULL check; health
 changes invalidate that shortcut, and due outbox retries are checked every tick.
+A command line's write observes before it answers and leaves the delivery to a detached
+dispatcher: the `tasks` binary (`cli::main_detaching`) gives its stores a hand-off
+(`Store::dispatching_by`). The write still makes the observation every write made
+(`Pass::Observe`), queuing in the outbox what each recipient on its host hears, read against the
+board as the write left it: a hand-over or a move before the delivery neither reroutes nor folds
+it, and a callback registration takes its first look before it answers. It then starts
+`tasks dispatch` of the same executable detached, in a session of its own (`cli/detached.rs`;
+its lines go to `sf-tasks/dispatch.log` beside the repository's own board, nowhere for a
+`TASKS_SERVER` board), which delivers. One dispatcher runs a host at a time
+(`store/dispatcher.rs`, `Store::dispatch_detached`), under the row
+`callback_lease:['dispatch', HOST]` (60 s, renewed on each pass): one that finds it held counts an
+ask (`asked`) and waits until a pass begun after it (`served`) has ended (`completed`), or until
+the holder's lease lapses, when it takes the host over, so the asks of a holder lost before or
+during that pass are not lost; a new holder alone is not that pass. The holder passes
+until no ask stands and every recipient was reached (one whose lease another dispatcher held is
+passed again, for up to a recipient's lease), so 40 writes at once make a few passes, not 40.
+Each host's dispatchers keep a row of their own, so none takes an ask for recipients it cannot
+reach. A holder whose lease lapsed and was taken ends after its pass and leaves the row to the new
+holder. A hand-off that cannot start the process delivers in the write, as every library store
+does (the Symphony server's, the tests', `cli::main` in-process), and so does the binary under
+`TASKS_DISPATCH=inline`, for a test that reads what a command delivered once it has ended. A pass
+reads the delivered messages after the lowest recipient cursor once (`store/pool.rs`) and each
+recipient's inbox filters that pool, looking its deliveries up by key, where each recipient
+scanned the message and delivery tables itself; the plan before a recipient's lease no longer
+reads its inbox, since one it would read always goes on to the lease, which reads it. A
+dispatcher's own writes (an observation, a delivery) read the board marker before and after:
+when nothing else moved it between, its cached snapshot still holds (`adopt`), since a dispatcher
+writes nothing a snapshot reads, and the next recipient's leased read is the marker alone, not
+the whole board again. Under each recipient's lease a delivering pass otherwise reads the board
+and its account again, and its final transaction still re-decides when a PULL it read as waiting
+was acknowledged or pruned. A write's observation reads the account again but keeps the board it
+read once it committed, and leaves a recipient whose recorded observation is at or past that
+board's marker: that one read a board holding the write, and reading the whole board again under
+every lease is what made 40 writers at once take minutes. It also leaves, without its lease, a
+recipient whose look moved by the newest message alone and whose inbox no message since its cursor
+could reach (`Store::could_hear` tests the pass's pool on the client: to it, to a role, from the
+owner, a verdict): the write gave it nothing to hear, its recorded look and cursors stay as when
+another dispatcher held its lease, and the delivering pass moves them. A read of one statement (a plan's
+stored state, the marker, the pending check, the registrations, a waiting dispatcher's look at
+the lease) is answered outside an explicit transaction (`Store::read`): one statement reads one
+snapshot on its own, and every commit syncs the store, about 5 ms on the board's server even when
+nothing was written, paid for each recipient of each write. The inbox fetches the orchestrators'
+sessions by id from their roles: `session WHERE handle IN (SELECT ... FROM role)` runs the role
+scan again for each session, seconds on a board of thousands of each, for every inbox a message
+could reach, which is what made one write on a board that size take minutes. A diff reads the
+confirmed registrations only for a child that went quiet since the last look
+(`attach::events::quiet_children`). `examples/dispatch_load.rs` measures 40
+concurrent `tasks say` against a scratch database seeded from a dump of the live board.
 Dispatch plans before leasing and refreshes its inputs and observation again after acquiring
 the small `callback_lease` record. Its revision identifies the holder, including on release;
 taking or releasing it never rewrites `seen` or `statuses` or allocates a counter. Lease rows

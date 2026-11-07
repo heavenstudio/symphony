@@ -112,14 +112,25 @@ pub fn told(board: &Board, child: &str, handle: &str, held: Vec<String>) -> Vec<
         .collect()
 }
 
-/// The status of each unfinished task orchestrator `handle` hears, by slug: what schedules its
-/// PULL digest, so another orchestrator's tasks moving schedule nothing for it.
-pub fn open_statuses(board: &Board, handle: &str) -> BTreeMap<String, String> {
-    let owners = Owners::new(&board.tasks);
+/// The status of each unfinished task on the board, by slug: the map an orchestrator's callback
+/// state keeps, in the meaning dispatchers built before one orchestrator per task read it.
+pub fn open_statuses(board: &Board) -> BTreeMap<String, String> {
     (board.tasks.iter())
         .filter(|t| !crate::health::FINISHED.contains(&t.status.as_str()))
-        .filter(|t| owners.reaches(&t.slug, handle))
         .map(|t| (t.slug.clone(), t.status.clone()))
+        .collect()
+}
+
+/// Of `statuses`, those of the tasks orchestrator `handle` hears: what schedules its PULL digest,
+/// so another orchestrator's tasks moving schedule nothing for it.
+pub fn heard_statuses<'statuses>(
+    owners: &Owners,
+    statuses: &'statuses BTreeMap<String, String>,
+    handle: &str,
+) -> BTreeMap<&'statuses str, &'statuses str> {
+    (statuses.iter())
+        .filter(|(slug, _)| owners.reaches(slug, handle))
+        .map(|(slug, status)| (slug.as_str(), status.as_str()))
         .collect()
 }
 
@@ -157,6 +168,12 @@ pub fn took_line(to: &str, from: &[(String, &str)]) -> String {
         .map(|(handle, health)| format!("{handle} ({health})"))
         .collect();
     format!("{to} took orchestrator over from {}", from.join(", "))
+}
+
+/// Whether a move of the orchestrator role from `from` to `to` is said to `handle`: each session it
+/// left, and the one it reached.
+pub fn moved_for(from: &[&str], to: &str, handle: &str) -> bool {
+    to == handle || from.contains(&handle)
 }
 
 /// A move of the orchestrator role, read back from its thread line: the handles it left, and the
