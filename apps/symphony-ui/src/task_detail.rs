@@ -6,8 +6,8 @@ use symphony_api::{Agents, TaskPage};
 #[component]
 pub(crate) fn LiveTaskPage(route: Memo<String>, data: Signal<crate::task_live::Data>) -> Element {
     use crate::task_live;
+    // The page's error is drawn in its notice stack (`live::BoardPage`), out of the page's flow.
     rsx! {
-        if !data.read().error.is_empty() { p { role: "alert", "{data.read().error}" } }
         if let Some(slug) = route().strip_prefix("/task/") {
             if let Some(page) = data.read().detail.clone().filter(|p| p.task.slug == slug) {
                 TaskDetail { key: "{page.task.slug}", tasks: page.children.clone(), page, entries: data.read().entries.clone(), older: data.read().before.is_some(), loaded: data.read().thread_loaded, offer: data.read().approval.clone(), onhistory: move |older| { spawn(task_live::history(older,route,data)); }, onchildren: move |more| { spawn(task_live::children(more,route,data)); }, onoffer: move |_| { spawn(task_live::offer(route,data)); } }
@@ -276,7 +276,7 @@ pub fn AgentsView(
     let tasks = Rc::new(tasks);
     rsx! {
         h1 { "Agents" } p { class: "lead", "Who is connected, and what they are working on." }
-        p { class: "muted", "{agents.probes.herdr} · {agents.probes.slots}" }
+        p { class: "muted", "{agents.probes.panes} · {agents.probes.slots}" }
         h2 { "Happening now" }
         div { class: "agents-now", for task in tasks.iter().filter(|t| t.status == "in_progress" || t.status == "review") { Near { key: "{task.slug}", id: "now-{task.slug}", height: 120, TaskRow { task: task.clone() } } } }
         h2 { "Connected" }

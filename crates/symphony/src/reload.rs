@@ -62,7 +62,7 @@ impl Drop for BuildProcess {
 
 fn git(root: &Path, args: &[&str]) -> Result<String, String> {
     let done = symphony_board::sys::output(
-        Command::new("git")
+        crate::children::command("git")
             .args(args)
             .current_dir(root)
             .env_remove("GIT_DIR")
@@ -441,10 +441,11 @@ fn server_build(root: &Path, home: &Path) -> Command {
     command
 }
 
-/// Run one build from `root` in a process group of its own, its diagnostics the error when it fails.
-/// It starts without a fork and inherits only its streams (symphony_board::sys::Command): macOS's accept
-/// marks a connection close-on-exec in a second call, and a build started between the two would
-/// hold that client's connection open for its whole run.
+/// Run one build from `root` in a process group of its own, its diagnostics the error when it fails,
+/// without its starter's session ([`crate::children`]). It starts without a fork and inherits only
+/// its streams (symphony_board::sys::Command): macOS's accept marks a connection close-on-exec in a
+/// second call, and a build started between the two would hold that client's connection open for
+/// its whole run.
 fn run_build(
     mut command: Command,
     root: &Path,
@@ -455,9 +456,8 @@ fn run_build(
     // hold its writer, so it is made close-on-exec (symphony_board::sys::pipe) and only the build gets it.
     let (mut stderr, writer) =
         symphony_board::sys::pipe().map_err(|e| format!("could not build {product}: {e}"))?;
-    let child = command
+    let child = crate::children::sessionless(&mut command)
         .current_dir(root)
-        .env_remove("TASKS_SESSION")
         .env_remove("SF_CONTENT_DIR")
         .stdin(Stdio::null())
         .stdout(Stdio::null())

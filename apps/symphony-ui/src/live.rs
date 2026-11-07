@@ -333,8 +333,12 @@ fn BoardPage(route: Memo<String>, scope: String) -> Element {
             }
         });
     }
+    // A task or agents view's failed fetch is a page notice, as the board's is: an alert in the
+    // page's flow would shrink the page when a reconnect clears it, clamping a reader at its end.
+    #[cfg(feature = "page-tasks")]
+    let error = use_memo(move || data.read().error.clone())();
     #[cfg(not(feature = "page-tasks"))]
-    let _ = route;
+    let (_, error) = (route, String::new());
     let marked = use_hook(|| Rc::new(Cell::new(false)));
     use_effect(move || {
         if board.read().is_some() && !marked.replace(true) {
@@ -358,23 +362,18 @@ fn BoardPage(route: Memo<String>, scope: String) -> Element {
             front
         };
         #[cfg(feature = "page-tasks")]
-        {
-            if route().starts_with("/task/") || route() == "/agents" {
-                rsx! { crate::tasks::LiveTaskPage { route, data } }
-            } else {
-                front
-            }
-        }
-        #[cfg(not(feature = "page-tasks"))]
-        {
+        let front = if route().starts_with("/task/") || route() == "/agents" {
+            rsx! { crate::tasks::LiveTaskPage { route, data } }
+        } else {
             front
-        }
+        };
+        front
     } else {
         rsx! { p { class: "lead", {trouble().map_or_else(|| "Loading the board…".into(), |why| format!("The board could not be loaded: {why}. Trying again."))} } }
     };
     rsx! { main { "data-ready": "board", "data-feed": if stale() { "stale" } else { "live" },
         {content}
-        PageNotices { reconnecting: stale() }
+        PageNotices { reconnecting: stale(), error }
     } }
 }
 
