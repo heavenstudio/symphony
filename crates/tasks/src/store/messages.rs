@@ -11,6 +11,7 @@ use crate::rows::{MessageRow, SessionRow};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::sync::LazyLock;
 
 /// The kinds of message that reach an inbox; `system` is the record only.
 pub const DELIVERED: [&str; 2] = ["msg", "verdict"];
@@ -19,34 +20,57 @@ pub const DELIVERED: [&str; 2] = ["msg", "verdict"];
 /// own and leaves it out of its inbox.
 pub const BOARD: &str = "board";
 
+/// Whether a message could reach `$handle`'s inbox after `$since`: delivered, sent since the session
+/// connected, not its own, and from the owner, to it, to a role or a verdict (not addressed to another
+/// handle or the owner). Its fields are read under `m`: `""` for a row of the table, `"$m."` for a row
+/// of a [`super::pool::Pool`]. The roles and the tree decide the rest ([`Store::inbox_read`]).
+fn could_reach(m: &str) -> String {
+    format!(
+        "{m}sid > $since AND {m}ts >= $me.connected AND {m}kind IN $delivered AND {m}sender != $handle
+        AND ({m}sender = 'owner' OR {m}recipient = $handle OR ({m}recipient != NONE AND string::starts_with({m}recipient, '@')) OR {m}kind = 'verdict')"
+    )
+}
+
 /// What an inbox is worked out from: the session's roles, the tree, and the messages since it
-/// connected that are not its own, that it has not acknowledged, and that could reach it (not
-/// addressed to another handle or the owner). Acknowledgement markers overwrite decimal integer
-/// keys during tree construction, then one marker filter selects the unread record references.
-/// Their bodies are fetched within the same transaction snapshot.
-const INBOX: &str = concat!(
-    "
+/// connected that are not its own, that it has not acknowledged, and that could reach it. Read from
+/// the message table, or from `$pool`, a dispatch pass's rows of it ([`super::pool::Pool`]), when one is given:
+/// then acknowledgements are looked up for those rows alone, not scanned for. Acknowledgement markers
+/// overwrite decimal integer keys during tree construction, then one marker filter selects the
+/// unread record references. Their bodies are fetched within the same transaction snapshot, and the
+/// roles and the tree only when one is wanted. The orchestrators' sessions are fetched by id from
+/// their roles: a `session WHERE handle IN (SELECT ... FROM role)` runs the role scan again for each
+/// session, seconds on a board of thousands of each, for every inbox a message could reach.
+static INBOX: LazyLock<String> = LazyLock::new(|| {
+    format!(
+        "
 LET $me = (SELECT connected FROM ONLY type::record('session', $handle));
-LET $candidates = IF $me = NONE { [] } ELSE {
-    (SELECT VALUE [<string>sid, id] FROM message
-        WHERE sid > $since AND ts >= $me.connected AND kind IN $delivered AND sender != $handle
-        AND (sender = 'owner' OR recipient = $handle OR (recipient != NONE AND string::starts_with(recipient, '@')) OR kind = 'verdict'))
-};
-LET $acked = (SELECT VALUE [<string>message, NULL] FROM delivery WHERE handle = $handle AND message > $since);
-",
-    include_str!("inbox_unread.surql"),
-    "
-RETURN {
-    orchestrators: (SELECT VALUE [slug, handle] FROM role WHERE role = 'orchestrator'),
-    orchestrator_sessions: (SELECT * OMIT id FROM session
-        WHERE handle IN (SELECT VALUE handle FROM role WHERE role = 'orchestrator')),
-    native_presence: (SELECT handle, confirmed_until ?? 0 AS until FROM callback_state WHERE string::starts_with(address ?? '', 'codex:')),
+LET $candidates = IF $me = NONE {{ [] }} ELSE IF $pool = NONE {{
+    (SELECT VALUE [<string>sid, id] FROM message WHERE {scan})
+}} ELSE {{
+    $pool.filter(|$m| {pooled}).map(|$m| [<string>$m.sid, type::record('message', [$m.slug, $m.sid])])
+}};
+LET $acked = IF $pool = NONE {{
+    (SELECT VALUE [<string>message, NULL] FROM delivery WHERE handle = $handle AND message > $since)
+}} ELSE {{
+    $candidates.filter(|$c| record::exists(type::record('delivery', [<int>$c[0], $handle]))).map(|$c| [$c[0], NULL])
+}};
+{unread}
+LET $placing = array::len($wanted) > 0;
+LET $orchestrators = IF $placing {{ (SELECT VALUE [slug, handle] FROM role WHERE role = 'orchestrator') }} ELSE {{ [] }};
+RETURN {{
+    orchestrators: $orchestrators,
+    orchestrator_sessions: (SELECT * OMIT id FROM array::distinct($orchestrators.map(|$held| type::record('session', $held[1])))),
+    native_presence: IF $placing {{ (SELECT handle, confirmed_until ?? 0 AS until FROM callback_state WHERE string::starts_with(address ?? '', 'codex:')) }} ELSE {{ [] }},
     known: $me != NONE,
-    roles: (SELECT slug, role FROM role WHERE handle = $handle),
-    tree: (SELECT VALUE [slug, parent] FROM task),
+    roles: IF $placing {{ (SELECT slug, role FROM role WHERE handle = $handle) }} ELSE {{ [] }},
+    tree: IF $placing {{ (SELECT VALUE [slug, parent] FROM task) }} ELSE {{ [] }},
     messages: (SELECT * OMIT id FROM $wanted ORDER BY sid),
-};"
-);
+}};",
+        scan = could_reach(""),
+        pooled = could_reach("$m."),
+        unread = include_str!("inbox_unread.surql"),
+    )
+});
 
 /// `line`, a message's write, made once per `$key` on `$slug`'s thread: the first write under the
 /// key makes the line and `delivery_key:[slug, key]`, which names that line to every later one,
@@ -283,12 +307,17 @@ IF $handle != NONE AND !record::exists(type::record('session', $handle)) {{ THRO
     /// Unread addressed messages, owner messages on its tasks, and verdicts for the executor and
     /// orchestrators. Unaddressed agent posts remain on the thread without notifying participants.
     pub fn inbox(&self, handle: &str) -> Result<Vec<Message>, Error> {
-        self.inbox_after(handle, i64::MIN)
+        self.inbox_read(handle, i64::MIN, None)
     }
 
-    /// Native dispatch has already copied older messages to its durable outbox. Newly acquired
-    /// roles must not backfill that history; manual inbox reads still use the complete history.
-    pub(super) fn inbox_after(&self, handle: &str, since: i64) -> Result<Vec<Message>, Error> {
+    /// The inbox after `since` from the message table, or from `pool`'s rows of it
+    /// ([`super::pool::Pool`]).
+    pub(super) fn inbox_read(
+        &self,
+        handle: &str,
+        since: i64,
+        pool: Option<Value>,
+    ) -> Result<Vec<Message>, Error> {
         #[derive(Deserialize)]
         struct Held {
             slug: String,
@@ -304,8 +333,8 @@ IF $handle != NONE AND !record::exists(type::record('session', $handle)) {{ THRO
             tree: Vec<(String, Option<String>)>,
             messages: Vec<MessageRow>,
         }
-        let vars = json!({"handle": handle, "delivered": DELIVERED, "since":since});
-        let read: Read = self.retrying(|| self.transact(INBOX, vars.clone()))?;
+        let vars = json!({"handle": handle, "delivered": DELIVERED, "since":since, "pool": pool});
+        let read: Read = self.retrying(|| self.transact(&INBOX, vars.clone()))?;
         if !read.known {
             return Err(refused(format!("no session {}", repr(handle))));
         }
