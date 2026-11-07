@@ -443,6 +443,17 @@ pub fn connect(root: &Path) -> Result<symphony_board::Store, String> {
     }
 }
 
+/// A quick-task outcome read must identify the owner's intended task before confirming it.
+pub(crate) fn is_quick_task(task: &symphony_board::Task, receipt: &str) -> bool {
+    task.created_by == "owner"
+        && task
+            .fields
+            .get("_symphony")
+            .and_then(|fields| fields.get("owner_save"))
+            .and_then(serde_json::Value::as_str)
+            == Some(receipt)
+}
+
 /// The agents view, its machine probes run without this process's session
 /// ([`crate::children::board_env`]): hc's session names would scope the census to the starter's
 /// core.

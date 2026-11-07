@@ -10,7 +10,8 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use std::cell::RefCell;
 use std::collections::{BTreeSet, HashMap, HashSet};
-use std::fmt::Write as _;
+
+mod owner_task;
 
 mod roles;
 
@@ -259,70 +260,6 @@ FOR $dependent IN array::distinct($blocked_links.slug) {{
 }
 
 impl Store {
-    /// A new task, on the record. `assignee`: a session the task is reserved for, with no lapse.
-    pub fn create(&self, new: &NewTask) -> Result<Task, Error> {
-        if !plain_slug(&new.slug) {
-            return Err(refused(format!(
-                "slug {} must look like area/short-name (lowercase, digits, dashes)",
-                repr(&new.slug)
-            )));
-        }
-        let title = new.title.trim();
-        if title.is_empty() {
-            return Err(refused("a task needs a title".into()));
-        }
-        if !BEFORE_WORK.contains(&new.status.as_str()) {
-            return Err(refused(format!(
-                "a new task starts as {}, not {}",
-                BEFORE_WORK.join(", "),
-                repr(&new.status)
-            )));
-        }
-        if !(0..=4).contains(&new.priority) {
-            return Err(refused("priority runs 0 (most urgent) to 4".into()));
-        }
-        let parent = new.parent.as_deref().filter(|p| !p.is_empty());
-        if new.instruction && parent.is_none() {
-            return Err(refused(
-                "an instruction task is a subtask: it needs a parent".into(),
-            ));
-        }
-        let needed: Vec<Value> = new
-            .depends
-            .iter()
-            .map(String::as_str)
-            .chain(parent)
-            .map(|other| json!({"slug": other, "missing": format!("{REFUSED}{}", no_task(other))}))
-            .collect();
-        let links: Vec<Value> = (new.links.iter().map(|l| ("doc", l)))
-            .chain(new.depends.iter().map(|d| ("dep", d)))
-            .map(|(kind, target)| json!({"kind": kind, "target": target}))
-            .collect();
-        let mut said = format!("created by {}", new.by);
-        if let Some(assignee) = &new.assignee {
-            let _ = write!(said, " for {assignee}");
-        }
-        let act = if new.by == OWNER { "" } else { ACT };
-        let body = format!(
-            "{act}{CREATE}\n{}\n{}",
-            logged("$slug", "$actor", "'system'", "$said", "NONE"),
-            block_cancelled_dependencies(false)
-        );
-        let vars = acting(
-            &new.by,
-            (self.clock)(),
-            json!({
-                "slug": new.slug, "title": title, "body": new.body, "status": new.status,
-                "priority": new.priority, "parent": parent, "instruction": new.instruction,
-                "needed": needed, "links": links, "assignee": new.assignee, "said": said,
-                "taken": format!("{REFUSED}task {} already exists", new.slug),
-                "unassignable": new.assignee.as_ref()
-                    .map(|a| format!("{REFUSED}no session {} to assign it to", repr(a))),
-            }),
-        );
-        self.retrying(|| self.written(&body, vars.clone(), &new.slug))
-    }
-
     /// Set a task's priority, recording the actor and both values without changing its other fields.
     pub fn set_priority(&self, slug: &str, priority: i64, handle: &str) -> Result<Task, Error> {
         if !(0..=4).contains(&priority) {
