@@ -74,15 +74,17 @@ fn each_build_is_mains_own_command_with_its_arguments() {
     }
 }
 
-/// What the build saw, `|` after each: its directory, the two variables a build must not see and
-/// one it keeps, its stdin and stdout, and whether it leads a process group of its own.
+/// What the build saw, `|` after each: its directory, the six variables a build must not see (the
+/// board's session, hc's four and the content tree) and one it keeps, its stdin and stdout, and
+/// whether it leads a process group of its own.
 const SAW: &str = r#"
     input=other; output=other; leader=no
     test /dev/fd/0 -ef /dev/null && input=null
     test /dev/fd/1 -ef /dev/null && output=null
     test "$(ps -o pgid= -p $$ | tr -d ' ')" = "$$" && leader=yes
-    printf '%s|' "$(pwd -P)" "${TASKS_SESSION-unset}" "${SF_CONTENT_DIR-unset}" \
-        "${SF_SYMPHONY_KEPT-unset}" "$input" "$output" "$leader" > saw
+    printf '%s|' "$(pwd -P)" "${TASKS_SESSION-unset}" "${HC_TERMINAL_ID-unset}" \
+        "${HC_TERMINAL_SOCKET-unset}" "${HC_SESSION-unset}" "${HC_SCOPE-unset}" \
+        "${SF_CONTENT_DIR-unset}" "${SF_SYMPHONY_KEPT-unset}" "$input" "$output" "$leader" > saw
 "#;
 
 #[test]
@@ -103,6 +105,10 @@ fn a_build_runs_from_the_root_in_a_group_of_its_own_without_the_session_or_conte
             ])
             .env(CASE, &tree.root)
             .env("TASKS_SESSION", "a-session")
+            .env("HC_TERMINAL_ID", "t7")
+            .env("HC_TERMINAL_SOCKET", "/fixture/hc/t7.sock")
+            .env("HC_SESSION", "fixture-core")
+            .env("HC_SCOPE", "fixture-scope")
             .env("SF_CONTENT_DIR", "/a/content/tree")
             .env("SF_SYMPHONY_KEPT", "kept"),
     )
@@ -116,7 +122,7 @@ fn a_build_runs_from_the_root_in_a_group_of_its_own_without_the_session_or_conte
     assert_eq!(
         tree.read("saw"),
         format!(
-            "{}|unset|unset|kept|null|null|yes|",
+            "{}|unset|unset|unset|unset|unset|unset|kept|null|null|yes|",
             tree.root.canonicalize().unwrap().display()
         )
     );

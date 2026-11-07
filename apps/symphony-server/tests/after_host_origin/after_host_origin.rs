@@ -195,14 +195,14 @@ impl Fixture {
                 &stub,
                 concat!(
                     "#!/bin/sh\nset -eu\n",
-                    "printf '%s|session=%s|pane=%s\\n' \"$*\" \"${TASKS_SESSION-unset}\" \"${HERDR_PANE_ID-unset}\" >> \"$SF_AFTER_HOST_ORIGIN_FINISH\"\n",
+                    "printf '%s|session=%s|terminal=%s|socket=%s\\n' \"$*\" \"${TASKS_SESSION-unset}\" \"${HC_TERMINAL_ID-unset}\" \"${HC_TERMINAL_SOCKET-unset}\" >> \"$SF_AFTER_HOST_ORIGIN_FINISH\"\n",
                     "printf '\\n' 1<> \"$SF_AFTER_HOST_ORIGIN_NOTICE\"\n",
                     "if [ \"$1\" = tasks ] && [ -p \"$PWD/finish.release\" ]; then\n",
                     "  IFS= read -r result < \"$PWD/finish.release\"\n",
                     "  case \"$result\" in\n",
                     "    fail) printf '%s\\n' 'fixture finish failure' >&2; exit 9 ;;\n",
-                    "    reported) printf '→ could not clean up the sessions of %s: fixture Herdr unavailable\\nfixture Herdr details\\n' \"$3\" ;;\n",
-                    "    closed) printf '%s\\n' '→ closed pane fixture-pane of fixture-session (finished); restore: fixture' ;;\n",
+                    "    reported) printf '→ could not clean up the sessions of %s: fixture hc unavailable\\nfixture hc details\\n' \"$3\" ;;\n",
+                    "    closed) printf '%s\\n' '→ closed pane t7 of fixture-session (finished); restore: fixture' ;;\n",
                     "  esac\n",
                     "fi\n"
                 ),
@@ -370,9 +370,11 @@ printf '%s\n' '{"Self":{"DNSName":"review-fixture.tail.test.","TailscaleIPs":["f
             .env("TASKS_SERVER", address.to_string())
             .env("TASKS_DATABASE", "after_host_origin")
             .env("PATH", path)
+            .env("TASKS_SWEEP", if finishing { "on" } else { "off" })
             .env_remove("BASH_ENV")
             .env_remove("TASKS_SESSION")
-            .env_remove("HERDR_PANE_ID")
+            .env_remove("HC_TERMINAL_ID")
+            .env_remove("HC_TERMINAL_SOCKET")
             .env_remove("TASKS_BIN")
             .env_remove("SF_SYMPHONY_UI_DIST")
             .env_remove("GIT_DIR")
@@ -383,15 +385,13 @@ printf '%s\n' '{"Self":{"DNSName":"review-fixture.tail.test.","TailscaleIPs":["f
             .stdout(out)
             .stderr(err);
         if finishing {
-            command
+            command // started from an agent's hc terminal, which no board child may join
                 .env("TASKS_SESSION", "fixture-session")
-                .env("HERDR_PANE_ID", "fixture-pane")
-                .env("TASKS_SWEEP", "on")
+                .env("HC_TERMINAL_ID", "t7")
+                .env("HC_TERMINAL_SOCKET", "/fixture/hc/t7.sock")
                 .env("TASKS_BIN", root.join("tools/rs-bin.sh"))
                 .env("SF_AFTER_HOST_ORIGIN_FINISH", root.join("finish.calls"))
                 .env("SF_AFTER_HOST_ORIGIN_NOTICE", root.join("finish.notice"));
-        } else {
-            command.env("TASKS_SWEEP", "off");
         }
         let mut child = OwnedChild(command.spawn().unwrap());
         let status = child.0.wait().unwrap();
