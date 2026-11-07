@@ -304,8 +304,8 @@ fn phase(phase: &'static str) {
         String::from_utf8_lossy(&done.stderr)
     );
     let delays = match phase {
-        "check" => 3,
-        "lookup" | "reopen" => 2,
+        "check" | "reopen" => 3,
+        "open" | "lookup" => 2,
         "journal" | "concurrent" | "receipt-write" | "journal-write" | "interrupted" => 0,
         _ => 1,
     };

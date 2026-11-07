@@ -147,7 +147,8 @@ fn outlasted(began: (Instant, SystemTime), now: (Instant, SystemTime), timeout: 
 
 /// Own the command's group through completion, cancellation or `timeout`, measured on the clocks
 /// `now` reads. Regular files keep a descendant's inherited output descriptor from holding a
-/// reader or this deadline open forever.
+/// reader or this deadline open forever. It runs without the server's session
+/// ([`symphony::children`]), whoever hands it.
 pub(crate) fn output_while(
     mut command: Command,
     timeout: Duration,
@@ -157,7 +158,7 @@ pub(crate) fn output_while(
     let out = capture().map_err(|e| e.to_string())?;
     let err = capture().map_err(|e| e.to_string())?;
     // A session of its own: the resulting group belongs only to this child.
-    let child = command
+    let child = symphony::children::sessionless(&mut command)
         .new_session()
         .stdin(Stdio::null())
         .stdout(out.try_clone().map_err(|e| e.to_string())?)

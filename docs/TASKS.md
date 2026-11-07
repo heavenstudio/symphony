@@ -288,7 +288,10 @@ The app is the source of truth for who is doing what: `GET /api/agents` of the S
 `symphony/crates/tasks/tests/cli/agents.rs`). The board (sessions, roles, `task_sessions`) is the record; hc's
 live terminals (`hc ls`) and the test-slot locks are probes that say what each agent is doing now, and `probes` names
 either as `unavailable` when it cannot be asked, the rest being built from the board alone. The hc probe keeps the
-key `herdr` and an agent's terminal the key `pane`: names the wire keeps.
+key `herdr` and an agent's terminal the key `pane`: names the wire keeps. The Symphony's `/api/agents` also names
+that probe `panes`, with the same answer under both keys, and its client reads `panes`, else `herdr`
+(`symphony/crates/symphony-api/src/agent_probes.rs`), so a client and a server one build apart still agree; the
+rest of its document is the board's.
 
 ```
 {"generated": 1790000000.0,
