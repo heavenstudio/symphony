@@ -9,9 +9,6 @@
 //! SQLite's row ids are kept as `sid`; `counter:message` and `counter:task` hold the last id given out,
 //! `counter:tree` counts the moves of a task under another, and `counter:['agent', key]` the binds of
 //! one agent (`Store::bind_agent`): each a record the writes that must not pass each other write.
-//! `counter:['registration', handle]` counts one handle's callback registrations, so a registration
-//! after a retirement (which deletes its `callback_state` row) never takes a retired one's number;
-//! it starts from the clock, above the numbers from 1 that registrations had before it.
 //! Mutation events advance `counter:board` in the transaction that changes board inputs,
 //! callback registration/observations or owner chat. Readers compare that marker without writing it.
 //! An event UPDATEs the marker, or CREATEs it on a board's first write, and never UPSERTs it: an

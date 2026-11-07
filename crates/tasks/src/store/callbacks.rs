@@ -139,12 +139,14 @@ pub struct Callback {
     /// Codex thread is present while that terminal runs Codex.
     #[serde(default)]
     pub terminal: Option<String>,
-    /// Which of the handle's registrations this one is. `counter:['registration', HANDLE]` counts
-    /// them, outside the row a retirement deletes, so a later one never takes a retired one's number.
-    /// A count starts from the clock (seconds since 1970), above the numbers registrations had
-    /// before the count, which numbered from 1: not even one retired then comes back.
+    /// How many times the handle has registered since its row was made: a number a registration
+    /// made after a retirement (which deletes the row) takes again.
     #[serde(default)]
     registration_revision: u64,
+    /// Which registration this is: a random id each registration writes, so one made since never
+    /// has it. None on a row an older build wrote, which writes none.
+    #[serde(default)]
+    registration_nonce: Option<String>,
     #[serde(skip)]
     live_orchestrator: bool,
 }
@@ -269,10 +271,8 @@ IF $take {{
     UPDATE callback_event SET delivered = true, text = '' WHERE handle != $actor AND string::starts_with(key, 'chat-') RETURN NONE;
 }};
 IF $address = NONE {{ UPDATE callback_event SET delivered = true, text = '' WHERE handle = $actor AND string::starts_with(key, 'chat-') RETURN NONE; }};
-LET $registration = math::max([type::record('counter', ['registration', $actor]).last ?? <int> math::floor($now), type::record('callback_state', $actor).registration_revision ?? 0]) + 1;
-UPSERT type::record('counter', ['registration', $actor]) SET last = $registration RETURN NONE;
 UPSERT type::record('callback_state', $actor) SET handle = $actor, address = $address, host = $host, chat_fallback = $chat AND $if_free,
-    registration_revision = $registration,
+    registration_revision = (registration_revision ?? 0) + 1, registration_nonce = rand::string(32),
     owner = $owner, confirmed_until = 0, chat_resume = false, terminal = $terminal,
     chat = IF $address = NONE {{ false }} ELSE IF $take {{ true }} ELSE {{ chat ?? false }} RETURN NONE;
 IF $address != NONE AND string::starts_with($address, 'codex:') {{
@@ -313,7 +313,7 @@ RETURN NONE;");
 
     fn stored_callbacks(&self) -> Result<Vec<Callback>, Error> {
         self.retrying(|| self.read(
-            "RETURN SELECT handle, address, host, terminal, registration_revision ?? 0 AS registration_revision, chat ?? false AS chat, chat_fallback ?? false AS chat_fallback, owner, confirmed_until ?? 0 AS confirmed_until,
+            "RETURN SELECT handle, address, host, terminal, registration_revision ?? 0 AS registration_revision, registration_nonce, chat ?? false AS chat, chat_fallback ?? false AS chat_fallback, owner, confirmed_until ?? 0 AS confirmed_until,
                 (SELECT * OMIT id FROM ONLY type::record('session', $parent.handle)) AS session, chat_resume ?? false AS chat_resume, pane_watch ?? {} AS pane_watch,
                 IF type::record('session', handle).agent = NONE { false } ELSE { type::record('callback_state', ['binding', type::record('session', handle).agent]).in_process ?? true } AS in_process
              FROM callback_state WHERE address != NONE AND type::record('session', handle).left_at = NONE;", json!({}),
@@ -343,8 +343,11 @@ RETURN NONE;");
     }
 
     /// Retire the registration `callback` was read as, exactly: its address, listener, terminal (or
-    /// none) and `registration_revision`, so never one registered since, though from the same
-    /// listener and terminal. Whether it retired it.
+    /// none), `registration_revision` and `registration_nonce` (or none), so never one registered
+    /// since, though from the same listener and terminal and with the same number. Whether it
+    /// retired it. The one registration it cannot tell from the one read is a row an older build
+    /// (which writes no nonce) made again just as it was: the same address, listener and terminal,
+    /// and numbered as the one read.
     pub(crate) fn clear_callback(&self, callback: &Callback, why: &str) -> Result<bool, Error> {
         self.retire_registration(callback, why, None)
     }
@@ -370,6 +373,7 @@ RETURN NONE;");
         let mut vars = json!({
             "handle":callback.handle, "address":callback.address, "owner":callback.owner,
             "terminal":callback.terminal, "revision":callback.registration_revision,
+            "nonce":callback.registration_nonce,
         });
         let mut guard = "";
         if let Some(hold) = hold {
@@ -377,8 +381,8 @@ RETURN NONE;");
             guard = HOLDS;
         }
         let body = format!("{guard}
-             LET $state = (SELECT address, owner, terminal, registration_revision ?? 0 AS revision FROM ONLY type::record('callback_state', $handle));
-             IF $state.address != $address OR $state.owner != $owner OR $state.terminal != $terminal OR $state.revision != $revision {{ RETURN false }};
+             LET $state = (SELECT address, owner, terminal, registration_revision ?? 0 AS revision, registration_nonce AS nonce FROM ONLY type::record('callback_state', $handle));
+             IF $state.address != $address OR $state.owner != $owner OR $state.terminal != $terminal OR $state.revision != $revision OR $state.nonce != $nonce {{ RETURN false }};
              DELETE type::record('callback_state', $handle) RETURN NONE;
              UPDATE callback_event SET delivered = true, text = '' WHERE handle = $handle AND string::starts_with(key, 'chat-') RETURN NONE;
              RETURN true;");

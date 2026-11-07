@@ -308,9 +308,11 @@ The close writes the closure only once the terminal is killed, bound to the reco
 callback registered before the kill completes the record's thread. It then retires the
 registration from that terminal, or the very one it read before (from no terminal):
 `clear_callback` retires a registration only as it was read (address, listener, terminal or none,
-and `registration_revision`, counted in `counter:['registration', HANDLE]`, outside the row a
-retirement deletes, and started from the clock, above the numbers from 1 given before the count,
-so a number never returns), never one registered since. A Codex record written `codex:`
+`registration_revision`, and `registration_nonce`, a random id each registration writes), never
+one registered since, though it took the same number after a retirement deleted the row. Its one
+limit: a row an older build (which writes no nonce) makes again just as the one read was (the
+same address, listener and terminal, numbered the same) cannot be told from it, and a close that
+read that one may retire it. A Codex record written `codex:`
 takes the thread the handle's callback
 registered, at its launch or its close (`store/launches.rs`), so the order of the callback and
 the record never loses it. Its tests' handles:
