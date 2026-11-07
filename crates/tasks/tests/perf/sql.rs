@@ -2,11 +2,13 @@
 //! ones too, and every `UPDATE` or `DELETE` of a table under a condition as the `SELECT` of the rows
 //! it would change; and the variables a statement reads.
 //!
-//! Keywords count in any case, as the server takes them. Quoted text (`'…'`, `"…"`, `` `…` ``, a
-//! backslash escaping the byte after it) and comments (`--`, `//` or `#` to the end of the line,
-//! `/* … */`) hold no statement, and none of their brackets or `;` ends one; a statement keeps its
-//! quoted text and has each comment read as a space. Every cut falls on an ASCII byte, which UTF-8
-//! never puts inside a character, so text in any script passes through whole.
+//! Keywords count in any case and end at any byte no name goes on with, as the server takes them:
+//! `SELECT*`, `SELECT/**/ *` and `select-- …` then a line are reads as `SELECT *` is. Quoted text
+//! (`'…'`, `"…"`, `` `…` ``, a backslash escaping the byte after it) and comments (`--`, `//` or
+//! `#` to the end of the line, `/* … */`) hold no statement, and none of their brackets or `;` ends
+//! one; a statement keeps its quoted text and has each comment read as a space. Every cut falls on
+//! an ASCII byte, which UTF-8 never puts inside a character, so text in any script passes through
+//! whole.
 
 /// Names SurrealQL binds itself, and the parameters of a closure, which a statement uses unbound.
 const BUILT_IN: [&str; 7] = [
@@ -22,13 +24,13 @@ enum Part {
 }
 
 /// SurrealQL with each byte's [`Part`].
-struct Lexed<'a> {
-    sql: &'a str,
+struct Lexed<'sql> {
+    sql: &'sql str,
     parts: Vec<Part>,
 }
 
-impl<'a> Lexed<'a> {
-    fn new(sql: &'a str) -> Lexed<'a> {
+impl<'sql> Lexed<'sql> {
+    fn new(sql: &'sql str) -> Lexed<'sql> {
         let bytes = sql.as_bytes();
         let mut parts = vec![Part::Code; bytes.len()];
         let mut at = 0;
@@ -55,18 +57,20 @@ impl<'a> Lexed<'a> {
         self.parts.get(at) == Some(&Part::Code)
     }
 
-    /// Whether `keyword` (upper case) stands at `at` in code, in any case, a word of its own
-    /// followed by white space.
+    /// Whether `keyword` (upper case) stands at `at` in code, in any case, a word of its own as the
+    /// server reads one: after no byte of a name, a variable or a path (`.`), and followed by a
+    /// byte no name goes on with, white space, a comment, `*` or `(` alike.
     fn keyword_at(&self, at: usize, keyword: &str) -> bool {
         let bytes = self.sql.as_bytes();
         let end = at + keyword.len();
         let spelled = bytes
             .get(at..end)
             .is_some_and(|word| word.eq_ignore_ascii_case(keyword.as_bytes()));
+        let after_a_name = at > 0 && (is_word(bytes[at - 1]) || bytes[at - 1] == b'.');
         spelled
             && (at..end).all(|inside| self.is_code(inside))
-            && (at == 0 || !is_word(bytes[at - 1]))
-            && bytes.get(end).is_some_and(u8::is_ascii_whitespace)
+            && !after_a_name
+            && bytes.get(end).is_some_and(|&next| !is_word(next))
     }
 
     /// Where the statement starting at `from` ends: the bracket closing the one it is in, a `;`
@@ -154,8 +158,10 @@ fn block_end(bytes: &[u8], open: usize) -> usize {
         .map_or(bytes.len(), |close| close + 2)
 }
 
+/// Whether a name, a variable (`$`) or a record id (`table:id`) goes on with `byte`: a letter
+/// outside ASCII is taken to, so no keyword ends inside one.
 fn is_word(byte: u8) -> bool {
-    byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'$' || byte == b':'
+    byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'$' | b':') || !byte.is_ascii()
 }
 
 /// Each statement `sql` holds that reads rows of a table under a condition, as a `SELECT`: every
@@ -175,6 +181,20 @@ pub fn statements(sql: &str) -> Vec<String> {
         }
     }
     found
+}
+
+/// Each `DEFINE EVENT` statement `sql` holds, whole: what the server runs in the write that fires
+/// it, which no client sends.
+pub fn events(sql: &str) -> Vec<String> {
+    let lexed = Lexed::new(sql);
+    let defines = (0..sql.len()).filter(|&at| lexed.keyword_at(at, "DEFINE"));
+    let definitions = defines.map(|at| lexed.text(at, lexed.statement_end(at)));
+    definitions
+        .filter(|definition| {
+            let defined = definition["DEFINE".len()..].trim_start();
+            Lexed::new(defined).keyword_at(0, "EVENT")
+        })
+        .collect()
 }
 
 /// `UPDATE TABLE SET … WHERE COND` or `DELETE TABLE WHERE COND` (a table by its name, not one
@@ -302,6 +322,52 @@ LET $selected = 1; RETURN deleted_at;";
                 "Select VALUE sid From message",
                 "SELECT id FROM callback_event WHERE handle = $actor",
                 "SELECT id FROM callback_event WHERE key = 'pull-1'",
+            ]
+        );
+    }
+
+    /// A keyword ends at any byte no name goes on with, as the server reads it: a comment, `*`,
+    /// a line or `(` straight after one starts its statement as a space does. One a name, a
+    /// variable, a path or a record id holds starts none.
+    #[test]
+    fn a_keyword_ends_at_any_byte_no_name_goes_on_with() {
+        let sql = "SELECT/**/ * FROM session WHERE kind = 'reviewer';
+SELECT* FROM session;
+select/* café */ * from session;
+SELECT-- comment
+* FROM session;
+DELETE/**/callback_event WHERE key = 'pull-1';
+UPDATE-- the events
+callback_event SET attempts = 0 WHERE(handle = $actor);
+LET $selected = selection.select; RETURN [select:one, selectédeleted];";
+        assert_eq!(
+            statements(sql),
+            [
+                "SELECT  * FROM session WHERE kind = 'reviewer'",
+                "SELECT* FROM session",
+                "select  * from session",
+                "SELECT \n* FROM session",
+                "SELECT id FROM callback_event WHERE key = 'pull-1'",
+                "SELECT id FROM callback_event WHERE (handle = $actor)",
+            ]
+        );
+    }
+
+    /// Each event a schema defines is read whole, the braces and `;` of its body inside it, in
+    /// any case and after a comment; no other definition is.
+    #[test]
+    fn an_event_definition_is_read_whole_and_no_other_definition() {
+        let sql = "DEFINE TABLE IF NOT EXISTS message SCHEMAFULL;
+DEFINE EVENT OVERWRITE said ON message WHEN $event != 'UPDATE' THEN {
+    IF $event != 'CREATE' { LET $was = (SELECT sid FROM said); };
+};
+define event/**/kept ON task THEN { UPDATE counter:board SET last = 1 RETURN NONE; };
+DEFINE INDEX IF NOT EXISTS message_sid ON message FIELDS sid; -- DEFINE EVENT noted ON x THEN {};";
+        assert_eq!(
+            events(sql),
+            [
+                "DEFINE EVENT OVERWRITE said ON message WHEN $event != 'UPDATE' THEN {\n    IF $event != 'CREATE' { LET $was = (SELECT sid FROM said); };\n}",
+                "define event kept ON task THEN { UPDATE counter:board SET last = 1 RETURN NONE; }",
             ]
         );
     }

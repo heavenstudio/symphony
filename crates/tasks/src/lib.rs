@@ -36,7 +36,7 @@ pub mod port;
 pub mod pyjson;
 pub mod rows;
 pub mod rpc;
-mod schema;
+pub mod schema;
 pub mod server;
 mod store;
 pub mod sweep;

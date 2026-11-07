@@ -4,14 +4,17 @@
 //! each `UPDATE` or `DELETE` of a table under a `WHERE` read as the `SELECT` of the rows it would
 //! change, the server planning only a `SELECT`) is planned by the server (`EXPLAIN`) with the
 //! request's own variables, and a variable an earlier statement of the request set given a value
-//! of its kind ([`bound`]). The check fails on what [`crate::findings`] finds in a plan: a filtered
-//! scan of message, delivery, role, session or callback_state, or a subquery in a predicate.
+//! of its kind ([`bound`]). The relay sees only what a client sends, so what the schema's events
+//! run in the write that fires them is planned from the schema itself ([`crate::sql::events`]),
+//! `$before` and `$after` a message of the board's. The check fails on what [`crate::findings`]
+//! finds in a plan: a filtered scan of message, delivery, role, session or callback_state, or a
+//! subquery in a predicate.
 
 use crate::board::board;
 use crate::findings::{Finding, findings, whole_read};
 use crate::generated::{self, NOW};
 use crate::proxy::{Proxy, Request};
-use crate::sql::{statements, variables};
+use crate::sql::{events, statements, variables};
 use crate::store;
 use serde_json::{Map, Value, json};
 use std::collections::BTreeMap;
@@ -37,6 +40,7 @@ pub fn bound(name: &str) -> Option<Value> {
         "line" => json!({"slug": generated::thread(), "sid": 1}),
         "address" => json!("uds:/tmp/perf.sock"),
         "dependent" => json!(generated::thread()),
+        "sender" => json!(generated::writer()),
         "prefix" | "pull_kept" => json!("pull-1"),
         _ => return None,
     })
@@ -179,8 +183,20 @@ fn every_query_a_write_a_recipient_or_a_tick_sends_is_planned_on_an_index() {
     let mut requests = board.first_looks.clone();
     requests.extend(relay.take());
     let planned = plan_all(&board.client(), &requests);
+    let failed = failures(&planned);
+    eprintln!(
+        "perf: {} requests, {} distinct statements planned, {} with a finding",
+        requests.len(),
+        planned.len(),
+        failed.len()
+    );
+    assert!(failed.is_empty(), "{}", failed.join("\n\n"));
+}
+
+/// Each statement of `planned` with its plan, on stderr, and one line for each with a finding.
+fn failures(planned: &BTreeMap<String, Planned>) -> Vec<String> {
     let mut failed = Vec::new();
-    for (statement, one) in &planned {
+    for (statement, one) in planned {
         let whole = whole_read(&one.plan).map_or(String::new(), |t| format!(" (reads {t} whole)"));
         eprintln!(
             "--- sent {}×{whole}: {statement}\n{}",
@@ -195,8 +211,38 @@ fn every_query_a_write_a_recipient_or_a_tick_sends_is_planned_on_an_index() {
             ));
         }
     }
+    failed
+}
+
+/// What the schema's events run in the write that fires them is planned on an index too: `said`'s
+/// look back at a sender's word before the one a delete or an edit took, a post's and a verdict's,
+/// each the last key of its range. `$before` and `$after` are a word of the generated board's
+/// writer, as a delete of it gives them.
+#[test]
+fn every_query_the_schemas_events_run_is_planned_on_an_index() {
+    let board = board();
+    let word = json!({"slug": generated::thread(), "sid": 1, "sender": generated::writer(),
+        "recipient": null, "kind": "msg", "text": "a word", "ts": NOW});
+    let vars = json!({"before": word, "after": word, "event": "DELETE"});
+    let defined = events(symphony_board::schema::DEFINE);
+    let requests: Vec<Request> = (defined.into_iter())
+        .map(|event| Request {
+            sql: event,
+            vars: vars.clone(),
+        })
+        .collect();
+    let planned = plan_all(&board.client(), &requests);
+    let looks_back: Vec<&String> = (planned.keys())
+        .filter(|statement| statement.contains("FROM message"))
+        .collect();
+    assert_eq!(
+        looks_back.len(),
+        2,
+        "said's look back, a post's and a verdict's: {planned:#?}"
+    );
+    let failed = failures(&planned);
     eprintln!(
-        "perf: {} requests, {} distinct statements planned, {} with a finding",
+        "perf: {} events, {} distinct statements planned, {} with a finding",
         requests.len(),
         planned.len(),
         failed.len()
@@ -204,29 +250,77 @@ fn every_query_a_write_a_recipient_or_a_tick_sends_is_planned_on_an_index() {
     assert!(failed.is_empty(), "{}", failed.join("\n\n"));
 }
 
-/// A request spelled as the server also takes it, a lower-case `select`, or a `SELECT` after a
-/// comment holding a letter outside ASCII, is planned as any other, and its read of session under
-/// a condition, which no index serves, found: planned on a server of its own, not the generated
-/// board, which the other tests hold.
+/// `sql`, sent with no variables, as the check plans it on the board `client` reaches.
+fn checked(client: &Client, sql: &str) -> BTreeMap<String, Planned> {
+    let request = Request {
+        sql: sql.to_string(),
+        vars: json!({}),
+    };
+    plan_all(client, &[request])
+}
+
+/// What the check finds in `planned`, every statement's findings in turn.
+fn found_in(planned: &BTreeMap<String, Planned>) -> Vec<&Finding> {
+    (planned.values()).flat_map(|one| &one.findings).collect()
+}
+
+/// A read spelled any way the server takes it (a keyword in lower case, after a comment holding a
+/// letter outside ASCII, or straight before a comment, `*` or a line) is planned as the server
+/// plans the text as sent, and its read of session under a condition, which no index serves,
+/// found; so is a change of session's rows spelled so. A keyword quoted or in a comment reads
+/// nothing. Planned on a server of its own, not the generated board, which the other tests hold.
 #[test]
-fn a_select_in_any_case_or_after_any_comment_is_planned_and_its_scan_found() {
+fn a_read_in_any_spelling_the_server_takes_is_planned_and_its_scan_found() {
     let fixture = store::Fixture::empty();
     fixture.session("reviewer");
-    let spellings = [
+    let client = fixture.store.client();
+    let scan = Finding::FilteredScan("session".into());
+    let reads = [
         "select * from session where kind = 'reviewer'",
         "// unicode comment: café\nSELECT * FROM session WHERE kind = 'reviewer'",
+        "SELECT/**/ * FROM session WHERE kind = 'reviewer'",
+        "SELECT* FROM session WHERE kind = 'reviewer'",
+        "select/* café */ * from session where kind = 'reviewer'",
+        "SELECT-- comment\n* FROM session WHERE kind = 'reviewer'",
     ];
-    for sql in spellings {
-        let request = Request {
-            sql: sql.to_string(),
-            vars: json!({}),
-        };
-        let planned = plan_all(fixture.store.client(), &[request]);
-        let found: Vec<&Finding> = (planned.values()).flat_map(|one| &one.findings).collect();
-        assert_eq!(
-            found,
-            [&Finding::FilteredScan("session".into())],
-            "{sql}: {planned:#?}"
-        );
+    for sql in reads {
+        let mut as_sent = (client.query(&format!("EXPLAIN {sql};"), json!({})))
+            .unwrap_or_else(|why| panic!("the server takes {sql:?}: {why:?}"));
+        let plan = (as_sent.pop())
+            .and_then(|answer| answer.as_str().map(String::from))
+            .unwrap_or_default();
+        let expected = std::slice::from_ref(&scan);
+        assert_eq!(findings(&plan), expected, "{sql:?} as sent:\n{plan}");
+        let planned = checked(client, sql);
+        assert_eq!(planned.len(), 1, "{sql:?}: {planned:#?}");
+        assert_eq!(found_in(&planned), [&scan], "{sql:?}: {planned:#?}");
+    }
+    let changes = [
+        "DELETE/**/session WHERE kind = 'reviewer'",
+        "UPDATE-- the beat\nsession SET last_seen = 1 WHERE(kind = 'reviewer')",
+    ];
+    for sql in changes {
+        let planned = checked(client, sql);
+        assert_eq!(found_in(&planned), [&scan], "{sql:?}: {planned:#?}");
+    }
+    let hidden = [
+        (
+            "SELECT * FROM task WHERE title = 'SELECT* FROM session WHERE kind = 1'",
+            "SELECT * FROM task WHERE title = 'SELECT* FROM session WHERE kind = 1'",
+        ),
+        (
+            "SELECT * FROM task -- SELECT/**/ * FROM session WHERE kind = 'x'",
+            "SELECT * FROM task",
+        ),
+        (
+            "/* select* from session where kind = 'x' */ SELECT * FROM task",
+            "SELECT * FROM task",
+        ),
+    ];
+    for (sql, read) in hidden {
+        let planned = checked(client, sql);
+        let statements: Vec<&String> = planned.keys().collect();
+        assert_eq!(statements, [read], "{sql:?}");
+        assert_eq!(found_in(&planned), Vec::<&Finding>::new(), "{sql:?}");
     }
 }
