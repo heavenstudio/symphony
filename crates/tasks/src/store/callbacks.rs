@@ -141,6 +141,8 @@ pub struct Callback {
     pub terminal: Option<String>,
     /// Which of the handle's registrations this one is. `counter:['registration', HANDLE]` counts
     /// them, outside the row a retirement deletes, so a later one never takes a retired one's number.
+    /// A count starts from the clock (seconds since 1970), above the numbers registrations had
+    /// before the count, which numbered from 1: not even one retired then comes back.
     #[serde(default)]
     registration_revision: u64,
     #[serde(skip)]
@@ -267,7 +269,7 @@ IF $take {{
     UPDATE callback_event SET delivered = true, text = '' WHERE handle != $actor AND string::starts_with(key, 'chat-') RETURN NONE;
 }};
 IF $address = NONE {{ UPDATE callback_event SET delivered = true, text = '' WHERE handle = $actor AND string::starts_with(key, 'chat-') RETURN NONE; }};
-LET $registration = math::max([type::record('counter', ['registration', $actor]).last ?? 0, type::record('callback_state', $actor).registration_revision ?? 0]) + 1;
+LET $registration = math::max([type::record('counter', ['registration', $actor]).last ?? <int> math::floor($now), type::record('callback_state', $actor).registration_revision ?? 0]) + 1;
 UPSERT type::record('counter', ['registration', $actor]) SET last = $registration RETURN NONE;
 UPSERT type::record('callback_state', $actor) SET handle = $actor, address = $address, host = $host, chat_fallback = $chat AND $if_free,
     registration_revision = $registration,

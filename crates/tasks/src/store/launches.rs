@@ -126,9 +126,13 @@ IF $at.pane != $pane OR $at.started != $started { RETURN false };";
 
 /// Stops a write of a close or a restore once its hold of `$handle`'s session (`$hold`, the revision
 /// [`Store::take_session`] gave it) is no longer the session's, lapsed or not: another close or
-/// restore took it over. Nothing is written, and the write is refused ([`held`]).
+/// restore took it over. Nothing is written, and the write is refused ([`held`]). While the hold is
+/// its own, the write also writes the hold's row, as a takeover does: the board's transactions are
+/// optimistic and conflict only on what both write, so a takeover that commits while the write is
+/// under way makes it fail, and tried again (`retrying`) it is refused.
 pub(super) const HOLDS: &str =
-    "IF type::record('callback_lease', ['session', $handle]).revision != $hold { THROW $taken };";
+    "IF type::record('callback_lease', ['session', $handle]).revision != $hold { THROW $taken };
+UPDATE type::record('callback_lease', ['session', $handle]) SET writes = (writes ?? 0) + 1 RETURN NONE;";
 
 /// The variables [`HOLDS`] reads, for the hold `revision` of `handle`'s session.
 pub(super) fn held(vars: &mut Value, handle: &str, revision: u64) {

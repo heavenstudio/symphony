@@ -1,11 +1,12 @@
 //! A close or a restore whose hold of the session lapsed and was taken over writes nothing: the hold
 //! is the fencing token of each of its writes (`Store::take_session`). A restore that loses it after
 //! starting a terminal kills that terminal, as it does when a launch replaced its record meanwhile.
-//! And a handle's registrations are numbered once, so a retired one's number never comes back.
+//! And a handle's registrations are numbered once, from the clock, so a retired one's number never
+//! comes back, not even one numbered before the count.
 
 use crate::close::restore_line;
 use crate::close_holds::restoring;
-use crate::close_races::{after, record};
+use crate::close_races::{after, ahead_of, record};
 use crate::common::refused;
 use crate::{Hooked, World};
 use serde_json::{Value, json};
@@ -226,37 +227,80 @@ fn a_restore_whose_record_a_launch_replaced_as_its_terminal_started_kills_it_and
     );
 }
 
+/// `handle` registers its thread from no terminal.
+fn register(world: &World, handle: &str) {
+    world
+        .store()
+        .callback_in(handle, Some("codex:0abc-12"), false, false, None)
+        .unwrap();
+}
+
+/// What `sql` answers first on the world's board, given `$handle` and the time, `$now`.
+fn ask(world: &World, handle: &str, sql: &str) -> Value {
+    let vars = json!({"handle": handle, "now": world.f.now()});
+    let mut answers = world.store().client().query(sql, vars).unwrap();
+    answers.remove(0)
+}
+
+/// The number of `handle`'s registration, as its row holds it.
+fn number(world: &World, handle: &str) -> u64 {
+    let sql =
+        "SELECT VALUE registration_revision FROM ONLY type::record('callback_state', $handle)";
+    ask(world, handle, sql).as_u64().unwrap()
+}
+
 #[test]
-fn a_handles_registrations_are_numbered_once_so_a_retired_ones_number_never_returns() {
+fn a_handles_registrations_are_numbered_once_from_the_clock_so_a_retired_ones_never_returns() {
     let world = World::new();
     let session = world.waiting_reviewer();
     let handle = &session.handle;
-    let register = || {
-        world
-            .store()
-            .callback_in(handle, Some("codex:0abc-12"), false, false, None)
-            .unwrap();
-    };
-    let ask = |sql: &str| -> Value {
-        let mut answers = world
-            .store()
-            .client()
-            .query(sql, json!({"handle": handle}))
-            .unwrap();
-        answers.remove(0)
-    };
-    let number = || {
-        ask("SELECT VALUE registration_revision FROM ONLY type::record('callback_state', $handle)")
-    };
-    register();
-    let first = number();
+    let seed = ask(&world, handle, "RETURN <int> math::floor($now)");
+    register(&world, handle);
+    let first = number(&world, handle);
     // The close retires it, its row with it; the restored agent registers alike again.
     world.close(handle).unwrap();
     restoring(&world, handle).unwrap();
-    register();
-    let again = number();
-    // A board from before the count numbers on from the registration it holds.
-    ask("DELETE type::record('counter', ['registration', $handle])");
-    register();
-    assert_eq!((first, again, number()), (json!(1), json!(2), json!(3)));
+    register(&world, handle);
+    let again = number(&world, handle);
+    // A count lost, its row kept: it numbers on from that row's.
+    ask(
+        &world,
+        handle,
+        "DELETE type::record('counter', ['registration', $handle])",
+    );
+    register(&world, handle);
+    let seed = seed.as_u64().unwrap();
+    assert_eq!(
+        [first, again, number(&world, handle)],
+        [seed + 1, seed + 2, seed + 3]
+    );
+}
+
+#[test]
+fn a_registration_after_one_from_before_the_count_was_retired_never_takes_its_number() {
+    let world = World::new();
+    let session = world.waiting_reviewer();
+    let handle = &session.handle;
+    // A board from before the count: the handle's one registration, from no terminal, is its
+    // first, and nothing counts them.
+    register(&world, handle);
+    ask(
+        &world,
+        handle,
+        "UPDATE type::record('callback_state', $handle) SET registration_revision = 1 RETURN NONE;
+         DELETE type::record('counter', ['registration', $handle]);",
+    );
+    // As the close kills, a close from before the hold retires that registration, its row with
+    // it, and the agent registers alike again: the count starts, and must not give it 1.
+    let racing = ahead_of(&world, "kill", 1, || {
+        ask(
+            &world,
+            handle,
+            "DELETE type::record('callback_state', $handle)",
+        );
+        register(&world, handle);
+    });
+    world.close_through(&racing, handle).unwrap();
+    let left = world.store().callbacks().unwrap().remove(handle.as_str());
+    assert_eq!(left.map(|callback| callback.terminal), Some(None));
 }
