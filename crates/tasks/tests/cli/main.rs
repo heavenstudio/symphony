@@ -12,6 +12,7 @@ mod beat;
 #[path = "../../../../../tools/gate/tests/hooks/board_beat.rs"]
 mod board_beat;
 mod commands;
+mod detached;
 mod finish;
 mod handover;
 mod launch;

@@ -1,5 +1,10 @@
-//! Native session channels and a durable outbox. Writes deliver immediately; the Symphony server's
-//! clock drains retries and observes actionable PULL/STALE/LOST changes. No agent keeps a monitor alive.
+//! Native session channels and a durable outbox. Every write observes the board for each recipient
+//! before it answers, so what a recipient hears is read against the board as that write left it.
+//! A library store's write delivers too; a command line's leaves the delivery to the detached
+//! dispatcher it starts, one a host at a time ([`Store::dispatching_by`],
+//! [`Store::dispatch_detached`]), so the command answers without waiting on any recipient. The
+//! Symphony server's clock drains retries and observes actionable PULL/STALE/LOST changes. No agent
+//! keeps a monitor alive.
 
 use super::callback_peer::{self as peer, Owner};
 use super::callback_state::{State, stored_seen};
@@ -23,22 +28,33 @@ mod codex;
 #[path = "../../../../../tools/gate/tests/verify/script_process_cwd.rs"]
 mod fixture_script;
 
-const CALLBACK_LEASE_SECONDS: u64 = 60;
+/// How long one dispatcher holds a recipient: past it, another may observe and deliver for it.
+pub(super) const CALLBACK_LEASE_SECONDS: u64 = 60;
+
+/// What a dispatch does for each recipient on its host. Each observes the board for it and queues
+/// what it hears in its outbox; a write whose delivery a detached dispatcher makes stops there.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum Pass {
+    Observe,
+    Deliver,
+}
 
 fn sampled<'a, T: Clone + 'a>(probe: Probe<'a, T>) -> Probe<'a, T> {
     let sample = std::cell::OnceCell::new();
     Box::new(move || sample.get_or_init(&probe).clone())
 }
 
-// One machine observation per recipient dispatch, shared by planning and the leased read.
-// Only machine inputs are retained: the agents view is rebuilt against the refreshed board.
-struct DispatchProbes<'a> {
-    env: &'a crate::cli::Env,
-    sample: std::cell::OnceCell<Probes<'a>>,
+/// A pass's visit to one recipient: what the pass does there, and one machine observation shared by
+/// planning and the leased read. Only machine inputs are retained: the agents view is rebuilt
+/// against the refreshed board.
+struct Visit<'env> {
+    pass: Pass,
+    env: &'env crate::cli::Env,
+    sample: std::cell::OnceCell<Probes<'env>>,
 }
 
-impl<'a> DispatchProbes<'a> {
-    fn get(&self) -> &Probes<'a> {
+impl<'env> Visit<'env> {
+    fn probes(&self) -> &Probes<'env> {
         self.sample.get_or_init(|| {
             let probes = crate::cli::probes::machine(self.env);
             Probes {
@@ -80,6 +96,21 @@ struct Stored {
     state: Option<State>,
     checked_pull: f64,
     queued: Vec<Queued>,
+}
+
+/// A recipient's observation as written: whether the PULLs it read as waiting still were, and how
+/// the write moved the board marker.
+#[derive(Deserialize)]
+struct Accounted {
+    current: bool,
+    marker: Moved,
+}
+
+/// The board marker just before and just after one of a dispatcher's own writes.
+#[derive(Deserialize)]
+struct Moved {
+    before: u64,
+    after: u64,
 }
 
 #[derive(Clone, Deserialize)]
@@ -222,7 +253,7 @@ RETURN NONE;");
                 ),
             )
         })?;
-        self.dispatch_callbacks()
+        self.dispatch_or_hand_off()
     }
 
     pub fn chat_recipient(&self) -> Result<Option<String>, Error> {
@@ -242,7 +273,7 @@ RETURN NONE;");
     }
 
     fn stored_callbacks(&self) -> Result<Vec<Callback>, Error> {
-        self.retrying(|| self.transact(
+        self.retrying(|| self.read(
             "RETURN SELECT handle, address, host, chat ?? false AS chat, chat_fallback ?? false AS chat_fallback, owner, confirmed_until ?? 0 AS confirmed_until,
                 (SELECT * OMIT id FROM ONLY type::record('session', $parent.handle)) AS session, chat_resume ?? false AS chat_resume, pane_watch ?? {} AS pane_watch,
                 IF type::record('session', handle).agent = NONE { false } ELSE { type::record('callback_state', ['binding', type::record('session', handle).agent]).in_process ?? true } AS in_process
@@ -438,15 +469,55 @@ RETURN NONE;");
              }; RETURN NONE;",
             json!({"key":key, "text":text}),
         ))?;
-        self.dispatch_callbacks()
+        self.dispatch_or_hand_off()
+    }
+
+    /// This store, its writes leaving their callback delivery to `hand_off` instead of making it
+    /// before they answer: a command line's, whose hand-off starts a detached dispatcher
+    /// ([`Store::dispatch_detached`]). The write still observes the board for every recipient first,
+    /// so each hears it as the write left the board. A hand-off that says it started nothing leaves
+    /// the delivery to the write, as a store without one does (the Symphony server's, whose clock
+    /// dispatches too).
+    pub fn dispatching_by(mut self, hand_off: super::HandOff) -> Store {
+        self.hand_off = Some(hand_off);
+        self
+    }
+
+    /// What a committed write that may concern a recipient does: observes the board for each and
+    /// hands the delivery over, or makes it. Never fails the write: what went wrong goes to stderr,
+    /// and the outbox keeps the rest for the next dispatch.
+    pub(super) fn after_write(&self) {
+        if let Err(error) = self.dispatch_or_hand_off() {
+            eprintln!("CALLBACK deferred: {error}");
+        }
+    }
+
+    fn dispatch_or_hand_off(&self) -> Result<(), Error> {
+        let Some(hand_off) = &self.hand_off else {
+            return self.dispatch_callbacks();
+        };
+        // What each recipient hears is queued against the board as this write left it: a later
+        // write (a hand-over, a move) cannot reroute or fold it before the dispatcher delivers.
+        let observed = self.dispatch_pass(Pass::Observe).map(|_| ());
+        if !hand_off() {
+            self.dispatch_callbacks()?;
+        }
+        observed
     }
 
     pub fn dispatch_callbacks(&self) -> Result<(), Error> {
+        self.dispatch_pass(Pass::Deliver).map(|_| ())
+    }
+
+    /// One pass over the recipients on this host: whether it reached every one, none of whose
+    /// lease another dispatcher held.
+    pub(super) fn dispatch_pass(&self, pass: Pass) -> Result<bool, Error> {
         let callbacks = self.callbacks()?;
-        if !callbacks.is_empty() {
-            self.dispatch_board(&callbacks)?;
+        if callbacks.is_empty() {
+            return Ok(true);
         }
-        Ok(())
+        self.dispatch_board(&callbacks, pass)
+            .map(|(_, reached)| reached)
     }
 
     /// The server clock reuses this sequenced snapshot for its read models after delivery. Only the
@@ -461,7 +532,8 @@ RETURN NONE;");
         }
         let (board, _) = self.callback_board()?;
         self.watch_panes(&board, &callbacks)?;
-        self.dispatch_board(&callbacks).map(Some)
+        self.dispatch_board(&callbacks, Pass::Deliver)
+            .map(|(board, _)| Some(board))
     }
 
     /// The herdr panes this tick of the server clock sampled, when its pane watch took a sample.
@@ -472,10 +544,16 @@ RETURN NONE;");
             .clone()
     }
 
+    /// The board as the pass read it, and whether the pass reached every recipient on this host: one
+    /// whose lease another dispatcher held is left to that one, and to the next pass.
     fn dispatch_board(
         &self,
         callbacks: &BTreeMap<String, Callback>,
-    ) -> Result<super::Board, Error> {
+        pass: Pass,
+    ) -> Result<(super::Board, bool), Error> {
+        // Each pass reads the messages afresh, once for every recipient ([`super::pool::Pool`]).
+        // The pool is plain data, whole or none, so a panic elsewhere leaves nothing half-made in it.
+        *self.inbox_pool.lock().unwrap_or_else(|e| e.into_inner()) = None;
         let (mut board, mut sequence) = self.callback_board()?;
         let health: Vec<_> = board
             .sessions
@@ -502,24 +580,26 @@ RETURN NONE;");
                     })
             });
         if idle {
+            let mut reached = true;
             for (handle, callback) in callbacks.iter().filter(|(_, c)| c.host == self.host) {
-                if self.callback_pending(handle, callback.chat)? {
-                    self.dispatch_agent(handle)?;
+                if pass == Pass::Deliver && self.callback_pending(handle, callback.chat)? {
+                    reached &= self.dispatch_agent(handle)?;
                 }
             }
-            return Ok(board);
+            return Ok((board, reached));
         }
         let initial_sequence = sequence;
         let mut observed = true;
         let mut pull_at = f64::INFINITY;
         for (handle, callback) in callbacks.iter().filter(|(_, c)| c.host == self.host) {
             let env = crate::cli::Env::of_process();
-            let probes = DispatchProbes {
+            let visit = Visit {
+                pass,
                 env: &env,
                 sample: std::cell::OnceCell::new(),
             };
             let (handled, due) =
-                self.dispatch_one(handle, callback, &mut board, &mut sequence, &probes, None)?;
+                self.dispatch_one(handle, callback, &mut board, &mut sequence, &visit, None)?;
             observed &= handled;
             pull_at = pull_at.min(due);
         }
@@ -529,7 +609,7 @@ RETURN NONE;");
                 health,
                 pull_at,
             });
-        Ok(board)
+        Ok((board, observed))
     }
 
     /// One look of the pane watch for each recipient on this host ([`attach::pane_watch`]): herdr is
@@ -618,18 +698,19 @@ RETURN NONE;");
         Ok(())
     }
 
-    // Direct messages need only the native outbox, never a machine/pane probe or a board digest.
-    fn dispatch_agent(&self, handle: &str) -> Result<(), Error> {
-        if let Some(callback) = self
+    /// Direct messages need only the native outbox, never a machine/pane probe or a board digest.
+    /// Whether it reached the recipient: false while another dispatcher holds its lease.
+    fn dispatch_agent(&self, handle: &str) -> Result<bool, Error> {
+        match self
             .callbacks()?
             .get(handle)
             .filter(|c| c.host == self.host)
         {
-            self.with_callback_lease(handle, |deadline, _| {
+            Some(callback) => self.with_callback_lease(handle, |deadline, _| {
                 self.deliver_pending(handle, callback, deadline)
-            })?;
+            }),
+            None => Ok(true),
         }
-        Ok(())
     }
 
     fn with_callback_lease(
@@ -702,7 +783,7 @@ RETURN NONE;");
 
     fn board_marker(&self) -> Result<u64, Error> {
         self.retrying(|| {
-            self.transact(
+            self.read(
                 "RETURN (SELECT VALUE last FROM ONLY counter:board) ?? 0;",
                 json!({}),
             )
@@ -720,10 +801,13 @@ RETURN NONE;");
         callback: &Callback,
         board: &mut super::Board,
         sequence: &mut u64,
-        probes: &DispatchProbes<'_>,
+        visit: &Visit<'_>,
         lease: Option<(Instant, u64)>,
     ) -> Result<(bool, f64), Error> {
-        if lease.is_some() {
+        // A write's observation keeps the board it read once its write committed: what the write
+        // caused is read against the board as the write left it. A delivering pass reads the board
+        // again under the lease, so a delayed plan cannot publish a transient from an older board.
+        if lease.is_some() && visit.pass == Pass::Deliver {
             (*board, *sequence) = self.callback_board()?;
         }
         let Stored {
@@ -731,7 +815,7 @@ RETURN NONE;");
             checked_pull,
             queued,
         } = self.retrying(|| {
-            self.transact(
+            self.read(
                 "RETURN { state: (SELECT * OMIT id FROM ONLY type::record('callback_state', $handle)), checked_pull: type::record('callback_lease', $handle).pull ?? 0,
                     queued: (SELECT key, text, sequence, pull_entries, pull_withheld FROM callback_event WHERE handle = $handle AND delivered != true
                         AND (string::starts_with(key, 'pull-') OR string::starts_with(key, 'event-') OR (string::starts_with(key, 'pane-') AND string::starts_with(text, 'BLOCKED ')))) };",
@@ -742,12 +826,19 @@ RETURN NONE;");
             return Ok((true, f64::INFINITY));
         };
         state.restore_unknown();
+        let unsequenced = state.seen.is_some() && state.snapshot_sequence == 0;
+        // An observation recorded at a marker at or past this board's read a board holding this
+        // write's commit (each write a board read sees moves the marker, and this board was read
+        // after it), so what the write caused was heard there: a write's observation leaves that
+        // recipient. Reading the board again instead would cost each of many writers at once the
+        // whole board for each recipient another had observed meanwhile.
+        if visit.pass == Pass::Observe && !unsequenced && state.snapshot_sequence >= *sequence {
+            return Ok((true, f64::INFINITY));
+        }
         // Planning can meet an observation newer than its shared snapshot. Recheck the marker
         // before diffing it, including unsequenced legacy observations. A lease also rechecks the
         // marker above, so a delayed plan cannot publish a transient from an older board.
-        if state.snapshot_sequence > *sequence
-            || (state.seen.is_some() && state.snapshot_sequence == 0)
-        {
+        if state.snapshot_sequence > *sequence || unsequenced {
             (*board, *sequence) = self.callback_board()?;
         }
         let Some(session) = board
@@ -811,12 +902,16 @@ RETURN NONE;");
         };
         let last_pull = state.pull.max(checked_pull);
         // A PULL still queued is never said as it was written, but built again (`pull_account`).
+        // A PULL that falls due with time, or one still queued, which is built again before it is
+        // said, waits for the pass that delivers: an observation leaves both as it found them, so
+        // that pass still finds them due. What the observation would record as heard is not left.
+        let delivering = visit.pass == Pass::Deliver;
         let scheduled = orchestrator
             && (initializing
                 || (state.pull_entries.is_none() && state.pull_queued.is_none())
-                || self.now() - last_pull >= 600.0
+                || (delivering && self.now() - last_pull >= 600.0)
                 || hears(&statuses) != hears(&state.statuses)
-                || queued.iter().any(Queued::is_pull));
+                || (delivering && queued.iter().any(Queued::is_pull)));
         let changed = orchestrator && attach::pull_changed(before.as_ref(), &compact(&seen));
         let quiet = (seen.children.values())
             .chain(legacy.children.values())
@@ -830,7 +925,7 @@ RETURN NONE;");
         let view = if scheduled || changed || quiet {
             Some(crate::cli::agents::describe_board(
                 self,
-                probes.get(),
+                visit.probes(),
                 self.now(),
                 false,
                 board,
@@ -872,7 +967,7 @@ RETURN NONE;");
                         callback,
                         board,
                         sequence,
-                        probes,
+                        visit,
                         Some((deadline, revision)),
                     )
                     .map(|_| ())
@@ -956,13 +1051,16 @@ RETURN NONE;");
             state.seen.as_ref() == Some(&legacy) && state.narrowing.as_ref() == Some(&narrowing);
         // Message, role and task-tree writes append a board message. Once the inbox is durably
         // copied, an unchanged observation needs only outbox retries, not another history scan.
-        let inbox = if state.inbox_cursor == Some(board.latest_message) && unchanged {
-            Vec::new()
-        } else if first_observation {
-            self.inbox(handle)?
-        } else {
-            self.inbox_after(handle, message_floor)?
-        };
+        // A plan that would read it goes on to the lease below whatever it finds (the cursor or the
+        // observation has moved), and the leased pass reads it again: the plan leaves it to that one.
+        let inbox =
+            if lease.is_none() || (state.inbox_cursor == Some(board.latest_message) && unchanged) {
+                Vec::new()
+            } else if first_observation {
+                self.inbox(handle)?
+            } else {
+                self.inbox_pooled(handle, message_floor, board.latest_message)?
+            };
         for message in inbox.into_iter().filter(|message| {
             message.id > message_floor
                 || (first_observation
@@ -994,7 +1092,7 @@ RETURN NONE;");
                 text: String,
             }
             let chat: Vec<Chat> = self.retrying(|| {
-                self.transact(
+                self.read(
                     "RETURN SELECT key, text FROM chat_event WHERE delivered = false
                         AND !record::exists(type::record('callback_event', [$handle, string::concat('chat-', key)])) ORDER BY key NUMERIC;",
                     json!({"handle":handle}),
@@ -1025,16 +1123,32 @@ RETURN NONE;");
             });
             crate::health::health(&child.row, self.now(), &self.host, &*self.pid_alive, held)
         });
-        if events.is_empty()
+        let settled = events.is_empty()
             && !initializing
             && state.registration_revision == state.observed_registration
-            && unchanged
             && state.statuses == statuses
-            && state.inbox_cursor == Some(board.latest_message)
             && state.unknown_children == unknown_children
             && (account.as_ref()).is_none_or(|a| a.changes_nothing(&state, &queued, &pull_text))
-            && rescoped.is_empty()
-        {
+            && rescoped.is_empty();
+        let current = unchanged && state.inbox_cursor == Some(board.latest_message);
+        // A write's observation leaves a recipient whose look moved by the newest message alone, and
+        // whose inbox no message since could reach (the pass's pool says so, with no read of its
+        // own), to the delivering pass: the write gave it nothing to hear. Its recorded look and
+        // cursors stay where they were, as when another dispatcher held its lease, and the delivering
+        // pass moves them. Taking every recipient's lease to read an empty inbox and move its cursor
+        // was most of what one write cost.
+        let unreached = !current
+            && settled
+            && visit.pass == Pass::Observe
+            && lease.is_none()
+            && state.narrowing.as_ref() == Some(&narrowing)
+            && state.seen.as_ref().is_some_and(|recorded| {
+                let mut recorded = recorded.clone();
+                recorded.latest_message = legacy.latest_message;
+                recorded == legacy
+            })
+            && !self.could_hear(handle, message_floor, board.latest_message)?;
+        if settled && (current || unreached) {
             if due {
                 // Fresh command Stores share this deadline even when the digest has no new
                 // entry. Its scheduling checkpoint belongs to the small lease, not Seen.
@@ -1044,7 +1158,7 @@ RETURN NONE;");
                     json!({"handle":handle, "revision":revision, "now":self.now()}),
                 ))?;
             }
-            if !self.callback_pending(handle, callback.chat)? {
+            if visit.pass == Pass::Observe || !self.callback_pending(handle, callback.chat)? {
                 return Ok((true, pull_at));
             }
             if let Some((deadline, _)) = lease {
@@ -1061,7 +1175,7 @@ RETURN NONE;");
                         callback,
                         board,
                         sequence,
-                        probes,
+                        visit,
                         Some((deadline, revision)),
                     )
                     .map(|_| ())
@@ -1076,8 +1190,9 @@ RETURN NONE;");
         let waiting: Vec<&str> = (queued.iter().filter(|line| line.is_pull()))
             .map(|line| line.key.as_str())
             .collect();
-        let current = self.retrying(|| self.transact::<bool>(
-            "LET $current = array::len($waiting.filter(|$key| record::exists(type::record('callback_event', [$handle, $key]))
+        let accounted = self.retrying(|| self.transact::<Accounted>(
+            "LET $marker = (SELECT VALUE last FROM ONLY counter:board) ?? 0;
+             LET $current = array::len($waiting.filter(|$key| record::exists(type::record('callback_event', [$handle, $key]))
                 AND type::record('callback_event', [$handle, $key]).delivered != true)) = array::len($waiting);
              IF $current {
              IF $pull_kept != NONE {
@@ -1118,7 +1233,7 @@ RETURN NONE;");
                 delivery_version = delivery_version ?? 1 RETURN NONE;
              };
              };
-             RETURN $current;",
+             RETURN { current: $current, marker: { before: $marker, after: (SELECT VALUE last FROM ONLY counter:board) ?? 0 } };",
             json!({"handle":handle, "waiting":waiting, "events":events, "seen":stored_seen, "narrowing":narrowing, "unknown_children":unknown_children, "snapshot_sequence":sequence, "statuses":statuses, "revision":revision,
                 "pull":if due {self.now()} else {state.pull}, "legacy_upgrade":legacy_upgrade,
                 "pull_queued":account.as_ref().map_or(&state.pull_queued, |a| &a.queued),
@@ -1128,15 +1243,39 @@ RETURN NONE;");
                 "computed":due, "pull_current":pull_current, "rescoped":rescoped,
                 "pull_kept":pull_kept, "pull_text":pull_text, "replace_pull":pull_replaced}),
         ))?;
-        if !current {
-            return self.dispatch_one(handle, callback, board, sequence, probes, lease);
+        if *sequence == accounted.marker.before {
+            *sequence = accounted.marker.after;
         }
-        self.deliver_pending(handle, callback, lease.expect("writes hold a lease").0)
-            .map(|()| (true, pull_at))
+        self.adopt(&accounted.marker);
+        if !accounted.current {
+            return self.dispatch_one(handle, callback, board, sequence, visit, lease);
+        }
+        if visit.pass == Pass::Deliver {
+            self.deliver_pending(handle, callback, lease.expect("writes hold a lease").0)?;
+        }
+        Ok((true, pull_at))
+    }
+
+    /// The board marker as one of this dispatcher's own writes moved it. When the board stood at
+    /// `before` (no other write came between this dispatcher's read of the board and its write), the
+    /// snapshot read there still holds at `after`: a dispatcher writes observations, outbox lines
+    /// and deliveries, none of which a snapshot reads. The next recipient then reads the marker
+    /// alone, not the whole board again. The cached snapshot is plain data, whole or none, so a
+    /// panic that poisoned its lock left nothing half-made in it.
+    fn adopt(&self, moved: &Moved) {
+        let mut cached = self
+            .callback_snapshot
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        if let Some(snapshot) = cached.as_mut()
+            && snapshot.callback_sequence == moved.before
+        {
+            snapshot.callback_sequence = moved.after;
+        }
     }
 
     fn callback_pending(&self, handle: &str, chat: bool) -> Result<bool, Error> {
-        self.retrying(|| self.transact(
+        self.retrying(|| self.read(
             "RETURN array::len(SELECT key FROM callback_event WHERE handle = $handle AND delivered != true AND attempts < 3 AND (retry_at = NONE OR retry_at <= $now)
                 AND (!string::starts_with(key, 'chat-') OR ($chat AND type::record('chat_event', string::slice(key, 5)).delivered != true)) LIMIT 1) > 0;",
             json!({"handle":handle, "chat":chat, "now":self.now()}),
@@ -1193,8 +1332,9 @@ RETURN NONE;");
             .iter()
             .rev()
             .find(|event| event.pull_entries.is_some());
-        self.retrying(|| self.transact::<Value>(
-            "FOR $key IN $keys {
+        let moved = self.retrying(|| self.transact::<Moved>(
+            "LET $marker = (SELECT VALUE last FROM ONLY counter:board) ?? 0;
+             FOR $key IN $keys {
                 UPDATE type::record('callback_event', [$handle, $key]) SET attempts += 1, delivered = $success, retry_at = $now + 5,
                     capacity_limited = $capacity OR (capacity_limited ?? false) RETURN NONE;
              };
@@ -1203,10 +1343,11 @@ RETURN NONE;");
                 FOR $message IN $messages { UPSERT type::record('delivery', [$message, $handle]) SET message = $message, handle = $handle, acked = $now RETURN NONE; };
                 FOR $key IN $chat { UPDATE type::record('chat_event', $key) SET delivered = true, text = '' RETURN NONE; };
                 UPDATE callback_event SET text = '' WHERE handle = $handle AND delivered = true AND string::starts_with(key, 'chat-') RETURN NONE;
-             }; RETURN NONE;",
+             }; RETURN { before: $marker, after: (SELECT VALUE last FROM ONLY counter:board) ?? 0 };",
             json!({"handle":handle, "keys":keys, "messages":messages, "chat":chat_keys, "success":success, "now":self.now(),
                 "capacity":capacity, "pull":pull}),
         ))?;
+        self.adopt(&moved);
         if let Err(why) = result {
             if why.kind == DeliveryFailure::Dead {
                 self.clear_callback(callback, &why.message)?;
