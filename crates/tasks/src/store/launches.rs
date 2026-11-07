@@ -57,39 +57,42 @@ impl NewLaunch {
     }
 }
 
-/// What a launch's own record line says about it.
-fn said(launch: &NewLaunch) -> String {
+/// What a launch's own record line says about it, around the agent session it records (which the
+/// record's transaction settles: [`SETTLED`]): the words before it and after it.
+fn said(launch: &NewLaunch) -> (String, String) {
     let h = &launch.handle;
     let who = if launch.how == "launched" {
         format!("launched {h}")
     } else {
         format!("found {h} running")
     };
-    let mut said = format!(
-        "{who} as {}: pane {}, agent session {}, worktree {}",
-        launch.role,
-        launch.pane,
-        if launch.claude_session.is_empty() {
-            "unknown"
-        } else {
-            &launch.claude_session
-        },
-        launch.worktree
+    let before = format!(
+        "{who} as {}: pane {}, agent session ",
+        launch.role, launch.pane
     );
+    let mut after = format!(", worktree {}", launch.worktree);
     if !launch.branch.is_empty() {
-        let _ = write!(said, ", branch {}", launch.branch);
+        let _ = write!(after, ", branch {}", launch.branch);
     }
-    said
+    (before, after)
 }
 
-/// A change to a recorded task session, refused if there is none.
-fn recorded(change: &str) -> String {
+/// The conversation a write of a record of `$handle` keeps, as `$conversation` (`$session` is
+/// SurrealDB's own): the one `$given`, but a Codex one whose thread is not known yet (`codex:`) takes
+/// the thread the handle's callback registered (`codex:THREAD`), so the thread is kept whichever was
+/// written first, the callback or the record.
+const SETTLED: &str = "LET $thread = type::record('callback_state', $handle).address ?? '';
+LET $conversation = IF $given = 'codex:' AND string::starts_with($thread, 'codex:') AND $thread != 'codex:' { $thread } ELSE { $given };";
+
+/// A change to a recorded task session, refused if there is none, said on the thread as `said`
+/// (an expression).
+fn recorded(change: &str, said: &str) -> String {
     format!(
         "IF !record::exists(type::record('task_session', [$slug, $handle])) {{ THROW $unrecorded }};
 UPDATE type::record('task_session', [$slug, $handle]) {change} RETURN NONE;
 {}
 RETURN NONE;",
-        logged("$slug", "$handle", "'system'", "$said", "NONE")
+        logged("$slug", "$handle", "'system'", said, "NONE")
     )
 }
 
@@ -117,25 +120,38 @@ impl Store {
             ..TaskSessionRow::default()
         };
         let line = if launch.log {
-            logged("$slug", "$handle", "'system'", "$said", "NONE")
+            logged(
+                "$slug",
+                "$handle",
+                "'system'",
+                "string::concat($said_before, $said_conversation, $said_after)",
+                "NONE",
+            )
         } else {
             String::new()
         };
         let body = format!(
             "IF !record::exists(type::record('task', $slug)) {{ THROW $no_task }};
 IF !record::exists(type::record('session', $handle)) {{ THROW $no_session }};
+{SETTLED}
+LET $said_conversation = IF $conversation = '' {{ 'unknown' }} ELSE {{ $conversation }};
 UPSERT type::record('task_session', [$slug, $handle]) CONTENT $row RETURN NONE;
+UPDATE type::record('task_session', [$slug, $handle]) SET claude_session = $conversation RETURN NONE;
 {line}
-RETURN NONE;"
+RETURN $conversation;"
         );
+        let (before, after) = said(launch);
         let vars = json!({
             "slug": launch.slug, "handle": launch.handle, "row": row, "now": row.started,
-            "said": said(launch),
+            "given": launch.claude_session, "said_before": before, "said_after": after,
             "no_task": format!("{REFUSED}{}", no_task(&launch.slug)),
             "no_session": format!("{REFUSED}no session {}", repr(&launch.handle)),
         });
-        self.retrying(|| self.transact::<Value>(&body, vars.clone()))?;
-        Ok(row)
+        let claude_session = self.retrying(|| self.transact::<String>(&body, vars.clone()))?;
+        Ok(TaskSessionRow {
+            claude_session,
+            ..row
+        })
     }
 
     /// The sessions launched for `slug`, by when they started.
@@ -171,7 +187,10 @@ RETURN NONE;"
         self.retrying(|| self.transact(&read, vars.clone()))
     }
 
-    /// Its pane is closed. The record stays, with the line that brings it back.
+    /// Its pane is closed. The record stays, with the line that brings it back. A Codex record whose
+    /// thread is still unknown takes the one the handle's callback registered, if any ([`SETTLED`]);
+    /// one that closes with none says on the thread, after its restore line, that no thread id ever
+    /// arrived, so restore cannot resume it.
     pub fn close_task_session(
         &self,
         slug: &str,
@@ -179,19 +198,32 @@ RETURN NONE;"
         why: &str,
         restore: &str,
     ) -> Result<(), Error> {
-        let body = recorded("SET closed = $now, closed_why = $why, restore = $restore");
+        let body = format!(
+            "LET $given = type::record('task_session', [$slug, $handle]).claude_session;
+{SETTLED}
+LET $line = IF $conversation = 'codex:' {{ string::concat($said, $lost) }} ELSE {{ $said }};
+{}",
+            recorded(
+                "SET closed = $now, closed_why = $why, restore = $restore, claude_session = $conversation",
+                "$line"
+            )
+        );
         let said = format!("closed the pane of {handle} ({why}); restore: {restore}");
+        let lost = format!(
+            ". Its Codex thread id never arrived, so restore cannot resume its conversation: start \
+             it again with just tasks launch {slug}"
+        );
         self.change_task_session(
             slug,
             handle,
             &body,
-            json!({"why": why, "restore": restore, "said": said}),
+            json!({"why": why, "restore": restore, "said": said, "lost": lost}),
         )
     }
 
     /// It runs again, in `pane`.
     pub fn reopen_task_session(&self, slug: &str, handle: &str, pane: &str) -> Result<(), Error> {
-        let body = recorded("SET pane = $pane, closed = NONE, closed_why = ''");
+        let body = recorded("SET pane = $pane, closed = NONE, closed_why = ''", "$said");
         let said = format!("restored {handle} in pane {pane}");
         self.change_task_session(slug, handle, &body, json!({"pane": pane, "said": said}))
     }

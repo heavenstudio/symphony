@@ -13,7 +13,7 @@ const FAKE: &str = env!("CARGO_BIN_EXE_fake-hc");
 const TASKS: &str = env!("CARGO_BIN_EXE_tasks");
 
 /// A pid no process has (macOS's run to 99998, Linux's to 4194304).
-const NO_PID: i64 = 99_999_999;
+pub(crate) const NO_PID: i64 = 99_999_999;
 
 /// A folder of its own outside any repository (the target dir is inside this one), emptied first.
 fn outside(name: &str) -> PathBuf {
@@ -37,7 +37,7 @@ fn git(dir: &PathBuf, args: &[&str]) {
 /// A board of its own, a repository `lamp-works` with `main` to run in, its worktrees in a folder
 /// of their own, and the fake hc's state (the Herdr app showing the space `lamp-works`) and log.
 pub(crate) struct Terminals {
-    dir: PathBuf,
+    pub(crate) dir: PathBuf,
     env: Env,
 }
 
@@ -142,7 +142,7 @@ impl Terminals {
             .collect()
     }
 
-    fn edit_terminals(&self, edit: impl Fn(&mut serde_json::Map<String, Value>)) {
+    pub(crate) fn edit_terminals(&self, edit: impl Fn(&mut serde_json::Map<String, Value>)) {
         let mut state = self.state();
         for t in state["terminals"].as_array_mut().unwrap() {
             edit(t.as_object_mut().unwrap());
@@ -151,7 +151,7 @@ impl Terminals {
     }
 
     /// An orchestrator and a task `sim/jump` it made: the orchestrator's handle.
-    fn orchestrator(&self) -> String {
+    pub(crate) fn orchestrator(&self) -> String {
         let board = self.board();
         let orch = board
             .register(&NewSession::new("orchestrator"))

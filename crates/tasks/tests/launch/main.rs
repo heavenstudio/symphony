@@ -6,6 +6,7 @@
 mod common;
 
 mod cleanup;
+mod close;
 mod finish;
 mod hc;
 mod last_look;
@@ -14,6 +15,7 @@ mod procs;
 mod reap;
 mod restore;
 mod screen;
+mod thread;
 
 use common::Fixture;
 use serde_json::{Map, Value, json};

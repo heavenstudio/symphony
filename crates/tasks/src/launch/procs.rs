@@ -156,7 +156,9 @@ const PROTECTED: [(&str, Matcher); 4] = [
     ("the Symphony", symphony_app),
 ];
 
-fn protected(commands: &[String]) -> Option<String> {
+/// Why a terminal running these commands must never be closed, by any command: the first that is a
+/// verify, a test run, a land or the Symphony, named with its head. None when none of them is.
+pub fn protected(commands: &[String]) -> Option<String> {
     commands.iter().find_map(|command| {
         PROTECTED
             .iter()

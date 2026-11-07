@@ -275,3 +275,109 @@ fn sessions_of_a_handle_span_its_tasks_in_the_order_started() {
     );
     assert!(f.store.sessions_of("ghost-owl").unwrap().is_empty());
 }
+
+/// A Codex launch of `handle` on sim/jump whose thread the launch does not know (`codex:`).
+fn codex_launch(f: &Fixture, handle: &str) -> TaskSessionRow {
+    f.store
+        .record_launch(&NewLaunch {
+            claude_session: "codex:".into(),
+            worktree: "/wt/x".into(),
+            pane: "t3".into(),
+            ..NewLaunch::new("sim/jump", handle, "executor")
+        })
+        .unwrap()
+}
+
+#[test]
+fn a_codex_record_written_after_its_callback_keeps_the_thread_the_callback_registered() {
+    let f = Fixture::empty();
+    f.task("sim/jump");
+    let h = f.session("worker");
+    f.store
+        .callback(&h, Some("codex:0abc-12"), false, false)
+        .unwrap();
+    let row = codex_launch(&f, &h);
+    assert_eq!(row.claude_session, "codex:0abc-12");
+    assert_eq!(
+        f.store.task_sessions("sim/jump").unwrap(),
+        std::slice::from_ref(&row)
+    );
+    assert_eq!(
+        f.said("sim/jump").last().unwrap(),
+        &format!("launched {h} as executor: pane t3, agent session codex:0abc-12, worktree /wt/x")
+    );
+    // A conversation the record names is its own, whatever the callback says.
+    for given in ["codex:9999-00", "11111111-2222-3333-4444-555555555555", ""] {
+        let kept = f
+            .store
+            .record_launch(&NewLaunch {
+                claude_session: given.into(),
+                ..NewLaunch::new("sim/jump", &h, "executor")
+            })
+            .unwrap();
+        assert_eq!(kept.claude_session, given);
+        assert_eq!(
+            f.store.task_sessions("sim/jump").unwrap()[0].claude_session,
+            given
+        );
+    }
+}
+
+#[test]
+fn a_codex_record_closed_with_no_thread_says_restore_cannot_resume_it() {
+    let f = Fixture::empty();
+    f.task("sim/jump");
+    let h = f.session("worker");
+    codex_launch(&f, &h);
+    let restore = format!("just tasks restore sim/jump {h}");
+    f.store
+        .close_task_session("sim/jump", &h, "idle", &restore)
+        .unwrap();
+    let read = f.store.task_sessions("sim/jump").unwrap().remove(0);
+    assert_eq!(
+        (read.claude_session.as_str(), read.restore.as_str()),
+        ("codex:", restore.as_str())
+    );
+    assert!(read.closed.is_some());
+    assert_eq!(
+        f.said("sim/jump").last().unwrap(),
+        &format!(
+            "closed the pane of {h} (idle); restore: {restore}. Its Codex thread id never arrived, \
+             so restore cannot resume its conversation: start it again with just tasks launch \
+             sim/jump"
+        )
+    );
+}
+
+#[test]
+fn a_codex_record_still_unknown_when_it_closes_takes_the_thread_registered_meanwhile() {
+    let f = Fixture::empty();
+    f.task("sim/jump");
+    let h = f.session("worker");
+    codex_launch(&f, &h);
+    // Registered without completing the record, as a write racing the launch's could leave it.
+    f.store
+        .client()
+        .query(
+            "UPSERT type::record('callback_state', $handle) SET handle = $handle, \
+             address = 'codex:0abc-12', host = 'this-host' RETURN NONE;",
+            serde_json::json!({"handle": h}),
+        )
+        .unwrap();
+    assert_eq!(
+        f.store.task_sessions("sim/jump").unwrap()[0].claude_session,
+        "codex:"
+    );
+    let restore = format!("just tasks restore sim/jump {h}");
+    f.store
+        .close_task_session("sim/jump", &h, "idle", &restore)
+        .unwrap();
+    assert_eq!(
+        f.store.task_sessions("sim/jump").unwrap()[0].claude_session,
+        "codex:0abc-12"
+    );
+    assert_eq!(
+        f.said("sim/jump").last().unwrap(),
+        &format!("closed the pane of {h} (idle); restore: {restore}")
+    );
+}

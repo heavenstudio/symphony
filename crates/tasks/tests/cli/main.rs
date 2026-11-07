@@ -11,6 +11,7 @@ mod beat;
 // Launcher regressions use this board harness so the core gate needs no board dependency.
 #[path = "../../../../../tools/gate/tests/hooks/board_beat.rs"]
 mod board_beat;
+mod close;
 mod commands;
 mod finish;
 mod handover;

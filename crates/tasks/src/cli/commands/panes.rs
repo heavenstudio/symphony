@@ -1,7 +1,7 @@
-//! The commands that drive agents' hc terminals: `launch`, `restore`, `cleanup`, `reap` and
-//! `finish`, and the cleanup after a task finishes, each a call into [`crate::launch`] and the lines
-//! it says. The caller's own terminal (`HC_TERMINAL_ID`) is never closed. A refusal (an hc or git
-//! step that failed, or the board's) is exit 1, a board that cannot be reached exit 2.
+//! The commands that drive agents' hc terminals: `launch`, `restore`, `cleanup`, `close`, `reap`
+//! and `finish`, and the cleanup after a task finishes, each a call into [`crate::launch`] and the
+//! lines it says. The caller's own terminal (`HC_TERMINAL_ID`) is never closed. A refusal (an hc or
+//! git step that failed, or the board's) is exit 1, a board that cannot be reached exit 2.
 
 use super::{Context, Stop};
 use crate::Store;
@@ -100,6 +100,27 @@ pub(super) fn cleanup(store: &Store, c: &mut Context) -> Result<(), Stop> {
     if closures.is_empty() {
         c.say("nothing to clean up");
     }
+    Ok(())
+}
+
+/// `close SLUG HANDLE`: one agent's terminal, whatever it holds, recorded with its restore line.
+pub(super) fn close(store: &Store, c: &mut Context) -> Result<(), Stop> {
+    let (slug, handle) = (c.arg("slug"), c.arg("handle"));
+    let actor = c.actor()?;
+    let closed = launch::close(
+        store,
+        &Binary::of(c.env),
+        &*procs::table(c.env),
+        &actor,
+        &slug,
+        &handle,
+    )?;
+    c.say(&format!(
+        "closed pane {} of {handle} ({}){}",
+        closed.pane,
+        closed.why,
+        restore_part(&closed.restore)
+    ));
     Ok(())
 }
 
