@@ -30,6 +30,7 @@ mod pending_pull;
 mod priority;
 mod pull_acknowledgements;
 mod quiet_callbacks;
+mod relay;
 mod reserve;
 mod roles;
 mod sessions;

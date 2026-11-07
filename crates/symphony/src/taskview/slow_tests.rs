@@ -2,84 +2,25 @@
 //! the page gets its answer; a board late twice is said to be slow, never unreachable; a write that
 //! got no answer runs once, a defined function's call however it is spelled.
 
-use std::io::{Read, Write};
-use std::net::{Shutdown, TcpListener, TcpStream};
-use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::time::{Duration, Instant};
-
 use serde_json::json;
 use symphony_board::rpc::{Client, slow};
 
+use super::relay::{Relay, WAIT};
 use super::store_fixture::{Fixture, NOW, RawWrite, Seed};
 use super::{brief_row, page};
 use crate::taskview::read_failure;
 use crate::test_tree::Tree;
 
-/// The store's wait in these tests, and how much later than it a held answer comes.
-const WAIT: Duration = Duration::from_millis(300);
-const LATE: Duration = Duration::from_millis(1500);
 const UNREACHABLE: &str = "the task board cannot be reached: ";
 
-/// A loopback relay in front of the board's server that holds back what the server sends on each of
-/// its first `held` connections by [`LATE`]; the request itself reaches the server at once.
-struct Stall {
-    addr: String,
-    connections: Arc<AtomicUsize>,
+/// A client of `fixture`'s board over `relay` ([`Relay::client`]).
+fn client(relay: &Relay, fixture: &Fixture) -> Client {
+    relay.client("sf", fixture.store.client().database())
 }
 
-impl Stall {
-    fn to(server: &str, held: usize) -> Stall {
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let addr = listener.local_addr().unwrap().to_string();
-        let connections = Arc::new(AtomicUsize::new(0));
-        let (server, counted) = (server.to_owned(), Arc::clone(&connections));
-        std::thread::spawn(move || {
-            let callers = listener.incoming().map_while(Result::ok);
-            for caller in callers {
-                let late = counted.fetch_add(1, Ordering::SeqCst) < held;
-                let upstream = TcpStream::connect(&server).unwrap();
-                let (mut asked, mut forwarded) =
-                    (caller.try_clone().unwrap(), upstream.try_clone().unwrap());
-                std::thread::spawn(move || {
-                    let _ = std::io::copy(&mut asked, &mut forwarded);
-                    let _ = forwarded.shutdown(Shutdown::Write);
-                });
-                std::thread::spawn(move || {
-                    let (mut answer, mut caller) = (upstream, caller);
-                    let mut buffer = vec![0; 1 << 16];
-                    while let Ok(got @ 1..) = answer.read(&mut buffer) {
-                        if late {
-                            std::thread::sleep(LATE);
-                        }
-                        if caller.write_all(&buffer[..got]).is_err() {
-                            break;
-                        }
-                    }
-                    let _ = caller.shutdown(Shutdown::Write);
-                });
-            }
-        });
-        Stall { addr, connections }
-    }
-
-    /// A client of `fixture`'s board over this relay, waiting [`WAIT`].
-    fn client(&self, fixture: &Fixture) -> Client {
-        client_at(&self.addr, fixture)
-    }
-
-    /// A store over this relay waiting [`WAIT`], sending nothing until asked.
-    fn store(&self, fixture: &Fixture) -> symphony_board::Store {
-        store_over(self.client(fixture))
-    }
-
-    fn connections(&self) -> usize {
-        self.connections.load(Ordering::SeqCst)
-    }
-}
-
-fn client_at(addr: &str, fixture: &Fixture) -> Client {
-    Client::new(addr, "sf", fixture.store.client().database()).waiting(WAIT)
+/// A store over `relay`, sending nothing until asked.
+fn store(relay: &Relay, fixture: &Fixture) -> symphony_board::Store {
+    store_over(client(relay, fixture))
 }
 
 fn store_over(client: Client) -> symphony_board::Store {
@@ -99,27 +40,21 @@ fn family() -> Fixture {
     )
 }
 
-/// `count()` once it is at least `want` or 10 s have gone: the server commits a request it was
-/// sent in its own time, and only its answer was held.
-fn settled(want: usize, count: impl Fn() -> usize) -> usize {
-    let deadline = Instant::now() + Duration::from_secs(10);
-    loop {
-        let counted = count();
-        if counted >= want || Instant::now() > deadline {
-            return counted;
-        }
-        std::thread::sleep(Duration::from_millis(20));
-    }
-}
-
 #[test]
 fn a_page_whose_read_is_answered_late_once_gets_the_answer_on_the_one_resend() {
     let fixture = family();
     let record = fixture.store.get("fixture/parent").unwrap();
-    let stall = Stall::to(fixture.store.client().addr(), 1);
-    let page = page(&stall.store(&fixture), &record, &Tree::new().root).unwrap();
+    let stall = Relay::to(fixture.store.client().addr(), 0);
+    // The page's read, rehearsed on nobody's short wait: the server's answer to it is what the
+    // read's one resend is answered from, at once.
+    page(&store(&stall, &fixture), &record, &Tree::new().root).unwrap();
+    stall.hold(1);
+    let page = page(&store(&stall, &fixture), &record, &Tree::new().root).unwrap();
     assert_eq!(page.children_count, 1);
-    assert_eq!(stall.connections(), 2, "the late read went once more");
+    let sent = stall.requests();
+    assert_eq!(sent.len(), 2, "the late read went once more: {sent:?}");
+    assert_eq!(sent[0].1, sent[1].1, "the same read went once more");
+    assert_eq!((sent[0].0, sent[1].0), (0, 1), "on a new connection");
 }
 
 /// Late twice is slow, 504; a board that refuses the connection, beside it, cannot be reached, 503.
@@ -127,8 +62,8 @@ fn a_page_whose_read_is_answered_late_once_gets_the_answer_on_the_one_resend() {
 fn a_page_whose_read_is_answered_late_twice_says_the_board_is_slow_not_unreachable() {
     let fixture = family();
     let record = fixture.store.get("fixture/parent").unwrap();
-    let stall = Stall::to(fixture.store.client().addr(), usize::MAX);
-    let failed = page(&stall.store(&fixture), &record, &Tree::new().root).unwrap_err();
+    let stall = Relay::to(fixture.store.client().addr(), usize::MAX);
+    let failed = page(&store(&stall, &fixture), &record, &Tree::new().root).unwrap_err();
     let (status, said) = read_failure(&failed, UNREACHABLE);
     assert_eq!(status, 504, "{said}");
     assert!(
@@ -141,13 +76,21 @@ fn a_page_whose_read_is_answered_late_twice_says_the_board_is_slow_not_unreachab
     );
     assert!(said.contains("it was not sent a third time"), "{said}");
     assert!(!said.contains("cannot be reached"), "{said}");
-    assert_eq!(stall.connections(), 2, "one sending and one more, no third");
+    let sent = stall.requests();
+    assert_eq!(
+        sent.iter()
+            .map(|(connection, _)| *connection)
+            .collect::<Vec<_>>(),
+        [0, 1],
+        "one sending and one more, no third: {sent:?}"
+    );
 
     let gone = {
-        let closed = TcpListener::bind("127.0.0.1:0").unwrap();
+        let closed = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         closed.local_addr().unwrap().to_string()
     };
-    let refused = store_over(client_at(&gone, &fixture));
+    let refused =
+        store_over(Client::new(&gone, "sf", fixture.store.client().database()).waiting(WAIT));
     let failed = refused.get("fixture/parent").unwrap_err();
     let (status, said) = read_failure(&failed.to_string(), UNREACHABLE);
     assert_eq!(status, 503, "{said}");
@@ -158,26 +101,25 @@ fn a_page_whose_read_is_answered_late_twice_says_the_board_is_slow_not_unreachab
     assert!(said.ends_with("the request was not sent"), "{said}");
 }
 
+/// The relay's list of what it was sent waits for the server's answer to the held write, so the
+/// thread is read once the write has run there, with no clock.
 #[test]
 fn a_write_whose_answer_is_late_runs_once_and_says_the_board_is_slow() {
     let fixture = family();
-    let stall = Stall::to(fixture.store.client().addr(), usize::MAX);
-    let failed = stall
-        .store(&fixture)
+    let stall = Relay::to(fixture.store.client().addr(), usize::MAX);
+    let failed = store(&stall, &fixture)
         .say("fixture/parent", "owner", "said once", None)
         .unwrap_err()
         .to_string();
     let (status, said) = read_failure(&failed, UNREACHABLE);
     assert_eq!(status, 504, "{said}");
     assert!(said.contains("so it was not sent again"), "{said}");
-    assert_eq!(stall.connections(), 1, "the write was sent again");
-    let said = settled(1, || {
-        let thread = fixture.store.thread("fixture/parent").unwrap();
-        thread
-            .iter()
-            .filter(|message| message.text == "said once")
-            .count()
-    });
+    assert_eq!(stall.requests().len(), 1, "the write was sent again");
+    let thread = fixture.store.thread("fixture/parent").unwrap();
+    let said = thread
+        .iter()
+        .filter(|message| message.text == "said once")
+        .count();
     assert_eq!(said, 1, "the write ran once");
 }
 
@@ -202,7 +144,7 @@ fn a_late_call_of_a_defined_function_runs_once_however_it_is_spelled() {
         );
         usize::try_from(counted.unwrap()[0].as_u64().unwrap()).unwrap()
     };
-    let stall = Stall::to(board.addr(), usize::MAX);
+    let stall = Relay::to(board.addr(), usize::MAX);
     let spellings = [
         "RETURN fn::bump();",
         "RETURN fn ::bump();",
@@ -213,8 +155,7 @@ fn a_late_call_of_a_defined_function_runs_once_however_it_is_spelled() {
     let mut sent = 0;
     for sql in spellings {
         sent += 1;
-        let failed = stall
-            .client(&fixture)
+        let failed = client(&stall, &fixture)
             .query(sql, json!({}))
             .unwrap_err()
             .to_string();
@@ -222,7 +163,8 @@ fn a_late_call_of_a_defined_function_runs_once_however_it_is_spelled() {
             slow(&failed) && failed.ends_with("so it was not sent again"),
             "{sql:?}: {failed}"
         );
-        assert_eq!(stall.connections(), sent, "{sql:?} was sent again");
-        assert_eq!(settled(sent, bumps), sent, "{sql:?} ran other than once");
+        // Once the server has answered each call it was sent: so each has run there.
+        assert_eq!(stall.requests().len(), sent, "{sql:?} was sent again");
+        assert_eq!(bumps(), sent, "{sql:?} ran other than once");
     }
 }

@@ -75,21 +75,22 @@ fn acknowledgements_keep_adjacent_large_integer_ids_and_recipients_distinct() {
     assert!(unread().is_empty());
 }
 
-/// Forward one real RPC to the private fixture, counting its complete HTTP response.
+/// Forward one real RPC to the private fixture, counting its complete HTTP response. Nothing here
+/// is late, so the proxy and the client wait for the server's answer as long as it takes, and no
+/// short wait races it on a loaded machine; only the loopback connect is bounded, which the kernel
+/// answers however busy the server is.
 fn measured_inbox(f: &Fixture, handle: &str) -> (Vec<Message>, usize) {
     use std::io::{BufRead, BufReader, Read, Write};
     use std::net::TcpListener;
     use std::time::Duration;
 
-    let wait = Duration::from_secs(3);
+    let connect = Duration::from_secs(3);
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let addr = listener.local_addr().unwrap();
     let upstream = f.store.client().addr().parse().unwrap();
     std::thread::scope(|scope| {
         let proxy = scope.spawn(move || -> std::io::Result<usize> {
             let (mut downstream, _) = listener.accept()?;
-            downstream.set_read_timeout(Some(wait))?;
-            downstream.set_write_timeout(Some(wait))?;
             let mut reader = BufReader::new(&downstream);
             let mut head = String::new();
             loop {
@@ -113,9 +114,7 @@ fn measured_inbox(f: &Fixture, handle: &str) -> (Vec<Message>, usize) {
             drop(reader);
             head.truncate(head.len() - 2);
             head.push_str("Connection: close\r\n\r\n");
-            let mut server = symphony_board::sys::connect(&upstream, wait)?;
-            server.set_read_timeout(Some(wait))?;
-            server.set_write_timeout(Some(wait))?;
+            let mut server = symphony_board::sys::connect(&upstream, connect)?;
             server.write_all(head.as_bytes())?;
             server.write_all(&body)?;
             let mut bytes = 0;
@@ -129,8 +128,7 @@ fn measured_inbox(f: &Fixture, handle: &str) -> (Vec<Message>, usize) {
                 bytes += read;
             }
         });
-        let client =
-            Client::new(&addr.to_string(), "sf", f.store.client().database()).waiting(wait);
+        let client = Client::new(&addr.to_string(), "sf", f.store.client().database());
         let store = Store::unchecked(client, Box::new(|| NOW), Box::new(|_| false), HOST);
         let messages = store.inbox(handle);
         let bytes = proxy.join().unwrap().unwrap();
