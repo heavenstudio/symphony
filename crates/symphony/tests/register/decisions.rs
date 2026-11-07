@@ -74,6 +74,38 @@ fn code_fence_is_ignored() {
 }
 
 #[test]
+fn an_indented_fence_belongs_to_its_card_and_hides_no_later_card() {
+    let found = cards(&["- [x] **a**", "  ~~~", "- [x] **b**"]);
+    assert_eq!(
+        found
+            .iter()
+            .map(|d| (d.slug.as_str(), d.raw.clone()))
+            .collect::<Vec<_>>(),
+        vec![("a", vec!["  ~~~".to_string()]), ("b", vec![])]
+    );
+}
+
+#[test]
+fn a_fence_no_card_contains_hides_the_cards_in_it() {
+    let found = cards(&[
+        "- [x] **a**",
+        "  [2026-11-04] agent — A",
+        "~~~",
+        "- [x] **example**",
+        "  [2026-11-04] agent — code",
+        "~~~",
+        "- [x] **b**",
+    ]);
+    assert_eq!(
+        found
+            .iter()
+            .map(|d| (d.slug.as_str(), d.raw.len()))
+            .collect::<Vec<_>>(),
+        vec![("a", 1), ("b", 0)]
+    );
+}
+
+#[test]
 fn open_is_rejected_or_question() {
     let found = cards(&[
         "- [ ] **a** — 1",

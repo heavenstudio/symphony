@@ -4,6 +4,7 @@ mod blocked_panes;
 mod board;
 mod callbacks;
 mod claim;
+mod closing;
 mod common;
 mod copy;
 mod copy_marker;
