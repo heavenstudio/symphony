@@ -47,7 +47,7 @@ fn FrameExtras(route: Route, mut draft: Signal<Draft>) -> Element {
             .and_then(|v| serde_wasm_bindgen::from_value::<BTreeSet<String>>(v).ok())
     });
     let mut known = use_signal(|| restore::<BTreeSet<String>>("reviewPreviousIds"));
-    let mut toasts = use_signal(Vec::<ActivityItem>::new);
+    let mut toasts = use_signal(crate::state::Toasts::default);
     let mut panel = use_signal(|| snapshot("reviewActivityOpen").as_bool() == Some(true));
     let mut trouble = use_signal(|| None::<String>);
     use_effect(move || {
@@ -92,12 +92,10 @@ fn FrameExtras(route: Route, mut draft: Signal<Draft>) -> Element {
                     .cloned()
                     .collect();
                 if !added.is_empty() {
-                    toasts.write().extend(added);
-                    let keep = toasts.peek().len().saturating_sub(3);
-                    toasts.write().drain(..keep);
+                    let batch = toasts.write().arrive(added);
                     spawn(async move {
-                        sleep(7_000).await;
-                        toasts.set(vec![]);
+                        sleep(crate::state::TOAST_MS).await;
+                        toasts.write().expire(batch);
                     });
                 }
             }
@@ -112,10 +110,10 @@ fn FrameExtras(route: Route, mut draft: Signal<Draft>) -> Element {
             ActivityPanel { panel, activity, seen, trouble }
         } }
         div { id: "toasts", "aria-live": "polite",
-            for item in toasts() {
+            for item in toasts.read().items().cloned().collect::<Vec<_>>() {
                 div { class: "pop", key: "{item.id}",
                     a { href: item.href, onclick: { let id = item.id.clone(); move |_| mark_seen(seen, &id) }, "{item.kind} · {item.slug}" }
-                    crate::components::button::Button { r#type: "button", "aria-label": "Dismiss notification", onclick: { let id = item.id.clone(); move |_| toasts.write().retain(|i| i.id != id) }, "×" }
+                    crate::components::button::Button { r#type: "button", "aria-label": "Dismiss notification", onclick: { let id = item.id.clone(); move |_| toasts.write().dismiss(&id) }, "×" }
                 }
             }
         }

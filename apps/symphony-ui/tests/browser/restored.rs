@@ -7,6 +7,7 @@ use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+mod activity;
 mod viewer;
 
 pub(super) struct Native {
@@ -808,6 +809,7 @@ fn document_page_end_and_two_real_toasts_clear_the_reconnect_notice() {
             .collect(),
     );
     let Some(mut browser) = chrome() else { return };
+    activity::hold_toast_lifetimes(&mut browser);
     browser.open(&site.url("/docs/PROBE.md"));
     assert!(browser.wait_for("document.querySelector('.document-page')?.dataset.feed==='live' && document.querySelector('[data-doc-key=intro] p')!==null && Array.isArray(window.reviewKnownIds)", SHOWN));
     for (i, width) in [390, 1024].into_iter().enumerate() {
