@@ -185,6 +185,16 @@ fn start() -> Server {
 /// compiles a test, so a test binary built earlier can find it gone. A server that ends before it
 /// answers is reported with its exit status and its log.
 pub fn launch(binary: &Path, log: &Path) -> Result<(String, Child), NotStarted<Infallible>> {
+    launch_on(binary, log, "memory")
+}
+
+/// [`launch`], the server keeping its data in `engine` (`memory`, or `surrealkv://FOLDER`, the
+/// engine the board runs on).
+pub fn launch_on(
+    binary: &Path,
+    log: &Path,
+    engine: &str,
+) -> Result<(String, Child), NotStarted<Infallible>> {
     if let Some(folder) = log.parent() {
         std::fs::create_dir_all(folder).unwrap_or_else(|error| {
             panic!(
@@ -218,13 +228,14 @@ pub fn launch(binary: &Path, log: &Path) -> Result<(String, Child), NotStarted<I
             Command::new("bash")
                 .arg("-c")
                 .arg(concat!(
-                    r#". "$2"; fixture_close_fds; exec 3<&0; "$0" start --unauthenticated --bind "$1" --log error memory >&2 3<&- & s=$!; "#,
+                    r#". "$2"; fixture_close_fds; exec 3<&0; "$0" start --unauthenticated --bind "$1" --log error "$3" >&2 3<&- & s=$!; "#,
                     r#"echo "$s"; exec >/dev/null; "#,
                     r#"(fixture_wait_eof <&3; kill $s 2>/dev/null) & c=$!; exec 3<&-; wait $s; r=$?; kill $c 2>/dev/null; wait $c 2>/dev/null; exit $r"#,
                 ))
                 .arg(binary)
                 .arg(&addr)
                 .arg(project_root().join("tools/fixture_process.sh"))
+                .arg(engine)
                 .stdout(announcer)
                 .stderr(output),
         )

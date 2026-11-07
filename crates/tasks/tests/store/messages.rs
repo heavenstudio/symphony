@@ -2,6 +2,7 @@
 //! and landings on the record.
 
 mod inbox;
+mod last_words;
 
 use crate::common::{Fixture, HOST, NOW, Seed, refused};
 use std::collections::BTreeSet;

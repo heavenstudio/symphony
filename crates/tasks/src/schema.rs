@@ -19,6 +19,17 @@
 //! Per-recipient `callback_lease` rows retain their revision and periodic PULL checkpoint across
 //! callback retirement; an event key must never inherit an earlier holder's revision.
 //!
+//! What a write, each recipient of its dispatch and each tick read is found through an index, never a
+//! scan of the table (the board crate's `perf` tests plan every one): messages by `sid` (a cursor's
+//! next), by `ts` (an inbox since its session connected), by recipient then `sid` (the owner's
+//! newest); deliveries by handle then message; roles by role; registrations by address. `said:⟨sender⟩`
+//! names each sender's newest `msg` or verdict, which events keep as messages are made and deleted
+//! (deleted only all at once, by a copy: a sender whose newest line goes keeps none until it speaks
+//! again), and `DEFINE` fills once when it holds nothing. These cost the copy's one transaction
+//! less than the machine's load moves it: the live board's 49k messages and 36k deliveries swapped
+//! in 123 s without them and 97 s with them, one after the other at load 140 (3.3.0, 2026-11-07);
+//! defining them on that board took 15 s.
+//!
 //! `moved:sqlite` is the move from SQLite (`Store::move_in`): the board it moved, when, and a hash of
 //! every row the move left, so a move into a board written since is refused.
 //!
@@ -27,7 +38,7 @@
 /// Bumped when `DEFINE` gains a table, field, index or event: a board at another version runs `DEFINE`
 /// again, and its `IF NOT EXISTS` adds what is new but leaves every definition already there as it
 /// was. Changing one (a field's type, an assertion, an index) also needs `DEFINE … OVERWRITE` for it.
-pub const VERSION: i64 = 12;
+pub const VERSION: i64 = 13;
 
 // Full-text index construction needs a committed analyzer, installed before the schema transaction.
 pub const ANALYZERS: &str = "DEFINE ANALYZER IF NOT EXISTS task_words TOKENIZERS blank, class, punct FILTERS lowercase, ascii;";
@@ -107,6 +118,7 @@ DEFINE FIELD IF NOT EXISTS since ON role TYPE float;
 DEFINE FIELD IF NOT EXISTS expires ON role TYPE option<float>;
 DEFINE INDEX IF NOT EXISTS role_slug ON role FIELDS slug;
 DEFINE INDEX IF NOT EXISTS role_handle ON role FIELDS handle;
+DEFINE INDEX IF NOT EXISTS role_role ON role FIELDS role;
 
 DEFINE TABLE IF NOT EXISTS message SCHEMAFULL;
 DEFINE FIELD IF NOT EXISTS sid ON message TYPE int;
@@ -117,11 +129,19 @@ DEFINE FIELD IF NOT EXISTS kind ON message TYPE string ASSERT $value IN ['system
 DEFINE FIELD IF NOT EXISTS text ON message TYPE string;
 DEFINE FIELD IF NOT EXISTS ts ON message TYPE float;
 DEFINE INDEX IF NOT EXISTS message_text_search ON message FIELDS text FULLTEXT ANALYZER task_words BM25;
+DEFINE INDEX IF NOT EXISTS message_sid ON message FIELDS sid;
+DEFINE INDEX IF NOT EXISTS message_ts ON message FIELDS ts;
+DEFINE INDEX IF NOT EXISTS message_recipient ON message FIELDS recipient, sid;
+
+DEFINE TABLE IF NOT EXISTS said SCHEMAFULL;
+DEFINE FIELD IF NOT EXISTS sid ON said TYPE int;
+DEFINE FIELD IF NOT EXISTS slug ON said TYPE string;
 
 DEFINE TABLE IF NOT EXISTS delivery SCHEMAFULL;
 DEFINE FIELD IF NOT EXISTS message ON delivery TYPE int;
 DEFINE FIELD IF NOT EXISTS handle ON delivery TYPE string;
 DEFINE FIELD IF NOT EXISTS acked ON delivery TYPE float;
+DEFINE INDEX IF NOT EXISTS delivery_handle ON delivery FIELDS handle, message;
 
 DEFINE TABLE IF NOT EXISTS delivery_key SCHEMAFULL;
 DEFINE FIELD IF NOT EXISTS slug ON delivery_key TYPE string;
@@ -159,6 +179,7 @@ DEFINE TABLE IF NOT EXISTS meta SCHEMAFULL;
 DEFINE FIELD IF NOT EXISTS version ON meta TYPE int;
 
 DEFINE TABLE IF NOT EXISTS callback_state SCHEMALESS;
+DEFINE INDEX IF NOT EXISTS callback_state_address ON callback_state FIELDS address;
 DEFINE TABLE IF NOT EXISTS callback_lease SCHEMALESS;
 DEFINE TABLE IF NOT EXISTS callback_event SCHEMALESS;
 DEFINE INDEX IF NOT EXISTS callback_event_handle ON callback_event FIELDS handle, delivered;
@@ -176,4 +197,21 @@ DEFINE EVENT OVERWRITE board_changed ON callback_state
       != [$after.address, $after.owner, $after.host, $after.chat, $after.chat_fallback, $after.chat_resume, $after.confirmed_until, $after.in_process, $after.seen, $after.pull, $after.registration_revision]
     THEN { IF record::exists(counter:board) { UPDATE counter:board SET last = (last ?? 0) + 1 RETURN NONE; } ELSE { CREATE counter:board SET last = 1 RETURN NONE; }; };
 DEFINE EVENT OVERWRITE board_changed ON chat_event WHEN $before != $after THEN { IF record::exists(counter:board) { UPDATE counter:board SET last = (last ?? 0) + 1 RETURN NONE; } ELSE { CREATE counter:board SET last = 1 RETURN NONE; }; };
+
+DEFINE EVENT OVERWRITE said ON message WHEN $event = 'CREATE' AND $after.kind IN ['msg', 'verdict'] THEN {
+    IF record::exists(type::record('said', $after.sender)) {
+        UPDATE type::record('said', $after.sender) SET sid = $after.sid, slug = $after.slug WHERE sid < $after.sid RETURN NONE;
+    } ELSE {
+        CREATE type::record('said', $after.sender) SET sid = $after.sid, slug = $after.slug RETURN NONE;
+    };
+};
+DEFINE EVENT OVERWRITE unsaid ON message WHEN $event = 'DELETE' THEN {
+    DELETE type::record('said', $before.sender) WHERE sid = $before.sid RETURN NONE;
+};
+IF (SELECT VALUE id FROM said LIMIT 1) = [] {
+    FOR $spoke IN (SELECT sender, array::max(array::group([[sid, slug]])) AS last FROM message WHERE kind IN ['msg', 'verdict'] GROUP BY sender) {
+        LET $newest = $spoke.last[0];
+        CREATE type::record('said', $spoke.sender) SET sid = $newest[0], slug = $newest[1] RETURN NONE;
+    };
+};
 ";

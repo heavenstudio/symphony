@@ -3,8 +3,8 @@
 
 use super::work::{OWNER, ROLES, Tree, above, no_task};
 use super::{
-    ACT, Error, Message, NativePresence, REFUSED, Store, acting, logged, message, native_health,
-    refused, repr,
+    ACT, Error, Message, NATIVE_PRESENCE, NativePresence, REFUSED, Store, acting, logged, message,
+    native_health, refused, repr,
 };
 use crate::health::{self, Health};
 use crate::rows::{MessageRow, SessionRow};
@@ -20,21 +20,25 @@ pub const DELIVERED: [&str; 2] = ["msg", "verdict"];
 /// own and leaves it out of its inbox.
 pub const BOARD: &str = "board";
 
-/// Whether a message could reach `$handle`'s inbox after `$since`: delivered, sent since the session
-/// connected, not its own, and from the owner, to it, to a role or a verdict (not addressed to another
-/// handle or the owner). Its fields are read under `m`: `""` for a row of the table, `"$m."` for a row
-/// of a [`super::pool::Pool`]. The roles and the tree decide the rest ([`Store::inbox_read`]).
+/// Whether a message could reach `$handle`'s inbox: delivered, sent since the session connected, not
+/// its own, and from the owner, to it, to a role or a verdict (not addressed to another handle or the
+/// owner). Its fields are read under `m`: `""` for a row of the table, `"$m."` for a row of a
+/// [`super::pool::Pool`]. The roles and the tree decide the rest ([`Store::inbox_read`]).
 fn could_reach(m: &str) -> String {
     format!(
-        "{m}sid > $since AND {m}ts >= $me.connected AND {m}kind IN $delivered AND {m}sender != $handle
+        "{m}ts >= $connected AND {m}kind IN $delivered AND {m}sender != $handle
         AND ({m}sender = 'owner' OR {m}recipient = $handle OR ({m}recipient != NONE AND string::starts_with({m}recipient, '@')) OR {m}kind = 'verdict')"
     )
 }
 
 /// What an inbox is worked out from: the session's roles, the tree, and the messages since it
-/// connected that are not its own, that it has not acknowledged, and that could reach it. Read from
-/// the message table, or from `$pool`, a dispatch pass's rows of it ([`super::pool::Pool`]), when one is given:
-/// then acknowledgements are looked up for those rows alone, not scanned for. Acknowledgement markers
+/// connected (after `$since`, when it is given) that are not its own, that it has not acknowledged,
+/// and that could reach it. Read from the message table, through `message_ts` from the session's
+/// connection or `message_sid` from `$since`, or from `$pool`, a dispatch pass's rows of it
+/// ([`super::pool::Pool`]), when one is given: then acknowledgements are looked up for those rows
+/// alone, not read through `delivery_handle`. The connection time is a parameter of its own: the
+/// server takes an index for a parameter's value, never for a field of one (`$me.connected` read
+/// every message). Acknowledgement markers
 /// overwrite decimal integer keys during tree construction, then one marker filter selects the
 /// unread record references. Their bodies are fetched within the same transaction snapshot, and the
 /// roles and the tree only when one is wanted. The orchestrators' sessions are fetched by id from
@@ -44,15 +48,20 @@ static INBOX: LazyLock<String> = LazyLock::new(|| {
     format!(
         "
 LET $me = (SELECT connected FROM ONLY type::record('session', $handle));
-LET $candidates = IF $me = NONE {{ [] }} ELSE IF $pool = NONE {{
+LET $connected = $me.connected;
+LET $candidates = IF $me = NONE {{ [] }} ELSE IF $pool != NONE {{
+    $pool.filter(|$m| $m.sid > $since AND {pooled}).map(|$m| [<string>$m.sid, type::record('message', [$m.slug, $m.sid])])
+}} ELSE IF $since = NONE {{
     (SELECT VALUE [<string>sid, id] FROM message WHERE {scan})
 }} ELSE {{
-    $pool.filter(|$m| {pooled}).map(|$m| [<string>$m.sid, type::record('message', [$m.slug, $m.sid])])
+    (SELECT VALUE [<string>sid, id] FROM message WHERE sid > $since AND {scan})
 }};
-LET $acked = IF $pool = NONE {{
-    (SELECT VALUE [<string>message, NULL] FROM delivery WHERE handle = $handle AND message > $since)
-}} ELSE {{
+LET $acked = IF $pool != NONE {{
     $candidates.filter(|$c| record::exists(type::record('delivery', [<int>$c[0], $handle]))).map(|$c| [$c[0], NULL])
+}} ELSE IF $since = NONE {{
+    (SELECT VALUE [<string>message, NULL] FROM delivery WHERE handle = $handle)
+}} ELSE {{
+    (SELECT VALUE [<string>message, NULL] FROM delivery WHERE handle = $handle AND message > $since)
 }};
 {unread}
 LET $placing = array::len($wanted) > 0;
@@ -60,7 +69,7 @@ LET $orchestrators = IF $placing {{ (SELECT VALUE [slug, handle] FROM role WHERE
 RETURN {{
     orchestrators: $orchestrators,
     orchestrator_sessions: (SELECT * OMIT id FROM array::distinct($orchestrators.map(|$held| type::record('session', $held[1])))),
-    native_presence: IF $placing {{ (SELECT handle, confirmed_until ?? 0 AS until FROM callback_state WHERE string::starts_with(address ?? '', 'codex:')) }} ELSE {{ [] }},
+    native_presence: IF $placing {{ {NATIVE_PRESENCE} }} ELSE {{ [] }},
     known: $me != NONE,
     roles: IF $placing {{ (SELECT slug, role FROM role WHERE handle = $handle) }} ELSE {{ [] }},
     tree: IF $placing {{ (SELECT VALUE [slug, parent] FROM task) }} ELSE {{ [] }},
@@ -307,15 +316,15 @@ IF $handle != NONE AND !record::exists(type::record('session', $handle)) {{ THRO
     /// Unread addressed messages, owner messages on its tasks, and verdicts for the executor and
     /// orchestrators. Unaddressed agent posts remain on the thread without notifying participants.
     pub fn inbox(&self, handle: &str) -> Result<Vec<Message>, Error> {
-        self.inbox_read(handle, i64::MIN, None)
+        self.inbox_read(handle, None, None)
     }
 
-    /// The inbox after `since` from the message table, or from `pool`'s rows of it
-    /// ([`super::pool::Pool`]).
+    /// The inbox (after `since`, when given) from the message table, or from `pool`'s rows of it
+    /// ([`super::pool::Pool`]), which needs a `since`.
     pub(super) fn inbox_read(
         &self,
         handle: &str,
-        since: i64,
+        since: Option<i64>,
         pool: Option<Value>,
     ) -> Result<Vec<Message>, Error> {
         #[derive(Deserialize)]
@@ -426,14 +435,12 @@ RETURN NONE;"
     }
 
     /// Each sender's latest message or verdict, by handle: what an agent last said on the board (the
-    /// board's own record lines are not its words).
+    /// board's own record lines are not its words). `said` names each one ([`crate::schema`]), so
+    /// this reads one message a sender, not every message.
     pub fn last_messages(&self) -> Result<BTreeMap<String, Message>, Error> {
-        let read = "
-LET $last = (SELECT sender, array::max(array::group([[sid, slug]])) AS last FROM message WHERE kind IN $delivered GROUP BY sender)
-    .map(|$sender| $sender.last[0]);
-RETURN SELECT * OMIT id FROM $last.map(|$m| type::record('message', [$m[1], $m[0]]));";
-        let rows: Vec<MessageRow> =
-            self.retrying(|| self.transact(read, json!({"delivered": DELIVERED})))?;
+        let read = "LET $said = (SELECT VALUE type::record('message', [slug, sid]) FROM said);
+RETURN SELECT * OMIT id FROM $said;";
+        let rows: Vec<MessageRow> = self.retrying(|| self.transact(read, json!({})))?;
         Ok(rows
             .into_iter()
             .map(|row| (row.sender.clone(), message(row)))
@@ -446,41 +453,22 @@ RETURN SELECT * OMIT id FROM $last.map(|$m| type::record('message', [$m[1], $m[0
     /// work, not a landing left open. A status change writes one of: a `moved it` line, a verdict (a
     /// `changes` sends the task back), or a `claimed it` line (a re-claim after a release). A release
     /// alone does not: roles come and go after a landing.
+    ///
+    /// The lines holding the word `landed` are found through the full-text index, and each slug's
+    /// newest landing is kept unless its own thread, read from that line on by key, holds a status
+    /// change after it (a landing the board records, `Store::landed`, is itself a verdict: only one
+    /// after it voids it). An older landing on the thread has every change after the newest after it
+    /// too, so the newest alone decides.
     pub fn landings_posted(&self) -> Result<BTreeSet<String>, Error> {
-        #[derive(Deserialize)]
-        struct Line {
-            slug: String,
-            sid: i64,
-        }
-        #[derive(Deserialize)]
-        struct Read {
-            landed: Vec<Line>,
-            moved: Vec<Line>,
-        }
-        let read = "RETURN {
-    landed: (SELECT slug, sid FROM message
-        WHERE kind IN $delivered AND string::contains(text, 'landed ' + slug + ' on main')),
-    moved: (SELECT slug, math::max(sid) AS sid FROM message WHERE kind = 'verdict'
-        OR (kind = 'system' AND (string::contains(text, ' moved it ') OR string::contains(text, ' claimed it')))
-        GROUP BY slug),
-};";
-        let read: Read = self.retrying(|| self.transact(read, json!({"delivered": DELIVERED})))?;
-        let moved: HashMap<&str, i64> = read
-            .moved
-            .iter()
-            .map(|line| (line.slug.as_str(), line.sid))
-            .collect();
-        Ok(read
-            .landed
-            .into_iter()
-            // `<=`: a landing the board records (`Store::landed`) is itself a verdict, the newest such line;
-            // only one after it voids it.
-            .filter(|line| {
-                moved
-                    .get(line.slug.as_str())
-                    .is_none_or(|&last| last <= line.sid)
-            })
-            .map(|line| line.slug)
-            .collect())
+        let read = "
+LET $landed = (SELECT slug, math::max(sid) AS sid FROM message
+    WHERE text @@ 'landed' AND kind IN $delivered AND string::contains(text, 'landed ' + slug + ' on main')
+    GROUP BY slug);
+RETURN $landed.filter(|$line| (SELECT VALUE sid FROM message:[$line.slug, $line.sid]>..[$line.slug, ..]
+    WHERE kind = 'verdict' OR (kind = 'system' AND (string::contains(text, ' moved it ') OR string::contains(text, ' claimed it')))
+    LIMIT 1) = []).map(|$line| $line.slug);";
+        let slugs: Vec<String> =
+            self.retrying(|| self.transact(read, json!({"delivered": DELIVERED})))?;
+        Ok(slugs.into_iter().collect())
     }
 }

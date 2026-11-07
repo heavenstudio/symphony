@@ -685,7 +685,7 @@ impl Store {
                  latest: (SELECT VALUE last FROM ONLY counter:message) ?? 0,
                  callback_sequence: $callback_sequence ?? 0,
                  has_callbacks: $has_callbacks ?? false,
-                 native_presence: (SELECT handle, confirmed_until ?? 0 AS until FROM callback_state WHERE string::starts_with(address ?? '', 'codex:')),
+                 native_presence: {NATIVE_PRESENCE},
                  open_deps: {deps},
                  known: {known},
                  mine: {mine},
@@ -751,11 +751,17 @@ fn native_health(row: &SessionRow, health: Health, now: f64, until: Option<f64>)
 }
 
 /// `$held`: every session holding work another could take over (`CLAIMABLE`, for everyone), for
-/// the `lost` line of health. Needs `$executing`.
+/// the `lost` line of health. Needs `$executing`. The roles are read by their tasks' slugs, through
+/// `role_slug`, and kept by role after: one condition over both would read every role.
 const HELD: &str = "LET $open = SELECT VALUE slug FROM task WHERE status IN $executing;
 LET $waiting = SELECT VALUE slug FROM task WHERE status = 'review';
-LET $held = array::distinct(SELECT VALUE handle FROM role
-    WHERE (role = 'executor' AND slug IN $open) OR (role = 'reviewer' AND slug IN $waiting));";
+LET $held = array::distinct((SELECT handle, role, slug FROM role WHERE slug IN array::concat($open, $waiting))
+    .filter(|$r| ($r.role = 'executor' AND $r.slug IN $open) OR ($r.role = 'reviewer' AND $r.slug IN $waiting))
+    .map(|$r| $r.handle));";
+
+/// The Codex registrations' presence, through `callback_state_address`: an address starting
+/// `codex:` is one from `codex:` up to `codex;`, the character after the colon.
+pub(super) const NATIVE_PRESENCE: &str = "(SELECT handle, confirmed_until ?? 0 AS until FROM callback_state WHERE address >= 'codex:' AND address < 'codex;')";
 
 /// The tasks `$handle` holds that another could take over (`health::claimable`, in the database).
 const CLAIMABLE: &str = "(SELECT VALUE slug FROM role WHERE handle = $handle
