@@ -14,6 +14,9 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 )]
 mod store_fixture;
 
+#[path = "slow_tests.rs"]
+mod slow;
+
 use store_fixture::{Fixture, Seed, task as row};
 use symphony_board::rows::TaskRow;
 

@@ -6,6 +6,7 @@
 //! that server's own listener, not on a SurrealDB start or shutdown that load stretches.
 
 use crate::common::{answer_healthy, script};
+use crate::helper::{answer, event_of};
 use std::io::Read;
 use std::net::{SocketAddr, TcpListener, TcpStream, UdpSocket};
 use std::path::{Path, PathBuf};
@@ -48,7 +49,6 @@ pub struct Unresponsive {
 impl Unresponsive {
     pub fn start(data: &str) -> Self {
         let events = UdpSocket::bind("127.0.0.1:0").unwrap();
-        events.set_read_timeout(Some(BOUND)).unwrap();
         let child = crate::store::spawn_with_input(
             Command::new(std::env::current_exe().unwrap())
                 .args([
@@ -73,7 +73,8 @@ impl Unresponsive {
             addr: String::new(),
         };
         let mut ready = [0; 128];
-        let size = server.events.recv(&mut ready).expect("helper ready event");
+        let size = event_of(&server.events, &mut server.child, &mut ready)
+            .unwrap_or_else(|why| panic!("helper ready event: {why}"));
         server.addr = std::str::from_utf8(&ready[..size])
             .unwrap()
             .strip_prefix("READY ")
@@ -169,7 +170,7 @@ fn helper_unresponsive() {
                 drop(connection);
             }
         });
-        events.send(format!("READY {addr}").as_bytes()).unwrap();
+        answer(events, format!("READY {addr}").as_bytes());
         let mut byte = [0];
         assert_eq!(std::io::stdin().read(&mut byte).unwrap(), 0);
         stopping.store(true, Ordering::SeqCst);

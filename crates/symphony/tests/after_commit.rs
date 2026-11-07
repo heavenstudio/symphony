@@ -64,6 +64,43 @@ fn scratch_cli_build_keeps_the_main_heartbeat_link() {
     ));
 }
 
+/// The scratch CLI's first run, which macOS assesses, happens in setup: once, as `--help`, with
+/// a bare environment that names no board; a CLI that cannot answer stops the setup there.
+#[test]
+fn the_scratch_cli_is_run_once_bare_before_any_case_runs_it() {
+    let tree = common::Tree::new();
+    let cli = tree.path("cli");
+    prepared_script(
+        &cli,
+        &format!(
+            "printf '%s\\n' \"$*\" >> {said}\nenv >> {said}",
+            said = quote(&tree.path("said"))
+        ),
+    );
+    common::run_once(&cli);
+    let said = tree.read("said");
+    let mut lines = said.lines();
+    assert_eq!(lines.next(), Some("--help"), "{said}");
+    let env: Vec<_> = lines.collect();
+    assert!(env.contains(&"PATH=/usr/bin:/bin"), "{said}");
+    assert!(
+        !env.iter().any(|line| ["HOME=", "TASKS_", "SF_", "GIT_"]
+            .iter()
+            .any(|prefix| line.starts_with(prefix))),
+        "{said}"
+    );
+
+    let broken = tree.path("broken-cli");
+    prepared_script(&broken, "echo 'no such board' >&2\nexit 3");
+    let refused = std::panic::catch_unwind(|| common::run_once(&broken)).unwrap_err();
+    let message = refused.downcast_ref::<String>().unwrap();
+    assert!(
+        message.contains(&format!("{} --help", broken.display()))
+            && message.contains("no such board"),
+        "{message}"
+    );
+}
+
 #[test]
 fn child_stages_are_forwarded_before_the_child_closes_its_output() {
     struct InterruptedOnce<R> {

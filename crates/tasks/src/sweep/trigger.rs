@@ -195,7 +195,7 @@ fn test_build(env: &Env) -> Option<PathBuf> {
 
 /// The main checkout of the repository whose git common dir is `common`: the folder holding it, when
 /// it is that checkout's `.git`. A bare repository, or a common dir kept elsewhere, has none.
-fn main_checkout(common: &Path) -> Option<&Path> {
+pub(crate) fn main_checkout(common: &Path) -> Option<&Path> {
     if common.file_name().is_some_and(|name| name == ".git") {
         common.parent().filter(|root| !root.as_os_str().is_empty())
     } else {
