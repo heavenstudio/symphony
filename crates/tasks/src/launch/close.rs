@@ -15,14 +15,17 @@
 //!
 //! A close holds the session for its whole run ([`Store::take_session`]), as a restore does, so
 //! neither starts while the other runs, nor a second close; one stopped part way holds it until its
-//! lease lapses. The last look before the kill ([`screen::close_unseen`]) must find the program
-//! judged ([`Running`]), still this board's and the handle's, no work under it, the terminal out of
-//! the owner's sight and the session still held. Only once the terminal is killed is the closure
-//! written, bound to the record read (its launch and its terminal), so a close kept or refused writes
-//! nothing, and a callback the agent registered before the kill completes the record's thread. Then
-//! the handle's callback is retired if it was registered from that terminal, or is the very
-//! registration read before the close (one from no terminal); never one registered from another.
-//! What is said to it waits in its inbox until `just tasks restore` brings it back.
+//! lease lapses. Every write it makes carries that hold, and none lands once another close or
+//! restore took the session over: a close that lost its hold after its kill records nothing more,
+//! and the next close or restore finds the terminal gone. The last look before the kill
+//! ([`screen::close_unseen`]) must find the program judged ([`Running`]), still this board's and the
+//! handle's, no work under it, the terminal out of the owner's sight and the session still held.
+//! Only once the terminal is killed is the closure written, bound to the record read (its launch and
+//! its terminal), so a close kept or refused writes nothing, and a callback the agent registered
+//! before the kill completes the record's thread. Then the handle's callback is retired if it was
+//! registered from that terminal, or is the very registration read before the close (one from no
+//! terminal); never one registered from another. What is said to it waits in its inbox until
+//! `just tasks restore` brings it back.
 //!
 //! A recorded terminal hc no longer runs (or a herdr pane id) is recorded closed as gone, with its
 //! restore line, and nothing is killed; one a close recorded closed already (stopped before it
@@ -47,7 +50,7 @@ struct Ask<'a> {
     slug: &'a str,
     handle: &'a str,
     why: String,
-    lease: u64,
+    hold: u64,
 }
 
 /// The terminal a close works on, as the board knows it.
@@ -77,7 +80,7 @@ pub fn close(
     }
     let task = store.get(slug)?;
     let board = store.session(handle)?.row;
-    let lease = store.take_session(handle, &format!("a close by {actor}"))?;
+    let hold = store.take_session(handle, &format!("a close by {actor}"))?;
     let ask = Ask {
         store,
         hc,
@@ -85,10 +88,10 @@ pub fn close(
         slug,
         handle,
         why: format!("{CLOSED_BY}{actor}"),
-        lease,
+        hold,
     };
     let closed = holding(&ask, &task, board);
-    let released = store.release_session(handle, lease);
+    let released = store.release_session(handle, hold);
     let closure = closed?;
     released?;
     Ok(closure)
@@ -113,12 +116,22 @@ fn holding(ask: &Ask<'_>, task: &Task, board: SessionRow) -> Result<Closure, Err
         }
         Err(NotClosed::Refused(problem)) => return Err(problem.into()),
     }
-    record(ask, &mine, &address)?;
-    if let Target::Found = target {
-        record_found(ask, &terminal, role, board)?;
+    let written = (|| {
+        record(ask, &mine, &address)?;
+        if let Target::Found = target {
+            record_found(ask, &terminal, role, board)?;
+        }
+        retire(ask, &address, read.as_ref(), &ask.why)
+    })();
+    match written {
+        Ok(()) => Ok(closure(&address, ask, &ask.why)),
+        Err(Error::Refused(why)) => Err(refused(format!(
+            "terminal {address} is killed, but {why}, so this close records nothing more: the next \
+             close or restore of {} finds it gone",
+            ask.handle
+        ))),
+        Err(problem) => Err(problem),
     }
-    retire(ask, &address, read.as_ref(), &ask.why)?;
-    Ok(closure(&address, ask, &ask.why))
 }
 
 fn refused(why: String) -> Error {
@@ -195,7 +208,8 @@ fn gone(ask: &Ask<'_>, target: &Target, mine: &[TaskSessionRow]) -> Result<Closu
         .filter(|record| record.closed.is_none() && &record.pane == pane);
     for record in open_there {
         let restore = restore_line(&record.slug, ask.handle);
-        ask.store.close_task_session_as(record, GONE, &restore)?;
+        ask.store
+            .close_task_session_as(record, GONE, &restore, ask.hold)?;
     }
     retire(ask, pane, read.as_ref(), why)?;
     Ok(closure(pane, ask, why))
@@ -300,7 +314,7 @@ fn still_closable(ask: &Ask<'_>, now: &Object, judged: &Judged) -> Result<(), St
     owned(ask, now)?;
     let held = ask
         .store
-        .renew_session(ask.handle, ask.lease)
+        .renew_session(ask.handle, ask.hold)
         .map_err(|problem| format!("the board cannot say it still holds its session: {problem}"))?;
     if !held {
         return Err("another close or a restore took its session over".into());
@@ -323,7 +337,7 @@ fn record(ask: &Ask<'_>, mine: &[TaskSessionRow], terminal: &str) -> Result<(), 
     for record in open_there {
         let restore = restore_line(&record.slug, ask.handle);
         ask.store
-            .close_task_session_as(record, &ask.why, &restore)?;
+            .close_task_session_as(record, &ask.why, &restore, ask.hold)?;
     }
     Ok(())
 }
@@ -351,7 +365,7 @@ fn record_found(
     };
     let restore = restore_line(ask.slug, ask.handle);
     ask.store
-        .record_found_closed(&launch, &ask.why, &restore)
+        .record_found_closed(&launch, &ask.why, &restore, ask.hold)
         .map(|_| ())
 }
 
@@ -361,12 +375,12 @@ fn record_found(
 fn retire(ask: &Ask<'_>, terminal: &str, read: Option<&Callback>, why: &str) -> Result<(), Error> {
     let said = format!("its terminal {terminal} closed ({why})");
     if let Some(unplaced) = read.filter(|read| read.terminal.is_none()) {
-        ask.store.clear_callback(unplaced, &said)?;
+        ask.store.clear_callback_held(unplaced, &said, ask.hold)?;
     }
     if let Some(now) = ask.store.callbacks()?.remove(ask.handle)
         && now.terminal.as_deref() == Some(terminal)
     {
-        ask.store.clear_callback(&now, &said)?;
+        ask.store.clear_callback_held(&now, &said, ask.hold)?;
     }
     Ok(())
 }

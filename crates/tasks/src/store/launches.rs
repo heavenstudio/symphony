@@ -124,9 +124,25 @@ const CLOSURE_LINE: &str =
 const SAME_LAUNCH: &str = "LET $at = type::record('task_session', [$slug, $handle]);
 IF $at.pane != $pane OR $at.started != $started { RETURN false };";
 
+/// Stops a write of a close or a restore once its hold of `$handle`'s session (`$hold`, the revision
+/// [`Store::take_session`] gave it) is no longer the session's, lapsed or not: another close or
+/// restore took it over. Nothing is written, and the write is refused ([`held`]).
+pub(super) const HOLDS: &str =
+    "IF type::record('callback_lease', ['session', $handle]).revision != $hold { THROW $taken };";
+
+/// The variables [`HOLDS`] reads, for the hold `revision` of `handle`'s session.
+pub(super) fn held(vars: &mut Value, handle: &str, revision: u64) {
+    if let Value::Object(vars) = vars {
+        let taken =
+            format!("{REFUSED}another close or a restore of {handle} took its session over");
+        vars.insert("hold".into(), json!(revision));
+        vars.insert("taken".into(), json!(taken));
+    }
+}
+
 /// How long a close or a restore holds a session ([`Store::take_session`]) without renewing it:
 /// past it, the next close or restore of that session takes it over. A close renews it at its last
-/// look, right before its kill.
+/// look, right before its kill; a restore right before it starts the terminal.
 pub const SESSION_LEASE_SECONDS: f64 = 300.0;
 
 /// A session's lease as [`Store::take_session`] answers: the revision taken, or who holds it until
@@ -257,23 +273,27 @@ RETURN $conversation;"
             .map(|_| ())
     }
 
-    /// [`Store::close_task_session`] of the session `record` was read as, only while it is still
-    /// that launch, open, in that terminal: never a session restored into another terminal since,
-    /// nor one another close has closed already. Whether it closed it.
+    /// [`Store::close_task_session`] of the session `record` was read as, by the close or restore
+    /// holding it as `hold` ([`Store::take_session`]), only while it is still that launch, open, in
+    /// that terminal: never a session restored into another terminal since, nor one another close
+    /// has closed already. Whether it closed it; refused once the hold is another's ([`HOLDS`]).
     pub fn close_task_session_as(
         &self,
         record: &TaskSessionRow,
         why: &str,
         restore: &str,
+        hold: u64,
     ) -> Result<bool, Error> {
         let mut vars = closure_vars(&record.slug, &record.handle, why, restore);
         same_launch(&mut vars, record);
-        let guard = format!("{SAME_LAUNCH}\nIF $at.closed != NONE {{ RETURN false }};");
+        held(&mut vars, &record.handle, hold);
+        let guard = format!("{HOLDS}\n{SAME_LAUNCH}\nIF $at.closed != NONE {{ RETURN false }};");
         self.change_task_session(&record.slug, &record.handle, &closing(&guard), vars)
     }
 
     /// Record `launch` as a session found running in its pane and closed there at once, said in one
-    /// line: the closure's ([`Store::close_task_session`]). Nothing is written when the record of its
+    /// line: the closure's ([`Store::close_task_session`]), by the close holding the session as
+    /// `hold` (refused once it is another's, [`HOLDS`]). Nothing is written when the record of its
     /// task and handle already names that terminal: its closure is recorded already, or it is open
     /// there. The record written, if any.
     pub fn record_found_closed(
@@ -281,6 +301,7 @@ RETURN $conversation;"
         launch: &NewLaunch,
         why: &str,
         restore: &str,
+        hold: u64,
     ) -> Result<Option<TaskSessionRow>, Error> {
         let now = (self.clock)();
         let row = TaskSessionRow {
@@ -300,6 +321,7 @@ RETURN $conversation;"
         let body = format!(
             "IF !record::exists(type::record('task', $slug)) {{ THROW $no_task }};
 IF !record::exists(type::record('session', $handle)) {{ THROW $no_session }};
+{HOLDS}
 IF type::record('task_session', [$slug, $handle]).pane = $row.pane {{ RETURN NONE }};
 LET $given = $row.claude_session;
 {SETTLED}
@@ -327,6 +349,7 @@ RETURN $conversation;",
                 ),
             ]);
         }
+        held(&mut vars, &launch.handle, hold);
         let kept: Option<String> = self.retrying(|| self.transact(&body, vars.clone()))?;
         Ok(kept.map(|claude_session| TaskSessionRow {
             claude_session,
@@ -346,18 +369,26 @@ RETURN $conversation;",
             .map(|_| ())
     }
 
-    /// [`Store::reopen_task_session`] in `pane` of the session `record` was read as, only while it
-    /// is still that launch, closed, in the terminal it was read in: never one a close recorded in
-    /// another terminal since (the new one, killed as it started). Whether it reopened it.
+    /// [`Store::reopen_task_session`] in `pane` of the session `record` was read as, by the restore
+    /// holding it as `hold` ([`Store::take_session`]), only while it is still that launch, closed,
+    /// in the terminal it was read in: never one a close recorded in another terminal since (the
+    /// new one, killed as it started). The session is revived with it ([`Store::revive`]): cleanup
+    /// leaves handles that closed, and the restored agent must be able to use the board. Whether it
+    /// reopened it; refused once the hold is another's ([`HOLDS`]).
     pub fn reopen_task_session_as(
         &self,
         record: &TaskSessionRow,
         pane: &str,
+        hold: u64,
     ) -> Result<bool, Error> {
         let handle = &record.handle;
         let mut vars = json!({"into": pane, "said": format!("restored {handle} in pane {pane}")});
         same_launch(&mut vars, record);
-        let guard = format!("{SAME_LAUNCH}\nIF $at.closed = NONE {{ RETURN false }};");
+        held(&mut vars, handle, hold);
+        let guard = format!(
+            "{HOLDS}\n{SAME_LAUNCH}\nIF $at.closed = NONE {{ RETURN false }};
+UPDATE type::record('session', $handle) SET left_at = NONE, last_seen = math::max([last_seen, $now]) RETURN NONE;"
+        );
         let body = recorded(
             &guard,
             "SET pane = $into, closed = NONE, closed_why = ''",
@@ -371,7 +402,8 @@ RETURN $conversation;",
     /// `callback_lease:['session', HANDLE]`. Refused while another holds it and it has not lapsed
     /// ([`SESSION_LEASE_SECONDS`]), so a close or a restore stopped part way holds it no longer than
     /// that. The revision that names this hold: [`Store::renew_session`],
-    /// [`Store::release_session`].
+    /// [`Store::release_session`], and the fencing token every write of its holder carries, so none
+    /// lands once another took the session over ([`HOLDS`]).
     pub fn take_session(&self, handle: &str, doing: &str) -> Result<u64, Error> {
         let now = self.now();
         let taken: Lease = self.retrying(|| {

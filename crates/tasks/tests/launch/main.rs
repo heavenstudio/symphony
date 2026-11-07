@@ -7,6 +7,7 @@ mod common;
 
 mod cleanup;
 mod close;
+mod close_fences;
 mod close_holds;
 mod close_races;
 mod finish;

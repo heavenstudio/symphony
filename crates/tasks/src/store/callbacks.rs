@@ -8,6 +8,7 @@
 
 use super::callback_peer::{self as peer, Owner};
 use super::callback_state::{State, stored_seen};
+use super::launches::{HOLDS, held};
 use super::pull_account::{Account, PullPlan};
 use super::queued_lines::{Hearing, Queued, Rescoped};
 use super::{ACT, Error, Store, acting, logged, refused};
@@ -138,7 +139,8 @@ pub struct Callback {
     /// Codex thread is present while that terminal runs Codex.
     #[serde(default)]
     pub terminal: Option<String>,
-    /// How many times the handle has registered: which of its registrations this one is.
+    /// Which of the handle's registrations this one is. `counter:['registration', HANDLE]` counts
+    /// them, outside the row a retirement deletes, so a later one never takes a retired one's number.
     #[serde(default)]
     registration_revision: u64,
     #[serde(skip)]
@@ -265,8 +267,10 @@ IF $take {{
     UPDATE callback_event SET delivered = true, text = '' WHERE handle != $actor AND string::starts_with(key, 'chat-') RETURN NONE;
 }};
 IF $address = NONE {{ UPDATE callback_event SET delivered = true, text = '' WHERE handle = $actor AND string::starts_with(key, 'chat-') RETURN NONE; }};
+LET $registration = math::max([type::record('counter', ['registration', $actor]).last ?? 0, type::record('callback_state', $actor).registration_revision ?? 0]) + 1;
+UPSERT type::record('counter', ['registration', $actor]) SET last = $registration RETURN NONE;
 UPSERT type::record('callback_state', $actor) SET handle = $actor, address = $address, host = $host, chat_fallback = $chat AND $if_free,
-    registration_revision = (registration_revision ?? 0) + 1,
+    registration_revision = $registration,
     owner = $owner, confirmed_until = 0, chat_resume = false, terminal = $terminal,
     chat = IF $address = NONE {{ false }} ELSE IF $take {{ true }} ELSE {{ chat ?? false }} RETURN NONE;
 IF $address != NONE AND string::starts_with($address, 'codex:') {{
@@ -340,17 +344,43 @@ RETURN NONE;");
     /// none) and `registration_revision`, so never one registered since, though from the same
     /// listener and terminal. Whether it retired it.
     pub(crate) fn clear_callback(&self, callback: &Callback, why: &str) -> Result<bool, Error> {
-        let retired = self.retrying(|| self.transact::<bool>(
-            "LET $state = (SELECT address, owner, terminal, registration_revision ?? 0 AS revision FROM ONLY type::record('callback_state', $handle));
-             IF $state.address != $address OR $state.owner != $owner OR $state.terminal != $terminal OR $state.revision != $revision { RETURN false };
+        self.retire_registration(callback, why, None)
+    }
+
+    /// [`Store::clear_callback`] by the close holding the handle's session as `hold`
+    /// ([`Store::take_session`]): refused, retiring nothing, once the hold is another's
+    /// ([`HOLDS`]).
+    pub(crate) fn clear_callback_held(
+        &self,
+        callback: &Callback,
+        why: &str,
+        hold: u64,
+    ) -> Result<bool, Error> {
+        self.retire_registration(callback, why, Some(hold))
+    }
+
+    fn retire_registration(
+        &self,
+        callback: &Callback,
+        why: &str,
+        hold: Option<u64>,
+    ) -> Result<bool, Error> {
+        let mut vars = json!({
+            "handle":callback.handle, "address":callback.address, "owner":callback.owner,
+            "terminal":callback.terminal, "revision":callback.registration_revision,
+        });
+        let mut guard = "";
+        if let Some(hold) = hold {
+            held(&mut vars, &callback.handle, hold);
+            guard = HOLDS;
+        }
+        let body = format!("{guard}
+             LET $state = (SELECT address, owner, terminal, registration_revision ?? 0 AS revision FROM ONLY type::record('callback_state', $handle));
+             IF $state.address != $address OR $state.owner != $owner OR $state.terminal != $terminal OR $state.revision != $revision {{ RETURN false }};
              DELETE type::record('callback_state', $handle) RETURN NONE;
              UPDATE callback_event SET delivered = true, text = '' WHERE handle = $handle AND string::starts_with(key, 'chat-') RETURN NONE;
-             RETURN true;",
-            json!({
-                "handle":callback.handle, "address":callback.address, "owner":callback.owner,
-                "terminal":callback.terminal, "revision":callback.registration_revision,
-            }),
-        ))?;
+             RETURN true;");
+        let retired = self.retrying(|| self.transact::<bool>(&body, vars.clone()))?;
         if retired {
             eprintln!(
                 "CALLBACK {} retired: {why}; messages remain in inbox",

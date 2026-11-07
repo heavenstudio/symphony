@@ -584,10 +584,11 @@ pub fn restore(
         {
             continue;
         }
-        // Held for the whole restore, as a close holds it: neither starts while the other runs.
-        let lease = store.take_session(&s.handle, "a restore")?;
-        let started = restore_one(store, hc, m, slug, s, tab);
-        let released = store.release_session(&s.handle, lease);
+        // Held for the whole restore, as a close holds it: neither starts while the other runs,
+        // and each of its writes lands only while it still holds it.
+        let hold = store.take_session(&s.handle, "a restore")?;
+        let started = restore_one(store, hc, m, slug, s, tab, hold);
+        let released = store.release_session(&s.handle, hold);
         restored.push(started?);
         released?;
     }
@@ -602,6 +603,7 @@ fn restore_one(
     slug: &str,
     session: &TaskSessionRow,
     tab: Option<&str>,
+    hold: u64,
 ) -> Result<Started, Error> {
     if session.claude_session.is_empty() || session.claude_session == "codex:" {
         return Err(Error::Refused(format!(
@@ -631,6 +633,7 @@ fn restore_one(
             session,
             GONE,
             &cleanup::restore_line(slug, &session.handle),
+            hold,
         )?;
     }
     if !Path::new(&session.worktree).is_dir() {
@@ -665,6 +668,13 @@ fn restore_one(
             ),
         )
     };
+    if !store.renew_session(&session.handle, hold)? {
+        return Err(Error::Refused(format!(
+            "another close or a restore of {} took its session over, so the restore starts no \
+             terminal",
+            session.handle
+        )));
+    }
     let mut terminal = String::new();
     let started = start_confirmed(
         hc,
@@ -687,17 +697,20 @@ fn restore_one(
         }
         return Err(problem.into());
     }
-    // cleanup leaves handles that closed: the restored agent must be able to use the board
-    store.revive(&session.handle)?;
-    if !store.reopen_task_session_as(session, &terminal)? {
-        // Its record changed while its terminal started, as only a close or another restore
-        // that took the session once this one's hold lapsed could: the record says what holds, and
-        // the terminal this one started goes.
-        let _ = hc.close(&terminal);
+    // Reopened and revived only while the restore still holds the session and the record is the
+    // one read: else the record says what holds, the terminal this one started goes, and it
+    // records nothing.
+    let reopened = store.reopen_task_session_as(session, &terminal, hold);
+    if !matches!(reopened, Ok(true)) {
+        let _ = hc.close(&terminal); // the problem is what the caller must hear
+        let why = match reopened {
+            Err(Error::Refused(why)) => why,
+            Err(problem) => return Err(problem),
+            Ok(_) => format!("{}'s record changed", session.handle),
+        };
         return Err(Error::Refused(format!(
-            "{} was closed while it was restored: its record changed, so terminal {terminal} \
-             is not kept",
-            session.handle
+            "{why} while it was restored, so the restore records nothing and terminal \
+             {terminal}, which it started, is killed"
         )));
     }
     let row = store

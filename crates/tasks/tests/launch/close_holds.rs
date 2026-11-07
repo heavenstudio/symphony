@@ -15,7 +15,7 @@ fn held(doing: &str, handle: &str) -> String {
 }
 
 /// `handle`'s session on sim/jump restored, through the world's own hc.
-fn restoring(world: &World, handle: &str) -> Result<Vec<Started>, Error> {
+pub(crate) fn restoring(world: &World, handle: &str) -> Result<Vec<Started>, Error> {
     restore(
         world.store(),
         &world.hc(),
@@ -124,8 +124,8 @@ fn a_restore_whose_hold_lapsed_as_its_terminal_started_gives_way_to_the_close_th
     assert_eq!(
         refused(restored),
         format!(
-            "{handle} was closed while it was restored: its record changed, so terminal {new} is \
-             not kept"
+            "another close or a restore of {handle} took its session over while it was restored, \
+             so the restore records nothing and terminal {new}, which it started, is killed"
         )
     );
     assert!(
@@ -287,14 +287,14 @@ fn a_close_stopped_after_its_record_has_its_callback_retired_by_the_next_with_no
         )
         .unwrap();
     let earlier = "closed by amber-heron";
-    world
+    let hold = world
         .store()
         .take_session(handle, "a close by amber-heron")
         .unwrap();
     world.edit_terminals(|all| all.clear());
     world
         .store()
-        .close_task_session_as(&session, earlier, &restore_line(handle))
+        .close_task_session_as(&session, earlier, &restore_line(handle), hold)
         .unwrap();
     let before = world.f.said("sim/jump").len();
     world.f.advance(300.0);

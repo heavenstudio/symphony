@@ -130,7 +130,8 @@ terminal is killed, bound to that terminal, and retires the callback registered 
 refused for the caller's own session or terminal, one the owner may be looking at, and one whose
 program is not at rest (work under it as the idle sweep reads it, any test run included, or
 another program in its foreground). A close and a restore of one session each hold it while they
-run, so neither starts while the other runs. A Codex record
+run, so neither starts while the other runs; one whose hold lapsed and was taken over writes
+nothing more, and a restore that lost it kills the terminal it started. A Codex record
 takes the thread its callback registered whichever is written first; one closed with no thread
 says on its thread that restore cannot resume it. See the [tasks skill](../../.agents/skills/tasks/SKILL.md#launch-restore-clean-up-herdr).
 

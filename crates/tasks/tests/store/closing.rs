@@ -1,7 +1,8 @@
 //! A close's writes to a task session's record (`close`, `launch::close`), each bound to the record
 //! the close read: the launch and the terminal it names. A record changed since (restored into
 //! another terminal, launched again, closed by another close) is left as it is, and nothing is said.
-//! And the session's hold, which a close and a restore take for their whole run.
+//! And the session's hold, which a close and a restore take for their whole run, and which each of
+//! their writes carries.
 
 use crate::common::{Fixture, refused};
 use crate::launches::launch;
@@ -31,10 +32,11 @@ fn a_bound_close_closes_only_the_launch_in_the_terminal_it_read_and_only_once() 
     let handle = &read.handle;
     let restore = format!("just tasks restore sim/jump {handle}");
     let before = fixture.said("sim/jump").len();
+    let hold = fixture.store.take_session(handle, "a close by o").unwrap();
     let close = |record, why| {
         fixture
             .store
-            .close_task_session_as(record, why, &restore)
+            .close_task_session_as(record, why, &restore, hold)
             .unwrap()
     };
     // Restored into another terminal since: not the session read.
@@ -124,6 +126,53 @@ fn a_session_is_held_by_one_close_or_restore_until_it_is_released_or_its_hold_la
 }
 
 #[test]
+fn no_write_of_a_hold_another_took_over_lands_and_one_lapsed_but_not_taken_over_still_writes() {
+    let fixture = Fixture::empty();
+    fixture.task("sim/jump");
+    let store = &fixture.store;
+    let read = launch(&fixture, "sim/jump", "executor");
+    let handle = &read.handle;
+    let restore = format!("just tasks restore sim/jump {handle}");
+    let found = NewLaunch {
+        pane: "t10".into(),
+        how: "found".into(),
+        log: false,
+        ..NewLaunch::new("sim/jump", handle, "executor")
+    };
+    let first = store.take_session(handle, "a close by o").unwrap();
+    // It lapses, and a restore takes the session over.
+    fixture.advance(300.0);
+    let second = store.take_session(handle, "a restore").unwrap();
+    let before = fixture.said("sim/jump").len();
+    let taken = format!("another close or a restore of {handle} took its session over");
+    assert_eq!(
+        [
+            refused(store.close_task_session_as(&read, "closed by o", &restore, first)),
+            refused(store.record_found_closed(&found, "closed by o", &restore, first)),
+            refused(store.reopen_task_session_as(&read, "t11", first)),
+        ],
+        [taken.clone(), taken.clone(), taken]
+    );
+    assert_eq!(
+        (current(&fixture), fixture.said("sim/jump").len()),
+        (read.clone(), before)
+    );
+    // The hold that took it over lapses as well, and no other takes it: its writes land.
+    fixture.advance(300.0);
+    let closed = store
+        .close_task_session_as(&read, "closed by o", &restore, second)
+        .unwrap();
+    let reopened = store
+        .reopen_task_session_as(&current(&fixture), "t11", second)
+        .unwrap();
+    let now = current(&fixture);
+    assert_eq!(
+        (closed, reopened, now.closed, now.pane.as_str()),
+        (true, true, None, "t11")
+    );
+}
+
+#[test]
 fn a_session_found_running_is_recorded_closed_in_one_line_once_per_terminal() {
     let fixture = Fixture::empty();
     fixture.task("sim/jump");
@@ -137,10 +186,11 @@ fn a_session_found_running_is_recorded_closed_in_one_line_once_per_terminal() {
         log: false,
         ..NewLaunch::new("sim/jump", &handle, "reviewer")
     };
+    let hold = fixture.store.take_session(&handle, "a close by o").unwrap();
     let before = fixture.said("sim/jump").len();
     let written = fixture
         .store
-        .record_found_closed(&found, "closed by o", &restore)
+        .record_found_closed(&found, "closed by o", &restore, hold)
         .unwrap()
         .unwrap();
     assert_eq!(current(&fixture), written);
@@ -172,7 +222,7 @@ fn a_session_found_running_is_recorded_closed_in_one_line_once_per_terminal() {
     assert_eq!(
         fixture
             .store
-            .record_found_closed(&found, "closed by p", &restore)
+            .record_found_closed(&found, "closed by p", &restore, hold)
             .unwrap(),
         None
     );
@@ -188,7 +238,7 @@ fn a_session_found_running_is_recorded_closed_in_one_line_once_per_terminal() {
     };
     let written = fixture
         .store
-        .record_found_closed(&elsewhere, "closed by o", &restore)
+        .record_found_closed(&elsewhere, "closed by o", &restore, hold)
         .unwrap()
         .unwrap();
     assert_eq!(written.claude_session, "codex:0abc-12");
@@ -201,7 +251,7 @@ fn a_session_found_running_is_recorded_closed_in_one_line_once_per_terminal() {
         refused(
             fixture
                 .store
-                .record_found_closed(&nowhere, "closed by o", &restore)
+                .record_found_closed(&nowhere, "closed by o", &restore, hold)
         ),
         "no task 'sim/none'"
     );
@@ -214,7 +264,13 @@ fn a_bound_reopen_never_takes_back_a_session_closed_in_another_terminal_since() 
     let read = launch(&fixture, "sim/jump", "executor");
     let handle = &read.handle;
     let restore = format!("just tasks restore sim/jump {handle}");
-    let reopen = |record, pane| fixture.store.reopen_task_session_as(record, pane).unwrap();
+    let hold = fixture.store.take_session(handle, "a restore").unwrap();
+    let reopen = |record, pane| {
+        fixture
+            .store
+            .reopen_task_session_as(record, pane, hold)
+            .unwrap()
+    };
     // Open: nothing to reopen.
     let reopened = reopen(&read, "t10");
     assert_eq!(
@@ -235,7 +291,7 @@ fn a_bound_reopen_never_takes_back_a_session_closed_in_another_terminal_since() 
     };
     fixture
         .store
-        .record_found_closed(&found, "closed by o", &restore)
+        .record_found_closed(&found, "closed by o", &restore, hold)
         .unwrap()
         .unwrap();
     let before = fixture.said("sim/jump").len();
