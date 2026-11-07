@@ -177,7 +177,7 @@ impl Terminals {
 #[test]
 fn a_launch_cases_folder_is_scratch_of_this_runs_own_and_goes_with_it() {
     // The run's own folder goes at its exit, or at the next run after a kill (`scratch_folder`).
-    let p = Panes::new("own");
+    let p = Terminals::new("own");
     assert_eq!(p.dir.parent(), Some(crate::own_scratch()));
     assert!(p.dir.join("lamp-works/.git").is_dir());
 }
