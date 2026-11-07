@@ -992,9 +992,12 @@ pub struct Agents {
     pub agents: Vec<Agent>,
 }
 
+/// Whether each machine probe could be asked: `ok` or `unavailable`.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AgentProbes {
-    pub herdr: String,
+    /// The terminals agents run in (hc's, shown in the Herdr app).
+    pub panes: String,
+    /// The test-slot locks.
     pub slots: String,
 }
 

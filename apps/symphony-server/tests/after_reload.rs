@@ -481,6 +481,7 @@ impl Fixture {
             if name.starts_with("SF_")
                 || name.starts_with("TASKS_")
                 || name.starts_with("GIT_")
+                || name.starts_with("HC_")
                 || name.starts_with("HERDR_")
             {
                 command.env_remove(key);
@@ -510,7 +511,7 @@ impl Fixture {
             .env("TASKS_SERVER", &self.board_address)
             .env("TASKS_DATABASE", "after_reload")
             .env("SF_TASKS_CLI", format!("'{}'", tasks_binary().display()))
-            .env("HERDR_BIN", "/usr/bin/false")
+            .env("HC_BIN", "/usr/bin/false")
             .env("GIT_CONFIG_GLOBAL", "/dev/null")
             .env("GIT_CONFIG_NOSYSTEM", "1")
             .env("ASKS_DB", self.dir.join("asks.db"))

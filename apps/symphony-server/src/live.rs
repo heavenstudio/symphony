@@ -1517,7 +1517,7 @@ mod tests {
             symphony_api::Agents {
                 generated: store.now(),
                 probes: symphony_api::AgentProbes {
-                    herdr: "ok".into(),
+                    panes: "ok".into(),
                     slots: "ok".into(),
                 },
                 agents: Vec::new(),
