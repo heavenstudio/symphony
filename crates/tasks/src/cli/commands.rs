@@ -394,10 +394,9 @@ pub fn run(store: &Store, c: &mut Context) -> Result<(), Stop> {
     Ok(())
 }
 
-/// `task` just changed status: when it is over, the panes of the sessions launched on it or under it
-/// close ([`panes::close_finished`]), and then a sweep starts, detached, in which their worktrees go
-/// without the window when merged and clean ([`trigger`]). The status change stands whatever happens
-/// here; what went wrong closing panes is said, and the sweep says nothing.
+/// `create SLUG TITLE`: a new task from its arguments and its body (the `body` argument, a file, or
+/// stdin for `-`), refused when the brief names the worktree of a dependency that has not landed
+/// ([`imported_worktree`]).
 fn create(store: &Store, c: &mut Context) -> Result<(), Stop> {
     let p = c.parsed;
     let body = match p.get("body_file") {

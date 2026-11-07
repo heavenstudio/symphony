@@ -3,6 +3,7 @@
 
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
+use std::cell::Cell;
 use std::convert::Infallible;
 use std::fs::{self, File};
 use std::io::{BufRead, BufReader, Read, Write};
@@ -237,6 +238,7 @@ fn main() {
 "#;
 
 struct Fixture {
+    name: String,
     dir: PathBuf,
     root: PathBuf,
     home: PathBuf,
@@ -246,6 +248,8 @@ struct Fixture {
     board_address: String,
     generation_pids: Vec<i64>,
     began: Instant,
+    /// When the last source edit landed, until a handshake answers it.
+    edited: Cell<Option<Instant>>,
 }
 impl Fixture {
     fn new(name: &str) -> Self {
@@ -319,6 +323,8 @@ impl Fixture {
         fs::create_dir_all(root.join("crates")).unwrap();
         fs::create_dir_all(dir.join("bin")).unwrap();
         let driver = driver(&logs);
+        // The verdict commit's first run of the board CLI, here rather than in the case's wait.
+        tasks_binary();
         for path in [
             root.join("tools/rs-bin.sh"),
             dir.join("bin/just"),
@@ -335,17 +341,16 @@ impl Fixture {
         let home = dir.join("installation");
         fs::create_dir_all(home.join("bin")).unwrap();
         fs::create_dir(dir.join("tmp")).unwrap();
-        // A link, as a copy would be a new file whose first run is this case's start.
+        // A link, as a copy would be a new file whose first run is this case's start. Its stamp
+        // names the image file its hash was taken of, as the server's install stamp does, so the
+        // start takes the hash as stamped instead of reading the image again.
         std::os::unix::fs::symlink(first_run::server_image(), home.join("bin/symphony-server"))
             .unwrap();
         let fingerprint = symphony::reload::fingerprint(&root).unwrap();
-        let binary: String = Sha256::digest(fs::read(home.join("bin/symphony-server")).unwrap())
-            .iter()
-            .map(|byte| format!("{byte:02x}"))
-            .collect();
+        let (binary, image) = first_run::server_stamp();
         write(
             &home.join("installed.json"),
-            &json!({"source":fingerprint,"binary":binary}).to_string(),
+            &json!({"source":fingerprint,"binary":binary,"image":image}).to_string(),
         );
         write(&home.join("client/public/index.html"), "initial client");
         write(
@@ -459,6 +464,7 @@ impl Fixture {
             started.unwrap_or_else(|why| panic!("private database exited before readiness: {why}"));
         let board = Store::open(rpc::Client::new(&board_address, "sf", "after_reload")).unwrap();
         Self {
+            name: name.into(),
             dir,
             root,
             home,
@@ -468,6 +474,7 @@ impl Fixture {
             board_address,
             generation_pids: Vec::new(),
             began: Instant::now(),
+            edited: Cell::new(None),
         }
     }
     fn server(&self, installed: bool) -> (OwnedChild, Lines, SocketAddr) {
@@ -520,9 +527,16 @@ impl Fixture {
         if installed {
             command.arg("--home").arg(&self.home);
         }
+        let spawned = Instant::now();
         let mut child = OwnedChild(sys::spawn_output(&mut command).unwrap());
         let mut lines = Lines::of(&mut child.0, &self.dir.join("server.log"));
         let line = lines.until("→ Symphony at http://127.0.0.1:");
+        println!(
+            "after_reload: {}: the {} start's ready line after {:.3}s",
+            self.name,
+            if installed { "installed" } else { "built" },
+            spawned.elapsed().as_secs_f64()
+        );
         let url = line
             .split_once("→ Symphony at ")
             .unwrap()
@@ -541,8 +555,32 @@ impl Fixture {
         (child, lines, address)
     }
     fn startup(&mut self) -> Entry {
-        let entry = self.gate.entered("startup");
+        let entry = self.entered("startup");
         self.generation_pids.push(entry.pid);
+        entry
+    }
+    /// The next `kind` handshake; the first after an edit says how long the edit took to wake the
+    /// reload watcher and reach it: an edit its file event missed waits for the watcher's period.
+    fn entered(&self, kind: &str) -> Entry {
+        let entry = self.gate.entered(kind);
+        if let Some(edited) = self.edited.take() {
+            println!(
+                "after_reload: {}: the edit's {kind} handshake after {:.3}s",
+                self.name,
+                edited.elapsed().as_secs_f64()
+            );
+        }
+        entry
+    }
+    /// The verdict commit's check (`outputs`) for a decision whose body was sent at `decided`: the
+    /// commit, its board CLI run and the check's start lie between the two.
+    fn committed(&self, decided: Instant) -> Entry {
+        let entry = self.gate.entered("outputs");
+        println!(
+            "after_reload: {}: the verdict commit's check after {:.3}s",
+            self.name,
+            decided.elapsed().as_secs_f64()
+        );
         entry
     }
     fn edit(&self, file: &str, text: &str) {
@@ -555,6 +593,7 @@ impl Fixture {
         let staged = self.dir.join("tmp/fixture-source");
         fs::write(&staged, text).unwrap();
         fs::rename(&staged, self.root.join(relative)).unwrap();
+        self.edited.set(Some(Instant::now()));
     }
     fn published(&self) {
         let commands = fs::read_to_string(self.dir.join("commands.log")).unwrap();
@@ -687,18 +726,26 @@ fn await_front(address: SocketAddr, pid: i64) {
     }
 }
 
-/// The board CLI the generations run: the one the workspace's test run built
-/// (`SF_TEST_TASKS_BINARY`, from `sf-rust-tests`), else built once here.
+/// The board CLI the generations run: this process's link of the one the workspace's test run built
+/// (`SF_TEST_TASKS_BINARY`, from `sf-rust-tests`), else of one built here, run once in setup
+/// (`first_run::board_cli`).
 fn tasks_binary() -> &'static Path {
     static BINARY: OnceLock<PathBuf> = OnceLock::new();
     BINARY.get_or_init(|| {
-        if let Some(built) = std::env::var_os("SF_TEST_TASKS_BINARY").filter(|b| !b.is_empty()) {
-            return PathBuf::from(built);
-        }
-        let wrapper = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../tools/rs-bin.sh");
-        let done = sys::output(Command::new(wrapper).args(["--build", "tasks"])).unwrap();
-        assert!(done.status.success(), "tasks binary build: {done:?}");
-        PathBuf::from(String::from_utf8(done.stdout).unwrap().trim())
+        let built = std::env::var_os("SF_TEST_TASKS_BINARY")
+            .filter(|b| !b.is_empty())
+            .map_or_else(
+                || {
+                    let wrapper =
+                        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../tools/rs-bin.sh");
+                    let done =
+                        sys::output(Command::new(wrapper).args(["--build", "tasks"])).unwrap();
+                    assert!(done.status.success(), "tasks binary build: {done:?}");
+                    PathBuf::from(String::from_utf8(done.stdout).unwrap().trim())
+                },
+                PathBuf::from,
+            );
+        first_run::board_cli(&built)
     })
 }
 fn post(address: SocketAddr, route: &str, payload: &Value) -> Value {
@@ -720,14 +767,37 @@ fn accepted(address: SocketAddr, route: &str, size: usize) -> TcpStream {
 }
 
 /// What a case's waits run is a file setup already ran, never a copy of it made for the case: the
-/// installation links the built image, every stand-in the driver's one copy, and an install links
-/// that copy too (`first_run`).
+/// installation links this process's link of the built image, the generations run its link of the
+/// board CLI, every stand-in the driver's one copy, and an install links that copy too
+/// (`first_run`).
 #[test]
 fn installations_and_stand_ins_link_the_files_setup_ran() {
+    use std::os::unix::fs::MetadataExt;
     let f = Fixture::new("first-runs");
     let resolved = |path: &Path| fs::canonicalize(path).unwrap();
     let image = f.home.join("bin/symphony-server");
     assert_eq!(resolved(&image), resolved(first_run::server_image()));
+    // Not the build output's own name, which a rebuild moves to a new file
+    // (`first_run::tests`), and the stamp names the installation's own file.
+    let built = resolved(Path::new(env!("CARGO_BIN_EXE_symphony-server")));
+    assert_ne!(resolved(&image), built);
+    let stamp: Value =
+        serde_json::from_slice(&fs::read(f.home.join("installed.json")).unwrap()).unwrap();
+    let (binary, named) = first_run::server_stamp();
+    assert_eq!((&stamp["binary"], &stamp["image"]), (&json!(binary), named));
+    let file = fs::metadata(&image).unwrap();
+    assert_eq!(
+        (named["device"].as_u64(), named["inode"].as_u64()),
+        (Some(file.dev()), Some(file.ino()))
+    );
+    assert_eq!(
+        tasks_binary().parent(),
+        first_run::server_image().parent(),
+        "the board CLI is this process's link too"
+    );
+    if let Some(runners) = std::env::var_os("SF_TEST_TASKS_BINARY").filter(|b| !b.is_empty()) {
+        assert_ne!(resolved(tasks_binary()), resolved(Path::new(&runners)));
+    }
     let driver = resolved(&f.root.join("tools/rs-bin.sh"));
     // Not the compile output rustc writes in the logs folder, but the machine copy of its bytes:
     // the one file machine_copy hands out for them under the compile's name, already run.
@@ -748,7 +818,7 @@ fn installations_and_stand_ins_link_the_files_setup_ran() {
         )
         .unwrap(),
     );
-    f.gate.entered("build").release("install");
+    f.entered("build").release("install");
     install.wait();
     assert_eq!(resolved(&image), driver, "the install links the stand-in");
     assert!(!f.home.join("bin/next").exists());
@@ -795,6 +865,7 @@ fn a_decision_lands_on_main_without_a_manual_commit() {
     );
     let (mut server, mut lines, address) = f.server(false);
     let before = repository(&f.root, &["rev-parse", "main"]);
+    let decided = Instant::now();
     assert_eq!(
         post(
             address,
@@ -803,7 +874,7 @@ fn a_decision_lands_on_main_without_a_manual_commit() {
         )["ok"],
         true
     );
-    let output = f.gate.entered("outputs");
+    let output = f.committed(decided);
     // The publication worker is blocked in its output check, with its verdict branch visible.
     // Complete a real read-hub scan before releasing it, then require that publication still lands.
     let scanned = symphony::branches::branch_cards(&f.root);
@@ -908,7 +979,7 @@ fn requests_accepted_before_and_during_handover_all_receive_a_status() {
         .to_string();
     let mut held = accepted(address, "/api/message", body.len());
     f.edit("live.rs", "// handover with unanswered connections\n");
-    f.gate.entered("build").release("install");
+    f.entered("build").release("install");
     let startup = f.startup();
     let replacement_pid = startup.pid;
     assert_front(address, original_pid);
@@ -969,7 +1040,7 @@ fn failed_build_and_startup_keep_serving_then_module_and_main_handover_preserve_
     let (mut original, mut lines, address) = f.server(true);
     let original_pid = i64::from(original.0.id());
     f.edit("live.rs", "// build failure\n");
-    let build = f.gate.entered("build");
+    let build = f.entered("build");
     assert_front(address, original_pid);
     build.release("fail");
     lines.until("fixture compiler refused source");
@@ -996,7 +1067,7 @@ fn failed_build_and_startup_keep_serving_then_module_and_main_handover_preserve_
         "live.rs",
         "// starts a replacement that exits before readiness\n",
     );
-    f.gate.entered("build").release("install");
+    f.entered("build").release("install");
     let failed = f.startup();
     let failed_pid = failed.pid;
     assert_front(address, original_pid);
@@ -1018,7 +1089,7 @@ fn failed_build_and_startup_keep_serving_then_module_and_main_handover_preserve_
             .to_string();
     let mut held = accepted(address, "/api/decision", body.len());
     f.edit("live.rs", "// module replacement\n");
-    let build = f.gate.entered("build");
+    let build = f.entered("build");
     assert_front(address, original_pid);
     build.release("install");
     let startup = f.startup();
@@ -1033,13 +1104,14 @@ fn failed_build_and_startup_keep_serving_then_module_and_main_handover_preserve_
         original.0.try_wait().unwrap().is_none(),
         "accepted save keeps the old generation draining"
     );
+    let decided = Instant::now();
     held.write_all(body.as_bytes()).unwrap();
     assert_eq!(
         response(held)["ok"],
         true,
         "accepted request survived handover"
     );
-    let output = f.gate.entered("outputs");
+    let output = f.committed(decided);
     assert_eq!(
         repository(&f.root, &["show", "main:docs/TOPIC.md"]),
         DOC.trim_end()
@@ -1085,7 +1157,7 @@ fn failed_build_and_startup_keep_serving_then_module_and_main_handover_preserve_
             .to_string();
     let mut held = accepted(address, "/api/message", body.len());
     f.edit("main.rs", "fn main() { /* main entry changed */ }\n");
-    f.gate.entered("build").release("install");
+    f.entered("build").release("install");
     let startup = f.startup();
     let third_pid = startup.pid;
     assert_front(address, second_pid);
@@ -1121,7 +1193,7 @@ fn client_only_and_shared_edits_publish_once_and_failures_preserve_the_serving_b
     assert_eq!(client_page(address), "initial client");
 
     f.source("symphony/apps/symphony-ui/src/main.rs", "refused client");
-    let client = f.gate.entered("client");
+    let client = f.entered("client");
     assert_front(address, original_pid);
     assert_eq!(
         client_page(address),
@@ -1155,7 +1227,7 @@ fn client_only_and_shared_edits_publish_once_and_failures_preserve_the_serving_b
     );
 
     f.source("symphony/apps/symphony-ui/src/main.rs", "incomplete bundle");
-    f.gate.entered("client").release("empty");
+    f.entered("client").release("empty");
     lines.until("client build has no index.html");
     assert_front(address, original_pid);
     assert_eq!(client_page(address), "initial client");
@@ -1166,8 +1238,8 @@ fn client_only_and_shared_edits_publish_once_and_failures_preserve_the_serving_b
 
     // A successful bundle followed by a failed replacement must also restore the client.
     f.source("symphony/apps/symphony-ui/src/main.rs", "unready client");
-    f.gate.entered("client").release("bundle");
-    let build = f.gate.entered("build");
+    f.entered("client").release("bundle");
+    let build = f.entered("build");
     assert_eq!(client_page(address), "initial client");
     build.release("install");
     let startup = f.startup();
@@ -1188,8 +1260,8 @@ fn client_only_and_shared_edits_publish_once_and_failures_preserve_the_serving_b
     );
 
     f.source("symphony/apps/symphony-ui/src/main.rs", "shipped client");
-    f.gate.entered("client").release("bundle");
-    f.gate.entered("build").release("install");
+    f.entered("client").release("bundle");
+    f.entered("build").release("install");
     let startup = f.startup();
     let second_pid = startup.pid;
     assert_eq!(client_page(address), "shipped client");
@@ -1226,8 +1298,8 @@ fn client_only_and_shared_edits_publish_once_and_failures_preserve_the_serving_b
         "symphony/crates/symphony-api/src/lib.rs",
         "// changed shared contract\n",
     );
-    f.gate.entered("client").release("bundle");
-    f.gate.entered("build").release("install");
+    f.entered("client").release("bundle");
+    f.entered("build").release("install");
     let startup = f.startup();
     let third_pid = startup.pid;
     startup.release("exec");
@@ -1276,11 +1348,11 @@ fn startup_rebuilds_an_older_client_even_when_the_server_stamp_is_current() {
 
     let (mut original, mut lines, address) = f.server(true);
     let original_pid = i64::from(original.0.id());
-    let client = f.gate.entered("client");
+    let client = f.entered("client");
     assert_eq!(client_page(address), "initial client");
     assert_front(address, original_pid);
     client.release("bundle");
-    f.gate.entered("build").release("install");
+    f.entered("build").release("install");
     let startup = f.startup();
     let replacement_pid = startup.pid;
     assert_eq!(client_page(address), "current client");
@@ -1305,10 +1377,10 @@ fn shutdown_cancels_build_or_startup_and_releases_the_lease() {
         let pid = i64::from(server.0.id());
         let build = if phase == "client" {
             f.source("symphony/apps/symphony-ui/src/main.rs", "cancelled client");
-            f.gate.entered("client")
+            f.entered("client")
         } else {
             f.edit("main.rs", "fn main() { /* cancelled replacement */ }\n");
-            f.gate.entered("build")
+            f.entered("build")
         };
         let held = if phase == "startup" {
             build.release("install");

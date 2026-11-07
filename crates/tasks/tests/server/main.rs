@@ -1,6 +1,7 @@
 //! The board's server: found where it says it is, started when it is not (on a reserved port, and on
-//! another when that one was taken), and the git common dir it keeps its data in; and the move of the
-//! SQLite board into it, in a repository of its own.
+//! another when that one was taken), and the git common dir it keeps its data in; what its store
+//! takes on disk, and the reclaim that rebuilds it; and the move of the SQLite board into it, in a
+//! repository of its own.
 
 #![expect(
     clippy::disallowed_methods,
@@ -17,6 +18,7 @@ mod helper;
 mod home;
 mod home_fixture;
 mod port;
+mod reclaim;
 mod sessionless;
 #[path = "../store/sqlite.rs"]
 mod sqlite;

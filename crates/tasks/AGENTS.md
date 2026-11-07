@@ -341,7 +341,8 @@ both without the starter's session, `sys::SESSION_VARS`: `TASKS_SESSION`,
 `HC_TERMINAL_ID`, `HC_TERMINAL_SOCKET`, `HC_SESSION` and `HC_SCOPE`. A child that
 kept hc's would start its terminals under the starter's, which end with it, and
 an hc call would answer for the starter's core and scope alone. That covers the
-database server `Home` starts, its `ps` and `lsof`, every hc call (each names the
+database server `Home` starts, its `ps` and `lsof`, the `surreal export` and
+`import` a reclaim runs, every hc call (each names the
 terminal it acts on; the caller's own is read from the `Env`, never handed to
 hc), git, the detached dispatcher, sweep and review command, the sweep's cwd
 scans (`process_cwd::process_cwds_with` and `occupied_with`, handed
@@ -402,7 +403,12 @@ again; a request whose text proves it a read (`rpc::Kind::of`: only `SELECT`,
 `RETURN`, `LET`, `INFO` and transaction statements, no write word anywhere,
 and every `::` a call in a namespace that only computes, its word right against
 the `::`: `fn ::bump()` is a write) goes once more on a new connection, never a
-third time. Each sending waits the client's wait for its whole answer, however
+third time. A store opens a board at its build's schema version on one such
+read of the version (`Store::with`), defining and writing nothing, so a page's
+open over a slow board goes once more as its read does; a board not made yet,
+or at another version, is defined: its namespace and database first when the
+server lacks either, then its tables and version in one transaction
+(`tests/store/open_read.rs`). Each sending waits the client's wait for its whole answer, however
 it trickles in, so a read waits at most twice that. A late answer on a working
 connection says the server is slow (`rpc::slow`), which the Symphony's read routes answer with 504, not the 503 of
 a board that cannot be reached. `tasks-copy` copies a whole
@@ -417,6 +423,37 @@ old SQLite board into it once, one way, reading SQLite through `rusqlite`
 ([TASKS](../../../docs/workflow/TASKS.md#the-move-to-surrealdb)). On the in-memory
 engine a transaction that big costs more than linearly (the board at the move:
 39 server CPU-s, against 1.5 on `surrealkv://`).
+
+Every server `server::Home` starts gets `server::Storage` as its environment
+(`SURREAL_SURREALKV_VLOG_THRESHOLD`, `SURREAL_SURREALKV_MAX_MEMTABLE_SIZE`).
+Each value stays beside its key in the sstables, where compaction drops the
+versions a rewrite leaves, and the write-ahead log holds at most 256 MiB.
+SurrealKV's own threshold, 4 KiB, sent large values to a value log. It deletes a
+value-log file only once no sstable points into it, so a row rewritten in place
+kept every version: 102 GiB for a 0.5 GiB board (tools/tasks-db-space). Never
+set `SURREAL_SURREALKV_ENABLE_VLOG=false`: a store with values in its log then
+cannot read them. `tasks-reclaim` (`just tasks-reclaim`, the owner's) is
+`Home::reclaim`. Under the starters' lock it ends the board's server and starts
+an unrecorded one on the store. It exports every namespace's every database with
+`surreal export` and imports them into `reclaim/data` under `Storage`, each
+database's file named by its place among them (`0002.sf.tasks.surql`), so two
+names differing only in case never share one on macOS's case-folding
+filesystem. Then it re-exports, compares each file byte for byte along with the root's and
+namespaces' users and accesses, swaps the stores, starts the board's server and
+removes the old store; the exports stay. It refuses a store without `sf/tasks`
+and an `INFO` answer without its namespaces or databases object, which would
+otherwise carry nothing and remove the store. Its private servers never take a
+port the halted server had, which a monitor may still hold as the board's. A
+failure before the swap restarts the old store untouched, and says the restart's
+own failure beside the reclaim's. A failure after it ends every server on the
+new store before the stores move back: a start whose address record fails ends
+the server it started, since the next `ensure` would adopt one left
+unrecorded. A start refuses while the store sits in `reclaim/old`
+without a successor, and the next reclaim puts it back before starting over.
+Without arguments it reclaims the board of the repository it runs in; `--dir
+FOLDER` reclaims a board folder elsewhere, as its tests and a rehearsal on a
+clone do (an APFS clone of `sf-tasks/data`: 102.8 GiB to 1.5 GiB, the server
+down 8 min).
 
 `tasks search` keeps keyword ranking by default, including exact slugs. `--mode
 vector` uses BGE chunk neighbours; `--mode hybrid` offers reciprocal rank fusion;
@@ -445,10 +482,10 @@ become visible after a completed pass, rather than synchronously with writes.
 explicitly supplied identity is still validated. A nonblocking per-database
 file lock admits one embed writer. Unchanged maintenance passes read only the message counter,
 task update stamps and model id against the last successful whole-board checkpoint, never source
-text, chunk manifests, model loading or downloads. A changed board scans hashes and part counts
-and embeds only changed sources. Explicit catch-up also repairs derived cache damage without a
-board write. Manual bulk catch-up uses
-one thread too; `--threads 1..64` explicitly overrides it for bulk work.
+text, chunk manifests, model loading or downloads. The checkpoint is the server's SHA-256 of those
+stamps, never the stamps: kept whole, they were a 165 KB row rewritten by each changed pass. A
+changed board scans hashes and part counts and embeds only changed sources. Explicit catch-up
+also repairs derived cache damage without a board write. Manual bulk catch-up uses one thread too; `--threads 1..64` explicitly overrides it for bulk work.
 Short search queries always use one inference thread.
 
 The approved BAAI/bge-small-en-v1.5 model runs locally through tract-onnx 0.22.5

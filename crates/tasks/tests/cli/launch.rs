@@ -15,12 +15,10 @@ const TASKS: &str = env!("CARGO_BIN_EXE_tasks");
 /// A pid no process has (macOS's run to 99998, Linux's to 4194304).
 const NO_PID: i64 = 99_999_999;
 
-/// A folder of its own outside any repository (the target dir is inside this one), emptied first.
+/// A folder of its own outside any repository (the target dir is inside this one), emptied first: a
+/// scratch folder of this process's, gone with the binary's exit.
 fn outside(name: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("launch-{}-{name}", std::process::id()));
-    let _ = fs::remove_dir_all(&dir);
-    fs::create_dir_all(&dir).unwrap();
-    dir.canonicalize().unwrap()
+    crate::scratch(&format!("launch-{name}"))
 }
 
 fn git(dir: &PathBuf, args: &[&str]) {
@@ -174,6 +172,14 @@ impl Terminals {
             "labels": {"sf.board": board_of(&self.env), "sf.handle": handle},
         }], "layout": {"spaces": []}}));
     }
+}
+
+#[test]
+fn a_launch_cases_folder_is_scratch_of_this_runs_own_and_goes_with_it() {
+    // The run's own folder goes at its exit, or at the next run after a kill (`scratch_folder`).
+    let p = Terminals::new("own");
+    assert_eq!(p.dir.parent(), Some(crate::own_scratch()));
+    assert!(p.dir.join("lamp-works/.git").is_dir());
 }
 
 // -- launch -----------------------------------------------------------------------------

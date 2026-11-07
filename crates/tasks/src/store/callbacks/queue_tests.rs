@@ -83,41 +83,67 @@ fn codex_queue_takes_the_message_whole_without_the_token_and_answers_how_it_ende
         );
         return;
     };
+    const MESSAGE: &str = "AGENT from a to b — one\n-- 'two' $HOME";
     let read = |name: &str| std::fs::read_to_string(dir.join(name)).unwrap();
-    let queued = |mode: &str| {
+    // The stand-in in `mode`, with no record of an earlier run left to be read for this one's.
+    let staged = |mode: &str| {
+        for record in ["argv", "saw", "pid"] {
+            match std::fs::remove_file(dir.join(record)) {
+                Err(error) if error.kind() != std::io::ErrorKind::NotFound => panic!("{error}"),
+                _ => {}
+            }
+        }
         std::fs::write(dir.join("mode"), mode).unwrap();
-        answered(queue("abcdef01", "AGENT from a to b — one\n-- 'two' $HOME"))
     };
-    assert_eq!(queued("exit 0"), Ok(()));
+    let queued = |mode: &str, due: &dyn Fn(Duration) -> bool| {
+        staged(mode);
+        answered(queue_until("abcdef01", MESSAGE, due))
+    };
+    // A stand-in in these modes ends by itself, however late a loaded machine starts it: with no
+    // deadline before its end, the answer is the one its end gives, and its record is there.
+    let never = |_: Duration| false;
+    assert_eq!(queued("exit 0", &never), Ok(()));
     assert_eq!(
         read("argv"),
-        "queue\0--thread\0abcdef01\0--message\0AGENT from a to b — one\n-- 'two' $HOME\0"
+        format!("queue\0--thread\0abcdef01\0--message\0{MESSAGE}\0")
     );
     assert_eq!(read("saw"), "unset|kept|null|null|null|");
     assert_eq!(
-        queued("exit 3"),
+        queued("exit 3", &never),
         Err("codex queue exited exit status: 3".into())
     );
     assert_eq!(
-        queued("killed"),
+        queued("killed", &never),
         Err("codex queue exited signal: 9 (SIGKILL)".into())
     );
-    let began = Instant::now();
-    assert_eq!(queued("hang"), Err("codex queue timed out".into()));
-    // Well short of the stand-in's own 60 s: the kill at 5 s is what ended it.
-    let took = began.elapsed();
-    assert!(
-        took >= Duration::from_secs(5) && took < Duration::from_secs(30),
-        "{took:?}"
+    // A deadline that comes once the stand-in has written its pid, its last word before it hangs:
+    // the queue it says it is, is the one ended and reaped.
+    let started = || std::fs::read_to_string(dir.join("pid")).is_ok_and(|pid| !pid.is_empty());
+    assert_eq!(
+        queued("hang", &|_| started()),
+        Err("codex queue timed out".into())
     );
     let pid: i64 = read("pid").parse().unwrap();
     assert!(
         !crate::sys::pid_alive(pid),
         "the timed-out queue is ended and reaped"
     );
+    // Delivery's own deadline, whether or not the stand-in has started by then: well short of its
+    // own 60 s, the kill at 5 s is what ends it.
+    staged("hang");
+    let began = Instant::now();
+    assert_eq!(
+        answered(queue("abcdef01", MESSAGE)),
+        Err("codex queue timed out".into())
+    );
+    let took = began.elapsed();
+    assert!(
+        took >= Duration::from_secs(5) && took < Duration::from_secs(30),
+        "{took:?}"
+    );
     std::fs::remove_file(dir.join("codex")).unwrap();
     assert_eq!(
-        queued("exit 0"),
+        answered(queue("abcdef01", MESSAGE)),
         Err(std::io::Error::from_raw_os_error(libc::ENOENT).to_string())
     );
 }
