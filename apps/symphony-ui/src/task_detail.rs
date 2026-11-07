@@ -6,8 +6,8 @@ use symphony_api::{Agents, TaskPage};
 #[component]
 pub(crate) fn LiveTaskPage(route: Memo<String>, data: Signal<crate::task_live::Data>) -> Element {
     use crate::task_live;
+    // The page's error is drawn in its notice stack (`live::BoardPage`), out of the page's flow.
     rsx! {
-        if !data.read().error.is_empty() { p { role: "alert", "{data.read().error}" } }
         if let Some(slug) = route().strip_prefix("/task/") {
             if let Some(page) = data.read().detail.clone().filter(|p| p.task.slug == slug) {
                 TaskDetail { key: "{page.task.slug}", tasks: page.children.clone(), page, entries: data.read().entries.clone(), older: data.read().before.is_some(), loaded: data.read().thread_loaded, offer: data.read().approval.clone(), onhistory: move |older| { spawn(task_live::history(older,route,data)); }, onchildren: move |more| { spawn(task_live::children(more,route,data)); }, onoffer: move |_| { spawn(task_live::offer(route,data)); } }

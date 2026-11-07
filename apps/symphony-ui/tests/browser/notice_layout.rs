@@ -145,3 +145,76 @@ fn a_stale_notice_leaves_the_task_composer_clear_at_page_end_without_scroll_clam
         );
     }
 }
+
+// A task page's failed fetch (here its owner offer) is a page notice, as the board's is: an
+// alert in the page's flow would shrink the page when the reconnect's reload clears it.
+#[test]
+fn a_task_page_error_is_a_notice_and_clearing_it_on_reconnect_keeps_the_page_end() {
+    let site = site();
+    let responses = look_parity::responses();
+    for path in ["/api/task-page", "/api/task-history"] {
+        site.set_json(path, &responses[path]);
+    }
+    site.fail_route("/api/task-offer", true);
+    let Some(mut chrome) = chrome() else { return };
+    chrome.call(
+        "Emulation.setDeviceMetricsOverride",
+        json!({"width":320,"height":900,"deviceScaleFactor":1,"mobile":false}),
+    );
+    chrome.open(&site.url("/task/visual/in-progress"));
+    assert!(
+        chrome.wait_for(
+            "document.querySelector('#task-thread .entry') !== null && document.querySelector('#task-send button[type=submit]') !== null && document.querySelector('.page-notices [role=alert]')?.textContent === 'Board snapshot unavailable'",
+            SHOWN
+        ),
+        "the failed offer must be reported in the notice stack: {}",
+        chrome.eval("document.body.innerText")
+    );
+    assert_eq!(
+        chrome.eval("[...document.querySelectorAll('main [role=alert]')].filter(alert => !alert.closest('.page-notices')).length"),
+        json!(0),
+        "the error is drawn once, outside the page's flow"
+    );
+    chrome.eval("scrollTo(0,document.documentElement.scrollHeight); new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))");
+    chrome.eval(
+        "window.errorScroll=scrollY; window.errorHeight=document.documentElement.scrollHeight",
+    );
+    assert_eq!(
+        chrome.eval(r#"(() => {
+            const notice = document.querySelector('.page-notices').getBoundingClientRect();
+            const send = document.querySelector('#task-send button[type=submit]').getBoundingClientRect();
+            return scrollY === Math.max(0, document.documentElement.scrollHeight - innerHeight) && send.bottom <= notice.top;
+        })()"#),
+        json!(true),
+        "at the page end the composer clears the error notice"
+    );
+    // The server recovers, so whatever the reconnect asks for again succeeds.
+    site.set_json(
+        "/api/task-offer",
+        &json!({"action":"approve","label":"Approve","branch":"visual/in-progress","payload":null}),
+    );
+    site.fail_route("/api/task-offer", false);
+    assert!(wait_for_feed(&site), "the page never followed the feed");
+    site.fail_feeds(usize::MAX);
+    site.drop_feeds();
+    assert!(chrome.wait_for(
+        "document.querySelector('main')?.dataset.feed === 'stale'",
+        SHOWN
+    ));
+    site.fail_feeds(0);
+    assert!(
+        chrome.wait_for(
+            "document.querySelector('main')?.dataset.feed === 'live' && !document.querySelector('.page-notices [role=alert]')",
+            SHOWN
+        ),
+        "the reconnect's reload must clear the error: {}",
+        chrome.eval("document.body.innerText")
+    );
+    assert_eq!(
+        chrome.eval(
+            "scrollY === errorScroll && document.documentElement.scrollHeight === errorHeight"
+        ),
+        json!(true),
+        "clearing the error must keep the page end and never clamp the scroll"
+    );
+}
