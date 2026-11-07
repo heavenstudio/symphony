@@ -318,11 +318,12 @@ fn found_in(planned: &BTreeMap<String, Planned>) -> Vec<&Finding> {
 /// A read spelled any way the server takes it (a keyword in lower case, after a comment holding a
 /// letter outside ASCII, or straight before a comment, `*`, a line, a variable or white space
 /// outside ASCII) is planned as the server plans the text as sent, and its read of session under a
-/// condition, which no index serves, found; so is a change of session's rows spelled so, each
-/// taken by the server. Of the requests holding them, the server plans a read of rows in each,
-/// and a reader knowing no spelling has each reported; this one has none. A keyword quoted, in a
-/// comment, a name or an object's key reads nothing. Planned on a server of its own, not the
-/// generated board, which the other tests hold.
+/// condition, which no index serves, found; so is a change of session's rows spelled so (its
+/// table quoted straight after the verb too), each taken by the server. Of the requests holding
+/// the reads, the server plans a read of rows in each, and a reader knowing no spelling has each
+/// reported; this one has none. A value whose text holds parentheses reads none, even to a reader
+/// knowing no spelling. A keyword quoted, in a comment, a name or an object's key reads nothing.
+/// Planned on a server of its own, not the generated board, which the other tests hold.
 #[test]
 fn a_read_in_any_spelling_the_server_takes_is_planned_and_its_scan_found() {
     let fixture = store::Fixture::empty();
@@ -357,6 +358,12 @@ fn a_read_in_any_spelling_the_server_takes_is_planned_and_its_scan_found() {
     assert_eq!(unread(client, &requests, statements), Vec::<String>::new());
     let unknown = unread(client, &requests, |_| Vec::new());
     assert_eq!(unknown.len(), reads.len(), "{unknown:#?}");
+    let values = ["RETURN '(Ready)'", "RETURN {note: 'status (Ready)'}"];
+    let values: Vec<Request> = values.map(request).into();
+    assert_eq!(
+        unread(client, &values, |_| Vec::new()),
+        Vec::<String>::new()
+    );
     let changes = [
         "DELETE/**/session WHERE kind = 'nobody'",
         "UPDATE-- the beat\nsession SET last_seen = 1 WHERE(kind = 'nobody')",
@@ -364,6 +371,10 @@ fn a_read_in_any_spelling_the_server_takes_is_planned_and_its_scan_found() {
         "DELETE\u{a0}FROM\u{2003}session\u{a0}WHERE kind = 'nobody'",
         "delete from⟨session⟩ where kind = 'nobody'",
         "DELETE `session`WHERE kind = 'nobody'",
+        "DELETE`session` WHERE kind = 'nobody'",
+        "DELETE⟨session⟩ WHERE kind = 'nobody'",
+        "UPDATE`session` SET last_seen = 1.0 WHERE kind = 'nobody'",
+        "UPSERT⟨session⟩ SET last_seen = 1.0 WHERE kind = 'nobody'",
     ];
     for sql in changes {
         (client.query(&format!("{sql} RETURN NONE;"), json!({})))

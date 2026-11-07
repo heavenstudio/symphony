@@ -13,6 +13,8 @@
 //! Whether a plan reads rows at all ([`reads_rows`]) is what the check asks of a statement it read
 //! no statement out of ([`crate::sql`]): one that does is a spelling the check does not know.
 
+use crate::sql::unquoted;
+
 /// The tables no path reads whole to keep a few rows.
 pub const WATCHED: [&str; 5] = ["message", "delivery", "role", "session", "callback_state"];
 
@@ -72,9 +74,11 @@ pub fn findings(plan: &str) -> Vec<Finding> {
     found
 }
 
-/// The first `(Operator)` a predicate holds: how EXPLAIN shows a subquery in it.
+/// The first `(Operator)` a predicate or an expression holds outside its quoted values: how
+/// EXPLAIN shows a subquery in it. A value's text (`'status (Ready)'`) holds none.
 fn subplan(predicate: &str) -> Option<String> {
-    let mut rest = predicate;
+    let code = unquoted(predicate);
+    let mut rest = code.as_str();
     while let Some(open) = rest.find('(') {
         let inner = &rest[open + 1..];
         let name: String = inner
@@ -93,8 +97,9 @@ fn subplan(predicate: &str) -> Option<String> {
 
 /// Whether `plan` reads rows: a node that is a source of them (`TableScan`, `IndexScan`,
 /// `RecordIdScan`, `DynamicScan`, `SourceExpr`: any `…Scan`), or a subquery in an expression,
-/// which EXPLAIN shows as `(Operator)`. A read inside an `IF`'s branches or a function's arguments
-/// it does not show (3.3.0: `IfElse [branches: 1]`, `array::len(...)`).
+/// which EXPLAIN shows as `(Operator)` outside its quoted values (`RETURN '(Ready)'` reads none).
+/// A read inside an `IF`'s branches or a function's arguments it does not show (3.3.0:
+/// `IfElse [branches: 1]`, `array::len(...)`).
 pub fn reads_rows(plan: &str) -> bool {
     plan.lines().any(|line| {
         let operator = line.trim_start().split([' ', '[']).next().unwrap_or("");
@@ -215,9 +220,27 @@ mod reading {
             "Return [ctx: Db]
     Expr [ctx: Db] [expr: array::len(...)]",
             "Expr [ctx: Db] [expr: `BEGIN`]",
+            "Return [ctx: Rt]
+    Expr [ctx: Rt] [expr: '(Ready)']",
+            "Return [ctx: Rt]
+    Expr [ctx: Rt] [expr: { note: 'status (Ready)' }]",
         ];
         for plan in none {
             assert!(!reads_rows(plan), "{plan}");
         }
+    }
+
+    /// A value's text in a predicate is no subquery, whatever it holds; a subquery beside one is.
+    #[test]
+    fn a_value_quoted_in_a_predicate_is_no_subquery() {
+        let quoted = "SelectProject [ctx: Db] [projections: *]
+    TableScan [ctx: Db] [table: task, direction: Forward, predicate: title = '(Ready)' OR body = \"it's (Done)\", pre_decode_filter: yes]";
+        assert_eq!(findings(quoted), none());
+        let beside = "SelectProject [ctx: Db] [projections: *]
+    TableScan [ctx: Db] [table: task, direction: Forward, predicate: title = '(Ready)' OR slug INSIDE (ProjectValue), pre_decode_filter: no (unsupported predicate)]";
+        assert_eq!(
+            findings(beside),
+            [Finding::SubqueryPerRow("ProjectValue".into())]
+        );
     }
 }
