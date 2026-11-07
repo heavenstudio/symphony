@@ -1,19 +1,29 @@
 //! The statements a request's SurrealQL holds, as the plan check plans them: every `SELECT`, nested
-//! ones too, and every `UPDATE` or `DELETE` of a table under a condition as the `SELECT` of the rows
-//! it would change; and the variables a statement reads.
+//! ones too, and every `UPDATE`, `UPSERT` or `DELETE` of a table under a condition as the `SELECT`
+//! of the rows it would change; the statements it runs one after another; and the variables a
+//! statement reads.
 //!
-//! Keywords count in any case and end at any byte no name goes on with, as the server takes them:
-//! `SELECT*`, `SELECT/**/ *` and `select-- …` then a line are reads as `SELECT *` is. Quoted text
-//! (`'…'`, `"…"`, `` `…` ``, a backslash escaping the byte after it) and comments (`--`, `//` or
-//! `#` to the end of the line, `/* … */`) hold no statement, and none of their brackets or `;` ends
-//! one; a statement keeps its quoted text and has each comment read as a space. Every cut falls on
-//! an ASCII byte, which UTF-8 never puts inside a character, so text in any script passes through
-//! whole.
+//! A keyword is read as the server's lexer reads one (SurrealDB 3.3.0, `surrealdb/syn/src/lexer`):
+//! in any case, and a word of its own. A name goes on only with an ASCII letter, digit or `_`
+//! (`is_identifier_continue`), so a keyword ends at any other byte: white space of any script (the
+//! lexer skips sixteen spaces outside ASCII, `U+00A0` and `U+2003` among them), a comment, `*`,
+//! `(` or a variable's `$` alike, and `SELECT$projection`, `SELECT/**/ *` and `select-- …` then a
+//! line are reads as `SELECT *` is. One starts after any byte but those and the `$` of a variable,
+//! the `.` of a path or the `:` of a record id (`$select`, `row.select` and `said:select` are
+//! names), and a word followed by a lone `:` is an object's key (`{ select: 1 }`). Quoted text
+//! (`'…'`, `"…"`, `` `…` ``, `⟨…⟩`, a backslash escaping the byte after it) and comments (`--`,
+//! `//` or `#` to the end of the line, `/* … */`) hold no statement, and none of their brackets or
+//! `;` ends one; a statement keeps its quoted text and has each comment read as a space. Every cut
+//! falls on a character's first byte, so text in any script passes through whole.
 
 /// Names SurrealQL binds itself, and the parameters of a closure, which a statement uses unbound.
 const BUILT_IN: [&str; 7] = [
     "parent", "this", "value", "before", "after", "event", "input",
 ];
+
+/// The brackets quoting a name as backticks do (`⟨said⟩`).
+const OPEN: &str = "⟨";
+const CLOSE: &str = "⟩";
 
 /// What a byte of SurrealQL is part of.
 #[derive(Clone, Copy, PartialEq)]
@@ -37,7 +47,13 @@ impl<'sql> Lexed<'sql> {
         while at < bytes.len() {
             let following = bytes.get(at + 1).copied();
             let (part, end) = match (bytes[at], following) {
-                (b'\'' | b'"' | b'`', _) => (Part::Quoted, quoted_end(bytes, at)),
+                (quote @ (b'\'' | b'"' | b'`'), _) => {
+                    (Part::Quoted, quoted_end(bytes, at + 1, &[quote]))
+                }
+                _ if bytes[at..].starts_with(OPEN.as_bytes()) => (
+                    Part::Quoted,
+                    quoted_end(bytes, at + OPEN.len(), CLOSE.as_bytes()),
+                ),
                 (b'-', Some(b'-')) | (b'/', Some(b'/')) | (b'#', _) => {
                     (Part::Comment, line_end(bytes, at))
                 }
@@ -58,19 +74,29 @@ impl<'sql> Lexed<'sql> {
     }
 
     /// Whether `keyword` (upper case) stands at `at` in code, in any case, a word of its own as the
-    /// server reads one: after no byte of a name, a variable or a path (`.`), and followed by a
-    /// byte no name goes on with, white space, a comment, `*` or `(` alike.
+    /// server reads one: it starts after no byte of a name, a variable, a path or a record id
+    /// ([`goes_into_a_name`]), ends at a byte no name goes on with ([`goes_on_a_name`]), and is no
+    /// object's key.
     fn keyword_at(&self, at: usize, keyword: &str) -> bool {
         let bytes = self.sql.as_bytes();
         let end = at + keyword.len();
         let spelled = bytes
             .get(at..end)
             .is_some_and(|word| word.eq_ignore_ascii_case(keyword.as_bytes()));
-        let after_a_name = at > 0 && (is_word(bytes[at - 1]) || bytes[at - 1] == b'.');
         spelled
             && (at..end).all(|inside| self.is_code(inside))
-            && !after_a_name
-            && bytes.get(end).is_some_and(|&next| !is_word(next))
+            && (at == 0 || !goes_into_a_name(bytes[at - 1]))
+            && bytes.get(end).is_none_or(|&next| !goes_on_a_name(next))
+            && !self.a_key_ends(end)
+    }
+
+    /// Whether the next code from `from`, past white space and comments, is a lone `:`: the word
+    /// before it an object's key (`{ select: 1 }`), which no keyword can be followed by.
+    fn a_key_ends(&self, from: usize) -> bool {
+        let characters = (self.code_from(from)).filter(|&(at, _)| self.sql.is_char_boundary(at));
+        let mut rests = characters.map(|(at, _)| &self.sql[at..]);
+        let next = rests.find(|rest| !rest.starts_with(char::is_whitespace));
+        next.is_some_and(|rest| rest.starts_with(':') && !rest.starts_with("::"))
     }
 
     /// Where the statement starting at `from` ends: the bracket closing the one it is in, a `;`
@@ -130,15 +156,17 @@ impl<'sql> Lexed<'sql> {
     }
 }
 
-/// Past the quote closing the one at `open`.
-fn quoted_end(bytes: &[u8], open: usize) -> usize {
-    let quote = bytes[open];
-    let mut at = open + 1;
+/// Past the `close` that ends the quoted text going on from `from`, a backslash escaping the byte
+/// after it.
+fn quoted_end(bytes: &[u8], from: usize, close: &[u8]) -> usize {
+    let mut at = from;
     while at < bytes.len() {
-        match bytes[at] {
-            b'\\' => at += 2,
-            byte if byte == quote => return at + 1,
-            _ => at += 1,
+        if bytes[at] == b'\\' {
+            at += 2;
+        } else if bytes[at..].starts_with(close) {
+            return at + close.len();
+        } else {
+            at += 1;
         }
     }
     bytes.len()
@@ -158,27 +186,54 @@ fn block_end(bytes: &[u8], open: usize) -> usize {
         .map_or(bytes.len(), |close| close + 2)
 }
 
-/// Whether a name, a variable (`$`) or a record id (`table:id`) goes on with `byte`: a letter
-/// outside ASCII is taken to, so no keyword ends inside one.
-fn is_word(byte: u8) -> bool {
-    byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'$' | b':') || !byte.is_ascii()
+/// Whether a name goes on with `byte`, as the server's lexer reads one (`is_identifier_continue`):
+/// an ASCII letter, digit or `_`. Any other byte ends a name, a byte of a character outside ASCII
+/// (white space of any script among them) too.
+fn goes_on_a_name(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric() || byte == b'_'
 }
 
+/// Whether a word after `byte` goes on something other than a statement: a name, a variable
+/// (`$select`), a path (`row.select`) or a record id (`said:select`).
+fn goes_into_a_name(byte: u8) -> bool {
+    goes_on_a_name(byte) || matches!(byte, b'$' | b'.' | b':')
+}
+
+/// The verbs of a statement that changes the rows of a table under a condition.
+const CHANGES: [&str; 3] = ["UPDATE", "UPSERT", "DELETE"];
+
 /// Each statement `sql` holds that reads rows of a table under a condition, as a `SELECT`: every
-/// `SELECT`, nested ones too, and every `UPDATE TABLE … WHERE …` and `DELETE TABLE WHERE …` as
-/// the `SELECT id` of the rows it would change. A `SELECT` ends where the bracket it opened in
-/// closes, or at a `;` outside any bracket.
+/// `SELECT`, nested ones too, and every `UPDATE TABLE … WHERE …`, `UPSERT TABLE … WHERE …` and
+/// `DELETE [FROM] TABLE WHERE …` as the `SELECT id` of the rows it would change. A `SELECT` ends
+/// where the bracket it opened in closes, or at a `;` outside any bracket.
 pub fn statements(sql: &str) -> Vec<String> {
     let lexed = Lexed::new(sql);
     let mut found = Vec::new();
     for at in 0..sql.len() {
         if lexed.keyword_at(at, "SELECT") {
             found.push(lexed.text(at, lexed.statement_end(at)));
-        } else if (lexed.keyword_at(at, "UPDATE") || lexed.keyword_at(at, "DELETE"))
+        } else if CHANGES.iter().any(|verb| lexed.keyword_at(at, verb))
             && let Some(read) = as_select(&lexed.text(at, lexed.statement_end(at)))
         {
             found.push(read);
         }
+    }
+    found
+}
+
+/// The statements `sql` runs one after another, each comment read as a space: its text between the
+/// `;`s outside any bracket, an empty one left out.
+pub fn sequence(sql: &str) -> Vec<String> {
+    let lexed = Lexed::new(sql);
+    let mut found = Vec::new();
+    let mut from = 0;
+    while from < sql.len() {
+        let end = lexed.statement_end(from);
+        let statement = lexed.text(from, end);
+        if !statement.is_empty() {
+            found.push(statement);
+        }
+        from = end + 1;
     }
     found
 }
@@ -197,20 +252,25 @@ pub fn events(sql: &str) -> Vec<String> {
         .collect()
 }
 
-/// `UPDATE TABLE SET … WHERE COND` or `DELETE TABLE WHERE COND` (a table by its name, not one
-/// record) as `SELECT id FROM TABLE WHERE COND`; none for any other.
+/// `UPDATE TABLE SET … WHERE COND`, `UPSERT TABLE SET … WHERE COND` or `DELETE [FROM] TABLE WHERE
+/// COND` (a table by its name, bare or quoted, not one record) as `SELECT id FROM TABLE WHERE
+/// COND`; none for any other.
 fn as_select(statement: &str) -> Option<String> {
     let after_verb = statement.get("UPDATE".len()..)?;
     if !after_verb.starts_with(char::is_whitespace) {
         return None;
     }
-    let rest = after_verb.trim_start();
-    let table: String = rest
-        .chars()
-        .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
-        .collect();
+    let mut rest = after_verb.trim_start();
+    if statement[.."DELETE".len()].eq_ignore_ascii_case("DELETE")
+        && Lexed::new(rest).keyword_at(0, "FROM")
+    {
+        rest = rest["FROM".len()..].trim_start();
+    }
+    let table = table_at(rest)?;
     let after_table = &rest[table.len()..];
-    if table.is_empty() || !after_table.starts_with(char::is_whitespace) {
+    // A clause's word follows a table; a record (`said:x`), a function (`type::record(…)`) or a
+    // second target goes on otherwise.
+    if !(after_table.trim_start()).starts_with(|c: char| c.is_ascii_alphabetic()) {
         return None;
     }
     let condition_at = Lexed::new(after_table).top_level("WHERE")? + "WHERE".len();
@@ -218,6 +278,19 @@ fn as_select(statement: &str) -> Option<String> {
     let condition = (Lexed::new(condition).top_level("RETURN"))
         .map_or(condition, |returning| &condition[..returning]);
     Some(format!("SELECT id FROM {table} WHERE {}", condition.trim()))
+}
+
+/// The table name `text` starts with as written, bare (`session`) or quoted (`` `session` ``,
+/// `⟨session⟩`); none when it starts with no name.
+fn table_at(text: &str) -> Option<&str> {
+    let end = if text.starts_with(['`', '⟨']) {
+        let lexed = Lexed::new(text);
+        (0..text.len()).find(|&at| lexed.parts[at] != Part::Quoted)
+    } else {
+        text.find(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+    };
+    let name = &text[..end.unwrap_or(text.len())];
+    (!name.is_empty()).then_some(name)
 }
 
 /// The variables `statement` reads (`$name`, in its code), but a closure's parameters and
@@ -326,9 +399,9 @@ LET $selected = 1; RETURN deleted_at;";
         );
     }
 
-    /// A keyword ends at any byte no name goes on with, as the server reads it: a comment, `*`,
-    /// a line or `(` straight after one starts its statement as a space does. One a name, a
-    /// variable, a path or a record id holds starts none.
+    /// A keyword ends at any byte no name goes on with, as the server's lexer reads it: a comment,
+    /// `*`, a line, `(`, a variable's `$` or white space outside ASCII straight after one starts
+    /// its statement as a space does, and so does a keyword after a space outside ASCII.
     #[test]
     fn a_keyword_ends_at_any_byte_no_name_goes_on_with() {
         let sql = "SELECT/**/ * FROM session WHERE kind = 'reviewer';
@@ -336,10 +409,14 @@ SELECT* FROM session;
 select/* café */ * from session;
 SELECT-- comment
 * FROM session;
+SELECT$projection FROM session;
+SELECT\u{a0}* FROM session;
+SELECT\u{2003}*\u{3000}FROM session;
+RETURN\u{a0}SELECT * FROM task;
 DELETE/**/callback_event WHERE key = 'pull-1';
 UPDATE-- the events
 callback_event SET attempts = 0 WHERE(handle = $actor);
-LET $selected = selection.select; RETURN [select:one, selectédeleted];";
+DELETE\u{2003}callback_event\u{a0}WHERE$pull RETURN NONE;";
         assert_eq!(
             statements(sql),
             [
@@ -347,8 +424,68 @@ LET $selected = selection.select; RETURN [select:one, selectédeleted];";
                 "SELECT* FROM session",
                 "select  * from session",
                 "SELECT \n* FROM session",
+                "SELECT$projection FROM session",
+                "SELECT\u{a0}* FROM session",
+                "SELECT\u{2003}*\u{3000}FROM session",
+                "SELECT * FROM task",
                 "SELECT id FROM callback_event WHERE key = 'pull-1'",
                 "SELECT id FROM callback_event WHERE (handle = $actor)",
+                "SELECT id FROM callback_event WHERE $pull",
+            ]
+        );
+    }
+
+    /// A word a name goes on with, or one that goes on a variable, a path or a record id, is a name
+    /// and starts no statement; nor does an object's key, a lone `:` after it past white space
+    /// and comments, nor a name quoted in `⟨…⟩`.
+    #[test]
+    fn a_keyword_inside_a_name_or_as_a_key_starts_none() {
+        let sql = "LET $selected = selection.select;
+RETURN [$select, said:select, fn::update, _select, select_one, select2, ⟨select * from session⟩];
+RETURN { select: 1, update : 2, delete/**/: 3, where\u{a0}: 4, `select`: 5 };
+RETURN session:⟨delete⟩;";
+        assert_eq!(statements(sql), Vec::<String>::new());
+    }
+
+    /// `UPSERT` of a table under a condition reads its rows as `UPDATE` does, `DELETE` with or
+    /// without `FROM`, a table's name bare or quoted; a record, a function or a table followed by no
+    /// clause changes no rows under a condition.
+    #[test]
+    fn a_change_of_rows_reads_them_in_any_spelling_of_its_table() {
+        let sql = "UPSERT session SET seen = 1 WHERE kind = 'reviewer';
+DELETE FROM session WHERE kind = 'x' RETURN BEFORE;
+delete from⟨session⟩ where kind = 'y';
+DELETE `session`WHERE kind = 'z';
+UPDATE ⟨call back⟩ SET a = 1 WHERE b = 2;
+UPDATE session:one SET a = 1 WHERE b = 2;
+DELETE type::record('session', $h) WHERE b = 2;
+UPSERT session, task WHERE b = 2;";
+        assert_eq!(
+            statements(sql),
+            [
+                "SELECT id FROM session WHERE kind = 'reviewer'",
+                "SELECT id FROM session WHERE kind = 'x'",
+                "SELECT id FROM ⟨session⟩ WHERE kind = 'y'",
+                "SELECT id FROM `session` WHERE kind = 'z'",
+                "SELECT id FROM ⟨call back⟩ WHERE b = 2",
+            ]
+        );
+    }
+
+    /// The statements a request runs one after another, past quoted `;`s, brackets and comments.
+    #[test]
+    fn a_request_runs_its_statements_one_after_another() {
+        let sql = "BEGIN; LET $x = (SELECT * FROM a; ); -- no; statement
+RETURN { a: 'b;c' } /* ; */ ;; IF $x { UPDATE a SET b = 1; } ;
+COMMIT";
+        assert_eq!(
+            sequence(sql),
+            [
+                "BEGIN",
+                "LET $x = (SELECT * FROM a; )",
+                "RETURN { a: 'b;c' }",
+                "IF $x { UPDATE a SET b = 1; }",
+                "COMMIT",
             ]
         );
     }

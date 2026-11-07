@@ -36,7 +36,7 @@ fn word(client: &Client, slug: &str, sid: i64, kind: &str) {
 /// The word `said` names for [`RARE`], as `[sid, slug]`, or none.
 fn rare_word(client: &Client) -> Value {
     let mut answers = (client.query(
-        "RETURN (SELECT VALUE [sid, slug] FROM ONLY type::record('said', $sender));",
+        "RETURN (SELECT VALUE [sid, slug] FROM ONLY type::record('said', [$sender]));",
         json!({"sender": RARE}),
     ))
     .unwrap();

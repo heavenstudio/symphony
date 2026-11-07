@@ -24,8 +24,11 @@
 //! runs): messages by `sid` (a cursor's next), by `ts` (an inbox since its session connected), by
 //! recipient then `sid` (the owner's newest), by sender, kind, `sid` and slug (a sender's newest
 //! post, and newest verdict); deliveries by handle then message; roles by role; registrations by
-//! address. `said:⟨sender⟩` names each sender's newest `msg` or verdict, the greatest `[sid, slug]`
-//! (a copy takes one `sid` on two threads), and `DEFINE` fills it once when it holds nothing. An
+//! address. `said:[sender]` names each sender's newest `msg` or verdict, the greatest `[sid, slug]`
+//! (a copy takes one `sid` on two threads), and `DEFINE` fills it once when it holds nothing. Its
+//! key is an array holding the sender, so every string a message's sender may be is one, the empty
+//! string too: a record id that is the string itself refuses the empty one, and a copy of a board of
+//! schema 12 holding a word with no sender failed on it. An
 //! event keeps it as messages are made, deleted or edited: a message made, or edited into a
 //! sender's word, is that sender's word if no greater one is; a word deleted, or edited to another
 //! sender or out of the words, gives way to the sender's word before it, the greater of the last
@@ -39,7 +42,8 @@
 //! 50k messages, against 17.6 s with `said` emptied first), and a hand at the server deleting or
 //! editing a word. Until `message_sender`, the look back walked `message_sid` from the newest
 //! message down, and in an event SurrealKV walks a range backward over the rows it holds in memory
-//! (every row its server took since it started, up to 4 GiB) out of all proportion: over 150 s
+//! (every row written since it last wrote them to an sstable: up to 4 GiB, its default on the
+//! machine measured, 256 MiB on a server `server::Storage` sets up) out of all proportion: over 150 s
 //! for 50k messages, where the same walk took 4.6 s as a statement of its own and 1.8 s once a
 //! restart had written the rows to disk, so a delete of a rare sender's newest word on a board just
 //! copied did not answer in 600 s (3.3.0, 2026-11-07). These cost the copy's one transaction
@@ -224,7 +228,7 @@ DEFINE EVENT OVERWRITE said ON message
         != [$after.sender, $after.sid, $after.slug, $after.kind IN ['msg', 'verdict']]
     THEN {
     IF $event != 'CREATE' {
-        LET $was = (SELECT sid, slug FROM ONLY type::record('said', $before.sender));
+        LET $was = (SELECT sid, slug FROM ONLY type::record('said', [$before.sender]));
         IF $was.sid = $before.sid AND $was.slug = $before.slug {
             LET $sender = $before.sender;
             LET $newest = array::max(array::concat(
@@ -232,25 +236,25 @@ DEFINE EVENT OVERWRITE said ON message
                 (SELECT VALUE [sid, slug] FROM message WHERE sender = $sender AND kind = 'verdict' ORDER BY sid DESC, slug DESC LIMIT 1)
             ));
             IF $newest = NONE {
-                DELETE type::record('said', $before.sender) RETURN NONE;
+                DELETE type::record('said', [$before.sender]) RETURN NONE;
             } ELSE {
-                UPDATE type::record('said', $before.sender) SET sid = $newest[0], slug = $newest[1] RETURN NONE;
+                UPDATE type::record('said', [$before.sender]) SET sid = $newest[0], slug = $newest[1] RETURN NONE;
             };
         };
     };
     IF $event != 'DELETE' AND $after.kind IN ['msg', 'verdict'] {
-        IF record::exists(type::record('said', $after.sender)) {
-            UPDATE type::record('said', $after.sender) SET sid = $after.sid, slug = $after.slug
+        IF record::exists(type::record('said', [$after.sender])) {
+            UPDATE type::record('said', [$after.sender]) SET sid = $after.sid, slug = $after.slug
                 WHERE sid < $after.sid OR (sid = $after.sid AND slug < $after.slug) RETURN NONE;
         } ELSE {
-            CREATE type::record('said', $after.sender) SET sid = $after.sid, slug = $after.slug RETURN NONE;
+            CREATE type::record('said', [$after.sender]) SET sid = $after.sid, slug = $after.slug RETURN NONE;
         };
     };
 };
 IF (SELECT VALUE id FROM said LIMIT 1) = [] {
     FOR $spoke IN (SELECT sender, array::max(array::group([[sid, slug]])) AS last FROM message WHERE kind IN ['msg', 'verdict'] GROUP BY sender) {
         LET $newest = $spoke.last[0];
-        CREATE type::record('said', $spoke.sender) SET sid = $newest[0], slug = $newest[1] RETURN NONE;
+        CREATE type::record('said', [$spoke.sender]) SET sid = $newest[0], slug = $newest[1] RETURN NONE;
     };
 };
 ";

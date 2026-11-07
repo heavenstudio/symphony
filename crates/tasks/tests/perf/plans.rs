@@ -11,13 +11,13 @@
 //! subquery in a predicate.
 
 use crate::board::board;
-use crate::findings::{Finding, findings, whole_read};
+use crate::findings::{Finding, findings, reads_rows, whole_read};
 use crate::generated::{self, NOW};
 use crate::proxy::{Proxy, Request};
-use crate::sql::{events, statements, variables};
+use crate::sql::{events, sequence, statements, variables};
 use crate::store;
 use serde_json::{Map, Value, json};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use symphony_board::rpc::Client;
 
 /// A value of the kind a variable set by an earlier statement of a request holds, by its name, for
@@ -54,8 +54,9 @@ struct Planned {
     findings: Vec<Finding>,
 }
 
-/// `statement`, sent with `sent_with`, planned on the board `client` reaches.
-fn plan_one(client: &Client, statement: &str, sent_with: &Value) -> Planned {
+/// The variables `statement` is planned with: those its request sent (`sent_with`), and a value of
+/// [`bound`]'s for each other it reads; and the names it reads that neither gives.
+fn given(statement: &str, sent_with: &Value) -> (Map<String, Value>, Vec<String>) {
     let mut vars: Map<String, Value> = sent_with.as_object().cloned().unwrap_or_default();
     let mut unbound = Vec::new();
     let read = variables(statement);
@@ -70,6 +71,22 @@ fn plan_one(client: &Client, statement: &str, sent_with: &Value) -> Planned {
             None => unbound.push(name),
         }
     }
+    (vars, unbound)
+}
+
+/// The server's plan of `statement` with `vars`, or why it gave none.
+fn explain(client: &Client, statement: &str, vars: Map<String, Value>) -> Result<String, String> {
+    match client.query(&format!("EXPLAIN {statement};"), Value::Object(vars)) {
+        Ok(mut answers) => Ok((answers.pop())
+            .and_then(|answer| answer.as_str().map(String::from))
+            .unwrap_or_default()),
+        Err(why) => Err(format!("not planned: {why:?}")),
+    }
+}
+
+/// `statement`, sent with `sent_with`, planned on the board `client` reaches.
+fn plan_one(client: &Client, statement: &str, sent_with: &Value) -> Planned {
+    let (vars, unbound) = given(statement, sent_with);
     let (plan, found) = if !unbound.is_empty() {
         (
             format!(
@@ -79,15 +96,12 @@ fn plan_one(client: &Client, statement: &str, sent_with: &Value) -> Planned {
             vec![Finding::NotPlanned],
         )
     } else {
-        match client.query(&format!("EXPLAIN {statement};"), Value::Object(vars)) {
-            Ok(mut answers) => {
-                let plan = (answers.pop())
-                    .and_then(|answer| answer.as_str().map(String::from))
-                    .unwrap_or_default();
+        match explain(client, statement, vars) {
+            Ok(plan) => {
                 let found = findings(&plan);
                 (plan, found)
             }
-            Err(why) => (format!("not planned: {why:?}"), vec![Finding::NotPlanned]),
+            Err(why) => (why, vec![Finding::NotPlanned]),
         }
     };
     Planned {
@@ -95,6 +109,31 @@ fn plan_one(client: &Client, statement: &str, sent_with: &Value) -> Planned {
         plan,
         findings: found,
     }
+}
+
+/// Each statement `requests` run one after another ([`sequence`]) that `read` reads no statement
+/// out of but the server plans as a read of rows ([`reads_rows`]), with its plan: a spelling the
+/// check does not know, reported rather than left unplanned. A variable it reads that neither its
+/// request nor [`bound`] gives is NONE: what it reads is in the plan's shape, whatever the value.
+/// The server plans no `UPDATE`, `UPSERT` or `DELETE` (3.3.0: `EXPLAIN is only supported with the
+/// new execution model`), so their spellings rest on [`crate::sql`]'s reading alone.
+fn unread(client: &Client, requests: &[Request], read: fn(&str) -> Vec<String>) -> Vec<String> {
+    let mut seen = BTreeSet::new();
+    let mut unread = Vec::new();
+    for request in requests {
+        for statement in sequence(&request.sql) {
+            if !read(&statement).is_empty() || !seen.insert(statement.clone()) {
+                continue;
+            }
+            let (vars, _) = given(&statement, &request.vars);
+            if let Ok(plan) = explain(client, &statement, vars)
+                && reads_rows(&plan)
+            {
+                unread.push(format!("{statement}\n{}", plan.trim_end()));
+            }
+        }
+    }
+    unread
 }
 
 /// Each distinct statement of `requests`, planned on the board `client` reaches.
@@ -184,13 +223,20 @@ fn every_query_a_write_a_recipient_or_a_tick_sends_is_planned_on_an_index() {
     requests.extend(relay.take());
     let planned = plan_all(&board.client(), &requests);
     let failed = failures(&planned);
+    let unread = unread(&board.client(), &requests, statements);
     eprintln!(
-        "perf: {} requests, {} distinct statements planned, {} with a finding",
+        "perf: {} requests, {} distinct statements planned, {} with a finding, {} read by the server and not by the check",
         requests.len(),
         planned.len(),
-        failed.len()
+        failed.len(),
+        unread.len()
     );
     assert!(failed.is_empty(), "{}", failed.join("\n\n"));
+    assert!(
+        unread.is_empty(),
+        "the server plans a read of rows in each, and the check read no statement out of it:\n{}",
+        unread.join("\n\n")
+    );
 }
 
 /// Each statement of `planned` with its plan, on stderr, and one line for each with a finding.
@@ -250,13 +296,18 @@ fn every_query_the_schemas_events_run_is_planned_on_an_index() {
     assert!(failed.is_empty(), "{}", failed.join("\n\n"));
 }
 
-/// `sql`, sent with no variables, as the check plans it on the board `client` reaches.
-fn checked(client: &Client, sql: &str) -> BTreeMap<String, Planned> {
-    let request = Request {
+/// `sql` as a request sending the one variable a spelling below reads: a projection, named
+/// straight after its keyword.
+fn request(sql: &str) -> Request {
+    Request {
         sql: sql.to_string(),
-        vars: json!({}),
-    };
-    plan_all(client, &[request])
+        vars: json!({"projection": 1}),
+    }
+}
+
+/// `sql`, as [`request`] sends it, as the check plans it on the board `client` reaches.
+fn checked(client: &Client, sql: &str) -> BTreeMap<String, Planned> {
+    plan_all(client, &[request(sql)])
 }
 
 /// What the check finds in `planned`, every statement's findings in turn.
@@ -265,10 +316,13 @@ fn found_in(planned: &BTreeMap<String, Planned>) -> Vec<&Finding> {
 }
 
 /// A read spelled any way the server takes it (a keyword in lower case, after a comment holding a
-/// letter outside ASCII, or straight before a comment, `*` or a line) is planned as the server
-/// plans the text as sent, and its read of session under a condition, which no index serves,
-/// found; so is a change of session's rows spelled so. A keyword quoted or in a comment reads
-/// nothing. Planned on a server of its own, not the generated board, which the other tests hold.
+/// letter outside ASCII, or straight before a comment, `*`, a line, a variable or white space
+/// outside ASCII) is planned as the server plans the text as sent, and its read of session under a
+/// condition, which no index serves, found; so is a change of session's rows spelled so, each
+/// taken by the server. Of the requests holding them, the server plans a read of rows in each,
+/// and a reader knowing no spelling has each reported; this one has none. A keyword quoted, in a
+/// comment, a name or an object's key reads nothing. Planned on a server of its own, not the
+/// generated board, which the other tests hold.
 #[test]
 fn a_read_in_any_spelling_the_server_takes_is_planned_and_its_scan_found() {
     let fixture = store::Fixture::empty();
@@ -282,9 +336,13 @@ fn a_read_in_any_spelling_the_server_takes_is_planned_and_its_scan_found() {
         "SELECT* FROM session WHERE kind = 'reviewer'",
         "select/* café */ * from session where kind = 'reviewer'",
         "SELECT-- comment\n* FROM session WHERE kind = 'reviewer'",
+        "SELECT$projection FROM session WHERE kind = 'reviewer'",
+        "SELECT\u{a0}* FROM session WHERE kind = 'reviewer'",
+        "SELECT\u{2003}* FROM session WHERE kind = 'reviewer'",
+        "LET $read = (SELECT\u{3000}* FROM session WHERE kind = 'reviewer')",
     ];
     for sql in reads {
-        let mut as_sent = (client.query(&format!("EXPLAIN {sql};"), json!({})))
+        let mut as_sent = (client.query(&format!("EXPLAIN {sql};"), request(sql).vars))
             .unwrap_or_else(|why| panic!("the server takes {sql:?}: {why:?}"));
         let plan = (as_sent.pop())
             .and_then(|answer| answer.as_str().map(String::from))
@@ -295,11 +353,21 @@ fn a_read_in_any_spelling_the_server_takes_is_planned_and_its_scan_found() {
         assert_eq!(planned.len(), 1, "{sql:?}: {planned:#?}");
         assert_eq!(found_in(&planned), [&scan], "{sql:?}: {planned:#?}");
     }
+    let requests: Vec<Request> = reads.map(request).into();
+    assert_eq!(unread(client, &requests, statements), Vec::<String>::new());
+    let unknown = unread(client, &requests, |_| Vec::new());
+    assert_eq!(unknown.len(), reads.len(), "{unknown:#?}");
     let changes = [
-        "DELETE/**/session WHERE kind = 'reviewer'",
-        "UPDATE-- the beat\nsession SET last_seen = 1 WHERE(kind = 'reviewer')",
+        "DELETE/**/session WHERE kind = 'nobody'",
+        "UPDATE-- the beat\nsession SET last_seen = 1 WHERE(kind = 'nobody')",
+        "UPSERT session SET last_seen = 1 WHERE kind = 'nobody'",
+        "DELETE\u{a0}FROM\u{2003}session\u{a0}WHERE kind = 'nobody'",
+        "delete from⟨session⟩ where kind = 'nobody'",
+        "DELETE `session`WHERE kind = 'nobody'",
     ];
     for sql in changes {
+        (client.query(&format!("{sql} RETURN NONE;"), json!({})))
+            .unwrap_or_else(|why| panic!("the server takes {sql:?}: {why:?}"));
         let planned = checked(client, sql);
         assert_eq!(found_in(&planned), [&scan], "{sql:?}: {planned:#?}");
     }
@@ -315,6 +383,10 @@ fn a_read_in_any_spelling_the_server_takes_is_planned_and_its_scan_found() {
         (
             "/* select* from session where kind = 'x' */ SELECT * FROM task",
             "SELECT * FROM task",
+        ),
+        (
+            "SELECT {select: 1, delete/**/: 2} AS keys, ⟨select⟩ FROM task WHERE body.select = 1 OR id = task:update",
+            "SELECT {select: 1, delete : 2} AS keys, ⟨select⟩ FROM task WHERE body.select = 1 OR id = task:update",
         ),
     ];
     for (sql, read) in hidden {

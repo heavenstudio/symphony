@@ -9,6 +9,9 @@
 //!
 //! A scan with no predicate reads every row because the caller wants every row (the board's
 //! snapshot of its sessions and roles): no index makes that smaller, and it is listed, not failed.
+//!
+//! Whether a plan reads rows at all ([`reads_rows`]) is what the check asks of a statement it read
+//! no statement out of ([`crate::sql`]): one that does is a spelling the check does not know.
 
 /// The tables no path reads whole to keep a few rows.
 pub const WATCHED: [&str; 5] = ["message", "delivery", "role", "session", "callback_state"];
@@ -86,6 +89,17 @@ fn subplan(predicate: &str) -> Option<String> {
         rest = inner;
     }
     None
+}
+
+/// Whether `plan` reads rows: a node that is a source of them (`TableScan`, `IndexScan`,
+/// `RecordIdScan`, `DynamicScan`, `SourceExpr`: any `…Scan`), or a subquery in an expression,
+/// which EXPLAIN shows as `(Operator)`. A read inside an `IF`'s branches or a function's arguments
+/// it does not show (3.3.0: `IfElse [branches: 1]`, `array::len(...)`).
+pub fn reads_rows(plan: &str) -> bool {
+    plan.lines().any(|line| {
+        let operator = line.trim_start().split([' ', '[']).next().unwrap_or("");
+        operator.ends_with("Scan") || operator == "SourceExpr" || subplan(line).is_some()
+    })
 }
 
 /// Whether `plan` reads a watched table whole, with no predicate: listed, not failed.
@@ -172,5 +186,38 @@ mod reading {
     Filter [ctx: Db] [predicate: type::record('session', handle).left_at = NONE]
         IndexScan [ctx: Db] [index: callback_state_address, access: >NONE, direction: Forward]";
         assert_eq!(findings(bounded), none());
+    }
+
+    /// The plans a server gave statements of each kind (3.3.0, 2026-11-07): a read of rows under a
+    /// `LET`, of one record, from a variable or in an expression, against a value, a branch and a
+    /// function's arguments it does not unfold, and a transaction's word.
+    #[test]
+    fn a_plan_reads_rows_through_a_source_of_them_or_a_subquery() {
+        let reads = [
+            "Let [ctx: Db] [name: $x]
+    SelectProject [ctx: Db] [projections: *]
+        TableScan [ctx: Db] [table: session, direction: Forward, predicate: kind = 'reviewer', pre_decode_filter: yes]",
+            "UnwrapExactlyOne [ctx: Db]
+    ProjectValue [ctx: Db] [expr: last]
+        RecordIdScan [ctx: Db] [record_id: counter:board]",
+            "SelectProject [ctx: Db] [projections: *]
+    SourceExpr [ctx: Db] [expr: $said]",
+            "Return [ctx: Db]
+    Expr [ctx: Db] [expr: {a: (SelectProject), b: (ProjectValue)}]",
+        ];
+        for plan in reads {
+            assert!(reads_rows(plan), "{plan}");
+        }
+        let none = [
+            "Return [ctx: Rt]
+    Expr [ctx: Rt] [expr: 1]",
+            "IfElse [ctx: Db] [branches: 1, has_else: true]",
+            "Return [ctx: Db]
+    Expr [ctx: Db] [expr: array::len(...)]",
+            "Expr [ctx: Db] [expr: `BEGIN`]",
+        ];
+        for plan in none {
+            assert!(!reads_rows(plan), "{plan}");
+        }
     }
 }

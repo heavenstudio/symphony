@@ -404,11 +404,14 @@ at or above the live one of 2026-11-07 (50k messages, 2.6k sessions, about 3k
 roles, 100 recipients on Unix sockets this process serves) on `surrealkv://`.
 Its plan check runs say, claim, inbox, a dispatch and the `tasks api` calls
 `land` and the Symphony make through a recording relay and has the server plan
-(`EXPLAIN`) every statement they sent, read out of each request in any
-keyword case, past comments and with a keyword ending at any byte no name goes
-on with (`SELECT*`, `SELECT/**/ *`), as the server reads it
-(`tests/perf/sql.rs`), and every statement the schema's events run, read out
-of `schema::DEFINE`, which the relay never sees: a `TableScan` with a
+(`EXPLAIN`) every statement they sent, read out of each request as the
+server's lexer reads a keyword: in any case, past comments, ending at any byte
+no name goes on with (`SELECT*`, `SELECT$projection`, a space outside ASCII)
+and starting after none that a name, variable, path or record id holds
+(`tests/perf/sql.rs`); and every statement the schema's events run, read out
+of `schema::DEFINE`, which the relay never sees. A statement of a request
+that the server plans as a read of rows and the check read nothing out of
+fails it, so a spelling it does not know is reported; a `TableScan` with a
 predicate over message, delivery, role, session or callback_state, a whole
 index of one of them under a filter, or a subquery in a predicate, fails it
 (`tests/perf/findings.rs`), so a query that loses its index (a dropped

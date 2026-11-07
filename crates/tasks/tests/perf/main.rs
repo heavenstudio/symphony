@@ -9,8 +9,10 @@
 //!   the server, is planned with no filtered scan of a whole table among message, delivery, role,
 //!   session and callback_state, and no subquery in a predicate, which the server runs again for
 //!   every row it tests; and so is every query the schema's events run in the write that fires
-//!   them. Deterministic: the plans, never a time. [`sql`] reads the statements out of a request
-//!   or the schema; [`findings`] reads what is wrong out of a plan.
+//!   them. A statement of a request that the server plans as a read of rows, and the check read
+//!   no statement out of, fails it too: a spelling it does not know is reported, not skipped.
+//!   Deterministic: the plans, never a time. [`sql`] reads the statements out of a request or the
+//!   schema as the server's lexer does; [`findings`] reads what is wrong out of a plan.
 //! - [`timings`]: say, claim, inbox and the api answers, each run as the `tasks` binary an agent
 //!   runs, within a bound stated there.
 //! - [`words`]: each sender's last word kept by its event where the board is biggest, a rare

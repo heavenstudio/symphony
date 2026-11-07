@@ -1,8 +1,8 @@
 //! Each sender's last word (`said`): what `last_messages` answers from it is what the query it
 //! replaced answered from every message, after each write the schema takes: a post, a copy (equal
-//! ids on two threads among its messages), a message deleted, or edited to another kind or sender,
-//! every message deleted with the last words still named, as a copy by a store of schema 12 does;
-//! and a board written before it was has it once opened.
+//! ids on two threads among its messages, words with no sender), a message deleted, or edited to
+//! another kind or sender, every message deleted with the last words still named, as a copy by a
+//! store of schema 12 does; and a board written before it was has it once opened.
 
 use crate::common::{Fixture, NOW, Seed};
 use serde_json::{Value, json};
@@ -111,6 +111,47 @@ fn equal_ids_on_two_threads_name_the_later_thread_whichever_comes_first() {
         .into();
     let board = Fixture::new(seed);
     agrees(&board, "a copy", "writer", Some("tools/z"));
+}
+
+/// A copy of a board holding words with no sender, which schema 12 and its dump take, names that
+/// sender's word as the query it replaced does, apart from a sender named as the empty one's key
+/// is written; the empty sender's newest deleted gives way to its word before, and its last to none.
+#[test]
+fn a_copy_holding_words_with_no_sender_names_their_word() {
+    let mut seed = Seed::default()
+        .task("tools/a", "ready")
+        .task("tools/z", "ready");
+    let word = |slug: &str, id: i64, sender: &str, kind: &str| MessageRow {
+        id,
+        slug: slug.into(),
+        sender: sender.into(),
+        recipient: None,
+        kind: kind.into(),
+        text: format!("{slug} {id}"),
+        ts: NOW,
+    };
+    let key_written = "said:['']";
+    seed.dump.messages = vec![
+        word("tools/a", 1, "", "verdict"),
+        word("tools/z", 2, key_written, "msg"),
+        word("tools/a", 3, "", "msg"),
+    ];
+    let board = Fixture::new(seed);
+    agrees(&board, "the copy", "", Some("tools/a 3"));
+    agrees(&board, "the copy", key_written, Some("tools/z 2"));
+    let delete = |slug: &str, id: i64| {
+        (board.store.client())
+            .query(
+                "DELETE type::record('message', [$slug, $id]);",
+                json!({"slug": slug, "id": id}),
+            )
+            .unwrap();
+    };
+    delete("tools/a", 3);
+    agrees(&board, "its newest deleted", "", Some("tools/a 1"));
+    delete("tools/a", 1);
+    agrees(&board, "its last deleted", "", None);
+    agrees(&board, "its last deleted", key_written, Some("tools/z 2"));
 }
 
 /// A deleted last word gives way to the greatest `[sid, slug]` before it, a post or a verdict:
