@@ -87,7 +87,7 @@ impl Site {
             (
                 "/api/agent-page",
                 serde_json::json!({
-                    "view": {"generated": 0.0, "probes": {"herdr": "ok", "slots": "ok"}, "agents": []},
+                    "view": {"generated": 0.0, "probes": {"panes": "ok", "slots": "ok"}, "agents": []},
                     "tasks": [], "total": 0, "next": null
                 }),
             ),

@@ -983,11 +983,7 @@ fn maintenance_worker(
             eprintln!("· idle-session sweep started");
             match crate::live::measured("idle-session sweep", || {
                 let mut command = Command::new(shared.root.join("tools/rs-bin.sh"));
-                command
-                    .args(["tasks", "reap"])
-                    .current_dir(&shared.root)
-                    .env_remove("TASKS_SESSION")
-                    .env_remove("HERDR_PANE_ID");
+                command.args(["tasks", "reap"]).current_dir(&shared.root);
                 sys::output_while(
                     command,
                     timeout,
@@ -1035,6 +1031,9 @@ mod head_tests;
 
 #[cfg(test)]
 mod broken_stderr_tests;
+
+#[cfg(test)]
+mod session_tests;
 
 #[cfg(test)]
 mod tests {
@@ -1278,14 +1277,14 @@ mod tests {
         );
     }
 
-    struct SweepFixture {
-        root: PathBuf,
-        shared: Arc<Shared>,
+    pub(super) struct SweepFixture {
+        pub(super) root: PathBuf,
+        pub(super) shared: Arc<Shared>,
         background: Option<Background>,
     }
 
     impl SweepFixture {
-        fn with_embedding_launcher(script: &str) -> Self {
+        pub(super) fn with_embedding_launcher(script: &str) -> Self {
             use std::os::unix::fs::PermissionsExt;
             let fixture = Self::new(script);
             let launcher = fixture.root.join("tools/tasks.sh");
@@ -1296,7 +1295,7 @@ mod tests {
         }
 
         /// A shared installation whose launcher runs `script`; its sweep starts with `start`.
-        fn new(script: &str) -> Self {
+        pub(super) fn new(script: &str) -> Self {
             static NEXT: AtomicUsize = AtomicUsize::new(0);
             let root = std::env::temp_dir().join(format!(
                 "sf-sweep-{}-{}",
@@ -1318,7 +1317,7 @@ mod tests {
         }
 
         /// Own `worker` as the server does, until the fixture is dropped.
-        fn start(&mut self, worker: std::thread::JoinHandle<()>) {
+        pub(super) fn start(&mut self, worker: std::thread::JoinHandle<()>) {
             self.background = Some(Background {
                 shared: self.shared.clone(),
                 workers: vec![worker],
@@ -1326,16 +1325,16 @@ mod tests {
             });
         }
 
-        fn wait_for(&self, file: &str, expected: &str) {
+        pub(super) fn wait_for(&self, file: &str, expected: &str) {
             let began = Instant::now();
-            while std::fs::read_to_string(self.root.join(file))
-                .ok()
-                .as_deref()
-                != Some(expected)
-            {
+            loop {
+                let read = std::fs::read_to_string(self.root.join(file)).ok();
+                if read.as_deref() == Some(expected) {
+                    return;
+                }
                 assert!(
                     began.elapsed() < Duration::from_secs(15),
-                    "sweep did not write {file}"
+                    "sweep did not write {file}: it holds {read:?}"
                 );
                 std::thread::sleep(Duration::from_millis(10));
             }

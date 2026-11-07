@@ -151,7 +151,7 @@ fn convert(mut command: Command, dest: &Path, timeout: Duration) -> bool {
     let Ok(part) = part_file(dest) else {
         return false;
     };
-    let made = command
+    let made = crate::children::sessionless(&mut command)
         .arg("--out")
         .arg(&part)
         .stdout(Stdio::null())

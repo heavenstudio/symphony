@@ -60,7 +60,7 @@ pub async fn scan() -> Option<usize> {
 /// [`scan`] with `ps` as `program` names it (a stand-in, in tests).
 async fn scan_with(program: &OsStr) -> Option<usize> {
     let table = crate::sys::capture().ok()?;
-    let ps = Command::new(program)
+    let ps = symphony::children::sessionless(&mut Command::new(program))
         .args(["-axww", "-o", "pid=,ppid=,command="])
         .stdin(Stdio::null())
         .stdout(table.try_clone().ok()?)
@@ -218,11 +218,17 @@ mod tests {
             ),
         );
         // What std's spawn, as tokio's was, hands the same stand-in: this process's environment
-        // and directory, unchanged.
+        // and directory, unchanged but for the session the server was started in, which no
+        // child of the server keeps.
         let theirs = {
             use symphony_board::sys::Spawning as _;
             let ran = std::process::Command::new(stand_in.program())
                 .args(["-axww", "-o", "pid=,ppid=,command="])
+                .env_remove("TASKS_SESSION")
+                .env_remove("HC_TERMINAL_ID")
+                .env_remove("HC_TERMINAL_SOCKET")
+                .env_remove("HC_SESSION")
+                .env_remove("HC_SCOPE")
                 .output_locked()
                 .unwrap();
             assert!(ran.status.success());
