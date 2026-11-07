@@ -2,8 +2,8 @@
 //! them.
 
 use super::{
-    ACT, Change, Error, Failure, REFUSED, Say, Store, Task, Which, acting, left_actor, logged,
-    refused, repr, unknown_actor,
+    ACT, Change, Error, Failure, Opens, REFUSED, Say, Store, Task, Which, acting, left_actor,
+    logged, refused, repr, unknown_actor,
 };
 use crate::health::Health;
 use serde::Deserialize;
@@ -393,12 +393,14 @@ LET $said = $actor + ' changed priority p' + <string>$task.priority + ' → p' +
 
     /// Move a task along (`can_transition`). Work started, or held by an executor, is moved only by a
     /// session holding a role on it, except that the owner may cancel any open task and return
-    /// blocked work to review.
+    /// blocked work to review. A move into in_progress from ready or blocked starts work, which takes
+    /// a slot of its orchestrator's, refused past the store's cap ([`crate::slots`]).
     pub fn move_to(&self, slug: &str, status: &str, handle: &str) -> Result<Task, Error> {
         if handle == OWNER && matches!(status, "cancelled" | "review") {
             return self.move_as_owner(slug, status);
         }
-        self.rule(slug, handle, |view| {
+        let starts = status == "in_progress" && self.slots.is_some();
+        self.ruling(slug, handle, starts, |view| {
             view.actor(handle)?;
             let task = view.task(slug)?;
             let current = task.status.as_str();
@@ -418,9 +420,25 @@ LET $said = $actor + ' changed priority p' + <string>$task.priority + ' → p' +
                     "{handle} holds no role on {slug}, which is {current}"
                 )));
             }
+            // Work started again, or started by a move: a slot of its orchestrator's, or of its
+            // executor's parent (the mover's when it has none) where no orchestrator holds it.
+            let opens = (status == "in_progress" && matches!(current, "ready" | "blocked")).then(|| {
+                let executors: Vec<String> =
+                    view.holders("executor").map(|r| r.handle.clone()).collect();
+                Opens {
+                    orchestrator: None,
+                    by: if executors.is_empty() {
+                        vec![handle.into()]
+                    } else {
+                        executors
+                    },
+                    what: format!("{slug} cannot go from {current} to in_progress"),
+                }
+            });
             Ok(Change {
                 status: Some(status.into()),
                 say: Say::system(format!("{handle} moved it {current} → {status}")),
+                opens,
                 ..Change::default()
             })
         })

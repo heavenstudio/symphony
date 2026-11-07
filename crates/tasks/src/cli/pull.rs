@@ -20,6 +20,7 @@
 
 use crate::health::EXECUTING;
 use crate::orchestration::{Owners, claimable_work};
+use crate::slots::Ledger;
 use crate::sys::local_minute;
 use crate::{Board, Error, Session, Store, Task};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
@@ -51,6 +52,10 @@ pub struct Digest {
     pub notes: BTreeMap<String, String>,
     /// Work retained because its shared native presence signal expired.
     pub liveness_unknown: Vec<String>,
+    /// The cap on an orchestrator's open tasks the board holds starts to ([`crate::slots`]).
+    pub cap: Option<usize>,
+    /// The open slots the orchestrator the digest is for holds, under a cap ([`Digest::only_for`]).
+    pub slots: Option<usize>,
 }
 
 impl Digest {
@@ -120,17 +125,23 @@ impl Digest {
         let heard = |held: &Vec<&Task>| held.iter().any(|t| owners.reaches(&t.slug, handle));
         self.liveness_unknown
             .retain(|quiet| work.get(quiet.as_str()).is_some_and(heard));
+        if self.cap.is_some() {
+            self.slots = Some(Ledger::of_board(board).held(handle).len());
+        }
         self
     }
 
     pub fn lines(&self) -> Vec<String> {
-        let counts: Vec<String> = ["executing"]
+        let mut counts: Vec<String> = ["executing"]
             .iter()
             .chain(CATEGORIES.iter())
             // Keep the usual digest compact; cancellation blockers get a count when present.
             .filter(|name| **name != "dependency_blocked" || self.count(name) > 0)
             .map(|name| format!("{name}={}", self.count(name)))
             .collect();
+        if let (Some(held), Some(cap)) = (self.slots, self.cap) {
+            counts.push(format!("slots={held}/{cap}"));
+        }
         let mut out = vec![format!(
             "PULL {} {}",
             &local_minute(self.now)[11..],
@@ -302,5 +313,7 @@ pub fn digest(
         idle: idle.to_vec(),
         notes,
         liveness_unknown,
+        cap: store.slots(),
+        slots: None,
     })
 }

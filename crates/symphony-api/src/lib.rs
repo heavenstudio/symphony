@@ -1022,6 +1022,15 @@ pub struct Agent {
     pub health: String,
     pub last_tool_call: Option<f64>,
     pub last_message: Option<AgentSaid>,
+    /// The open tasks it holds against the board's cap on an orchestrator's, when one is set.
+    #[serde(default)]
+    pub slots: Option<AgentSlots>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AgentSlots {
+    pub open: usize,
+    pub cap: usize,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

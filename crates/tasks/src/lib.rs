@@ -38,6 +38,7 @@ pub mod rows;
 pub mod rpc;
 mod schema;
 pub mod server;
+pub mod slots;
 mod store;
 pub mod sweep;
 pub mod sys;

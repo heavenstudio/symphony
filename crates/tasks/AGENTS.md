@@ -366,6 +366,15 @@ prefix) and that branch's tip appended, its output appended to
 `sf-tasks/on-review.log`; a slug naming no branch starts nothing and the log
 says so. A board `TASKS_SERVER` names starts none unless `TASKS_ON_REVIEW=on`,
 and `off` starts none anywhere (`tests/sweep/on_review.rs`).
+`slots.rs` owns the cap on an orchestrator's open tasks: `[board]
+orchestrator_slots`, read from the main checkout's `symphony.toml` from the
+`.git` files alone (no `git` process: every command reads it) when the CLI or
+the Symphony opens its store (`cli::capped`, `Store::capping`); a store opened
+without it caps nothing. A rule that may open a slot reads the board's tasks
+and roles in its view's transaction (`Which::Starting`, `store/cap.rs`) and,
+when it opens one, checks and bumps `counter:['slots', HANDLE]` in the write,
+so two starts at once are one retry, not two slots (`tests/store/slots.rs`,
+`tests/cli/slots.rs`).
 
 Its store tests start one in-memory server per test binary and give each test a
 database of its own. The server is the pinned SurrealDB `tools/surreal.sh`

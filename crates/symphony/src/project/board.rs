@@ -15,6 +15,9 @@ pub struct Board {
     /// The command the board starts, detached from the main checkout, when a task moves to review,
     /// given the task's slug, its branch and the branch's tip; empty starts none.
     pub on_review: Vec<String>,
+    /// The open tasks (in progress or in review) an orchestrator may hold before the board refuses
+    /// it new work, which the board reads itself (`symphony_board::slots`); `None` caps nothing.
+    pub orchestrator_slots: Option<u32>,
 }
 
 impl Board {
@@ -30,11 +33,17 @@ impl Board {
     pub(super) fn from_file(file: FileBoard) -> Result<Board, String> {
         let inside =
             |key: &str, path: Option<String>| path.map(|path| super::inside(key, path)).transpose();
+        if file.orchestrator_slots == Some(0) {
+            return Err(
+                "[board] orchestrator_slots is 0; an orchestrator needs at least one slot".into(),
+            );
+        }
         Ok(Board {
             export: inside("[board] export", file.export)?,
             disposable: file.disposable,
             guide: inside("[board] guide", file.guide)?,
             on_review: file.on_review,
+            orchestrator_slots: file.orchestrator_slots,
         })
     }
 }
@@ -47,6 +56,7 @@ pub(super) struct FileBoard {
     disposable: Vec<String>,
     guide: Option<String>,
     on_review: Vec<String>,
+    orchestrator_slots: Option<u32>,
     #[serde(flatten)]
     pub(super) unknown: super::file::Unknown,
 }

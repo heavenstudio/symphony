@@ -295,7 +295,8 @@ key `herdr` and an agent's terminal the key `pane`: names the wire keeps.
    "state_detail": {"recipe": "verify-full", "phase": "waiting", "since": 1789999000.0},
    "health": "live",
    "last_tool_call": 1789999900.0,
-   "last_message": {"slug": "sim/jump", "ts": 1789999800.0, "text": "the ring is at 900"}}]}
+   "last_message": {"slug": "sim/jump", "ts": 1789999800.0, "text": "the ring is at 900"},
+   "slots": null}]}                                    # an orchestrator's: {"open": 3, "cap": 8}
 ```
 
 `state` is `working`, `running_test` (a run of its own holds a test slot, `phase: holding`, or is queued for one,
@@ -305,7 +306,9 @@ question), `idle`, or `gone` (no terminal and no sign of life). An agent running
 (`null` before the first): the monitor's 20 s beat and board commands do not move it.
 `callback` is the native address (`uds:` or `codex:`), or `null` for an inbox-only
 session; `chat` says whether this session is the current chat recipient, including
-an orchestrator fallback. No credentials appear in this API.
+an orchestrator fallback. `slots` is, under a project cap ([Slots](#slots)), the open
+tasks an orchestrator (or any session holding open work's slot) holds against the
+cap, and `null` otherwise. No credentials appear in this API.
 
 The rules a port must copy, in this order:
 
@@ -543,6 +546,45 @@ A second hook (`sf-hook wait-guard`) refuses a loop waiting on machine-wide proc
   or above it, that has one, so the orchestrator takes the role on the root
   only. A subtask handed to another orchestrator is that one's, with what is
   below it. A message to a handle or to another role stays with them.
+
+## Slots
+
+An orchestrator holds at most a set number of open tasks, its slots, so work is
+pushed to done before new work starts (`symphony/crates/tasks/src/slots.rs`).
+The number is the project's: `orchestrator_slots` in the `[board]` table of
+`symphony.toml`, read from the repository's main checkout, as `on_review` is,
+so a branch cannot raise its own cap. With no key, or no file, nothing is
+capped. A value that does not parse, or one below 1, is said on stderr
+(`⚠ …; no cap on an orchestrator's open tasks applies`) and caps nothing.
+
+- **Open** is `in_progress` or `review`. `blocked`, `backlog`, `concept`,
+  `design` and `ready` hold no slot; a slot frees when its task is `done` or
+  `cancelled`, or leaves the open statuses another way.
+- **One piece of work, one slot.** A review mirror (`review/BRANCH`,
+  `review-N/BRANCH`, `SLUG/review`) counts with the task it reviews when the
+  board holds that task. A subtask counts with the highest task above it that
+  the same orchestrator holds, so a task and its open subtasks take one slot.
+- **Whose slot.** The orchestrator of the task, or of the nearest task above it
+  that has one whose session still holds ([Subtasks](#subtasks)). A task no
+  orchestrator holds counts against the parent session (`register --parent`)
+  of the session starting it, or of its executors once open.
+- **Where it bites.** A claim into `in_progress`, a move into `in_progress`
+  from `ready` or `blocked`, and taking the `orchestrator` role on an open
+  task are refused when they would open a new slot for an orchestrator
+  already at the cap, naming its open tasks and their status:
+  `sim/x cannot start: cobalt-otter holds 8 open tasks, the cap of 8 an
+  orchestrator holds: …; a slot frees when one of them is done or cancelled`.
+  `tasks api` holds the same cap. A start inside a slot already open (a
+  subtask of open work, a mirror of a task in review) is never refused, and a
+  hand-over is not capped.
+- **Not retroactive.** An orchestrator above the cap keeps every task and
+  works them; it starts nothing new until it is below the cap.
+
+Two starts at once cannot both take the last slot: a start that opens one
+holds `counter:['slots', HANDLE]`, read in the same transaction as the board it
+counted, and the second write is retried against the new count. Each
+orchestrator's PULL header shows `slots=OPEN/CAP`, and the agents API its
+`slots` ([The agents API](#the-agents-api)).
 
 ## Talking on a task
 

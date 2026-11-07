@@ -33,6 +33,7 @@ mod quiet_callbacks;
 mod reserve;
 mod roles;
 mod sessions;
+mod slots;
 mod sqlite;
 mod start;
 mod tree;

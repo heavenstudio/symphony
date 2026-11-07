@@ -4,10 +4,13 @@
 
 use crate::orchestration;
 use crate::rows::RoleRow;
-use crate::store::{Change, Error, Say, Store, Task, refused, repr};
+use crate::slots::OPEN;
+use crate::store::{Change, Error, Opens, Say, Store, Task, refused, repr};
 
 impl Store {
     /// Join a task as `orchestrator` or `reviewer` (executor is `claim`, reserved is `reserve`).
+    /// Taking the orchestrator role on open work takes a slot of the taker's, refused past the
+    /// store's cap ([`crate::slots`]).
     pub fn take_role(&self, slug: &str, handle: &str, role: &str) -> Result<Task, Error> {
         if role != "orchestrator" && role != "reviewer" {
             return Err(refused(format!(
@@ -15,7 +18,8 @@ impl Store {
                 repr(role)
             )));
         }
-        self.rule(slug, handle, |view| {
+        let starts = role == "orchestrator" && self.slots.is_some();
+        self.ruling(slug, handle, starts, |view| {
             view.actor(handle)?;
             let task = view.task(slug)?;
             if task.status == "done" || task.status == "cancelled" {
@@ -58,6 +62,17 @@ impl Store {
                     expires: None,
                 });
                 change.say = Say::system(format!("{handle} joined as {role}"));
+                // Open work taken on: a slot of the new orchestrator's.
+                if single && OPEN.contains(&task.status.as_str()) {
+                    change.opens = Some(Opens {
+                        orchestrator: Some(handle.into()),
+                        by: Vec::new(),
+                        what: format!(
+                            "{handle} cannot take orchestrator on {slug}, which is {}",
+                            task.status
+                        ),
+                    });
+                }
             }
             if !took.is_empty() {
                 change.say = Say::system(orchestration::took_line(handle, &took));

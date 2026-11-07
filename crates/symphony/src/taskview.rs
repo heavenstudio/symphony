@@ -426,7 +426,7 @@ pub fn connect(root: &Path) -> Result<symphony_board::Store, String> {
     // A read-only web request is never a board session or a launcher.
     env.vars.remove("TASKS_SESSION");
     let client = symphony_board::cli::board_client(&env)?.waiting(BOARD_WAIT);
-    if let Some(text) = env.vars.get("TASKS_NOW") {
+    let store = if let Some(text) = env.vars.get("TASKS_NOW") {
         let now = text
             .parse::<f64>()
             .ok()
@@ -438,10 +438,12 @@ pub fn connect(root: &Path) -> Result<symphony_board::Store, String> {
             Box::new(symphony_board::sys::pid_alive),
             &symphony_board::sys::hostname(),
         )
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?
     } else {
-        symphony_board::Store::open(client).map_err(|e| e.to_string())
-    }
+        symphony_board::Store::open(client).map_err(|e| e.to_string())?
+    };
+    // The cap the command line holds starts to, which the agents view and the PULL digest show.
+    Ok(symphony_board::cli::capped(store, &env))
 }
 
 /// A quick-task outcome read must identify the owner's intended task before confirming it.
