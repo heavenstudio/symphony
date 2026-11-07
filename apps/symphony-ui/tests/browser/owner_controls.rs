@@ -13,6 +13,15 @@ use std::time::Instant;
 #[path = "../../../../crates/tasks/src/port.rs"]
 mod port;
 
+/// std's `lsof`, which [`port::listens`] runs here: the board's own is its `sys` command.
+impl port::Lsof for Command {
+    fn lsof(args: &[&str]) -> Self {
+        let mut lsof = Command::new("lsof");
+        lsof.args(args);
+        lsof
+    }
+}
+
 /// An in-memory board that is seen to hold its address's listener itself before any write.
 pub(super) struct ScratchBoard {
     child: Option<Child>,

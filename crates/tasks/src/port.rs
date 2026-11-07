@@ -12,11 +12,12 @@
 //!
 //! It uses std alone, so a crate that does not link this one takes the file as a module of its own
 //! (the Symphony client's browser tests, by `#[path]`), and [`listens`] is handed what runs its
-//! `lsof`.
+//! `lsof`. It starts no child itself: the command is [`Lsof`]'s, the board's from `crate::sys`
+//! and std's from the crate that takes the file.
 
 use std::fmt;
 use std::net::{Ipv4Addr, SocketAddr, TcpListener};
-use std::process::{Command, Output};
+use std::process::Output;
 use std::time::Instant;
 
 /// How many starts are made before a child whose address is taken each time is given up on.
@@ -74,7 +75,7 @@ pub fn in_use(output: &str) -> bool {
 /// (`-a -p PID -iTCP@ADDR -sTCP:LISTEN`); it exits 1 with nothing to say when there are none. An
 /// `lsof` that cannot run, or that fails saying why, is the error. `run` runs it and reads what it
 /// printed to its end: `crate::sys::output`, which no child another thread starts meanwhile can
-/// hold open, or [`Command::output`] in a crate that does not link the board.
+/// hold open, or std's `Command::output` in a crate that does not link the board.
 pub fn listens<C: Lsof>(
     pid: u32,
     addr: SocketAddr,
@@ -111,19 +112,11 @@ pub fn listens<C: Lsof>(
     )))
 }
 
-/// The command [`listens`] runs `lsof` as: std's, or the board's own (`crate::sys::Command`), which
-/// starts it without a fork.
+/// The command [`listens`] runs `lsof` as: the board's own (`crate::sys::Command`), which starts it
+/// without a fork or the starter's session, or std's, which a crate that takes this file gives.
 pub trait Lsof {
     /// `lsof` with `args`.
     fn lsof(args: &[&str]) -> Self;
-}
-
-impl Lsof for Command {
-    fn lsof(args: &[&str]) -> Self {
-        let mut lsof = Command::new("lsof");
-        lsof.args(args);
-        lsof
-    }
 }
 
 /// A loopback address nothing was bound to as it was picked, on none of the ports in `tried`. A port

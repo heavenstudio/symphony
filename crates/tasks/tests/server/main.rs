@@ -2,6 +2,11 @@
 //! another when that one was taken), and the git common dir it keeps its data in; and the move of the
 //! SQLite board into it, in a repository of its own.
 
+#![expect(
+    clippy::disallowed_methods,
+    reason = "a test starts its fixtures and stand-ins as it likes; the board's children are sys's"
+)]
+
 mod common;
 mod copy;
 mod cutover;

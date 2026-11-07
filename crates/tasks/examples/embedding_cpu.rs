@@ -4,7 +4,7 @@ use std::fs;
 use std::path::PathBuf;
 use std::time::Instant;
 use symphony_board::embedding::{Bge, Embedder, text_hash};
-use symphony_board::sys::Spawning as _;
+use symphony_board::sys;
 
 fn cpu() -> std::io::Result<f64> {
     let mut time = libc::timespec {
@@ -19,8 +19,7 @@ fn cpu() -> std::io::Result<f64> {
 }
 
 fn load() -> String {
-    std::process::Command::new("uptime")
-        .output_locked()
+    sys::output(&mut sys::command("uptime"))
         .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
         .unwrap_or_else(|e| e.to_string())
 }

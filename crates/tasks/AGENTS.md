@@ -343,12 +343,20 @@ kept hc's would start its terminals under the starter's, which end with it, and
 an hc call would answer for the starter's core and scope alone. That covers the
 database server `Home` starts, its `ps` and `lsof`, every hc call (each names the
 terminal it acts on; the caller's own is read from the `Env`, never handed to
-hc), git, the detached dispatcher, sweep and review command, and Codex delivery.
+hc), git, the detached dispatcher, sweep and review command, the sweep's cwd
+scans (`process_cwd::process_cwds_with` and `occupied_with`, handed
+`sys::command("lsof")`), and Codex delivery.
 A call that must keep a name sets it on the command after, saying why; none
 does today: a launched agent's `TASKS_SESSION` is a word of the command line
-`hc run` starts, not hc's. No other source of the crate makes a `Command` or
-clears one's environment (`sys`'s tests read them); `port.rs`'s std `lsof` is
-for `apps/symphony-ui`'s browser test alone. The Symphony's
+`hc run` starts, not hc's. Clippy holds it: the crate's own `clippy.toml`, the
+workspace's settings whole and then `disallowed-methods`, refuses std's and
+`process_cwd`'s `Command::new` and `env_clear`, and `process_cwd::process_cwds`
+and `occupied`, by the path they resolve to, however they are spelled, imported
+or gated; the two helpers carry `#[expect(clippy::disallowed_methods)]`. The
+library's test build and each integration test target allow it at their root;
+`src/sys/clippy_tests.rs` runs the toolchain's clippy over a probe crate that
+reads the same file. `port.rs` starts nothing: std's `lsof` for its `Lsof` is
+`apps/symphony-ui`'s browser test's own. The Symphony's
 `children` re-exports the list, `command` and `sessionless`.
 
 `staff` makes one staffing pass (`src/launch/staff.rs`), also called before `reap`.

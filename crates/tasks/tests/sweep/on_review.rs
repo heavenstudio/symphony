@@ -157,11 +157,11 @@ fn a_task_moved_to_review_starts_the_manifests_command_from_the_main_checkout_wi
 
 #[test]
 fn the_review_command_runs_without_the_session_of_the_agent_that_moved_the_task() {
-    let r = executing("sim/jump", "amber-heron");
-    branch(&r, "sim/jump");
-    let record = r.dir.join("record");
+    let repo = executing("sim/jump", "amber-heron");
+    branch(&repo, "sim/jump");
+    let record = repo.dir.join("record");
     write(
-        &r.root,
+        &repo.root,
         "tools/on-review.sh",
         &format!(
             "#!/bin/sh\nprintf '%s|%s|%s|%s|%s|%s\\n' \"${{TASKS_SESSION-unset}}\" \
@@ -172,16 +172,16 @@ fn the_review_command_runs_without_the_session_of_the_agent_that_moved_the_task(
         ),
     );
     fs::set_permissions(
-        r.root.join("tools/on-review.sh"),
+        repo.root.join("tools/on-review.sh"),
         fs::Permissions::from_mode(0o755),
     )
     .unwrap();
-    manifest(&r, &["tools/on-review.sh"]);
+    manifest(&repo, &["tools/on-review.sh"]);
     // The mover's: its handle (`run` sets it) and the hc terminal, socket, core and scope it runs in.
     run(
-        &r,
+        &repo,
         "amber-heron",
-        &r.root,
+        &repo.root,
         &["move", "sim/jump", "review"],
         |vars| {
             for (key, value) in [

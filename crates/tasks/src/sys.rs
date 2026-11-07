@@ -11,8 +11,9 @@
 //! of the process that starts it ([`SESSION_VARS`]): an agent that runs a board command from its hc
 //! terminal hands it the board handle it acts as and the terminal and core it runs in. A child that
 //! kept hc's and ran `hc run` would start a terminal under that one, which ends with it (`hc
-//! --skill`), and an hc call would answer for that core and scope alone. No other source of the
-//! crate makes a `Command` (this module's tests say so).
+//! --skill`), and an hc call would answer for that core and scope alone. Clippy refuses a child
+//! made anywhere else in the crate, however its path is spelled, imported or gated (the crate's
+//! clippy.toml, `disallowed-methods`; tried in `src/sys/clippy_tests.rs`).
 
 use std::collections::BTreeMap;
 use std::ffi::{OsStr, c_char, c_int, c_long};
@@ -52,6 +53,10 @@ pub fn sessionless(command: &mut Command) -> &mut Command {
 
 /// A command for `program` with this process's environment but [`SESSION_VARS`]. What the caller
 /// sets on it after it keeps: a call that must keep one of them sets it there, and says why.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "one of the two places a board child is made, without the session"
+)]
 pub fn command(program: impl AsRef<OsStr>) -> Command {
     let mut command = Command::new(program);
     sessionless(&mut command);
@@ -61,6 +66,10 @@ pub fn command(program: impl AsRef<OsStr>) -> Command {
 /// A command for `program` whose whole environment is `vars` but [`SESSION_VARS`]: a child started
 /// in a caller's environment ([`crate::cli::Env`]) rather than this process's. What the caller sets
 /// on it after it keeps, as with [`command`].
+#[expect(
+    clippy::disallowed_methods,
+    reason = "one of the two places a board child is made, without the session"
+)]
 pub fn command_with(program: impl AsRef<OsStr>, vars: &BTreeMap<String, String>) -> Command {
     let mut command = Command::new(program);
     command.env_clear().envs(vars);
@@ -185,9 +194,11 @@ pub fn terminate(pid: i64, hard: bool) -> bool {
 }
 
 #[cfg(test)]
+mod clippy_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::Path;
 
     /// The session this test's re-run is started in, as an agent's hc terminal starts a command:
     /// its board handle, and hc's terminal, socket, core and scope; beside one variable of no
@@ -260,76 +271,6 @@ mod tests {
             "{said}{}",
             String::from_utf8_lossy(&done.stderr)
         );
-    }
-
-    /// Every child the board starts is built by [`command`] or [`command_with`]: no other source of
-    /// the crate makes a `Command` or clears one's environment, so a new launcher cannot hand its
-    /// child the starter's session. Test code starts what it likes: a file of tests, a `tests`
-    /// folder, and a `#[cfg(test)]` module, which ends its file. `port.rs` uses std's alone, for a
-    /// crate that compiles it without the board; the board's own `lsof` is this module's.
-    #[test]
-    fn no_source_but_this_module_builds_a_child() {
-        let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
-        let exempt = [src.join("sys.rs"), src.join("port.rs")];
-        let mut found = Vec::new();
-        let mut folders = vec![src.clone()];
-        while let Some(folder) = folders.pop() {
-            for entry in std::fs::read_dir(&folder).unwrap() {
-                let path = entry.unwrap().path();
-                let name = path.file_name().unwrap().to_string_lossy().into_owned();
-                if path.is_dir() {
-                    if name != "tests" {
-                        folders.push(path);
-                    }
-                    continue;
-                }
-                let tests = name == "tests.rs" || name.ends_with("_tests.rs");
-                if !name.ends_with(".rs") || tests || exempt.contains(&path) {
-                    continue;
-                }
-                let text = std::fs::read_to_string(&path).unwrap();
-                for (at, line) in production(&text) {
-                    if line.contains("Command::new") || line.contains("env_clear") {
-                        let file = path.strip_prefix(&src).unwrap().display();
-                        found.push(format!("src/{file}:{at}: {}", line.trim()));
-                    }
-                }
-            }
-        }
-        found.sort();
-        assert!(
-            found.is_empty(),
-            "a child built past sys::command and sys::command_with:\n{}",
-            found.join("\n")
-        );
-    }
-
-    /// The lines of `text` that are no test code nor a comment, numbered from 1: none from a
-    /// `#[cfg(test)]` module with a body on, and none of a `#[cfg(test)]` declaration (`mod x;`).
-    fn production(text: &str) -> Vec<(usize, &str)> {
-        let mut lines = Vec::new();
-        let mut gated = false;
-        for (at, line) in text.lines().enumerate() {
-            let trimmed = line.trim();
-            if trimmed == "#[cfg(test)]" {
-                gated = true;
-            } else if gated {
-                if trimmed.ends_with('{') {
-                    break;
-                }
-                gated = !trimmed.ends_with(';');
-            } else if !trimmed.starts_with("//") {
-                lines.push((at + 1, line));
-            }
-        }
-        lines
-    }
-
-    #[test]
-    fn production_code_ends_at_a_test_module_and_skips_a_test_declaration() {
-        let text = "use a;\n// Command::new\n#[cfg(test)]\n#[path = \"x.rs\"]\nmod x;\nfn b() {}\n\
-                    #[cfg(test)]\nmod tests {\n    fn c() {}\n}\n";
-        assert_eq!(production(text), [(1, "use a;"), (6, "fn b() {}")]);
     }
 
     #[test]

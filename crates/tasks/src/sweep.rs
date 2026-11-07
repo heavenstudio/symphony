@@ -150,7 +150,7 @@ pub struct Options {
 }
 
 impl Options {
-    /// The machine's own: its process table, `ps` in the environment `vars`, `lsof`, its clock.
+    /// The machine's own: its process table, `ps` in `vars`, a sessionless `lsof`, its clock.
     pub fn machine(vars: &BTreeMap<String, String>) -> Options {
         let vars = vars.clone();
         Options {
@@ -159,8 +159,8 @@ impl Options {
             finished: Finished::default(),
             alive: Box::new(process::pid_alive),
             started: Box::new(move |pid| process::process_start(pid, &vars)),
-            cwds: Box::new(process_cwd::process_cwds),
-            occupied: Box::new(process_cwd::occupied),
+            cwds: Box::new(|| process_cwd::process_cwds_with(sys::command("lsof"))),
+            occupied: Box::new(|tree| process_cwd::occupied_with(sys::command("lsof"), tree)),
             now: Box::new(trigger::now),
             pause: Box::new(|_, _| {}),
         }
