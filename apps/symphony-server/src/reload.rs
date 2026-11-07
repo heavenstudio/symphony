@@ -226,11 +226,14 @@ pub(crate) fn setup(serve: &Serve) -> Result<Setup, String> {
             Ok::<_, String>(lease)
         })
         .transpose()?;
+    let fingerprint = lease
+        .as_ref()
+        .and_then(|lease| installed_source(serve, lease));
     Ok(Setup {
         listeners: Vec::new(),
         lease,
         control: None,
-        fingerprint: installed_source(serve),
+        fingerprint,
     })
 }
 

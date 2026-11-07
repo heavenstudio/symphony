@@ -83,40 +83,81 @@ fn binary_fingerprint(path: &Path) -> std::io::Result<String> {
         .collect())
 }
 
-/// A stamp belongs to executable bytes, not their inode or mtime: cargo may install an unchanged
-/// binary again. A manual replacement or an upgrade invalidates the old stamp safely. The bytes are
-/// read again only when the file is not the one the stamp hashed ([`image_hash`]).
-pub(super) fn installed_source(serve: &Serve) -> Option<String> {
+/// The installed server's source, when this process is the installed image, that image holds the
+/// bytes the stamp hashed, and the installed client is the stamped one. `lease` is the home's
+/// server lock, which this start holds (`reload::setup`).
+///
+/// The hash decides: an upgrade or a manual replacement with other bytes never passes, and cargo
+/// installing the same bytes again does. The image's identity ([`Image`]) only spares the read, as
+/// the file the stamp hashed answers unread ([`stamped_source`]). Its ctime is left out on purpose:
+/// the after_reload fixture installs a hard link of the build output, and every other test
+/// process's link of that output and every rebuild's unlink of its name move the ctime of the
+/// installed file without changing a byte.
+pub(super) fn installed_source(serve: &Serve, lease: &File) -> Option<String> {
     let home = serve.home.as_ref()?;
     let binary = home.join("bin/symphony-server");
     if std::env::current_exe().ok()?.canonicalize().ok()? != binary.canonicalize().ok()? {
         return None;
     }
+    let source = stamped_source(home, lease)?;
+    // A current server stamp alone cannot certify an older (or manually replaced) client.
+    // Transferred generations bypass this initial-install lookup: their parent just published
+    // the bundle, even if writing its optional recovery stamp failed.
+    (symphony::reload::installed_client_source(home)?
+        == symphony::reload::client_fingerprint(&serve.root).ok()?)
+    .then_some(source)
+}
+
+/// The stamp's source, when `home`'s installed image holds the bytes the stamp hashed. Another
+/// file of those bytes (cargo installing them again, an install by hand, a stamp from before
+/// identities) is read once and recorded in the stamp, so the next start takes it as stamped
+/// rather than reading it again until a reload stamps. Writing here keeps the stamp's rule, as
+/// `lease`, the home's server lock, is held ([`write_stamp`]); a file that moved while it was read
+/// is not recorded ([`image_hash`]).
+fn stamped_source(home: &Path, _lease: &File) -> Option<String> {
     let installed: Installed =
         serde_json::from_slice(&fs::read(home.join(INSTALLED)).ok()?).ok()?;
     let stamped = installed
         .image
         .as_ref()
         .map(|image| (installed.binary.as_str(), image));
-    if installed.binary != image_hash(&binary, stamped, binary_fingerprint).ok()?.0 {
+    let (binary, image) = image_hash(
+        &home.join("bin/symphony-server"),
+        stamped,
+        binary_fingerprint,
+    )
+    .ok()?;
+    if binary != installed.binary {
         return None;
     }
-    // A current server stamp alone cannot certify an older (or manually replaced) client.
-    // Transferred generations bypass this initial-install lookup: their parent just published
-    // the bundle, even if writing its optional recovery stamp failed.
-    (symphony::reload::installed_client_source(home)?
-        == symphony::reload::client_fingerprint(&serve.root).ok()?)
-    .then_some(installed.source)
+    if image.is_none() || image == installed.image {
+        return Some(installed.source);
+    }
+    let restamped = Installed { image, ..installed };
+    if let Err(why) = write_stamp(home, &restamped) {
+        eprintln!("· Symphony: could not record the installed image in its stamp: {why}");
+    }
+    Some(restamped.source)
 }
 
 pub(super) fn stamp_install(home: &Path, source: &str) -> std::io::Result<()> {
     let (binary, image) = image_hash(&home.join("bin/symphony-server"), None, binary_fingerprint)?;
-    let installed = Installed {
-        source: source.into(),
-        binary,
-        image,
-    };
-    let bytes = serde_json::to_vec(&installed).map_err(std::io::Error::other)?;
+    write_stamp(
+        home,
+        &Installed {
+            source: source.into(),
+            binary,
+            image,
+        },
+    )
+}
+
+/// `installed` as `home`'s stamp, whole or not at all. Every writer holds the home's server lock:
+/// a reload's [`stamp_install`] under the lease its replacement inherits, and a fresh start's
+/// [`stamped_source`] under the lease it took. So no two write at once, and nothing writes between
+/// a start's read of the stamp and its write-back.
+fn write_stamp(home: &Path, installed: &Installed) -> std::io::Result<()> {
+    let bytes = serde_json::to_vec(installed).map_err(std::io::Error::other)?;
     let next = home.join(format!("{INSTALLED}.{}", std::process::id()));
     let result = fs::write(&next, bytes).and_then(|()| fs::rename(&next, home.join(INSTALLED)));
     if result.is_err() {
@@ -127,9 +168,12 @@ pub(super) fn stamp_install(home: &Path, source: &str) -> std::io::Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::{INSTALLED, Image, Installed, binary_fingerprint, image_hash, stamp_install};
+    use super::{
+        INSTALLED, Image, Installed, binary_fingerprint, image_hash, stamp_install, stamped_source,
+    };
     use crate::testing::Tree;
     use std::cell::Cell;
+    use std::fs::{self, File};
     use std::path::Path;
 
     #[test]
@@ -187,6 +231,76 @@ mod tests {
         let missing = image_hash(&tree.path("bin/missing"), None, hash);
         assert!(missing.is_err(), "{missing:?}");
         assert_eq!(hashes.get(), 3);
+    }
+
+    /// A file written while it is read keeps the hash of what was read, but is not named: its
+    /// identity after the write would vouch for bytes nobody hashed.
+    #[test]
+    fn an_image_written_while_it_is_hashed_is_not_named() {
+        let tree = Tree::new();
+        let first = binary_fingerprint(&tree.write("first", "first image")).unwrap();
+        for written in ["other image", "a longer image than the first"] {
+            let image = tree.write("bin/symphony-server", "first image");
+            let (binary, named) = image_hash(&image, None, |path| {
+                let read = binary_fingerprint(path);
+                fs::write(path, written).unwrap();
+                read
+            })
+            .unwrap();
+            assert_eq!(binary, first, "{written}");
+            assert_eq!(named, None, "{written}");
+        }
+    }
+
+    /// A start under the home's lease records another file of the stamped bytes in the stamp, which
+    /// the next start takes unread, and leaves the stamp alone otherwise.
+    #[test]
+    fn a_start_records_another_file_of_the_stamped_bytes_and_only_that() {
+        let tree = Tree::new();
+        let home = tree.path("home");
+        let image = tree.write("home/bin/symphony-server", "installed image");
+        let lease = File::create(home.join("server.lock")).unwrap();
+        lease.try_lock().unwrap();
+        let stamp = home.join(INSTALLED);
+        let read = || serde_json::from_slice::<Installed>(&fs::read(&stamp).unwrap()).unwrap();
+        stamp_install(&home, "source").unwrap();
+
+        // The stamped file: its source, and the stamp as it was.
+        let written = fs::read(&stamp).unwrap();
+        assert_eq!(stamped_source(&home, &lease).as_deref(), Some("source"));
+        assert_eq!(fs::read(&stamp).unwrap(), written);
+
+        // The same bytes installed again, as another file: its source, and that file recorded.
+        let reinstall = |text: &str| {
+            fs::rename(tree.write("home/bin/next", text), &image).unwrap();
+            Image::of(&image).unwrap()
+        };
+        let again = reinstall("installed image");
+        assert_ne!(read().image.as_ref(), Some(&again));
+        assert_eq!(stamped_source(&home, &lease).as_deref(), Some("source"));
+        let restamped = read();
+        assert_eq!(
+            (restamped.binary, restamped.image),
+            (binary_fingerprint(&image).unwrap(), Some(again.clone()))
+        );
+        let partial = home.join(format!("{INSTALLED}.{}", std::process::id()));
+        assert!(!partial.exists(), "{}", partial.display());
+
+        // A stamp from before identities: recorded the same way.
+        let binary = binary_fingerprint(&image).unwrap();
+        fs::write(
+            &stamp,
+            serde_json::json!({"source": "older", "binary": binary}).to_string(),
+        )
+        .unwrap();
+        assert_eq!(stamped_source(&home, &lease).as_deref(), Some("older"));
+        assert_eq!(read().image, Some(again));
+
+        // Other bytes: no source, and the stamp kept for the reload that builds.
+        reinstall("upgraded image");
+        let kept = fs::read(&stamp).unwrap();
+        assert_eq!(stamped_source(&home, &lease), None);
+        assert_eq!(fs::read(&stamp).unwrap(), kept);
     }
 
     #[test]

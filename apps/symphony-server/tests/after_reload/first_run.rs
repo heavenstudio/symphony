@@ -52,7 +52,11 @@ fn private_folder() -> &'static Path {
         // SAFETY: atexit's one argument is `remove`, a function of no arguments that cannot unwind
         // (it ignores the removal's error); at exit it reads the static, which holds the folder
         // once this initializer has returned and nothing before.
-        unsafe { libc::atexit(remove) };
+        assert_eq!(
+            unsafe { libc::atexit(remove) },
+            0,
+            "the private links' removal at exit is set"
+        );
         folder
     })
 }
@@ -82,8 +86,9 @@ pub(super) fn private_link(built: &Path, folder: &Path) -> PathBuf {
     link
 }
 
-/// `binary --help` run once, answering with a usage line; how long that took.
-fn run_once(binary: &Path) -> f64 {
+/// `binary --help` run once, answering with its own usage line, which starts `usage`; how long that
+/// took.
+fn run_once(binary: &Path, usage: &str) -> f64 {
     let began = Instant::now();
     let done = sys::output(
         Command::new(binary)
@@ -93,8 +98,8 @@ fn run_once(binary: &Path) -> f64 {
     )
     .unwrap();
     assert!(
-        done.status.success() && done.stdout.starts_with(b"usage: "),
-        "{} must answer help before any start: {done:?}",
+        done.status.success() && done.stdout.starts_with(usage.as_bytes()),
+        "{} must answer help with {usage:?} before any start: {done:?}",
         binary.display()
     );
     began.elapsed().as_secs_f64()
@@ -111,38 +116,43 @@ pub(super) fn server_image() -> &'static Path {
         );
         println!(
             "after_reload: the server image's first run in this process took {:.3}s",
-            run_once(&image)
+            run_once(&image, "usage: symphony-server ")
         );
         image
     })
 }
 
-/// The installation stamp's `binary` and `image` for [`server_image`]: the hash of its bytes and the
-/// file they were read from, as the server's own stamp records them (src/reload/stamp.rs).
-/// Taken once per process, so neither a case's setup nor its installed start reads the image.
+/// An installation stamp's `binary` and `image` for `path`: the hash of its bytes and the file they
+/// were read from, through links, as the server's own stamp records them (src/reload/stamp.rs).
+fn stamp_of(path: &Path) -> (String, Value) {
+    let binary = Sha256::digest(fs::read(path).unwrap())
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect();
+    let meta = fs::metadata(path).unwrap();
+    (
+        binary,
+        json!({
+            "device": meta.dev(),
+            "inode": meta.ino(),
+            "size": meta.len(),
+            "modified": [meta.mtime(), meta.mtime_nsec()],
+        }),
+    )
+}
+
+/// [`server_image`]'s stamp, taken once per process, so neither a case's setup nor its installed
+/// start reads the image.
 pub(super) fn server_stamp() -> &'static (String, Value) {
     static STAMP: OnceLock<(String, Value)> = OnceLock::new();
     STAMP.get_or_init(|| {
-        let image = server_image();
         let began = Instant::now();
-        let binary: String = Sha256::digest(fs::read(image).unwrap())
-            .iter()
-            .map(|byte| format!("{byte:02x}"))
-            .collect();
-        let meta = fs::metadata(image).unwrap();
+        let stamp = stamp_of(server_image());
         println!(
             "after_reload: the server image's stamp took {:.3}s",
             began.elapsed().as_secs_f64()
         );
-        (
-            binary,
-            json!({
-                "device": meta.dev(),
-                "inode": meta.ino(),
-                "size": meta.len(),
-                "modified": [meta.mtime(), meta.mtime_nsec()],
-            }),
-        )
+        stamp
     })
 }
 
@@ -152,7 +162,7 @@ pub(super) fn board_cli(built: &Path) -> PathBuf {
     let cli = private_link(built, private_folder());
     println!(
         "after_reload: the board CLI's first run in this process took {:.3}s",
-        run_once(&cli)
+        run_once(&cli, "usage: just tasks ")
     );
     cli
 }
@@ -172,10 +182,9 @@ pub(super) fn stand_in(compiled: &Path) -> PathBuf {
 
 #[cfg(test)]
 mod tests {
-    use super::private_link;
-    use sha2::{Digest, Sha256};
+    use super::{private_link, stamp_of};
     use std::fs;
-    use std::path::{Path, PathBuf};
+    use std::path::PathBuf;
 
     /// A folder of this case's own, removed when it ends.
     struct Scratch(PathBuf);
@@ -187,16 +196,17 @@ mod tests {
     }
 
     /// A rebuild of the server during a run writes a new file and moves the output's name to it (the
-    /// linker renames its output into place; cargo moves the result under the output's name). An
-    /// installation of the private link keeps the bytes its stamp names; one of the output's name
-    /// would follow the rebuild, and its start would find the stamp stale and build at once.
+    /// linker renames its output into place; cargo moves the result under the output's name). The
+    /// stamp setup writes for an installation of the private link, its hash and the file it was
+    /// taken of, still names the installed file after both, so its start takes the stamp as
+    /// current, unread. One of the output's name would follow the rebuild, and its start would find
+    /// the stamp stale and build at once.
     #[test]
-    fn rebuilding_the_server_binary_mid_run_leaves_an_installed_stamp_unchanged() {
+    fn rebuilding_the_server_binary_mid_run_leaves_the_installed_stamp_current() {
         let scratch = Scratch(
             std::env::temp_dir().join(format!("sf-after-reload-rebuilt-{}", std::process::id())),
         );
         let _ = fs::remove_dir_all(&scratch.0);
-        let digest = |path: &Path| Sha256::digest(fs::read(path).unwrap());
         // A build output of this case's own, linked the way setup links the real one, installed.
         let output = scratch.0.join("target/debug/symphony-server");
         let private = scratch.0.join("private");
@@ -210,22 +220,27 @@ mod tests {
         }
         fs::write(&output, "the image the run began with").unwrap();
         std::os::unix::fs::symlink(private_link(&output, &private), &installed).unwrap();
-        let stamp = digest(&installed);
+        let stamp = stamp_of(&installed);
 
         let next = output.with_file_name("symphony-server.ld_next");
         fs::write(&next, "the image a rebuild made").unwrap();
         fs::rename(&next, &output).unwrap();
-        assert_ne!(digest(&output), stamp, "the rebuild replaced the output");
+        let rebuilt = stamp_of(&output);
+        assert_ne!(
+            rebuilt.0, stamp.0,
+            "the rebuild replaced the output's bytes"
+        );
+        assert_ne!(rebuilt.1, stamp.1, "and its file");
         assert_eq!(
-            digest(&installed),
+            stamp_of(&installed),
             stamp,
-            "the installation keeps its bytes"
+            "the installation is still the file its stamp names"
         );
         // The uplift: the output moved under deps/ and linked back under its name.
         let deps = output.with_file_name("deps/symphony_server-0123");
         fs::create_dir_all(deps.parent().unwrap()).unwrap();
         fs::rename(&output, &deps).unwrap();
         fs::hard_link(&deps, &output).unwrap();
-        assert_eq!(digest(&installed), stamp);
+        assert_eq!(stamp_of(&installed), stamp);
     }
 }
