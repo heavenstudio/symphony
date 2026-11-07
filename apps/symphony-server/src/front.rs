@@ -983,11 +983,8 @@ fn maintenance_worker(
             eprintln!("· idle-session sweep started");
             match crate::live::measured("idle-session sweep", || {
                 let mut command = Command::new(shared.root.join("tools/rs-bin.sh"));
-                command
-                    .args(["tasks", "reap"])
-                    .current_dir(&shared.root)
-                    .env_remove("TASKS_SESSION")
-                    .env_remove("HERDR_PANE_ID");
+                command.args(["tasks", "reap"]).current_dir(&shared.root);
+                sys::sessionless(&mut command);
                 sys::output_while(
                     command,
                     timeout,
@@ -1328,14 +1325,14 @@ mod tests {
 
         fn wait_for(&self, file: &str, expected: &str) {
             let began = Instant::now();
-            while std::fs::read_to_string(self.root.join(file))
-                .ok()
-                .as_deref()
-                != Some(expected)
-            {
+            loop {
+                let read = std::fs::read_to_string(self.root.join(file)).ok();
+                if read.as_deref() == Some(expected) {
+                    return;
+                }
                 assert!(
                     began.elapsed() < Duration::from_secs(15),
-                    "sweep did not write {file}"
+                    "sweep did not write {file}: it holds {read:?}"
                 );
                 std::thread::sleep(Duration::from_millis(10));
             }
@@ -1452,6 +1449,51 @@ mod tests {
             stopping.elapsed() < Duration::from_secs(5),
             "shutdown must cancel an active sweep instead of waiting for its four-minute deadline"
         );
+    }
+
+    /// A board command's stand-in: what it holds of the starter's session, written whole.
+    const HELD: &str = "printf '%s|%s|%s|%s|%s' \"${TASKS_SESSION-unset}\" \"${HC_TERMINAL_ID-unset}\" \"${HC_TERMINAL_SOCKET-unset}\" \"${HC_SESSION-unset}\" \"${HC_SCOPE-unset}\" > held.part; mv held.part held; exec sleep 30";
+
+    #[test]
+    fn the_maintenance_children_run_without_the_session_of_the_servers_terminal() {
+        const CHILD: &str = "SF_SESSIONLESS_CHILD";
+        if std::env::var_os(CHILD).is_none() {
+            // The server, as one an agent starts from its hc terminal.
+            let test = "front::tests::the_maintenance_children_run_without_the_session_of_the_servers_terminal";
+            let mut server = Command::new(std::env::current_exe().unwrap());
+            server
+                .args(["--exact", test, "--nocapture"])
+                .env(CHILD, "1");
+            for (name, value) in sys::SESSION_VARS.into_iter().zip([
+                "fixture-session",
+                "t7",
+                "/fixture/hc/t7.sock",
+                "fixture-core",
+                "fixture-scope",
+            ]) {
+                server.env(name, value);
+            }
+            let done = symphony_board::sys::output(&mut server).unwrap();
+            let said = String::from_utf8_lossy(&done.stdout);
+            let errors = String::from_utf8_lossy(&done.stderr);
+            assert!(done.status.success(), "{said}\n{errors}");
+            assert!(
+                said.contains("1 passed"),
+                "the child must run the case: {said}"
+            );
+            return;
+        }
+        assert_eq!(
+            std::env::var("HC_TERMINAL_SOCKET").unwrap(),
+            "/fixture/hc/t7.sock"
+        );
+        let mut reap = SweepFixture::new(HELD);
+        reap.start(session_maintenance(&reap.shared, Some(&reap.root), Stamp::now).unwrap());
+        let mut embed = SweepFixture::with_embedding_launcher(HELD);
+        embed.start(embeddings::start(&embed.shared, Some(&embed.root), Stamp::now).unwrap());
+        for fixture in [&reap, &embed] {
+            fixture.wait_for("held", "unset|unset|unset|unset|unset");
+        }
     }
 
     #[test]

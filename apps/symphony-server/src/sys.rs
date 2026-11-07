@@ -68,6 +68,26 @@ pub fn parent() -> i64 {
     i64::from(std::os::unix::process::parent_id())
 }
 
+/// What ties a process to the session that started the server: the board handle it acts as, and
+/// the hc terminal and core it runs in (`hc --skill`). A child that kept hc's and ran `hc run`
+/// would start a terminal under that one, which ends with it.
+pub const SESSION_VARS: [&str; 5] = [
+    "TASKS_SESSION",
+    "HC_TERMINAL_ID",
+    "HC_TERMINAL_SOCKET",
+    "HC_SESSION",
+    "HC_SCOPE",
+];
+
+/// `command` without the starter's session ([`SESSION_VARS`]): how each board command the server
+/// starts runs.
+pub fn sessionless(command: &mut Command) -> &mut Command {
+    for name in SESSION_VARS {
+        command.env_remove(name);
+    }
+    command
+}
+
 /// `name` on the PATH, as a shell finds it.
 pub fn which(name: &str) -> Option<PathBuf> {
     std::env::var_os("PATH").and_then(|path| {
