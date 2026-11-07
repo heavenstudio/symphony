@@ -23,9 +23,13 @@
 //! scan of the table (the board crate's `perf` tests plan every one): messages by `sid` (a cursor's
 //! next), by `ts` (an inbox since its session connected), by recipient then `sid` (the owner's
 //! newest); deliveries by handle then message; roles by role; registrations by address. `said:⟨sender⟩`
-//! names each sender's newest `msg` or verdict, which events keep as messages are made and deleted
-//! (deleted only all at once, by a copy: a sender whose newest line goes keeps none until it speaks
-//! again), and `DEFINE` fills once when it holds nothing. These cost the copy's one transaction
+//! names each sender's newest `msg` or verdict, the greatest `[sid, slug]` (a copy takes one `sid` on
+//! two threads), and `DEFINE` fills it once when it holds nothing. An event keeps it as messages are
+//! made, deleted or edited: a message made, or edited into a sender's word, is that sender's word if
+//! no greater one is; a word deleted, or edited to another sender or out of the words, gives way to
+//! the sender's word before it, read back along `sid`. The board makes messages only: it deletes them
+//! all at once, in a copy, which empties `said` first so no deletion looks back, and edits none, so
+//! that read back is only ever a hand's at the server. These cost the copy's one transaction
 //! less than the machine's load moves it: the live board's 49k messages and 36k deliveries swapped
 //! in 123 s without them and 97 s with them, one after the other at load 140 (3.3.0, 2026-11-07);
 //! defining them on that board took 15 s.
@@ -198,15 +202,30 @@ DEFINE EVENT OVERWRITE board_changed ON callback_state
     THEN { IF record::exists(counter:board) { UPDATE counter:board SET last = (last ?? 0) + 1 RETURN NONE; } ELSE { CREATE counter:board SET last = 1 RETURN NONE; }; };
 DEFINE EVENT OVERWRITE board_changed ON chat_event WHEN $before != $after THEN { IF record::exists(counter:board) { UPDATE counter:board SET last = (last ?? 0) + 1 RETURN NONE; } ELSE { CREATE counter:board SET last = 1 RETURN NONE; }; };
 
-DEFINE EVENT OVERWRITE said ON message WHEN $event = 'CREATE' AND $after.kind IN ['msg', 'verdict'] THEN {
-    IF record::exists(type::record('said', $after.sender)) {
-        UPDATE type::record('said', $after.sender) SET sid = $after.sid, slug = $after.slug WHERE sid < $after.sid RETURN NONE;
-    } ELSE {
-        CREATE type::record('said', $after.sender) SET sid = $after.sid, slug = $after.slug RETURN NONE;
+DEFINE EVENT OVERWRITE said ON message
+    WHEN $event != 'UPDATE' OR [$before.sender, $before.sid, $before.slug, $before.kind IN ['msg', 'verdict']]
+        != [$after.sender, $after.sid, $after.slug, $after.kind IN ['msg', 'verdict']]
+    THEN {
+    IF $event != 'CREATE' {
+        LET $was = (SELECT sid, slug FROM ONLY type::record('said', $before.sender));
+        IF $was.sid = $before.sid AND $was.slug = $before.slug {
+            LET $top = (SELECT VALUE sid FROM message WHERE sender = $before.sender AND kind IN ['msg', 'verdict'] ORDER BY sid DESC LIMIT 1);
+            LET $newest = array::max((SELECT VALUE [sid, slug] FROM message WHERE sid IN $top AND sender = $before.sender AND kind IN ['msg', 'verdict']));
+            IF $newest = NONE {
+                DELETE type::record('said', $before.sender) RETURN NONE;
+            } ELSE {
+                UPDATE type::record('said', $before.sender) SET sid = $newest[0], slug = $newest[1] RETURN NONE;
+            };
+        };
     };
-};
-DEFINE EVENT OVERWRITE unsaid ON message WHEN $event = 'DELETE' THEN {
-    DELETE type::record('said', $before.sender) WHERE sid = $before.sid RETURN NONE;
+    IF $event != 'DELETE' AND $after.kind IN ['msg', 'verdict'] {
+        IF record::exists(type::record('said', $after.sender)) {
+            UPDATE type::record('said', $after.sender) SET sid = $after.sid, slug = $after.slug
+                WHERE sid < $after.sid OR (sid = $after.sid AND slug < $after.slug) RETURN NONE;
+        } ELSE {
+            CREATE type::record('said', $after.sender) SET sid = $after.sid, slug = $after.slug RETURN NONE;
+        };
+    };
 };
 IF (SELECT VALUE id FROM said LIMIT 1) = [] {
     FOR $spoke IN (SELECT sender, array::max(array::group([[sid, slug]])) AS last FROM message WHERE kind IN ['msg', 'verdict'] GROUP BY sender) {

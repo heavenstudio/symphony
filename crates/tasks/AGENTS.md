@@ -363,9 +363,11 @@ at or above the live one of 2026-11-07 (50k messages, 2.6k sessions, about 3k
 roles, 100 recipients on Unix sockets this process serves) on `surrealkv://`.
 Its plan check runs say, claim, inbox, a dispatch and the `tasks api` calls
 `land` and the Symphony make through a recording relay and has the server plan
-(`EXPLAIN`) every statement they sent: a `TableScan` with a predicate over
-message, delivery, role, session or callback_state, or a subquery in a
-predicate, fails it, so a query that loses its index (a dropped
+(`EXPLAIN`) every statement they sent, read out of each request in any
+keyword case and past comments (`tests/perf/sql.rs`): a `TableScan` with a
+predicate over message, delivery, role, session or callback_state, a whole
+index of one of them under a filter, or a subquery in a predicate, fails it
+(`tests/perf/findings.rs`), so a query that loses its index (a dropped
 `DEFINE INDEX`, a condition rewritten past it) fails there, naming the
 statement and its plan. Its timings run say, claim, inbox and those api calls
 three times each, each median within a bound stated once in
@@ -373,7 +375,8 @@ three times each, each median within a bound stated once in
 run it by hand (`tools/rs-bin.sh sf-slots cargo test --manifest-path
 symphony/Cargo.toml -p symphony-board --test perf`) for a change to the board's
 queries or the api. `SF_PERF_TASKS=PATH` times another `tasks` build on the
-same board.
+same board. A run leaves its folder in the temporary directory; the next run
+removes each such folder whose process has ended.
 
 `tasks search` keeps keyword ranking by default, including exact slugs. `--mode
 vector` uses BGE chunk neighbours; `--mode hybrid` offers reciprocal rank fusion;

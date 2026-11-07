@@ -7,7 +7,8 @@
 //! answered a say in 6 to 9 minutes and a claim in 2: each recipient's inbox read cost 7 s of the
 //! server's time.
 
-use crate::board::{self, board};
+use crate::board::board;
+use crate::generated;
 use serde_json::{Value, json};
 use std::time::Duration;
 
@@ -16,6 +17,12 @@ struct Timed {
     name: String,
     args: Vec<String>,
     input: String,
+    bound: Duration,
+}
+
+/// The walls of one timed name's runs, and the bound of their median.
+struct Walls {
+    runs: Vec<Duration>,
     bound: Duration,
 }
 
@@ -40,12 +47,10 @@ fn api(method: &str, args: Value, bound: Duration) -> Timed {
 #[test]
 fn say_claim_inbox_and_the_api_answer_within_their_bounds_on_a_board_at_scale() {
     let mut board = board();
-    let (thread, writer, recipient, orchestrator) = (
-        board::thread(),
-        board::writer(),
-        board::recipient(),
-        board::orchestrator(),
-    );
+    let thread = generated::thread();
+    let writer = generated::writer();
+    let recipient = generated::recipient();
+    let orchestrator = generated::orchestrator();
     let mut timed = Vec::new();
     for n in 0..3 {
         timed.push(command(
@@ -82,14 +87,16 @@ fn say_claim_inbox_and_the_api_answer_within_their_bounds_on_a_board_at_scale() 
             api("inbox", json!({"handle": orchestrator}), API),
         ]);
     }
-    let mut walls: std::collections::BTreeMap<String, (Vec<Duration>, Duration)> =
-        std::collections::BTreeMap::new();
-    for t in &timed {
-        let args: Vec<&str> = t.args.iter().map(String::as_str).collect();
-        let ran = board.run(&board.addr, &args, &t.input);
-        assert_eq!(ran.code, 0, "{}: {}", t.name, ran.err);
-        let entry = walls.entry(t.name.clone()).or_insert((Vec::new(), t.bound));
-        entry.0.push(ran.wall);
+    let mut walls: std::collections::BTreeMap<String, Walls> = std::collections::BTreeMap::new();
+    for step in &timed {
+        let args: Vec<&str> = step.args.iter().map(String::as_str).collect();
+        let ran = board.run(&board.addr, &args, &step.input);
+        assert_eq!(ran.code, 0, "{}: {}", step.name, ran.err);
+        let entry = (walls.entry(step.name.clone())).or_insert(Walls {
+            runs: Vec::new(),
+            bound: step.bound,
+        });
+        entry.runs.push(ran.wall);
     }
     assert!(
         board
@@ -99,7 +106,7 @@ fn say_claim_inbox_and_the_api_answer_within_their_bounds_on_a_board_at_scale() 
         board.listeners.heard(&recipient)
     );
     let mut over = Vec::new();
-    for (name, (mut runs, bound)) in walls {
+    for (name, Walls { mut runs, bound }) in walls {
         runs.sort();
         let median = runs[runs.len() / 2];
         eprintln!("perf: {name}: median {median:.3?} of {runs:.3?}, bound {bound:.0?}");

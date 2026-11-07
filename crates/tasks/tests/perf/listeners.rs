@@ -8,7 +8,7 @@ use std::io::Read;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
 pub struct Listeners {
@@ -23,7 +23,8 @@ impl Listeners {
     pub fn new(dir: &Path, handles: &[String]) -> Listeners {
         let mut paths = BTreeMap::new();
         let mut bound = Vec::new();
-        for (n, handle) in handles.iter().enumerate() {
+        let numbered = handles.iter().enumerate();
+        for (n, handle) in numbered {
             let path = dir.join(format!("c{n}.sock"));
             let _ = std::fs::remove_file(&path);
             let listener = UnixListener::bind(&path).expect("a recipient's socket binds");
@@ -43,8 +44,7 @@ impl Listeners {
                     while let Ok((stream, _)) = listener.accept() {
                         idle = false;
                         let lines = read_frame(stream);
-                        let mut heard = heard.lock().unwrap_or_else(|e| e.into_inner());
-                        heard.entry(handle.clone()).or_default().extend(lines);
+                        (heard_so_far(&heard).entry(handle.clone()).or_default()).extend(lines);
                     }
                 }
                 if idle {
@@ -57,8 +57,7 @@ impl Listeners {
 
     /// Everything `handle`'s socket has been sent so far, one message's content a line.
     pub fn heard(&self, handle: &str) -> Vec<String> {
-        let said = self.said.lock().unwrap_or_else(|e| e.into_inner());
-        said.get(handle).cloned().unwrap_or_default()
+        (heard_so_far(&self.said).get(handle).cloned()).unwrap_or_default()
     }
 
     /// Whether `handle`'s socket is sent a line holding `text` within `wait`.
@@ -79,10 +78,21 @@ impl Listeners {
 impl Drop for Listeners {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::Relaxed);
-        for path in self.paths.values() {
+        let sockets = self.paths.values();
+        for path in sockets {
             let _ = std::fs::remove_file(path);
         }
     }
+}
+
+/// What every socket has been sent so far, by handle. A panic while it was held (a test's, reading
+/// it, or the serving thread's, adding one connection's lines, which are read whole before) leaves
+/// each handle's lines as they were or with one connection's added: every line kept was sent, so
+/// what a later reader finds is still what was heard.
+fn heard_so_far(
+    said: &Mutex<BTreeMap<String, Vec<String>>>,
+) -> MutexGuard<'_, BTreeMap<String, Vec<String>>> {
+    said.lock().unwrap_or_else(|failed| failed.into_inner())
 }
 
 /// The contents of the SDK envelopes one connection sent, read to its end (the board closes its

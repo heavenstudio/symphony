@@ -6,7 +6,7 @@ use serde_json::Value;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{Shutdown, TcpListener, TcpStream};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 
 /// One request a client sent: its query text and its variables.
@@ -30,8 +30,9 @@ impl Proxy {
         let addr = listener.local_addr().unwrap().to_string();
         let sent = Arc::new(Mutex::new(Vec::new()));
         let stop = Arc::new(AtomicBool::new(false));
-        let (kept, stopped, upstream) =
-            (Arc::clone(&sent), Arc::clone(&stop), upstream.to_string());
+        let kept = Arc::clone(&sent);
+        let stopped = Arc::clone(&stop);
+        let upstream = upstream.to_string();
         std::thread::spawn(move || {
             while !stopped.load(Ordering::Relaxed) {
                 match listener.accept() {
@@ -49,8 +50,15 @@ impl Proxy {
 
     /// The requests sent so far, which are then forgotten.
     pub fn take(&self) -> Vec<Request> {
-        std::mem::take(&mut *self.sent.lock().unwrap_or_else(|e| e.into_inner()))
+        std::mem::take(&mut *sent_so_far(&self.sent))
     }
+}
+
+/// The requests kept so far. A panic while they were held (a relay thread's push of one request,
+/// decoded whole before, or a test's take of them all) leaves every request kept whole: what a later
+/// reader finds was each sent.
+fn sent_so_far(sent: &Mutex<Vec<Request>>) -> MutexGuard<'_, Vec<Request>> {
+    sent.lock().unwrap_or_else(|failed| failed.into_inner())
 }
 
 impl Drop for Proxy {
@@ -104,7 +112,7 @@ fn relay(client: TcpStream, server: TcpStream, kept: Arc<Mutex<Vec<Request>>>) {
                     sql: sql.to_string(),
                     vars: call["params"][1].clone(),
                 };
-                kept.lock().unwrap_or_else(|e| e.into_inner()).push(request);
+                sent_so_far(&kept).push(request);
             }
             head.extend_from_slice(&body);
             if to_server.write_all(&head).is_err() {
