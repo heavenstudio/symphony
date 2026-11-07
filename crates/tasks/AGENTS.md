@@ -335,6 +335,21 @@ status pipe, and the child inherits only its streams and the descriptors it is
 passed. A std `Command` cannot say it cleared its environment, its group or its
 session, so it is never translated. The helpers live in the leaf
 `process_cwd::spawn`, which `sys` re-exports, so the cwd scans' `lsof` shares them.
+Every child the board starts is built by `sys::command` (this process's
+environment) or `sys::command_with` (a caller's `Env` as its whole environment),
+both without the starter's session, `sys::SESSION_VARS`: `TASKS_SESSION`,
+`HC_TERMINAL_ID`, `HC_TERMINAL_SOCKET`, `HC_SESSION` and `HC_SCOPE`. A child that
+kept hc's would start its terminals under the starter's, which end with it, and
+an hc call would answer for the starter's core and scope alone. That covers the
+database server `Home` starts, its `ps` and `lsof`, every hc call (each names the
+terminal it acts on; the caller's own is read from the `Env`, never handed to
+hc), git, the detached dispatcher, sweep and review command, and Codex delivery.
+A call that must keep a name sets it on the command after, saying why; none
+does today: a launched agent's `TASKS_SESSION` is a word of the command line
+`hc run` starts, not hc's. No other source of the crate makes a `Command` or
+clears one's environment (`sys`'s tests read them); `port.rs`'s std `lsof` is
+for `apps/symphony-ui`'s browser test alone. The Symphony's
+`children` re-exports the list, `command` and `sessionless`.
 
 `staff` makes one staffing pass (`src/launch/staff.rs`), also called before `reap`.
 Its sole config is `tools/task_staff.json` in the calling checkout, disabled by

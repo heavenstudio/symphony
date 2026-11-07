@@ -3,7 +3,7 @@
 //! idle/unavailable threads and the default configuration retain the CLI queue path.
 
 use super::DeliveryError;
-use crate::sys::{self, Child, Command, Stdio};
+use crate::sys::{self, Child, Stdio};
 use serde_json::{Value, json};
 use std::io::{BufRead, BufReader, Write};
 use std::sync::mpsc::{self, Receiver, Sender};
@@ -21,7 +21,7 @@ impl Proxy {
         // Pipes no child another thread spawns can hold, and a spawn that hands the proxy only them.
         let (stdin, mut input) = sys::pipe().map_err(DeliveryError::retry)?;
         let (output, stdout) = sys::pipe().map_err(DeliveryError::retry)?;
-        let child = Command::new("codex")
+        let child = sys::command("codex")
             .args(["app-server", "proxy"])
             .env_remove("CLAUDE_CODE_MESSAGING_TOKEN")
             .stdin(stdin)
@@ -99,7 +99,7 @@ impl Drop for Proxy {
 /// Once steering is attempted, an ambiguous failure stays retryable in the durable outbox.
 pub(super) fn steer(thread: &str, text: &str) -> Result<bool, DeliveryError> {
     let enabled =
-        sys::output(Command::new("git").args(["config", "--bool", "--get", "sf.codexSteer"]))
+        sys::output(sys::command("git").args(["config", "--bool", "--get", "sf.codexSteer"]))
             .is_ok_and(|output| output.status.success() && output.stdout == b"true\n");
     if !enabled {
         return Ok(false);

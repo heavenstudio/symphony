@@ -2,6 +2,7 @@
 //! that is the only codex on its `PATH`.
 
 use super::*;
+use crate::sys::Command;
 
 /// Where a re-run of a queue test below finds its folder, whose stand-in is the only codex on its
 /// `PATH`.

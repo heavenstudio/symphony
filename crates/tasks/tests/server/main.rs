@@ -12,6 +12,7 @@ mod helper;
 mod home;
 mod home_fixture;
 mod port;
+mod sessionless;
 #[path = "../store/sqlite.rs"]
 mod sqlite;
 /// The store's tests' helpers, for the one way the tests find the pinned `surreal`.

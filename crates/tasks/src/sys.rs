@@ -6,8 +6,16 @@
 //! thread spawns can hold open, from the leaf the cwd scans share ([`process_cwd::spawn`]), and
 //! the lock a std spawn beside them takes ([`spawning`], [`Spawning`]); and a TCP connection no
 //! spawn copies ([`connect`]). An async caller awaits a child's end through [`Exit`].
+//!
+//! Every child the board starts is built here ([`command`], [`command_with`]), without the session
+//! of the process that starts it ([`SESSION_VARS`]): an agent that runs a board command from its hc
+//! terminal hands it the board handle it acts as and the terminal and core it runs in. A child that
+//! kept hc's and ran `hc run` would start a terminal under that one, which ends with it (`hc
+//! --skill`), and an hc call would answer for that core and scope alone. No other source of the
+//! crate makes a `Command` (this module's tests say so).
 
-use std::ffi::{c_char, c_int, c_long};
+use std::collections::BTreeMap;
+use std::ffi::{OsStr, c_char, c_int, c_long};
 use std::fs::File;
 
 pub use process_cwd::exit::Exit;
@@ -23,9 +31,46 @@ unsafe extern "C" {
     fn localtime_r(time: *const i64, result: *mut Tm) -> *mut Tm;
 }
 
+/// What ties a process to its starter's session: the board handle (`TASKS_SESSION`), and hc's
+/// terminal, its socket, the core and the scope.
+pub const SESSION_VARS: [&str; 5] = [
+    "TASKS_SESSION",
+    "HC_TERMINAL_ID",
+    "HC_TERMINAL_SOCKET",
+    "HC_SESSION",
+    "HC_SCOPE",
+];
+
+/// `command` keeps none of [`SESSION_VARS`], from this process's environment, from one it was
+/// given, or set on it before. A launcher handed a command calls it on every one.
+pub fn sessionless(command: &mut Command) -> &mut Command {
+    for name in SESSION_VARS {
+        command.env_remove(name);
+    }
+    command
+}
+
+/// A command for `program` with this process's environment but [`SESSION_VARS`]. What the caller
+/// sets on it after it keeps: a call that must keep one of them sets it there, and says why.
+pub fn command(program: impl AsRef<OsStr>) -> Command {
+    let mut command = Command::new(program);
+    sessionless(&mut command);
+    command
+}
+
+/// A command for `program` whose whole environment is `vars` but [`SESSION_VARS`]: a child started
+/// in a caller's environment ([`crate::cli::Env`]) rather than this process's. What the caller sets
+/// on it after it keeps, as with [`command`].
+pub fn command_with(program: impl AsRef<OsStr>, vars: &BTreeMap<String, String>) -> Command {
+    let mut command = Command::new(program);
+    command.env_clear().envs(vars);
+    sessionless(&mut command);
+    command
+}
+
 impl crate::port::Lsof for Command {
     fn lsof(args: &[&str]) -> Self {
-        let mut lsof = Command::new("lsof");
+        let mut lsof = command("lsof");
         lsof.args(args);
         lsof
     }
@@ -142,6 +187,150 @@ pub fn terminate(pid: i64, hard: bool) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::Path;
+
+    /// The session this test's re-run is started in, as an agent's hc terminal starts a command:
+    /// its board handle, and hc's terminal, socket, core and scope; beside one variable of no
+    /// session.
+    const STARTED: [(&str, &str); 6] = [
+        ("TASKS_SESSION", "fixture-session"),
+        ("HC_TERMINAL_ID", "t7"),
+        ("HC_TERMINAL_SOCKET", "/fixture/hc/t7.sock"),
+        ("HC_SESSION", "fixture-core"),
+        ("HC_SCOPE", "fixture-scope"),
+        ("SF_BOARD_KEPT", "kept"),
+    ];
+
+    /// What a child holds of [`STARTED`], `|` between, run by `sh`.
+    fn saw(command: &mut Command) -> String {
+        let said = "printf '%s|%s|%s|%s|%s|%s' \"${TASKS_SESSION-unset}\" \
+                    \"${HC_TERMINAL_ID-unset}\" \"${HC_TERMINAL_SOCKET-unset}\" \
+                    \"${HC_SESSION-unset}\" \"${HC_SCOPE-unset}\" \"${SF_BOARD_KEPT-unset}\"";
+        let done = output(command.args(["-c", said])).unwrap();
+        assert!(done.status.success(), "{done:?}");
+        String::from_utf8(done.stdout).unwrap()
+    }
+
+    #[test]
+    fn a_child_runs_without_its_starters_session_but_with_what_its_caller_sets() {
+        // Set in this process, the variables would reach every other test's children: a re-run of
+        // this test alone is started in them.
+        const CASE: &str = "SF_BOARD_CHILDREN_CASE";
+        if std::env::var_os(CASE).is_some() {
+            let none = "unset|unset|unset|unset|unset";
+            let all = "fixture-session|t7|/fixture/hc/t7.sock|fixture-core|fixture-scope|kept";
+            assert_eq!(saw(&mut Command::new("/bin/sh")), all, "the starter's own");
+            assert_eq!(saw(&mut command("/bin/sh")), format!("{none}|kept"));
+            assert_eq!(
+                saw(command("/bin/sh").env("TASKS_SESSION", "an-actor")),
+                "an-actor|unset|unset|unset|unset|kept",
+                "an actor's command keeps the handle it is given"
+            );
+            // A caller's environment, its session in it, is the child's whole environment but that.
+            let mut given: BTreeMap<String, String> = std::env::vars().collect();
+            given.insert("SF_BOARD_KEPT".into(), "given".into());
+            assert_eq!(
+                saw(&mut command_with("/bin/sh", &given)),
+                format!("{none}|given")
+            );
+            given.remove("SF_BOARD_KEPT");
+            assert_eq!(
+                saw(command_with("/bin/sh", &given).env("HC_TERMINAL_ID", "t9")),
+                "unset|t9|unset|unset|unset|unset"
+            );
+            // A launcher handed a command drops even what its caller set before.
+            let mut handed = Command::new("/bin/sh");
+            handed.env("HC_SESSION", "other-core");
+            assert_eq!(saw(sessionless(&mut handed)), format!("{none}|kept"));
+            return;
+        }
+        let done = output(
+            Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "sys::tests::a_child_runs_without_its_starters_session_but_with_what_its_caller_sets",
+                ])
+                .env(CASE, "1")
+                .envs(STARTED),
+        )
+        .unwrap();
+        let said = String::from_utf8_lossy(&done.stdout);
+        assert!(
+            done.status.success() && said.contains("1 passed"),
+            "{said}{}",
+            String::from_utf8_lossy(&done.stderr)
+        );
+    }
+
+    /// Every child the board starts is built by [`command`] or [`command_with`]: no other source of
+    /// the crate makes a `Command` or clears one's environment, so a new launcher cannot hand its
+    /// child the starter's session. Test code starts what it likes: a file of tests, a `tests`
+    /// folder, and a `#[cfg(test)]` module, which ends its file. `port.rs` uses std's alone, for a
+    /// crate that compiles it without the board; the board's own `lsof` is this module's.
+    #[test]
+    fn no_source_but_this_module_builds_a_child() {
+        let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        let exempt = [src.join("sys.rs"), src.join("port.rs")];
+        let mut found = Vec::new();
+        let mut folders = vec![src.clone()];
+        while let Some(folder) = folders.pop() {
+            for entry in std::fs::read_dir(&folder).unwrap() {
+                let path = entry.unwrap().path();
+                let name = path.file_name().unwrap().to_string_lossy().into_owned();
+                if path.is_dir() {
+                    if name != "tests" {
+                        folders.push(path);
+                    }
+                    continue;
+                }
+                let tests = name == "tests.rs" || name.ends_with("_tests.rs");
+                if !name.ends_with(".rs") || tests || exempt.contains(&path) {
+                    continue;
+                }
+                let text = std::fs::read_to_string(&path).unwrap();
+                for (at, line) in production(&text) {
+                    if line.contains("Command::new") || line.contains("env_clear") {
+                        let file = path.strip_prefix(&src).unwrap().display();
+                        found.push(format!("src/{file}:{at}: {}", line.trim()));
+                    }
+                }
+            }
+        }
+        found.sort();
+        assert!(
+            found.is_empty(),
+            "a child built past sys::command and sys::command_with:\n{}",
+            found.join("\n")
+        );
+    }
+
+    /// The lines of `text` that are no test code nor a comment, numbered from 1: none from a
+    /// `#[cfg(test)]` module with a body on, and none of a `#[cfg(test)]` declaration (`mod x;`).
+    fn production(text: &str) -> Vec<(usize, &str)> {
+        let mut lines = Vec::new();
+        let mut gated = false;
+        for (at, line) in text.lines().enumerate() {
+            let trimmed = line.trim();
+            if trimmed == "#[cfg(test)]" {
+                gated = true;
+            } else if gated {
+                if trimmed.ends_with('{') {
+                    break;
+                }
+                gated = !trimmed.ends_with(';');
+            } else if !trimmed.starts_with("//") {
+                lines.push((at + 1, line));
+            }
+        }
+        lines
+    }
+
+    #[test]
+    fn production_code_ends_at_a_test_module_and_skips_a_test_declaration() {
+        let text = "use a;\n// Command::new\n#[cfg(test)]\n#[path = \"x.rs\"]\nmod x;\nfn b() {}\n\
+                    #[cfg(test)]\nmod tests {\n    fn c() {}\n}\n";
+        assert_eq!(production(text), [(1, "use a;"), (6, "fn b() {}")]);
+    }
 
     #[test]
     fn the_host_name_is_the_one_the_system_gives() {

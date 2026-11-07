@@ -16,7 +16,7 @@ const PS_PATIENCE: Duration = Duration::from_secs(30);
 /// The command lines of everything running under `pid`, from `ps`. A table `ps` could not give is
 /// `LaunchError`: a pane is never called idle on no information.
 pub fn descendants(pid: i64) -> Result<Vec<String>, LaunchError> {
-    descendants_by(Command::new("ps"), pid)
+    descendants_by(crate::sys::command("ps"), pid)
 }
 
 /// The process table a command in `env` reads: [`descendants`], or on a scratch board (a

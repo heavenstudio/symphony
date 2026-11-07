@@ -1,11 +1,12 @@
 //! The hc client (`Binary`, `Hc`'s calls) against the fake as a real binary, and the fake itself.
 
 use crate::{FAKE, Hooked, SPACE, World};
-use serde_json::json;
+use serde_json::{Value, json};
 use std::collections::BTreeMap;
 use symphony_board::cli::Env;
 use symphony_board::launch::LaunchError;
 use symphony_board::launch::hc::{Binary, Hc, board_of, is_not_found, text_of};
+use symphony_board::sys::Command;
 
 fn binary(named: &str) -> Binary {
     let mut vars = BTreeMap::new();
@@ -362,27 +363,44 @@ fn the_fake_runs_a_terminal_into_the_window_and_refuses_a_name_taken() {
             "hc run: name_taken: amber-heron is taken".into()
         ))
     );
-    // Run from a terminal, it is that terminal's child, which the window shows under it: no tab.
-    let mut w = w;
-    w.set("HC_TERMINAL_ID", address);
-    let label = [
-        "--label",
-        "herdr.space=sp-new",
-        "--label",
-        "herdr.tab=tb-kid",
-    ];
-    let child = w
-        .hc()
-        .json(&[&["run", "--bg"], &label[..], &["--", "zsh"]].concat());
-    let child = w.terminal(child.unwrap()["address"].as_str().unwrap());
-    assert_eq!(child["parent"], address);
-    assert_eq!(
+    // Run from a terminal, as an agent there runs it, it is that terminal's child, which the window
+    // shows under it: no tab.
+    let tabs = |w: &World| {
         w.state()["layout"]["spaces"][1]["tabs"]
             .as_array()
             .unwrap()
-            .len(),
-        1
-    );
+            .len()
+    };
+    let from_terminal = symphony_board::sys::output(
+        Command::new(FAKE)
+            .args(["run", "--bg", "--label", "herdr.space=sp-new"])
+            .args(["--label", "herdr.tab=tb-kid", "--json", "--", "zsh"])
+            .env_clear()
+            .envs(&w.env.vars)
+            .env("HC_TERMINAL_ID", address),
+    )
+    .unwrap();
+    let child: Value = serde_json::from_slice(&from_terminal.stdout).unwrap();
+    let child = w.terminal(child["address"].as_str().unwrap());
+    assert_eq!(child["parent"], address);
+    assert_eq!(tabs(&w), 1);
+    // The board's own call from that terminal hands hc none of its session: no child of it, even
+    // without `--no-parent`, so the window puts it in its tab.
+    let mut w = w;
+    w.set("HC_TERMINAL_ID", address);
+    let board = w.hc().json(&[
+        "run",
+        "--bg",
+        "--label",
+        "herdr.space=sp-new",
+        "--label",
+        "herdr.tab=tb-board",
+        "--",
+        "zsh",
+    ]);
+    let board = w.terminal(board.unwrap()["address"].as_str().unwrap());
+    assert_eq!(board["parent"], json!(null));
+    assert_eq!(tabs(&w), 2);
 }
 
 #[test]

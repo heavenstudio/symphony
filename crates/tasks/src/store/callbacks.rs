@@ -13,7 +13,7 @@ use super::queued_lines::{Hearing, Queued, Rescoped};
 use super::{ACT, Error, Store, acting, logged, refused};
 use crate::cli::agents::{Answer, Pane, Probe, Probes};
 use crate::cli::{attach, pull};
-use crate::sys::{Command, Stdio};
+use crate::sys::Stdio;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
@@ -1595,7 +1595,7 @@ fn deliver(callback: &Callback, text: &str) -> Result<(), DeliveryError> {
 /// connection the Symphony server accepted and has not yet marked close-on-exec stays out of it, so
 /// that client's read to the end of its answer never waits for the queue.
 fn queue(thread: &str, text: &str) -> Result<(), DeliveryError> {
-    let mut child = Command::new("codex")
+    let mut child = crate::sys::command("codex")
         .args(["queue", "--thread", thread, "--message", text])
         .env_remove("CLAUDE_CODE_MESSAGING_TOKEN")
         .stdin(Stdio::null())

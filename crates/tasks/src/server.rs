@@ -10,7 +10,7 @@
 
 use crate::port::{self, NotStarted, Start};
 use crate::rpc;
-use crate::sys::{Command, output, pid_alive, terminate};
+use crate::sys::{command, output, pid_alive, terminate};
 use std::fmt;
 use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom};
@@ -33,8 +33,9 @@ const PATIENCE: Duration = Duration::from_secs(60);
 /// How long a server asked to end is given before it is made to.
 const GRACE: Duration = Duration::from_secs(20);
 /// The server starts detached: in a session of its own with no terminal (SurrealDB ends on a hangup,
-/// which a closed pane would send its whole session), with none of its starter's files, and reaped by
-/// init, as `sh` ends at once.
+/// which a closed pane would send its whole session), with none of its starter's files nor its
+/// starter's agent session and hc terminal ([`crate::sys::SESSION_VARS`]), and reaped by init, as
+/// `sh` ends at once.
 const START: &str = r#""$0" start --unauthenticated --no-banner --log warn --bind "$1" "$2" >>"$3" 2>&1 </dev/null & echo $!"#;
 
 /// Why the board's server cannot be had.
@@ -177,7 +178,7 @@ impl Home {
     /// its answer and its record): it holds the data's lock, so no other could start. Its address is the
     /// one its command line binds; its version is taken as the pinned one, which started it.
     fn unrecorded(&self) -> Option<Running> {
-        let out = output(Command::new("ps").args(["-ww", "-axo", "pid=,command="])).ok()?;
+        let out = output(command("ps").args(["-ww", "-axo", "pid=,command="])).ok()?;
         let data = self.data();
         String::from_utf8_lossy(&out.stdout)
             .lines()
@@ -235,8 +236,7 @@ impl Home {
         if !pid_alive(pid) {
             return false;
         }
-        let Ok(out) =
-            output(Command::new("ps").args(["-ww", "-o", "command=", "-p", &pid.to_string()]))
+        let Ok(out) = output(command("ps").args(["-ww", "-o", "command=", "-p", &pid.to_string()]))
         else {
             return false;
         };
@@ -293,7 +293,7 @@ impl Home {
             let addr = reserved.to_string();
             let from = fs::metadata(&log).map_or(0, |meta| meta.len());
             let out = output(
-                Command::new("/bin/sh")
+                command("/bin/sh")
                     .new_session()
                     .arg("-c")
                     .arg(START)
