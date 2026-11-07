@@ -4,7 +4,6 @@
 use crate::{Hooked, World};
 use serde_json::{Value, json};
 use std::cell::Cell;
-use std::rc::Rc;
 use std::slice::from_ref;
 use symphony_board::launch::hc::{Hc, Object};
 use symphony_board::launch::reap::{self, REAP_SECONDS, Reap, Sweep};
@@ -60,7 +59,7 @@ impl World {
 }
 
 /// `terminal` of `handle`, left as it is for `why`.
-fn left(terminal: &str, handle: Option<&str>, why: &str) -> Closure {
+pub(crate) fn left(terminal: &str, handle: Option<&str>, why: &str) -> Closure {
     Closure {
         pane: terminal.into(),
         handle: handle.map(str::to_string),
@@ -92,36 +91,6 @@ fn looks_during_get<'w>(
 }
 
 /// What the owner may come to look at: the terminal itself, or a window that cannot say.
-/// An hc whose `nth` `hc get` finds the terminal at work again: `resume` changes it just before
-/// that call answers. `gets` counts the calls.
-fn resumes_at_get<'w>(
-    w: &'w World,
-    nth: usize,
-    resume: &'w dyn Fn(&str),
-    gets: &'w Cell<usize>,
-) -> Hooked<'w> {
-    let mut hooked = Hooked::new(w);
-    hooked.instead = Box::new(move |args| {
-        if args[0] == "get" {
-            gets.set(gets.get() + 1);
-            if gets.get() == nth {
-                resume(args[1]);
-            }
-        }
-        None
-    });
-    hooked
-}
-
-/// The terminal's agent goes back to work.
-const WORKING: fn(&World, &str) = |w, t| {
-    w.edit_terminal(t, |t| {
-        t.insert("status".into(), json!("working"));
-    })
-};
-/// A job starts under the terminal's program.
-const JOB: fn(&World, &str) = |w, t| w.run_under(w.pid_of(t), &["cargo test -p x"]);
-
 const LOOKS: [fn(&str) -> Value; 2] = [
     |terminal| json!({"agent": terminal}),
     |_| json!({"errors": ["broken"]}),
@@ -417,138 +386,4 @@ fn a_terminal_gone_before_the_close_looks_it_up_is_closed_already_with_no_kill()
     assert_eq!(w.calls_of(&["get", &ended]).len(), 2);
     assert_eq!(w.calls_of(&["kill"]), Vec::<Vec<String>>::new());
     assert_eq!(w.calls_of(&["rm"]), Vec::<Vec<String>>::new());
-}
-
-// -- work that resumes before the last look ----------------------------------------------------
-
-#[test]
-fn cleanup_keeps_a_terminal_its_last_get_finds_at_work_again_agent_shell_or_ended() {
-    let runs_again: fn(&World, &str) = |w, t| {
-        w.edit_terminal(t, |t| {
-            t.insert("state".into(), json!("live"));
-        })
-    };
-    let job = "work started under it: runs cargo test -p x";
-    for (kind, resume, why) in [
-        ("agent", WORKING, "its agent is working now"),
-        ("agent", JOB, job),
-        ("shell", JOB, job),
-        ("ended", runs_again, "its program runs again"),
-    ] {
-        let w = World::new();
-        let (handle, terminal) = match kind {
-            "agent" => {
-                let (handle, terminal) = w.worker("sim/jump", Some("done"));
-                (Some(handle), terminal)
-            }
-            "shell" => (None, w.add_terminal(false, None, json!({}))),
-            _ => (
-                None,
-                w.add_terminal(false, None, json!({"state": "finished"})),
-            ),
-        };
-        // The first get is cleanup's own look; the second, the close's, finds the work.
-        let gets = Cell::new(0);
-        let resume = |t: &str| resume(&w, t);
-        let closures = w.clean_through(&resumes_at_get(&w, 2, &resume, &gets));
-        let kept = left(&terminal, handle.as_deref(), why);
-        assert_eq!(closures, [kept], "{kind}: {why}");
-        assert_eq!(gets.get(), 2, "{kind}: {why}");
-        assert!(w.has_terminal(&terminal), "{terminal} was closed");
-        assert_eq!(w.calls_of(&["kill"]), Vec::<Vec<String>>::new());
-        // Work found, the window is not asked again: only cleanup's own look read it.
-        assert_eq!(w.calls_of(&["app", "status"]).len(), 1, "{kind}: {why}");
-        let sessions = w.store().task_sessions("sim/jump").unwrap();
-        assert!(sessions.iter().all(|s| s.closed.is_none()), "{sessions:?}");
-    }
-}
-
-#[test]
-fn the_idle_sweep_keeps_a_terminal_its_last_get_finds_at_work_again_and_reopens_its_record() {
-    for resume in [WORKING, JOB] {
-        let w = World::new();
-        let (handle, terminal) = w.worker("sim/jump", Some("done"));
-        assert_eq!(w.sweep_through(&w.hc()).idle, from_ref(&handle));
-        // The third get is the close's own, after the closure is recorded.
-        let gets = Cell::new(0);
-        let resume = |t: &str| resume(&w, t);
-        let hooked = resumes_at_get(&w, 3, &resume, &gets);
-        assert_eq!(w.sweep_through(&hooked), Sweep::default());
-        assert_eq!(gets.get(), 3);
-        assert!(w.has_terminal(&terminal), "{terminal} was closed");
-        assert_eq!(w.calls_of(&["kill"]), Vec::<Vec<String>>::new());
-        let [open] = <[_; 1]>::try_from(w.store().task_sessions("sim/jump").unwrap()).unwrap();
-        assert_eq!((open.closed, open.pane.as_str()), (None, terminal.as_str()));
-        // Idle again, it waits a whole idle wait from the start before it closes.
-        w.edit_terminal(&terminal, |t| {
-            t.insert("status".into(), json!("idle"));
-        });
-        w.run_under(w.pid_of(&terminal), &[]);
-        assert_eq!(w.sweep_through(&w.hc()).idle, from_ref(&handle));
-        assert_eq!(w.sweep_through(&w.hc()).closed.len(), 1);
-        assert!(!w.has_terminal(&terminal), "{terminal} stayed");
-    }
-}
-
-#[test]
-fn cleanup_keeps_a_terminal_whose_last_look_cannot_read_its_processes_or_finds_no_pid() {
-    let w = World::new();
-    let (handle, terminal) = w.worker("sim/jump", Some("done"));
-    // The ps table answers cleanup's own look, then fails the close's.
-    let tables = Rc::new(Cell::new(0));
-    let read = Rc::clone(&tables);
-    let processes = move |_: i64| {
-        read.set(read.get() + 1);
-        if read.get() == 1 {
-            Ok(Vec::new())
-        } else {
-            Err(LaunchError("ps: no answer".into()))
-        }
-    };
-    let closures = symphony_board::launch::cleanup(w.store(), &w.hc(), &processes, false, &[]);
-    let why = "never closed on no information: ps: no answer";
-    assert_eq!(closures.unwrap(), [left(&terminal, Some(&handle), why)]);
-    assert_eq!(tables.get(), 2);
-    // hc knows no pid for it by the close's look.
-    let gets = Cell::new(0);
-    let no_pid = |t: &str| {
-        w.edit_terminal(t, |t| {
-            t.insert("pid".into(), Value::Null);
-        })
-    };
-    let closures = w.clean_through(&resumes_at_get(&w, 2, &no_pid, &gets));
-    let why = "hc knows no pid for it now";
-    assert_eq!(closures, [left(&terminal, Some(&handle), why)]);
-    assert!(w.has_terminal(&terminal), "{terminal} was closed");
-    assert_eq!(w.calls_of(&["kill"]), Vec::<Vec<String>>::new());
-}
-
-#[test]
-fn the_idle_sweep_keeps_a_terminal_running_another_program_by_its_last_look_and_closes_an_ended_one()
- {
-    let another: fn(&World, &str) = |w, t| {
-        let pid = w.new_pid();
-        w.edit_terminal(t, |t| {
-            t.insert("pid".into(), json!(pid));
-        })
-    };
-    let ended: fn(&World, &str) = |w, t| {
-        w.edit_terminal(t, |t| {
-            t.insert("state".into(), json!("finished"));
-        })
-    };
-    for (change, closes) in [(another, false), (ended, true)] {
-        let w = World::new();
-        let (handle, terminal) = w.worker("sim/jump", Some("done"));
-        assert_eq!(w.sweep_through(&w.hc()).idle, from_ref(&handle));
-        let gets = Cell::new(0);
-        let change = |t: &str| change(&w, t);
-        let swept = w.sweep_through(&resumes_at_get(&w, 3, &change, &gets));
-        assert_eq!(swept.closed.len(), usize::from(closes), "{swept:?}");
-        assert_eq!(w.has_terminal(&terminal), !closes, "{terminal}");
-        // An ended program has nothing to kill: it is only removed.
-        assert_eq!(w.calls_of(&["kill"]), Vec::<Vec<String>>::new());
-        let [record] = <[_; 1]>::try_from(w.store().task_sessions("sim/jump").unwrap()).unwrap();
-        assert_eq!(record.closed.is_some(), closes, "{record:?}");
-    }
 }

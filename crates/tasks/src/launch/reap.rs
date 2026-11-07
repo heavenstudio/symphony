@@ -242,7 +242,7 @@ pub fn sweep(
         {
             continue;
         }
-        let Some(pid) = top_pid(&terminal) else {
+        let Some(pid) = hc::top_pid(&terminal) else {
             continue;
         };
         match (how.processes)(pid) {
@@ -385,14 +385,6 @@ fn live_work(store: &Store) -> Result<HashSet<String>, Error> {
     Ok(held)
 }
 
-/// The pid of the program the terminal started: the agent, which `env` became.
-fn top_pid(terminal: &Object) -> Option<i64> {
-    terminal
-        .get("pid")
-        .and_then(Value::as_i64)
-        .filter(|p| *p > 0)
-}
-
 /// Its handle: claude's `-n` (or `--name`), else its `sf.handle` label, else its terminal's name.
 fn name(terminal: &Object) -> Option<String> {
     let argv = hc::argv(terminal);
@@ -439,7 +431,7 @@ fn still_idle(
         return Ok(None);
     };
     if text_of(&now, "state") != "live"
-        || top_pid(&now) != Some(pid)
+        || hc::top_pid(&now) != Some(pid)
         || hc::agent(&now).is_none()
         || current_handle != handle
         || Some(current_handle.as_str()) == how.caller
@@ -474,7 +466,7 @@ fn still_finished(
     if text_of(now, "state") != "live" {
         return Ok(());
     }
-    if top_pid(now) != Some(pid) || hc::agent(now).is_none() {
+    if hc::top_pid(now) != Some(pid) || hc::agent(now).is_none() {
         return Err("another program runs in it now".into());
     }
     let status = hc::status(now);

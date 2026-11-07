@@ -2,13 +2,14 @@
 //! closure recorded on its task with the line that restores it; and [`finish`], the same for the
 //! sessions of one task that just became done or cancelled.
 
-use super::hc::{self, Hc, Object, text_of};
-use super::procs::{busy_reason, named};
+use super::hc::{self, Hc, Object, text, text_of};
+use super::procs::{self, busy_reason, named};
 use super::screen::{self, NotClosed};
 use super::{GONE, LaunchError, Processes, READY_STATES, gone};
 use crate::health::FINISHED;
 use crate::rows::TaskSessionRow;
 use crate::{Error, NewLaunch, Store, Task};
+use serde_json::{Value, json};
 use std::collections::{HashMap, HashSet};
 
 /// A terminal cleanup closed, or for a dry run would close; a recorded pane that is gone, whose
@@ -89,29 +90,74 @@ fn closed(
     }
 }
 
+/// What runs in a live terminal by one `hc get`: the program it started (its pid), the program in
+/// its foreground (pid, name and argv, or null) and the agent hc sees there. Cleanup closes the
+/// terminal only while the close's own look finds the same, so its judgement is never applied to
+/// another program: another instance, a shell `--keep` put in place of a lost one, or a job a shell
+/// became by `exec` under its own pid.
+#[derive(Debug, Clone, PartialEq)]
+struct Running {
+    pid: Option<i64>,
+    foreground: Value,
+    agent: Option<&'static str>,
+}
+
+impl Running {
+    fn of(terminal: &Object) -> Running {
+        let foreground = terminal.get("foreground").and_then(Value::as_object);
+        Running {
+            pid: hc::top_pid(terminal),
+            foreground: foreground.map_or(Value::Null, |shown| {
+                json!({"pid": shown.get("pid"), "name": shown.get("name"), "argv": shown.get("argv")})
+            }),
+            agent: hc::agent(terminal),
+        }
+    }
+}
+
+/// What cleanup judged finished: a terminal whose program had ended, or a live one running this.
+enum Judged {
+    Ended,
+    Live(Running),
+}
+
+/// Whether what holds a live terminal's foreground leaves it closable: the program the terminal
+/// started (not a job a shell runs in front), and in a terminal with no agent, a shell. A program
+/// is never an idle shell on its own, and the processes under a program never include it, so a job
+/// a shell became by `exec` shows only here. Nothing hc shows there says nothing is idle.
+fn foreground_idle(terminal: &Object, is_agent: bool) -> bool {
+    let Some(shown) = terminal.get("foreground").and_then(Value::as_object) else {
+        return false;
+    };
+    if hc::pid(terminal) != hc::top_pid(terminal) {
+        return false;
+    }
+    is_agent || procs::shell(&text(shown.get("name")))
+}
+
 /// Whether `terminal`, as the close's own `hc get` finds it, still closes, else why it stays. One
-/// whose program has ended has nothing to lose. One that had `ended` stays if its program runs
-/// again; a live one stays if its agent is no longer idle or done, or if what runs under it now is
-/// work ([`busy_reason`]), or if that cannot be read.
-fn still_finished(terminal: &Object, processes: &Processes, ended: bool) -> Result<(), String> {
+/// whose program has ended has nothing to lose. One cleanup judged ended stays if its program runs
+/// again; a live one stays if hc knows no pid for it, if another program runs in it now
+/// ([`Running`]), if its agent is no longer idle or done, or if what runs under it now is work
+/// ([`busy_reason`]), or if that cannot be read.
+fn still_finished(terminal: &Object, processes: &Processes, judged: &Judged) -> Result<(), String> {
     if text_of(terminal, "state") != "live" {
         return Ok(());
     }
-    if ended {
+    let Judged::Live(judged) = judged else {
         return Err("its program runs again".into());
+    };
+    let Some(pid) = hc::top_pid(terminal) else {
+        return Err("hc knows no pid for it now".into());
+    };
+    if Running::of(terminal) != *judged {
+        return Err("another program runs in it now".into());
     }
     let status = hc::status(terminal);
-    if hc::agent(terminal).is_some() && !READY_STATES.contains(&status.as_str()) {
+    if judged.agent.is_some() && !READY_STATES.contains(&status.as_str()) {
         let status = if status.is_empty() { "silent" } else { &status };
         return Err(format!("its agent is {status} now"));
     }
-    let Some(pid) = terminal
-        .get("pid")
-        .and_then(serde_json::Value::as_i64)
-        .filter(|p| *p > 0)
-    else {
-        return Err("hc knows no pid for it now".into());
-    };
     match processes(pid) {
         Ok(commands) => busy_reason(&commands)
             .map_or(Ok(()), |why| Err(format!("work started under it: {why}"))),
@@ -218,7 +264,7 @@ pub fn cleanup(
             };
             if !dry_run {
                 match closed(hc, &address, &closure, &|t| {
-                    still_finished(t, processes, true)
+                    still_finished(t, processes, &Judged::Ended)
                 }) {
                     Ok(done) => closure.closed = done,
                     Err(kept) => closure = kept,
@@ -230,13 +276,13 @@ pub fn cleanup(
         if is_agent && !READY_STATES.contains(&hc::status(&terminal).as_str()) {
             continue;
         }
-        let Some(pid) = terminal
-            .get("pid")
-            .and_then(serde_json::Value::as_i64)
-            .filter(|p| *p > 0)
-        else {
+        let Some(pid) = hc::top_pid(&terminal) else {
             continue; // hc knows no pid: nothing to look under, not known to be idle
         };
+        if !foreground_idle(&terminal, is_agent) {
+            continue; // work in front, or nothing known to be idle there
+        }
+        let judged = Judged::Live(Running::of(&terminal));
         // What the board says first, so a table that cannot be read is said only of a terminal it
         // would otherwise close.
         let (handle, why, mine) = if is_agent {
@@ -293,7 +339,7 @@ pub fn cleanup(
         };
         if !dry_run {
             match closed(hc, &address, &closure, &|t| {
-                still_finished(t, processes, false)
+                still_finished(t, processes, &judged)
             }) {
                 Ok(true) => closure.closed = true,
                 Ok(false) => {

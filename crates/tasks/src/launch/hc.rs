@@ -405,6 +405,15 @@ pub fn pid(terminal: &Object) -> Option<i64> {
         .filter(|pid| *pid > 0)
 }
 
+/// The pid of the program the terminal started (for an agent, the agent, which `env` became), not
+/// of its foreground's; None when hc knows none.
+pub fn top_pid(terminal: &Object) -> Option<i64> {
+    terminal
+        .get("pid")
+        .and_then(Value::as_i64)
+        .filter(|p| *p > 0)
+}
+
 /// A label of the terminal (`hc get`), or "".
 pub fn label(terminal: &Object, key: &str) -> String {
     text(terminal.get("labels").and_then(|l| l.get(key)))

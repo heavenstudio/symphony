@@ -226,7 +226,10 @@ agent blocked on a person (Claude's folder-trust dialog), never ready, ended,
 gone, or whose send hc refuses, does not start, or cannot tell of, fails the
 launch naming the terminal, which is killed and removed; only Codex's hooks
 chooser is answered on the way. Codex runs with `--no-daemon`; its configured
-REPL helper (`procs::CODEX_REPL`, that exact path) is not work under it. A
+REPL helper (`procs::CODEX_REPL`, that exact path) is not work under it.
+Cleanup closes a live terminal only while its foreground is the program it
+started, and for no agent a shell (`hc get`'s `foreground`: a job a shell runs
+in front, or one it became by `exec`, is work). A
 close is `hc kill` then `hc rm`, never of the caller's terminal
 (`HC_TERMINAL_ID`) nor of one the owner may be looking at (`launch/screen.rs`,
 from `herdr-app status`: its `herdr.tab` label the tab the window shows, the
@@ -234,7 +237,8 @@ agent it shows, or held by an overlay or float); cleanup, finish and the idle
 sweep read the window last, after the close's own `hc get` and after the idle
 sweep records the closure, right before the kill (`screen::close_unseen`). That
 `hc get` must still find the terminal finished (an agent idle or done, the same
-program, and nothing under it its busy classifier counts as work), and a window
+program: its pid, and for cleanup its foreground, which `exec` changes under one
+pid, and nothing under it its busy classifier counts as work), and a window
 that cannot say (the call fails, it reports errors, or an overlay or float names
 no terminal) keeps the terminal; either keeps it, the sweep's record reopened. A record
 naming a herdr pane (`w1:p…`) is a gone terminal: cleanup records it closed

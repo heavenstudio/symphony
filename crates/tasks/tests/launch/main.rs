@@ -8,6 +8,7 @@ mod common;
 mod cleanup;
 mod finish;
 mod hc;
+mod last_look;
 mod launch;
 mod procs;
 mod reap;

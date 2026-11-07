@@ -110,8 +110,10 @@ which is killed and removed. It writes its handle, role, agent session
 id, worktree, branch, terminal and start time; `just tasks show` lists them under
 `Sessions:`. No terminal the owner may be looking at is closed: one in the tab the Herdr
 app shows, the agent it shows, or held over them (`herdr-app status`, read last, right
-before the kill, after a last `hc get` that must still find it finished); when the window
-cannot say or the terminal works again, it stays and cleanup names why. When a terminal is closed (`just
+before the kill, after a last `hc get` that must still find it finished, running the program
+cleanup judged: the same pid and foreground); when the window cannot say or the terminal
+works again, it stays and cleanup names why. A shell closes only with the shell itself in
+its foreground: a job it runs in front, or one it became by `exec`, is work. When a terminal is closed (`just
 tasks cleanup`, or the task becoming done or cancelled: `hc kill`, then `hc rm`) the
 record stays and says why and how to bring it back,
 `just tasks restore SLUG [HANDLE]`, which resumes the conversation in the same

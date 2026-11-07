@@ -18,8 +18,10 @@
 //! sweep of idle agents.
 //!
 //! A terminal is closed only when all of these hold: it is this board's (`sf.board`); its agent is
-//! idle (or it is a shell with nothing in it, or its program ended) and has no process running under
-//! it other than the agent and its helpers (a shell, a monitor, anything); no `verify`, test run,
+//! idle (or it is a shell with nothing in it, or its program ended), its foreground is the program it
+//! started (an agent, or for no agent a shell: a program a shell became is no idle shell) and has no
+//! process running under it other than the agent and its helpers (a shell, a monitor, anything);
+//! the last `hc get` before the kill finds that same program, still finished; no `verify`, test run,
 //! `land` or Symphony (`just symphony`) runs there; it is not the calling terminal
 //! (`HC_TERMINAL_ID`), an orchestrator's, or on screen in the Herdr app ([`screen`]); and the
 //! session it belongs to is on finished tasks only or holds nothing live. An agent terminal that
