@@ -1,7 +1,7 @@
 //! Work finishing starts a sweep by itself (src/sweep/trigger.rs): the command that finished the work
 //! returns at once, and the main checkout's build of `tasks` sweeps, detached, from the main
 //! checkout, into `sf-tasks/sweep.log`. A test's board starts none unless told (`TASKS_SWEEP=on`);
-//! herdr is the crate's `fake-herdr`, holding no panes. The build is this test's
+//! hc is the crate's `fake-hc`, holding no terminals. The build is this test's
 //! (`TASKS_BIN`), but in the tests that drop it: there the main checkout's `tools/rs-bin.sh` is a
 //! fake naming a build, or there is none.
 //!
@@ -30,16 +30,16 @@ fn run(
     change: impl FnOnce(&mut BTreeMap<String, String>),
 ) -> String {
     let mut vars = r.vars();
-    let herdr = r.dir.join("herdr.json");
-    if !herdr.exists() {
-        fs::write(&herdr, r#"{"tabs": [], "next": 1, "panes": []}"#).unwrap();
+    let hc = r.dir.join("hc.json");
+    if !hc.exists() {
+        fs::write(&hc, r#"{"terminals": [], "layout": {"spaces": []}}"#).unwrap();
     }
-    let state = herdr.to_string_lossy().into_owned();
+    let state = hc.to_string_lossy().into_owned();
     for (key, value) in [
         ("TASKS_SWEEP", "on"),
         ("TASKS_BIN", env!("CARGO_BIN_EXE_tasks")),
-        ("HERDR_BIN", env!("CARGO_BIN_EXE_fake-herdr")),
-        ("FAKE_HERDR_STATE", state.as_str()),
+        ("HC_BIN", env!("CARGO_BIN_EXE_fake-hc")),
+        ("FAKE_HC_STATE", state.as_str()),
         ("TASKS_SESSION", handle),
     ] {
         vars.insert(key.into(), value.into());

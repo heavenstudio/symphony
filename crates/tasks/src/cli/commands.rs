@@ -171,11 +171,12 @@ pub fn run(store: &Store, c: &mut Context) -> Result<(), Stop> {
             if !p.flag("off") && address.is_none() {
                 return Err(Stop::Refused("no native callback detected; pass an address, use inbox for an in-process subagent, or --off to unregister".into()));
             }
-            store.callback(
+            store.callback_in(
                 &actor,
                 address.as_deref(),
                 p.flag("chat"),
                 p.flag("if_free"),
+                c.env.var("HC_TERMINAL_ID"),
             )?;
             c.say(&format!(
                 "CALLBACK {actor} {}",
@@ -204,7 +205,7 @@ pub fn run(store: &Store, c: &mut Context) -> Result<(), Stop> {
             for line in table(&view) {
                 c.say(&line);
             }
-            let down: Vec<&str> = [("herdr", view.herdr), ("slots", view.slots)]
+            let down: Vec<&str> = [("hc", view.herdr), ("slots", view.slots)]
                 .iter()
                 .filter(|(_, asked)| !asked)
                 .map(|(name, _)| *name)

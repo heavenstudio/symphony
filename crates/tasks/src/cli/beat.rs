@@ -199,7 +199,7 @@ fn truthy(value: Option<&Value>) -> bool {
 }
 
 /// One hook event, as a heartbeat for the session bound to it. The key is the event's `agent_id` (a
-/// subagent), else its `session_id` (a full session with no monitor, as one started in a herdr pane);
+/// subagent), else its `session_id` (a full session with no monitor, as one started in an hc terminal);
 /// `bind_agent` never binds a handle with a live monitor, which beats on its own. A foreground Bash
 /// call marks the session busy for as long as it may run, so a long `verify-full` reads live; its
 /// PostToolUse clears that call's mark. The key, and whether a full session is bound by it now (None for a

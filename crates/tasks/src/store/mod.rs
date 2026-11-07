@@ -39,7 +39,7 @@ mod sessions;
 mod transaction;
 mod work;
 
-pub use callbacks::Callback;
+pub use callbacks::{Callback, Presence};
 pub use copy::Moved;
 pub(crate) use copy::WRITTEN_SINCE;
 pub use embeddings::{EmbeddingStats, VectorHit, VectorSearchProfile};
@@ -167,7 +167,7 @@ pub struct Store {
     pick: Mutex<Box<dyn Pick>>,
     callback_snapshot: Mutex<Option<Snapshot>>,
     callback_idle: Mutex<Option<callbacks::Idle>>,
-    /// The herdr panes the server clock's current tick sampled, which every view of that tick reads.
+    /// The hc terminals the server clock's current tick sampled, which every view of that tick reads.
     clock_panes: Mutex<Option<crate::cli::agents::Answer<Vec<crate::cli::agents::Pane>>>>,
     /// Where this store's writes send their callback dispatch; none dispatches in the write.
     hand_off: Option<HandOff>,

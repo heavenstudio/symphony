@@ -29,8 +29,9 @@ pub const FILE: &str = "symphony.toml";
 /// The agent transports the Symphony knows: Claude's inbox socket, Codex's queue, and the inbox a
 /// session without a channel reads.
 pub const TRANSPORTS: [&str; 3] = ["claude-uds", "codex-queue", "inbox"];
-/// The multiplexers agents' panes may run in; `none` for a project without one.
-pub const PANES: [&str; 2] = ["herdr", "none"];
+/// What agents' terminals run in (`hc`, herdr-core, shown in the Herdr app); `none` for a project
+/// without one.
+pub const PANES: [&str; 2] = ["hc", "none"];
 /// The id of a project whose folder's name has no letter or digit to make one of.
 pub const DEFAULT_ID: &str = "project";
 /// The prefix naming a path in the repository's common git folder.

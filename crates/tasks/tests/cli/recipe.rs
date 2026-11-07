@@ -11,7 +11,7 @@ use symphony_board::Beat;
 use symphony_board::cli::Env;
 use symphony_board::sys::Command;
 
-const FAKE: &str = env!("CARGO_BIN_EXE_fake-herdr");
+const FAKE: &str = env!("CARGO_BIN_EXE_fake-hc");
 
 /// What a process needs from this one's environment to start. Everything else it gets is the case's
 /// own: an agent's own TASKS_SESSION, or the board it works on, must not reach it.
@@ -212,15 +212,15 @@ fn just_tasks_attach_is_the_binarys_attach() {
 }
 
 #[test]
-fn just_tasks_runs_its_own_panes_with_no_launcher() {
+fn just_tasks_runs_its_own_terminals_with_no_launcher() {
     // cleanup is implemented by the tasks binary; the recipe names no launcher.
     let mut c = Case::new();
-    let state = crate::scratch("recipe-herdr").join("herdr.json");
-    std::fs::write(&state, r#"{"tabs": [], "panes": [], "next": 100}"#).unwrap();
-    c.env.vars.insert("HERDR_BIN".into(), FAKE.into());
+    let state = crate::scratch("recipe-hc").join("hc.json");
+    std::fs::write(&state, r#"{"terminals": [], "layout": {"spaces": []}}"#).unwrap();
+    c.env.vars.insert("HC_BIN".into(), FAKE.into());
     c.env
         .vars
-        .insert("FAKE_HERDR_STATE".into(), state.display().to_string());
+        .insert("FAKE_HC_STATE".into(), state.display().to_string());
     c.env.cwd = root();
     let recipe = just(&c.env, &["tasks", "cleanup", "--dry-run"], "");
     assert_eq!(recipe.code, 0, "{}", recipe.err);
