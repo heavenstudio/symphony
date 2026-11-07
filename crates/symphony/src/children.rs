@@ -4,6 +4,9 @@
 //! would start a terminal under that one, which ends with it (`hc --skill`).
 
 use std::ffi::OsStr;
+use std::io;
+use std::process::Output;
+use symphony_board::cli::Env;
 use symphony_board::sys::Command;
 
 /// What ties a process to its starter's session: the board handle (`TASKS_SESSION`), and hc's
@@ -31,6 +34,23 @@ pub fn command(program: impl AsRef<OsStr>) -> Command {
     let mut command = Command::new(program);
     sessionless(&mut command);
     command
+}
+
+/// What `command` printed, run to its end ([`symphony_board::sys::output`]) without its starter's
+/// session: the runner for a command the board builds and hands back to run (its `lsof`).
+pub fn output(command: &mut Command) -> io::Result<Output> {
+    symphony_board::sys::output(sessionless(command))
+}
+
+/// This process's environment as the board reads it, without [`SESSION_VARS`]: what a board call
+/// made in this process hands to the children the board starts with that environment alone (the
+/// hc probe of the agents view).
+pub fn board_env() -> Env {
+    let mut env = Env::of_process();
+    for name in SESSION_VARS {
+        env.vars.remove(name);
+    }
+    env
 }
 
 #[cfg(test)]

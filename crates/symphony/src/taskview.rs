@@ -421,10 +421,9 @@ pub fn read_failure(error: &str, unreachable: &str) -> (u16, String) {
 }
 
 pub fn connect(root: &Path) -> Result<symphony_board::Store, String> {
-    let mut env = symphony_board::cli::Env::of_process();
-    env.cwd = root.to_path_buf();
     // A read-only web request is never a board session or a launcher.
-    env.vars.remove("TASKS_SESSION");
+    let mut env = crate::children::board_env();
+    env.cwd = root.to_path_buf();
     let client = symphony_board::cli::board_client(&env)?.waiting(BOARD_WAIT);
     if let Some(text) = env.vars.get("TASKS_NOW") {
         let now = text
@@ -444,8 +443,11 @@ pub fn connect(root: &Path) -> Result<symphony_board::Store, String> {
     }
 }
 
+/// The agents view, its machine probes run without this process's session
+/// ([`crate::children::board_env`]): hc's session names would scope the census to the starter's
+/// core.
 pub fn agents(store: &symphony_board::Store, root: &Path) -> Result<symphony_api::Agents, String> {
-    let mut env = symphony_board::cli::Env::of_process();
+    let mut env = crate::children::board_env();
     env.cwd = root.to_path_buf();
     agents_probed(store, &symphony_board::cli::probes::machine(&env), None)
 }
@@ -456,7 +458,7 @@ pub fn agents_in(
     common: Option<&Path>,
     board: &symphony_board::Board,
 ) -> Result<symphony_api::Agents, String> {
-    let mut env = symphony_board::cli::Env::of_process();
+    let mut env = crate::children::board_env();
     env.cwd = root.to_path_buf();
     let probes = match common {
         Some(common) => symphony_board::cli::probes::machine_in(&env, common),

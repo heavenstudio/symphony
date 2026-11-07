@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
-use symphony::children::sessionless;
+use symphony::children::{self, sessionless};
 use symphony_board::sys::{Child, Command};
 use symphony_board::{port, sys};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -145,7 +145,7 @@ fn start_child(
                         .expect("startup output"),
                 ));
             }
-            if port::listens(owned.0[0].id(), addr, sys::output).map_err(|e| e.to_string())? {
+            if port::listens(owned.0[0].id(), addr, children::output).map_err(|e| e.to_string())? {
                 // Continue showing output during development, without retaining an unbounded log.
                 output.lock().expect("child output mutex").take();
                 return Ok(port::Start::Up(owned.0.remove(0)));
@@ -388,6 +388,9 @@ async fn forward(
 }
 
 #[cfg(test)]
+mod session_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use std::cell::Cell;
@@ -448,12 +451,7 @@ mod tests {
             ("compile failed", false, 1),
             ("startup deadline", true, 1),
         ] {
-            let until = Instant::now()
-                + if expired {
-                    Duration::ZERO
-                } else {
-                    Duration::from_secs(10)
-                };
+            let until = Instant::now() + Duration::from_secs(if expired { 0 } else { 10 });
             let mut ports = Vec::new();
             let pid = ChildPid::new();
             let result = start_child(

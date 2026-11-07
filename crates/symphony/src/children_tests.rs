@@ -1,6 +1,6 @@
 //! A child keeps none of its starter's session but what its caller sets after.
 
-use super::{command, sessionless};
+use super::{board_env, command, output, sessionless};
 use symphony_board::sys::Command;
 
 /// The five variables as the child sees them, `|` between.
@@ -36,15 +36,17 @@ fn a_child_runs_without_the_session_and_terminal_of_its_starter_but_with_its_act
             saw(sessionless(&mut handed)),
             "unset|unset|unset|unset|unset"
         );
+        // So does the runner of a command the board builds and hands back.
+        let ran = output(Command::new("/bin/sh").args(["-c", SAW])).unwrap();
+        assert_eq!(ran.stdout, b"unset|unset|unset|unset|unset");
+        // The board's environment keeps all of this process's but the session.
+        let env = board_env();
+        for (name, _) in STARTED {
+            assert!(!env.vars.contains_key(name), "{name}");
+        }
+        assert_eq!(env.vars.get(CASE).map(String::as_str), Some("1"));
         return;
     }
-    let started = [
-        ("TASKS_SESSION", "fixture-session"),
-        ("HC_TERMINAL_ID", "t7"),
-        ("HC_TERMINAL_SOCKET", "/fixture/hc/t7.sock"),
-        ("HC_SESSION", "fixture-core"),
-        ("HC_SCOPE", "fixture-scope"),
-    ];
     let done = symphony_board::sys::output(
         Command::new(std::env::current_exe().unwrap())
             .args([
@@ -52,7 +54,7 @@ fn a_child_runs_without_the_session_and_terminal_of_its_starter_but_with_its_act
                 "children::tests::a_child_runs_without_the_session_and_terminal_of_its_starter_but_with_its_actor",
             ])
             .env(CASE, "1")
-            .envs(started),
+            .envs(STARTED),
     )
     .unwrap();
     let said = String::from_utf8_lossy(&done.stdout);
@@ -62,3 +64,12 @@ fn a_child_runs_without_the_session_and_terminal_of_its_starter_but_with_its_act
         String::from_utf8_lossy(&done.stderr)
     );
 }
+
+/// The session this test's own process is started in.
+const STARTED: [(&str, &str); 5] = [
+    ("TASKS_SESSION", "fixture-session"),
+    ("HC_TERMINAL_ID", "t7"),
+    ("HC_TERMINAL_SOCKET", "/fixture/hc/t7.sock"),
+    ("HC_SESSION", "fixture-core"),
+    ("HC_SCOPE", "fixture-scope"),
+];

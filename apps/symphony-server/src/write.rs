@@ -243,10 +243,7 @@ fn finish_cancel(root: &std::path::Path, slug: &str) {
         ),
         Err(error) => cancel_failed(root, slug, &format!("could not run tasks finish: {error}")),
     }
-    let mut env = symphony_board::cli::Env::of_process();
-    for name in symphony::children::SESSION_VARS {
-        env.vars.remove(name);
-    }
+    let env = symphony::children::board_env();
     if symphony_board::sweep::trigger::enabled(&env)
         && !symphony_board::sweep::trigger::trigger(
             &env,
