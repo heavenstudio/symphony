@@ -984,7 +984,6 @@ fn maintenance_worker(
             match crate::live::measured("idle-session sweep", || {
                 let mut command = Command::new(shared.root.join("tools/rs-bin.sh"));
                 command.args(["tasks", "reap"]).current_dir(&shared.root);
-                sys::sessionless(&mut command);
                 sys::output_while(
                     command,
                     timeout,
@@ -1032,6 +1031,9 @@ mod head_tests;
 
 #[cfg(test)]
 mod broken_stderr_tests;
+
+#[cfg(test)]
+mod session_tests;
 
 #[cfg(test)]
 mod tests {
@@ -1275,14 +1277,14 @@ mod tests {
         );
     }
 
-    struct SweepFixture {
-        root: PathBuf,
-        shared: Arc<Shared>,
+    pub(super) struct SweepFixture {
+        pub(super) root: PathBuf,
+        pub(super) shared: Arc<Shared>,
         background: Option<Background>,
     }
 
     impl SweepFixture {
-        fn with_embedding_launcher(script: &str) -> Self {
+        pub(super) fn with_embedding_launcher(script: &str) -> Self {
             use std::os::unix::fs::PermissionsExt;
             let fixture = Self::new(script);
             let launcher = fixture.root.join("tools/tasks.sh");
@@ -1293,7 +1295,7 @@ mod tests {
         }
 
         /// A shared installation whose launcher runs `script`; its sweep starts with `start`.
-        fn new(script: &str) -> Self {
+        pub(super) fn new(script: &str) -> Self {
             static NEXT: AtomicUsize = AtomicUsize::new(0);
             let root = std::env::temp_dir().join(format!(
                 "sf-sweep-{}-{}",
@@ -1315,7 +1317,7 @@ mod tests {
         }
 
         /// Own `worker` as the server does, until the fixture is dropped.
-        fn start(&mut self, worker: std::thread::JoinHandle<()>) {
+        pub(super) fn start(&mut self, worker: std::thread::JoinHandle<()>) {
             self.background = Some(Background {
                 shared: self.shared.clone(),
                 workers: vec![worker],
@@ -1323,7 +1325,7 @@ mod tests {
             });
         }
 
-        fn wait_for(&self, file: &str, expected: &str) {
+        pub(super) fn wait_for(&self, file: &str, expected: &str) {
             let began = Instant::now();
             loop {
                 let read = std::fs::read_to_string(self.root.join(file)).ok();
@@ -1449,51 +1451,6 @@ mod tests {
             stopping.elapsed() < Duration::from_secs(5),
             "shutdown must cancel an active sweep instead of waiting for its four-minute deadline"
         );
-    }
-
-    /// A board command's stand-in: what it holds of the starter's session, written whole.
-    const HELD: &str = "printf '%s|%s|%s|%s|%s' \"${TASKS_SESSION-unset}\" \"${HC_TERMINAL_ID-unset}\" \"${HC_TERMINAL_SOCKET-unset}\" \"${HC_SESSION-unset}\" \"${HC_SCOPE-unset}\" > held.part; mv held.part held; exec sleep 30";
-
-    #[test]
-    fn the_maintenance_children_run_without_the_session_of_the_servers_terminal() {
-        const CHILD: &str = "SF_SESSIONLESS_CHILD";
-        if std::env::var_os(CHILD).is_none() {
-            // The server, as one an agent starts from its hc terminal.
-            let test = "front::tests::the_maintenance_children_run_without_the_session_of_the_servers_terminal";
-            let mut server = Command::new(std::env::current_exe().unwrap());
-            server
-                .args(["--exact", test, "--nocapture"])
-                .env(CHILD, "1");
-            for (name, value) in sys::SESSION_VARS.into_iter().zip([
-                "fixture-session",
-                "t7",
-                "/fixture/hc/t7.sock",
-                "fixture-core",
-                "fixture-scope",
-            ]) {
-                server.env(name, value);
-            }
-            let done = symphony_board::sys::output(&mut server).unwrap();
-            let said = String::from_utf8_lossy(&done.stdout);
-            let errors = String::from_utf8_lossy(&done.stderr);
-            assert!(done.status.success(), "{said}\n{errors}");
-            assert!(
-                said.contains("1 passed"),
-                "the child must run the case: {said}"
-            );
-            return;
-        }
-        assert_eq!(
-            std::env::var("HC_TERMINAL_SOCKET").unwrap(),
-            "/fixture/hc/t7.sock"
-        );
-        let mut reap = SweepFixture::new(HELD);
-        reap.start(session_maintenance(&reap.shared, Some(&reap.root), Stamp::now).unwrap());
-        let mut embed = SweepFixture::with_embedding_launcher(HELD);
-        embed.start(embeddings::start(&embed.shared, Some(&embed.root), Stamp::now).unwrap());
-        for fixture in [&reap, &embed] {
-            fixture.wait_for("held", "unset|unset|unset|unset|unset");
-        }
     }
 
     #[test]

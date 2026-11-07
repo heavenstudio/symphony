@@ -16,7 +16,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::{Mutex, mpsc};
 use std::time::{Duration, Instant};
-use symphony_board::sys::{self, Command, Stdio};
+use symphony_board::sys::{self, Stdio};
 
 const INHERITED: &str = "SF_SYMPHONY_HANDOVER";
 const PATIENCE: Duration = Duration::from_secs(120);
@@ -352,7 +352,7 @@ fn replace(
         .chain(transfer.ready)
         .chain(transfer.commit)
         .collect();
-    let mut command = Command::new(exe);
+    let mut command = symphony::children::command(exe);
     command
         .arg("serve")
         .arg("--home")

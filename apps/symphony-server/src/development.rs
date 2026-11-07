@@ -8,6 +8,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
+use symphony::children::sessionless;
 use symphony_board::sys::{Child, Command};
 use symphony_board::{port, sys};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -117,7 +118,7 @@ fn start_child(
         let mut launch = command(addr);
         let program = launch.get_program().to_string_lossy().into_owned();
         // Its output is read to the end after it exits: no child another thread spawns may hold it.
-        let mut child = sys::spawn_output(launch.process_group(0))
+        let mut child = sys::spawn_output(sessionless(&mut launch).process_group(0))
             .map_err(|e| format!("start {program} on {addr}: {e}"))?;
         #[cfg(test)]
         tests::SPAWNED.set(Some(child.id()));
@@ -517,8 +518,7 @@ mod tests {
             let why = result.unwrap_err();
             if executable == "/bin/sh" {
                 pid.assert_stopped();
-            }
-            if executable != "/bin/sh" {
+            } else {
                 assert!(why.contains(executable), "{why}");
             }
             assert!(

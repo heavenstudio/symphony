@@ -40,7 +40,6 @@ pub(super) fn start(
                     .current_dir(&shared.root)
                     .env_remove("TASKS_DATABASE")
                     .env_remove("TASKS_SERVER");
-                sys::sessionless(&mut command);
                 sys::output_while(
                     command,
                     TIMEOUT,

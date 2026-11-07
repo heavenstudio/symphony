@@ -211,11 +211,11 @@ async fn upload(shared: &Arc<Shared>, request: Request) -> Response {
 /// A preview's copied board may hold real pane identities. Only the shared installation
 /// closes sessions and triggers the same detached sweep as the CLI's finished-task path.
 fn finish_cancel(root: &std::path::Path, slug: &str) {
-    match symphony_board::sys::output(crate::sys::sessionless(
-        symphony_board::sys::Command::new(root.join("tools/rs-bin.sh"))
+    match symphony_board::sys::output(
+        symphony::children::command(root.join("tools/rs-bin.sh"))
             .args(["tasks", "finish", slug])
             .current_dir(root),
-    )) {
+    ) {
         Ok(done) if done.status.success() => {
             // `tasks finish` preserves the completed task's success even when cleanup fails;
             // its failure is an arrow-prefixed warning on stdout, not a nonzero exit.
@@ -244,7 +244,7 @@ fn finish_cancel(root: &std::path::Path, slug: &str) {
         Err(error) => cancel_failed(root, slug, &format!("could not run tasks finish: {error}")),
     }
     let mut env = symphony_board::cli::Env::of_process();
-    for name in crate::sys::SESSION_VARS {
+    for name in symphony::children::SESSION_VARS {
         env.vars.remove(name);
     }
     if symphony_board::sweep::trigger::enabled(&env)

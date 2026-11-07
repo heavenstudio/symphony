@@ -7,10 +7,10 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Output;
 use std::sync::{Arc, Mutex, mpsc};
-use symphony_board::sys::Command;
 
 use serde::{Deserialize, Serialize};
 
+use crate::children::command;
 use crate::landing::{PrivateWorktree, generators};
 use crate::plugins::Plugins;
 use crate::project::Project;
@@ -243,7 +243,7 @@ mod metadata_tests {
         }
         let tree = crate::test_tree::Tree::new();
         let command = |root: &Path, args: &[&str]| {
-            let mut cmd = Command::new("git");
+            let mut cmd = symphony_board::sys::Command::new("git");
             for key in REPOSITORY_OVERRIDES {
                 cmd.env_remove(key);
             }
@@ -298,7 +298,7 @@ mod metadata_tests {
         command(&tree.path("bare"), &["init", "--bare", "-q", "-b", "main"]);
         std::fs::create_dir(main.join("docs")).unwrap();
         for mode in ["without-git", "override", "aliases"] {
-            let mut child = Command::new(std::env::current_exe().unwrap());
+            let mut child = symphony_board::sys::Command::new(std::env::current_exe().unwrap());
             for key in REPOSITORY_OVERRIDES {
                 child.env_remove(key);
             }
@@ -530,7 +530,7 @@ fn run(
     input: Option<&str>,
     index: Option<&Path>,
 ) -> Result<Output, String> {
-    let mut command = Command::new("git");
+    let mut command = command("git");
     command.args(args).current_dir(root);
     if let Some(index) = index {
         command.env("GIT_INDEX_FILE", index);
@@ -606,7 +606,7 @@ fn merge(root: &Path, current: &str, base: &str, new: &str) -> Result<String, Co
     let done = {
         let _child = PublicationStage::start(format_args!("git merge-file"));
         symphony_board::sys::output(
-            Command::new("git")
+            command("git")
                 .args(["merge-file", "-p"])
                 .args(["current", "base", "new"].map(|n| scratch.0.join(n)))
                 .current_dir(root),
@@ -1392,7 +1392,7 @@ fn generate(root: &Path, heavy: bool) -> Result<(), String> {
             continue;
         }
         let (program, args) = generator.command.split_first().ok_or("empty generator")?;
-        let done = symphony_board::sys::output(Command::new(program).args(args).current_dir(root))
+        let done = symphony_board::sys::output(command(program).args(args).current_dir(root))
             .map_err(|e| e.to_string())?;
         if !done.status.success() {
             return Err(format!(
@@ -1649,7 +1649,7 @@ fn output_branch(
     let check = Project::of(&wt.path).verdicts.check.clone();
     if let Some((program, args)) = check.split_first() {
         let done = symphony_board::sys::output(
-            Command::new(program)
+            command(program)
                 .args(args)
                 .current_dir(&wt.path)
                 .env("TASKS_SESSION", &actor),
@@ -1710,7 +1710,7 @@ fn publish(
     // Land may verify a moving-main candidate. Neither that work nor the branch's initial
     // verify can hold the app's write locks; land owns its publication CAS and bounded retry.
     let done = symphony_board::sys::output(
-        Command::new(program)
+        command(program)
             .args(args)
             .arg(&publication.branch)
             .env("TASKS_SESSION", &publication.actor)
@@ -2390,7 +2390,7 @@ mod publication_tests {
     fn recovery_adopts_only_the_locked_inode_still_named_by_the_journal() {
         let tree = crate::test_tree::Tree::new();
         let done = symphony_board::sys::output(
-            Command::new("git")
+            symphony_board::sys::Command::new("git")
                 .args(["init", "-q", "-b", "main"])
                 .current_dir(&tree.root),
         )
