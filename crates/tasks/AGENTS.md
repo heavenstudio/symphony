@@ -257,7 +257,7 @@ JSON interface (`src/cli/api.rs`) takes a call on stdin; `tasks api --lines` tak
 one JSON call per line on stdin and answers each on its own line (a line that
 is a list of calls gets a list of answers), the methods being the store's, plus
 `threads` and `snapshot`, which read several things in one round trip.
-`launch`, `restore`, `cleanup`, `finish` and `reap` (the Symphony's idle
+`launch`, `restore`, `cleanup`, `close`, `finish` and `reap` (the Symphony's idle
 sweep, every five minutes) drive hc's terminals and git's worktrees from
 `src/launch/`, through `launch::hc::Hc` alone; the crate calls no `herdr`.
 A launch is one `hc run --bg --no-parent --outlive-parent --keep` of the
@@ -290,7 +290,32 @@ pid, and nothing under it its busy classifier counts as work), and a window
 that cannot say (the call fails, it reports errors, or an overlay or float names
 no terminal) keeps the terminal; either keeps it, the sweep's record reopened. A record
 naming a herdr pane (`w1:p…`) is a gone terminal: cleanup records it closed
-with its restore line, and restore brings it back in an hc terminal. Its tests' handles:
+with its restore line, and restore brings it back in an hc terminal. `close SLUG HANDLE`
+(`launch/close.rs`) closes one agent's terminal whatever role it holds, judged as cleanup judges
+a program (its foreground, `Running` at the last look) and as the idle sweep judges what runs
+under an agent (`reap_busy_reason`), out of the owner's sight. A close and a restore of one
+session each hold it for their whole run (`Store::take_session`, the row
+`callback_lease:['session', HANDLE]`, 300 s, a close renewing it at its last look, a restore
+before it starts the terminal), so neither starts while the other runs, nor a second close, and
+one stopped part way holds it until it lapses. The hold's revision fences every write and
+retirement either makes (`HOLDS` in `store/launches.rs`, checked in the write's own
+transaction, which also writes the hold's row: the board's transactions are optimistic and
+conflict only on rows both write, so a takeover committing first fails the write, and tried again
+it is refused): once another took the session over, a close writes nothing more (the next finds the
+terminal gone), and a restore kills the terminal it started and records nothing.
+The close writes the closure only once the terminal is killed, bound to the record read
+(`close_task_session_as`, `record_found_closed`), so a close kept or refused writes nothing and a
+callback registered before the kill completes the record's thread. It then retires the
+registration from that terminal, or the very one it read before (from no terminal):
+`clear_callback` retires a registration only as it was read (address, listener, terminal or none,
+`registration_revision`, and `registration_nonce`, a random id each registration writes), never
+one registered since, though it took the same number after a retirement deleted the row. Its one
+limit: a row an older build (which writes no nonce) makes again just as the one read was (the
+same address, listener and terminal, numbered the same) cannot be told from it, and a close that
+read that one may retire it. A Codex record written `codex:`
+takes the thread the handle's callback
+registered, at its launch or its close (`store/launches.rs`), so the order of the callback and
+the record never loses it. Its tests' handles:
 `TASKS_SERVER` and `TASKS_DATABASE` reach a board of the test's own
 (`tasks.Server`, one in-memory server per test process, a database per test);
 `TASKS_NOW` pins the clock, and a monitor's waits step it (each says `STEP

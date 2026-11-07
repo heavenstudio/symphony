@@ -37,7 +37,7 @@ sources once for every worktree that shares them (`tools/rs-bin.sh`): the
 first command after a change to them builds it, which takes a minute or two.
 The heartbeat hook runs the build its tree last ran (`.target/bin/tasks`) and
 builds nothing. There is no Python board adapter.
-`launch`, `restore`, `cleanup` and `reap` are its own, hc's terminals and all
+`launch`, `restore`, `cleanup`, `close` and `reap` are its own, hc's terminals and all
 (`symphony/crates/tasks/src/launch/`); the board calls no `herdr`. The server is the pinned SurrealDB, fetched once
 per machine into `sf-surreal/` in the git common dir by `bash tools/surreal.sh`
 (the Rust tests fetch it the same way); the board says so when it is missing.
@@ -135,7 +135,16 @@ record stays and says why and how to bring it back,
 `just tasks restore SLUG [HANDLE]`, which resumes the conversation in the same
 worktree, in a new terminal. A record from before hc names a herdr pane (`w1:p…`): that
 terminal is gone, so cleanup records it closed with its restore line, and restore brings
-the agent back in an hc terminal. See the [tasks skill](../../.agents/skills/tasks/SKILL.md#launch-restore-clean-up-herdr).
+the agent back in an hc terminal. `just tasks close SLUG HANDLE` closes one agent's terminal
+whatever role it holds (a reviewer waiting for a new tip), records it the same way once the
+terminal is killed, bound to that terminal, and retires the callback registered from it; it is
+refused for the caller's own session or terminal, one the owner may be looking at, and one whose
+program is not at rest (work under it as the idle sweep reads it, any test run included, or
+another program in its foreground). A close and a restore of one session each hold it while they
+run, so neither starts while the other runs; one whose hold lapsed and was taken over writes
+nothing more, and a restore that lost it kills the terminal it started. A Codex record
+takes the thread its callback registered whichever is written first; one closed with no thread
+says on its thread that restore cannot resume it. See the [tasks skill](../../.agents/skills/tasks/SKILL.md#launch-restore-clean-up-herdr).
 
 **Which agent starts where** is a [standing rule](../../RULES.md#workflowclaude-first-agents):
 executors and reviewers are Claude, started as in-process subagents or
