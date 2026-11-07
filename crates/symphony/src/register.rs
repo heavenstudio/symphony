@@ -16,17 +16,15 @@ use std::sync::LazyLock;
 
 use regex::Regex;
 use sha2::{Digest, Sha256};
+use symphony_docs::syntax;
+pub use symphony_docs::syntax::{REGION_END, REGION_START, card_end};
 
-use crate::text::{NS, S, lstrip, prefix_chars, repr, splitlines, strip};
+use crate::text::{NS, S, prefix_chars, repr, splitlines, strip};
 
 /// Comment kinds the owner writes. A `like` is a record, not work, so it is never open; the others
 /// stay open until an agent nests a `[!resolved]` under them.
 pub const KINDS: [&str; 5] = ["comment", "like", "dislike", "question", "decision"];
 pub const RESOLVED: &str = "resolved";
-pub const REGION_START: &str = "<!-- register:start -->";
-pub const REGION_END: &str = "<!-- register:end -->";
-/// An agent answers a decision with an indented line starting with this marker (the undated form).
-pub const REPLY: &str = "↳";
 /// An agent line `[ts] agent · question — …` asks the owner something: the card waits for the owner.
 pub const QUESTION: &str = "question";
 
@@ -39,40 +37,25 @@ pub(crate) static CALLOUT: LazyLock<Regex> =
 pub(crate) static QUOTE: LazyLock<Regex> = LazyLock::new(|| pattern(r"^{S}*>{S}?(?P<rest>.*)$"));
 pub(crate) static NESTED_RESOLVED: LazyLock<Regex> =
     LazyLock::new(|| pattern(r"(?i)^{S}*>{S}*\[!resolved\]{S}*(?P<text>.*)$"));
-pub(crate) static FENCE: LazyLock<Regex> = LazyLock::new(|| pattern(r"^{S}*(```|~~~)"));
-static DECISION: LazyLock<Regex> = LazyLock::new(|| {
-    pattern(
-        r"^-{S}+\[(?P<mark>[ xX?r~a-])\]{S}+\*\*(?P<slug>[^*]+)\*\*{S}*(?:[—–-]{S}*)?(?P<text>.*)$",
-    )
-});
-static INDENTED: LazyLock<Regex> = LazyLock::new(|| pattern(r"^{S}+{NS}"));
-pub(crate) static ENTRY: LazyLock<Regex> = LazyLock::new(|| {
-    pattern(
-        r"^{S}+\[(?P<ts>\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2})?)\]{S}+(?P<who>owner|agent)(?:{S}+·{S}+(?P<verdict>[a-z]+(?:-[a-z]+)*))?(?:{S}+—{S}*(?P<text>.*))?{S}*$",
-    )
-});
 static TOPIC: LazyLock<Regex> = LazyLock::new(|| pattern(r"^###{S}+(?P<topic>.+?){S}*$"));
 static GROUP_HEADING: LazyLock<Regex> = LazyLock::new(|| pattern(r"^##{S}+(?P<name>.+?){S}*$"));
 pub(crate) static REPLACES: LazyLock<Regex> =
     LazyLock::new(|| pattern(r"\*Replaces:\* ([a-z0-9][a-z0-9-]*)"));
 
-/// A card's own line, read: its slug as written (stripped), where its mark sits, and its text.
+/// A card's own line, read: its slug as written (stripped) and where its mark sits.
 pub(crate) struct CardLine<'a> {
     pub slug: &'a str,
     pub mark: Range<usize>,
-    pub state: State,
-    pub text: &'a str,
 }
 
-/// The card a line opens, if it opens one.
+/// The card a line opens, if it opens one, as the docs build reads it (`syntax::card_line`).
 pub(crate) fn card_line(line: &str) -> Option<CardLine<'_>> {
-    let caps = DECISION.captures(line)?;
-    let mark = caps.name("mark")?;
+    let (mark, slug, _) = syntax::card_line(line)?;
+    // `-`, whitespace, then `[`: the line's first bracket holds the mark
+    let at = line.find('[')? + 1;
     Some(CardLine {
-        slug: strip(caps.name("slug")?.as_str()),
-        mark: mark.range(),
-        state: State::from_mark(mark.as_str().chars().next()?)?,
-        text: strip(caps.name("text").map_or("", |m| m.as_str())),
+        slug: strip(slug),
+        mark: at..at + mark.len_utf8(),
     })
 }
 
@@ -88,13 +71,7 @@ pub(crate) fn remark(line: &str, mark: char) -> String {
     }
 }
 
-pub(crate) fn is_fence(line: &str) -> bool {
-    FENCE.is_match(line)
-}
-
-pub(crate) fn is_indented(line: &str) -> bool {
-    INDENTED.is_match(line)
-}
+pub(crate) use symphony_docs::syntax::{is_fence, is_indented};
 
 /// The register could not be read or written as asked; nothing was written.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -272,17 +249,9 @@ pub(crate) fn entry_keys(entries: &[Entry]) -> Vec<String> {
         .collect()
 }
 
-pub(crate) fn unseen_reply(line: &str) -> Option<(&str, &str)> {
-    let pair = line
-        .strip_prefix("  <!-- review:unseen-owner ")?
-        .trim_end_matches('\n')
-        .strip_suffix(" -->")?;
-    pair.split_once(' ')
-}
-
-pub(crate) fn unseen_marker(owner: &str, reply: &str) -> String {
-    format!("  <!-- review:unseen-owner {owner} {reply} -->\n")
-}
+pub(crate) use symphony_docs::syntax::{
+    unseen_owner as unseen_reply, unseen_owner_line as unseen_marker,
+};
 
 /// A decision card: `- [x] **five-workshops** — There are five workshops.`
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -310,55 +279,19 @@ impl Decision {
         } else {
             &self.raw
         };
-        let mut found: Vec<Entry> = Vec::new();
-        // a blank line inside a post: its next continuation starts a new paragraph
-        let mut paragraph = false;
-        for line in lines {
-            if unseen_reply(line).is_some() {
-                continue;
-            }
-            let text = strip(line);
-            let continues = found.last().is_some_and(|last| last.ts.is_some());
-            if text.is_empty() {
-                paragraph = continues;
-            } else if let Some(dated) = ENTRY.captures(line) {
-                paragraph = false;
-                found.push(Entry {
-                    ts: Some(dated["ts"].to_string()),
-                    who: if &dated["who"] == "owner" {
-                        Who::Owner
-                    } else {
-                        Who::Agent
-                    },
-                    verdict: dated.name("verdict").map(|v| v.as_str().to_string()),
-                    text: strip(dated.name("text").map_or("", |t| t.as_str())).to_string(),
-                });
-            } else if continues && line.chars().count() - lstrip(line).chars().count() > 2 {
-                let last = found.last_mut().expect("an entry to continue");
-                let joined = format!(
-                    "{}{}{text}",
-                    last.text,
-                    if paragraph { "\n\n" } else { "\n" }
-                );
-                last.text = strip(&joined).to_string();
-                paragraph = false;
-            } else if let Some(reply) = text.strip_prefix(REPLY) {
-                found.push(Entry {
-                    ts: None,
-                    who: Who::Agent,
-                    verdict: None,
-                    text: strip(reply).to_string(),
-                });
-            } else {
-                found.push(Entry {
-                    ts: None,
-                    who: Who::Owner,
-                    verdict: None,
-                    text: text.to_string(),
-                });
-            }
-        }
-        found
+        syntax::entries(lines)
+            .into_iter()
+            .map(|entry| Entry {
+                ts: entry.ts,
+                who: if entry.who == "owner" {
+                    Who::Owner
+                } else {
+                    Who::Agent
+                },
+                verdict: entry.verdict,
+                text: entry.text,
+            })
+            .collect()
     }
 
     /// Everything the card's thread says, from one read of its entries. The project's card kinds
@@ -526,68 +459,32 @@ pub struct Thread {
 }
 
 /// Every decision card in `lines`, with its history and the `###` topic above it.
+/// The cards are the docs build's (`syntax::cards`): each reaches exactly the boundary edits and the
+/// loss guard use ([`card_end`]), so an indented fence belongs to the thread, even an unclosed one,
+/// and cannot hide later document-level cards.
 pub fn parse_decisions<L: AsRef<str>>(lines: &[L]) -> Vec<Decision> {
-    let mut found: Vec<Decision> = Vec::new();
-    let mut topic = "General".to_string();
-    let mut in_fence = false;
-    let mut index = 0;
-    while index < lines.len() {
-        let line = lines[index].as_ref();
-        if is_fence(line) {
-            in_fence = !in_fence;
-        } else if in_fence {
-            // A document-level example is not a register.
-        } else if let Some(heading) = TOPIC.captures(line) {
-            topic = heading["topic"].to_string();
-        } else if let Some(card) = card_line(line) {
-            // Read exactly the boundary used by edits and the loss guard. Indented fences belong
-            // to the thread, even an unclosed one; they cannot hide later document-level cards.
-            let end = card_end(lines, index);
-            let raw: Vec<String> = lines[index + 1..end]
-                .iter()
-                .map(|line| line.as_ref().to_string())
-                .collect();
-            let note = raw
+    syntax::cards(lines)
+        .into_iter()
+        .filter_map(|card| {
+            let note = card
+                .raw
                 .iter()
                 .filter(|line| unseen_reply(line).is_none())
                 .map(|line| strip(line))
                 .filter(|line| !line.is_empty())
                 .map(str::to_string)
                 .collect();
-            found.push(Decision {
-                line: index + 1,
-                slug: card.slug.to_string(),
-                state: card.state,
-                text: card.text.to_string(),
+            Some(Decision {
+                line: card.line,
+                state: State::from_mark(card.mark)?,
+                slug: card.slug,
+                text: card.text,
                 note,
-                topic: topic.clone(),
-                raw,
-            });
-            index = end;
-            continue;
-        }
-        index += 1;
-    }
-    found
-}
-
-/// Index just past the card whose line is `lines[index]`: its indented lines, across blank lines
-/// inside it.
-pub fn card_end<L: AsRef<str>>(lines: &[L], index: usize) -> usize {
-    let mut end = index + 1;
-    let mut probe = end;
-    while probe < lines.len() {
-        let line = lines[probe].as_ref();
-        if is_indented(line) {
-            probe += 1;
-            end = probe;
-        } else if strip(line).is_empty() {
-            probe += 1;
-        } else {
-            break;
-        }
-    }
-    end
+                topic: card.topic,
+                raw: card.raw,
+            })
+        })
+        .collect()
 }
 
 /// The register region's bounds: the indexes of its start and end markers.
@@ -626,7 +523,7 @@ pub fn sort_register(text: &str, plugins: &crate::plugins::Plugins) -> Result<St
         let known = strip(line).is_empty()
             || TOPIC.is_match(line)
             || GROUP_HEADING.is_match(line)
-            || DECISION.is_match(line)
+            || card_line(line).is_some()
             || is_indented(line);
         if !known {
             return Err(ReviewError(format!(
