@@ -153,7 +153,7 @@ impl Client {
 
     /// `scoped`: in this client's namespace and database, which must exist.
     #[track_caller]
-    fn call(&self, sql: &str, vars: Value, scoped: bool) -> Result<Vec<Value>, DbError> {
+    pub(crate) fn call(&self, sql: &str, vars: Value, scoped: bool) -> Result<Vec<Value>, DbError> {
         self.requests.fetch_add(1, Ordering::SeqCst);
         let body = cbor::encode(&json!({"id": 1, "method": "query", "params": [sql, vars]}));
         let scope = if scoped {

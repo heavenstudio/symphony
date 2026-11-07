@@ -21,6 +21,17 @@ The heartbeat hook never starts it. `TASKS_SERVER` (an address) and
 history: `just tasks export` writes a readable snapshot to
 `docs/history/tasks.md` when one is worth keeping.
 
+The store takes about what it holds. Every server the board starts keeps each
+value beside its key, where compaction drops the versions a rewrite leaves, and
+logs at most 256 MiB of writes before it moves them to an sstable. SurrealKV's
+default had sent every value over 4 KiB to a value log that only grows: 102 GiB
+held a board of 0.5 GiB. `just tasks-reclaim`, the owner's to run from the main checkout,
+rebuilds a store that grew that way. It stops the server, exports every
+database, imports them into a new store, and checks that store's exports byte
+for byte against the old ones. Only then does it swap the stores and remove the
+old one. The exports stay in `sf-tasks/reclaim/exports/`. `--dir FOLDER`
+rehearses on a copy of `sf-tasks/` (`cp -c`, a clone).
+
 The command is the `tasks` binary (`symphony/crates/tasks`), built from this tree's
 sources once for every worktree that shares them (`tools/rs-bin.sh`): the
 first command after a change to them builds it, which takes a minute or two.
