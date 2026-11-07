@@ -19,6 +19,7 @@ mod fields;
 mod fixture_script;
 mod hand_over_outage;
 mod health;
+mod held_stream;
 mod keyed;
 mod launches;
 mod messages;

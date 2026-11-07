@@ -1,19 +1,22 @@
 //! A loopback relay in front of a board's server, for the tests of a slow board, which a client
 //! with a short wait reaches through it. It holds back the answer of each connection it is told to
 //! hold until it ends, so that client meets its wait on it however loaded the machine is; the request
-//! itself reaches the server at once. No other request that client sends may race its short wait
+//! itself reaches the server at once, and so does each later one on that connection, its answer held
+//! the same way, so a request sent again on the held stream is counted and runs like the first.
+//! No other request that client sends may race its short wait
 //! for the server's answer: once it holds, the relay answers a read on a connection it does not hold
 //! as the server answered that same read before the hold (the rehearsal, which nobody's short wait
 //! bounds), at once and without the server. A test that holds rehearses the reads its client goes on
 //! to send, and writes nothing in between, so the rehearsal's answers are the board's.
-//! The relay never keeps a clock: what it says of the requests waits for each connection it took
-//! to say something or end, and for the server's answer to each request it was sent
-//! ([`Relay::requests`]), not for a time.
+//! The relay never keeps a clock: what it says of the requests waits for each connection made to it
+//! before to be taken, then to say something or end, for each held one to be closed by its caller,
+//! as a client closes one whose answer did not come, and for the server's answer to each request it
+//! was sent ([`Relay::requests`]), not for a time.
 
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Write};
-use std::net::{TcpListener, TcpStream};
-use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
+use std::net::{Shutdown, SocketAddr, TcpListener, TcpStream};
+use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError, mpsc};
 use std::time::Duration;
 use symphony_board::cbor;
 use symphony_board::rpc::{Client, Kind};
@@ -30,7 +33,7 @@ pub(super) struct Relay {
 struct Shared {
     state: Mutex<State>,
     /// Told when a connection first says something or ends, when the server answers a request,
-    /// and when the relay ends.
+    /// when the caller of a held connection closes it, and when the relay ends.
     changed: Condvar,
 }
 
@@ -40,8 +43,12 @@ struct State {
     connections: usize,
     /// Those of them that have sent a request, or ended without one.
     heard: usize,
+    /// The probes made and not taken yet ([`Relay::settled`]), by the address they come from.
+    probes: Vec<SocketAddr>,
     /// The first connection after the hold, and how many from it on are held.
     hold: Option<(usize, usize)>,
+    /// The held connections that have sent a request and that their caller has not closed yet.
+    holding: usize,
     /// Each whole request, with the connection it came on, in the order they came.
     sent: Vec<(usize, Vec<u8>)>,
     /// The requests sent to the server whose answer has not come yet.
@@ -66,6 +73,14 @@ impl Relay {
             for caller in listener.incoming().map_while(Result::ok) {
                 let connection = {
                     let mut state = taken.lock();
+                    let from = caller.peer_addr().ok();
+                    if let Some(probe) = state.probes.iter().position(|probe| Some(*probe) == from)
+                    {
+                        state.probes.swap_remove(probe);
+                        drop(state);
+                        taken.changed.notify_all();
+                        continue;
+                    }
                     state.connections += 1;
                     state.connections - 1
                 };
@@ -84,7 +99,7 @@ impl Relay {
     /// ends, and each read on a later one is answered from the rehearsal: what the server answered
     /// through this relay before now, which must all be reads.
     pub(super) fn hold(&self, held: usize) {
-        let mut state = self.shared.settled();
+        let mut state = self.settled();
         assert!(state.hold.is_none(), "a relay holds once");
         let writes: Vec<String> = state
             .sent
@@ -112,10 +127,12 @@ impl Relay {
 
     /// Each request the relay was sent since the hold (all of them, with none), by the connection
     /// it came on, counted from the hold's first, then as they came on it: that connection, and
-    /// the request's statements. Once every connection taken has said something or ended, and the
-    /// server has answered each request the relay sent it, so what a request did there is done.
+    /// the request's statements. Once every connection taken has said something or ended, every
+    /// held one has been closed by its caller, so what it sent there again before giving up is
+    /// among these, and the server has answered each request the relay sent it, so what a request
+    /// did there is done.
     pub(super) fn requests(&self) -> Vec<(usize, String)> {
-        let state = self.shared.settled();
+        let state = self.settled();
         assert!(
             state.unrehearsed.is_empty(),
             "a connection not held sent what the rehearsal did not answer, so its answer raced the \
@@ -131,6 +148,23 @@ impl Relay {
             .collect();
         sent.sort_by_key(|(connection, _)| *connection);
         sent
+    }
+
+    /// The state once every connection made to the relay before now is taken and settled
+    /// ([`Shared::settled`]). The listener's queue gives connections in the order they were made,
+    /// so a probe made now, which the relay takes as no connection, is taken after each of them.
+    /// The probe is said before the relay can take it, and stays open until it is taken.
+    fn settled(&self) -> MutexGuard<'_, State> {
+        let (probe, from) = {
+            let mut state = self.shared.lock();
+            let probe = TcpStream::connect(&self.addr).unwrap();
+            let from = probe.local_addr().unwrap();
+            state.probes.push(from);
+            (probe, from)
+        };
+        drop(self.shared.until(|state| !state.probes.contains(&from)));
+        drop(probe);
+        self.shared.settled()
     }
 }
 
@@ -153,10 +187,12 @@ impl Shared {
             .unwrap_or_else(PoisonError::into_inner)
     }
 
-    /// The state once every connection taken has said something or ended, and the server has
-    /// answered every request it was sent.
+    /// The state once every connection taken has said something or ended, every held one has been
+    /// closed by its caller, and the server has answered every request it was sent.
     fn settled(&self) -> MutexGuard<'_, State> {
-        self.until(|state| state.heard == state.connections && state.pending == 0)
+        self.until(|state| {
+            state.heard == state.connections && state.holding == 0 && state.pending == 0
+        })
     }
 
     /// A connection taken ended without a request.
@@ -165,17 +201,27 @@ impl Shared {
         self.changed.notify_all();
     }
 
+    /// The caller of a held connection closed it.
+    fn closed(&self) {
+        self.lock().holding -= 1;
+        self.changed.notify_all();
+    }
+
     /// `request`, taken on `connection`: whether its answer is held, and the rehearsal's answer
     /// to it when it is not sent to the server.
     fn took(&self, connection: usize, request: &[u8]) -> (bool, Option<Vec<u8>>) {
         let mut state = self.lock();
-        if !state.sent.iter().any(|(on, _)| *on == connection) {
+        let opening = !state.sent.iter().any(|(on, _)| *on == connection);
+        if opening {
             state.heard += 1;
         }
         state.sent.push((connection, request.to_vec()));
         let (held, rehearsed) = match state.hold {
             Some((first, held)) if connection >= first => {
                 if connection - first < held {
+                    if opening {
+                        state.holding += 1;
+                    }
                     (true, None)
                 } else if let Some(answer) = state.rehearsed.get(request) {
                     (false, Some(answer.clone()))
@@ -210,17 +256,15 @@ impl Shared {
     }
 }
 
-/// Each request `caller` sends on `connection`, answered by the server or by the rehearsal, and when
-/// it is held, only once the relay has ended.
-fn serve(caller: TcpStream, server: &str, shared: &Shared, connection: usize) {
+/// Each request `caller` sends on `connection` until it closes the connection, answered by the
+/// server or by the rehearsal at once; on a held connection every request still goes to the server
+/// as it comes, and the answers only once the relay has ended ([`release`]).
+fn serve(caller: TcpStream, server: &str, shared: &Arc<Shared>, connection: usize) {
     let mut asked = BufReader::new(caller.try_clone().unwrap());
     let mut caller = caller;
-    let mut upstream = None;
-    let Some(mut request) = message(&mut asked) else {
-        shared.silent();
-        return;
-    };
-    loop {
+    let (mut upstream, mut heard, mut held_answers) = (None, false, None);
+    while let Some(request) = message(&mut asked) {
+        heard = true;
         let (held, rehearsed) = shared.took(connection, &request);
         let answer = rehearsed.or_else(|| {
             let answer = forward(&mut upstream, server, &request);
@@ -228,7 +272,9 @@ fn serve(caller: TcpStream, server: &str, shared: &Shared, connection: usize) {
             answer
         });
         if held {
-            drop(shared.until(|state| state.ended));
+            let to = held_answers.get_or_insert_with(|| release(&caller, shared));
+            drop(to.send(answer));
+            continue;
         }
         let Some(answer) = answer else {
             break;
@@ -236,11 +282,30 @@ fn serve(caller: TcpStream, server: &str, shared: &Shared, connection: usize) {
         if caller.write_all(&answer).is_err() {
             break;
         }
-        let Some(next) = message(&mut asked) else {
-            break;
-        };
-        request = next;
     }
+    if !heard {
+        shared.silent();
+    }
+    if held_answers.is_some() {
+        shared.closed();
+    }
+}
+
+/// Where the answers held on `caller`'s connection go: to it once the relay has ended, in the order
+/// they came, up to the first the server did not give, which ends the connection.
+fn release(caller: &TcpStream, shared: &Arc<Shared>) -> mpsc::Sender<Option<Vec<u8>>> {
+    let (held, answers) = mpsc::channel::<Option<Vec<u8>>>();
+    let (mut caller, shared) = (caller.try_clone().unwrap(), Arc::clone(shared));
+    std::thread::spawn(move || {
+        drop(shared.until(|state| state.ended));
+        for answer in answers.iter().map_while(std::convert::identity) {
+            if caller.write_all(&answer).is_err() {
+                break;
+            }
+        }
+        drop(caller.shutdown(Shutdown::Both));
+    });
+    held
 }
 
 /// `request` sent to the server on the connection `upstream` keeps, made if there is none: its
