@@ -8,10 +8,10 @@
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Output;
-use symphony_board::sys::Command;
 
 use serde_json::{Value, json};
 
+use crate::children::command;
 use crate::verdicts::{Board, BoardTask, VerdictError};
 
 pub struct CliBoard {
@@ -110,7 +110,7 @@ impl CliBoard {
     /// The binary with `extra`, `stdin` on its stdin (none if None), run to its end. Its input and
     /// output go through [`symphony_board::sys`]'s pipes, which no child another thread spawns holds open.
     fn output(&self, extra: &[&str], stdin: Option<&str>) -> Result<Output, VerdictError> {
-        let mut command = Command::new(&self.cli[0]);
+        let mut command = command(&self.cli[0]);
         command
             .args(&self.cli[1..])
             .args(extra)

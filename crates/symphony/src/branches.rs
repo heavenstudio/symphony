@@ -15,8 +15,8 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, LazyLock, Mutex};
-use symphony_board::sys::Command;
 
+use crate::children::command;
 use crate::project::Project;
 use crate::register::{Decision, REGION_START, parse_decisions};
 use crate::text::{rstrip, splitlines};
@@ -97,7 +97,7 @@ type Shapes = HashMap<String, HashSet<Shape>>;
 /// census) never holds the answer open.
 fn git(at: &Path, args: &[&str]) -> Option<String> {
     let done = symphony_board::sys::output(
-        Command::new("git")
+        command("git")
             .args(["-c", "diff.autoRefreshIndex=false"])
             .args(args)
             // A live scan can inspect a verdict worktree while its worker stages/commits it.
@@ -180,9 +180,7 @@ fn blobs(at: &Path, specs: &[String]) -> Vec<String> {
         return Vec::new();
     }
     let Ok(mut child) = symphony_board::sys::spawn_piped(
-        Command::new("git")
-            .args(["cat-file", "--batch"])
-            .current_dir(at),
+        command("git").args(["cat-file", "--batch"]).current_dir(at),
     ) else {
         return none();
     };
