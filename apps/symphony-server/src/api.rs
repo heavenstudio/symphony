@@ -13,7 +13,10 @@ use serde_json::json;
 use crate::front::Shared;
 use crate::live::Hub;
 
+mod failure;
 mod warm;
+
+use failure::{task_failure, unavailable};
 pub(crate) use warm::{start, warm};
 
 /// Where a plugin's routes answer: `/x/<route>/<rest>`.
@@ -593,21 +596,6 @@ pub(crate) async fn answer(shared: &Arc<Shared>, request: Request) -> Option<Res
         }
     };
     Some(response)
-}
-
-fn task_failure(error: symphony_board::Error) -> (StatusCode, String) {
-    match error {
-        symphony_board::Error::Refused(_) => (StatusCode::NOT_FOUND, error.to_string()),
-        symphony_board::Error::Db(_) => unavailable(&error.to_string(), ""),
-    }
-}
-
-/// A read route's board failure ([`symphony::taskview::read_failure`]): a board that answered too
-/// late is slow, 504; any other failure is 503, its words after `unreachable`.
-fn unavailable(error: &str, unreachable: &str) -> (StatusCode, String) {
-    let (status, said) = symphony::taskview::read_failure(error, unreachable);
-    let status = StatusCode::from_u16(status).unwrap_or(StatusCode::SERVICE_UNAVAILABLE);
-    (status, said)
 }
 
 fn document_response(

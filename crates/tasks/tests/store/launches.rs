@@ -11,7 +11,7 @@ fn launch(f: &Fixture, slug: &str, role: &str) -> TaskSessionRow {
             claude_session: "11111111-2222-3333-4444-555555555555".into(),
             worktree: "/wt/sim-jump".into(),
             branch: "sim/jump".into(),
-            pane: "w1:p9".into(),
+            pane: "t9".into(),
             model: "sonnet".into(),
             ..NewLaunch::new(slug, &handle, role)
         })
@@ -40,7 +40,7 @@ fn a_launch_is_read_back_whole_and_open_on_the_record() {
             "11111111-2222-3333-4444-555555555555",
             "/wt/sim-jump",
             "sim/jump",
-            "w1:p9",
+            "t9",
             "sonnet"
         )
     );
@@ -61,7 +61,7 @@ fn a_launch_is_read_back_whole_and_open_on_the_record() {
             h.as_str(),
             "system",
             format!(
-                "launched {h} as executor: pane w1:p9, agent session 11111111-2222-3333-4444-555555555555, worktree /wt/sim-jump, branch sim/jump"
+                "launched {h} as executor: pane t9, agent session 11111111-2222-3333-4444-555555555555, worktree /wt/sim-jump, branch sim/jump"
             )
         )
     );
@@ -75,16 +75,14 @@ fn a_session_found_running_is_recorded_as_found() {
     f.store
         .record_launch(&NewLaunch {
             worktree: "/wt/x".into(),
-            pane: "w1:p2".into(),
+            pane: "t2".into(),
             how: "found".into(),
             ..NewLaunch::new("sim/jump", &h, "reviewer")
         })
         .unwrap();
     assert_eq!(
         f.said("sim/jump").last().unwrap(),
-        &format!(
-            "found {h} running as reviewer: pane w1:p2, agent session unknown, worktree /wt/x"
-        )
+        &format!("found {h} running as reviewer: pane t2, agent session unknown, worktree /wt/x")
     );
 }
 
@@ -97,7 +95,7 @@ fn a_session_recorded_without_its_line_leaves_the_thread_as_it_was() {
     let row = f
         .store
         .record_launch(&NewLaunch {
-            pane: "w1:p2".into(),
+            pane: "t2".into(),
             how: "found".into(),
             log: false,
             ..NewLaunch::new("sim/jump", &h, "reviewer")
@@ -179,17 +177,15 @@ fn reopening_gives_the_new_pane_and_clears_the_closure() {
     f.store
         .close_task_session("sim/jump", h, "idle", "restore line")
         .unwrap();
-    f.store
-        .reopen_task_session("sim/jump", h, "w1:p77")
-        .unwrap();
+    f.store.reopen_task_session("sim/jump", h, "t77").unwrap();
     let read = f.store.task_sessions("sim/jump").unwrap().remove(0);
     assert_eq!(
         (read.pane.as_str(), read.closed, read.closed_why.as_str()),
-        ("w1:p77", None, "")
+        ("t77", None, "")
     );
     assert_eq!(
         f.said("sim/jump").last().unwrap(),
-        &format!("restored {h} in pane w1:p77")
+        &format!("restored {h} in pane t77")
     );
     assert_eq!(f.store.open_task_sessions().unwrap(), [read]);
 }
@@ -204,7 +200,7 @@ fn closing_or_reopening_what_was_never_launched_is_refused() {
         format!("{h} has no recorded session on sim/jump")
     );
     assert_eq!(
-        refused(f.store.reopen_task_session("sim/jump", &h, "w1:p1")),
+        refused(f.store.reopen_task_session("sim/jump", &h, "t1")),
         format!("{h} has no recorded session on sim/jump")
     );
 }
@@ -223,7 +219,7 @@ fn launching_again_for_the_same_handle_replaces_the_record() {
             claude_session: "other-id".into(),
             worktree: "/wt/two".into(),
             branch: "b2".into(),
-            pane: "w1:p2".into(),
+            pane: "t2".into(),
             ..NewLaunch::new("sim/jump", &first.handle, "executor")
         })
         .unwrap();

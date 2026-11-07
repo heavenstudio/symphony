@@ -4,24 +4,28 @@
 //! slug as the id (`project` when the folder's has no letter or digit), one entrypoint serving
 //! `docs/` at `/docs/` with `docs/history` skipped, the register `DECISIONS.md` in the first
 //! entrypoint's folder, `artifacts/`, `main`, the Symphony's own theme, every built-in transport
-//! and no panes. An empty file, or none, is a plain project. An unknown table, key or renderer, a
-//! path outside the project (an entrypoint's folder leading out of it through a link too), and an
-//! entrypoint or a file of one on a route another answers are refused by name, so a misspelt
-//! setting never passes for its default and no file is hidden.
+//! and no panes. An empty file, or none, is a plain project. An unknown table or key is refused by
+//! name where the project is loaded or linted ([`Project::load`]) and, where the Symphony runs with
+//! the file as it is ([`Project::of`]), left out by name with the rest read, so a misspelt setting
+//! never passes for its default unsaid, and a file a newer Symphony wrote keeps its settings under
+//! an older one. An `[[entrypoints]]` table and a generator's are strict: a key there the Symphony
+//! does not know refuses the file wherever it is read, since a misspelt one would change what is
+//! served or built. An unknown renderer, a path outside the project (an entrypoint's folder
+//! leading out of it through a link too), and an entrypoint or a file of one on a route another
+//! answers are refused by name, so no file is hidden.
 
 use std::collections::BTreeMap;
 use std::path::{Component, Path, PathBuf};
 use std::sync::{Arc, LazyLock, Mutex, PoisonError};
 use std::time::SystemTime;
 
-use serde::Deserialize;
-
 mod board;
+mod file;
 
 pub use crate::entrypoint::Entrypoint;
 use crate::entrypoint::{SYMPHONY_ROUTES, below, join};
 pub use board::Board;
-use board::FileBoard;
+use file::{File, FileEntrypoint};
 
 /// The project file at a project's root.
 pub const FILE: &str = "symphony.toml";
@@ -29,8 +33,9 @@ pub const FILE: &str = "symphony.toml";
 /// The agent transports the Symphony knows: Claude's inbox socket, Codex's queue, and the inbox a
 /// session without a channel reads.
 pub const TRANSPORTS: [&str; 3] = ["claude-uds", "codex-queue", "inbox"];
-/// The multiplexers agents' panes may run in; `none` for a project without one.
-pub const PANES: [&str; 2] = ["herdr", "none"];
+/// What agents' terminals run in (`hc`, herdr-core, shown in the Herdr app); `none` for a project
+/// without one.
+pub const PANES: [&str; 2] = ["hc", "none"];
 /// The id of a project whose folder's name has no letter or digit to make one of.
 pub const DEFAULT_ID: &str = "project";
 /// The prefix naming a path in the repository's common git folder.
@@ -98,85 +103,6 @@ pub struct Verdicts {
 
 pub use crate::landing::Generator;
 
-/// The file as written: every table and key optional, nothing else allowed.
-#[derive(Default, Deserialize)]
-#[serde(deny_unknown_fields, default)]
-struct File {
-    project: FileProject,
-    entrypoints: Option<Vec<FileEntrypoint>>,
-    plugins: FilePlugins,
-    theme: FileTheme,
-    agents: FileAgents,
-    verdicts: FileVerdicts,
-    board: FileBoard,
-}
-
-#[derive(Default, Deserialize)]
-#[serde(deny_unknown_fields, default)]
-struct FileProject {
-    name: Option<String>,
-    id: Option<String>,
-    register: Option<String>,
-    artifacts: Option<String>,
-    default_branch: Option<String>,
-}
-
-/// One `[[entrypoints]]` table: its URL and folder named, the rest defaulted.
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct FileEntrypoint {
-    url: String,
-    folder: String,
-    #[serde(default)]
-    include: Option<Vec<String>>,
-    #[serde(default)]
-    exclude: Vec<String>,
-    #[serde(default)]
-    types: Option<Vec<String>>,
-    #[serde(default)]
-    history: Vec<String>,
-}
-
-#[derive(Default, Deserialize)]
-#[serde(deny_unknown_fields, default)]
-struct FilePlugins {
-    crates: Vec<String>,
-}
-
-#[derive(Default, Deserialize)]
-#[serde(deny_unknown_fields, default)]
-struct FileTheme {
-    package: Option<String>,
-    icon: Option<String>,
-    stylesheet: Option<String>,
-}
-
-#[derive(Default, Deserialize)]
-#[serde(deny_unknown_fields, default)]
-struct FileAgents {
-    transports: Option<Vec<String>>,
-    panes: Option<String>,
-    worktrees: Option<String>,
-    launch: FileLaunch,
-}
-
-#[derive(Default, Deserialize)]
-#[serde(deny_unknown_fields, default)]
-struct FileLaunch {
-    default: Option<String>,
-    model: Option<String>,
-    effort: Option<String>,
-}
-
-#[derive(Default, Deserialize)]
-#[serde(deny_unknown_fields, default)]
-struct FileVerdicts {
-    check: Vec<String>,
-    land: Vec<String>,
-    generators: Vec<Generator>,
-    record: Option<String>,
-}
-
 impl Project {
     /// The plain project at `root`: every default, its name and id from the folder's name.
     pub fn plain(root: &Path) -> Project {
@@ -188,37 +114,62 @@ impl Project {
     /// an entrypoint a file on a route another answers is an error naming the file and what is
     /// wrong.
     pub fn load(root: &Path) -> Result<Project, String> {
-        let project = Self::read(root)?;
+        let project = match Self::read(root)? {
+            Some(text) => Self::parse(root, &text)?,
+            None => Self::plain(root),
+        };
         project
             .check_files(root, &mut Vec::new())
             .map_err(|e| format!("{FILE}: {e}"))?;
         Ok(project)
     }
 
-    /// The file as [`Project::load`] reads it, before its entrypoints' files are looked at.
-    fn read(root: &Path) -> Result<Project, String> {
+    /// The file at `root` as written, `None` when there is none.
+    fn read(root: &Path) -> Result<Option<String>, String> {
         let path = root.join(FILE);
         match std::fs::read_to_string(&path) {
-            Ok(text) => Self::parse(root, &text),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Self::plain(root)),
+            Ok(text) => Ok(Some(text)),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
             Err(e) => Err(crate::text::os_error(&e, &path)),
         }
     }
 
-    /// `text` as the `symphony.toml` of the project at `root`. The files its entrypoints hold are
-    /// [`Project::load`]'s to look at.
+    /// `text` as written.
+    fn written(text: &str) -> Result<File, String> {
+        toml::from_str(text).map_err(|e| format!("{FILE}: {}", e.to_string().trim_end()))
+    }
+
+    /// `text` as the `symphony.toml` of the project at `root`, a table or key the Symphony does not
+    /// know refused by name and line. The files its entrypoints hold are [`Project::load`]'s to
+    /// look at.
     pub fn parse(root: &Path, text: &str) -> Result<Project, String> {
-        let file: File =
-            toml::from_str(text).map_err(|e| format!("{FILE}: {}", e.to_string().trim_end()))?;
+        let file = Self::written(text)?;
+        if let Some(refusal) = File::refusal(&file.unknown(text)) {
+            return Err(refusal);
+        }
         Self::resolve(root, file).map_err(|e| format!("{FILE}: {e}"))
+    }
+
+    /// The file at `root` as [`Project::of`] reads it, before its entrypoints' files are looked
+    /// at: the project of the settings this build knows, and the names of the tables and keys it
+    /// does not, left out ([`File::unknown`]).
+    fn read_known(root: &Path) -> Result<(Project, Vec<String>), String> {
+        let Some(text) = Self::read(root)? else {
+            return Ok((Self::plain(root), Vec::new()));
+        };
+        let file = Self::written(&text)?;
+        let unknown = file.unknown(&text);
+        let project = Self::resolve(root, file).map_err(|e| format!("{FILE}: {e}"))?;
+        Ok((project, unknown))
     }
 
     /// The project at `root` as [`Project::load`] reads it, cached until its file changes, or an
     /// entry appears, goes or is replaced in a folder whose entries the load looked at: an
     /// entrypoint's folder, or one where a file of an entrypoint would meet another route, or any
-    /// folder under that. A project that does not load leaves the plain project in its place and
-    /// is reported once per version on stderr; `symphony-status --lint` refuses it
-    /// ([`crate::lint::project_problems`]).
+    /// folder under that. A table or key this build does not know is left out and reported once
+    /// per version on stderr, the rest read as written, so a file a newer Symphony wrote keeps its
+    /// settings; a project that does not load leaves the plain project in its place, reported the
+    /// same way. `symphony-status --lint` refuses both ([`crate::lint::project_problems`]).
     pub fn of(root: &Path) -> Arc<Project> {
         type Seen = BTreeMap<PathBuf, (Vec<(PathBuf, Stamp)>, Arc<Project>)>;
         static SEEN: LazyLock<Mutex<Seen>> = LazyLock::new(|| Mutex::new(BTreeMap::new()));
@@ -235,20 +186,28 @@ impl Project {
             (path, stamp)
         };
         let mut stamps = vec![stamped(root.join(FILE))];
-        let loaded = Self::read(root).and_then(|project| {
+        let loaded = Self::read_known(root).and_then(|(project, unknown)| {
             let mut read = Vec::new();
             let checked = project.check_files(root, &mut read);
             read.sort();
             read.dedup();
             stamps.extend(read.into_iter().map(|path| stamped(root.join(path))));
             checked
-                .map(|()| project)
+                .map(|()| (project, unknown))
                 .map_err(|e| format!("{FILE}: {e}"))
         });
-        let project = Arc::new(loaded.unwrap_or_else(|problem| {
-            eprintln!("{}: {problem}; using the defaults", root.display());
-            Self::plain(root)
-        }));
+        let project = Arc::new(match loaded {
+            Ok((project, unknown)) => {
+                if let Some(refusal) = File::refusal(&unknown) {
+                    eprintln!("{}: {refusal}; left out, the rest read", root.display());
+                }
+                project
+            }
+            Err(problem) => {
+                eprintln!("{}: {problem}; using the defaults", root.display());
+                Self::plain(root)
+            }
+        });
         SEEN.lock()
             .unwrap_or_else(PoisonError::into_inner)
             .insert(root.to_path_buf(), (stamps, project.clone()));

@@ -632,7 +632,7 @@ fn pane_closed(f: &Fixture) {
     f.store
         .record_launch(&NewLaunch {
             claude_session: "sess-amber".into(),
-            pane: "w1:p7".into(),
+            pane: "t7".into(),
             ..NewLaunch::new("sim/jump", "amber-heron", "executor")
         })
         .unwrap();

@@ -261,8 +261,8 @@ mod tests {
                 "ROLE kept other orchestrator, in_progress (from next)",
                 Now::Dropped,
             ),
-            ("BLOCKED quiet gone w1:p2 — its pane waits", Now::Dropped),
-            ("BLOCKED kid kept w1:p3 — its pane waits", Now::Kept),
+            ("BLOCKED quiet gone t2 — its terminal waits", Now::Dropped),
+            ("BLOCKED kid kept t3 — its terminal waits", Now::Kept),
             ("STALE quiet — no sign of it for 90 s", Now::Dropped),
             ("STALE kid — no sign of it for 90 s", Now::Kept),
             (

@@ -193,6 +193,41 @@ fn maintenance_detects_message_counters_task_stamps_deletions_and_model_changes(
     assert_eq!(maintain(&f.store, &mut fake).sources, 0);
 }
 
+/// The checkpoint a pass writes is one digest whatever the board holds, and replaces the whole
+/// snapshot an older pass kept, which never counts as current.
+#[test]
+fn the_maintenance_checkpoint_is_one_digest_on_any_board_and_replaces_an_older_snapshot() {
+    let seed = (0..300).fold(Seed::default(), |seed, n| {
+        seed.task(&format!("area/a-long-task-slug-{n:03}"), "ready")
+    });
+    let f = Fixture::new(seed);
+    // What an older pass kept for this very board, which that pass took as current.
+    f.other_client()
+        .write(
+            "UPSERT task_embedding_checkpoint:board SET snapshot = {model: 'fake-v1',
+                message: {last: (SELECT VALUE last FROM ONLY counter:message) ?? 0,
+                    ts: (SELECT VALUE ts FROM ONLY counter:message) ?? 0},
+                tasks: (SELECT slug, updated, version FROM task ORDER BY slug)};",
+            json!({}),
+        )
+        .unwrap();
+    let mut fake = Fake::default();
+    assert_eq!(maintain(&f.store, &mut fake).sources, 300);
+    let row = f
+        .other_client()
+        .query(
+            "RETURN SELECT * OMIT id FROM ONLY task_embedding_checkpoint:board;",
+            json!({}),
+        )
+        .unwrap()
+        .remove(0);
+    let digest = row["digest"].as_str().unwrap().to_owned();
+    assert_eq!(row, json!({"digest": digest}));
+    assert_eq!(digest.len(), 64);
+    assert!(digest.chars().all(|c| c.is_ascii_hexdigit()), "{digest}");
+    assert_eq!(maintain(&f.store, &mut fake).sources, 0);
+}
+
 #[test]
 fn failed_and_racing_passes_leave_work_visible_to_the_next_maintenance_child() {
     let f = Fixture::new(Seed::default().task("cached/task", "ready"));

@@ -1,10 +1,11 @@
-//! The commands that drive herdr panes: `launch`, `restore`, `cleanup`, `reap` and `finish`, and the
-//! cleanup after a task finishes, each a call into [`crate::launch`] and the lines it says. A refusal
-//! (a herdr or git step that failed, or the board's) is exit 1, a board that cannot be reached exit 2.
+//! The commands that drive agents' hc terminals: `launch`, `restore`, `cleanup`, `reap` and
+//! `finish`, and the cleanup after a task finishes, each a call into [`crate::launch`] and the lines
+//! it says. The caller's own terminal (`HC_TERMINAL_ID`) is never closed. A refusal (an hc or git
+//! step that failed, or the board's) is exit 1, a board that cannot be reached exit 2.
 
 use super::{Context, Stop};
 use crate::Store;
-use crate::launch::herdr::Binary;
+use crate::launch::hc::Binary;
 use crate::launch::reap::{self, REAP_SECONDS, Reap};
 use crate::launch::{self, Ask, Machine, procs};
 
@@ -38,17 +39,7 @@ pub(super) fn launch(store: &Store, c: &mut Context) -> Result<(), Stop> {
         "launched {} on {} as {}: pane {}, agent session {}, worktree {}",
         s.handle, s.slug, s.role, s.pane, s.claude_session, s.worktree
     ));
-    if started.stuck {
-        c.say(&stuck(&s.pane));
-    }
     Ok(())
-}
-
-/// What is said when a prompt still sits in a pane's input line after the last enter.
-fn stuck(pane: &str) -> String {
-    format!(
-        "the prompt still sits in pane {pane}'s input line: `herdr pane send-keys {pane} enter` sends it"
-    )
 }
 
 /// `restore SLUG [HANDLE]`.
@@ -69,9 +60,6 @@ pub(super) fn restore(store: &Store, c: &mut Context) -> Result<(), Stop> {
             "restored {} on {}: pane {}, claude session {}",
             r.handle, r.slug, r.pane, r.claude_session
         ));
-        if s.stuck {
-            c.say(&stuck(&r.pane));
-        }
     }
     if again.is_empty() {
         c.say(&format!(
@@ -89,7 +77,6 @@ pub(super) fn cleanup(store: &Store, c: &mut Context) -> Result<(), Stop> {
         &Binary::of(c.env),
         &*procs::table(c.env),
         dry_run,
-        c.env.var("HERDR_PANE_ID"),
         &[],
     )?;
     for closure in &closures {
@@ -146,7 +133,6 @@ pub(super) fn reap(store: &Store, c: &mut Context) -> Result<(), Stop> {
         state: reap::state_path(c.env, &c.env.cwd).map_err(Stop::Board)?,
         apply: !dry_run,
         processes: &*processes,
-        current_pane: c.env.var("HERDR_PANE_ID"),
         caller: caller.as_deref(),
         min_idle: REAP_SECONDS,
     };
@@ -190,17 +176,10 @@ pub(super) fn finish(store: &Store, c: &mut Context) -> Result<(), Stop> {
     Ok(())
 }
 
-/// The panes of the sessions launched on finished `slug` or under it close ([`launch::finish`]),
-/// each closed pane a line; what went wrong is said, and nothing fails.
+/// The terminals of the sessions launched on finished `slug` or under it close
+/// ([`launch::finish`]), each closed one a line; what went wrong is said, and nothing fails.
 pub(super) fn close_finished(store: &Store, c: &mut Context, slug: &str) {
-    let herdr = Binary::of(c.env);
-    let lines = launch::finish(
-        store,
-        &herdr,
-        &*procs::table(c.env),
-        slug,
-        c.env.var("HERDR_PANE_ID"),
-    );
+    let lines = launch::finish(store, &Binary::of(c.env), &*procs::table(c.env), slug);
     for line in lines {
         c.say(&format!("→ {line}"));
     }

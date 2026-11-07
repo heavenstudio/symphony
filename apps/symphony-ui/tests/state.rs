@@ -5,7 +5,9 @@ mod common;
 
 use common::{board, delta};
 use symphony_api::{Change, Delta};
-use symphony_ui::state::{Backoff, Notice, Region, apply, reload_for};
+use symphony_ui::state::{
+    Backoff, Notice, Region, Toasts, apply, keeps_panel_baseline, reload_for,
+};
 
 #[test]
 fn a_card_event_changes_that_card_and_nothing_else() {
@@ -210,4 +212,111 @@ fn a_region_this_client_does_not_know_moves_nothing() {
 
 fn board_card() -> symphony_api::Card {
     board("board.json").next[1].clone()
+}
+
+fn activity(id: &str) -> symphony_api::ActivityItem {
+    symphony_api::ActivityItem {
+        id: id.into(),
+        kind: "question".into(),
+        path: "docs/PROBE.md".into(),
+        slug: format!("Unread {id}"),
+        ts: "2026-11-02T06:00:00Z".into(),
+        text: "A real activity notification".into(),
+        href: "/docs/PROBE.md".into(),
+        answered: false,
+    }
+}
+
+fn up(toasts: &Toasts) -> Vec<&str> {
+    toasts.items().map(|item| item.id.as_str()).collect()
+}
+
+#[test]
+fn an_earlier_batch_expiring_leaves_a_later_batch_up() {
+    let mut toasts = Toasts::default();
+    let first = toasts.arrive(vec![activity("a")]);
+    let second = toasts.arrive(vec![activity("b"), activity("c")]);
+    assert_ne!(first, second);
+    toasts.expire(first);
+    assert_eq!(
+        up(&toasts),
+        ["b", "c"],
+        "the later batch keeps its own time"
+    );
+    toasts.expire(first);
+    assert_eq!(
+        up(&toasts),
+        ["b", "c"],
+        "an expiry that already ran changes nothing"
+    );
+    toasts.expire(second);
+    assert!(up(&toasts).is_empty());
+}
+
+#[test]
+fn a_dismissed_batch_expiring_takes_down_no_later_toast() {
+    let mut toasts = Toasts::default();
+    let first = toasts.arrive(vec![activity("a"), activity("b")]);
+    toasts.dismiss("a");
+    toasts.dismiss("b");
+    toasts.arrive(vec![activity("c"), activity("d")]);
+    toasts.expire(first);
+    assert_eq!(up(&toasts), ["c", "d"]);
+}
+
+#[test]
+fn at_most_three_toasts_are_up_and_the_newest_stay() {
+    let mut toasts = Toasts::default();
+    toasts.arrive(vec![activity("a"), activity("b")]);
+    let second = toasts.arrive(vec![activity("c"), activity("d")]);
+    assert_eq!(up(&toasts), ["b", "c", "d"]);
+    toasts.arrive((0..4).map(|n| activity(&format!("e{n}"))).collect());
+    assert_eq!(
+        up(&toasts),
+        ["e1", "e2", "e3"],
+        "one batch past the cap keeps its newest"
+    );
+    toasts.expire(second);
+    assert_eq!(up(&toasts), ["e1", "e2", "e3"]);
+}
+
+#[test]
+fn dismissing_takes_down_that_toast_alone() {
+    let mut toasts = Toasts::default();
+    toasts.arrive(vec![activity("a"), activity("b")]);
+    toasts.dismiss("a");
+    assert_eq!(up(&toasts), ["b"]);
+    toasts.dismiss("missing");
+    assert_eq!(up(&toasts), ["b"]);
+}
+
+#[test]
+fn the_panel_baseline_holds_from_an_arrival_until_the_panel_is_ready() {
+    let none = None::<&[&str]>;
+    let (empty, one, two) = (Some(&[][..]), Some(&["a"][..]), Some(&["a", "b"][..]));
+    assert!(
+        !keeps_panel_baseline(none, empty, false),
+        "no baseline yet: the first is taken"
+    );
+    assert!(
+        !keeps_panel_baseline(empty, none, false),
+        "nothing known before the first read"
+    );
+    assert!(
+        !keeps_panel_baseline(one, one, false),
+        "no arrival since the baseline"
+    );
+    assert!(
+        !keeps_panel_baseline(two, one, false),
+        "an id going away is no arrival"
+    );
+    assert!(
+        keeps_panel_baseline(empty, one, false),
+        "an announced arrival keeps the ids from before it while the panel loads"
+    );
+    assert!(keeps_panel_baseline(one, two, false));
+    assert!(
+        !keeps_panel_baseline(empty, one, true),
+        "a ready panel follows the activity itself"
+    );
 }

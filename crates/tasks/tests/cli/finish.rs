@@ -1,12 +1,12 @@
 //! `finish`, and the cleanup after a task finishes, on the launch commands' private board and
 //! throwaway repository.
 
-use crate::launch::Panes;
+use crate::launch::Terminals;
 use symphony_board::{NewLaunch, NewSession, NewTask};
 
 /// A task `sim/a` with a session launched on `on` (it, or an instruction subtask under it), in the
-/// idle pane `w1:p1`, and claimed there: the worker that runs it.
-fn launched_on(p: &Panes, on: &str) -> String {
+/// idle terminal `t1`, and claimed there: the worker that runs it.
+fn launched_on(p: &Terminals, on: &str) -> String {
     let board = p.board();
     let orch = board
         .register(&NewSession::new("orchestrator"))
@@ -34,18 +34,18 @@ fn launched_on(p: &Panes, on: &str) -> String {
             handle: worker.clone(),
             role: "executor".into(),
             claude_session: "c".into(),
-            pane: "w1:p1".into(),
+            pane: "t1".into(),
             ..NewLaunch::default()
         })
         .unwrap();
     board.claim(on, &worker).unwrap();
-    p.idle_pane(&worker);
+    p.idle_terminal(&worker);
     worker
 }
 
 fn closed_line(on: &str, worker: &str) -> String {
     format!(
-        "→ closed pane w1:p1 of {worker} (its tasks are finished); restore: just tasks restore {on} {worker}\n"
+        "→ closed pane t1 of {worker} (its tasks are finished); restore: just tasks restore {on} {worker}\n"
     )
 }
 
@@ -55,7 +55,7 @@ fn a_task_that_finishes_with_a_session_launched_on_it_is_cleaned_up_after() {
         ("sim/a", &["move", "sim/a", "cancelled"][..], "cancelled"),
         ("sim/a/do", &["done", "sim/a/do", "it is"][..], "done"),
     ] {
-        let p = Panes::new("finish");
+        let p = Terminals::new("finish");
         let worker = launched_on(&p, on);
         let ran = p.as_(&worker, args);
         assert_eq!(
@@ -67,13 +67,13 @@ fn a_task_that_finishes_with_a_session_launched_on_it_is_cleaned_up_after() {
             ),
             "{args:?}"
         );
-        assert_eq!(p.pane_ids(), Vec::<String>::new());
+        assert_eq!(p.addresses(), Vec::<String>::new());
     }
 }
 
 #[test]
 fn a_verdict_that_finishes_a_task_is_cleaned_up_after() {
-    let p = Panes::new("verdict");
+    let p = Terminals::new("verdict");
     let worker = launched_on(&p, "sim/a");
     let board = p.board();
     board.move_to("sim/a", "review", &worker).unwrap();
@@ -92,7 +92,7 @@ fn a_verdict_that_finishes_a_task_is_cleaned_up_after() {
 
 #[test]
 fn a_session_launched_on_a_task_below_counts_for_the_one_that_finishes() {
-    let p = Panes::new("below");
+    let p = Terminals::new("below");
     let worker = launched_on(&p, "sim/a/do");
     p.board().done("sim/a/do", &worker, "did it").unwrap(); // on the board itself: no cleanup yet
     let orch = p.board().get("sim/a").unwrap().created_by;
@@ -104,8 +104,8 @@ fn a_session_launched_on_a_task_below_counts_for_the_one_that_finishes() {
 }
 
 #[test]
-fn nothing_is_asked_of_herdr_for_a_task_no_session_was_launched_on_or_one_still_open() {
-    let p = Panes::new("quiet");
+fn nothing_is_asked_of_hc_for_a_task_no_session_was_launched_on_or_one_still_open() {
+    let p = Terminals::new("quiet");
     let worker = launched_on(&p, "sim/a");
     let board = p.board();
     board.create(&NewTask::new("sim/b", "B", &worker)).unwrap();
@@ -122,13 +122,13 @@ fn nothing_is_asked_of_herdr_for_a_task_no_session_was_launched_on_or_one_still_
 }
 
 #[test]
-fn a_finish_that_cannot_read_the_process_table_keeps_the_pane_and_names_the_failure() {
+fn a_finish_that_cannot_read_the_process_table_keeps_the_terminal_and_names_the_failure() {
     for (on, args, status) in [
         ("sim/a", &["move", "sim/a", "cancelled"][..], "cancelled"),
         ("sim/a/do", &["done", "sim/a/do", "it is"][..], "done"),
     ] {
         for table in [None, Some("    1     0 /sbin/launchd\n")] {
-            let p = Panes::new("finish-no-table");
+            let p = Terminals::new("finish-no-table");
             let worker = launched_on(&p, on);
             let why = no_table(&p, table);
             let ran = p.as_(&worker, args);
@@ -137,21 +137,21 @@ fn a_finish_that_cannot_read_the_process_table_keeps_the_pane_and_names_the_fail
                 (
                     0,
                     format!(
-                        "{on} is {status}\n→ kept pane w1:p1 of {worker} (never closed on no information: {why})\n"
+                        "{on} is {status}\n→ kept pane t1 of {worker} (never closed on no information: {why})\n"
                     ),
                     ""
                 ),
                 "{args:?} {table:?}"
             );
-            assert_eq!(p.pane_ids(), ["w1:p1"]);
+            assert_eq!(p.addresses(), ["t1"]);
             assert_eq!(p.board().get(on).unwrap().status, status);
         }
     }
 }
 
 /// The process table the commands read made useless: none (`table` is None), or `table`, which
-/// lists no shell of the pane's. What each kept pane's line says of it.
-fn no_table(p: &Panes, table: Option<&str>) -> String {
+/// lists no process of the terminal's. What each kept terminal's line says of it.
+fn no_table(p: &Terminals, table: Option<&str>) -> String {
     let file = p.ps_table();
     match table {
         None => {
@@ -169,9 +169,9 @@ fn no_table(p: &Panes, table: Option<&str>) -> String {
 }
 
 #[test]
-fn a_cleanup_that_cannot_read_the_process_table_keeps_the_pane_and_names_the_failure() {
+fn a_cleanup_that_cannot_read_the_process_table_keeps_the_terminal_and_names_the_failure() {
     for table in [None, Some("garbage only\n")] {
-        let p = Panes::new("cleanup-no-table");
+        let p = Terminals::new("cleanup-no-table");
         let worker = launched_on(&p, "sim/a");
         p.board().move_to("sim/a", "cancelled", &worker).unwrap(); // on the board itself
         let why = no_table(&p, table);
@@ -181,25 +181,23 @@ fn a_cleanup_that_cannot_read_the_process_table_keeps_the_pane_and_names_the_fai
                 (ran.code, ran.out, ran.err.as_str()),
                 (
                     0,
-                    format!(
-                        "kept pane w1:p1 of {worker} (never closed on no information: {why})\n"
-                    ),
+                    format!("kept pane t1 of {worker} (never closed on no information: {why})\n"),
                     ""
                 ),
                 "{args:?} {table:?}"
             );
         }
-        assert_eq!(p.pane_ids(), ["w1:p1"]);
+        assert_eq!(p.addresses(), ["t1"]);
     }
 }
 
 #[test]
 fn a_cleanup_that_fails_is_said_and_the_status_change_stands() {
     for (key, value, why) in [
-        ("FAKE_HERDR_FAIL", "pane list", "herdr pane list failed: "),
-        ("HERDR_BIN", "/no/such/herdr", "herdr pane list: "),
+        ("FAKE_HC_FAIL", "ls", "hc ls: fake_failure: ls failed"),
+        ("HC_BIN", "/no/such/hc", "hc ls: "),
     ] {
-        let mut p = Panes::new("fails");
+        let mut p = Terminals::new("fails");
         let worker = launched_on(&p, "sim/a");
         p.set(key, value);
         let ran = p.as_(&worker, &["move", "sim/a", "cancelled"]);
@@ -217,7 +215,7 @@ fn a_cleanup_that_fails_is_said_and_the_status_change_stands() {
 
 #[test]
 fn finish_closes_what_a_finished_task_left_and_needs_no_session() {
-    let p = Panes::new("finish-command");
+    let p = Terminals::new("finish-command");
     let worker = launched_on(&p, "sim/a");
     p.board().move_to("sim/a", "cancelled", &worker).unwrap(); // on the board itself, as `just land` does
     let ran = p.run(&["finish", "sim/a"]);

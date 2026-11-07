@@ -1,4 +1,4 @@
-//! What follows a task's move: a finished task's pane closes and its sweep starts; a task in
+//! What follows a task's move: a finished task's terminals close and its sweep starts; a task in
 //! review starts its tip's verify, the board's `on_review` command, said in one line.
 
 use super::{Context, panes};
@@ -23,7 +23,7 @@ pub(super) fn after_move(store: &Store, c: &mut Context, task: &Task) {
     }
 }
 
-/// A finished task's pane closes and the worktree sweep is asked for.
+/// A finished task's terminals close and the worktree sweep is asked for.
 pub(super) fn after_finish(store: &Store, c: &mut Context, task: &Task) {
     if !FINISHED.contains(&task.status.as_str()) {
         return;

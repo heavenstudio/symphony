@@ -93,7 +93,7 @@ fn a_stale_child_running_a_test_leaves_idle_callback_rows_unchanged() {
             .env_remove("GIT_WORK_TREE")
             .env_remove("GIT_COMMON_DIR")
             .env(CHILD, "1")
-            .env("HERDR_BIN", "/usr/bin/false")
+            .env("HC_BIN", "/usr/bin/false")
             )
             .unwrap();
         assert!(output.status.success(), "{output:?}");
@@ -617,7 +617,7 @@ fn due_ticks_probe_once_and_idle_cursor_changes_do_not_probe() {
     ));
     std::fs::create_dir_all(&dir).unwrap();
     let directory = CommandDirectory(dir.clone());
-    let herdr = dir.join("herdr");
+    let hc = dir.join("hc");
     let log = dir.join("probes");
     let git = dir.join("git");
     let git_log = dir.join("repository-probes");
@@ -627,15 +627,15 @@ fn due_ticks_probe_once_and_idle_cursor_changes_do_not_probe() {
         false,
     );
     crate::fixture_script::write(
-        &herdr,
-        "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$PROBE_LOG\"\nprintf '%s\\n' '{\"result\":{\"panes\":[]}}'\n",
+        &hc,
+        "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$PROBE_LOG\"\nprintf '%s\\n' '{\"terminals\":[]}'\n",
         false,
     );
     let git_image = std::fs::metadata(&git).unwrap();
-    let herdr_image = std::fs::metadata(&herdr).unwrap();
+    let hc_image = std::fs::metadata(&hc).unwrap();
     assert_eq!(
         (git_image.dev(), git_image.ino()),
-        (herdr_image.dev(), herdr_image.ino())
+        (hc_image.dev(), hc_image.ino())
     );
     f.store
         .client()
@@ -662,7 +662,9 @@ fn due_ticks_probe_once_and_idle_cursor_changes_do_not_probe() {
                 .env("TASKS_DATABASE", f.store.client().database())
                 .env("TASKS_NOW", f.now().to_string())
                 .env("TASKS_SWEEP", "off")
-                .env("HERDR_BIN", &herdr)
+                // The command's own dispatch is the one counted: it ends before the count is read.
+                .env("TASKS_DISPATCH", "inline")
+                .env("HC_BIN", &hc)
                 .env("CODEX_THREAD_ID", "")
                 .env("CLAUDE_SESSION_ID", "")
                 .env("PROBE_LOG", &log)
@@ -1387,6 +1389,8 @@ done
             .env("TASKS_DATABASE", f.store.client().database())
             .env("TASKS_NOW", f.now().to_string())
             .env("TASKS_SWEEP", "off")
+            // Each command's deliveries end with it, so the stand-in's log is read after them all.
+            .env("TASKS_DISPATCH", "inline")
             .env("CODEX_THREAD_ID", "")
             .env("CLAUDE_SESSION_ID", "")
             .env("PATH", &path)

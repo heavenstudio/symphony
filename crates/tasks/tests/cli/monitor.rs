@@ -1,8 +1,8 @@
 //! Monitor/attach harness with TASKS_NOW pinned: time advances only at waits.
 //! A wait writes STEP <now> to stderr and reads a line before the next look;
 //! between(n) changes state between look n and its successor.
-//! Each case owns its repository, slot locks and landed branches. Fake herdr
-//! returns a file of panes and counts each query. The in-process command uses
+//! Each case owns its repository, slot locks and landed branches. A stand-in hc
+//! returns a file of terminals and counts each query. The in-process command uses
 //! the case's stdin/stderr, keeping steps under the test's control.
 
 use crate::beat::{bash, tool};
@@ -59,7 +59,7 @@ struct Monitor {
     repo: PathBuf,
     now: Cell<f64>,
     lines: RefCell<Vec<String>>,
-    /// What herdr answers, once `herdr()` is called.
+    /// What hc answers, once `hc()` is called.
     panes: RefCell<Value>,
     slots: Cell<usize>,
 }
@@ -108,9 +108,9 @@ impl Monitor {
         let repo = repository(&dir.join("repo"));
         let mut c = Case::new();
         c.env.cwd = repo.clone();
-        // herdr cannot be asked until `herdr()`.
-        let none = dir.join("no-herdr").display().to_string();
-        c.env.vars.insert("HERDR_BIN".into(), none);
+        // hc cannot be asked until `hc()`.
+        let none = dir.join("no-hc").display().to_string();
+        c.env.vars.insert("HC_BIN".into(), none);
         Monitor {
             c,
             dir,
@@ -160,31 +160,31 @@ impl Monitor {
         assert_eq!((ran.code, ran.out.as_str(), ran.err.as_str()), (0, "", ""));
     }
 
-    /// herdr answers the panes as they are when the monitor starts; the file returned counts its calls.
-    fn herdr(&mut self) -> PathBuf {
-        let (state, calls) = (self.dir.join("herdr.json"), self.dir.join("herdr.calls"));
+    /// hc answers the terminals as they are when the monitor starts; the file returned counts its calls.
+    fn hc(&mut self) -> PathBuf {
+        let (state, calls) = (self.dir.join("hc.json"), self.dir.join("hc.calls"));
         fs::write(&calls, "").unwrap();
         let bin = format!(
             "sh -c 'echo >>\"$1\"; cat \"$0\"' '{}' '{}'",
             state.display(),
             calls.display()
         );
-        self.c.env.vars.insert("HERDR_BIN".into(), bin);
+        self.c.env.vars.insert("HC_BIN".into(), bin);
         calls
     }
 
-    /// herdr as the crate's `fake-herdr`, found on PATH as `herdr`; its panes `panes` in the file
+    /// hc as the crate's `fake-hc`, found on PATH as `hc`; its terminals `terminals` in the file
     /// returned, which a case rewrites between looks.
-    fn fake_herdr(&mut self, panes: Value) -> PathBuf {
+    fn fake_hc(&mut self, terminals: Value) -> PathBuf {
         let bin = self.dir.join("bin");
         fs::create_dir_all(&bin).unwrap();
-        std::os::unix::fs::symlink(env!("CARGO_BIN_EXE_fake-herdr"), bin.join("herdr")).unwrap();
-        let state = self.dir.join("fake-herdr.json");
-        fs::write(&state, json!({ "panes": panes }).to_string()).unwrap();
+        std::os::unix::fs::symlink(env!("CARGO_BIN_EXE_fake-hc"), bin.join("hc")).unwrap();
+        let state = self.dir.join("fake-hc.json");
+        fs::write(&state, json!({ "terminals": terminals }).to_string()).unwrap();
         let vars = &mut self.c.env.vars;
-        vars.remove("HERDR_BIN");
+        vars.remove("HC_BIN");
         vars.insert("PATH".into(), format!("{}:/usr/bin:/bin", bin.display()));
-        vars.insert("FAKE_HERDR_STATE".into(), state.display().to_string());
+        vars.insert("FAKE_HC_STATE".into(), state.display().to_string());
         state
     }
 
@@ -195,8 +195,8 @@ impl Monitor {
     /// `attach --resume HANDLE` until its polls are done, `between(n)` after its n-th wait; what it
     /// printed after its first line goes to `lines`.
     fn watch(&self, handle: &str, w: Watch, between: &dyn Fn(&Monitor, usize)) {
-        let state = json!({"result": {"panes": *self.panes.borrow()}});
-        fs::write(self.dir.join("herdr.json"), state.to_string()).unwrap();
+        let state = json!({"terminals": *self.panes.borrow()});
+        fs::write(self.dir.join("hc.json"), state.to_string()).unwrap();
         let mut env = self.at().env;
         env.vars
             .insert("TASKS_PULL_SECONDS".into(), format!("{:?}", w.pull_every));
@@ -763,9 +763,9 @@ fn idle_agents_come_from_the_agents_view() {
     let mut m = Monitor::new("idle-agents");
     let (orch, worker) = (m.register("orchestrator"), m.register("worker"));
     m.board().bind_agent("sess-w", &worker, false).unwrap();
-    m.herdr();
-    *m.panes.borrow_mut() = json!([{"pane_id": "w1:p1", "agent": "claude", "agent_status": "idle",
-                                    "agent_session": {"value": "sess-w"}, "cwd": "/x"}]);
+    m.hc();
+    *m.panes.borrow_mut() = json!([{"address": "t1", "agent": "claude", "status": "idle",
+                                    "name": worker, "cwd": "/x", "state": "live"}]);
     m.watch(&orch, Watch::polls(1), &idle);
     assert!(m.pulls()[0].contains("idle=1"), "{:?}", m.lines());
     assert!(m.has(&format!("  idle {worker}")), "{:?}", m.lines());
@@ -778,7 +778,7 @@ fn launched_child(m: &Monitor) -> (String, String) {
         claude_session: "sess-c".into(),
         worktree: "/wt/child".into(),
         branch: "sim/a".into(),
-        pane: "w1:p1".into(),
+        pane: "t1".into(),
         ..NewLaunch::new("sim/a", &child, "executor")
     };
     m.board().record_launch(&launch).unwrap();
@@ -813,8 +813,8 @@ fn the_same_child_is_lost_once_its_run_is_gone() {
 }
 
 #[test]
-fn a_poll_asks_herdr_once_however_many_children_are_quiet() {
-    let mut m = Monitor::new("herdr-once");
+fn a_poll_asks_hc_once_however_many_children_are_quiet() {
+    let mut m = Monitor::new("hc-once");
     let orch = m.register("orchestrator");
     let children: Vec<String> = (0..5).map(|_| m.child("worker", &orch)).collect();
     for (i, child) in children.iter().enumerate() {
@@ -827,7 +827,7 @@ fn a_poll_asks_herdr_once_however_many_children_are_quiet() {
         .map(|c| m.last_seen(c))
         .fold(f64::MIN, f64::max);
     m.now.set(latest);
-    let calls = m.herdr();
+    let calls = m.hc();
     let w = Watch {
         beat: 1000.0,
         ..Watch::past_the_lost_line()
@@ -841,12 +841,12 @@ fn a_poll_asks_herdr_once_however_many_children_are_quiet() {
 
 #[test]
 fn a_poll_with_nobody_quiet_asks_nothing_but_the_digest_at_attach() {
-    let mut m = Monitor::new("herdr-quiet");
+    let mut m = Monitor::new("hc-quiet");
     let orch = m.register("orchestrator");
     let child = m.child("worker", &orch);
     m.ok(&orch, &["create", "sim/a", "A"]);
     m.ok(&child, &["claim", "sim/a"]);
-    let calls = m.herdr();
+    let calls = m.hc();
     m.watch(&orch, Watch::polls(3), &idle);
     assert_eq!(Monitor::asked(&calls), 1);
 }
@@ -882,13 +882,13 @@ fn an_unlaunched_child_verifying_in_a_trial_merge_is_neither_lost_nor_orphaning_
     // An orphan entry would trigger a PULL; the verifying child creates no actionable gap.
 }
 
-/// `launched_child`'s pane, `w1:p1`, as herdr reports it.
+/// `launched_child`'s terminal, `t1`, as hc keeps it.
 fn child_pane(status: &str) -> Value {
-    json!({"pane_id": "w1:p1", "agent": "claude", "agent_status": status,
-           "agent_session": {"value": "sess-c"}, "cwd": "/wt/child"})
+    json!({"address": "t1", "agent": "claude", "status": status, "state": "live",
+           "cwd": "/wt/child"})
 }
 
-/// The pane watch's lines.
+/// The terminal watch's lines.
 fn watched(m: &Monitor) -> Vec<String> {
     m.starting(&["BLOCKED ", "WATCH "])
 }
@@ -896,10 +896,11 @@ fn watched(m: &Monitor) -> Vec<String> {
 #[test]
 fn a_blocked_pane_is_said_once_until_it_is_answered_and_blocks_again() {
     let mut m = Monitor::new("blocked-once");
-    let state = m.fake_herdr(json!([child_pane("working")]));
+    let state = m.fake_hc(json!([child_pane("working")]));
     let (orch, child) = launched_child(&m);
     let set = |status: &str| {
-        fs::write(&state, json!({ "panes": [child_pane(status)] }).to_string()).unwrap()
+        let terminals = json!({ "terminals": [child_pane(status)] });
+        fs::write(&state, terminals.to_string()).unwrap()
     };
     m.watch(&orch, Watch::polls(5), &|_, n| match n {
         0 | 3 => set("blocked"),
@@ -907,7 +908,7 @@ fn a_blocked_pane_is_said_once_until_it_is_answered_and_blocks_again() {
         _ => {}
     });
     let blocked =
-        format!("BLOCKED {child} sim/a w1:p1 — its pane waits on an approval or a question");
+        format!("BLOCKED {child} sim/a t1 — its terminal waits on an approval or a question");
     assert_eq!(watched(&m), [blocked.clone(), blocked]);
 }
 
@@ -918,16 +919,17 @@ fn only_the_orchestrator_of_a_blocked_sessions_work_hears_it() {
     let orch = m.register("orchestrator");
     m.ok(&orch, &["role", "sim/a", "orchestrator"]);
     let other = m.register("orchestrator");
-    // The orchestrator's own pane, and one no session holds, wait too.
+    // The orchestrator's own terminal, and one no session holds, wait too.
     let own = NewLaunch {
-        pane: "w1:p2".into(),
+        pane: "t2".into(),
         ..NewLaunch::new("sim/a", &orch, "reviewer")
     };
     m.board().record_launch(&own).unwrap();
-    let pane = |id: &str| json!({"pane_id": id, "agent": "codex", "agent_status": "blocked"});
-    m.fake_herdr(json!([child_pane("blocked"), pane("w1:p2"), pane("w1:p9")]));
+    let pane =
+        |id: &str| json!({"address": id, "agent": "codex", "status": "blocked", "state": "live"});
+    m.fake_hc(json!([child_pane("blocked"), pane("t2"), pane("t9")]));
     let blocked =
-        format!("BLOCKED {child} sim/a w1:p1 — its pane waits on an approval or a question");
+        format!("BLOCKED {child} sim/a t1 — its terminal waits on an approval or a question");
     for (who, heard) in [
         (&other, vec![]),
         (&parent, vec![]), // its parent, another orchestrator: the work is orch's, as for LOST
@@ -940,25 +942,25 @@ fn only_the_orchestrator_of_a_blocked_sessions_work_hears_it() {
 }
 
 #[test]
-fn herdr_absent_is_said_once() {
-    let m = Monitor::new("herdr-absent");
+fn hc_absent_is_said_once() {
+    let m = Monitor::new("hc-absent");
     let (orch, _) = launched_child(&m);
     m.watch(&orch, Watch::polls(5), &idle);
     assert_eq!(
         watched(&m),
         [
-            "WATCH herdr unanswered: herdr pane list: No such file or directory (os error 2) — blocked panes go unreported until it answers"
+            "WATCH hc unanswered: hc ls: No such file or directory (os error 2) — blocked terminals go unreported until it answers"
         ]
     );
 }
 
 #[test]
-fn herdr_failing_is_said_once_and_the_block_it_hid_is_said_when_it_answers() {
-    let mut m = Monitor::new("herdr-failing");
-    let state = m.fake_herdr(json!([child_pane("blocked")]));
+fn hc_failing_is_said_once_and_the_block_it_hid_is_said_when_it_answers() {
+    let mut m = Monitor::new("hc-failing");
+    let state = m.fake_hc(json!([child_pane("blocked")]));
     let (orch, child) = launched_child(&m);
     let set = |text: String| fs::write(&state, text).unwrap();
-    let blocked = json!({ "panes": [child_pane("blocked")] }).to_string();
+    let blocked = json!({ "terminals": [child_pane("blocked")] }).to_string();
     set("not json".into());
     m.watch(&orch, Watch::polls(5), &|_, n| match n {
         2 => set(blocked.clone()),
@@ -971,32 +973,30 @@ fn herdr_failing_is_said_once_and_the_block_it_hid_is_said_when_it_answers() {
         .iter()
         .map(|l| &l[..l.find(':').unwrap_or(l.len())])
         .collect();
+    let block =
+        format!("BLOCKED {child} sim/a t1 — its terminal waits on an approval or a question");
     // Two outages, each said once; the block once, not again after the second.
     assert_eq!(
         said,
-        [
-            "WATCH herdr unanswered",
-            format!("BLOCKED {child} sim/a w1").as_str(),
-            "WATCH herdr unanswered"
-        ],
+        ["WATCH hc unanswered", block.as_str(), "WATCH hc unanswered"],
         "{lines:?}"
     );
     assert!(
-        lines[0].starts_with("WATCH herdr unanswered: herdr pane list failed: "),
+        lines[0].starts_with("WATCH hc unanswered: hc ls: fake_state: "),
         "{lines:?}"
     );
 }
 
 #[test]
-fn a_poll_asks_herdr_once_for_the_view_and_the_pane_watch() {
-    let mut m = Monitor::new("herdr-once-watched");
+fn a_poll_asks_hc_once_for_the_view_and_the_terminal_watch() {
+    let mut m = Monitor::new("hc-once-watched");
     let (orch, _) = launched_child(&m);
-    let calls = m.herdr();
+    let calls = m.hc();
     let w = Watch {
         beat: 1000.0,
         ..Watch::past_the_lost_line()
     };
     m.watch(&orch, w, &idle);
-    // Every poll watches the launched child's pane; the polls it is quiet also need the view.
+    // Every poll watches the launched child's terminal; the polls it is quiet also need the view.
     assert_eq!(Monitor::asked(&calls), GONE_STEPS + 1);
 }
