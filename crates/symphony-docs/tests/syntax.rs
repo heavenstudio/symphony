@@ -1,9 +1,9 @@
 //! The Markdown syntax every reader of the docs shares, against the rules the docs are read by.
 
 use symphony_docs::syntax::{
-    LineIndex, WikiLink, anchors, card_line, cards, code_ranges, components, entries, entry_line,
-    heading, heading_anchor, line_links, line_of, lines, links, mask_code_spans, pictures,
-    wikilinks,
+    LineIndex, WikiLink, anchors, card_end, card_line, cards, code_ranges, components, entries,
+    entry_line, heading, heading_anchor, is_continuation, is_indented, line_links, line_of, lines,
+    links, mask_code_spans, pictures, unseen_owner, unseen_owner_line, wikilinks,
 };
 
 #[test]
@@ -256,6 +256,166 @@ fn cards_keep_their_lines_topic_and_skip_fences() {
             (12, "two", "rejected", "Items", 0)
         ]
     );
+}
+
+/// Each card's slug and the lines under it.
+fn slugs_and_raw(text: &str) -> Vec<(String, Vec<String>)> {
+    cards(&lines(text))
+        .into_iter()
+        .map(|card| (card.slug, card.raw))
+        .collect()
+}
+
+#[test]
+fn an_indented_fence_belongs_to_its_card_and_hides_no_later_card() {
+    let unclosed = slugs_and_raw("- [x] **a**\n  ~~~\n- [x] **b**\n");
+    assert_eq!(
+        unclosed,
+        [
+            ("a".to_string(), vec!["  ~~~".to_string()]),
+            ("b".to_string(), vec![])
+        ]
+    );
+    let closed =
+        slugs_and_raw("- [ ] **a**\n  ```\n  - [x] **inner** — code\n  ```\n\n- [ ] **b**\n");
+    assert_eq!(
+        closed
+            .iter()
+            .map(|(slug, raw)| (slug.as_str(), raw.len()))
+            .collect::<Vec<_>>(),
+        [("a", 3), ("b", 0)]
+    );
+}
+
+#[test]
+fn a_fence_no_card_contains_hides_the_cards_in_it() {
+    let found = slugs_and_raw(
+        "- [x] **a**\n  [2026-11-04] agent — A\n~~~\n- [x] **example**\n  [2026-11-04] agent — code\n~~~\n- [x] **b**\n",
+    );
+    assert_eq!(
+        found,
+        [
+            (
+                "a".to_string(),
+                vec!["  [2026-11-04] agent — A".to_string()]
+            ),
+            ("b".to_string(), vec![])
+        ]
+    );
+}
+
+#[test]
+fn a_card_ends_at_its_last_indented_line_across_blank_lines() {
+    let page = [
+        "- [x] **a**",
+        "  one",
+        "",
+        "    two",
+        "",
+        "prose",
+        "  later",
+    ];
+    assert_eq!(card_end(&page, 0), 4);
+    assert_eq!(card_end(&page, 5), 7);
+    assert_eq!(card_end(&["- [x] **a**"], 0), 1);
+    assert!(is_indented("\tx") && !is_indented("x") && !is_indented("   "));
+}
+
+#[test]
+fn a_hidden_unseen_owner_line_is_no_entry_and_breaks_no_continuation() {
+    let card = cards(&lines(
+        "- [x] **a**\n  [2026-11-04] agent — A\n  <!-- review:unseen-owner a b -->\n    B\n",
+    ))
+    .remove(0);
+    let found: Vec<_> = card
+        .entries()
+        .into_iter()
+        .map(|e| (e.ts, e.who, e.text))
+        .collect();
+    assert_eq!(
+        found,
+        [(Some("2026-11-04".to_string()), "agent", "A\nB".to_string())]
+    );
+}
+
+#[test]
+fn a_continuation_is_any_indent_deeper_than_two_characters() {
+    assert!(is_continuation("   x") && is_continuation("\t  x") && is_continuation("\t\t\tx"));
+    assert!(!is_continuation("  x") && !is_continuation("\tx") && !is_continuation("      "));
+    assert!(is_continuation("    [2026-10-30 07:00] owner — quoted"));
+}
+
+#[test]
+fn a_deeper_line_continues_a_dated_entry_tabbed_or_dated_looking() {
+    let raw = [
+        "  [2026-11-04] agent — Example:",
+        "\t  B",
+        "    [2026-10-30 07:00] owner — Literal example.",
+        "  [2026-11-05] owner · approved",
+        "    [2026-11-01] owner — under a dated entry, a continuation",
+    ];
+    let found: Vec<_> = entries(&raw)
+        .into_iter()
+        .map(|e| (e.ts, e.who, e.text))
+        .collect();
+    assert_eq!(
+        found,
+        [
+            (
+                Some("2026-11-04".to_string()),
+                "agent",
+                "Example:\nB\n[2026-10-30 07:00] owner — Literal example.".to_string()
+            ),
+            (
+                Some("2026-11-05".to_string()),
+                "owner",
+                "[2026-11-01] owner — under a dated entry, a continuation".to_string()
+            )
+        ]
+    );
+    // Under no dated entry, a deeper dated line still starts one.
+    let first = entries(&["    [2026-11-01] owner — first"]);
+    assert_eq!(first[0].ts.as_deref(), Some("2026-11-01"));
+}
+
+#[test]
+fn crlf_lines_read_as_lf_ones_hidden_marker_included() {
+    let text = "- [x] **a**\r\n  [2026-11-04] agent — A\r\n  <!-- review:unseen-owner a b -->\r\n    B\r\n";
+    let found: Vec<_> = cards(&lines(text))
+        .remove(0)
+        .entries()
+        .into_iter()
+        .map(|e| e.text)
+        .collect();
+    assert_eq!(found, ["A\nB"]);
+}
+
+#[test]
+fn a_hidden_unseen_owner_line_outside_an_entry_is_skipped() {
+    let raw = [
+        "  <!-- review:unseen-owner k1 k2 -->",
+        "  [2026-11-04] owner · approved — fine",
+    ];
+    let found: Vec<_> = entries(&raw)
+        .into_iter()
+        .map(|e| (e.who, e.verdict, e.text))
+        .collect();
+    assert_eq!(
+        found,
+        [("owner", Some("approved".to_string()), "fine".to_string())]
+    );
+    // deeper than the two spaces it is written with, it is no marker but an entry's words
+    assert_eq!(unseen_owner("    <!-- review:unseen-owner k1 k2 -->"), None);
+}
+
+#[test]
+fn the_unseen_owner_line_reads_back_its_two_keys() {
+    let line = unseen_owner_line("owner:1", "reply:2");
+    assert_eq!(line, "  <!-- review:unseen-owner owner:1 reply:2 -->\n");
+    assert_eq!(unseen_owner(&line), Some(("owner:1", "reply:2")));
+    assert_eq!(unseen_owner(line.trim_end()), Some(("owner:1", "reply:2")));
+    assert_eq!(unseen_owner("  <!-- review:unseen-owner lonely -->"), None);
+    assert_eq!(unseen_owner("  <!-- review:other a b -->"), None);
 }
 
 #[test]

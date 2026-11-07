@@ -496,7 +496,7 @@ fn record(store: &Store, handle: &str, terminal: &Object) -> Result<String, Erro
         s.closed.is_some()
             && s.closed_why == WHY
             && s.pane == address
-            && s.claude_session == stored_session(terminal)
+            && same_conversation(&s.claude_session, &stored_session(terminal))
     }) {
         // A previous sweep may have stopped after the board transaction but before hc closed the
         // terminal. The durable record already carries its line; do not overwrite and log it again.
@@ -535,6 +535,12 @@ fn record(store: &Store, handle: &str, terminal: &Object) -> Result<String, Erro
     })?;
     store.close_task_session(&slug, handle, WHY, &restore_line(&slug, handle))?;
     Ok(restore_line(&slug, handle))
+}
+
+/// Whether a record's conversation is the one a terminal runs: the same, or a Codex thread the record
+/// took from the agent's callback where the terminal's command line names none (`codex:`).
+fn same_conversation(recorded: &str, running: &str) -> bool {
+    recorded == running || (running == "codex:" && recorded.starts_with("codex:"))
 }
 
 /// hc refused a close already recorded: the sessions it closed are open again.

@@ -91,19 +91,19 @@ fn closed(
 }
 
 /// What runs in a live terminal by one `hc get`: the program it started (its pid), the program in
-/// its foreground (pid, name and argv, or null) and the agent hc sees there. Cleanup closes the
-/// terminal only while the close's own look finds the same, so its judgement is never applied to
-/// another program: another instance, a shell `--keep` put in place of a lost one, or a job a shell
-/// became by `exec` under its own pid.
+/// its foreground (pid, name and argv, or null) and the agent hc sees there. Cleanup (and `close`)
+/// closes the terminal only while the close's own look finds the same, so its judgement is never
+/// applied to another program: another instance, a shell `--keep` put in place of a lost one, or a
+/// job a shell became by `exec` under its own pid.
 #[derive(Debug, Clone, PartialEq)]
-struct Running {
+pub(super) struct Running {
     pid: Option<i64>,
     foreground: Value,
     agent: Option<&'static str>,
 }
 
 impl Running {
-    fn of(terminal: &Object) -> Running {
+    pub(super) fn of(terminal: &Object) -> Running {
         let foreground = terminal.get("foreground").and_then(Value::as_object);
         Running {
             pid: hc::top_pid(terminal),
@@ -113,10 +113,22 @@ impl Running {
             agent: hc::agent(terminal),
         }
     }
+
+    /// The pid of what runs in the live terminal `now` (the close's own `hc get`) while it is still
+    /// this; else why the terminal stays.
+    pub(super) fn still(&self, now: &Object) -> Result<i64, String> {
+        let Some(pid) = hc::top_pid(now) else {
+            return Err("hc knows no pid for it now".into());
+        };
+        if Running::of(now) != *self {
+            return Err("another program runs in it now".into());
+        }
+        Ok(pid)
+    }
 }
 
-/// What cleanup judged finished: a terminal whose program had ended, or a live one running this.
-enum Judged {
+/// What a close judged closable: a terminal whose program had ended, or a live one running this.
+pub(super) enum Judged {
     Ended,
     Live(Running),
 }
@@ -125,7 +137,7 @@ enum Judged {
 /// started (not a job a shell runs in front), and in a terminal with no agent, a shell. A program
 /// is never an idle shell on its own, and the processes under a program never include it, so a job
 /// a shell became by `exec` shows only here. Nothing hc shows there says nothing is idle.
-fn foreground_idle(terminal: &Object, is_agent: bool) -> bool {
+pub(super) fn foreground_idle(terminal: &Object, is_agent: bool) -> bool {
     let Some(shown) = terminal.get("foreground").and_then(Value::as_object) else {
         return false;
     };
@@ -147,12 +159,7 @@ fn still_finished(terminal: &Object, processes: &Processes, judged: &Judged) -> 
     let Judged::Live(judged) = judged else {
         return Err("its program runs again".into());
     };
-    let Some(pid) = hc::top_pid(terminal) else {
-        return Err("hc knows no pid for it now".into());
-    };
-    if Running::of(terminal) != *judged {
-        return Err("another program runs in it now".into());
-    }
+    let pid = judged.still(terminal)?;
     let status = hc::status(terminal);
     if judged.agent.is_some() && !READY_STATES.contains(&status.as_str()) {
         let status = if status.is_empty() { "silent" } else { &status };
