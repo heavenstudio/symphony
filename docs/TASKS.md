@@ -125,11 +125,12 @@ record stays and says why and how to bring it back,
 worktree, in a new terminal. A record from before hc names a herdr pane (`w1:p…`): that
 terminal is gone, so cleanup records it closed with its restore line, and restore brings
 the agent back in an hc terminal. `just tasks close SLUG HANDLE` closes one agent's terminal
-whatever role it holds (a reviewer waiting for a new tip), records it the same way, before the
-kill and bound to that terminal, and retires the callback registered from it; it is refused for
-the caller's own session or terminal, one the owner may be looking at, and one whose program is
-not at rest (work under it as the idle sweep reads it, any test run included, or another program
-in its foreground). A restore of that session waits for the kill. A Codex record
+whatever role it holds (a reviewer waiting for a new tip), records it the same way once the
+terminal is killed, bound to that terminal, and retires the callback registered from it; it is
+refused for the caller's own session or terminal, one the owner may be looking at, and one whose
+program is not at rest (work under it as the idle sweep reads it, any test run included, or
+another program in its foreground). A close and a restore of one session each hold it while they
+run, so neither starts while the other runs. A Codex record
 takes the thread its callback registered whichever is written first; one closed with no thread
 says on its thread that restore cannot resume it. See the [tasks skill](../../.agents/skills/tasks/SKILL.md#launch-restore-clean-up-herdr).
 

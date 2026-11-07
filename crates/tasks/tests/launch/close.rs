@@ -380,25 +380,25 @@ fn a_terminal_whose_processes_cannot_be_read_is_refused() {
 }
 
 #[test]
-fn a_kill_hc_refuses_leaves_the_session_open_and_says_so() {
+fn a_kill_hc_refuses_leaves_the_session_open_writes_nothing_and_holds_it_no_longer() {
     let mut world = World::new();
     let session = world.waiting_reviewer();
     let before = world.f.said("sim/jump").len();
     world.set("FAKE_HC_FAIL", "kill");
     let failed = format!("hc kill {}: fake_failure: kill failed", session.pane);
     assert_eq!(refused(world.close(&session.handle)), failed);
-    // The closure was recorded before the kill; it is undone, on the thread too.
-    assert_eq!(
-        world.said_since(before),
-        [
-            closed_line(&session.handle, &world.orch),
-            format!("kept the pane of {} ({failed})", session.handle)
-        ]
-    );
+    assert_eq!(world.said_since(before), Vec::<String>::new());
     let [read] = <[_; 1]>::try_from(world.store().task_sessions("sim/jump").unwrap()).unwrap();
     assert_eq!(
         (read.closed, read.closed_why.as_str(), read.pane.as_str()),
         (None, "", session.pane.as_str())
+    );
+    // The refused close let the session go: the next one closes it.
+    world.set("FAKE_HC_FAIL", "");
+    assert_eq!(world.close(&session.handle).unwrap().pane, session.pane);
+    assert_eq!(
+        world.said_since(before),
+        [closed_line(&session.handle, &world.orch)]
     );
 }
 

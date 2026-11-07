@@ -2,28 +2,31 @@
 //! role it holds (a reviewer waiting for a new tip, which cleanup and the idle sweep keep), and record
 //! the closure on the task with the line that restores it.
 //!
-//! The terminal is the one the handle's record on SLUG names (open, or closed by a close that may
-//! not have killed it yet), else the live terminal of this board the handle runs in (its `sf.handle`
-//! label, else its name). Only this board's terminals (`sf.board`) close, and only one whose
-//! `sf.handle` label, when it has one, is the handle's. The close is refused for the caller's own
-//! session or terminal (`HC_TERMINAL_ID`), for one the owner may be looking at ([`screen`], the rule
-//! cleanup keeps), and for a live one whose program is not at rest: hc knows no pid for it, its
-//! foreground is not its agent (or, with no agent, a shell) as cleanup reads it
-//! ([`foreground_idle`]), or anything runs under it that the idle sweep counts as work
-//! ([`procs::reap_busy_reason`]: a verify, a test run of any kind, a land, the Symphony, a shell,
-//! any program but the agent's helpers and board commands). A call that cannot say refuses as well.
+//! The terminal is the one the handle's open record on SLUG names, else the live terminal of this
+//! board the handle runs in (its `sf.handle` label, else its name). Only this board's terminals
+//! (`sf.board`) close, and only one whose `sf.handle` label, when it has one, is the handle's. The
+//! close is refused for the caller's own session or terminal (`HC_TERMINAL_ID`), for one the owner
+//! may be looking at ([`screen`], the rule cleanup keeps), and for a live one whose program is not at
+//! rest: hc knows no pid for it, its foreground is not its agent (or, with no agent, a shell) as
+//! cleanup reads it ([`foreground_idle`]), or anything runs under it that the idle sweep counts as
+//! work ([`procs::reap_busy_reason`]: a verify, a test run of any kind, a land, the Symphony, a
+//! shell, any program but the agent's helpers and board commands). A call that cannot say refuses
+//! as well.
 //!
-//! The closure is recorded first, bound to the record read (its launch and its terminal): it never
-//! closes a session restored into another terminal meanwhile, and a second close of the same
-//! terminal writes no second line. While it stands, restore refuses that session, whose terminal
-//! still runs. Then the last look before the kill ([`screen::close_unseen`]) must find the program
-//! judged ([`Running`]), still this board's and the handle's, no work under it, and the terminal out
-//! of the owner's sight; else the session is open again, said on the thread. A close stopped after
-//! its record is finished by the next close of that session, which writes no line. A recorded
-//! terminal hc no longer runs (or a herdr pane id) is recorded closed as gone, with its restore
-//! line, and nothing is killed. The handle's native callback registered from that terminal (or from
-//! none) is retired, never one registered since from another: what is said to it waits in its inbox
-//! until `just tasks restore` brings it back.
+//! A close holds the session for its whole run ([`Store::take_session`]), as a restore does, so
+//! neither starts while the other runs, nor a second close; one stopped part way holds it until its
+//! lease lapses. The last look before the kill ([`screen::close_unseen`]) must find the program
+//! judged ([`Running`]), still this board's and the handle's, no work under it, the terminal out of
+//! the owner's sight and the session still held. Only once the terminal is killed is the closure
+//! written, bound to the record read (its launch and its terminal), so a close kept or refused writes
+//! nothing, and a callback the agent registered before the kill completes the record's thread. Then
+//! the handle's callback is retired if it was registered from that terminal, or is the very
+//! registration read before the close (one from no terminal); never one registered from another.
+//! What is said to it waits in its inbox until `just tasks restore` brings it back.
+//!
+//! A recorded terminal hc no longer runs (or a herdr pane id) is recorded closed as gone, with its
+//! restore line, and nothing is killed; one a close recorded closed already (stopped before it
+//! retired the callback) writes nothing more. Either way the callback is retired by the same rule.
 
 use super::cleanup::{Judged, Running, foreground_idle, restore_line, stored_session};
 use super::hc::{self, BOARD_LABEL, HANDLE_LABEL, Hc, Object, text_of};
@@ -36,7 +39,7 @@ use serde_json::Value;
 /// How a close's reason starts: `closed by ACTOR`.
 const CLOSED_BY: &str = "closed by ";
 
-/// Who closes which session's terminal, recorded on which task, and why.
+/// Who closes which session's terminal, recorded on which task, why, and the session's hold.
 struct Ask<'a> {
     store: &'a Store,
     hc: &'a dyn Hc,
@@ -44,16 +47,17 @@ struct Ask<'a> {
     slug: &'a str,
     handle: &'a str,
     why: String,
+    lease: u64,
 }
 
 /// The terminal a close works on, as the board knows it.
 enum Target {
     /// The open record of the session on the task names it.
     Recorded(TaskSessionRow),
-    /// A close recorded the session closed in it, and may have stopped before the kill.
-    Pending(TaskSessionRow),
-    /// The handle runs in it, and no record on the task names it.
+    /// The handle runs in it, and no open record on the task names it.
     Found,
+    /// A close recorded the session closed, and no terminal of the handle runs.
+    Closed(TaskSessionRow),
 }
 
 /// Close `handle`'s terminal for `actor`, recording it on `slug` (the module says when it is
@@ -73,8 +77,7 @@ pub fn close(
     }
     let task = store.get(slug)?;
     let board = store.session(handle)?.row;
-    let mine = store.sessions_of(handle)?;
-    let role = role(&task, &mine, slug, handle)?;
+    let lease = store.take_session(handle, &format!("a close by {actor}"))?;
     let ask = Ask {
         store,
         hc,
@@ -82,37 +85,40 @@ pub fn close(
         slug,
         handle,
         why: format!("{CLOSED_BY}{actor}"),
+        lease,
     };
-    let (target, terminal) = target(&ask, &mine)?;
+    let closed = holding(&ask, &task, board);
+    let released = store.release_session(handle, lease);
+    let closure = closed?;
+    released?;
+    Ok(closure)
+}
+
+/// The close, while it holds the session.
+fn holding(ask: &Ask<'_>, task: &Task, board: SessionRow) -> Result<Closure, Error> {
+    let mine = ask.store.sessions_of(ask.handle)?;
+    let role = role(task, &mine, ask.slug, ask.handle)?;
+    let (target, terminal) = target(ask, &mine)?;
     let Some(terminal) = terminal else {
-        return gone(&ask, &target, &mine);
+        return gone(ask, &target, &mine);
     };
     let address = text_of(&terminal, "address");
-    let judged = judge(&ask, &terminal)?;
-    let callback = registered_from(store, handle, &address)?;
-    let (why, written) = match target {
-        Target::Pending(record) => (record.closed_why, Vec::new()),
-        Target::Recorded(_) => (ask.why.clone(), record(&ask, &mine, &terminal)?),
-        Target::Found => {
-            let mut written = record(&ask, &mine, &terminal)?;
-            written.extend(record_found(&ask, &terminal, role, board)?);
-            (ask.why.clone(), written)
-        }
-    };
-    let finished = |now: &Object| still_closable(&ask, now, &judged);
-    match screen::close_unseen(hc, &address, &finished) {
+    let judged = judge(ask, &terminal)?;
+    let read = ask.store.callbacks()?.remove(ask.handle);
+    let finished = |now: &Object| still_closable(ask, now, &judged);
+    match screen::close_unseen(ask.hc, &address, &finished) {
         Ok(()) => {}
         Err(NotClosed::Kept(kept)) => {
-            keep(&ask, &written, &kept)?;
             return Err(refused(format!("terminal {address} stays: {kept}")));
         }
-        Err(NotClosed::Refused(problem)) => {
-            keep(&ask, &written, &problem.0)?;
-            return Err(problem.into());
-        }
+        Err(NotClosed::Refused(problem)) => return Err(problem.into()),
     }
-    retire(&ask, callback, &address, &why)?;
-    Ok(closure(&address, &ask, &why))
+    record(ask, &mine, &address)?;
+    if let Target::Found = target {
+        record_found(ask, &terminal, role, board)?;
+    }
+    retire(ask, &address, read.as_ref(), &ask.why)?;
+    Ok(closure(&address, ask, &ask.why))
 }
 
 fn refused(why: String) -> Error {
@@ -151,25 +157,20 @@ fn target(ask: &Ask<'_>, mine: &[TaskSessionRow]) -> Result<(Target, Option<Obje
     let recorded = mine
         .iter()
         .find(|record| record.slug == ask.slug && !record.pane.is_empty());
-    let pending = match recorded {
-        Some(record) if record.closed.is_none() => {
-            let terminal = found(ask.hc, &record.pane)?;
-            return Ok((Target::Recorded(record.clone()), terminal));
-        }
-        Some(record) if record.closed_why.starts_with(CLOSED_BY) => Some(record),
-        _ => None,
-    };
-    if let Some(record) = pending
-        && let Some(terminal) = found(ask.hc, &record.pane)?
+    if let Some(record) = recorded
+        && record.closed.is_none()
     {
-        return Ok((Target::Pending(record.clone()), Some(terminal)));
+        let terminal = found(ask.hc, &record.pane)?;
+        return Ok((Target::Recorded(record.clone()), terminal));
     }
     if let Some(address) = running(ask.hc, ask.handle)? {
         return Ok((Target::Found, found(ask.hc, &address)?));
     }
-    match pending {
-        Some(record) => Ok((Target::Pending(record.clone()), None)),
-        None => Err(nowhere(ask)),
+    match recorded {
+        Some(record) if record.closed_why.starts_with(CLOSED_BY) => {
+            Ok((Target::Closed(record.clone()), None))
+        }
+        _ => Err(nowhere(ask)),
     }
 }
 
@@ -185,10 +186,10 @@ fn nowhere(ask: &Ask<'_>) -> Error {
 fn gone(ask: &Ask<'_>, target: &Target, mine: &[TaskSessionRow]) -> Result<Closure, Error> {
     let (pane, why) = match target {
         Target::Found => return Err(nowhere(ask)),
-        Target::Pending(record) => (&record.pane, record.closed_why.as_str()),
+        Target::Closed(record) => (&record.pane, record.closed_why.as_str()),
         Target::Recorded(record) => (&record.pane, GONE),
     };
-    let callback = registered_from(ask.store, ask.handle, pane)?;
+    let read = ask.store.callbacks()?.remove(ask.handle);
     let open_there = mine
         .iter()
         .filter(|record| record.closed.is_none() && &record.pane == pane);
@@ -196,7 +197,7 @@ fn gone(ask: &Ask<'_>, target: &Target, mine: &[TaskSessionRow]) -> Result<Closu
         let restore = restore_line(&record.slug, ask.handle);
         ask.store.close_task_session_as(record, GONE, &restore)?;
     }
-    retire(ask, callback, pane, why)?;
+    retire(ask, pane, read.as_ref(), why)?;
     Ok(closure(pane, ask, why))
 }
 
@@ -293,10 +294,17 @@ fn idle_under(processes: &Processes, pid: i64) -> Result<(), String> {
 }
 
 /// Whether the terminal, as the close's own `hc get` finds it (`now`), still closes: still this
-/// board's and the handle's, and its program ended, or the program `judged` still runs there at
-/// rest. Else why it stays.
+/// board's and the handle's, the session still this close's to hold (held anew for the kill), and
+/// its program ended, or the program `judged` still runs there at rest. Else why it stays.
 fn still_closable(ask: &Ask<'_>, now: &Object, judged: &Judged) -> Result<(), String> {
     owned(ask, now)?;
+    let held = ask
+        .store
+        .renew_session(ask.handle, ask.lease)
+        .map_err(|problem| format!("the board cannot say it still holds its session: {problem}"))?;
+    if !held {
+        return Err("another close or a restore took its session over".into());
+    }
     if text_of(now, "state") != "live" {
         return Ok(());
     }
@@ -306,38 +314,28 @@ fn still_closable(ask: &Ask<'_>, now: &Object, judged: &Judged) -> Result<(), St
     idle_under(ask.processes, judged.still(now)?)
 }
 
-/// Record the closure on every open record of the handle in `terminal`, each only while it is
-/// still the one read: the records it closed.
-fn record(
-    ask: &Ask<'_>,
-    mine: &[TaskSessionRow],
-    terminal: &Object,
-) -> Result<Vec<TaskSessionRow>, Error> {
-    let address = text_of(terminal, "address");
+/// Record the closure on every open record of the handle in `terminal`, now killed, each only while
+/// it is still the one read.
+fn record(ask: &Ask<'_>, mine: &[TaskSessionRow], terminal: &str) -> Result<(), Error> {
     let open_there = mine
         .iter()
-        .filter(|record| record.closed.is_none() && record.pane == address);
-    let mut written = Vec::new();
+        .filter(|record| record.closed.is_none() && record.pane == terminal);
     for record in open_there {
         let restore = restore_line(&record.slug, ask.handle);
-        if ask
-            .store
-            .close_task_session_as(record, &ask.why, &restore)?
-        {
-            written.push(record.clone());
-        }
+        ask.store
+            .close_task_session_as(record, &ask.why, &restore)?;
     }
-    Ok(written)
+    Ok(())
 }
 
-/// Record the session found in `terminal` on the task, closed there in one line, unless the record
-/// of the task names that terminal already.
+/// Record the session found in `terminal`, now killed, on the task, closed there in one line,
+/// unless the record of the task names that terminal already.
 fn record_found(
     ask: &Ask<'_>,
     terminal: &Object,
     role: String,
     board: SessionRow,
-) -> Result<Option<TaskSessionRow>, Error> {
+) -> Result<(), Error> {
     let cwd = text_of(terminal, "cwd");
     let launch = NewLaunch {
         slug: ask.slug.into(),
@@ -352,39 +350,23 @@ fn record_found(
         log: false,
     };
     let restore = restore_line(ask.slug, ask.handle);
-    ask.store.record_found_closed(&launch, &ask.why, &restore)
+    ask.store
+        .record_found_closed(&launch, &ask.why, &restore)
+        .map(|_| ())
 }
 
-/// The last look kept the terminal (`kept`): the records this close wrote are open again.
-fn keep(ask: &Ask<'_>, written: &[TaskSessionRow], kept: &str) -> Result<(), Error> {
-    for record in written {
-        ask.store.keep_task_session(record, &ask.why, kept)?;
+/// Retire the handle's callback: the registration `read` before the close from no terminal, only
+/// as it was read, and the one registered now from `terminal` (the one closed); never one
+/// registered from another terminal, nor one from none registered since.
+fn retire(ask: &Ask<'_>, terminal: &str, read: Option<&Callback>, why: &str) -> Result<(), Error> {
+    let said = format!("its terminal {terminal} closed ({why})");
+    if let Some(unplaced) = read.filter(|read| read.terminal.is_none()) {
+        ask.store.clear_callback(unplaced, &said)?;
+    }
+    if let Some(now) = ask.store.callbacks()?.remove(ask.handle)
+        && now.terminal.as_deref() == Some(terminal)
+    {
+        ask.store.clear_callback(&now, &said)?;
     }
     Ok(())
-}
-
-/// The handle's native callback, if it was registered from `terminal` or from no terminal hc knows.
-fn registered_from(store: &Store, handle: &str, terminal: &str) -> Result<Option<Callback>, Error> {
-    Ok(store.callbacks()?.remove(handle).filter(|callback| {
-        callback
-            .terminal
-            .as_deref()
-            .is_none_or(|from| from == terminal)
-    }))
-}
-
-/// Retire `callback`, the registration read before the close, and no other.
-fn retire(
-    ask: &Ask<'_>,
-    callback: Option<Callback>,
-    terminal: &str,
-    why: &str,
-) -> Result<(), Error> {
-    match callback {
-        Some(callback) => ask.store.clear_callback(
-            &callback,
-            &format!("its terminal {terminal} closed ({why})"),
-        ),
-        None => Ok(()),
-    }
 }

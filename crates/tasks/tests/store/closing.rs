@@ -1,6 +1,7 @@
 //! A close's writes to a task session's record (`close`, `launch::close`), each bound to the record
 //! the close read: the launch and the terminal it names. A record changed since (restored into
 //! another terminal, launched again, closed by another close) is left as it is, and nothing is said.
+//! And the session's hold, which a close and a restore take for their whole run.
 
 use crate::common::{Fixture, refused};
 use crate::launches::launch;
@@ -71,43 +72,54 @@ fn a_bound_close_closes_only_the_launch_in_the_terminal_it_read_and_only_once() 
 }
 
 #[test]
-fn a_kept_close_reopens_only_the_closure_it_wrote() {
+fn a_session_is_held_by_one_close_or_restore_until_it_is_released_or_its_hold_lapses() {
     let fixture = Fixture::empty();
-    fixture.task("sim/jump");
-    let read = launch(&fixture, "sim/jump", "executor");
-    let handle = &read.handle;
-    let restore = format!("just tasks restore sim/jump {handle}");
-    fixture
-        .store
-        .close_task_session_as(&read, "closed by o", &restore)
-        .unwrap();
-    let before = fixture.said("sim/jump").len();
-    let keep = |why| {
-        fixture
-            .store
-            .keep_task_session(&read, why, "on screen")
-            .unwrap()
+    let store = &fixture.store;
+    let handle = fixture.session("worker");
+    let other = fixture.session("worker");
+    let held_by = |doing: &str, left: u32| {
+        format!("{doing} of {handle} is under way: its hold lapses in {left} s")
     };
-    // Another close's closure is not this one's.
-    let kept = keep("closed by p");
-    assert_eq!((kept, current(&fixture).closed.is_some()), (false, true));
-    let kept = keep("closed by o");
-    let open = current(&fixture);
+    let close = store.take_session(&handle, "a close by orch-1").unwrap();
+    assert_eq!(
+        refused(store.take_session(&handle, "a restore")),
+        held_by("a close by orch-1", 300)
+    );
+    // Another session is another hold.
+    store.take_session(&other, "a restore").unwrap();
+    // Renewed, it holds another 300 s from then.
+    fixture.advance(100.0);
+    let renewed = store.renew_session(&handle, close).unwrap();
+    fixture.advance(250.0);
+    assert_eq!(
+        (renewed, refused(store.take_session(&handle, "a restore"))),
+        (true, held_by("a close by orch-1", 50))
+    );
+    store.release_session(&handle, close).unwrap();
+    let restore = store.take_session(&handle, "a restore").unwrap();
+    // A hold that ended renews and releases nothing: the restore holds the session on.
     assert_eq!(
         (
-            kept,
-            open.closed,
-            open.closed_why.as_str(),
-            open.pane.as_str()
+            restore > close,
+            store.renew_session(&handle, close).unwrap()
         ),
-        (true, None, "", "t9")
+        (true, false)
     );
-    // Open already: nothing to undo.
-    let kept = keep("closed by o");
-    assert_eq!((kept, current(&fixture).closed), (false, None));
+    store.release_session(&handle, close).unwrap();
     assert_eq!(
-        fixture.said("sim/jump")[before..],
-        [format!("kept the pane of {handle} (on screen)")]
+        refused(store.take_session(&handle, "a close by orch-2")),
+        held_by("a restore", 300)
+    );
+    // A hold stopped part way lapses: the next takes the session over, and the lapsed one's
+    // holder can no longer renew it.
+    fixture.advance(300.0);
+    let taken = store.take_session(&handle, "a close by orch-2").unwrap();
+    assert_eq!(
+        (
+            taken > restore,
+            store.renew_session(&handle, restore).unwrap()
+        ),
+        (true, false)
     );
 }
 

@@ -124,6 +124,20 @@ const CLOSURE_LINE: &str =
 const SAME_LAUNCH: &str = "LET $at = type::record('task_session', [$slug, $handle]);
 IF $at.pane != $pane OR $at.started != $started { RETURN false };";
 
+/// How long a close or a restore holds a session ([`Store::take_session`]) without renewing it:
+/// past it, the next close or restore of that session takes it over. A close renews it at its last
+/// look, right before its kill.
+pub const SESSION_LEASE_SECONDS: f64 = 300.0;
+
+/// A session's lease as [`Store::take_session`] answers: the revision taken, or who holds it until
+/// when.
+#[derive(Deserialize)]
+struct Lease {
+    revision: Option<u64>,
+    doing: Option<String>,
+    until: Option<f64>,
+}
+
 /// What [`CLOSURE_LINE`] says of the closure of `handle`'s pane on `slug`, and why.
 fn closure_vars(slug: &str, handle: &str, why: &str, restore: &str) -> Value {
     json!({
@@ -258,29 +272,6 @@ RETURN $conversation;"
         self.change_task_session(&record.slug, &record.handle, &closing(&guard), vars)
     }
 
-    /// A close recorded as `closed_why` before its kill (by [`Store::close_task_session_as`] or
-    /// [`Store::record_found_closed`]) left the terminal of `record` running after all, for the reason
-    /// `kept`: the session is open again, said on the thread, only while the record is still that
-    /// closure of that launch in that terminal. Whether it reopened it.
-    pub fn keep_task_session(
-        &self,
-        record: &TaskSessionRow,
-        closed_why: &str,
-        kept: &str,
-    ) -> Result<bool, Error> {
-        let handle = &record.handle;
-        let mut vars = json!({
-            "closed_why": closed_why,
-            "said": format!("kept the pane of {handle} ({kept})"),
-        });
-        same_launch(&mut vars, record);
-        let guard = format!(
-            "{SAME_LAUNCH}\nIF $at.closed = NONE OR $at.closed_why != $closed_why {{ RETURN false }};"
-        );
-        let body = recorded(&guard, "SET closed = NONE, closed_why = ''", "$said");
-        self.change_task_session(&record.slug, handle, &body, vars)
-    }
-
     /// Record `launch` as a session found running in its pane and closed there at once, said in one
     /// line: the closure's ([`Store::close_task_session`]). Nothing is written when the record of its
     /// task and handle already names that terminal: its closure is recorded already, or it is open
@@ -373,6 +364,61 @@ RETURN $conversation;",
             "$said",
         );
         self.change_task_session(&record.slug, handle, &body, vars)
+    }
+
+    /// Take `handle`'s session for `doing` (`a close by ACTOR`, `a restore`): the lease a close and a
+    /// restore of one session each hold for their whole run, the row
+    /// `callback_lease:['session', HANDLE]`. Refused while another holds it and it has not lapsed
+    /// ([`SESSION_LEASE_SECONDS`]), so a close or a restore stopped part way holds it no longer than
+    /// that. The revision that names this hold: [`Store::renew_session`],
+    /// [`Store::release_session`].
+    pub fn take_session(&self, handle: &str, doing: &str) -> Result<u64, Error> {
+        let now = self.now();
+        let taken: Lease = self.retrying(|| {
+            self.transact(
+                "LET $lease = (SELECT until, revision, doing FROM ONLY type::record('callback_lease', ['session', $handle]));
+                 IF ($lease.until ?? 0) > $now { RETURN { doing: $lease.doing, until: $lease.until } };
+                 LET $revision = ($lease.revision ?? 0) + 1;
+                 UPSERT type::record('callback_lease', ['session', $handle]) SET until = $now + $seconds, revision = $revision, doing = $doing RETURN NONE;
+                 RETURN { revision: $revision };",
+                json!({"handle": handle, "doing": doing, "now": now, "seconds": SESSION_LEASE_SECONDS}),
+            )
+        })?;
+        match taken {
+            Lease {
+                revision: Some(revision),
+                ..
+            } => Ok(revision),
+            Lease { doing, until, .. } => Err(refused(format!(
+                "{} of {handle} is under way: its hold lapses in {:.0} s",
+                doing.unwrap_or_default(),
+                until.unwrap_or(now) - now
+            ))),
+        }
+    }
+
+    /// Hold `handle`'s session another [`SESSION_LEASE_SECONDS`] from now, while the hold
+    /// `revision` is still its lease, lapsed or not: false once another close or restore took it.
+    pub fn renew_session(&self, handle: &str, revision: u64) -> Result<bool, Error> {
+        self.retrying(|| {
+            self.transact(
+                "IF (SELECT VALUE revision FROM ONLY type::record('callback_lease', ['session', $handle])) != $revision { RETURN false };
+                 UPDATE type::record('callback_lease', ['session', $handle]) SET until = $now + $seconds RETURN NONE;
+                 RETURN true;",
+                json!({"handle": handle, "revision": revision, "now": self.now(), "seconds": SESSION_LEASE_SECONDS}),
+            )
+        })
+    }
+
+    /// End the hold `revision` of `handle`'s session; a hold another took since is left as it is.
+    pub fn release_session(&self, handle: &str, revision: u64) -> Result<(), Error> {
+        self.retrying(|| {
+            self.transact::<Value>(
+                "UPDATE type::record('callback_lease', ['session', $handle]) SET until = 0 WHERE revision = $revision RETURN NONE; RETURN NONE;",
+                json!({"handle": handle, "revision": revision}),
+            )
+        })
+        .map(|_| ())
     }
 
     fn change_task_session<T: DeserializeOwned>(

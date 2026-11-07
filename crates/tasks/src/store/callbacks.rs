@@ -138,6 +138,9 @@ pub struct Callback {
     /// Codex thread is present while that terminal runs Codex.
     #[serde(default)]
     pub terminal: Option<String>,
+    /// How many times the handle has registered: which of its registrations this one is.
+    #[serde(default)]
+    registration_revision: u64,
     #[serde(skip)]
     live_orchestrator: bool,
 }
@@ -304,7 +307,7 @@ RETURN NONE;");
 
     fn stored_callbacks(&self) -> Result<Vec<Callback>, Error> {
         self.retrying(|| self.read(
-            "RETURN SELECT handle, address, host, terminal, chat ?? false AS chat, chat_fallback ?? false AS chat_fallback, owner, confirmed_until ?? 0 AS confirmed_until,
+            "RETURN SELECT handle, address, host, terminal, registration_revision ?? 0 AS registration_revision, chat ?? false AS chat, chat_fallback ?? false AS chat_fallback, owner, confirmed_until ?? 0 AS confirmed_until,
                 (SELECT * OMIT id FROM ONLY type::record('session', $parent.handle)) AS session, chat_resume ?? false AS chat_resume, pane_watch ?? {} AS pane_watch,
                 IF type::record('session', handle).agent = NONE { false } ELSE { type::record('callback_state', ['binding', type::record('session', handle).agent]).in_process ?? true } AS in_process
              FROM callback_state WHERE address != NONE AND type::record('session', handle).left_at = NONE;", json!({}),
@@ -333,22 +336,28 @@ RETURN NONE;");
             .collect())
     }
 
-    /// Retire the registration `callback` was read as: never one registered since, from another
-    /// listener or another terminal.
-    pub(crate) fn clear_callback(&self, callback: &Callback, why: &str) -> Result<(), Error> {
-        self.retrying(|| self.transact::<Value>(
-            "LET $state = (SELECT address, owner, terminal FROM ONLY type::record('callback_state', $handle));
-             IF $state.address = $address AND $state.owner = $owner AND (!$terminal OR $state.terminal = $terminal) {
-                DELETE type::record('callback_state', $handle) RETURN NONE;
-                UPDATE callback_event SET delivered = true, text = '' WHERE handle = $handle AND string::starts_with(key, 'chat-') RETURN NONE;
-             }; RETURN NONE;",
-            json!({"handle":callback.handle, "address":callback.address, "owner":callback.owner, "terminal":callback.terminal}),
+    /// Retire the registration `callback` was read as, exactly: its address, listener, terminal (or
+    /// none) and `registration_revision`, so never one registered since, though from the same
+    /// listener and terminal. Whether it retired it.
+    pub(crate) fn clear_callback(&self, callback: &Callback, why: &str) -> Result<bool, Error> {
+        let retired = self.retrying(|| self.transact::<bool>(
+            "LET $state = (SELECT address, owner, terminal, registration_revision ?? 0 AS revision FROM ONLY type::record('callback_state', $handle));
+             IF $state.address != $address OR $state.owner != $owner OR $state.terminal != $terminal OR $state.revision != $revision { RETURN false };
+             DELETE type::record('callback_state', $handle) RETURN NONE;
+             UPDATE callback_event SET delivered = true, text = '' WHERE handle = $handle AND string::starts_with(key, 'chat-') RETURN NONE;
+             RETURN true;",
+            json!({
+                "handle":callback.handle, "address":callback.address, "owner":callback.owner,
+                "terminal":callback.terminal, "revision":callback.registration_revision,
+            }),
         ))?;
-        eprintln!(
-            "CALLBACK {} retired: {why}; messages remain in inbox",
-            callback.handle
-        );
-        Ok(())
+        if retired {
+            eprintln!(
+                "CALLBACK {} retired: {why}; messages remain in inbox",
+                callback.handle
+            );
+        }
+        Ok(retired)
     }
 
     /// STALE/LOST bookkeeping uses the last sweep's evidence until the next sweep plus its margin.

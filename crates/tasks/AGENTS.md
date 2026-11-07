@@ -293,11 +293,16 @@ naming a herdr pane (`w1:p…`) is a gone terminal: cleanup records it closed
 with its restore line, and restore brings it back in an hc terminal. `close SLUG HANDLE`
 (`launch/close.rs`) closes one agent's terminal whatever role it holds, judged as cleanup judges
 a program (its foreground, `Running` at the last look) and as the idle sweep judges what runs
-under an agent (`reap_busy_reason`), out of the owner's sight. It records the closure before the
-kill, bound to the record read (`close_task_session_as`, `record_found_closed`; `keep_task_session`
-undoes it when the last look keeps the terminal), so a restore waits for the kill and a second
-close writes nothing; it retires only the callback registered from that terminal
-(`clear_callback` never retires a registration from another). A Codex record written `codex:`
+under an agent (`reap_busy_reason`), out of the owner's sight. A close and a restore of one
+session each hold it for their whole run (`Store::take_session`, the row
+`callback_lease:['session', HANDLE]`, 300 s, a close renewing it at its last look), so neither
+starts while the other runs, nor a second close, and one stopped part way holds it until it lapses.
+The close writes the closure only once the terminal is killed, bound to the record read
+(`close_task_session_as`, `record_found_closed`), so a close kept or refused writes nothing and a
+callback registered before the kill completes the record's thread. It then retires the
+registration from that terminal, or the very one it read before (from no terminal):
+`clear_callback` retires a registration only as it was read (address, listener, terminal or none,
+and `registration_revision`), never one registered since. A Codex record written `codex:`
 takes the thread the handle's callback
 registered, at its launch or its close (`store/launches.rs`), so the order of the callback and
 the record never loses it. Its tests' handles:

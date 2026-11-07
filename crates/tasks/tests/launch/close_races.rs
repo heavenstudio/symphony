@@ -1,18 +1,39 @@
-//! `close` against what changes while it runs: another program, work or another owner in the
-//! terminal by the last look before the kill; a restore, or a second close, of the same session; a
-//! close stopped part way, which the next one finishes; and a terminal already gone.
+//! `close` against what changes in the terminal while it runs: another program, work or another
+//! owner by the last look before the kill; and a terminal already gone. What holds the session
+//! meanwhile (a restore, another close, one stopped part way) is `close_holds.rs`'s.
 
-use crate::close::{closed_line, restore_line};
+use crate::close::restore_line;
 use crate::common::refused;
 use crate::{Hooked, World};
 use serde_json::{Map, Value, json};
-use std::cell::{Cell, RefCell};
-use symphony_board::launch::{Closure, GONE, restore};
+use std::cell::Cell;
+use symphony_board::launch::{Closure, GONE};
 use symphony_board::rows::TaskSessionRow;
 use symphony_board::{Error, NewLaunch};
 
+/// The fake hc, running `then` right before its `nth` `call` (`get`, `kill`…) goes to it.
+pub(crate) fn ahead_of<'hook>(
+    world: &World,
+    call: &'hook str,
+    nth: usize,
+    then: impl Fn() + 'hook,
+) -> Hooked<'hook> {
+    let seen = Cell::new(0);
+    let mut hc = Hooked::new(world);
+    hc.instead = Box::new(move |args| {
+        if args[0] == call {
+            seen.set(seen.get() + 1);
+            if seen.get() == nth {
+                then();
+            }
+        }
+        None
+    });
+    hc
+}
+
 /// The fake hc, running `then` right after its `nth` `call` (`get`, `rm`…) answered.
-fn after<'hook>(
+pub(crate) fn after<'hook>(
     world: &World,
     call: &'hook str,
     nth: usize,
@@ -31,27 +52,19 @@ fn after<'hook>(
     hc
 }
 
-/// The closure lines of sim/jump's thread from the `from`th on.
-fn closures(world: &World, from: usize) -> Vec<String> {
-    world
-        .said_since(from)
-        .into_iter()
-        .filter(|line| line.starts_with("closed the pane"))
-        .collect()
-}
-
 /// The terminals hc was asked to kill or remove.
-fn killed(world: &World) -> Vec<Vec<String>> {
+pub(crate) fn killed(world: &World) -> Vec<Vec<String>> {
     [world.calls_of(&["kill"]), world.calls_of(&["rm"])].concat()
 }
 
-fn record(world: &World) -> TaskSessionRow {
+/// sim/jump's one record, as it is now.
+pub(crate) fn record(world: &World) -> TaskSessionRow {
     let [record] = <[_; 1]>::try_from(world.store().task_sessions("sim/jump").unwrap()).unwrap();
     record
 }
 
 /// The close of `session` (`closed`, after the `before`th line of the thread) was refused at its last
-/// look, saying `why`: nothing killed, and the closure it recorded first is undone on the thread.
+/// look, saying `why`: nothing killed, nothing written, the session open.
 fn kept_at_the_last_look(
     world: &World,
     session: &TaskSessionRow,
@@ -64,14 +77,7 @@ fn kept_at_the_last_look(
         format!("terminal {} stays: {why}", session.pane)
     );
     world.untouched();
-    assert_eq!(
-        world.said_since(before),
-        [
-            closed_line(&session.handle, &world.orch),
-            format!("kept the pane of {} ({why})", session.handle)
-        ],
-        "{why}"
-    );
+    assert_eq!(world.said_since(before), Vec::<String>::new(), "{why}");
 }
 
 /// An edit of a terminal as hc keeps it, given the pid of its program.
@@ -174,227 +180,23 @@ fn a_terminal_that_changed_hands_by_the_last_look_is_kept() {
 }
 
 #[test]
-fn a_close_while_the_session_is_restored_keeps_it_closed_and_refuses_the_restore() {
+fn a_close_whose_hold_lapsed_and_was_taken_over_by_its_last_look_keeps_the_terminal() {
     let world = World::new();
     let session = world.waiting_reviewer();
     let handle = &session.handle;
-    world.close(handle).unwrap();
     let before = world.f.said("sim/jump").len();
-    // Its new terminal has taken its first message, and the restore has not reopened its record yet.
-    let closing = RefCell::new(None);
-    let racing = after(&world, "send", 1, || {
-        *closing.borrow_mut() = Some(world.close(handle));
+    let taken = after(&world, "get", 1, || {
+        world.f.advance(300.0);
+        world.store().take_session(handle, "a restore").unwrap();
     });
-    let restored = restore(
-        world.store(),
-        &racing,
-        &world.machine(),
-        "sim/jump",
-        Some(handle),
-        None,
-    );
-    let new = closing.take().unwrap().unwrap().pane;
+    let closed = world.close_through(&taken, handle);
+    let why = "another close or a restore took its session over";
+    kept_at_the_last_look(&world, &session, before, closed, why);
+    // The close let go of nothing that is not its own: the restore holds the session on.
     assert_eq!(
-        refused(restored),
-        format!(
-            "{handle} was closed while it was restored: its record changed, so terminal {new} is not kept"
-        )
+        refused(world.close(handle)),
+        format!("a restore of {handle} is under way: its hold lapses in 300 s")
     );
-    assert!(
-        !world.has_terminal(&new),
-        "{new} in {:?}",
-        world.addresses()
-    );
-    let read = record(&world);
-    assert_eq!(
-        (read.closed.is_some(), read.pane.as_str()),
-        (true, new.as_str()),
-        "{read:?}"
-    );
-    assert_eq!(world.said_since(before), [closed_line(handle, &world.orch)]);
-}
-
-#[test]
-fn a_restore_waits_until_the_close_has_killed_the_terminal() {
-    let world = World::new();
-    let session = world.waiting_reviewer();
-    let tried = RefCell::new(None);
-    // Right before the kill, the closure is recorded and the terminal still runs.
-    let racing = after(&world, "get", 2, || {
-        let early = restore(
-            world.store(),
-            &world.hc(),
-            &world.machine(),
-            "sim/jump",
-            Some(&session.handle),
-            None,
-        );
-        *tried.borrow_mut() = Some(refused(early));
-    });
-    let closed = world.close_through(&racing, &session.handle).unwrap();
-    assert_eq!(
-        (closed.why, closed.closed),
-        (format!("closed by {}", world.orch), true)
-    );
-    assert_eq!(
-        tried.take(),
-        Some(format!(
-            "{} still runs in terminal {}: close it before restoring",
-            session.handle, session.pane
-        ))
-    );
-    assert!(record(&world).closed.is_some(), "{:?}", record(&world));
-}
-
-#[test]
-fn a_session_restored_once_its_terminal_is_removed_stays_open_with_its_new_terminal_and_callback() {
-    let world = World::new();
-    let session = world.waiting_reviewer();
-    let handle = &session.handle;
-    world
-        .store()
-        .callback_in(
-            handle,
-            Some("codex:0abc-12"),
-            false,
-            false,
-            Some(&session.pane),
-        )
-        .unwrap();
-    let before = world.f.said("sim/jump").len();
-    let new = RefCell::new(String::new());
-    // As soon as the old terminal is removed, the session is restored, and its agent registers the
-    // same thread again from its new terminal.
-    let racing = after(&world, "rm", 1, || {
-        let [again] = <[_; 1]>::try_from(
-            restore(
-                world.store(),
-                &world.hc(),
-                &world.machine(),
-                "sim/jump",
-                Some(handle),
-                None,
-            )
-            .unwrap(),
-        )
-        .unwrap();
-        world
-            .store()
-            .callback_in(
-                handle,
-                Some("codex:0abc-12"),
-                false,
-                false,
-                Some(&again.row.pane),
-            )
-            .unwrap();
-        *new.borrow_mut() = again.row.pane;
-    });
-    let closed = world.close_through(&racing, handle).unwrap();
-    assert_eq!(
-        (closed.pane.as_str(), closed.closed),
-        (session.pane.as_str(), true)
-    );
-    let new = new.take();
-    assert!(
-        world.live().contains(&new),
-        "{new} not in {:?}",
-        world.live()
-    );
-    let now = record(&world);
-    assert_eq!(
-        (now.closed, now.pane.as_str()),
-        (None, new.as_str()),
-        "{now:?}"
-    );
-    assert_eq!(closures(&world, before), [closed_line(handle, &world.orch)]);
-    let callbacks = world.store().callbacks().unwrap();
-    assert_eq!(
-        callbacks.get(handle).and_then(|c| c.terminal.clone()),
-        Some(new),
-        "{:?}",
-        callbacks.keys()
-    );
-}
-
-#[test]
-fn two_overlapping_closes_of_one_terminal_write_one_closure_line() {
-    // The second runs while the first is between its kill and its end, then before the first has
-    // recorded anything.
-    for (call, nth) in [("rm", 1), ("get", 1)] {
-        let world = World::new();
-        let session = world.waiting_reviewer();
-        let before = world.f.said("sim/jump").len();
-        let second = RefCell::new(None);
-        let racing = after(&world, call, nth, || {
-            *second.borrow_mut() = Some(world.close(&session.handle));
-        });
-        let first = world.close_through(&racing, &session.handle).unwrap();
-        let second = second.take().unwrap().unwrap();
-        assert_eq!((first.closed, second.closed), (true, true), "{call}");
-        assert!(
-            !world.has_terminal(&session.pane),
-            "{call}: {:?}",
-            world.addresses()
-        );
-        assert_eq!(
-            world.said_since(before),
-            [closed_line(&session.handle, &world.orch)],
-            "{call}"
-        );
-    }
-}
-
-#[test]
-fn a_close_stopped_after_its_record_is_finished_by_the_next_with_no_second_line() {
-    let world = World::new();
-    let session = world.waiting_reviewer();
-    let earlier = "closed by amber-heron";
-    // The record a close writes before its kill, the close stopping there.
-    world
-        .store()
-        .close_task_session_as(&session, earlier, &restore_line(&session.handle))
-        .unwrap();
-    let before = world.f.said("sim/jump").len();
-    let closed = world.close(&session.handle).unwrap();
-    assert_eq!((closed.why.as_str(), closed.closed), (earlier, true));
-    assert!(
-        !world.has_terminal(&session.pane),
-        "{:?}",
-        world.addresses()
-    );
-    assert_eq!(world.said_since(before), Vec::<String>::new());
-    assert_eq!(record(&world).closed_why, earlier);
-}
-
-#[test]
-fn a_close_stopped_after_its_kill_has_its_callback_retired_by_the_next() {
-    let world = World::new();
-    let session = world.waiting_reviewer();
-    let handle = &session.handle;
-    world
-        .store()
-        .callback_in(
-            handle,
-            Some("codex:0abc-12"),
-            false,
-            false,
-            Some(&session.pane),
-        )
-        .unwrap();
-    let earlier = format!("closed by {}", world.orch);
-    world
-        .store()
-        .close_task_session_as(&session, &earlier, &restore_line(handle))
-        .unwrap();
-    world.edit_terminals(|all| all.clear());
-    let before = world.f.said("sim/jump").len();
-    let closed = world.close(handle).unwrap();
-    assert_eq!((closed.why, closed.closed), (earlier, true));
-    assert_eq!(killed(&world), Vec::<Vec<String>>::new());
-    assert_eq!(world.said_since(before), Vec::<String>::new());
-    let callbacks = world.store().callbacks().unwrap();
-    assert!(!callbacks.contains_key(handle), "{:?}", callbacks.keys());
 }
 
 #[test]
