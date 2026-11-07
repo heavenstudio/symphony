@@ -34,8 +34,10 @@
 
 use serde::{Deserialize, Serialize};
 
+mod agent_probes;
 mod blocks;
 mod media;
+pub use agent_probes::AgentProbes;
 pub use blocks::*;
 pub use media::{GalleryItem, Media, View, Viewer};
 
@@ -990,15 +992,6 @@ pub struct Agents {
     pub generated: f64,
     pub probes: AgentProbes,
     pub agents: Vec<Agent>,
-}
-
-/// Whether each machine probe could be asked: `ok` or `unavailable`.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct AgentProbes {
-    /// The terminals agents run in (hc's, shown in the Herdr app).
-    pub panes: String,
-    /// The test-slot locks.
-    pub slots: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

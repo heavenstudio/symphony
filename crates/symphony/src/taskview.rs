@@ -480,19 +480,11 @@ fn agents_probed(
     wire_agents(&view)
 }
 
-/// The board's agents view on the Symphony's wire, which names the panes probe `panes` where the
-/// board's own JSON keeps `herdr`.
+/// The board's agents view on the Symphony's wire. The board's own JSON names the panes probe
+/// `herdr`, which [`symphony_api::AgentProbes`] reads and sends on as `panes` and `herdr` both.
 fn wire_agents(view: &symphony_board::cli::agents::View) -> Result<symphony_api::Agents, String> {
-    let json = symphony_board::pyjson::dumps_line(&view.json());
-    let mut json: serde_json::Value = serde_json::from_str(&json).map_err(|e| e.to_string())?;
-    if let Some(probes) = json
-        .get_mut("probes")
-        .and_then(serde_json::Value::as_object_mut)
-        && let Some(panes) = probes.remove("herdr")
-    {
-        probes.insert("panes".into(), panes);
-    }
-    serde_json::from_value(json).map_err(|e| e.to_string())
+    serde_json::from_str(&symphony_board::pyjson::dumps_line(&view.json()))
+        .map_err(|e| e.to_string())
 }
 
 /// Set the board field `name` on the task `slug`: the first of `plugins` declaring a field of that
