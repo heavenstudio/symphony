@@ -26,10 +26,12 @@ mod callback_state;
 mod callbacks;
 mod copy;
 mod depends;
+mod dispatcher;
 mod embeddings;
 mod fields;
 mod launches;
 mod messages;
+mod pool;
 mod pull_account;
 mod queued_lines;
 pub(crate) mod search;
@@ -50,6 +52,11 @@ pub use work::{
 
 type Clock = Box<dyn Fn() -> f64 + Send + Sync>;
 type Probe = Box<dyn Fn(i64) -> bool + Send + Sync>;
+
+/// What a write that asks for a callback dispatch does instead of dispatching
+/// ([`Store::dispatching_by`]): starts the dispatch elsewhere and says whether it did. When it did
+/// not, the write dispatches itself.
+pub type HandOff = Box<dyn Fn() -> bool + Send + Sync>;
 
 /// How long a call reads and decides again before it gives up on a board that keeps moving: as long as
 /// the SQLite store waited on its write lock, not a count of tries a busy board spends in two seconds.
@@ -162,6 +169,10 @@ pub struct Store {
     callback_idle: Mutex<Option<callbacks::Idle>>,
     /// The hc terminals the server clock's current tick sampled, which every view of that tick reads.
     clock_panes: Mutex<Option<crate::cli::agents::Answer<Vec<crate::cli::agents::Pane>>>>,
+    /// Where this store's writes send their callback dispatch; none dispatches in the write.
+    hand_off: Option<HandOff>,
+    /// The messages a dispatch pass reads every recipient's inbox from ([`pool::Pool`]).
+    inbox_pool: Mutex<Option<pool::Pool>>,
 }
 
 impl Store {
@@ -214,6 +225,8 @@ impl Store {
             callback_snapshot: Mutex::new(None),
             callback_idle: Mutex::new(None),
             clock_panes: Mutex::new(None),
+            hand_off: None,
+            inbox_pool: Mutex::new(None),
         }
     }
 
@@ -588,10 +601,8 @@ impl Store {
             vars,
             false,
         )?;
-        if snap.has_callbacks
-            && let Err(error) = self.dispatch_callbacks()
-        {
-            eprintln!("CALLBACK deferred: {error}");
+        if snap.has_callbacks {
+            self.after_write();
         }
         let view = View::new(self, snap);
         view.task(slug).map_err(Failure::Stop)?;

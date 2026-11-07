@@ -662,6 +662,8 @@ fn due_ticks_probe_once_and_idle_cursor_changes_do_not_probe() {
                 .env("TASKS_DATABASE", f.store.client().database())
                 .env("TASKS_NOW", f.now().to_string())
                 .env("TASKS_SWEEP", "off")
+                // The command's own dispatch is the one counted: it ends before the count is read.
+                .env("TASKS_DISPATCH", "inline")
                 .env("HC_BIN", &hc)
                 .env("CODEX_THREAD_ID", "")
                 .env("CLAUDE_SESSION_ID", "")
@@ -1387,6 +1389,8 @@ done
             .env("TASKS_DATABASE", f.store.client().database())
             .env("TASKS_NOW", f.now().to_string())
             .env("TASKS_SWEEP", "off")
+            // Each command's deliveries end with it, so the stand-in's log is read after them all.
+            .env("TASKS_DISPATCH", "inline")
             .env("CODEX_THREAD_ID", "")
             .env("CLAUDE_SESSION_ID", "")
             .env("PATH", &path)
