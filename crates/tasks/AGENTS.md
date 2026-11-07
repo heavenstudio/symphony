@@ -159,6 +159,54 @@ presence grace and reservation state against the current clock. The Symphony ser
 cached inputs even without a callback recipient; machine/test probes and the agents view still
 run each tick. Unchanged live observations skip planning until the periodic PULL check; health
 changes invalidate that shortcut, and due outbox retries are checked every tick.
+A command line's write observes before it answers and leaves the delivery to a detached
+dispatcher: the `tasks` binary (`cli::main_detaching`) gives its stores a hand-off
+(`Store::dispatching_by`). The write still makes the observation every write made
+(`Pass::Observe`), queuing in the outbox what each recipient on its host hears, read against the
+board as the write left it: a hand-over or a move before the delivery neither reroutes nor folds
+it, and a callback registration takes its first look before it answers. It then starts
+`tasks dispatch` of the same executable detached, in a session of its own (`cli/detached.rs`;
+its lines go to `sf-tasks/dispatch.log` beside the repository's own board, nowhere for a
+`TASKS_SERVER` board), which delivers. One dispatcher runs a host at a time
+(`store/dispatcher.rs`, `Store::dispatch_detached`), under the row
+`callback_lease:['dispatch', HOST]` (60 s, renewed on each pass): one that finds it held counts an
+ask (`asked`) and waits until a pass begun after it (`served`) has ended (`completed`), or until
+the holder's lease lapses, when it takes the host over, so the asks of a holder lost before or
+during that pass are not lost; a new holder alone is not that pass. The holder passes
+until no ask stands and every recipient was reached (one whose lease another dispatcher held is
+passed again, for up to a recipient's lease), so 40 writes at once make a few passes, not 40.
+Each host's dispatchers keep a row of their own, so none takes an ask for recipients it cannot
+reach. A holder whose lease lapsed and was taken ends after its pass and leaves the row to the new
+holder. A hand-off that cannot start the process delivers in the write, as every library store
+does (the Symphony server's, the tests', `cli::main` in-process), and so does the binary under
+`TASKS_DISPATCH=inline`, for a test that reads what a command delivered once it has ended. A pass
+reads the delivered messages after the lowest recipient cursor once (`store/pool.rs`) and each
+recipient's inbox filters that pool, looking its deliveries up by key, where each recipient
+scanned the message and delivery tables itself; the plan before a recipient's lease no longer
+reads its inbox, since one it would read always goes on to the lease, which reads it. A
+dispatcher's own writes (an observation, a delivery) read the board marker before and after:
+when nothing else moved it between, its cached snapshot still holds (`adopt`), since a dispatcher
+writes nothing a snapshot reads, and the next recipient's leased read is the marker alone, not
+the whole board again. Under each recipient's lease a delivering pass otherwise reads the board
+and its account again, and its final transaction still re-decides when a PULL it read as waiting
+was acknowledged or pruned. A write's observation reads the account again but keeps the board it
+read once it committed, and leaves a recipient whose recorded observation is at or past that
+board's marker: that one read a board holding the write, and reading the whole board again under
+every lease is what made 40 writers at once take minutes. It also leaves, without its lease, a
+recipient whose look moved by the newest message alone and whose inbox no message since its cursor
+could reach (`Store::could_hear` tests the pass's pool on the client: to it, to a role, from the
+owner, a verdict): the write gave it nothing to hear, its recorded look and cursors stay as when
+another dispatcher held its lease, and the delivering pass moves them. A read of one statement (a plan's
+stored state, the marker, the pending check, the registrations, a waiting dispatcher's look at
+the lease) is answered outside an explicit transaction (`Store::read`): one statement reads one
+snapshot on its own, and every commit syncs the store, about 5 ms on the board's server even when
+nothing was written, paid for each recipient of each write. The inbox fetches the orchestrators'
+sessions by id from their roles: `session WHERE handle IN (SELECT ... FROM role)` runs the role
+scan again for each session, seconds on a board of thousands of each, for every inbox a message
+could reach, which is what made one write on a board that size take minutes. A diff reads the
+confirmed registrations only for a child that went quiet since the last look
+(`attach::events::quiet_children`). `examples/dispatch_load.rs` measures 40
+concurrent `tasks say` against a scratch database seeded from a dump of the live board.
 Dispatch plans before leasing and refreshes its inputs and observation again after acquiring
 the small `callback_lease` record. Its revision identifies the holder, including on release;
 taking or releasing it never rewrites `seen` or `statuses` or allocates a counter. Lease rows
