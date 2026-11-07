@@ -1,6 +1,6 @@
 //! The monitor's look at the board each poll: what it follows, and that it makes one request of the
 //! board however many tasks its session orchestrates. Then the watch: what it prints over its
-//! waits, and that a poll asks herdr and the test slots once, or not at all with nobody quiet. The
+//! waits, and that a poll asks hc and the test slots once, or not at all with nobody quiet. The
 //! loop itself runs through the command line in `monitor.rs`.
 
 use crate::common::{Fixture, NOW, RawWrite};
@@ -222,10 +222,10 @@ fn probed(f: &Fixture, me: &str, polls: i64, beat: f64, probes: &Probes) {
 /// Three-second polls past the lost line.
 const GONE_POLLS: i64 = ((LIVE_SECONDS + STALE_SECONDS) / 3.0) as i64 + 3;
 
-/// With five children quiet, each poll asks herdr and the test slots once (one view of the agents),
+/// With five children quiet, each poll asks hc and the test slots once (one view of the agents),
 /// never once a child.
 #[test]
-fn a_poll_asks_herdr_and_the_slots_once_however_many_children_are_quiet() {
+fn a_poll_asks_hc_and_the_slots_once_however_many_children_are_quiet() {
     let f = Fixture::empty();
     let orch = f.session("orchestrator");
     for i in 0..5 {
@@ -243,12 +243,12 @@ fn a_poll_asks_herdr_and_the_slots_once_however_many_children_are_quiet() {
     let count = |name: &str| asked.iter().filter(|a| **a == name).count();
     let (panes, runs) = (count("panes"), count("runs"));
     let most = usize::try_from(GONE_POLLS + 1).unwrap();
-    assert!(panes > 0 && panes <= most, "{panes} asks of herdr");
+    assert!(panes > 0 && panes <= most, "{panes} asks of hc");
     assert!(runs > 0 && runs <= most, "{runs} asks of the slots");
     assert_eq!(panes, runs, "each view asks both once");
 }
 
-/// With nobody quiet a poll asks the machine nothing, neither herdr nor the slots.
+/// With nobody quiet a poll asks the machine nothing, neither hc nor the slots.
 #[test]
 fn a_poll_with_nobody_quiet_asks_nothing() {
     let f = Fixture::empty();

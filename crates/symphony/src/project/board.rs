@@ -39,12 +39,14 @@ impl Board {
     }
 }
 
-/// The table as written: every key optional, nothing else allowed.
+/// The table as written: every key optional, one this build does not know kept by name.
 #[derive(Default, Deserialize)]
-#[serde(deny_unknown_fields, default)]
+#[serde(default)]
 pub(super) struct FileBoard {
     export: Option<String>,
     disposable: Vec<String>,
     guide: Option<String>,
     on_review: Vec<String>,
+    #[serde(flatten)]
+    pub(super) unknown: super::file::Unknown,
 }

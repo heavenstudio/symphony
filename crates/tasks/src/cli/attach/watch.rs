@@ -20,7 +20,7 @@ pub struct Watch<'a> {
     pub polls: Option<i64>,
     /// A child whose own verify is running or queued for a slot is never called STALE or LOST while it
     /// is; the PULL digest's idle and verifying agents come from the same view. The pane watch asks
-    /// its herdr; with none, it does not run.
+    /// hc through them; with none, it does not run.
     pub probes: Option<&'a Probes<'a>>,
     /// Whether a task's branch is on main.
     pub landed: Option<&'a dyn Fn(&Task) -> bool>,
@@ -111,7 +111,7 @@ fn look(
     };
     let quiet = |h: &Health| matches!(h, Health::Stale | Health::Lost | Health::Unknown);
     let any_quiet = now.children.values().any(quiet);
-    // herdr is asked at most once a poll, by the agents view and the pane watch together.
+    // hc is asked at most once a poll, by the agents view and the pane watch together.
     let sample = OnceCell::new();
     let probes = w.probes.map(|probes| Probes {
         panes: Box::new(|| sample.get_or_init(|| (probes.panes)()).clone()),

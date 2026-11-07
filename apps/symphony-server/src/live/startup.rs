@@ -22,6 +22,20 @@ impl Hub {
         )
     }
 
+    /// Finish the current refresh (including its children), then release the watcher and board.
+    pub fn stop(&self) {
+        self.draining.send_replace(true);
+        self.disarm_initial_board();
+        let mut worker = self.worker.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(worker) = worker.take()
+            && worker.join().is_err()
+        {
+            crate::front::tell(format_args!(
+                "· Symphony data worker panicked while stopping"
+            ));
+        }
+    }
+
     /// Install watcher `W` and documents. The owned worker starts its board read when activated,
     /// then sweeps the watched files on its own every `period`.
     pub(super) fn start_watching<W: Watcher + Send + 'static>(

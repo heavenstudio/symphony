@@ -1,9 +1,10 @@
 //! Posts under a key (`Store::say_keyed`): made once per key on a thread, whatever a later post
 //! under it says, once when two come at once, said once to be unread by any executor, whichever
 //! post under the key finds that, and taking the thread's line made under no key when asked to
-//! (`Store::adopt_or_say`).
+//! (`Store::adopt_or_say`), with the board's notice of it said under no key.
 
 use crate::common::{Fixture, Seed};
+use serde_json::json;
 use symphony_board::health::LIVE_SECONDS;
 
 /// A post under a key is made once on a thread: every later one under the key answers the line the
@@ -195,7 +196,8 @@ fn a_post_asked_to_adopt_takes_the_threads_line_reading_it_and_the_notice_of_it(
             lines.iter().filter(|m| m.sender == "board").count(),
         )
     };
-    // Under no key, to a task nobody executes: the board's notice of it is under no key either.
+    // Under no key, to a task nobody executes: the board says once, under the line's own key
+    // (`unread:<id>`), that no executor reads it.
     let old = f
         .store
         .say("sim/jump", &a, "main is red", Some("@executor"))
@@ -295,4 +297,78 @@ fn a_post_that_takes_a_line_says_once_that_no_executor_reads_it() {
         )
         .unwrap();
     assert_eq!(told(), vec![notice]);
+}
+
+/// A post that takes a line made under no key takes the board's notice of it said under no key
+/// too: the key naming the line's notice (`unread:<id>`) takes the thread's earliest line of the
+/// board saying the line reaches no live executor, so neither the taking nor a repeat under the
+/// key says it again.
+#[test]
+fn a_post_that_takes_a_line_takes_the_notice_said_of_it_under_no_key() {
+    let f = Fixture::empty();
+    let a = f.session("worker");
+    f.task("sim/jump");
+    let by = |sender: &str| -> Vec<(i64, String)> {
+        f.store
+            .thread("sim/jump")
+            .unwrap()
+            .into_iter()
+            .filter(|m| m.sender == sender)
+            .map(|m| (m.id, m.text))
+            .collect()
+    };
+    // The line to the task's executor and the board's notice that nobody reads it, both made
+    // under no key.
+    let made = "LET $counted = (UPSERT ONLY counter:message SET last += 1, ts = $now);
+CREATE type::record('message', [$slug, $counted.last]) SET sid = $counted.last, slug = $slug,
+    sender = $sender, recipient = $to, kind = 'msg', text = $text, ts = $now RETURN NONE;";
+    let seed = |sender: &str, to: &str, text: &str| {
+        f.store
+            .client()
+            .query(
+                made,
+                json!({
+                    "slug": "sim/jump", "sender": sender, "to": to, "text": text, "now": f.now()
+                }),
+            )
+            .unwrap();
+    };
+    seed(&a, "@executor", "main is red");
+    let old = f
+        .store
+        .thread("sim/jump")
+        .unwrap()
+        .into_iter()
+        .find(|m| m.sender == a)
+        .unwrap();
+    let notice = format!(
+        "#{} from {a} to @executor reaches no live executor: no session holds the role",
+        old.id
+    );
+    seed("board", "@orchestrator", &notice);
+    assert_eq!(by("board"), vec![(old.id + 1, notice.clone())]);
+    let taken = f
+        .store
+        .adopt_or_say(
+            "sim/jump",
+            &a,
+            "main is red",
+            Some("@executor"),
+            "main-red:3e0c",
+        )
+        .unwrap();
+    assert_eq!(taken, old);
+    let again = f
+        .store
+        .say_keyed(
+            "sim/jump",
+            &a,
+            "main is red",
+            Some("@executor"),
+            "main-red:3e0c",
+        )
+        .unwrap();
+    assert_eq!(again, old);
+    assert_eq!(by(&a), vec![(old.id, "main is red".into())]);
+    assert_eq!(by("board"), vec![(old.id + 1, notice)]);
 }

@@ -134,8 +134,20 @@ pub struct Callback {
     /// What the server clock's pane watch last told it; older dispatchers leave it as it is.
     #[serde(default)]
     pane_watch: attach::PaneWatch,
+    /// The hc terminal the registering agent ran in (`HC_TERMINAL_ID`), if it ran in one: a
+    /// Codex thread is present while that terminal runs Codex.
+    #[serde(default)]
+    pub terminal: Option<String>,
     #[serde(skip)]
     live_orchestrator: bool,
+}
+
+/// What hc says of the machine's Codex agents, for [`Store::callback_presence`]: the live
+/// terminals running Codex, and the threads known to run in one of them (a recorded launch's).
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Presence {
+    pub terminals: BTreeSet<String>,
+    pub threads: BTreeSet<String>,
 }
 
 impl Store {
@@ -191,6 +203,20 @@ RETURN $key;"),
         chat: bool,
         if_free: bool,
     ) -> Result<(), Error> {
+        self.callback_in(handle, address, chat, if_free, None)
+    }
+
+    /// [`Store::callback`] from the hc terminal `terminal`, if the agent runs in one. A Codex
+    /// thread also completes the conversation its open launch records left unknown (`codex:`), so
+    /// that `restore` can resume it.
+    pub fn callback_in(
+        &self,
+        handle: &str,
+        address: Option<&str>,
+        chat: bool,
+        if_free: bool,
+        terminal: Option<&str>,
+    ) -> Result<(), Error> {
         if let Some(address) = address {
             validate(address).map_err(refused)?;
         } else if chat {
@@ -238,8 +264,11 @@ IF $take {{
 IF $address = NONE {{ UPDATE callback_event SET delivered = true, text = '' WHERE handle = $actor AND string::starts_with(key, 'chat-') RETURN NONE; }};
 UPSERT type::record('callback_state', $actor) SET handle = $actor, address = $address, host = $host, chat_fallback = $chat AND $if_free,
     registration_revision = (registration_revision ?? 0) + 1,
-    owner = $owner, confirmed_until = 0, chat_resume = false,
+    owner = $owner, confirmed_until = 0, chat_resume = false, terminal = $terminal,
     chat = IF $address = NONE {{ false }} ELSE IF $take {{ true }} ELSE {{ chat ?? false }} RETURN NONE;
+IF $address != NONE AND string::starts_with($address, 'codex:') {{
+    UPDATE task_session SET claude_session = $address WHERE handle = $actor AND closed = NONE AND claude_session = 'codex:' RETURN NONE;
+}};
 RETURN NONE;");
         self.retrying(|| {
             self.transact::<Value>(
@@ -249,6 +278,7 @@ RETURN NONE;");
                     self.now(),
                     json!({
                         "address":address, "chat":chat, "if_free":if_free, "host":self.host, "owner":owner,
+                        "terminal":terminal.filter(|t| !t.is_empty() && address.is_some()),
                     }),
                 ),
             )
@@ -274,7 +304,7 @@ RETURN NONE;");
 
     fn stored_callbacks(&self) -> Result<Vec<Callback>, Error> {
         self.retrying(|| self.read(
-            "RETURN SELECT handle, address, host, chat ?? false AS chat, chat_fallback ?? false AS chat_fallback, owner, confirmed_until ?? 0 AS confirmed_until,
+            "RETURN SELECT handle, address, host, terminal, chat ?? false AS chat, chat_fallback ?? false AS chat_fallback, owner, confirmed_until ?? 0 AS confirmed_until,
                 (SELECT * OMIT id FROM ONLY type::record('session', $parent.handle)) AS session, chat_resume ?? false AS chat_resume, pane_watch ?? {} AS pane_watch,
                 IF type::record('session', handle).agent = NONE { false } ELSE { type::record('callback_state', ['binding', type::record('session', handle).agent]).in_process ?? true } AS in_process
              FROM callback_state WHERE address != NONE AND type::record('session', handle).left_at = NONE;", json!({}),
@@ -330,13 +360,15 @@ RETURN NONE;");
     }
 
     /// The idle sweep confirms native reachability rather than treating absent tool calls as an
-    /// exit. A socket must accept a connection; a Codex thread must still occupy a pane. A dry run
-    /// reports the same channels without changing their heartbeat. No payload or credentials are
-    /// sent by the socket probe. The inventory's boolean says whether absence is established:
-    /// partial inventories can confirm known threads but cannot retire missing registrations.
+    /// exit. A socket must accept a connection; a Codex thread must still occupy a terminal: one a
+    /// recorded launch puts it in, else the terminal it registered from, which must still run
+    /// Codex. A thread registered from no terminal, that no launch records, is neither confirmed
+    /// nor retired: hc cannot say where it runs. A dry run reports the same channels without
+    /// changing their heartbeat. No payload or credentials are sent by the socket probe. Without
+    /// `codex` (hc did not answer) no thread is confirmed or retired.
     pub(crate) fn callback_presence(
         &self,
-        pane_sessions: Option<(&BTreeSet<String>, bool)>,
+        codex: Option<&Presence>,
         refresh: bool,
     ) -> Result<BTreeSet<String>, Error> {
         let mut present = BTreeSet::new();
@@ -368,22 +400,22 @@ RETURN NONE;");
                     }
                 }
             } else {
-                let Some((panes, complete)) = pane_sessions else {
+                let Some(codex) = codex else {
                     continue;
                 };
-                let found = callback
-                    .address
-                    .strip_prefix("codex:")
-                    .is_some_and(|id| panes.contains(id));
-                if !found && !complete {
+                let thread = callback.address.strip_prefix("codex:").unwrap_or_default();
+                if codex.threads.contains(thread) {
+                    true
+                } else if let Some(terminal) = &callback.terminal {
+                    codex.terminals.contains(terminal)
+                } else {
                     continue;
                 }
-                found
             };
             if alive && (!refresh || self.callback_seen(&callback)?) {
                 present.insert(callback.handle);
             } else if !alive && refresh {
-                self.clear_callback(&callback, "thread no longer occupies a pane")?;
+                self.clear_callback(&callback, "thread no longer occupies a terminal")?;
             }
         }
         if refresh {
@@ -522,7 +554,7 @@ RETURN NONE;");
 
     /// The server clock reuses this sequenced snapshot for its read models after delivery. Only the
     /// clock watches panes: a write delivers what it caused, and a pane's prompt is no write. The
-    /// watch looks first, so the one herdr sample it takes serves the tick's PULL view and the
+    /// watch looks first, so the one hc sample it takes serves the tick's PULL view and the
     /// clock's agents view after it ([`Store::clock_panes`]).
     pub fn dispatch_callbacks_snapshot(&self) -> Result<Option<super::Board>, Error> {
         *self.clock_panes.lock().unwrap_or_else(|e| e.into_inner()) = None;
@@ -536,7 +568,7 @@ RETURN NONE;");
             .map(|(board, _)| Some(board))
     }
 
-    /// The herdr panes this tick of the server clock sampled, when its pane watch took a sample.
+    /// The hc terminals this tick of the server clock sampled, when its pane watch took a sample.
     pub(crate) fn clock_panes(&self) -> Option<Answer<Vec<Pane>>> {
         self.clock_panes
             .lock()
@@ -612,7 +644,7 @@ RETURN NONE;");
         Ok((board, observed))
     }
 
-    /// One look of the pane watch for each recipient on this host ([`attach::pane_watch`]): herdr is
+    /// One look of the pane watch for each recipient on this host ([`attach::pane_watch`]): hc is
     /// asked once a tick, and only when some recipient oversees a session launched into an open
     /// pane. A look that changes nothing writes nothing. It plans from what the recipient's row said
     /// and, under its lease, looks again from what the row says now: another clock on the board may
@@ -637,7 +669,7 @@ RETURN NONE;");
             self.clock_panes
                 .lock()
                 .unwrap_or_else(|e| e.into_inner())
-                .get_or_insert_with(|| crate::cli::probes::herdr_panes(&env))
+                .get_or_insert_with(|| crate::cli::probes::hc_terminals(&env))
                 .clone()
         };
         for (callback, overseen) in recipients {

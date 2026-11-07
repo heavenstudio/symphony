@@ -1,6 +1,6 @@
 //! What the store's tests share: one SurrealDB server for the whole test binary, a database of its own
 //! per test, a settable clock and process table (`tasks_store_test.py`'s `Clock` and `alive`), and a
-//! board seeded through the one-way copy.
+//! board seeded through the one-way copy ([`Seed`], `seed.rs`).
 //!
 //! The server is the pinned `surreal` (`SF_SURREAL`, else `tools/surreal.sh` fetches it), in memory on a
 //! free local port. It runs under a shell that stops it when this process's pipe to the shell closes,
@@ -23,10 +23,17 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 use symphony_board::health::{LIVE_SECONDS, STALE_SECONDS};
 use symphony_board::port::{NotStarted, Start};
-use symphony_board::rows::{Dump, LinkRow, RoleRow, SessionRow, TaskRow};
 use symphony_board::rpc::{self, Client, DbError};
 use symphony_board::sys::{Child, Command};
 use symphony_board::{Health, NewSession, NewTask, Store, Task};
+
+#[path = "seed.rs"]
+mod seed;
+#[allow(
+    unused_imports,
+    reason = "each test binary including this file uses some of the seed's builders"
+)]
+pub use seed::{Seed, session, task};
 
 pub const NOW: f64 = 1_800_000_000.0;
 /// Past the lost line.
@@ -473,92 +480,6 @@ pub fn amber_back_meanwhile() -> (Fixture, Store) {
     (f, late)
 }
 
-/// A board to seed, in the dump's shape: sessions seen at `NOW`, tasks in the order given.
-#[derive(Default, Clone)]
-pub struct Seed {
-    pub dump: Dump,
-}
-
-impl Seed {
-    pub fn session(self, handle: &str) -> Seed {
-        self.session_row(session(handle))
-    }
-
-    pub fn session_row(mut self, row: SessionRow) -> Seed {
-        self.dump.sessions.push(row);
-        self
-    }
-
-    pub fn task(self, slug: &str, status: &str) -> Seed {
-        let row = TaskRow {
-            id: self.dump.tasks.len() as i64 + 1,
-            ..task(slug, status)
-        };
-        self.task_row(row)
-    }
-
-    pub fn task_row(mut self, row: TaskRow) -> Seed {
-        self.dump.tasks.push(row);
-        self
-    }
-
-    pub fn role(mut self, slug: &str, handle: &str, role: &str) -> Seed {
-        let since = NOW + self.dump.roles.len() as f64;
-        self.dump.roles.push(RoleRow {
-            slug: slug.into(),
-            handle: handle.into(),
-            role: role.into(),
-            since,
-            expires: None,
-        });
-        self
-    }
-
-    pub fn reserved(mut self, slug: &str, handle: &str, expires: Option<f64>) -> Seed {
-        self.dump.roles.push(RoleRow {
-            slug: slug.into(),
-            handle: handle.into(),
-            role: "reserved".into(),
-            since: NOW,
-            expires,
-        });
-        self
-    }
-
-    pub fn link(mut self, slug: &str, kind: &str, target: &str) -> Seed {
-        self.dump.task_links.push(LinkRow {
-            slug: slug.into(),
-            kind: kind.into(),
-            target: target.into(),
-        });
-        self
-    }
-}
-
-pub fn session(handle: &str) -> SessionRow {
-    SessionRow {
-        handle: handle.into(),
-        kind: "worker".into(),
-        connected: NOW,
-        last_seen: NOW,
-        ..Default::default()
-    }
-}
-
-pub fn task(slug: &str, status: &str) -> TaskRow {
-    TaskRow {
-        id: 1,
-        slug: slug.into(),
-        title: format!("Task {slug}"),
-        status: status.into(),
-        priority: 2,
-        created_by: "owner".into(),
-        created: NOW,
-        updated: NOW,
-        ..Default::default()
-    }
-}
-
 /// The refusal's words, or a panic naming what came back instead.
 pub fn refused<T: std::fmt::Debug>(result: Result<T, symphony_board::Error>) -> String {
     match result {
@@ -567,32 +488,41 @@ pub fn refused<T: std::fmt::Debug>(result: Result<T, symphony_board::Error>) -> 
     }
 }
 
-/// The public presence sweep `store` runs over an empty pane inventory, keeping its round in
-/// `state`: it looks up no pane or process, and refreshes and prunes the board's callbacks as ever.
+/// The public presence sweep `store` runs over an hc that lists no terminal, keeping its round in
+/// `state`: it looks up no terminal or process, and refreshes and prunes the board's callbacks as
+/// ever.
 pub fn sweep_presence(store: &Store, state: PathBuf) {
     use symphony_board::launch::LaunchError;
-    use symphony_board::launch::herdr::Herdr;
+    use symphony_board::launch::hc::Hc;
     use symphony_board::launch::reap::{self, REAP_SECONDS, Reap};
 
-    struct EmptyPanes;
-    impl Herdr for EmptyPanes {
+    struct NoTerminals;
+    impl Hc for NoTerminals {
         fn run(&self, _args: &[&str]) -> Result<String, LaunchError> {
-            Ok(r#"{"result":{"agents":[]}}"#.into())
+            Ok(r#"{"terminals":[]}"#.into())
         }
-        fn workspace(&self) -> Option<String> {
+        fn feed(&self, _args: &[&str], _input: &str) -> Result<String, LaunchError> {
+            panic!("no terminal needs the core's documents")
+        }
+        fn app(&self, _args: &[&str]) -> Result<String, LaunchError> {
+            panic!("no terminal needs the window")
+        }
+        fn caller(&self) -> Option<String> {
             None
+        }
+        fn board(&self) -> String {
+            "lamp-works/tasks".into()
         }
     }
 
     let sweep = Reap {
         state,
         apply: true,
-        processes: &|_| panic!("no pane needs a process inventory"),
-        current_pane: None,
+        processes: &|_| panic!("no terminal needs a process inventory"),
         caller: None,
         min_idle: REAP_SECONDS,
     };
-    let swept = reap::sweep(store, &EmptyPanes, &sweep, &mut Vec::new());
+    let swept = reap::sweep(store, &NoTerminals, &sweep, &mut Vec::new());
     assert!(swept.unwrap().is_some());
     std::fs::remove_file(&sweep.state).unwrap();
     std::fs::remove_file(reap::lock_path(&sweep.state)).unwrap();

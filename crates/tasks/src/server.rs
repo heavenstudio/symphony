@@ -7,6 +7,9 @@
 //! the caller. That is also the restart: a server that was killed is started again on the same data. A
 //! recorded server older than the pinned SurrealDB is replaced; a newer one, a tree ahead of this one,
 //! is used as it is.
+//!
+//! Every server it starts keeps the board's values in its sstables ([`Storage`]), where compaction
+//! reclaims what a rewrite leaves, and [`Home::reclaim`] rebuilds a store that grew before it did.
 
 use crate::port::{self, NotStarted, Start};
 use crate::rpc;
@@ -18,6 +21,13 @@ use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
+mod reclaim;
+mod storage;
+
+pub use reclaim::{Reclaimed, bytes};
+pub use storage::Storage;
+use storage::store;
+
 /// The SurrealDB the board runs on: `tools/surreal.sh`'s `VERSION`, which fetches it.
 pub const SURREAL_VERSION: &str = "3.3.0";
 /// The board's folder in the git common dir.
@@ -28,6 +38,11 @@ const ADDRESS: &str = "server.json";
 const LOCK: &str = "lock";
 const LOG: &str = "server.log";
 const DATA: &str = "data";
+/// In the board's folder, where a reclaim works ([`Home::reclaim`]): the `exports/` it keeps, the new
+/// store it builds in `data/`, the exports of that store it checks in `check/`, and the old store,
+/// `old/`, from the swap to its removal.
+const RECLAIM: &str = "reclaim";
+const OLD: &str = "old";
 /// How long a server is waited for to come up or to answer, on a machine as loaded as this one gets.
 const PATIENCE: Duration = Duration::from_secs(60);
 /// How long a server asked to end is given before it is made to.
@@ -46,6 +61,9 @@ pub enum ServerError {
     NotUp(String),
     /// The board's folder could not be read or written.
     Io(String),
+    /// A reclaim stopped before its swap ([`Home::reclaim`]): what failed. The board's server runs on
+    /// the old store again, untouched.
+    Reclaim(String),
 }
 
 impl fmt::Display for ServerError {
@@ -58,6 +76,10 @@ impl fmt::Display for ServerError {
                 path.display()
             ),
             ServerError::NotUp(why) | ServerError::Io(why) => f.write_str(why),
+            ServerError::Reclaim(why) => write!(
+                f,
+                "the reclaim stopped and the board runs on its old store, untouched: {why}"
+            ),
         }
     }
 }
@@ -80,6 +102,7 @@ pub struct Home {
     dir: PathBuf,
     surreal: PathBuf,
     patience: Duration,
+    storage: Storage,
 }
 
 impl Home {
@@ -89,6 +112,7 @@ impl Home {
             dir: dir.into(),
             surreal: surreal.into(),
             patience: PATIENCE,
+            storage: Storage::BOARD,
         }
     }
 
@@ -110,6 +134,12 @@ impl Home {
     /// How long a server that is starting, or that runs and does not answer, is waited for.
     pub fn patience(self, patience: Duration) -> Home {
         Home { patience, ..self }
+    }
+
+    /// How the servers this board starts keep their data: [`Storage::BOARD`] unless a test asks
+    /// for a memtable small enough to flush, or for the storage a store grew under.
+    pub fn storage(self, storage: Storage) -> Home {
+        Home { storage, ..self }
     }
 
     pub fn dir(&self) -> &Path {
@@ -226,7 +256,7 @@ impl Home {
 
     /// The data a server of this board is started on, as its command line names it.
     fn data(&self) -> String {
-        format!("surrealkv://{}", self.dir.join(DATA).display())
+        store(&self.dir.join(DATA))
     }
 
     /// Whether `pid` is this board's server: running, and on this board's data. A pid recorded once
@@ -278,28 +308,53 @@ impl Home {
         )))
     }
 
-    /// Start a server on a free port, wait until it answers, and record it. Under the lock. SurrealDB
-    /// is told a reserved port to bind; one that ends saying the port was taken meanwhile is started
-    /// again on another ([`port`]), every start within the one patience. It is up once it answers and
-    /// holds the port's listener itself ([`port::listens`]): a process that took its port answers
-    /// too, while this server is still on its way to ending.
+    /// Start the board's server ([`Home::spawn`]) and record it. Under the lock. A store a reclaim
+    /// moved aside and never replaced is refused, never started anew and empty in its place. A
+    /// server whose record fails is ended before the failure is said: left running, nobody's, the
+    /// next [`Home::ensure`] would adopt it ([`Home::unrecorded`]) on whatever store it holds, one a
+    /// reclaim's rollback has since moved aside among them.
     fn start(&self) -> Result<Running, ServerError> {
+        let old = self.dir.join(RECLAIM).join(OLD);
+        if !self.dir.join(DATA).exists() && old.exists() {
+            return Err(ServerError::Io(format!(
+                "the board's store is at {}: a reclaim moved it there and stopped; \
+                 `just tasks-reclaim` puts it back",
+                old.display()
+            )));
+        }
+        let running = self.spawn(&self.data(), &[])?;
+        if let Err(problem) = self.record(&running) {
+            return Err(match self.end(running.pid) {
+                Ok(()) => problem,
+                Err(again) => ServerError::NotUp(format!("{problem}; and then {again}")),
+            });
+        }
+        Ok(running)
+    }
+
+    /// Start a server on `data` on a free port, none of `except`, with this board's [`Storage`], and
+    /// wait until it answers. SurrealDB is told a reserved port to bind; one that ends saying the port was taken
+    /// meanwhile is started again on another ([`port`]), every start within the one patience. It is
+    /// up once it answers and holds the port's listener itself ([`port::listens`]): a process that
+    /// took its port answers too, while this server is still on its way to ending.
+    fn spawn(&self, data: &str, except: &[u16]) -> Result<Running, ServerError> {
         if !self.surreal.is_file() {
             return Err(ServerError::NoSurreal(self.surreal.clone()));
         }
         let log = self.dir.join(LOG);
         let until = Instant::now() + self.patience;
-        let started = port::start_on_free_port(port::ATTEMPTS, until, |reserved| {
+        let started = port::start_on_free_port_except(except, port::ATTEMPTS, until, |reserved| {
             let addr = reserved.to_string();
             let from = fs::metadata(&log).map_or(0, |meta| meta.len());
             let out = output(
                 Command::new("/bin/sh")
                     .new_session()
+                    .envs(self.storage.environment())
                     .arg("-c")
                     .arg(START)
                     .arg(&self.surreal)
                     .arg(&addr)
-                    .arg(self.data())
+                    .arg(data)
                     .arg(&log),
             )
             .map_err(io("could not start", &self.surreal))?;
@@ -353,10 +408,7 @@ impl Home {
             ))
         };
         match started {
-            Ok((running, _)) => {
-                self.record(&running)?;
-                Ok(running)
-            }
+            Ok((running, _)) => Ok(running),
             Err(NotStarted::Failed(error)) => Err(error),
             Err(NotStarted::NoPort(problem)) => {
                 Err(io("found no free port beside", &self.dir)(problem))

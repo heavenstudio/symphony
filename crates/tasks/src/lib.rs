@@ -45,8 +45,9 @@ pub mod sys;
 pub use health::Health;
 pub use store::{
     BEFORE_WORK, Beat, Board, Callback, EmbeddingStats, Error, HandOff, KINDS, LANDS_FROM, Landed,
-    Message, Moved, NewLaunch, NewSession, NewTask, PIPELINE, PULLABLE, Pick, ROLES, Role,
-    STATUSES, SearchHit, Session, Store, Task, VectorHit, VectorSearchProfile, can_transition,
+    Message, Moved, NewLaunch, NewSession, NewTask, PIPELINE, PULLABLE, Pick, Presence, ROLES,
+    Role, STATUSES, SearchHit, Session, Store, Task, VectorHit, VectorSearchProfile,
+    can_transition,
 };
 
 /// The board's namespace and database on the server.
@@ -130,4 +131,101 @@ fn copy(
         dump.task_sessions.len(),
         dump.delivery_keys.len(),
     )))
+}
+
+/// The reclaim's usage, said when its arguments are none of its forms.
+const RECLAIM_USAGE: &str =
+    "usage: tasks-reclaim, in a checkout of the board's repository, or tasks-reclaim --dir FOLDER";
+
+/// `tasks-reclaim`: the store of the board in the git common dir of `env`'s working directory rebuilt
+/// from an export of itself ([`server::Home::reclaim`]), the board's server down meanwhile; or, with
+/// `--dir FOLDER`, the store of a board folder of that shape elsewhere, a copy to rehearse on. Either
+/// way served by the pinned `surreal` beside that common dir, or `SF_SURREAL`'s. What it did goes to
+/// `out`, a refusal to `err`; the exit code is returned.
+pub fn reclaim_main(
+    args: &[String],
+    env: &cli::Env,
+    out: &mut dyn std::io::Write,
+    err: &mut dyn std::io::Write,
+) -> i32 {
+    let folder = match args {
+        [] => Ok(None),
+        [dir, folder] if dir == "--dir" => Ok(Some(env.cwd.join(folder))),
+        _ => Err(RECLAIM_USAGE.to_string()),
+    };
+    let reclaimed = folder.and_then(|folder| {
+        let common = git::common_dir(&env.cwd).map_err(|e| e.to_string())?;
+        let home =
+            server::Home::in_common(&common, env.var("SF_SURREAL").map(std::path::Path::new));
+        let home = match folder {
+            Some(folder) => server::Home::new(&folder, home.surreal()),
+            None => home,
+        };
+        home.reclaim().map_err(|e| e.to_string())
+    });
+    match reclaimed {
+        Ok(done) => {
+            let _ = writeln!(
+                out,
+                "tasks-reclaim: the board's store took {} and takes {}; {} databases carried, each \
+                 exported the same from both stores; their exports are in {}; the board's server is \
+                 pid {} at {}",
+                size(done.before),
+                size(done.after),
+                done.databases.len(),
+                done.exports.display(),
+                done.running.pid,
+                done.running.addr
+            );
+            0
+        }
+        Err(why) => {
+            let _ = writeln!(err, "❌ tasks-reclaim: {why}");
+            2
+        }
+    }
+}
+
+/// `bytes` as a person reads it, to a tenth: GiB from one on, else MiB.
+fn size(bytes: u64) -> String {
+    let mib = bytes as f64 / f64::from(1 << 20);
+    if mib >= 1024.0 {
+        format!("{:.1} GiB", mib / 1024.0)
+    } else {
+        format!("{mib:.1} MiB")
+    }
+}
+
+#[cfg(test)]
+mod reclaim_tests {
+    use super::*;
+
+    #[test]
+    fn a_size_is_said_in_mib_below_one_gib_and_in_gib_from_it() {
+        assert_eq!(size(0), "0.0 MiB");
+        assert_eq!(size(575_736 * 1024), "562.2 MiB");
+        assert_eq!(size((1 << 30) - 1), "1024.0 MiB");
+        assert_eq!(size(1 << 30), "1.0 GiB");
+        assert_eq!(size(109_490_057_216), "102.0 GiB");
+    }
+
+    #[test]
+    fn arguments_of_no_form_are_refused_before_a_board_is_reached() {
+        let env = cli::Env::of_process();
+        for args in [
+            vec!["--board"],
+            vec!["--dir"],
+            vec!["folder"],
+            vec!["--dir", "folder", "more"],
+        ] {
+            let args: Vec<String> = args.into_iter().map(String::from).collect();
+            let (mut out, mut err) = (Vec::new(), Vec::new());
+            assert_eq!(reclaim_main(&args, &env, &mut out, &mut err), 2, "{args:?}");
+            assert!(out.is_empty());
+            assert_eq!(
+                String::from_utf8(err).unwrap(),
+                format!("❌ tasks-reclaim: {RECLAIM_USAGE}\n")
+            );
+        }
+    }
 }
