@@ -1,8 +1,9 @@
 //! What a task waits on, changed after it was made: a dependent of a superseded task follows its
 //! successor, and once nothing it waits on is cancelled it leaves the block a cancellation put it in.
 
+use super::cap::GUARD;
 use super::work::{BLOCK_LINE, OWNER, no_task};
-use super::{ACT, Error, Failure, STATUSES, Store, Task, acting, logged, refused};
+use super::{ACT, Error, Failure, Opens, STATUSES, Store, Task, Which, acting, logged, refused};
 use serde::Deserialize;
 use serde_json::json;
 use std::collections::{BTreeSet, HashMap, HashSet};
@@ -89,7 +90,8 @@ fn waits_on(deps: &HashMap<&str, Vec<&str>>, from: &str, to: &str) -> bool {
 impl Store {
     /// `slug` waits on `add` too and no longer on `remove`, on its thread. A task a cancelled
     /// prerequisite blocked that then waits on nothing cancelled goes back to the status its block line
-    /// recorded; one blocked by hand stays blocked.
+    /// recorded; one blocked by hand stays blocked. Back to in_progress starts it again: the change
+    /// is refused when that raises an orchestrator's open tasks past the cap ([`crate::slots`]).
     pub fn change_depends(
         &self,
         slug: &str,
@@ -197,6 +199,27 @@ impl Store {
                     Blocked::From(_) | Blocked::ByHand => None,
                 }
             };
+            // Back to work it was blocked from starts it again, as a move would: refused past the
+            // cap. Back to review is where it was blocked from, as a landing's hold returns it.
+            let slots = match (back, self.slots) {
+                (Some(("in_progress", _)), Some(cap)) => {
+                    let view = self.view(&Which::Starting(slug))?;
+                    let mut executing: Vec<String> =
+                        view.holders("executor").map(|r| r.handle.clone()).collect();
+                    if executing.is_empty() {
+                        executing.push(by.into());
+                    }
+                    let opens = Opens {
+                        status: Some("in_progress".into()),
+                        orchestrator: None,
+                        by: executing,
+                        what: format!("{slug} cannot go from blocked back to in_progress"),
+                    };
+                    self.slots_taken(&view, slug, &opens, cap)?
+                }
+                _ => Vec::new(),
+            };
+            let guarded = !slots.is_empty();
             let vars = acting(
                 by,
                 (self.clock)(),
@@ -207,9 +230,14 @@ impl Store {
                     "back": back.map(|(to, why)| {
                         format!("unblocked: no cancelled dependency left; back to {to}{why}")
                     }),
+                    "slots": slots,
                 }),
             );
-            self.written(&body, vars, slug)
+            if guarded {
+                self.written(&format!("{body}{GUARD}"), vars, slug)
+            } else {
+                self.written(&body, vars, slug)
+            }
         })
     }
 }

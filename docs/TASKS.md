@@ -560,29 +560,45 @@ capped. A value that does not parse, or one below 1, is said on stderr
 - **Open** is `in_progress` or `review`. `blocked`, `backlog`, `concept`,
   `design` and `ready` hold no slot; a slot frees when its task is `done` or
   `cancelled`, or leaves the open statuses another way.
-- **One piece of work, one slot.** A review mirror (`review/BRANCH`,
-  `review-N/BRANCH`, `SLUG/review`) counts with the task it reviews when the
-  board holds that task. A subtask counts with the highest task above it that
-  the same orchestrator holds, so a task and its open subtasks take one slot.
+- **Each open task, one slot.** A subtask holds a slot of its own, so
+  gathering open work under one task frees none. Two kinds of task share the
+  slot of another: a review mirror (`review/BRANCH`, `review-N/BRANCH`,
+  `SLUG/review`) counts with the task it reviews when the board holds that
+  task, and an instruction subtask (`instruction: true`) with the nearest
+  task above it that is not one.
 - **Whose slot.** The orchestrator of the task, or of the nearest task above it
-  that has one whose session still holds ([Subtasks](#subtasks)). A task no
-  orchestrator holds counts against the parent session (`register --parent`)
-  of the session starting it, or of its executors once open.
-- **Where it bites.** A claim into `in_progress`, a move into `in_progress`
-  from `ready` or `blocked`, and taking the `orchestrator` role on an open
-  task are refused when they would open a new slot for an orchestrator
-  already at the cap, naming its open tasks and their status:
+  that has one whose session still holds ([Subtasks](#subtasks)); a task two
+  orchestrators hold counts against both, and a start is refused if either is
+  full. A task no orchestrator holds counts against the parent session
+  (`register --parent`) of the session starting it, or of its executors once
+  open.
+- **Where it bites.** A claim into `in_progress`; a move into `in_progress`
+  or `review` from a status that holds no slot; a dependency change that sends
+  blocked work back to `in_progress`; and taking the `orchestrator` role on a
+  task with open work at or below it. Each is refused when it would raise an
+  orchestrator's open tasks past the cap, naming them and their status, a
+  shared slot's tasks joined by `with`:
   `sim/x cannot start: cobalt-otter holds 8 open tasks, the cap of 8 an
-  orchestrator holds: …; a slot frees when one of them is done or cancelled`.
-  `tasks api` holds the same cap. A start inside a slot already open (a
-  subtask of open work, a mirror of a task in review) is never refused, and a
-  hand-over is not capped.
+  orchestrator holds: sim/a (review) with review/sim/a (review), …; a slot
+  frees when one of them is done or cancelled`. The count is the number of
+  entries listed. `tasks api` holds the same cap. A start inside a slot
+  already open (a mirror of a task in review, an instruction for open work)
+  is never refused.
+- **What it leaves alone.** Work blocked from `review` goes back to `review`
+  uncapped, by a move or a dependency change, as a landing that holds a task
+  it is landing returns it; work blocked from anywhere else is capped on its
+  way back. The owner's moves, a hand-over and a change of parent are not
+  capped.
 - **Not retroactive.** An orchestrator above the cap keeps every task and
   works them; it starts nothing new until it is below the cap.
 
-Two starts at once cannot both take the last slot: a start that opens one
-holds `counter:['slots', HANDLE]`, read in the same transaction as the board it
-counted, and the second write is retried against the new count. Each
+Two starts at once cannot both take the last slot: every start that changes an
+orchestrator's open tasks, one into a slot already open included, holds
+`counter:['slots', HANDLE]`, read in the same transaction as the task it
+starts, and the write that loses is decided again on the new board. The cap
+reads the open tasks through the `task_status` index, the tasks above them and
+the tasks they review by id, a level a round trip, and their roles through
+`role_slug`; it reads no table whole (`tests/store/slots/cost.rs`). Each
 orchestrator's PULL header shows `slots=OPEN/CAP`, and the agents API its
 `slots` ([The agents API](#the-agents-api)).
 

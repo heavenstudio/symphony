@@ -1,11 +1,13 @@
 //! Tasks: making them, the tree of subtasks, joining and releasing them, moving them along, landing
 //! them.
 
+use super::cap::blocked_from;
 use super::{
     ACT, Change, Error, Failure, Opens, REFUSED, Say, Store, Task, Which, acting, left_actor,
     logged, refused, repr, unknown_actor,
 };
 use crate::health::Health;
+use crate::slots::OPEN;
 use serde::Deserialize;
 use serde_json::{Value, json};
 use std::cell::RefCell;
@@ -393,13 +395,15 @@ LET $said = $actor + ' changed priority p' + <string>$task.priority + ' → p' +
 
     /// Move a task along (`can_transition`). Work started, or held by an executor, is moved only by a
     /// session holding a role on it, except that the owner may cancel any open task and return
-    /// blocked work to review. A move into in_progress from ready or blocked starts work, which takes
-    /// a slot of its orchestrator's, refused past the store's cap ([`crate::slots`]).
+    /// blocked work to review. A move into in_progress or review from a status that holds no slot
+    /// starts work, refused when it would raise an orchestrator's open tasks past the store's cap
+    /// ([`crate::slots`]); work blocked from review goes back to review as it left it, as a landing
+    /// holding it for stamps returns it.
     pub fn move_to(&self, slug: &str, status: &str, handle: &str) -> Result<Task, Error> {
         if handle == OWNER && matches!(status, "cancelled" | "review") {
             return self.move_as_owner(slug, status);
         }
-        let starts = status == "in_progress" && self.slots.is_some();
+        let starts = OPEN.contains(&status) && self.slots.is_some();
         self.ruling(slug, handle, starts, |view| {
             view.actor(handle)?;
             let task = view.task(slug)?;
@@ -422,17 +426,23 @@ LET $said = $actor + ' changed priority p' + <string>$task.priority + ' → p' +
             }
             // Work started again, or started by a move: a slot of its orchestrator's, or of its
             // executor's parent (the mover's when it has none) where no orchestrator holds it.
-            let opens = (status == "in_progress" && matches!(current, "ready" | "blocked")).then(|| {
+            let returns = current == "blocked"
+                && status == "review"
+                && (view.snap.slots.as_ref())
+                    .is_some_and(|read| blocked_from(&read.blocks) == Some("review"));
+            let starting = OPEN.contains(&status) && !OPEN.contains(&current) && !returns;
+            let opens = starting.then(|| {
                 let executors: Vec<String> =
                     view.holders("executor").map(|r| r.handle.clone()).collect();
                 Opens {
+                    status: Some(status.into()),
                     orchestrator: None,
                     by: if executors.is_empty() {
                         vec![handle.into()]
                     } else {
                         executors
                     },
-                    what: format!("{slug} cannot go from {current} to in_progress"),
+                    what: format!("{slug} cannot go from {current} to {status}"),
                 }
             });
             Ok(Change {

@@ -370,11 +370,16 @@ and `off` starts none anywhere (`tests/sweep/on_review.rs`).
 orchestrator_slots`, read from the main checkout's `symphony.toml` from the
 `.git` files alone (no `git` process: every command reads it) when the CLI or
 the Symphony opens its store (`cli::capped`, `Store::capping`); a store opened
-without it caps nothing. A rule that may open a slot reads the board's tasks
-and roles in its view's transaction (`Which::Starting`, `store/cap.rs`) and,
-when it opens one, checks and bumps `counter:['slots', HANDLE]` in the write,
-so two starts at once are one retry, not two slots (`tests/store/slots.rs`,
-`tests/cli/slots.rs`).
+without it caps nothing. A rule that may start work reads, in its view's
+transaction (`Which::Starting`, `store/cap.rs`), the slot counters, the open
+tasks through `task_status`, their roles through `role_slug` and the lines
+that blocked the task; then the tasks above them and the tasks they review by
+id, a level a round trip. It decides on the board before and after the change
+(`slots::started`) and, for every orchestrator whose open tasks it changes,
+checks and bumps `counter:['slots', HANDLE]` in the write, so two starts at
+once are one retry, not two slots (`tests/store/slots.rs` and its `moves` and
+`cost` modules, `tests/cli/slots.rs`). Each statement the cap sends is in
+`SLOT_READS`, which `tests/store/slots/cost.rs` has the server plan.
 
 Its store tests start one in-memory server per test binary and give each test a
 database of its own. The server is the pinned SurrealDB `tools/surreal.sh`

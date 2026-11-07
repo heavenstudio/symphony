@@ -1,5 +1,9 @@
 //! The cap on an orchestrator's open tasks: where it refuses a start, what it counts, where a slot
-//! frees, and that it takes nothing from an orchestrator already above it.
+//! frees, and that it takes nothing from an orchestrator already above it. Moves, dependency
+//! changes, the tree reshaped and races are [`moves`]'; what the cap costs, [`cost`]'s.
+
+mod cost;
+mod moves;
 
 use crate::common::{Fixture, Seed, refused, session, task};
 use symphony_board::Store;
@@ -71,10 +75,18 @@ fn board(led: &[(&str, &str)], free: &[(&str, &str)]) -> Fixture {
     Fixture::new(seed)
 }
 
+/// The seed of [`EIGHT`] under O, and `more` it orchestrates.
+fn eight_and_seed(more: &[(&str, &str)]) -> Seed {
+    let mut seed = sessions();
+    for (slug, status) in EIGHT.iter().chain(more) {
+        seed = with(seed, slug, status, None, Some(O));
+    }
+    seed
+}
+
 /// [`EIGHT`] under O, and `more` it orchestrates.
 fn eight_and(more: &[(&str, &str)]) -> Fixture {
-    let led: Vec<(&str, &str)> = EIGHT.iter().chain(more).copied().collect();
-    board(&led, &[])
+    Fixture::new(eight_and_seed(more))
 }
 
 /// A store on `f`'s board holding starts to `cap` open tasks an orchestrator.
@@ -173,9 +185,9 @@ fn a_review_mirror_counts_once_with_the_task_it_reviews() {
     let said = refused(store.claim("work/later", K));
     assert!(said.contains("holds 8 open tasks"), "{said}");
     for slot in [
-        "review/work/a (review) + work/a (in_progress)",
-        "work/b (review) + work/b/review (review)",
-        "review-2/work/c (review) + work/c (in_progress)",
+        "work/a (in_progress) with review/work/a (review), ",
+        "work/b (review) with work/b/review (review), ",
+        "work/c (in_progress) with review-2/work/c (review), ",
     ] {
         assert!(said.contains(slot), "{slot}: {said}");
     }
@@ -251,21 +263,22 @@ fn a_move_into_in_progress_from_blocked_or_ready_is_refused_at_the_cap() {
 }
 
 #[test]
-fn taking_orchestrator_on_open_work_is_refused_at_the_cap_and_on_its_own_slot_or_unstarted_work_is_not()
- {
+fn taking_orchestrator_on_open_work_is_refused_at_the_cap_and_on_its_own_or_unstarted_work_is_not()
+{
     let mut seed = sessions();
-    for (slug, status) in EIGHT {
+    for (slug, status) in &EIGHT[..7] {
         seed = with(seed, slug, status, None, Some(O));
     }
+    // Work of its own below one of O's: O's eighth open task.
+    seed = with(seed, "work/a/part", "in_progress", Some("work/a"), None);
     seed = with(seed, "loose", "in_progress", None, None);
     seed = with(seed, "later", "ready", None, None);
-    seed = with(seed, "work/a/part", "in_progress", Some("work/a"), None);
+    seed = with(seed, "later/one", "review", Some("later"), None);
     let f = Fixture::new(seed);
     let store = capped(&f, 8);
-    // The subtask is held under its parent's slot.
-    let holds = HOLDS_EIGHT.replace(
-        "work/a (in_progress)",
-        "work/a (in_progress) + work/a/part (in_progress)",
+    let holds = HOLDS_EIGHT.replace(", work/h (review)", "").replace(
+        "work/a (in_progress), ",
+        "work/a (in_progress), work/a/part (in_progress), ",
     );
     assert_eq!(
         refused(store.take_role("loose", O, "orchestrator")),
@@ -275,9 +288,15 @@ fn taking_orchestrator_on_open_work_is_refused_at_the_cap_and_on_its_own_slot_or
         store.get("loose").unwrap().holders("orchestrator"),
         Vec::<&str>::new()
     );
-    store.take_role("later", O, "orchestrator").unwrap();
+    // later is not open, but the work below it is, and would be O's.
+    assert!(
+        refused(store.take_role("later", O, "orchestrator")).starts_with(
+            "olive-orch cannot take orchestrator on later, which is ready: olive-orch holds 8"
+        ),
+    );
     store.take_role("work/a/part", O, "orchestrator").unwrap();
     store.take_role("loose", P, "orchestrator").unwrap();
+    store.take_role("later", P, "orchestrator").unwrap();
     // A reviewer takes no slot.
     store.take_role("work/b", K, "reviewer").unwrap();
 }

@@ -4,13 +4,12 @@
 
 use crate::orchestration;
 use crate::rows::RoleRow;
-use crate::slots::OPEN;
 use crate::store::{Change, Error, Opens, Say, Store, Task, refused, repr};
 
 impl Store {
     /// Join a task as `orchestrator` or `reviewer` (executor is `claim`, reserved is `reserve`).
-    /// Taking the orchestrator role on open work takes a slot of the taker's, refused past the
-    /// store's cap ([`crate::slots`]).
+    /// Taking the orchestrator role makes the open work it takes on the taker's: refused when that
+    /// raises the taker's open tasks past the store's cap ([`crate::slots`]).
     pub fn take_role(&self, slug: &str, handle: &str, role: &str) -> Result<Task, Error> {
         if role != "orchestrator" && role != "reviewer" {
             return Err(refused(format!(
@@ -62,9 +61,11 @@ impl Store {
                     expires: None,
                 });
                 change.say = Say::system(format!("{handle} joined as {role}"));
-                // Open work taken on: a slot of the new orchestrator's.
-                if single && OPEN.contains(&task.status.as_str()) {
+                // The open work it takes on, the task's and the work below it nobody else
+                // orchestrates: the new orchestrator's slots.
+                if single {
                     change.opens = Some(Opens {
+                        status: None,
                         orchestrator: Some(handle.into()),
                         by: Vec::new(),
                         what: format!(

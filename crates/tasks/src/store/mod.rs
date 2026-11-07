@@ -41,6 +41,8 @@ mod transaction;
 mod work;
 
 pub use callbacks::{Callback, Presence};
+/// Every statement the cap on an orchestrator's open tasks sends: the plan test's to plan.
+pub use cap::STATEMENTS as SLOT_READS;
 pub use copy::Moved;
 pub(crate) use copy::WRITTEN_SINCE;
 pub use embeddings::{EmbeddingStats, VectorHit, VectorSearchProfile};
@@ -418,7 +420,8 @@ impl Store {
     }
 
     /// Become the executor. Of any number of claims at once, one wins. A claim that starts ready
-    /// work takes a slot of its orchestrator's, refused past the store's cap ([`crate::slots`]).
+    /// work is refused when it would raise an orchestrator's open tasks past the store's cap
+    /// ([`crate::slots`]).
     pub fn claim(&self, slug: &str, handle: &str) -> Result<Task, Error> {
         self.ruling(slug, handle, self.slots.is_some(), |view| {
             view.actor(handle)?;
@@ -478,6 +481,7 @@ impl Store {
             if task.status == "ready" {
                 change.status = Some("in_progress".into());
                 change.opens = Some(Opens {
+                    status: change.status.clone(),
                     orchestrator: None,
                     by: vec![handle.into()],
                     what: format!("{slug} cannot start"),
@@ -751,16 +755,20 @@ impl Store {
             ),
             _ => ("[]", "[]"),
         };
-        let slots = if matches!(which, Which::Starting(_)) {
-            format!("slots: {},", cap::READ)
+        let (slot_lets, slots) = if matches!(which, Which::Starting(_)) {
+            if let (Some(vars), Value::Object(more)) = (vars.as_object_mut(), cap::vars()) {
+                vars.extend(more);
+            }
+            (cap::lets(), cap::field())
         } else {
-            String::new()
+            (String::new(), String::new())
         };
         vars["executing"] = json!(EXECUTING);
         let read = format!(
             "LET $tasks = ({pick});
              LET $slugs = $tasks.slug;
              {HELD}
+             {slot_lets}
              RETURN {{
                  tasks: $tasks,
                  links: (SELECT slug, kind, target FROM link{scope} ORDER BY target),
@@ -1113,9 +1121,12 @@ struct Change {
     opens: Option<Opens>,
 }
 
-/// A start a rule makes: a claim or a move into in_progress, or the orchestrator role taken on open
-/// work. Under a cap it takes a slot of the task's orchestrator's ([`crate::slots`]).
+/// A start a rule makes: a claim or a move into an open status, or the orchestrator role taken.
+/// Under a cap it is refused when it would raise an orchestrator's open tasks past it
+/// ([`crate::slots::started`]).
 struct Opens {
+    /// The status it moves the task to, when it moves it.
+    status: Option<String>,
     /// The session taking the orchestrator role on the task, when that is the start.
     orchestrator: Option<String>,
     /// The sessions whose parents stand in for an orchestrator when none holds the task: its
