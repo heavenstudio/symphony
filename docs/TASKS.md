@@ -76,8 +76,8 @@ Board writes dispatch addressed messages and role/status/new-work changes. A
 command line's write queues what each recipient hears, as the write left the
 board, and answers without delivering it: a detached `tasks dispatch` delivers,
 one a host at a time, which makes one more pass for each write that commits
-while it runs. One that finds another running waits for that pass, and takes
-over if the other's lease lapses.
+while it runs. One that finds another running waits until that pass has ended,
+and takes over if the other's lease lapses first.
 The shared Symphony server schedules PULL digests and STALE/LOST transitions and
 retries failed deliveries. Per-recipient leases prevent concurrent writers
 from sending the same queued event. A successful native send acknowledges the

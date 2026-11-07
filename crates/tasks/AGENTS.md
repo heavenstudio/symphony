@@ -168,8 +168,9 @@ its lines go to `sf-tasks/dispatch.log` beside the repository's own board, nowhe
 `TASKS_SERVER` board), which delivers. One dispatcher runs a host at a time
 (`store/dispatcher.rs`, `Store::dispatch_detached`), under the row
 `callback_lease:['dispatch', HOST]` (60 s, renewed on each pass): one that finds it held counts an
-ask (`asked`) and waits until a pass begins after it (`served`), or until the holder's lease
-lapses, when it takes the host over, so a dead holder's asks are not lost. The holder passes
+ask (`asked`) and waits until a pass begun after it (`served`) has ended (`completed`), or until
+the holder's lease lapses, when it takes the host over, so the asks of a holder lost before or
+during that pass are not lost; a new holder alone is not that pass. The holder passes
 until no ask stands and every recipient was reached (one whose lease another dispatcher held is
 passed again, for up to a recipient's lease), so 40 writes at once make a few passes, not 40.
 Each host's dispatchers keep a row of their own, so none takes an ask for recipients it cannot

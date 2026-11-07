@@ -1,17 +1,14 @@
 //! A command line's writes queue what each recipient hears, then hand its delivery to one detached
 //! dispatcher a host at a time (`Store::dispatching_by`, `Store::dispatch_detached`): the write
-//! answers without delivering, dispatchers that find another running ask it for one more pass and
-//! wait for it, one waiting on a dead holder takes the host over once its lease lapses, and every
-//! recipient still hears each message once.
+//! answers without delivering, and every recipient still hears each message once. What a
+//! dispatcher that finds another running does is `dispatch_holder`'s.
 
 use super::callbacks::Listener;
 use super::common::{Fixture, HOST};
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::{Arc, Barrier, Mutex};
-use std::thread::JoinHandle;
-use std::time::{Duration, Instant};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Barrier};
 use symphony_board::Store;
 
 /// The message ids among `lines` (posts and verdicts), each with how often it came.
@@ -30,13 +27,14 @@ pub(super) fn ids(lines: &[String]) -> BTreeMap<i64, usize> {
 }
 
 /// A worker executing a task of its own, its callback a listener of the test's.
-struct Recipient {
-    handle: String,
-    slug: String,
-    listener: Listener,
+pub(super) struct Recipient {
+    pub(super) handle: String,
+    pub(super) slug: String,
+    pub(super) listener: Listener,
 }
 
-fn recipient(f: &Fixture, n: usize) -> Recipient {
+/// The `n`th recipient: a worker that claimed a task of its own and listens.
+pub(super) fn recipient(f: &Fixture, n: usize) -> Recipient {
     let handle = f.session("worker");
     let slug = format!("tools/load-{n}");
     f.task(&slug);
@@ -68,7 +66,7 @@ pub(super) fn listen(store: &Store, handle: &str, name: &str) -> Listener {
 }
 
 /// Another store on the board whose writes hand their delivery over, each hand-off counted.
-fn handing(f: &Fixture, asked: &Arc<AtomicUsize>) -> Store {
+pub(super) fn handing(f: &Fixture, asked: &Arc<AtomicUsize>) -> Store {
     let asked = Arc::clone(asked);
     f.other().dispatching_by(Box::new(move || {
         asked.fetch_add(1, Ordering::SeqCst);
@@ -86,7 +84,7 @@ fn lease_of(f: &Fixture, host: &str) -> Value {
     f.store
         .client()
         .query(
-            "RETURN SELECT until, asked, served FROM ONLY type::record('callback_lease', ['dispatch', $host]);",
+            "RETURN SELECT until, asked, served, completed FROM ONLY type::record('callback_lease', ['dispatch', $host]);",
             json!({"host": host}),
         )
         .unwrap()
@@ -94,38 +92,8 @@ fn lease_of(f: &Fixture, host: &str) -> Value {
 }
 
 /// This host's dispatch lease as it stands.
-fn lease(f: &Fixture) -> Value {
+pub(super) fn lease(f: &Fixture) -> Value {
     lease_of(f, HOST)
-}
-
-/// Whether a dispatcher holds this host's dispatch lease now.
-fn held(f: &Fixture) -> bool {
-    lease(f)["until"]
-        .as_f64()
-        .is_some_and(|until| until > f.now())
-}
-
-/// Wait until `done`, which another thread brings about within seconds.
-fn until(done: impl Fn() -> bool) {
-    let deadline = Instant::now() + Duration::from_secs(30);
-    while !done() {
-        assert!(Instant::now() < deadline, "not within 30 s");
-        std::thread::sleep(Duration::from_millis(5));
-    }
-}
-
-/// Whether `handle` acknowledged `message`, as a delivery records it.
-fn delivered(f: &Fixture, message: i64, handle: &str) -> bool {
-    f.store
-        .client()
-        .query(
-            "RETURN record::exists(type::record('delivery', [$message, $handle]));",
-            json!({"message": message, "handle": handle}),
-        )
-        .unwrap()
-        .remove(0)
-        .as_bool()
-        .unwrap()
 }
 
 /// Whether the outbox holds `message` for `handle`, and whether it went out.
@@ -142,62 +110,6 @@ fn queued(f: &Fixture, handle: &str, message: i64) -> Option<bool> {
         .unwrap()
         .remove(0);
     row.as_bool()
-}
-
-/// A post while a dispatcher holds the lease, and the dispatcher it starts.
-struct WhileHeld {
-    to: String,
-    slug: String,
-    by: String,
-    /// The post's id.
-    posted: Mutex<Option<i64>>,
-    /// The post's own dispatcher, which waits on the holder: the passes it made.
-    waiter: Mutex<Option<JoinHandle<usize>>>,
-}
-
-impl WhileHeld {
-    fn new(to: &Recipient, by: &str) -> Arc<WhileHeld> {
-        Arc::new(WhileHeld {
-            to: to.handle.clone(),
-            slug: to.slug.clone(),
-            by: by.to_string(),
-            posted: Mutex::new(None),
-            waiter: Mutex::new(None),
-        })
-    }
-
-    /// Once a dispatcher holds the lease (the first clock read after `held`): the post, handed
-    /// over, and its own dispatcher, started beside the holder.
-    fn meanwhile(self: &Arc<Self>, board: &Arc<Fixture>) -> impl Fn() + Send + Sync + 'static {
-        let (board, this, once) = (Arc::clone(board), Arc::clone(self), AtomicBool::new(false));
-        move || {
-            if held(&board) && !once.swap(true, Ordering::SeqCst) {
-                let asked = Arc::new(AtomicUsize::new(0));
-                let message = handing(&board, &asked)
-                    .say(&this.slug, &this.by, "while it ran", Some(&this.to))
-                    .unwrap();
-                *this.posted.lock().unwrap() = Some(message.id);
-                assert_eq!(asked.load(Ordering::SeqCst), 1);
-                let dispatcher = board.other();
-                let asks = lease(&board)["asked"].as_u64().unwrap_or_default();
-                *this.waiter.lock().unwrap() = Some(std::thread::spawn(move || {
-                    dispatcher.dispatch_detached().unwrap()
-                }));
-                // The holder goes on only once the ask is in, as a dispatcher started by a write
-                // the holder's pass did not see asks before that pass ends.
-                until(|| lease(&board)["asked"].as_u64() == Some(asks + 1));
-            }
-        }
-    }
-
-    fn posted(&self) -> i64 {
-        self.posted.lock().unwrap().expect("the write was made")
-    }
-
-    fn waited(&self) -> usize {
-        let waiter = self.waiter.lock().unwrap().take();
-        waiter.expect("its dispatcher started").join().unwrap()
-    }
 }
 
 #[test]
@@ -224,7 +136,10 @@ fn a_write_that_hands_its_delivery_over_queues_it_and_answers_before_any_deliver
         ids(&to.listener.drain(&f, &writer, &to.handle)),
         BTreeMap::from([(id, 1)])
     );
-    assert_eq!(lease(&f), json!({"until": 0, "asked": 0, "served": 0}));
+    assert_eq!(
+        lease(&f),
+        json!({"until": 0, "asked": 0, "served": 0, "completed": 0})
+    );
     handing.session(&writer).unwrap();
     handing.touch(&writer).unwrap();
     assert_eq!(
@@ -306,140 +221,6 @@ fn a_hand_off_that_cannot_start_dispatches_in_the_write() {
         ids(&to.listener.drain(&f, &writer, &to.handle)),
         BTreeMap::from([(id, 1)])
     );
-}
-
-#[test]
-fn a_dispatcher_that_finds_another_running_waits_for_the_pass_it_asked_for() {
-    let f = Arc::new(Fixture::empty());
-    let to = recipient(&f, 0);
-    let writer = f.session("worker");
-    let before = to.listener.drain(&f, &writer, &to.handle);
-    assert!(before.is_empty(), "{before:?}");
-    let meanwhile = WhileHeld::new(&to, &writer);
-    let running = f.busy(meanwhile.meanwhile(&f));
-    assert_eq!(
-        running.dispatch_detached().unwrap(),
-        2,
-        "the running dispatcher makes the pass it was asked for"
-    );
-    assert_eq!(
-        meanwhile.waited(),
-        0,
-        "the post's dispatcher waited for that pass and made none"
-    );
-    assert_eq!(
-        ids(&to.listener.drain(&f, &writer, &to.handle)),
-        BTreeMap::from([(meanwhile.posted(), 1)])
-    );
-    assert_eq!(lease(&f), json!({"until": 0, "asked": 1, "served": 1}));
-}
-
-#[test]
-fn a_dispatcher_whose_lease_lapsed_leaves_the_next_holder_its_lease_and_its_asks() {
-    let f = Arc::new(Fixture::empty());
-    let to = recipient(&f, 0);
-    let writer = f.session("worker");
-    let before = to.listener.drain(&f, &writer, &to.handle);
-    assert!(before.is_empty(), "{before:?}");
-    let meanwhile = WhileHeld::new(&to, &writer);
-    let stalled = f.busy({
-        let (board, meanwhile, once) = (
-            Arc::clone(&f),
-            Arc::clone(&meanwhile),
-            AtomicBool::new(false),
-        );
-        // The first dispatcher stalls past its lease: the next takes the host, and while it runs a
-        // write's dispatcher asks it for one more pass.
-        move || {
-            if held(&board) && !once.swap(true, Ordering::SeqCst) {
-                board.advance(61.0);
-                let next = board.busy(meanwhile.meanwhile(&board));
-                assert_eq!(next.dispatch_detached().unwrap(), 2);
-            }
-        }
-    });
-    assert_eq!(
-        stalled.dispatch_detached().unwrap(),
-        1,
-        "a holder whose lease lapsed ends after its own pass, neither answering the ask nor releasing"
-    );
-    assert_eq!(meanwhile.waited(), 0);
-    assert_eq!(lease(&f), json!({"until": 0, "asked": 1, "served": 1}));
-    assert_eq!(
-        ids(&to.listener.drain(&f, &writer, &to.handle)),
-        BTreeMap::from([(meanwhile.posted(), 1)])
-    );
-}
-
-#[test]
-fn a_dispatcher_waiting_on_a_dead_holder_takes_the_host_over_once_its_lease_lapses() {
-    let f = Arc::new(Fixture::empty());
-    let mut recipients: Vec<Recipient> = (0..2).map(|n| recipient(&f, n)).collect();
-    recipients.sort_by(|a, b| a.handle.cmp(&b.handle));
-    let (first, last) = (&recipients[0], &recipients[1]);
-    let writer = f.session("worker");
-    let writing = deferring(&f);
-    let delivered_first = writing
-        .say(
-            &first.slug,
-            &writer,
-            "before the crash",
-            Some(&first.handle),
-        )
-        .unwrap()
-        .id;
-    let waiting = writing
-        .say(
-            &last.slug,
-            &writer,
-            "before the crash, waiting",
-            Some(&last.handle),
-        )
-        .unwrap()
-        .id;
-    // A dispatcher whose process is lost after its first delivery: its unwind leaves its lease as
-    // a killed process would, held with nobody behind it.
-    let lost = AtomicBool::new(false);
-    let crashed = f.busy({
-        let board = Arc::clone(&f);
-        let (to_first, to_last) = (first.handle.clone(), last.handle.clone());
-        move || {
-            if delivered(&board, delivered_first, &to_first)
-                && !delivered(&board, waiting, &to_last)
-                && !lost.swap(true, Ordering::SeqCst)
-            {
-                panic!("the dispatcher's process is lost");
-            }
-        }
-    });
-    let ended =
-        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| crashed.dispatch_detached()));
-    assert!(ended.is_err(), "the dispatcher was lost mid-pass");
-    assert!(held(&f), "its lease outlives it: {}", lease(&f));
-    let after = writing
-        .say(&last.slug, &writer, "after the crash", Some(&last.handle))
-        .unwrap()
-        .id;
-    let dispatcher = f.other();
-    let next = std::thread::spawn(move || dispatcher.dispatch_detached().unwrap());
-    // The write's dispatcher asks the dead holder, which never answers; once its lease lapses, the
-    // waiting dispatcher takes the host over and delivers what the dead one left.
-    until(|| lease(&f)["asked"] == json!(1));
-    f.advance(61.0);
-    let passes = next.join().unwrap();
-    assert!(
-        passes >= 1,
-        "the waiting dispatcher made the passes, not {passes}"
-    );
-    assert_eq!(
-        ids(&last.listener.drain(&f, &writer, &last.handle)),
-        BTreeMap::from([(waiting, 1), (after, 1)])
-    );
-    assert_eq!(
-        ids(&first.listener.drain(&f, &writer, &first.handle)),
-        BTreeMap::from([(delivered_first, 1)])
-    );
-    assert_eq!(lease(&f)["until"], json!(0));
 }
 
 #[test]

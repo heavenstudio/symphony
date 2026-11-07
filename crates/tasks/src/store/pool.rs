@@ -22,8 +22,9 @@ pub(super) struct Pool {
     rows: Value,
 }
 
-/// The pass's [`Pool`], held: [`Store::pool_through`] made sure there is one.
-struct PoolGuard<'a>(std::sync::MutexGuard<'a, Option<Pool>>);
+/// The pass's [`Pool`], held for as long as the store it borrows: [`Store::pool_through`] made
+/// sure there is one.
+struct PoolGuard<'store>(std::sync::MutexGuard<'store, Option<Pool>>);
 
 impl std::ops::Deref for PoolGuard<'_> {
     type Target = Pool;
@@ -116,56 +117,97 @@ mod tests {
     use super::could_reach_row;
     use serde_json::{Value, json};
 
-    fn row(sid: i64, sender: &str, recipient: Option<&str>, kind: &str) -> Value {
-        json!({"sid": sid, "slug": "tools/x", "sender": sender, "recipient": recipient, "kind": kind, "ts": 1.0})
+    /// The recipient every case asks about, and its cursor.
+    const ME: &str = "amber-wren";
+    const CURSOR: i64 = 4;
+
+    /// A pool row as the pool's read gives one.
+    struct Row<'case> {
+        sid: i64,
+        sender: &'case str,
+        recipient: Option<&'case str>,
+        kind: &'case str,
+    }
+
+    impl Row<'_> {
+        /// A post after the cursor, from another session, to `recipient`.
+        fn after(recipient: Option<&str>) -> Row<'_> {
+            Row {
+                sid: CURSOR + 1,
+                sender: "solar-fox",
+                recipient,
+                kind: "msg",
+            }
+        }
+
+        fn json(&self) -> Value {
+            json!({"sid": self.sid, "slug": "tools/x", "sender": self.sender, "recipient": self.recipient, "kind": self.kind, "ts": 1.0})
+        }
     }
 
     #[test]
     fn a_pool_row_could_reach_the_handle_it_is_to_a_role_the_owner_and_a_verdict() {
-        let me = "amber-wren";
-        for (sender, recipient, kind) in [
-            ("solar-fox", Some(me), "msg"),
-            ("solar-fox", Some("@orchestrator"), "msg"),
-            ("solar-fox", Some("@executor"), "msg"),
-            ("owner", None, "msg"),
-            ("owner", Some("solar-fox"), "msg"),
-            ("solar-fox", None, "verdict"),
+        for row in [
+            Row::after(Some(ME)),
+            Row::after(Some("@orchestrator")),
+            Row::after(Some("@executor")),
+            Row {
+                sender: "owner",
+                ..Row::after(None)
+            },
+            Row {
+                sender: "owner",
+                ..Row::after(Some("solar-fox"))
+            },
+            Row {
+                kind: "verdict",
+                ..Row::after(None)
+            },
         ] {
-            assert!(
-                could_reach_row(&row(5, sender, recipient, kind), me, 4),
-                "{sender} to {recipient:?}, {kind}"
-            );
+            let row = row.json();
+            assert!(could_reach_row(&row, ME, CURSOR), "{row}");
         }
     }
 
     #[test]
     fn a_pool_row_reaches_no_other_handle_nor_its_sender_nor_one_at_or_before_the_cursor() {
-        let me = "amber-wren";
-        for (sid, sender, recipient, kind) in [
-            (5, "solar-fox", Some("vivid-owl"), "msg"),
-            (5, "solar-fox", None, "msg"),
-            (5, me, Some(me), "msg"),
-            (5, me, Some("@orchestrator"), "verdict"),
-            (4, "solar-fox", Some(me), "msg"),
-            (3, "owner", None, "verdict"),
+        for row in [
+            Row::after(Some("vivid-owl")),
+            Row::after(None),
+            Row {
+                sender: ME,
+                ..Row::after(Some(ME))
+            },
+            Row {
+                sender: ME,
+                kind: "verdict",
+                ..Row::after(Some("@orchestrator"))
+            },
+            Row {
+                sid: CURSOR,
+                ..Row::after(Some(ME))
+            },
+            Row {
+                sid: CURSOR - 1,
+                sender: "owner",
+                kind: "verdict",
+                ..Row::after(None)
+            },
         ] {
-            assert!(
-                !could_reach_row(&row(sid, sender, recipient, kind), me, 4),
-                "#{sid} {sender} to {recipient:?}, {kind}"
-            );
+            let row = row.json();
+            assert!(!could_reach_row(&row, ME, CURSOR), "{row}");
         }
     }
 
     #[test]
     fn a_pool_row_without_a_number_for_its_sid_counts_as_after_the_cursor() {
-        let me = "amber-wren";
-        let mut unnumbered = row(0, "solar-fox", Some(me), "msg");
+        let mut unnumbered = Row::after(Some(ME)).json();
         unnumbered["sid"] = json!("5");
-        assert!(could_reach_row(&unnumbered, me, 4));
+        assert!(could_reach_row(&unnumbered, ME, CURSOR), "{unnumbered}");
         unnumbered
             .as_object_mut()
             .expect("a row is an object")
             .remove("sid");
-        assert!(could_reach_row(&unnumbered, me, 4));
+        assert!(could_reach_row(&unnumbered, ME, CURSOR), "{unnumbered}");
     }
 }
