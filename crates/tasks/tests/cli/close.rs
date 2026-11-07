@@ -40,30 +40,25 @@ fn a_close_says_what_it_closed_with_its_restore_line_and_a_refusal_is_exit_1() {
         )
     );
     p.set("HC_TERMINAL_ID", "");
+    let said = format!(
+        "closed pane {} of {} (closed by {orch}); restore: just tasks restore sim/jump {}\n",
+        s.pane, s.handle, s.handle
+    );
     let ran = p.as_(&orch, &["close", "sim/jump", &s.handle]);
     assert_eq!(
-        (ran.code, ran.out, ran.err.as_str()),
-        (
-            0,
-            format!(
-                "closed pane {} of {} (closed by {orch}); restore: just tasks restore sim/jump {}\n",
-                s.pane, s.handle, s.handle
-            ),
-            ""
-        )
+        (ran.code, ran.out.as_str(), ran.err.as_str()),
+        (0, said.as_str(), "")
     );
-    assert!(!p.addresses().contains(&s.pane));
+    let addresses = p.addresses();
+    assert!(!addresses.contains(&s.pane), "{addresses:?}");
+    // Closed already: the same closure, and nothing more on the thread.
+    let lines = p.board().thread("sim/jump").unwrap().len();
     let again = p.as_(&orch, &["close", "sim/jump", &s.handle]);
     assert_eq!(
-        (again.code, again.err),
-        (
-            1,
-            format!(
-                "✖ {} has no open session on sim/jump and runs in no terminal of this board\n",
-                s.handle
-            )
-        )
+        (again.code, again.out.as_str(), again.err.as_str()),
+        (0, said.as_str(), "")
     );
+    assert_eq!(p.board().thread("sim/jump").unwrap().len(), lines);
 }
 
 #[test]

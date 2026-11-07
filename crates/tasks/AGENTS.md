@@ -291,9 +291,14 @@ that cannot say (the call fails, it reports errors, or an overlay or float names
 no terminal) keeps the terminal; either keeps it, the sweep's record reopened. A record
 naming a herdr pane (`w1:p…`) is a gone terminal: cleanup records it closed
 with its restore line, and restore brings it back in an hc terminal. `close SLUG HANDLE`
-(`launch/close.rs`) closes one agent's terminal whatever it holds, through the same last look
-(the same program, no verify, test run, land or Symphony in it, out of the owner's sight), and
-records it the same way. A Codex record written `codex:` takes the thread the handle's callback
+(`launch/close.rs`) closes one agent's terminal whatever role it holds, judged as cleanup judges
+a program (its foreground, `Running` at the last look) and as the idle sweep judges what runs
+under an agent (`reap_busy_reason`), out of the owner's sight. It records the closure before the
+kill, bound to the record read (`close_task_session_as`, `record_found_closed`; `keep_task_session`
+undoes it when the last look keeps the terminal), so a restore waits for the kill and a second
+close writes nothing; it retires only the callback registered from that terminal
+(`clear_callback` never retires a registration from another). A Codex record written `codex:`
+takes the thread the handle's callback
 registered, at its launch or its close (`store/launches.rs`), so the order of the callback and
 the record never loses it. Its tests' handles:
 `TASKS_SERVER` and `TASKS_DATABASE` reach a board of the test's own

@@ -4,6 +4,7 @@ use super::work::no_task;
 use super::{Error, REFUSED, Store, logged, refused, repr};
 use crate::rows::TaskSessionRow;
 use serde::Deserialize;
+use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
 use std::fmt::Write as _;
 
@@ -85,15 +86,54 @@ const SETTLED: &str = "LET $thread = type::record('callback_state', $handle).add
 LET $conversation = IF $given = 'codex:' AND string::starts_with($thread, 'codex:') AND $thread != 'codex:' { $thread } ELSE { $given };";
 
 /// A change to a recorded task session, refused if there is none, said on the thread as `said`
-/// (an expression).
-fn recorded(change: &str, said: &str) -> String {
+/// (an expression). `guard` comes first, once the record is known to exist: a statement that may
+/// end the change (`RETURN false`) when the record is no longer the one the change is about.
+fn recorded(guard: &str, change: &str, said: &str) -> String {
     format!(
         "IF !record::exists(type::record('task_session', [$slug, $handle])) {{ THROW $unrecorded }};
+{guard}
 UPDATE type::record('task_session', [$slug, $handle]) {change} RETURN NONE;
 {}
-RETURN NONE;",
+RETURN true;",
         logged("$slug", "$handle", "'system'", said, "NONE")
     )
+}
+
+/// The closure of the record of `$slug` and `$handle` (as [`Store::close_task_session`] says it),
+/// once `guard` lets it through.
+fn closing(guard: &str) -> String {
+    format!(
+        "LET $given = type::record('task_session', [$slug, $handle]).claude_session;
+{SETTLED}
+{CLOSURE_LINE}
+{}",
+        recorded(
+            guard,
+            "SET closed = $now, closed_why = $why, restore = $restore, claude_session = $conversation",
+            "$line"
+        )
+    )
+}
+
+/// The closure's line, as `$line`: `$said`, and `$lost` after it when the conversation it keeps is
+/// a Codex one whose thread never arrived.
+const CLOSURE_LINE: &str =
+    "LET $line = IF $conversation = 'codex:' { string::concat($said, $lost) } ELSE { $said };";
+
+/// Stops a change of a record that is no longer the launch `$started` in terminal `$pane`.
+const SAME_LAUNCH: &str = "LET $at = type::record('task_session', [$slug, $handle]);
+IF $at.pane != $pane OR $at.started != $started { RETURN false };";
+
+/// What [`CLOSURE_LINE`] says of the closure of `handle`'s pane on `slug`, and why.
+fn closure_vars(slug: &str, handle: &str, why: &str, restore: &str) -> Value {
+    json!({
+        "why": why, "restore": restore,
+        "said": format!("closed the pane of {handle} ({why}); restore: {restore}"),
+        "lost": format!(
+            ". Its Codex thread id never arrived, so restore cannot resume its conversation: start \
+             it again with just tasks launch {slug}"
+        ),
+    })
 }
 
 impl Store {
@@ -198,43 +238,150 @@ RETURN $conversation;"
         why: &str,
         restore: &str,
     ) -> Result<(), Error> {
+        let vars = closure_vars(slug, handle, why, restore);
+        self.change_task_session::<Value>(slug, handle, &closing(""), vars)
+            .map(|_| ())
+    }
+
+    /// [`Store::close_task_session`] of the session `record` was read as, only while it is still
+    /// that launch, open, in that terminal: never a session restored into another terminal since,
+    /// nor one another close has closed already. Whether it closed it.
+    pub fn close_task_session_as(
+        &self,
+        record: &TaskSessionRow,
+        why: &str,
+        restore: &str,
+    ) -> Result<bool, Error> {
+        let mut vars = closure_vars(&record.slug, &record.handle, why, restore);
+        same_launch(&mut vars, record);
+        let guard = format!("{SAME_LAUNCH}\nIF $at.closed != NONE {{ RETURN false }};");
+        self.change_task_session(&record.slug, &record.handle, &closing(&guard), vars)
+    }
+
+    /// A close recorded as `closed_why` before its kill (by [`Store::close_task_session_as`] or
+    /// [`Store::record_found_closed`]) left the terminal of `record` running after all, for the reason
+    /// `kept`: the session is open again, said on the thread, only while the record is still that
+    /// closure of that launch in that terminal. Whether it reopened it.
+    pub fn keep_task_session(
+        &self,
+        record: &TaskSessionRow,
+        closed_why: &str,
+        kept: &str,
+    ) -> Result<bool, Error> {
+        let handle = &record.handle;
+        let mut vars = json!({
+            "closed_why": closed_why,
+            "said": format!("kept the pane of {handle} ({kept})"),
+        });
+        same_launch(&mut vars, record);
+        let guard = format!(
+            "{SAME_LAUNCH}\nIF $at.closed = NONE OR $at.closed_why != $closed_why {{ RETURN false }};"
+        );
+        let body = recorded(&guard, "SET closed = NONE, closed_why = ''", "$said");
+        self.change_task_session(&record.slug, handle, &body, vars)
+    }
+
+    /// Record `launch` as a session found running in its pane and closed there at once, said in one
+    /// line: the closure's ([`Store::close_task_session`]). Nothing is written when the record of its
+    /// task and handle already names that terminal: its closure is recorded already, or it is open
+    /// there. The record written, if any.
+    pub fn record_found_closed(
+        &self,
+        launch: &NewLaunch,
+        why: &str,
+        restore: &str,
+    ) -> Result<Option<TaskSessionRow>, Error> {
+        let now = (self.clock)();
+        let row = TaskSessionRow {
+            slug: launch.slug.clone(),
+            handle: launch.handle.clone(),
+            role: launch.role.clone(),
+            claude_session: launch.claude_session.clone(),
+            worktree: launch.worktree.clone(),
+            branch: launch.branch.clone(),
+            pane: launch.pane.clone(),
+            model: launch.model.clone(),
+            started: now,
+            closed: Some(now),
+            closed_why: why.into(),
+            restore: restore.into(),
+        };
         let body = format!(
-            "LET $given = type::record('task_session', [$slug, $handle]).claude_session;
+            "IF !record::exists(type::record('task', $slug)) {{ THROW $no_task }};
+IF !record::exists(type::record('session', $handle)) {{ THROW $no_session }};
+IF type::record('task_session', [$slug, $handle]).pane = $row.pane {{ RETURN NONE }};
+LET $given = $row.claude_session;
 {SETTLED}
-LET $line = IF $conversation = 'codex:' {{ string::concat($said, $lost) }} ELSE {{ $said }};
-{}",
-            recorded(
-                "SET closed = $now, closed_why = $why, restore = $restore, claude_session = $conversation",
-                "$line"
-            )
+{CLOSURE_LINE}
+UPSERT type::record('task_session', [$slug, $handle]) CONTENT $row RETURN NONE;
+UPDATE type::record('task_session', [$slug, $handle]) SET claude_session = $conversation RETURN NONE;
+{}
+RETURN $conversation;",
+            logged("$slug", "$handle", "'system'", "$line", "NONE")
         );
-        let said = format!("closed the pane of {handle} ({why}); restore: {restore}");
-        let lost = format!(
-            ". Its Codex thread id never arrived, so restore cannot resume its conversation: start \
-             it again with just tasks launch {slug}"
-        );
-        self.change_task_session(
-            slug,
-            handle,
-            &body,
-            json!({"why": why, "restore": restore, "said": said, "lost": lost}),
-        )
+        let mut vars = closure_vars(&launch.slug, &launch.handle, why, restore);
+        if let Value::Object(more) = &mut vars {
+            more.extend([
+                ("slug".into(), json!(launch.slug)),
+                ("handle".into(), json!(launch.handle)),
+                ("row".into(), json!(row)),
+                ("now".into(), json!(now)),
+                (
+                    "no_task".into(),
+                    json!(format!("{REFUSED}{}", no_task(&launch.slug))),
+                ),
+                (
+                    "no_session".into(),
+                    json!(format!("{REFUSED}no session {}", repr(&launch.handle))),
+                ),
+            ]);
+        }
+        let kept: Option<String> = self.retrying(|| self.transact(&body, vars.clone()))?;
+        Ok(kept.map(|claude_session| TaskSessionRow {
+            claude_session,
+            ..row
+        }))
     }
 
     /// It runs again, in `pane`.
     pub fn reopen_task_session(&self, slug: &str, handle: &str, pane: &str) -> Result<(), Error> {
-        let body = recorded("SET pane = $pane, closed = NONE, closed_why = ''", "$said");
+        let body = recorded(
+            "",
+            "SET pane = $pane, closed = NONE, closed_why = ''",
+            "$said",
+        );
         let said = format!("restored {handle} in pane {pane}");
-        self.change_task_session(slug, handle, &body, json!({"pane": pane, "said": said}))
+        self.change_task_session::<Value>(slug, handle, &body, json!({"pane": pane, "said": said}))
+            .map(|_| ())
     }
 
-    fn change_task_session(
+    /// [`Store::reopen_task_session`] in `pane` of the session `record` was read as, only while it
+    /// is still that launch, closed, in the terminal it was read in: never one a close recorded in
+    /// another terminal since (the new one, killed as it started). Whether it reopened it.
+    pub fn reopen_task_session_as(
+        &self,
+        record: &TaskSessionRow,
+        pane: &str,
+    ) -> Result<bool, Error> {
+        let handle = &record.handle;
+        let mut vars = json!({"into": pane, "said": format!("restored {handle} in pane {pane}")});
+        same_launch(&mut vars, record);
+        let guard = format!("{SAME_LAUNCH}\nIF $at.closed = NONE {{ RETURN false }};");
+        let body = recorded(
+            &guard,
+            "SET pane = $into, closed = NONE, closed_why = ''",
+            "$said",
+        );
+        self.change_task_session(&record.slug, handle, &body, vars)
+    }
+
+    fn change_task_session<T: DeserializeOwned>(
         &self,
         slug: &str,
         handle: &str,
         body: &str,
         more: Value,
-    ) -> Result<(), Error> {
+    ) -> Result<T, Error> {
         let mut vars = json!({
             "slug": slug, "handle": handle, "now": (self.clock)(),
             "unrecorded": format!("{REFUSED}{handle} has no recorded session on {slug}"),
@@ -242,7 +389,14 @@ LET $line = IF $conversation = 'codex:' {{ string::concat($said, $lost) }} ELSE 
         if let (Some(vars), Value::Object(more)) = (vars.as_object_mut(), more) {
             vars.extend(more);
         }
-        self.retrying(|| self.transact::<Value>(body, vars.clone()))
-            .map(|_| ())
+        self.retrying(|| self.transact(body, vars.clone()))
+    }
+}
+
+/// The launch and terminal [`SAME_LAUNCH`] holds a change to: `record`'s.
+fn same_launch(vars: &mut Value, record: &TaskSessionRow) {
+    if let Value::Object(vars) = vars {
+        vars.insert("pane".into(), json!(record.pane));
+        vars.insert("started".into(), json!(record.started));
     }
 }

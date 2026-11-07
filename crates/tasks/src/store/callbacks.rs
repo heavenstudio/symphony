@@ -333,14 +333,16 @@ RETURN NONE;");
             .collect())
     }
 
+    /// Retire the registration `callback` was read as: never one registered since, from another
+    /// listener or another terminal.
     pub(crate) fn clear_callback(&self, callback: &Callback, why: &str) -> Result<(), Error> {
         self.retrying(|| self.transact::<Value>(
-            "LET $state = (SELECT address, owner FROM ONLY type::record('callback_state', $handle));
-             IF $state.address = $address AND $state.owner = $owner {
+            "LET $state = (SELECT address, owner, terminal FROM ONLY type::record('callback_state', $handle));
+             IF $state.address = $address AND $state.owner = $owner AND (!$terminal OR $state.terminal = $terminal) {
                 DELETE type::record('callback_state', $handle) RETURN NONE;
                 UPDATE callback_event SET delivered = true, text = '' WHERE handle = $handle AND string::starts_with(key, 'chat-') RETURN NONE;
              }; RETURN NONE;",
-            json!({"handle":callback.handle, "address":callback.address, "owner":callback.owner}),
+            json!({"handle":callback.handle, "address":callback.address, "owner":callback.owner, "terminal":callback.terminal}),
         ))?;
         eprintln!(
             "CALLBACK {} retired: {why}; messages remain in inbox",

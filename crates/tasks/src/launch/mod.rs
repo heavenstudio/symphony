@@ -606,13 +606,9 @@ pub fn restore(
             )));
         }
         if s.closed.is_none() {
-            // A pane that is gone (a herdr pane from before hc): its closure is said first.
-            store.close_task_session(
-                slug,
-                &s.handle,
-                GONE,
-                &cleanup::restore_line(slug, &s.handle),
-            )?;
+            // A pane that is gone (a herdr pane from before hc): its closure is said first, once:
+            // a close that recorded it meanwhile said it already.
+            store.close_task_session_as(s, GONE, &cleanup::restore_line(slug, &s.handle))?;
         }
         if !Path::new(&s.worktree).is_dir() {
             if !s.branch.is_empty() && branch_exists(&m.root, &s.branch) {
@@ -665,7 +661,16 @@ pub fn restore(
         }
         // cleanup leaves handles that closed: the restored agent must be able to use the board
         store.revive(&s.handle)?;
-        store.reopen_task_session(slug, &s.handle, &terminal)?;
+        if !store.reopen_task_session_as(s, &terminal)? {
+            // A close took the session while its terminal started (`close`, by its label): the
+            // record says so, and the terminal it may have left goes too.
+            let _ = hc.close(&terminal);
+            return Err(Error::Refused(format!(
+                "{} was closed while it was restored: its record changed, so terminal {terminal} \
+                 is not kept",
+                s.handle
+            )));
+        }
         let row = store
             .task_sessions(slug)?
             .into_iter()

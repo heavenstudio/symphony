@@ -4,7 +4,8 @@ use crate::common::{Fixture, NOW, refused};
 use symphony_board::NewLaunch;
 use symphony_board::rows::TaskSessionRow;
 
-fn launch(f: &Fixture, slug: &str, role: &str) -> TaskSessionRow {
+/// A launch of a new worker's handle on `slug` as `role`, in terminal t9: its record.
+pub(crate) fn launch(f: &Fixture, slug: &str, role: &str) -> TaskSessionRow {
     let handle = f.session("worker");
     f.store
         .record_launch(&NewLaunch {

@@ -7,6 +7,7 @@ mod common;
 
 mod cleanup;
 mod close;
+mod close_races;
 mod finish;
 mod hc;
 mod last_look;
