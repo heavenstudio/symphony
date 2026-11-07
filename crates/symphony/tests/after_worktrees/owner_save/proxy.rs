@@ -22,18 +22,20 @@ impl Forward {
         let create = sql.contains("CREATE type::record('task', $slug)");
         let lookup = sql.contains("record::exists(type::record('task', $slug))") && !create;
         let mut chosen = self.chosen.lock().unwrap();
+        // The store open's schema check is a read too (`Store::with`), sent once more when late.
+        let open = sql.contains("INFO FOR DB");
         let applies = match self.phase {
-            "open" => sql.contains("INFO FOR DB"),
             // Both read attempts must time out before the save has a pre-dispatch refusal.
+            "open" => open && *chosen < 2,
             "lookup" => lookup && *chosen < 2,
             "create" | "message" | "reply" | "edited" | "wipe" => create,
             "check" => create && *chosen == 0 || lookup && matches!(*chosen, 1 | 2),
-            "reopen" => create && *chosen == 0 || sql.contains("INFO FOR DB") && *chosen == 1,
+            "reopen" => create && *chosen == 0 || open && matches!(*chosen, 1 | 2),
             "journal" | "concurrent" | "receipt-write" | "journal-write" | "interrupted" => false,
             _ => unreachable!(),
         };
-        let delay =
-            applies && (*chosen == 0 || matches!(self.phase, "lookup" | "check" | "reopen"));
+        let delay = applies
+            && (*chosen == 0 || matches!(self.phase, "open" | "lookup" | "check" | "reopen"));
         if delay {
             *chosen += 1;
             call["params"][0] = json!(match self.phase {

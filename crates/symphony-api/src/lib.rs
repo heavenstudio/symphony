@@ -34,8 +34,10 @@
 
 use serde::{Deserialize, Serialize};
 
+mod agent_probes;
 mod blocks;
 mod media;
+pub use agent_probes::AgentProbes;
 pub use blocks::*;
 pub use media::{GalleryItem, Media, View, Viewer};
 
@@ -990,12 +992,6 @@ pub struct Agents {
     pub generated: f64,
     pub probes: AgentProbes,
     pub agents: Vec<Agent>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct AgentProbes {
-    pub herdr: String,
-    pub slots: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

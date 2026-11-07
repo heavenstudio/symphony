@@ -276,7 +276,7 @@ pub fn AgentsView(
     let tasks = Rc::new(tasks);
     rsx! {
         h1 { "Agents" } p { class: "lead", "Who is connected, and what they are working on." }
-        p { class: "muted", "{agents.probes.herdr} · {agents.probes.slots}" }
+        p { class: "muted", "{agents.probes.panes} · {agents.probes.slots}" }
         h2 { "Happening now" }
         div { class: "agents-now", for task in tasks.iter().filter(|t| t.status == "in_progress" || t.status == "review") { Near { key: "{task.slug}", id: "now-{task.slug}", height: 120, TaskRow { task: task.clone() } } } }
         h2 { "Connected" }

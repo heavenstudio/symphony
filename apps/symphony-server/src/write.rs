@@ -212,11 +212,9 @@ async fn upload(shared: &Arc<Shared>, request: Request) -> Response {
 /// closes sessions and triggers the same detached sweep as the CLI's finished-task path.
 fn finish_cancel(root: &std::path::Path, slug: &str) {
     match symphony_board::sys::output(
-        symphony_board::sys::Command::new(root.join("tools/rs-bin.sh"))
+        symphony::children::command(root.join("tools/rs-bin.sh"))
             .args(["tasks", "finish", slug])
-            .current_dir(root)
-            .env_remove("TASKS_SESSION")
-            .env_remove("HERDR_PANE_ID"),
+            .current_dir(root),
     ) {
         Ok(done) if done.status.success() => {
             // `tasks finish` preserves the completed task's success even when cleanup fails;
@@ -245,9 +243,7 @@ fn finish_cancel(root: &std::path::Path, slug: &str) {
         ),
         Err(error) => cancel_failed(root, slug, &format!("could not run tasks finish: {error}")),
     }
-    let mut env = symphony_board::cli::Env::of_process();
-    env.vars.remove("TASKS_SESSION");
-    env.vars.remove("HERDR_PANE_ID");
+    let env = symphony::children::board_env();
     if symphony_board::sweep::trigger::enabled(&env)
         && !symphony_board::sweep::trigger::trigger(
             &env,

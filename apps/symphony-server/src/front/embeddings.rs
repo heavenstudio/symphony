@@ -38,10 +38,8 @@ pub(super) fn start(
                     .arg(shared.root.join("tools/tasks.sh"))
                     .args(["embed", "--maintenance", "--threads", "1"])
                     .current_dir(&shared.root)
-                    .env_remove("TASKS_SESSION")
                     .env_remove("TASKS_DATABASE")
-                    .env_remove("TASKS_SERVER")
-                    .env_remove("HERDR_PANE_ID");
+                    .env_remove("TASKS_SERVER");
                 sys::output_while(
                     command,
                     TIMEOUT,
