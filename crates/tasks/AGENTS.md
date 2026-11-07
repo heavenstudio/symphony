@@ -342,7 +342,12 @@ again; a request whose text proves it a read (`rpc::Kind::of`: only `SELECT`,
 `RETURN`, `LET`, `INFO` and transaction statements, no write word anywhere,
 and every `::` a call in a namespace that only computes, its word right against
 the `::`: `fn ::bump()` is a write) goes once more on a new connection, never a
-third time. Each sending waits the client's wait for its whole answer, however
+third time. A store opens a board at its build's schema version on one such
+read of the version (`Store::with`), defining and writing nothing, so a page's
+open over a slow board goes once more as its read does; a board not made yet,
+or at another version, is defined: its namespace and database first when the
+server lacks either, then its tables and version in one transaction
+(`tests/store/open_read.rs`). Each sending waits the client's wait for its whole answer, however
 it trickles in, so a read waits at most twice that. A late answer on a working
 connection says the server is slow (`rpc::slow`), which the Symphony's read routes answer with 504, not the 503 of
 a board that cannot be reached. `tasks-copy` copies a whole
