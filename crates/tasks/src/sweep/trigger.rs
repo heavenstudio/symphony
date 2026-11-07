@@ -13,7 +13,7 @@
 use crate::cli::Env;
 use crate::git::common_dir;
 use crate::server::FOLDER;
-use crate::sys::{self, Command, Stdio};
+use crate::sys::{self, Stdio};
 use std::fs::{self, File, OpenOptions, TryLockError};
 use std::io::{Read, Seek, Write};
 use std::path::{Path, PathBuf};
@@ -211,8 +211,9 @@ pub(crate) fn main_checkout(common: &Path) -> Option<&Path> {
 
 /// `tasks sweep --background=WHY [--task=TASK]` in a session of its own, from the main checkout, by
 /// the main checkout's build of `tasks` (a test's `TASKS_BIN` on a test's board), with `env`'s
-/// environment, its output appended to the log; a thread reaps it when it ends. With no main
-/// checkout the log says so and nothing starts.
+/// environment but its session ([`sys::SESSION_VARS`]: the sweep acts as no one, in no terminal),
+/// its output appended to the log; a thread reaps it when it ends. With no main checkout the log
+/// says so and nothing starts.
 fn spawn(env: &Env, common: &Path, why: &str, task: Option<&str>) -> std::io::Result<()> {
     let dir = folder(common);
     fs::create_dir_all(&dir)?;
@@ -229,12 +230,12 @@ fn spawn(env: &Env, common: &Path, why: &str, task: Option<&str>) -> std::io::Re
     };
     let mut command = match test_build(env) {
         Some(binary) => {
-            let mut command = Command::new(binary);
+            let mut command = sys::command_with(binary, &env.vars);
             command.arg("sweep").arg(format!("--background={why}"));
             command
         }
         None => {
-            let mut command = Command::new("/bin/sh");
+            let mut command = sys::command_with("/bin/sh", &env.vars);
             command
                 .arg("-c")
                 .arg(FROM_THE_ROOT)
@@ -248,8 +249,6 @@ fn spawn(env: &Env, common: &Path, why: &str, task: Option<&str>) -> std::io::Re
         command.arg(format!("--task={task}"));
     }
     command
-        .env_clear()
-        .envs(&env.vars)
         .current_dir(root)
         .stdin(Stdio::null())
         .stdout(log.try_clone()?)

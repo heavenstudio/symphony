@@ -50,7 +50,7 @@ use place::{name_place, place, stream};
 use crate::cli::{Env, probes};
 use crate::health::{FINISHED, RESERVE_SECONDS};
 use crate::rows::TaskSessionRow;
-use crate::sys::{self, Command};
+use crate::sys;
 use crate::{Error, NewLaunch, NewSession, Store};
 use hc::{Hc, text_of};
 use serde_json::Value;
@@ -352,7 +352,7 @@ pub fn launch(store: &Store, hc: &dyn Hc, m: &Machine, ask: &Ask) -> Result<Star
         store.leave(&handle)?;
         if made_worktree && path.exists() {
             let _ = sys::output(
-                Command::new("git")
+                sys::command("git")
                     .arg("-C")
                     .arg(&m.root)
                     .args(["worktree", "remove", "--force"])
@@ -795,7 +795,7 @@ fn claude_args(model: &str, handle: &str, mode: &str, identity: [&str; 2]) -> Ve
 // -- git -------------------------------------------------------------------------------------
 
 fn git(root: &Path, args: &[&str]) -> Result<String, LaunchError> {
-    let done = sys::output(Command::new("git").arg("-C").arg(root).args(args))
+    let done = sys::output(sys::command("git").arg("-C").arg(root).args(args))
         .map_err(|e| LaunchError(format!("git {}: {e}", args[..2.min(args.len())].join(" "))))?;
     if !done.status.success() {
         return Err(LaunchError(format!(
@@ -808,7 +808,7 @@ fn git(root: &Path, args: &[&str]) -> Result<String, LaunchError> {
 }
 
 fn branch_exists(root: &Path, branch: &str) -> bool {
-    sys::output(Command::new("git").arg("-C").arg(root).args([
+    sys::output(sys::command("git").arg("-C").arg(root).args([
         "rev-parse",
         "--verify",
         "-q",

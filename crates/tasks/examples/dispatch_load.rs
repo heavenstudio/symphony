@@ -24,7 +24,7 @@ use std::sync::{Arc, Barrier, Mutex};
 use std::time::{Duration, Instant};
 use symphony_board::rows::Dump;
 use symphony_board::rpc::{self, Client};
-use symphony_board::sys::{self, Command};
+use symphony_board::sys;
 use symphony_board::{DATABASE, NAMESPACE, NewSession, NewTask, Store};
 
 type Frames = Arc<Mutex<BTreeMap<String, Vec<String>>>>;
@@ -130,7 +130,7 @@ fn listen(path: &Path, handle: String, frames: Frames, stop: Arc<AtomicBool>) {
 
 /// The CPU seconds process `pid` has used, as `ps` says them (`[[D-]H:]M:S.ss`).
 fn cpu_seconds(pid: &str) -> Option<f64> {
-    let said = sys::output(Command::new("ps").args(["-o", "time=", "-p", pid])).ok()?;
+    let said = sys::output(sys::command("ps").args(["-o", "time=", "-p", pid])).ok()?;
     let text = String::from_utf8_lossy(&said.stdout).trim().to_string();
     let (days, rest) = text
         .split_once('-')
@@ -149,7 +149,7 @@ fn cpu_seconds(pid: &str) -> Option<f64> {
 /// much about that as about the board.
 fn load_average() -> Option<String> {
     let said = std::fs::read_to_string("/proc/loadavg").ok().or_else(|| {
-        let said = sys::output(Command::new("sysctl").args(["-n", "vm.loadavg"])).ok()?;
+        let said = sys::output(sys::command("sysctl").args(["-n", "vm.loadavg"])).ok()?;
         Some(String::from_utf8_lossy(&said.stdout).into_owned())
     })?;
     let numbers: Vec<&str> = (said.split_whitespace())
@@ -299,7 +299,7 @@ fn write_all(options: &Options, board: &Board) -> Vec<Said> {
         .map(|(n, writer)| {
             let to = board.recipients[n % board.recipients.len()].clone();
             let barrier = Arc::clone(&barrier);
-            let mut command = Command::new(&options.tasks);
+            let mut command = sys::command(&options.tasks);
             command
                 .args(["say", &to.slug, &format!("load {n}"), "--to", &to.handle])
                 .args(["--as", writer])

@@ -360,6 +360,31 @@ status pipe, and the child inherits only its streams and the descriptors it is
 passed. A std `Command` cannot say it cleared its environment, its group or its
 session, so it is never translated. The helpers live in the leaf
 `process_cwd::spawn`, which `sys` re-exports, so the cwd scans' `lsof` shares them.
+Every child the board starts is built by `sys::command` (this process's
+environment) or `sys::command_with` (a caller's `Env` as its whole environment),
+both without the starter's session, `sys::SESSION_VARS`: `TASKS_SESSION`,
+`HC_TERMINAL_ID`, `HC_TERMINAL_SOCKET`, `HC_SESSION` and `HC_SCOPE`. A child that
+kept hc's would start its terminals under the starter's, which end with it, and
+an hc call would answer for the starter's core and scope alone. That covers the
+database server `Home` starts, its `ps` and `lsof`, the `surreal export` and
+`import` a reclaim runs, every hc call (each names the
+terminal it acts on; the caller's own is read from the `Env`, never handed to
+hc), git, the detached dispatcher, sweep and review command, the sweep's cwd
+scans (`process_cwd::process_cwds_with` and `occupied_with`, handed
+`sys::command("lsof")`), and Codex delivery.
+A call that must keep a name sets it on the command after, saying why; none
+does today: a launched agent's `TASKS_SESSION` is a word of the command line
+`hc run` starts, not hc's. Clippy holds it: the crate's own `clippy.toml`, the
+workspace's settings whole and then `disallowed-methods`, refuses std's and
+`process_cwd`'s `Command::new` and `env_clear`, and `process_cwd::process_cwds`
+and `occupied`, by the path they resolve to, however they are spelled, imported
+or gated; the two helpers carry `#[expect(clippy::disallowed_methods)]`. The
+library's test build and each integration test target allow it at their root.
+`sys`'s tests hold the file to the workspace's settings, and the nightly-only
+target `tests/child_guard` (a nested build, so never in the fast plan) runs the
+toolchain's clippy over a probe crate that reads the same file. `port.rs` starts nothing: std's `lsof` for its `Lsof` is
+`apps/symphony-ui`'s browser test's own. The Symphony's
+`children` re-exports the list, `command` and `sessionless`.
 
 `staff` makes one staffing pass (`src/launch/staff.rs`), also called before `reap`.
 Its sole config is `tools/task_staff.json` in the calling checkout, disabled by

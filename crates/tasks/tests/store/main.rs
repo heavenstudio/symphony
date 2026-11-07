@@ -1,5 +1,10 @@
 //! The store over a real SurrealDB server, one test binary so they share one server.
 
+#![expect(
+    clippy::disallowed_methods,
+    reason = "a test starts its fixtures and stand-ins as it likes; the board's children are sys's"
+)]
+
 mod blocked_panes;
 mod board;
 mod callbacks;

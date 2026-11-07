@@ -156,6 +156,49 @@ fn a_task_moved_to_review_starts_the_manifests_command_from_the_main_checkout_wi
 }
 
 #[test]
+fn the_review_command_runs_without_the_session_of_the_agent_that_moved_the_task() {
+    let repo = executing("sim/jump", "amber-heron");
+    branch(&repo, "sim/jump");
+    let record = repo.dir.join("record");
+    write(
+        &repo.root,
+        "tools/on-review.sh",
+        &format!(
+            "#!/bin/sh\nprintf '%s|%s|%s|%s|%s|%s\\n' \"${{TASKS_SESSION-unset}}\" \
+             \"${{HC_TERMINAL_ID-unset}}\" \"${{HC_TERMINAL_SOCKET-unset}}\" \"${{HC_SESSION-unset}}\" \
+             \"${{HC_SCOPE-unset}}\" \"${{TASKS_ON_REVIEW-unset}}\" > '{record}.part'\n\
+             mv '{record}.part' '{record}'\n",
+            record = record.display()
+        ),
+    );
+    fs::set_permissions(
+        repo.root.join("tools/on-review.sh"),
+        fs::Permissions::from_mode(0o755),
+    )
+    .unwrap();
+    manifest(&repo, &["tools/on-review.sh"]);
+    // The mover's: its handle (`run` sets it) and the hc terminal, socket, core and scope it runs in.
+    run(
+        &repo,
+        "amber-heron",
+        &repo.root,
+        &["move", "sim/jump", "review"],
+        |vars| {
+            for (key, value) in [
+                ("HC_TERMINAL_ID", "t7"),
+                ("HC_TERMINAL_SOCKET", "/fixture/hc/t7.sock"),
+                ("HC_SESSION", "fixture-core"),
+                ("HC_SCOPE", "fixture-scope"),
+            ] {
+                vars.insert(key.into(), value.into());
+            }
+        },
+    );
+    // The rest of the mover's environment is the command's.
+    assert_eq!(written(&record), "unset|unset|unset|unset|unset|on\n");
+}
+
+#[test]
 fn a_review_task_names_its_branch_and_a_bare_program_name_is_found_on_the_path() {
     let r = executing("review/sim/jump", "amber-heron");
     let tip = branch(&r, "sim/jump");

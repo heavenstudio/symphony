@@ -8,7 +8,7 @@ use super::{Clock, Env, open_unchecked, reach};
 use crate::git::common_dir;
 use crate::store::HandOff;
 use crate::sweep::trigger;
-use crate::sys::{self, Command, Stdio};
+use crate::sys::{self, Stdio};
 use std::fs::File;
 use std::io::Write;
 use std::path::Path;
@@ -24,8 +24,8 @@ pub(super) const INLINE: (&str, &str) = ("TASKS_DISPATCH", "inline");
 pub const LOG: &str = "dispatch.log";
 
 /// What a write on a board `env` reaches does with its dispatch: starts `program dispatch` detached,
-/// in a session of its own, with `env`'s environment and working directory. Whether it started; the
-/// write dispatches itself when it did not.
+/// in a session of its own, with `env`'s environment but its session ([`sys::SESSION_VARS`]) and
+/// its working directory. Whether it started; the write dispatches itself when it did not.
 pub(super) fn hand_off(env: &Env, program: &Path) -> HandOff {
     let (env, program) = (env.clone(), program.to_path_buf());
     Box::new(move || match start(&env, &program) {
@@ -38,11 +38,10 @@ pub(super) fn hand_off(env: &Env, program: &Path) -> HandOff {
 }
 
 fn start(env: &Env, program: &Path) -> std::io::Result<()> {
-    let mut command = Command::new(program);
+    // The writer's session is not the dispatcher's: it acts as no one, in no terminal.
+    let mut command = sys::command_with(program, &env.vars);
     command
         .arg(COMMAND)
-        .env_clear()
-        .envs(&env.vars)
         .current_dir(&env.cwd)
         .stdin(Stdio::null())
         .new_session();

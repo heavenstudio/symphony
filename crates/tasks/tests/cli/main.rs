@@ -1,5 +1,10 @@
 //! The `tasks` command line over a real SurrealDB server: the store's tests' server, one per binary.
 
+#![expect(
+    clippy::disallowed_methods,
+    reason = "a test starts its fixtures and stand-ins as it likes; the board's children are sys's"
+)]
+
 #[path = "../store/common.rs"]
 #[allow(dead_code)]
 mod common;
