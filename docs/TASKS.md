@@ -208,9 +208,9 @@ returned its task to in-progress. That last keep includes landing changes messag
 on the branch task or any numbered review task. A pending post keeps the terminal
 immediately, before the thirty-minute recovery threshold. A post, status move or verdict
 by its addressed handle answers earlier work; reading its inbox does not.
-Nothing runs under it but MCP helpers (Codex's configured `node_repl` among
-them, by its path), caffeinate and board commands: anything else is work. Status, roles
-and the window are read again right before the close, and the terminal and the window once
+Nothing runs under it but MCP helpers (Codex's configured `node_repl` and the ChatGPT
+app's `cua-repl.mjs` under its own `node` among them, each by its exact path),
+caffeinate and board commands: anything else is work. Status, roles and the window are read again right before the close, and the terminal and the window once
 more after the close is recorded, right before the kill: work resumed by then (its agent
 working, or work under it) or the window showing it reopens the record. Never an unnamed terminal or another board's (it may be the owner's), an
 orchestrator, the caller's (`HC_TERMINAL_ID`), or one on screen in the Herdr app, which

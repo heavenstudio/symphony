@@ -117,7 +117,9 @@ thread message by id, with its typed `blocks` and display `stamp`. `task-summary
 one brief-free record so a task entering a paged view appears without a board
 refetch; `task-counts` and `task-signoff` update the column totals and owner queue.
 `docs` replaces navigation order; `agent-probes` reports
-probe availability; `tasks-status` reports board availability. Unknown regions
+probe availability; `tasks-status` reports board availability, and of a board
+that went whether it is `slow` (it took the read and answered late) or
+unreachable, again when it turns from one to the other. Unknown regions
 are ignored by the current board client.
 
 One filesystem watcher handles registers, branch discovery and the client
