@@ -990,26 +990,6 @@ impl Hub {
         Ok(())
     }
 
-    fn board_error(&self, error: String) {
-        let mut held = self.tasks.lock().unwrap_or_else(|e| e.into_inner());
-        let newly_unavailable = held.error.is_none();
-        held.error = Some(error.clone());
-        drop(held);
-        if newly_unavailable {
-            let mut pages = self.pages.write().unwrap_or_else(|e| e.into_inner());
-            for page in pages.values_mut() {
-                page.board.counts.tasks = None;
-                self.publish(
-                    page,
-                    vec![
-                        json!({"region":"tasks-status", "data":{"available":false,"error":error}}),
-                        json!({"region":"counts", "data":page.board.counts}),
-                    ],
-                );
-            }
-        }
-    }
-
     /// What the watcher follows: main's inputs, every tree's documents, models and concepts, and
     /// the refs and worktree records in the common folder.
     fn watch_paths(&self) -> Vec<(PathBuf, RecursiveMode)> {
@@ -1290,7 +1270,7 @@ fn run(
                 hub.refresh_order("")
             });
             if board.is_none() {
-                board = connect(&hub.root).ok();
+                board = hub.reconnect(&mut connect);
             }
             if let Some(store) = &board
                 && let Err(e) = measured("board tick", || hub.board_read(store))
@@ -1443,6 +1423,7 @@ fn task_changes(changes: &mut Vec<Value>, old: &[symphony_api::Task], new: &[sym
     }
 }
 
+mod board_status;
 mod startup;
 
 #[cfg(test)]
@@ -1462,6 +1443,9 @@ mod backstop_tests;
 
 #[cfg(test)]
 mod startup_tests;
+
+#[cfg(test)]
+mod status_tests;
 
 #[cfg(test)]
 mod tests {
