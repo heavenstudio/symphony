@@ -186,6 +186,11 @@ fn forward(
     let mut pending = Vec::new();
     let mut buffer = [0; 8192];
     loop {
+        // The stop as it stood when this read began. [`Log::finish`] stores it after the server's
+        // last write, so only a read begun once it was seen has found every line written before
+        // it: one that timed out first, its thread then held off the CPU past the stop, would end
+        // the drain with the last lines, the stopped line among them, still unread.
+        let stopped = control.stopping.load(Ordering::Acquire);
         match input.read(&mut buffer) {
             Ok(0) => break,
             Ok(n) => {
@@ -207,7 +212,7 @@ fn forward(
                     io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
                 ) =>
             {
-                if control.stopping.load(Ordering::Acquire) {
+                if stopped {
                     break;
                 }
             }
@@ -420,5 +425,48 @@ mod tests {
             .unwrap();
         assert!(std::fs::read(&path).unwrap().is_empty());
         std::fs::remove_file(path).unwrap();
+    }
+
+    /// The stop of a loaded machine: the forwarder's read times out with nothing to read, and
+    /// before its thread runs again the server writes its last line and [`Log::finish`] stores
+    /// the stop. That line is still forwarded, and the forwarder still ends while a child holds
+    /// the writer open.
+    #[test]
+    fn a_line_written_before_the_stop_reaches_the_log_after_a_read_timed_out_before_it() {
+        /// The socket's reads, but for the first: it has timed out, and its answer comes back
+        /// only after the server's last line and the stop. `writer` stays open as a child's would.
+        struct Late {
+            input: UnixStream,
+            writer: UnixStream,
+            control: Arc<Control>,
+            timed_out: bool,
+        }
+        impl Read for Late {
+            fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+                if self.timed_out {
+                    return self.input.read(buffer);
+                }
+                self.timed_out = true;
+                (&self.writer).write_all(b"Symphony server stopped\n")?;
+                self.control.stopping.store(true, Ordering::Release);
+                Err(io::ErrorKind::WouldBlock.into())
+            }
+        }
+        let (input, writer) = UnixStream::pair().unwrap();
+        input
+            .set_read_timeout(Some(Duration::from_millis(10)))
+            .unwrap();
+        let control = Arc::new(Control::default());
+        let late = Late {
+            input,
+            writer,
+            control: control.clone(),
+            timed_out: false,
+        };
+        let mut out = Vec::new();
+        forward(late, &mut out, io::sink(), &control).unwrap();
+        let text = String::from_utf8(out).unwrap();
+        let bodies: Vec<_> = text.lines().map(|line| &line[27..]).collect();
+        assert_eq!(bodies, ["Symphony server stopped"], "{text}");
     }
 }

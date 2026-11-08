@@ -540,17 +540,30 @@ fn run(
         symphony_board::sys::spawn_piped(&mut command).map_err(|e| e.to_string())?
     };
     let mut child = child;
+    // git refusing before it reads its input (an argument it does not know, say) has closed it, and
+    // the write fails: git is waited for all the same, so what it said reaches the caller and its
+    // process is reaped. The write's own error is the answer only where git said nothing, or
+    // succeeded without having had its whole input.
+    let mut written = Ok(());
     if let Some(input) = input {
         let _stage = PublicationStage::start(format_args!("write git input pid={}", child.id()));
-        child
-            .stdin
-            .take()
-            .ok_or("no command input")?
-            .write_all(input.as_bytes())
-            .map_err(|e| e.to_string())?;
+        written = match child.stdin.take() {
+            Some(mut pipe) => pipe.write_all(input.as_bytes()),
+            None => Err(std::io::Error::other("no command input")),
+        };
     }
     let _wait = PublicationStage::start(format_args!("wait git pid={} {args:?}", child.id()));
-    symphony_board::sys::wait_output(child).map_err(|e| e.to_string())
+    let done = symphony_board::sys::wait_output(child).map_err(|e| e.to_string())?;
+    match written {
+        Err(problem) if done.status.success() => Err(format!(
+            "git answered, but its input was not written: {problem}"
+        )),
+        Err(problem) if done.stderr.trim_ascii().is_empty() => Err(format!(
+            "git exited {}; its input was not written: {problem}",
+            done.status
+        )),
+        _ => Ok(done),
+    }
 }
 
 fn checked(done: Output) -> Result<String, String> {
@@ -565,6 +578,9 @@ fn checked(done: Output) -> Result<String, String> {
         })
     }
 }
+
+#[cfg(test)]
+mod input_tests;
 
 fn git(root: &Path, args: &[&str]) -> Result<String, String> {
     checked(run(root, args, None, None)?).map(|s| s.trim_end_matches('\n').to_string())
@@ -2403,62 +2419,7 @@ impl Committer {
 }
 
 #[cfg(test)]
-mod publication_tests {
-    use super::*;
-
-    #[test]
-    fn recovery_adopts_only_the_locked_inode_still_named_by_the_journal() {
-        let tree = crate::test_tree::Tree::new();
-        let done = symphony_board::sys::output(
-            symphony_board::sys::Command::new("git")
-                .args(["init", "-q", "-b", "main"])
-                .current_dir(&tree.root),
-        )
-        .unwrap();
-        assert!(done.status.success(), "{done:?}");
-        let path = tree.path("publication.json");
-        let data = |new: &str| {
-            serde_json::json!({"edit":{"rel":"docs/a.md","base":"","new":new},"publication":null})
-                .to_string()
-        };
-        std::fs::write(&path, data("earlier")).unwrap();
-        let old = OpenOptions::new()
-            .read(true)
-            .write(true)
-            .open(&path)
-            .unwrap();
-        let next = tree.path("replacement");
-        std::fs::write(&next, data("later")).unwrap();
-        std::fs::rename(next, &path).unwrap();
-        assert!(
-            OutputJob::recover_opened(&tree.root, &path, old)
-                .unwrap()
-                .is_none()
-        );
-        assert_eq!(std::fs::read_to_string(&path).unwrap(), data("later"));
-        let current = OpenOptions::new()
-            .read(true)
-            .write(true)
-            .open(&path)
-            .unwrap();
-        let adopted = OutputJob::recover_opened(&tree.root, &path, current)
-            .unwrap()
-            .unwrap();
-        assert_eq!(adopted.saved.edit.new, "later");
-        drop(adopted);
-        let disappeared = OpenOptions::new()
-            .read(true)
-            .write(true)
-            .open(&path)
-            .unwrap();
-        std::fs::remove_file(&path).unwrap();
-        assert!(
-            OutputJob::recover_opened(&tree.root, &path, disappeared)
-                .unwrap()
-                .is_none()
-        );
-    }
-}
+mod publication_tests;
 
 #[cfg(test)]
 mod history_tests;
