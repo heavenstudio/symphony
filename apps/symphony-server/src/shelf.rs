@@ -2,15 +2,17 @@
 //! (`symphony-shelf`, the server holding it): `[[shelf:all]]` draws every item on the checkout's
 //! shelf, each with the poster its label names, else its label's own picture. The gallery is cached
 //! per root and its watch drops and warms it, as a project's gallery would. Its page is `/shelf`, and
-//! `/x/shelf/NAME.item` serves an item's file.
+//! `/x/shelf/NAME.item` serves an item's file. Its renderer, `shelf-item`, draws an `.item` file in
+//! the fixture viewer [`viewer`], in the gallery and wherever a page links or pictures one; its
+//! `shelf-ledger` draws a `.csv` file as a line of text.
 
 use std::collections::HashMap;
 use std::path::{Component as Part, Path, PathBuf};
 use std::sync::{LazyLock, Mutex};
 
 use sha2::{Digest, Sha256};
-use symphony_plugin::vocabulary::{Block, GalleryItem, Media, NavItem};
-use symphony_plugin::{Component, Page, Plugin, Reply, Route, Watch};
+use symphony_plugin::vocabulary::{Block, GalleryItem, Media, NavItem, Span, View, Viewer};
+use symphony_plugin::{Component, Drawing, File, Page, Plugin, Renderer, Reply, Route, Watch};
 
 /// The plugin's name, as a project's `[plugins] crates` lists it.
 pub const NAME: &str = "fixture-shelf";
@@ -50,6 +52,10 @@ impl Plugin for Shelf {
         vec![self]
     }
 
+    fn renderers(&self) -> Vec<&dyn Renderer> {
+        vec![self, &Ledger]
+    }
+
     fn watches(&self) -> Vec<&dyn Watch> {
         vec![self]
     }
@@ -82,6 +88,79 @@ impl Plugin for Shelf {
 /// The theme package the plugin provides, as a fixture project's `[theme] package` names it.
 pub const THEME: &str = "fixture-shelf";
 
+/// The renderer's name, as an entrypoint's `types` gives it, and its files' type.
+pub const ITEM: &str = "shelf-item";
+pub const ITEM_TYPE: &str = "text/plain; charset=utf-8";
+
+/// The viewer an item opens in: the element `shelf-viewer` its script defines, a `Turn` view and a
+/// `Back` one that set its `angle` and call its `settle`, and a download link.
+pub fn viewer() -> Viewer {
+    let view = |label: &str, angle: &str| View {
+        label: label.into(),
+        title: Some(format!("{label} the item")),
+        set: vec![("angle".into(), angle.into())],
+        call: Some("settle".into()),
+    };
+    Viewer {
+        element: "shelf-viewer".into(),
+        script: "/static/shelf-viewer.js".into(),
+        attributes: vec![
+            ("loading".into(), "lazy".into()),
+            ("angle".into(), "0".into()),
+        ],
+        views: vec![view("Turn", "90"), view("Back", "0")],
+        download: Some(".item".into()),
+        open_label: Some("Take it down".into()),
+        close_label: Some("Put it back".into()),
+    }
+}
+
+impl Renderer for Shelf {
+    fn name(&self) -> &str {
+        ITEM
+    }
+
+    fn extensions(&self) -> &[&str] {
+        &["item"]
+    }
+
+    fn content_type(&self) -> &str {
+        ITEM_TYPE
+    }
+
+    fn draw(&self, _page: &Page<'_>, _file: &File<'_>) -> Result<Drawing, String> {
+        Ok(Drawing::Viewer(viewer()))
+    }
+}
+
+/// The shelf's ledger, a `.csv` file drawn as a line of text and served as [`LEDGER_TYPE`]: a
+/// renderer of an extension the server knows a kind of its own for.
+struct Ledger;
+
+pub const LEDGER_TYPE: &str = "text/vnd.shelf-ledger";
+
+impl Renderer for Ledger {
+    fn name(&self) -> &str {
+        "shelf-ledger"
+    }
+
+    fn extensions(&self) -> &[&str] {
+        &["csv"]
+    }
+
+    fn content_type(&self) -> &str {
+        LEDGER_TYPE
+    }
+
+    fn draw(&self, _page: &Page<'_>, file: &File<'_>) -> Result<Drawing, String> {
+        Ok(Drawing::Blocks(vec![Block::Paragraph {
+            spans: vec![Span::Text {
+                text: format!("ledger {}", file.label),
+            }],
+        }]))
+    }
+}
+
 impl Route for Shelf {
     fn path(&self) -> &str {
         "shelf"
@@ -108,6 +187,7 @@ impl Component for Shelf {
         Ok(vec![Block::Media {
             media: Media::Gallery {
                 items: gallery(page.root),
+                viewer: viewer(),
             },
         }])
     }
@@ -229,4 +309,39 @@ fn build(root: &Path) -> Vec<GalleryItem> {
         });
     }
     items
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::testing::Tree;
+
+    #[test]
+    fn a_page_linking_an_item_draws_it_in_the_viewer_its_gallery_opens() {
+        install().unwrap();
+        let tree = Tree::new();
+        tree.write(symphony::project::FILE, MANIFEST);
+        let render = symphony::render::Render::new(&tree.root);
+        let media: Vec<Media> = render
+            .sections("[First](/room/shelf/items/FIRST.item)\n", DOC)
+            .into_iter()
+            .flat_map(|section| section.media)
+            .collect();
+        assert_eq!(
+            media,
+            [Media::Viewer {
+                src: "/room/shelf/items/FIRST.item".into(),
+                label: "First".into(),
+                poster: None,
+                viewer: viewer(),
+            }],
+            "{media:?}"
+        );
+        let page = Page::new(&tree.root, DOC);
+        let gallery = Shelf.render(&page, "all", None).unwrap();
+        assert!(
+            matches!(&gallery[..], [Block::Media { media: Media::Gallery { viewer: shown, .. } }] if *shown == viewer()),
+            "{gallery:?}"
+        );
+    }
 }

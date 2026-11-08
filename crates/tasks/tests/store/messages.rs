@@ -2,6 +2,7 @@
 //! and landings on the record.
 
 mod inbox;
+mod last_words;
 
 use crate::common::{Fixture, HOST, NOW, Seed, refused};
 use std::collections::BTreeSet;
@@ -632,7 +633,7 @@ fn pane_closed(f: &Fixture) {
     f.store
         .record_launch(&NewLaunch {
             claude_session: "sess-amber".into(),
-            pane: "w1:p7".into(),
+            pane: "t7".into(),
             ..NewLaunch::new("sim/jump", "amber-heron", "executor")
         })
         .unwrap();

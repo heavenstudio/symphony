@@ -2,7 +2,7 @@
 //! process (the kernel says, `kill(pid, 0)`; `ps -p PID` only dates it, against a reused pid).
 //! The shared `process-cwd` crate scans working directories. Any doubt keeps a worktree.
 
-use crate::sys::{self, Command};
+use crate::sys;
 use std::collections::BTreeMap;
 
 const WEEKDAYS: [&str; 7] = [
@@ -143,10 +143,8 @@ pub fn pid_alive(pid: i64) -> bool {
 /// locale overridden: a local `ps` at -03 reads 10:10:22 where the lock says 13:10:22.
 pub fn process_start(pid: i64, vars: &BTreeMap<String, String>) -> Option<String> {
     let done = sys::output(
-        Command::new("ps")
+        sys::command_with("ps", vars)
             .args(["-o", "lstart=", "-p", &pid.to_string()])
-            .env_clear()
-            .envs(vars)
             .env("LC_ALL", "C")
             .env("TZ", "UTC"),
     )
@@ -158,6 +156,7 @@ pub fn process_start(pid: i64, vars: &BTreeMap<String, String>) -> Option<String
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::sys::Command;
 
     #[test]
     fn a_start_reads_with_padded_days_and_full_names_and_nothing_else() {

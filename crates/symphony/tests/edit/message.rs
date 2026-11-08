@@ -37,6 +37,28 @@ fn a_multi_line_message_continues_indented() {
 }
 
 #[test]
+fn a_dated_looking_line_in_a_message_stays_in_that_message() {
+    let out = owner(TEXT, "two", "Like this:\n[2026-09-20 08:00] agent — quoted");
+    let card = parse_decisions(&lines(&out))
+        .into_iter()
+        .find(|d| d.slug == "two")
+        .unwrap();
+    let said: Vec<_> = card
+        .entries()
+        .into_iter()
+        .map(|e| (e.ts, e.who, e.text))
+        .collect();
+    assert_eq!(
+        said,
+        vec![(
+            Some(NOW.to_string()),
+            Who::Owner,
+            "Like this:\n[2026-09-20 08:00] agent — quoted".to_string()
+        )]
+    );
+}
+
+#[test]
 fn the_message_is_waiting_for_an_agent_answer() {
     let out = owner(TEXT, "two", "Why this one?");
     let card = parse_decisions(&lines(&out))

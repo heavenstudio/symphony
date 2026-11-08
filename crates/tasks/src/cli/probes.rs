@@ -1,15 +1,17 @@
 //! What the agents API and the monitor ask of the machine: the test runs holding or queued for a
-//! slot, herdr's panes (as [`crate::launch::herdr`] asks), the branch checked out in a folder, and
+//! slot, hc's terminals (as [`crate::launch::hc`] asks), the branch checked out in a folder, and
 //! whether a task's branch already landed on main.
 
 use super::Env;
 use super::agents::{Answer, Pane, Probes, Run};
 use crate::git;
+use crate::launch::hc::{Binary, Hc};
 use crate::sys::{self, Command};
 use serde_json::Value;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::fs::{self, File, TryLockError};
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Output;
 use std::sync::mpsc;
@@ -19,11 +21,9 @@ use std::time::Duration;
 pub const SLOTS_DIR: &str = "sf-test-slots";
 /// Each pool and the prefix of its files (`test_slots.POOLS`).
 const POOLS: [(&str, &str); 2] = [("run", "slot"), ("render", "render")];
-/// How long herdr may take to answer.
-const HERDR_PATIENCE: Duration = Duration::from_secs(120);
 
-/// The machine's own probes for the board in `env`'s git repository: herdr as `HERDR_BIN` names it,
-/// the slot locks in the git common dir, and `git` for branches, each folder asked once.
+/// The machine's own probes for the board in `env`'s git repository: hc as `HC_BIN` names it, the
+/// slot locks in the git common dir, and `git` for branches, each folder asked once.
 pub fn machine(env: &Env) -> Probes<'_> {
     machine_with_common(env, git::common_dir(&env.cwd).map_err(|e| e.to_string()))
 }
@@ -36,7 +36,7 @@ pub fn machine_in<'a>(env: &'a Env, common: &Path) -> Probes<'a> {
 fn machine_with_common(env: &Env, common: Result<PathBuf, String>) -> Probes<'_> {
     let branches: RefCell<HashMap<String, String>> = RefCell::new(HashMap::new());
     Probes {
-        panes: Box::new(move || herdr_panes(env)),
+        panes: Box::new(move || hc_terminals(env)),
         runs: Box::new(move || match &common {
             Ok(common) => slot_runs(common),
             Err(why) => Err(why.to_string()),
@@ -184,42 +184,48 @@ fn run(info: &serde_json::Map<String, Value>, phase: &str, pool: &str) -> Run {
     }
 }
 
-// -- herdr -----------------------------------------------------------------------------
+// -- hc ---------------------------------------------------------------------------------
 
-/// herdr's panes: `HERDR_BIN pane list`, in the workspace the caller runs in when it runs in one.
-pub fn herdr_panes(env: &Env) -> Answer<Vec<Pane>> {
-    let binary = split(env.var("HERDR_BIN").unwrap_or("herdr"))?;
-    let Some((program, args)) = binary.split_first() else {
-        return Err("HERDR_BIN names no command".into());
-    };
-    let mut command = Command::new(program);
-    command.args(args).args(["pane", "list"]);
-    if let Some(workspace) = env.var("HERDR_WORKSPACE_ID") {
-        command.args(["--workspace", workspace]);
-    }
-    command.env_clear().envs(&env.vars).current_dir(&env.cwd);
-    let done =
-        within(&mut command, HERDR_PATIENCE).map_err(|why| format!("herdr pane list: {why}"))?;
-    let said = |bytes: &[u8]| String::from_utf8_lossy(bytes).trim().to_string();
-    if !done.status.success() {
-        let why = Some(said(&done.stderr))
-            .filter(|s| !s.is_empty())
-            .unwrap_or_else(|| said(&done.stdout));
-        return Err(format!("herdr pane list failed: {why}"));
-    }
-    let text = String::from_utf8_lossy(&done.stdout);
-    let text = if text.is_empty() { "{}" } else { &text };
-    let answer: Value =
-        serde_json::from_str(text).map_err(|_| "herdr pane list printed no JSON".to_string())?;
-    let no_list = || "herdr pane list answered no list of panes".to_string();
-    let result = match answer.as_object().ok_or_else(no_list)?.get("result") {
-        Some(result) => result.as_object().ok_or_else(no_list)?,
-        None => return Ok(Vec::new()),
-    };
-    match result.get("panes") {
-        Some(Value::Array(panes)) => Ok(panes.iter().filter_map(Pane::from_json).collect()),
-        Some(_) => Err(no_list()),
-        None => Ok(Vec::new()),
+/// The machine's live hc terminals (`HC_BIN ls`), whoever started them, as panes: the agents view
+/// finds a session's by its recorded terminal or its name, and touches none.
+pub fn hc_terminals(env: &Env) -> Answer<Vec<Pane>> {
+    let live = Binary::of(env).live().map_err(|e| e.0)?;
+    Ok(live.iter().filter_map(Pane::from_hc).collect())
+}
+
+impl Pane {
+    /// A terminal from hc's JSON (`ls` or `get`), whatever else hc says of it; None for one with
+    /// no address.
+    pub fn from_hc(terminal: &serde_json::Map<String, Value>) -> Option<Pane> {
+        use crate::launch::hc;
+        let text = |key: &str| {
+            terminal
+                .get(key)
+                .and_then(Value::as_str)
+                .map(str::to_string)
+        };
+        let id = text("address").filter(|id| !id.is_empty())?;
+        let foreground = terminal
+            .get("foreground")
+            .and_then(|f| f.get("cwd"))
+            .and_then(Value::as_str)
+            .map(str::to_string);
+        let cwd = [foreground, text("cwd")]
+            .into_iter()
+            .flatten()
+            .find(|cwd| !cwd.is_empty())
+            .unwrap_or_default();
+        let session = hc::conversation(&hc::argv(terminal))
+            .map(|id| id.strip_prefix("codex:").unwrap_or(&id).to_string());
+        Some(Pane {
+            id,
+            agent: hc::agent(terminal).map(str::to_string),
+            status: Some(hc::status(terminal)).filter(|s| !s.is_empty()),
+            session,
+            cwd,
+            title: text("title"),
+            name: text("name"),
+        })
     }
 }
 
@@ -227,10 +233,25 @@ pub fn herdr_panes(env: &Env) -> Answer<Vec<Pane>> {
 /// [`sys::spawn_output`] makes, so a child another thread spawns meanwhile cannot hold a finished
 /// answer past `limit`.
 pub(crate) fn within(command: &mut Command, limit: Duration) -> Answer<Output> {
-    let child = sys::spawn_output(command).map_err(|e| e.to_string())?;
+    within_fed(command, &[], limit)
+}
+
+/// [`within`], with `input` written to the child's stdin, which then ends.
+pub(crate) fn within_fed(command: &mut Command, input: &[u8], limit: Duration) -> Answer<Output> {
+    let mut child = if input.is_empty() {
+        sys::spawn_output(command)
+    } else {
+        sys::spawn_piped(command)
+    }
+    .map_err(|e| e.to_string())?;
     let pid = i64::from(child.id());
     let (send, receive) = mpsc::channel();
+    let input = input.to_vec();
     std::thread::spawn(move || {
+        if let Some(mut stdin) = child.stdin.take() {
+            // A child that ends without reading its input answers all the same.
+            let _ = stdin.write_all(&input);
+        }
         let _ = send.send(sys::wait_output(child));
     });
     match receive.recv_timeout(limit) {
@@ -305,7 +326,7 @@ pub fn split(text: &str) -> Answer<Vec<String>> {
 // -- git -------------------------------------------------------------------------------
 
 fn git(dir: &Path, args: &[&str]) -> Option<Output> {
-    sys::output(Command::new("git").arg("-C").arg(dir).args(args)).ok()
+    sys::output(sys::command("git").arg("-C").arg(dir).args(args)).ok()
 }
 
 /// The branch checked out in `cwd`; "" for a detached head or a folder in no repository.

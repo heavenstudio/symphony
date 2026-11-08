@@ -7,6 +7,9 @@ use symphony_board::health::{LIVE_SECONDS, RESERVE_SECONDS, STALE_SECONDS};
 use symphony_board::sys::local_minute;
 use symphony_board::{NewTask, Task};
 
+#[path = "pull_unanswered.rs"]
+mod unanswered;
+
 struct Case {
     f: Fixture,
     landed: BTreeSet<String>,
@@ -486,6 +489,34 @@ fn the_header_names_every_count_at_the_given_time_in_local_time() {
     let d = c.digest();
     assert_eq!(d.lines()[0], header(&local_minute(NOW)[11..], [0; 6]));
     assert_eq!(d.now, NOW);
+}
+
+#[test]
+fn under_a_cap_the_orchestrators_header_counts_its_open_tasks_against_it() {
+    let c = Case::new();
+    let orch = c.f.session("orchestrator");
+    for (slug, status) in [
+        ("sim/a", "in_progress"),
+        ("sim/b", "review"),
+        ("sim/c", "ready"),
+    ] {
+        c.task(slug, status);
+        c.f.store.take_role(slug, &orch, "orchestrator").unwrap();
+    }
+    c.task("sim/b/review", "review");
+    let board = c.f.store.board().unwrap();
+    let capped = c.f.other().capping(Some(8));
+    let first_line = |store: &symphony_board::Store| {
+        digest(store, &[], None, NOW, &[])
+            .unwrap()
+            .only_for(&board, &orch)
+            .lines()[0]
+            .clone()
+    };
+    // sim/a and sim/b, its review mirror counted with it: two slots.
+    let plain = header(&local_minute(NOW)[11..], [1, 1, 0, 2, 0, 0]);
+    assert_eq!(first_line(&capped), format!("{plain} slots=2/8"));
+    assert_eq!(first_line(&c.f.store), plain, "no cap, no count");
 }
 
 #[test]

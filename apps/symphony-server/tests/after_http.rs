@@ -8,6 +8,8 @@
 mod board;
 #[path = "after_http/client.rs"]
 mod client;
+#[path = "after_http/owner_save.rs"]
+mod owner_save;
 #[path = "../../../crates/symphony/tests/common/tree.rs"]
 mod tree;
 
@@ -1077,28 +1079,7 @@ fn persistence(f: &Fixture) {
     );
     f.get("/api/ask?id=bad").status(400);
     f.get("/api/ask?id=999999").status(404);
-    let filed = f.post("/api/quick-task", &json!({"title":"HTTP filed task", "body":"Private board body", "page":"/docs/TOPIC.md#one", "priority":1})).status(200).json();
-    assert_eq!(filed["slug"], "inbox/http-filed-task");
-    let store = symphony_board::cli::connect(&symphony_board::cli::Env::of_process()).unwrap();
-    let task = store.get("inbox/http-filed-task").unwrap();
-    assert_eq!(task.title, "HTTP filed task");
-    assert_eq!(task.status, "concept");
-    assert_eq!(task.priority, 1);
-    assert!(task.body.contains("Private board body"));
-    assert!(
-        task.body
-            .contains("Sent from [/docs/TOPIC.md#one](/docs/TOPIC.md#one)")
-    );
-    assert!(task.links.iter().any(|link| link == "docs/TOPIC.md#one"));
-    assert_eq!(
-        f.post(
-            "/api/quick-task",
-            &json!({"title":"HTTP filed task", "page":"/docs/TOPIC.md"})
-        )
-        .status(200)
-        .json()["slug"],
-        "inbox/http-filed-task-2"
-    );
+    owner_save::quick_tasks(f);
 }
 
 /// The numbers of the `mark-NNNNNN` lines `text` shows, in the order it shows them.
@@ -1286,7 +1267,7 @@ fn uploads(f: &Fixture) {
     let filed = f
         .post(
             "/api/quick-task",
-            &json!({"title":"Upload task", "body":format!("The bug:\n\n{markup}"), "page":"/tasks"}),
+            &json!({"request":"cccccccccccccccccccccccccccccccc", "title":"Upload task", "body":format!("The bug:\n\n{markup}"), "page":"/tasks"}),
         )
         .status(200)
         .json();

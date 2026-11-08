@@ -1,11 +1,12 @@
 //! Behavior restored after the tooling migration, at the document and typed-content boundaries.
 
+#[path = "common/items.rs"]
+mod items;
 #[path = "common/tree.rs"]
 mod tree;
 
 use serde_json::{Value, json};
-use symphony::render::Render;
-use symphony::{blocks, register, schema};
+use symphony::{blocks, register, render::Render, schema};
 use symphony_api::{
     Block, CalloutKind, CardGroup, CardState, ContainerKind, FigureSize, Image, Media,
     Presentation, Span, ThreadAuthor,
@@ -298,8 +299,8 @@ fn typed_prose_retains_inline_structure_tables_code_and_callouts() {
 fn typed_links_components_and_media_retain_their_identity_and_fragment_index() {
     let tree = Tree::new();
     tree.write("docs/NAV.md", "# Navigation\n\n## Course\n");
-    let renderer = Render::new(&tree.root);
-    let source = "[[NAV#Course]] and [[task:sim/course|Set course]]\n\n![model](/artifacts/a.glb)\n\n![mockup](/artifacts/b.html)\n";
+    let renderer = Render::new(&tree.root).with_plugins(items::plugins());
+    let source = "[[NAV#Course]] and [[task:sim/course|Set course]]\n\n![model](/artifacts/a.item)\n\n![mockup](/artifacts/b.html)\n";
     let sections = renderer.typed_sections(source, "docs/x.md");
     let first = blocks::section(&sections[0], "docs/x.md");
     let [Block::Paragraph { spans }] = first.as_slice() else {
@@ -314,10 +315,11 @@ fn typed_links_components_and_media_retain_their_identity_and_fragment_index() {
     assert_eq!(
         blocks::section(&sections[1], "docs/x.md"),
         [Block::Media {
-            media: Media::Model {
-                src: "/artifacts/a.glb".into(),
+            media: Media::Viewer {
+                src: "/artifacts/a.item".into(),
                 label: "model".into(),
                 poster: None,
+                viewer: items::viewer(),
             }
         }]
     );
@@ -330,12 +332,8 @@ fn typed_links_components_and_media_retain_their_identity_and_fragment_index() {
             }
         }]
     );
-    assert_eq!(sections[1].media.len(), 1);
-    assert_eq!(sections[2].media.len(), 1);
-    let changed = renderer.typed_sections(
-        &source.replace("/artifacts/a.glb", "/artifacts/c.glb"),
-        "docs/x.md",
-    );
+    assert_eq!((sections[1].media.len(), sections[2].media.len()), (1, 1));
+    let changed = renderer.typed_sections(&source.replace("a.item", "c.item"), "docs/x.md");
     assert_ne!(changed[1].hash, sections[1].hash);
     assert_eq!(changed[2].hash, sections[2].hash);
 }
@@ -769,10 +767,11 @@ fn the_generic_blocks_and_spans_write_and_read_back_as_themselves() {
             presentation: Presentation::class("matrix shape-matrix"),
         },
         Block::Media {
-            media: Media::Model {
-                src: "/x/lamps/NOR-L01.glb".into(),
+            media: Media::Viewer {
+                src: "/x/lamps/NOR-L01.item".into(),
                 label: "NOR-L01".into(),
                 poster: Some("/x/lamps/NOR-L01.png".into()),
+                viewer: items::viewer(),
             },
         },
         // A paragraph of one media span reads as that media, so a component's media goes in it.
@@ -783,15 +782,16 @@ fn the_generic_blocks_and_spans_write_and_read_back_as_themselves() {
                     items: vec![
                         GalleryItem {
                             name: "NOR-L01".into(),
-                            src: "/x/lamps/NOR-L01.glb".into(),
+                            src: "/x/lamps/NOR-L01.item".into(),
                             poster: Some("/x/lamps/NOR-L01.png".into()),
                         },
                         GalleryItem {
                             name: "SOU-L03".into(),
-                            src: "/x/lamps/SOU-L03.glb".into(),
+                            src: "/x/lamps/SOU-L03.item".into(),
                             poster: None,
                         },
                     ],
+                    viewer: items::viewer(),
                 },
             }],
         },

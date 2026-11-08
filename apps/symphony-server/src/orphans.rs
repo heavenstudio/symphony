@@ -60,7 +60,7 @@ pub async fn scan() -> Option<usize> {
 /// [`scan`] with `ps` as `program` names it (a stand-in, in tests).
 async fn scan_with(program: &OsStr) -> Option<usize> {
     let table = crate::sys::capture().ok()?;
-    let ps = Command::new(program)
+    let ps = symphony::children::sessionless(&mut Command::new(program))
         .args(["-axww", "-o", "pid=,ppid=,command="])
         .stdin(Stdio::null())
         .stdout(table.try_clone().ok()?)
@@ -169,19 +169,22 @@ mod tests {
     }
 
     /// A `ps` stand-in, `sh` running `body`, in a folder of its own removed however the test ends;
-    /// `$dir` in the body is that folder.
+    /// `$dir` in the body is that folder. Its executable is the machine's one copy of the fixture
+    /// script, already run ([`crate::testing::assert_primed`]), so no case's bound covers the
+    /// first exec of a new file.
     struct StandIn(std::path::PathBuf);
 
     impl StandIn {
         fn new(name: &str, body: &str) -> Self {
-            use std::os::unix::fs::PermissionsExt;
             let dir = std::env::temp_dir().join(format!("orphans-{name}-{}", std::process::id()));
             let _ = std::fs::remove_dir_all(&dir);
             std::fs::create_dir_all(&dir).unwrap();
             let dir = dir.canonicalize().unwrap();
-            let program = dir.join("ps");
-            std::fs::write(&program, format!("#!/bin/sh\ndir=\"${{0%/*}}\"\n{body}\n")).unwrap();
-            std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755)).unwrap();
+            crate::fixture_script::write(
+                &dir.join("ps"),
+                &format!("#!/bin/sh\ndir=\"${{0%/*}}\"\n{body}\n"),
+                false,
+            );
             Self(dir)
         }
 
@@ -218,11 +221,17 @@ mod tests {
             ),
         );
         // What std's spawn, as tokio's was, hands the same stand-in: this process's environment
-        // and directory, unchanged.
+        // and directory, unchanged but for the session the server was started in, which no
+        // child of the server keeps.
         let theirs = {
             use symphony_board::sys::Spawning as _;
             let ran = std::process::Command::new(stand_in.program())
                 .args(["-axww", "-o", "pid=,ppid=,command="])
+                .env_remove("TASKS_SESSION")
+                .env_remove("HC_TERMINAL_ID")
+                .env_remove("HC_TERMINAL_SOCKET")
+                .env_remove("HC_SESSION")
+                .env_remove("HC_SCOPE")
                 .output_locked()
                 .unwrap();
             assert!(ran.status.success());
@@ -259,13 +268,15 @@ mod tests {
     }
 
     /// The census has no deadline of its own: a `ps` that never answers holds its scan until the
-    /// scan is dropped, which kills it, and it is still reaped.
+    /// scan is dropped, which kills it, and it is still reaped. The stand-in's bound to start
+    /// covers no first exec of a new file: its executable has already run.
     #[tokio::test]
     async fn a_hung_census_ps_is_killed_and_reaped_when_its_scan_is_dropped() {
         let stand_in = StandIn::new(
             "hung",
             "printf '%s' $$ > \"$dir/pid.partial\"; /bin/mv \"$dir/pid.partial\" \"$dir/pid\"\nexec /bin/sleep 60",
         );
+        crate::testing::assert_primed(&stand_in.program());
         let program = stand_in.program();
         let scan = tokio::spawn(async move { scan_with(program.as_os_str()).await });
         until("the stand-in never started", || {

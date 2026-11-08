@@ -5221,6 +5221,7 @@ dependencies = [
  "symphony-api",
  "symphony-args",
  "symphony-board",
+ "symphony-docs",
  "symphony-plugin",
  "symphony-schema",
  "toml",

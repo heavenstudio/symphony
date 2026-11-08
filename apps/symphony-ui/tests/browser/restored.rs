@@ -7,8 +7,9 @@ use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-mod model;
+mod activity;
 mod queue;
+mod viewer;
 
 pub(super) struct Native {
     child: Child,
@@ -424,7 +425,7 @@ fn restored_mockups_keep_opaque_origins_in_frames_full_size_and_svg_hops() {
         std::fs::read_to_string(site.root.join("artifacts/server.log")).unwrap()
     );
     assert_eq!(
-        browser.eval("document.querySelectorAll('model-viewer').length"),
+        browser.eval("document.querySelectorAll('.viewer-stage').length"),
         json!(0)
     );
 }
@@ -795,6 +796,7 @@ fn document_page_end_and_two_real_toasts_clear_the_reconnect_notice() {
             .collect(),
     );
     let Some(mut browser) = chrome() else { return };
+    activity::hold_toast_lifetimes(&mut browser);
     browser.open(&site.url("/docs/PROBE.md"));
     assert!(browser.wait_for("document.querySelector('.document-page')?.dataset.feed==='live' && document.querySelector('[data-doc-key=intro] p')!==null && Array.isArray(window.reviewKnownIds)", SHOWN));
     for (i, width) in [390, 1024].into_iter().enumerate() {
@@ -1029,18 +1031,12 @@ fn restored_gallery_loads_only_the_selected_model_and_lightbox_uses_originals_an
         vec![
             image("first"),
             image("second"),
-            json!({"type":"media","media":{"kind":"gallery","items":[{"name":"FIRST","src":"/first.glb?v=one","poster":"/first-thumb.svg"},{"name":"SECOND","src":"/second.glb?v=one","poster":"/second-thumb.svg"}]}}),
+            json!({"type":"media","media":{"kind":"gallery","items":[{"name":"FIRST","src":"/first.item?v=one","poster":"/first-thumb.svg"},{"name":"SECOND","src":"/second.item?v=one","poster":"/second-thumb.svg"}],"viewer":viewer::viewer()}}),
         ],
     );
-    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../..");
-    site.set_file(
-        "/static/model-viewer.min.js",
-        std::fs::read(root.join("tools/static/model-viewer.min.js")).unwrap(),
-        "text/javascript",
-    );
-    let model = model::triangle_glb();
-    for path in ["/first.glb", "/second.glb"] {
-        site.set_file(path, model.clone(), "model/gltf-binary");
+    site.set_file(viewer::SCRIPT, viewer::MODULE.to_vec(), "text/javascript");
+    for path in ["/first.item", "/second.item"] {
+        site.set_file(path, path.as_bytes().to_vec(), "text/plain");
     }
     for id in ["first", "second"] {
         for size in ["thumb", "original"] {
@@ -1051,14 +1047,15 @@ fn restored_gallery_loads_only_the_selected_model_and_lightbox_uses_originals_an
     browser.open(&site.url("/docs/PROBE.md"));
     assert!(browser.wait_for("document.querySelectorAll('.gallery-pick').length===2 && document.querySelector('.doc-body img[data-zoom-ready]')?.naturalWidth===200",SHOWN),"{}; {:?}",browser.eval("document.body.innerText"),site.targets());
     assert_eq!(
-        browser.eval("document.querySelectorAll('model-viewer,#review-model-viewer').length"),
+        browser
+            .eval("document.querySelectorAll('fixture-viewer,script[data-viewer-module]').length"),
         json!(0)
     );
     assert!(
         !site
             .requests()
             .iter()
-            .any(|p| p.ends_with(".glb") || p.contains("model-viewer"))
+            .any(|p| p.ends_with(".item") || p.contains("fixture-viewer"))
     );
     browser.eval("document.querySelector('.doc-body img').focus();document.activeElement.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true}))");
     assert!(browser.wait_for("document.querySelector('#media-lightbox[data-state=open] img')?.getAttribute('src')==='/first-original.svg'",SHOWN));
@@ -1090,45 +1087,36 @@ fn restored_gallery_loads_only_the_selected_model_and_lightbox_uses_originals_an
     browser.eval("document.querySelector('.gallery-pick').scrollIntoView({block:'center'});document.querySelector('.gallery-pick img').click()");
     assert!(
         browser.wait_for(
-            "document.querySelector('model-viewer')?.loaded === true",
+            "document.querySelector('fixture-viewer')?.loaded === true",
             SHOWN
         ),
         "{}",
         browser.eval("document.body.innerHTML")
     );
-    assert!(site.requests().contains(&"/first.glb".into()));
+    assert!(site.requests().contains(&"/first.item".into()));
     assert_eq!(
         browser.eval("document.querySelector('#media-lightbox[data-state=open]') !== null"),
         json!(false)
     );
-    assert!(!site.requests().contains(&"/second.glb".into()));
+    assert!(!site.requests().contains(&"/second.item".into()));
     browser.eval("document.querySelectorAll('.gallery-pick')[1].scrollIntoView({block:'center'});document.querySelectorAll('.gallery-pick')[1].click()");
-    assert!(browser.wait_for("document.querySelectorAll('model-viewer').length===1 && document.querySelector('model-viewer')?.getAttribute('src')==='/second.glb?v=one' && document.querySelector('model-viewer').loaded===true",SHOWN));
-    assert!(site.requests().contains(&"/second.glb".into()));
+    assert!(browser.wait_for("document.querySelectorAll('fixture-viewer').length===1 && document.querySelector('fixture-viewer')?.getAttribute('src')==='/second.item?v=one' && document.querySelector('fixture-viewer').loaded===true",SHOWN));
+    assert!(site.requests().contains(&"/second.item".into()));
     assert_eq!(
         site.requests()
             .iter()
-            .filter(|p| *p == "/static/model-viewer.min.js")
+            .filter(|p| *p == viewer::SCRIPT)
             .count(),
         1
     );
-    browser.eval("document.querySelector('[data-glb-view=tilt]').click()");
-    assert_eq!(
-        browser.eval("document.querySelector('model-viewer').getAttribute('camera-orbit')"),
-        json!("0deg 25deg auto")
-    );
-    browser.eval("document.querySelector('[data-glb-view=reset]').click()");
-    assert_eq!(
-        browser.eval("document.querySelector('model-viewer').getAttribute('camera-orbit')"),
-        json!("-45deg 60deg auto")
-    );
-    assert_eq!(
-        browser.eval("document.querySelector('model-viewer').getAttribute('field-of-view')"),
-        json!("auto")
-    );
+    let state = "(e => [e.getAttribute('angle'), e.getAttribute('zoom'), e.settled ?? 0])(document.querySelector('fixture-viewer'))";
+    browser.eval("document.querySelectorAll('[data-viewer-set]')[0].click()");
+    assert_eq!(browser.eval(state), json!(["90", "2", 1]));
+    browser.eval("document.querySelectorAll('[data-viewer-set]')[1].click()");
+    assert_eq!(browser.eval(state), json!(["-45", "auto", 2]));
     browser.eval("document.querySelectorAll('.gallery-pick')[1].click()");
     assert!(browser.wait_for(
-        "document.querySelectorAll('model-viewer').length===0",
+        "document.querySelectorAll('fixture-viewer').length===0",
         SHOWN
     ));
 }

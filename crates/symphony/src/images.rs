@@ -115,6 +115,13 @@ pub fn sips_available() -> bool {
 
 /// Write a JPEG of `src`, `width` pixels across, to `dest` with the system's `sips`; false when it could not.
 pub fn sips_convert(src: &Path, dest: &Path, width: u32) -> bool {
+    sips_convert_within(src, dest, width, Duration::from_secs(30))
+}
+
+/// [`sips_convert`], reaping `sips` once it has run for `budget`. A test's own `sips` is a file it has
+/// just written, whose first exec macOS holds until its assessment of the new file ends, so the test
+/// waits for its exit instead.
+fn sips_convert_within(src: &Path, dest: &Path, width: u32, budget: Duration) -> bool {
     let mut command = Command::new("sips");
     command
         .args([
@@ -128,7 +135,7 @@ pub fn sips_convert(src: &Path, dest: &Path, width: u32) -> bool {
         ])
         .arg(width.to_string())
         .arg(src);
-    convert(command, dest, Duration::from_secs(30))
+    convert(command, dest, budget)
 }
 
 /// Reserve a distinct output for every call, including overlapping requests for the same thumbnail.
@@ -152,7 +159,7 @@ fn convert(mut command: Command, dest: &Path, timeout: Duration) -> bool {
     let Ok(part) = part_file(dest) else {
         return false;
     };
-    let made = command
+    let made = crate::children::sessionless(&mut command)
         .arg("--out")
         .arg(&part)
         .stdout(Stdio::null())

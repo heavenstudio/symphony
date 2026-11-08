@@ -14,10 +14,10 @@
 use std::collections::BTreeMap;
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use symphony_board::sys::Command;
 
 use serde::{Deserialize, Serialize};
 
+use crate::children::command;
 use crate::clock::stamp_at;
 use crate::text::{is_space, os_error, prefix_chars, repr, strip};
 
@@ -260,7 +260,7 @@ impl AskStore {
     pub(crate) fn run(&self, script: &str) -> Result<String, AskError> {
         let failed = |problem: std::io::Error| AskError::Store(format!("sqlite3: {problem}"));
         let mut child = symphony_board::sys::spawn_piped(
-            Command::new("sqlite3")
+            command("sqlite3")
                 .args(["-bail", "-batch", "-json"])
                 .arg(&self.path),
         )
@@ -509,7 +509,7 @@ pub fn default_path(root: &Path, asks_db: Option<&str>) -> PathBuf {
         return PathBuf::from(db);
     }
     let mut base = std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
-    let common = symphony_board::sys::output(Command::new("git").arg("-C").arg(root).args([
+    let common = symphony_board::sys::output(command("git").arg("-C").arg(root).args([
         "rev-parse",
         "--path-format=absolute",
         "--git-common-dir",

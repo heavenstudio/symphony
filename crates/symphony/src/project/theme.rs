@@ -21,8 +21,9 @@ pub struct Theme {
     pub layouts: BTreeMap<String, String>,
 }
 
+/// The table as written: every key optional, one this build does not know kept by name.
 #[derive(Default, Deserialize)]
-#[serde(deny_unknown_fields, default)]
+#[serde(default)]
 pub(super) struct FileTheme {
     package: Option<String>,
     name: Option<String>,
@@ -30,6 +31,8 @@ pub(super) struct FileTheme {
     stylesheet: Option<String>,
     tokens: BTreeMap<String, String>,
     layouts: BTreeMap<String, String>,
+    #[serde(flatten)]
+    pub(super) unknown: super::file::Unknown,
 }
 
 impl Theme {

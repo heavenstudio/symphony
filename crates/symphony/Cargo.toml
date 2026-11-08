@@ -31,6 +31,8 @@ symphony-args = { path = "../symphony-args" }
 symphony-api = { path = "../symphony-api" }
 # The plugin seams the game modules implement, and the project file (symphony.toml) they are chosen by.
 symphony-plugin = { path = "../symphony-plugin" }
+# The one reading of a card and its entries, which the docs build shares (`register`).
+symphony-docs = { path = "../symphony-docs" }
 toml.workspace = true
 symphony-board = { path = "../tasks" }
 gix = { version = "0.87", default-features = false, features = ["basic", "blob-diff", "revision", "sha1"] }

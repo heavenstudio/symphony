@@ -23,7 +23,7 @@ fn two_orchestrators() -> (Fixture, String, String) {
 }
 
 /// Past the lost line, with only `keep` still beating.
-fn go_quiet_but(f: &Fixture, keep: &[&str]) {
+pub(super) fn go_quiet_but(f: &Fixture, keep: &[&str]) {
     f.advance(LIVE_SECONDS + STALE_SECONDS + 5.0);
     for handle in keep {
         f.store.touch(handle).unwrap();
@@ -196,7 +196,7 @@ fn a_hand_over_to_a_session_gone_quiet_or_leaving_meanwhile_is_refused() {
 }
 
 /// What reached each listener since the last look, through a barrier `sender` sends.
-fn heard(f: &Fixture, sender: &str, who: &[(&Listener, &str)]) -> Vec<Vec<String>> {
+pub(super) fn heard(f: &Fixture, sender: &str, who: &[(&Listener, &str)]) -> Vec<Vec<String>> {
     f.store.dispatch_callbacks_snapshot().unwrap();
     who.iter()
         .map(|(listener, handle)| listener.drain(f, sender, handle))

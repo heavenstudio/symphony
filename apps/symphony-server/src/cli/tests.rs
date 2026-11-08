@@ -27,14 +27,15 @@ fn scratch_run_in_a_child() {
 /// signal is 2.
 #[test]
 fn a_scratch_run_keeps_its_arguments_board_folder_streams_and_exit() {
-    use std::os::unix::fs::PermissionsExt;
     let dir = std::env::temp_dir().join(format!("scratch-run-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let dir = dir.canonicalize().unwrap();
+    // The machine's copy of the fixture script, already run: the target's budget covers no
+    // first exec of a new file.
     let script = |name: &str, body: &str| {
         let path = dir.join(name);
-        std::fs::write(&path, format!("#!/bin/sh\n{body}")).unwrap();
-        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        crate::fixture_script::write(&path, &format!("#!/bin/sh\n{body}"), false);
+        crate::testing::assert_primed(&path);
         path
     };
     let server = script(

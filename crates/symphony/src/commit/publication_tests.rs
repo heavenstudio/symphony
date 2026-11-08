@@ -1,12 +1,12 @@
-//! A queued verdict publication recovered from its journal: the file it opened is adopted only
-//! while the journal still names it, never once that file was replaced or removed.
+//! The publication journal's recovery: the locked file it adopts, and the ones it leaves.
+
 use super::*;
 
 #[test]
 fn recovery_adopts_only_the_locked_inode_still_named_by_the_journal() {
     let tree = crate::test_tree::Tree::new();
     let done = symphony_board::sys::output(
-        Command::new("git")
+        symphony_board::sys::Command::new("git")
             .args(["init", "-q", "-b", "main"])
             .current_dir(&tree.root),
     )

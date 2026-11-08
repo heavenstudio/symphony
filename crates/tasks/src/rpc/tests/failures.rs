@@ -9,6 +9,9 @@ use std::net::TcpStream;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
 
+/// A write: a request that got no answer is never sent again ([`crate::rpc::Kind`]).
+const WRITE: &str = "CREATE ONLY message:once SET text = 'said once';";
+
 #[test]
 fn a_query_failure_names_its_source_elapsed_time_wait_and_original_cause() {
     assert_eq!(
@@ -29,7 +32,7 @@ fn a_client_waits_on_a_silent_server_no_longer_than_it_was_told() {
     let held = std::thread::spawn(move || silent.accept().map(|(stream, _)| stream));
     let began = std::time::Instant::now();
     let client = Client::new(&addr, "sf", "t").waiting(Duration::from_millis(300));
-    let failed = client.query("RETURN 1;", json!({})).unwrap_err();
+    let failed = client.query(WRITE, json!({})).unwrap_err();
     assert!(
         began.elapsed() < Duration::from_secs(5),
         "{:?}",
@@ -60,7 +63,7 @@ fn a_request_a_kept_connection_took_and_never_answered_is_not_sent_again() {
     });
     let client = Client::new(&addr, "sf", "t").waiting(Duration::from_secs(5));
     sevens(&client, 3);
-    let failed = client.query("RETURN 7;", json!({}));
+    let failed = client.query(WRITE, json!({}));
     let Err(DbError::Failed(said)) = failed else {
         panic!("{failed:?}")
     };
@@ -112,7 +115,7 @@ fn a_kept_requests_read_timeout_never_resends_a_write_or_keeps_its_socket() {
         assert_eq!(
             cause,
             format!(
-                "the server at {addr} did not answer: read failed on a pooled socket after 15 completed requests: {}; the request may have run there, so it was not sent again",
+                "the server at {addr} is slow: no answer within 300ms: read failed on a pooled socket after 15 completed requests: {}; the request may have run there, so it was not sent again",
                 std::io::Error::from_raw_os_error(libc::EAGAIN)
             )
         );
@@ -132,7 +135,7 @@ fn a_fresh_sockets_eof_names_read_and_zero_completed_requests() {
     let (addr, served) = one_reply(b"");
     let client = Client::new(&addr, "sf", "t").waiting(Duration::from_secs(5));
     assert_eq!(
-        client.query("RETURN 7;", json!({})),
+        client.query(WRITE, json!({})),
         Err(DbError::Failed(format!(
             "the server at {addr} did not answer: read failed on a freshly opened socket after 0 completed requests: it closed the connection; the request may have run there, so it was not sent again"
         )))

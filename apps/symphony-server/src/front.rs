@@ -1089,11 +1089,7 @@ fn maintenance_worker(
             eprintln!("· idle-session sweep started");
             match crate::live::measured("idle-session sweep", || {
                 let mut command = Command::new(shared.root.join("tools/rs-bin.sh"));
-                command
-                    .args(["tasks", "reap"])
-                    .current_dir(&shared.root)
-                    .env_remove("TASKS_SESSION")
-                    .env_remove("HERDR_PANE_ID");
+                command.args(["tasks", "reap"]).current_dir(&shared.root);
                 sys::output_while(
                     command,
                     timeout,
@@ -1147,3 +1143,6 @@ mod head_tests;
 
 #[cfg(test)]
 mod broken_stderr_tests;
+
+#[cfg(test)]
+mod session_tests;

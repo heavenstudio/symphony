@@ -23,8 +23,6 @@ const STYLE: Asset = asset!(
     "/assets/media.css",
     AssetOptions::css().with_static_head(true)
 );
-// Keep the 1.1 MB module out of dx's preload list and the board's initial requests.
-const VIEWER: &str = "/static/model-viewer.min.js";
 
 #[derive(Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub(crate) struct Photo {
@@ -68,7 +66,7 @@ pub fn use_activation() -> Signal<bool> {
         if let Some(root) = root() {
             each(
                 &root,
-                "#quick-root img, #quick-root model-viewer, #quick-root iframe",
+                "#quick-root img, #quick-root .viewer-stage, #quick-root iframe",
                 |node| {
                     let rect = node.get_bounding_client_rect();
                     if rect.width() > 0.0 && rect.height() > 0.0 {
@@ -222,16 +220,26 @@ fn scale_frame(stage: &DomElement) {
     }
 }
 
-fn load_viewer() {
-    let Some(doc) = document() else {
+/// The module script a mounted viewer's stage names, added to the page once: a viewer's module stays
+/// out of dx's preload list and the board's initial requests.
+fn load_viewer(stage: &DomElement) {
+    let (Some(doc), Some(root), Some(src)) = (
+        document(),
+        root(),
+        stage
+            .get_attribute("data-viewer-script")
+            .filter(|s| local_asset(s)),
+    ) else {
         return;
     };
-    if doc.get_element_by_id("review-model-viewer").is_none()
-        && let Ok(script) = doc.create_element("script")
-    {
-        script.set_id("review-model-viewer");
+    let mut loaded = false;
+    each(&root, "script[data-viewer-module]", |script| {
+        loaded |= script.get_attribute("data-viewer-module").as_deref() == Some(src.as_str());
+    });
+    if !loaded && let Ok(script) = doc.create_element("script") {
+        let _ = script.set_attribute("data-viewer-module", &src);
         let _ = script.set_attribute("type", "module");
-        let _ = script.set_attribute("src", VIEWER);
+        let _ = script.set_attribute("src", &src);
         if let Some(head) = doc.head() {
             let _ = head.append_child(&script);
         }
@@ -249,39 +257,12 @@ fn activate(stage: &DomElement) {
         return;
     }
     let _ = stage.set_attribute("data-media-active", "true");
-    if stage.get_attribute("data-media-kind").as_deref() == Some("mockup") {
-        if let Ok(Some(frame)) = stage.query_selector("iframe") {
-            scale_frame(stage);
-            let _ = frame.set_attribute("src", &src);
-        }
-        return;
+    if stage.get_attribute("data-media-kind").as_deref() == Some("mockup")
+        && let Ok(Some(frame)) = stage.query_selector("iframe")
+    {
+        scale_frame(stage);
+        let _ = frame.set_attribute("src", &src);
     }
-    let Some(doc) = document() else {
-        return;
-    };
-    load_viewer();
-    let Ok(model) = doc.create_element("model-viewer") else {
-        return;
-    };
-    for (name, value) in [
-        ("src", src.as_str()),
-        (
-            "alt",
-            &stage.get_attribute("data-label").unwrap_or_default(),
-        ),
-        ("camera-controls", ""),
-        ("touch-action", "pan-y"),
-        ("environment-image", "neutral"),
-        ("shadow-intensity", "0"),
-        ("interaction-prompt", "none"),
-        ("exposure", "1"),
-        ("camera-orbit", "-45deg 60deg auto"),
-        ("loading", "lazy"),
-    ] {
-        let _ = model.set_attribute(name, value);
-    }
-    stage.set_text_content(None);
-    let _ = stage.append_child(&model);
 }
 
 fn scan(resize: &ResizeObserver, targets: &RefCell<Vec<DomElement>>) {
@@ -309,11 +290,11 @@ fn scan(resize: &ResizeObserver, targets: &RefCell<Vec<DomElement>>) {
             resize.observe(&stage);
             scale_frame(&stage);
         });
-        if root.query_selector("model-viewer").ok().flatten().is_some() {
-            load_viewer();
-        }
+        each(&root, ".viewer-stage[data-viewer-script]", |stage| {
+            load_viewer(&stage)
+        });
         // The visibility latch mounts a section or native media shell. loading=lazy handles
-        // raw HTML pictures/frames inside it; model-viewer also defers its own model requests.
+        // raw HTML pictures/frames inside it and a viewer's element defers its own requests.
         each(
             &root,
             "[data-media-src]:not([data-media-active])",
@@ -419,27 +400,23 @@ fn click(event: &Event, sender: &UnboundedSender<Action>) {
         let _ = sender.unbounded_send(Action::Close);
         return;
     }
-    if let Ok(Some(button)) = target.closest("[data-glb-view]") {
-        if let Some(model) = button
-            .closest(".glb-viewer")
+    // A viewer's view: the attributes its button lists set on the element, then its method called.
+    if let Ok(Some(button)) = target.closest("[data-viewer-set]") {
+        if let Some(element) = button
+            .closest(".media-viewer")
             .ok()
             .flatten()
-            .and_then(|v| v.query_selector("model-viewer").ok().flatten())
+            .and_then(|v| v.query_selector(".viewer-stage > *").ok().flatten())
         {
-            let tilt = button.get_attribute("data-glb-view").as_deref() == Some("tilt");
-            let _ = model.set_attribute(
-                "camera-orbit",
-                if tilt {
-                    "0deg 25deg auto"
-                } else {
-                    "-45deg 60deg auto"
-                },
-            );
-            let _ = model.set_attribute("field-of-view", if tilt { "30deg" } else { "auto" });
-            if let Ok(method) = js_sys::Reflect::get(&model, &JsValue::from_str("jumpCameraToGoal"))
+            let set = button.get_attribute("data-viewer-set").unwrap_or_default();
+            for (name, value) in symphony_api::View::decode(&set) {
+                let _ = element.set_attribute(name, value);
+            }
+            if let Some(call) = button.get_attribute("data-viewer-call")
+                && let Ok(method) = js_sys::Reflect::get(&element, &JsValue::from_str(&call))
                 && let Some(method) = method.dyn_ref::<js_sys::Function>()
             {
-                let _ = method.call0(&model);
+                let _ = method.call0(&element);
             }
         }
         return;
@@ -565,10 +542,6 @@ impl Controller {
                 scan(&resized_observer, &tracked);
             } else {
                 let _ = details.remove_attribute("data-busy");
-                each(&details, "[data-media-kind=model]", |stage| {
-                    stage.set_text_content(Some("3D model · drag to orbit"));
-                    let _ = stage.remove_attribute("data-media-active");
-                });
             }
         });
         doc.add_event_listener_with_callback("click", click.as_ref().unchecked_ref())

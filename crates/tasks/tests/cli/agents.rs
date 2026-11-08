@@ -1,5 +1,5 @@
 //! Agents API contracts for /api/agents and just tasks agents --json.
-//! The board is the record; each test supplies herdr panes and slot-lock probes
+//! The board is the record; each test supplies hc terminals and slot-lock probes
 //! to describe current work. The JSON key set is pinned as a wire contract.
 
 use crate::common::{Fixture, NOW};
@@ -12,7 +12,7 @@ use symphony_board::cli::agents::{
 use symphony_board::health::{LIVE_SECONDS, RESERVE_SECONDS, STALE_SECONDS};
 use symphony_board::{Beat, Health, NewLaunch, NewSession, NewTask};
 
-const AGENT_KEYS: [&str; 19] = [
+const AGENT_KEYS: [&str; 20] = [
     "handle",
     "kind",
     "model",
@@ -32,6 +32,7 @@ const AGENT_KEYS: [&str; 19] = [
     "health",
     "last_tool_call",
     "last_message",
+    "slots",
 ];
 
 #[test]
@@ -46,8 +47,8 @@ fn idle_agent_projection_uses_the_supplied_board_snapshot() {
     assert_eq!(c.agent(&worker).tasks[0].status, "review");
 }
 
-/// A board with an orchestrator and one ready task, `sim/jump`, and probes the test sets: herdr's
-/// panes and the slot runs (None: the probe cannot be asked), and the branch checked out in a folder.
+/// A board with an orchestrator and one ready task, `sim/jump`, and probes the test sets: hc.s
+/// terminals and the slot runs (None: the probe cannot be asked), and the branch checked out in a folder.
 struct Case {
     f: Fixture,
     panes: RefCell<Option<Vec<Value>>>,
@@ -75,8 +76,11 @@ impl Case {
     fn probes(&self) -> Probes<'_> {
         Probes {
             panes: Box::new(|| {
-                let panes = self.panes.borrow().clone().ok_or("herdr is down")?;
-                Ok(panes.iter().filter_map(Pane::from_json).collect())
+                let panes = self.panes.borrow().clone().ok_or("hc is down")?;
+                Ok(panes
+                    .iter()
+                    .filter_map(|t| t.as_object().and_then(Pane::from_hc))
+                    .collect())
             }),
             runs: Box::new(|| Ok(self.runs.borrow().clone().ok_or("no slots")?)),
             branch_of: Box::new(|cwd| {
@@ -130,11 +134,11 @@ impl Case {
     }
 
     fn worker(&self) -> String {
-        self.worker_on("sim/jump", "w1:p5", "/wt/sim-jump")
+        self.worker_on("sim/jump", "t5", "/wt/sim-jump")
     }
 
     fn worker_in(&self, worktree: &str) -> String {
-        self.worker_on("sim/jump", "w1:p5", worktree)
+        self.worker_on("sim/jump", "t5", worktree)
     }
 
     /// A session registered in the main checkout and nothing more.
@@ -145,11 +149,11 @@ impl Case {
         })
     }
 
-    /// A herdr pane: a claude agent in `/wt/sim-jump`, with `extra` keys over those.
+    /// An hc terminal: a claude agent in `/wt/sim-jump`, with `extra` keys over those.
     fn pane(&self, id: &str, status: &str, extra: Value) {
         let mut pane = json!({
-            "pane_id": id, "agent": "claude", "agent_status": status, "cwd": "/wt/sim-jump",
-            "agent_session": {"value": "x"}, "tab_id": "w1:t1",
+            "address": id, "agent": "claude", "status": status, "cwd": "/wt/sim-jump",
+            "state": "live", "argv": ["claude", "--session-id", "x"],
         });
         for (key, value) in extra.as_object().unwrap() {
             pane[key] = value.clone();
@@ -248,10 +252,36 @@ fn the_contract_keys_are_stable() {
 }
 
 #[test]
+fn under_a_cap_an_orchestrator_shows_its_open_tasks_against_it_and_a_worker_shows_none() {
+    let c = Case::new();
+    c.f.store
+        .take_role("sim/jump", &c.orch, "orchestrator")
+        .unwrap();
+    let worker = c.worker();
+    let uncapped = c.agent(&c.orch);
+    assert_eq!(uncapped.slots, None, "no cap, nothing shown");
+    let capped = c.f.other().capping(Some(8));
+    let view = describe(&capped, &c.probes(), c.f.now(), false).unwrap();
+    assert_eq!(
+        found(&view, &c.orch).slots,
+        Some(agents::Slots { open: 1, cap: 8 })
+    );
+    assert_eq!(found(&view, &worker).slots, None);
+    let me = parsed(&view)["agents"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|a| a["handle"] == c.orch.as_str())
+        .cloned()
+        .unwrap();
+    assert_eq!(me["slots"], json!({"open": 1, "cap": 8}));
+}
+
+#[test]
 fn the_json_is_written_in_the_contracts_key_order_as_python_writes_it() {
     let c = Case::new();
     let handle = c.worker();
-    c.pane("w1:p5", "working", json!({}));
+    c.pane("t5", "working", json!({}));
     c.f.store.say("sim/jump", &handle, "on it", None).unwrap();
     let text = symphony_board::pyjson::dumps(&c.view().json());
     let me = text.find(&format!("\"handle\": \"{handle}\"")).unwrap();
@@ -278,7 +308,7 @@ fn the_json_is_written_in_the_contracts_key_order_as_python_writes_it() {
    "branch": "sim/jump",
    "agent": "claude",
    "session_id": "sess-{handle}",
-   "pane": "w1:p5",
+   "pane": "t5",
    "callback": null,
    "chat": false,
    "state": "working",
@@ -289,7 +319,8 @@ fn the_json_is_written_in_the_contracts_key_order_as_python_writes_it() {
     "slug": "sim/jump",
     "ts": 1800000000.0,
     "text": "on it"
-   }}
+   }},
+   "slots": null
   }}"#,
             orch = c.orch
         )
@@ -329,7 +360,7 @@ fn a_launched_agent_is_described_from_its_task_session() {
             "/wt/sim-jump",
             "sim/jump",
             Some(format!("sess-{handle}")),
-            Some("w1:p5")
+            Some("t5")
         )
     );
     let held: Vec<(String, String, String)> = a
@@ -501,7 +532,7 @@ fn an_agent_that_never_beat_for_a_tool_call_has_none() {
 fn a_quiet_executor_whose_task_waits_in_review_and_whose_pane_is_idle_is_listed() {
     let c = Case::new();
     let handle = c.quiet_executor_with_task_in_review();
-    c.pane("w1:p5", "idle", json!({}));
+    c.pane("t5", "idle", json!({}));
     assert_eq!(c.agent(&handle).state, "idle");
 }
 
@@ -544,7 +575,7 @@ fn the_agents_never_registered_to_work_are_not_listed() {
 fn a_session_that_left_is_listed_only_with_all() {
     let c = Case::new();
     let handle = c.worker();
-    c.pane("w1:p5", "idle", json!({}));
+    c.pane("t5", "idle", json!({}));
     c.f.store.leave(&handle).unwrap();
     assert!(!c.handles(&c.view()).contains(&handle));
     assert_eq!(found(&c.view_all(), &handle).handle, handle);
@@ -624,7 +655,7 @@ fn every_agent_with_a_run_is_answered_in_one_view() {
     c.f.store
         .create(&NewTask::new("sim/other", "Other", "owner"))
         .unwrap();
-    let b = c.worker_on("sim/other", "w1:p5", "/wt/b");
+    let b = c.worker_on("sim/other", "t5", "/wt/b");
     c.run_of("waiting", "/wt/a", NOW, "verify");
     let asked = RefCell::new(Vec::new());
     let probes = Probes {
@@ -652,9 +683,9 @@ fn a_branch_lookup_that_fails_does_not_stop_the_view() {
     let c = Case::new();
     let handle = c.main_session();
     c.pane(
-        "w1:p9",
+        "t9",
         "working",
-        json!({"terminal_title_stripped": handle, "cwd": "/wt/other"}),
+        json!({"title": handle, "cwd": "/wt/other"}),
     );
     let probes = Probes {
         branch_of: Box::new(|_| Err("git is gone".into())),
@@ -666,39 +697,19 @@ fn a_branch_lookup_that_fails_does_not_stop_the_view() {
 }
 
 #[test]
-fn a_pane_without_an_id_is_ignored() {
+fn a_terminal_without_an_address_is_ignored() {
     let c = Case::new();
     let handle = c.worker();
     *c.panes.borrow_mut() = Some(vec![
-        json!({"agent": "claude", "agent_status": "blocked", "agent_session": {"value": format!("sess-{handle}")}}),
-        json!({"pane_id": "", "agent": "claude", "agent_status": "blocked", "terminal_title_stripped": handle}),
+        json!({"agent": "claude", "status": "blocked", "argv": ["claude", "--session-id", format!("sess-{handle}")]}),
+        json!({"address": "", "agent": "claude", "status": "blocked", "title": handle}),
+        json!("t3"),
     ]);
     assert_eq!(c.agent(&handle).state, "working");
 }
 
 #[test]
-fn a_pane_is_read_whatever_else_herdr_says_of_it() {
-    let pane = Pane::from_json(&json!({
-        "pane_id": "w1:p2", "agent": null, "agent_status": 3, "agent_session": "not an object",
-        "foreground_cwd": "", "cwd": "/wt/x", "name": "amber-heron", "focused": true,
-    }))
-    .unwrap();
-    assert_eq!(
-        (
-            pane.id.as_str(),
-            pane.agent,
-            pane.status,
-            pane.session,
-            pane.cwd.as_str(),
-            pane.name.as_deref()
-        ),
-        ("w1:p2", None, None, None, "/wt/x", Some("amber-heron"))
-    );
-    assert!(Pane::from_json(&json!("w1:p2")).is_none());
-}
-
-#[test]
-fn a_herdr_that_cannot_be_asked_is_reported_and_the_beat_decides() {
+fn hc_that_cannot_be_asked_is_reported_and_the_beat_decides() {
     let c = Case::new();
     let handle = c.worker();
     *c.panes.borrow_mut() = None;
@@ -731,7 +742,7 @@ fn working_probes_say_ok() {
 fn a_working_pane_is_working() {
     let c = Case::new();
     let handle = c.worker();
-    c.pane("w1:p5", "working", json!({}));
+    c.pane("t5", "working", json!({}));
     assert_eq!(c.agent(&handle).state, "working");
 }
 
@@ -739,7 +750,7 @@ fn a_working_pane_is_working() {
 fn a_blocked_pane_is_waiting_on_input() {
     let c = Case::new();
     let handle = c.worker();
-    c.pane("w1:p5", "blocked", json!({}));
+    c.pane("t5", "blocked", json!({}));
     assert_eq!(c.agent(&handle).state, "waiting_on_input");
 }
 
@@ -747,15 +758,15 @@ fn a_blocked_pane_is_waiting_on_input() {
 fn idle_and_done_panes_are_idle() {
     let c = Case::new();
     let handle = c.worker();
-    c.pane("w1:p5", "done", json!({}));
+    c.pane("t5", "done", json!({}));
     assert_eq!(c.agent(&handle).state, "idle");
 }
 
 #[test]
-fn a_pane_in_a_state_herdr_did_not_have_falls_back_to_the_beat() {
+fn a_terminal_in_a_state_hc_did_not_have_falls_back_to_the_beat() {
     let c = Case::new();
     let handle = c.worker();
-    c.pane("w1:p5", "unknown", json!({}));
+    c.pane("t5", "unknown", json!({}));
     assert_eq!(c.agent(&handle).state, "working");
     c.f.advance(LIVE_SECONDS + 5.0);
     assert_eq!(c.agent(&handle).state, "idle"); // stale
@@ -784,9 +795,9 @@ fn a_pane_found_by_its_claude_session_when_none_is_recorded() {
         .reserve("sim/jump", &handle, RESERVE_SECONDS)
         .unwrap();
     c.pane(
-        "w1:p9",
+        "t9",
         "blocked",
-        json!({"agent_session": {"value": "abc"}, "cwd": "/wt/elsewhere"}),
+        json!({"argv": ["claude", "--session-id", "abc"], "cwd": "/wt/elsewhere"}),
     );
     c.f.store.bind_agent("abc", &handle, false).unwrap();
     let a = c.agent(&handle);
@@ -797,12 +808,7 @@ fn a_pane_found_by_its_claude_session_when_none_is_recorded() {
             a.session_id.as_deref(),
             a.worktree.as_str()
         ),
-        (
-            "waiting_on_input",
-            Some("w1:p9"),
-            Some("abc"),
-            "/wt/elsewhere"
-        )
+        ("waiting_on_input", Some("t9"), Some("abc"), "/wt/elsewhere")
     );
 }
 
@@ -811,9 +817,9 @@ fn an_unlaunched_agents_branch_comes_from_its_panes_directory() {
     let c = Case::new();
     let handle = c.main_session();
     c.pane(
-        "w1:p9",
+        "t9",
         "working",
-        json!({"terminal_title_stripped": handle, "cwd": "/wt/other"}),
+        json!({"title": handle, "cwd": "/wt/other"}),
     );
     c.branches
         .borrow_mut()
@@ -821,7 +827,7 @@ fn an_unlaunched_agents_branch_comes_from_its_panes_directory() {
     let a = c.agent(&handle);
     assert_eq!(
         (a.worktree.as_str(), a.branch.as_str(), a.pane.as_deref()),
-        ("/wt/other", "tools/x", Some("w1:p9"))
+        ("/wt/other", "tools/x", Some("t9"))
     );
 }
 
@@ -830,14 +836,14 @@ fn a_pane_named_for_the_handle_is_its_and_its_foreground_folder_is_where_it_work
     let c = Case::new();
     let handle = c.main_session();
     c.pane(
-        "w1:p9",
+        "t9",
         "working",
-        json!({"name": handle, "foreground_cwd": "/wt/fg", "cwd": "/wt/shell"}),
+        json!({"name": handle, "foreground": {"cwd": "/wt/fg"}, "cwd": "/wt/shell"}),
     );
     let a = c.agent(&handle);
     assert_eq!(
         (a.pane.as_deref(), a.worktree.as_str()),
-        (Some("w1:p9"), "/wt/fg")
+        (Some("t9"), "/wt/fg")
     );
 }
 
@@ -845,7 +851,7 @@ fn a_pane_named_for_the_handle_is_its_and_its_foreground_folder_is_where_it_work
 fn the_agent_kind_comes_from_the_pane() {
     let c = Case::new();
     let handle = c.worker();
-    c.pane("w1:p5", "idle", json!({"agent": "codex"}));
+    c.pane("t5", "idle", json!({"agent": "codex"}));
     assert_eq!(c.agent(&handle).agent.as_deref(), Some("codex"));
 }
 
@@ -853,16 +859,16 @@ fn the_agent_kind_comes_from_the_pane() {
 fn a_pane_that_is_not_ours_is_not_matched() {
     let c = Case::new();
     let handle = c.worker();
-    c.pane("w1:p77", "blocked", json!({}));
+    c.pane("t77", "blocked", json!({}));
     assert_eq!(c.agent(&handle).state, "working"); // no pane found: the live beat says so
 }
 
 #[test]
-fn a_recorded_pane_herdr_no_longer_has_is_still_named() {
+fn a_recorded_terminal_hc_no_longer_has_is_still_named() {
     let c = Case::new();
     let handle = c.worker();
     let a = c.agent(&handle);
-    assert_eq!((a.pane.as_deref(), a.agent), (Some("w1:p5"), None));
+    assert_eq!((a.pane.as_deref(), a.agent), (Some("t5"), None));
 }
 
 // -- running a test --------------------------------------------------------------------
@@ -871,7 +877,7 @@ fn a_recorded_pane_herdr_no_longer_has_is_still_named() {
 fn an_agent_holding_a_slot_is_running_a_test() {
     let c = Case::new();
     let handle = c.worker();
-    c.pane("w1:p5", "idle", json!({}));
+    c.pane("t5", "idle", json!({}));
     c.run_of("holding", "/wt/sim-jump", NOW - 90.0, "verify-full");
     let a = c.agent(&handle);
     assert_eq!(a.state, "running_test");
@@ -935,7 +941,7 @@ fn the_same_agent_without_the_run_reads_gone_and_lost() {
 fn a_run_in_another_worktree_is_not_this_agents() {
     let c = Case::new();
     let handle = c.worker();
-    c.pane("w1:p5", "idle", json!({}));
+    c.pane("t5", "idle", json!({}));
     c.run_of("holding", "/wt/other", NOW - 90.0, "verify-full");
     assert_eq!(c.agent(&handle).state, "idle");
 }
@@ -1085,7 +1091,7 @@ fn the_table_is_a_column_per_field() {
             "sim/jump",
             "executor",
             "sim/jump",
-            "w1:p5"
+            "t5"
         ])
     );
 }
@@ -1100,14 +1106,14 @@ fn a_view_of_nobody_is_an_empty_table() {
     assert_eq!(view.generated, NOW);
 }
 
-/// `just tasks agents` as the command line runs it, herdr the crate's `fake-herdr` with one blocked
-/// pane bound to a worker.
+/// `just tasks agents` as the command line runs it, hc the crate's `fake-hc` with one blocked
+/// terminal named for a worker bound to its conversation.
 mod command {
     use crate::{Case, repository, scratch};
     use serde_json::{Value, json};
     use std::collections::BTreeSet;
 
-    const FAKE: &str = env!("CARGO_BIN_EXE_fake-herdr");
+    const FAKE: &str = env!("CARGO_BIN_EXE_fake-hc");
 
     struct Agents {
         c: Case,
@@ -1120,26 +1126,24 @@ mod command {
             let dir = scratch(&format!("agents-{name}"));
             let mut c = Case::new();
             c.env.cwd = repository(&dir.join("repo")); // its slot locks are its own
-            let state = dir.join("herdr.json");
-            let panes = json!({"tabs": [], "next": 9, "panes": [
-                {"pane_id": "w1:p5", "tab_id": "w1:t1", "cwd": "/wt/x", "agent": "claude",
-                 "agent_status": "blocked", "agent_session": {"value": "sess-1"}}]});
-            std::fs::write(&state, panes.to_string()).unwrap();
-            c.env.vars.insert("HERDR_BIN".into(), FAKE.into());
-            c.env
-                .vars
-                .insert("FAKE_HERDR_STATE".into(), state.display().to_string());
             let orch = c.register("orchestrator");
             let worker = c.register_with("worker", &["--parent", &orch]);
             c.store().bind_agent("sess-1", &worker, false).unwrap();
+            let state = dir.join("hc.json");
+            let terminals = json!({"terminals": [
+                {"address": "t5", "name": worker, "cwd": "/wt/x", "agent": "claude-code",
+                 "state": "live", "status": "blocked", "turn": 2, "pid": 9,
+                 "argv": ["claude", "--session-id", "sess-1"]}]});
+            std::fs::write(&state, terminals.to_string()).unwrap();
+            c.env.vars.insert("HC_BIN".into(), FAKE.into());
+            c.env
+                .vars
+                .insert("FAKE_HC_STATE".into(), state.display().to_string());
             Agents { c, orch, worker }
         }
 
-        fn herdr_down(&mut self) {
-            self.c
-                .env
-                .vars
-                .insert("FAKE_HERDR_FAIL".into(), "pane list".into());
+        fn hc_down(&mut self) {
+            self.c.env.vars.insert("FAKE_HC_FAIL".into(), "ls".into());
         }
 
         fn json(&self, args: &[&str]) -> Value {
@@ -1175,11 +1179,7 @@ mod command {
             .unwrap();
         assert_eq!(
             (&worker["state"], &worker["pane"], &worker["session_id"]),
-            (
-                &json!("waiting_on_input"),
-                &json!("w1:p5"),
-                &json!("sess-1")
-            )
+            (&json!("waiting_on_input"), &json!("t5"), &json!("sess-1"))
         );
         assert_eq!(data["probes"]["herdr"], "ok");
     }
@@ -1207,7 +1207,7 @@ mod command {
     #[test]
     fn the_table_says_which_probe_could_not_be_asked() {
         let mut a = Agents::new("table-probe");
-        a.herdr_down();
+        a.hc_down();
         let out = a.c.ok(&a.orch, &["agents"]);
         // The rows (registered at one moment: by handle), then the probe that was down.
         let (last, rows) = out
@@ -1220,7 +1220,7 @@ mod command {
         assert!(rows.iter().any(|row| row.starts_with(&a.worker)), "{out}");
         assert_eq!(
             last,
-            "(probe unavailable: herdr; states come from the board alone)"
+            "(probe unavailable: hc; states come from the board alone)"
         );
     }
 
@@ -1231,9 +1231,9 @@ mod command {
     }
 
     #[test]
-    fn a_herdr_that_is_down_is_a_probe_status_not_an_error() {
-        let mut a = Agents::new("herdr-down");
-        a.herdr_down();
+    fn hc_that_is_down_is_a_probe_status_not_an_error() {
+        let mut a = Agents::new("hc-down");
+        a.hc_down();
         let data = a.json(&["agents", "--json"]);
         assert_eq!(data["probes"]["herdr"], "unavailable");
         assert!(a.handles(&["agents", "--json"]).contains(&a.worker));

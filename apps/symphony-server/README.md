@@ -103,7 +103,11 @@ insertions and removals do not shift an integer offset past an unread record.
 Document and picture links in those snapshots retain the branch prefix. Removed worktrees
 return 404. Empty or missing task slugs return 400 before reading the board.
 A missing task returns 404; an unavailable board returns 503 while the document
-board continues without task counts. Native routes apply both
+board continues without task counts. A board that took a read and answered it
+later than the 3 s wait, on its one resend too, is slow: 504, "the task board is
+slow", never "cannot be reached". The wait bounds the board tick, which shares the
+data worker's thread with document refreshes, and bounds each sending's whole
+answer, so a read sent twice stays inside the client's 15 s request limit. Native routes apply both
 the peer gate and the Host check; sandboxed frames cannot read the API.
 
 `just symphony` installs the release client with the shared server, in
@@ -143,7 +147,9 @@ thread message by id, with its typed `blocks` and display `stamp`. `task-summary
 one brief-free record so a task entering a paged view appears without a board
 refetch; `task-counts` and `task-signoff` update the column totals and owner queue.
 `docs` replaces navigation order; `agent-probes` reports
-probe availability; `tasks-status` reports board availability. Unknown regions
+probe availability; `tasks-status` reports board availability, and of a board
+that went whether it is `slow` (it took the read and answered late) or
+unreachable, again when it turns from one to the other. Unknown regions
 are ignored by the current board client.
 
 One filesystem watcher handles registers, branch discovery and the client

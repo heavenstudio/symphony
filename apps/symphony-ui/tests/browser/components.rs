@@ -55,7 +55,7 @@ pub(super) fn choose(page: &mut super::Chrome, selector: &str, text: &str) {
     ));
 }
 
-fn open_panel(page: &mut super::Chrome) {
+pub(super) fn open_panel(page: &mut super::Chrome) {
     assert!(page.wait_for("document.querySelector('#quick-open') !== null", SHOWN));
     page.eval("document.querySelector('#quick-open').focus()");
     key(page, "Enter", "Enter", 13);
@@ -65,7 +65,7 @@ fn open_panel(page: &mut super::Chrome) {
     ));
 }
 
-fn task_tab(page: &mut super::Chrome) {
+pub(super) fn task_tab(page: &mut super::Chrome) {
     page.eval("document.querySelector('#quick-sheet [role=tab]').focus()");
     key(page, "ArrowRight", "ArrowRight", 39);
     assert!(page.wait_for("document.activeElement.textContent==='Add task'", SHOWN));

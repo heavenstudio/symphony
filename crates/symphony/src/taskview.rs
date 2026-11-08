@@ -404,14 +404,28 @@ pub fn activity(store: &symphony_board::Store) -> Result<Vec<ActivityItem>, symp
         .collect())
 }
 
+/// How long the server waits on each board request: its board tick shares the data worker's thread
+/// with every document refresh, and a page gives up on an answer after 15 s (`symphony-ui`'s
+/// `request.rs`). A read with no whole answer in that time goes once more
+/// ([`symphony_board::rpc::Kind`]), and so waits at most twice this.
+const BOARD_WAIT: std::time::Duration = std::time::Duration::from_secs(3);
+
+/// A page read's board failure: a board that took the request and answered too late is slow (504),
+/// any other failure 503, said after `unreachable` (the words a route puts before it).
+pub fn read_failure(error: &str, unreachable: &str) -> (u16, String) {
+    if symphony_board::rpc::slow(error) {
+        (504, format!("the task board is slow: {error}"))
+    } else {
+        (503, format!("{unreachable}{error}"))
+    }
+}
+
 pub fn connect(root: &Path) -> Result<symphony_board::Store, String> {
-    let mut env = symphony_board::cli::Env::of_process();
-    env.cwd = root.to_path_buf();
     // A read-only web request is never a board session or a launcher.
-    env.vars.remove("TASKS_SESSION");
-    let client =
-        symphony_board::cli::board_client(&env)?.waiting(std::time::Duration::from_secs(3));
-    if let Some(text) = env.vars.get("TASKS_NOW") {
+    let mut env = crate::children::board_env();
+    env.cwd = root.to_path_buf();
+    let client = symphony_board::cli::board_client(&env)?.waiting(BOARD_WAIT);
+    let store = if let Some(text) = env.vars.get("TASKS_NOW") {
         let now = text
             .parse::<f64>()
             .ok()
@@ -423,14 +437,30 @@ pub fn connect(root: &Path) -> Result<symphony_board::Store, String> {
             Box::new(symphony_board::sys::pid_alive),
             &symphony_board::sys::hostname(),
         )
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?
     } else {
-        symphony_board::Store::open(client).map_err(|e| e.to_string())
-    }
+        symphony_board::Store::open(client).map_err(|e| e.to_string())?
+    };
+    // The cap the command line holds starts to, which the agents view and the PULL digest show.
+    Ok(symphony_board::cli::capped(store, &env))
 }
 
+/// A quick-task outcome read must identify the owner's intended task before confirming it.
+pub(crate) fn is_quick_task(task: &symphony_board::Task, receipt: &str) -> bool {
+    task.created_by == "owner"
+        && task
+            .fields
+            .get("_symphony")
+            .and_then(|fields| fields.get("owner_save"))
+            .and_then(serde_json::Value::as_str)
+            == Some(receipt)
+}
+
+/// The agents view, its machine probes run without this process's session
+/// ([`crate::children::board_env`]): hc's session names would scope the census to the starter's
+/// core.
 pub fn agents(store: &symphony_board::Store, root: &Path) -> Result<symphony_api::Agents, String> {
-    let mut env = symphony_board::cli::Env::of_process();
+    let mut env = crate::children::board_env();
     env.cwd = root.to_path_buf();
     agents_probed(store, &symphony_board::cli::probes::machine(&env), None)
 }
@@ -441,7 +471,7 @@ pub fn agents_in(
     common: Option<&Path>,
     board: &symphony_board::Board,
 ) -> Result<symphony_api::Agents, String> {
-    let mut env = symphony_board::cli::Env::of_process();
+    let mut env = crate::children::board_env();
     env.cwd = root.to_path_buf();
     let probes = match common {
         Some(common) => symphony_board::cli::probes::machine_in(&env, common),
@@ -462,6 +492,12 @@ fn agents_probed(
         None => symphony_board::cli::agents::describe(store, probes, store.now(), false),
     }
     .map_err(|e| e.to_string())?;
+    wire_agents(&view)
+}
+
+/// The board's agents view on the Symphony's wire. The board's own JSON names the panes probe
+/// `herdr`, which [`symphony_api::AgentProbes`] reads and sends on as `panes` and `herdr` both.
+fn wire_agents(view: &symphony_board::cli::agents::View) -> Result<symphony_api::Agents, String> {
     serde_json::from_str(&symphony_board::pyjson::dumps_line(&view.json()))
         .map_err(|e| e.to_string())
 }
@@ -531,6 +567,10 @@ fn fields(
 #[cfg(test)]
 #[path = "taskview/page_tests.rs"]
 mod page_tests;
+
+#[cfg(test)]
+#[path = "taskview/agents_tests.rs"]
+mod agents_tests;
 
 #[cfg(test)]
 mod tests {
