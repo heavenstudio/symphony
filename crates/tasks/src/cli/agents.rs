@@ -34,8 +34,8 @@ mod place;
 use crate::health::{FINISHED, Health};
 use crate::pyjson::Py;
 use crate::rows::TaskSessionRow;
-use crate::{Error, Session, Store, Task};
-pub use place::{PROCESS, PROCESS_SCAN_SECONDS, Process};
+use crate::{Binding, Error, Session, Store, Task};
+pub use place::{Began, PROCESS, PROCESS_SCAN_SECONDS, Process};
 use place::{Stay, resolve, waited_on};
 use std::cell::{OnceCell, RefCell};
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -379,9 +379,10 @@ struct Row<'a> {
     pane: Option<&'a Pane>,
     worktree: String,
     branch: String,
-    /// An in-process agent's: when it came to the worktree its binding recorded, which `worktree`
-    /// is, and the earliest time a call of its there read (earlier only if the clock went back).
-    placed: Option<(f64, f64)>,
+    /// An in-process agent's binding, when `worktree` is the one it recorded: when it came there,
+    /// by the board's clock and the clock since boot, and the earliest time a call of its there read
+    /// (earlier only if the clock went back).
+    placed: Option<&'a Binding>,
 }
 
 /// The agents API's answer as of `now`: every session's agent, bar those that left (and, unless
@@ -466,9 +467,7 @@ pub fn describe_board(
                 pane,
                 worktree,
                 branch,
-                placed: placed
-                    .filter(|_| record.is_none() && pane.is_none())
-                    .map(|b| (b.placed_at, b.stay_from)),
+                placed: placed.filter(|_| record.is_none() && pane.is_none()),
             }
         })
         .collect();
@@ -523,9 +522,15 @@ pub fn describe_board(
         // An in-process agent makes no tool call while it waits on what it started in the
         // background: a process it started, still working in its own worktree, is that wait.
         let waiting = match (run, row.placed) {
-            (None, Some((came, from))) if quiet => {
-                let last = s.row.last_tool.unwrap_or(came);
-                waited_on(&real(&row.worktree), Stay { came, from, last }, &scan)
+            (None, Some(b)) if quiet => {
+                let stay = Stay {
+                    came: b.placed_at,
+                    from: b.stay_from,
+                    last: s.row.last_tool.unwrap_or(b.placed_at),
+                    came_boot: b.placed_boot.as_ref(),
+                    last_boot: b.last_boot.as_ref(),
+                };
+                waited_on(&real(&row.worktree), &stay, &scan)
             }
             _ => None,
         };

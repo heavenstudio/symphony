@@ -1,8 +1,10 @@
 //! The checkout an in-process key's binding keeps: where a subagent's own tool calls run, and since
-//! when, beside the session its orchestrator registered elsewhere.
+//! when, by the board's clock and the clock since boot, beside the session its orchestrator
+//! registered elsewhere.
 
 use crate::common::{Fixture, NOW};
 use std::collections::BTreeMap;
+use symphony_board::sys::Boottime;
 use symphony_board::{Beat, Binding, NewSession};
 
 /// What the board keeps of the key the session `h` beats through.
@@ -11,7 +13,7 @@ fn binding_of(f: &Fixture, h: &str) -> Binding {
 }
 
 /// Subagent key `agent-1`'s binding, in `worktree` on `branch` since `came`, its calls there read
-/// from `from` on.
+/// from `from` on, none of them reading the clock since boot.
 fn kept(worktree: &str, branch: &str, came: f64, from: f64) -> Binding {
     Binding {
         agent: "agent-1".into(),
@@ -20,7 +22,16 @@ fn kept(worktree: &str, branch: &str, came: f64, from: f64) -> Binding {
         branch: branch.into(),
         placed_at: came,
         stay_from: from,
+        ..Binding::default()
     }
+}
+
+/// A reading of the clock since boot, `at` seconds into boot `boot`.
+fn read(boot: &str, at: f64) -> Option<Boottime> {
+    Some(Boottime {
+        boot: boot.into(),
+        at,
+    })
 }
 
 /// Subagent key `agent-1`, bound to a session registered in the main checkout.
@@ -41,11 +52,16 @@ impl<'a> Subagent<'a> {
 
     /// A tool call of its, `by` seconds after the board's clock, from the checkout given.
     fn call(&self, by: f64, place: Option<(&str, &str)>) {
+        self.reading(by, place, None);
+    }
+
+    /// [`Subagent::call`], whose hook read the clock since boot as `boot`.
+    fn reading(&self, by: f64, place: Option<(&str, &str)>, boot: Option<Boottime>) {
         self.f.advance(by);
         let beat = self
             .f
             .store
-            .agent_beat_in("agent-1", &Beat::default(), place);
+            .agent_beat_in("agent-1", &Beat::default(), place, boot.as_ref());
         assert_eq!(beat.unwrap().as_deref(), Some(self.handle.as_str()));
     }
 }
@@ -105,22 +121,72 @@ fn a_clock_that_went_back_while_it_was_there_widens_its_stay_and_never_moves_whe
     assert_eq!(binding_of(&f, &h), kept("/wt/b", "tools/b", b, b));
 }
 
+/// What a call read of the clock since boot (on which Linux dates a process's start): the reading
+/// of the call that came to a checkout, and its latest call's, whatever the board's clock reads.
+#[test]
+fn a_subagents_binding_keeps_the_clock_since_boot_its_calls_read_when_it_came_and_last() {
+    let f = Fixture::empty();
+    let s = Subagent::bound(&f);
+    let h = s.handle.clone();
+    let a = Some(("/wt/a", "tools/a"));
+    let at_a = |last: Option<Boottime>| Binding {
+        placed_boot: read("boot-1", 100.0),
+        last_boot: last,
+        ..kept("/wt/a", "tools/a", NOW, NOW - 5.0)
+    };
+    s.reading(0.0, a, read("boot-1", 100.0));
+    // The wall clock set back 5 s: the clock since boot runs on, a call outside any checkout too.
+    s.reading(-5.0, a, read("boot-1", 160.0));
+    s.reading(0.0, None, read("boot-1", 220.0));
+    assert_eq!(binding_of(&f, &h), at_a(read("boot-1", 220.0)));
+    // Calls side by side may land out of order: the later reading stays.
+    s.reading(0.0, a, read("boot-1", 200.0));
+    assert_eq!(binding_of(&f, &h), at_a(read("boot-1", 220.0)));
+    // A new boot's reading replaces the last boot's; when it came stays a reading of that boot.
+    s.reading(0.0, a, read("boot-2", 5.0));
+    assert_eq!(binding_of(&f, &h), at_a(read("boot-2", 5.0)));
+    // A call that read none leaves its last reading unknown, until one reads it again.
+    s.reading(0.0, a, None);
+    assert_eq!(binding_of(&f, &h), at_a(None));
+    s.reading(0.0, a, read("boot-2", 9.0));
+    assert_eq!(binding_of(&f, &h), at_a(read("boot-2", 9.0)));
+    // A move starts both again, from that call's reading, or from none.
+    s.reading(0.0, Some(("/wt/b", "tools/b")), read("boot-2", 30.0));
+    let b = Binding {
+        placed_boot: read("boot-2", 30.0),
+        last_boot: read("boot-2", 30.0),
+        ..kept("/wt/b", "tools/b", NOW - 5.0, NOW - 5.0)
+    };
+    assert_eq!(binding_of(&f, &h), b);
+    s.reading(0.0, a, None);
+    assert_eq!(
+        binding_of(&f, &h),
+        kept("/wt/a", "tools/a", NOW - 5.0, NOW - 5.0)
+    );
+}
+
 #[test]
 fn a_beat_from_a_checkout_is_one_request_as_a_beat_without_one() {
     let f = Fixture::empty();
     let h = f.session("worker");
     assert!(f.store.bind_agent("agent-1", &h, false).unwrap());
-    let requests = |place| {
+    let boot = |at: f64| Boottime {
+        boot: "boot-1".into(),
+        at,
+    };
+    let requests = |place, boot: Option<&Boottime>| {
         let before = f.store.client().requests();
         f.store
-            .agent_beat_in("agent-1", &Beat::default(), place)
+            .agent_beat_in("agent-1", &Beat::default(), place, boot)
             .unwrap();
         f.store.client().requests() - before
     };
-    assert_eq!(requests(Some(("/wt/a", "a"))), requests(None));
-    assert_eq!(requests(Some(("/wt/b", "b"))), requests(None));
+    let plain = requests(None, None);
+    assert_eq!(requests(Some(("/wt/a", "a")), Some(&boot(1.0))), plain);
+    assert_eq!(requests(Some(("/wt/b", "b")), Some(&boot(2.0))), plain);
     f.advance(-5.0);
-    assert_eq!(requests(Some(("/wt/b", "b"))), requests(None));
+    assert_eq!(requests(Some(("/wt/b", "b")), Some(&boot(3.0))), plain);
+    assert_eq!(requests(None, Some(&boot(2.0))), plain);
 }
 
 #[test]
@@ -129,9 +195,16 @@ fn a_key_bound_to_no_session_keeps_no_checkout() {
     let h = f.session("worker");
     f.store.leave(&h).unwrap();
     assert!(!f.store.bind_agent("agent-1", &h, false).unwrap());
-    let beat = f
-        .store
-        .agent_beat_in("agent-1", &Beat::default(), Some(("/wt/a", "a")));
+    let boot = Boottime {
+        boot: "boot-1".into(),
+        at: 1.0,
+    };
+    let beat = f.store.agent_beat_in(
+        "agent-1",
+        &Beat::default(),
+        Some(("/wt/a", "a")),
+        Some(&boot),
+    );
     assert_eq!(beat.unwrap(), None);
     let other = f.session("worker");
     assert!(f.store.bind_agent("agent-1", &other, false).unwrap());
@@ -143,8 +216,17 @@ fn a_full_sessions_binding_keeps_no_checkout_and_reads_as_no_subagents() {
     let f = Fixture::empty();
     let h = f.session("worker");
     assert!(f.store.bind_agent("session-1", &h, true).unwrap());
+    let boot = Boottime {
+        boot: "boot-1".into(),
+        at: 1.0,
+    };
     f.store
-        .agent_beat_in("session-1", &Beat::default(), Some(("/wt/a", "a")))
+        .agent_beat_in(
+            "session-1",
+            &Beat::default(),
+            Some(("/wt/a", "a")),
+            Some(&boot),
+        )
         .unwrap();
     let full = Binding {
         agent: "session-1".into(),

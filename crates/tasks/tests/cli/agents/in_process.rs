@@ -4,7 +4,8 @@
 use super::*;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::{Path, PathBuf};
-use symphony_board::cli::agents::PROCESS_SCAN_SECONDS;
+use symphony_board::cli::agents::{Began, PROCESS_SCAN_SECONDS};
+use symphony_board::sys::Boottime;
 
 /// A linked worktree's top folder (its `.git` a file naming a git dir checked out on `sim/jump`), in
 /// a scratch folder of its own, resolved.
@@ -18,11 +19,27 @@ fn linked_worktree(name: &str) -> PathBuf {
     tree.canonicalize().unwrap()
 }
 
-/// A process working in `cwd`, started at `started` by the board's clock.
+/// A process working in `cwd`, started at `started` by the board's clock, as macOS dates a start.
 fn process(cwd: &Path, started: f64) -> Process {
     Process {
         cwd: cwd.to_path_buf(),
-        started: Some(started),
+        started: Some(Began::At(started)),
+    }
+}
+
+/// A reading of the clock since boot, `at` seconds into boot `boot-1`.
+fn since_boot(at: f64) -> Boottime {
+    Boottime {
+        boot: "boot-1".into(),
+        at,
+    }
+}
+
+/// A process working in `cwd`, started `at` seconds into boot `boot-1`, as Linux dates a start.
+fn booted(cwd: &Path, at: f64) -> Process {
+    Process {
+        cwd: cwd.to_path_buf(),
+        started: Some(Began::AfterBoot(since_boot(at))),
     }
 }
 
@@ -30,6 +47,11 @@ impl Case {
     /// A subagent its orchestrator registered in the main checkout, which claimed `sim/jump`: its
     /// board command binds it, and that call, in `tree`, records where it works, now.
     fn subagent_in(&self, tree: &Path) -> String {
+        self.subagent_reading(tree, None)
+    }
+
+    /// [`Case::subagent_in`], whose hook read the clock since boot as `boot`.
+    fn subagent_reading(&self, tree: &Path, boot: Option<&Boottime>) -> String {
         let handle = self.f.session_with(NewSession {
             parent: Some(self.orch.clone()),
             worktree: "/main".into(),
@@ -43,16 +65,21 @@ impl Case {
                 .bind_agent("agent-sub", &handle, false)
                 .unwrap()
         );
-        self.call_in("agent-sub", tree);
+        self.call_reading("agent-sub", tree, boot);
         handle
     }
 
     /// A tool call of subagent `agent` in `tree`, as the heartbeat hook hands it on.
     fn call_in(&self, agent: &str, tree: &Path) {
+        self.call_reading(agent, tree, None);
+    }
+
+    /// [`Case::call_in`], whose hook read the clock since boot as `boot`.
+    fn call_reading(&self, agent: &str, tree: &Path, boot: Option<&Boottime>) {
         let place = Some((tree.to_str().unwrap(), "sim/jump"));
         self.f
             .store
-            .agent_beat_in(agent, &Beat::default(), place)
+            .agent_beat_in(agent, &Beat::default(), place, boot)
             .unwrap();
     }
 
@@ -227,6 +254,89 @@ fn a_build_begun_after_the_clock_went_back_is_a_doubt_not_an_absence() {
     assert_eq!(c.agent(&handle).health, Health::Lost);
     c.processes_in(vec![process(&tree, NOW - 6.5), process(&tree, NOW + 0.5)]);
     assert_eq!(c.agent(&handle).health, Health::Live, "its own proves it");
+}
+
+/// The re-review's quiet-clock probe: live on its build, the subagent waits with no call while the
+/// wall clock is set 5 s either way. Neither the kernel's start nor its calls' readings move:
+/// Linux's start since boot is compared with the readings of that clock its hook took, and macOS's
+/// stamp, fixed when the build began, with the board's times of its calls. Still its own.
+#[test]
+fn setting_the_wall_clock_while_it_waits_leaves_its_build_its_own() {
+    for set in [-5.0, 5.0] {
+        for (os, build) in [
+            ("linux", booted as fn(&Path, f64) -> Process),
+            ("macos", process),
+        ] {
+            let c = Case::new();
+            let tree = linked_worktree(&format!("quiet-set-{os}{set}"));
+            let handle = c.subagent_reading(&tree, Some(&since_boot(100.0)));
+            let started = if os == "linux" { 100.5 } else { NOW + 0.5 };
+            c.processes_in(vec![build(&tree, started)]);
+            c.f.advance(LIVE_SECONDS + 1.0);
+            let a = c.agent(&handle);
+            assert_eq!((a.state, a.health), ("running_test", Health::Live));
+            c.f.advance(set);
+            c.past_the_lost_line();
+            let a = c.agent(&handle);
+            let read = (a.state, a.health, a.detail.unwrap().phase);
+            assert_eq!(
+                read,
+                ("running_test", Health::Live, "running".into()),
+                "{os} {set}"
+            );
+        }
+    }
+}
+
+/// A start Linux dates since boot is its from the reading its coming call took to its last call's,
+/// a second either side, whatever the board's clock reads; in another boot than its last call's it
+/// began after that call, and is not its.
+#[test]
+fn a_start_since_boot_is_its_between_the_readings_its_calls_took() {
+    let c = Case::new();
+    let tree = linked_worktree("boot-stay");
+    let handle = c.subagent_reading(&tree, Some(&since_boot(100.0)));
+    c.f.advance(-30.0);
+    c.call_reading("agent-sub", &tree, Some(&since_boot(400.0)));
+    c.past_the_lost_line();
+    let reads = |listed: Process| {
+        c.processes_in(vec![listed]);
+        c.agent(&handle).health
+    };
+    for at in [99.0, 100.0, 250.0, 400.0, 401.0] {
+        assert_eq!(reads(booted(&tree, at)), Health::Live, "{at}");
+    }
+    for at in [98.5, 401.5] {
+        assert_eq!(reads(booted(&tree, at)), Health::Lost, "{at}");
+    }
+    let rebooted = Boottime {
+        boot: "boot-2".into(),
+        at: 250.0,
+    };
+    let after_a_reboot = Process {
+        cwd: tree.clone(),
+        started: Some(Began::AfterBoot(rebooted)),
+    };
+    assert_eq!(reads(after_a_reboot), Health::Lost);
+}
+
+/// A start since boot is compared with readings of that clock alone: when the call that came read
+/// none, what began up to its last reading may be its, and the board cannot tell (unknown, never
+/// lost); what began after it is not. With no reading at all, nothing bounds it.
+#[test]
+fn a_start_since_boot_with_no_reading_to_bound_it_is_a_doubt_not_an_absence() {
+    let c = Case::new();
+    let tree = linked_worktree("boot-unread");
+    let handle = c.subagent_in(&tree);
+    c.processes_in(vec![booted(&tree, 50.0)]);
+    c.past_the_lost_line();
+    let a = c.agent(&handle);
+    assert_eq!((a.state, a.health), ("running_test", Health::Unknown));
+    c.call_reading("agent-sub", &tree, Some(&since_boot(200.0)));
+    c.past_the_lost_line();
+    assert_eq!(c.agent(&handle).health, Health::Unknown);
+    c.processes_in(vec![booted(&tree, 201.5)]);
+    assert_eq!(c.agent(&handle).health, Health::Lost);
 }
 
 /// The adversarial review's other probe: bound in one checkout, the subagent's background build

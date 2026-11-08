@@ -267,6 +267,21 @@ impl Clock {
     }
 }
 
+/// The clock since boot a run reads (a hook, for a subagent's binding): this machine's
+/// ([`sys::boot_clock`]), or the reading `TASKS_BOOT_CLOCK` pins, `BOOT-ID SECONDS` (anything else,
+/// as `none`: no reading), as `TASKS_NOW` pins the board's clock.
+fn boot_clock(env: &Env) -> Option<sys::Boottime> {
+    let Some(pinned) = env.var("TASKS_BOOT_CLOCK") else {
+        return sys::boot_clock();
+    };
+    let (boot, at) = pinned.split_once(' ')?;
+    let at = at.parse::<f64>().ok().filter(|at| at.is_finite())?;
+    (!boot.is_empty()).then(|| sys::Boottime {
+        boot: boot.into(),
+        at,
+    })
+}
+
 /// The board `env` reaches, its server started if it is down, whether or not the board has moved
 /// there: what `tasks-copy --board` and `just tasks-cutover` write into.
 pub fn board_client(env: &Env) -> Result<Client, String> {
@@ -346,4 +361,34 @@ fn parts(clock: &Clock) -> (Box<dyn Fn() -> f64 + Send + Sync>, Probe, String) {
         Clock::Machine => Box::new(crate::store::now),
     };
     (read, Box::new(sys::pid_alive), sys::hostname())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_pinned_clock_since_boot_is_a_boot_and_its_seconds_and_anything_else_reads_none() {
+        let pinned = |text: &str| {
+            let vars = [("TASKS_BOOT_CLOCK".to_string(), text.to_string())];
+            boot_clock(&Env {
+                vars: vars.into_iter().collect(),
+                cwd: std::env::temp_dir(),
+            })
+        };
+        let read = sys::Boottime {
+            boot: "boot-1".into(),
+            at: 12.5,
+        };
+        assert_eq!(pinned("boot-1 12.5"), Some(read));
+        for text in ["none", "boot-1", " 12.5", "boot-1 soon", "boot-1 inf"] {
+            assert_eq!(pinned(text), None, "{text}");
+        }
+        // Unpinned, the machine's: its boot, where starts are dated since boot.
+        let machine = |read: Option<sys::Boottime>| read.map(|r| r.boot);
+        assert_eq!(
+            machine(boot_clock(&Env::default())),
+            machine(sys::boot_clock())
+        );
+    }
 }

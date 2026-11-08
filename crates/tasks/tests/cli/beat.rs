@@ -139,10 +139,15 @@ mod beats {
     /// Three-second polls past the lost line.
     const GONE_POLLS: usize = ((LIVE_SECONDS + STALE_SECONDS) / 3.0) as usize + 3;
 
-    /// A case whose board clock a test moves (`TASKS_NOW`), from `NOW`.
+    /// The boot a [`Clocked`] case's hooks read the clock since boot in, and its reading at `NOW`.
+    pub(super) const BOOT: (&str, f64) = ("boot-1", 1000.0);
+
+    /// A case whose board clock a test moves (`TASKS_NOW`), from `NOW`, and whose hooks read the
+    /// clock since boot (`TASKS_BOOT_CLOCK`) in [`BOOT`], from its reading.
     pub(super) struct Clocked {
         c: Case,
         now: Cell<f64>,
+        since_boot: Cell<f64>,
     }
 
     impl Clocked {
@@ -150,10 +155,19 @@ mod beats {
             Clocked {
                 c: Case::new(),
                 now: Cell::new(NOW),
+                since_boot: Cell::new(BOOT.1),
             }
         }
 
+        /// `seconds` go by, on both clocks.
         pub(super) fn pass(&self, seconds: f64) {
+            self.now.set(self.now.get() + seconds);
+            self.since_boot.set(self.since_boot.get() + seconds);
+        }
+
+        /// The wall clock is set by `seconds` (as a time server or a person sets it): the board's
+        /// clock moves, the clock since boot does not.
+        pub(super) fn set_wall(&self, seconds: f64) {
             self.now.set(self.now.get() + seconds);
         }
 
@@ -161,6 +175,8 @@ mod beats {
             let mut env = self.c.env.clone();
             env.vars
                 .insert("TASKS_NOW".into(), format!("{:?}", self.now.get()));
+            let since_boot = format!("{} {:?}", BOOT.0, self.since_boot.get());
+            env.vars.insert("TASKS_BOOT_CLOCK".into(), since_boot);
             Case { env }
         }
 

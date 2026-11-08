@@ -3,7 +3,7 @@
 //! working directory of every process, and whether a task's branch already landed on main.
 
 use super::Env;
-use super::agents::{Answer, Pane, Probes, Process, Run};
+use super::agents::{Answer, Began, Pane, Probes, Process, Run};
 use crate::git;
 use crate::launch::hc::{Binary, Hc};
 use crate::sys::{self, Command};
@@ -54,9 +54,9 @@ fn machine_with_common(env: &Env, common: Result<PathBuf, String>) -> Probes<'_>
 }
 
 /// Every process `lsof` lists, where it works as the worktree sweep reads it (a sessionless `lsof`,
-/// [`process_cwd::pid_cwds_with`]) and when it started as the kernel stamped it
-/// ([`sys::process_starts`]), none when that cannot be read; one that ended since it was listed is
-/// left out. A listing that cannot be read, or lists nothing, cannot say.
+/// [`process_cwd::pid_cwds_with`]) and when it started as the kernel stamped it, on the clock it
+/// dates starts by ([`sys::process_starts`]), none when that cannot be read; one that ended since it
+/// was listed is left out. A listing that cannot be read, or lists nothing, cannot say.
 pub fn processes() -> Answer<Vec<Process>> {
     let listed = process_cwd::pid_cwds_with(sys::command("lsof"))
         .ok_or_else(|| "lsof cannot list the processes' working directories".to_string())?;
@@ -65,13 +65,14 @@ pub fn processes() -> Answer<Vec<Process>> {
     Ok(listed
         .into_iter()
         .zip(starts)
-        .filter_map(|((_, cwd), start)| match start {
-            sys::Start::At(at) => Some(Process {
-                cwd,
-                started: Some(at),
-            }),
-            sys::Start::Unreadable => Some(Process { cwd, started: None }),
-            sys::Start::Ended => None,
+        .filter_map(|((_, cwd), start)| {
+            let started = match start {
+                sys::Start::At(at) => Some(Began::At(at)),
+                sys::Start::AfterBoot(read) => Some(Began::AfterBoot(read)),
+                sys::Start::Unreadable => None,
+                sys::Start::Ended => return None,
+            };
+            Some(Process { cwd, started })
         })
         .collect())
 }

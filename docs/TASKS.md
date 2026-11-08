@@ -293,7 +293,12 @@ read from the `.git` files, and, when that checkout changed, the time it came
 there; a call with no `cwd`, or one outside any checkout, moves neither (the
 last checkout stands: such a call says nothing of where it works). A call there
 that reads a time before any other there did (the clock went back) keeps that
-earliest time too, never moving when it came. A
+earliest time too, never moving when it came. On Linux, whose kernel dates a
+process's start on the clock since boot, the hook also reads that clock (its
+boot's id and `/proc/uptime`): the binding keeps the reading of the call that
+came to the checkout and of its latest call anywhere, a later boot's replacing
+an earlier one's, and none when a call read none. Setting the wall clock moves
+neither those readings nor a start dated on that clock. A
 subagent waiting on a background command of its own (a `cargo test`, a build)
 makes no calls; while a live process it started works in that recorded linked
 worktree it reads `running_test` in the agents API, and is neither stale, lost
@@ -378,11 +383,15 @@ The rules a port must copy, in this order:
   that worktree, its working directory the worktree's top folder or below it, with no other `.git` between (a scratch
   repository or a nested worktree is not its), compared component by component, never by a string prefix; and it
   started while the agent was there, from a second before its binding recorded that checkout to a second after its
-  last tool call. A server or shell started there before the agent came, or after it went quiet, is not its, so a
+  last tool call, on the clock its start is dated by: the board's for macOS, whose stamp is fixed when it started;
+  the clock since boot for Linux, against the readings of that clock its calls took, never a wall time worked out
+  from today's boot time, which setting the wall clock moves (a start in another boot than its last call's began
+  after that call). A server or shell started there before the agent came, or after it went quiet, is not its, so a
   stray process never hides abandoned work. With none of its own there, the board cannot tell, and so never calls it
   lost, while one working there may be its: its start cannot be read (no permission, an unexpected record; one that
   ended since the listing is left out), or it began after the earliest time a call of the agent's there read and
-  before it came, which only a clock that went back while it was there leaves. The processes
+  before it came, which only a clock that went back while it was there leaves, or it is dated since boot and the
+  call that came, or its last call, read no clock since boot (a start after a last reading is still not its). The processes
   are listed with their starts (`lsof`, as the worktree sweep lists them, and the kernel's process table) only when
   such an agent is in the view, once a view, and a long-lived reader (the server's clock and dispatcher, the
   monitor) keeps the listing for 20 s by its store's clock, from when the listing ended.

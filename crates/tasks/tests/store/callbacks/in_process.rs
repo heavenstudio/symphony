@@ -64,10 +64,14 @@ fn an_in_process_child_waiting_on_a_process_in_its_worktree_is_told_lost_only_on
     let tree = tree.canonicalize().unwrap();
     let place = Some((tree.to_str().unwrap(), "tools/waiting"));
     assert!(f.store.bind_agent("agent-c", &child, false).unwrap());
-    // The background launch: its hook's beat before, the process, its hook's beat after.
+    // The background launch: its hook's beat before, the process, its hook's beat after, each
+    // reading the machine's clocks as the hook does.
     let call = || {
         f.advance(wall_clock() - f.now());
-        let beat = f.store.agent_beat_in("agent-c", &Beat::default(), place);
+        let boot = symphony_board::sys::boot_clock();
+        let beat = f
+            .store
+            .agent_beat_in("agent-c", &Beat::default(), place, boot.as_ref());
         assert_eq!(beat.unwrap().as_deref(), Some(child.as_str()));
     };
     call();

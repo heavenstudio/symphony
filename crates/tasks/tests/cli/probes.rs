@@ -5,10 +5,10 @@ use serde_json::{Value, json};
 use std::fs::{self, File};
 use std::path::{Path, PathBuf};
 use symphony_board::cli::Env;
-use symphony_board::cli::agents::Pane;
+use symphony_board::cli::agents::{Began, Pane};
 use symphony_board::cli::probes::{branch_of, hc_terminals, landed, machine, slot_runs, split};
 use symphony_board::git::{checkout, linked};
-use symphony_board::sys::Command;
+use symphony_board::sys::{Command, boot_clock};
 
 /// A run's fields, in `Run`'s order, for comparing several at once.
 type RunFields<'a> = (
@@ -502,13 +502,13 @@ fn wall_clock() -> f64 {
 #[test]
 fn the_machine_lists_each_process_with_its_working_directory_and_when_it_started() {
     let folder = scratch("working").canonicalize().unwrap();
-    let before = wall_clock();
+    let before = (wall_clock(), boot_clock());
     let mut cat = Command::new("cat");
     cat.current_dir(&folder)
         .stdin(symphony_board::sys::Stdio::piped())
         .stdout(symphony_board::sys::Stdio::null());
     let mut working = cat.spawn().unwrap();
-    let after = wall_clock();
+    let after = (wall_clock(), boot_clock());
     let env = hc_env("/nonexistent/hc", &[]);
     let listed = (machine(&env).processes)();
     let _ = working.kill();
@@ -516,13 +516,21 @@ fn the_machine_lists_each_process_with_its_working_directory_and_when_it_started
     let listed = listed.expect("lsof lists the working directories");
     let there: Vec<_> = listed.iter().filter(|p| p.cwd == folder).collect();
     assert_eq!(there.len(), 1, "{} in {listed:?}", folder.display());
-    // Stamped to the microsecond on macOS; on Linux in clock ticks after a boot named in whole
-    // seconds, so up to a second off (the slack the agents view allows a start).
-    let off = if cfg!(target_os = "linux") { 1.0 } else { 0.01 };
-    let started = there[0].started.expect("its start is read");
+    // Stamped by the wall clock to the microsecond on macOS; on Linux in clock ticks since boot, in
+    // this boot, the clock `/proc/uptime` reads to the hundredth.
+    let started = there[0].started.clone().expect("its start is read");
+    let (from, at, to) = match (&started, &before.1, &after.1) {
+        (Began::At(at), None, None) => (before.0, *at, after.0),
+        (Began::AfterBoot(at), Some(from), Some(to))
+            if at.boot == from.boot && at.boot == to.boot =>
+        {
+            (from.at, at.at, to.at)
+        }
+        _ => panic!("{started:?} on a machine whose clock since boot reads {before:?}"),
+    };
     assert!(
-        (before - off..=after + off).contains(&started),
-        "{before} <= {started} <= {after}"
+        (from - 0.01..=to + 0.01).contains(&at),
+        "{from} <= {at} <= {to}"
     );
     // This process, still running, is listed too: its working directory shared with the others.
     let here = std::env::current_dir().unwrap().canonicalize().unwrap();

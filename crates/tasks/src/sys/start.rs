@@ -1,5 +1,7 @@
 //! When a listed process started, as the kernel stamps it ([`process_starts`]): libproc on macOS,
-//! `/proc` on Linux, and whether a process it cannot date has ended or only cannot be read.
+//! `/proc` on Linux, and whether a process it cannot date has ended or only cannot be read. Linux
+//! dates a start on the clock since boot, which no setting of the wall clock moves, and
+//! [`boot_clock`] reads that clock now, so a start there is compared with times read on it alone.
 
 #[cfg(target_os = "macos")]
 use std::ffi::c_int;
@@ -9,18 +11,65 @@ use std::ffi::{c_int, c_long};
 /// `ESRCH`, no such process, as both macOS and Linux number it.
 #[cfg(any(target_os = "macos", target_os = "linux", test))]
 const ESRCH: i32 = 3;
+/// Where Linux names this boot, a new id at each.
+#[cfg(target_os = "linux")]
+const BOOT_ID: &str = "/proc/sys/kernel/random/boot_id";
+
+/// A reading of the clock since boot (Linux's `CLOCK_BOOTTIME`, sleep included): the boot it counts
+/// from, by that boot's own id, and the seconds since it. Setting the wall clock moves neither; two
+/// readings compare only when they name the same boot.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct Boottime {
+    pub boot: String,
+    pub at: f64,
+}
 
 /// What the kernel says of when a listed process started.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Start {
-    /// In seconds since the epoch, as the board's clock counts them, by the kernel's own stamp.
+    /// In seconds since the epoch, as the board's clock counts them, by the kernel's own stamp, fixed
+    /// when it started (macOS): a later setting of the wall clock does not move it.
     At(f64),
+    /// On the clock since boot (Linux, whose `/proc/PID/stat` counts a start in ticks after boot): by
+    /// the wall clock it would add today's boot time, which moves whenever the wall clock is set.
+    AfterBoot(Boottime),
     /// It has ended since it was listed (or is a zombie, or its pid names another process now): it
     /// works nowhere.
     Ended,
     /// It may still run, but its start cannot be read (no permission, an unexpected record, a
     /// system with no reader): when it began is unknown, not known to be before or after anything.
     Unreadable,
+}
+
+/// The clock since boot, read now ([`Boottime`]): `/proc/uptime` and the boot's id on Linux; none
+/// when it cannot be read.
+#[cfg(target_os = "linux")]
+pub fn boot_clock() -> Option<Boottime> {
+    boot_read(
+        std::fs::read_to_string(BOOT_ID),
+        std::fs::read_to_string("/proc/uptime"),
+    )
+}
+
+/// The clock since boot, read now: none where no start is dated on it (macOS stamps a start by the
+/// wall clock, fixed when it began).
+#[cfg(not(target_os = "linux"))]
+pub fn boot_clock() -> Option<Boottime> {
+    None
+}
+
+/// A reading of the clock since boot from the boot's id and `/proc/uptime` (whose first field is the
+/// seconds since boot): none when either cannot be read or makes no sense.
+#[cfg(any(target_os = "linux", test))]
+fn boot_read(id: std::io::Result<String>, uptime: std::io::Result<String>) -> Option<Boottime> {
+    let boot = id.ok()?.trim().to_owned();
+    let at = uptime
+        .ok()?
+        .split_whitespace()
+        .next()?
+        .parse::<f64>()
+        .ok()?;
+    (!boot.is_empty() && at.is_finite() && at >= 0.0).then_some(Boottime { boot, at })
 }
 
 /// When each of `pids` started ([`Start`]), in order.
@@ -32,11 +81,10 @@ pub fn process_starts(pids: &[i64]) -> Vec<Start> {
     };
     #[cfg(target_os = "linux")]
     let started = {
-        // A start in /proc/PID/stat is in clock ticks after the boot /proc/stat names, in seconds.
-        let boot = std::fs::read_to_string("/proc/stat").ok().and_then(|stat| {
-            let line = stat.lines().find_map(|line| line.strip_prefix("btime "))?;
-            line.trim().parse::<f64>().ok()
-        });
+        // A start in /proc/PID/stat is in clock ticks after this boot.
+        let boot = std::fs::read_to_string(BOOT_ID)
+            .ok()
+            .map(|id| id.trim().to_owned());
         // SAFETY: sysconf reads a configuration value and touches no memory of ours.
         let ticks = u32::try_from(unsafe { sysconf(LINUX_CLOCK_TICKS) })
             .ok()
@@ -46,7 +94,7 @@ pub fn process_starts(pids: &[i64]) -> Vec<Start> {
                 return Start::Ended;
             }
             let stat = std::fs::read_to_string(format!("/proc/{pid}/stat"));
-            proc_started(stat, boot, ticks)
+            proc_started(stat, boot.as_deref(), ticks)
         }
     };
     #[cfg(not(any(target_os = "macos", target_os = "linux")))]
@@ -69,11 +117,11 @@ fn bsd_started(read: std::io::Result<Option<(u64, u64)>>) -> Start {
     }
 }
 
-/// A start as a read of `/proc/PID/stat` gave it, with the boot time `/proc/stat` names and the
-/// clock ticks a second: a pid with no such file, or a zombie, has ended; a file that cannot be
-/// read or parsed, or no boot time or ticks, cannot be read.
+/// A start as a read of `/proc/PID/stat` gave it, in the boot whose id is `boot`, with the clock
+/// ticks a second: a pid with no such file, or a zombie, has ended; a file that cannot be read or
+/// parsed, or no boot id or ticks, cannot be read.
 #[cfg(any(target_os = "linux", test))]
-fn proc_started(read: std::io::Result<String>, boot: Option<f64>, ticks: Option<u32>) -> Start {
+fn proc_started(read: std::io::Result<String>, boot: Option<&str>, ticks: Option<u32>) -> Start {
     let stat = match read {
         Ok(stat) => stat,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Start::Ended,
@@ -88,10 +136,11 @@ fn proc_started(read: std::io::Result<String>, boot: Option<f64>, ticks: Option<
         return Start::Ended;
     }
     let after_boot: Option<f64> = fields.get(19).and_then(|ticks| ticks.parse().ok());
-    match (boot, after_boot, ticks) {
-        (Some(boot), Some(after_boot), Some(ticks)) => {
-            Start::At(boot + after_boot / f64::from(ticks))
-        }
+    match (boot.filter(|id| !id.is_empty()), after_boot, ticks) {
+        (Some(boot), Some(after_boot), Some(ticks)) => Start::AfterBoot(Boottime {
+            boot: boot.to_owned(),
+            at: after_boot / f64::from(ticks),
+        }),
         _ => Start::Unreadable,
     }
 }
@@ -174,11 +223,13 @@ mod tests {
             format!("42 (a) b) {state} 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 250 20\n")
         };
         let read = |text: String| -> std::io::Result<String> { Ok(text) };
-        let (boot, ticks) = (Some(1_800_000_000.0), Some(100));
-        assert_eq!(
-            proc_started(read(stat("S")), boot, ticks),
-            Start::At(1_800_000_002.5)
-        );
+        let (boot, ticks) = (Some("boot-1"), Some(100));
+        // Seconds after boot, in that boot, never a wall date by today's boot time.
+        let since_boot = Start::AfterBoot(Boottime {
+            boot: "boot-1".into(),
+            at: 2.5,
+        });
+        assert_eq!(proc_started(read(stat("S")), boot, ticks), since_boot);
         for zombie in ["Z", "X", "x"] {
             assert_eq!(proc_started(read(stat(zombie)), boot, ticks), Start::Ended);
         }
@@ -198,11 +249,38 @@ mod tests {
             proc_started(read("42 (a) S 1".into()), boot, ticks),
             Start::Unreadable
         );
-        assert_eq!(
-            proc_started(read(stat("S")), None, ticks),
-            Start::Unreadable
-        );
+        for boot in [None, Some("")] {
+            assert_eq!(
+                proc_started(read(stat("S")), boot, ticks),
+                Start::Unreadable
+            );
+        }
         assert_eq!(proc_started(read(stat("S")), boot, None), Start::Unreadable);
+    }
+
+    #[test]
+    fn the_clock_since_boot_reads_the_boot_s_id_and_the_first_field_of_uptime() {
+        let read = |text: &str| -> std::io::Result<String> { Ok(text.into()) };
+        assert_eq!(
+            boot_read(read("boot-1\n"), read("12.50 40.00\n")),
+            Some(Boottime {
+                boot: "boot-1".into(),
+                at: 12.5
+            })
+        );
+        let unread = || Err(Error::from(ErrorKind::NotFound));
+        assert_eq!(boot_read(unread(), read("12.50 40.00\n")), None);
+        assert_eq!(boot_read(read("boot-1\n"), unread()), None);
+        for (id, uptime) in [
+            ("\n", "12.50 40.00\n"),
+            ("boot-1", ""),
+            ("boot-1", "soon 40.00"),
+            ("boot-1", "-1.0 0.0"),
+            ("boot-1", "inf 0.0"),
+            ("boot-1", "NaN 0.0"),
+        ] {
+            assert_eq!(boot_read(read(id), read(uptime)), None, "{id:?} {uptime:?}");
+        }
     }
 
     #[test]
@@ -215,10 +293,16 @@ mod tests {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_secs_f64();
-        assert!(
-            matches!(starts[0], Start::At(at) if at <= now),
-            "{starts:?}"
-        );
+        let since_boot = boot_clock();
+        // A wall date where the kernel stamps one, else a time since this boot, before now on it.
+        let dated = match (&starts[0], &since_boot) {
+            (Start::At(at), None) => *at <= now,
+            (Start::AfterBoot(began), Some(clock)) => {
+                began.boot == clock.boot && began.at <= clock.at
+            }
+            _ => false,
+        };
+        assert!(dated, "{starts:?} {since_boot:?}");
         assert_eq!(starts[1..], [Start::Ended, Start::Ended, Start::Ended]);
     }
 }

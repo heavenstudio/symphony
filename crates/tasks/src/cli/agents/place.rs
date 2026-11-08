@@ -7,15 +7,19 @@
 //! that one, never one beneath it): `running_test`, `{"recipe": "process", "phase": "running"}`,
 //! and live. A process is its own when it began while the agent was there: not before its binding
 //! recorded that worktree, nor after its last tool call, so a server or shell another started there
-//! keeps nobody alive. When the board cannot tell (the machine's processes cannot be listed, or one
-//! working there may be the agent's but its start cannot be read, or the clock went back while the
-//! agent was there and the process began in the time that leaves in doubt): `running_test` with
-//! `"phase": "unknown"`, health `unknown`, so it is not called lost either. With none working there
-//! that can be its it ages as before ([`waited_on`]).
+//! keeps nobody alive. Its start is compared on the clock the kernel dates it by: the board's on
+//! macOS, whose stamp is fixed when it began, and on Linux the clock since boot, with the readings of
+//! that clock the agent's calls gave, so setting the wall clock while it waits retimes nothing. When
+//! the board cannot tell (the machine's processes cannot be listed, or one working there may be the
+//! agent's but its start cannot be read, or the board's clock went back while the agent was there
+//! and the process began in the time that leaves in doubt, or a call that bounds the stay read no
+//! clock since boot): `running_test` with `"phase": "unknown"`, health `unknown`, so it is not called
+//! lost either. With none working there that can be its it ages as before ([`waited_on`]).
 
 use super::{Answer, Detail, Probes};
 use crate::Store;
 use crate::health::Health;
+use crate::sys::Boottime;
 use std::path::{Path, PathBuf};
 
 /// How long a long-lived reader keeps the machine's process listing ([`Store::kept_scan`]): a
@@ -24,15 +28,26 @@ pub const PROCESS_SCAN_SECONDS: f64 = 20.0;
 /// The recipe of a wait the view sees as a process working in an in-process agent's worktree.
 pub const PROCESS: &str = "process";
 /// How far a process's start may fall outside the agent's stay and still be its: the kernel stamps
-/// a start and the board reads its own clock apart, and Linux names its boot in whole seconds.
+/// a start and a hook reads its clocks apart, each to its own grain (Linux's in clock ticks).
 const START_SLACK_SECONDS: f64 = 1.0;
 
-/// A live process the machine lists: where it works and when it started, by the board's clock (none
-/// when the kernel could not say: it may be anyone's, the agent's working there included).
+/// A live process the machine lists: where it works and when it started (none when the kernel could
+/// not say: it may be anyone's, the agent's working there included).
 #[derive(Debug, Clone, PartialEq)]
 pub struct Process {
     pub cwd: PathBuf,
-    pub started: Option<f64>,
+    pub started: Option<Began>,
+}
+
+/// When a listed process started, on the clock the kernel dates it by.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Began {
+    /// By the board's clock, a stamp fixed when it started (macOS): compared with the board's
+    /// clock's times of the agent's calls.
+    At(f64),
+    /// On the clock since boot (Linux), which no setting of the wall clock moves: compared with the
+    /// readings of that clock the agent's calls gave, never with a wall time.
+    AfterBoot(Boottime),
 }
 
 impl<'a> Probes<'a> {
@@ -88,9 +103,10 @@ fn works_in(cwd: &Path, tree: &Path) -> bool {
             .all(|folder| !folder.join(".git").exists())
 }
 
-/// An in-process agent's stay in the checkout its binding recorded, by the board's clock.
+/// An in-process agent's stay in the checkout its binding recorded, by the board's clock and by the
+/// clock since boot.
 #[derive(Debug, Clone, Copy)]
-pub(super) struct Stay {
+pub(super) struct Stay<'a> {
     /// When its binding recorded that checkout (`placed_at`).
     pub came: f64,
     /// The earliest time a call of its there read: `came`, unless the clock went back while it was
@@ -98,36 +114,84 @@ pub(super) struct Stay {
     pub from: f64,
     /// Its last tool call.
     pub last: f64,
+    /// The clock since boot when it came, and at its last call (`placed_boot`, `last_boot`): none
+    /// when that call did not read it.
+    pub came_boot: Option<&'a Boottime>,
+    pub last_boot: Option<&'a Boottime>,
+}
+
+/// Whether a process working where an agent stayed is the agent's.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum Whose {
+    Its,
+    Maybe,
+    Not,
+}
+
+impl Stay<'_> {
+    /// Whether a process that started `began` is its: when it started in the stay, by the clock it
+    /// was dated on, it is; when that cannot be told (no start, the board's clock went back, a call
+    /// that read no clock since boot), maybe; else not.
+    fn whose(&self, began: Option<&Began>) -> Whose {
+        let slack = START_SLACK_SECONDS;
+        let (its, maybe) = match began {
+            None => return Whose::Maybe,
+            Some(Began::At(at)) => {
+                let from = self.from.min(self.came);
+                let within = (self.came - slack..=self.last + slack).contains(at);
+                (within, (from - slack..self.came - slack).contains(at))
+            }
+            Some(Began::AfterBoot(began)) => {
+                // Readings compare within one boot; a last call read in another boot came before
+                // this boot, and before every process now running.
+                let came = self.came_boot.filter(|s| s.boot == began.boot);
+                let last = self.last_boot.filter(|s| s.boot == began.boot);
+                let before = came.is_some_and(|came| began.at < came.at - slack);
+                let after =
+                    self.last_boot.is_some() && last.is_none_or(|l| began.at > l.at + slack);
+                if before || after {
+                    return Whose::Not;
+                }
+                (came.is_some() && last.is_some(), true)
+            }
+        };
+        match (its, maybe) {
+            (true, _) => Whose::Its,
+            (false, true) => Whose::Maybe,
+            (false, false) => Whose::Not,
+        }
+    }
 }
 
 /// What the machine's processes (`scan`, listed once a view) say of an in-process agent gone quiet
 /// in `tree` (resolved) after `stay` there: its health and what it waits on. Live on a process
-/// working there that began in its stay; unknown when they cannot be listed, or when one working
-/// there may be its but cannot be told to be: its start cannot be read, or it began while the clock
-/// had gone back (after the earliest time a call of its there read, before it came). None when
-/// `tree` is no linked worktree (the main checkout, which every agent registered there shares, or
-/// a folder in no repository) or no process working there can be its.
+/// working there that began in its stay, by the clock its start is dated on; unknown when they
+/// cannot be listed, or when one working there may be its but cannot be told to be: its start
+/// cannot be read, or it began while the board's clock had gone back (after the earliest time a
+/// call of its there read, before it came), or its start is dated since boot and the call that
+/// would bound it read no clock since boot. None when `tree` is no linked worktree (the main
+/// checkout, which every agent registered there shares, or a folder in no repository) or no process
+/// working there can be its.
 pub(super) fn waited_on(
     tree: &str,
-    stay: Stay,
+    stay: &Stay,
     scan: &dyn Fn() -> Answer<Vec<Process>>,
 ) -> Option<(Health, Detail)> {
     let tree = Path::new(tree);
     if tree.as_os_str().is_empty() || !crate::git::linked(tree) {
         return None;
     }
-    let (from, came) = (stay.from.min(stay.came), stay.came);
-    let within = (came - START_SLACK_SECONDS)..=(stay.last + START_SLACK_SECONDS);
-    let went_back = (from - START_SLACK_SECONDS)..(came - START_SLACK_SECONDS);
-    let its_own = |p: &&Process| p.started.is_some_and(|at| within.contains(&at));
-    let maybe = |p: &&Process| p.started.is_none_or(|at| went_back.contains(&at));
     let (health, phase) = match scan() {
         Err(_) => (Health::Unknown, "unknown"),
         Ok(listed) => {
-            let there: Vec<&Process> = listed.iter().filter(|p| works_in(&p.cwd, tree)).collect();
-            if there.iter().any(its_own) {
+            let whose: Vec<Whose> = listed
+                .iter()
+                .filter(|p| works_in(&p.cwd, tree))
+                .map(|p| stay.whose(p.started.as_ref()))
+                .collect();
+            if whose.contains(&Whose::Its) {
                 (Health::Live, "running")
-            } else if there.iter().any(maybe) {
+            } else if whose.contains(&Whose::Maybe) {
                 (Health::Unknown, "unknown")
             } else {
                 return None;
