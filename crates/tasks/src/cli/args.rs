@@ -63,6 +63,15 @@ const fn opt(flag: &'static str, dest: &'static str, takes: Takes) -> Opt {
     }
 }
 
+/// A command of positionals and `--as` alone.
+const fn plain(name: &'static str, pos: &'static [Pos]) -> Command {
+    Command {
+        name,
+        pos,
+        opts: &[AS],
+    }
+}
+
 const fn choice(flag: &'static str, dest: &'static str, choices: &'static [&'static str]) -> Opt {
     Opt {
         flag,
@@ -151,6 +160,7 @@ const COMMANDS: &[Command] = &[
             AS,
             choice("--status", "status", STATUSES),
             opt("--mine", "mine", Takes::Bool),
+            opt("--doubled", "doubled", Takes::Bool),
             opt("--json", "json", Takes::Bool),
         ],
     },
@@ -176,11 +186,7 @@ const COMMANDS: &[Command] = &[
             opt("--batch-size", "batch_size", Takes::Value(Ty::Int)),
         ],
     },
-    Command {
-        name: "next",
-        pos: &[],
-        opts: &[AS],
-    },
+    plain("next", &[]),
     Command {
         name: "create",
         pos: &[pos("slug"), pos("title")],
@@ -214,21 +220,9 @@ const COMMANDS: &[Command] = &[
         ],
         opts: &[AS],
     },
-    Command {
-        name: "field",
-        pos: &[pos("slug"), pos("name"), pos("value")],
-        opts: &[AS],
-    },
-    Command {
-        name: "claim",
-        pos: SLUG,
-        opts: &[AS],
-    },
-    Command {
-        name: "reserve",
-        pos: SLUG,
-        opts: &[AS],
-    },
+    plain("field", &[pos("slug"), pos("name"), pos("value")]),
+    plain("claim", SLUG),
+    plain("reserve", SLUG),
     Command {
         name: "release",
         pos: SLUG,
@@ -261,11 +255,7 @@ const COMMANDS: &[Command] = &[
             opt("--replace", "replace", Takes::Pair),
         ],
     },
-    Command {
-        name: "done",
-        pos: &[pos("slug"), pos("note")],
-        opts: &[AS],
-    },
+    plain("done", &[pos("slug"), pos("note")]),
     Command {
         name: "role",
         pos: &[
@@ -278,6 +268,7 @@ const COMMANDS: &[Command] = &[
         ],
         opts: &[AS],
     },
+    plain("handover", &[pos("slug"), pos("to")]),
     Command {
         name: "move",
         pos: &[
@@ -329,16 +320,13 @@ const COMMANDS: &[Command] = &[
             opt("--prompt", "prompt", STR),
         ],
     },
-    Command {
-        name: "restore",
-        pos: &[pos("slug"), maybe("handle")],
-        opts: &[AS],
-    },
+    plain("restore", &[pos("slug"), maybe("handle")]),
     Command {
         name: "cleanup",
         pos: &[],
         opts: &[AS, opt("--dry-run", "dry_run", Takes::Bool)],
     },
+    plain("close", &[pos("slug"), pos("handle")]),
     Command {
         name: "reap",
         pos: &[],
@@ -367,31 +355,15 @@ const COMMANDS: &[Command] = &[
             opt("--json", "json", Takes::Bool),
         ],
     },
-    Command {
-        name: "inbox",
-        pos: &[],
-        opts: &[AS],
-    },
-    Command {
-        name: "leave",
-        pos: &[],
-        opts: &[AS],
-    },
-    Command {
-        name: "beat",
-        pos: &[],
-        opts: &[AS],
-    },
+    plain("inbox", &[]),
+    plain("leave", &[]),
+    plain("beat", &[]),
     Command {
         name: "export",
         pos: &[],
         opts: &[AS, opt("--out", "out", STR)],
     },
-    Command {
-        name: "finish",
-        pos: SLUG,
-        opts: &[AS],
-    },
+    plain("finish", SLUG),
     Command {
         name: "sweep",
         pos: &[],
@@ -802,7 +774,7 @@ mod tests {
             .unwrap()
     }
 
-    const ALL: &str = "'callback', 'register', 'attach', 'list', 'search', 'embed', 'next', 'create', 'priority', 'field', 'claim', 'reserve', 'release', 'show', 'parent', 'depends', 'done', 'role', 'move', 'verdict', 'say', 'launch', 'restore', 'cleanup', 'reap', 'staff', 'agents', 'who', 'inbox', 'leave', 'beat', 'export', 'finish', 'sweep'";
+    const ALL: &str = "'callback', 'register', 'attach', 'list', 'search', 'embed', 'next', 'create', 'priority', 'field', 'claim', 'reserve', 'release', 'show', 'parent', 'depends', 'done', 'role', 'handover', 'move', 'verdict', 'say', 'launch', 'restore', 'cleanup', 'close', 'reap', 'staff', 'agents', 'who', 'inbox', 'leave', 'beat', 'export', 'finish', 'sweep'";
 
     #[test]
     fn every_command_of_the_usage_is_read_and_has_its_help() {
@@ -826,9 +798,11 @@ mod tests {
             (true, Some("amber-heron"))
         );
         assert!(!run(&["reap"]).flag("dry_run"));
-        assert!(usage::USAGE.contains(",cleanup,reap,staff,agents,"));
+        assert!(usage::USAGE.contains(",cleanup,close,reap,staff,agents,"));
         assert_eq!(
-            usage::HELP.matches(",cleanup,reap,staff,agents,").count(),
+            usage::HELP
+                .matches(",cleanup,close,reap,staff,agents,")
+                .count(),
             2
         );
     }

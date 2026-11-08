@@ -1,7 +1,7 @@
 //! Who is doing what: the agents API (`/api/agents`, `just tasks agents [--json]`).
 //!
 //! The board is the record. Each agent is a board session; its task sessions say which task it runs, in
-//! which worktree and branch, as which Claude session and in which herdr pane. herdr's panes and the
+//! which worktree and branch, as which Claude session and in which hc terminal. hc's terminals and the
 //! test-slot locks ([`super::probes`]) are probes that say what each agent is doing at this moment;
 //! they feed the answer, never replace the record, and a probe that cannot be asked is named
 //! `unavailable` with the answer still built from the board.
@@ -14,7 +14,7 @@
 //!     "task", "role",                 # the task it works now (an open one first) and its role there
 //!     "tasks": [{"slug", "role", "status"}],     # every task it holds a role on, bar orchestrating
 //!     "worktree", "branch",           # where it really works (its task session, else its pane)
-//!     "agent", "session_id", "pane",  # claude|codex, its conversation id, its herdr pane
+//!     "agent", "session_id", "pane",  # claude|codex, its conversation id, its hc terminal
 //!     "state", "state_detail",
 //!     "health",                       # the board's, except that a run in progress reads live
 //!     "last_tool_call",               # when a tool call of its agent last beat (null before one)
@@ -22,7 +22,7 @@
 //! ```
 //!
 //! `state` is one of `working`, `running_test` (its worktree holds a test slot or is queued for one;
-//! `state_detail` says `{"recipe", "phase": "holding"|"waiting", "since"}`), `waiting_on_input` (herdr
+//! `state_detail` says `{"recipe", "phase": "holding"|"waiting", "since"}`), `waiting_on_input` (hc
 //! sees an approval or question), `idle`, `gone` (no pane and no sign of life). An agent waiting on its
 //! own verify is `running_test` and reads live, never lost. A run is the agent's when tagged with its
 //! handle, else by exact worktree to an agent alone in it: never by a directory prefix, never to agents
@@ -32,7 +32,6 @@ use crate::health::{FINISHED, Health};
 use crate::pyjson::Py;
 use crate::rows::TaskSessionRow;
 use crate::{Error, Session, Store, Task};
-use serde_json::Value;
 use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -43,47 +42,21 @@ pub const MESSAGE_CHARS: usize = 200;
 /// A probe's answer, or why it could not be asked.
 pub type Answer<T> = Result<T, String>;
 
-/// A herdr pane, as much of it as the view reads.
+/// An hc terminal (a pane of the Herdr app), as much of it as the view reads.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Pane {
+    /// Its hc address (`t7`).
     pub id: String,
     /// `claude` or `codex`.
     pub agent: Option<String>,
-    /// herdr's `agent_status`: `working`, `blocked`, `idle`, `done`.
+    /// hc's status word: `working`, `blocked`, `idle`, `done`, `error`.
     pub status: Option<String>,
-    /// The agent's conversation id.
+    /// The agent's conversation id, when what runs in it names one.
     pub session: Option<String>,
-    /// The folder its foreground process runs in, else its shell's; "" if neither.
+    /// The folder its foreground process runs in, else the one it started in; "" if neither.
     pub cwd: String,
     pub title: Option<String>,
     pub name: Option<String>,
-}
-
-impl Pane {
-    /// A pane from herdr's JSON, whatever else herdr says of it; None for one with no id.
-    pub fn from_json(value: &Value) -> Option<Pane> {
-        let text = |key: &str| value.get(key).and_then(Value::as_str).map(str::to_string);
-        let id = text("pane_id").filter(|id| !id.is_empty())?;
-        let session = value
-            .get("agent_session")
-            .and_then(|s| s.get("value"))
-            .and_then(Value::as_str)
-            .map(str::to_string);
-        let cwd = [text("foreground_cwd"), text("cwd")]
-            .into_iter()
-            .flatten()
-            .find(|cwd| !cwd.is_empty())
-            .unwrap_or_default();
-        Some(Pane {
-            id,
-            agent: text("agent"),
-            status: text("agent_status"),
-            session,
-            cwd,
-            title: text("terminal_title_stripped"),
-            name: text("name"),
-        })
-    }
 }
 
 /// A test run holding a slot or queued for one (`test_slots.runs`).
@@ -107,7 +80,7 @@ pub type Probe<'a, T> = Box<dyn Fn() -> Answer<T> + 'a>;
 /// The git branch checked out in a folder.
 pub type BranchOf<'a> = Box<dyn Fn(&str) -> Answer<String> + 'a>;
 
-/// What can be asked about the machine, each a function so tests give their own: herdr's panes, the
+/// What can be asked about the machine, each a function so tests give their own: hc's terminals, the
 /// slot runs, and the git branch checked out in a folder.
 pub struct Probes<'a> {
     pub panes: Probe<'a, Vec<Pane>>,
@@ -161,13 +134,23 @@ pub struct Agent {
     pub health: Health,
     pub last_tool_call: Option<f64>,
     pub last_message: Option<Said>,
+    /// Under a cap on an orchestrator's open tasks ([`crate::slots`]), the open slots it holds and
+    /// the cap: for an orchestrator, and for any session open work counts against.
+    pub slots: Option<Slots>,
+}
+
+/// The open slots a session holds against the cap.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Slots {
+    pub open: usize,
+    pub cap: usize,
 }
 
 /// The agents API's answer.
 #[derive(Debug, Clone, PartialEq)]
 pub struct View {
     pub generated: f64,
-    /// Whether herdr could be asked.
+    /// Whether hc could be asked (the `herdr` probe of the JSON, a name the wire keeps).
     pub herdr: bool,
     /// Whether the slot locks could be read.
     pub slots: bool,
@@ -222,6 +205,10 @@ impl Agent {
                 ("text", Py::str(&m.text)),
             ])
         });
+        let slots = self.slots.map_or(Py::Null, |s| {
+            let count = |n: usize| Py::Int(i64::try_from(n).unwrap_or(i64::MAX));
+            Py::obj(vec![("open", count(s.open)), ("cap", count(s.cap))])
+        });
         Py::obj(vec![
             ("handle", Py::str(&self.handle)),
             ("kind", Py::str(&self.kind)),
@@ -242,6 +229,7 @@ impl Agent {
             ("health", Py::str(self.health.as_str())),
             ("last_tool_call", Py::opt_float(self.last_tool_call)),
             ("last_message", said),
+            ("slots", slots),
         ])
     }
 }
@@ -436,13 +424,16 @@ pub fn describe_board(
     include_left: bool,
     board: &crate::Board,
 ) -> Result<View, Error> {
-    // A tick of the server clock asks herdr once: its pane watch's sample, when it took one.
+    // A tick of the server clock asks hc once: its pane watch's sample, when it took one.
     let panes = store.clock_panes().unwrap_or_else(|| (probes.panes)()).ok();
     let runs = (probes.runs)().ok();
     let records = store.all_task_sessions()?;
     let bound = store.bound_agents()?;
     let spoke = store.last_messages()?;
     let callbacks = store.callbacks()?;
+    let open_slots = store
+        .slots()
+        .map(|cap| (cap, crate::slots::Ledger::of_board(board).counts()));
     let mut held_by_handle = tasks_by_handle(&board.tasks);
     let mut by_handle: HashMap<&str, Vec<&TaskSessionRow>> = HashMap::new();
     for r in &records {
@@ -613,6 +604,10 @@ pub fn describe_board(
                 slug: m.slug.clone(),
                 ts: m.ts,
                 text: cut(&m.text),
+            }),
+            slots: open_slots.as_ref().and_then(|(cap, counts)| {
+                let open = counts.get(handle).copied().unwrap_or(0);
+                (s.row.kind == "orchestrator" || open > 0).then_some(Slots { open, cap: *cap })
             }),
         });
     }

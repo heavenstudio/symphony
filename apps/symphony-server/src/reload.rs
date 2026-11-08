@@ -7,79 +7,21 @@ use crate::front::Shared;
 use crate::home::{Home, Running};
 use notify::{RecursiveMode, Watcher};
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use std::collections::BTreeSet;
-use std::fs::{self, File, OpenOptions};
+use std::fs::{File, OpenOptions};
 use std::io::{PipeReader, PipeWriter, Read, Write};
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd, RawFd};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::{Mutex, mpsc};
 use std::time::{Duration, Instant};
-use symphony_board::sys::{self, Command, Stdio};
+use symphony_board::sys::{self, Stdio};
+
+mod stamp;
+use stamp::{installed_source, stamp_install};
 
 const INHERITED: &str = "SF_SYMPHONY_HANDOVER";
 const PATIENCE: Duration = Duration::from_secs(120);
-const INSTALLED: &str = "installed.json";
-
-#[derive(Serialize, Deserialize)]
-struct Installed {
-    source: String,
-    binary: String,
-}
-
-fn binary_fingerprint(path: &std::path::Path) -> std::io::Result<String> {
-    let mut file = File::open(path)?;
-    let mut hash = Sha256::new();
-    let mut buffer = [0_u8; 64 * 1024];
-    loop {
-        let size = file.read(&mut buffer)?;
-        if size == 0 {
-            break;
-        }
-        hash.update(&buffer[..size]);
-    }
-    Ok(hash
-        .finalize()
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect())
-}
-
-/// A stamp belongs to executable bytes, not their inode or mtime: cargo may install an unchanged
-/// binary again. A manual replacement or an upgrade invalidates the old stamp safely.
-fn installed_source(serve: &Serve) -> Option<String> {
-    let home = serve.installed()?;
-    let binary = home.join("bin/symphony-server");
-    if std::env::current_exe().ok()?.canonicalize().ok()? != binary.canonicalize().ok()? {
-        return None;
-    }
-    let installed: Installed =
-        serde_json::from_slice(&fs::read(home.join(INSTALLED)).ok()?).ok()?;
-    if installed.binary != binary_fingerprint(&binary).ok()? {
-        return None;
-    }
-    // A current server stamp alone cannot certify an older (or manually replaced) client.
-    // Transferred generations bypass this initial-install lookup: their parent just published
-    // the bundle, even if writing its optional recovery stamp failed.
-    (symphony::reload::installed_client_source(home)?
-        == symphony::reload::client_fingerprint(&serve.root).ok()?)
-    .then_some(installed.source)
-}
-
-fn stamp_install(home: &std::path::Path, source: &str) -> std::io::Result<()> {
-    let installed = Installed {
-        source: source.into(),
-        binary: binary_fingerprint(&home.join("bin/symphony-server"))?,
-    };
-    let bytes = serde_json::to_vec(&installed).map_err(std::io::Error::other)?;
-    let next = home.join(format!("{INSTALLED}.{}", std::process::id()));
-    let result = fs::write(&next, bytes).and_then(|()| fs::rename(&next, home.join(INSTALLED)));
-    if result.is_err() {
-        let _ = fs::remove_file(next);
-    }
-    result
-}
 
 #[derive(Serialize, Deserialize)]
 struct Transfer {
@@ -284,11 +226,14 @@ pub(crate) fn setup(serve: &Serve) -> Result<Setup, String> {
             Ok::<_, String>(lease)
         })
         .transpose()?;
+    let fingerprint = lease
+        .as_ref()
+        .and_then(|lease| installed_source(serve, lease));
     Ok(Setup {
         listeners: Vec::new(),
         lease,
         control: None,
-        fingerprint: installed_source(serve),
+        fingerprint,
     })
 }
 
@@ -356,7 +301,7 @@ fn replace(
         .chain(transfer.ready)
         .chain(transfer.commit)
         .collect();
-    let mut command = Command::new(exe);
+    let mut command = symphony::children::command(exe);
     command
         .arg("serve")
         .arg("--home")

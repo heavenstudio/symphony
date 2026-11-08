@@ -196,7 +196,7 @@ fn port(word: &str) -> Result<u16, String> {
 /// process's folder and on its streams: the server's exit code, or 2 when it could not start or ended
 /// on a signal.
 fn scratch(exe: &Path, args: &[String], database: &str, asks: &Path) -> i32 {
-    symphony_board::sys::Command::new(exe)
+    symphony::children::command(exe)
         .args(args)
         .env("TASKS_DATABASE", database)
         .env("ASKS_DB", asks)
@@ -457,7 +457,7 @@ pub(crate) fn open(url: &str) {
 /// (front::start), once it accepts: the opener starts without a fork and inherits only its
 /// streams, never a connection not yet close-on-exec.
 fn opener(url: &str) -> symphony_board::sys::Command {
-    let mut command = symphony_board::sys::Command::new(if cfg!(target_os = "macos") {
+    let mut command = symphony::children::command(if cfg!(target_os = "macos") {
         "open"
     } else {
         "xdg-open"

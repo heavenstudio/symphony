@@ -133,6 +133,9 @@ impl Store {
             callback_snapshot: Mutex::new(None),
             callback_idle: Mutex::new(None),
             clock_panes: Mutex::new(None),
+            hand_off: None,
+            inbox_pool: Mutex::new(None),
+            slots: None,
         }
     }
 
@@ -193,15 +196,26 @@ const BOARD_SCHEMA: &str = concat!("RETURN ", board_schema!(), ";");
 
 #[cfg(test)]
 mod tests {
-    use super::undefined;
+    use super::{BOARD_SCHEMA, undefined};
 
     #[test]
     fn only_a_namespace_or_this_database_not_on_the_server_reads_as_a_board_not_made_yet() {
         assert!(undefined("The namespace 'sf' does not exist", "tasks"));
         assert!(undefined("The database 'tasks' does not exist", "tasks"));
-        assert!(!undefined("The database 'other' does not exist", "tasks"));
-        assert!(!undefined("The table 'meta' does not exist", "tasks"));
-        assert!(!undefined("The namespace 'sf' already exists", "tasks"));
-        assert!(!undefined("The namespace 'sf", "tasks"));
+        for other in [
+            "The database 'other' does not exist",
+            "The table 'meta' does not exist",
+            "The namespace 'sf' already exists",
+            "The namespace 'sf",
+            "the server at 127.0.0.1:1 is slow: The database 'tasks' does not exist",
+        ] {
+            assert!(!undefined(other, "tasks"), "{other}");
+        }
+    }
+
+    /// The open's check of the version is a read, so a late answer to it goes once more.
+    #[test]
+    fn the_schema_version_check_is_a_read() {
+        assert_eq!(crate::rpc::Kind::of(BOARD_SCHEMA), crate::rpc::Kind::Read);
     }
 }

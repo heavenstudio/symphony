@@ -7,7 +7,7 @@ mod fixture;
 #[path = "common/bash_env.rs"]
 mod bash_env;
 
-#[path = "../../../../tools/gate/tests/verify/script.rs"]
+#[path = "../../../../tools/gate/tests/verify/script_board.rs"]
 mod fixture_script;
 
 use fixture::{Fixture, Server};
@@ -214,14 +214,14 @@ fn exercise_blocked_finish(_: std::net::SocketAddr) {
         assert_eq!(calls.len(), index * 2 + 1, "sweep must wait for finish");
         assert_eq!(
             calls.last().unwrap(),
-            &format!("tasks finish {slug}|session=unset|pane=unset")
+            &format!("tasks finish {slug}|session=unset|terminal=unset|socket=unset")
         );
         release.release(outcome);
         let calls = shared.wait_for_finish_calls(index * 2 + 2);
         assert_eq!(
             calls.last().unwrap(),
             &format!(
-                "sweep --background={slug} is cancelled --task={slug}|session=unset|pane=unset"
+                "sweep --background={slug} is cancelled --task={slug}|session=unset|terminal=unset|socket=unset"
             )
         );
         let thread = shared.board.thread(&slug).unwrap();
@@ -241,14 +241,11 @@ fn exercise_blocked_finish(_: std::net::SocketAddr) {
             } else {
                 assert!(
                     failure.text.contains(&format!(
-                        "could not clean up the sessions of {slug}: fixture Herdr unavailable"
+                        "could not clean up the sessions of {slug}: fixture hc unavailable"
                     )),
                     "{failure:?}"
                 );
-                assert!(
-                    failure.text.contains("\nfixture Herdr details"),
-                    "{failure:?}"
-                );
+                assert!(failure.text.contains("\nfixture hc details"), "{failure:?}");
             }
             assert_eq!(failure.recipient.as_deref(), Some("owner"));
             assert_ne!(failure.sender, "owner");
@@ -371,9 +368,9 @@ fn exercise_finish(address: std::net::SocketAddr) {
     assert_eq!(
         calls,
         [
-            format!("tasks finish {slug}|session=unset|pane=unset"),
+            format!("tasks finish {slug}|session=unset|terminal=unset|socket=unset"),
             format!(
-                "sweep --background={slug} is cancelled --task={slug}|session=unset|pane=unset"
+                "sweep --background={slug} is cancelled --task={slug}|session=unset|terminal=unset|socket=unset"
             ),
         ]
     );

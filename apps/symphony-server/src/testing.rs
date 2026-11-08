@@ -99,6 +99,32 @@ pub fn entered(file: &std::fs::File) -> i64 {
         .unwrap()
 }
 
+/// Asserts that the stand-in `crate::fixture_script::write` installed at `program` is the
+/// machine's one copy of its fixture script, which that write ran once, to its end, before handing
+/// it out. macOS holds a new file's first exec while it assesses the file (25 to 31 s at a load of
+/// 120, against milliseconds for the next exec), so that wait is setup, never part of the budget
+/// of the case that starts the stand-in.
+pub fn assert_primed(program: &std::path::Path) {
+    use std::os::unix::fs::MetadataExt;
+    let mut body = program.as_os_str().to_owned();
+    body.push(".body");
+    let body = std::fs::read_to_string(&body).unwrap();
+    let copy = crate::fixture_script::machine_copy::machine_copy(
+        &crate::fixture_script::tracked_wrapper(&body),
+    );
+    let (installed, shared) = (
+        std::fs::metadata(program).unwrap(),
+        std::fs::metadata(&copy).unwrap(),
+    );
+    assert_eq!(
+        (installed.dev(), installed.ino()),
+        (shared.dev(), shared.ino()),
+        "{} is not the machine's already-run copy {} of its fixture script",
+        program.display(),
+        copy.display()
+    );
+}
+
 pub fn repository(tree: &Tree) -> std::path::PathBuf {
     repository_at(tree, "main")
 }
@@ -155,6 +181,25 @@ mod tests {
             Err(panic) => (*panic.downcast::<&str>().unwrap()).to_owned(),
         };
         assert_eq!(message, "fixture child readiness deadline passed");
+    }
+
+    /// A stand-in is primed only as the machine's copy `fixture_script::write` links; a file
+    /// written in place with the same bytes and body is new to macOS, and is refused.
+    #[test]
+    fn only_the_machine_copy_of_a_fixture_script_passes_as_primed() {
+        let tree = Tree::new();
+        let body = "#!/bin/sh\nexit 0\n";
+        let linked = tree.path("linked");
+        crate::fixture_script::write(&linked, body, false);
+        assert_primed(&linked);
+        let fresh = tree.write("fresh", &std::fs::read_to_string(&linked).unwrap());
+        tree.write("fresh.body", body);
+        let refused = std::panic::catch_unwind(|| assert_primed(&fresh)).unwrap_err();
+        let message = *refused.downcast::<String>().unwrap();
+        assert!(
+            message.contains("is not the machine's already-run copy"),
+            "{message}"
+        );
     }
 
     #[test]

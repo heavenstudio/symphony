@@ -9,6 +9,7 @@ mod args;
 pub mod attach;
 mod beat;
 mod commands;
+mod detached;
 mod embedding;
 mod field;
 pub mod probes;
@@ -65,13 +66,39 @@ fn check_actor(actor: &str) -> Result<(), crate::Error> {
     Ok(())
 }
 
-/// `tasks ARGS`: what it says goes to `out` and `err`; the exit code is returned.
+/// `tasks ARGS`: what it says goes to `out` and `err`; the exit code is returned. Each write makes
+/// its callback dispatch before it answers, as the library's stores do.
 pub fn main(
     args: &[String],
     env: &Env,
     input: &mut dyn Read,
     out: &mut dyn Write,
     err: &mut dyn Write,
+) -> i32 {
+    run(args, env, input, out, err, None)
+}
+
+/// `tasks ARGS` as the `tasks` binary at `program` runs them: as [`main`], but each write hands its
+/// callback dispatch to a detached `program dispatch` it starts and answers once it has committed
+/// ([`detached`]); one that cannot start it dispatches itself.
+pub fn main_detaching(
+    args: &[String],
+    env: &Env,
+    input: &mut dyn Read,
+    out: &mut dyn Write,
+    err: &mut dyn Write,
+    program: &Path,
+) -> i32 {
+    run(args, env, input, out, err, Some(program))
+}
+
+fn run(
+    args: &[String],
+    env: &Env,
+    input: &mut dyn Read,
+    out: &mut dyn Write,
+    err: &mut dyn Write,
+    program: Option<&Path>,
 ) -> i32 {
     // A plain-word spelling for scratch runs, also accepted before `api`. It is the exact
     // TASKS_DATABASE override, without a shell environment prefix or a second board server.
@@ -87,13 +114,17 @@ pub fn main(
         if database != DATABASE {
             scratch.vars.insert("TASKS_SWEEP".into(), "off".into());
         }
-        return main(&args[2..], &scratch, input, out, err);
+        return run(&args[2..], &scratch, input, out, err, program);
     }
+    if args.len() == 1 && args[0] == detached::COMMAND {
+        return detached::run(env, err);
+    }
+    let board = || connect(env).map(|store| detaching(store, env, program));
     if args.len() == 1 && args[0] == "api" {
-        return api::run(input, out, || connect(env));
+        return api::run(input, out, board);
     }
     if args.len() == 2 && args[0] == "api" && args[1] == "--lines" {
-        return api::serve(&mut std::io::BufReader::new(input), out, || connect(env));
+        return api::serve(&mut std::io::BufReader::new(input), out, board);
     }
     let parsed = match args::parse(args) {
         args::Outcome::Run(parsed) => parsed,
@@ -116,7 +147,10 @@ pub fn main(
     let start = !(parsed.command == "sweep" && parsed.flag("background"));
     let reached = Clock::of(env).and_then(|clock| {
         let store = open(reach(env, &env.cwd, start)?, &clock)?;
-        Ok((store, clock))
+        let store = capped_saying(store, env, &mut |problem| {
+            let _ = writeln!(err, "⚠ {problem}");
+        });
+        Ok((detaching(store, env, program), clock))
     });
     let (store, clock) = match reached {
         Ok(reached) => reached,
@@ -149,9 +183,45 @@ pub fn main(
 
 /// The board as `env` reaches it: the server `TASKS_SERVER` names, in database `TASKS_DATABASE`, else
 /// the one in the git common dir of the working directory, started if it is not running; its clock
-/// pinned at `TASKS_NOW` if that is set.
+/// pinned at `TASKS_NOW` if that is set; its starts held to the cap the project sets ([`capped`]).
 pub fn connect(env: &Env) -> Result<Store, String> {
-    open(reach(env, &env.cwd, true)?, &Clock::of(env)?)
+    Ok(capped(
+        open(reach(env, &env.cwd, true)?, &Clock::of(env)?)?,
+        env,
+    ))
+}
+
+/// `store`, its starts held to the cap on each orchestrator's open tasks that the main checkout of
+/// `env`'s repository configures ([`crate::slots::of_env`]). A cap that cannot be read is said on
+/// stderr and caps nothing: a broken project file must not stop the board, nor the landing that
+/// mends it.
+pub fn capped(store: Store, env: &Env) -> Store {
+    capped_saying(store, env, &mut |problem| eprintln!("tasks: {problem}"))
+}
+
+/// As [`capped`], what is wrong with the cap said by `say`.
+fn capped_saying(store: Store, env: &Env, say: &mut dyn FnMut(&str)) -> Store {
+    match crate::slots::of_env(env) {
+        Ok(slots) => store.capping(slots),
+        Err(problem) => {
+            say(&format!(
+                "{problem}; no cap on an orchestrator's open tasks applies"
+            ));
+            store
+        }
+    }
+}
+
+/// `store`, its writes handing their dispatch to a detached `program dispatch` when a `program` runs,
+/// unless `TASKS_DISPATCH=inline` asks each write to dispatch before it answers (a test that reads
+/// what the command delivered once it has ended).
+fn detaching(store: Store, env: &Env, program: Option<&Path>) -> Store {
+    match program {
+        Some(program) if env.var(detached::INLINE.0) != Some(detached::INLINE.1) => {
+            store.dispatching_by(detached::hand_off(env, program))
+        }
+        _ => store,
+    }
 }
 
 /// The time a run reads: this machine's, or the one `TASKS_NOW` pins, which only a monitor's own waits

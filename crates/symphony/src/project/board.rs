@@ -1,5 +1,5 @@
-//! The project file's `[board]` table: the board's export, what a finished worktree may hold, and
-//! the guide task messages render as part of.
+//! The project file's `[board]` table: the board's export, what a finished worktree may hold, the
+//! guide task messages render as part of, and what the board starts when a task moves to review.
 
 use serde::Deserialize;
 
@@ -12,6 +12,12 @@ pub struct Board {
     /// The board's guide, project-relative: task messages' links and pictures resolve from it as
     /// they do on its own page. `None` is [`Board::GUIDE`].
     pub guide: Option<String>,
+    /// The command the board starts, detached from the main checkout, when a task moves to review,
+    /// given the task's slug, its branch and the branch's tip; empty starts none.
+    pub on_review: Vec<String>,
+    /// The open tasks (in progress or in review) an orchestrator may hold before the board refuses
+    /// it new work, which the board reads itself (`symphony_board::slots`); `None` caps nothing.
+    pub orchestrator_slots: Option<u32>,
 }
 
 impl Board {
@@ -27,19 +33,30 @@ impl Board {
     pub(super) fn from_file(file: FileBoard) -> Result<Board, String> {
         let inside =
             |key: &str, path: Option<String>| path.map(|path| super::inside(key, path)).transpose();
+        if file.orchestrator_slots == Some(0) {
+            return Err(
+                "[board] orchestrator_slots is 0; an orchestrator needs at least one slot".into(),
+            );
+        }
         Ok(Board {
             export: inside("[board] export", file.export)?,
             disposable: file.disposable,
             guide: inside("[board] guide", file.guide)?,
+            on_review: file.on_review,
+            orchestrator_slots: file.orchestrator_slots,
         })
     }
 }
 
-/// The table as written: every key optional, nothing else allowed.
+/// The table as written: every key optional, one this build does not know kept by name.
 #[derive(Default, Deserialize)]
-#[serde(deny_unknown_fields, default)]
+#[serde(default)]
 pub(super) struct FileBoard {
     export: Option<String>,
     disposable: Vec<String>,
     guide: Option<String>,
+    on_review: Vec<String>,
+    orchestrator_slots: Option<u32>,
+    #[serde(flatten)]
+    pub(super) unknown: super::file::Unknown,
 }

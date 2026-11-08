@@ -1,10 +1,11 @@
-//! Page media: model and mockup markup, image dimensions, thumbnails and asset
-//! validators. HTTP encoding, cache and route cases belong to the server.
+//! Page media: mockup markup, files a plugin's renderer draws, image dimensions, thumbnails and
+//! asset validators. HTTP encoding, cache and route cases belong to the server.
 
 #[path = "../common/mod.rs"]
 mod common;
 
 mod assets;
+mod drawn;
 mod embeds;
 mod images;
 

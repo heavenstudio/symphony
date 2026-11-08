@@ -1,7 +1,8 @@
 //! The board's tables in SurrealDB, one per SQLite table of `tools/tasks_store.py`, typed so a row
 //! the rules would never write is refused rather than kept. A record's id is its SQLite primary key:
 //! `task:⟨slug⟩`, `session:⟨handle⟩`, `role:[slug, handle, role]`, `link:[slug, kind, target]`,
-//! `message:[slug, id]`, `delivery:[message, handle]`, `barred_key:⟨key⟩`, `task_session:[slug, handle]`.
+//! `message:[slug, id]`, `delivery:[message, handle]`, `barred_key:⟨key⟩`, `task_session:[slug, handle]`,
+//! `delivery_key:[slug, key]` (the message a keyed post made once on a thread, `Store::say_keyed`).
 //! A message is keyed by its task first so a thread is one range of keys: an index on `slug` would do
 //! the same, but makes a transaction inserting many messages (the copy's) cost more than linearly
 //! (15k messages: 22 CPU-s with it, 2 without, measured on 3.3.0).
@@ -17,6 +18,39 @@
 //! whole copy now takes 20 s).
 //! Per-recipient `callback_lease` rows retain their revision and periodic PULL checkpoint across
 //! callback retirement; an event key must never inherit an earlier holder's revision.
+//!
+//! What a write, each recipient of its dispatch and each tick read is found through an index, never a
+//! scan of the table (the board crate's `perf` tests plan every one, and every query an event here
+//! runs): messages by `sid` (a cursor's next), by `ts` (an inbox since its session connected), by
+//! recipient then `sid` (the owner's newest), by sender, kind, `sid` and slug (a sender's newest
+//! post, and newest verdict); deliveries by handle then message; roles by role; registrations by
+//! address. `said:[sender]` names each sender's newest `msg` or verdict, the greatest `[sid, slug]`
+//! (a copy takes one `sid` on two threads), and `DEFINE` fills it once when it holds nothing. Its
+//! key is an array holding the sender, so every string a message's sender may be is one, the empty
+//! string too: a record id that is the string itself refuses the empty one, and a copy of a board of
+//! schema 12 holding a word with no sender failed on it. An
+//! event keeps it as messages are made, deleted or edited: a message made, or edited into a
+//! sender's word, is that sender's word if no greater one is; a word deleted, or edited to another
+//! sender or out of the words, gives way to the sender's word before it, the greater of the last
+//! key of the sender's posts and the last of its verdicts in `message_sender`: two keys read,
+//! however many messages the board holds. They name the sender as a variable of its own,
+//! `$sender`: the server plans `sender = $before.sender` as a scan of the whole table, with no
+//! index (3.3.0 `EXPLAIN`). The board makes messages and edits none; its copy deletes
+//! them all at once and empties `said` first, so no deletion looks back. What does look back: a
+//! copy by a store of schema 12, which deletes the messages with `said` still full (each sender's
+//! word deleted gives way to its next, until none is left: 19.5 s for a copy of the `perf` tests'
+//! 50k messages, against 17.6 s with `said` emptied first), and a hand at the server deleting or
+//! editing a word. Until `message_sender`, the look back walked `message_sid` from the newest
+//! message down, and in an event SurrealKV walks a range backward over the rows it holds in memory
+//! (every row written since it last wrote them to an sstable: up to 4 GiB, its default on the
+//! machine measured, 256 MiB on a server `server::Storage` sets up) out of all proportion: over 150 s
+//! for 50k messages, where the same walk took 4.6 s as a statement of its own and 1.8 s once a
+//! restart had written the rows to disk, so a delete of a rare sender's newest word on a board just
+//! copied did not answer in 600 s (3.3.0, 2026-11-07). These cost the copy's one transaction
+//! less than the machine's load moves it: the live board's 49k messages and 36k deliveries swapped
+//! in 123 s without the events and 97 s with them, one after the other at load 140; defining them
+//! on that board took 15 s; and the `perf` tests' board of 50k messages copied in 41 and 44 s with
+//! `message_sender`, 60 and 53 s without it, alternating on one server at load 65 to 85.
 //!
 //! `moved:sqlite` is the move from SQLite (`Store::move_in`): the board it moved, when, and a hash of
 //! every row the move left, so a move into a board written since is refused.
@@ -36,7 +70,7 @@
 /// as it was. Changing one (a field's type, an assertion, an index) also needs `DEFINE … OVERWRITE`
 /// for it. The steps are additive, so a reader one version behind still reads what a newer build
 /// writes.
-pub const VERSION: i64 = 11;
+pub const VERSION: i64 = 13;
 
 /// A board schema: its version, and the steps that bring a board of any older version to it.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -210,6 +244,8 @@ pub(crate) fn mutates(sql: &str) -> bool {
 // Full-text index construction needs a committed analyzer, installed before the schema transaction.
 pub const ANALYZERS: &str = "DEFINE ANALYZER IF NOT EXISTS task_words TOKENIZERS blank, class, punct FILTERS lowercase, ascii;";
 
+/// The board's tables, indexes and events, run in one transaction by a store opening a board at
+/// another [`VERSION`]; public for the board crate's `perf` tests, which plan what its events run.
 pub const DEFINE: &str = "
 DEFINE TABLE IF NOT EXISTS task SCHEMAFULL;
 DEFINE FIELD IF NOT EXISTS sid ON task TYPE int;
@@ -285,6 +321,7 @@ DEFINE FIELD IF NOT EXISTS since ON role TYPE float;
 DEFINE FIELD IF NOT EXISTS expires ON role TYPE option<float>;
 DEFINE INDEX IF NOT EXISTS role_slug ON role FIELDS slug;
 DEFINE INDEX IF NOT EXISTS role_handle ON role FIELDS handle;
+DEFINE INDEX IF NOT EXISTS role_role ON role FIELDS role;
 
 DEFINE TABLE IF NOT EXISTS message SCHEMAFULL;
 DEFINE FIELD IF NOT EXISTS sid ON message TYPE int;
@@ -295,11 +332,26 @@ DEFINE FIELD IF NOT EXISTS kind ON message TYPE string ASSERT $value IN ['system
 DEFINE FIELD IF NOT EXISTS text ON message TYPE string;
 DEFINE FIELD IF NOT EXISTS ts ON message TYPE float;
 DEFINE INDEX IF NOT EXISTS message_text_search ON message FIELDS text FULLTEXT ANALYZER task_words BM25;
+DEFINE INDEX IF NOT EXISTS message_sid ON message FIELDS sid;
+DEFINE INDEX IF NOT EXISTS message_ts ON message FIELDS ts;
+DEFINE INDEX IF NOT EXISTS message_recipient ON message FIELDS recipient, sid;
+DEFINE INDEX IF NOT EXISTS message_sender ON message FIELDS sender, kind, sid, slug;
+
+DEFINE TABLE IF NOT EXISTS said SCHEMAFULL;
+DEFINE FIELD IF NOT EXISTS sid ON said TYPE int;
+DEFINE FIELD IF NOT EXISTS slug ON said TYPE string;
 
 DEFINE TABLE IF NOT EXISTS delivery SCHEMAFULL;
 DEFINE FIELD IF NOT EXISTS message ON delivery TYPE int;
 DEFINE FIELD IF NOT EXISTS handle ON delivery TYPE string;
 DEFINE FIELD IF NOT EXISTS acked ON delivery TYPE float;
+DEFINE INDEX IF NOT EXISTS delivery_handle ON delivery FIELDS handle, message;
+
+DEFINE TABLE IF NOT EXISTS delivery_key SCHEMAFULL;
+DEFINE FIELD IF NOT EXISTS slug ON delivery_key TYPE string;
+DEFINE FIELD IF NOT EXISTS key ON delivery_key TYPE string;
+DEFINE FIELD IF NOT EXISTS message ON delivery_key TYPE int;
+DEFINE FIELD IF NOT EXISTS ts ON delivery_key TYPE float;
 
 DEFINE TABLE IF NOT EXISTS barred_key SCHEMAFULL;
 DEFINE FIELD IF NOT EXISTS key ON barred_key TYPE string;
@@ -331,6 +383,7 @@ DEFINE TABLE IF NOT EXISTS meta SCHEMAFULL;
 DEFINE FIELD IF NOT EXISTS version ON meta TYPE int;
 
 DEFINE TABLE IF NOT EXISTS callback_state SCHEMALESS;
+DEFINE INDEX IF NOT EXISTS callback_state_address ON callback_state FIELDS address;
 DEFINE TABLE IF NOT EXISTS callback_lease SCHEMALESS;
 DEFINE TABLE IF NOT EXISTS callback_event SCHEMALESS;
 DEFINE INDEX IF NOT EXISTS callback_event_handle ON callback_event FIELDS handle, delivered;
@@ -348,6 +401,41 @@ DEFINE EVENT OVERWRITE board_changed ON callback_state
       != [$after.address, $after.owner, $after.host, $after.chat, $after.chat_fallback, $after.chat_resume, $after.confirmed_until, $after.in_process, $after.seen, $after.pull, $after.registration_revision]
     THEN { IF record::exists(counter:board) { UPDATE counter:board SET last = (last ?? 0) + 1 RETURN NONE; } ELSE { CREATE counter:board SET last = 1 RETURN NONE; }; };
 DEFINE EVENT OVERWRITE board_changed ON chat_event WHEN $before != $after THEN { IF record::exists(counter:board) { UPDATE counter:board SET last = (last ?? 0) + 1 RETURN NONE; } ELSE { CREATE counter:board SET last = 1 RETURN NONE; }; };
+
+DEFINE EVENT OVERWRITE said ON message
+    WHEN $event != 'UPDATE' OR [$before.sender, $before.sid, $before.slug, $before.kind IN ['msg', 'verdict']]
+        != [$after.sender, $after.sid, $after.slug, $after.kind IN ['msg', 'verdict']]
+    THEN {
+    IF $event != 'CREATE' {
+        LET $was = (SELECT sid, slug FROM ONLY type::record('said', [$before.sender]));
+        IF $was.sid = $before.sid AND $was.slug = $before.slug {
+            LET $sender = $before.sender;
+            LET $newest = array::max(array::concat(
+                (SELECT VALUE [sid, slug] FROM message WHERE sender = $sender AND kind = 'msg' ORDER BY sid DESC, slug DESC LIMIT 1),
+                (SELECT VALUE [sid, slug] FROM message WHERE sender = $sender AND kind = 'verdict' ORDER BY sid DESC, slug DESC LIMIT 1)
+            ));
+            IF $newest = NONE {
+                DELETE type::record('said', [$before.sender]) RETURN NONE;
+            } ELSE {
+                UPDATE type::record('said', [$before.sender]) SET sid = $newest[0], slug = $newest[1] RETURN NONE;
+            };
+        };
+    };
+    IF $event != 'DELETE' AND $after.kind IN ['msg', 'verdict'] {
+        IF record::exists(type::record('said', [$after.sender])) {
+            UPDATE type::record('said', [$after.sender]) SET sid = $after.sid, slug = $after.slug
+                WHERE sid < $after.sid OR (sid = $after.sid AND slug < $after.slug) RETURN NONE;
+        } ELSE {
+            CREATE type::record('said', [$after.sender]) SET sid = $after.sid, slug = $after.slug RETURN NONE;
+        };
+    };
+};
+IF (SELECT VALUE id FROM said LIMIT 1) = [] {
+    FOR $spoke IN (SELECT sender, array::max(array::group([[sid, slug]])) AS last FROM message WHERE kind IN ['msg', 'verdict'] GROUP BY sender) {
+        LET $newest = $spoke.last[0];
+        CREATE type::record('said', [$spoke.sender]) SET sid = $newest[0], slug = $newest[1] RETURN NONE;
+    };
+};
 ";
 
 #[cfg(test)]

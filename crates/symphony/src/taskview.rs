@@ -9,6 +9,9 @@ use symphony_api::{ActivityItem, Message, Role, Session, Task, TaskCounts, Tasks
 
 use crate::{clock, dashboard, render::Render};
 
+mod connect;
+pub use connect::{connect, connect_in, read_failure};
+
 pub fn snapshot(store: &symphony_board::Store) -> Result<(Tasks, i64), symphony_board::Error> {
     let board = store.board()?;
     Ok(snapshot_board(&board))
@@ -404,46 +407,22 @@ pub fn activity(store: &symphony_board::Store) -> Result<Vec<ActivityItem>, symp
         .collect())
 }
 
-/// The board of the project at `root`, as this process's environment reaches it.
-pub fn connect(root: &Path) -> Result<symphony_board::Store, String> {
-    connect_in(root, symphony_board::cli::Env::of_process())
+/// A quick-task outcome read must identify the owner's intended task before confirming it.
+pub(crate) fn is_quick_task(task: &symphony_board::Task, receipt: &str) -> bool {
+    task.created_by == "owner"
+        && task
+            .fields
+            .get("_symphony")
+            .and_then(|fields| fields.get("owner_save"))
+            .and_then(serde_json::Value::as_str)
+            == Some(receipt)
 }
 
-/// The board of the project at `root` as `env` reaches it, opened to read by the schema rule: a
-/// board one version ahead is read and never written, and a write on it is refused naming the
-/// project and `just symphony`.
-pub fn connect_in(
-    root: &Path,
-    mut env: symphony_board::cli::Env,
-) -> Result<symphony_board::Store, String> {
-    env.cwd = root.to_path_buf();
-    // A read-only web request is never a board session or a launcher.
-    env.vars.remove("TASKS_SESSION");
-    let reached = symphony_board::cli::board(&env)?;
-    let client = reached.client.waiting(std::time::Duration::from_secs(3));
-    let how = symphony_board::Opening::read().of(reached.project.as_deref());
-    match env.vars.get("TASKS_NOW") {
-        Some(text) => {
-            let now = text
-                .parse::<f64>()
-                .ok()
-                .filter(|n| n.is_finite())
-                .ok_or_else(|| format!("TASKS_NOW={text} is not a time in seconds"))?;
-            symphony_board::Store::opening(
-                client,
-                Box::new(move || now),
-                Box::new(symphony_board::sys::pid_alive),
-                &symphony_board::sys::hostname(),
-                &how,
-            )
-        }
-        None => symphony_board::Store::open_as(client, &how),
-    }
-    .map_err(|e| e.to_string())
-}
-
+/// The agents view, its machine probes run without this process's session
+/// ([`crate::children::board_env`]): hc's session names would scope the census to the starter's
+/// core.
 pub fn agents(store: &symphony_board::Store, root: &Path) -> Result<symphony_api::Agents, String> {
-    let mut env = symphony_board::cli::Env::of_process();
+    let mut env = crate::children::board_env();
     env.cwd = root.to_path_buf();
     agents_probed(store, &symphony_board::cli::probes::machine(&env), None)
 }
@@ -454,7 +433,7 @@ pub fn agents_in(
     common: Option<&Path>,
     board: &symphony_board::Board,
 ) -> Result<symphony_api::Agents, String> {
-    let mut env = symphony_board::cli::Env::of_process();
+    let mut env = crate::children::board_env();
     env.cwd = root.to_path_buf();
     let probes = match common {
         Some(common) => symphony_board::cli::probes::machine_in(&env, common),
@@ -475,6 +454,12 @@ fn agents_probed(
         None => symphony_board::cli::agents::describe(store, probes, store.now(), false),
     }
     .map_err(|e| e.to_string())?;
+    wire_agents(&view)
+}
+
+/// The board's agents view on the Symphony's wire. The board's own JSON names the panes probe
+/// `herdr`, which [`symphony_api::AgentProbes`] reads and sends on as `panes` and `herdr` both.
+fn wire_agents(view: &symphony_board::cli::agents::View) -> Result<symphony_api::Agents, String> {
     serde_json::from_str(&symphony_board::pyjson::dumps_line(&view.json()))
         .map_err(|e| e.to_string())
 }
@@ -544,6 +529,10 @@ fn fields(
 #[cfg(test)]
 #[path = "taskview/page_tests.rs"]
 mod page_tests;
+
+#[cfg(test)]
+#[path = "taskview/agents_tests.rs"]
+mod agents_tests;
 
 #[cfg(test)]
 mod tests {

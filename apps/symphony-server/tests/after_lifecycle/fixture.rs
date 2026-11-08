@@ -20,8 +20,21 @@ use symphony_board::sys::{Child, Command, Stdio};
 #[path = "../../../../../tools/gate/tests/gate/scratch.rs"]
 mod scratch;
 
-#[path = "machine_copy.rs"]
+#[path = "../../../../../tools/gate/tests/verify/machine_copy.rs"]
 pub mod machine_copy;
+
+/// A machine copy's first run starts under the spawn lock the board's `sys` takes for every spawn.
+fn run_fixture(command: &mut std::process::Command) -> std::io::Result<std::process::ExitStatus> {
+    symphony_board::sys::Spawning::status_locked(command)
+}
+
+#[path = "stand_ins.rs"]
+mod stand_ins;
+use stand_ins::{STAND_IN_LIFETIME, StandIns};
+
+#[path = "owner.rs"]
+mod owner;
+use owner::stage as owner_stage;
 
 #[cfg(test)]
 #[path = "scratch_tests.rs"]
@@ -31,6 +44,10 @@ mod scratch_tests;
 #[path = "descendant_cleanup_tests.rs"]
 mod descendant_cleanup_tests;
 
+#[cfg(test)]
+#[path = "unsuccessful_child_tests.rs"]
+mod unsuccessful_child_tests;
+
 pub const APP: &str = env!("CARGO_BIN_EXE_symphony-server");
 pub const PATIENCE: Duration = Duration::from_secs(30);
 pub const AGENTS: [&str; 3] = ["TASKS_SESSION", "CODEX_THREAD_ID", "CLAUDECODE"];
@@ -38,17 +55,21 @@ pub const AGENTS: [&str; 3] = ["TASKS_SESSION", "CODEX_THREAD_ID", "CLAUDECODE"]
 const SCRATCH_PREFIX: &str = "after-lifecycle-";
 
 /// Validate the freshly linked executable once before measuring server starts. The OS's first
-/// image launch is setup; every server still has the unchanged patience for its actual startup.
+/// image launch is setup, waited for to its end under no case deadline (`setup_success`); every
+/// server still has the unchanged patience for its actual startup.
 /// Keep the completed child's identity so reuse is observable without a timing threshold.
 static PREPARED_APP: OnceLock<u32> = OnceLock::new();
 static PREPARED_COMMANDS: OnceLock<[u32; 4]> = OnceLock::new();
 
 fn prepare_app(log: &Path) -> u32 {
     *PREPARED_APP.get_or_init(|| {
+        if let Some(pid) = owner::parents_app() {
+            return pid;
+        }
         let mut command = Command::new(APP);
         command.arg("--help").env_clear().stdin(Stdio::null());
         let mut preparation = Process::spawn(command, log);
-        preparation.success();
+        preparation.setup_success();
         assert!(
             preparation.output().starts_with("usage: symphony-server "),
             "the built image must answer help before fixture starts: {}",
@@ -82,7 +103,10 @@ fn prepare_commands(repo: &Repo, folder: &Path) -> [u32; 4] {
                 .args(args);
             let mut preparation = Process::spawn(command, &folder.join(name));
             preparation.success();
-            preparation.child.id()
+            let pid = preparation.child.id();
+            drop(preparation);
+            owner_stage(&format!("command preparation {name}"));
+            pid
         })
     })
 }
@@ -101,6 +125,7 @@ impl Scratch {
         fs::create_dir_all(&root).unwrap();
         let root = root.canonicalize().unwrap();
         REAP.call_once(|| scratch::reap_dead_scratch(&root, SCRATCH_PREFIX));
+        owner_stage("scratch sweep");
         loop {
             let path = root.join(format!(
                 "{SCRATCH_PREFIX}{}-{}",
@@ -133,6 +158,7 @@ impl Drop for Scratch {
         } else if let Err(error) = fs::remove_dir_all(&self.path) {
             panic!("cannot remove scratch {}: {error}", self.path.display());
         }
+        owner_stage("scratch removal");
     }
 }
 
@@ -146,6 +172,7 @@ fn command_fixture(path: &Path, name: &str) {
     // fresh in every verify run. Link the machine's one copy of these bytes for every scratch
     // checkout; $0 still names the invoking fixture path (ps/open use it).
     symlink(machine_copy::machine_copy(&script_source(name)), path).unwrap();
+    owner_stage(&format!("link {}", path.display()));
 }
 
 /// The tracked script a fixture command's machine-wide copy is made from.
@@ -173,6 +200,7 @@ pub fn repository(root: &Path, args: &[&str]) {
     )
     .unwrap();
     assert!(done.status.success(), "{args:?}: {}", said(&done));
+    owner_stage(&format!("git {}", args[0]));
 }
 
 pub fn said(out: &Output) -> String {
@@ -286,6 +314,11 @@ fn wait_cleanup(
         Some(Err(error)) => format!("{}: {error}", why()),
         None => format!("timed out: {}", why()),
     };
+    cleanup_failed(&message);
+}
+
+/// Fail a passing case with `message`; beside an original failure, report it and keep that one.
+fn cleanup_failed(message: &str) {
     if std::thread::panicking() {
         eprintln!("{message}");
     } else {
@@ -370,7 +403,8 @@ impl Executable {
 }
 
 /// Every descendant inherits the writer. EOF proves even an orphaned fixture command has
-/// stopped using scratch, including subprocesses of a census shell cancelled by the server.
+/// stopped using scratch. A server starts its own children without it: those stand-ins hold
+/// [`StandIns`] instead.
 struct Descendants {
     reader: File,
     origin: String,
@@ -529,6 +563,21 @@ impl Process {
 
     pub fn success(&mut self) {
         let status = self.wait();
+        self.succeeded(status);
+    }
+
+    /// `success` for setup's run, which waits for the child's own end, never a case's deadline:
+    /// a new file's first exec waits for macOS to assess it, one file at a time machine-wide, as
+    /// machine_copy's prime does. The target's load-scaled budget in sf-tool-tests still bounds a
+    /// hung one.
+    fn setup_success(&mut self) {
+        let status = self.child.wait().unwrap();
+        self.succeeded(status);
+    }
+
+    /// Fail with the child's pid, command, status and output, and for a silent signal its
+    /// executable's identity at spawn and now, unless `status` is a success.
+    fn succeeded(&self, status: ExitStatus) {
         let output = self.output();
         let identity = if status.signal().is_some() && output.is_empty() {
             self.executable.failure()
@@ -681,6 +730,7 @@ pub struct Repo {
     pub builds: PathBuf,
     detached: Mutex<Vec<i64>>,
     descendants: Mutex<Vec<Descendants>>,
+    stand_ins: Mutex<StandIns>,
     next: AtomicUsize,
     _scratch: Scratch,
 }
@@ -688,7 +738,10 @@ pub struct Repo {
 impl Repo {
     pub fn new(name: &str) -> Self {
         let scratch = Scratch::new(name);
+        // Before the first command: preparation runs the ps stand-in too.
+        let stand_ins = StandIns::open(&scratch.path);
         prepare_app(&scratch.path.join("prepare-app"));
+        owner_stage("app preparation");
         let base = scratch.path.clone();
         let main = base.join("main with spaces");
         fs::create_dir_all(&main).unwrap();
@@ -733,6 +786,7 @@ impl Repo {
             ],
         );
         write(&tree.join("docs/A.md"), "# Alpha\n\nbranch document\n");
+        owner_stage("worktree document");
         // The one server's machine folder is the test's own; its build stays in the install folder.
         let home = base.join("machine");
         let bin = base.join("commands");
@@ -755,6 +809,7 @@ impl Repo {
             bin,
             detached: Mutex::new(Vec::new()),
             descendants: Mutex::new(Vec::new()),
+            stand_ins: Mutex::new(stand_ins),
             next: AtomicUsize::new(0),
             _scratch: scratch,
         };
@@ -1010,14 +1065,28 @@ impl Repo {
             );
         }
     }
+
+    /// Once no server or command of this case runs, refuse every later stand-in and wait for
+    /// those that started to end ([`StandIns`]).
+    fn close_stand_ins(&self) {
+        // Also run while unwinding, when an earlier panic may have poisoned the lock.
+        self.stand_ins
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .close();
+    }
 }
 
 impl Drop for Repo {
     fn drop(&mut self) {
         self.cleanup();
+        owner_stage("repository cleanup");
         for descendants in self.descendants.lock().unwrap().iter_mut() {
             descendants.wait();
         }
+        owner_stage("descendant waits");
+        self.close_stand_ins();
+        owner_stage("stand-in close");
         profile_warm(&fs::read_to_string(self.home.join("server.log")).unwrap_or_default());
     }
 }

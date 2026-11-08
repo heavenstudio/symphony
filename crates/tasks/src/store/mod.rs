@@ -7,10 +7,9 @@
 //! could make a session healthier moves its `last_seen`). A write that meets another's (SurrealDB's
 //! optimistic conflict) or finds itself stale reads and decides again.
 
-use crate::cbor;
 use crate::health::{self, EXECUTING, Health};
 pub(crate) use crate::pyjson::repr;
-use crate::rows::{Dump, LinkRow, MessageRow, RoleRow, SessionRow, TaskRow};
+use crate::rows::{LinkRow, MessageRow, RoleRow, SessionRow, TaskRow};
 use crate::rpc::{Client, DbError};
 use crate::schema;
 use serde::Deserialize;
@@ -23,31 +22,49 @@ use std::sync::Mutex;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 mod callback_peer;
+mod callback_state;
 mod callbacks;
+mod cap;
+mod copy;
 mod depends;
+mod dispatcher;
 mod embeddings;
 mod fields;
 mod launches;
 mod messages;
 mod opening;
+mod pool;
+mod pull_account;
+mod queued_lines;
+mod reading;
 pub(crate) mod search;
 mod sessions;
 mod transaction;
+pub(crate) mod unanswered;
 mod work;
 
-pub use callbacks::Callback;
+pub use callbacks::{Callback, Presence};
+/// Every statement the cap on an orchestrator's open tasks sends: the plan test's to plan.
+pub use cap::STATEMENTS as SLOT_READS;
+pub use copy::Moved;
+pub(crate) use copy::WRITTEN_SINCE;
 pub use embeddings::{EmbeddingStats, VectorHit, VectorSearchProfile};
 pub use launches::NewLaunch;
 pub use opening::Opening;
+use reading::{HELD, NATIVE_PRESENCE, native_bounds};
 pub use search::SearchHit;
 pub use sessions::{Beat, KINDS, NewSession, Pick};
-use transaction::Run;
 pub use work::{
     BEFORE_WORK, LANDS_FROM, Landed, NewTask, PIPELINE, PULLABLE, ROLES, STATUSES, can_transition,
 };
 
 type Clock = Box<dyn Fn() -> f64 + Send + Sync>;
 type Probe = Box<dyn Fn(i64) -> bool + Send + Sync>;
+
+/// What a write that asks for a callback dispatch does instead of dispatching
+/// ([`Store::dispatching_by`]): starts the dispatch elsewhere and says whether it did. When it did
+/// not, the write dispatches itself.
+pub type HandOff = Box<dyn Fn() -> bool + Send + Sync>;
 
 /// How long a call reads and decides again before it gives up on a board that keeps moving: as long as
 /// the SQLite store waited on its write lock, not a count of tries a busy board spends in two seconds.
@@ -56,7 +73,6 @@ const PATIENCE: Duration = Duration::from_secs(30);
 const STALE: &str = "stale";
 /// What a write throws to refuse goes before its words: the refusal comes back as `Error::Refused`.
 const REFUSED: &str = "refused: ";
-
 /// Why a call gave no result.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Error {
@@ -154,19 +170,39 @@ pub struct Store {
     clock: Clock,
     pid_alive: Probe,
     host: String,
-    /// The schema version this store writes, which every write's [`schema::GUARD`] checks.
-    schema: i64,
-    /// What a write on a board at another version is refused with, naming the board's project.
-    refusal: schema::Refusal,
     /// Where new sessions' handles come from.
     pick: Mutex<Box<dyn Pick>>,
     callback_snapshot: Mutex<Option<Snapshot>>,
     callback_idle: Mutex<Option<callbacks::Idle>>,
-    /// The herdr panes the server clock's current tick sampled, which every view of that tick reads.
+    /// The hc terminals the server clock's current tick sampled, which every view of that tick reads.
     clock_panes: Mutex<Option<crate::cli::agents::Answer<Vec<crate::cli::agents::Pane>>>>,
+    /// Where this store's writes send their callback dispatch; none dispatches in the write.
+    hand_off: Option<HandOff>,
+    /// The messages a dispatch pass reads every recipient's inbox from ([`pool::Pool`]).
+    inbox_pool: Mutex<Option<pool::Pool>>,
+    /// The open tasks an orchestrator may hold before a start is refused ([`crate::slots`]); none
+    /// caps nothing.
+    slots: Option<usize>,
+    /// The schema version this store writes, which every write's [`schema::GUARD`] checks.
+    schema: i64,
+    /// What a write on a board at another version is refused with, naming the board's project.
+    refusal: schema::Refusal,
 }
 
 impl Store {
+    /// This store, its starts held to `slots` open tasks an orchestrator: a claim, a move into
+    /// in_progress and taking the orchestrator role on open work are refused past it
+    /// ([`crate::slots`]). None caps nothing, as a store opens.
+    pub fn capping(mut self, slots: Option<usize>) -> Store {
+        self.slots = slots;
+        self
+    }
+
+    /// The cap this store holds starts to, if any ([`Store::capping`]).
+    pub fn slots(&self) -> Option<usize> {
+        self.slots
+    }
+
     pub fn client(&self) -> &Client {
         &self.client
     }
@@ -174,204 +210,6 @@ impl Store {
     /// The time by this store's clock.
     pub fn now(&self) -> f64 {
         (self.clock)()
-    }
-
-    /// Make the board `dump`, replacing whatever was there. The rows go up in requests the server takes
-    /// and land in one transaction: a dump that cannot be written leaves the board as it was.
-    pub fn copy(&self, dump: &Dump) -> Result<(), Error> {
-        self.copy_into(dump, None)
-    }
-
-    /// As [`Store::copy`], for the move from the SQLite board at `from`: in the copy's one transaction,
-    /// refused, changing nothing, if the board holds a move and was written since ([`Store::moved`]),
-    /// and recording this move, with a hash of the rows it leaves.
-    pub fn move_in(&self, dump: &Dump, from: &str) -> Result<(), Error> {
-        self.copy_into(dump, Some(from))
-    }
-
-    /// The move from SQLite this board holds, if it holds one ([`Store::move_in`]).
-    pub fn moved(&self) -> Result<Option<Moved>, Error> {
-        let sql = format!(
-            "LET $was = (SELECT * FROM ONLY moved:sqlite);
-             RETURN IF $was = NONE {{ NONE }} ELSE {{ {{ board: $was.board, at: $was.at, written_since: $was.rows != {ROWS} }} }};"
-        );
-        self.retrying(|| self.transact(&sql, json!({})))
-    }
-
-    /// Remove every copy's staging table (`copy_…`): what a copy killed while it staged leaves. Only for
-    /// a caller that knows no copy runs meanwhile (the move, under its lock).
-    pub fn remove_staging(&self) -> Result<(), Error> {
-        let tables: Vec<String> = self
-            .retrying(|| self.transact("RETURN object::keys((INFO FOR DB).tables);", json!({})))?;
-        let remove: String = tables
-            .iter()
-            .filter(|table| {
-                table.starts_with("copy_")
-                    && table.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
-            })
-            .map(|table| format!("REMOVE TABLE IF EXISTS {table};"))
-            .collect();
-        if !remove.is_empty() {
-            self.retrying(|| Ok(self.client.query(&remove, json!({}))?))?;
-        }
-        Ok(())
-    }
-
-    fn copy_into(&self, dump: &Dump, from: Option<&str>) -> Result<(), Error> {
-        let keyed = |rows: Vec<Value>, key: &dyn Fn(&Value) -> Value| -> Vec<Value> {
-            rows.into_iter()
-                .map(|mut row| {
-                    row["id"] = key(&row);
-                    row
-                })
-                .collect()
-        };
-        // SQLite's row id is the record's `sid`.
-        let with_sid = |mut row: Value| {
-            row["sid"] = row["id"].clone();
-            row
-        };
-        let tables = [
-            (
-                "task",
-                keyed(
-                    values(&dump.tasks).into_iter().map(with_sid).collect(),
-                    &|r| r["slug"].clone(),
-                ),
-            ),
-            (
-                "link",
-                keyed(values(&dump.task_links), &|r| {
-                    json!([r["slug"], r["kind"], r["target"]])
-                }),
-            ),
-            (
-                "session",
-                keyed(values(&dump.sessions), &|r| r["handle"].clone()),
-            ),
-            (
-                "role",
-                keyed(values(&dump.roles), &|r| {
-                    json!([r["slug"], r["handle"], r["role"]])
-                }),
-            ),
-            (
-                "message",
-                keyed(
-                    values(&dump.messages).into_iter().map(with_sid).collect(),
-                    &|r| json!([r["slug"], r["sid"]]),
-                ),
-            ),
-            (
-                "delivery",
-                keyed(values(&dump.deliveries), &|r| {
-                    json!([r["message"], r["handle"]])
-                }),
-            ),
-            (
-                "barred_key",
-                keyed(values(&dump.barred_keys), &|r| r["key"].clone()),
-            ),
-            (
-                "task_session",
-                keyed(values(&dump.task_sessions), &|r| {
-                    json!([r["slug"], r["handle"]])
-                }),
-            ),
-        ];
-        let last = dump.messages.iter().map(|m| m.id).max().unwrap_or(0);
-        let last_task = dump.tasks.iter().map(|t| t.id).max().unwrap_or(0);
-        let last_ts = dump.messages.iter().map(|m| m.ts).reduce(f64::max);
-        let staging = format!(
-            "copy_{:016x}",
-            RandomState::new().hash_one(std::process::id())
-        );
-        let copied = self.stage(&staging, &tables).and_then(|()| {
-            let mut swap = String::new();
-            if from.is_some() {
-                let _ = writeln!(
-                    swap,
-                    "LET $was = (SELECT * FROM ONLY moved:sqlite);
-                     IF $was != NONE AND $was.rows != {ROWS} {{ THROW string::concat($refused, $was.board, $since) }};"
-                );
-            }
-            for (table, _) in &tables {
-                let _ = writeln!(
-                    swap,
-                    "DELETE {table}; INSERT INTO {table} (SELECT VALUE row FROM {staging}_{table}) RETURN NONE; REMOVE TABLE {staging}_{table};"
-                );
-            }
-            // These caches describe the replaced board and are rebuilt by catch-up. Keep the
-            // reset in the swap transaction so a refused copy preserves the current index.
-            swap.push_str("DELETE task_chunk RETURN NONE; DELETE task_embedding_source RETURN NONE; DELETE task_embedding_checkpoint RETURN NONE;\n");
-            swap.push_str("UPSERT counter:message SET last = $last, ts = $last_ts RETURN NONE;\nUPSERT counter:task SET last = $last_task RETURN NONE;\n");
-            if from.is_some() {
-                let _ = writeln!(
-                    swap,
-                    "UPSERT moved:sqlite SET board = $from, at = $at, rows = {ROWS} RETURN NONE;"
-                );
-            }
-            swap.push_str("RETURN NONE;");
-            let vars = json!({
-                "last": last, "last_ts": last_ts, "last_task": last_task,
-                "from": from, "at": self.now(),
-                "refused": format!("{REFUSED}{}", WRITTEN_SINCE.0), "since": WRITTEN_SINCE.1,
-            });
-            self.retrying(|| self.transact::<Value>(&swap, vars.clone())).map(|_| ())
-        });
-        if copied.is_err() {
-            let remove: String = tables
-                .iter()
-                .map(|(table, _)| format!("REMOVE TABLE IF EXISTS {staging}_{table};"))
-                .collect();
-            let _ = self.client.query(&remove, json!({}));
-        }
-        copied
-    }
-
-    /// Every row of `tables` into schemaless tables named `{staging}_{table}`, each request at most
-    /// `CHUNK_BYTES`: a board is bigger than the server takes in one. The copy's one transaction then
-    /// moves them in. The tables are made behind the schema guard, so a board at another version
-    /// than this store's is refused before anything is staged in it.
-    fn stage(&self, staging: &str, tables: &[(&str, Vec<Value>)]) -> Result<(), Error> {
-        let send = |sql: &str, vars: Value| {
-            self.retrying(|| Ok(self.client.query(sql, vars.clone())?))
-                .map(|_| ())
-        };
-        let define: String = tables
-            .iter()
-            .map(|(table, _)| format!("DEFINE TABLE {staging}_{table} SCHEMALESS;"))
-            .collect();
-        self.retrying(|| {
-            self.run_transaction::<Value>(
-                &format!("{define}\nRETURN NONE;"),
-                json!({}),
-                Run::Guarded { dispatch: false },
-            )
-        })?;
-        for (table, rows) in tables {
-            let insert = format!("INSERT INTO {staging}_{table} $rows RETURN NONE;");
-            let (mut chunk, mut bytes) = (Vec::new(), 0);
-            for row in rows {
-                let size = cbor::encode(row).len();
-                if bytes + size > CHUNK_BYTES && !chunk.is_empty() {
-                    send(&insert, json!({"rows": std::mem::take(&mut chunk)}))?;
-                    bytes = 0;
-                }
-                chunk.push(json!({"row": row}));
-                bytes += size;
-            }
-            if !chunk.is_empty() {
-                send(&insert, json!({"rows": chunk}))?;
-            }
-        }
-        Ok(())
-    }
-
-    /// Every row of the board, in the shape the copy reads, each table in the order of its key: what a
-    /// copy wrote, read back.
-    pub fn dump(&self) -> Result<Dump, Error> {
-        self.retrying(|| self.transact(DUMP, json!({})))
     }
 
     /// Every task and session, with health, in one round trip.
@@ -504,9 +342,11 @@ impl Store {
             .collect())
     }
 
-    /// Become the executor. Of any number of claims at once, one wins.
+    /// Become the executor. Of any number of claims at once, one wins. A claim that starts ready
+    /// work is refused when it would raise an orchestrator's open tasks past the store's cap
+    /// ([`crate::slots`]).
     pub fn claim(&self, slug: &str, handle: &str) -> Result<Task, Error> {
-        self.rule(slug, handle, |view| {
+        self.ruling(slug, handle, self.slots.is_some(), |view| {
             view.actor(handle)?;
             let task = view.task(slug)?;
             if !EXECUTING.contains(&task.status.as_str()) {
@@ -563,6 +403,12 @@ impl Store {
             });
             if task.status == "ready" {
                 change.status = Some("in_progress".into());
+                change.opens = Some(Opens {
+                    status: change.status.clone(),
+                    by: vec![handle.into()],
+                    what: format!("{slug} cannot start"),
+                    ..Opens::default()
+                });
             }
             let mut text = format!("{handle} claimed it");
             if !handed.is_empty() {
@@ -647,11 +493,8 @@ impl Store {
             })
         })?;
         if verdict == "changes" {
-            self.tell_if_unread(
-                slug,
-                None,
-                &format!("the changes verdict from {handle} to @executor"),
-            );
+            let what = format!("the changes verdict from {handle} to @executor");
+            self.tell_if_unread(slug, None, &what, None);
         }
         Ok(task)
     }
@@ -700,13 +543,35 @@ impl Store {
         actor: &str,
         decide: impl Fn(&View) -> Result<Change, Error>,
     ) -> Result<Task, Error> {
+        self.ruling(slug, actor, false, decide)
+    }
+
+    /// As [`Store::rule`]; one that `starts` work ([`Opens`]) under a cap also reads what the cap
+    /// decides on, in the same transaction as its task ([`cap`]).
+    fn ruling(
+        &self,
+        slug: &str,
+        actor: &str,
+        starts: bool,
+        decide: impl Fn(&View) -> Result<Change, Error>,
+    ) -> Result<Task, Error> {
+        let which = if starts {
+            Which::Starting(slug)
+        } else {
+            Which::Slug(slug)
+        };
         self.retrying(|| {
-            let view = self.view(&Which::Slug(slug))?;
+            let view = self.view(&which)?;
             let change = decide(&view).map_err(Failure::Stop)?;
+            let slots = match (&change.opens, self.slots) {
+                (Some(opens), Some(cap)) => self.slots_taken(&view, slug, opens, cap)?,
+                _ => Vec::new(),
+            };
             let version = view.snap.tasks.first().map_or(0, |t| t.version);
-            let body = if change.status.is_some() {
+            let mut body = if change.status.is_some() {
                 format!(
-                    "{WRITE}\n{}",
+                    "{WRITE}{}\n{}",
+                    cap::HOLDING,
                     work::block_cancelled_dependencies(
                         change.status.as_deref() == Some("cancelled")
                     )
@@ -714,10 +579,16 @@ impl Store {
             } else {
                 WRITE.into()
             };
-            self.written(&body, change.vars(slug, actor, version, view.now), slug)
+            if !slots.is_empty() {
+                body.push_str(cap::GUARD);
+            }
+            let mut vars = change.vars(slug, actor, version, view.now);
+            vars["slots"] = Value::Array(slots);
+            self.written(&body, vars, slug)
         })
     }
 
+    #[track_caller]
     fn view(&self, which: &Which) -> Result<View, Failure> {
         let (read, vars) = Self::reading(which);
         let snap: Snapshot = self.transact(&read, vars)?;
@@ -726,6 +597,7 @@ impl Store {
 
     /// `body`'s writes, then `slug` read as `get` reads it, in one transaction: the task as the write
     /// left it, in the write's one round trip. `body` ends without a `RETURN`.
+    #[track_caller]
     fn written(&self, body: &str, mut vars: Value, slug: &str) -> Result<Task, Failure> {
         let (read, more) = Self::reading(&Which::Slug(slug));
         if let (Some(vars), Value::Object(more)) = (vars.as_object_mut(), more) {
@@ -737,99 +609,12 @@ impl Store {
             vars,
             false,
         )?;
-        if snap.has_callbacks
-            && let Err(error) = self.dispatch_callbacks()
-        {
-            eprintln!("CALLBACK deferred: {error}");
+        if snap.has_callbacks {
+            self.after_write();
         }
         let view = View::new(self, snap);
         view.task(slug).map_err(Failure::Stop)?;
         Ok(view.tasks().remove(0))
-    }
-
-    /// The statements that read `which`, ending in the `RETURN` of a `Snapshot`, and their variables.
-    fn reading(which: &Which) -> (String, Value) {
-        const SCOPED: &str = " WHERE slug IN $slugs";
-        const KNOWN: &str = "record::exists(type::record('task', $slug))";
-        let (pick, scope, known, mut vars) = match which {
-            Which::All => (
-                "SELECT * OMIT id FROM task ORDER BY priority, sid",
-                "",
-                "true",
-                json!({}),
-            ),
-            Which::Status(status) => (
-                "SELECT * OMIT id FROM task WHERE status = $status ORDER BY priority, sid",
-                SCOPED,
-                "true",
-                json!({"status": status}),
-            ),
-            Which::Slug(slug) => (
-                "SELECT * OMIT id FROM type::record('task', $slug)",
-                SCOPED,
-                KNOWN,
-                json!({"slug": slug}),
-            ),
-            Which::Slugs(slugs) => (
-                "SELECT * OMIT id FROM $wanted.map(|$slug| type::record('task', $slug)) ORDER BY priority, sid",
-                SCOPED,
-                "true",
-                json!({"wanted": slugs}),
-            ),
-            Which::Children(slug) => (
-                "SELECT * OMIT id FROM task WHERE parent = $slug ORDER BY sid",
-                SCOPED,
-                KNOWN,
-                json!({"slug": slug}),
-            ),
-            Which::Pullable(handle) => (
-                "SELECT * OMIT id FROM task WHERE status IN $pullable ORDER BY sid",
-                SCOPED,
-                "record::exists(type::record('session', $handle))",
-                json!({"handle": handle, "pullable": PULLABLE}),
-            ),
-            Which::Linked(doc) => (
-                "SELECT * OMIT id FROM array::distinct(SELECT VALUE slug FROM link
-                     WHERE kind = 'doc' AND (target = $doc OR string::starts_with(target, $doc + '#')))
-                     .map(|$s| type::record('task', $s)) ORDER BY priority, slug",
-                SCOPED,
-                "true",
-                json!({"doc": doc}),
-            ),
-        };
-        let (deps, mine) = match which {
-            Which::Slug(_) | Which::Pullable(_) => (
-                "(SELECT slug, kind, target FROM link WHERE slug IN $slugs AND kind = 'dep'
-                  AND type::record('task', target).status NOT IN [NONE, 'done'] ORDER BY target)",
-                if matches!(which, Which::Pullable(_)) {
-                    "(SELECT VALUE slug FROM role WHERE handle = $handle)"
-                } else {
-                    "[]"
-                },
-            ),
-            _ => ("[]", "[]"),
-        };
-        vars["executing"] = json!(EXECUTING);
-        let read = format!(
-            "LET $tasks = ({pick});
-             LET $slugs = $tasks.slug;
-             {HELD}
-             RETURN {{
-                 tasks: $tasks,
-                 links: (SELECT slug, kind, target FROM link{scope} ORDER BY target),
-                 roles: (SELECT slug, handle, role, since, expires FROM role{scope} ORDER BY since, handle),
-                 sessions: (SELECT * OMIT id FROM session ORDER BY connected, handle),
-                 held: $held,
-                 latest: (SELECT VALUE last FROM ONLY counter:message) ?? 0,
-                 callback_sequence: $callback_sequence ?? 0,
-                 has_callbacks: $has_callbacks ?? false,
-                 native_presence: (SELECT handle, confirmed_until ?? 0 AS until FROM callback_state WHERE string::starts_with(address ?? '', 'codex:')),
-                 open_deps: {deps},
-                 known: {known},
-                 mine: {mine},
-             }};"
-        );
-        (read, vars)
     }
 
     fn retrying<T>(&self, mut once: impl FnMut() -> Result<T, Failure>) -> Result<T, Error> {
@@ -853,48 +638,6 @@ impl Store {
             }
         }
     }
-}
-
-/// The most a copy sends in one request: the server takes 4 MiB (`SURREAL_HTTP_MAX_RPC_BODY_SIZE`).
-const CHUNK_BYTES: usize = 1 << 20;
-
-const DUMP: &str = "RETURN {
-    tasks: (SELECT * OMIT id, version FROM task ORDER BY sid),
-    task_links: (SELECT * OMIT id FROM link ORDER BY slug, kind, target),
-    sessions: (SELECT * OMIT id FROM session ORDER BY handle),
-    roles: (SELECT * OMIT id FROM role ORDER BY slug, handle, role),
-    messages: (SELECT * OMIT id FROM message ORDER BY sid),
-    deliveries: (SELECT * OMIT id FROM delivery ORDER BY message, handle),
-    barred_keys: (SELECT * OMIT id FROM barred_key ORDER BY key),
-    task_sessions: (SELECT * OMIT id FROM task_session ORDER BY slug, handle),
-};";
-
-/// Every row the copy writes, the counters with them, in the order of their keys, as one hash: the same
-/// as long as nothing is written.
-const ROWS: &str = "crypto::sha256(<string> [
-    (SELECT * FROM task ORDER BY id), (SELECT * FROM link ORDER BY id),
-    (SELECT * FROM session ORDER BY id), (SELECT * FROM role ORDER BY id),
-    (SELECT * FROM message ORDER BY id), (SELECT * FROM delivery ORDER BY id),
-    (SELECT * FROM barred_key ORDER BY id), (SELECT * FROM task_session ORDER BY id),
-    (SELECT * FROM counter ORDER BY id),
-])";
-
-/// What a move into a board written since its move is refused with, before and after that move's board.
-pub(crate) const WRITTEN_SINCE: (&str, &str) = (
-    "the SurrealDB board holds the move of ",
-    " and was written since, which a move into it would lose",
-);
-
-/// The move from SQLite a board holds ([`Store::move_in`]).
-#[derive(Debug, Clone, PartialEq, Deserialize)]
-pub struct Moved {
-    /// The SQLite board it moved.
-    #[serde(rename = "board")]
-    pub from: String,
-    /// When, by the clock of the store that moved it.
-    pub at: f64,
-    /// Whether a row changed since: a move into the board now would lose it.
-    pub written_since: bool,
 }
 
 /// One session, `$handle`, and whether it holds work another could take over (a `Found`). Needs
@@ -930,13 +673,6 @@ fn native_health(row: &SessionRow, health: Health, now: f64, until: Option<f64>)
     }
 }
 
-/// `$held`: every session holding work another could take over (`CLAIMABLE`, for everyone), for
-/// the `lost` line of health. Needs `$executing`.
-const HELD: &str = "LET $open = SELECT VALUE slug FROM task WHERE status IN $executing;
-LET $waiting = SELECT VALUE slug FROM task WHERE status = 'review';
-LET $held = array::distinct(SELECT VALUE handle FROM role
-    WHERE (role = 'executor' AND slug IN $open) OR (role = 'reviewer' AND slug IN $waiting));";
-
 /// The tasks `$handle` holds that another could take over (`health::claimable`, in the database).
 const CLAIMABLE: &str = "(SELECT VALUE slug FROM role WHERE handle = $handle
     AND ((role = 'executor' AND type::record('task', slug).status IN $executing)
@@ -954,7 +690,7 @@ FOR $s IN $seen {
 };
 UPDATE type::record('session', $actor) SET last_seen = math::max([last_seen, $now]) RETURN NONE;
 FOR $r IN $drop { DELETE type::record('role', [$slug, $r.handle, $r.role]); };
-FOR $r IN $add { UPSERT type::record('role', [$slug, $r.handle, $r.role]) CONTENT $r RETURN NONE; };
+FOR $r IN $add { IF type::record('session', $r.handle).left_at != NONE { THROW 'stale' }; UPSERT type::record('role', [$slug, $r.handle, $r.role]) CONTENT $r RETURN NONE; };
 UPDATE type::record('task', $slug) SET version += 1, status = $status ?? status, updated = $updated ?? updated RETURN NONE;
 IF $say {
     LET $counted = (UPSERT ONLY counter:message SET last += 1, ts = IF ts != NONE AND ts > $now AND ts <= $now + 60 { ts } ELSE { $now });
@@ -968,6 +704,8 @@ enum Which<'a> {
     All,
     Status(&'a str),
     Slug(&'a str),
+    /// One task, as `Slug`, with what the cap on an orchestrator's open tasks decides a start on.
+    Starting(&'a str),
     Slugs(&'a [String]),
     /// The tasks right under one, in the order they were made.
     Children(&'a str),
@@ -1017,6 +755,9 @@ struct Snapshot {
     /// The task (`Which::Slug`, `Which::Children`) or session (`Which::Pullable`) the read is about
     /// is there.
     known: bool,
+    /// What the cap decides a start on (`Which::Starting`).
+    #[serde(default)]
+    slots: Option<cap::Read>,
 }
 
 #[derive(Clone, Deserialize)]
@@ -1197,7 +938,29 @@ struct Change {
     drop: Vec<(String, String)>,
     add: Option<RoleRow>,
     status: Option<String>,
+    /// The move is a hold, which keeps the task's slot while it is blocked ([`cap`]).
+    hold: bool,
     say: Option<Say>,
+    /// Work it starts, which takes a slot of an orchestrator's under the store's cap.
+    opens: Option<Opens>,
+}
+
+/// A start a rule makes: a claim or a move into an open status, the orchestrator role taken, or a
+/// change of parent of open work. Under a cap it is refused when it would raise an orchestrator's
+/// open tasks past it ([`crate::slots::started`]).
+#[derive(Default)]
+struct Opens {
+    /// The status it moves the task to, when it moves it.
+    status: Option<String>,
+    /// The session taking the orchestrator role on the task, when that is the start.
+    orchestrator: Option<String>,
+    /// The task's new parent, or none, when that is the change.
+    parent: Option<Option<String>>,
+    /// The sessions whose parents stand in for an orchestrator when none holds the task: its
+    /// executor once it starts.
+    by: Vec<String>,
+    /// What the refusal says cannot happen.
+    what: String,
 }
 
 struct Say {
@@ -1245,6 +1008,7 @@ impl Change {
             "drop": self.drop.iter().map(|(handle, role)| json!({"handle": handle, "role": role})).collect::<Vec<_>>(),
             "add": self.add.iter().collect::<Vec<_>>(),
             "status": self.status,
+            "hold": self.hold,
             "updated": self.status.as_ref().map(|_| now),
             "say": say,
         })
@@ -1333,68 +1097,4 @@ fn backoff(attempt: u32) -> Duration {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn an_expired_native_signal_never_overrules_a_heartbeat_or_an_explicit_departure() {
-        let row = SessionRow::default();
-        for (health, until, want) in [
-            (Health::Live, Some(0.0), Health::Live),
-            (Health::Lost, Some(100.0), Health::Lost),
-            (Health::Stale, Some(99.0), Health::Unknown),
-            (Health::Lost, Some(99.0), Health::Unknown),
-            (Health::Left, Some(99.0), Health::Unknown),
-            (Health::Lost, None, Health::Lost),
-        ] {
-            assert_eq!(native_health(&row, health, 100.0, until), want);
-        }
-        let left = SessionRow {
-            left_at: Some(1.0),
-            ..row
-        };
-        assert_eq!(
-            native_health(&left, Health::Left, 100.0, Some(0.0)),
-            Health::Left
-        );
-        assert!(Health::Unknown.holds());
-        assert_eq!(Health::Unknown.as_str(), "unknown");
-    }
-
-    #[test]
-    fn native_uncertainty_expires_without_overruling_the_heartbeat_health() {
-        let row = SessionRow::default();
-        for health in [Health::Live, Health::Stale, Health::Lost, Health::Left] {
-            let protected = if health == Health::Live {
-                health
-            } else {
-                Health::Unknown
-            };
-            for (now, expected) in [(699.0, protected), (700.0, protected), (701.0, health)] {
-                assert_eq!(native_health(&row, health, now, Some(100.0)), expected);
-            }
-        }
-    }
-
-    #[test]
-    fn a_name_is_quoted_as_python_quotes_it() {
-        assert_eq!(repr("nobody"), "'nobody'");
-        assert_eq!(repr(""), "''");
-        assert_eq!(repr("it's"), "\"it's\"");
-        assert_eq!(repr("it's \"x\""), "'it\\'s \"x\"'");
-        assert_eq!(repr("a\\b\nc\td\r\u{1}"), "'a\\\\b\\nc\\td\\r\\x01'");
-        assert_eq!(repr("sim/jump — ✓"), "'sim/jump — ✓'");
-    }
-
-    #[test]
-    fn a_refusal_is_its_words_and_a_database_failure_says_so() {
-        assert_eq!(
-            Error::Refused("no task 'x'".into()).to_string(),
-            "no task 'x'"
-        );
-        assert_eq!(
-            Error::Db("cannot reach it".into()).to_string(),
-            "SurrealDB: cannot reach it"
-        );
-    }
-}
+mod tests;

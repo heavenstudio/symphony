@@ -19,18 +19,22 @@
 //! reason instead. The monitor delivers it only for newly actionable entries.
 
 use crate::health::EXECUTING;
+use crate::orchestration::{Owners, claimable_work};
+use crate::slots::Ledger;
+use crate::store::unanswered::Pending;
 use crate::sys::local_minute;
-use crate::{Error, Store, Task};
+use crate::{Board, Error, Session, Store, Task};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 /// How many of a category are listed.
 pub const SHOWN: usize = 6;
 /// The categories, in the order they are listed; `idle` holds handles, the others tasks.
-pub const CATEGORIES: [&str; 6] = [
+pub const CATEGORIES: [&str; 7] = [
     "ready_unstaffed",
     "dependency_blocked",
     "in_progress_orphaned",
     "review_unreviewed",
+    "unanswered",
     "landed_open",
     "idle",
 ];
@@ -41,6 +45,8 @@ pub struct Digest {
     pub now: f64,
     /// In-progress tasks with an executor present.
     pub executing: usize,
+    /// The slugs `executing` counts, for [`Digest::only_for`].
+    running: Vec<String>,
     tasks: BTreeMap<&'static str, Vec<Task>>,
     /// Handles the agents API reports idle.
     pub idle: Vec<String>,
@@ -48,6 +54,11 @@ pub struct Digest {
     pub notes: BTreeMap<String, String>,
     /// Work retained because its shared native presence signal expired.
     pub liveness_unknown: Vec<String>,
+    unanswered: Vec<Pending>,
+    /// The cap on an orchestrator's open tasks the board holds starts to ([`crate::slots`]).
+    pub cap: Option<usize>,
+    /// The open slots the orchestrator the digest is for holds, under a cap ([`Digest::only_for`]).
+    pub slots: Option<usize>,
 }
 
 impl Digest {
@@ -58,6 +69,8 @@ impl Digest {
             .flat_map(|name| {
                 let entries: Vec<String> = if *name == "idle" {
                     self.idle.clone()
+                } else if *name == "unanswered" {
+                    self.unanswered.iter().map(pending_key).collect()
                 } else {
                     self.items(name).iter().map(|t| t.slug.clone()).collect()
                 };
@@ -69,9 +82,34 @@ impl Digest {
     }
     /// Stable event content, independent of when the board was observed.
     pub fn event_lines(&self) -> Vec<String> {
+        self.event_lines_since(&BTreeSet::new())
+    }
+
+    /// Pending-post lines are emitted once per post, including when another category changes.
+    pub fn event_lines_since(&self, seen: &BTreeSet<(String, String)>) -> Vec<String> {
         let mut lines = self.lines();
         lines[0] = format!("PULL {}", lines[0].splitn(3, ' ').nth(2).unwrap_or(""));
+        lines.retain(|line| !line.starts_with("  unanswered "));
+        lines.extend(self.unanswered_lines(seen));
         lines
+    }
+
+    fn unanswered_lines(&self, seen: &BTreeSet<(String, String)>) -> Vec<String> {
+        let mut by_post: BTreeMap<(String, i64), Vec<String>> = BTreeMap::new();
+        for pending in &self.unanswered {
+            if !seen.contains(&("unanswered".into(), pending_key(pending))) {
+                by_post
+                    .entry((pending.slug.clone(), pending.post.id))
+                    .or_default()
+                    .push(format!("{}: {}", pending.handle, pending.command()));
+            }
+        }
+        by_post
+            .into_iter()
+            .map(|((slug, id), commands)| {
+                format!("  unanswered {slug} post #{id} — {}", commands.join("; "))
+            })
+            .collect()
     }
     /// How many there are in `name`, `executing` or a category.
     pub fn count(&self, name: &str) -> usize {
@@ -87,14 +125,56 @@ impl Digest {
         self.tasks.get(name).map_or(&[], Vec::as_slice)
     }
 
+    /// The digest as orchestrator `handle` hears it: the rows of its own tasks and of unclaimed
+    /// ones ([`Owners::reaches`]), and the idle sessions but the children of another orchestrator
+    /// still here. Staffing was judged on the whole board, so work on a subtask still staffs its
+    /// parent.
+    pub fn only_for(mut self, board: &Board, handle: &str) -> Digest {
+        let owners = Owners::new(&board.tasks);
+        for listed in self.tasks.values_mut() {
+            listed.retain(|task| owners.reaches(&task.slug, handle));
+        }
+        self.tasks.retain(|_, listed| !listed.is_empty());
+        self.unanswered.retain(|p| owners.reaches(&p.slug, handle));
+        self.running.retain(|slug| owners.reaches(slug, handle));
+        self.executing = self.running.len();
+        self.notes.retain(|slug, _| owners.reaches(slug, handle));
+        let sessions: HashMap<&str, &Session> = (board.sessions.iter())
+            .map(|s| (s.row.handle.as_str(), s))
+            .collect();
+        let elsewhere = |parent: &str| {
+            let orchestrator = |p: &&Session| p.row.kind == "orchestrator" && p.health.holds();
+            parent != handle && sessions.get(parent).is_some_and(orchestrator)
+        };
+        self.idle.retain(|idle| {
+            let parent = sessions
+                .get(idle.as_str())
+                .and_then(|s| s.row.parent.as_deref());
+            !parent.is_some_and(elsewhere)
+        });
+        let work = claimable_work(board);
+        let heard = |held: &Vec<&Task>| held.iter().any(|t| owners.reaches(&t.slug, handle));
+        self.liveness_unknown
+            .retain(|quiet| work.get(quiet.as_str()).is_some_and(heard));
+        if self.cap.is_some() {
+            self.slots = Some(Ledger::of_board(board).held(handle).len());
+        }
+        self
+    }
+
     pub fn lines(&self) -> Vec<String> {
-        let counts: Vec<String> = ["executing"]
+        let mut counts: Vec<String> = ["executing"]
             .iter()
             .chain(CATEGORIES.iter())
             // Keep the usual digest compact; cancellation blockers get a count when present.
-            .filter(|name| **name != "dependency_blocked" || self.count(name) > 0)
+            .filter(|name| {
+                !matches!(**name, "dependency_blocked" | "unanswered") || self.count(name) > 0
+            })
             .map(|name| format!("{name}={}", self.count(name)))
             .collect();
+        if let (Some(held), Some(cap)) = (self.slots, self.cap) {
+            counts.push(format!("slots={held}/{cap}"));
+        }
         let mut out = vec![format!(
             "PULL {} {}",
             &local_minute(self.now)[11..],
@@ -106,6 +186,8 @@ impl Digest {
         for name in CATEGORIES {
             let listed: Vec<String> = if name == "idle" {
                 self.idle.iter().map(|h| format!("  idle {h}")).collect()
+            } else if name == "unanswered" {
+                self.unanswered_lines(&BTreeSet::new())
             } else {
                 self.items(name)
                     .iter()
@@ -182,9 +264,20 @@ pub fn digest(
     let staffed = |task: &Task| {
         present(task, "executor") || below(task).iter().any(|c| present(c, "executor"))
     };
+    let mut running = Vec::new();
     let mut found: BTreeMap<&'static str, Vec<Task>> = BTreeMap::new();
     let mut notes = BTreeMap::new();
     let mut executing = 0;
+    let unanswered: Vec<_> = store
+        .pending_posts(&tasks)?
+        .into_iter()
+        .filter(|p| p.overdue(now) && !busy.contains(p.handle.as_str()))
+        .collect();
+    for t in &tasks {
+        if unanswered.iter().any(|p| p.slug == t.slug) {
+            found.entry("unanswered").or_default().push(t.clone());
+        }
+    }
     for t in &tasks {
         let cancelled: Vec<&str> = t
             .depends
@@ -228,6 +321,7 @@ pub fn digest(
             "in_progress" => {
                 if staffed(t) {
                     executing += 1;
+                    running.push(t.slug.clone());
                 } else {
                     found
                         .entry("in_progress_orphaned")
@@ -259,9 +353,17 @@ pub fn digest(
     Ok(Digest {
         now,
         executing,
+        running,
         tasks: found,
         idle: idle.to_vec(),
         notes,
         liveness_unknown,
+        unanswered,
+        cap: store.slots(),
+        slots: None,
     })
+}
+
+fn pending_key(pending: &Pending) -> String {
+    format!("{}#{}", pending.slug, pending.post.id)
 }

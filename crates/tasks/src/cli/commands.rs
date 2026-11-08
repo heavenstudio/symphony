@@ -4,12 +4,12 @@
 use super::agents::{describe, table};
 use super::args::Parsed;
 use super::attach::{Watch, watch};
-use super::text::{event, export_markdown, message_line, roles_text, tree_order};
+use super::text::{event, export_markdown, message_line, roles_text};
 use super::{Clock, Env, probes, shape};
-use crate::health::{FINISHED, RESERVE_SECONDS};
+use crate::health::RESERVE_SECONDS;
 use crate::pyjson::{self, Py};
 use crate::sweep::{self, git::Listed, trigger};
-use crate::sys::{self, Command};
+use crate::sys;
 use crate::{Error, NewSession, NewTask, Session, Store, Task};
 use std::collections::BTreeMap;
 use std::io::{Read, Write};
@@ -20,6 +20,8 @@ const EXPORT_PATH: &str = "docs/history/tasks.md";
 /// How often an orchestrator's monitor prints the PULL digest, unless `TASKS_PULL_SECONDS` says.
 const PULL_SECONDS: f64 = 600.0;
 
+mod finish;
+mod list;
 mod panes;
 
 /// Why a command stopped short.
@@ -76,7 +78,7 @@ impl Context<'_> {
 
     /// `git ARGS` in the working directory: its output, or "" if it fails.
     fn git(&self, args: &[&str]) -> String {
-        sys::output(Command::new("git").args(args).current_dir(&self.env.cwd))
+        sys::output(sys::command("git").args(args).current_dir(&self.env.cwd))
             .ok()
             .filter(|done| done.status.success())
             .map(|done| String::from_utf8_lossy(&done.stdout).trim().to_string())
@@ -169,11 +171,12 @@ pub fn run(store: &Store, c: &mut Context) -> Result<(), Stop> {
             if !p.flag("off") && address.is_none() {
                 return Err(Stop::Refused("no native callback detected; pass an address, use inbox for an in-process subagent, or --off to unregister".into()));
             }
-            store.callback(
+            store.callback_in(
                 &actor,
                 address.as_deref(),
                 p.flag("chat"),
                 p.flag("if_free"),
+                c.env.var("HC_TERMINAL_ID"),
             )?;
             c.say(&format!(
                 "CALLBACK {actor} {}",
@@ -202,7 +205,7 @@ pub fn run(store: &Store, c: &mut Context) -> Result<(), Stop> {
             for line in table(&view) {
                 c.say(&line);
             }
-            let down: Vec<&str> = [("herdr", view.herdr), ("slots", view.slots)]
+            let down: Vec<&str> = [("hc", view.herdr), ("slots", view.slots)]
                 .iter()
                 .filter(|(_, asked)| !asked)
                 .map(|(name, _)| *name)
@@ -214,34 +217,7 @@ pub fn run(store: &Store, c: &mut Context) -> Result<(), Stop> {
                 ));
             }
         }
-        "list" => {
-            let mut tasks = store.tasks(p.get("status"))?;
-            if p.flag("mine") {
-                let me = c.actor()?;
-                tasks.retain(|t| t.roles.iter().any(|r| r.handle == me));
-            }
-            if p.flag("json") {
-                let json = Py::obj(vec![("tasks", shape::tasks(&tasks))]);
-                c.say(&pyjson::dumps(&json));
-                return Ok(());
-            }
-            for (depth, t) in tree_order(&tasks) {
-                let roles = roles_text(t);
-                let roles = if roles.is_empty() {
-                    String::new()
-                } else {
-                    format!("  [{roles}]")
-                };
-                c.say(&format!(
-                    "{}p{} {:<11} {:<28} {}{roles}",
-                    "  ".repeat(depth),
-                    t.priority,
-                    t.status,
-                    t.slug,
-                    t.title
-                ));
-            }
-        }
+        "list" => list::run(store, c)?,
         "search" => super::search::run(store, c)?,
         "embed" => {
             // Only the cache-only maintenance mode may run without an agent. Explicit actors
@@ -296,7 +272,7 @@ pub fn run(store: &Store, c: &mut Context) -> Result<(), Stop> {
             let slug = c.arg("slug");
             let t = store.done(&slug, &c.actor()?, &c.arg("note"))?;
             c.say(&format!("{slug} is {}", t.status));
-            after_finish(store, c, &t);
+            finish::after_finish(store, c, &t);
         }
         "claim" => {
             let t = store.claim(&c.arg("slug"), &c.actor()?)?;
@@ -316,17 +292,22 @@ pub fn run(store: &Store, c: &mut Context) -> Result<(), Stop> {
             store.take_role(&slug, &c.actor()?, &role)?;
             c.say(&format!("{role} on {slug}"));
         }
+        "handover" => {
+            let (slug, to) = (c.arg("slug"), c.arg("to"));
+            store.hand_over(&slug, &c.actor()?, &to)?;
+            c.say(&format!("handed {slug} to {to} (orchestrator)"));
+        }
         "move" => {
             let slug = c.arg("slug");
             let t = store.move_to(&slug, &c.arg("status"), &c.actor()?)?;
             c.say(&format!("{slug} is {}", t.status));
-            after_finish(store, c, &t);
+            finish::after_move(store, c, &t);
         }
         "verdict" => {
             let slug = c.arg("slug");
             let t = store.verdict(&slug, &c.actor()?, &c.arg("verdict"), &c.arg("text"))?;
             c.say(&format!("{slug} is {}", t.status));
-            after_finish(store, c, &t);
+            finish::after_finish(store, c, &t);
         }
         "say" => {
             let m = store.say(&c.arg("slug"), &c.actor()?, &c.arg("text"), p.get("to"))?;
@@ -336,6 +317,7 @@ pub fn run(store: &Store, c: &mut Context) -> Result<(), Stop> {
         "staff" => panes::staff(store, c)?,
         "restore" => panes::restore(store, c)?,
         "cleanup" => panes::cleanup(store, c)?,
+        "close" => panes::close(store, c)?,
         "reap" => {
             panes::reap(store, c)?;
             if !p.flag("dry_run") {
@@ -413,19 +395,9 @@ pub fn run(store: &Store, c: &mut Context) -> Result<(), Stop> {
     Ok(())
 }
 
-/// `task` just changed status: when it is over, the panes of the sessions launched on it or under it
-/// close ([`panes::close_finished`]), and then a sweep starts, detached, in which their worktrees go
-/// without the window when merged and clean ([`trigger`]). The status change stands whatever happens
-/// here; what went wrong closing panes is said, and the sweep says nothing.
-fn after_finish(store: &Store, c: &mut Context, task: &Task) {
-    if !FINISHED.contains(&task.status.as_str()) {
-        return;
-    }
-    panes::close_finished(store, c, &task.slug);
-    let why = format!("{} is {}", task.slug, task.status);
-    trigger::trigger(c.env, &c.env.cwd, &why, Some(&task.slug));
-}
-
+/// `create SLUG TITLE`: a new task from its arguments and its body (the `body` argument, a file, or
+/// stdin for `-`), refused when the brief names the worktree of a dependency that has not landed
+/// ([`imported_worktree`]).
 fn create(store: &Store, c: &mut Context) -> Result<(), Stop> {
     let p = c.parsed;
     let body = match p.get("body_file") {

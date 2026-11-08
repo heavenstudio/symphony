@@ -12,11 +12,12 @@
 //!
 //! It uses std alone, so a crate that does not link this one takes the file as a module of its own
 //! (the Symphony client's browser tests, by `#[path]`), and [`listens`] is handed what runs its
-//! `lsof`.
+//! `lsof`. It starts no child itself: the command is [`Lsof`]'s, the board's from `crate::sys`
+//! and std's from the crate that takes the file.
 
 use std::fmt;
 use std::net::{Ipv4Addr, SocketAddr, TcpListener};
-use std::process::{Command, Output};
+use std::process::Output;
 use std::time::Instant;
 
 /// How many starts are made before a child whose address is taken each time is given up on.
@@ -74,7 +75,7 @@ pub fn in_use(output: &str) -> bool {
 /// (`-a -p PID -iTCP@ADDR -sTCP:LISTEN`); it exits 1 with nothing to say when there are none. An
 /// `lsof` that cannot run, or that fails saying why, is the error. `run` runs it and reads what it
 /// printed to its end: `crate::sys::output`, which no child another thread starts meanwhile can
-/// hold open, or [`Command::output`] in a crate that does not link the board.
+/// hold open, or std's `Command::output` in a crate that does not link the board.
 pub fn listens<C: Lsof>(
     pid: u32,
     addr: SocketAddr,
@@ -111,29 +112,29 @@ pub fn listens<C: Lsof>(
     )))
 }
 
-/// The command [`listens`] runs `lsof` as: std's, or the board's own (`crate::sys::Command`), which
-/// starts it without a fork.
+/// The command [`listens`] runs `lsof` as: the board's own (`crate::sys::Command`), which starts it
+/// without a fork or the starter's session, or std's, which a crate that takes this file gives.
 pub trait Lsof {
     /// `lsof` with `args`.
     fn lsof(args: &[&str]) -> Self;
 }
 
-impl Lsof for Command {
-    fn lsof(args: &[&str]) -> Self {
-        let mut lsof = Command::new("lsof");
-        lsof.args(args);
-        lsof
-    }
+/// A loopback address nothing was bound to as it was picked, on none of the ports in `avoid`.
+fn reserve(avoid: &[u16]) -> std::io::Result<SocketAddr> {
+    pick(avoid, || TcpListener::bind((Ipv4Addr::LOCALHOST, 0)))
 }
 
-/// A loopback address nothing was bound to as it was picked, on none of the ports in `tried`. A port
-/// picked again is held while the next is picked, so the system cannot hand it back.
-fn reserve(tried: &[u16]) -> std::io::Result<SocketAddr> {
+/// The address of the first listener `bind` gives on none of the ports in `avoid`. A listener on
+/// one of them is held while the next is bound, so the system cannot hand its port back.
+fn pick(
+    avoid: &[u16],
+    mut bind: impl FnMut() -> std::io::Result<TcpListener>,
+) -> std::io::Result<SocketAddr> {
     let mut held = Vec::new();
     loop {
-        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))?;
+        let listener = bind()?;
         let addr = listener.local_addr()?;
-        if !tried.contains(&addr.port()) {
+        if !avoid.contains(&addr.port()) {
             return Ok(addr);
         }
         held.push(listener);
@@ -148,22 +149,64 @@ fn reserve(tried: &[u16]) -> std::io::Result<SocketAddr> {
 pub fn start_on_free_port<T, E>(
     attempts: usize,
     until: Instant,
+    start: impl FnMut(SocketAddr) -> Result<Start<T>, E>,
+) -> Result<(T, SocketAddr), NotStarted<E>> {
+    start_on_free_port_except(&[], attempts, until, start)
+}
+
+/// As [`start_on_free_port`], never on a port of `except`: the port of a server that ended, which a
+/// client may still hold as that server's address.
+pub fn start_on_free_port_except<T, E>(
+    except: &[u16],
+    attempts: usize,
+    until: Instant,
     mut start: impl FnMut(SocketAddr) -> Result<Start<T>, E>,
 ) -> Result<(T, SocketAddr), NotStarted<E>> {
-    let mut tried = Vec::new();
+    let mut avoid = except.to_vec();
+    let mut tried = 0;
     loop {
-        let addr = reserve(&tried).map_err(NotStarted::NoPort)?;
-        tried.push(addr.port());
+        let addr = reserve(&avoid).map_err(NotStarted::NoPort)?;
+        avoid.push(addr.port());
+        tried += 1;
         match start(addr).map_err(NotStarted::Failed)? {
             Start::Up(up) => return Ok((up, addr)),
             Start::Ended(output) if !in_use(&output) => return Err(NotStarted::Ended(output)),
-            Start::Ended(output) if tried.len() >= attempts || Instant::now() >= until => {
+            Start::Ended(output) if tried >= attempts || Instant::now() >= until => {
                 return Err(NotStarted::InUse {
-                    attempts: tried.len(),
+                    attempts: tried,
                     output,
                 });
             }
             Start::Ended(_) => {}
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_port_to_avoid_is_held_while_the_next_is_picked_and_never_given() {
+        let bound: Vec<TcpListener> = (0..3)
+            .map(|_| TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap())
+            .collect();
+        let ports: Vec<u16> = bound
+            .iter()
+            .map(|listener| listener.local_addr().unwrap().port())
+            .collect();
+        let mut given = bound.into_iter();
+        let picked = pick(&ports[..2], || Ok(given.next().unwrap())).unwrap();
+        assert_eq!(picked.port(), ports[2]);
+        assert!(
+            given.next().is_none(),
+            "no listener was bound past the first free one"
+        );
+    }
+
+    #[test]
+    fn a_failed_bind_is_the_pick_s_error() {
+        let refused = pick(&[], || Err(std::io::Error::other("no ports left")));
+        assert_eq!(refused.unwrap_err().to_string(), "no ports left");
     }
 }

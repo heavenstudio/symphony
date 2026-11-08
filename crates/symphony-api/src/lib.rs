@@ -34,8 +34,12 @@
 
 use serde::{Deserialize, Serialize};
 
+mod agent_probes;
 mod blocks;
+mod media;
+pub use agent_probes::AgentProbes;
 pub use blocks::*;
+pub use media::{GalleryItem, Media, View, Viewer};
 mod project;
 pub use project::*;
 
@@ -643,35 +647,6 @@ pub struct Heading {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "lowercase")]
-pub enum Media {
-    Mockup {
-        src: String,
-        label: String,
-    },
-    /// A 3D model (`.glb`), drawn by the vendored viewer under its caption; `poster` is a picture
-    /// shown before it loads.
-    Model {
-        src: String,
-        label: String,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        poster: Option<String>,
-    },
-    /// Models to pick from, one open at a time.
-    Gallery {
-        items: Vec<GalleryItem>,
-    },
-}
-
-/// One model of a gallery. The poster URL already names a small copy.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct GalleryItem {
-    pub name: String,
-    pub src: String,
-    pub poster: Option<String>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Fragment {
     #[serde(default)]
     pub blocks: Vec<Block>,
@@ -904,12 +879,6 @@ pub struct Agents {
     pub agents: Vec<Agent>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct AgentProbes {
-    pub herdr: String,
-    pub slots: String,
-}
-
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[expect(clippy::struct_field_names, reason = "the field is the wire's name")]
 pub struct Agent {
@@ -934,6 +903,15 @@ pub struct Agent {
     pub health: String,
     pub last_tool_call: Option<f64>,
     pub last_message: Option<AgentSaid>,
+    /// The open tasks it holds against the board's cap on an orchestrator's, when one is set.
+    #[serde(default)]
+    pub slots: Option<AgentSlots>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AgentSlots {
+    pub open: usize,
+    pub cap: usize,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

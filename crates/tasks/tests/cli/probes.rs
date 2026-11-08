@@ -1,10 +1,12 @@
-//! What the agents API and the monitor ask of the machine: the test-slot locks, herdr's panes, the
+//! What the agents API and the monitor ask of the machine: the test-slot locks, hc's terminals, the
 //! branch checked out in a folder, and whether a task's branch landed.
 
+use serde_json::{Value, json};
 use std::fs::{self, File};
 use std::path::{Path, PathBuf};
 use symphony_board::cli::Env;
-use symphony_board::cli::probes::{branch_of, herdr_panes, landed, machine, slot_runs, split};
+use symphony_board::cli::agents::Pane;
+use symphony_board::cli::probes::{branch_of, hc_terminals, landed, machine, slot_runs, split};
 use symphony_board::sys::Command;
 
 /// A run's fields, in `Run`'s order, for comparing several at once.
@@ -227,12 +229,12 @@ fn no_slot_folder_is_no_run() {
     assert!(slot_runs(&scratch("none")).unwrap().is_empty());
 }
 
-// -- herdr -----------------------------------------------------------------------------
+// -- hc --------------------------------------------------------------------------------
 
-fn herdr_env(bin: &str, extra: &[(&str, &str)]) -> Env {
+fn hc_env(bin: &str, extra: &[(&str, &str)]) -> Env {
     let mut vars: std::collections::BTreeMap<String, String> = [
         ("PATH", std::env::var("PATH").unwrap()),
-        ("HERDR_BIN", bin.to_string()),
+        ("HC_BIN", bin.to_string()),
     ]
     .into_iter()
     .map(|(k, v)| (k.to_string(), v))
@@ -245,69 +247,116 @@ fn herdr_env(bin: &str, extra: &[(&str, &str)]) -> Env {
 }
 
 #[test]
-fn herdr_s_panes_are_its_answers_result() {
-    let dir = scratch("herdr");
+fn hc_s_terminals_are_its_live_list_and_one_without_an_address_is_none() {
+    let dir = scratch("hc");
     let answer = dir.join("answer.json");
     fs::write(
         &answer,
-        r#"{"result": {"panes": [{"pane_id": "w1:p5", "agent": "claude", "agent_status": "blocked",
-             "agent_session": {"value": "sess-1"}, "cwd": "/wt/x"}, {"pane_id": "w1:p6"}, "junk"]}}"#,
+        r#"{"terminals": [{"address": "t5", "agent": "claude", "status": "blocked",
+             "name": "amber-heron", "cwd": "/wt/x", "state": "live"}, {"address": "t6"},
+             {"address": ""}, {"name": "no-address"}]}"#,
     )
     .unwrap();
     let bin = format!("sh -c 'cat \"$0\"' '{}'", answer.display());
-    let panes = herdr_panes(&herdr_env(&bin, &[])).unwrap();
+    let panes = hc_terminals(&hc_env(&bin, &[])).unwrap();
     let ids: Vec<&str> = panes.iter().map(|p| p.id.as_str()).collect();
-    assert_eq!(ids, ["w1:p5", "w1:p6"]);
-    assert_eq!(panes[0].session.as_deref(), Some("sess-1"));
+    assert_eq!(ids, ["t5", "t6"]);
+    let first = &panes[0];
+    assert_eq!(
+        (
+            first.agent.as_deref(),
+            first.status.as_deref(),
+            first.name.as_deref(),
+            first.cwd.as_str()
+        ),
+        (
+            Some("claude"),
+            Some("blocked"),
+            Some("amber-heron"),
+            "/wt/x"
+        )
+    );
 }
 
 #[test]
-fn herdr_is_asked_for_the_panes_of_the_workspace_it_runs_in() {
-    let bin = r#"sh -c 'printf "{\"result\": {\"panes\": [{\"pane_id\": \"%s\"}]}}" "$*"' herdr"#;
+fn hc_is_asked_for_its_live_terminals_whatever_space_the_caller_runs_in() {
+    let bin = r#"sh -c 'printf "{\"terminals\": [{\"address\": \"%s\"}]}" "$*"' hc"#;
     let ids = |extra: &[(&str, &str)]| -> Vec<String> {
-        herdr_panes(&herdr_env(bin, extra))
+        hc_terminals(&hc_env(bin, extra))
             .unwrap()
             .into_iter()
             .map(|p| p.id)
             .collect()
     };
-    assert_eq!(ids(&[]), ["pane list"]);
+    assert_eq!(ids(&[]), ["ls --json"]);
+    assert_eq!(ids(&[("HC_TERMINAL_ID", "t9")]), ["ls --json"]);
+}
+
+#[test]
+fn an_hc_that_cannot_answer_is_an_error() {
+    for bin in [
+        "/nonexistent/hc",
+        "sh -c 'echo no socket >&2; exit 1'",
+        "sh -c 'echo not json'",
+        "true",
+        "sh -c 'echo \"[1]\"'",
+        r#"sh -c 'echo "{\"terminals\": 3}"'"#,
+        r#"sh -c 'echo "{\"terminals\": [\"junk\"]}"'"#,
+        "'unclosed",
+        "  ",
+    ] {
+        assert!(hc_terminals(&hc_env(bin, &[])).is_err(), "{bin}");
+    }
+}
+
+#[test]
+fn an_hc_with_no_live_terminal_has_no_panes() {
+    let bin = r#"sh -c 'echo "{\"terminals\": []}"'"#;
+    assert!(hc_terminals(&hc_env(bin, &[])).unwrap().is_empty());
+}
+
+#[test]
+fn a_terminal_is_read_whatever_else_hc_says_of_it() {
+    let read = |terminal: Value| Pane::from_hc(terminal.as_object().unwrap());
+    let pane = read(json!({
+        "address": "t2", "agent": null, "status": 3, "argv": "not a list",
+        "foreground": {"cwd": ""}, "cwd": "/wt/x", "name": "amber-heron", "keep": true,
+    }))
+    .unwrap();
     assert_eq!(
-        ids(&[("HERDR_WORKSPACE_ID", "w9")]),
-        ["pane list --workspace w9"]
+        (
+            pane.id.as_str(),
+            pane.agent,
+            pane.status,
+            pane.session,
+            pane.cwd.as_str(),
+            pane.name.as_deref()
+        ),
+        ("t2", None, None, None, "/wt/x", Some("amber-heron"))
+    );
+    assert!(read(json!({"name": "amber-heron"})).is_none());
+    // As `hc get` shows it: the status an object, the conversation in the foreground's argv.
+    let got = read(json!({
+        "address": "t4", "status": {"app": "codex", "state": "idle"},
+        "foreground": {"argv": ["codex", "resume", "0abc"], "cwd": "/wt/fg", "name": "codex"},
+        "cwd": "/wt/start",
+    }))
+    .unwrap();
+    assert_eq!(
+        (
+            got.agent.as_deref(),
+            got.status.as_deref(),
+            got.session.as_deref(),
+            got.cwd.as_str()
+        ),
+        (Some("codex"), Some("idle"), Some("0abc"), "/wt/fg")
     );
 }
 
 #[test]
-fn a_herdr_that_cannot_answer_is_an_error() {
-    for bin in [
-        "/nonexistent/herdr",
-        "sh -c 'echo no socket >&2; exit 1'",
-        "sh -c 'echo not json'",
-        "sh -c 'echo \"[1]\"'",
-        r#"sh -c 'echo "{\"result\": []}"'"#,
-        r#"sh -c 'echo "{\"result\": {\"panes\": 3}}"'"#,
-        "'unclosed",
-        "  ",
-    ] {
-        assert!(herdr_panes(&herdr_env(bin, &[])).is_err(), "{bin}");
-    }
-}
-
-#[test]
-fn a_herdr_with_nothing_to_say_has_no_panes() {
-    for bin in ["true", r#"sh -c 'echo "{\"result\": {}}"'"#] {
-        assert!(
-            herdr_panes(&herdr_env(bin, &[])).unwrap().is_empty(),
-            "{bin}"
-        );
-    }
-}
-
-#[test]
-fn herdr_s_binary_is_split_as_a_posix_shell_splits_it() {
+fn a_binary_is_split_as_a_posix_shell_splits_it() {
     let cases: [(&str, &[&str]); 7] = [
-        ("herdr", &["herdr"]),
+        ("hc", &["hc"]),
         ("  bash   fake.sh ", &["bash", "fake.sh"]),
         (
             r#"sh -c 'cat "$0"' /a\ b"#,
@@ -401,7 +450,7 @@ fn a_task_with_no_branch_is_not() {
 #[test]
 fn the_machines_probes_outside_a_repository_read_no_slots_and_ask_git_once_a_folder() {
     let nowhere = outside("machine");
-    let mut env = herdr_env("/nonexistent/herdr", &[]);
+    let mut env = hc_env("/nonexistent/hc", &[]);
     env.cwd = nowhere.clone();
     let probes = machine(&env);
     assert!((probes.runs)().is_err());

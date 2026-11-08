@@ -47,11 +47,6 @@ use std::time::Duration;
 #[cfg(target_vendor = "apple")]
 use std::time::Instant;
 
-/// `O_CLOFORK`, which the libc crate does not name for Apple (`sys/fcntl.h`): a descriptor no spawn
-/// or fork copies. Only `open` sets it; macOS's `F_SETFD` and `F_DUPFD_CLOFORK` do not.
-#[cfg(target_vendor = "apple")]
-const O_CLOFORK: libc::c_int = 0x0800_0000;
-
 static SPAWNING: Mutex<()> = Mutex::new(());
 
 /// Held while this process holds a descriptor for a child that any spawn would copy: the copies
@@ -425,7 +420,7 @@ fn reopened(fd: std::os::fd::BorrowedFd<'_>, read: bool, write: bool) -> io::Res
     File::options()
         .read(read)
         .write(write)
-        .custom_flags(O_CLOFORK)
+        .custom_flags(crate::close_on_fork::O_CLOFORK)
         .open(format!("/dev/fd/{}", fd.as_raw_fd()))
 }
 
@@ -1554,6 +1549,11 @@ mod tests {
     /// interpreter is missing or may not run) is read and passed over, and a file with no `#!` line
     /// goes to `sh` at once: the one spawn is the start, as std's answers. With none to start, the
     /// refusal is std's and nothing is spawned. Once the child ends, nothing holds its input.
+    ///
+    /// The start runs under `/bin/bash`, one image: macOS's `/bin/sh` execs the shell it selects,
+    /// and an exec there makes a new process and task and leaves the old task for the kernel to
+    /// tear down. That first image keeps the child's input until then, which can outlast the
+    /// shell's whole run and its reap under load.
     #[cfg(target_os = "macos")]
     #[test]
     fn a_start_spawns_only_the_child_it_starts() {
@@ -1562,7 +1562,7 @@ mod tests {
             std::fs::create_dir_all(tmp.0.join(dir)).unwrap();
             tmp.file(&format!("{dir}/prog"), body, mode)
         };
-        script("found", "#!/bin/sh\nprintf found:%s \"$1\"\n", 0o755);
+        script("found", "#!/bin/bash\nprintf found:%s \"$1\"\n", 0o755);
         script("denied", "#!/bin/sh\nexit 9\n", 0o644);
         std::fs::create_dir_all(tmp.0.join("folder/prog")).unwrap();
         script("lost", "#!/no/such/sf-interpreter\nexit 9\n", 0o755);

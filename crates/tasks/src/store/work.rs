@@ -1,17 +1,21 @@
 //! Tasks: making them, the tree of subtasks, joining and releasing them, moving them along, landing
 //! them.
 
+use super::cap::{GUARD, UNHOLD};
 use super::{
-    ACT, Change, Error, Failure, REFUSED, Say, Store, Task, Which, acting, left_actor, logged,
-    refused, repr, unknown_actor,
+    ACT, Change, Error, Failure, Opens, REFUSED, Say, Store, Task, Which, acting, left_actor,
+    logged, refused, repr, unknown_actor,
 };
 use crate::health::Health;
-use crate::rows::RoleRow;
+use crate::slots::OPEN;
 use serde::Deserialize;
 use serde_json::{Value, json};
 use std::cell::RefCell;
 use std::collections::{BTreeSet, HashMap, HashSet};
-use std::fmt::Write as _;
+
+mod owner_task;
+
+mod roles;
 
 /// Who makes a task or posts to a thread without a session of its own.
 pub(super) const OWNER: &str = "owner";
@@ -195,7 +199,8 @@ const TREE_READ: &str = "RETURN {
 const MOVE_UNDER: &str = "
 IF ((SELECT VALUE last FROM ONLY counter:tree) ?? 0) != $moves { THROW 'stale' };
 UPSERT counter:tree SET last += 1 RETURN NONE;
-UPDATE type::record('task', $slug) SET parent = $parent, updated = $now, version += 1 RETURN NONE;";
+UPDATE type::record('task', $slug) SET parent = $parent, updated = $now, version += 1 RETURN NONE;
+DELETE type::record('counter', ['hold', $slug]) RETURN NONE;";
 
 /// slug -> parent, for every task.
 pub(super) type Tree = HashMap<String, Option<String>>;
@@ -250,6 +255,7 @@ FOR $dependent IN array::distinct($blocked_links.slug) {{
     LET $cancelled = $blocked_links.filter(|$link| $link.slug = $dependent).target;
     LET $was = (SELECT VALUE status FROM ONLY type::record('task', $dependent));
     UPDATE type::record('task', $dependent) SET status = 'blocked', updated = $now, version += 1 RETURN NONE;
+    DELETE type::record('counter', ['hold', $dependent]) RETURN NONE;
     LET $reason = '{BLOCK_LINE}' + array::join($cancelled, ', ') + ' (was ' + $was + ')';
     {}
 }};",
@@ -258,70 +264,6 @@ FOR $dependent IN array::distinct($blocked_links.slug) {{
 }
 
 impl Store {
-    /// A new task, on the record. `assignee`: a session the task is reserved for, with no lapse.
-    pub fn create(&self, new: &NewTask) -> Result<Task, Error> {
-        if !plain_slug(&new.slug) {
-            return Err(refused(format!(
-                "slug {} must look like area/short-name (lowercase, digits, dashes)",
-                repr(&new.slug)
-            )));
-        }
-        let title = new.title.trim();
-        if title.is_empty() {
-            return Err(refused("a task needs a title".into()));
-        }
-        if !BEFORE_WORK.contains(&new.status.as_str()) {
-            return Err(refused(format!(
-                "a new task starts as {}, not {}",
-                BEFORE_WORK.join(", "),
-                repr(&new.status)
-            )));
-        }
-        if !(0..=4).contains(&new.priority) {
-            return Err(refused("priority runs 0 (most urgent) to 4".into()));
-        }
-        let parent = new.parent.as_deref().filter(|p| !p.is_empty());
-        if new.instruction && parent.is_none() {
-            return Err(refused(
-                "an instruction task is a subtask: it needs a parent".into(),
-            ));
-        }
-        let needed: Vec<Value> = new
-            .depends
-            .iter()
-            .map(String::as_str)
-            .chain(parent)
-            .map(|other| json!({"slug": other, "missing": format!("{REFUSED}{}", no_task(other))}))
-            .collect();
-        let links: Vec<Value> = (new.links.iter().map(|l| ("doc", l)))
-            .chain(new.depends.iter().map(|d| ("dep", d)))
-            .map(|(kind, target)| json!({"kind": kind, "target": target}))
-            .collect();
-        let mut said = format!("created by {}", new.by);
-        if let Some(assignee) = &new.assignee {
-            let _ = write!(said, " for {assignee}");
-        }
-        let act = if new.by == OWNER { "" } else { ACT };
-        let body = format!(
-            "{act}{CREATE}\n{}\n{}",
-            logged("$slug", "$actor", "'system'", "$said", "NONE"),
-            block_cancelled_dependencies(false)
-        );
-        let vars = acting(
-            &new.by,
-            (self.clock)(),
-            json!({
-                "slug": new.slug, "title": title, "body": new.body, "status": new.status,
-                "priority": new.priority, "parent": parent, "instruction": new.instruction,
-                "needed": needed, "links": links, "assignee": new.assignee, "said": said,
-                "taken": format!("{REFUSED}task {} already exists", new.slug),
-                "unassignable": new.assignee.as_ref()
-                    .map(|a| format!("{REFUSED}no session {} to assign it to", repr(a))),
-            }),
-        );
-        self.retrying(|| self.written(&body, vars.clone(), &new.slug))
-    }
-
     /// Set a task's priority, recording the actor and both values without changing its other fields.
     pub fn set_priority(&self, slug: &str, priority: i64, handle: &str) -> Result<Task, Error> {
         if !(0..=4).contains(&priority) {
@@ -352,7 +294,10 @@ LET $said = $actor + ' changed priority p' + <string>$task.priority + ' → p' +
         })
     }
 
-    /// Move a task under `parent`, or to the top with none. A task is never its own ancestor.
+    /// Move a task under `parent`, or to the top with none. A task is never its own ancestor. Under a
+    /// cap, a session's change that would raise an orchestrator's open tasks past it, the open work at
+    /// and below the task coming under its tree, is refused ([`crate::slots`]); a hold on the task
+    /// ends.
     pub fn set_parent(&self, slug: &str, parent: Option<&str>, by: &str) -> Result<Task, Error> {
         #[derive(Deserialize)]
         struct Read {
@@ -389,12 +334,14 @@ LET $said = $actor + ' changed priority p' + <string>$task.priority + ' → p' +
                     ))));
                 }
             }
+            let slots = self.reparenting(slug, parent, by)?;
+            let guarded = if slots.is_empty() { body.clone() } else { format!("{body}{GUARD}") };
             let vars = acting(
                 by,
                 (self.clock)(),
-                json!({"slug": slug, "parent": parent, "moves": read.moves, "said": said}),
+                json!({"slug": slug, "parent": parent, "moves": read.moves, "said": said, "slots": slots}),
             );
-            self.written(&body, vars, slug)
+            self.written(&guarded, vars, slug)
         })
     }
 
@@ -453,80 +400,40 @@ LET $said = $actor + ' changed priority p' + <string>$task.priority + ' → p' +
         Ok(self.retrying(|| self.view(&Which::Linked(doc)))?.tasks())
     }
 
-    /// Join a task as `orchestrator` or `reviewer` (executor is `claim`, reserved is `reserve`).
-    pub fn take_role(&self, slug: &str, handle: &str, role: &str) -> Result<Task, Error> {
-        if role != "orchestrator" && role != "reviewer" {
-            return Err(refused(format!(
-                "take_role is for orchestrator or reviewer; use claim or reserve for {}",
-                repr(role)
-            )));
-        }
-        self.rule(slug, handle, |view| {
-            view.actor(handle)?;
-            let task = view.task(slug)?;
-            if task.status == "done" || task.status == "cancelled" {
-                return Err(refused(format!("{slug} is {}", task.status)));
-            }
-            if role == "reviewer" && view.holds(handle, "executor") {
-                return Err(refused(format!(
-                    "{handle} executes {slug} and cannot review its own work"
-                )));
-            }
-            let mut change = Change::default();
-            if !view.holds(handle, role) {
-                change.add = Some(RoleRow {
-                    slug: slug.into(),
-                    handle: handle.into(),
-                    role: role.into(),
-                    since: view.now,
-                    expires: None,
-                });
-                change.say = Say::system(format!("{handle} joined as {role}"));
-            }
-            Ok(change)
-        })
-    }
-
-    /// Let go of `role` on a task, or of every role it holds there. Work in progress with no executor
-    /// left is ready again.
-    pub fn release(&self, slug: &str, handle: &str, role: Option<&str>) -> Result<Task, Error> {
-        self.rule(slug, handle, |view| {
-            view.actor(handle)?;
-            let task = view.task(slug)?;
-            let mine = |r: &&RoleRow| r.handle == handle && role.is_none_or(|role| r.role == role);
-            let mut change = Change::default();
-            for held in view.snap.roles.iter().filter(mine) {
-                change.drop(&held.handle, &held.role);
-            }
-            if change.drop.is_empty() {
-                return Err(refused(format!(
-                    "{handle} holds no {} on {slug}",
-                    role.unwrap_or("role")
-                )));
-            }
-            let executing = view.holders("executor").any(|r| !mine(&r));
-            if task.status == "in_progress" && !executing {
-                change.status = Some("ready".into());
-            }
-            change.say = Say::system(format!(
-                "{handle} released {} (released)",
-                role.unwrap_or("every role")
-            ));
-            Ok(change)
-        })
-    }
-
     /// Move a task along (`can_transition`). Work started, or held by an executor, is moved only by a
     /// session holding a role on it, except that the owner may cancel any open task and return
-    /// blocked work to review.
+    /// blocked work to review. A move into in_progress or review from a status that holds no slot
+    /// starts work, refused when it would raise an orchestrator's open tasks past the store's cap
+    /// ([`crate::slots`]): blocked work a hold kept open ([`Store::hold_blocked`]) holds its slot still, and
+    /// any other takes one. Any move ends a hold.
     pub fn move_to(&self, slug: &str, status: &str, handle: &str) -> Result<Task, Error> {
         if handle == OWNER && matches!(status, "cancelled" | "review") {
             return self.move_as_owner(slug, status);
         }
-        self.rule(slug, handle, |view| {
+        self.moving(slug, status, handle, false)
+    }
+
+    /// Hold open work blocked, keeping its slot under the cap, as a landing does while every stamp
+    /// its branch lacks is one nobody is producing: a move to blocked, as [`Store::move_to`] makes
+    /// it and with the same line on the thread, after which the task counts as open until its next
+    /// move, change of parent or of dependencies. So the move that returns it starts nothing, and
+    /// the slot it held is no one else's meanwhile.
+    pub fn hold_blocked(&self, slug: &str, handle: &str) -> Result<Task, Error> {
+        self.moving(slug, "blocked", handle, true)
+    }
+
+    /// [`Store::move_to`] by a session, `hold`ing its slot ([`Store::hold_blocked`]) when asked.
+    fn moving(&self, slug: &str, status: &str, handle: &str, hold: bool) -> Result<Task, Error> {
+        let starts = OPEN.contains(&status) && self.slots.is_some();
+        self.ruling(slug, handle, starts, |view| {
             view.actor(handle)?;
             let task = view.task(slug)?;
             let current = task.status.as_str();
+            if hold && !OPEN.contains(&current) {
+                return Err(refused(format!(
+                    "{slug} is {current}: only work in progress or in review is held"
+                )));
+            }
             if !can_transition(current, status) {
                 return Err(refused(format!(
                     "{slug} cannot go from {current} to {status}"
@@ -543,9 +450,29 @@ LET $said = $actor + ' changed priority p' + <string>$task.priority + ' → p' +
                     "{handle} holds no role on {slug}, which is {current}"
                 )));
             }
+            // Work started again, or started by a move: a slot of its orchestrator's, or of its
+            // executor's parent (the mover's when it has none) where no orchestrator holds it.
+            // Blocked work a hold kept open holds its slot already, which the cap reads.
+            let starting = OPEN.contains(&status) && !OPEN.contains(&current);
+            let opens = starting.then(|| {
+                let executors: Vec<String> =
+                    view.holders("executor").map(|r| r.handle.clone()).collect();
+                Opens {
+                    status: Some(status.into()),
+                    by: if executors.is_empty() {
+                        vec![handle.into()]
+                    } else {
+                        executors
+                    },
+                    what: format!("{slug} cannot go from {current} to {status}"),
+                    ..Opens::default()
+                }
+            });
             Ok(Change {
                 status: Some(status.into()),
+                hold,
                 say: Say::system(format!("{handle} moved it {current} → {status}")),
+                opens,
                 ..Change::default()
             })
         })
@@ -575,6 +502,7 @@ IF $task.status NOT IN $from {{
 }};
 IF $status = 'review' AND $task.instruction {{ THROW $instruction }};
 UPDATE type::record('task', $slug) SET status = $status, updated = $now, version += 1 RETURN NONE;
+{UNHOLD}
 LET $said = $actor + ' moved it ' + $task.status + ' → ' + $status;
 {}\n{}",
             logged("$slug", "$actor", "'system'", "$said", "NONE"),
@@ -656,11 +584,8 @@ LET $said = $actor + ' moved it ' + $task.status + ' → ' + $status;
         })?;
         let from = found.into_inner();
         if from == "in_progress" {
-            self.tell_if_unread(
-                slug,
-                None,
-                &format!("the landing of {slug} from {handle} to @executor"),
-            );
+            let what = format!("the landing of {slug} from {handle} to @executor");
+            self.tell_if_unread(slug, None, &what, None);
         }
         Ok(Landed { task, from })
     }

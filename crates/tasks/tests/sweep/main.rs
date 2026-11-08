@@ -5,13 +5,20 @@
 //! cannot reach (a clock, `ps`, a pause, the process scan) and as the command line, in this process,
 //! where it is the command line that is tested.
 
+#![expect(
+    clippy::disallowed_methods,
+    reason = "a test starts its fixtures and stand-ins as it likes; the board's children are sys's"
+)]
+
 #[path = "../store/common.rs"]
 #[allow(dead_code)]
 mod common;
 
 mod cli;
 mod finished;
+mod on_review;
 mod rules;
+mod sessionless;
 mod triggers;
 
 use common::{Fixture, Seed};

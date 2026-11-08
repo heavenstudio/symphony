@@ -31,6 +31,22 @@ fn fixture_repositories_share_one_completed_app_and_command_preparation() {
     }
 }
 
+/// Setup's run ends when its child does, never at a case deadline: on a clock already past
+/// every one, a child still reading its open input when the wait begins (the wait closes it)
+/// succeeds.
+#[test]
+fn a_setup_run_waits_for_its_child_on_a_clock_past_every_deadline() {
+    let scratch = Scratch::new("setup-run");
+    let mut command = Command::new("/bin/sh");
+    command
+        .args(["-c", "read -r line; printf ended"])
+        .stdin(Stdio::piped());
+    let mut setup = Process::spawn(command, &scratch.path.join("setup"));
+    setup.wait_elapsed = Box::new(|_| PATIENCE);
+    setup.setup_success();
+    assert_eq!(setup.output(), "ended");
+}
+
 #[test]
 fn a_readiness_timeout_names_its_child_and_reports_late_open_stage() {
     let scratch = Scratch::new("readiness-timeout");
@@ -136,126 +152,6 @@ fn a_spawn_racing_endpoint_creation_does_not_inherit_the_endpoint() {
             );
         }
     });
-}
-
-#[test]
-fn unsuccessful_children_report_their_pid_command_status_and_output() {
-    let scratch = Scratch::new("unsuccessful-child");
-    for (index, (script, status, output)) in [
-        ("exit 7", "exit status: 7", ""),
-        (
-            "printf 'child stdout'; printf 'child stderr' >&2; exit 9",
-            "exit status: 9",
-            "child stdoutchild stderr",
-        ),
-        ("kill -TERM $$", "signal: 15", ""),
-        (
-            "printf 'signal stdout'; kill -TERM $$",
-            "signal: 15",
-            "signal stdout",
-        ),
-    ]
-    .into_iter()
-    .enumerate()
-    {
-        let mut command = Command::new("/bin/sh");
-        command.args(["-c", script]);
-        let mut process = Process::spawn(command, &scratch.path.join(index.to_string()));
-        let pid = process.child.id();
-        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            process.success();
-        }));
-        let failure = result.expect_err("unsuccessful child must fail success()");
-        let message = failure.downcast_ref::<String>().unwrap();
-        assert!(message.starts_with(&format!("child {pid} (\"/bin/sh\" [\"-c\", ")));
-        assert!(message.contains(script), "{message}");
-        assert!(message.contains(status), "{message}");
-        assert!(message.ends_with(&format!(": {output}")), "{message}");
-        if status == "signal: 15" && output.is_empty() {
-            let meta = fs::metadata("/bin/sh").unwrap();
-            let identity = format!(
-                "inode={} mtime={}.{:09}",
-                meta.ino(),
-                meta.mtime(),
-                meta.mtime_nsec()
-            );
-            assert!(
-                message.contains(&format!("at spawn: {identity}; at failure: {identity}")),
-                "{message}"
-            );
-        } else {
-            assert!(!message.contains("at spawn:"), "{message}");
-        }
-    }
-}
-
-#[test]
-fn a_silent_signal_reports_the_original_and_current_executable_identity() {
-    use std::os::unix::fs::PermissionsExt;
-    let script = "#!/bin/sh\nprintf ready > \"$1\"\nread -r release\nkill -TERM $$\n";
-    for removed in [false, true] {
-        let scratch = Scratch::new("signal-image");
-        let executable = scratch.path.join("child");
-        let entered = scratch.path.join("entered");
-        write(&executable, script);
-        fs::set_permissions(&executable, fs::Permissions::from_mode(0o755)).unwrap();
-        File::open(&executable)
-            .unwrap()
-            .set_modified(std::time::UNIX_EPOCH + Duration::from_secs(1000))
-            .unwrap();
-        let before = fs::metadata(&executable).unwrap();
-        let mut command = Command::new(&executable);
-        command.arg(&entered).stdin(Stdio::piped());
-        let mut child = Process::spawn(command, &scratch.path.join("process"));
-        until("silent child entered its input wait", || {
-            (fs::read_to_string(&entered).ok().as_deref() == Some("ready")).then_some(())
-        });
-        // Replace/unlink the path, never the running image's bytes. Input releases the owned
-        // child only after the new path state is established; no startup timing is assumed.
-        let after = if removed {
-            fs::remove_file(&executable).unwrap();
-            None
-        } else {
-            let replacement = scratch.path.join("replacement");
-            write(&replacement, script);
-            fs::set_permissions(&replacement, fs::Permissions::from_mode(0o755)).unwrap();
-            File::open(&replacement)
-                .unwrap()
-                .set_modified(std::time::UNIX_EPOCH + Duration::from_secs(2000))
-                .unwrap();
-            fs::rename(&replacement, &executable).unwrap();
-            Some(fs::metadata(&executable).unwrap())
-        };
-        writeln!(child.child.stdin.as_mut().unwrap(), "release").unwrap();
-        let failure = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| child.success()))
-            .expect_err("a signalled child must still fail success()");
-        let message = failure.downcast_ref::<String>().unwrap();
-        assert!(message.contains("signal: 15"), "{message}");
-        assert!(
-            message.contains(&format!("executable {executable:?}")),
-            "{message}"
-        );
-        assert!(
-            message.contains(&format!(
-                "at spawn: inode={} mtime=1000.000000000",
-                before.ino()
-            )),
-            "{message}"
-        );
-        if let Some(after) = after {
-            assert_ne!(before.ino(), after.ino());
-            assert!(
-                message.contains(&format!(
-                    "at failure: inode={} mtime=2000.000000000",
-                    after.ino()
-                )),
-                "{message}"
-            );
-        } else {
-            assert!(message.contains("at failure: unavailable:"), "{message}");
-        }
-        assert!(child.output().is_empty());
-    }
 }
 
 #[test]

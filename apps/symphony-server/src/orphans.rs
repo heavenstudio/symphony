@@ -2,7 +2,9 @@
 //! ends on its own (`docs_server_test.py` runs from before 371b52e6 left 1,144 of them, 29.8 GB, on
 //! 2026-10-07). They are counted and shown, never killed: that is the owner's call.
 
+use std::ffi::OsStr;
 use std::path::Path;
+use symphony_board::sys::{Command, Exit, Stdio};
 
 /// The pid `home`'s record names, if it names one.
 pub fn recorded(home: &Path) -> Option<i64> {
@@ -45,18 +47,27 @@ pub fn count(ps: &str, own: i64, recorded: impl Fn(&Path) -> Option<i64>) -> usi
 }
 
 /// The count, from this machine's process table now; `None` when `ps` cannot be read.
-/// Cancelling the scan kills its owned child; Tokio reaps it without holding server shutdown.
-/// The table is written to a file ([`crate::sys::capture`]), never a pipe: a child another thread
-/// spawns meanwhile could keep a pipe's writer and hold the round open for its whole life.
+/// `ps` starts without a fork ([`Command`]), so it holds no descriptor of the server's but its
+/// streams, not even a connection accepted a moment before and not yet close-on-exec. Cancelling
+/// the scan kills its owned child, which its [`Exit`]'s thread reaps without holding server
+/// shutdown. The table is written to a file ([`crate::sys::capture`]), never a pipe: a child
+/// another thread spawns meanwhile could keep a pipe's writer and hold the round open for its
+/// whole life.
 pub async fn scan() -> Option<usize> {
+    scan_with(OsStr::new("ps")).await
+}
+
+/// [`scan`] with `ps` as `program` names it (a stand-in, in tests).
+async fn scan_with(program: &OsStr) -> Option<usize> {
     let table = crate::sys::capture().ok()?;
-    let mut ps = tokio::process::Command::new("ps");
-    ps.args(["-axww", "-o", "pid=,ppid=,command="])
-        .stdin(std::process::Stdio::null())
+    let ps = symphony::children::sessionless(&mut Command::new(program))
+        .args(["-axww", "-o", "pid=,ppid=,command="])
+        .stdin(Stdio::null())
         .stdout(table.try_clone().ok()?)
-        .stderr(std::process::Stdio::null())
-        .kill_on_drop(true);
-    let status = crate::sys::spawn_async(&mut ps).ok()?.wait().await.ok()?;
+        .stderr(Stdio::null())
+        .spawn()
+        .ok()?;
+    let status = Exit::of(ps).ok()?.await.ok()?;
     let table = crate::sys::captured(table).ok()?;
     status.success().then(|| {
         count(
@@ -155,6 +166,201 @@ mod tests {
         .unwrap();
         assert_eq!(recorded(&home), Some(104));
         std::fs::remove_dir_all(&home).unwrap();
+    }
+
+    /// A `ps` stand-in, `sh` running `body`, in a folder of its own removed however the test ends;
+    /// `$dir` in the body is that folder. Its executable is the machine's one copy of the fixture
+    /// script, already run ([`crate::testing::assert_primed`]), so no case's bound covers the
+    /// first exec of a new file.
+    struct StandIn(std::path::PathBuf);
+
+    impl StandIn {
+        fn new(name: &str, body: &str) -> Self {
+            let dir = std::env::temp_dir().join(format!("orphans-{name}-{}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&dir);
+            std::fs::create_dir_all(&dir).unwrap();
+            let dir = dir.canonicalize().unwrap();
+            crate::fixture_script::write(
+                &dir.join("ps"),
+                &format!("#!/bin/sh\ndir=\"${{0%/*}}\"\n{body}\n"),
+                false,
+            );
+            Self(dir)
+        }
+
+        fn program(&self) -> std::path::PathBuf {
+            self.0.join("ps")
+        }
+
+        fn said(&self, name: &str) -> String {
+            std::fs::read_to_string(self.0.join(name)).unwrap_or_default()
+        }
+    }
+
+    impl Drop for StandIn {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    /// What a stand-in writes of how it was started: its arguments, directory and environment
+    /// to `said`, and where its streams go to `streams`.
+    const RECORD: &str = "{ printf '%s\\n' \"$@\"; printf 'cwd=%s\\n' \"$(pwd -P)\"; /usr/bin/env | /usr/bin/sort; } > \"$dir/said\"\n\
+                          { test /dev/fd/0 -ef /dev/null && printf 'stdin null\\n'; \
+                          test /dev/fd/1 -ef /dev/null || printf 'stdout kept\\n'; \
+                          test /dev/fd/2 -ef /dev/null && printf 'stderr null\\n'; } > \"$dir/streams\"\n";
+
+    #[tokio::test]
+    async fn the_census_runs_ps_with_its_arguments_environment_and_streams_and_counts_its_table() {
+        let stand_in = StandIn::new(
+            "contract",
+            &format!(
+                "{RECORD}printf 'unread\\n' >&2\n\
+                 printf '101 1 /usr/bin/interp -B tools/docs_server --root /gone\\n'\n\
+                 printf '102 555 /usr/bin/interp -B tools/docs_server --root /kept\\n'"
+            ),
+        );
+        // What std's spawn, as tokio's was, hands the same stand-in: this process's environment
+        // and directory, unchanged but for the session the server was started in, which no
+        // child of the server keeps.
+        let theirs = {
+            use symphony_board::sys::Spawning as _;
+            let ran = std::process::Command::new(stand_in.program())
+                .args(["-axww", "-o", "pid=,ppid=,command="])
+                .env_remove("TASKS_SESSION")
+                .env_remove("HC_TERMINAL_ID")
+                .env_remove("HC_TERMINAL_SOCKET")
+                .env_remove("HC_SESSION")
+                .env_remove("HC_SCOPE")
+                .output_locked()
+                .unwrap();
+            assert!(ran.status.success());
+            stand_in.said("said")
+        };
+        assert_eq!(scan_with(stand_in.program().as_os_str()).await, Some(1));
+        let said = stand_in.said("said");
+        assert!(
+            said.starts_with("-axww\n-o\npid=,ppid=,command=\ncwd="),
+            "{said}"
+        );
+        assert_eq!(
+            said, theirs,
+            "the census changed the environment or directory"
+        );
+        assert_eq!(
+            stand_in.said("streams"),
+            "stdin null\nstdout kept\nstderr null\n"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_census_whose_ps_cannot_start_fails_or_is_killed_counts_nothing() {
+        let missing = StandIn::new("missing", "exit 0");
+        assert_eq!(scan_with(missing.0.join("absent").as_os_str()).await, None);
+        let rows = "printf '101 1 /usr/bin/interp -B tools/docs_server --root /gone\\n'";
+        let failed = StandIn::new("failed", &format!("{rows}\nexit 1"));
+        assert_eq!(scan_with(failed.program().as_os_str()).await, None);
+        let killed = StandIn::new("killed", &format!("{rows}\nkill -KILL $$"));
+        assert_eq!(scan_with(killed.program().as_os_str()).await, None);
+        // An empty table read whole is a count, of none.
+        let empty = StandIn::new("empty", "exit 0");
+        assert_eq!(scan_with(empty.program().as_os_str()).await, Some(0));
+    }
+
+    /// The census has no deadline of its own: a `ps` that never answers holds its scan until the
+    /// scan is dropped, which kills it, and it is still reaped. The stand-in's bound to start
+    /// covers no first exec of a new file: its executable has already run.
+    #[tokio::test]
+    async fn a_hung_census_ps_is_killed_and_reaped_when_its_scan_is_dropped() {
+        let stand_in = StandIn::new(
+            "hung",
+            "printf '%s' $$ > \"$dir/pid.partial\"; /bin/mv \"$dir/pid.partial\" \"$dir/pid\"\nexec /bin/sleep 60",
+        );
+        crate::testing::assert_primed(&stand_in.program());
+        let program = stand_in.program();
+        let scan = tokio::spawn(async move { scan_with(program.as_os_str()).await });
+        until("the stand-in never started", || {
+            !stand_in.said("pid").is_empty()
+        })
+        .await;
+        let pid: i64 = stand_in.said("pid").parse().unwrap();
+        assert!(crate::sys::pid_alive(pid));
+        assert!(!scan.is_finished(), "a hung ps answered");
+        scan.abort();
+        assert!(scan.await.unwrap_err().is_cancelled());
+        // A zombie is still alive to kill(0): only a reaped child is gone.
+        until("the dropped census's ps was never reaped", || {
+            !crate::sys::pid_alive(pid)
+        })
+        .await;
+    }
+
+    /// Waits for `done`, failing with `what` after a bound only a condition that never holds
+    /// reaches, letting the runtime's other tasks run meanwhile.
+    async fn until(what: &str, done: impl Fn() -> bool) {
+        let began = std::time::Instant::now();
+        while !done() {
+            assert!(
+                began.elapsed() < std::time::Duration::from_secs(30),
+                "{what}"
+            );
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    }
+
+    /// The census's `ps` keeps none of the server's descriptors that are not close-on-exec, as a
+    /// connection is for a moment after its accept. This test reruns itself with such a
+    /// descriptor handed to it; a std child, as tokio's spawn made, keeps it.
+    #[tokio::test]
+    async fn the_census_ps_holds_no_descriptor_the_server_left_inheritable() {
+        use std::os::fd::{AsRawFd, RawFd};
+        const INHERITED: &str = "SF_CENSUS_INHERITED_FD";
+        let Some(fd) = std::env::var_os(INHERITED) else {
+            let null = std::fs::File::open("/dev/null").unwrap();
+            let done = symphony_board::sys::output(
+                Command::new(std::env::current_exe().unwrap())
+                    .args([
+                        "--exact",
+                        "orphans::tests::the_census_ps_holds_no_descriptor_the_server_left_inheritable",
+                        "--nocapture",
+                    ])
+                    .env(INHERITED, null.as_raw_fd().to_string())
+                    // Handed under the same number, and not close-on-exec in the rerun.
+                    .pass_fd(null.as_raw_fd()),
+            )
+            .unwrap();
+            let said = String::from_utf8_lossy(&done.stdout);
+            assert!(
+                done.status.success() && said.contains("1 passed"),
+                "{said}\n{}",
+                String::from_utf8_lossy(&done.stderr)
+            );
+            return;
+        };
+        let fd: RawFd = fd.to_str().unwrap().parse().unwrap();
+        let stand_in = StandIn::new(
+            "inherited",
+            &format!("if test -e /dev/fd/{fd}; then printf held > \"$dir/held\"; fi"),
+        );
+        {
+            use symphony_board::sys::Spawning as _;
+            let ran = std::process::Command::new(stand_in.program())
+                .status_locked()
+                .unwrap();
+            assert!(ran.success());
+        }
+        assert_eq!(
+            stand_in.said("held"),
+            "held",
+            "the descriptor is not inheritable"
+        );
+        std::fs::remove_file(stand_in.0.join("held")).unwrap();
+        assert_eq!(scan_with(stand_in.program().as_os_str()).await, Some(0));
+        assert_eq!(
+            stand_in.said("held"),
+            "",
+            "the census's ps held the descriptor"
+        );
     }
 
     #[test]

@@ -266,3 +266,29 @@ mod detail;
 pub(crate) use detail::LiveTaskPage;
 #[cfg(any(not(target_arch = "wasm32"), feature = "page-tasks"))]
 pub use detail::{AgentsView, TaskDetail};
+
+#[cfg(test)]
+mod tests {
+    use super::AgentsView;
+    use dioxus::prelude::*;
+    use serde_json::json;
+
+    /// A server from before the panes probe's rename names it `herdr` alone: the agents page still
+    /// shows its answer.
+    #[test]
+    fn the_agents_page_shows_the_panes_probe_a_server_named_herdr() {
+        fn page() -> Element {
+            let agents: symphony_api::Agents = serde_json::from_value(json!({
+                "generated": 1.5,
+                "probes": {"herdr": "unavailable", "slots": "ok"},
+                "agents": [],
+            }))
+            .unwrap();
+            rsx! { AgentsView { agents, tasks: Vec::new(), total: 0, more: false, lost_more: false, onmore: |_| {} } }
+        }
+        let mut dom = VirtualDom::new(page);
+        dom.rebuild_in_place();
+        let html = dioxus_ssr::render(&dom);
+        assert!(html.contains(">unavailable · ok</p>"), "{html}");
+    }
+}

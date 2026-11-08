@@ -7,10 +7,10 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Output;
 use std::sync::{Arc, Mutex, mpsc};
-use symphony_board::sys::Command;
 
 use serde::{Deserialize, Serialize};
 
+use crate::children::command;
 use crate::landing::{PrivateWorktree, generators};
 use crate::plugins::Plugins;
 use crate::project::Project;
@@ -243,7 +243,7 @@ mod metadata_tests {
         }
         let tree = crate::test_tree::Tree::new();
         let command = |root: &Path, args: &[&str]| {
-            let mut cmd = Command::new("git");
+            let mut cmd = symphony_board::sys::Command::new("git");
             for key in REPOSITORY_OVERRIDES {
                 cmd.env_remove(key);
             }
@@ -298,7 +298,7 @@ mod metadata_tests {
         command(&tree.path("bare"), &["init", "--bare", "-q", "-b", "main"]);
         std::fs::create_dir(main.join("docs")).unwrap();
         for mode in ["without-git", "override", "aliases"] {
-            let mut child = Command::new(std::env::current_exe().unwrap());
+            let mut child = symphony_board::sys::Command::new(std::env::current_exe().unwrap());
             for key in REPOSITORY_OVERRIDES {
                 child.env_remove(key);
             }
@@ -533,7 +533,7 @@ fn run(
     input: Option<&str>,
     index: Option<&Path>,
 ) -> Result<Output, String> {
-    let mut command = Command::new("git");
+    let mut command = command("git");
     command.args(args).current_dir(root);
     if let Some(index) = index {
         command.env("GIT_INDEX_FILE", index);
@@ -543,17 +543,30 @@ fn run(
         symphony_board::sys::spawn_piped(&mut command).map_err(|e| e.to_string())?
     };
     let mut child = child;
+    // git refusing before it reads its input (an argument it does not know, say) has closed it, and
+    // the write fails: git is waited for all the same, so what it said reaches the caller and its
+    // process is reaped. The write's own error is the answer only where git said nothing, or
+    // succeeded without having had its whole input.
+    let mut written = Ok(());
     if let Some(input) = input {
         let _stage = PublicationStage::start(format_args!("write git input pid={}", child.id()));
-        child
-            .stdin
-            .take()
-            .ok_or("no command input")?
-            .write_all(input.as_bytes())
-            .map_err(|e| e.to_string())?;
+        written = match child.stdin.take() {
+            Some(mut pipe) => pipe.write_all(input.as_bytes()),
+            None => Err(std::io::Error::other("no command input")),
+        };
     }
     let _wait = PublicationStage::start(format_args!("wait git pid={} {args:?}", child.id()));
-    symphony_board::sys::wait_output(child).map_err(|e| e.to_string())
+    let done = symphony_board::sys::wait_output(child).map_err(|e| e.to_string())?;
+    match written {
+        Err(problem) if done.status.success() => Err(format!(
+            "git answered, but its input was not written: {problem}"
+        )),
+        Err(problem) if done.stderr.trim_ascii().is_empty() => Err(format!(
+            "git exited {}; its input was not written: {problem}",
+            done.status
+        )),
+        _ => Ok(done),
+    }
 }
 
 fn checked(done: Output) -> Result<String, String> {
@@ -568,6 +581,9 @@ fn checked(done: Output) -> Result<String, String> {
         })
     }
 }
+
+#[cfg(test)]
+mod input_tests;
 
 fn git(root: &Path, args: &[&str]) -> Result<String, String> {
     checked(run(root, args, None, None)?).map(|s| s.trim_end_matches('\n').to_string())
@@ -609,7 +625,7 @@ fn merge(root: &Path, current: &str, base: &str, new: &str) -> Result<String, Co
     let done = {
         let _child = PublicationStage::start(format_args!("git merge-file"));
         symphony_board::sys::output(
-            Command::new("git")
+            command("git")
                 .args(["merge-file", "-p"])
                 .args(["current", "base", "new"].map(|n| scratch.0.join(n)))
                 .current_dir(root),
@@ -950,18 +966,28 @@ fn canonical_register(
 
 impl<'a> Histories<'a> {
     fn read(text: &'a str) -> Option<Self> {
+        use crate::register::{card_line, unseen_reply};
+        use std::collections::BTreeSet;
+        use symphony_docs::syntax::{cards as shared_cards, entry_line, is_continuation};
+
         let mut skeleton = Vec::new();
         let mut cards = BTreeMap::new();
-        let mut lines = text.split_inclusive('\n').peekable();
-        let mut fenced = false;
-        while let Some(line) = lines.next() {
-            if crate::register::is_fence(line) {
-                fenced = !fenced;
-            }
-            let card = (!fenced)
-                .then(|| crate::register::card_line(line.trim_end_matches('\n')))
-                .flatten();
-            let Some(card) = card else {
+        // Lines are classified as the shared reading reads them, without their `\n` or `\r\n`
+        // (the merge keeps their bytes), and a fence under a card is its thread's.
+        let bare = |line: &'a str| {
+            let line = line.strip_suffix('\n').unwrap_or(line);
+            line.strip_suffix('\r').unwrap_or(line)
+        };
+        let plain: Vec<_> = text.split_inclusive('\n').map(bare).collect();
+        let openers: BTreeSet<_> = shared_cards(&plain).iter().map(|c| c.line - 1).collect();
+        let dated = |line: &'a str| {
+            let at = line.find('[')? + 1;
+            Some(&line[at..at + entry_line(bare(line))?.ts?.len()])
+        };
+        let hidden = |line: &'a str| unseen_reply(bare(line)).is_some();
+        let mut lines = text.split_inclusive('\n').enumerate().peekable();
+        while let Some((index, line)) = lines.next() {
+            let Some(card) = card_line(bare(line)).filter(|_| openers.contains(&index)) else {
                 skeleton.push(HistoryPart::Text(line.to_string()));
                 continue;
             };
@@ -978,30 +1004,40 @@ impl<'a> Histories<'a> {
             ));
             let mut entries = Vec::new();
             let mut metadata = Vec::new();
-            while let Some(next) = lines.peek() {
-                if crate::register::unseen_reply(next).is_some() {
-                    metadata.push(lines.next()?);
+            while let Some(&(_, next)) = lines.peek() {
+                if hidden(next) {
+                    metadata.push(lines.next()?.1);
                     continue;
                 }
-                let Some(entry) = crate::register::ENTRY.captures(next) else {
+                let Some(timestamp) = dated(next) else {
                     break;
                 };
-                let timestamp = entry.name("ts")?.as_str();
-                let mut raw = lines.next()?.to_string();
-                // A continuation belongs to its dated entry and moves with it unchanged.
+                let mut raw = lines.next()?.1.to_string();
+                // A continuation (`is_continuation`, even a dated-looking one) moves unchanged with
+                // its entry; a hidden marker between them, skipped when read, joins the metadata.
                 loop {
                     let mut following = lines.clone();
                     let mut gap = String::new();
-                    while following.peek().is_some_and(|line| line.trim().is_empty()) {
-                        gap.push_str(following.next()?);
+                    let mut markers = Vec::new();
+                    while let Some(&(_, line)) = following.peek() {
+                        if hidden(line) {
+                            markers.push(line);
+                        } else if line.trim().is_empty() {
+                            gap.push_str(line);
+                        } else {
+                            break;
+                        }
+                        following.next();
                     }
-                    if !following.peek().is_some_and(|line| {
-                        line.starts_with("   ") && !crate::register::ENTRY.is_match(line)
-                    }) {
+                    if !following
+                        .peek()
+                        .is_some_and(|&(_, line)| is_continuation(bare(line)))
+                    {
                         break;
                     }
                     raw.push_str(&gap);
-                    raw.push_str(following.next()?);
+                    raw.push_str(following.next()?.1);
+                    metadata.extend(markers);
                     lines = following;
                 }
                 entries.push((timestamp, raw));
@@ -1395,7 +1431,7 @@ fn generate(root: &Path, heavy: bool) -> Result<(), String> {
             continue;
         }
         let (program, args) = generator.command.split_first().ok_or("empty generator")?;
-        let done = symphony_board::sys::output(Command::new(program).args(args).current_dir(root))
+        let done = symphony_board::sys::output(command(program).args(args).current_dir(root))
             .map_err(|e| e.to_string())?;
         if !done.status.success() {
             return Err(format!(
@@ -1652,7 +1688,7 @@ fn output_branch(
     let check = Project::of(&wt.path).verdicts.check.clone();
     if let Some((program, args)) = check.split_first() {
         let done = symphony_board::sys::output(
-            Command::new(program)
+            command(program)
                 .args(args)
                 .current_dir(&wt.path)
                 .env("TASKS_SESSION", &actor),
@@ -1713,7 +1749,7 @@ fn publish(
     // Land may verify a moving-main candidate. Neither that work nor the branch's initial
     // verify can hold the app's write locks; land owns its publication CAS and bounded retry.
     let done = symphony_board::sys::output(
-        Command::new(program)
+        command(program)
             .args(args)
             .arg(&publication.branch)
             .env("TASKS_SESSION", &publication.actor)
@@ -2386,236 +2422,7 @@ impl Committer {
 }
 
 #[cfg(test)]
-mod publication_tests {
-    use super::*;
-
-    #[test]
-    fn recovery_adopts_only_the_locked_inode_still_named_by_the_journal() {
-        let tree = crate::test_tree::Tree::new();
-        let done = symphony_board::sys::output(
-            Command::new("git")
-                .args(["init", "-q", "-b", "main"])
-                .current_dir(&tree.root),
-        )
-        .unwrap();
-        assert!(done.status.success(), "{done:?}");
-        let path = tree.path("publication.json");
-        let data = |new: &str| {
-            serde_json::json!({"edit":{"rel":"docs/a.md","base":"","new":new},"publication":null})
-                .to_string()
-        };
-        std::fs::write(&path, data("earlier")).unwrap();
-        let old = OpenOptions::new()
-            .read(true)
-            .write(true)
-            .open(&path)
-            .unwrap();
-        let next = tree.path("replacement");
-        std::fs::write(&next, data("later")).unwrap();
-        std::fs::rename(next, &path).unwrap();
-        assert!(
-            OutputJob::recover_opened(&tree.root, &path, old)
-                .unwrap()
-                .is_none()
-        );
-        assert_eq!(std::fs::read_to_string(&path).unwrap(), data("later"));
-        let current = OpenOptions::new()
-            .read(true)
-            .write(true)
-            .open(&path)
-            .unwrap();
-        let adopted = OutputJob::recover_opened(&tree.root, &path, current)
-            .unwrap()
-            .unwrap();
-        assert_eq!(adopted.saved.edit.new, "later");
-        drop(adopted);
-        let disappeared = OpenOptions::new()
-            .read(true)
-            .write(true)
-            .open(&path)
-            .unwrap();
-        std::fs::remove_file(&path).unwrap();
-        assert!(
-            OutputJob::recover_opened(&tree.root, &path, disappeared)
-                .unwrap()
-                .is_none()
-        );
-    }
-}
+mod publication_tests;
 
 #[cfg(test)]
-mod history_tests {
-    use super::card_count_mismatch;
-
-    /// The merge of a project without plugins: no card kind reads these cards.
-    fn merge_history(current: &str, base: &str, new: &str) -> Option<String> {
-        super::merge_history(current, base, new, &super::Plugins::default())
-    }
-
-    #[test]
-    fn card_occurrences_are_compared_per_slug_and_fenced_examples_do_not_count() {
-        let base = "- [ ] **a** — A.\n- [ ] **b** — B.\n";
-        assert_eq!(card_count_mismatch(base, base, base, base), Some(false));
-        assert_eq!(
-            card_count_mismatch(base, base, base, &format!("{base}- [x] **a** — A.\n")),
-            Some(true)
-        );
-        assert_eq!(
-            card_count_mismatch(base, base, base, "- [x] **a** — A.\n- [x] **a** — A.\n"),
-            Some(true)
-        );
-        assert_eq!(
-            card_count_mismatch(
-                base,
-                base,
-                base,
-                &format!("{base}```\n- [ ] **a** — Example.\n```\n")
-            ),
-            Some(false)
-        );
-        let duplicate_base = format!("{base}{base}");
-        assert_eq!(
-            card_count_mismatch(
-                &duplicate_base,
-                &duplicate_base,
-                &duplicate_base,
-                &duplicate_base
-            ),
-            Some(false)
-        );
-        let one = "- [ ] **a** — A.\n";
-        let two = format!("{one}{one}");
-        for (current, base, new, merged, expected) in [
-            (one, "", "", one, Some(false)),
-            ("", "", one, one, Some(false)),
-            (one, "", one, one, Some(false)),
-            ("", one, one, one, Some(true)),
-            ("", one, one, "", Some(false)),
-            (one, one, "", "", Some(false)),
-            (two.as_str(), one, two.as_str(), two.as_str(), Some(false)),
-            ("", one, two.as_str(), one, None),
-        ] {
-            assert_eq!(card_count_mismatch(current, base, new, merged), expected);
-        }
-    }
-
-    #[test]
-    fn many_added_cards_keep_separators_but_cannot_hide_changed_prose_or_topics() {
-        let base = "# Original prose\n\n- [ ] **c** — Existing.\n";
-        let additions = (0..32)
-            .map(|i| format!("\n\n- [ ] **new{i}** — New card {i}.\n    Proposal details {i}.\n"))
-            .collect::<String>();
-        let current = format!("{base}{additions}");
-        let saved = format!("{base}  [2026-10-30 08:00] owner — Exact owner words.\n");
-        assert_eq!(
-            merge_history(&current, base, &saved),
-            Some(format!("{saved}{additions}"))
-        );
-        assert!(
-            merge_history(
-                &current.replace("Original prose", "Changed prose"),
-                base,
-                &saved
-            )
-            .is_none()
-        );
-        let base =
-            format!("<!-- register:start -->\n### Original topic\n\n{base}<!-- register:end -->\n");
-        // Authored prose inside a register is refused rather than treated as generated headings.
-        assert!(merge_history(&base, &base, &base).is_none());
-        let base = "<!-- register:start -->\n### Original topic\n\n- [ ] **c** — Existing.\n<!-- register:end -->\n";
-        let saved = base.replace(
-            "<!-- register:end -->",
-            "  [2026-10-30 08:00] owner — Exact owner words.\n<!-- register:end -->",
-        );
-        let changed = base.replace("Original topic", "Changed topic").replace(
-            "<!-- register:end -->",
-            &format!("{additions}<!-- register:end -->"),
-        );
-        assert!(merge_history(&changed, base, &saved).is_none());
-    }
-
-    #[test]
-    fn shared_additions_anchor_later_saved_lines_and_conflicting_orders_are_refused() {
-        let base = "- [ ] **c** — Card.\n";
-        let first = "  [2026-10-30 07:50] owner — First.\n";
-        let second = "  [2026-10-30 06:00] owner — Second.\n";
-        let reply = "  [2026-10-30 07:55] agent — Reply.\n";
-        let saved = format!("{base}{first}{second}");
-        assert_eq!(
-            merge_history(&format!("{base}{first}{reply}"), base, &saved),
-            Some(format!("{base}{first}{second}{reply}"))
-        );
-        assert!(merge_history(&format!("{base}{second}{first}"), base, &saved).is_none());
-    }
-
-    #[test]
-    fn only_additions_are_inserted_and_unterminated_entries_remain_separate() {
-        let base = "- [ ] **card** — Question.\n  [2026-10-30 07:50] owner — First.\n  [2026-10-30 07:40] owner — Second.";
-        let current = format!("{base}\n  [2026-10-30 07:55] agent — Reply.");
-        let new = format!("{base}\n  [2026-10-30 07:45] owner — Addition.\n");
-        assert_eq!(merge_history(&current, base, &new), Some("- [ ] **card** — Question.\n  [2026-10-30 07:45] owner — Addition.\n  [2026-10-30 07:50] owner — First.\n  [2026-10-30 07:40] owner — Second.\n  [2026-10-30 07:55] agent — Reply.".into()));
-        let header = "- [ ] **card** — Question.";
-        assert_eq!(
-            merge_history(
-                header,
-                header,
-                &format!("{header}\n  [2026-10-30 07:45] owner — Addition.\n")
-            ),
-            Some(format!(
-                "{header}\n  [2026-10-30 07:45] owner — Addition.\n"
-            ))
-        );
-    }
-
-    #[test]
-    fn identical_events_are_shared_and_equal_minutes_keep_each_sides_order() {
-        let base = "- [ ] **card** — Question.\n";
-        let shared = "  [2026-10-30 07:38] owner · question — Same event.\n";
-        let reply = "  [2026-10-30 07:38] agent — Reply.\n";
-        let verdict = "  [2026-10-30 07:38] owner · approved — Yes.\n";
-        let current = format!("{base}{shared}{reply}");
-        let new = format!("{base}{shared}{shared}{verdict}");
-        assert_eq!(
-            merge_history(&current, base, &new),
-            Some(format!("{base}{shared}{reply}{shared}{verdict}"))
-        );
-    }
-
-    #[test]
-    fn ambiguous_marks_and_rewritten_save_history_are_refused() {
-        let base = "- [ ] **card** — Question.\n  [2026-10-30 07:37] owner — Original.\n";
-        let current = base.replace("[ ]", "[x]");
-        assert!(merge_history(&current, base, &base.replace("[ ]", "[-]")).is_none());
-        assert!(merge_history(base, base, &base.replace("Original.", "Rewritten.")).is_none());
-        assert!(merge_history(base, base, &base.replace("Question.", "Rewritten card.")).is_none());
-        let duplicate = format!("{base}{base}");
-        assert!(merge_history(&duplicate, &duplicate, &duplicate).is_none());
-        let later = "  [2026-10-30 07:38] agent — Later.\n";
-        let with_later = format!("{base}{later}");
-        let reordered = base.replace("Question.\n", &format!("Question.\n{later}"));
-        assert!(merge_history(&reordered, &with_later, &with_later).is_none());
-        // An unchanged or matching saved mark keeps main's verdict while adding the note.
-        for saved_header in [base, current.as_str()] {
-            assert_eq!(
-                merge_history(&current, base, &format!("{saved_header}{later}")),
-                Some(format!("{current}{later}"))
-            );
-        }
-    }
-
-    #[test]
-    fn fenced_examples_are_not_cards_and_a_delayed_event_sorts_before_existing_history() {
-        let example = "```text\n- [ ] **card** — Example.\n```\n";
-        let base =
-            format!("{example}- [ ] **card** — Question.\n  [2026-10-30 07:40] owner — Later.\n");
-        let delayed = "  [2026-10-30 07:38] agent — Delayed.\n";
-        assert_eq!(
-            merge_history(&base, &base, &format!("{base}{delayed}")),
-            Some(base.replace(
-                "  [2026-10-30 07:40]",
-                &format!("{delayed}  [2026-10-30 07:40]")
-            ))
-        );
-    }
-}
+mod history_tests;

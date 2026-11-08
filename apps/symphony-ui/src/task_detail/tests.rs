@@ -1,0 +1,188 @@
+use super::*;
+use dioxus::core::NoOpMutations;
+use std::cell::Cell;
+
+#[test]
+fn owner_controls_show_current_priority_and_cancel_only_open_tasks() {
+    for status in [
+        "backlog",
+        "concept",
+        "design",
+        "ready",
+        "in_progress",
+        "blocked",
+        "review",
+        "done",
+        "cancelled",
+    ] {
+        for priority in 0..=4 {
+            let html = dioxus_ssr::render_element(rsx! {
+                OwnerControls { slug: "fixture/task".to_string(), priority, status: status.to_string() }
+            });
+            assert!(html.contains("for=\"task-priority\""), "{html}");
+            assert!(
+                html.contains(&format!("<span>p{priority}</span>")),
+                "{html}"
+            );
+            assert!(
+                html.contains("aria-haspopup=\"listbox\" aria-expanded=false"),
+                "{html}"
+            );
+            assert_eq!(
+                html.contains(">Cancel task</button>"),
+                !matches!(status, "done" | "cancelled"),
+                "{status}: {html}"
+            );
+            assert!(!html.contains("Confirm cancellation"), "{html}");
+            assert!(
+                !html.contains("role=\"status\""),
+                "empty feedback takes no space: {html}"
+            );
+        }
+    }
+}
+
+/// `cobalt-otter`, an agent of `kind` holding nothing, as the agents API sends it with `slots`.
+fn agent(kind: &str, slots: Option<symphony_api::AgentSlots>) -> symphony_api::Agent {
+    symphony_api::Agent {
+        handle: "cobalt-otter".into(),
+        kind: kind.into(),
+        model: "opus".into(),
+        parent: None,
+        task: None,
+        role: None,
+        tasks: Vec::new(),
+        worktree: String::new(),
+        branch: String::new(),
+        agent: None,
+        session_id: None,
+        pane: None,
+        callback: None,
+        chat: false,
+        state: "idle".into(),
+        state_detail: None,
+        health: "live".into(),
+        last_tool_call: None,
+        last_message: None,
+        slots,
+    }
+}
+
+#[test]
+fn an_agent_under_the_cap_shows_its_open_tasks_against_it_and_one_without_shows_none() {
+    let capped = agent(
+        "orchestrator",
+        Some(symphony_api::AgentSlots { open: 3, cap: 8 }),
+    );
+    let html =
+        dioxus_ssr::render_element(rsx! { AgentRow { agent: capped, tasks: Rc::new(Vec::new()) } });
+    assert!(html.contains("<p>open tasks: 3 of 8</p>"), "{html}");
+    let html = dioxus_ssr::render_element(
+        rsx! { AgentRow { agent: agent("worker", None), tasks: Rc::new(Vec::new()) } },
+    );
+    assert!(html.contains("cobalt-otter"), "{html}");
+    assert!(!html.contains("open tasks:"), "{html}");
+}
+
+fn paragraph(text: &str) -> symphony_api::Block {
+    symphony_api::Block::Paragraph {
+        spans: vec![symphony_api::Span::Text { text: text.into() }],
+    }
+}
+
+fn chunk(revision: &str, text: &str, next: usize, omitted: usize) -> symphony_api::TaskBrief {
+    symphony_api::TaskBrief {
+        blocks: vec![paragraph(text)],
+        next,
+        omitted,
+        revision: revision.into(),
+    }
+}
+
+/// The brief as the page's feed hands it over: its revision and the bytes its page left out.
+fn fed_brief(brief: Rc<Cell<(&'static str, usize)>>) -> Element {
+    let (revision, omitted) = brief.get();
+    rsx! { Brief { slug: "fixture/task".to_owned(), revision, blocks: vec![paragraph("start")], omitted, next: 24_000 } }
+}
+
+#[test]
+fn a_brief_edited_from_short_to_long_offers_its_remaining_text() {
+    let brief = Rc::new(Cell::new(("short", 0)));
+    let mut dom = VirtualDom::new_with_props(fed_brief, brief.clone());
+    dom.rebuild(&mut NoOpMutations);
+    let html = dioxus_ssr::render(&dom);
+    assert!(!html.contains("brief-more"), "{html}");
+    brief.set(("long", 90_000));
+    dom.mark_dirty(ScopeId::APP);
+    dom.render_immediate(&mut NoOpMutations);
+    let html = dioxus_ssr::render(&dom);
+    assert!(html.contains("brief-more"), "{html}");
+    assert!(
+        html.contains("90000 bytes of it are not shown yet"),
+        "{html}"
+    );
+}
+
+#[test]
+fn what_was_read_of_a_brief_ends_with_its_revision() {
+    let mut read = BriefRead::default();
+    read.add(
+        "one",
+        24_000,
+        150_000,
+        Ok(chunk("one", "second part", 124_000, 50_000)),
+    );
+    let held = read.of("one").expect("the read revision is held");
+    assert_eq!(
+        (held.blocks.clone(), held.next, held.omitted),
+        (vec![paragraph("second part")], 124_000, 50_000)
+    );
+    assert_eq!(read.of("two"), None, "an edited brief starts from its page");
+    read.add(
+        "two",
+        24_000,
+        30_000,
+        Ok(chunk("two", "new rest", 54_000, 0)),
+    );
+    assert_eq!(
+        read,
+        BriefRead {
+            revision: "two".into(),
+            blocks: vec![paragraph("new rest")],
+            next: 54_000,
+            omitted: 0,
+            failed: String::new(),
+        },
+        "nothing read of the first revision follows the second's start"
+    );
+}
+
+#[test]
+fn a_chunk_cut_from_another_revision_is_not_joined_to_the_part_shown() {
+    let mut read = BriefRead::default();
+    read.add(
+        "one",
+        24_000,
+        150_000,
+        Ok(chunk("two", "misaligned", 124_000, 9)),
+    );
+    assert_eq!(
+        (read.blocks.len(), read.next, read.omitted),
+        (0, 24_000, 150_000),
+        "{read:?}"
+    );
+    assert!(read.failed.contains("The brief changed"), "{read:?}");
+    read.add(
+        "one",
+        24_000,
+        150_000,
+        Ok(chunk("one", "rest", 124_000, 50_000)),
+    );
+    assert_eq!((read.blocks.len(), read.failed.as_str()), (1, ""));
+    read.add("one", 24_000, 150_000, Err("offline".into()));
+    assert_eq!(
+        (read.blocks.len(), read.next, read.failed.as_str()),
+        (1, 124_000, "offline"),
+        "a failed read keeps what was read and says why"
+    );
+}

@@ -388,7 +388,7 @@ fn DocSection(
     let content = rsx! {
             div { class: "section-prose",
                 onclick: move |event: MouseEvent| {
-                    let interactive = event.data().try_as_web_event().and_then(|e| e.target()).and_then(|e| e.dyn_into::<web_sys::Element>().ok()).and_then(|e| e.closest("a, button, input, summary, textarea, img, iframe, model-viewer").ok().flatten()).is_some();
+                    let interactive = event.data().try_as_web_event().and_then(|e| e.target()).and_then(|e| e.dyn_into::<web_sys::Element>().ok()).and_then(|e| e.closest("a, button, input, summary, textarea, img, iframe, .viewer-stage").ok().flatten()).is_some();
                     if is_card && !interactive { editing.set(true); }
                 },
                 FragmentView { fragment }

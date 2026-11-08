@@ -267,14 +267,20 @@ in-memory blob pages are allowed; file URLs and external hosts are blocked.
   adapter sizes mounted frames and its component dialog opens
   pictures at `data-full`. Mockups stay at 1280x800, scaled by their card's width,
   with only `allow-scripts` in their sandbox. Never add `allow-same-origin`.
-  The vendored `/static/model-viewer.min.js` is loaded once, on the first visible
-  model, and is absent from the shell's preloads. A plugin's pages are the
+  A file a plugin's renderer draws in a viewer is a `Media::Viewer`, drawn by
+  `viewer::FileViewer` from its `symphony_api::Viewer` data alone: the custom
+  element (its markup from `Viewer::element_html`, every value escaped), its
+  caption, a button per view and the download link. The client holds no
+  viewer's code: the module script the viewer names is loaded once, on the first
+  mounted stage naming it, and is absent from the shell's preloads; a view's
+  button sets the attributes it lists on the element and calls the method it
+  names. A plugin's pages are the
   `ProjectView`'s `nav` items the served page inlines (`PROJECT_ELEMENT`): each
   reads its document through `DocumentPage`, as a `/shelf` page reads
-  `docs/SHELF.md`. A `Media::Gallery` holds its items (name, model `src`,
-  `poster`), served under the plugin's route, `/x/shelf/`. Its grid has only
-  small pictures until an item opens; one selected model is mounted at a time,
-  and closing it unmounts the viewer.
+  `docs/SHELF.md`. A `Media::Gallery` holds its items (name, file `src`,
+  `poster`), served under the plugin's route, `/x/shelf/`, and the viewer they
+  open in. Its grid has only small pictures until an item opens; one selected
+  item is mounted at a time, and closing it unmounts the viewer.
   The server warms read snapshots before announcing its URL, and a gallery
   plugin warms the selected checkout's gallery cache at startup and when a
   folder its watch names changes. Startup logs separate gallery, document and

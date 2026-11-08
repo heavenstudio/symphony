@@ -4,14 +4,15 @@ use crate::common::{Fixture, NOW, refused};
 use symphony_board::NewLaunch;
 use symphony_board::rows::TaskSessionRow;
 
-fn launch(f: &Fixture, slug: &str, role: &str) -> TaskSessionRow {
+/// A launch of a new worker's handle on `slug` as `role`, in terminal t9: its record.
+pub(crate) fn launch(f: &Fixture, slug: &str, role: &str) -> TaskSessionRow {
     let handle = f.session("worker");
     f.store
         .record_launch(&NewLaunch {
             claude_session: "11111111-2222-3333-4444-555555555555".into(),
             worktree: "/wt/sim-jump".into(),
             branch: "sim/jump".into(),
-            pane: "w1:p9".into(),
+            pane: "t9".into(),
             model: "sonnet".into(),
             ..NewLaunch::new(slug, &handle, role)
         })
@@ -40,7 +41,7 @@ fn a_launch_is_read_back_whole_and_open_on_the_record() {
             "11111111-2222-3333-4444-555555555555",
             "/wt/sim-jump",
             "sim/jump",
-            "w1:p9",
+            "t9",
             "sonnet"
         )
     );
@@ -61,7 +62,7 @@ fn a_launch_is_read_back_whole_and_open_on_the_record() {
             h.as_str(),
             "system",
             format!(
-                "launched {h} as executor: pane w1:p9, agent session 11111111-2222-3333-4444-555555555555, worktree /wt/sim-jump, branch sim/jump"
+                "launched {h} as executor: pane t9, agent session 11111111-2222-3333-4444-555555555555, worktree /wt/sim-jump, branch sim/jump"
             )
         )
     );
@@ -75,16 +76,14 @@ fn a_session_found_running_is_recorded_as_found() {
     f.store
         .record_launch(&NewLaunch {
             worktree: "/wt/x".into(),
-            pane: "w1:p2".into(),
+            pane: "t2".into(),
             how: "found".into(),
             ..NewLaunch::new("sim/jump", &h, "reviewer")
         })
         .unwrap();
     assert_eq!(
         f.said("sim/jump").last().unwrap(),
-        &format!(
-            "found {h} running as reviewer: pane w1:p2, agent session unknown, worktree /wt/x"
-        )
+        &format!("found {h} running as reviewer: pane t2, agent session unknown, worktree /wt/x")
     );
 }
 
@@ -97,7 +96,7 @@ fn a_session_recorded_without_its_line_leaves_the_thread_as_it_was() {
     let row = f
         .store
         .record_launch(&NewLaunch {
-            pane: "w1:p2".into(),
+            pane: "t2".into(),
             how: "found".into(),
             log: false,
             ..NewLaunch::new("sim/jump", &h, "reviewer")
@@ -179,17 +178,15 @@ fn reopening_gives_the_new_pane_and_clears_the_closure() {
     f.store
         .close_task_session("sim/jump", h, "idle", "restore line")
         .unwrap();
-    f.store
-        .reopen_task_session("sim/jump", h, "w1:p77")
-        .unwrap();
+    f.store.reopen_task_session("sim/jump", h, "t77").unwrap();
     let read = f.store.task_sessions("sim/jump").unwrap().remove(0);
     assert_eq!(
         (read.pane.as_str(), read.closed, read.closed_why.as_str()),
-        ("w1:p77", None, "")
+        ("t77", None, "")
     );
     assert_eq!(
         f.said("sim/jump").last().unwrap(),
-        &format!("restored {h} in pane w1:p77")
+        &format!("restored {h} in pane t77")
     );
     assert_eq!(f.store.open_task_sessions().unwrap(), [read]);
 }
@@ -204,7 +201,7 @@ fn closing_or_reopening_what_was_never_launched_is_refused() {
         format!("{h} has no recorded session on sim/jump")
     );
     assert_eq!(
-        refused(f.store.reopen_task_session("sim/jump", &h, "w1:p1")),
+        refused(f.store.reopen_task_session("sim/jump", &h, "t1")),
         format!("{h} has no recorded session on sim/jump")
     );
 }
@@ -223,7 +220,7 @@ fn launching_again_for_the_same_handle_replaces_the_record() {
             claude_session: "other-id".into(),
             worktree: "/wt/two".into(),
             branch: "b2".into(),
-            pane: "w1:p2".into(),
+            pane: "t2".into(),
             ..NewLaunch::new("sim/jump", &first.handle, "executor")
         })
         .unwrap();
@@ -278,4 +275,110 @@ fn sessions_of_a_handle_span_its_tasks_in_the_order_started() {
         "reviewer"
     );
     assert!(f.store.sessions_of("ghost-owl").unwrap().is_empty());
+}
+
+/// A Codex launch of `handle` on sim/jump whose thread the launch does not know (`codex:`).
+fn codex_launch(f: &Fixture, handle: &str) -> TaskSessionRow {
+    f.store
+        .record_launch(&NewLaunch {
+            claude_session: "codex:".into(),
+            worktree: "/wt/x".into(),
+            pane: "t3".into(),
+            ..NewLaunch::new("sim/jump", handle, "executor")
+        })
+        .unwrap()
+}
+
+#[test]
+fn a_codex_record_written_after_its_callback_keeps_the_thread_the_callback_registered() {
+    let f = Fixture::empty();
+    f.task("sim/jump");
+    let h = f.session("worker");
+    f.store
+        .callback(&h, Some("codex:0abc-12"), false, false)
+        .unwrap();
+    let row = codex_launch(&f, &h);
+    assert_eq!(row.claude_session, "codex:0abc-12");
+    assert_eq!(
+        f.store.task_sessions("sim/jump").unwrap(),
+        std::slice::from_ref(&row)
+    );
+    assert_eq!(
+        f.said("sim/jump").last().unwrap(),
+        &format!("launched {h} as executor: pane t3, agent session codex:0abc-12, worktree /wt/x")
+    );
+    // A conversation the record names is its own, whatever the callback says.
+    for given in ["codex:9999-00", "11111111-2222-3333-4444-555555555555", ""] {
+        let kept = f
+            .store
+            .record_launch(&NewLaunch {
+                claude_session: given.into(),
+                ..NewLaunch::new("sim/jump", &h, "executor")
+            })
+            .unwrap();
+        assert_eq!(kept.claude_session, given);
+        assert_eq!(
+            f.store.task_sessions("sim/jump").unwrap()[0].claude_session,
+            given
+        );
+    }
+}
+
+#[test]
+fn a_codex_record_closed_with_no_thread_says_restore_cannot_resume_it() {
+    let f = Fixture::empty();
+    f.task("sim/jump");
+    let h = f.session("worker");
+    codex_launch(&f, &h);
+    let restore = format!("just tasks restore sim/jump {h}");
+    f.store
+        .close_task_session("sim/jump", &h, "idle", &restore)
+        .unwrap();
+    let read = f.store.task_sessions("sim/jump").unwrap().remove(0);
+    assert_eq!(
+        (read.claude_session.as_str(), read.restore.as_str()),
+        ("codex:", restore.as_str())
+    );
+    assert!(read.closed.is_some());
+    assert_eq!(
+        f.said("sim/jump").last().unwrap(),
+        &format!(
+            "closed the pane of {h} (idle); restore: {restore}. Its Codex thread id never arrived, \
+             so restore cannot resume its conversation: start it again with just tasks launch \
+             sim/jump"
+        )
+    );
+}
+
+#[test]
+fn a_codex_record_still_unknown_when_it_closes_takes_the_thread_registered_meanwhile() {
+    let f = Fixture::empty();
+    f.task("sim/jump");
+    let h = f.session("worker");
+    codex_launch(&f, &h);
+    // Registered without completing the record, as a write racing the launch's could leave it.
+    f.store
+        .client()
+        .query(
+            "UPSERT type::record('callback_state', $handle) SET handle = $handle, \
+             address = 'codex:0abc-12', host = 'this-host' RETURN NONE;",
+            serde_json::json!({"handle": h}),
+        )
+        .unwrap();
+    assert_eq!(
+        f.store.task_sessions("sim/jump").unwrap()[0].claude_session,
+        "codex:"
+    );
+    let restore = format!("just tasks restore sim/jump {h}");
+    f.store
+        .close_task_session("sim/jump", &h, "idle", &restore)
+        .unwrap();
+    assert_eq!(
+        f.store.task_sessions("sim/jump").unwrap()[0].claude_session,
+        "codex:0abc-12"
+    );
+    assert_eq!(
+        f.said("sim/jump").last().unwrap(),
+        &format!("closed the pane of {h} (idle); restore: {restore}")
+    );
 }

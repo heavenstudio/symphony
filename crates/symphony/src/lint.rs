@@ -198,7 +198,7 @@ pub fn main(root: &Path, out: &mut dyn Write, err: &mut dyn Write) -> i32 {
         }
         let _ = writeln!(
             err,
-            "✖ the project file is refused, so the Symphony would use the defaults in its place."
+            "✖ the project file is refused, so the Symphony runs with what it does not know left out, or with the defaults in its place when it does not load."
         );
         return 1;
     }
