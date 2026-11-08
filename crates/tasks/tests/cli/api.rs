@@ -397,6 +397,36 @@ fn landed_closes_only_from_what_the_call_names_and_answers_what_it_found() {
     );
 }
 
+/// `move`'s `from` (api 6): the move goes only from a status it names, as its own write reads the
+/// task, and without it from any the pipeline allows.
+#[test]
+fn a_move_from_goes_only_from_the_statuses_it_names() {
+    let c = Case::new();
+    let actor = c.register("worker");
+    c.ok(&actor, &["create", "sim/a", "A"]);
+    c.ok(&actor, &["claim", "sim/a"]);
+    let call = |status: &str, from: Option<Value>| {
+        let mut args = json!({"slug": "sim/a", "status": status, "handle": actor});
+        if let Some(from) = from {
+            args["from"] = from;
+        }
+        json!({"method": "move", "args": args})
+    };
+    assert_eq!(
+        answer(&c.env, call("in_progress", Some(json!(["review"])))),
+        json!({"refused": "sim/a is in_progress, not review: it stays in_progress"})
+    );
+    let moved = &answer(
+        &c.env,
+        call("review", Some(json!(["blocked", "in_progress"]))),
+    )["ok"];
+    assert_eq!(moved["status"], "review");
+    assert_eq!(
+        answer(&c.env, call("blocked", None))["ok"]["status"],
+        "blocked"
+    );
+}
+
 #[test]
 fn board_authored_notices_reach_the_actors_own_inbox_and_still_validate_the_actor_and_recipient() {
     let c = Case::new();
