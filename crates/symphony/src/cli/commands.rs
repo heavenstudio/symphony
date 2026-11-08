@@ -4,7 +4,7 @@
 use std::io::Write;
 
 /// The Symphony's own commands, in the order its usage names them.
-const OWN: [&str; 9] = [
+const OWN: [&str; 10] = [
     "status",
     "reply",
     "docs-audit",
@@ -13,12 +13,16 @@ const OWN: [&str; 9] = [
     "triage",
     "verdict-tasks",
     "ask",
+    "init",
     "serve",
 ];
 
 /// `name`, a command the Symphony does not have, run by the first plugin that adds it with `args`;
 /// a name no plugin adds is refused. Its exit code.
 pub(super) fn plugin(name: &str, args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i32 {
+    if name == "init" {
+        return crate::init::main(args, out, err);
+    }
     if let Some(command) = crate::plugins::commands()
         .into_iter()
         .find(|command| command.name() == name)

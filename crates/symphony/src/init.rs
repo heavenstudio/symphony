@@ -1,0 +1,447 @@
+//! `symphony init`: the agents' integration files a project needs, installed and kept current.
+//!
+//! The Symphony ships the generic skills, the allow rules (Claude's in `.claude/settings.json`,
+//! Codex's in `.codex/rules/symphony.rules`) and the heartbeat hook. Each file it writes carries a
+//! stamp, which is how a later run knows the file is its own to bring up to date. A file of the same
+//! name without the stamp is the project's own: it is the one in use and this never writes over it.
+//! Where the project has none, the Symphony's is used. The project's own skills and guards sit
+//! beside the shipped ones and are never touched.
+
+use std::io;
+use std::path::{Path, PathBuf};
+
+use serde_json::{Map, Value, json};
+use sha2::{Digest, Sha256};
+
+/// Where the skills live in a project, and where Claude Code loads them from.
+const SKILLS: &str = ".agents/skills";
+const CLAUDE_SKILLS: &str = ".claude/skills";
+const SETTINGS: &str = ".claude/settings.json";
+const CODEX_RULES: &str = ".codex/rules/symphony.rules";
+
+/// The mark on a skill's `SKILL.md` and on the Codex rules file.
+const MARK: &str = "symphony-stamp:";
+
+/// The heartbeat hook's command. It runs the binary the project's `.target/bin/symphony` names and
+/// builds nothing; with none linked it passes quietly.
+const HOOK_COMMAND: &str =
+    "\"$CLAUDE_PROJECT_DIR/.target/bin/symphony\" hook tasks-beat 2>/dev/null || true";
+/// What every command the Symphony wrote has in it.
+const HOOK_OWN: &str = "symphony\" hook tasks-beat";
+const HOOK_TIMEOUT: u64 = 10;
+/// The hook's events and the tool matcher of each.
+const HOOK_EVENTS: [(&str, &str); 2] = [("PreToolUse", "Bash"), ("PostToolUse", "")];
+
+/// What an agent on the board runs, which Claude allows without a prompt.
+const ALLOW: [&str; 5] = [
+    "Bash(just tasks:*)",
+    "Bash(TASKS_SESSION=* just tasks *)",
+    "Bash(just symphony-status:*)",
+    "Bash(just symphony-reply:*)",
+    "Bash(just symphony-ask:*)",
+];
+
+/// One shipped skill: its folder name and its files by path inside it (`SKILL.md` first).
+pub struct Skill {
+    pub name: String,
+    pub files: Vec<(String, String)>,
+}
+
+/// Everything the Symphony ships to a project.
+pub struct Shipped {
+    pub skills: Vec<Skill>,
+    pub codex_rules: String,
+}
+
+macro_rules! skill {
+    ($name:literal $(, $file:literal)*) => {
+        Skill {
+            name: $name.to_string(),
+            files: vec![
+                ("SKILL.md".to_string(), include_str!(concat!("../shipped/skills/", $name, "/SKILL.md")).to_string())
+                $(, ($file.to_string(), include_str!(concat!("../shipped/skills/", $name, "/", $file)).to_string()))*
+            ],
+        }
+    };
+}
+
+impl Shipped {
+    /// The files this build carries.
+    pub fn builtin() -> Shipped {
+        Shipped {
+            skills: vec![
+                skill!("apply-review", "rewrite-brief.md"),
+                skill!("chat-doc"),
+                skill!("create-task"),
+                skill!("task-orchestrator"),
+                skill!("tasks"),
+                skill!("triage"),
+                skill!("work"),
+            ],
+            codex_rules: include_str!("../shipped/codex.rules").to_string(),
+        }
+    }
+}
+
+/// What one run did to one thing.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Outcome {
+    Installed,
+    Updated,
+    Current,
+    /// The project's own copy, left as it is.
+    Own,
+    Removed,
+}
+
+impl Outcome {
+    fn word(&self) -> &'static str {
+        match self {
+            Outcome::Installed => "installed",
+            Outcome::Updated => "updated",
+            Outcome::Current => "current",
+            Outcome::Own => "kept (the project's own)",
+            Outcome::Removed => "removed",
+        }
+    }
+}
+
+/// A line of the run's report: the thing and what happened to it.
+pub type Report = Vec<(String, Outcome)>;
+
+fn digest(parts: &[&str]) -> String {
+    let mut hash = Sha256::new();
+    for part in parts {
+        hash.update(part.as_bytes());
+        hash.update([0]);
+    }
+    hash.finalize()[..8]
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
+/// The stamp a skill's `SKILL.md` carries: after its front matter, a comment naming the files' digest.
+fn stamped_skill(skill: &Skill, text: &str) -> String {
+    let parts: Vec<&str> = skill
+        .files
+        .iter()
+        .flat_map(|(path, body)| [path.as_str(), body.as_str()])
+        .collect();
+    let files: Vec<&str> = skill.files.iter().map(|(path, _)| path.as_str()).collect();
+    let line = format!(
+        "<!-- {MARK} {} files={} -->\n",
+        digest(&parts),
+        files.join(",")
+    );
+    let at = text
+        .strip_prefix("---\n")
+        .and_then(|rest| rest.find("\n---\n").map(|end| 4 + end + 5))
+        .unwrap_or(0);
+    format!("{}{line}{}", &text[..at], &text[at..])
+}
+
+/// Whether `text` carries the Symphony's stamp: a line that begins with the mark.
+fn is_stamped(text: &str) -> bool {
+    text.lines().any(|line| {
+        line.strip_prefix("<!-- ")
+            .or_else(|| line.strip_prefix("# "))
+            .is_some_and(|rest| rest.starts_with(MARK))
+    })
+}
+
+/// The files a stamp names: what the Symphony wrote into the skill's folder.
+fn stamped_files(text: &str) -> Vec<&str> {
+    text.lines()
+        .find_map(|line| line.split_once(" files=")?.1.strip_suffix(" -->"))
+        .map(|names| {
+            names
+                .split(',')
+                .filter(|name| !name.contains("..") && !name.starts_with('/'))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn stamped_rules(text: &str) -> String {
+    format!("# {MARK} {}\n{text}", digest(&[text]))
+}
+
+/// Writes `text` at `path` when it differs; whether it wrote.
+fn put(path: &Path, text: &str) -> io::Result<bool> {
+    if std::fs::read_to_string(path).is_ok_and(|have| have == text) {
+        return Ok(false);
+    }
+    if let Some(folder) = path.parent() {
+        std::fs::create_dir_all(folder)?;
+    }
+    std::fs::write(path, text)?;
+    Ok(true)
+}
+
+/// Makes `.claude/skills/NAME` a link to the skill's folder when nothing is there.
+fn link_skill(root: &Path, name: &str) -> io::Result<()> {
+    let link = root.join(CLAUDE_SKILLS).join(name);
+    if link.symlink_metadata().is_ok() {
+        return Ok(());
+    }
+    std::fs::create_dir_all(root.join(CLAUDE_SKILLS))?;
+    std::os::unix::fs::symlink(PathBuf::from("../../").join(SKILLS).join(name), link)
+}
+
+fn install_skills(root: &Path, shipped: &Shipped, report: &mut Report) -> io::Result<()> {
+    for skill in &shipped.skills {
+        let folder = root.join(SKILLS).join(&skill.name);
+        let entry = format!("skill {}", skill.name);
+        let main = folder.join("SKILL.md");
+        let have = std::fs::read_to_string(&main);
+        let outcome = match &have {
+            Ok(text) if !is_stamped(text) => Outcome::Own,
+            _ => {
+                let mut wrote = false;
+                for (path, body) in &skill.files {
+                    let text = if path == "SKILL.md" {
+                        stamped_skill(skill, body)
+                    } else {
+                        body.clone()
+                    };
+                    wrote |= put(&folder.join(path), &text)?;
+                }
+                match (wrote, have.is_ok()) {
+                    (false, _) => Outcome::Current,
+                    (true, true) => Outcome::Updated,
+                    (true, false) => Outcome::Installed,
+                }
+            }
+        };
+        if folder.is_dir() {
+            link_skill(root, &skill.name)?;
+        }
+        report.push((entry, outcome));
+    }
+    Ok(())
+}
+
+/// A skill the Symphony wrote and no longer ships: its `SKILL.md` goes, its folder with it when
+/// nothing else of the project's is in it, and the link to it.
+fn remove_retired(root: &Path, shipped: &Shipped, report: &mut Report) -> io::Result<()> {
+    let Ok(folders) = std::fs::read_dir(root.join(SKILLS)) else {
+        return Ok(());
+    };
+    let mut names: Vec<String> = folders
+        .flatten()
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .filter(|name| !shipped.skills.iter().any(|skill| &skill.name == name))
+        .collect();
+    names.sort();
+    for name in names {
+        let folder = root.join(SKILLS).join(&name);
+        let main = folder.join("SKILL.md");
+        if !std::fs::read_to_string(&main).is_ok_and(|text| is_stamped(&text)) {
+            continue;
+        }
+        let text = std::fs::read_to_string(&main)?;
+        for file in stamped_files(&text) {
+            let _ = std::fs::remove_file(folder.join(file));
+        }
+        let _ = std::fs::remove_file(&main);
+        let _ = std::fs::remove_dir(&folder);
+        let link = root.join(CLAUDE_SKILLS).join(&name);
+        if !folder.exists() && link.symlink_metadata().is_ok_and(|meta| meta.is_symlink()) {
+            std::fs::remove_file(link)?;
+        }
+        report.push((format!("skill {name}"), Outcome::Removed));
+    }
+    Ok(())
+}
+
+fn install_codex_rules(root: &Path, shipped: &Shipped, report: &mut Report) -> io::Result<()> {
+    let path = root.join(CODEX_RULES);
+    let have = std::fs::read_to_string(&path);
+    let outcome = match &have {
+        Ok(text) if !text.lines().next().is_some_and(is_mark_line) => Outcome::Own,
+        _ => match (
+            put(&path, &stamped_rules(&shipped.codex_rules))?,
+            have.is_ok(),
+        ) {
+            (false, _) => Outcome::Current,
+            (true, true) => Outcome::Updated,
+            (true, false) => Outcome::Installed,
+        },
+    };
+    report.push(("codex rules".to_string(), outcome));
+    Ok(())
+}
+
+fn is_mark_line(line: &str) -> bool {
+    line.strip_prefix("# ")
+        .is_some_and(|rest| rest.starts_with(MARK))
+}
+
+/// A command the project wrote for the heartbeat: it names the beat and is not the Symphony's.
+fn own_beat(command: &str) -> bool {
+    command.contains("tasks-beat") && !command.contains(HOOK_OWN)
+}
+
+/// `hooks.EVENT` carries the heartbeat: the Symphony's command brought up to date, or the project's
+/// own left alone, else a group added. Whether it changed anything.
+fn ensure_beat(hooks: &mut Map<String, Value>, event: &str, matcher: &str) -> bool {
+    let groups = hooks
+        .entry(event.to_string())
+        .or_insert_with(|| json!([]))
+        .as_array_mut();
+    let Some(groups) = groups else {
+        return false;
+    };
+    let mut own = false;
+    let mut changed = false;
+    for group in groups.iter_mut() {
+        let Some(list) = group.get_mut("hooks").and_then(Value::as_array_mut) else {
+            continue;
+        };
+        for hook in list {
+            let command = hook.get("command").and_then(Value::as_str).unwrap_or("");
+            if own_beat(command) {
+                return false;
+            }
+            if command.contains(HOOK_OWN) {
+                own = true;
+                if command != HOOK_COMMAND {
+                    hook["command"] = json!(HOOK_COMMAND);
+                    changed = true;
+                }
+                if hook.get("timeout") != Some(&json!(HOOK_TIMEOUT)) {
+                    hook["timeout"] = json!(HOOK_TIMEOUT);
+                    changed = true;
+                }
+            }
+        }
+    }
+    if !own {
+        groups.push(json!({
+            "matcher": matcher,
+            "hooks": [{"type": "command", "command": HOOK_COMMAND, "timeout": HOOK_TIMEOUT}],
+        }));
+        changed = true;
+    }
+    changed
+}
+
+fn install_settings(root: &Path, report: &mut Report) -> io::Result<()> {
+    let path = root.join(SETTINGS);
+    let have = std::fs::read_to_string(&path).ok();
+    let mut settings: Value = match &have {
+        Some(text) => serde_json::from_str(text).map_err(|error| {
+            io::Error::new(io::ErrorKind::InvalidData, format!("{SETTINGS}: {error}"))
+        })?,
+        None => json!({}),
+    };
+    let not_object = || {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("{SETTINGS}: not the shape Claude Code reads; left as it is"),
+        )
+    };
+    let top = settings.as_object_mut().ok_or_else(not_object)?;
+    let mut changed = false;
+
+    let permissions = top
+        .entry("permissions")
+        .or_insert_with(|| json!({}))
+        .as_object_mut()
+        .ok_or_else(not_object)?;
+    let allow = permissions
+        .entry("allow")
+        .or_insert_with(|| json!([]))
+        .as_array_mut()
+        .ok_or_else(not_object)?;
+    for rule in ALLOW {
+        if !allow.iter().any(|have| have.as_str() == Some(rule)) {
+            allow.push(json!(rule));
+            changed = true;
+        }
+    }
+
+    let hooks = top
+        .entry("hooks")
+        .or_insert_with(|| json!({}))
+        .as_object_mut()
+        .ok_or_else(not_object)?;
+    for (event, matcher) in HOOK_EVENTS {
+        changed |= ensure_beat(hooks, event, matcher);
+    }
+
+    let outcome = match (changed, have.is_some()) {
+        (false, _) => Outcome::Current,
+        (true, existed) => {
+            let mut text = serde_json::to_string_pretty(&settings).map_err(io::Error::other)?;
+            text.push('\n');
+            put(&path, &text)?;
+            if existed {
+                Outcome::Updated
+            } else {
+                Outcome::Installed
+            }
+        }
+    };
+    report.push(("claude settings".to_string(), outcome));
+    Ok(())
+}
+
+/// Installs and brings current everything `shipped` holds in the project at `root`.
+pub fn init(root: &Path, shipped: &Shipped) -> io::Result<Report> {
+    let mut report = Report::new();
+    install_skills(root, shipped, &mut report)?;
+    remove_retired(root, shipped, &mut report)?;
+    install_codex_rules(root, shipped, &mut report)?;
+    install_settings(root, &mut report)?;
+    Ok(report)
+}
+
+const USAGE: &str = "usage: symphony init [-h] [--root ROOT]";
+const HELP: &str = "Install the agents' integration files and keep them current.
+
+options:
+  -h, --help   show this help message and exit
+  --root ROOT  the project's root (default: the current folder)
+
+A file of the same name without the Symphony's stamp is the project's own: it is used and never
+written over.";
+
+/// `symphony init [--root ROOT]`. Its exit code.
+pub fn main(args: &[String], out: &mut dyn io::Write, err: &mut dyn io::Write) -> i32 {
+    use crate::cli::{Flag, parse, refuse};
+    let flags = [Flag {
+        name: "--root",
+        value: true,
+    }];
+    let parsed = match parse(args, &flags) {
+        Ok(parsed) if parsed.help => {
+            let _ = writeln!(out, "{USAGE}\n\n{HELP}");
+            return 0;
+        }
+        Ok(parsed) if !parsed.positionals.is_empty() => {
+            let problem = format!("unrecognized arguments: {}", parsed.positionals.join(" "));
+            return refuse(err, USAGE, "init", &problem);
+        }
+        Ok(parsed) => parsed,
+        Err(problem) => return refuse(err, USAGE, "init", &problem),
+    };
+    let root = PathBuf::from(parsed.value("--root").unwrap_or("."));
+    match init(&root, &Shipped::builtin()) {
+        Ok(report) => {
+            for (entry, outcome) in report {
+                let _ = writeln!(out, "{entry}: {}", outcome.word());
+            }
+            0
+        }
+        Err(error) => {
+            let _ = writeln!(err, "symphony init: {error}");
+            1
+        }
+    }
+}
+
+#[cfg(test)]
+#[path = "init_tests.rs"]
+mod tests;
