@@ -990,22 +990,26 @@ impl Hub {
         Ok(())
     }
 
+    /// A failed board read: pages hear that the board went, with whether it is slow (it took the
+    /// read and answered late, [`symphony_board::rpc::slow`]) or unreachable, and hear again only
+    /// when a gone board turns from one to the other.
     fn board_error(&self, error: String) {
+        let slow = symphony_board::rpc::slow(&error);
         let mut held = self.tasks.lock().unwrap_or_else(|e| e.into_inner());
-        let newly_unavailable = held.error.is_none();
-        held.error = Some(error.clone());
+        let was = held.error.replace(error.clone());
         drop(held);
-        if newly_unavailable {
+        let newly_unavailable = was.is_none();
+        if newly_unavailable || was.is_some_and(|was| symphony_board::rpc::slow(&was) != slow) {
             let mut pages = self.pages.write().unwrap_or_else(|e| e.into_inner());
             for page in pages.values_mut() {
-                page.board.counts.tasks = None;
-                self.publish(
-                    page,
-                    vec![
-                        json!({"region":"tasks-status", "data":{"available":false,"error":error}}),
-                        json!({"region":"counts", "data":page.board.counts}),
-                    ],
-                );
+                let mut changes = vec![
+                    json!({"region":"tasks-status", "data":{"available":false,"slow":slow,"error":error}}),
+                ];
+                if newly_unavailable {
+                    page.board.counts.tasks = None;
+                    changes.push(json!({"region":"counts", "data":page.board.counts}));
+                }
+                self.publish(page, changes);
             }
         }
     }
@@ -1462,6 +1466,9 @@ mod backstop_tests;
 
 #[cfg(test)]
 mod startup_tests;
+
+#[cfg(test)]
+mod status_tests;
 
 #[cfg(test)]
 mod tests {

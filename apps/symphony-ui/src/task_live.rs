@@ -268,11 +268,11 @@ fn apply_event(value: &JsValue, mut data: Signal<Data>) -> Result<bool, String> 
             }
             "tasks-status" => {
                 reload_page |= property(&value, "available").as_bool() == Some(true);
-                next.error = if property(&value, "available").as_bool() == Some(false) {
-                    "The task board is unavailable. Reconnecting…".into()
-                } else {
-                    String::new()
-                };
+                next.error = crate::words::board_status(
+                    property(&value, "available").as_bool(),
+                    property(&value, "slow").as_bool(),
+                )
+                .into();
             }
             _ => {}
         }

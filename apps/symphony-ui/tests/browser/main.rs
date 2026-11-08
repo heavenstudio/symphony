@@ -1001,6 +1001,39 @@ fn one_feed_event_changes_one_card_in_place_with_no_page_fetch() {
     assert_eq!(texts(&mut chrome, ".tile b")[0], "37");
 }
 
+/// The task board's status off the feed: slow when the server reached the board and its answer
+/// came late, unavailable when the board refused the connection, nothing once it answers again.
+#[test]
+fn the_tasks_page_says_a_late_board_is_slow_and_a_refused_one_unavailable() {
+    let site = site();
+    let Some(mut chrome) = chrome() else { return };
+    chrome.open(&site.url("/tasks"));
+    assert!(chrome.wait_for("document.querySelector('.kanban') !== null", SHOWN));
+    assert!(wait_for_feed(&site), "the page never followed the feed");
+    let said = "document.querySelector('main[data-ready=board] .page-notices [role=alert]')?.textContent ?? ''";
+    for (version, status, words) in [
+        (
+            4183,
+            json!({"available":false,"slow":true,"error":"SurrealDB: the server at 127.0.0.1:1 is slow: no answer within 3s"}),
+            "The task board is slow to answer. Retrying…",
+        ),
+        (
+            4184,
+            json!({"available":false,"slow":false,"error":"SurrealDB: cannot connect to 127.0.0.1:1: Connection refused (os error 61)"}),
+            "The task board is unavailable. Reconnecting…",
+        ),
+        (4185, json!({"available":true}), ""),
+    ] {
+        let event = json!({"version":version,"changes":[{"region":"tasks-status","data":status}]});
+        site.push(version, &event.to_string());
+        assert!(
+            chrome.wait_for(&format!("({said}) === {}", json!(words)), SHOWN),
+            "after {status}, the page says {:?}",
+            chrome.eval(said)
+        );
+    }
+}
+
 #[test]
 fn a_feed_answered_500_once_heals_from_a_fresh_board_shown_stale_meanwhile() {
     let site = site();

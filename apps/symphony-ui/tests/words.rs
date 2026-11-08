@@ -1,6 +1,7 @@
-//! The board's words: a register's moment, the greeting, an age and the lead line.
+//! The board's words: a register's moment, the greeting, an age, the lead line and what a task
+//! page says of the board.
 
-use symphony_ui::words::{Moment, age, greeting, lead};
+use symphony_ui::words::{Moment, age, board_status, greeting, lead};
 
 fn at(text: &str) -> Moment {
     Moment::parse(text).unwrap_or_else(|| panic!("{text} does not parse"))
@@ -73,4 +74,24 @@ fn the_lead_counts_cards_and_documents_in_the_singular_and_plural() {
         "1 card waits on you across 1 document. Start with the one below."
     );
     assert_eq!(lead(0, 0), "Your queue is empty.");
+}
+
+#[test]
+fn the_board_status_tells_a_slow_board_from_an_unavailable_one() {
+    assert_eq!(
+        board_status(Some(false), Some(true)),
+        "The task board is slow to answer. Retrying…",
+        "reached, but the answer came late"
+    );
+    for slow in [Some(false), None] {
+        assert_eq!(
+            board_status(Some(false), slow),
+            "The task board is unavailable. Reconnecting…",
+            "refused, or a server that does not say: {slow:?}"
+        );
+    }
+    for slow in [None, Some(false), Some(true)] {
+        assert_eq!(board_status(Some(true), slow), "", "back: {slow:?}");
+        assert_eq!(board_status(None, slow), "", "no availability: {slow:?}");
+    }
 }

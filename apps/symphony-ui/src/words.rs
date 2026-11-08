@@ -105,6 +105,17 @@ pub fn lead(waiting: u32, docs: u32) -> String {
     )
 }
 
+/// What a task page says of the board after the feed's `tasks-status`, from its `available` and
+/// `slow`: nothing unless the board is unavailable; that it is slow when the server reached it and
+/// the answer came late, else that it is unavailable.
+pub fn board_status(available: Option<bool>, slow: Option<bool>) -> &'static str {
+    match (available, slow) {
+        (Some(false), Some(true)) => "The task board is slow to answer. Retrying…",
+        (Some(false), _) => "The task board is unavailable. Reconnecting…",
+        _ => "",
+    }
+}
+
 /// `noun`, with an s unless there is one.
 pub fn plural(count: u32, noun: &str) -> String {
     if count == 1 {
