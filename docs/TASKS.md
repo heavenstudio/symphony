@@ -290,7 +290,10 @@ tool call of a bound subagent also records, on its binding (never its session
 row, which keeps where its orchestrator ran `register`), the checkout that call
 ran in: the top folder above the hook's `cwd` and the branch checked out there,
 read from the `.git` files, and, when that checkout changed, the time it came
-there; a call with no `cwd`, or one outside any checkout, moves neither. A
+there; a call with no `cwd`, or one outside any checkout, moves neither (the
+last checkout stands: such a call says nothing of where it works). A call there
+that reads a time before any other there did (the clock went back) keeps that
+earliest time too, never moving when it came. A
 subagent waiting on a background command of its own (a `cargo test`, a build)
 makes no calls; while a live process it started works in that recorded linked
 worktree it reads `running_test` in the agents API, and is neither stale, lost
@@ -376,15 +379,19 @@ The rules a port must copy, in this order:
   repository or a nested worktree is not its), compared component by component, never by a string prefix; and it
   started while the agent was there, from a second before its binding recorded that checkout to a second after its
   last tool call. A server or shell started there before the agent came, or after it went quiet, is not its, so a
-  stray process never hides abandoned work, and one whose start cannot be read is not its either. The processes
+  stray process never hides abandoned work. With none of its own there, the board cannot tell, and so never calls it
+  lost, while one working there may be its: its start cannot be read (no permission, an unexpected record; one that
+  ended since the listing is left out), or it began after the earliest time a call of the agent's there read and
+  before it came, which only a clock that went back while it was there leaves. The processes
   are listed with their starts (`lsof`, as the worktree sweep lists them, and the kernel's process table) only when
   such an agent is in the view, once a view, and a long-lived reader (the server's clock and dispatcher, the
   monitor) keeps the listing for 20 s by its store's clock, from when the listing ended.
 - **state.** A matched run is `running_test`. Else a quiet subagent waiting on a process is `running_test` (`phase:
-  running`), or, when the processes cannot be listed, `running_test` with `phase: unknown`. Else the terminal's status
+  running`), or, when the processes cannot be listed or the board cannot tell whether one there is its,
+  `running_test` with `phase: unknown`. Else the terminal's status
   (`working`, `blocked` is `waiting_on_input`, `idle` and `done` are `idle`). Else the board's health: live is `working`,
   stale `idle`, lost or left `gone`. A matched run, and a process its subagent waits on, also lift `stale` and `lost` to
-  `live`; processes that cannot be listed make them `unknown`.
+  `live`; processes that cannot be listed, or one whose ownership cannot be told, make them `unknown`.
 - **A probe that fails** is `unavailable` in `probes`, and the answer is built from the board; a failing branch lookup is an
   empty branch.
 

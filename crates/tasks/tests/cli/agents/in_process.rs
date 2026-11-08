@@ -173,15 +173,60 @@ fn a_process_is_its_from_when_its_binding_recorded_the_worktree_to_its_last_tool
     for started in [NOW - 1.5, last + 1.5] {
         assert_eq!(reads(started), Health::Lost, "{started}");
     }
-    c.processes_in(vec![Process {
-        cwd: tree.clone(),
-        started: None,
-    }]);
+}
+
+/// The reviews' probe: a process working in its worktree whose start the kernel would not give
+/// may be its, so the board cannot tell: unknown, never lost. One of its own still reads live, and
+/// one whose start cannot be read elsewhere says nothing of it.
+#[test]
+fn a_process_there_whose_start_cannot_be_read_leaves_it_unknown_not_lost() {
+    let c = Case::new();
+    let tree = linked_worktree("unreadable");
+    let scratch_repo = tree.join(".target/tmp/case/repo");
+    std::fs::create_dir_all(scratch_repo.join(".git")).unwrap();
+    let handle = c.subagent_in(&tree);
+    let unreadable = |cwd: PathBuf| Process { cwd, started: None };
+    c.processes_in(vec![
+        unreadable(tree.join("crates/tasks")),
+        process(&tree, NOW - 60.0),
+    ]);
+    c.past_the_lost_line();
+    let a = c.agent(&handle);
+    assert_eq!((a.state, a.health), ("running_test", Health::Unknown));
+    assert_eq!(a.detail.unwrap().phase, "unknown");
+    c.processes_in(vec![unreadable(tree.clone()), process(&tree, NOW)]);
+    let a = c.agent(&handle);
     assert_eq!(
-        c.agent(&handle).health,
-        Health::Lost,
-        "no start ties it to none"
+        (a.health, a.detail.unwrap().phase.as_str()),
+        (Health::Live, "running")
     );
+    c.processes_in(vec![
+        unreadable(tree.with_file_name("wt-other")),
+        unreadable(scratch_repo),
+    ]);
+    let a = c.agent(&handle);
+    assert_eq!((a.state, a.health), ("gone", Health::Lost));
+}
+
+/// The adversarial review's clock probe: placed at NOW, the clock went back 5 s before its
+/// background build there, whose process so began before it came by the clock. It may be its: the
+/// board cannot tell, never that it is gone. One that began before the earliest time a call of its
+/// there read is not.
+#[test]
+fn a_build_begun_after_the_clock_went_back_is_a_doubt_not_an_absence() {
+    let c = Case::new();
+    let tree = linked_worktree("clock-back");
+    let handle = c.subagent_in(&tree);
+    c.f.advance(-5.0);
+    c.call_in("agent-sub", &tree); // the build's call, its process begun right after
+    c.processes_in(vec![process(&tree, NOW - 4.9)]);
+    c.past_the_lost_line();
+    let a = c.agent(&handle);
+    assert_eq!((a.state, a.health), ("running_test", Health::Unknown));
+    c.processes_in(vec![process(&tree, NOW - 6.5)]);
+    assert_eq!(c.agent(&handle).health, Health::Lost);
+    c.processes_in(vec![process(&tree, NOW - 6.5), process(&tree, NOW + 0.5)]);
+    assert_eq!(c.agent(&handle).health, Health::Live, "its own proves it");
 }
 
 /// The adversarial review's other probe: bound in one checkout, the subagent's background build

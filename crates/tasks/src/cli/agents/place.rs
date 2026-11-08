@@ -7,9 +7,11 @@
 //! that one, never one beneath it): `running_test`, `{"recipe": "process", "phase": "running"}`,
 //! and live. A process is its own when it began while the agent was there: not before its binding
 //! recorded that worktree, nor after its last tool call, so a server or shell another started there
-//! keeps nobody alive. When the machine's processes cannot be listed the board cannot tell:
-//! `running_test` with `"phase": "unknown"`, health `unknown`, so it is not called lost either. With
-//! none of its own working there it ages as before ([`waited_on`]).
+//! keeps nobody alive. When the board cannot tell (the machine's processes cannot be listed, or one
+//! working there may be the agent's but its start cannot be read, or the clock went back while the
+//! agent was there and the process began in the time that leaves in doubt): `running_test` with
+//! `"phase": "unknown"`, health `unknown`, so it is not called lost either. With none working there
+//! that can be its it ages as before ([`waited_on`]).
 
 use super::{Answer, Detail, Probes};
 use crate::Store;
@@ -26,7 +28,7 @@ pub const PROCESS: &str = "process";
 const START_SLACK_SECONDS: f64 = 1.0;
 
 /// A live process the machine lists: where it works and when it started, by the board's clock (none
-/// when the kernel could not say, which ties it to no agent).
+/// when the kernel could not say: it may be anyone's, the agent's working there included).
 #[derive(Debug, Clone, PartialEq)]
 pub struct Process {
     pub cwd: PathBuf,
@@ -86,28 +88,51 @@ fn works_in(cwd: &Path, tree: &Path) -> bool {
             .all(|folder| !folder.join(".git").exists())
 }
 
+/// An in-process agent's stay in the checkout its binding recorded, by the board's clock.
+#[derive(Debug, Clone, Copy)]
+pub(super) struct Stay {
+    /// When its binding recorded that checkout (`placed_at`).
+    pub came: f64,
+    /// The earliest time a call of its there read: `came`, unless the clock went back while it was
+    /// there (`stay_from`).
+    pub from: f64,
+    /// Its last tool call.
+    pub last: f64,
+}
+
 /// What the machine's processes (`scan`, listed once a view) say of an in-process agent gone quiet
-/// in `tree` (resolved), where it has been from `stay`'s first time (when its binding recorded
-/// `tree`) to its second (its last tool call): its health and what it waits on, live on a process
-/// that began there in that stay, unknown when they cannot be listed. None when `tree` is no linked
-/// worktree (the main checkout, which every agent registered there shares, or a folder in no
-/// repository) or no process of its own works there.
+/// in `tree` (resolved) after `stay` there: its health and what it waits on. Live on a process
+/// working there that began in its stay; unknown when they cannot be listed, or when one working
+/// there may be its but cannot be told to be: its start cannot be read, or it began while the clock
+/// had gone back (after the earliest time a call of its there read, before it came). None when
+/// `tree` is no linked worktree (the main checkout, which every agent registered there shares, or
+/// a folder in no repository) or no process working there can be its.
 pub(super) fn waited_on(
     tree: &str,
-    stay: (f64, f64),
+    stay: Stay,
     scan: &dyn Fn() -> Answer<Vec<Process>>,
 ) -> Option<(Health, Detail)> {
     let tree = Path::new(tree);
     if tree.as_os_str().is_empty() || !crate::git::linked(tree) {
         return None;
     }
-    let within = (stay.0 - START_SLACK_SECONDS)..=(stay.1 + START_SLACK_SECONDS);
-    let its_own =
-        |p: &Process| p.started.is_some_and(|at| within.contains(&at)) && works_in(&p.cwd, tree);
+    let (from, came) = (stay.from.min(stay.came), stay.came);
+    let within = (came - START_SLACK_SECONDS)..=(stay.last + START_SLACK_SECONDS);
+    let went_back = (from - START_SLACK_SECONDS)..(came - START_SLACK_SECONDS);
+    let its_own = |p: &&Process| p.started.is_some_and(|at| within.contains(&at));
+    let maybe = |p: &&Process| p.started.is_none_or(|at| went_back.contains(&at));
     let (health, phase) = match scan() {
         Err(_) => (Health::Unknown, "unknown"),
-        Ok(listed) if listed.iter().any(its_own) => (Health::Live, "running"),
-        Ok(_) => return None,
+        Ok(listed) => {
+            let there: Vec<&Process> = listed.iter().filter(|p| works_in(&p.cwd, tree)).collect();
+            if there.iter().any(its_own) {
+                (Health::Live, "running")
+            } else if there.iter().any(maybe) {
+                (Health::Unknown, "unknown")
+            } else {
+                return None;
+            }
+        }
     };
     let detail = Detail {
         recipe: PROCESS.into(),

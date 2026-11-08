@@ -55,7 +55,8 @@ fn machine_with_common(env: &Env, common: Result<PathBuf, String>) -> Probes<'_>
 
 /// Every process `lsof` lists, where it works as the worktree sweep reads it (a sessionless `lsof`,
 /// [`process_cwd::pid_cwds_with`]) and when it started as the kernel stamped it
-/// ([`sys::process_starts`]); a listing that cannot be read, or lists nothing, cannot say.
+/// ([`sys::process_starts`]), none when that cannot be read; one that ended since it was listed is
+/// left out. A listing that cannot be read, or lists nothing, cannot say.
 pub fn processes() -> Answer<Vec<Process>> {
     let listed = process_cwd::pid_cwds_with(sys::command("lsof"))
         .ok_or_else(|| "lsof cannot list the processes' working directories".to_string())?;
@@ -64,7 +65,14 @@ pub fn processes() -> Answer<Vec<Process>> {
     Ok(listed
         .into_iter()
         .zip(starts)
-        .map(|((_, cwd), started)| Process { cwd, started })
+        .filter_map(|((_, cwd), start)| match start {
+            sys::Start::At(at) => Some(Process {
+                cwd,
+                started: Some(at),
+            }),
+            sys::Start::Unreadable => Some(Process { cwd, started: None }),
+            sys::Start::Ended => None,
+        })
         .collect())
 }
 

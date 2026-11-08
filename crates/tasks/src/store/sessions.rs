@@ -81,6 +81,9 @@ pub struct Binding {
     pub branch: String,
     /// When its tool calls were first seen in that checkout, by the board's clock (0 before).
     pub placed_at: f64,
+    /// The earliest time any of its calls in that checkout read: `placed_at`, or earlier when the
+    /// clock went back while it was there, which leaves a process's start in that span in doubt.
+    pub stay_from: f64,
 }
 
 /// Where a new session's handle comes from: Python's `random.Random`, as `register` draws on it.
@@ -182,9 +185,13 @@ IF $s != NONE {
         SET last_seen = math::max([last_seen, $now]), last_tool = math::max([last_tool ?? $now, $now]), busy_until = $mark.until, busy_call = $mark.call RETURN NONE;
 };
 LET $bound = type::record('callback_state', ['binding', $agent]);
-IF $s != NONE AND $place != NONE AND $bound.in_process = true
-    AND [$bound.worktree, $bound.branch] != [$place.worktree, $place.branch] {
-    UPDATE $bound SET worktree = $place.worktree, branch = $place.branch, placed_at = $now RETURN NONE;
+IF $s != NONE AND $place != NONE AND $bound.in_process = true {
+    IF [$bound.worktree, $bound.branch] != [$place.worktree, $place.branch] {
+        UPDATE $bound SET worktree = $place.worktree, branch = $place.branch, placed_at = $now,
+            stay_from = $now RETURN NONE;
+    } ELSE IF $now < ($bound.stay_from ?? $bound.placed_at) {
+        UPDATE $bound SET stay_from = $now RETURN NONE;
+    };
 };
 RETURN $s.handle;";
 
@@ -342,8 +349,9 @@ impl Store {
     /// [`Store::agent_beat`], from the checkout the tool call runs in, if it is known: its top folder
     /// and the branch checked out there. An in-process agent's binding keeps them as where it really
     /// works (a subagent's session is registered where its orchestrator ran `register`), and when it
-    /// came there, written only when they change. A full session's binding keeps none: its terminal
-    /// or launch says where it works.
+    /// came there, written only when they change; a call there that reads a time before any other
+    /// there did (the clock went back) lowers [`Binding::stay_from`]. A full session's binding keeps
+    /// none: its terminal or launch says where it works.
     pub fn agent_beat_in(
         &self,
         agent: &str,
@@ -480,7 +488,9 @@ RETURN NONE;",
                 type::record('callback_state', ['binding', agent]).in_process ?? false AS in_process,
                 type::record('callback_state', ['binding', agent]).worktree ?? '' AS worktree,
                 type::record('callback_state', ['binding', agent]).branch ?? '' AS branch,
-                type::record('callback_state', ['binding', agent]).placed_at ?? 0 AS placed_at
+                type::record('callback_state', ['binding', agent]).placed_at ?? 0 AS placed_at,
+                type::record('callback_state', ['binding', agent]).stay_from
+                    ?? type::record('callback_state', ['binding', agent]).placed_at ?? 0 AS stay_from
             FROM session WHERE agent != NONE AND left_at = NONE;";
         let bound: Vec<Bound> = self.retrying(|| self.transact(read, json!({})))?;
         Ok(bound.into_iter().map(|b| (b.handle, b.binding)).collect())

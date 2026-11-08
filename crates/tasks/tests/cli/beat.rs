@@ -124,6 +124,8 @@ impl Event {
     }
 }
 
+mod place;
+
 /// Beat command health and session updates.
 mod beats {
     use super::{bash, tool};
@@ -137,20 +139,21 @@ mod beats {
     /// Three-second polls past the lost line.
     const GONE_POLLS: usize = ((LIVE_SECONDS + STALE_SECONDS) / 3.0) as usize + 3;
 
-    struct Clocked {
+    /// A case whose board clock a test moves (`TASKS_NOW`), from `NOW`.
+    pub(super) struct Clocked {
         c: Case,
         now: Cell<f64>,
     }
 
     impl Clocked {
-        fn new() -> Clocked {
+        pub(super) fn new() -> Clocked {
             Clocked {
                 c: Case::new(),
                 now: Cell::new(NOW),
             }
         }
 
-        fn pass(&self, seconds: f64) {
+        pub(super) fn pass(&self, seconds: f64) {
             self.now.set(self.now.get() + seconds);
         }
 
@@ -169,15 +172,15 @@ mod beats {
             self.at().ok(who, args)
         }
 
-        fn register(&self, kind: &str) -> String {
+        pub(super) fn register(&self, kind: &str) -> String {
             self.at().register(kind)
         }
 
-        fn board(&self) -> Store {
+        pub(super) fn board(&self) -> Store {
             self.at().store()
         }
 
-        fn beat(&self, event: &Value) {
+        pub(super) fn beat(&self, event: &Value) {
             let ran = self.run(&["beat"], &event.to_string());
             assert_eq!(
                 (ran.code, ran.out.as_str(), ran.err.as_str()),
@@ -215,7 +218,7 @@ mod beats {
         }
     }
 
-    fn inbox(handle: &str) -> String {
+    pub(super) fn inbox(handle: &str) -> String {
         format!("TASKS_SESSION={handle} just tasks inbox")
     }
 
@@ -481,103 +484,6 @@ mod beats {
             .insert("TASKS_SERVER".into(), "127.0.0.1:1".into());
         let ran = b.run(&["beat"], &bash("ls").agent("a").0.to_string());
         assert_eq!((ran.code, ran.out.as_str(), ran.err.as_str()), (0, "", ""));
-    }
-
-    /// A repository's main checkout and a linked worktree of it on `tools/x`, with a folder inside.
-    fn checkouts(name: &str) -> (std::path::PathBuf, std::path::PathBuf) {
-        let dir = scratch(name);
-        let main = repository(&dir.join("repo"));
-        let tree = dir.join("wt");
-        crate::git(
-            &main,
-            &[
-                "worktree",
-                "add",
-                "-q",
-                "-b",
-                "tools/x",
-                tree.to_str().unwrap(),
-            ],
-        );
-        std::fs::create_dir_all(tree.join("crates/tasks")).unwrap();
-        (main, tree)
-    }
-
-    /// Where `h`'s subagent binding says it works: (worktree, branch, since when).
-    fn placed(b: &Clocked, h: &str) -> (String, String, f64) {
-        let kept = b.board().agent_bindings().unwrap().remove(h).unwrap();
-        assert!(kept.in_process);
-        (kept.worktree, kept.branch, kept.placed_at)
-    }
-
-    #[test]
-    fn a_subagents_board_command_records_the_checkout_it_runs_in_on_its_binding() {
-        let b = Clocked::new();
-        let (_, tree) = checkouts("beat-place");
-        let h = b.register("worker");
-        let mut event = bash(&inbox(&h)).agent("agent-1").0;
-        event["cwd"] = json!(tree.join("crates/tasks").to_str().unwrap());
-        b.beat(&event);
-        let top = tree.to_str().unwrap().to_string();
-        assert_eq!(placed(&b, &h), (top.clone(), "tools/x".into(), NOW));
-        // A call in no checkout moves nothing; one in the same checkout keeps when it came.
-        b.pass(30.0);
-        let mut elsewhere = tool("Read", "agent-1");
-        elsewhere["cwd"] = json!("/");
-        b.beat(&elsewhere);
-        let mut again = tool("Read", "agent-1");
-        again["cwd"] = json!(tree.to_str().unwrap());
-        b.beat(&again);
-        assert_eq!(placed(&b, &h), (top, "tools/x".into(), NOW));
-    }
-
-    /// A subagent bound in one checkout that starts its background build in another is looked for
-    /// there: the build's own call records it, whatever the command (the adversarial review's probe).
-    #[test]
-    fn a_later_tool_call_of_a_bound_subagent_moves_its_checkout_and_when_it_came() {
-        let b = Clocked::new();
-        let (main, tree) = checkouts("beat-moved");
-        let h = b.register("worker");
-        let mut bind = bash(&inbox(&h)).agent("agent-1").0;
-        bind["cwd"] = json!(main.to_str().unwrap());
-        b.beat(&bind);
-        assert_eq!(placed(&b, &h).0, main.to_str().unwrap());
-        b.pass(30.0);
-        let mut build = bash("tools/rs-bin.sh sf-slots cargo build")
-            .agent("agent-1")
-            .0;
-        build["tool_input"]["run_in_background"] = json!(true);
-        build["cwd"] = json!(tree.join("crates/tasks").to_str().unwrap());
-        b.beat(&build);
-        let moved = (tree.to_str().unwrap().into(), "tools/x".into(), NOW + 30.0);
-        assert_eq!(placed(&b, &h), moved);
-        // Any tool's call says it too: a Read back in the main checkout moves it back.
-        b.pass(30.0);
-        let mut read = tool("Read", "agent-1");
-        read["cwd"] = json!(main.to_str().unwrap());
-        b.beat(&read);
-        assert_eq!(
-            (placed(&b, &h).0, placed(&b, &h).2),
-            (main.to_str().unwrap().into(), NOW + 60.0)
-        );
-    }
-
-    #[test]
-    fn a_full_sessions_board_command_records_no_checkout() {
-        let b = Clocked::new();
-        let (main, _) = checkouts("beat-full-place");
-        let h = b.register("worker");
-        let mut event = bash(&inbox(&h)).session("s-9").0;
-        event["cwd"] = json!(main.to_str().unwrap());
-        b.beat(&event);
-        let mut later = tool("Read", "s-9");
-        later.as_object_mut().unwrap().remove("agent_id");
-        later["session_id"] = json!("s-9");
-        later["cwd"] = json!(main.to_str().unwrap());
-        b.beat(&later);
-        let kept = b.board().agent_bindings().unwrap().remove(&h).unwrap();
-        assert_eq!((kept.agent.as_str(), kept.in_process), ("s-9", false));
-        assert_eq!((kept.worktree.as_str(), kept.placed_at), ("", 0.0));
     }
 
     #[test]

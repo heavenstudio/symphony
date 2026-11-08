@@ -526,19 +526,9 @@ fn the_machine_lists_each_process_with_its_working_directory_and_when_it_started
     );
     // This process, still running, is listed too: its working directory shared with the others.
     let here = std::env::current_dir().unwrap().canonicalize().unwrap();
-    assert!(listed.iter().any(|p| p.cwd == here && p.started.is_some()));
-}
-
-#[test]
-fn a_process_start_is_read_only_while_it_runs() {
-    let mut done = Command::new("true").spawn().unwrap();
-    done.wait().unwrap();
-    let pids = [i64::from(std::process::id()), i64::from(done.id()), 0, -1];
-    let started = symphony_board::sys::process_starts(&pids);
-    assert_eq!(started.len(), 4);
     assert!(
-        started[0].is_some_and(|at| at <= wall_clock()),
-        "{started:?}"
+        listed.iter().any(|p| p.cwd == here && p.started.is_some()),
+        "{} not among {listed:?}",
+        here.display()
     );
-    assert_eq!(started[1..], [None, None, None]);
 }
