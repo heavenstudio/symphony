@@ -1032,6 +1032,8 @@ struct Opens {
     orchestrator: Option<String>,
     /// The task's new parent, or none, when that is the change.
     parent: Option<Option<String>>,
+    /// Whether the change lifts the task's red mark ([`Store::unmark_red`]).
+    unmarks: bool,
     /// The sessions whose parents stand in for an orchestrator when none holds the task: its
     /// executor once it starts.
     by: Vec<String>,

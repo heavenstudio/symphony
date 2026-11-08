@@ -356,13 +356,13 @@ fn a_start_into_an_open_slot_racing_its_close_and_another_start_is_decided_again
 }
 
 /// The red the race tests close, and the work under it.
-const RED: &str = "tests/main-red-race";
-const UNDER: &str = "fix/under";
+pub(super) const RED: &str = "tests/main-red-race";
+pub(super) const UNDER: &str = "fix/under";
 
 /// O holding the first `led` of [`EIGHT`] and `work/next` to claim, beside [`RED`] in review, which
 /// O orchestrates and lark reviews, with [`UNDER`] under it, in progress when `started`: red work,
 /// which takes no slot while the red is open.
-fn beside_a_red(led: usize, started: bool) -> Fixture {
+pub(super) fn beside_a_red(led: usize, started: bool) -> Fixture {
     let mut seed = sessions().session("lark");
     for (slug, status) in &EIGHT[..led] {
         seed = with(seed, slug, status, None, Some(O));
@@ -495,16 +495,14 @@ fn work_started_under_a_red_as_it_closes_is_decided_again_and_takes_a_slot() {
 }
 
 /// How long a race's side waits for the other before the test fails rather than hangs.
-const WAIT: Duration = Duration::from_secs(60);
+pub(super) const WAIT: Duration = Duration::from_secs(60);
 
 #[test]
 fn a_red_marked_as_the_owner_cancels_it_is_decided_again_and_a_claim_read_between_counts_it() {
     // A red filed before the mark, in review with work in progress under it, all O's: nine.
     let mut seed = sessions();
-    for (slug, status) in EIGHT[..7]
-        .iter()
-        .chain(&[("work/next", "ready"), (RED, "review")])
-    {
+    let led = (EIGHT[..7].iter()).chain(&[("work/next", "ready"), (RED, "review")]);
+    for (slug, status) in led {
         seed = with(seed, slug, status, None, Some(O));
     }
     let f = Fixture::new(with(seed, UNDER, "in_progress", Some(RED), None));

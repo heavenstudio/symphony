@@ -1,10 +1,12 @@
 //! The cap on an orchestrator's open tasks: where it refuses a start, what it counts (red work it
 //! does not), where a slot frees, and that it takes nothing from an orchestrator already above it.
 //! Moves, dependency
-//! changes, the tree reshaped and races are [`moves`]'; what the cap costs, [`cost`]'s.
+//! changes, the tree reshaped and races are [`moves`]'; a red's mark against writes that read
+//! before it changed, [`red_marks`]'; what the cap costs, [`cost`]'s.
 
 mod cost;
 mod moves;
+mod red_marks;
 
 use crate::common::{Fixture, Seed, refused, session, task};
 use symphony_board::rows::{SessionRow, TaskRow};

@@ -666,7 +666,12 @@ capped. A value that does not parse, or one below 1, is said on stderr
   counted. A close decides what it holds on the task as it read it, and its
   write goes on only from that version, so a red marked between the two
   (an earlier red the nightly or main's verify marks) is read and decided
-  again. A refusal names the owner's open red work after its
+  again, and a task it read as not on the board is refused there, never
+  closed unfenced as a red filed since. `unmark_red`, from a filer too, lifts
+  the mark of an open red that stays open as ordinary work (main's green
+  reached it once work on it started): it and the work under it count from
+  then, decided and held as a close is, never refused; a task unmarked or
+  closed is left as it is. A refusal names the owner's open red work after its
   counted slots: `…; a slot frees when one of them is done or cancelled; not
   counted, as red work takes no slot: tests/main-red-abc (in_progress)`. The
   mark alone tells; a slug never does. The PULL header's `slots=` and the

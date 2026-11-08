@@ -471,7 +471,10 @@ not, it holds the slot counters of the owners whose counts it raises
 open red holds too (`slots::reds`, both in `slots/change.rs`), so a start decided
 before the close is decided again (`tests/store/slots/moves.rs`). The owner's cancel,
 which reads the cap's board before its own write, fences that write on the task's
-version as read (`cap::FENCE`), so a red marked between them is read and decided again. A change of parent of open
+version as read (`cap::FENCE`), so a red marked between them is read and decided again, and
+refuses a task its read did not find. `unmark_red` (`store/work/red.rs`, a filer's) lifts an
+open red's mark, read, fenced and held as a close (`cap::unmarking_slots`,
+`tests/store/slots/red_marks.rs`). A change of parent of open
 work and a hand-over of its orchestrator role are decided the same way
 (`set_parent`, `hand_over`), but for the owner's. A hold (`Store::hold_blocked`,
 `tasks api`'s `hold` from api 4, land's while stamps wait) keeps blocked work's slot: it is a record, not a task

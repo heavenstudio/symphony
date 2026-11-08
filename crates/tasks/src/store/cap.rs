@@ -143,8 +143,8 @@ pub(super) struct Ruled {
 /// An owner's close as the cap judged it ([`Store::closing_slots`]).
 #[derive(Default)]
 pub(super) struct Closed {
-    /// The task's version as read, which the write must still find ([`FENCE`]); none for a task
-    /// not on the board.
+    /// The task's version as read, which the write must still find ([`FENCE`]); none for a move
+    /// that reads nothing, into an open status.
     pub(super) version: Option<i64>,
     /// The counters its write holds ([`GUARD`]).
     pub(super) slots: Vec<Value>,
@@ -163,6 +163,15 @@ impl Closed {
 /// on (`$version`): a red marked since, whose close then holds counters, among them. The board
 /// reads and decides again.
 pub(super) const FENCE: &str = "IF (SELECT VALUE version FROM ONLY type::record('task', $slug)) != $version { THROW 'stale' };\n";
+
+/// The version of `slug` as `view` read it, for a write to fence on ([`FENCE`]). A task not on the
+/// board is refused at the read: no write goes on unfenced to find one filed since, a red with
+/// work started under it that its counters, judged on nothing, would let count past the cap.
+fn version_read(view: &View, slug: &str) -> Result<i64, Failure> {
+    let read = view.snap.tasks.iter().find(|task| task.row.slug == slug);
+    read.map(|task| task.version)
+        .ok_or_else(|| Failure::Stop(super::work::no_task(slug)))
+}
 
 /// A task as the cap reads it.
 #[derive(Clone, Deserialize)]
@@ -367,6 +376,9 @@ impl Store {
         if let Some(parent) = parent {
             after = after.reparented(slug, parent);
         }
+        if opens.unmarks {
+            after = after.unmarked(slug);
+        }
         let refusal = |full: slots::Full<'_>, cap: usize| {
             let place = after.place(slug);
             let children: Vec<&str> = if place.by_parent && place.owners.contains(&full.owner) {
@@ -392,17 +404,37 @@ impl Store {
     /// What a move of `slug` into `status` holds, for a write that reads nothing the cap decides
     /// on, the owner's: no counters unless it closes an open red ([`closing`]), whether this store
     /// caps starts or not, since a store that does may have read the board before it; and, for a
-    /// close, the task's version they were judged at, which the write fences on ([`FENCE`]). A
-    /// move into an open status reads nothing.
+    /// close, the task's version they were judged at, which the write fences on ([`FENCE`]), a
+    /// task not on the board refused at that read ([`version_read`]). A move into an open status
+    /// reads nothing.
     pub(super) fn closing_slots(&self, slug: &str, status: &str) -> Result<Closed, Failure> {
         if crate::red::open(status) {
             return Ok(Closed::default());
         }
         let view = self.view(&Which::Starting(slug))?;
-        let version = view.snap.tasks.first().map(|task| task.version);
+        let version = Some(version_read(&view, slug)?);
         let slots = match closing(&view, slug, Some(status)) {
             Some(opens) => self.holding(&view, slug, &opens, None)?,
             None => Vec::new(),
+        };
+        Ok(Closed { version, slots })
+    }
+
+    /// What lifting `slug`'s red mark holds ([`Store::unmark_red`]), as a red's close does: the
+    /// counters of the counts it raises, at any count, capped store or not; none unless `slug` is
+    /// an open red. And the task's version they were judged at, which the write fences on.
+    pub(super) fn unmarking_slots(&self, slug: &str) -> Result<Closed, Failure> {
+        let view = self.view(&Which::Starting(slug))?;
+        let version = Some(version_read(&view, slug)?);
+        let task = view.task(slug).map_err(Failure::Stop)?;
+        let slots = if crate::red::marked(&task.fields) && crate::red::open(&task.status) {
+            let opens = Opens {
+                unmarks: true,
+                ..Opens::default()
+            };
+            self.holding(&view, slug, &opens, None)?
+        } else {
+            Vec::new()
         };
         Ok(Closed { version, slots })
     }

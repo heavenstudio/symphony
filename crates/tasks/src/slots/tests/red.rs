@@ -32,6 +32,19 @@ fn a_reds_close_holds_the_counts_it_raises_and_the_red_that_work_started_under_i
         Err("o"),
         "past the cap, which a close is never refused at"
     );
+    // A red left open with its mark lifted is ordinary work: it counts, with the work under it.
+    let unmarked = open.unmarked("red");
+    assert_eq!(
+        (changed(&open, &unmarked), reds(&open, &unmarked)),
+        (vec!["o"], vec!["red"]),
+        "red and red/fix count once it is no red"
+    );
+    assert_eq!(unmarked.holdings()["o"].len(), 3, "red, red/fix and a");
+    assert_eq!(
+        reds(&unmarked, &unmarked.unmarked("red")),
+        Vec::<&str>::new(),
+        "no red to end"
+    );
     let under = open.changed("red/new", Some("in_progress"), None, &[]);
     assert_eq!(
         (changed(&open, &under), reds(&open, &under)),

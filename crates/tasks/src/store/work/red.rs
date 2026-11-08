@@ -1,6 +1,7 @@
 //! A red's mark ([`crate::red`]) is its filer's alone: a session of kind [`FILER`], as the tools that
 //! file reds register, marks a task where it files it ([`crate::NewTask::red`]) or, for a red it
-//! filed before it marked reds, afterwards ([`Store::mark_red`]). No other session marks one, and
+//! filed before it marked reds, afterwards ([`Store::mark_red`]), and lifts it from a red left open
+//! as ordinary work ([`Store::unmark_red`]). No other session marks one or lifts its mark, and
 //! the mark goes on a task of a red series alone ([`crate::red::SERIES`]), so no work marks itself
 //! red to take no slot, nor any feature, whoever registers as a filer.
 
@@ -80,6 +81,42 @@ IF !$task.red OR $task.priority > 0 {{
                 vars.extend(filer);
             }
             self.written(&body, vars, slug)
+        })
+    }
+
+    /// Lifts the red mark of the open task `slug`, which stays open red no more: main's green
+    /// reached it once work on it had started, so it is ordinary work, and it and the open work
+    /// under it take a slot as any work does from then. As a red's close, it is never refused at
+    /// the cap and holds the counters it changes, judged on the task as read ([`super::cap`]), so a
+    /// start decided before it is decided again, counted. Only a filer lifts one ([`FILER`]); a
+    /// task unmarked or closed is left as it is, its thread unchanged.
+    pub fn unmark_red(&self, slug: &str, by: &str) -> Result<Task, Error> {
+        let body = format!(
+            "{ACT}
+LET $task = (SELECT status, fields._board.red AS red FROM ONLY type::record('task', $slug));
+IF $task = NONE {{ THROW $missing }};
+{FILED}
+IF $task.red AND $task.status NOT IN ['done', 'cancelled'] {{
+    UPDATE type::record('task', $slug) SET fields._board.red = NONE, version += 1 RETURN NONE;
+    LET $said = $actor + ' lifted its red mark: red no more, it and the open work under it take a slot as any work does';
+    {}
+}};",
+            logged("$slug", "$actor", "'system'", "$said", "NONE")
+        );
+        self.retrying(|| {
+            let held = self.unmarking_slots(slug)?;
+            let mut vars = acting(
+                by,
+                (self.clock)(),
+                json!({
+                    "slug": slug, "slots": held.slots, "version": held.version,
+                    "missing": format!("{REFUSED}{}", no_task(slug)),
+                }),
+            );
+            if let (Some(vars), Value::Object(filer)) = (vars.as_object_mut(), filing(by)) {
+                vars.extend(filer);
+            }
+            self.written(&held.guarding(&body), vars, slug)
         })
     }
 }

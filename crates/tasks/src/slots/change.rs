@@ -58,18 +58,19 @@ fn differing<'a>(
     owners
 }
 
-/// The reds a change from `before` to `after` relies on or ends, in order: a red whose open status
-/// it changes (its close), and each open red that, before or after it, makes red work of an open
-/// task whose record, place or red work it changes. The write holds each one's counter
-/// (`counter:['red', SLUG]`), so a red's close and a start that took no slot under it meet there,
+/// The reds a change from `before` to `after` relies on or ends, in order: a red it ends or opens
+/// (its close, or its mark lifted), and each open red that, before or after it, makes red work of
+/// an open task whose record, place or red work it changes. The write holds each one's counter
+/// (`counter:['red', SLUG]`), so a red's end and a start that took no slot under it meet there,
 /// as two starts under one orchestrator meet at its slot counter: the one that loses reads and
 /// decides again, the start then counted.
 pub fn reds<'a>(before: &Ledger<'a>, after: &Ledger<'a>) -> Vec<&'a str> {
     let mut reds = BTreeSet::new();
+    let open = crate::red::open;
+    let exempts = |task: &Entry<'_>| task.red && open(task.status);
     for (&slug, now) in &after.tasks {
         let was = before.tasks.get(slug);
-        let open = crate::red::open;
-        if now.red && was.is_some_and(|was| open(was.status) != open(now.status)) {
+        if was.is_some_and(|was| was.red && exempts(was) != exempts(now)) {
             reds.insert(slug);
         }
         let same = was == Some(now)
