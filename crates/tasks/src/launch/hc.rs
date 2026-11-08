@@ -11,13 +11,18 @@ use super::LaunchError;
 use crate::cli::{Env, probes};
 use crate::sys::{self, Command};
 use serde_json::{Map, Value};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 /// A JSON object hc answered.
 pub type Object = Map<String, Value>;
 
 /// How long hc or the Herdr app may take to answer one call.
 const PATIENCE: Duration = Duration::from_secs(120);
+
+/// How long a killed terminal is given to end before its remove is tried anyway ([`Hc::end`]),
+/// and how often hc is asked whether it has in that time.
+const ENDING: Duration = Duration::from_secs(10);
+const ENDING_LOOK: Duration = Duration::from_millis(100);
 
 /// The label naming the board a terminal was started for.
 pub const BOARD_LABEL: &str = "sf.board";
@@ -136,17 +141,40 @@ pub trait Hc {
     }
 
     /// Kill the terminal when it is `live`, then remove it, with no look first: one hc no longer
-    /// knows is already gone.
+    /// knows is already gone. hc removes no terminal still running, and a killed one may take a
+    /// while to end: unless the kill's answer finds it ended, the remove waits until a look finds it
+    /// so ([`Hc::ended`]).
     fn end(&self, terminal: &str, live: bool) -> Result<(), LaunchError> {
         if live {
-            match self.json(&["kill", terminal]) {
+            let killed = match self.json(&["kill", terminal]) {
                 Err(e) if is_not_found(&e) => return Ok(()),
-                other => other.map(|_| ())?,
+                other => other?,
+            };
+            let state = killed.get("state").and_then(Value::as_str);
+            if !state.is_some_and(|state| state != "live") && !self.ended(terminal) {
+                return Ok(());
             }
         }
         match self.json(&["rm", terminal]) {
             Err(e) if is_not_found(&e) => Ok(()),
             other => other.map(|_| ()),
+        }
+    }
+
+    /// Wait for a killed terminal to end, by hc's own look (`hc get`) every [`ENDING_LOOK`], for
+    /// at most [`ENDING`]: false when hc knows it no more (there is nothing left to remove), else
+    /// true once it ended, or once the wait is over or a look fails, leaving the remove to say why
+    /// it cannot.
+    fn ended(&self, terminal: &str) -> bool {
+        let until = Instant::now() + ENDING;
+        loop {
+            match self.get(terminal) {
+                Ok(None) => return false,
+                Ok(Some(found)) if text(found.get("state")) == "live" && Instant::now() < until => {
+                    std::thread::sleep(ENDING_LOOK);
+                }
+                Ok(Some(_)) | Err(_) => return true,
+            }
         }
     }
 

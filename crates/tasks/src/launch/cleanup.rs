@@ -4,6 +4,7 @@
 
 use super::hc::{self, Hc, Object, text, text_of};
 use super::procs::{self, busy_reason, named};
+use super::reap::NOT_REAPED_KINDS;
 use super::screen::{self, NotClosed};
 use super::{GONE, LaunchError, Processes, READY_STATES, gone};
 use crate::health::FINISHED;
@@ -177,15 +178,28 @@ pub(super) fn restore_line(slug: &str, handle: &str) -> String {
 }
 
 /// Close the terminals nobody needs; with `only` slugs, only those of those tasks' open sessions.
-/// The caller's terminal is never closed. A record whose pane is gone is recorded closed first. A
-/// terminal whose `hc get` or process table could not be read stays, as a [`Closure`] that is
-/// `kept`, naming the call that failed; so does one the owner may be looking at ([`screen`]).
+/// The caller's terminal is never closed, nor an orchestrator's or a chat's. A record whose pane is
+/// gone is recorded closed first. A terminal whose `hc get` or process table could not be read
+/// stays, as a [`Closure`] that is `kept`, naming the call that failed; so does one the owner may
+/// be looking at ([`screen`]).
 pub fn cleanup(
     store: &Store,
     hc: &dyn Hc,
     processes: &Processes,
     dry_run: bool,
     only: &[String],
+) -> Result<Vec<Closure>, Error> {
+    cleanup_as(store, hc, processes, dry_run, only, None)
+}
+
+/// [`cleanup`] for the session `caller`, whose own terminal is never closed either, wherever it is.
+pub fn cleanup_as(
+    store: &Store,
+    hc: &dyn Hc,
+    processes: &Processes,
+    dry_run: bool,
+    only: &[String],
+    caller: Option<&str>,
 ) -> Result<Vec<Closure>, Error> {
     let current = hc.caller();
     let handles: HashSet<String> = store
@@ -296,8 +310,10 @@ pub fn cleanup(
             let Some(handle) = handle else {
                 continue;
             };
-            if store.session(&handle)?.row.kind == "orchestrator" {
-                continue;
+            if Some(handle.as_str()) == caller
+                || NOT_REAPED_KINDS.contains(&store.session(&handle)?.row.kind.as_str())
+            {
+                continue; // the caller's own, an orchestrator's or a chat's
             }
             let (live, mine) = held(store, &handle)?;
             if !live.is_empty() || (mine.is_empty() && store.sessions_of(&handle)?.is_empty()) {

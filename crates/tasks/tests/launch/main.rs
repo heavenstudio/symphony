@@ -11,6 +11,7 @@
 mod common;
 
 mod cleanup;
+mod cleanup_kept;
 mod close;
 mod close_fences;
 mod close_holds;

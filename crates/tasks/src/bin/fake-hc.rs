@@ -25,6 +25,8 @@
 //! `FAKE_HC_DROP_DOWN=1` loses the first down).
 //! `FAKE_HC_FAIL=WORDS[,WORDS]` makes those calls exit 1 with hc's error on stderr: a command's
 //! first word (`get`, `run`), or `app` and its first word (`app ls`, `app do`).
+//! A terminal whose state holds `ending: N` is still ending after its `kill`, as a program that
+//! takes a while to exit is: live, so `rm` refuses it, until the Nth `get` after the kill.
 
 use serde_json::{Map, Value, json};
 use std::io::{BufRead, Write};
@@ -279,6 +281,14 @@ fn answer(argv: &[String], state: &mut Map<String, Value>) -> Answer {
             Answer::Kept(json!({"terminals": found}).to_string())
         }
         "get" => match find(state, arg(1)) {
+            Some(t) if t.contains_key("killed") => {
+                let left = t.get("ending").and_then(Value::as_u64).unwrap_or(0);
+                t.insert("ending".into(), json!(left.saturating_sub(1)));
+                if left <= 1 {
+                    end(t);
+                }
+                Answer::Saved(shown(t).to_string())
+            }
             Some(t) => Answer::Kept(shown(t).to_string()),
             None => not_found(arg(1)),
         },
@@ -337,11 +347,11 @@ fn answer(argv: &[String], state: &mut Map<String, Value>) -> Answer {
             let Some(t) = find(state, arg(1)) else {
                 return not_found(arg(1));
             };
-            if t["state"] == "live" {
-                t.insert("state".into(), json!("finished"));
-                t.insert("reason".into(), json!("killed"));
-                t.insert("status".into(), Value::Null);
-                t.insert("exit_code".into(), json!(129));
+            let ending = t.get("ending").and_then(Value::as_u64).unwrap_or(0);
+            if t["state"] == "live" && ending > 0 {
+                t.insert("killed".into(), json!(true));
+            } else if t["state"] == "live" {
+                end(t);
             }
             let said = shown(t);
             Answer::Saved(said.to_string())
@@ -360,6 +370,15 @@ fn answer(argv: &[String], state: &mut Map<String, Value>) -> Answer {
         }
         other => Answer::Refused("unsupported", format!("fake hc has no {other}"), 2),
     }
+}
+
+/// A killed terminal's program ends.
+fn end(t: &mut Map<String, Value>) {
+    t.insert("state".into(), json!("finished"));
+    t.insert("reason".into(), json!("killed"));
+    t.insert("status".into(), Value::Null);
+    t.insert("exit_code".into(), json!(129));
+    t.remove("killed");
 }
 
 /// `hc run --bg --json [--name N] [--cwd C] [--label K=V]... [flags] -- ARGV`.

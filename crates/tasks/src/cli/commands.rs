@@ -317,6 +317,7 @@ pub fn run(store: &Store, c: &mut Context) -> Result<(), Stop> {
         "staff" => panes::staff(store, c)?,
         "restore" => panes::restore(store, c)?,
         "cleanup" => panes::cleanup(store, c)?,
+        "clean" => panes::clean(store, c)?,
         "close" => panes::close(store, c)?,
         "reap" => {
             panes::reap(store, c)?;

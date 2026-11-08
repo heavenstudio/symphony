@@ -145,6 +145,47 @@ fn close_kills_a_live_terminal_then_removes_it_and_a_gone_one_is_already_closed(
 }
 
 #[test]
+fn a_kill_that_leaves_its_terminal_live_a_while_waits_for_it_to_finish_before_the_remove() {
+    let w = World::new();
+    // Its program exits at the third look after the kill; hc refuses to remove it until then.
+    let slow = w.add_terminal(true, None, json!({"ending": 3}));
+    w.hc().close(&slow).unwrap();
+    assert!(w.addresses().is_empty());
+    let changes: Vec<String> = w
+        .calls()
+        .into_iter()
+        .filter(|c| c[0] != "ls")
+        .map(|c| c[..2].join(" "))
+        .collect();
+    let looked = format!("get {slow}");
+    assert_eq!(
+        changes,
+        [
+            looked.clone(),
+            format!("kill {slow}"),
+            looked.clone(),
+            looked.clone(),
+            looked,
+            format!("rm {slow}")
+        ]
+    );
+    // One hc forgets while it ends is closed already: nothing is left to remove.
+    let gone = w.add_terminal(true, None, json!({"ending": 3}));
+    let mut hooked = Hooked::new(&w);
+    hooked.instead = Box::new(|args| {
+        let forgot = args[0] == "get" && w.calls_of(&["kill"]).len() == 2;
+        forgot.then(|| {
+            Err(LaunchError(format!(
+                "hc get {}: not_found: no terminal",
+                args[1]
+            )))
+        })
+    });
+    hooked.close(&gone).unwrap();
+    assert_eq!(w.calls_of(&["rm", &gone]), Vec::<Vec<String>>::new());
+}
+
+#[test]
 fn a_terminal_hc_forgets_while_it_closes_is_closed() {
     let w = World::new();
     let live = w.add_terminal(true, None, json!({}));
