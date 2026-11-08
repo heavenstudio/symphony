@@ -101,10 +101,15 @@ fn the_system_converter_receives_sips_arguments_and_publishes_its_output() {
     if let Some(root) = std::env::var_os(CASE) {
         let root = std::path::PathBuf::from(root);
         assert!(super::sips_available());
-        assert!(super::sips_convert(
+        // The `sips` found is the script written below, and macOS holds a new file's first exec
+        // until syspolicyd has assessed it (seconds under load, past 30 s at a load of 100 to 150),
+        // after the spawn has returned. The production budget would race that; this waits for the
+        // converter's own exit.
+        assert!(super::sips_convert_within(
             &root.join("source.png"),
             &root.join("thumb.jpg"),
-            540
+            540,
+            Duration::MAX
         ));
         return;
     }
