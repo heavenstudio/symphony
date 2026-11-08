@@ -8,11 +8,17 @@ use super::*;
 const ROLE: &str = "SF_LIFECYCLE_SCRATCH_ROLE";
 const ENTRY: &str = "fixture::scratch_tests::scratch_owner";
 
+/// An owner makes its whole repository inside this readiness wait. Every new image that
+/// repository runs is run here first, as setup ([`prepare_images`]), and the owner takes this
+/// process's run of the app as its own: a freshly built app's first run waits its turn in the
+/// machine's assessment queue, for as long as the queue holds it, which only setup waits for.
 fn owner(role: &str, logs: &Scratch) -> (Process, PathBuf) {
+    let images = prepare_images(&logs.path);
     let mut command = Command::new(std::env::current_exe().unwrap());
     command
         .args([ENTRY, "--exact", "--nocapture", "--test-threads=1"])
         .env(ROLE, role)
+        .env(PREPARED_APP_BY_PARENT, images.app.to_string())
         .stdin(Stdio::piped());
     let mut process = Process::spawn(command, &logs.path.join(role));
     let path = until("scratch owner readiness", || {
@@ -31,6 +37,15 @@ fn owner(role: &str, logs: &Scratch) -> (Process, PathBuf) {
                     .map(|(_, path)| path.into())
             })
     });
+    let output = process.output();
+    let used = output
+        .lines()
+        .find_map(|line| line.split_once("SCRATCH_APP=").map(|(_, pid)| pid));
+    assert_eq!(
+        used,
+        Some(images.app.to_string().as_str()),
+        "the owner's repository ran an app preparation of its own inside the readiness wait: {output}"
+    );
     (process, path)
 }
 
@@ -145,6 +160,7 @@ fn scratch_owner() {
         "hold" => Some(repo),
         _ => panic!("unknown scratch owner role {role}"),
     };
+    println!("SCRATCH_APP={}", PREPARED_APP.get().unwrap());
     println!("SCRATCH_READY={}", path.display());
     std::io::stdout().flush().unwrap();
     std::io::stdin().read_exact(&mut [0]).unwrap();
@@ -212,6 +228,25 @@ fn the_next_run_sweeps_a_killed_owner_and_preserves_a_live_owner() {
     let logs = Scratch::new("scratch-owner-test");
     let (mut held, path) = owner("hold", &logs);
     assert!(path.join("main with spaces/.git/HEAD").is_file());
+    // Each command the held repository links runs a copy its owner's parent ran before the
+    // owner started, or an image the system ships (tailscale's /usr/bin/false).
+    let copies = prepare_images(&logs.path).copies;
+    for folder in [
+        "commands",
+        "main with spaces/tools",
+        "prepare-commands/commands",
+    ] {
+        for entry in fs::read_dir(path.join(folder)).unwrap() {
+            let link = entry.unwrap().path();
+            let image = fs::read_link(&link).unwrap();
+            assert!(
+                copies.contains(&image) || image.starts_with("/usr/bin/"),
+                "{} runs {}, which an owner's parent does not run first",
+                link.display(),
+                image.display()
+            );
+        }
+    }
     let (next, _) = owner("pass", &logs);
     assert!(
         path.join("main with spaces/.git/HEAD").is_file(),

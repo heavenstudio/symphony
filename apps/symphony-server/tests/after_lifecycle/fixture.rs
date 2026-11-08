@@ -57,8 +57,18 @@ const SCRATCH_PREFIX: &str = "after-lifecycle-";
 static PREPARED_APP: OnceLock<u32> = OnceLock::new();
 static PREPARED_COMMANDS: OnceLock<[u32; 4]> = OnceLock::new();
 
+/// The pid of the app's preparation run in a parent that waits within a deadline while this
+/// process makes its repository ([`prepare_images`]): taken as this process's own preparation,
+/// so that wait holds no run of the image at all.
+const PREPARED_APP_BY_PARENT: &str = "SF_LIFECYCLE_PREPARED_APP";
+
 fn prepare_app(log: &Path) -> u32 {
     *PREPARED_APP.get_or_init(|| {
+        if let Ok(pid) = std::env::var(PREPARED_APP_BY_PARENT) {
+            return pid
+                .parse()
+                .unwrap_or_else(|_| panic!("{PREPARED_APP_BY_PARENT} is no pid: {pid:?}"));
+        }
         let mut command = Command::new(APP);
         command.arg("--help").env_clear().stdin(Stdio::null());
         let mut preparation = Process::spawn(command, log);
@@ -99,6 +109,29 @@ fn prepare_commands(repo: &Repo, folder: &Path) -> [u32; 4] {
             preparation.child.id()
         })
     })
+}
+
+/// The tracked scripts whose machine copies a repository's commands link ([`command_fixture`]).
+const COMMAND_SCRIPTS: [&str; 4] = ["build.sh", "open.sh", "ps.sh", "bash.sh"];
+
+/// Every new image a fixture repository runs, each run once by this process.
+struct Images {
+    /// The pid of the built app's preparation run ([`prepare_app`]).
+    app: u32,
+    /// The machine copy of each of [`COMMAND_SCRIPTS`], in that order.
+    copies: [PathBuf; 4],
+}
+
+/// Run every new image a fixture repository runs, as setup: the built app and each command
+/// script's machine copy, under no case deadline. A process that makes its own repository while
+/// this one waits on it within PATIENCE then meets no file's first run, which macOS assesses
+/// before its first instruction, one file at a time machine-wide; given
+/// [`PREPARED_APP_BY_PARENT`], it runs no app image at all.
+fn prepare_images(folder: &Path) -> Images {
+    Images {
+        app: prepare_app(&folder.join("prepare-app")),
+        copies: COMMAND_SCRIPTS.map(|name| machine_copy::machine_copy(&script_source(name))),
+    }
 }
 
 /// Own the folder before repository setup, so even setup failures retain their diagnostic files.
