@@ -14,6 +14,9 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 )]
 pub(super) mod store_fixture;
 
+#[path = "../../../tasks/tests/store/relay.rs"]
+mod relay;
+
 #[path = "slow_tests.rs"]
 mod slow;
 
