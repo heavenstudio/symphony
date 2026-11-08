@@ -20,6 +20,16 @@
 //! inputs. Those writes can conflict across otherwise unrelated tasks; every such path retries
 //! the whole transaction. Callback readers use that marker to reuse unchanged board inputs.
 
+// The library's tests start their own fixtures and stand-ins; clippy checks the library without
+// them too, where only `sys::command` and `sys::command_with` make a child (clippy.toml).
+#![cfg_attr(
+    test,
+    expect(
+        clippy::disallowed_methods,
+        reason = "a test starts its fixtures as it likes; the library alone is checked without it"
+    )
+)]
+
 #[cfg(test)]
 extern crate self as symphony_board;
 
@@ -36,8 +46,9 @@ pub mod port;
 pub mod pyjson;
 pub mod rows;
 pub mod rpc;
-mod schema;
+pub mod schema;
 pub mod server;
+pub mod slots;
 mod store;
 pub mod sweep;
 pub mod sys;
@@ -46,7 +57,7 @@ pub use health::Health;
 pub use store::{
     BEFORE_WORK, Beat, Board, Callback, EmbeddingStats, Error, HandOff, KINDS, LANDS_FROM, Landed,
     Message, Moved, NewLaunch, NewSession, NewTask, PIPELINE, PULLABLE, Pick, Presence, ROLES,
-    Role, STATUSES, SearchHit, Session, Store, Task, VectorHit, VectorSearchProfile,
+    Role, SLOT_READS, STATUSES, SearchHit, Session, Store, Task, VectorHit, VectorSearchProfile,
     can_transition,
 };
 

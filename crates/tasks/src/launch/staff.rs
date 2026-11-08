@@ -5,7 +5,7 @@ use super::hc::{self, Binary, Hc, text_of};
 use super::{Ask, Machine, launch, prompt_text};
 use crate::cli::{Env, agents, probes};
 use crate::health::{EXECUTING, FINISHED};
-use crate::sys::{Command, FileLock};
+use crate::sys::FileLock;
 use crate::{Board, Error, Health, NewLaunch, NewTask, Store, Task, git};
 use serde::Deserialize;
 use std::collections::HashSet;
@@ -172,7 +172,7 @@ fn eligible(task: &Task, board: &Board, config: &Config) -> bool {
 /// Available memory, including reclaimable inactive pages on macOS (MemAvailable on Linux).
 fn free_memory_gib() -> Result<f64, Error> {
     let bytes = if cfg!(target_os = "macos") {
-        let output = crate::sys::output(&mut Command::new("vm_stat")).map_err(refused)?;
+        let output = crate::sys::output(&mut crate::sys::command("vm_stat")).map_err(refused)?;
         if !output.status.success() {
             return Err(refused("vm_stat failed"));
         }

@@ -364,6 +364,31 @@ status pipe, and the child inherits only its streams and the descriptors it is
 passed. A std `Command` cannot say it cleared its environment, its group or its
 session, so it is never translated. The helpers live in the leaf
 `process_cwd::spawn`, which `sys` re-exports, so the cwd scans' `lsof` shares them.
+Every child the board starts is built by `sys::command` (this process's
+environment) or `sys::command_with` (a caller's `Env` as its whole environment),
+both without the starter's session, `sys::SESSION_VARS`: `TASKS_SESSION`,
+`HC_TERMINAL_ID`, `HC_TERMINAL_SOCKET`, `HC_SESSION` and `HC_SCOPE`. A child that
+kept hc's would start its terminals under the starter's, which end with it, and
+an hc call would answer for the starter's core and scope alone. That covers the
+database server `Home` starts, its `ps` and `lsof`, the `surreal export` and
+`import` a reclaim runs, every hc call (each names the
+terminal it acts on; the caller's own is read from the `Env`, never handed to
+hc), git, the detached dispatcher, sweep and review command, the sweep's cwd
+scans (`process_cwd::process_cwds_with` and `occupied_with`, handed
+`sys::command("lsof")`), and Codex delivery.
+A call that must keep a name sets it on the command after, saying why; none
+does today: a launched agent's `TASKS_SESSION` is a word of the command line
+`hc run` starts, not hc's. Clippy holds it: the crate's own `clippy.toml`, the
+workspace's settings whole and then `disallowed-methods`, refuses std's and
+`process_cwd`'s `Command::new` and `env_clear`, and `process_cwd::process_cwds`
+and `occupied`, by the path they resolve to, however they are spelled, imported
+or gated; the two helpers carry `#[expect(clippy::disallowed_methods)]`. The
+library's test build and each integration test target allow it at their root.
+`sys`'s tests hold the file to the workspace's settings, and the nightly-only
+target `tests/child_guard` (a nested build, so never in the fast plan) runs the
+toolchain's clippy over a probe crate that reads the same file. `port.rs` starts nothing: std's `lsof` for its `Lsof` is
+`apps/symphony-ui`'s browser test's own. The Symphony's
+`children` re-exports the list, `command` and `sessionless`.
 
 `staff` makes one staffing pass (`src/launch/staff.rs`), also called before `reap`.
 Its sole config is `tools/task_staff.json` in the calling checkout, disabled by
@@ -395,6 +420,26 @@ prefix) and that branch's tip appended, its output appended to
 `sf-tasks/on-review.log`; a slug naming no branch starts nothing and the log
 says so. A board `TASKS_SERVER` names starts none unless `TASKS_ON_REVIEW=on`,
 and `off` starts none anywhere (`tests/sweep/on_review.rs`).
+`slots.rs` owns the cap on an orchestrator's open tasks: `[board]
+orchestrator_slots`, read from the main checkout's `symphony.toml` from the
+`.git` files alone (no `git` process: every command reads it) when the CLI or
+the Symphony opens its store (`cli::capped`, `Store::capping`); a store opened
+without it caps nothing. A rule that may start work reads, in its view's
+transaction (`Which::Starting`, `store/cap.rs`), the slot counters, the open
+tasks through `task_status`, the holds (`counter:['hold', SLUG]`) and their
+tasks, and their roles through `role_slug`; then the tasks above them and the
+tasks they review by id, a level a round trip. It decides on the board before
+and after the change (`slots::started`) and, for every orchestrator whose open
+tasks it changes, checks and bumps `counter:['slots', HANDLE]` in the write, so
+two starts at once are one retry, not two slots (`tests/store/slots.rs` and its
+`moves` and `cost` modules, `tests/cli/slots.rs`). A change of parent of open
+work and a hand-over of its orchestrator role are decided the same way
+(`set_parent`, `hand_over`), but for the owner's. A hold (`Store::hold_blocked`,
+`tasks api`'s `hold` from api 4, land's while stamps wait) keeps blocked work's slot: it is a record, not a task
+field, since a reader built before it refuses a task row with a field it does
+not know, and every write that moves the task, changes its parent or its
+dependencies deletes it. Each statement the cap sends is in `SLOT_READS`, which
+`tests/store/slots/cost.rs` has the server plan.
 
 Its store tests start one in-memory server per test binary and give each test a
 database of its own. The server is the pinned SurrealDB `tools/surreal.sh`
@@ -427,6 +472,35 @@ old SQLite board into it once, one way, reading SQLite through `rusqlite`
 ([TASKS](../../../docs/workflow/TASKS.md#the-move-to-surrealdb)). On the in-memory
 engine a transaction that big costs more than linearly (the board at the move:
 39 server CPU-s, against 1.5 on `surrealkv://`).
+
+The `perf` test target (`tests/perf/`) is the board at scale: a generated board
+at or above the live one of 2026-11-07 (50k messages, 2.6k sessions, about 3k
+roles, 100 recipients on Unix sockets this process serves) on `surrealkv://`.
+Its plan check runs say, claim, inbox, a dispatch and the `tasks api` calls
+`land` and the Symphony make through a recording relay and has the server plan
+(`EXPLAIN`) every statement they sent, read out of each request as the
+server's lexer reads a keyword: in any case, past comments, ending at any byte
+no name goes on with (`SELECT*`, `SELECT$projection`, a space outside ASCII)
+and starting after none that a name, variable, path or record id holds
+(`tests/perf/sql.rs`); and every statement the schema's events run, read out
+of `schema::DEFINE`, which the relay never sees. A statement of a request
+that the server plans as a read of rows and the check read nothing out of
+fails it, so a spelling it does not know is reported; a `TableScan` with a
+predicate over message, delivery, role, session or callback_state, a whole
+index of one of them under a filter, or a subquery in a predicate, fails it
+(`tests/perf/findings.rs`), so a query that loses its index (a dropped
+`DEFINE INDEX`, a condition rewritten past it) fails there, naming the
+statement and its plan. Its timings run say, claim, inbox and those api calls
+three times each, each median within a bound stated once in
+`tests/perf/timings.rs`; `tests/perf/words.rs` deletes a rare sender's newest
+word (its other one the board's first) and every message at once with the last
+words named, as a schema 12 copy does, each within a bound stated there.
+Its tier is nightly, so the fast plan leaves it out:
+run it by hand (`tools/rs-bin.sh sf-slots cargo test --manifest-path
+symphony/Cargo.toml -p symphony-board --test perf`) for a change to the board's
+queries or the api. `SF_PERF_TASKS=PATH` times another `tasks` build on the
+same board. A run leaves its folder in the temporary directory; the next run
+removes each such folder whose process has ended.
 
 Every server `server::Home` starts gets `server::Storage` as its environment
 (`SURREAL_SURREALKV_VLOG_THRESHOLD`, `SURREAL_SURREALKV_MAX_MEMTABLE_SIZE`).

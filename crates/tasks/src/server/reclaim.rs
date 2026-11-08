@@ -4,7 +4,7 @@
 use super::storage::store;
 use super::{ADDRESS, DATA, Home, OLD, RECLAIM, Running, ServerError, io};
 use crate::rpc;
-use crate::sys::{Command, output};
+use crate::sys::{command, output};
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 use std::fs;
@@ -261,7 +261,7 @@ impl Home {
     ) -> Result<(), ServerError> {
         let endpoint = format!("http://{}", running.addr);
         let out = output(
-            Command::new(&self.surreal)
+            command(&self.surreal)
                 .args([
                     verb,
                     "--endpoint",

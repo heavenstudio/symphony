@@ -1,6 +1,6 @@
 //! hc (herdr-core) and the Herdr app, over their command lines: the binaries `HC_BIN` (default `hc`)
 //! and `HERDR_APP_BIN` (default `herdr-app`) name, split as a POSIX shell splits them, with the
-//! caller's environment and working directory. Every call the launcher, the cleanup and the idle
+//! caller's environment but its session ([`Binary`]) and its working directory. Every call the launcher, the cleanup and the idle
 //! sweep make goes through [`Hc`]; the tests point both at the crate's `fake-hc`.
 //!
 //! A terminal the board starts carries the labels `sf.board` ([`Hc::board`]: the project and the
@@ -9,7 +9,7 @@
 
 use super::LaunchError;
 use crate::cli::{Env, probes};
-use crate::sys::Command;
+use crate::sys::{self, Command};
 use serde_json::{Map, Value};
 use std::time::Duration;
 
@@ -216,7 +216,11 @@ fn words(args: &[&str]) -> String {
     }
 }
 
-/// The hc and Herdr app binaries `env` names, run with `env`'s variables in its working directory.
+/// The hc and Herdr app binaries `env` names, run with `env`'s variables in its working directory,
+/// but its session ([`sys::SESSION_VARS`]): no call is a child of the caller's terminal, nor scoped
+/// to the caller's core. Every call names the terminal it acts on; the caller's own terminal is
+/// read from `env` ([`Hc::caller`]), never handed to hc. A launched agent's `TASKS_SESSION` is a
+/// word of the command line `hc run` starts (`env TASKS_SESSION=HANDLE ...`), not hc's.
 pub struct Binary {
     hc: Result<Vec<String>, String>,
     app: Result<Vec<String>, String>,
@@ -244,13 +248,8 @@ impl Binary {
         let (program, rest) = named
             .split_first()
             .ok_or_else(|| LaunchError(format!("{var} names no command")))?;
-        let mut command = Command::new(program);
-        command
-            .args(rest)
-            .args(args)
-            .env_clear()
-            .envs(&self.env.vars)
-            .current_dir(&self.env.cwd);
+        let mut command = sys::command_with(program, &self.env.vars);
+        command.args(rest).args(args).current_dir(&self.env.cwd);
         Ok(command)
     }
 }

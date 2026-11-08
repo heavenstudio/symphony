@@ -10,7 +10,7 @@ use crate::cli::Env;
 use crate::git::common_dir;
 use crate::sweep::git::rev;
 use crate::sweep::trigger::{folder, main_checkout, now};
-use crate::sys::{self, Command, Stdio};
+use crate::sys::{self, Stdio};
 use serde::Deserialize;
 use std::fs::{self, File, OpenOptions};
 use std::io::Write;
@@ -154,7 +154,8 @@ fn program(root: &Path, name: &str) -> PathBuf {
     }
 }
 
-/// `args` in a session of its own, from the main checkout `root`, with `env`'s environment, its
+/// `args` in a session of its own, from the main checkout `root`, with `env`'s environment but the
+/// mover's session ([`sys::SESSION_VARS`]: the review acts as a board session of its own), its
 /// output appended to the log; a thread reaps it when it ends.
 fn spawn(
     env: &Env,
@@ -172,11 +173,9 @@ fn spawn(
         sys::local_minute(now()),
         args.join(" ")
     )?;
-    let mut command = Command::new(program(root, &args[0]));
+    let mut command = sys::command_with(program(root, &args[0]), &env.vars);
     command
         .args(&args[1..])
-        .env_clear()
-        .envs(&env.vars)
         .current_dir(root)
         .stdin(Stdio::null())
         .stdout(log.try_clone()?)

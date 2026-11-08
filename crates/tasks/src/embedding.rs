@@ -1,7 +1,6 @@
 //! Local BGE inference and tokenizer-aware chunks. Only explicit embedding/search commands load
 //! this runtime; the board's write path has no inference or network work.
 
-use crate::sys::Command;
 use sha2::{Digest, Sha256};
 use std::fmt::Write as _;
 use std::fs::{self, OpenOptions};
@@ -280,7 +279,7 @@ fn fetch(path: &Path, remote: &str, sha: &str) -> Result<(), String> {
     let temp = path.with_extension(format!("part-{}", std::process::id()));
     let url = format!("https://huggingface.co/BAAI/bge-small-en-v1.5/resolve/{REVISION}/{remote}");
     let result = crate::sys::output(
-        Command::new("curl")
+        crate::sys::command("curl")
             .args([
                 "-fsSL",
                 "--retry",

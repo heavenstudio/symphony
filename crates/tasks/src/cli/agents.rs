@@ -134,6 +134,16 @@ pub struct Agent {
     pub health: Health,
     pub last_tool_call: Option<f64>,
     pub last_message: Option<Said>,
+    /// Under a cap on an orchestrator's open tasks ([`crate::slots`]), the open slots it holds and
+    /// the cap: for an orchestrator, and for any session open work counts against.
+    pub slots: Option<Slots>,
+}
+
+/// The open slots a session holds against the cap.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Slots {
+    pub open: usize,
+    pub cap: usize,
 }
 
 /// The agents API's answer.
@@ -195,6 +205,10 @@ impl Agent {
                 ("text", Py::str(&m.text)),
             ])
         });
+        let slots = self.slots.map_or(Py::Null, |s| {
+            let count = |n: usize| Py::Int(i64::try_from(n).unwrap_or(i64::MAX));
+            Py::obj(vec![("open", count(s.open)), ("cap", count(s.cap))])
+        });
         Py::obj(vec![
             ("handle", Py::str(&self.handle)),
             ("kind", Py::str(&self.kind)),
@@ -215,6 +229,7 @@ impl Agent {
             ("health", Py::str(self.health.as_str())),
             ("last_tool_call", Py::opt_float(self.last_tool_call)),
             ("last_message", said),
+            ("slots", slots),
         ])
     }
 }
@@ -416,6 +431,9 @@ pub fn describe_board(
     let bound = store.bound_agents()?;
     let spoke = store.last_messages()?;
     let callbacks = store.callbacks()?;
+    let open_slots = store
+        .slots()
+        .map(|cap| (cap, crate::slots::Ledger::of_board(board).counts()));
     let mut held_by_handle = tasks_by_handle(&board.tasks);
     let mut by_handle: HashMap<&str, Vec<&TaskSessionRow>> = HashMap::new();
     for r in &records {
@@ -586,6 +604,10 @@ pub fn describe_board(
                 slug: m.slug.clone(),
                 ts: m.ts,
                 text: cut(&m.text),
+            }),
+            slots: open_slots.as_ref().and_then(|(cap, counts)| {
+                let open = counts.get(handle).copied().unwrap_or(0);
+                (s.row.kind == "orchestrator" || open > 0).then_some(Slots { open, cap: *cap })
             }),
         });
     }

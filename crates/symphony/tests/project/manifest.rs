@@ -76,6 +76,28 @@ fn the_board_table_names_its_guide_and_what_a_review_starts() {
 }
 
 #[test]
+fn the_board_table_names_the_open_tasks_an_orchestrator_may_hold_and_none_caps_nothing() {
+    assert_eq!(
+        parsed("[board]\norchestrator_slots = 8\n")
+            .unwrap()
+            .board
+            .orchestrator_slots,
+        Some(8)
+    );
+    assert_eq!(parsed("").unwrap().board.orchestrator_slots, None);
+    assert!(
+        refused("[board]\norchestrator_slots = 0\n")
+            .contains("orchestrator_slots is 0; an orchestrator needs at least one slot")
+    );
+    for text in [
+        "[board]\norchestrator_slots = -1\n",
+        "[board]\norchestrator_slots = \"8\"\n",
+    ] {
+        assert!(refused(text).contains("orchestrator_slots"), "{text}");
+    }
+}
+
+#[test]
 fn a_folder_whose_name_makes_no_slug_is_still_a_plain_project() {
     let tree = Tree::new();
     for root in [Path::new(""), Path::new("/"), &folder(&tree, "★ ★")] {

@@ -14,7 +14,7 @@ use super::queued_lines::{Hearing, Queued, Rescoped};
 use super::{ACT, Error, Store, acting, logged, refused};
 use crate::cli::agents::{Answer, Pane, Probe, Probes};
 use crate::cli::{attach, pull};
-use crate::sys::{Command, Stdio};
+use crate::sys::Stdio;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
@@ -1653,7 +1653,7 @@ fn queue_until(
     text: &str,
     due: impl Fn(Duration) -> bool,
 ) -> Result<(), DeliveryError> {
-    let mut child = Command::new("codex")
+    let mut child = crate::sys::command("codex")
         .args(["queue", "--thread", thread, "--message", text])
         .env_remove("CLAUDE_CODE_MESSAGING_TOKEN")
         .stdin(Stdio::null())

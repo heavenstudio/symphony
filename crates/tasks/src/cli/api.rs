@@ -15,10 +15,10 @@ use std::io::{BufRead, Read, Write};
 
 /// What a caller of these methods may rely on beyond the schema and the server's RPC: one more each
 /// time a method takes or does something an earlier build refused or did otherwise (1: `landed`'s
-/// `from`, before which a build declares none; 2: `say`'s `key`; 3: `say`'s `adopt`; 4:
-/// board-authored `notify`; 5: notices take literal session recipients). The live launcher
-/// (`tools/tasks.sh`) serves an earlier main build only while this matches main's, so no caller
-/// reaches a build without what it relies on.
+/// `from`, before which a build declares none; 2: `say`'s `key`; 3: its `adopt`; 4: `hold`, a
+/// landing's move to blocked that keeps the task's slot; 5: board-authored `notify`, whose notices
+/// take literal session recipients). The live launcher (`tools/tasks.sh`) serves an earlier main
+/// build only while this matches main's, so no caller reaches a build without what it relies on.
 #[expect(
     dead_code,
     reason = "tools/tasks.sh reads it from the committed source; no Rust code compares builds"
@@ -409,6 +409,11 @@ fn dispatch<F: FnOnce() -> Result<Store, String>>(
             args!(slug: need, status: need, handle: actor);
             let (slug, status, handle): (String, String, String) = (slug, status, handle);
             shape::task(&board.get()?.move_to(&slug, &status, &handle)?)
+        }
+        "hold" => {
+            args!(slug: need, handle: actor);
+            let (slug, handle): (String, String) = (slug, handle);
+            shape::task(&board.get()?.hold_blocked(&slug, &handle)?)
         }
         "verdict" => {
             args!(slug: need, handle: actor, verdict: need, text: need);

@@ -3,6 +3,11 @@
 //! takes on disk, and the reclaim that rebuilds it; and the move of the SQLite board into it, in a
 //! repository of its own.
 
+#![expect(
+    clippy::disallowed_methods,
+    reason = "a test starts its fixtures and stand-ins as it likes; the board's children are sys's"
+)]
+
 mod common;
 mod copy;
 mod cutover;
@@ -14,6 +19,7 @@ mod home;
 mod home_fixture;
 mod port;
 mod reclaim;
+mod sessionless;
 #[path = "../store/sqlite.rs"]
 mod sqlite;
 /// The store's tests' helpers, for the one way the tests find the pinned `surreal`.

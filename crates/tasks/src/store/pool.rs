@@ -64,10 +64,10 @@ impl Store {
         latest: i64,
     ) -> Result<Vec<Message>, Error> {
         if latest - since > POOL_SPAN {
-            return self.inbox_read(handle, since, None);
+            return self.inbox_read(handle, Some(since), None);
         }
         let rows = self.pool_through(since, latest)?.rows.clone();
-        self.inbox_read(handle, since, Some(rows))
+        self.inbox_read(handle, Some(since), Some(rows))
     }
 
     /// Whether a message after `since`, as of message `latest`, could reach `handle`'s inbox, read
