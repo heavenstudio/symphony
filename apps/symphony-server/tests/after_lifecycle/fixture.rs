@@ -32,6 +32,10 @@ fn run_fixture(command: &mut std::process::Command) -> std::io::Result<std::proc
 mod stand_ins;
 use stand_ins::{STAND_IN_LIFETIME, StandIns};
 
+#[path = "owner.rs"]
+mod owner;
+use owner::stage as owner_stage;
+
 #[cfg(test)]
 #[path = "scratch_tests.rs"]
 mod scratch_tests;
@@ -57,17 +61,10 @@ const SCRATCH_PREFIX: &str = "after-lifecycle-";
 static PREPARED_APP: OnceLock<u32> = OnceLock::new();
 static PREPARED_COMMANDS: OnceLock<[u32; 4]> = OnceLock::new();
 
-/// The pid of the app's preparation run in a parent that waits within a deadline while this
-/// process makes its repository ([`prepare_images`]): taken as this process's own preparation,
-/// so that wait holds no run of the image at all.
-const PREPARED_APP_BY_PARENT: &str = "SF_LIFECYCLE_PREPARED_APP";
-
 fn prepare_app(log: &Path) -> u32 {
     *PREPARED_APP.get_or_init(|| {
-        if let Ok(pid) = std::env::var(PREPARED_APP_BY_PARENT) {
-            return pid
-                .parse()
-                .unwrap_or_else(|_| panic!("{PREPARED_APP_BY_PARENT} is no pid: {pid:?}"));
+        if let Some(pid) = owner::parents_app() {
+            return pid;
         }
         let mut command = Command::new(APP);
         command.arg("--help").env_clear().stdin(Stdio::null());
@@ -106,32 +103,12 @@ fn prepare_commands(repo: &Repo, folder: &Path) -> [u32; 4] {
                 .args(args);
             let mut preparation = Process::spawn(command, &folder.join(name));
             preparation.success();
-            preparation.child.id()
+            let pid = preparation.child.id();
+            drop(preparation);
+            owner_stage(&format!("command preparation {name}"));
+            pid
         })
     })
-}
-
-/// The tracked scripts whose machine copies a repository's commands link ([`command_fixture`]).
-const COMMAND_SCRIPTS: [&str; 4] = ["build.sh", "open.sh", "ps.sh", "bash.sh"];
-
-/// Every new image a fixture repository runs, each run once by this process.
-struct Images {
-    /// The pid of the built app's preparation run ([`prepare_app`]).
-    app: u32,
-    /// The machine copy of each of [`COMMAND_SCRIPTS`], in that order.
-    copies: [PathBuf; 4],
-}
-
-/// Run every new image a fixture repository runs, as setup: the built app and each command
-/// script's machine copy, under no case deadline. A process that makes its own repository while
-/// this one waits on it within PATIENCE then meets no file's first run, which macOS assesses
-/// before its first instruction, one file at a time machine-wide; given
-/// [`PREPARED_APP_BY_PARENT`], it runs no app image at all.
-fn prepare_images(folder: &Path) -> Images {
-    Images {
-        app: prepare_app(&folder.join("prepare-app")),
-        copies: COMMAND_SCRIPTS.map(|name| machine_copy::machine_copy(&script_source(name))),
-    }
 }
 
 /// Own the folder before repository setup, so even setup failures retain their diagnostic files.
@@ -148,6 +125,7 @@ impl Scratch {
         fs::create_dir_all(&root).unwrap();
         let root = root.canonicalize().unwrap();
         REAP.call_once(|| scratch::reap_dead_scratch(&root, SCRATCH_PREFIX));
+        owner_stage("scratch sweep");
         loop {
             let path = root.join(format!(
                 "{SCRATCH_PREFIX}{}-{}",
@@ -180,6 +158,7 @@ impl Drop for Scratch {
         } else if let Err(error) = fs::remove_dir_all(&self.path) {
             panic!("cannot remove scratch {}: {error}", self.path.display());
         }
+        owner_stage("scratch removal");
     }
 }
 
@@ -193,6 +172,7 @@ fn command_fixture(path: &Path, name: &str) {
     // fresh in every verify run. Link the machine's one copy of these bytes for every scratch
     // checkout; $0 still names the invoking fixture path (ps/open use it).
     symlink(machine_copy::machine_copy(&script_source(name)), path).unwrap();
+    owner_stage(&format!("link {}", path.display()));
 }
 
 /// The tracked script a fixture command's machine-wide copy is made from.
@@ -220,6 +200,7 @@ pub fn repository(root: &Path, args: &[&str]) {
     )
     .unwrap();
     assert!(done.status.success(), "{args:?}: {}", said(&done));
+    owner_stage(&format!("git {}", args[0]));
 }
 
 pub fn said(out: &Output) -> String {
@@ -757,6 +738,7 @@ impl Repo {
         // Before the first command: preparation runs the ps stand-in too.
         let stand_ins = StandIns::open(&scratch.path);
         prepare_app(&scratch.path.join("prepare-app"));
+        owner_stage("app preparation");
         let base = scratch.path.clone();
         let main = base.join("main with spaces");
         fs::create_dir_all(&main).unwrap();
@@ -801,6 +783,7 @@ impl Repo {
             ],
         );
         write(&tree.join("docs/A.md"), "# Alpha\n\nbranch document\n");
+        owner_stage("worktree document");
         let home = main.join(".git/sf-symphony");
         let bin = base.join("commands");
         fs::create_dir(&bin).unwrap();
@@ -1072,10 +1055,13 @@ impl Repo {
 impl Drop for Repo {
     fn drop(&mut self) {
         self.cleanup();
+        owner_stage("repository cleanup");
         for descendants in self.descendants.lock().unwrap().iter_mut() {
             descendants.wait();
         }
+        owner_stage("descendant waits");
         self.close_stand_ins();
+        owner_stage("stand-in close");
         profile_warm(&fs::read_to_string(self.home.join("server.log")).unwrap_or_default());
     }
 }
