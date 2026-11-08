@@ -367,29 +367,60 @@ fn batches_and_streams_keep_serving_agents_and_owner_recipients_after_refusals()
     }
 }
 
-/// `create`'s `red` (api 6) marks the task it files red, as land files a red of main; a call
-/// without it marks nothing.
+/// `create`'s `red` (api 6) marks the task it files red when a red's filer files it, as land files
+/// a red of main, and `mark_red` marks one it filed before; a filer is a session `register` takes
+/// of kind `filer`, which the command line's `register` does not. Any other session's mark is
+/// refused, and a call without one marks nothing.
 #[test]
-fn create_marks_a_task_red_when_the_call_names_what_is_red() {
+fn only_a_reds_filer_marks_a_task_red_through_the_api() {
     let c = Case::new();
-    let actor = c.register("worker");
+    let worker = c.register("worker");
+    let filer = answer(
+        &c.env,
+        json!({"method": "register", "args": {"kind": "filer"}}),
+    )["ok"]["handle"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let unfiled = format!(
+        "only a red's filer marks a task red, a session of kind filer as the tools that file reds register; '{worker}' is not one"
+    );
     let made = answer(
         &c.env,
         json!([
-            {"method": "create", "args": {"slug": "tests/main-red-abc", "title": "Main red", "by": actor, "priority": 0, "red": "main"}},
-            {"method": "create", "args": {"slug": "sim/a", "title": "A", "by": actor, "red": null}},
-            {"method": "create", "args": {"slug": "sim/b", "title": "B", "by": actor, "red": ""}},
+            {"method": "create", "args": {"slug": "tests/main-red-abc", "title": "Main red", "by": filer, "priority": 0, "red": "main"}},
+            {"method": "create", "args": {"slug": "work/escape", "title": "Escape", "by": worker, "red": "main"}},
+            {"method": "create", "args": {"slug": "sim/a", "title": "A", "by": worker, "red": null}},
+            {"method": "create", "args": {"slug": "sim/b", "title": "B", "by": filer, "red": ""}},
+            {"method": "create", "args": {"slug": "tests/nightly-red-old", "title": "Old", "by": filer, "priority": 1}},
+            {"method": "mark_red", "args": {"slug": "tests/nightly-red-old", "red": "nightly", "by": worker}},
+            {"method": "mark_red", "args": {"slug": "tests/nightly-red-old", "red": "nightly", "by": filer}},
         ]),
     );
     assert_eq!(made[0]["ok"]["priority"], json!(0));
-    assert_eq!(made[1]["ok"]["slug"], json!("sim/a"));
+    assert_eq!(made[1], json!({"refused": unfiled}));
+    assert_eq!(made[2]["ok"]["slug"], json!("sim/a"));
     assert_eq!(
-        made[2],
+        made[3],
         json!({"refused": "a red task names what is red, such as main"})
     );
+    assert_eq!(made[5], json!({"refused": unfiled}));
+    assert_eq!(made[6]["ok"]["priority"], json!(0));
     let store = c.store();
-    assert!(store.get("tests/main-red-abc").unwrap().red());
-    assert!(!store.get("sim/a").unwrap().red());
+    let red = |slug: &str| store.get(slug).map(|t| t.red()).ok();
+    assert_eq!(
+        [
+            "tests/main-red-abc",
+            "work/escape",
+            "sim/a",
+            "tests/nightly-red-old"
+        ]
+        .map(red),
+        [Some(true), None, Some(false), Some(true)]
+    );
+    let ran = c.run_as("", &["register", "--kind", "filer"], "");
+    assert_ne!(ran.code, 0, "{}", ran.out);
+    assert!(ran.err.contains("invalid choice: 'filer'"), "{}", ran.err);
 }
 
 /// `landed` closes from review or held blocked unless the call names `from`, and answers with the

@@ -453,6 +453,31 @@ fn red_work_takes_no_slot_with_its_mirrors_instructions_and_the_work_under_it() 
 }
 
 #[test]
+fn a_red_done_or_cancelled_exempts_nothing_under_it() {
+    for closed in ["done", "cancelled"] {
+        let ledger = Ledger::new(
+            [
+                red(led("tests/red", None, closed, "o")),
+                entry("tests/red/fix", Some("tests/red"), "in_progress"),
+                told("tests/red/fix/do", "tests/red/fix", "in_progress"),
+            ],
+            [],
+        );
+        for slug in ["tests/red", "tests/red/fix", "tests/red/fix/do"] {
+            assert!(!ledger.red(slug), "{slug} under a {closed} red");
+        }
+        assert_eq!(
+            (named(&ledger.held("o")), ledger.reds().contains_key("o")),
+            (
+                "tests/red/fix (in_progress) with tests/red/fix/do (in_progress)".to_string(),
+                false
+            ),
+            "the work under a {closed} red is counted"
+        );
+    }
+}
+
+#[test]
 fn red_work_starts_at_any_count_and_a_feature_start_at_the_cap_is_still_refused() {
     let mut tasks: Vec<Entry> = ["s1", "s2", "s3"]
         .into_iter()

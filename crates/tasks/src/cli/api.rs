@@ -18,7 +18,8 @@ use std::io::{BufRead, Read, Write};
 /// `from`, before which a build declares none; 2: `say`'s `key`; 3: its `adopt`; 4: `hold`, a
 /// landing's move to blocked that keeps the task's slot; 5: board-authored `notify`, whose notices
 /// take literal session recipients; 6: `create`'s `red`, the mark of a task filed for a red, which
-/// takes no slot). The live launcher (`tools/tasks.sh`) serves an earlier main build only while this
+/// takes no slot, `mark_red` for a red filed before it, both from a session of kind `filer`
+/// alone, which `register` takes). The live launcher (`tools/tasks.sh`) serves an earlier main build only while this
 /// matches main's, so no caller reaches a build without what it relies on.
 #[expect(
     dead_code,
@@ -345,6 +346,11 @@ fn dispatch<F: FnOnce() -> Result<Store, String>>(
             let new: NewTask = a.rest()?;
             super::check_actor(&new.by)?;
             shape::task(&board.get()?.create(&new)?)
+        }
+        "mark_red" => {
+            args!(slug: need, red: need, by: actor);
+            let (slug, red, by): (String, String, String) = (slug, red, by);
+            shape::task(&board.get()?.mark_red(&slug, &red, &by)?)
         }
         "ancestors" => {
             args!(slug: need);

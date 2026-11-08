@@ -432,11 +432,13 @@ tasks they review by id, a level a round trip. It decides on the board before
 and after the change (`slots::started`) and, for every orchestrator whose open
 tasks it changes, checks and bumps `counter:['slots', HANDLE]` in the write, so
 two starts at once are one retry, not two slots (`tests/store/slots.rs` and its
-`moves` and `cost` modules, `tests/cli/slots.rs`). Red work takes no slot: a task
+`moves` and `cost` modules, `tests/cli/slots.rs`). Red work takes no slot: an open task
 `create`'s `red` marks (`fields._board.red`, `red.rs`, api 6, which the cap's reads
 project beside each task) and the work under it, judged by the task whose work it is;
 a refusal names it apart, and PULL lists a red nobody executes 10 minutes after filing
-first, as `red_unstaffed`. A change of parent of open
+first, as `red_unstaffed`, before any cancelled dependency of its. Only a session of
+kind `filer` marks, on `create` or later with `mark_red` (`store/work/red.rs`), and
+`set_field` refuses the board's own `_board` fields. A change of parent of open
 work and a hand-over of its orchestrator role are decided the same way
 (`set_parent`, `hand_over`), but for the owner's. A hold (`Store::hold_blocked`,
 `tasks api`'s `hold` from api 4, land's while stamps wait) keeps blocked work's slot: it is a record, not a task

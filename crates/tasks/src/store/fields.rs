@@ -32,6 +32,11 @@ impl Store {
                 )));
             }
         }
+        if plugin == crate::red::FIELDS {
+            return Err(refused(format!(
+                "fields.{plugin} are the board's own: a red is marked by its filer (mark_red)"
+            )));
+        }
         let shown = match value {
             Value::String(text) => text.clone(),
             Value::Number(number) => number.to_string(),

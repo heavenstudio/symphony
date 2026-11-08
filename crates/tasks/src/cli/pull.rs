@@ -18,9 +18,9 @@
 //! or stale (so an agent working a subtask `X/do` staffs `X`). A ready task also needs its dependencies
 //! done to be offered at all; cancelled prerequisites are listed as `dependency_blocked` with a
 //! reason instead. A red task ([`crate::red`]) nobody executes [`UNSTAFFED_SECONDS`] after it was
-//! filed, whatever its status short of review, is `red_unstaffed`, named first and nowhere else, and
-//! counted in the header only then, as `dependency_blocked` is. The monitor delivers it only for
-//! newly actionable entries.
+//! filed, whatever its status short of review, is `red_unstaffed`, named first and nowhere else, a
+//! cancelled dependency of its in its note, and counted in the header only then, as
+//! `dependency_blocked` is. The monitor delivers it only for newly actionable entries.
 
 use crate::health::EXECUTING;
 use crate::orchestration::{Owners, claimable_work};
@@ -253,31 +253,39 @@ pub fn digest(
             })
             .map(String::as_str)
             .collect();
-        if !matches!(t.status.as_str(), "done" | "cancelled") && !cancelled.is_empty() {
-            found
-                .entry("dependency_blocked")
-                .or_default()
-                .push(t.clone());
-            notes.insert(
-                t.slug.clone(),
-                format!("cancelled dependencies: {}", cancelled.join(", ")),
-            );
-            continue;
-        }
-        let mut unstaffed = |name: &'static str, notes: &mut BTreeMap<String, String>| {
+        let blocked = (!cancelled.is_empty())
+            .then(|| format!("cancelled dependencies: {}", cancelled.join(", ")));
+        let unstaffed = |name: &'static str,
+                         found: &mut BTreeMap<&'static str, Vec<Task>>,
+                         notes: &mut BTreeMap<String, String>| {
             found.entry(name).or_default().push(t.clone());
             let reserved = (t.roles.iter()).find(|r| r.role == "reserved" && r.health.holds());
-            if let Some(r) = reserved {
-                notes.insert(t.slug.clone(), format!("reserved {}", r.handle));
+            let note = (reserved
+                .map(|r| format!("reserved {}", r.handle))
+                .into_iter())
+            .chain(blocked.clone())
+            .collect::<Vec<_>>();
+            if !note.is_empty() {
+                notes.insert(t.slug.clone(), note.join("; "));
             }
         };
-        // A red nobody executes once it has stood a while is named first, and only there.
+        // A red nobody executes once it has stood a while is named first, and only there, a
+        // cancelled dependency of its said beside it: it is judged before anything else.
         let red = t.red()
             && !matches!(t.status.as_str(), "review" | "done" | "cancelled")
             && now - t.created >= UNSTAFFED_SECONDS
             && !staffed(t);
         if red {
-            unstaffed("red_unstaffed", &mut notes);
+            unstaffed("red_unstaffed", &mut found, &mut notes);
+        } else if let Some(blocked) = &blocked
+            && !matches!(t.status.as_str(), "done" | "cancelled")
+        {
+            found
+                .entry("dependency_blocked")
+                .or_default()
+                .push(t.clone());
+            notes.insert(t.slug.clone(), blocked.clone());
+            continue;
         }
         match t.status.as_str() {
             "ready" if !red => {
@@ -287,7 +295,7 @@ pub fn digest(
                     .filter_map(|d| by_slug.get(d.as_str()))
                     .all(|d| d.status == "done");
                 if free && !staffed(t) {
-                    unstaffed("ready_unstaffed", &mut notes);
+                    unstaffed("ready_unstaffed", &mut found, &mut notes);
                 }
             }
             "in_progress" => {

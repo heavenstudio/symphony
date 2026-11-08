@@ -15,6 +15,8 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 
 mod owner_task;
 
+mod red;
+
 mod roles;
 
 /// Who makes a task or posts to a thread without a session of its own.

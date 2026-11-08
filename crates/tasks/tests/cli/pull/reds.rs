@@ -4,16 +4,22 @@
 use super::{Case, slugs};
 use symphony_board::NewTask;
 use symphony_board::health::RESERVE_SECONDS;
-use symphony_board::red::UNSTAFFED_SECONDS;
+use symphony_board::red::{FILER, UNSTAFFED_SECONDS};
 
 impl Case {
-    /// `slug`, filed for a red of main, most urgent, as land files one.
+    /// `slug`, filed for a red of main by its filer, most urgent, as land files one.
     fn red(&self, slug: &str) {
+        self.red_on(slug, &[]);
+    }
+
+    /// [`Case::red`], depending on `depends`.
+    fn red_on(&self, slug: &str, depends: &[&str]) {
         self.task_with(
             NewTask {
                 priority: 0,
                 red: Some("main".into()),
-                ..NewTask::new(slug, &format!("Red {slug}"), "owner")
+                depends: depends.iter().map(|d| d.to_string()).collect(),
+                ..NewTask::new(slug, &format!("Red {slug}"), &self.f.session(FILER))
             },
             "ready",
         );
@@ -103,6 +109,32 @@ fn a_red_staffed_through_a_subtask_or_reserved_is_named_with_its_reserver_until_
     )));
     c.f.store.claim("tests/main-red-abc/fix", &who).unwrap();
     assert_eq!(c.digest().count("red_unstaffed"), 0);
+}
+
+#[test]
+fn an_overdue_red_whose_dependency_was_cancelled_is_named_first_its_dependency_beside_it() {
+    let c = Case::new();
+    c.task("dep/ready", "ready");
+    c.red_on("tests/main-red-abc", &["dep/ready"]);
+    c.task_with(c.priority("work/feature", 0), "ready");
+    c.f.store
+        .move_to("dep/ready", "cancelled", "owner")
+        .unwrap();
+    c.f.advance(UNSTAFFED_SECONDS);
+    let d = c.digest();
+    assert_eq!(
+        (slugs(&d, "red_unstaffed"), d.count("dependency_blocked")),
+        (vec!["tests/main-red-abc".into()], 0),
+        "judged a red before a blocked dependent"
+    );
+    assert_eq!(
+        d.lines()[1..],
+        [
+            "  red_unstaffed p0 tests/main-red-abc — Red tests/main-red-abc   (cancelled dependencies: dep/ready)",
+            "  ready_unstaffed p0 work/feature — T work/feature",
+        ],
+        "named first, before ordinary ready work"
+    );
 }
 
 #[test]

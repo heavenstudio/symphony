@@ -18,10 +18,11 @@
 //!   to review or lands) counts with the task it is an instruction for, its nearest ancestor that
 //!   is not one.
 //!
-//! Red work takes no slot ([`Ledger::red`]): a task filed for a red that stops every landing
+//! Red work takes no slot ([`Ledger::red`]): an open task filed for a red that stops every landing
 //! ([`crate::red`]) and the work under it, its mirrors and instructions included, start at any count
 //! and free none, and a refusal names the red work its owner holds apart, as not counted. The
-//! work that fixes a red never waits for a slot.
+//! work that fixes a red never waits for a slot. A red done or cancelled exempts nothing: the
+//! work still open under it, and any started there since, counts as other work does.
 //!
 //! A task no orchestrator holds counts against its executor's parent session (`register
 //! --parent`). The cap is the project's (`[board] orchestrator_slots` in the main checkout's
@@ -107,7 +108,7 @@ pub struct Entry<'a> {
     /// ([`crate::Health::holds`]).
     pub orchestrators: Vec<&'a str>,
     pub executors: Vec<&'a str>,
-    /// Filed for a red ([`crate::red`]): it and the work under it take no slot.
+    /// Filed for a red ([`crate::red`]): while it is open, it and the work under it take no slot.
     pub red: bool,
 }
 
@@ -326,18 +327,20 @@ impl<'a> Ledger<'a> {
     }
 
     /// Whether `slug` is red work, which takes no slot: the task whose work it is
-    /// ([`Ledger::work`]), or a task above that one, was filed for a red ([`crate::red`]). So a
-    /// mirror and an instruction are red work with the task they serve, and a slot is all red work
-    /// or none.
+    /// ([`Ledger::work`]), or a task above that one, is an open red ([`crate::red`]). So a mirror
+    /// and an instruction are red work with the task they serve, a slot is all red work or none,
+    /// and a red done or cancelled exempts nothing under it.
     pub fn red(&self, slug: &'a str) -> bool {
-        (self.chain(self.work(slug)).into_iter()).any(|at| self.tasks[at].red)
+        let mut above = (self.chain(self.work(slug)).into_iter()).map(|at| &self.tasks[at]);
+        above.any(|task| task.red && crate::red::open(task.status))
     }
 
     /// Every owner's open slots, in one pass over the open tasks: those the cap counts, then the
     /// red work it does not.
     fn tally(&self) -> [HashMap<&'a str, Held<'a>>; 2] {
         let mut tally: [HashMap<&'a str, Held<'a>>; 2] = Default::default();
-        for task in self.tasks.values().filter(|t| t.open()) {
+        let open = self.tasks.values().filter(|t| t.open());
+        for task in open {
             let place = self.place(task.slug);
             let all = &mut tally[usize::from(self.red(task.slug))];
             for owner in place.owners {
@@ -345,10 +348,10 @@ impl<'a> Ledger<'a> {
                 slot.push((task.slug, task.shown()));
             }
         }
-        for slot in (tally.iter_mut())
+        let slots = (tally.iter_mut())
             .flat_map(HashMap::values_mut)
-            .flat_map(BTreeMap::values_mut)
-        {
+            .flat_map(BTreeMap::values_mut);
+        for slot in slots {
             slot.sort_unstable();
         }
         tally

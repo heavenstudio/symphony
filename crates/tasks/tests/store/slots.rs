@@ -18,6 +18,8 @@ const W: &str = "wren";
 const K: &str = "kite";
 /// Another orchestrator, holding nothing.
 const P: &str = "pine-orch";
+/// A red's filer, a session as the tools that file reds register ([`symphony_board::red::FILER`]).
+const F: &str = "flint";
 
 /// Eight open tasks, in progress and in review by turns.
 const EIGHT: [(&str, &str); 8] = [
@@ -34,20 +36,21 @@ const EIGHT: [(&str, &str); 8] = [
 /// What O holding [`EIGHT`] is said as.
 const HOLDS_EIGHT: &str = "olive-orch holds 8 open tasks, the cap of 8 an orchestrator holds: work/a (in_progress), work/b (review), work/c (in_progress), work/d (review), work/e (in_progress), work/f (review), work/g (in_progress), work/h (review); a slot frees when one of them is done or cancelled";
 
-/// A board to seed: O and P orchestrators, W (O's child) and K.
+/// A board to seed: O and P orchestrators, W (O's child), K and the filer F.
 fn sessions() -> Seed {
-    let orchestrator = |handle: &str| SessionRow {
-        kind: "orchestrator".into(),
+    let kind = |handle: &str, kind: &str| SessionRow {
+        kind: kind.into(),
         ..session(handle)
     };
     Seed::default()
-        .session_row(orchestrator(O))
-        .session_row(orchestrator(P))
+        .session_row(kind(O, "orchestrator"))
+        .session_row(kind(P, "orchestrator"))
         .session_row(SessionRow {
             parent: Some(O.into()),
             ..session(W)
         })
         .session(K)
+        .session_row(kind(F, symphony_board::red::FILER))
 }
 
 /// `seed` with a task `slug` in `status` under `parent`, its orchestrator `by` if any.
@@ -331,13 +334,13 @@ fn open_work_no_orchestrator_holds_takes_a_slot_of_its_executors_parent() {
     assert!(said.contains("loose/one (in_progress)"), "{said}");
 }
 
-/// `slug`, filed for a red of `what` by the owner, most urgent, as land files one.
+/// `slug`, filed for a red of `what` by its filer F, most urgent, as land files one.
 fn red(store: &Store, slug: &str, what: &str) {
     let task = store
         .create(&NewTask {
             priority: 0,
             red: Some(what.into()),
-            ..NewTask::new(slug, &format!("Red: {slug}"), "owner")
+            ..NewTask::new(slug, &format!("Red: {slug}"), F)
         })
         .unwrap();
     assert!(task.red(), "{slug} is marked");
@@ -385,6 +388,38 @@ fn an_orchestrator_at_the_cap_still_starts_main_and_nightly_red_work_and_names_i
         )
     );
     assert_eq!(store.get("work/next").unwrap().status, "ready");
+}
+
+#[test]
+fn a_cancelled_red_exempts_no_work_under_it_and_none_started_there_since() {
+    let f = Fixture::new(eight_and_seed(&[]));
+    let store = capped(&f, 8);
+    red(&store, "tests/main-red-old", "main");
+    store
+        .create(&NewTask {
+            parent: Some("tests/main-red-old".into()),
+            ..NewTask::new("fix/early", "Early", "owner")
+        })
+        .unwrap();
+    store
+        .take_role("tests/main-red-old", O, "orchestrator")
+        .unwrap();
+    // Started under the open red at the cap: red work, taking no slot.
+    store.claim("fix/early", W).unwrap();
+    store.move_to("tests/main-red-old", "cancelled", O).unwrap();
+    // Once the red is cancelled the work still open under it counts, and new work there takes a
+    // slot as any does, which O, now past the cap, lacks.
+    store
+        .create(&NewTask {
+            parent: Some("tests/main-red-old".into()),
+            ..NewTask::new("fix/late", "Late", "owner")
+        })
+        .unwrap();
+    assert_eq!(
+        refused(store.claim("fix/late", W)),
+        "fix/late cannot start: olive-orch holds 9 open tasks, the cap of 8 an orchestrator holds: fix/early (in_progress), work/a (in_progress), work/b (review), work/c (in_progress), work/d (review), work/e (in_progress), work/f (review), work/g (in_progress), work/h (review); a slot frees when one of them is done or cancelled"
+    );
+    assert_eq!(store.get("fix/late").unwrap().status, "ready");
 }
 
 #[test]
