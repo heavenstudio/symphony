@@ -119,6 +119,26 @@ fn say(case: &Case, program: &Path, args: &[&str]) -> Ran {
     run_as(&case.env, program, args)
 }
 
+/// `tasks api` as the `tasks` binary at `program` runs it in `env`, `call` on its stdin.
+fn api(env: &Env, program: &Path, call: &Value) -> Ran {
+    let args = ["api".to_string()];
+    let (mut out, mut err) = (Vec::new(), Vec::new());
+    let input = call.to_string();
+    let code = main_detaching(
+        &args,
+        env,
+        &mut input.as_bytes(),
+        &mut out,
+        &mut err,
+        program,
+    );
+    Ran {
+        code,
+        out: String::from_utf8(out).unwrap(),
+        err: String::from_utf8(err).unwrap(),
+    }
+}
+
 /// This host's dispatch lease as it stands.
 fn lease(case: &Case) -> Value {
     case.store()
@@ -287,4 +307,94 @@ fn a_dispatcher_that_cannot_start_leaves_the_dispatch_to_the_command() {
     assert_eq!(ran.code, 0, "{}", ran.err);
     // Delivered before the command answered: the socket already holds the frame.
     listener.until("here and now", Duration::from_secs(1));
+}
+
+/// An orchestrator with its callback on `listener`, a task of its in review whose executor has gone
+/// quiet with none, and a reviewer of it: the reviewer, and the environment of a clock past the
+/// executor's last beat.
+fn quiet_executor(case: &Case, slug: &str, listener: &Listener) -> (String, Env) {
+    let orchestrator = case.register("orchestrator");
+    let executor = case.register("worker");
+    let reviewer = case.register("reviewer");
+    let store = case.store();
+    store
+        .create(&symphony_board::NewTask::new(slug, "Quiet", &orchestrator))
+        .unwrap();
+    store
+        .take_role(slug, &orchestrator, "orchestrator")
+        .unwrap();
+    store.claim(slug, &executor).unwrap();
+    store.move_to(slug, "review", &executor).unwrap();
+    store.take_role(slug, &reviewer, "reviewer").unwrap();
+    store
+        .callback(
+            &orchestrator,
+            Some(&format!("uds:{}", listener.path.display())),
+            false,
+            false,
+        )
+        .unwrap();
+    let mut later = case.env.clone();
+    let after = NOW + symphony_board::health::LIVE_SECONDS + 1.0;
+    later.vars.insert("TASKS_NOW".into(), after.to_string());
+    (reviewer, later)
+}
+
+#[test]
+fn a_post_no_executor_reads_brings_the_orchestrators_callback_the_boards_notice() {
+    let case = Case::new();
+    let listener = Listener::new("unread-post");
+    let (reviewer, later) = quiet_executor(&case, "tools/unread-post", &listener);
+    let ran = run_as(
+        &later,
+        Path::new(env!("CARGO_BIN_EXE_tasks")),
+        &[
+            "say",
+            "tools/unread-post",
+            "the hash moved",
+            "--to",
+            "@executor",
+            "--as",
+            &reviewer,
+        ],
+    );
+    assert_eq!(ran.code, 0, "{}", ran.err);
+    let lines = listener.until("reaches no live executor", Duration::from_secs(60));
+    let notice: Vec<&String> = (lines.iter())
+        .filter(|line| line.contains("reaches no live executor"))
+        .collect();
+    assert_eq!(notice.len(), 1, "{lines:?}");
+    assert!(
+        notice[0].starts_with("MSG #") && notice[0].contains(" tools/unread-post from board — "),
+        "{lines:?}"
+    );
+}
+
+/// A changes verdict made through `tasks api`, as `land-approve` makes one, reaches the
+/// orchestrator's callback as a verdict, and the board's notice that no executor reads it after it.
+#[test]
+fn an_api_changes_verdict_brings_the_orchestrators_callback_the_verdict_and_the_notice() {
+    let case = Case::new();
+    let listener = Listener::new("unread-verdict");
+    let (reviewer, later) = quiet_executor(&case, "tools/unread-verdict", &listener);
+    let call = json!({"method": "verdict", "args": {"slug": "tools/unread-verdict",
+        "handle": reviewer, "verdict": "changes", "text": "the hit misses"}});
+    let ran = api(&later, Path::new(env!("CARGO_BIN_EXE_tasks")), &call);
+    assert_eq!(ran.code, 0, "{}", ran.err);
+    assert!(ran.out.contains("\"in_progress\""), "{}", ran.out);
+    let lines = listener.until("reaches no live executor", Duration::from_secs(60));
+    assert!(
+        lines.iter().any(|line| line.starts_with("VERDICT #")
+            && line.contains(&format!(
+                " tools/unread-verdict from {reviewer} — changes: the hit misses"
+            ))),
+        "{lines:?}"
+    );
+    assert_eq!(
+        (lines.iter())
+            .filter(|line| line.contains("reaches no live executor"))
+            .count(),
+        1,
+        "{lines:?}"
+    );
 }

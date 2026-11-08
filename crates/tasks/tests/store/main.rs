@@ -31,6 +31,7 @@ mod keyed;
 mod launches;
 mod messages;
 mod mixed_dispatchers;
+mod move_from;
 mod next;
 mod open_read;
 mod orchestrators;

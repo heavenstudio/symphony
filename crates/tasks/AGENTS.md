@@ -473,6 +473,11 @@ field, since a reader built before it refuses a task row with a field it does
 not know, and every write that moves the task, changes its parent or its
 dependencies deletes it. Each statement the cap sends is in `SLOT_READS`, which
 `tests/store/slots/cost.rs` has the server plan.
+A move that names where it goes from (`Store::move_from`, `tasks api`'s `move`
+with `from` from api 6, `store/work/moves.rs`) is refused unless the task's
+status, as the move's own write reads it, is one of those: a caller that decided
+the move on an earlier read (land's changes verdict sending work in review back)
+leaves a status another move set since, blocked say, as it is.
 
 Its store tests start one in-memory server per test binary and give each test a
 database of its own. The server is the pinned SurrealDB `tools/surreal.sh`
