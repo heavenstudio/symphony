@@ -136,6 +136,9 @@ impl Store {
                      IF $was != NONE AND $was.rows != {ROWS} {{ THROW string::concat($refused, $was.board, $since) }};"
                 );
             }
+            // Each sender's last word goes with the messages, before them, so their deletion
+            // finds no word to look past; the copied messages' events name them again.
+            swap.push_str("DELETE said RETURN NONE;\n");
             for (table, _) in &tables {
                 let _ = writeln!(
                     swap,

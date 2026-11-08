@@ -4,10 +4,12 @@
 
 use crate::orchestration;
 use crate::rows::RoleRow;
-use crate::store::{Change, Error, Say, Store, Task, refused, repr};
+use crate::store::{Change, Error, Opens, Say, Store, Task, refused, repr};
 
 impl Store {
     /// Join a task as `orchestrator` or `reviewer` (executor is `claim`, reserved is `reserve`).
+    /// Taking the orchestrator role makes the open work it takes on the taker's: refused when that
+    /// raises the taker's open tasks past the store's cap ([`crate::slots`]).
     pub fn take_role(&self, slug: &str, handle: &str, role: &str) -> Result<Task, Error> {
         if role != "orchestrator" && role != "reviewer" {
             return Err(refused(format!(
@@ -15,7 +17,8 @@ impl Store {
                 repr(role)
             )));
         }
-        self.rule(slug, handle, |view| {
+        let starts = role == "orchestrator" && self.slots.is_some();
+        self.ruling(slug, handle, starts, |view| {
             view.actor(handle)?;
             let task = view.task(slug)?;
             if task.status == "done" || task.status == "cancelled" {
@@ -38,8 +41,14 @@ impl Store {
                     if holding {
                         continue; // a double both still hold: settled by handover or release
                     }
+                    // A hand-over is capped as this take is: it is no way round the cap.
+                    let capped = if self.slots.is_some() {
+                        format!(", which {handle}'s cap decides as it does a take")
+                    } else {
+                        String::new()
+                    };
                     return Err(refused(format!(
-                        "{slug} is orchestrated by {} ({}); {} hands it over with: just tasks handover {slug} {handle}",
+                        "{slug} is orchestrated by {} ({}); {} hands it over with: just tasks handover {slug} {handle}{capped}",
                         other.handle,
                         health.as_str(),
                         other.handle
@@ -58,6 +67,18 @@ impl Store {
                     expires: None,
                 });
                 change.say = Say::system(format!("{handle} joined as {role}"));
+                // The open work it takes on, the task's and the work below it nobody else
+                // orchestrates: the new orchestrator's slots.
+                if single {
+                    change.opens = Some(Opens {
+                        orchestrator: Some(handle.into()),
+                        what: format!(
+                            "{handle} cannot take orchestrator on {slug}, which is {}",
+                            task.status
+                        ),
+                        ..Opens::default()
+                    });
+                }
             }
             if !took.is_empty() {
                 change.say = Say::system(orchestration::took_line(handle, &took));
@@ -67,9 +88,12 @@ impl Store {
     }
 
     /// Move the orchestrator role on `slug` from `from`, who holds it, to `to`, in one write: the
-    /// thread names the new orchestrator, and both hear one ROLE event.
+    /// thread names the new orchestrator, and both hear one ROLE event. The open work it hands on,
+    /// the task's and the work below it nobody else orchestrates, takes `to`'s slots: refused, as
+    /// [`Store::take_role`] is, when that raises `to`'s open tasks past the cap. The owner's is not.
     pub fn hand_over(&self, slug: &str, from: &str, to: &str) -> Result<Task, Error> {
-        self.rule(slug, from, |view| {
+        let capped = from != super::OWNER;
+        self.ruling(slug, from, capped && self.slots.is_some(), |view| {
             view.actor(from)?;
             let task = view.task(slug)?;
             if task.status == "done" || task.status == "cancelled" {
@@ -108,6 +132,14 @@ impl Store {
                 });
             }
             change.say = Say::system(orchestration::handed_line(from, to));
+            change.opens = capped.then(|| Opens {
+                orchestrator: Some(to.into()),
+                what: format!(
+                    "{from} cannot hand {slug}, which is {}, to {to}",
+                    task.status
+                ),
+                ..Opens::default()
+            });
             Ok(change)
         })
     }

@@ -1,8 +1,10 @@
 //! Working-directory scans shared by the board's worktree sweep and the cargo cache sweep.
 //! Unreadable scans keep trees; an empty global listing is unreadable. Partial listings remain useful.
 //! Their `lsof` starts without a fork and is read through close-on-exec pipes ([`spawn`]), the
-//! helper the board's children share, since this leaf is the one crate both sides link. An async
-//! caller awaits such a child's end, killed if the wait is dropped first, through [`exit`].
+//! helper the board's children share, since this leaf is the one crate both sides link. A caller
+//! that chooses lsof's environment hands the scan its own command ([`process_cwds_with`],
+//! [`occupied_with`]). An async caller awaits such a child's end, killed if the wait is dropped
+//! first, through [`exit`].
 
 use std::path::{Path, PathBuf};
 use std::process::Output;
@@ -22,7 +24,12 @@ const LSOF_PATIENCE: Duration = Duration::from_secs(60);
 /// The working directory of every process `lsof` can see; none when it cannot be asked or lists
 /// nothing (this process alone has one: none at all is a listing that could not be read).
 pub fn process_cwds() -> Option<Vec<PathBuf>> {
-    let mut lsof = Command::new("lsof");
+    process_cwds_with(Command::new("lsof"))
+}
+
+/// [`process_cwds`] through `lsof`, a command for lsof the caller built, in the environment it
+/// chose (the board's starts without its starter's session); this adds the arguments.
+pub fn process_cwds_with(mut lsof: Command) -> Option<Vec<PathBuf>> {
     lsof.args(["-Fn", "-d", "cwd"]);
     cwds_of(&mut lsof)
 }
@@ -31,7 +38,12 @@ pub fn process_cwds() -> Option<Vec<PathBuf>> {
 /// directories by inode (`+D`), never by lsof's escaped display names. An unreadable or timed-out
 /// search is unknown; a clean exit 1 with no matches is lsof's normal empty search result.
 pub fn occupied(tree: &Path) -> Option<bool> {
-    let mut lsof = Command::new("lsof");
+    occupied_with(Command::new("lsof"), tree)
+}
+
+/// [`occupied`] through `lsof`, a command for lsof the caller built, as [`process_cwds_with`] takes
+/// it; this adds the arguments and `tree`.
+pub fn occupied_with(mut lsof: Command, tree: &Path) -> Option<bool> {
     lsof.args(["-a", "-d", "cwd", "-Fp", "-x", "f", "+D"])
         .arg(tree);
     occupancy_of(&mut lsof)
@@ -166,6 +178,43 @@ mod tests {
             .map(|p| p.canonicalize().unwrap_or(p))
             .collect();
         assert!(seen.contains(&here), "{}", here.display());
+    }
+
+    /// A stand-in lsof run by `sh`: `script` sees lsof's arguments as `$@`.
+    fn stand_in(script: &str) -> Command {
+        let mut lsof = Command::new("/bin/sh");
+        lsof.args(["-c", script, "lsof"]);
+        lsof
+    }
+
+    /// The scans run the caller's command, in the environment the caller gave it, with lsof's
+    /// arguments added: what it lists is the answer, and nothing of this process's own lsof.
+    #[test]
+    fn a_scan_runs_the_lsof_its_caller_built() {
+        let mut listing = stand_in("printf 'p1\\nn%s|%s\\n' \"$*\" \"${SF_CWD_GIVEN-unset}\"");
+        listing.env("SF_CWD_GIVEN", "given");
+        assert_eq!(
+            process_cwds_with(listing),
+            Some(vec![PathBuf::from("-Fn -d cwd|given")])
+        );
+        assert_eq!(process_cwds_with(Command::new("/no/such/lsof")), None);
+        let search = "[ \"$*|${SF_CWD_GIVEN-unset}\" = '-a -d cwd -Fp -x f +D /work/a b|given' ] \
+                      && printf 'p7\\n'; exit 1";
+        let mut given = stand_in(search);
+        given.env("SF_CWD_GIVEN", "given");
+        assert_eq!(occupied_with(given, Path::new("/work/a b")), Some(true));
+        let mut elsewhere = stand_in(search);
+        elsewhere.env("SF_CWD_GIVEN", "given");
+        assert_eq!(occupied_with(elsewhere, Path::new("/work/c")), Some(false));
+        assert_eq!(
+            occupied_with(stand_in(search), Path::new("/work/a b")),
+            Some(false),
+            "a command without what its caller set"
+        );
+        assert_eq!(
+            occupied_with(Command::new("/no/such/lsof"), Path::new("/work")),
+            None
+        );
     }
 
     #[test]

@@ -1,6 +1,11 @@
 //! Agent launch lifecycle on private board and terminal fixtures: hc and the Herdr app are the
 //! crate's `fake-hc`.
 
+#![expect(
+    clippy::disallowed_methods,
+    reason = "a test starts its fixtures and stand-ins as it likes; the board's children are sys's"
+)]
+
 #[path = "../store/common.rs"]
 #[allow(dead_code)]
 mod common;

@@ -1,0 +1,31 @@
+# How clippy reads the workspace lints (Cargo.toml, `[workspace.lints.clippy]`). Only what differs from
+# clippy's defaults is here.
+
+# Nothing here is published: a lint may ask for a change to a `pub` signature, since every caller is
+# in this tree.
+avoid-breaking-exported-api = false
+
+# A test asserts: its `unwrap()` and `panic!` are the assertion, and it may print what it saw.
+allow-unwrap-in-tests = true
+allow-panic-in-tests = true
+allow-print-in-tests = true
+
+# Names `doc_markdown` would otherwise want in backticks: the products and formats the docs name as
+# words. `..` keeps clippy's own list (JavaScript, GitHub, macOS and the rest).
+doc-valid-idents = ["SurrealDB", "SurrealKV", "SQLite", "GDScript", "CBOR", ".."]
+
+# The board's own, below the workspace's settings above. Clippy reads the nearest clippy.toml alone,
+# so this crate's starts with symphony/clippy.toml whole (src/sys.rs's tests hold it to that).
+#
+# Every child the board starts is built by `sys::command` or `sys::command_with` (src/sys.rs), without
+# the session of the process that starts it (`sys::SESSION_VARS`). Clippy refuses any other
+# constructor, however its path is spelled, imported or renamed. A test target, or a library test
+# module, starts what it likes and says so: `#[expect(clippy::disallowed_methods, reason = "...")]`.
+disallowed-methods = [
+    { path = "std::process::Command::new", reason = "a board child starts without its starter's session: sys::command, or sys::command_with in a caller's environment" },
+    { path = "process_cwd::spawn::Command::new", reason = "a board child starts without its starter's session: sys::command, or sys::command_with in a caller's environment" },
+    { path = "std::process::Command::env_clear", reason = "a child in a caller's environment is sys::command_with's, which keeps none of the session" },
+    { path = "process_cwd::spawn::Command::env_clear", reason = "a child in a caller's environment is sys::command_with's, which keeps none of the session" },
+    { path = "process_cwd::process_cwds", reason = "its lsof keeps the starter's session: process_cwd::process_cwds_with(sys::command(\"lsof\"))" },
+    { path = "process_cwd::occupied", reason = "its lsof keeps the starter's session: process_cwd::occupied_with(sys::command(\"lsof\"), tree)" },
+]

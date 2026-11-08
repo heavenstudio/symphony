@@ -2,7 +2,6 @@
 //! data. It is read from the `.git` files themselves, with no `git` process, as a hook that runs on
 //! every tool call needs; a layout it does not know asks git.
 
-use crate::sys::Command;
 use std::fmt;
 use std::path::{Path, PathBuf};
 
@@ -24,8 +23,9 @@ pub fn common_dir(cwd: &Path) -> Result<PathBuf, NotARepository> {
 }
 
 /// The nearest `.git` above `cwd`: a folder is the common dir, a worktree's file names its gitdir,
-/// whose `commondir` names the common dir. None for anything else, or anything unreadable.
-fn read(cwd: &Path) -> Option<PathBuf> {
+/// whose `commondir` names the common dir. None for anything else, or anything unreadable: what a
+/// caller that may start no `git` process reads ([`crate::slots::of_env`], on every command).
+pub(crate) fn read(cwd: &Path) -> Option<PathBuf> {
     let here = cwd.canonicalize().ok()?;
     for folder in here.ancestors() {
         let dot = folder.join(".git");
@@ -49,7 +49,7 @@ fn ask_git(cwd: &Path) -> Result<PathBuf, NotARepository> {
             cwd.display()
         ))
     };
-    let out = crate::sys::output(Command::new("git").arg("-C").arg(cwd).args([
+    let out = crate::sys::output(crate::sys::command("git").arg("-C").arg(cwd).args([
         "rev-parse",
         "--path-format=absolute",
         "--git-common-dir",

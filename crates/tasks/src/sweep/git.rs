@@ -58,7 +58,7 @@ pub fn git(dir: &Path, args: &[&str]) -> Option<Output> {
 }
 
 fn command(dir: &Path) -> Command {
-    let mut command = Command::new("git");
+    let mut command = crate::sys::command("git");
     command.current_dir(dir).stdin(Stdio::null());
     // A hook or launcher can inherit the caller's repository and index. Each sweep operation
     // must instead discover the repository belonging to its explicit working directory.

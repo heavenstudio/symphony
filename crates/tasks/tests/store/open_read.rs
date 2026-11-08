@@ -127,6 +127,37 @@ fn fresh_namespace() -> String {
     )
 }
 
+/// Every read a page, a list or an agent's look makes is sent as a read ([`Kind::of`]), so a late
+/// answer to it goes once more: no word of a write, no call outside the namespaces that only
+/// compute, and no `;` in its text, quoted or not, but between its statements.
+#[test]
+fn every_read_a_page_a_list_or_a_look_makes_is_sent_as_a_read() {
+    let f = Fixture::empty();
+    let handle = f.session("worker");
+    f.task("p/a");
+    f.store.say("p/a", "owner", "go", Some(&handle)).unwrap();
+    let relay = Relay::to(f.store.client().addr(), 0);
+    let store = open(relay.client("sf", f.store.client().database()));
+    let opened = relay.requests().len();
+    store.get("p/a").unwrap();
+    store.tasks(None).unwrap();
+    store.tasks(Some("ready")).unwrap();
+    store.children("p/a").unwrap();
+    store.linked_to("docs/x.md").unwrap();
+    store.next_for(&handle).unwrap();
+    assert_eq!(store.inbox(&handle).unwrap().len(), 1, "the owner's line");
+    store.thread("p/a").unwrap();
+    store.to_owner(10).unwrap();
+    store.last_messages().unwrap();
+    store.landings_posted().unwrap();
+    store.ever_executed("p/a").unwrap();
+    let reads = relay.requests().split_off(opened);
+    assert_eq!(reads.len(), 12, "one request a read: {reads:#?}");
+    for (_, sql) in &reads {
+        assert_eq!(Kind::of(sql), Kind::Read, "sent as a write: {sql}");
+    }
+}
+
 #[test]
 fn a_page_read_under_a_slow_board_is_answered_after_one_read_resend_and_its_open_writes_nothing() {
     let f = Fixture::empty();

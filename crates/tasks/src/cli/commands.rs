@@ -9,7 +9,7 @@ use super::{Clock, Env, probes, shape};
 use crate::health::RESERVE_SECONDS;
 use crate::pyjson::{self, Py};
 use crate::sweep::{self, git::Listed, trigger};
-use crate::sys::{self, Command};
+use crate::sys;
 use crate::{Error, NewSession, NewTask, Session, Store, Task};
 use std::collections::BTreeMap;
 use std::io::{Read, Write};
@@ -78,7 +78,7 @@ impl Context<'_> {
 
     /// `git ARGS` in the working directory: its output, or "" if it fails.
     fn git(&self, args: &[&str]) -> String {
-        sys::output(Command::new("git").args(args).current_dir(&self.env.cwd))
+        sys::output(sys::command("git").args(args).current_dir(&self.env.cwd))
             .ok()
             .filter(|done| done.status.success())
             .map(|done| String::from_utf8_lossy(&done.stdout).trim().to_string())

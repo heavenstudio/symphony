@@ -178,32 +178,42 @@ fn the_addressed_agents_status_move_answers_its_post() {
 
 #[test]
 fn unanswered_digest_rows_follow_the_tasks_orchestrator() {
-    let c = Case::new();
-    c.task("sim/a", "in_progress");
-    let worker = c.executor("sim/a");
-    let owner = c.f.session("orchestrator");
-    let other = c.f.session("orchestrator");
-    c.f.store
-        .take_role("sim/a", &owner, "orchestrator")
-        .unwrap();
-    let post =
+    for cap in [None, Some(1)] {
+        let c = Case::new();
+        c.task("sim/a", "in_progress");
+        let worker = c.executor("sim/a");
+        let owner = c.f.session("orchestrator");
+        let other = c.f.session("orchestrator");
         c.f.store
-            .say("sim/a", "owner", "continue", Some(&worker))
+            .take_role("sim/a", &owner, "orchestrator")
             .unwrap();
-    c.f.advance(31.0 * 60.0);
-    // Keep task ownership live while the executor's heartbeat expires.
-    c.f.store.touch(&owner).unwrap();
-    let board = c.f.store.board().unwrap();
-    let heard = c.digest().only_for(&board, &owner);
-    assert_eq!(heard.count("unanswered"), 1);
-    assert!(
-        heard
-            .event_lines()
-            .join("\n")
-            .contains(&format!("post #{}", post.id))
-    );
-    let withheld = c.digest().only_for(&board, &other);
-    assert_eq!(withheld.count("unanswered"), 0);
-    assert!(withheld.entries().iter().all(|e| e.0 != "unanswered"));
-    assert!(!withheld.event_lines().join("\n").contains("unanswered"));
+        let post =
+            c.f.store
+                .say("sim/a", "owner", "continue", Some(&worker))
+                .unwrap();
+        c.f.advance(31.0 * 60.0);
+        // Keep task ownership live while the executor's heartbeat expires.
+        c.f.store.touch(&owner).unwrap();
+        let store = c.f.other().capping(cap);
+        let digest =
+            || symphony_board::cli::pull::digest(&store, &[], None, c.f.now(), &[]).unwrap();
+        let board = store.board().unwrap();
+        let heard = digest().only_for(&board, &owner);
+        assert_eq!(heard.count("unanswered"), 1);
+        assert!(
+            heard
+                .event_lines()
+                .join("\n")
+                .contains(&format!("post #{}", post.id))
+        );
+        assert_eq!(heard.cap, cap);
+        assert_eq!(heard.slots, cap.map(|_| 1));
+        assert_eq!(heard.lines()[0].contains("slots=1/1"), cap.is_some());
+        let withheld = digest().only_for(&board, &other);
+        assert_eq!(withheld.count("unanswered"), 0);
+        assert!(withheld.entries().iter().all(|e| e.0 != "unanswered"));
+        assert!(!withheld.event_lines().join("\n").contains("unanswered"));
+        assert_eq!(withheld.slots, cap.map(|_| 0));
+        assert_eq!(withheld.lines()[0].contains("slots=0/1"), cap.is_some());
+    }
 }

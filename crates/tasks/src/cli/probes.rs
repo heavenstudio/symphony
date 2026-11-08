@@ -326,7 +326,7 @@ pub fn split(text: &str) -> Answer<Vec<String>> {
 // -- git -------------------------------------------------------------------------------
 
 fn git(dir: &Path, args: &[&str]) -> Option<Output> {
-    sys::output(Command::new("git").arg("-C").arg(dir).args(args)).ok()
+    sys::output(sys::command("git").arg("-C").arg(dir).args(args)).ok()
 }
 
 /// The branch checked out in `cwd`; "" for a detached head or a folder in no repository.
