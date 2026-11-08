@@ -105,14 +105,29 @@ pub fn lead(waiting: u32, docs: u32) -> String {
     )
 }
 
-/// What a task page says of the board after the feed's `tasks-status`, from its `available` and
-/// `slow`: nothing unless the board is unavailable; that it is slow when the server reached it and
-/// the answer came late, else that it is unavailable.
-pub fn board_status(available: Option<bool>, slow: Option<bool>) -> &'static str {
-    match (available, slow) {
-        (Some(false), Some(true)) => "The task board is slow to answer. Retrying…",
-        (Some(false), _) => "The task board is unavailable. Reconnecting…",
-        _ => "",
+/// The feed's `tasks-status`: whether the task board answers (`None` when the event does not say),
+/// and of one that does not, whether the server reached it and its answer came late.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct BoardStatus {
+    pub available: Option<bool>,
+    pub slow: bool,
+}
+
+impl BoardStatus {
+    /// What a task page says of the board: nothing unless it is unavailable; that it is slow when
+    /// it is, else that it is unavailable.
+    pub fn notice(self) -> &'static str {
+        match self {
+            Self {
+                available: Some(false),
+                slow: true,
+            } => "The task board is slow to answer. Retrying…",
+            Self {
+                available: Some(false),
+                slow: false,
+            } => "The task board is unavailable. Reconnecting…",
+            _ => "",
+        }
     }
 }
 

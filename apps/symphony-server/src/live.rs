@@ -990,30 +990,6 @@ impl Hub {
         Ok(())
     }
 
-    /// A failed board read: pages hear that the board went, with whether it is slow (it took the
-    /// read and answered late, [`symphony_board::rpc::slow`]) or unreachable, and hear again only
-    /// when a gone board turns from one to the other.
-    fn board_error(&self, error: String) {
-        let slow = symphony_board::rpc::slow(&error);
-        let mut held = self.tasks.lock().unwrap_or_else(|e| e.into_inner());
-        let was = held.error.replace(error.clone());
-        drop(held);
-        let newly_unavailable = was.is_none();
-        if newly_unavailable || was.is_some_and(|was| symphony_board::rpc::slow(&was) != slow) {
-            let mut pages = self.pages.write().unwrap_or_else(|e| e.into_inner());
-            for page in pages.values_mut() {
-                let mut changes = vec![
-                    json!({"region":"tasks-status", "data":{"available":false,"slow":slow,"error":error}}),
-                ];
-                if newly_unavailable {
-                    page.board.counts.tasks = None;
-                    changes.push(json!({"region":"counts", "data":page.board.counts}));
-                }
-                self.publish(page, changes);
-            }
-        }
-    }
-
     /// What the watcher follows: main's inputs, every tree's documents, models and concepts, and
     /// the refs and worktree records in the common folder.
     fn watch_paths(&self) -> Vec<(PathBuf, RecursiveMode)> {
@@ -1294,7 +1270,7 @@ fn run(
                 hub.refresh_order("")
             });
             if board.is_none() {
-                board = connect(&hub.root).ok();
+                board = hub.reconnect(&mut connect);
             }
             if let Some(store) = &board
                 && let Err(e) = measured("board tick", || hub.board_read(store))
@@ -1447,6 +1423,7 @@ fn task_changes(changes: &mut Vec<Value>, old: &[symphony_api::Task], new: &[sym
     }
 }
 
+mod board_status;
 mod startup;
 
 #[cfg(test)]

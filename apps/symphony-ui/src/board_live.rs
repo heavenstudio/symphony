@@ -353,10 +353,11 @@ fn merge(value: &JsValue, d: &mut BoardData) -> Result<bool, String> {
             }
             "tasks-status" => {
                 refresh |= field(&value, "available").as_bool() == Some(true);
-                d.error = crate::words::board_status(
-                    field(&value, "available").as_bool(),
-                    field(&value, "slow").as_bool(),
-                )
+                d.error = crate::words::BoardStatus {
+                    available: field(&value, "available").as_bool(),
+                    slow: field(&value, "slow").as_bool() == Some(true),
+                }
+                .notice()
                 .into();
             }
             _ => {}

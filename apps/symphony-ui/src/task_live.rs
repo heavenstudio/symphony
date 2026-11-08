@@ -268,10 +268,11 @@ fn apply_event(value: &JsValue, mut data: Signal<Data>) -> Result<bool, String> 
             }
             "tasks-status" => {
                 reload_page |= property(&value, "available").as_bool() == Some(true);
-                next.error = crate::words::board_status(
-                    property(&value, "available").as_bool(),
-                    property(&value, "slow").as_bool(),
-                )
+                next.error = crate::words::BoardStatus {
+                    available: property(&value, "available").as_bool(),
+                    slow: property(&value, "slow").as_bool() == Some(true),
+                }
+                .notice()
                 .into();
             }
             _ => {}

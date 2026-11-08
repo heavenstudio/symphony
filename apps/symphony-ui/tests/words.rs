@@ -1,7 +1,7 @@
 //! The board's words: a register's moment, the greeting, an age, the lead line and what a task
 //! page says of the board.
 
-use symphony_ui::words::{Moment, age, board_status, greeting, lead};
+use symphony_ui::words::{BoardStatus, Moment, age, greeting, lead};
 
 fn at(text: &str) -> Moment {
     Moment::parse(text).unwrap_or_else(|| panic!("{text} does not parse"))
@@ -78,20 +78,34 @@ fn the_lead_counts_cards_and_documents_in_the_singular_and_plural() {
 
 #[test]
 fn the_board_status_tells_a_slow_board_from_an_unavailable_one() {
+    let late = BoardStatus {
+        available: Some(false),
+        slow: true,
+    };
     assert_eq!(
-        board_status(Some(false), Some(true)),
+        late.notice(),
         "The task board is slow to answer. Retrying…",
         "reached, but the answer came late"
     );
-    for slow in [Some(false), None] {
-        assert_eq!(
-            board_status(Some(false), slow),
-            "The task board is unavailable. Reconnecting…",
-            "refused, or a server that does not say: {slow:?}"
-        );
-    }
-    for slow in [None, Some(false), Some(true)] {
-        assert_eq!(board_status(Some(true), slow), "", "back: {slow:?}");
-        assert_eq!(board_status(None, slow), "", "no availability: {slow:?}");
+    let refused = BoardStatus {
+        available: Some(false),
+        slow: false,
+    };
+    assert_eq!(
+        refused.notice(),
+        "The task board is unavailable. Reconnecting…",
+        "refused, or a server that does not say it is slow"
+    );
+    for slow in [false, true] {
+        let back = BoardStatus {
+            available: Some(true),
+            slow,
+        };
+        assert_eq!(back.notice(), "", "{back:?}");
+        let unsaid = BoardStatus {
+            available: None,
+            slow,
+        };
+        assert_eq!(unsaid.notice(), "", "{unsaid:?}");
     }
 }
