@@ -2,7 +2,7 @@
 //! the move, on disk) in a repository's git dir, reached from the repository as every agent reaches
 //! them, with no `TASKS_*` variable naming either.
 
-use crate::common::{GuardedSurreal, Scratch, command_of, gone, signal};
+use crate::common::{Repository as Repo, Scratch, command_of, gone};
 use crate::helper::{answer, event_of};
 use crate::sqlite;
 use std::fs;
@@ -13,63 +13,20 @@ use std::path::{Path, PathBuf};
 use symphony_board::cli::Env;
 use symphony_board::server::{FOLDER, Home, Running};
 use symphony_board::sys::{Child, Command, Stdio};
-use symphony_board::{cli, cutover, rpc, sys};
+use symphony_board::{cli, cutover, rpc};
 
-/// A repository of its own holding the sample SQLite board in its git dir. The server a test started
-/// there is stopped when it goes, by the pid its address file records, if that process serves it;
-/// its pipe watchdog also stops it when the test process ends without running Drop.
 /// The project file of every repository here: its id names its SQLite board, `lamp-works-tasks.db`.
 const PROJECT: &str = "[project]\nid = \"lamp-works\"\n";
 
-struct Repo {
-    dir: PathBuf,
-    surreal: GuardedSurreal,
-}
-
-impl Repo {
-    fn new(name: &str) -> Repo {
-        let dir = PathBuf::from(env!("CARGO_TARGET_TMPDIR"))
-            .join(format!("cutover-home-{}-{name}", std::process::id()));
-        let _ = fs::remove_dir_all(&dir);
-        fs::create_dir_all(&dir).unwrap();
-        let done = sys::output(Command::new("git").args(["init", "-q"]).arg(&dir)).unwrap();
-        assert!(done.status.success());
-        let dir = dir.canonicalize().unwrap();
-        fs::write(dir.join("symphony.toml"), PROJECT).unwrap();
-        sqlite::make(&dir.join(".git/lamp-works-tasks.db"), &sqlite::sample());
-        let surreal = GuardedSurreal::new(&dir);
-        Repo { dir, surreal }
-    }
-
-    fn common(&self) -> PathBuf {
-        self.dir.join(".git")
-    }
-
-    fn env(&self) -> Env {
-        let surreal = self.surreal.path().display().to_string();
-        Env {
-            vars: [("SF_SURREAL".to_string(), surreal)].into_iter().collect(),
-            cwd: self.dir.clone(),
-        }
-    }
-}
-
-impl Drop for Repo {
-    fn drop(&mut self) {
-        self.surreal.shutdown();
-        let home = self.common().join(FOLDER);
-        let recorded = fs::read_to_string(home.join("server.json"))
-            .ok()
-            .and_then(|text| serde_json::from_str::<Running>(&text).ok());
-        if let Some(running) = recorded {
-            let data = format!("surrealkv://{}", home.join("data").display());
-            if command_of(running.pid).is_some_and(|line| line.contains(&data)) {
-                signal(running.pid, "KILL");
-                gone(running.pid);
-            }
-        }
-        let _ = fs::remove_dir_all(&self.dir);
-    }
+/// A repository of its own ([`Repo`]) holding the sample SQLite board in its git dir.
+fn holding_sqlite(name: &str) -> Repo {
+    let repo = Repo::new(&format!("cutover-home-{name}"));
+    fs::write(repo.dir.join("symphony.toml"), PROJECT).unwrap();
+    sqlite::make(
+        &repo.common().join("lamp-works-tasks.db"),
+        &sqlite::sample(),
+    );
+    repo
 }
 
 /// `tasks ARGS` in the repository: its exit code, stdout and stderr.
@@ -86,7 +43,7 @@ fn tasks(env: &Env, args: &[&str]) -> (i32, String, String) {
 
 #[test]
 fn a_board_moved_in_a_repository_is_the_one_its_tasks_reach_with_its_keys_and_sweep() {
-    let repo = Repo::new("moved");
+    let repo = holding_sqlite("moved");
     let env = repo.env();
     let board = repo.common().join("lamp-works-tasks.db");
     fs::write(
@@ -155,7 +112,7 @@ fn cutover_with(env: &Env, vars: &[(&str, &str)]) -> (i32, String, String) {
 
 /// The repository's own SurrealDB board's server, started as the binary starts it, and recorded.
 fn own_server(repo: &Repo) -> Running {
-    Home::in_common(&repo.common(), Some(repo.surreal.path()))
+    Home::in_common(&repo.common(), Some(repo.surreal()))
         .ensure()
         .unwrap()
 }
@@ -332,7 +289,7 @@ fn helper_fixture_process() {
         let running = scratch.home().ensure().unwrap();
         hold(&scratch.dir, scratch.data(), running);
     } else {
-        let repo = Repo::new("killed cutover's fixture");
+        let repo = holding_sqlite("killed cutover's fixture");
         let running = if route == "cutover" {
             let (mut out, mut err) = (Vec::new(), Vec::new());
             assert_eq!(
@@ -341,7 +298,7 @@ fn helper_fixture_process() {
                 "{}",
                 String::from_utf8_lossy(&err)
             );
-            Home::in_common(&repo.common(), Some(repo.surreal.path()))
+            Home::in_common(&repo.common(), Some(repo.surreal()))
                 .recorded()
                 .unwrap()
         } else {
@@ -387,7 +344,7 @@ fn names(folder: &Path) -> Vec<String> {
 /// lose writes or change bound keys.
 #[test]
 fn a_copy_of_the_frozen_board_is_not_moved_over_the_live_one() {
-    let repo = Repo::new("dry-run");
+    let repo = holding_sqlite("dry-run");
     let env = repo.env();
     let (mut out, mut err) = (Vec::new(), Vec::new());
     assert_eq!(cutover::main(&[], &env, &mut out, &mut err), 0);
@@ -437,7 +394,7 @@ fn a_copy_of_the_frozen_board_is_not_moved_over_the_live_one() {
 /// locked, frozen or marked, and no server starts here.
 #[test]
 fn a_board_of_another_repository_is_not_moved_into_this_ones() {
-    let (repo, other) = (Repo::new("here"), Repo::new("there"));
+    let (repo, other) = (holding_sqlite("here"), holding_sqlite("there"));
     let board = other.common().join("lamp-works-tasks.db");
 
     let (code, out, err) = cutover_of(&repo.env(), &board);
@@ -459,7 +416,7 @@ fn a_board_of_another_repository_is_not_moved_into_this_ones() {
 #[test]
 fn the_repositorys_board_by_another_path_moves_and_is_marked_in_its_git_dir() {
     for hard in [false, true] {
-        let repo = Repo::new(if hard { "linked-hard" } else { "linked" });
+        let repo = holding_sqlite(if hard { "linked-hard" } else { "linked" });
         let (board, link) = (
             repo.common().join("lamp-works-tasks.db"),
             repo.dir.join("board.db"),
@@ -485,7 +442,10 @@ fn the_repositorys_board_by_another_path_moves_and_is_marked_in_its_git_dir() {
 /// server, before freezing or writing a marker.
 #[test]
 fn the_repositorys_board_does_not_move_into_another_repositorys_server() {
-    let (here, there) = (Repo::new("server-here"), Repo::new("server-there"));
+    let (here, there) = (
+        holding_sqlite("server-here"),
+        holding_sqlite("server-there"),
+    );
     let mut env = there.env();
     let (mut out, mut err) = (Vec::new(), Vec::new());
     assert_eq!(cutover::main(&[], &env, &mut out, &mut err), 0);
@@ -512,7 +472,10 @@ fn the_repositorys_board_does_not_move_into_another_repositorys_server() {
 /// working directory before accepting a server override.
 #[test]
 fn a_repositorys_board_does_not_move_into_another_server_wherever_the_run_starts() {
-    let (here, there) = (Repo::new("whence-here"), Repo::new("whence-there"));
+    let (here, there) = (
+        holding_sqlite("whence-here"),
+        holding_sqlite("whence-there"),
+    );
     let theirs = own_server(&there);
     let board = here.common().join("lamp-works-tasks.db");
     for cwd in [PathBuf::from("/"), there.dir.clone()] {
@@ -536,10 +499,10 @@ fn a_repositorys_board_does_not_move_into_another_server_wherever_the_run_starts
 /// Recognize repository boards through symlinks and hard links from any cwd.
 #[test]
 fn the_repositorys_board_by_a_link_does_not_move_into_another_server() {
-    let there = Repo::new("links-there");
+    let there = holding_sqlite("links-there");
     let theirs = own_server(&there);
     for hard in [false, true] {
-        let repo = Repo::new(if hard { "links-hard" } else { "links-soft" });
+        let repo = holding_sqlite(if hard { "links-hard" } else { "links-soft" });
         let (board, link) = (
             repo.common().join("lamp-works-tasks.db"),
             repo.dir.join("link.db"),
@@ -573,7 +536,7 @@ fn the_repositorys_board_by_a_link_does_not_move_into_another_server() {
 /// override preserves bound keys and sweep state with the board.
 #[test]
 fn the_repositorys_board_does_not_move_with_its_own_server_named() {
-    let repo = Repo::new("own-named");
+    let repo = holding_sqlite("own-named");
     let own = own_server(&repo);
     fs::write(
         repo.common().join("lamp-works-tasks.db.reap.json"),

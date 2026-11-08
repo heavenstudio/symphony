@@ -208,9 +208,13 @@ run each tick. Unchanged live observations skip planning until the periodic PULL
 changes invalidate that shortcut, and due outbox retries are checked every tick.
 A command line's write observes before it answers and leaves the delivery to a detached
 dispatcher: the `tasks` binary (`cli::main_detaching`) gives its stores a hand-off
-(`Store::dispatching_by`). The write still makes the observation every write made
-(`Pass::Observe`), queuing in the outbox what each recipient on its host hears, read against the
-board as the write left it: a hand-over or a move before the delivery neither reroutes nor folds
+(`Store::dispatching_by`). Every build of `tasks` is `cli::process_main` and nothing else, this
+crate's and the containing project's board-only one alike (the one the live board runs): a
+`main` of its own that calls `cli::main` delivers in every write and starts no dispatcher
+(`tests/server/dispatch.rs` runs the binary in the live board's shape). The write still makes
+the observation every write made (`Pass::Observe`), queuing in the outbox what each recipient
+on its host hears, read against the board as the write left it: a hand-over or a move before
+the delivery neither reroutes nor folds
 it, and a callback registration takes its first look before it answers. It then starts
 `tasks dispatch` of the same executable detached, in a session of its own (`cli/detached.rs`;
 its lines go to `sf-tasks/dispatch.log` beside the repository's own board, nowhere for a
@@ -489,6 +493,11 @@ field, since a reader built before it refuses a task row with a field it does
 not know, and every write that moves the task, changes its parent or its
 dependencies deletes it. Each statement the cap sends is in `SLOT_READS`, which
 `tests/store/slots/cost.rs` has the server plan.
+A move that names where it goes from (`Store::move_from`, `tasks api`'s `move`
+with `from` from api 6, `store/work/moves.rs`) is refused unless the task's
+status, as the move's own write reads it, is one of those: a caller that decided
+the move on an earlier read (land's changes verdict sending work in review back)
+leaves a status another move set since, blocked say, as it is.
 
 Its store tests start one in-memory server per test binary and give each test a
 database of its own. The server is the pinned SurrealDB `tools/surreal.sh`
