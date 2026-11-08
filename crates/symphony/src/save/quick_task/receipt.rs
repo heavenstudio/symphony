@@ -11,7 +11,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 /// The lock stays owned through preflight, dispatch and confirmation.
 pub(in crate::save) struct Receipt {
-    file: File,
+    file: Lease,
     path: PathBuf,
     root: PathBuf,
     identity: String,
@@ -23,9 +23,22 @@ pub(in crate::save) struct Receipt {
 }
 
 struct Claim {
-    file: File,
+    file: Lease,
     fresh: bool,
     preparation_error: Option<String>,
+}
+
+/// A held lock, released before its descriptor closes. The lock belongs to the open file
+/// description, and every spawn or fork on another thread copies this descriptor into its child
+/// until that child's exec: close-on-exec, which std sets in the open call itself, closes the copy
+/// only there. Closing this descriptor alone would leave the lock with that child, and the next
+/// open of the receipt would find it locked.
+struct Lease(File);
+
+impl Drop for Lease {
+    fn drop(&mut self) {
+        let _ = self.0.unlock();
+    }
 }
 
 fn failure(path: &Path, cause: impl std::fmt::Display) -> Failure {
@@ -48,20 +61,18 @@ fn preflight_failure(
     error
 }
 
-fn lock(file: &File, path: &Path) -> Result<(), Failure> {
-    file.try_lock().map_err(|error| failure(path, error))
+fn lock(file: File, path: &Path) -> Result<Lease, Failure> {
+    file.try_lock().map_err(|error| failure(path, error))?;
+    Ok(Lease(file))
 }
 
 fn existing(root: &Path, identity: &str, path: &Path) -> Result<Option<Claim>, Failure> {
     match OpenOptions::new().read(true).write(true).open(path) {
-        Ok(file) => {
-            lock(&file, path)?;
-            Ok(Some(Claim {
-                file,
-                fresh: false,
-                preparation_error: None,
-            }))
-        }
+        Ok(file) => Ok(Some(Claim {
+            file: lock(file, path)?,
+            fresh: false,
+            preparation_error: None,
+        })),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
         Err(error) if path.is_dir() => Err(preflight_failure(root, identity, path, error)),
         Err(error) => Err(failure(path, error)),
@@ -102,7 +113,7 @@ fn claim(root: &Path, identity: &str, path: &Path, fingerprint: &str) -> Result<
         .write(true)
         .open(&guard_path)
         .map_err(|error| preflight_failure(root, identity, &guard_path, error))?;
-    lock(&guard, &guard_path)?;
+    let _guard = lock(guard, &guard_path)?;
     if let Some(claim) = existing(root, identity, path)? {
         return Ok(claim);
     }
@@ -113,22 +124,24 @@ fn claim(root: &Path, identity: &str, path: &Path, fingerprint: &str) -> Result<
         NEXT.fetch_add(1, Ordering::Relaxed)
     ));
     let result = (|| {
-        let mut file = OpenOptions::new()
+        let file = OpenOptions::new()
             .create_new(true)
             .read(true)
             .write(true)
             .open(&part)
             .map_err(|error| preflight_failure(root, identity, &part, error))?;
-        lock(&file, &part)?;
+        let mut file = lock(file, &part)?;
         let preparation_error = file
+            .0
             .write_all(fingerprint.as_bytes())
-            .and_then(|()| file.sync_all())
+            .and_then(|()| file.0.sync_all())
             .err()
             .map(|error| error.to_string());
         if preparation_error.is_some() {
             // A published empty receipt seals an attempt that cannot dispatch.
-            file.set_len(0)
-                .and_then(|()| file.sync_all())
+            file.0
+                .set_len(0)
+                .and_then(|()| file.0.sync_all())
                 .map_err(|error| failure(&part, error))?;
         }
         match std::fs::hard_link(&part, path) {
@@ -184,10 +197,12 @@ impl Receipt {
             fresh,
             preparation_error,
         } = claim(root, identity, &path, &fingerprint)?;
-        file.seek(SeekFrom::Start(0))
+        file.0
+            .seek(SeekFrom::Start(0))
             .map_err(|error| failure(&path, error))?;
         let mut bytes = Vec::new();
-        file.read_to_end(&mut bytes)
+        file.0
+            .read_to_end(&mut bytes)
             .map_err(|error| failure(&path, error))?;
         if bytes.len() < 64 {
             let cause = preparation_error
@@ -214,7 +229,7 @@ impl Receipt {
             serde_json::from_slice(&bytes[64..]).ok()
         };
         // A replay can read bytes whose writer could not confirm their durability.
-        file.sync_all().map_err(|error| failure(&path, error))?;
+        file.0.sync_all().map_err(|error| failure(&path, error))?;
         sync_directories(
             root,
             path.parent().expect("a receipt path includes its folder"),
@@ -258,17 +273,17 @@ impl Receipt {
             _ => return result,
         };
         let bytes = serde_json::to_vec(&terminal).expect("JSON value serializes");
-        let persisted = self
-            .file
+        let file = &mut self.file.0;
+        let persisted = file
             .seek(SeekFrom::Start(64))
-            .and_then(|_| self.file.write_all(&bytes))
-            .and_then(|()| self.file.set_len(64 + bytes.len() as u64))
-            .and_then(|()| self.file.sync_all());
+            .and_then(|_| file.write_all(&bytes))
+            .and_then(|()| file.set_len(64 + bytes.len() as u64))
+            .and_then(|()| file.sync_all());
         match persisted {
             Ok(()) => journal::remove(&self.root, &self.identity),
             Err(_) if result.is_err() => {
                 // Truncating a known refusal needs no data block and prevents any later dispatch.
-                if let Err(error) = self.file.set_len(0).and_then(|()| self.file.sync_all()) {
+                if let Err(error) = file.set_len(0).and_then(|()| file.sync_all()) {
                     return Ok(pending(&failure(&self.path, error).error));
                 }
                 journal::remove(&self.root, &self.identity);
@@ -323,6 +338,35 @@ mod tests {
         .expect("scope cannot rebind the request");
         assert_eq!(error.status, 400);
         assert!(error.error.contains("different text"), "{}", error.error);
+    }
+
+    /// What held the lock in the full library runs that found a receipt reopened at once still
+    /// locked (a 503, or a panic in `open`): a child a sibling test spawned while the receipt was
+    /// open, which keeps its copy of the receipt's descriptor, the same open file description,
+    /// until its exec. A child handed that copy as its output is that child, held while its input
+    /// is open.
+    #[test]
+    fn a_receipt_lets_go_of_its_lock_whatever_copy_of_its_descriptor_a_child_still_holds() {
+        use symphony_board::sys::{Command, Stdio};
+        let tree = Tree::new();
+        let payload = json!({"title":"Task"});
+        let receipt = open(&tree.root, &payload);
+        let fingerprint = receipt.fingerprint.clone();
+        let mut child = Command::new("/bin/cat")
+            .stdin(Stdio::piped())
+            .stdout(receipt.file.0.try_clone().unwrap())
+            .spawn()
+            .unwrap();
+        drop(receipt);
+        let repeated = open(&tree.root, &payload);
+        assert!(
+            child.try_wait().unwrap().is_none(),
+            "the child let go of its copy before the receipt was opened again"
+        );
+        assert!(!repeated.fresh, "existing receipt was fresh");
+        assert_eq!(repeated.fingerprint, fingerprint);
+        drop(repeated);
+        assert!(child.wait().unwrap().success());
     }
 
     #[test]
