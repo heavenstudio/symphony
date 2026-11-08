@@ -211,7 +211,7 @@ pub fn symphony_app(command: &str) -> bool {
 /// as [`CODEX_CUA_NODE`] running [`CODEX_CUA_REPL`].
 pub const CODEX_REPL: &str = "/Applications/ChatGPT.app/Contents/Resources/cua_node/bin/node_repl";
 
-/// The node the ChatGPT app ships beside [`CODEX_REPL`]. It is a helper only running
+/// The node the ChatGPT app bundles beside [`CODEX_REPL`]. It is a helper only running
 /// [`CODEX_CUA_REPL`]: no other script under it, and no other `node`, is.
 pub const CODEX_CUA_NODE: &str = "/Applications/ChatGPT.app/Contents/Resources/cua_node/bin/node";
 
