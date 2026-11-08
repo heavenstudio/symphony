@@ -19,6 +19,7 @@
 
 mod assets;
 mod binaries;
+mod board_status;
 mod chrome;
 #[path = "../common/mod.rs"]
 mod common;

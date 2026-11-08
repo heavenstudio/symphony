@@ -300,7 +300,9 @@ agent blocked on a person (Claude's folder-trust dialog), never ready, ended,
 gone, or whose send hc refuses, does not start, or cannot tell of, fails the
 launch naming the terminal, which is killed and removed; only Codex's hooks
 chooser is answered on the way. Codex runs with `--no-daemon`; its configured
-REPL helper (`procs::CODEX_REPL`, that exact path) is not work under it.
+REPL helper (`procs::CODEX_REPL`) and the ChatGPT app's computer-use REPL
+(`procs::CODEX_CUA_NODE` running `procs::CODEX_CUA_REPL`), each by that exact
+path, are not work under it.
 Cleanup closes a live terminal only while its foreground is the program it
 started, and for no agent a shell (`hc get`'s `foreground`: a job a shell runs
 in front, or one it became by `exec`, is work). A
