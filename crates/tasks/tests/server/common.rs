@@ -1,4 +1,5 @@
-//! A folder of its own per test, for a board and its server, and the pinned `surreal` to serve it
+//! A folder of its own per test, for a board and its server (or a repository of its own, its board in
+//! its git dir, [`Repository`]), and the pinned `surreal` to serve it
 //! (the store tests' `surreal()`, the one way every test binary finds it). A server a test leaves
 //! running is stopped when its folder goes, by the pid its address file records, and only if that
 //! process serves this folder. A pipe watchdog also ends every server if the test process is killed.
@@ -11,7 +12,8 @@ use std::path::{Path, PathBuf};
 use std::process::ExitStatus;
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
-use symphony_board::server::{Home, Running};
+use symphony_board::cli::Env;
+use symphony_board::server::{FOLDER, Home, Running};
 use symphony_board::sys::{Child, Command, Spawning as _, Stdio};
 
 pub fn surreal() -> PathBuf {
@@ -209,6 +211,68 @@ impl Drop for Scratch {
             .and_then(|text| serde_json::from_str::<Running>(&text).ok());
         if let Some(running) = recorded {
             self.stop_if_ours(running.pid);
+        }
+        let _ = std::fs::remove_dir_all(&self.dir);
+    }
+}
+
+/// A repository of its own, its board the one in its git dir in the live board's shape: reached
+/// from the repository with no `TASKS_*` variable naming it, its server started on disk there by
+/// the first command that needs one. That server is stopped when the repository goes, by the pid
+/// its address file records, if that process serves it; its pipe watchdog also stops it when the
+/// test process ends without running Drop.
+pub struct Repository {
+    pub dir: PathBuf,
+    surreal: GuardedSurreal,
+}
+
+impl Repository {
+    /// A new repository, in a folder named for `name`.
+    pub fn new(name: &str) -> Repository {
+        let dir = PathBuf::from(env!("CARGO_TARGET_TMPDIR"))
+            .join(format!("{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let done = symphony_board::sys::output(Command::new("git").args(["init", "-q"]).arg(&dir))
+            .unwrap();
+        assert!(done.status.success(), "git init: {done:?}");
+        let dir = dir.canonicalize().unwrap();
+        let surreal = GuardedSurreal::new(&dir);
+        Repository { dir, surreal }
+    }
+
+    pub fn common(&self) -> PathBuf {
+        self.dir.join(".git")
+    }
+
+    /// The `surreal` its board's server is started with.
+    pub fn surreal(&self) -> &Path {
+        self.surreal.path()
+    }
+
+    /// What a command in the repository reads: that `surreal`, and no variable naming a board.
+    pub fn env(&self) -> Env {
+        let surreal = self.surreal().display().to_string();
+        Env {
+            vars: [("SF_SURREAL".to_string(), surreal)].into_iter().collect(),
+            cwd: self.dir.clone(),
+        }
+    }
+}
+
+impl Drop for Repository {
+    fn drop(&mut self) {
+        self.surreal.shutdown();
+        let home = self.common().join(FOLDER);
+        let recorded = std::fs::read_to_string(home.join("server.json"))
+            .ok()
+            .and_then(|text| serde_json::from_str::<Running>(&text).ok());
+        if let Some(running) = recorded {
+            let data = format!("surrealkv://{}", home.join("data").display());
+            if command_of(running.pid).is_some_and(|line| line.contains(&data)) {
+                signal(running.pid, "KILL");
+                gone(running.pid);
+            }
         }
         let _ = std::fs::remove_dir_all(&self.dir);
     }

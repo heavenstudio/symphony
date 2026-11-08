@@ -28,6 +28,7 @@ use crate::{DATABASE, NAMESPACE, Store, sys};
 use std::collections::BTreeMap;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
+use std::process::ExitCode;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -91,6 +92,22 @@ pub fn main_detaching(
     program: &Path,
 ) -> i32 {
     run(args, env, input, out, err, Some(program))
+}
+
+/// A `tasks` executable's whole `main`: this process's arguments, environment and standard streams,
+/// run as [`main_detaching`] with this executable as the dispatcher it starts, or as [`main`] when
+/// it cannot name itself. Every build of `tasks` is this one call (this crate's binary and the
+/// project's board-only one, which the live board runs), so no build leaves its writes' delivery
+/// in the command.
+pub fn process_main() -> ExitCode {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    let env = Env::of_process();
+    let (mut input, mut out, mut err) = (std::io::stdin(), std::io::stdout(), std::io::stderr());
+    let code = match std::env::current_exe() {
+        Ok(program) => main_detaching(&args, &env, &mut input, &mut out, &mut err, &program),
+        Err(_) => main(&args, &env, &mut input, &mut out, &mut err),
+    };
+    ExitCode::from(u8::try_from(code).unwrap_or(2))
 }
 
 fn run(

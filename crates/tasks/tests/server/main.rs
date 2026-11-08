@@ -1,7 +1,7 @@
 //! The board's server: found where it says it is, started when it is not (on a reserved port, and on
 //! another when that one was taken), and the git common dir it keeps its data in; what its store
-//! takes on disk, and the reclaim that rebuilds it; and the move of the SQLite board into it, in a
-//! repository of its own.
+//! takes on disk, and the reclaim that rebuilds it; the move of the SQLite board into it, in a
+//! repository of its own; and, in that shape, a write's delivery by the detached dispatcher it starts.
 
 #![expect(
     clippy::disallowed_methods,
@@ -11,12 +11,16 @@
 mod common;
 mod copy;
 mod cutover;
+mod dispatch;
 #[path = "../../../../../tools/gate/tests/verify/script_process_cwd.rs"]
 mod fixture_script;
 mod git;
 mod helper;
 mod home;
 mod home_fixture;
+/// The recipients' Unix sockets, served by this process (the perf tests').
+#[path = "../perf/listeners.rs"]
+mod listeners;
 mod port;
 mod reclaim;
 mod sessionless;
