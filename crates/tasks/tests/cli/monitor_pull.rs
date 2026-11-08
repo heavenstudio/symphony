@@ -181,3 +181,100 @@ fn an_unlaunched_child_verifying_in_a_trial_merge_is_neither_lost_nor_orphaning_
     );
     // An orphan entry would trigger a PULL; the verifying child creates no actionable gap.
 }
+
+/// `quiet_child` as an in-process subagent: its board command ran in a linked worktree of the case's
+/// repository, `wt` on `sim/a`, which its binding records. The worktree is returned.
+fn subagent_child(m: &Monitor) -> (String, String, PathBuf) {
+    let (orch, child) = quiet_child(m);
+    let tree = m.dir.join("wt");
+    git(
+        &m.repo,
+        &[
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            "sim/a",
+            tree.to_str().unwrap(),
+        ],
+    );
+    let mut bind = bash(&format!("TASKS_SESSION={child} just tasks show sim/a"))
+        .agent("agent-c")
+        .0;
+    bind["cwd"] = json!(tree.to_str().unwrap());
+    m.beat(&bind);
+    m.now.set(m.last_seen(&child));
+    (orch, child, tree)
+}
+
+/// A process working in a folder, as a subagent's background `cargo test` works in its worktree,
+/// until it is dropped however the test ends: a `cat` on a pipe only this test holds, so it ends
+/// with the test process too, with no deadline of its own.
+struct Working(sys::Child);
+
+impl Working {
+    fn in_folder(folder: &std::path::Path) -> Self {
+        let mut cat = sys::Command::new("cat");
+        cat.current_dir(folder)
+            .stdin(sys::Stdio::piped())
+            .stdout(sys::Stdio::null());
+        Self(cat.spawn().unwrap())
+    }
+}
+
+impl Drop for Working {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+
+/// Two-hundred-second waits, a digest at each, to past the lost line: few looks, so few listings of
+/// the machine's processes.
+fn long_waits_past_the_lost_line() -> Watch {
+    Watch {
+        interval: 200.0,
+        pull_every: 30.0,
+        ..Watch::polls(((LIVE_SECONDS + STALE_SECONDS) / 200.0) as usize + 2)
+    }
+}
+
+#[test]
+fn an_in_process_child_whose_worktree_holds_a_live_process_is_neither_lost_nor_orphaned() {
+    let m = Monitor::new("in-process-waiting");
+    let (orch, child, tree) = subagent_child(&m);
+    // What it waits on: a child of the test runner working in its worktree, as its background
+    // `cargo test` was.
+    let waited = Working::in_folder(&tree);
+    let began = m.now.get();
+    m.watch(&orch, long_waits_past_the_lost_line(), &idle);
+    drop(waited);
+    assert!(m.now.get() - began > LIVE_SECONDS + STALE_SECONDS);
+    assert_eq!(
+        m.health(&child),
+        "lost",
+        "the board alone would call it lost"
+    );
+    assert_eq!(
+        m.starting(&["LOST ", "STALE ", "  in_progress_orphaned "]),
+        Vec::<String>::new(),
+        "{:?}",
+        m.lines()
+    );
+}
+
+#[test]
+fn the_same_in_process_child_with_no_process_in_its_worktree_is_lost_and_its_task_orphaned() {
+    let m = Monitor::new("in-process-gone");
+    let (orch, child, _) = subagent_child(&m);
+    m.watch(&orch, long_waits_past_the_lost_line(), &idle);
+    assert_eq!(
+        m.starting(&["LOST "]),
+        [format!("LOST {child} — its work is claimable: sim/a")]
+    );
+    assert!(
+        m.has("  in_progress_orphaned p2 sim/a — A"),
+        "{:?}",
+        m.lines()
+    );
+}

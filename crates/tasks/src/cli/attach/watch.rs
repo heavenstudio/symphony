@@ -18,9 +18,10 @@ pub struct Watch<'a> {
     pub beat: f64,
     /// Stop after this many waits (tests); None runs until the session is refused a beat.
     pub polls: Option<i64>,
-    /// A child whose own verify is running or queued for a slot is never called STALE or LOST while it
-    /// is; the PULL digest's idle and verifying agents come from the same view. The pane watch asks
-    /// hc through them; with none, it does not run.
+    /// A child whose own verify is running or queued for a slot, or an in-process child with a process
+    /// still working in its own worktree, is never called STALE or LOST while it is; the PULL digest's
+    /// idle and verifying agents come from the same view. The pane watch asks hc through them; with
+    /// none, it does not run.
     pub probes: Option<&'a Probes<'a>>,
     /// Whether a task's branch is on main.
     pub landed: Option<&'a dyn Fn(&Task) -> bool>,
@@ -117,6 +118,8 @@ fn look(
         panes: Box::new(|| sample.get_or_init(|| (probes.panes)()).clone()),
         runs: Box::new(|| (probes.runs)()),
         branch_of: Box::new(|cwd| (probes.branch_of)(cwd)),
+        // The monitor looks every few seconds: the process listing is kept a while.
+        cwds: Box::new(|| store.kept_scan(&*probes.cwds)),
     });
     // One view of the agents a poll, however many children are quiet, shared with the digest.
     let view = match &probes {

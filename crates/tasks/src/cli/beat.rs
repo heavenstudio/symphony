@@ -202,7 +202,9 @@ fn truthy(value: Option<&Value>) -> bool {
 /// subagent), else its `session_id` (a full session with no monitor, as one started in an hc terminal);
 /// `bind_agent` never binds a handle with a live monitor, which beats on its own. A foreground Bash
 /// call marks the session busy for as long as it may run, so a long `verify-full` reads live; its
-/// PostToolUse clears that call's mark. The key, and whether a full session is bound by it now (None for a
+/// PostToolUse clears that call's mark. A subagent's board command also records, on its binding, the
+/// checkout its call runs in (the event's `cwd`): where the agents view looks for what it left running
+/// once it goes quiet. The key, and whether a full session is bound by it now (None for a
 /// subagent's, or an event with no key).
 pub fn beat_event(
     store: &Store,
@@ -228,7 +230,22 @@ pub fn beat_event(
     }
     let command = tool.get("command").and_then(Value::as_str).unwrap_or("");
     if let Some(named) = named_handle(command) {
-        store.bind_agent(agent, &named, !by_agent)?;
+        // A subagent's checkout is where its own calls run, which its session (registered where
+        // its orchestrator ran `register`) does not say.
+        let place = if by_agent {
+            event
+                .get("cwd")
+                .and_then(Value::as_str)
+                .filter(|cwd| !cwd.is_empty())
+                .and_then(|cwd| crate::git::checkout(Path::new(cwd)))
+        } else {
+            None
+        };
+        let place = place
+            .as_ref()
+            .map(|(top, branch)| (top.to_str().unwrap_or_default(), branch.as_str()))
+            .filter(|(top, _)| !top.is_empty());
+        store.bind_agent_in(agent, &named, !by_agent, place)?;
     }
     let call = event
         .get("tool_use_id")

@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 use symphony_board::cli::Env;
 use symphony_board::cli::agents::Pane;
 use symphony_board::cli::probes::{branch_of, hc_terminals, landed, machine, slot_runs, split};
+use symphony_board::git::{checkout, linked};
 use symphony_board::sys::Command;
 
 /// A run's fields, in `Run`'s order, for comparing several at once.
@@ -462,4 +463,44 @@ fn the_machines_probes_outside_a_repository_read_no_slots_and_ask_git_once_a_fol
     git(&dir, &["checkout", "-q", "-b", "tools/z"]);
     assert_eq!((probes.branch_of)(folder).unwrap(), "tools/y"); // asked once a view
     fs::remove_dir_all(nowhere).unwrap();
+}
+
+#[test]
+fn a_folders_checkout_is_its_top_folder_and_branch_read_from_the_git_files() {
+    let main = repo("checkout").canonicalize().unwrap();
+    git(&main, &["checkout", "-q", "-b", "tools/x"]);
+    fs::create_dir_all(main.join("deep/er")).unwrap();
+    assert_eq!(
+        checkout(&main.join("deep/er")),
+        Some((main.clone(), "tools/x".to_string()))
+    );
+    assert!(!linked(&main), "the main checkout's .git is the common dir");
+    let tree = main.with_file_name(format!("probes-{}-checkout-wt", std::process::id()));
+    let _ = fs::remove_dir_all(&tree);
+    let at = tree.to_str().unwrap();
+    git(&main, &["worktree", "add", "-q", "-b", "tools/y", at]);
+    assert_eq!(checkout(&tree), Some((tree.clone(), "tools/y".to_string())));
+    assert!(linked(&tree));
+    git(&tree, &["checkout", "-q", "--detach"]);
+    assert_eq!(checkout(&tree), Some((tree.clone(), String::new())));
+    let nowhere = outside("no-checkout");
+    assert_eq!(checkout(&nowhere), None);
+    assert!(!linked(&nowhere));
+    assert_eq!(checkout(&nowhere.join("not-there")), None);
+    fs::remove_dir_all(nowhere).unwrap();
+    fs::remove_dir_all(tree).unwrap();
+}
+
+#[test]
+fn the_machine_lists_its_processes_working_directories_this_ones_among_them() {
+    let env = hc_env("/nonexistent/hc", &[]);
+    let probes = machine(&env);
+    let here = std::env::current_dir().unwrap().canonicalize().unwrap();
+    let listed = (probes.cwds)().expect("lsof lists the working directories");
+    assert!(
+        listed.contains(&here),
+        "{} not among the {} listed",
+        here.display(),
+        listed.len()
+    );
 }

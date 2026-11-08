@@ -12,7 +12,7 @@ use super::launches::{HOLDS, held};
 use super::pull_account::{Account, PullPlan};
 use super::queued_lines::{Hearing, Queued, Rescoped};
 use super::{ACT, Error, Store, acting, logged, refused};
-use crate::cli::agents::{Answer, Pane, Probe, Probes};
+use crate::cli::agents::{Answer, Pane};
 use crate::cli::{attach, pull};
 use crate::sys::Stdio;
 use serde::{Deserialize, Serialize};
@@ -24,6 +24,8 @@ use std::time::{Duration, Instant};
 
 #[path = "codex_delivery.rs"]
 mod codex;
+mod visit;
+use visit::Visit;
 
 #[cfg(test)]
 #[path = "../../../../../tools/gate/tests/verify/script_process_cwd.rs"]
@@ -38,33 +40,6 @@ pub(super) const CALLBACK_LEASE_SECONDS: u64 = 60;
 pub(super) enum Pass {
     Observe,
     Deliver,
-}
-
-fn sampled<'a, T: Clone + 'a>(probe: Probe<'a, T>) -> Probe<'a, T> {
-    let sample = std::cell::OnceCell::new();
-    Box::new(move || sample.get_or_init(&probe).clone())
-}
-
-/// A pass's visit to one recipient: what the pass does there, and one machine observation shared by
-/// planning and the leased read. Only machine inputs are retained: the agents view is rebuilt
-/// against the refreshed board.
-struct Visit<'env> {
-    pass: Pass,
-    env: &'env crate::cli::Env,
-    sample: std::cell::OnceCell<Probes<'env>>,
-}
-
-impl<'env> Visit<'env> {
-    fn probes(&self) -> &Probes<'env> {
-        self.sample.get_or_init(|| {
-            let probes = crate::cli::probes::machine(self.env);
-            Probes {
-                panes: sampled(probes.panes),
-                runs: sampled(probes.runs),
-                branch_of: probes.branch_of,
-            }
-        })
-    }
 }
 
 pub(super) struct Idle {
@@ -672,11 +647,7 @@ RETURN NONE;");
         let mut pull_at = f64::INFINITY;
         for (handle, callback) in callbacks.iter().filter(|(_, c)| c.host == self.host) {
             let env = crate::cli::Env::of_process();
-            let visit = Visit {
-                pass,
-                env: &env,
-                sample: std::cell::OnceCell::new(),
-            };
+            let visit = Visit::new(pass, &env, self);
             let (handled, due) =
                 self.dispatch_one(handle, callback, &mut board, &mut sequence, &visit, None)?;
             observed &= handled;

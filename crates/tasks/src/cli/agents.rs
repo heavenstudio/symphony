@@ -26,15 +26,20 @@
 //! sees an approval or question), `idle`, `gone` (no pane and no sign of life). An agent waiting on its
 //! own verify is `running_test` and reads live, never lost. A run is the agent's when tagged with its
 //! handle, else by exact worktree to an agent alone in it: never by a directory prefix, never to agents
-//! sharing a worktree.
+//! sharing a worktree. A quiet in-process agent with no run is judged by what works in the worktree
+//! its binding recorded (`agents/place.rs`).
+
+mod place;
 
 use crate::health::{FINISHED, Health};
 use crate::pyjson::Py;
 use crate::rows::TaskSessionRow;
 use crate::{Error, Session, Store, Task};
-use std::cell::RefCell;
+pub use place::{PROCESS, PROCESS_SCAN_SECONDS};
+use place::{resolve, waited_on};
+use std::cell::{OnceCell, RefCell};
 use std::collections::{BTreeMap, HashMap, HashSet};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 /// The longest last message shown, in characters, before it is cut.
 pub const MESSAGE_CHARS: usize = 200;
@@ -81,11 +86,14 @@ pub type Probe<'a, T> = Box<dyn Fn() -> Answer<T> + 'a>;
 pub type BranchOf<'a> = Box<dyn Fn(&str) -> Answer<String> + 'a>;
 
 /// What can be asked about the machine, each a function so tests give their own: hc's terminals, the
-/// slot runs, and the git branch checked out in a folder.
+/// slot runs, the git branch checked out in a folder, and the working directory of every process.
 pub struct Probes<'a> {
     pub panes: Probe<'a, Vec<Pane>>,
     pub runs: Probe<'a, Vec<Run>>,
     pub branch_of: BranchOf<'a>,
+    /// The working directory of every live process the machine lists, asked only for an in-process
+    /// agent gone quiet in a worktree of its own.
+    pub cwds: Probe<'a, Vec<PathBuf>>,
 }
 
 /// What a `running_test` agent runs.
@@ -312,36 +320,6 @@ fn first<'r>(runs: &[&'r Run]) -> Option<&'r Run> {
     found
 }
 
-/// `path` with its symbolic links resolved, as Python's `os.path.realpath`: what does not exist is kept
-/// as written beneath the part that does. "" stays "".
-fn resolve(path: &str) -> String {
-    if path.is_empty() {
-        return String::new();
-    }
-    let given = Path::new(path);
-    let whole = if given.is_absolute() {
-        given.to_path_buf()
-    } else {
-        std::env::current_dir().unwrap_or_default().join(given)
-    };
-    let mut rest = Vec::new();
-    let mut at: &Path = &whole;
-    loop {
-        if let Ok(found) = at.canonicalize() {
-            let mut out: PathBuf = found;
-            out.extend(rest.iter().rev());
-            return out.to_string_lossy().into_owned();
-        }
-        match (at.parent(), at.file_name()) {
-            (Some(parent), Some(name)) => {
-                rest.push(name.to_owned());
-                at = parent;
-            }
-            _ => return whole.to_string_lossy().into_owned(),
-        }
-    }
-}
-
 /// The pane that is this agent's: its recorded one, else one running its conversation, else one
 /// named for its handle.
 pub(crate) fn find_pane<'p>(
@@ -402,6 +380,8 @@ struct Row<'a> {
     pane: Option<&'a Pane>,
     worktree: String,
     branch: String,
+    /// An in-process agent's: the worktree its binding recorded, which `worktree` is.
+    placed: bool,
 }
 
 /// The agents API's answer as of `now`: every session's agent, bar those that left (and, unless
@@ -428,7 +408,8 @@ pub fn describe_board(
     let panes = store.clock_panes().unwrap_or_else(|| (probes.panes)()).ok();
     let runs = (probes.runs)().ok();
     let records = store.all_task_sessions()?;
-    let bound = store.bound_agents()?;
+    let bindings = store.agent_bindings()?;
+    let bound = |handle: &str| bindings.get(handle).map(|b| b.agent.as_str());
     let spoke = store.last_messages()?;
     let callbacks = store.callbacks()?;
     let open_slots = store
@@ -464,14 +445,18 @@ pub fn describe_board(
                 .filter(|r| primary.is_some_and(|(t, _)| r.slug == t.slug))
                 .collect();
             let record = on_primary.last().or(mine.last()).copied();
-            let pane = some_panes.and_then(|panes| {
-                find_pane(panes, record, bound.get(handle).map(String::as_str), handle)
-            });
+            let pane = some_panes.and_then(|panes| find_pane(panes, record, bound(handle), handle));
             let pane_cwd = pane.map_or("", |p| p.cwd.as_str());
-            let (worktree, branch) = match record {
-                Some(r) => (r.worktree.clone(), r.branch.clone()),
-                None if !pane_cwd.is_empty() => (pane_cwd.to_string(), branch_of(pane_cwd)),
-                None => (session.row.worktree.clone(), session.row.branch.clone()),
+            // A subagent is registered where its orchestrator ran `register`; its binding records
+            // the checkout its own tool calls run in.
+            let placed = bindings
+                .get(handle)
+                .filter(|b| b.in_process && !b.worktree.is_empty());
+            let (worktree, branch) = match (record, placed) {
+                (Some(r), _) => (r.worktree.clone(), r.branch.clone()),
+                (None, _) if !pane_cwd.is_empty() => (pane_cwd.to_string(), branch_of(pane_cwd)),
+                (None, Some(b)) => (b.worktree.clone(), b.branch.clone()),
+                (None, None) => (session.row.worktree.clone(), session.row.branch.clone()),
             };
             Row {
                 session,
@@ -481,6 +466,7 @@ pub fn describe_board(
                 pane,
                 worktree,
                 branch,
+                placed: record.is_none() && pane.is_none() && placed.is_some(),
             }
         })
         .collect();
@@ -493,6 +479,9 @@ pub fn describe_board(
             *sharing.entry(real(&row.worktree)).or_default() += 1;
         }
     }
+    // The machine's processes are listed at most once a view, and only for a quiet in-process agent.
+    let scanned: OnceCell<Answer<Vec<PathBuf>>> = OnceCell::new();
+    let scan = || scanned.get_or_init(|| (probes.cwds)()).clone();
     let mut agents = Vec::new();
     for row in rows {
         let s = row.session;
@@ -528,8 +517,15 @@ pub fn describe_board(
             continue;
         }
         let mut health = s.health;
+        let quiet = matches!(health, Health::Stale | Health::Lost | Health::Unknown);
+        // An in-process agent makes no tool call while it waits on what it started in the
+        // background: a process still working in its own worktree is that wait.
+        let waiting = match run {
+            None if quiet && row.placed => waited_on(&real(&row.worktree), &scan),
+            _ => None,
+        };
         let (state, detail) = if let Some(run) = run {
-            if matches!(health, Health::Stale | Health::Lost | Health::Unknown) {
+            if quiet {
                 health = Health::Live;
             }
             let detail = Detail {
@@ -537,6 +533,9 @@ pub fn describe_board(
                 phase: run.phase.clone(),
                 since: run.since,
             };
+            ("running_test", Some(detail))
+        } else if let Some((waits, detail)) = waiting {
+            health = waits;
             ("running_test", Some(detail))
         } else if let Some(state) = row
             .pane
@@ -560,7 +559,7 @@ pub fn describe_board(
                 .unwrap_or(&r.claude_session)
         }))
         .or_else(|| nonempty(row.pane.and_then(|p| p.session.as_deref())))
-        .or_else(|| nonempty(bound.get(handle).map(String::as_str)))
+        .or_else(|| nonempty(bound(handle)))
         .or_else(|| {
             callbacks
                 .get(handle)
@@ -653,21 +652,4 @@ pub fn table(view: &View) -> Vec<String> {
             )
         })
         .collect()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::resolve;
-
-    #[test]
-    fn a_path_resolves_as_python_s_realpath_resolves_it() {
-        let here = std::env::current_dir().unwrap().canonicalize().unwrap();
-        assert_eq!(resolve(""), "");
-        assert_eq!(
-            resolve("not/there"),
-            here.join("not/there").to_string_lossy()
-        );
-        assert_eq!(resolve("/no-such-top/x"), "/no-such-top/x");
-        assert_eq!(resolve("/"), "/");
-    }
 }

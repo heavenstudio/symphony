@@ -55,10 +55,10 @@ pub mod sys;
 
 pub use health::Health;
 pub use store::{
-    BEFORE_WORK, Beat, Board, Callback, EmbeddingStats, Error, HandOff, KINDS, LANDS_FROM, Landed,
-    Message, Moved, NewLaunch, NewSession, NewTask, PIPELINE, PULLABLE, Pick, Presence, ROLES,
-    Role, SLOT_READS, STATUSES, SearchHit, Session, Store, Task, VectorHit, VectorSearchProfile,
-    can_transition,
+    BEFORE_WORK, Beat, Binding, Board, Callback, EmbeddingStats, Error, HandOff, KINDS, LANDS_FROM,
+    Landed, Message, Moved, NewLaunch, NewSession, NewTask, PIPELINE, PULLABLE, Pick, Presence,
+    ROLES, Role, SLOT_READS, STATUSES, SearchHit, Session, Store, Task, VectorHit,
+    VectorSearchProfile, can_transition,
 };
 
 /// The board's namespace and database on the server.

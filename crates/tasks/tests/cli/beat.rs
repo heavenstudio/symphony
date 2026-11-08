@@ -483,6 +483,64 @@ mod beats {
         assert_eq!((ran.code, ran.out.as_str(), ran.err.as_str()), (0, "", ""));
     }
 
+    /// A repository's main checkout and a linked worktree of it on `tools/x`, with a folder inside.
+    fn checkouts(name: &str) -> (std::path::PathBuf, std::path::PathBuf) {
+        let dir = scratch(name);
+        let main = repository(&dir.join("repo"));
+        let tree = dir.join("wt");
+        crate::git(
+            &main,
+            &[
+                "worktree",
+                "add",
+                "-q",
+                "-b",
+                "tools/x",
+                tree.to_str().unwrap(),
+            ],
+        );
+        std::fs::create_dir_all(tree.join("crates/tasks")).unwrap();
+        (main, tree)
+    }
+
+    #[test]
+    fn a_subagents_board_command_records_the_checkout_it_runs_in_on_its_binding() {
+        let b = Clocked::new();
+        let (_, tree) = checkouts("beat-place");
+        let h = b.register("worker");
+        let mut event = bash(&inbox(&h)).agent("agent-1").0;
+        event["cwd"] = json!(tree.join("crates/tasks").to_str().unwrap());
+        b.beat(&event);
+        let kept = b.board().agent_bindings().unwrap().remove(&h).unwrap();
+        assert_eq!(
+            (
+                kept.in_process,
+                kept.worktree.as_str(),
+                kept.branch.as_str()
+            ),
+            (true, tree.to_str().unwrap(), "tools/x")
+        );
+        // A call that is no board command moves nothing, wherever it runs.
+        let mut elsewhere = tool("Read", "agent-1");
+        elsewhere["cwd"] = json!("/");
+        b.beat(&elsewhere);
+        let kept = b.board().agent_bindings().unwrap().remove(&h).unwrap();
+        assert_eq!(kept.worktree, tree.to_str().unwrap());
+    }
+
+    #[test]
+    fn a_full_sessions_board_command_records_no_checkout() {
+        let b = Clocked::new();
+        let (main, _) = checkouts("beat-full-place");
+        let h = b.register("worker");
+        let mut event = bash(&inbox(&h)).session("s-9").0;
+        event["cwd"] = json!(main.to_str().unwrap());
+        b.beat(&event);
+        let kept = b.board().agent_bindings().unwrap().remove(&h).unwrap();
+        assert_eq!((kept.agent.as_str(), kept.in_process), ("s-9", false));
+        assert_eq!(kept.worktree, "");
+    }
+
     #[test]
     fn a_beat_never_starts_the_boards_server() {
         let b = Clocked::new();

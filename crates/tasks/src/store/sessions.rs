@@ -65,6 +65,22 @@ pub struct Beat {
     pub ended: bool,
 }
 
+/// The Claude Code key a session's tool calls beat through, as [`Store::agent_bindings`] reads it.
+#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
+#[serde(default)]
+pub struct Binding {
+    /// The Claude Code session or agent id.
+    pub agent: String,
+    /// The key is an in-process agent's (a subagent's), not a full session's.
+    pub in_process: bool,
+    /// Where an in-process agent's tool calls run, as its last board command's hook saw it: the top
+    /// folder of that checkout, "" before one was seen. Its session row keeps where it registered
+    /// (the main checkout, for a subagent its orchestrator registered).
+    pub worktree: String,
+    /// The branch checked out there then, "" when detached.
+    pub branch: String,
+}
+
 /// Where a new session's handle comes from: Python's `random.Random`, as `register` draws on it.
 pub trait Pick: Send {
     /// An index below `len` (`choice`).
@@ -114,8 +130,17 @@ const BINDING: &str = "RETURN {
     barred: record::exists(type::record('barred_key', $agent)),
     bound: (SELECT VALUE handle FROM session WHERE agent = $agent AND left_at = NONE),
     in_process: type::record('callback_state', ['binding', $agent]).in_process,
+    worktree: type::record('callback_state', ['binding', $agent]).worktree,
+    branch: type::record('callback_state', ['binding', $agent]).branch,
     native: type::record('callback_state', $handle).address != NONE,
 };";
+
+/// An in-process agent's checkout, kept on its binding beside its provenance, never on its session.
+const PLACE: &str = "
+IF type::record('callback_state', ['binding', $agent]).in_process = true {
+    UPDATE type::record('callback_state', ['binding', $agent]) SET worktree = $worktree, branch = $branch RETURN NONE;
+};
+RETURN NONE;";
 
 /// Every bind of one agent writes its counter first, so two at once meet there rather than each
 /// binding a handle of its own; then the session is still as decided on.
@@ -253,40 +278,81 @@ impl Store {
     /// names a monitored handle is a monitored session: it lets go of what it held and is barred, so
     /// what it names after (a child's handle) is never kept alive by its calls.
     pub fn bind_agent(&self, agent: &str, handle: &str, session: bool) -> Result<bool, Error> {
+        self.bind_agent_in(agent, handle, session, None)
+    }
+
+    /// [`Store::bind_agent`], from the checkout the tool call runs in, if it is known: its top
+    /// folder and the branch checked out there. An in-process agent bound here keeps them on its
+    /// binding, written only when they change, as where it really works (a subagent's session is
+    /// registered where its orchestrator ran `register`). A full session's are not kept: its
+    /// terminal or launch says where it works.
+    pub fn bind_agent_in(
+        &self,
+        agent: &str,
+        handle: &str,
+        session: bool,
+        place: Option<(&str, &str)>,
+    ) -> Result<bool, Error> {
+        let (bound, kept) = self.bind_read(agent, handle, session)?;
+        if let Some((worktree, branch)) = place
+            && bound
+            && !session
+            && (kept.0 != worktree || kept.1 != branch)
+        {
+            let vars = json!({"agent": agent, "worktree": worktree, "branch": branch});
+            self.retrying(|| self.transact::<Value>(PLACE, vars.clone()))?;
+        }
+        Ok(bound)
+    }
+
+    /// Whether `agent` beats for `handle` now, as [`Store::bind_agent`] decides it, and the checkout
+    /// its binding kept when it was read ("" for each part not kept).
+    fn bind_read(
+        &self,
+        agent: &str,
+        handle: &str,
+        session: bool,
+    ) -> Result<(bool, (String, String)), Error> {
         #[derive(Deserialize)]
         struct Found {
             row: Option<SessionRow>,
             barred: bool,
             bound: Vec<String>,
             in_process: Option<bool>,
+            worktree: Option<String>,
+            branch: Option<String>,
             native: bool,
         }
         self.retrying(|| {
             let found: Found = self.transact(BINDING, json!({"agent": agent, "handle": handle}))?;
+            let kept = (
+                found.worktree.clone().unwrap_or_default(),
+                found.branch.clone().unwrap_or_default(),
+            );
             let Some(row) = found.row else {
-                return Ok(false);
+                return Ok((false, kept));
             };
             if !session && found.native {
-                return Ok(false);
+                return Ok((false, kept));
             }
             if row.agent.as_deref() == Some(agent) {
                 if found.in_process == Some(true) || (session && found.in_process == Some(false)) {
-                    return Ok(true);
+                    return Ok((true, kept));
                 }
                 self.transact::<Value>(
                     &format!("{CHANNEL_BIND} RETURN NONE;"),
                     json!({"agent":agent, "handle":handle, "full":session}),
                 )?;
-                return Ok(true);
+                return Ok((true, kept));
             }
             if session && found.barred {
-                return Ok(false);
+                return Ok((false, kept));
             }
             let monitored = self.monitored(&row);
             let (write, bound) = if session && monitored {
                 (BAR, false)
             } else if row.left_at.is_some() || monitored || (session && !found.bound.is_empty()) {
-                return Ok(false);
+                return Ok((false, kept));
             } else {
                 (BIND, true)
             };
@@ -296,7 +362,7 @@ impl Store {
             });
             let channel = if bound { CHANNEL_BIND } else { "" };
             self.transact::<Value>(&format!("{BIND_GUARD}{channel}{write}"), vars)?;
-            Ok(bound)
+            Ok((bound, kept))
         })
     }
 
@@ -426,5 +492,24 @@ RETURN NONE;",
             "RETURN SELECT handle, agent FROM session WHERE agent != NONE AND left_at = NONE;";
         let bound: Vec<Bound> = self.retrying(|| self.transact(read, json!({})))?;
         Ok(bound.into_iter().map(|b| (b.handle, b.agent)).collect())
+    }
+
+    /// Handle -> the key whose tool calls beat for it, with what its binding keeps (whether it is an
+    /// in-process agent's, and where that agent's calls run), for sessions that have not left: what
+    /// [`Store::bound_agents`] reads, in the same one request.
+    pub fn agent_bindings(&self) -> Result<BTreeMap<String, Binding>, Error> {
+        #[derive(Deserialize)]
+        struct Bound {
+            handle: String,
+            #[serde(flatten)]
+            binding: Binding,
+        }
+        let read = "RETURN SELECT handle, agent,
+                type::record('callback_state', ['binding', agent]).in_process ?? false AS in_process,
+                type::record('callback_state', ['binding', agent]).worktree ?? '' AS worktree,
+                type::record('callback_state', ['binding', agent]).branch ?? '' AS branch
+            FROM session WHERE agent != NONE AND left_at = NONE;";
+        let bound: Vec<Bound> = self.retrying(|| self.transact(read, json!({})))?;
+        Ok(bound.into_iter().map(|b| (b.handle, b.binding)).collect())
     }
 }

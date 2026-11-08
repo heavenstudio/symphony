@@ -30,6 +30,7 @@ mod depends;
 mod dispatcher;
 mod embeddings;
 mod fields;
+mod kept;
 mod launches;
 mod messages;
 mod pool;
@@ -49,9 +50,9 @@ pub use copy::Moved;
 pub(crate) use copy::WRITTEN_SINCE;
 pub use embeddings::{EmbeddingStats, VectorHit, VectorSearchProfile};
 pub use launches::NewLaunch;
-use reading::{HELD, NATIVE_PRESENCE, native_bounds};
+use reading::{HELD, NATIVE_PRESENCE, native_bounds, native_health};
 pub use search::SearchHit;
-pub use sessions::{Beat, KINDS, NewSession, Pick};
+pub use sessions::{Beat, Binding, KINDS, NewSession, Pick};
 pub use work::{
     BEFORE_WORK, LANDS_FROM, Landed, NewTask, PIPELINE, PULLABLE, ROLES, STATUSES, can_transition,
 };
@@ -186,6 +187,8 @@ pub struct Store {
     callback_idle: Mutex<Option<callbacks::Idle>>,
     /// The hc terminals the server clock's current tick sampled, which every view of that tick reads.
     clock_panes: Mutex<Option<crate::cli::agents::Answer<Vec<crate::cli::agents::Pane>>>>,
+    /// The process listing a long-lived reader last took ([`Store::kept_scan`]).
+    process_scan: kept::Scan,
     /// Where this store's writes send their callback dispatch; none dispatches in the write.
     hand_off: Option<HandOff>,
     /// The messages a dispatch pass reads every recipient's inbox from ([`pool::Pool`]).
@@ -264,6 +267,7 @@ impl Store {
             callback_snapshot: Mutex::new(None),
             callback_idle: Mutex::new(None),
             clock_panes: Mutex::new(None),
+            process_scan: kept::Scan::default(),
             hand_off: None,
             inbox_pool: Mutex::new(None),
             slots: None,
@@ -735,22 +739,6 @@ struct Found {
     session: Option<SessionRow>,
     held: Vec<String>,
     native_until: Option<f64>,
-}
-
-/// A completed sweep either confirms a Codex pane or retires its callback. An expired registration
-/// therefore means the sweep did not establish absence, even if ordinary heartbeats have expired.
-/// Keep that uncertainty for at most another lost interval; a stalled sweep cannot hold work forever.
-fn native_health(row: &SessionRow, health: Health, now: f64, until: Option<f64>) -> Health {
-    if row.left_at.is_none()
-        && health != Health::Live
-        && until.is_some_and(|until| {
-            until < now && now - until <= health::LIVE_SECONDS + health::STALE_SECONDS
-        })
-    {
-        Health::Unknown
-    } else {
-        health
-    }
 }
 
 /// The tasks `$handle` holds that another could take over (`health::claimable`, in the database).

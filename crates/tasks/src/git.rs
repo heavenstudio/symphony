@@ -42,6 +42,34 @@ pub(crate) fn read(cwd: &Path) -> Option<PathBuf> {
     None
 }
 
+/// The checkout `cwd` is in, read as [`read`] reads, with no `git` process: its top folder (the
+/// nearest above `cwd` holding a `.git`), and the branch checked out there, "" for a detached head.
+/// None for a folder in no checkout, or one whose `.git` cannot be read.
+pub fn checkout(cwd: &Path) -> Option<(PathBuf, String)> {
+    let here = cwd.canonicalize().ok()?;
+    for folder in here.ancestors() {
+        let dot = folder.join(".git");
+        let gitdir = if dot.is_dir() {
+            dot
+        } else if dot.is_file() {
+            let text = std::fs::read_to_string(&dot).ok()?;
+            folder.join(text.trim().strip_prefix("gitdir:")?.trim())
+        } else {
+            continue;
+        };
+        let head = std::fs::read_to_string(gitdir.join("HEAD")).ok()?;
+        let branch = head.trim().strip_prefix("ref: refs/heads/").unwrap_or("");
+        return Some((folder.to_path_buf(), branch.to_string()));
+    }
+    None
+}
+
+/// Whether `top` is a linked worktree's top folder (its `.git` is a file), never the main checkout,
+/// whose `.git` is the common dir itself.
+pub fn linked(top: &Path) -> bool {
+    top.join(".git").is_file()
+}
+
 fn ask_git(cwd: &Path) -> Result<PathBuf, NotARepository> {
     let not = |why: String| {
         NotARepository(format!(

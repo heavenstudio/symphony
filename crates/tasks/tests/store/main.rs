@@ -5,6 +5,7 @@
     reason = "a test starts its fixtures and stand-ins as it likes; the board's children are sys's"
 )]
 
+mod bindings;
 mod blocked_panes;
 mod board;
 mod callbacks;

@@ -286,7 +286,15 @@ only for a board command or a key already bound. A foreground Bash call
 reads live for as long as its timeout allows (at most 10 minutes), so a long
 `verify-full` does not look like silence; of calls running side by side, the
 one that may run longest keeps the mark, and only its own end clears it. A
-subagent that stops makes no more calls, and ages to stale and lost as before.
+subagent's board command also records, on its binding (never its session row,
+which keeps where its orchestrator ran `register`), the checkout that call ran
+in: the top folder above the hook's `cwd` and the branch checked out there,
+read from the `.git` files. A subagent waiting on a background command of its
+own (a `cargo test`, a build) makes no calls; while a live process works in
+that recorded linked worktree it reads `running_test` in the agents API, and
+is neither stale, lost nor orphaning its task ([The agents API](#the-agents-api)).
+A subagent that stops makes no more calls, leaves nothing working there, and
+ages to stale and lost as before.
 
 Orchestrators can share the board, each holding its own slug prefixes. A decision
 one side makes that the other must act on becomes a short board task for that side,
@@ -324,9 +332,12 @@ rest of its document is the board's.
 ```
 
 `state` is `working`, `running_test` (a run of its own holds a test slot, `phase: holding`, or is queued for one,
-`phase: waiting`, `state_detail` naming the recipe and since when), `waiting_on_input` (hc sees an approval or a
+`phase: waiting`, `state_detail` naming the recipe and since when; or a quiet subagent's own worktree holds a live
+process, `{"recipe": "process", "phase": "running", "since": null}`, or the machine's processes cannot be listed to
+tell, `"phase": "unknown"`), `waiting_on_input` (hc sees an approval or a
 question), `idle`, or `gone` (no terminal and no sign of life). An agent running or queued for its own verify reads
-`running_test` and `health: live`, never `lost`. `last_tool_call` is the time of the last tool call of the agent
+`running_test` and `health: live`, never `lost`; so does a subagent whose worktree holds a live process, and one whose
+processes cannot be listed reads `health: unknown`. `last_tool_call` is the time of the last tool call of the agent
 (`null` before the first): the monitor's 20 s beat and board commands do not move it.
 `callback` is the native address (`uds:` or `codex:`), or `null` for an inbox-only
 session; `chat` says whether this session is the current chat recipient, including
@@ -343,8 +354,9 @@ The rules a port must copy, in this order:
   A quiet one with a terminal or a run stays (an executor whose task waits in review,
   its terminal idle). `--all` lists everything and changes nothing else.
 - **worktree and branch.** From the agent's task session (`just tasks launch` recorded it; the one for its primary task,
-  else its latest), else from its terminal's working directory (and the branch checked out there), else, only with
-  neither, the directory `register` ran in: an agent that was never launched and has no terminal.
+  else its latest), else from its terminal's working directory (and the branch checked out there), else, for a
+  subagent, the checkout its binding recorded at its last board command, else, only with none of these, the directory
+  `register` ran in: an agent that was never launched and has no terminal.
 - **Which terminal.** The task session's terminal if hc still lists it live, else the terminal whose program runs the
   task session's conversation or the one bound by the heartbeat hook (when hc gives its argv), else the terminal titled
   or named with the handle. A terminal without an address is ignored.
@@ -355,9 +367,18 @@ The rules a port must copy, in this order:
   exports), never to agents that share a worktree (all those registered in the main checkout); the count of agents sharing a
   worktree takes every session, left ones included, so `--all` never changes who a run belongs to. Several runs: holding
   before waiting, then the oldest.
-- **state.** A matched run is `running_test`. Else the terminal's status (`working`, `blocked` is `waiting_on_input`, `idle`
-  and `done` are `idle`). Else the board's health: live is `working`, stale `idle`, lost or left `gone`. A matched run also lifts
-  `stale` and `lost` to `live`.
+- **What a quiet subagent waits on.** A subagent (an in-process binding) that is stale, lost or unknown, has no matched
+  run and no terminal, and whose recorded checkout is a linked worktree (its `.git` a file; never the main checkout,
+  which every agent registered there shares) waits on a process when one the machine lists works in that worktree:
+  the process's working directory is the worktree's top folder or below it, with no other `.git` between (a scratch
+  repository or a nested worktree is not its), compared component by component, never by a string prefix. The
+  processes are listed (`lsof`, as the worktree sweep lists them) only when such an agent is in the view, once a view,
+  and a long-lived reader (the server's clock and dispatcher, the monitor) keeps the listing for 20 s by its store's clock.
+- **state.** A matched run is `running_test`. Else a quiet subagent waiting on a process is `running_test` (`phase:
+  running`), or, when the processes cannot be listed, `running_test` with `phase: unknown`. Else the terminal's status
+  (`working`, `blocked` is `waiting_on_input`, `idle` and `done` are `idle`). Else the board's health: live is `working`,
+  stale `idle`, lost or left `gone`. A matched run, and a process its subagent waits on, also lift `stale` and `lost` to
+  `live`; processes that cannot be listed make them `unknown`.
 - **A probe that fails** is `unavailable` in `probes`, and the answer is built from the board; a failing branch lookup is an
   empty branch.
 
@@ -699,6 +720,10 @@ task, with its live status beside it.
   The owner steers through the thread.
 - **Nothing is reassigned automatically.** A lost session's work becomes
   claimable, and the claim that takes it over says so in the thread.
-- **A subagent is seen only through its tool calls.** One waiting on a
-  background job without calling a tool goes stale after 90 s, and lost after
-  10 minutes if it holds claimable work.
+- **A subagent is seen through its tool calls and what it left running.** One
+  waiting on a background job without calling a tool reads `running_test` while
+  a process works in the linked worktree its last board command ran in; one with
+  nothing working there (or in the main checkout, which says nothing of whose a
+  process is) goes stale after 90 s, and lost after 10 minutes if it holds
+  claimable work. The board's own health (`just tasks show`, a claim) still ages
+  by its beats alone.
