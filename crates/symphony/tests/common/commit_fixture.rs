@@ -47,20 +47,30 @@ generators = [
 record = ".git/sf-land/verdicts"
 "#;
 const CHILD: &str = "SF_AFTER_COMMIT_ROOT";
+/// How long a case child may go without a stage event before its watchdog fails it (`watch`),
+/// and how long a gate socket waits for its peer's line.
 const DEADLINE: Duration = Duration::from_secs(45);
+/// How each line `stage` writes starts, and how each publication trace does: a line starting
+/// with either is a stage event, the progress a case child's watchdog measures.
+const STAGE_EVENT: &str = "after_commit case=";
+const PUBLICATION_TRACE: &str = "publication pid=";
 
 #[allow(dead_code)]
-fn stage(name: impl std::fmt::Display) {
+fn stage_line(name: impl std::fmt::Display) -> String {
     static BEGAN: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
-    // Write directly: libtest otherwise withholds this until the case finishes,
-    // which can be later than the target's outer timeout.
-    let line = format!(
-        "after_commit case={} pid={} +{:.3}s: {name}\n",
+    format!(
+        "{STAGE_EVENT}{} pid={} +{:.3}s: {name}\n",
         std::thread::current().name().unwrap_or("worker"),
         std::process::id(),
         BEGAN.get_or_init(Instant::now).elapsed().as_secs_f64()
-    );
-    let _ = std::io::stderr().write_all(line.as_bytes());
+    )
+}
+
+#[allow(dead_code)]
+fn stage(name: impl std::fmt::Display) {
+    // Write directly: libtest otherwise withholds this until the case finishes,
+    // which can be later than the target's outer timeout.
+    let _ = std::io::stderr().write_all(stage_line(name).as_bytes());
 }
 
 #[allow(dead_code)]
@@ -141,174 +151,7 @@ fn quote(path: &Path) -> String {
     format!("'{}'", path.to_str().unwrap().replace('\'', "'\\''"))
 }
 
-#[allow(dead_code)]
-fn relay_output(
-    mut reader: impl Read,
-    mut saved: impl Write,
-    mut live: impl Write,
-) -> std::io::Result<()> {
-    let mut buffer = [0; 8192];
-    loop {
-        let count = match reader.read(&mut buffer) {
-            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
-            result => result?,
-        };
-        if count == 0 {
-            return Ok(());
-        }
-        saved.write_all(&buffer[..count])?;
-        live.write_all(&buffer[..count])?;
-    }
-}
-
-// Reporting only: the existing watchdog and target budgets remain unchanged.
-const PUBLICATION_REPORT_AFTER: Duration = Duration::from_secs(5);
-
-#[allow(dead_code)]
-struct PublicationProgress {
-    line: String,
-    began: Instant,
-    reported: bool,
-}
-
-#[allow(dead_code)]
-#[derive(Default)]
-struct PendingPublications(
-    std::collections::BTreeMap<String, (Instant, String, bool)>,
-    std::collections::BTreeMap<String, PublicationProgress>,
-);
-
-#[allow(dead_code)]
-impl PendingPublications {
-    fn thread_key(line: &str) -> String {
-        let header = line.split_once(" stage=").map_or(line, |(header, _)| header);
-        let (process, rest) = header.split_once(" id=").unwrap_or((header, ""));
-        let thread = rest.split_once(" thread=").map_or("", |(_, thread)| thread);
-        format!("{process} thread={thread}")
-    }
-
-    fn observe(&mut self, line: &str, now: Instant) -> bool {
-        if !line.starts_with("publication pid=") {
-            return false;
-        }
-        let key = if let Some((key, _)) = line.rsplit_once(" started elapsed=") {
-            self.0.insert(key.into(), (now, line.into(), false));
-            key
-        } else if let Some((key, _)) = line.rsplit_once(" finished elapsed=") {
-            self.0.remove(key);
-            key
-        } else {
-            return true;
-        };
-        self.1.insert(Self::thread_key(key), PublicationProgress {
-            line: line.into(),
-            began: now,
-            reported: false,
-        });
-        true
-    }
-
-    fn report(began: Instant, line: &str, last: &str, now: Instant) -> String {
-        format!(
-            "after_commit publication still open after {:.3}s: {} | last trace: {}\n",
-            now.duration_since(began).as_secs_f64(),
-            line.trim_end(),
-            last.trim_end()
-        )
-    }
-
-    fn overdue(&mut self, now: Instant) -> String {
-        let mut output = String::new();
-        let mut just_reported = std::collections::BTreeSet::new();
-        for (began, line, reported) in self.0.values_mut() {
-            if !*reported && now.duration_since(*began) >= PUBLICATION_REPORT_AFTER {
-                *reported = true;
-                let thread = Self::thread_key(line);
-                output.push_str(&Self::report(*began, line, &self.1[&thread].line, now));
-                just_reported.insert(thread);
-            }
-        }
-        // A new trace line starts a new quiet period, even when an enclosing
-        // publication has already been reported. Preserve the last finished
-        // stage so a gap between stages is located before the target timeout.
-        for (thread, progress) in &mut self.1 {
-            if !progress.reported && now.duration_since(progress.began) >= PUBLICATION_REPORT_AFTER {
-                progress.reported = true;
-                if !just_reported.contains(thread) {
-                    for (began, line, _) in self.0.values() {
-                        if Self::thread_key(line) == *thread {
-                            output.push_str(&Self::report(*began, line, &progress.line, now));
-                        }
-                    }
-                }
-            }
-        }
-        output
-    }
-}
-
-#[allow(dead_code)]
-fn relay_publication_output(
-    reader: impl Read,
-    mut saved: impl Write,
-    mut live: impl Write,
-    pending: &Mutex<PendingPublications>,
-) -> std::io::Result<()> {
-    let mut reader = BufReader::new(reader);
-    let mut line = Vec::new();
-    loop {
-        line.clear();
-        if reader.read_until(b'\n', &mut line)? == 0 {
-            return Ok(());
-        }
-        saved.write_all(&line)?;
-        let trace = pending.lock().unwrap().observe(&String::from_utf8_lossy(&line), Instant::now());
-        if !trace {
-            live.write_all(&line)?;
-        }
-    }
-}
-
-#[allow(dead_code)]
-fn quiet_publication_output(output: &str) -> String {
-    output.split_inclusive('\n').filter(|line| !line.starts_with("publication pid=")).collect()
-}
-
-#[allow(dead_code)]
-struct OwnedChild(symphony_board::sys::Child, Vec<std::thread::JoinHandle<std::io::Result<()>>>, Arc<Mutex<PendingPublications>>);
-impl OwnedChild {
-    fn logged(command: &mut symphony_board::sys::Command, path: &Path) -> Self {
-        let log = std::fs::File::create(path).unwrap();
-        let saved = log.try_clone().unwrap();
-        // The relays end with the case's output, never later because another case's child kept it.
-        let mut child = symphony_board::sys::spawn_output(command).unwrap();
-        let error = child.stderr.take().unwrap();
-        let output = child.stdout.take().unwrap();
-        let pending = Arc::new(Mutex::new(PendingPublications::default()));
-        let out_pending = Arc::clone(&pending);
-        let err_pending = Arc::clone(&pending);
-        Self(
-            child,
-            vec![
-                std::thread::spawn(move || relay_publication_output(output, saved, std::io::stderr(), &out_pending)),
-                std::thread::spawn(move || relay_publication_output(error, log, std::io::stderr(), &err_pending)),
-            ],
-            pending,
-        )
-    }
-
-    fn finish_output(&mut self) {
-        for relay in self.1.drain(..) {
-            relay.join().unwrap().unwrap();
-        }
-    }
-}
-impl Drop for OwnedChild {
-    fn drop(&mut self) {
-        let _ = self.0.kill();
-        let _ = self.0.wait();
-    }
-}
+include!("case_child.rs");
 
 /// Environment overrides belong to an owned child, never the concurrently running test binary.
 #[allow(dead_code)]
@@ -372,24 +215,15 @@ fn isolated_output(name: &str, run: impl FnOnce(&Fixture)) -> Option<String> {
         .stdin(symphony_board::sys::Stdio::Null);
     let mut child = OwnedChild::logged(&mut child, &output);
     stage(format_args!("case child spawned: {name}"));
-    let began = Instant::now();
-    let status = loop {
-        // Full detail stays in child.log; an open stage reaches the live stream
-        // before the target timeout, without flooding successful suite output.
-        let pending = child.2.lock().unwrap().overdue(Instant::now());
-        let _ = std::io::stderr().write_all(pending.as_bytes());
-        if let Some(status) = child.0.try_wait().unwrap() {
-            break status;
-        }
-        assert!(
-            began.elapsed() < DEADLINE,
-            "{}",
-            watchdog_report(name, &tree.root)
-        );
-        // Only the outer watchdog polls process completion. All ordering assertions below use
-        // sockets or worker joins, with no elapsed-time or sleep-based success criterion.
-        std::thread::park_timeout(Duration::from_millis(10));
-    };
+    let status = watch(
+        name,
+        &tree.root,
+        &child.2,
+        || child.0.try_wait().unwrap(),
+        Instant::now,
+        || std::thread::park_timeout(Duration::from_millis(10)),
+    )
+    .unwrap_or_else(|report| panic!("{report}"));
     child.finish_output();
     stage(format_args!(
         "case child completed: {name}, {status}, wall={:.3}s",
