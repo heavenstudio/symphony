@@ -78,7 +78,8 @@ fn a_red_whose_mark_its_filer_lifts_counts_with_the_work_under_it_never_refused_
             "only a red's filer marks a task red, a session of kind filer as the tools that file reds register; '{O}' is not one"
         )
     );
-    assert!(store.get(RED).unwrap().red());
+    let kept = store.get(RED).unwrap();
+    assert!(kept.red(), "{kept:?}");
     // Its filer lifts the mark past the cap, never refused: the red and the work under it count.
     let lifted = store.unmark_red(RED, F).unwrap();
     assert!(!lifted.red() && lifted.status == "review", "{lifted:?}");
@@ -93,7 +94,8 @@ fn a_red_whose_mark_its_filer_lifts_counts_with_the_work_under_it_never_refused_
     // Lifted once: a red lifted already, and a task never marked, are left as they are.
     let thread = store.thread(RED).unwrap();
     store.unmark_red(RED, F).unwrap();
-    assert!(!store.unmark_red("work/a", F).unwrap().red());
+    let never = store.unmark_red("work/a", F).unwrap();
+    assert!(!never.red(), "{never:?}");
     assert_eq!(store.thread(RED).unwrap().len(), thread.len());
     let lines = (thread.iter()).filter(|m| m.text.contains("lifted its red mark"));
     assert_eq!(lines.count(), 1, "{thread:?}");

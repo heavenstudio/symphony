@@ -239,16 +239,6 @@ impl<'a> Ledger<'a> {
         after
     }
 
-    /// The ledger once `slug` is no red, its mark lifted ([`crate::Store::unmark_red`]): it and the
-    /// open work under it count as any work does.
-    pub fn unmarked(&self, slug: &str) -> Ledger<'a> {
-        let mut after = self.clone();
-        if let Some(task) = after.tasks.get_mut(slug) {
-            task.red = false;
-        }
-        after
-    }
-
     /// The ledger once `slug` is under `parent`, or at the top with none; the tasks below it move
     /// with it. A hold lasts no change of parent.
     pub fn reparented(&self, slug: &str, parent: Option<&'a str>) -> Ledger<'a> {

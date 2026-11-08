@@ -12,6 +12,16 @@ impl<'a> Ledger<'a> {
         let chain = self.chain(self.work(slug)).into_iter();
         chain.filter(|at| self.tasks[at].red && crate::red::open(self.tasks[at].status))
     }
+
+    /// The ledger once `slug` is no red, its mark lifted ([`crate::Store::unmark_red`]): it and the
+    /// open work under it count as any work does.
+    pub fn unmarked(&self, slug: &str) -> Ledger<'a> {
+        let mut after = self.clone();
+        if let Some(task) = after.tasks.get_mut(slug) {
+            task.red = false;
+        }
+        after
+    }
 }
 
 /// What a change from `before` to `after` does under `cap`: the owners whose counted open slots it
