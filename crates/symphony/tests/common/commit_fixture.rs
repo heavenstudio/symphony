@@ -50,8 +50,8 @@ const CHILD: &str = "SF_AFTER_COMMIT_ROOT";
 /// How long a case child may go without a stage event before its watchdog fails it (`watch`),
 /// and how long a gate socket waits for its peer's line.
 const DEADLINE: Duration = Duration::from_secs(45);
-/// How each line `stage` writes starts, and how each publication trace does: a line starting
-/// with either is a stage event, the progress a case child's watchdog measures.
+/// How each line `stage` writes starts, and how each publication trace does. A whole line of
+/// either form is a stage event (`stage_event`), the progress a case child's watchdog measures.
 const STAGE_EVENT: &str = "after_commit case=";
 const PUBLICATION_TRACE: &str = "publication pid=";
 

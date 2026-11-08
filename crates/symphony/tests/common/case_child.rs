@@ -32,8 +32,55 @@ struct PublicationProgress {
     reported: bool,
 }
 
+/// Whether `line` is a whole stage record, the only output that is a case child's progress:
+/// a `stage` line naming its stage, or a publication trace whose stage started or finished. A
+/// line that only starts like one (a bare prefix, a diagnostic naming a pid) is not.
+#[allow(dead_code)]
+fn stage_event(line: &str) -> bool {
+    let line = line.trim_end_matches('\n');
+    let seconds = |text: &str| text.strip_suffix('s').is_some_and(|s| s.parse::<f64>().is_ok());
+    if let Some(rest) = line.strip_prefix(STAGE_EVENT) {
+        let Some((case, rest)) = rest.split_once(" pid=") else {
+            return false;
+        };
+        let Some((pid, rest)) = rest.split_once(" +") else {
+            return false;
+        };
+        let Some((elapsed, name)) = rest.split_once(": ") else {
+            return false;
+        };
+        return !case.is_empty()
+            && pid.parse::<u32>().is_ok()
+            && seconds(elapsed)
+            && !name.trim().is_empty();
+    }
+    let Some(rest) = line.strip_prefix(PUBLICATION_TRACE) else {
+        return false;
+    };
+    let Some((pid, rest)) = rest.split_once(" id=") else {
+        return false;
+    };
+    let Some((id, rest)) = rest.split_once(" thread=") else {
+        return false;
+    };
+    let Some((thread, rest)) = rest.split_once(" stage=\"") else {
+        return false;
+    };
+    let Some((stage, state)) = rest.rsplit_once("\" ") else {
+        return false;
+    };
+    let elapsed = state
+        .strip_prefix("started elapsed=")
+        .or_else(|| state.strip_prefix("finished elapsed="));
+    pid.parse::<u32>().is_ok()
+        && id.parse::<u64>().is_ok()
+        && !thread.is_empty()
+        && !stage.is_empty()
+        && elapsed.is_some_and(seconds)
+}
+
 /// What the relays have seen of a child: its open publication stages, each thread's last trace,
-/// and when its last stage event (a `stage` line or a publication trace) arrived.
+/// and when its last stage event (`stage_event`) arrived.
 #[allow(dead_code)]
 #[derive(Default)]
 struct PendingPublications(
@@ -52,7 +99,7 @@ impl PendingPublications {
     }
 
     fn observe(&mut self, line: &str, now: Instant) -> bool {
-        if line.starts_with(STAGE_EVENT) || line.starts_with(PUBLICATION_TRACE) {
+        if stage_event(line) {
             self.2 = Some(now);
         }
         if !line.starts_with(PUBLICATION_TRACE) {
@@ -146,6 +193,14 @@ fn quiet_publication_output(output: &str) -> String {
 /// stages keep coming, and one that goes `DEADLINE` without a stage event is a hang, failed with
 /// its watchdog report, whose child logs end at the open stage. `now` and `wait` are the clock
 /// and one poll's pause, so a test can run the loop on a clock of its own.
+///
+/// Its limit: it catches a child that stops, never one that spins. A save that
+/// `retry_conflicts` (src/commit.rs) retries every 250 ms, while another worker hangs holding an
+/// older backlog, traces whole lock and process stages on each attempt, so its case never goes
+/// quiet. That case is left to the target's own budget, and only the 5 s still-open report
+/// names its open publication on the live stream. A wall bound per thread or per stage would
+/// catch it, but would also fail a slow case that is still advancing on a loaded host: the
+/// failure this watchdog measures quiet to avoid.
 #[allow(dead_code)]
 fn watch(
     name: &str,

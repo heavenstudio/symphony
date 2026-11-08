@@ -8,6 +8,17 @@ use std::os::unix::process::ExitStatusExt;
 /// minutes of its clock in milliseconds, so no test here waits out `DEADLINE`.
 const POLL: Duration = Duration::from_millis(250);
 
+/// A stalled stub's end: it exits cleanly once its clock passes four deadlines, so a watchdog
+/// that never fires fails the test at `expect_err` instead of polling forever.
+fn ends_after_four_deadlines(
+    clock: &Cell<Instant>,
+    spawned: Instant,
+) -> impl FnMut() -> Option<std::process::ExitStatus> + '_ {
+    move || (clock.get() >= spawned + DEADLINE * 4).then(|| std::process::ExitStatus::from_raw(0))
+}
+
+const FIRES_FIRST: &str = "the watchdog fires before the stub ends";
+
 #[test]
 fn the_watchdog_fails_a_stub_case_that_goes_its_deadline_without_a_stage_event() {
     let tree = common::Tree::new();
@@ -21,7 +32,7 @@ fn the_watchdog_fails_a_stub_case_that_goes_its_deadline_without_a_stage_event()
         "stalled stub",
         &tree.root,
         &pending,
-        || None,
+        ends_after_four_deadlines(&clock, spawned),
         || clock.get(),
         || {
             let at = clock.get() + POLL;
@@ -37,7 +48,7 @@ fn the_watchdog_fails_a_stub_case_that_goes_its_deadline_without_a_stage_event()
             pending.lock().unwrap().observe(line, at);
         },
     )
-    .unwrap_err();
+    .expect_err(FIRES_FIRST);
     assert!(
         report.starts_with("stalled stub watchdog: --- child.log ---\n") && report.ends_with(&open),
         "the report gives the child log, ending at the open stage: {report}"
@@ -58,16 +69,68 @@ fn the_watchdog_fails_a_stub_case_that_goes_its_deadline_without_a_stage_event()
         "silent stub",
         &tree.root,
         &pending,
-        || None,
+        ends_after_four_deadlines(&clock, spawned),
         || clock.get(),
         || clock.set(clock.get() + POLL),
     )
-    .unwrap_err();
+    .expect_err(FIRES_FIRST);
     assert!(report.starts_with("silent stub watchdog: "), "{report}");
     assert_eq!(
         clock.get() - spawned,
         DEADLINE,
         "a child with no stage event at all fails a deadline after its spawn"
+    );
+}
+
+#[test]
+fn the_watchdog_fails_a_stub_case_whose_output_only_looks_like_stage_events() {
+    let tree = common::Tree::new();
+    let open = stage_line("publication start: owner comment");
+    let trace = "publication pid=17 id=1 thread=ThreadId(2)/\"stub\" stage=\"wait update-ref\"";
+    let noise = [
+        "publication pid=\n".to_string(),
+        "after_commit case=\n".into(),
+        "publication pid=17 still waiting on its lock\n".into(),
+        format!("{trace} queued elapsed=0.100s\n"),
+        format!("{trace} finished elapsed=soon\n"),
+        "publication pid=17 id=1 thread=ThreadId(2)/\"stub\" stage=\"\" finished elapsed=0.001s\n"
+            .into(),
+        "after_commit case=stub pid=17 +1.000s: \n".into(),
+        "after_commit case=stub pid=seventeen +1.000s: git start\n".into(),
+        "after_commit case=stub pid=17: git start\n".into(),
+    ];
+    for line in &noise {
+        assert!(!stage_event(line), "not a whole stage record: {line}");
+    }
+    assert!(stage_event(&open));
+    assert!(stage_event(&format!("{trace} started elapsed=0.000s\n")));
+    std::fs::write(tree.path("child.log"), &open).unwrap();
+    let pending = Mutex::new(PendingPublications::default());
+    let spawned = Instant::now();
+    let clock = Cell::new(spawned);
+    pending.lock().unwrap().observe(&open, spawned);
+    let mut lines = noise.iter().cycle();
+    let report = watch(
+        "noisy stub",
+        &tree.root,
+        &pending,
+        ends_after_four_deadlines(&clock, spawned),
+        || clock.get(),
+        || {
+            let at = clock.get() + POLL;
+            clock.set(at);
+            pending.lock().unwrap().observe(lines.next().unwrap(), at);
+        },
+    )
+    .expect_err(FIRES_FIRST);
+    assert!(
+        report.starts_with("noisy stub watchdog: --- child.log ---\n") && report.ends_with(&open),
+        "{report}"
+    );
+    assert_eq!(
+        clock.get() - spawned,
+        DEADLINE,
+        "a poll of prefixed noise after the last stage event is still quiet"
     );
 }
 
