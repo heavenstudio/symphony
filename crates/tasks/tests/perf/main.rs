@@ -22,6 +22,11 @@
 //! ran `session WHERE handle IN (SELECT … FROM role)`, the role scan again for every session, 7 s a
 //! recipient. The suite is how a change to the board's queries shows what it costs at that scale.
 
+#![expect(
+    clippy::disallowed_methods,
+    reason = "a test starts its fixtures and stand-ins as it likes; the board's children are sys's"
+)]
+
 #[path = "../store/common.rs"]
 #[allow(dead_code)]
 mod store;
