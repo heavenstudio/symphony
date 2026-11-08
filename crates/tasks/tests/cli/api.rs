@@ -370,7 +370,7 @@ fn batches_and_streams_keep_serving_agents_and_owner_recipients_after_refusals()
 /// `create`'s `red` (api 6) marks the task it files red when a red's filer files it, as land files
 /// a red of main, and `mark_red` marks one it filed before; a filer is a session `register` takes
 /// of kind `filer`, which the command line's `register` does not. Any other session's mark is
-/// refused, and a call without one marks nothing.
+/// refused, as is a filer's on a task of no red series, and a call without one marks nothing.
 #[test]
 fn only_a_reds_filer_marks_a_task_red_through_the_api() {
     let c = Case::new();
@@ -389,16 +389,18 @@ fn only_a_reds_filer_marks_a_task_red_through_the_api() {
         &c.env,
         json!([
             {"method": "create", "args": {"slug": "tests/main-red-abc", "title": "Main red", "by": filer, "priority": 0, "red": "main"}},
-            {"method": "create", "args": {"slug": "work/escape", "title": "Escape", "by": worker, "red": "main"}},
+            {"method": "create", "args": {"slug": "work/escape", "title": "Escape", "by": filer, "red": "main"}},
             {"method": "create", "args": {"slug": "sim/a", "title": "A", "by": worker, "red": null}},
-            {"method": "create", "args": {"slug": "sim/b", "title": "B", "by": filer, "red": ""}},
+            {"method": "create", "args": {"slug": "tests/main-red-b", "title": "B", "by": filer, "red": ""}},
             {"method": "create", "args": {"slug": "tests/nightly-red-old", "title": "Old", "by": filer, "priority": 1}},
             {"method": "mark_red", "args": {"slug": "tests/nightly-red-old", "red": "nightly", "by": worker}},
             {"method": "mark_red", "args": {"slug": "tests/nightly-red-old", "red": "nightly", "by": filer}},
+            {"method": "mark_red", "args": {"slug": "sim/a", "red": "main", "by": filer}},
         ]),
     );
+    let unseries = |slug: &str| json!({"refused": format!("{slug} is of no red series: a red is marked only on a task of the series reds are filed in, tests/main-red-* and tests/nightly-red-*")});
     assert_eq!(made[0]["ok"]["priority"], json!(0));
-    assert_eq!(made[1], json!({"refused": unfiled}));
+    assert_eq!(made[1], unseries("work/escape"));
     assert_eq!(made[2]["ok"]["slug"], json!("sim/a"));
     assert_eq!(
         made[3],
@@ -406,6 +408,7 @@ fn only_a_reds_filer_marks_a_task_red_through_the_api() {
     );
     assert_eq!(made[5], json!({"refused": unfiled}));
     assert_eq!(made[6]["ok"]["priority"], json!(0));
+    assert_eq!(made[7], unseries("sim/a"));
     let store = c.store();
     let red = |slug: &str| store.get(slug).map(|t| t.red()).ok();
     assert_eq!(

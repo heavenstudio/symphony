@@ -629,7 +629,8 @@ impl Store {
     }
 
     /// As [`Store::rule`]; one that `starts` work ([`Opens`]) under a cap also reads what the cap
-    /// decides on, in the same transaction as its task ([`cap`]).
+    /// decides on, in the same transaction as its task ([`cap`]), and so does a red's close, read
+    /// again for it once its task is read ([`cap::closing`]).
     fn ruling(
         &self,
         slug: &str,
@@ -643,9 +644,20 @@ impl Store {
             Which::Slug(slug)
         };
         self.retrying(|| {
-            let view = self.view(&which)?;
-            let change = decide(&view).map_err(Failure::Stop)?;
-            let slots = match (&change.opens, self.slots) {
+            let mut view = self.view(&which)?;
+            let mut change = decide(&view).map_err(Failure::Stop)?;
+            let closes = |view: &View, change: &Change| {
+                (change.opens.is_none() && self.slots.is_some())
+                    .then(|| cap::closing(view, slug, change.status.as_deref()))
+                    .flatten()
+            };
+            // A red's close is decided again on what the cap reads, which a plain read lacks.
+            if !starts && closes(&view, &change).is_some() {
+                view = self.view(&Which::Starting(slug))?;
+                change = decide(&view).map_err(Failure::Stop)?;
+            }
+            let closing = closes(&view, &change);
+            let slots = match (change.opens.as_ref().or(closing.as_ref()), self.slots) {
                 (Some(opens), Some(cap)) => self.slots_taken(&view, slug, opens, cap)?,
                 _ => Vec::new(),
             };
@@ -1161,6 +1173,9 @@ struct Opens {
     by: Vec<String>,
     /// What the refusal says cannot happen.
     what: String,
+    /// A red's close ([`cap::closing`]): never refused, though it raises the counts of the work
+    /// under the red, and holding the counters it changes as a start does.
+    closes: bool,
 }
 
 struct Say {

@@ -14,6 +14,11 @@
 //! A record and not a field of the task: a reader built before it would refuse a task row holding
 //! a field it does not know.
 //!
+//! A red's close ([`closing`]) is read so too: never refused, it raises the counts of the open work
+//! under the red, and holds the counters a start would. A red's own counter (`counter:['red',
+//! SLUG]`) is held by its close and by every start that takes no slot under it
+//! ([`crate::slots::reds`]).
+//!
 //! The write holds the counter of every orchestrator whose open tasks it changes, a start into a
 //! slot already open included, and moves it on: two starts at once under one orchestrator meet
 //! there, and the one that loses reads and decides again. So no write passes the cap on what it read
@@ -41,6 +46,9 @@ pub const ROLES_OF: &str = "SELECT slug, handle, role FROM role WHERE slug IN $s
 /// Every slot counter, a range of record ids.
 pub const COUNTERS: &str =
     "SELECT VALUE [record::id(id)[1], last] FROM counter:['slots', NONE]..['slots', ..]";
+/// Every red's counter ([`crate::slots::reds`]), a range of record ids.
+pub const RED_COUNTERS: &str =
+    "SELECT VALUE [record::id(id)[1], last] FROM counter:['red', NONE]..['red', ..]";
 /// Every hold, its task and the stamp it was made at, a range of record ids.
 pub const HOLDS: &str =
     "SELECT VALUE [record::id(id)[1], ts] FROM counter:['hold', NONE]..['hold', ..]";
@@ -48,7 +56,15 @@ pub const HOLDS: &str =
 pub const HELD_TASKS: &str = "SELECT slug, parent, status, instruction, fields._board.red AS red, updated FROM $slot_holds.map(|$h| type::record('task', $h[0]))";
 
 /// Every statement the cap sends, which `tests/store/slots/cost.rs` has the server plan.
-pub const STATEMENTS: [&str; 6] = [OPEN_TASKS, BY_ID, ROLES_OF, COUNTERS, HOLDS, HELD_TASKS];
+pub const STATEMENTS: [&str; 7] = [
+    OPEN_TASKS,
+    BY_ID,
+    ROLES_OF,
+    COUNTERS,
+    HOLDS,
+    HELD_TASKS,
+    RED_COUNTERS,
+];
 
 /// What `Which::Starting` sets before its `RETURN`: the open tasks, the holds and the tasks they
 /// hold, and all of those with the task read.
@@ -62,7 +78,7 @@ pub(super) fn lets() -> String {
 /// The field of `Which::Starting`'s read the cap decides on.
 pub(super) fn field() -> String {
     format!(
-        "slots: {{ open: $slot_open, holds: $slot_holds, held: $slot_held, roles: ({ROLES_OF}), counted: ({COUNTERS}) }},"
+        "slots: {{ open: $slot_open, holds: $slot_holds, held: $slot_held, roles: ({ROLES_OF}), counted: ({COUNTERS}), reds: ({RED_COUNTERS}) }},"
     )
 }
 
@@ -71,12 +87,12 @@ pub(super) fn vars() -> Value {
     json!({"slot_statuses": OPEN})
 }
 
-/// The write's hold on each slot counter it read (`$slots`: handle and `last`): stale if another
-/// start moved it since, then moved on.
+/// The write's hold on each counter it read (`$slots`: its key, `['slots', HANDLE]` or `['red',
+/// SLUG]`, and `last`): stale if another write moved it since, then moved on.
 pub(super) const GUARD: &str = "
 FOR $s IN $slots {
-    IF ((SELECT VALUE last FROM ONLY type::record('counter', ['slots', $s.handle])) ?? 0) != $s.last { THROW 'stale' };
-    UPSERT type::record('counter', ['slots', $s.handle]) SET last = $s.last + 1 RETURN NONE;
+    IF ((SELECT VALUE last FROM ONLY type::record('counter', $s.key)) ?? 0) != $s.last { THROW 'stale' };
+    UPSERT type::record('counter', $s.key) SET last = $s.last + 1 RETURN NONE;
 };";
 
 /// The end of `$slug`'s hold, in a write that moves it or changes its parent or dependencies.
@@ -87,6 +103,31 @@ pub(super) const UNHOLD: &str = "DELETE type::record('counter', ['hold', $slug])
 pub(super) const HOLDING: &str = "
 IF $status { DELETE type::record('counter', ['hold', $slug]) RETURN NONE; };
 IF $hold { UPSERT type::record('counter', ['hold', $slug]) SET last = 0, ts = $updated RETURN NONE; };";
+
+/// The change a write moving `slug` into `status` makes under the cap, read in `view`, when it
+/// closes an open red ([`crate::red`]): never refused, it holds the counters it changes
+/// ([`slots::changed`], [`slots::reds`]), so a start decided on what it read before the close is
+/// decided again. None for any other write.
+pub(super) fn closing(view: &View, slug: &str, status: Option<&str>) -> Option<Opens> {
+    let task = view.task(slug).ok()?;
+    let status = status.filter(|to| !crate::red::open(to))?;
+    let red = crate::red::marked(&task.fields) && crate::red::open(&task.status);
+    red.then(|| Opens {
+        status: Some(status.into()),
+        closes: true,
+        ..Opens::default()
+    })
+}
+
+/// The counters of `kind` a write holds ([`GUARD`]), one for each of `names`, at the `last` of
+/// each as `read` gave it.
+fn held(kind: &str, read: &[(String, i64)], names: &[&str]) -> Vec<Value> {
+    let last: HashMap<&str, i64> = read.iter().map(|(n, l)| (n.as_str(), *l)).collect();
+    let last = |name: &str| last.get(name).copied().unwrap_or(0);
+    (names.iter())
+        .map(|name| json!({"key": [kind, name], "last": last(name)}))
+        .collect()
+}
 
 /// A task as the cap reads it.
 #[derive(Clone, Deserialize)]
@@ -125,6 +166,8 @@ pub(super) struct Read {
     held: Vec<Row>,
     roles: Vec<RoleRead>,
     counted: Vec<(String, i64)>,
+    /// Each red's counter, by slug.
+    reds: Vec<(String, i64)>,
 }
 
 impl Read {
@@ -245,7 +288,12 @@ impl Store {
         if let Some(parent) = parent {
             after = after.reparented(slug, parent);
         }
-        let changed = slots::started(&before, &after, cap).map_err(|full| {
+        let changed = if opens.closes {
+            Ok(slots::changed(&before, &after))
+        } else {
+            slots::started(&before, &after, cap)
+        };
+        let changed = changed.map_err(|full| {
             let place = after.place(slug);
             let children: Vec<&str> = if place.by_parent && place.owners.contains(&full.owner) {
                 (by.iter().copied())
@@ -258,13 +306,22 @@ impl Store {
             };
             Failure::Stop(refused(slots::refusal(&opens.what, &full, &children, cap)))
         })?;
-        let counted: HashMap<&str, i64> = (read.counted.iter())
-            .map(|(handle, last)| (handle.as_str(), *last))
-            .collect();
-        Ok(changed
-            .into_iter()
-            .map(|owner| json!({"handle": owner, "last": counted.get(owner).copied().unwrap_or(0)}))
-            .collect())
+        let mut counters = held("slots", &read.counted, &changed);
+        counters.extend(held("red", &read.reds, &slots::reds(&before, &after)));
+        Ok(counters)
+    }
+
+    /// The counters a close of `slug` into `status` holds under the cap, for a write that reads
+    /// nothing the cap decides on, the owner's: none unless it closes an open red ([`closing`]).
+    pub(super) fn closing_slots(&self, slug: &str, status: &str) -> Result<Vec<Value>, Failure> {
+        let Some(cap) = self.slots else {
+            return Ok(Vec::new());
+        };
+        let view = self.view(&Which::Starting(slug))?;
+        match closing(&view, slug, Some(status)) {
+            Some(opens) => self.slots_taken(&view, slug, &opens, cap),
+            None => Ok(Vec::new()),
+        }
     }
 
     /// The slot counters `by`'s change of `slug`'s parent to `parent` holds under the cap: the open
@@ -323,6 +380,7 @@ mod tests {
             ],
             roles: Vec::new(),
             counted: Vec::new(),
+            reds: Vec::new(),
         };
         let kept: Vec<(String, bool)> = read.kept().map(|r| (r.slug, r.held)).collect();
         assert_eq!(kept, [("kept".to_string(), true)]);

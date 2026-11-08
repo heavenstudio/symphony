@@ -437,8 +437,13 @@ two starts at once are one retry, not two slots (`tests/store/slots.rs` and its
 project beside each task) and the work under it, judged by the task whose work it is;
 a refusal names it apart, and PULL lists a red nobody executes 10 minutes after filing
 first, as `red_unstaffed`, before any cancelled dependency of its. Only a session of
-kind `filer` marks, on `create` or later with `mark_red` (`store/work/red.rs`), and
-`set_field` refuses the board's own `_board` fields. A change of parent of open
+kind `filer` marks, on `create` or later with `mark_red` (`store/work/red.rs`, whose
+checks are read in its write's transaction), only a task of a red series
+(`red::SERIES`), and `set_field` refuses the board's own `_board` fields. A red's
+close is never refused: in its write it holds the slot counters of the owners whose
+counts it raises (`slots::changed`) and `counter:['red', SLUG]`, which every start
+of work under the open red holds too (`slots::reds`), so a start decided before the
+close is decided again (`tests/store/slots/moves.rs`). A change of parent of open
 work and a hand-over of its orchestrator role are decided the same way
 (`set_parent`, `hand_over`), but for the owner's. A hold (`Store::hold_blocked`,
 `tasks api`'s `hold` from api 4, land's while stamps wait) keeps blocked work's slot: it is a record, not a task

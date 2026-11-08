@@ -621,13 +621,21 @@ capped. A value that does not parse, or one below 1, is said on stderr
   kind `filer`, which `tasks api`'s `register` takes and the command line's
   `register` does not, as the project's tools that file reds register. A
   create naming `red` from any other session is refused, and `set_field`
-  refuses the board's own `_board` fields. `mark_red` marks an open red its
-  filer filed before it marked reds, and makes it p0, once. While the
+  refuses the board's own `_board` fields. The mark goes only on a task of a
+  series reds are filed in (`red::SERIES`: `tests/main-red-*`, a red verify
+  of main, and `tests/nightly-red-*`, a red night), whoever marks it, so no
+  feature takes it. `mark_red` marks an open red its
+  filer filed before it marked reds, and makes it p0, once: what it judges is
+  read in the transaction that writes, so two at once post one line. While the
   marked task is open, it and the work under it take no slot: subtasks,
   review mirrors and instructions are judged by the task whose work they are
   and the tasks above it. Red work starts at any count and frees none. A red
   done or cancelled exempts nothing: the work under it counts again, new
-  work there included. A refusal names the owner's open red work after its
+  work there included. Its close is never refused, though it raises its
+  owners' counts: it holds their slot counters and the red's own,
+  `counter:['red', SLUG]`, which every start of work under the open red holds
+  too, so a start decided on a board read before the close is decided again,
+  counted. A refusal names the owner's open red work after its
   counted slots: `…; a slot frees when one of them is done or cancelled; not
   counted, as red work takes no slot: tests/main-red-abc (in_progress)`. The
   mark alone tells; a slug never does. The PULL header's `slots=` and the

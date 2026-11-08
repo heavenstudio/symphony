@@ -51,7 +51,8 @@ impl Store {
         if !(0..=4).contains(&new.priority) {
             return Err(refused("priority runs 0 (most urgent) to 4".into()));
         }
-        let red = new.red.as_deref().map(named).transpose()?;
+        let red = (new.red.as_deref()).map(|what| named(&new.slug, what));
+        let red = red.transpose()?;
         let parent = new.parent.as_deref().filter(|p| !p.is_empty());
         if new.instruction && parent.is_none() {
             return Err(refused(

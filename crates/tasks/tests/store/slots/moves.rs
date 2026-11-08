@@ -1,13 +1,14 @@
 //! The cap where work moves back into an open status: from blocked, through a changed dependency,
 //! from a landing's hold; where a change of parent or a hand-over brings open work under an
-//! orchestrator; on a task two orchestrators hold; and a start racing the close of the slot it
-//! joins.
+//! orchestrator; on a task two orchestrators hold; a start racing the close of the slot it joins;
+//! and a red's close, never refused, which counts the work under it from then, a start that read
+//! the board before it decided again.
 
-use super::{EIGHT, HOLDS_EIGHT, K, O, P, W, board, capped, eight_and, open, sessions, with};
+use super::{EIGHT, HOLDS_EIGHT, K, O, P, W, board, capped, eight_and, open, red, sessions, with};
 use crate::common::{Fixture, refused, task};
 use serde_json::json;
-use symphony_board::Store;
 use symphony_board::rows::TaskRow;
+use symphony_board::{Error, NewTask, Store, Task};
 
 /// `slugs` as `change_depends` takes them.
 fn owned(slugs: &[&str]) -> Vec<String> {
@@ -347,4 +348,111 @@ fn a_start_into_an_open_slot_racing_its_close_and_another_start_is_decided_again
         "review/work/a cannot start: olive-orch holds 2 open tasks, the cap of 2 an orchestrator holds: work/b (in_progress), work/c (in_progress); a slot frees when one of them is done or cancelled"
     );
     assert_eq!(open(&f.store), ["work/b", "work/c"]);
+}
+
+/// The red the race tests close, and the work under it.
+const RED: &str = "tests/main-red-race";
+const UNDER: &str = "fix/under";
+
+/// O holding the first `led` of [`EIGHT`] and `work/next` to claim, beside [`RED`] in review, which
+/// O orchestrates and lark reviews, with [`UNDER`] under it, in progress when `started`: red work,
+/// which takes no slot while the red is open.
+fn beside_a_red(led: usize, started: bool) -> Fixture {
+    let mut seed = sessions().session("lark");
+    for (slug, status) in &EIGHT[..led] {
+        seed = with(seed, slug, status, None, Some(O));
+    }
+    let f = Fixture::new(with(seed, "work/next", "ready", None, Some(O)));
+    let store = &f.store;
+    red(store, RED, "main");
+    store.take_role(RED, O, "orchestrator").unwrap();
+    store.take_role(RED, "lark", "reviewer").unwrap();
+    store.claim(RED, W).unwrap();
+    store.move_to(RED, "review", W).unwrap();
+    let under = NewTask {
+        parent: Some(RED.into()),
+        ..NewTask::new(UNDER, "Under the red", "owner")
+    };
+    store.create(&under).unwrap();
+    if started {
+        store.claim(UNDER, W).unwrap();
+    }
+    f
+}
+
+/// A write that closes [`RED`].
+type Close = fn(&Store) -> Result<Task, Error>;
+
+/// Each write that closes [`RED`]: its orchestrator's cancel, the owner's, its reviewer's approval.
+fn closes() -> [(&'static str, Close); 3] {
+    [
+        ("its orchestrator's cancel", |s| {
+            s.move_to(RED, "cancelled", O)
+        }),
+        ("the owner's cancel", |s| {
+            s.move_to(RED, "cancelled", "owner")
+        }),
+        ("its reviewer's approval", |s| {
+            s.verdict(RED, "lark", "approve", "fixed")
+        }),
+    ]
+}
+
+#[test]
+fn a_reds_close_past_the_cap_is_never_refused_and_the_work_under_it_counts_from_then() {
+    for (how, close) in closes() {
+        let f = beside_a_red(8, true);
+        let store = capped(&f, 8);
+        close(&store).unwrap_or_else(|why| panic!("{how}: {why:?}"));
+        assert_eq!(open(&store).len(), 9, "{how}");
+        let said = refused(store.claim("work/next", K));
+        assert!(
+            said.starts_with("work/next cannot start: olive-orch holds 9 open tasks"),
+            "{how}: {said}"
+        );
+        assert!(said.contains("fix/under (in_progress)"), "{how}: {said}");
+    }
+}
+
+#[test]
+fn a_start_decided_before_a_red_closed_is_decided_again_the_work_under_it_counted() {
+    for (how, close) in closes() {
+        let f = beside_a_red(7, true);
+        let other = capped(&f, 8);
+        // The claim reads seven slots, the red's work taking none; before it writes, the red
+        // closes, and the work under it takes the eighth.
+        let racing = f
+            .slow(move || {
+                close(&other).unwrap();
+            })
+            .capping(Some(8));
+        let said = refused(racing.claim("work/next", K));
+        assert!(
+            said.starts_with("work/next cannot start: olive-orch holds 8 open tasks"),
+            "{how}: {said}"
+        );
+        assert!(said.contains("fix/under (in_progress)"), "{how}: {said}");
+        assert_eq!(f.store.get("work/next").unwrap().status, "ready", "{how}");
+    }
+}
+
+#[test]
+fn work_started_under_a_red_as_it_closes_is_decided_again_and_takes_a_slot() {
+    for (how, close) in closes() {
+        let f = beside_a_red(8, false);
+        let other = capped(&f, 8);
+        // The claim reads the red open, so the work under it takes no slot; before it writes, the
+        // red closes.
+        let racing = f
+            .slow(move || {
+                close(&other).unwrap();
+            })
+            .capping(Some(8));
+        assert_eq!(
+            refused(racing.claim(UNDER, W)),
+            format!("{UNDER} cannot start: {HOLDS_EIGHT}"),
+            "{how}"
+        );
+        assert_eq!(f.store.get(UNDER).unwrap().status, "ready", "{how}");
+    }
 }

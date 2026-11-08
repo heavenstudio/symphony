@@ -423,6 +423,20 @@ fn a_cancelled_red_exempts_no_work_under_it_and_none_started_there_since() {
 }
 
 #[test]
+fn a_filer_marks_no_feature_red_so_the_cap_still_refuses_its_claim() {
+    let f = eight_and(&[("work/next", "ready")]);
+    let store = capped(&f, 8);
+    let full = format!("work/next cannot start: {HOLDS_EIGHT}");
+    assert_eq!(refused(store.claim("work/next", K)), full);
+    // A filer, which any worker may register, marks the feature the cap refused: no red series'.
+    let said = refused(store.mark_red("work/next", "main", F));
+    assert!(said.starts_with("work/next is of no red series"), "{said}");
+    assert!(!store.get("work/next").unwrap().red());
+    assert_eq!(refused(store.claim("work/next", K)), full);
+    assert_eq!(store.get("work/next").unwrap().status, "ready");
+}
+
+#[test]
 fn a_task_only_named_like_a_red_takes_a_slot() {
     let f = eight_and(&[("tests/main-red-old", "ready")]);
     assert_eq!(
@@ -437,7 +451,7 @@ fn a_red_with_nothing_named_red_is_refused() {
     assert_eq!(
         refused(f.store.create(&NewTask {
             red: Some(" ".into()),
-            ..NewTask::new("tests/red", "Red", "owner")
+            ..NewTask::new("tests/main-red-blank", "Red", F)
         })),
         "a red task names what is red, such as main"
     );

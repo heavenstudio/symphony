@@ -1,5 +1,6 @@
-//! A red's mark on the real store: only a red's filer, a session of kind `filer`, sets it, where it
-//! files a red or afterwards on a red it filed before it marked reds ([`symphony_board::red`]).
+//! A red's mark on the real store: only a red's filer, a session of kind `filer`, sets it, and only
+//! on a task of a red series, where it files a red or afterwards on a red it filed before it marked
+//! reds ([`symphony_board::red`]).
 
 use super::common::{Fixture, refused};
 use serde_json::json;
@@ -13,24 +14,78 @@ fn unfiled(actor: &str) -> String {
     )
 }
 
+/// What a mark on `slug`, of no red series, is told, whoever marks it.
+fn unseries(slug: &str) -> String {
+    format!(
+        "{slug} is of no red series: a red is marked only on a task of the series reds are filed in, tests/main-red-* and tests/nightly-red-*"
+    )
+}
+
+/// The red the tests mark, filed before its filer marked reds.
+const RED: &str = "tests/nightly-red-sim";
+
+/// The lines on `slug`'s thread saying `filer` marked it.
+fn marks(f: &Fixture, slug: &str, filer: &str) -> usize {
+    let line = format!("{filer} marked it red (nightly) and most urgent, as a red is filed");
+    f.said(slug).iter().filter(|said| **said == line).count()
+}
+
 #[test]
-fn only_a_reds_filer_marks_a_task_red_where_it_is_filed() {
+fn only_a_reds_filer_marks_a_task_of_a_red_series_where_it_is_filed() {
     let f = Fixture::empty();
     let (filer, worker) = (f.session(FILER), f.session("worker"));
     let orchestrator = f.session("orchestrator");
-    let escape = |by: &str| NewTask {
+    let filing = |slug: &str, by: &str| NewTask {
         red: Some("main".into()),
-        ..NewTask::new("work/feature-escape", "Escape the cap", by)
+        ..NewTask::new(slug, "A red", by)
     };
-    for by in [worker.as_str(), orchestrator.as_str(), "owner"] {
-        assert_eq!(refused(f.store.create(&escape(by))), unfiled(by), "{by}");
-        assert!(
-            f.store.get("work/feature-escape").is_err(),
-            "{by}'s refused create files nothing"
+    for by in [
+        worker.as_str(),
+        orchestrator.as_str(),
+        "owner",
+        filer.as_str(),
+    ] {
+        let escape = filing("work/feature-escape", by);
+        assert_eq!(
+            refused(f.store.create(&escape)),
+            unseries("work/feature-escape"),
+            "{by}"
         );
     }
-    let filed = f.store.create(&escape(&filer)).unwrap();
+    for by in [worker.as_str(), orchestrator.as_str(), "owner"] {
+        let red = filing("tests/main-red-3e0c", by);
+        assert_eq!(refused(f.store.create(&red)), unfiled(by), "{by}");
+    }
+    for slug in ["work/feature-escape", "tests/main-red-3e0c"] {
+        assert!(
+            f.store.get(slug).is_err(),
+            "a refused create files nothing: {slug}"
+        );
+    }
+    let filed = (f.store.create(&filing("tests/main-red-3e0c", &filer))).unwrap();
     assert!(filed.red(), "{filed:?}");
+}
+
+#[test]
+fn a_filer_marks_no_feature_red_after_it_is_filed() {
+    let f = Fixture::empty();
+    let filer = f.session(FILER);
+    let before = f.task("work/feature");
+    assert_eq!(
+        refused(f.store.mark_red("work/feature", "main", &filer)),
+        unseries("work/feature")
+    );
+    let feature = f.store.get("work/feature").unwrap();
+    assert_eq!(
+        (feature.red(), feature.priority),
+        (false, before.priority),
+        "{feature:?}"
+    );
+    let said = f.said("work/feature");
+    assert!(
+        said.iter().all(|line| !line.contains("marked it red")),
+        "{said:?}"
+    );
 }
 
 #[test]
@@ -57,35 +112,50 @@ fn a_red_filed_before_the_mark_is_marked_most_urgent_by_its_filer_once() {
     let (filer, worker) = (f.session(FILER), f.session("worker"));
     f.task_with(NewTask {
         priority: 1,
-        ..NewTask::new("tests/nightly-red-sim", "Nightly red: sim", &filer)
+        ..NewTask::new(RED, "Nightly red: sim", &filer)
     });
     assert_eq!(
-        refused(
-            f.store
-                .mark_red("tests/nightly-red-sim", "nightly", &worker)
-        ),
+        refused(f.store.mark_red(RED, "nightly", &worker)),
         unfiled(&worker)
     );
     assert_eq!(
-        refused(f.store.mark_red("tests/nightly-red-sim", " ", &filer)),
+        refused(f.store.mark_red(RED, " ", &filer)),
         "a red task names what is red, such as main"
     );
-    let marked = (f.store.mark_red("tests/nightly-red-sim", "nightly", &filer)).unwrap();
+    let marked = (f.store.mark_red(RED, "nightly", &filer)).unwrap();
     assert_eq!((marked.red(), marked.priority), (true, 0), "{marked:?}");
-    let said = f.said("tests/nightly-red-sim");
-    assert_eq!(
-        said.last().map(String::as_str),
-        Some(
-            format!("{filer} marked it red (nightly) and most urgent, as a red is filed").as_str()
-        )
+    let said = f.said(RED);
+    assert_eq!(marks(&f, RED, &filer), 1, "{said:?}");
+    assert!(
+        said.last()
+            .is_some_and(|last| last.contains("marked it red")),
+        "{said:?}"
     );
     // Marked and most urgent already: left as it is, its thread unchanged.
-    (f.store.mark_red("tests/nightly-red-sim", "nightly", &filer)).unwrap();
-    assert_eq!(f.said("tests/nightly-red-sim"), said);
+    (f.store.mark_red(RED, "nightly", &filer)).unwrap();
+    assert_eq!(f.said(RED), said);
 }
 
 #[test]
-fn a_closed_task_is_no_red_to_mark() {
+fn two_marks_of_one_red_at_once_post_one_marking_line() {
+    let f = Fixture::empty();
+    let filer = f.session(FILER);
+    f.task_with(NewTask {
+        priority: 1,
+        ..NewTask::new(RED, "Nightly red: sim", &filer)
+    });
+    let (other, by) = (f.other(), filer.clone());
+    // The second mark lands after the first has begun, before it writes.
+    let late = f.late(move || {
+        other.mark_red(RED, "nightly", &by).unwrap();
+    });
+    let marked = late.mark_red(RED, "nightly", &filer).unwrap();
+    assert_eq!((marked.red(), marked.priority), (true, 0), "{marked:?}");
+    assert_eq!(marks(&f, RED, &filer), 1, "{:?}", f.said(RED));
+}
+
+#[test]
+fn a_closed_or_missing_task_is_no_red_to_mark() {
     let f = Fixture::empty();
     let filer = f.session(FILER);
     f.task("tests/nightly-red-old");
@@ -97,4 +167,11 @@ fn a_closed_task_is_no_red_to_mark() {
         "tests/nightly-red-old is cancelled: only an open task is marked red"
     );
     assert!(!f.store.get("tests/nightly-red-old").unwrap().red());
+    assert_eq!(
+        refused(
+            f.store
+                .mark_red("tests/nightly-red-gone", "nightly", &filer)
+        ),
+        "no task 'tests/nightly-red-gone'"
+    );
 }
