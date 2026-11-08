@@ -21,6 +21,7 @@ mod home_fixture;
 /// The recipients' Unix sockets, served by this process (the perf tests').
 #[path = "../perf/listeners.rs"]
 mod listeners;
+mod own_board;
 mod port;
 mod reclaim;
 mod sessionless;

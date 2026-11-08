@@ -147,8 +147,10 @@ pub fn surreal() -> PathBuf {
     PathBuf::from(String::from_utf8(found.stdout).unwrap().trim())
 }
 
-fn project_root() -> PathBuf {
-    std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+/// The project around the crate whose tests include this file: the nearest folder above it holding
+/// the owned server fixture scripts.
+pub fn project_root() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
         .ancestors()
         .find(|root| {
             root.join("tools/surreal.sh").is_file()
@@ -178,6 +180,7 @@ fn start() -> Server {
             log.display()
         )
     });
+    // SAFETY: `stop_server` takes nothing and reads only this process's own statics, at its exit.
     assert_eq!(unsafe { atexit(stop_server) }, 0, "the server's end is set");
     Server {
         addr,

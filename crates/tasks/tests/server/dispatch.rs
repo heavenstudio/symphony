@@ -5,9 +5,13 @@
 //! board for what it says, takes this host's dispatch lease and delivers to the recipient's native
 //! callback. A post, a `tasks api` post shaped as `land-approve --verdict changes`' and a changes
 //! verdict each do.
+//!
+//! The executable is whichever `tasks` the including test binary's package builds: this crate's in
+//! the server tests, and the project's board-only one, the build the live board runs, in that
+//! package's tests (`apps/tasks/tests/dispatch.rs`), which include this file as it is.
 
-use crate::common::Repository;
 use crate::listeners::Listeners;
+use crate::own_board::Repository;
 use serde_json::{Value, json};
 use std::fs;
 use std::io::Write;
