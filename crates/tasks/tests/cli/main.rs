@@ -34,6 +34,7 @@ mod pull;
 mod recipe;
 mod scratch_folder;
 mod search;
+mod slots;
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};

@@ -148,6 +148,9 @@ fn run(
     let start = !(parsed.command == "sweep" && parsed.flag("background"));
     let reached = Clock::of(env).and_then(|clock| {
         let store = open(reach(env, &env.cwd, start)?, &clock)?;
+        let store = capped_saying(store, env, &mut |problem| {
+            let _ = writeln!(err, "⚠ {problem}");
+        });
         Ok((detaching(store, env, program), clock))
     });
     let (store, clock) = match reached {
@@ -181,9 +184,33 @@ fn run(
 
 /// The board as `env` reaches it: the server `TASKS_SERVER` names, in database `TASKS_DATABASE`, else
 /// the one in the git common dir of the working directory, started if it is not running; its clock
-/// pinned at `TASKS_NOW` if that is set.
+/// pinned at `TASKS_NOW` if that is set; its starts held to the cap the project sets ([`capped`]).
 pub fn connect(env: &Env) -> Result<Store, String> {
-    open(reach(env, &env.cwd, true)?, &Clock::of(env)?)
+    Ok(capped(
+        open(reach(env, &env.cwd, true)?, &Clock::of(env)?)?,
+        env,
+    ))
+}
+
+/// `store`, its starts held to the cap on each orchestrator's open tasks that the main checkout of
+/// `env`'s repository configures ([`crate::slots::of_env`]). A cap that cannot be read is said on
+/// stderr and caps nothing: a broken project file must not stop the board, nor the landing that
+/// mends it.
+pub fn capped(store: Store, env: &Env) -> Store {
+    capped_saying(store, env, &mut |problem| eprintln!("tasks: {problem}"))
+}
+
+/// As [`capped`], what is wrong with the cap said by `say`.
+fn capped_saying(store: Store, env: &Env, say: &mut dyn FnMut(&str)) -> Store {
+    match crate::slots::of_env(env) {
+        Ok(slots) => store.capping(slots),
+        Err(problem) => {
+            say(&format!(
+                "{problem}; no cap on an orchestrator's open tasks applies"
+            ));
+            store
+        }
+    }
 }
 
 /// `store`, its writes handing their dispatch to a detached `program dispatch` when a `program` runs,

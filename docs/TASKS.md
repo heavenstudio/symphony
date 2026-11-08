@@ -307,7 +307,8 @@ rest of its document is the board's.
    "state_detail": {"recipe": "verify-full", "phase": "waiting", "since": 1789999000.0},
    "health": "live",
    "last_tool_call": 1789999900.0,
-   "last_message": {"slug": "sim/jump", "ts": 1789999800.0, "text": "the ring is at 900"}}]}
+   "last_message": {"slug": "sim/jump", "ts": 1789999800.0, "text": "the ring is at 900"},
+   "slots": null}]}                                    # an orchestrator's: {"open": 3, "cap": 8}
 ```
 
 `state` is `working`, `running_test` (a run of its own holds a test slot, `phase: holding`, or is queued for one,
@@ -317,7 +318,9 @@ question), `idle`, or `gone` (no terminal and no sign of life). An agent running
 (`null` before the first): the monitor's 20 s beat and board commands do not move it.
 `callback` is the native address (`uds:` or `codex:`), or `null` for an inbox-only
 session; `chat` says whether this session is the current chat recipient, including
-an orchestrator fallback. No credentials appear in this API.
+an orchestrator fallback. `slots` is, under a project cap ([Slots](#slots)), the open
+tasks an orchestrator (or any session holding open work's slot) holds against the
+cap, and `null` otherwise. No credentials appear in this API.
 
 The rules a port must copy, in this order:
 
@@ -483,7 +486,8 @@ thread says `A handed orchestrator over to B; address B or @orchestrator`,
 and each of the two hears one `ROLE SLUG B orchestrator, STATUS (from A)`,
 whatever other role B holds there. HANDLE must still be there (live, stale or
 of unknown liveness); a hand-over to a session gone quiet, or leaving as it is
-written, is refused, naming its health. Taking the role over a holder that is
+written, is refused, naming its health; under a cap, so is one that would raise
+HANDLE's open tasks past it ([Slots](#slots)). Taking the role over a holder that is
 lost or left drops that one in the same write, and the thread says `B took
 orchestrator over from A (lost)`; so does taking it again where a left holder
 still sits beside you. A task is its orchestrator's when that session holds the
@@ -555,6 +559,76 @@ A second hook (`sf-hook wait-guard`) refuses a loop waiting on machine-wide proc
   or above it, that has one, so the orchestrator takes the role on the root
   only. A subtask handed to another orchestrator is that one's, with what is
   below it. A message to a handle or to another role stays with them.
+
+## Slots
+
+An orchestrator holds at most a set number of open tasks, its slots, so work is
+pushed to done before new work starts (`symphony/crates/tasks/src/slots.rs`).
+The number is the project's: `orchestrator_slots` in the `[board]` table of
+`symphony.toml`, read from the repository's main checkout, as `on_review` is,
+so a branch cannot raise its own cap. With no key, or no file, nothing is
+capped. A value that does not parse, or one below 1, is said on stderr
+(`⚠ …; no cap on an orchestrator's open tasks applies`) and caps nothing.
+
+- **Open** is `in_progress` or `review`, or `blocked` under a hold that keeps
+  the slot (below). Other `blocked` work, `backlog`, `concept`, `design` and
+  `ready` hold no slot; a slot frees when its task is `done` or `cancelled`,
+  or leaves the open statuses another way.
+- **Each open task, one slot.** A subtask holds a slot of its own, so
+  gathering open work under one task frees none. Two kinds of task share the
+  slot of another: a review mirror (`review/BRANCH`, `review-N/BRANCH`,
+  `SLUG/review`) counts with the task it reviews when the board holds that
+  task, and an instruction subtask (`instruction: true`) with the nearest
+  task above it that is not one.
+- **Whose slot.** The orchestrator of the task, or of the nearest task above it
+  that has one whose session still holds ([Subtasks](#subtasks)); a task two
+  orchestrators hold counts against both, and a start is refused if either is
+  full. A task no orchestrator holds counts against the parent session
+  (`register --parent`) of the session starting it, or of its executors once
+  open.
+- **Where it bites.** A claim into `in_progress`; a move into `in_progress`
+  or `review` from a status that holds no slot, blocked work going back to
+  review included; a dependency change that sends blocked work back to
+  `in_progress` or `review`; taking the `orchestrator` role on a task with
+  open work at or below it, or being handed it (`handover`, refused as the
+  receiver's take would be); and a change of parent that brings open work at
+  or below the task under an orchestrator's tree. Each is refused when it would raise an
+  orchestrator's open tasks past the cap, naming them and their status, a
+  shared slot's tasks joined by `with`:
+  `sim/x cannot start: cobalt-otter holds 8 open tasks, the cap of 8 an
+  orchestrator holds: sim/a (review) with review/sim/a (review), …; a slot
+  frees when one of them is done or cancelled`. The count is the number of
+  entries listed. `tasks api` holds the same cap. A start inside a slot
+  already open (a mirror of a task in review, an instruction for open work)
+  is never refused.
+- **A landing's hold.** A landing that holds a task in review blocked while
+  every stamp its branch lacks is one nobody is producing does it with a hold
+  (`Store::hold_blocked`, `tasks api`'s `hold`, api version 4): the task
+  stays blocked, as any blocked task does to everyone on it, and keeps its
+  slot, shown as `(blocked, held)`, so its move
+  back to review starts nothing and is never refused. The hold is the record
+  `counter:['hold', SLUG]`, stamped with the task's `updated` as the hold left
+  it, and ends with the task's next move (a landing's close and the owner's
+  moves included: every status write deletes it), change of parent or of
+  dependencies.
+  Work blocked by any other move holds no slot, and takes one to come back.
+  The PULL header and the agents API do not read holds: they count a held task
+  as the blocked task it is.
+- **What it leaves alone.** The owner's moves, changes of parent and
+  hand-overs are not capped.
+- **Not retroactive.** An orchestrator above the cap keeps every task and
+  works them; it starts nothing new until it is below the cap.
+
+Two starts at once cannot both take the last slot: every start that changes an
+orchestrator's open tasks, one into a slot already open included, holds
+`counter:['slots', HANDLE]`, read in the same transaction as the task it
+starts, and the write that loses is decided again on the new board. The cap
+reads the open tasks through the `task_status` index, the holds as a range of
+record ids and their tasks by id, the tasks above them and the tasks they
+review by id, a level a round trip, and their roles through `role_slug`; it
+reads no table whole (`tests/store/slots/cost.rs`). Each
+orchestrator's PULL header shows `slots=OPEN/CAP`, and the agents API its
+`slots` ([The agents API](#the-agents-api)).
 
 ## Talking on a task
 

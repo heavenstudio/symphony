@@ -12,7 +12,7 @@ use symphony_board::cli::agents::{
 use symphony_board::health::{LIVE_SECONDS, RESERVE_SECONDS, STALE_SECONDS};
 use symphony_board::{Beat, Health, NewLaunch, NewSession, NewTask};
 
-const AGENT_KEYS: [&str; 19] = [
+const AGENT_KEYS: [&str; 20] = [
     "handle",
     "kind",
     "model",
@@ -32,6 +32,7 @@ const AGENT_KEYS: [&str; 19] = [
     "health",
     "last_tool_call",
     "last_message",
+    "slots",
 ];
 
 #[test]
@@ -251,6 +252,32 @@ fn the_contract_keys_are_stable() {
 }
 
 #[test]
+fn under_a_cap_an_orchestrator_shows_its_open_tasks_against_it_and_a_worker_shows_none() {
+    let c = Case::new();
+    c.f.store
+        .take_role("sim/jump", &c.orch, "orchestrator")
+        .unwrap();
+    let worker = c.worker();
+    let uncapped = c.agent(&c.orch);
+    assert_eq!(uncapped.slots, None, "no cap, nothing shown");
+    let capped = c.f.other().capping(Some(8));
+    let view = describe(&capped, &c.probes(), c.f.now(), false).unwrap();
+    assert_eq!(
+        found(&view, &c.orch).slots,
+        Some(agents::Slots { open: 1, cap: 8 })
+    );
+    assert_eq!(found(&view, &worker).slots, None);
+    let me = parsed(&view)["agents"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|a| a["handle"] == c.orch.as_str())
+        .cloned()
+        .unwrap();
+    assert_eq!(me["slots"], json!({"open": 1, "cap": 8}));
+}
+
+#[test]
 fn the_json_is_written_in_the_contracts_key_order_as_python_writes_it() {
     let c = Case::new();
     let handle = c.worker();
@@ -292,7 +319,8 @@ fn the_json_is_written_in_the_contracts_key_order_as_python_writes_it() {
     "slug": "sim/jump",
     "ts": 1800000000.0,
     "text": "on it"
-   }}
+   }},
+   "slots": null
   }}"#,
             orch = c.orch
         )

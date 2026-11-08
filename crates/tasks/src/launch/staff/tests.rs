@@ -130,6 +130,7 @@ fn reuse_reports_unconfirmed_acceptance_unless_hc_saw_the_turn_start() {
             health: Health::Live,
             last_tool_call: None,
             last_message: None,
+            slots: None,
         };
         let hc = ReusedTerminal {
             outcome,

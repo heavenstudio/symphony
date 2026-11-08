@@ -24,6 +24,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 mod callback_peer;
 mod callback_state;
 mod callbacks;
+mod cap;
 mod copy;
 mod depends;
 mod dispatcher;
@@ -40,6 +41,8 @@ mod transaction;
 mod work;
 
 pub use callbacks::{Callback, Presence};
+/// Every statement the cap on an orchestrator's open tasks sends: the plan test's to plan.
+pub use cap::STATEMENTS as SLOT_READS;
 pub use copy::Moved;
 pub(crate) use copy::WRITTEN_SINCE;
 pub use embeddings::{EmbeddingStats, VectorHit, VectorSearchProfile};
@@ -184,6 +187,9 @@ pub struct Store {
     hand_off: Option<HandOff>,
     /// The messages a dispatch pass reads every recipient's inbox from ([`pool::Pool`]).
     inbox_pool: Mutex<Option<pool::Pool>>,
+    /// The open tasks an orchestrator may hold before a start is refused ([`crate::slots`]); none
+    /// caps nothing.
+    slots: Option<usize>,
 }
 
 impl Store {
@@ -257,7 +263,21 @@ impl Store {
             clock_panes: Mutex::new(None),
             hand_off: None,
             inbox_pool: Mutex::new(None),
+            slots: None,
         }
+    }
+
+    /// This store, its starts held to `slots` open tasks an orchestrator: a claim, a move into
+    /// in_progress and taking the orchestrator role on open work are refused past it
+    /// ([`crate::slots`]). None caps nothing, as a store opens.
+    pub fn capping(mut self, slots: Option<usize>) -> Store {
+        self.slots = slots;
+        self
+    }
+
+    /// The cap this store holds starts to, if any ([`Store::capping`]).
+    pub fn slots(&self) -> Option<usize> {
+        self.slots
     }
 
     pub fn client(&self) -> &Client {
@@ -399,9 +419,11 @@ impl Store {
             .collect())
     }
 
-    /// Become the executor. Of any number of claims at once, one wins.
+    /// Become the executor. Of any number of claims at once, one wins. A claim that starts ready
+    /// work is refused when it would raise an orchestrator's open tasks past the store's cap
+    /// ([`crate::slots`]).
     pub fn claim(&self, slug: &str, handle: &str) -> Result<Task, Error> {
-        self.rule(slug, handle, |view| {
+        self.ruling(slug, handle, self.slots.is_some(), |view| {
             view.actor(handle)?;
             let task = view.task(slug)?;
             if !EXECUTING.contains(&task.status.as_str()) {
@@ -458,6 +480,12 @@ impl Store {
             });
             if task.status == "ready" {
                 change.status = Some("in_progress".into());
+                change.opens = Some(Opens {
+                    status: change.status.clone(),
+                    by: vec![handle.into()],
+                    what: format!("{slug} cannot start"),
+                    ..Opens::default()
+                });
             }
             let mut text = format!("{handle} claimed it");
             if !handed.is_empty() {
@@ -592,13 +620,35 @@ impl Store {
         actor: &str,
         decide: impl Fn(&View) -> Result<Change, Error>,
     ) -> Result<Task, Error> {
+        self.ruling(slug, actor, false, decide)
+    }
+
+    /// As [`Store::rule`]; one that `starts` work ([`Opens`]) under a cap also reads what the cap
+    /// decides on, in the same transaction as its task ([`cap`]).
+    fn ruling(
+        &self,
+        slug: &str,
+        actor: &str,
+        starts: bool,
+        decide: impl Fn(&View) -> Result<Change, Error>,
+    ) -> Result<Task, Error> {
+        let which = if starts {
+            Which::Starting(slug)
+        } else {
+            Which::Slug(slug)
+        };
         self.retrying(|| {
-            let view = self.view(&Which::Slug(slug))?;
+            let view = self.view(&which)?;
             let change = decide(&view).map_err(Failure::Stop)?;
+            let slots = match (&change.opens, self.slots) {
+                (Some(opens), Some(cap)) => self.slots_taken(&view, slug, opens, cap)?,
+                _ => Vec::new(),
+            };
             let version = view.snap.tasks.first().map_or(0, |t| t.version);
-            let body = if change.status.is_some() {
+            let mut body = if change.status.is_some() {
                 format!(
-                    "{WRITE}\n{}",
+                    "{WRITE}{}\n{}",
+                    cap::HOLDING,
                     work::block_cancelled_dependencies(
                         change.status.as_deref() == Some("cancelled")
                     )
@@ -606,7 +656,12 @@ impl Store {
             } else {
                 WRITE.into()
             };
-            self.written(&body, change.vars(slug, actor, version, view.now), slug)
+            if !slots.is_empty() {
+                body.push_str(cap::GUARD);
+            }
+            let mut vars = change.vars(slug, actor, version, view.now);
+            vars["slots"] = Value::Array(slots);
+            self.written(&body, vars, slug)
         })
     }
 
@@ -656,7 +711,7 @@ impl Store {
                 "true",
                 json!({"status": status}),
             ),
-            Which::Slug(slug) => (
+            Which::Slug(slug) | Which::Starting(slug) => (
                 "SELECT * OMIT id FROM type::record('task', $slug)",
                 SCOPED,
                 KNOWN,
@@ -690,7 +745,7 @@ impl Store {
             ),
         };
         let (deps, mine) = match which {
-            Which::Slug(_) | Which::Pullable(_) => (
+            Which::Slug(_) | Which::Starting(_) | Which::Pullable(_) => (
                 "(SELECT slug, kind, target FROM link WHERE slug IN $slugs AND kind = 'dep'
                   AND type::record('task', target).status NOT IN [NONE, 'done'] ORDER BY target)",
                 if matches!(which, Which::Pullable(_)) {
@@ -701,12 +756,21 @@ impl Store {
             ),
             _ => ("[]", "[]"),
         };
+        let (slot_lets, slots) = if matches!(which, Which::Starting(_)) {
+            if let (Some(vars), Value::Object(more)) = (vars.as_object_mut(), cap::vars()) {
+                vars.extend(more);
+            }
+            (cap::lets(), cap::field())
+        } else {
+            (String::new(), String::new())
+        };
         vars["executing"] = json!(EXECUTING);
         native_bounds(&mut vars);
         let read = format!(
             "LET $tasks = ({pick});
              LET $slugs = $tasks.slug;
              {HELD}
+             {slot_lets}
              RETURN {{
                  tasks: $tasks,
                  links: (SELECT slug, kind, target FROM link{scope} ORDER BY target),
@@ -720,6 +784,7 @@ impl Store {
                  open_deps: {deps},
                  known: {known},
                  mine: {mine},
+                 {slots}
              }};"
         );
         (read, vars)
@@ -834,6 +899,8 @@ enum Which<'a> {
     All,
     Status(&'a str),
     Slug(&'a str),
+    /// One task, as `Slug`, with what the cap on an orchestrator's open tasks decides a start on.
+    Starting(&'a str),
     Slugs(&'a [String]),
     /// The tasks right under one, in the order they were made.
     Children(&'a str),
@@ -883,6 +950,9 @@ struct Snapshot {
     /// The task (`Which::Slug`, `Which::Children`) or session (`Which::Pullable`) the read is about
     /// is there.
     known: bool,
+    /// What the cap decides a start on (`Which::Starting`).
+    #[serde(default)]
+    slots: Option<cap::Read>,
 }
 
 #[derive(Clone, Deserialize)]
@@ -1063,7 +1133,29 @@ struct Change {
     drop: Vec<(String, String)>,
     add: Option<RoleRow>,
     status: Option<String>,
+    /// The move is a hold, which keeps the task's slot while it is blocked ([`cap`]).
+    hold: bool,
     say: Option<Say>,
+    /// Work it starts, which takes a slot of an orchestrator's under the store's cap.
+    opens: Option<Opens>,
+}
+
+/// A start a rule makes: a claim or a move into an open status, the orchestrator role taken, or a
+/// change of parent of open work. Under a cap it is refused when it would raise an orchestrator's
+/// open tasks past it ([`crate::slots::started`]).
+#[derive(Default)]
+struct Opens {
+    /// The status it moves the task to, when it moves it.
+    status: Option<String>,
+    /// The session taking the orchestrator role on the task, when that is the start.
+    orchestrator: Option<String>,
+    /// The task's new parent, or none, when that is the change.
+    parent: Option<Option<String>>,
+    /// The sessions whose parents stand in for an orchestrator when none holds the task: its
+    /// executor once it starts.
+    by: Vec<String>,
+    /// What the refusal says cannot happen.
+    what: String,
 }
 
 struct Say {
@@ -1111,6 +1203,7 @@ impl Change {
             "drop": self.drop.iter().map(|(handle, role)| json!({"handle": handle, "role": role})).collect::<Vec<_>>(),
             "add": self.add.iter().collect::<Vec<_>>(),
             "status": self.status,
+            "hold": self.hold,
             "updated": self.status.as_ref().map(|_| now),
             "say": say,
         })
