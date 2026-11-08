@@ -250,7 +250,7 @@ fn the_next_run_sweeps_a_killed_owner_and_preserves_a_live_owner() {
     let (mut held, path) = owner("hold", &logs);
     assert!(path.join("main with spaces/.git/HEAD").is_file());
     // Each command the held repository links runs a copy its owner's parent ran before the
-    // owner started, or an image the system ships (tailscale's /usr/bin/false).
+    // owner started, or an image of the system's own under /usr/bin (tailscale's false).
     let copies = prepare_images(&logs.path).copies;
     for folder in [
         "commands",
