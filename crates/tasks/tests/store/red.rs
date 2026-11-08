@@ -193,12 +193,17 @@ fn a_task_named_under_a_closed_red_is_ordinary_work_no_filer_marks() {
         refused(f.store.mark_red(&child, "main", &filer)),
         unseries(&child)
     );
-    assert!(!f.store.get(&child).unwrap().red());
+    let unmarked = f.store.get(&child).unwrap();
+    assert!(!unmarked.red(), "{unmarked:?}");
     let fix = format!("{old}/fix");
     let under = NewTask {
         red: Some("main".into()),
         ..NewTask::new(&fix, "A fix", &filer)
     };
     assert_eq!(refused(f.store.create(&under)), unseries(&fix));
-    assert!(f.store.get(&fix).is_err(), "a refused create files nothing");
+    let unfiled = f.store.get(&fix);
+    assert!(
+        unfiled.is_err(),
+        "a refused create files nothing: {unfiled:?}"
+    );
 }

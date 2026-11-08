@@ -4,9 +4,14 @@
 //! and a red's close, never refused, which counts the work under it from then, a start that read
 //! the board before it decided again.
 
-use super::{EIGHT, HOLDS_EIGHT, K, O, P, W, board, capped, eight_and, open, red, sessions, with};
+use super::{
+    EIGHT, F, HOLDS_EIGHT, K, O, P, W, board, capped, eight_and, open, red, sessions, with,
+};
 use crate::common::{Fixture, refused, task};
 use serde_json::json;
+use std::sync::{Mutex, mpsc};
+use std::thread;
+use std::time::Duration;
 use symphony_board::rows::TaskRow;
 use symphony_board::{Error, NewTask, Store, Task};
 
@@ -406,21 +411,33 @@ fn closes() -> [(&'static str, Close); 4] {
 /// nightly's and any board without a cap: a red's close holds its counters on either.
 type Writer = fn(&Fixture) -> Store;
 
-/// Each closing store ([`Writer`]) with each close ([`closes`]), named.
-fn closers() -> Vec<(String, Writer, Close)> {
+/// One way to close [`RED`]: a close ([`closes`]) on a closing store ([`Writer`]), and how it is
+/// named.
+struct Closer {
+    how: String,
+    writer: Writer,
+    close: Close,
+}
+
+/// Each closing store with each close.
+fn closers() -> Vec<Closer> {
     let writers: [(&str, Writer); 2] = [
         ("a capped store", |f| capped(f, 8)),
         ("an uncapped store", Fixture::other),
     ];
     let pairs = writers.into_iter().flat_map(|(by, writer)| {
-        (closes().into_iter()).map(move |(how, close)| (format!("{how} on {by}"), writer, close))
+        (closes().into_iter()).map(move |(how, close)| Closer {
+            how: format!("{how} on {by}"),
+            writer,
+            close,
+        })
     });
     pairs.collect()
 }
 
 #[test]
 fn a_reds_close_past_the_cap_is_never_refused_and_the_work_under_it_counts_from_then() {
-    for (how, writer, close) in closers() {
+    for Closer { how, writer, close } in closers() {
         let f = beside_a_red(8, true);
         close(&writer(&f)).unwrap_or_else(|why| panic!("{how}: {why:?}"));
         let store = capped(&f, 8);
@@ -436,7 +453,7 @@ fn a_reds_close_past_the_cap_is_never_refused_and_the_work_under_it_counts_from_
 
 #[test]
 fn a_start_decided_before_a_red_closed_is_decided_again_the_work_under_it_counted() {
-    for (how, writer, close) in closers() {
+    for Closer { how, writer, close } in closers() {
         let f = beside_a_red(7, true);
         let other = writer(&f);
         // The claim reads seven slots, the red's work taking none; before it writes, the red
@@ -458,7 +475,7 @@ fn a_start_decided_before_a_red_closed_is_decided_again_the_work_under_it_counte
 
 #[test]
 fn work_started_under_a_red_as_it_closes_is_decided_again_and_takes_a_slot() {
-    for (how, writer, close) in closers() {
+    for Closer { how, writer, close } in closers() {
         let f = beside_a_red(8, false);
         let other = writer(&f);
         // The claim reads the red open, so the work under it takes no slot; before it writes, the
@@ -475,4 +492,55 @@ fn work_started_under_a_red_as_it_closes_is_decided_again_and_takes_a_slot() {
         );
         assert_eq!(f.store.get(UNDER).unwrap().status, "ready", "{how}");
     }
+}
+
+/// How long a race's side waits for the other before the test fails rather than hangs.
+const WAIT: Duration = Duration::from_secs(60);
+
+#[test]
+fn a_red_marked_as_the_owner_cancels_it_is_decided_again_and_a_claim_read_between_counts_it() {
+    // A red filed before the mark, in review with work in progress under it, all O's: nine.
+    let mut seed = sessions();
+    for (slug, status) in EIGHT[..7]
+        .iter()
+        .chain(&[("work/next", "ready"), (RED, "review")])
+    {
+        seed = with(seed, slug, status, None, Some(O));
+    }
+    let f = Fixture::new(with(seed, UNDER, "in_progress", Some(RED), None));
+    let (read, owner_read) = mpsc::channel();
+    let (go, owner_go) = mpsc::channel();
+    let (finished, owner_finished) = mpsc::channel();
+    let owner_go = Mutex::new(owner_go);
+    // The owner's cancel reads the red unmarked, then waits.
+    let owner = f.slow(move || {
+        read.send(()).unwrap();
+        owner_go.lock().unwrap().recv_timeout(WAIT).unwrap();
+    });
+    let cancel = thread::spawn(move || {
+        let cancelled = owner.move_to(RED, "cancelled", "owner");
+        finished.send(()).unwrap();
+        cancelled
+    });
+    owner_read.recv_timeout(WAIT).unwrap();
+    // Its filer marks it, so O counts seven; a claim reads seven, and before it writes the cancel
+    // commits, the work under the red counted again.
+    f.store.mark_red(RED, "main", F).unwrap();
+    let owner_finished = Mutex::new(owner_finished);
+    let claiming = f
+        .slow(move || {
+            go.send(()).unwrap();
+            owner_finished.lock().unwrap().recv_timeout(WAIT).unwrap();
+        })
+        .capping(Some(8));
+    let said = refused(claiming.claim("work/next", K));
+    let cancelled = cancel.join().unwrap().unwrap();
+    assert_eq!(cancelled.status, "cancelled", "{cancelled:?}");
+    assert!(
+        said.starts_with("work/next cannot start: olive-orch holds 8 open tasks"),
+        "{said}"
+    );
+    assert!(said.contains("fix/under (in_progress)"), "{said}");
+    let next = f.store.get("work/next").unwrap();
+    assert_eq!(next.status, "ready", "{next:?}");
 }

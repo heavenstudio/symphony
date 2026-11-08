@@ -663,7 +663,10 @@ capped. A value that does not parse, or one below 1, is said on stderr
   nightly's does not), it holds their slot counters and the red's own,
   `counter:['red', SLUG]`, which every start of work under the open red holds
   too, so a start decided on a board read before the close is decided again,
-  counted. A refusal names the owner's open red work after its
+  counted. A close decides what it holds on the task as it read it, and its
+  write goes on only from that version, so a red marked between the two
+  (an earlier red the nightly or main's verify marks) is read and decided
+  again. A refusal names the owner's open red work after its
   counted slots: `…; a slot frees when one of them is done or cancelled; not
   counted, as red work takes no slot: tests/main-red-abc (in_progress)`. The
   mark alone tells; a slug never does. The PULL header's `slots=` and the

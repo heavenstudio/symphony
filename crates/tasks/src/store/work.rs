@@ -515,14 +515,15 @@ LET $said = $actor + ' moved it ' + $task.status + ' → ' + $status;
             block_cancelled_dependencies(cancelling)
         );
         self.retrying(|| {
-            // A red's close holds the counters it changes as a start does, capped store or not.
-            let slots = if cancelling { self.closing_slots(slug, status)? } else { Vec::new() };
-            let body = if slots.is_empty() { body.clone() } else { format!("{body}{GUARD}") };
+            // A red's close holds the counters it changes as a start does, capped store or not,
+            // judged on the task as read: a red marked since is read and decided again.
+            let closed = self.closing_slots(slug, status)?;
+            let body = closed.guarding(&body);
             let vars = acting(
                 OWNER,
                 (self.clock)(),
                 json!({
-                    "slug": slug, "status": status, "from": from, "slots": slots,
+                    "slug": slug, "status": status, "from": from, "slots": closed.slots, "version": closed.version,
                     "missing": format!("{REFUSED}{}", no_task(slug)),
                     "cannot": format!("{REFUSED}{slug} cannot go from "),
                     "instruction": format!("{REFUSED}{slug} is an instruction subtask: its executor closes it with `done`, not review"),

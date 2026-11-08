@@ -140,6 +140,30 @@ pub(super) struct Ruled {
     pub(super) slots: Vec<Value>,
 }
 
+/// An owner's close as the cap judged it ([`Store::closing_slots`]).
+#[derive(Default)]
+pub(super) struct Closed {
+    /// The task's version as read, which the write must still find ([`FENCE`]); none for a task
+    /// not on the board.
+    pub(super) version: Option<i64>,
+    /// The counters its write holds ([`GUARD`]).
+    pub(super) slots: Vec<Value>,
+}
+
+impl Closed {
+    /// `body` fenced on the version read and guarded by the counters held, as this close needs.
+    pub(super) fn guarding(&self, body: &str) -> String {
+        let fence = if self.version.is_some() { FENCE } else { "" };
+        let guard = if self.slots.is_empty() { "" } else { GUARD };
+        format!("{fence}{body}{guard}")
+    }
+}
+
+/// A write's refusal to go on from a task that moved since the read its counters were judged
+/// on (`$version`): a red marked since, whose close then holds counters, among them. The board
+/// reads and decides again.
+pub(super) const FENCE: &str = "IF (SELECT VALUE version FROM ONLY type::record('task', $slug)) != $version { THROW 'stale' };\n";
+
 /// A task as the cap reads it.
 #[derive(Clone, Deserialize)]
 struct Row {
@@ -365,15 +389,22 @@ impl Store {
         Ok(counters)
     }
 
-    /// The counters a close of `slug` into `status` holds, for a write that reads nothing the cap
-    /// decides on, the owner's: none unless it closes an open red ([`closing`]), whether this store
-    /// caps starts or not, since a store that does may have read the board before it.
-    pub(super) fn closing_slots(&self, slug: &str, status: &str) -> Result<Vec<Value>, Failure> {
-        let view = self.view(&Which::Starting(slug))?;
-        match closing(&view, slug, Some(status)) {
-            Some(opens) => self.holding(&view, slug, &opens, None),
-            None => Ok(Vec::new()),
+    /// What a move of `slug` into `status` holds, for a write that reads nothing the cap decides
+    /// on, the owner's: no counters unless it closes an open red ([`closing`]), whether this store
+    /// caps starts or not, since a store that does may have read the board before it; and, for a
+    /// close, the task's version they were judged at, which the write fences on ([`FENCE`]). A
+    /// move into an open status reads nothing.
+    pub(super) fn closing_slots(&self, slug: &str, status: &str) -> Result<Closed, Failure> {
+        if crate::red::open(status) {
+            return Ok(Closed::default());
         }
+        let view = self.view(&Which::Starting(slug))?;
+        let version = view.snap.tasks.first().map(|task| task.version);
+        let slots = match closing(&view, slug, Some(status)) {
+            Some(opens) => self.holding(&view, slug, &opens, None)?,
+            None => Vec::new(),
+        };
+        Ok(Closed { version, slots })
     }
 
     /// The slot counters `by`'s change of `slug`'s parent to `parent` holds under the cap: the open
