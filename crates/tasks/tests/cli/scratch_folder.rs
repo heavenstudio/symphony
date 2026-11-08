@@ -24,7 +24,7 @@ fn a_run_of_this_binary() {
     fs::write(scratch("made").join("file"), "a run's scratch").unwrap();
     if role == "held" {
         println!("{MADE}");
-        // The input ends with the test that started this run, unless a kill ends the run first.
+        // The input ends once the test that started this run has reaped it, or with that test.
         let _ = std::io::copy(&mut std::io::stdin(), &mut std::io::sink());
     }
 }
@@ -96,6 +96,10 @@ fn a_killed_runs_scratch_goes_at_the_next_run() {
         .stderr(Stdio::null())
         .spawn()
         .unwrap();
+    // Kept until the held run is reaped: `wait` closes a child's input before it waits, and on
+    // macOS a killed process's thread blocked on that input can wake to its end and remove the
+    // scratch at the exit before the kill has ended the process.
+    let input = held.stdin.take();
     let mut out = BufReader::new(held.stdout.take().unwrap());
     let mut said = String::new();
     while !said.lines().any(|line| line == MADE) {
@@ -107,6 +111,7 @@ fn a_killed_runs_scratch_goes_at_the_next_run() {
     }
     held.kill().unwrap();
     assert_eq!(held.wait().unwrap().signal(), Some(9));
+    drop(input);
     let left = format!("{}-0", held.id());
     assert_eq!(names(&temp.join(SCRATCH_HARNESS)), [left.as_str()]);
     let file = temp.join(SCRATCH_HARNESS).join(&left).join("made/file");
