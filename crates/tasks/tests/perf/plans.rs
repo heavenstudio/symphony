@@ -1,0 +1,409 @@
+//! The plan check. The commands of every per-write, per-recipient and per-tick path run on the
+//! generated board through the recording relay ([`crate::proxy`]); each statement their requests
+//! hold that reads rows under a condition ([`crate::sql`]: every `SELECT`, nested ones too, and
+//! each `UPDATE` or `DELETE` of a table under a `WHERE` read as the `SELECT` of the rows it would
+//! change, the server planning only a `SELECT`) is planned by the server (`EXPLAIN`) with the
+//! request's own variables, and a variable an earlier statement of the request set given a value
+//! of its kind ([`bound`]). The relay sees only what a client sends, so what the schema's events
+//! run in the write that fires them is planned from the schema itself ([`crate::sql::events`]),
+//! `$before` and `$after` a message of the board's. The check fails on what [`crate::findings`]
+//! finds in a plan: a filtered scan of message, delivery, role, session or callback_state, or a
+//! subquery in a predicate.
+
+use crate::board::board;
+use crate::findings::{Finding, findings, reads_rows, whole_read};
+use crate::generated::{self, NOW};
+use crate::proxy::{Proxy, Request};
+use crate::sql::{events, sequence, statements, variables};
+use crate::store;
+use serde_json::{Map, Value, json};
+use std::collections::{BTreeMap, BTreeSet};
+use symphony_board::rpc::Client;
+
+/// A value of the kind a variable set by an earlier statement of a request holds, by its name, for
+/// planning a statement that reads it: the server picks an index by the value it compares, and an
+/// unbound name reads as NONE, for which it picks none.
+pub fn bound(name: &str) -> Option<Value> {
+    let open = json!([generated::thread(), generated::slug(generated::TASKS - 1)]);
+    Some(match name {
+        "me" => json!({"connected": NOW - 5.0 * 86_400.0, "left_at": null}),
+        "connected" => json!(NOW - 5.0 * 86_400.0),
+        "slugs" | "open" | "waiting" => open,
+        "tasks" => json!([{"slug": generated::thread()}]),
+        "orchestrators" => json!([[generated::thread(), generated::orchestrator()]]),
+        "sid" | "same" | "last" => json!(1),
+        "ts" => json!(NOW),
+        "counted" => json!({"last": 1, "ts": NOW}),
+        "agent" | "binding" | "old" | "other" | "had" | "made" | "was" => Value::Null,
+        "s" | "state" | "c" | "lease" | "recipient" | "channel" | "before" | "pull" => json!({}),
+        "candidates" | "acked" | "wanted" | "pool" | "keys" | "waiting_keys" | "said" => json!([]),
+        "line" => json!({"slug": generated::thread(), "sid": 1}),
+        "address" => json!("uds:/tmp/perf.sock"),
+        "dependent" => json!(generated::thread()),
+        "sender" => json!(generated::writer()),
+        "prefix" | "pull_kept" => json!("pull-1"),
+        _ => return None,
+    })
+}
+
+/// One statement as planned: how often the requests sent it, its plan and what is wrong with it.
+#[derive(Debug)]
+struct Planned {
+    sent: usize,
+    plan: String,
+    findings: Vec<Finding>,
+}
+
+/// The variables `statement` is planned with: those its request sent (`sent_with`), and a value of
+/// [`bound`]'s for each other it reads; and the names it reads that neither gives.
+fn given(statement: &str, sent_with: &Value) -> (Map<String, Value>, Vec<String>) {
+    let mut vars: Map<String, Value> = sent_with.as_object().cloned().unwrap_or_default();
+    let mut unbound = Vec::new();
+    let read = variables(statement);
+    for name in read {
+        if vars.contains_key(&name) {
+            continue;
+        }
+        match bound(&name) {
+            Some(value) => {
+                vars.insert(name, value);
+            }
+            None => unbound.push(name),
+        }
+    }
+    (vars, unbound)
+}
+
+/// The server's plan of `statement` with `vars`, or why it gave none.
+fn explain(client: &Client, statement: &str, vars: Map<String, Value>) -> Result<String, String> {
+    match client.query(&format!("EXPLAIN {statement};"), Value::Object(vars)) {
+        Ok(mut answers) => Ok((answers.pop())
+            .and_then(|answer| answer.as_str().map(String::from))
+            .unwrap_or_default()),
+        Err(why) => Err(format!("not planned: {why:?}")),
+    }
+}
+
+/// `statement`, sent with `sent_with`, planned on the board `client` reaches.
+fn plan_one(client: &Client, statement: &str, sent_with: &Value) -> Planned {
+    let (vars, unbound) = given(statement, sent_with);
+    let (plan, found) = if !unbound.is_empty() {
+        (
+            format!(
+                "not planned: give ${} a value in plans::bound",
+                unbound.join(", $")
+            ),
+            vec![Finding::NotPlanned],
+        )
+    } else {
+        match explain(client, statement, vars) {
+            Ok(plan) => {
+                let found = findings(&plan);
+                (plan, found)
+            }
+            Err(why) => (why, vec![Finding::NotPlanned]),
+        }
+    };
+    Planned {
+        sent: 1,
+        plan,
+        findings: found,
+    }
+}
+
+/// Each statement `requests` run one after another ([`sequence`]) that `read` reads no statement
+/// out of but the server plans as a read of rows ([`reads_rows`]), with its plan: a spelling the
+/// check does not know, reported rather than left unplanned. A variable it reads that neither its
+/// request nor [`bound`] gives is NONE: what it reads is in the plan's shape, whatever the value.
+/// The server plans no `UPDATE`, `UPSERT` or `DELETE` (3.3.0: `EXPLAIN is only supported with the
+/// new execution model`), so their spellings rest on [`crate::sql`]'s reading alone.
+fn unread(client: &Client, requests: &[Request], read: fn(&str) -> Vec<String>) -> Vec<String> {
+    let mut seen = BTreeSet::new();
+    let mut unread = Vec::new();
+    for request in requests {
+        for statement in sequence(&request.sql) {
+            if !read(&statement).is_empty() || !seen.insert(statement.clone()) {
+                continue;
+            }
+            let (vars, _) = given(&statement, &request.vars);
+            if let Ok(plan) = explain(client, &statement, vars)
+                && reads_rows(&plan)
+            {
+                unread.push(format!("{statement}\n{}", plan.trim_end()));
+            }
+        }
+    }
+    unread
+}
+
+/// Each distinct statement of `requests`, planned on the board `client` reaches.
+fn plan_all(client: &Client, requests: &[Request]) -> BTreeMap<String, Planned> {
+    let mut planned: BTreeMap<String, Planned> = BTreeMap::new();
+    for request in requests {
+        let held = statements(&request.sql);
+        for statement in held {
+            if let Some(seen) = planned.get_mut(&statement) {
+                seen.sent += 1;
+                continue;
+            }
+            let one = plan_one(client, &statement, &request.vars);
+            planned.insert(statement, one);
+        }
+    }
+    planned
+}
+
+#[test]
+fn every_query_a_write_a_recipient_or_a_tick_sends_is_planned_on_an_index() {
+    let mut board = board();
+    let relay = Proxy::to(&board.addr);
+    let thread = generated::thread();
+    let writer = generated::writer();
+    let recipient = generated::recipient();
+    let orchestrator = generated::orchestrator();
+    let claimed = board.unclaimed();
+    let api = |method: &str, args: Value| json!({"method": method, "args": args}).to_string();
+    let commands: Vec<(Vec<&str>, String)> = vec![
+        (
+            vec![
+                "say",
+                &thread,
+                "a post to its recipient",
+                "--to",
+                &recipient,
+                "--as",
+                &writer,
+            ],
+            String::new(),
+        ),
+        (
+            vec![
+                "say",
+                &thread,
+                "a post to the orchestrator",
+                "--to",
+                "@orchestrator",
+                "--as",
+                &writer,
+            ],
+            String::new(),
+        ),
+        (vec!["claim", &claimed, "--as", &writer], String::new()),
+        (vec!["inbox", "--as", &orchestrator], String::new()),
+        (vec!["inbox", "--as", &recipient], String::new()),
+        (vec!["dispatch"], String::new()),
+    ];
+    let calls = [
+        api("get", json!({"slug": thread})),
+        api("tasks", json!({"status": "review"})),
+        api("ever_executed", json!({"slug": thread})),
+        api("sessions", json!({})),
+        api("session", json!({"handle": writer})),
+        api("ancestors", json!({"slug": thread})),
+        api("thread", json!({"slug": thread})),
+        api(
+            "say",
+            json!({"slug": thread, "sender": writer, "text": "a keyed notice", "to": "@orchestrator", "key": "perf"}),
+        ),
+        api("landings_posted", json!({})),
+        api("last_messages", json!({})),
+        api("to_owner", json!({"limit": 40})),
+        api("inbox", json!({"handle": orchestrator})),
+    ];
+    for (args, input) in &commands {
+        let ran = board.run(&relay.addr, args, input);
+        assert_eq!(ran.code, 0, "{args:?}: {}", ran.err);
+    }
+    for call in &calls {
+        let ran = board.run(&relay.addr, &["api"], call);
+        assert_eq!(ran.code, 0, "{call}: {}", ran.err);
+        assert!(ran.out.contains("\"ok\""), "{call}: {}", ran.out);
+    }
+    let mut requests = board.first_looks.clone();
+    requests.extend(relay.take());
+    let planned = plan_all(&board.client(), &requests);
+    let failed = failures(&planned);
+    let unread = unread(&board.client(), &requests, statements);
+    eprintln!(
+        "perf: {} requests, {} distinct statements planned, {} with a finding, {} read by the server and not by the check",
+        requests.len(),
+        planned.len(),
+        failed.len(),
+        unread.len()
+    );
+    assert!(failed.is_empty(), "{}", failed.join("\n\n"));
+    assert!(
+        unread.is_empty(),
+        "the server plans a read of rows in each, and the check read no statement out of it:\n{}",
+        unread.join("\n\n")
+    );
+}
+
+/// Each statement of `planned` with its plan, on stderr, and one line for each with a finding.
+fn failures(planned: &BTreeMap<String, Planned>) -> Vec<String> {
+    let mut failed = Vec::new();
+    for (statement, one) in planned {
+        let whole = whole_read(&one.plan).map_or(String::new(), |t| format!(" (reads {t} whole)"));
+        eprintln!(
+            "--- sent {}×{whole}: {statement}\n{}",
+            one.sent,
+            one.plan.trim_end()
+        );
+        if !one.findings.is_empty() {
+            failed.push(format!(
+                "{:?} in {statement}\n{}",
+                one.findings,
+                one.plan.trim_end()
+            ));
+        }
+    }
+    failed
+}
+
+/// What the schema's events run in the write that fires them is planned on an index too: `said`'s
+/// look back at a sender's word before the one a delete or an edit took, a post's and a verdict's,
+/// each the last key of its range. `$before` and `$after` are a word of the generated board's
+/// writer, as a delete of it gives them.
+#[test]
+fn every_query_the_schemas_events_run_is_planned_on_an_index() {
+    let board = board();
+    let word = json!({"slug": generated::thread(), "sid": 1, "sender": generated::writer(),
+        "recipient": null, "kind": "msg", "text": "a word", "ts": NOW});
+    let vars = json!({"before": word, "after": word, "event": "DELETE"});
+    let defined = events(symphony_board::schema::DEFINE);
+    let requests: Vec<Request> = (defined.into_iter())
+        .map(|event| Request {
+            sql: event,
+            vars: vars.clone(),
+        })
+        .collect();
+    let planned = plan_all(&board.client(), &requests);
+    let looks_back: Vec<&String> = (planned.keys())
+        .filter(|statement| statement.contains("FROM message"))
+        .collect();
+    assert_eq!(
+        looks_back.len(),
+        2,
+        "said's look back, a post's and a verdict's: {planned:#?}"
+    );
+    let failed = failures(&planned);
+    eprintln!(
+        "perf: {} events, {} distinct statements planned, {} with a finding",
+        requests.len(),
+        planned.len(),
+        failed.len()
+    );
+    assert!(failed.is_empty(), "{}", failed.join("\n\n"));
+}
+
+/// `sql` as a request sending the one variable a spelling below reads: a projection, named
+/// straight after its keyword.
+fn request(sql: &str) -> Request {
+    Request {
+        sql: sql.to_string(),
+        vars: json!({"projection": 1}),
+    }
+}
+
+/// `sql`, as [`request`] sends it, as the check plans it on the board `client` reaches.
+fn checked(client: &Client, sql: &str) -> BTreeMap<String, Planned> {
+    plan_all(client, &[request(sql)])
+}
+
+/// What the check finds in `planned`, every statement's findings in turn.
+fn found_in(planned: &BTreeMap<String, Planned>) -> Vec<&Finding> {
+    (planned.values()).flat_map(|one| &one.findings).collect()
+}
+
+/// A read spelled any way the server takes it (a keyword in lower case, after a comment holding a
+/// letter outside ASCII, or straight before a comment, `*`, a line, a variable or white space
+/// outside ASCII) is planned as the server plans the text as sent, and its read of session under a
+/// condition, which no index serves, found; so is a change of session's rows spelled so (its
+/// table quoted straight after the verb too), each taken by the server. Of the requests holding
+/// the reads, the server plans a read of rows in each, and a reader knowing no spelling has each
+/// reported; this one has none. A value whose text holds parentheses reads none, even to a reader
+/// knowing no spelling. A keyword quoted, in a comment, a name or an object's key reads nothing.
+/// Planned on a server of its own, not the generated board, which the other tests hold.
+#[test]
+fn a_read_in_any_spelling_the_server_takes_is_planned_and_its_scan_found() {
+    let fixture = store::Fixture::empty();
+    fixture.session("reviewer");
+    let client = fixture.store.client();
+    let scan = Finding::FilteredScan("session".into());
+    let reads = [
+        "select * from session where kind = 'reviewer'",
+        "// unicode comment: café\nSELECT * FROM session WHERE kind = 'reviewer'",
+        "SELECT/**/ * FROM session WHERE kind = 'reviewer'",
+        "SELECT* FROM session WHERE kind = 'reviewer'",
+        "select/* café */ * from session where kind = 'reviewer'",
+        "SELECT-- comment\n* FROM session WHERE kind = 'reviewer'",
+        "SELECT$projection FROM session WHERE kind = 'reviewer'",
+        "SELECT\u{a0}* FROM session WHERE kind = 'reviewer'",
+        "SELECT\u{2003}* FROM session WHERE kind = 'reviewer'",
+        "LET $read = (SELECT\u{3000}* FROM session WHERE kind = 'reviewer')",
+    ];
+    for sql in reads {
+        let mut as_sent = (client.query(&format!("EXPLAIN {sql};"), request(sql).vars))
+            .unwrap_or_else(|why| panic!("the server takes {sql:?}: {why:?}"));
+        let plan = (as_sent.pop())
+            .and_then(|answer| answer.as_str().map(String::from))
+            .unwrap_or_default();
+        let expected = std::slice::from_ref(&scan);
+        assert_eq!(findings(&plan), expected, "{sql:?} as sent:\n{plan}");
+        let planned = checked(client, sql);
+        assert_eq!(planned.len(), 1, "{sql:?}: {planned:#?}");
+        assert_eq!(found_in(&planned), [&scan], "{sql:?}: {planned:#?}");
+    }
+    let requests: Vec<Request> = reads.map(request).into();
+    assert_eq!(unread(client, &requests, statements), Vec::<String>::new());
+    let unknown = unread(client, &requests, |_| Vec::new());
+    assert_eq!(unknown.len(), reads.len(), "{unknown:#?}");
+    let values = ["RETURN '(Ready)'", "RETURN {note: 'status (Ready)'}"];
+    let values: Vec<Request> = values.map(request).into();
+    assert_eq!(
+        unread(client, &values, |_| Vec::new()),
+        Vec::<String>::new()
+    );
+    let changes = [
+        "DELETE/**/session WHERE kind = 'nobody'",
+        "UPDATE-- the beat\nsession SET last_seen = 1 WHERE(kind = 'nobody')",
+        "UPSERT session SET last_seen = 1 WHERE kind = 'nobody'",
+        "DELETE\u{a0}FROM\u{2003}session\u{a0}WHERE kind = 'nobody'",
+        "delete from⟨session⟩ where kind = 'nobody'",
+        "DELETE `session`WHERE kind = 'nobody'",
+        "DELETE`session` WHERE kind = 'nobody'",
+        "DELETE⟨session⟩ WHERE kind = 'nobody'",
+        "UPDATE`session` SET last_seen = 1.0 WHERE kind = 'nobody'",
+        "UPSERT⟨session⟩ SET last_seen = 1.0 WHERE kind = 'nobody'",
+    ];
+    for sql in changes {
+        (client.query(&format!("{sql} RETURN NONE;"), json!({})))
+            .unwrap_or_else(|why| panic!("the server takes {sql:?}: {why:?}"));
+        let planned = checked(client, sql);
+        assert_eq!(found_in(&planned), [&scan], "{sql:?}: {planned:#?}");
+    }
+    let hidden = [
+        (
+            "SELECT * FROM task WHERE title = 'SELECT* FROM session WHERE kind = 1'",
+            "SELECT * FROM task WHERE title = 'SELECT* FROM session WHERE kind = 1'",
+        ),
+        (
+            "SELECT * FROM task -- SELECT/**/ * FROM session WHERE kind = 'x'",
+            "SELECT * FROM task",
+        ),
+        (
+            "/* select* from session where kind = 'x' */ SELECT * FROM task",
+            "SELECT * FROM task",
+        ),
+        (
+            "SELECT {select: 1, delete/**/: 2} AS keys, ⟨select⟩ FROM task WHERE body.select = 1 OR id = task:update",
+            "SELECT {select: 1, delete : 2} AS keys, ⟨select⟩ FROM task WHERE body.select = 1 OR id = task:update",
+        ),
+    ];
+    for (sql, read) in hidden {
+        let planned = checked(client, sql);
+        let statements: Vec<&String> = planned.keys().collect();
+        assert_eq!(statements, [read], "{sql:?}");
+        assert_eq!(found_in(&planned), Vec::<&Finding>::new(), "{sql:?}");
+    }
+}

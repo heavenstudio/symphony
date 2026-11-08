@@ -449,6 +449,35 @@ old SQLite board into it once, one way, reading SQLite through `rusqlite`
 engine a transaction that big costs more than linearly (the board at the move:
 39 server CPU-s, against 1.5 on `surrealkv://`).
 
+The `perf` test target (`tests/perf/`) is the board at scale: a generated board
+at or above the live one of 2026-11-07 (50k messages, 2.6k sessions, about 3k
+roles, 100 recipients on Unix sockets this process serves) on `surrealkv://`.
+Its plan check runs say, claim, inbox, a dispatch and the `tasks api` calls
+`land` and the Symphony make through a recording relay and has the server plan
+(`EXPLAIN`) every statement they sent, read out of each request as the
+server's lexer reads a keyword: in any case, past comments, ending at any byte
+no name goes on with (`SELECT*`, `SELECT$projection`, a space outside ASCII)
+and starting after none that a name, variable, path or record id holds
+(`tests/perf/sql.rs`); and every statement the schema's events run, read out
+of `schema::DEFINE`, which the relay never sees. A statement of a request
+that the server plans as a read of rows and the check read nothing out of
+fails it, so a spelling it does not know is reported; a `TableScan` with a
+predicate over message, delivery, role, session or callback_state, a whole
+index of one of them under a filter, or a subquery in a predicate, fails it
+(`tests/perf/findings.rs`), so a query that loses its index (a dropped
+`DEFINE INDEX`, a condition rewritten past it) fails there, naming the
+statement and its plan. Its timings run say, claim, inbox and those api calls
+three times each, each median within a bound stated once in
+`tests/perf/timings.rs`; `tests/perf/words.rs` deletes a rare sender's newest
+word (its other one the board's first) and every message at once with the last
+words named, as a schema 12 copy does, each within a bound stated there.
+Its tier is nightly, so the fast plan leaves it out:
+run it by hand (`tools/rs-bin.sh sf-slots cargo test --manifest-path
+symphony/Cargo.toml -p symphony-board --test perf`) for a change to the board's
+queries or the api. `SF_PERF_TASKS=PATH` times another `tasks` build on the
+same board. A run leaves its folder in the temporary directory; the next run
+removes each such folder whose process has ended.
+
 Every server `server::Home` starts gets `server::Storage` as its environment
 (`SURREAL_SURREALKV_VLOG_THRESHOLD`, `SURREAL_SURREALKV_MAX_MEMTABLE_SIZE`).
 Each value stays beside its key in the sstables, where compaction drops the

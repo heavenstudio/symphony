@@ -1,4 +1,5 @@
-//! Inbox acknowledgements, unread-body payload size and acknowledged-history scaling.
+//! Inbox acknowledgements, unread-body payload size, acknowledged-history scaling, and the inbox
+//! of a recipient further behind than a dispatch pass reads.
 
 use super::texts;
 use crate::common::{Fixture, HOST, NOW, Seed};
@@ -211,4 +212,57 @@ fn acknowledged_key_selection_fits_the_shared_store_wait() {
             began.elapsed()
         );
     }
+}
+
+/// A recipient further behind than one dispatch pass's pool reaches (a session long unobserved,
+/// its cursor 2100 lines back) reads its inbox from the message table, from its cursor on, and
+/// still hears what was said to it, and nothing of the lines it could never hear.
+#[test]
+fn a_recipient_far_behind_the_board_reads_its_inbox_from_its_cursor() {
+    use crate::callbacks::Listener;
+    use symphony_board::rows::MessageRow;
+    let mut seed = Seed::default()
+        .session("worker")
+        .session("writer")
+        .task("tools/far", "in_progress");
+    seed.dump.messages = (1..=2100)
+        .map(|id| MessageRow {
+            id,
+            slug: "tools/far".into(),
+            sender: "writer".into(),
+            recipient: None,
+            kind: "msg".into(),
+            text: format!("line {id}"),
+            ts: NOW,
+        })
+        .collect();
+    let f = Fixture::new(seed);
+    let listener = Listener::new(f.store.client().database());
+    f.store
+        .callback(
+            "worker",
+            Some(&format!("uds:{}", listener.path.display())),
+            false,
+            false,
+        )
+        .unwrap();
+    f.store
+        .client()
+        .query(
+            "UPDATE type::record('callback_state', 'worker') SET message_cursor = 1, inbox_cursor = 1 RETURN NONE;",
+            serde_json::json!({}),
+        )
+        .unwrap();
+    f.store
+        .say("tools/far", "writer", "far news", Some("worker"))
+        .unwrap();
+    let heard = listener.drain(&f, "writer", "worker");
+    assert!(
+        heard.iter().any(|line| line.contains("far news")),
+        "{heard:?}"
+    );
+    assert!(
+        !heard.iter().any(|line| line.contains("line ")),
+        "{heard:?}"
+    );
 }
