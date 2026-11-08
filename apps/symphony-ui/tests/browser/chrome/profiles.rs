@@ -88,7 +88,7 @@ fn a_run_of_this_binary() {
     std::fs::write(profile.join("file"), "a run's profile").unwrap();
     println!("{MADE}{}", own().display());
     if role == "held" {
-        // The input ends with the test that started this run, unless a kill ends the run first.
+        // The input ends once the test that started this run has reaped it, or with that test.
         let _ = std::io::copy(&mut std::io::stdin(), &mut std::io::sink());
     }
 }
@@ -146,8 +146,13 @@ fn a_profile_is_in_this_processs_own_folder_in_the_root() {
 #[test]
 fn a_runs_profiles_go_at_its_exit_and_a_killed_runs_at_the_next_run() {
     let (mut held, _out, killed) = run("held");
+    // Kept until the held run is reaped: `wait` closes a child's input before it waits, and on
+    // macOS a killed process's thread blocked on that input can wake to its end and remove the
+    // profiles at the exit before the kill has ended the process.
+    let input = held.stdin.take();
     held.kill().unwrap();
     assert_eq!(held.wait().unwrap().signal(), Some(libc::SIGKILL));
+    drop(input);
     assert!(
         killed.join("0/file").is_file(),
         "the kill left no profile, proving nothing"

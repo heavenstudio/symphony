@@ -1175,6 +1175,7 @@ wait "$helper"
                 // before killing the suite, as when a piped cargo test loses its consumer.
                 drop(suite.0.stderr.take().expect("piped suite stderr reader"));
             }
+            let input = suite.0.stdin.take(); // Kept to the reap: Child::wait closes it first.
             if let Some(expected) = expected {
                 assert!(
                     Command::new("/bin/kill")
@@ -1185,7 +1186,7 @@ wait "$helper"
                 );
                 assert_eq!(suite.0.wait().unwrap().signal(), Some(expected));
             } else {
-                drop(suite.0.stdin.take());
+                drop(input);
                 assert!(suite.0.wait().unwrap().success());
             }
             reader.join().unwrap();
