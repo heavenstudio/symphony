@@ -30,8 +30,9 @@
 //! - neither it nor its descendants has an unanswered addressed post, and no reviewer is waiting
 //!   for re-review after changes (a verdict or a landing changes message);
 //! - nothing runs under its agent but what is known to be harmless ([`procs::reap_busy_reason`]):
-//!   MCP helpers (Codex's REPL helper by its configured path), caffeinate, a board command or
-//!   monitor (`just tasks…`, the `tasks` binary).
+//!   MCP helpers (Codex's REPL helper by its configured path, and the ChatGPT app's computer-use
+//!   REPL by its exact node and module path), caffeinate, a board command or monitor
+//!   (`just tasks…`, the `tasks` binary).
 //!   Anything else, whatever it is, is work. A terminal whose processes cannot be read is kept.
 //! - the owner is not looking at it ([`super::screen`]): not in the tab the Herdr app shows, not
 //!   the agent it shows, not held over them; when the window cannot say, it is kept.

@@ -207,18 +207,39 @@ pub fn symphony_app(command: &str) -> bool {
 }
 
 /// The REPL helper server Codex is configured to keep running (`mcp_servers.node_repl` in
-/// `~/.codex/config.toml`), by that exact path: no other `node_repl`, and no `node`, is a helper.
+/// `~/.codex/config.toml`), by that exact path: no other `node_repl` is a helper, and a `node` only
+/// as [`CODEX_CUA_NODE`] running [`CODEX_CUA_REPL`].
 pub const CODEX_REPL: &str = "/Applications/ChatGPT.app/Contents/Resources/cua_node/bin/node_repl";
 
-/// `^(?:\S*/)?claude(?:\s|$)|(?:^|[\s/@_-])mcp(?:[-_.\s]|$)`, ignoring case, or [`CODEX_REPL`]:
-/// the agent and its helper servers.
+/// The node the ChatGPT app ships beside [`CODEX_REPL`]. It is a helper only running
+/// [`CODEX_CUA_REPL`]: no other script under it, and no other `node`, is.
+pub const CODEX_CUA_NODE: &str = "/Applications/ChatGPT.app/Contents/Resources/cua_node/bin/node";
+
+/// The ChatGPT app's computer-use REPL, by that exact module path: Codex keeps it running under
+/// [`CODEX_CUA_NODE`] in every session, and it starts its own [`CODEX_REPL`].
+pub const CODEX_CUA_REPL: &str = "/Applications/ChatGPT.app/Contents/Resources/cua_node/lib/node_modules/@oai/cua-repl/bin/cua-repl.mjs";
+
+/// Codex's helpers, each by its exact path and with whatever arguments follow: [`CODEX_REPL`], and
+/// [`CODEX_CUA_NODE`] running [`CODEX_CUA_REPL`] as its first argument.
+fn codex_helper(command: &str) -> bool {
+    let mut words = command.split(space);
+    match words.next() {
+        Some(CODEX_REPL) => true,
+        Some(CODEX_CUA_NODE) => words.next() == Some(CODEX_CUA_REPL),
+        _ => false,
+    }
+}
+
+/// `^(?:\S*/)?(?:claude|codex)(?:\s|$)|(?:^|[\s/@_-])mcp(?:[-_.\s]|$)`, ignoring case, but never a
+/// `codex exec` job; or one of Codex's helpers by its exact path ([`CODEX_REPL`], and
+/// [`CODEX_CUA_NODE`] running [`CODEX_CUA_REPL`]): the agent and its helper servers.
 pub fn harmless(command: &str) -> bool {
     let lower = command.to_ascii_lowercase();
     // Codex exec jobs are work even when their parent agent is idle.
     if codex_exec(&lower) {
         return false;
     }
-    command.split(space).next() == Some(CODEX_REPL)
+    codex_helper(command)
         || first_word_is(&lower, &["claude", "codex"])
         || starts(&lower, "mcp").any(|at| {
             before(&lower, at).is_none_or(|c| space(c) || "/@_-".contains(c))
