@@ -17,15 +17,17 @@ use std::io::{BufRead, Read, Write};
 /// time a method takes or does something an earlier build refused or did otherwise (1: `landed`'s
 /// `from`, before which a build declares none; 2: `say`'s `key`; 3: its `adopt`; 4: `hold`, a
 /// landing's move to blocked that keeps the task's slot; 5: board-authored `notify`, whose notices
-/// take literal session recipients; 6: `create`'s `red`, the mark of a task filed for a red, which
-/// takes no slot, `mark_red` for a red filed before it and `unmark_red` for one left open as
-/// ordinary work, each from a session of kind `filer` alone, which `register` takes). The live launcher (`tools/tasks.sh`) serves an earlier main build only while this
+/// take literal session recipients; 6: `move`'s `from`, the statuses alone it moves from, as a
+/// landing's changes verdict sends work in review back; 7: `create`'s `red`, the mark of a task
+/// filed for a red, which takes no slot, `mark_red` for a red filed before it and `unmark_red` for
+/// one left open as ordinary work, each from a session of kind `filer` alone, which `register`
+/// takes). The live launcher (`tools/tasks.sh`) serves an earlier main build only while this
 /// matches main's, so no caller reaches a build without what it relies on.
 #[expect(
     dead_code,
     reason = "tools/tasks.sh reads it from the committed source; no Rust code compares builds"
 )]
-pub const VERSION: i64 = 6;
+pub const VERSION: i64 = 7;
 
 /// Why a call has no result.
 enum Fail {
@@ -418,9 +420,17 @@ fn dispatch<F: FnOnce() -> Result<Store, String>>(
             shape::task(&board.get()?.release(&slug, &handle, role.as_deref())?)
         }
         "move" => {
-            args!(slug: need, status: need, handle: actor);
-            let (slug, status, handle): (String, String, String) = (slug, status, handle);
-            shape::task(&board.get()?.move_to(&slug, &status, &handle)?)
+            args!(slug: need, status: need, handle: actor, from: take);
+            let (slug, status, handle, from): (String, String, String, Option<Vec<String>>) =
+                (slug, status, handle, from);
+            let store = board.get()?;
+            shape::task(&match from {
+                Some(from) => {
+                    let from: Vec<&str> = from.iter().map(String::as_str).collect();
+                    store.move_from(&slug, &from, &status, &handle)?
+                }
+                None => store.move_to(&slug, &status, &handle)?,
+            })
         }
         "hold" => {
             args!(slug: need, handle: actor);

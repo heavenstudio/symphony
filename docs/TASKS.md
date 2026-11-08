@@ -641,7 +641,7 @@ capped. A value that does not parse, or one below 1, is said on stderr
   as the blocked task it is.
 - **Red work takes no slot.** A task filed for a red that stops every
   landing is marked so where it is filed (`create`'s `red`, naming what is
-  red, `tasks api` version 6; kept as the board field `fields._board.red`,
+  red, `tasks api` version 7; kept as the board field `fields._board.red`,
   `symphony/crates/tasks/src/red.rs`). Only a red's filer marks: a session of
   kind `filer`, which `tasks api`'s `register` takes and the command line's
   `register` does not, as the project's tools that file reds register. A

@@ -457,7 +457,7 @@ and after the change (`slots::started`) and, for every orchestrator whose open
 tasks it changes, checks and bumps `counter:['slots', HANDLE]` in the write, so
 two starts at once are one retry, not two slots (`tests/store/slots.rs` and its
 `moves` and `cost` modules, `tests/cli/slots.rs`). Red work takes no slot: an open task
-`create`'s `red` marks (`fields._board.red`, `red.rs`, api 6, which the cap's reads
+`create`'s `red` marks (`fields._board.red`, `red.rs`, api 7, which the cap's reads
 project beside each task) and the work under it, judged by the task whose work it is;
 a refusal names it apart, and PULL lists a red nobody executes 10 minutes after filing
 first, as `red_unstaffed`, before any cancelled dependency of its. Only a session of
@@ -482,6 +482,11 @@ field, since a reader built before it refuses a task row with a field it does
 not know, and every write that moves the task, changes its parent or its
 dependencies deletes it. Each statement the cap sends is in `SLOT_READS`, which
 `tests/store/slots/cost.rs` has the server plan.
+A move that names where it goes from (`Store::move_from`, `tasks api`'s `move`
+with `from` from api 6, `store/work/moves.rs`) is refused unless the task's
+status, as the move's own write reads it, is one of those: a caller that decided
+the move on an earlier read (land's changes verdict sending work in review back)
+leaves a status another move set since, blocked say, as it is.
 
 Its store tests start one in-memory server per test binary and give each test a
 database of its own. The server is the pinned SurrealDB `tools/surreal.sh`

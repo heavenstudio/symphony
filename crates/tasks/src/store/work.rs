@@ -13,6 +13,9 @@ use serde_json::{Value, json};
 use std::cell::RefCell;
 use std::collections::{BTreeSet, HashMap, HashSet};
 
+mod moves;
+use moves::Moving;
+
 mod owner_task;
 
 mod red;
@@ -416,7 +419,7 @@ LET $said = $actor + ' changed priority p' + <string>$task.priority + ' → p' +
         if handle == OWNER && matches!(status, "cancelled" | "review") {
             return self.move_as_owner(slug, status);
         }
-        self.moving(slug, status, handle, false)
+        self.moving(slug, status, handle, Moving::Any)
     }
 
     /// Hold open work blocked, keeping its slot under the cap, as a landing does while every stamp
@@ -425,21 +428,17 @@ LET $said = $actor + ' changed priority p' + <string>$task.priority + ' → p' +
     /// move, change of parent or of dependencies. So the move that returns it starts nothing, and
     /// the slot it held is no one else's meanwhile.
     pub fn hold_blocked(&self, slug: &str, handle: &str) -> Result<Task, Error> {
-        self.moving(slug, "blocked", handle, true)
+        self.moving(slug, "blocked", handle, Moving::Hold)
     }
 
-    /// [`Store::move_to`] by a session, `hold`ing its slot ([`Store::hold_blocked`]) when asked.
-    fn moving(&self, slug: &str, status: &str, handle: &str, hold: bool) -> Result<Task, Error> {
+    /// [`Store::move_to`] by a session, from the statuses `how` allows ([`Moving`]).
+    fn moving(&self, slug: &str, status: &str, handle: &str, how: Moving) -> Result<Task, Error> {
         let starts = OPEN.contains(&status) && self.slots.is_some();
         self.ruling(slug, handle, starts, |view| {
             view.actor(handle)?;
             let task = view.task(slug)?;
             let current = task.status.as_str();
-            if hold && !OPEN.contains(&current) {
-                return Err(refused(format!(
-                    "{slug} is {current}: only work in progress or in review is held"
-                )));
-            }
+            how.allows(slug, current)?;
             if !can_transition(current, status) {
                 return Err(refused(format!(
                     "{slug} cannot go from {current} to {status}"
@@ -476,7 +475,7 @@ LET $said = $actor + ' changed priority p' + <string>$task.priority + ' → p' +
             });
             Ok(Change {
                 status: Some(status.into()),
-                hold,
+                hold: how.holds(),
                 say: Say::system(format!("{handle} moved it {current} → {status}")),
                 opens,
                 ..Change::default()
