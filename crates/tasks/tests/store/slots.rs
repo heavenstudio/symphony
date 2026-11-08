@@ -1,13 +1,14 @@
-//! The cap on an orchestrator's open tasks: where it refuses a start, what it counts, where a slot
-//! frees, and that it takes nothing from an orchestrator already above it. Moves, dependency
+//! The cap on an orchestrator's open tasks: where it refuses a start, what it counts (red work it
+//! does not), where a slot frees, and that it takes nothing from an orchestrator already above it.
+//! Moves, dependency
 //! changes, the tree reshaped and races are [`moves`]'; what the cap costs, [`cost`]'s.
 
 mod cost;
 mod moves;
 
 use crate::common::{Fixture, Seed, refused, session, task};
-use symphony_board::Store;
 use symphony_board::rows::{SessionRow, TaskRow};
+use symphony_board::{NewTask, Store};
 
 /// The orchestrator every test's open work is under.
 const O: &str = "olive-orch";
@@ -328,6 +329,89 @@ fn open_work_no_orchestrator_holds_takes_a_slot_of_its_executors_parent() {
     let said = refused(capped(&f, 8).claim("work/next", K));
     assert!(said.contains("holds 8 open tasks"), "{said}");
     assert!(said.contains("loose/one (in_progress)"), "{said}");
+}
+
+/// `slug`, filed for a red of `what` by the owner, most urgent, as land files one.
+fn red(store: &Store, slug: &str, what: &str) {
+    let task = store
+        .create(&NewTask {
+            priority: 0,
+            red: Some(what.into()),
+            ..NewTask::new(slug, &format!("Red: {slug}"), "owner")
+        })
+        .unwrap();
+    assert!(task.red(), "{slug} is marked");
+}
+
+#[test]
+fn an_orchestrator_at_the_cap_still_starts_main_and_nightly_red_work_and_names_it_apart() {
+    let seed = eight_and_seed(&[("work/next", "ready")]).session("lark");
+    let f = Fixture::new(seed);
+    let store = capped(&f, 8);
+    red(&store, "tests/main-red-abc", "main");
+    red(&store, "tests/nightly-red-sim", "nightly");
+    (store.create(&NewTask {
+        parent: Some("tests/main-red-abc".into()),
+        ..NewTask::new("fix/static", "Fix static", "owner")
+    }))
+    .unwrap();
+    store
+        .take_role("tests/nightly-red-sim", O, "orchestrator")
+        .unwrap();
+    // A red no orchestrator holds counts against its claimer's parent: O, at the cap.
+    assert_eq!(
+        store.claim("tests/main-red-abc", W).unwrap().status,
+        "in_progress"
+    );
+    assert_eq!(
+        store.claim("tests/nightly-red-sim", K).unwrap().status,
+        "in_progress"
+    );
+    // Taking the role on open red work, and starting the work under a red, are not capped either.
+    store
+        .take_role("tests/main-red-abc", O, "orchestrator")
+        .unwrap();
+    assert_eq!(
+        store.claim("fix/static", "lark").unwrap().status,
+        "in_progress"
+    );
+    store.move_to("fix/static", "review", "lark").unwrap();
+    assert_eq!(open(&store).len(), 11);
+    // A feature at the cap is refused as before, the red work named apart as not counted.
+    assert_eq!(
+        refused(store.claim("work/next", K)),
+        format!(
+            "work/next cannot start: {HOLDS_EIGHT}; not counted, as red work takes no slot: fix/static (review), tests/main-red-abc (in_progress), tests/nightly-red-sim (in_progress)"
+        )
+    );
+    assert_eq!(store.get("work/next").unwrap().status, "ready");
+}
+
+#[test]
+fn a_task_only_named_like_a_red_takes_a_slot() {
+    let f = eight_and(&[("tests/main-red-old", "ready")]);
+    assert_eq!(
+        refused(capped(&f, 8).claim("tests/main-red-old", K)),
+        format!("tests/main-red-old cannot start: {HOLDS_EIGHT}")
+    );
+}
+
+#[test]
+fn a_red_with_nothing_named_red_is_refused() {
+    let f = Fixture::new(sessions());
+    assert_eq!(
+        refused(f.store.create(&NewTask {
+            red: Some(" ".into()),
+            ..NewTask::new("tests/red", "Red", "owner")
+        })),
+        "a red task names what is red, such as main"
+    );
+    assert!(
+        !f.store
+            .create(&NewTask::new("plain/x", "X", "owner"))
+            .unwrap()
+            .red()
+    );
 }
 
 #[test]

@@ -44,6 +44,7 @@ pub mod on_review;
 pub mod orchestration;
 pub mod port;
 pub mod pyjson;
+pub mod red;
 pub mod rows;
 pub mod rpc;
 pub mod schema;

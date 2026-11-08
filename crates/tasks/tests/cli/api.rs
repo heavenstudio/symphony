@@ -367,6 +367,31 @@ fn batches_and_streams_keep_serving_agents_and_owner_recipients_after_refusals()
     }
 }
 
+/// `create`'s `red` (api 6) marks the task it files red, as land files a red of main; a call
+/// without it marks nothing.
+#[test]
+fn create_marks_a_task_red_when_the_call_names_what_is_red() {
+    let c = Case::new();
+    let actor = c.register("worker");
+    let made = answer(
+        &c.env,
+        json!([
+            {"method": "create", "args": {"slug": "tests/main-red-abc", "title": "Main red", "by": actor, "priority": 0, "red": "main"}},
+            {"method": "create", "args": {"slug": "sim/a", "title": "A", "by": actor, "red": null}},
+            {"method": "create", "args": {"slug": "sim/b", "title": "B", "by": actor, "red": ""}},
+        ]),
+    );
+    assert_eq!(made[0]["ok"]["priority"], json!(0));
+    assert_eq!(made[1]["ok"]["slug"], json!("sim/a"));
+    assert_eq!(
+        made[2],
+        json!({"refused": "a red task names what is red, such as main"})
+    );
+    let store = c.store();
+    assert!(store.get("tests/main-red-abc").unwrap().red());
+    assert!(!store.get("sim/a").unwrap().red());
+}
+
 /// `landed` closes from review or held blocked unless the call names `from`, and answers with the
 /// status it found: land closes work taken back to in progress only when it says so.
 #[test]

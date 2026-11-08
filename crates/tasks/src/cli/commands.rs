@@ -439,6 +439,8 @@ fn create(store: &Store, c: &mut Context) -> Result<(), Stop> {
         depends: p.all("depends").to_vec(),
         assignee: p.get("assignee").map(str::to_string),
         instruction: p.flag("instruction"),
+        // Reds are marked by what files them (`tasks api` `create`); work under one is red work.
+        red: None,
     };
     let t = store.create(&new)?;
     c.say(&format!("created {} ({})", t.slug, t.status));

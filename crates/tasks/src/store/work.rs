@@ -77,6 +77,9 @@ pub struct NewTask {
     pub assignee: Option<String>,
     /// A subtask (it needs a `parent`) whose executor closes it with `done`.
     pub instruction: bool,
+    /// What is red, for a task filed to fix a red that stops every landing ([`crate::red`]): it
+    /// and the work under it take no orchestrator slot.
+    pub red: Option<String>,
 }
 
 impl Default for NewTask {
@@ -93,6 +96,7 @@ impl Default for NewTask {
             depends: Vec::new(),
             assignee: None,
             instruction: false,
+            red: None,
         }
     }
 }

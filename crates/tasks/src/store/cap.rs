@@ -4,7 +4,8 @@
 //! the cap decides on (`Which::Starting`): every slot counter (`counter:['slots', HANDLE]`), the
 //! open tasks through `task_status`, the holds ([`HOLDS`]) and their tasks by id, and their
 //! orchestrator and executor roles through `role_slug`. Then, by id, the tasks above them and the
-//! tasks they review, a level a round trip, with their roles. Nothing reads a table whole.
+//! tasks they review, a level a round trip, with their roles. Each task comes with its red mark
+//! ([`crate::red`]), so red work is told apart where the tree is read. Nothing reads a table whole.
 //!
 //! A hold (`Store::hold_blocked`, a landing's while it waits on stamps) moves open work to blocked and
 //! keeps its slot: `counter:['hold', SLUG]`, its `ts` the task's `updated` as the hold left it. It
@@ -30,12 +31,10 @@ use std::collections::{BTreeSet, HashMap};
 /// Rounds of reads by id above the open tasks: deeper than any tree the board holds.
 const DEPTH: usize = 32;
 
-/// The open tasks, through `task_status`.
-pub const OPEN_TASKS: &str =
-    "SELECT slug, parent, status, instruction FROM task WHERE status IN $slot_statuses";
+/// The open tasks, through `task_status`, each with its red mark ([`crate::red`]).
+pub const OPEN_TASKS: &str = "SELECT slug, parent, status, instruction, fields._board.red AS red FROM task WHERE status IN $slot_statuses";
 /// The tasks `$slot_wanted` names, by id.
-pub const BY_ID: &str =
-    "SELECT slug, parent, status, instruction FROM $slot_wanted.map(|$s| type::record('task', $s))";
+pub const BY_ID: &str = "SELECT slug, parent, status, instruction, fields._board.red AS red FROM $slot_wanted.map(|$s| type::record('task', $s))";
 /// Their roles, through `role_slug`: a task holds a handful, and naming the two the cap reads would
 /// let the server take an index of every row holding one of them instead.
 pub const ROLES_OF: &str = "SELECT slug, handle, role FROM role WHERE slug IN $slot_wanted";
@@ -46,7 +45,7 @@ pub const COUNTERS: &str =
 pub const HOLDS: &str =
     "SELECT VALUE [record::id(id)[1], ts] FROM counter:['hold', NONE]..['hold', ..]";
 /// The tasks `$slot_holds` holds, by id, with the stamp each hold must match.
-pub const HELD_TASKS: &str = "SELECT slug, parent, status, instruction, updated FROM $slot_holds.map(|$h| type::record('task', $h[0]))";
+pub const HELD_TASKS: &str = "SELECT slug, parent, status, instruction, fields._board.red AS red, updated FROM $slot_holds.map(|$h| type::record('task', $h[0]))";
 
 /// Every statement the cap sends, which `tests/store/slots/cost.rs` has the server plan.
 pub const STATEMENTS: [&str; 6] = [OPEN_TASKS, BY_ID, ROLES_OF, COUNTERS, HOLDS, HELD_TASKS];
@@ -97,6 +96,9 @@ struct Row {
     status: String,
     #[serde(default)]
     instruction: Option<bool>,
+    /// Its red mark, what is red, when it was filed for one ([`crate::red`]).
+    #[serde(default)]
+    red: Option<Value>,
     /// Read for a held task alone: the stamp its hold must match.
     #[serde(default)]
     updated: Option<f64>,
@@ -176,6 +178,7 @@ impl Store {
                 parent: row.parent.clone(),
                 status: row.status.clone(),
                 instruction: Some(row.instruction),
+                red: (crate::red::marked(&row.fields)).then_some(Value::Bool(true)),
                 updated: None,
                 held: false,
             });
@@ -227,6 +230,7 @@ impl Store {
             held: row.held,
             orchestrators: orchestrators.remove(row.slug.as_str()).unwrap_or_default(),
             executors: executors.remove(row.slug.as_str()).unwrap_or_default(),
+            red: row.red.as_ref().is_some_and(|what| !what.is_null()),
         });
         let parents = (view.snap.sessions.iter())
             .filter_map(|row| Some((row.handle.as_str(), row.parent.as_deref()?)));
@@ -294,6 +298,7 @@ mod tests {
             parent: None,
             status: status.into(),
             instruction: Some(false),
+            red: None,
             updated: Some(updated),
             held: false,
         }

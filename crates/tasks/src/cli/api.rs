@@ -17,13 +17,14 @@ use std::io::{BufRead, Read, Write};
 /// time a method takes or does something an earlier build refused or did otherwise (1: `landed`'s
 /// `from`, before which a build declares none; 2: `say`'s `key`; 3: its `adopt`; 4: `hold`, a
 /// landing's move to blocked that keeps the task's slot; 5: board-authored `notify`, whose notices
-/// take literal session recipients). The live launcher (`tools/tasks.sh`) serves an earlier main
-/// build only while this matches main's, so no caller reaches a build without what it relies on.
+/// take literal session recipients; 6: `create`'s `red`, the mark of a task filed for a red, which
+/// takes no slot). The live launcher (`tools/tasks.sh`) serves an earlier main build only while this
+/// matches main's, so no caller reaches a build without what it relies on.
 #[expect(
     dead_code,
     reason = "tools/tasks.sh reads it from the committed source; no Rust code compares builds"
 )]
-pub const VERSION: i64 = 5;
+pub const VERSION: i64 = 6;
 
 /// Why a call has no result.
 enum Fail {

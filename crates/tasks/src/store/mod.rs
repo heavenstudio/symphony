@@ -142,6 +142,11 @@ impl Task {
             .map(|r| r.handle.as_str())
             .collect()
     }
+
+    /// Whether it was filed for a red ([`crate::red`]).
+    pub fn red(&self) -> bool {
+        crate::red::marked(&self.fields)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
