@@ -1,0 +1,219 @@
+//! Addressed work follows its recipient's role lifetime and subsequent activity.
+
+use super::*;
+
+#[test]
+fn leaving_after_answering_does_not_hide_a_replacements_reply() {
+    let c = Case::new();
+    c.task("sim/a", "review");
+    let a = c.f.session("reviewer");
+    let b = c.f.session("reviewer");
+    c.f.store.take_role("sim/a", &a, "reviewer").unwrap();
+    c.f.store
+        .record_launch(&symphony_board::NewLaunch::new("sim/a", &a, "reviewer"))
+        .unwrap();
+    c.f.store.release("sim/a", &a, Some("reviewer")).unwrap();
+    c.f.store.take_role("sim/a", &b, "reviewer").unwrap();
+    c.f.store
+        .record_launch(&symphony_board::NewLaunch::new("sim/a", &b, "reviewer"))
+        .unwrap();
+    c.f.store
+        .say("sim/a", "owner", "review", Some("@reviewer"))
+        .unwrap();
+    c.f.store
+        .say("sim/a", &b, "review completed", None)
+        .unwrap();
+    c.f.store.leave(&b).unwrap();
+    c.f.advance(31.0 * 60.0);
+    assert_eq!(c.digest().count("unanswered"), 0);
+}
+
+#[test]
+fn unanswered_posts_observe_age_role_health_answers_and_recovery_commands() {
+    for status in ["in_progress", "blocked", "review"] {
+        let c = Case::new();
+        c.task("sim/a", "in_progress");
+        let executor = c.executor("sim/a");
+        if status != "in_progress" {
+            c.f.store.move_to("sim/a", status, &executor).unwrap();
+        }
+        for to in ["@executor", executor.as_str()] {
+            let post =
+                c.f.store
+                    .say("sim/a", "owner", "reconcile", Some(to))
+                    .unwrap();
+            c.f.advance(29.0 * 60.0);
+            assert_eq!(c.digest().count("unanswered"), 0);
+            c.f.advance(2.0 * 60.0);
+            let d = c.digest();
+            assert_eq!(slugs(&d, "unanswered"), ["sim/a"]);
+            assert!(
+                d.lines()
+                    .iter()
+                    .any(|line| line.contains(&format!("post #{}", post.id))
+                        && line.contains("just tasks launch sim/a --role executor"))
+            );
+            assert_eq!(
+                c.verifying(std::slice::from_ref(&executor))
+                    .count("unanswered"),
+                0
+            );
+            c.f.store
+                .say("sim/a", &executor, "reconciled", None)
+                .unwrap();
+            assert_eq!(c.digest().count("unanswered"), 0);
+        }
+    }
+}
+
+#[test]
+fn a_closed_reviewer_and_a_left_recorded_executor_are_detected() {
+    let c = Case::new();
+    c.task("sim/a", "review");
+    let executor = c.executor("sim/a");
+    let reviewer = c.f.session("reviewer");
+    c.f.store.take_role("sim/a", &reviewer, "reviewer").unwrap();
+    for (handle, role, conversation) in [
+        (&executor, "executor", "conversation"),
+        (&reviewer, "reviewer", "codex:thread"),
+    ] {
+        c.f.store
+            .record_launch(&symphony_board::NewLaunch {
+                claude_session: conversation.into(),
+                ..symphony_board::NewLaunch::new("sim/a", handle, role)
+            })
+            .unwrap();
+        c.f.store
+            .close_task_session("sim/a", handle, "closed", "restore")
+            .unwrap();
+        c.f.store
+            .say("sim/a", "owner", "continue", Some(&format!("@{role}")))
+            .unwrap();
+    }
+    c.f.store.leave(&executor).unwrap();
+    c.f.advance(31.0 * 60.0);
+    c.f.store.touch(&reviewer).unwrap();
+    let d = c.digest();
+    assert_eq!(d.count("unanswered"), 1);
+    let lines = d.lines().join("\n");
+    for handle in [&executor, &reviewer] {
+        assert!(
+            lines.contains(&format!("just tasks restore sim/a {handle}")),
+            "{lines}"
+        );
+    }
+    c.f.store.revive(&executor).unwrap();
+    c.f.store.say("sim/a", &executor, "answered", None).unwrap();
+    c.f.store.say("sim/a", &reviewer, "answered", None).unwrap();
+    assert_eq!(c.digest().count("unanswered"), 0);
+}
+
+#[test]
+fn a_replacement_does_not_inherit_a_predecessors_role_addressed_post() {
+    for role in ["executor", "reviewer"] {
+        for elapsed in [0.0, 1.0] {
+            let c = Case::new();
+            c.task(
+                "sim/a",
+                if role == "executor" {
+                    "in_progress"
+                } else {
+                    "review"
+                },
+            );
+            let old = if role == "executor" {
+                c.executor("sim/a")
+            } else {
+                let h = c.f.session("reviewer");
+                c.f.store.take_role("sim/a", &h, role).unwrap();
+                h
+            };
+            let previous =
+                c.f.store
+                    .say("sim/a", "owner", "old request", Some(&format!("@{role}")))
+                    .unwrap();
+            c.f.advance(elapsed);
+            c.f.store.release("sim/a", &old, Some(role)).unwrap();
+            let replacement = c.f.session(if role == "executor" {
+                "worker"
+            } else {
+                "reviewer"
+            });
+            if role == "executor" {
+                c.f.store.claim("sim/a", &replacement).unwrap();
+            } else {
+                c.f.store.take_role("sim/a", &replacement, role).unwrap();
+            }
+            c.f.advance(31.0 * 60.0);
+            assert_eq!(c.digest().count("unanswered"), 0, "{role}, {elapsed}");
+            let next =
+                c.f.store
+                    .say("sim/a", "owner", "new request", Some(&format!("@{role}")))
+                    .unwrap();
+            c.f.advance(31.0 * 60.0);
+            let lines = c.digest().lines().join("\n");
+            assert!(lines.contains(&format!("post #{} —", next.id)), "{lines}");
+            assert!(
+                !lines.contains(&format!("post #{} —", previous.id)),
+                "{lines}"
+            );
+        }
+    }
+}
+
+#[test]
+fn the_addressed_agents_status_move_answers_its_post() {
+    let c = Case::new();
+    c.task("sim/a", "in_progress");
+    let executor = c.executor("sim/a");
+    c.f.store
+        .say("sim/a", "owner", "continue", Some("@executor"))
+        .unwrap();
+    c.f.advance(31.0 * 60.0);
+    assert_eq!(c.digest().count("unanswered"), 1);
+    c.f.store.move_to("sim/a", "blocked", &executor).unwrap();
+    c.f.advance(31.0 * 60.0);
+    assert_eq!(c.digest().count("unanswered"), 0);
+}
+
+#[test]
+fn unanswered_digest_rows_follow_the_tasks_orchestrator() {
+    for cap in [None, Some(1)] {
+        let c = Case::new();
+        c.task("sim/a", "in_progress");
+        let worker = c.executor("sim/a");
+        let owner = c.f.session("orchestrator");
+        let other = c.f.session("orchestrator");
+        c.f.store
+            .take_role("sim/a", &owner, "orchestrator")
+            .unwrap();
+        let post =
+            c.f.store
+                .say("sim/a", "owner", "continue", Some(&worker))
+                .unwrap();
+        c.f.advance(31.0 * 60.0);
+        // Keep task ownership live while the executor's heartbeat expires.
+        c.f.store.touch(&owner).unwrap();
+        let store = c.f.other().capping(cap);
+        let digest =
+            || symphony_board::cli::pull::digest(&store, &[], None, c.f.now(), &[]).unwrap();
+        let board = store.board().unwrap();
+        let heard = digest().only_for(&board, &owner);
+        assert_eq!(heard.count("unanswered"), 1);
+        assert!(
+            heard
+                .event_lines()
+                .join("\n")
+                .contains(&format!("post #{}", post.id))
+        );
+        assert_eq!(heard.cap, cap);
+        assert_eq!(heard.slots, cap.map(|_| 1));
+        assert_eq!(heard.lines()[0].contains("slots=1/1"), cap.is_some());
+        let withheld = digest().only_for(&board, &other);
+        assert_eq!(withheld.count("unanswered"), 0);
+        assert!(withheld.entries().iter().all(|e| e.0 != "unanswered"));
+        assert!(!withheld.event_lines().join("\n").contains("unanswered"));
+        assert_eq!(withheld.slots, cap.map(|_| 0));
+        assert_eq!(withheld.lines()[0].contains("slots=0/1"), cap.is_some());
+    }
+}

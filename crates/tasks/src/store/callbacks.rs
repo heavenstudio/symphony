@@ -531,7 +531,7 @@ RETURN NONE;");
             .collect();
         self.retrying(|| self.transact::<Value>(
             &format!("{ACT}\nLET $pull = (SELECT pull_entries, pull_withheld, sequence FROM callback_event WHERE handle = $actor AND key IN $keys AND pull_entries != NONE ORDER BY sequence DESC LIMIT 1)[0];
-                IF $pull != NONE {{ UPDATE type::record('callback_state', $actor) SET pull_entries = $pull.pull_entries, pull_withheld = $pull.pull_withheld ?? [], pull_awaiting = NONE, pull_queued = NONE RETURN NONE; }};
+                IF $pull != NONE {{ UPDATE type::record('callback_state', $actor) SET pull_unanswered = array::union(pull_unanswered ?? [], $pull.pull_entries.filter(|$entry| $entry[0] = 'unanswered' AND $entry NOT IN ($pull.pull_withheld ?? []))), pull_entries = $pull.pull_entries, pull_withheld = $pull.pull_withheld ?? [], pull_awaiting = NONE, pull_queued = NONE RETURN NONE; }};
                 FOR $key IN $keys {{ UPDATE type::record('callback_event', [$actor, $key]) SET delivered = true RETURN NONE; }};
                 FOR $key IN $chats {{ UPDATE type::record('chat_event', $key) SET delivered = true, text = '' RETURN NONE; }};
                 UPDATE callback_event SET text = '' WHERE handle = $actor AND delivered = true AND string::starts_with(key, 'chat-') RETURN NONE; RETURN NONE;"),
@@ -1076,7 +1076,11 @@ RETURN NONE;");
             let entries = digest.entries();
             let digest = digest.only_for(board, handle);
             let heard = digest.entries();
-            let said: Vec<String> = digest.event_lines().iter().map(|l| event_line(l)).collect();
+            let said: Vec<String> = digest
+                .event_lines_since(&state.acknowledged().unwrap_or_default())
+                .iter()
+                .map(|l| event_line(l))
+                .collect();
             pull_text = said.join("\n");
             account = Some(match legacy_upgrade {
                 true => Account::upgrade(&state, &entries, &heard),
@@ -1418,7 +1422,7 @@ RETURN NONE;");
                     capacity_limited = $capacity OR (capacity_limited ?? false) RETURN NONE;
              };
              IF $success {
-                IF $pull != NONE { UPDATE type::record('callback_state', $handle) SET pull_entries = $pull.pull_entries, pull_withheld = $pull.pull_withheld ?? [], pull_awaiting = NONE, pull_queued = NONE RETURN NONE; };
+                IF $pull != NONE { UPDATE type::record('callback_state', $handle) SET pull_unanswered = array::union(pull_unanswered ?? [], $pull.pull_entries.filter(|$entry| $entry[0] = 'unanswered' AND $entry NOT IN ($pull.pull_withheld ?? []))), pull_entries = $pull.pull_entries, pull_withheld = $pull.pull_withheld ?? [], pull_awaiting = NONE, pull_queued = NONE RETURN NONE; };
                 FOR $message IN $messages { UPSERT type::record('delivery', [$message, $handle]) SET message = $message, handle = $handle, acked = $now RETURN NONE; };
                 FOR $key IN $chat { UPDATE type::record('chat_event', $key) SET delivered = true, text = '' RETURN NONE; };
                 UPDATE callback_event SET text = '' WHERE handle = $handle AND delivered = true AND string::starts_with(key, 'chat-') RETURN NONE;
@@ -1703,106 +1707,7 @@ fn probe(callback: &Callback) -> Result<(), DeliveryError> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn plain_orchestrator_tie_break_does_not_depend_on_callback_row_order() {
-        let callback = |handle: &str| {
-            let mut row: Callback = serde_json::from_value(json!({
-                "handle":handle, "address":"codex:abcdef01", "host":"test",
-                "session":crate::rows::SessionRow::default()
-            }))
-            .unwrap();
-            row.live_orchestrator = true;
-            row
-        };
-        for rows in [
-            vec![callback("zinc-otter"), callback("amber-heron")],
-            vec![callback("amber-heron"), callback("zinc-otter")],
-        ] {
-            assert_eq!(recipient(&rows), Some("amber-heron"));
-        }
-    }
-
-    #[test]
-    fn capacity_splits_between_events_and_never_loses_or_reorders_them() {
-        let mut attempts = Vec::new();
-        let mut delivered = Vec::new();
-        deliver_batches(
-            &[1, 2, 3, 4, 5],
-            Instant::now() + Duration::from_secs(1),
-            &mut |batch| {
-                attempts.push(batch.to_vec());
-                if batch.len() > 2 {
-                    Err(DeliveryError::capacity("full"))
-                } else {
-                    Ok(())
-                }
-            },
-            &mut |batch, result| {
-                assert!(result.is_ok());
-                delivered.extend_from_slice(batch);
-                Ok(())
-            },
-        )
-        .unwrap();
-        assert_eq!(
-            attempts,
-            [
-                vec![1, 2, 3, 4, 5],
-                vec![1, 2],
-                vec![3, 4, 5],
-                vec![3],
-                vec![4, 5]
-            ]
-        );
-        assert_eq!(delivered, [1, 2, 3, 4, 5]);
-    }
-
-    #[test]
-    fn an_oversized_event_is_retained_but_does_not_block_smaller_events() {
-        let mut recorded = Vec::new();
-        deliver_batches(
-            &[1, 2],
-            Instant::now() + Duration::from_secs(1),
-            &mut |batch| {
-                if batch.contains(&1) {
-                    Err(DeliveryError::capacity("large"))
-                } else {
-                    Ok(())
-                }
-            },
-            &mut |batch, result| {
-                recorded.push((batch.to_vec(), result.is_ok()));
-                Ok(())
-            },
-        )
-        .unwrap();
-        assert_eq!(recorded, [(vec![1], false), (vec![2], true)]);
-    }
-
-    #[test]
-    fn a_transport_failure_retains_the_whole_batch_without_splitting_or_retrying_it() {
-        let mut attempts = 0;
-        let mut recorded = Vec::new();
-        deliver_batches(
-            &[1, 2, 3],
-            Instant::now() + Duration::from_secs(1),
-            &mut |_| {
-                attempts += 1;
-                Err(DeliveryError::retry("short write"))
-            },
-            &mut |batch, result| {
-                recorded.push((batch.to_vec(), result.is_ok()));
-                Ok(())
-            },
-        )
-        .unwrap();
-        assert_eq!(attempts, 1);
-        assert_eq!(recorded, [(vec![1, 2, 3], false)]);
-    }
-}
+mod tests;
 
 #[cfg(test)]
 mod queue_tests;

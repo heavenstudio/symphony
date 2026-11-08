@@ -9,6 +9,7 @@
 
 mod events;
 mod panes;
+mod pull_updates;
 mod seen;
 mod watch;
 

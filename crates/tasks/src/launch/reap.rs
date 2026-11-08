@@ -27,6 +27,8 @@
 //!   session that left) holds an executor role on an `in_progress`, `blocked` or `review` task or a
 //!   reviewer role on a task in `review`: an executor in review waits on its reviewers, whose
 //!   changes must reach it, and [`super::finish`] closes it once the task is done;
+//! - neither it nor its descendants has an unanswered addressed post, and no reviewer is waiting
+//!   for re-review after changes (a verdict or a landing changes message);
 //! - nothing runs under its agent but what is known to be harmless ([`procs::reap_busy_reason`]):
 //!   MCP helpers (Codex's REPL helper by its configured path), caffeinate, a board command or
 //!   monitor (`just tasks…`, the `tasks` binary).
@@ -48,6 +50,9 @@
 //! status, or work under it), that is on screen then, or that a call cannot say of, stays, its
 //! session reopened and its idle wait started again. A sweep interrupted after
 //! recording a close reuses that record when it retries closing the same terminal and conversation.
+
+mod work;
+use work::live_work;
 
 use super::cleanup::{restore_line, stored_session};
 use super::hc::{self, Hc, Object, text_of};
@@ -347,42 +352,6 @@ fn read_seen(state: &Path, now: f64) -> HashMap<String, f64> {
         seen.insert(key.clone(), since);
     }
     seen
-}
-
-/// Handles that hold live work, themselves or through a session under them (a subagent): an
-/// executor on a task `in_progress`, `blocked` or in `review`, a reviewer on one in `review`. A
-/// departed middle session still links its live descendants to their ancestors; leaving releases
-/// its own roles.
-fn live_work(store: &Store) -> Result<HashSet<String>, Error> {
-    let mut own: Vec<String> = Vec::new();
-    for task in store.tasks(None)? {
-        for role in &task.roles {
-            let live = match role.role.as_str() {
-                "executor" => matches!(task.status.as_str(), "in_progress" | "blocked" | "review"),
-                "reviewer" => task.status == "review",
-                _ => false,
-            };
-            if live {
-                own.push(role.handle.clone());
-            }
-        }
-    }
-    let parent: HashMap<String, String> = store
-        .sessions()?
-        .into_iter()
-        .filter_map(|s| Some((s.row.handle, s.row.parent?)))
-        .collect();
-    let mut held = HashSet::new();
-    for handle in own {
-        let mut seen = HashSet::new();
-        let mut at = Some(handle);
-        while let Some(here) = at.filter(|h| seen.insert(h.clone())) {
-            // the holder and every session above it
-            held.insert(here.clone());
-            at = parent.get(&here).cloned();
-        }
-    }
-    Ok(held)
 }
 
 /// Its handle: claude's `-n` (or `--name`), else its `sf.handle` label, else its terminal's name.
