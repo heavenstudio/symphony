@@ -35,16 +35,27 @@ mod tests {
 
     #[test]
     fn only_the_boards_own_mark_marks_a_task_red() {
-        assert!(marked(&fields(FIELDS, MARK, json!("main"))));
-        assert!(!marked(&BTreeMap::new()), "no fields");
-        assert!(
-            !marked(&fields(FIELDS, MARK, Value::Null)),
-            "a cleared mark"
-        );
-        assert!(
-            !marked(&fields("plugin", MARK, json!("main"))),
-            "a plugin's field of the same name"
-        );
-        assert!(!marked(&fields(FIELDS, "other", json!("main"))));
+        let cases = [
+            (
+                fields(FIELDS, MARK, json!("main")),
+                true,
+                "the board's mark",
+            ),
+            (BTreeMap::new(), false, "no fields"),
+            (fields(FIELDS, MARK, Value::Null), false, "a cleared mark"),
+            (
+                fields("plugin", MARK, json!("main")),
+                false,
+                "a plugin's field of the same name",
+            ),
+            (
+                fields(FIELDS, "other", json!("main")),
+                false,
+                "another board field",
+            ),
+        ];
+        for (fields, red, why) in cases {
+            assert_eq!(marked(&fields), red, "{why}: {fields:?}");
+        }
     }
 }
