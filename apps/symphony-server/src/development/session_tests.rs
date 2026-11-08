@@ -45,20 +45,19 @@ fn a_development_child_and_its_listen_probe_run_without_the_starters_session() {
         Scratch(std::env::temp_dir().join(format!("sf-dev-session-{}", std::process::id())));
     std::fs::create_dir_all(&scratch.0).unwrap();
     // The `lsof` first on the PATH: it says the child listens once the child has said what it
-    // holds, and what it holds itself each time it is asked.
+    // holds, and what it holds itself each time it is asked. It is the machine's copy of the
+    // fixture script, already run, so the child's startup deadline covers no first exec of a new
+    // file.
     let lsof = scratch.0.join("lsof");
-    std::fs::write(
+    crate::fixture_script::write(
         &lsof,
-        format!(
+        &format!(
             "#!/bin/sh\n{}\ntest -s \"${DIR}/child.held\" || exit 1\nprintf 'p%s\\n' \"$5\"\n",
             held("lsof")
         ),
-    )
-    .unwrap();
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&lsof, std::fs::Permissions::from_mode(0o755)).unwrap();
-    }
+        false,
+    );
+    crate::testing::assert_primed(&lsof);
     // The front door, as one an agent starts from its hc terminal.
     let started = [
         ("TASKS_SESSION", "fixture-session"),

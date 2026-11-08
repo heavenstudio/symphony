@@ -626,7 +626,6 @@ mod tests {
     use crate::testing::{Tree, git, repository};
     use sha2::{Digest, Sha256};
     use std::collections::BTreeSet;
-    use std::os::unix::fs::PermissionsExt;
     use std::path::Path;
     use std::sync::Arc;
     use std::time::{Duration, Instant};
@@ -650,16 +649,16 @@ mod tests {
             "main/apps/symphony-host/src/bin/symphony-server.rs",
             "fn main() {}\n",
         );
-        // The owned build command records its selected package and fails immediately.
-        tree.write(
-            "main/tools/rs-bin.sh",
+        // The owned build command records its selected package and fails immediately. It is the
+        // machine's copy of the fixture script, already run, so the bound on each build covers no
+        // first exec of a new file.
+        let build = root.join("tools/rs-bin.sh");
+        crate::fixture_script::write(
+            &build,
             "#!/bin/sh\nprintf '%s\\n' \"$*\" > \"${0%/tools/rs-bin.sh}/build-args\"\nexit 1\n",
+            false,
         );
-        std::fs::set_permissions(
-            root.join("tools/rs-bin.sh"),
-            std::fs::Permissions::from_mode(0o755),
-        )
-        .unwrap();
+        crate::testing::assert_primed(&build);
         git(&root, &["add", "."]);
         git(&root, &["commit", "-qm", "Reload sources"]);
         // The installed client is current, so only the server build runs.
