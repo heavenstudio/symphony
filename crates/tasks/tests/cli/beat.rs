@@ -503,6 +503,13 @@ mod beats {
         (main, tree)
     }
 
+    /// Where `h`'s subagent binding says it works: (worktree, branch, since when).
+    fn placed(b: &Clocked, h: &str) -> (String, String, f64) {
+        let kept = b.board().agent_bindings().unwrap().remove(h).unwrap();
+        assert!(kept.in_process);
+        (kept.worktree, kept.branch, kept.placed_at)
+    }
+
     #[test]
     fn a_subagents_board_command_records_the_checkout_it_runs_in_on_its_binding() {
         let b = Clocked::new();
@@ -511,21 +518,48 @@ mod beats {
         let mut event = bash(&inbox(&h)).agent("agent-1").0;
         event["cwd"] = json!(tree.join("crates/tasks").to_str().unwrap());
         b.beat(&event);
-        let kept = b.board().agent_bindings().unwrap().remove(&h).unwrap();
-        assert_eq!(
-            (
-                kept.in_process,
-                kept.worktree.as_str(),
-                kept.branch.as_str()
-            ),
-            (true, tree.to_str().unwrap(), "tools/x")
-        );
-        // A call that is no board command moves nothing, wherever it runs.
+        let top = tree.to_str().unwrap().to_string();
+        assert_eq!(placed(&b, &h), (top.clone(), "tools/x".into(), NOW));
+        // A call in no checkout moves nothing; one in the same checkout keeps when it came.
+        b.pass(30.0);
         let mut elsewhere = tool("Read", "agent-1");
         elsewhere["cwd"] = json!("/");
         b.beat(&elsewhere);
-        let kept = b.board().agent_bindings().unwrap().remove(&h).unwrap();
-        assert_eq!(kept.worktree, tree.to_str().unwrap());
+        let mut again = tool("Read", "agent-1");
+        again["cwd"] = json!(tree.to_str().unwrap());
+        b.beat(&again);
+        assert_eq!(placed(&b, &h), (top, "tools/x".into(), NOW));
+    }
+
+    /// A subagent bound in one checkout that starts its background build in another is looked for
+    /// there: the build's own call records it, whatever the command (the adversarial review's probe).
+    #[test]
+    fn a_later_tool_call_of_a_bound_subagent_moves_its_checkout_and_when_it_came() {
+        let b = Clocked::new();
+        let (main, tree) = checkouts("beat-moved");
+        let h = b.register("worker");
+        let mut bind = bash(&inbox(&h)).agent("agent-1").0;
+        bind["cwd"] = json!(main.to_str().unwrap());
+        b.beat(&bind);
+        assert_eq!(placed(&b, &h).0, main.to_str().unwrap());
+        b.pass(30.0);
+        let mut build = bash("tools/rs-bin.sh sf-slots cargo build")
+            .agent("agent-1")
+            .0;
+        build["tool_input"]["run_in_background"] = json!(true);
+        build["cwd"] = json!(tree.join("crates/tasks").to_str().unwrap());
+        b.beat(&build);
+        let moved = (tree.to_str().unwrap().into(), "tools/x".into(), NOW + 30.0);
+        assert_eq!(placed(&b, &h), moved);
+        // Any tool's call says it too: a Read back in the main checkout moves it back.
+        b.pass(30.0);
+        let mut read = tool("Read", "agent-1");
+        read["cwd"] = json!(main.to_str().unwrap());
+        b.beat(&read);
+        assert_eq!(
+            (placed(&b, &h).0, placed(&b, &h).2),
+            (main.to_str().unwrap().into(), NOW + 60.0)
+        );
     }
 
     #[test]
@@ -536,9 +570,14 @@ mod beats {
         let mut event = bash(&inbox(&h)).session("s-9").0;
         event["cwd"] = json!(main.to_str().unwrap());
         b.beat(&event);
+        let mut later = tool("Read", "s-9");
+        later.as_object_mut().unwrap().remove("agent_id");
+        later["session_id"] = json!("s-9");
+        later["cwd"] = json!(main.to_str().unwrap());
+        b.beat(&later);
         let kept = b.board().agent_bindings().unwrap().remove(&h).unwrap();
         assert_eq!((kept.agent.as_str(), kept.in_process), ("s-9", false));
-        assert_eq!(kept.worktree, "");
+        assert_eq!((kept.worktree.as_str(), kept.placed_at), ("", 0.0));
     }
 
     #[test]

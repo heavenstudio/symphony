@@ -143,6 +143,89 @@ pub fn pid_alive(pid: i64) -> bool {
     signalled || std::io::Error::last_os_error().raw_os_error() == Some(EPERM)
 }
 
+/// When each of `pids` started, in seconds since the epoch as the board's clock counts them, by the
+/// kernel's own stamp; none for one that has ended, is a zombie, or cannot be read.
+pub fn process_starts(pids: &[i64]) -> Vec<Option<f64>> {
+    #[cfg(target_os = "macos")]
+    let started = |pid: i64| {
+        let pid = c_int::try_from(pid).ok().filter(|pid| *pid > 0)?;
+        let (seconds, micros) = bsd_start(pid).ok()??;
+        Some(f64::from(u32::try_from(seconds).ok()?) + f64::from(u32::try_from(micros).ok()?) / 1e6)
+    };
+    #[cfg(target_os = "linux")]
+    let started = {
+        // A start in /proc/PID/stat is in clock ticks after the boot /proc/stat names, in seconds.
+        let boot = std::fs::read_to_string("/proc/stat").ok().and_then(|stat| {
+            let line = stat.lines().find_map(|line| line.strip_prefix("btime "))?;
+            line.trim().parse::<f64>().ok()
+        });
+        // SAFETY: sysconf reads a configuration value and touches no memory of ours.
+        let ticks = u32::try_from(unsafe { sysconf(LINUX_CLOCK_TICKS) })
+            .ok()
+            .filter(|t| *t > 0);
+        move |pid: i64| {
+            let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
+            let (_, fields) = stat.rsplit_once(')')?;
+            let fields: Vec<&str> = fields.split_whitespace().collect();
+            if pid <= 0 || matches!(fields.first(), Some(&"Z" | &"X" | &"x")) {
+                return None;
+            }
+            let after_boot = fields.get(19)?.parse::<f64>().ok()?;
+            Some(boot? + after_boot / f64::from(ticks?))
+        }
+    };
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    let started = |_: i64| None;
+    pids.iter().map(|pid| started(*pid)).collect()
+}
+
+/// `_SC_CLK_TCK`, the clock ticks a second, as glibc and musl number it.
+#[cfg(target_os = "linux")]
+const LINUX_CLOCK_TICKS: c_int = 2;
+
+#[cfg(target_os = "linux")]
+unsafe extern "C" {
+    fn sysconf(name: c_int) -> c_long;
+}
+
+/// When process `pid` started, as libproc's `proc_bsdinfo` stamps it: its seconds and microseconds
+/// since the epoch; none for a pid that names no process (or another's, reused) or a zombie, and an
+/// error when libproc cannot be read.
+#[cfg(target_os = "macos")]
+pub(crate) fn bsd_start(pid: c_int) -> std::io::Result<Option<(u64, u64)>> {
+    // Layout of proc_bsdinfo from the SDK's sys/proc_info.h (136 bytes).
+    #[repr(C)]
+    #[derive(Default)]
+    struct BsdInfo {
+        prefix: [u32; 12],
+        comm: [u8; 16],
+        name: [u8; 32],
+        details: [u32; 6],
+        seconds: u64,
+        micros: u64,
+    }
+    #[link(name = "proc")]
+    unsafe extern "C" {
+        fn proc_pidinfo(
+            pid: c_int,
+            flavor: c_int,
+            arg: u64,
+            buffer: *mut std::ffi::c_void,
+            size: c_int,
+        ) -> c_int;
+    }
+    let mut info = BsdInfo::default();
+    let size = c_int::try_from(std::mem::size_of::<BsdInfo>()).expect("proc_bsdinfo fits int");
+    // SAFETY: libproc receives a writable proc_bsdinfo buffer of exactly the requested size.
+    let read = unsafe { proc_pidinfo(pid, 3, 0, (&raw mut info).cast(), size) };
+    if read != size {
+        return Err(std::io::Error::last_os_error());
+    }
+    // pbi_pid is the fourth word and pbi_status the second; a status of 5 is a zombie (SZOMB).
+    let gone = pid <= 0 || info.prefix[3] != u32::try_from(pid).unwrap_or(0) || info.prefix[1] == 5;
+    Ok((!gone).then_some((info.seconds, info.micros)))
+}
+
 /// `seconds` as `time.strftime("%Y-%m-%d %H:%M", time.localtime(seconds))` writes it: this machine's
 /// time zone, the seconds floored.
 pub fn local_minute(seconds: f64) -> String {

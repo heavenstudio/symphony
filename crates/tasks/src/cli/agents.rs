@@ -35,11 +35,10 @@ use crate::health::{FINISHED, Health};
 use crate::pyjson::Py;
 use crate::rows::TaskSessionRow;
 use crate::{Error, Session, Store, Task};
-pub use place::{PROCESS, PROCESS_SCAN_SECONDS};
+pub use place::{PROCESS, PROCESS_SCAN_SECONDS, Process};
 use place::{resolve, waited_on};
 use std::cell::{OnceCell, RefCell};
 use std::collections::{BTreeMap, HashMap, HashSet};
-use std::path::PathBuf;
 
 /// The longest last message shown, in characters, before it is cut.
 pub const MESSAGE_CHARS: usize = 200;
@@ -91,9 +90,9 @@ pub struct Probes<'a> {
     pub panes: Probe<'a, Vec<Pane>>,
     pub runs: Probe<'a, Vec<Run>>,
     pub branch_of: BranchOf<'a>,
-    /// The working directory of every live process the machine lists, asked only for an in-process
-    /// agent gone quiet in a worktree of its own.
-    pub cwds: Probe<'a, Vec<PathBuf>>,
+    /// Every live process the machine lists, where it works and when it started, asked only for an
+    /// in-process agent gone quiet in a worktree of its own.
+    pub processes: Probe<'a, Vec<Process>>,
 }
 
 /// What a `running_test` agent runs.
@@ -380,8 +379,9 @@ struct Row<'a> {
     pane: Option<&'a Pane>,
     worktree: String,
     branch: String,
-    /// An in-process agent's: the worktree its binding recorded, which `worktree` is.
-    placed: bool,
+    /// An in-process agent's: since when it has been in the worktree its binding recorded, which
+    /// `worktree` is.
+    placed: Option<f64>,
 }
 
 /// The agents API's answer as of `now`: every session's agent, bar those that left (and, unless
@@ -466,7 +466,9 @@ pub fn describe_board(
                 pane,
                 worktree,
                 branch,
-                placed: record.is_none() && pane.is_none() && placed.is_some(),
+                placed: placed
+                    .filter(|_| record.is_none() && pane.is_none())
+                    .map(|b| b.placed_at),
             }
         })
         .collect();
@@ -480,8 +482,8 @@ pub fn describe_board(
         }
     }
     // The machine's processes are listed at most once a view, and only for a quiet in-process agent.
-    let scanned: OnceCell<Answer<Vec<PathBuf>>> = OnceCell::new();
-    let scan = || scanned.get_or_init(|| (probes.cwds)()).clone();
+    let scanned: OnceCell<Answer<Vec<Process>>> = OnceCell::new();
+    let scan = || scanned.get_or_init(|| (probes.processes)()).clone();
     let mut agents = Vec::new();
     for row in rows {
         let s = row.session;
@@ -519,9 +521,12 @@ pub fn describe_board(
         let mut health = s.health;
         let quiet = matches!(health, Health::Stale | Health::Lost | Health::Unknown);
         // An in-process agent makes no tool call while it waits on what it started in the
-        // background: a process still working in its own worktree is that wait.
-        let waiting = match run {
-            None if quiet && row.placed => waited_on(&real(&row.worktree), &scan),
+        // background: a process it started, still working in its own worktree, is that wait.
+        let waiting = match (run, row.placed) {
+            (None, Some(since)) if quiet => {
+                let stay = (since, s.row.last_tool.unwrap_or(since));
+                waited_on(&real(&row.worktree), stay, &scan)
+            }
             _ => None,
         };
         let (state, detail) = if let Some(run) = run {

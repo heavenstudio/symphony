@@ -3,7 +3,7 @@
 //! working directory of every process, and whether a task's branch already landed on main.
 
 use super::Env;
-use super::agents::{Answer, Pane, Probes, Run};
+use super::agents::{Answer, Pane, Probes, Process, Run};
 use crate::git;
 use crate::launch::hc::{Binary, Hc};
 use crate::sys::{self, Command};
@@ -49,16 +49,23 @@ fn machine_with_common(env: &Env, common: Result<PathBuf, String>) -> Probes<'_>
             branches.borrow_mut().insert(cwd.into(), found.clone());
             Ok(found)
         }),
-        cwds: Box::new(process_cwds),
+        processes: Box::new(processes),
     }
 }
 
-/// The working directory of every process `lsof` lists, as the worktree sweep reads them
-/// ([`process_cwd::process_cwds_with`], a sessionless `lsof`); a listing that cannot be read, or
-/// lists nothing, cannot say.
-pub fn process_cwds() -> Answer<Vec<PathBuf>> {
-    process_cwd::process_cwds_with(sys::command("lsof"))
-        .ok_or_else(|| "lsof cannot list the processes' working directories".to_string())
+/// Every process `lsof` lists, where it works as the worktree sweep reads it (a sessionless `lsof`,
+/// [`process_cwd::pid_cwds_with`]) and when it started as the kernel stamped it
+/// ([`sys::process_starts`]); a listing that cannot be read, or lists nothing, cannot say.
+pub fn processes() -> Answer<Vec<Process>> {
+    let listed = process_cwd::pid_cwds_with(sys::command("lsof"))
+        .ok_or_else(|| "lsof cannot list the processes' working directories".to_string())?;
+    let pids: Vec<i64> = listed.iter().map(|(pid, _)| *pid).collect();
+    let starts = sys::process_starts(&pids);
+    Ok(listed
+        .into_iter()
+        .zip(starts)
+        .map(|((_, cwd), started)| Process { cwd, started })
+        .collect())
 }
 
 /// The main checkout of the repository `cwd` is in, whichever worktree that is: the common dir's

@@ -285,14 +285,16 @@ an orchestrator never keep a child it registered alive. The hook looks at the bo
 only for a board command or a key already bound. A foreground Bash call
 reads live for as long as its timeout allows (at most 10 minutes), so a long
 `verify-full` does not look like silence; of calls running side by side, the
-one that may run longest keeps the mark, and only its own end clears it. A
-subagent's board command also records, on its binding (never its session row,
-which keeps where its orchestrator ran `register`), the checkout that call ran
-in: the top folder above the hook's `cwd` and the branch checked out there,
-read from the `.git` files. A subagent waiting on a background command of its
-own (a `cargo test`, a build) makes no calls; while a live process works in
-that recorded linked worktree it reads `running_test` in the agents API, and
-is neither stale, lost nor orphaning its task ([The agents API](#the-agents-api)).
+one that may run longest keeps the mark, and only its own end clears it. Each
+tool call of a bound subagent also records, on its binding (never its session
+row, which keeps where its orchestrator ran `register`), the checkout that call
+ran in: the top folder above the hook's `cwd` and the branch checked out there,
+read from the `.git` files, and, when that checkout changed, the time it came
+there; a call with no `cwd`, or one outside any checkout, moves neither. A
+subagent waiting on a background command of its own (a `cargo test`, a build)
+makes no calls; while a live process it started works in that recorded linked
+worktree it reads `running_test` in the agents API, and is neither stale, lost
+nor orphaning its task ([The agents API](#the-agents-api)).
 A subagent that stops makes no more calls, leaves nothing working there, and
 ages to stale and lost as before.
 
@@ -355,7 +357,7 @@ The rules a port must copy, in this order:
   its terminal idle). `--all` lists everything and changes nothing else.
 - **worktree and branch.** From the agent's task session (`just tasks launch` recorded it; the one for its primary task,
   else its latest), else from its terminal's working directory (and the branch checked out there), else, for a
-  subagent, the checkout its binding recorded at its last board command, else, only with none of these, the directory
+  subagent, the checkout its binding recorded at its last tool call, else, only with none of these, the directory
   `register` ran in: an agent that was never launched and has no terminal.
 - **Which terminal.** The task session's terminal if hc still lists it live, else the terminal whose program runs the
   task session's conversation or the one bound by the heartbeat hook (when hc gives its argv), else the terminal titled
@@ -369,11 +371,15 @@ The rules a port must copy, in this order:
   before waiting, then the oldest.
 - **What a quiet subagent waits on.** A subagent (an in-process binding) that is stale, lost or unknown, has no matched
   run and no terminal, and whose recorded checkout is a linked worktree (its `.git` a file; never the main checkout,
-  which every agent registered there shares) waits on a process when one the machine lists works in that worktree:
-  the process's working directory is the worktree's top folder or below it, with no other `.git` between (a scratch
-  repository or a nested worktree is not its), compared component by component, never by a string prefix. The
-  processes are listed (`lsof`, as the worktree sweep lists them) only when such an agent is in the view, once a view,
-  and a long-lived reader (the server's clock and dispatcher, the monitor) keeps the listing for 20 s by its store's clock.
+  which every agent registered there shares) waits on a process when one the machine lists is its own: it works in
+  that worktree, its working directory the worktree's top folder or below it, with no other `.git` between (a scratch
+  repository or a nested worktree is not its), compared component by component, never by a string prefix; and it
+  started while the agent was there, from a second before its binding recorded that checkout to a second after its
+  last tool call. A server or shell started there before the agent came, or after it went quiet, is not its, so a
+  stray process never hides abandoned work, and one whose start cannot be read is not its either. The processes
+  are listed with their starts (`lsof`, as the worktree sweep lists them, and the kernel's process table) only when
+  such an agent is in the view, once a view, and a long-lived reader (the server's clock and dispatcher, the
+  monitor) keeps the listing for 20 s by its store's clock, from when the listing ended.
 - **state.** A matched run is `running_test`. Else a quiet subagent waiting on a process is `running_test` (`phase:
   running`), or, when the processes cannot be listed, `running_test` with `phase: unknown`. Else the terminal's status
   (`working`, `blocked` is `waiting_on_input`, `idle` and `done` are `idle`). Else the board's health: live is `working`,
@@ -722,8 +728,8 @@ task, with its live status beside it.
   claimable, and the claim that takes it over says so in the thread.
 - **A subagent is seen through its tool calls and what it left running.** One
   waiting on a background job without calling a tool reads `running_test` while
-  a process works in the linked worktree its last board command ran in; one with
-  nothing working there (or in the main checkout, which says nothing of whose a
-  process is) goes stale after 90 s, and lost after 10 minutes if it holds
+  a process it started works in the linked worktree its last tool call ran in;
+  one with nothing of its own working there (or in the main checkout, which says
+  nothing of whose a process is) goes stale after 90 s, and lost after 10 minutes if it holds
   claimable work. The board's own health (`just tasks show`, a claim) still ages
   by its beats alone.

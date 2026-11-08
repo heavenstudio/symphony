@@ -6,13 +6,13 @@ use crate::common::{Fixture, NOW};
 use serde_json::{Value, json};
 use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::PathBuf;
 use symphony_board::cli::agents::{
-    self, Agent, Detail, MESSAGE_CHARS, Pane, Probes, Run, View, describe, running_tests,
+    self, Agent, Detail, MESSAGE_CHARS, Pane, Probes, Process, Run, View, describe, running_tests,
 };
 use symphony_board::health::{LIVE_SECONDS, RESERVE_SECONDS, STALE_SECONDS};
 use symphony_board::{Beat, Health, NewLaunch, NewSession, NewTask};
 
+mod in_process;
 mod running;
 
 const AGENT_KEYS: [&str; 20] = [
@@ -57,9 +57,9 @@ struct Case {
     panes: RefCell<Option<Vec<Value>>>,
     runs: RefCell<Option<Vec<Run>>>,
     branches: RefCell<BTreeMap<String, String>>,
-    /// The working directories the machine's processes list (None: they cannot be listed), and how
-    /// many times they were asked for.
-    cwds: RefCell<Option<Vec<PathBuf>>>,
+    /// The processes the machine lists (None: they cannot be listed), and how many times they were
+    /// asked for.
+    processes: RefCell<Option<Vec<Process>>>,
     listed: Cell<usize>,
     orch: String,
 }
@@ -76,7 +76,7 @@ impl Case {
             panes: RefCell::new(Some(Vec::new())),
             runs: RefCell::new(Some(Vec::new())),
             branches: RefCell::new(BTreeMap::new()),
-            cwds: RefCell::new(Some(Vec::new())),
+            processes: RefCell::new(Some(Vec::new())),
             listed: Cell::new(0),
             orch,
         }
@@ -95,9 +95,9 @@ impl Case {
             branch_of: Box::new(|cwd| {
                 Ok(self.branches.borrow().get(cwd).cloned().unwrap_or_default())
             }),
-            cwds: Box::new(|| {
+            processes: Box::new(|| {
                 self.listed.set(self.listed.get() + 1);
-                Ok(self.cwds.borrow().clone().ok_or("lsof is gone")?)
+                Ok(self.processes.borrow().clone().ok_or("lsof is gone")?)
             }),
         }
     }
@@ -681,8 +681,8 @@ fn every_agent_with_a_run_is_answered_in_one_view() {
             Ok(c.runs.borrow().clone().unwrap())
         }),
         branch_of: Box::new(|_| Ok(String::new())),
-        cwds: Box::new(|| {
-            asked.borrow_mut().push("cwds");
+        processes: Box::new(|| {
+            asked.borrow_mut().push("processes");
             Ok(Vec::new())
         }),
     };

@@ -119,7 +119,7 @@ fn look(
         runs: Box::new(|| (probes.runs)()),
         branch_of: Box::new(|cwd| (probes.branch_of)(cwd)),
         // The monitor looks every few seconds: the process listing is kept a while.
-        cwds: Box::new(|| store.kept_scan(&*probes.cwds)),
+        processes: Box::new(|| store.kept_scan(&*probes.processes)),
     });
     // One view of the agents a poll, however many children are quiet, shared with the digest.
     let view = match &probes {

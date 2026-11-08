@@ -491,16 +491,54 @@ fn a_folders_checkout_is_its_top_folder_and_branch_read_from_the_git_files() {
     fs::remove_dir_all(tree).unwrap();
 }
 
+/// The time on this machine's clock, which a process's start is read against.
+fn wall_clock() -> f64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs_f64()
+}
+
 #[test]
-fn the_machine_lists_its_processes_working_directories_this_ones_among_them() {
+fn the_machine_lists_each_process_with_its_working_directory_and_when_it_started() {
+    let folder = scratch("working").canonicalize().unwrap();
+    let before = wall_clock();
+    let mut cat = Command::new("cat");
+    cat.current_dir(&folder)
+        .stdin(symphony_board::sys::Stdio::piped())
+        .stdout(symphony_board::sys::Stdio::null());
+    let mut working = cat.spawn().unwrap();
+    let after = wall_clock();
     let env = hc_env("/nonexistent/hc", &[]);
-    let probes = machine(&env);
-    let here = std::env::current_dir().unwrap().canonicalize().unwrap();
-    let listed = (probes.cwds)().expect("lsof lists the working directories");
+    let listed = (machine(&env).processes)();
+    let _ = working.kill();
+    let _ = working.wait();
+    let listed = listed.expect("lsof lists the working directories");
+    let there: Vec<_> = listed.iter().filter(|p| p.cwd == folder).collect();
+    assert_eq!(there.len(), 1, "{} in {listed:?}", folder.display());
+    // Stamped to the microsecond on macOS; on Linux in clock ticks after a boot named in whole
+    // seconds, so up to a second off (the slack the agents view allows a start).
+    let off = if cfg!(target_os = "linux") { 1.0 } else { 0.01 };
+    let started = there[0].started.expect("its start is read");
     assert!(
-        listed.contains(&here),
-        "{} not among the {} listed",
-        here.display(),
-        listed.len()
+        (before - off..=after + off).contains(&started),
+        "{before} <= {started} <= {after}"
     );
+    // This process, still running, is listed too: its working directory shared with the others.
+    let here = std::env::current_dir().unwrap().canonicalize().unwrap();
+    assert!(listed.iter().any(|p| p.cwd == here && p.started.is_some()));
+}
+
+#[test]
+fn a_process_start_is_read_only_while_it_runs() {
+    let mut done = Command::new("true").spawn().unwrap();
+    done.wait().unwrap();
+    let pids = [i64::from(std::process::id()), i64::from(done.id()), 0, -1];
+    let started = symphony_board::sys::process_starts(&pids);
+    assert_eq!(started.len(), 4);
+    assert!(
+        started[0].is_some_and(|at| at <= wall_clock()),
+        "{started:?}"
+    );
+    assert_eq!(started[1..], [None, None, None]);
 }

@@ -182,9 +182,19 @@ fn an_unlaunched_child_verifying_in_a_trial_merge_is_neither_lost_nor_orphaning_
     // An orphan entry would trigger a PULL; the verifying child creates no actionable gap.
 }
 
-/// `quiet_child` as an in-process subagent: its board command ran in a linked worktree of the case's
-/// repository, `wt` on `sim/a`, which its binding records. The worktree is returned.
+/// The time on this machine's clock, which a real process's start is read against.
+fn wall_clock() -> f64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs_f64()
+}
+
+/// `quiet_child` as an in-process subagent: its board command ran in the case's main checkout, and
+/// it has a linked worktree of its own, `wt` on `sim/a`, returned. The board's clock is the
+/// machine's from the start, as a process's start is.
 fn subagent_child(m: &Monitor) -> (String, String, PathBuf) {
+    m.now.set(wall_clock());
     let (orch, child) = quiet_child(m);
     let tree = m.dir.join("wt");
     git(
@@ -201,10 +211,30 @@ fn subagent_child(m: &Monitor) -> (String, String, PathBuf) {
     let mut bind = bash(&format!("TASKS_SESSION={child} just tasks show sim/a"))
         .agent("agent-c")
         .0;
-    bind["cwd"] = json!(tree.to_str().unwrap());
+    bind["cwd"] = json!(m.repo.to_str().unwrap());
+    m.now.set(wall_clock());
     m.beat(&bind);
     m.now.set(m.last_seen(&child));
     (orch, child, tree)
+}
+
+/// The subagent's background launch from its worktree `tree` (jade-heron's probe: bound elsewhere,
+/// no board command since): its call's hook, the process it leaves working there, its hook again
+/// once the call has returned.
+fn launched(m: &Monitor, tree: &std::path::Path) -> Working {
+    let call = bash("cargo test")
+        .agent("agent-c")
+        .with("run_in_background", json!(true))
+        .0;
+    let hook = |mut event: Value| {
+        event["cwd"] = json!(tree.to_str().unwrap());
+        m.now.set(wall_clock());
+        m.beat(&event);
+    };
+    hook(call.clone());
+    let waited = Working::in_folder(tree);
+    hook(crate::beat::Event(call).ended().0);
+    waited
 }
 
 /// A process working in a folder, as a subagent's background `cargo test` works in its worktree,
@@ -245,7 +275,7 @@ fn an_in_process_child_whose_worktree_holds_a_live_process_is_neither_lost_nor_o
     let (orch, child, tree) = subagent_child(&m);
     // What it waits on: a child of the test runner working in its worktree, as its background
     // `cargo test` was.
-    let waited = Working::in_folder(&tree);
+    let waited = launched(&m, &tree);
     let began = m.now.get();
     m.watch(&orch, long_waits_past_the_lost_line(), &idle);
     drop(waited);
@@ -266,7 +296,8 @@ fn an_in_process_child_whose_worktree_holds_a_live_process_is_neither_lost_nor_o
 #[test]
 fn the_same_in_process_child_with_no_process_in_its_worktree_is_lost_and_its_task_orphaned() {
     let m = Monitor::new("in-process-gone");
-    let (orch, child, _) = subagent_child(&m);
+    let (orch, child, tree) = subagent_child(&m);
+    drop(launched(&m, &tree)); // its run ended before it went quiet
     m.watch(&orch, long_waits_past_the_lost_line(), &idle);
     assert_eq!(
         m.starting(&["LOST "]),

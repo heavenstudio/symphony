@@ -3,11 +3,13 @@
 //!
 //! An in-process agent (a subagent: no terminal, no monitor, its tool calls its only heartbeat) gone
 //! quiet with no run of its own, in a linked worktree its binding recorded, is waiting on what it
-//! started there when a live process works in that worktree (its nearest checkout is that one, never
-//! one beneath it): `running_test`, `{"recipe": "process", "phase": "running"}`, and live. When the
-//! machine's processes cannot be listed the board cannot tell: `running_test` with `"phase":
-//! "unknown"`, health `unknown`, so it is not called lost either. With none working there it ages as
-//! before ([`waited_on`]).
+//! started there when a live process of its own works in that worktree (its nearest checkout is
+//! that one, never one beneath it): `running_test`, `{"recipe": "process", "phase": "running"}`,
+//! and live. A process is its own when it began while the agent was there: not before its binding
+//! recorded that worktree, nor after its last tool call, so a server or shell another started there
+//! keeps nobody alive. When the machine's processes cannot be listed the board cannot tell:
+//! `running_test` with `"phase": "unknown"`, health `unknown`, so it is not called lost either. With
+//! none of its own working there it ages as before ([`waited_on`]).
 
 use super::{Answer, Detail, Probes};
 use crate::Store;
@@ -19,14 +21,25 @@ use std::path::{Path, PathBuf};
 pub const PROCESS_SCAN_SECONDS: f64 = 20.0;
 /// The recipe of a wait the view sees as a process working in an in-process agent's worktree.
 pub const PROCESS: &str = "process";
+/// How far a process's start may fall outside the agent's stay and still be its: the kernel stamps
+/// a start and the board reads its own clock apart, and Linux names its boot in whole seconds.
+const START_SLACK_SECONDS: f64 = 1.0;
+
+/// A live process the machine lists: where it works and when it started, by the board's clock (none
+/// when the kernel could not say, which ties it to no agent).
+#[derive(Debug, Clone, PartialEq)]
+pub struct Process {
+    pub cwd: PathBuf,
+    pub started: Option<f64>,
+}
 
 impl<'a> Probes<'a> {
     /// These probes, the process listing kept by `store` ([`Store::kept_scan`]): a long-lived reader's,
     /// which views its agents every second or so.
     pub fn kept_by(self, store: &'a Store) -> Probes<'a> {
-        let cwds = self.cwds;
+        let processes = self.processes;
         Probes {
-            cwds: Box::new(move || store.kept_scan(&*cwds)),
+            processes: Box::new(move || store.kept_scan(&*processes)),
             ..self
         }
     }
@@ -74,20 +87,26 @@ fn works_in(cwd: &Path, tree: &Path) -> bool {
 }
 
 /// What the machine's processes (`scan`, listed once a view) say of an in-process agent gone quiet
-/// in `tree` (resolved): its health and what it waits on, live on a process working there, unknown
-/// when they cannot be listed. None when `tree` is no linked worktree (the main checkout, which every
-/// agent registered there shares, or a folder in no repository) or no process works there.
+/// in `tree` (resolved), where it has been from `stay`'s first time (when its binding recorded
+/// `tree`) to its second (its last tool call): its health and what it waits on, live on a process
+/// that began there in that stay, unknown when they cannot be listed. None when `tree` is no linked
+/// worktree (the main checkout, which every agent registered there shares, or a folder in no
+/// repository) or no process of its own works there.
 pub(super) fn waited_on(
     tree: &str,
-    scan: &dyn Fn() -> Answer<Vec<PathBuf>>,
+    stay: (f64, f64),
+    scan: &dyn Fn() -> Answer<Vec<Process>>,
 ) -> Option<(Health, Detail)> {
     let tree = Path::new(tree);
     if tree.as_os_str().is_empty() || !crate::git::linked(tree) {
         return None;
     }
+    let within = (stay.0 - START_SLACK_SECONDS)..=(stay.1 + START_SLACK_SECONDS);
+    let its_own =
+        |p: &Process| p.started.is_some_and(|at| within.contains(&at)) && works_in(&p.cwd, tree);
     let (health, phase) = match scan() {
         Err(_) => (Health::Unknown, "unknown"),
-        Ok(cwds) if cwds.iter().any(|cwd| works_in(cwd, tree)) => (Health::Live, "running"),
+        Ok(listed) if listed.iter().any(its_own) => (Health::Live, "running"),
         Ok(_) => return None,
     };
     let detail = Detail {

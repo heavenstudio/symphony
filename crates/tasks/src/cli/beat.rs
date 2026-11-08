@@ -202,10 +202,10 @@ fn truthy(value: Option<&Value>) -> bool {
 /// subagent), else its `session_id` (a full session with no monitor, as one started in an hc terminal);
 /// `bind_agent` never binds a handle with a live monitor, which beats on its own. A foreground Bash
 /// call marks the session busy for as long as it may run, so a long `verify-full` reads live; its
-/// PostToolUse clears that call's mark. A subagent's board command also records, on its binding, the
-/// checkout its call runs in (the event's `cwd`): where the agents view looks for what it left running
-/// once it goes quiet. The key, and whether a full session is bound by it now (None for a
-/// subagent's, or an event with no key).
+/// PostToolUse clears that call's mark. Each tool call of a bound subagent also records, on its
+/// binding, the checkout the call runs in (the event's `cwd`), and when it came there: where the
+/// agents view looks for what it left running once it goes quiet. The key, and whether a full
+/// session is bound by it now (None for a subagent's, or an event with no key).
 pub fn beat_event(
     store: &Store,
     event: &Map<String, Value>,
@@ -220,32 +220,29 @@ pub fn beat_event(
         return Ok(None);
     };
     let full = |bound: Option<String>| (!by_agent).then(|| (agent.to_string(), bound.is_some()));
+    // A subagent's checkout is where its own calls run, which its session (registered where its
+    // orchestrator ran `register`) does not say: each of its calls says it again, so one that moved
+    // is looked for where it went.
+    let checkout = by_agent
+        .then(|| event.get("cwd").and_then(Value::as_str))
+        .flatten()
+        .filter(|cwd| !cwd.is_empty())
+        .and_then(|cwd| crate::git::checkout(Path::new(cwd)));
+    let place = checkout
+        .as_ref()
+        .map(|(top, branch)| (top.to_str().unwrap_or_default(), branch.as_str()))
+        .filter(|(top, _)| !top.is_empty());
     let empty = Map::new();
     let tool = event
         .get("tool_input")
         .and_then(Value::as_object)
         .unwrap_or(&empty);
     if event.get("tool_name").and_then(Value::as_str) != Some("Bash") {
-        return Ok(full(store.agent_beat(agent, &Beat::default())?));
+        return Ok(full(store.agent_beat_in(agent, &Beat::default(), place)?));
     }
     let command = tool.get("command").and_then(Value::as_str).unwrap_or("");
     if let Some(named) = named_handle(command) {
-        // A subagent's checkout is where its own calls run, which its session (registered where
-        // its orchestrator ran `register`) does not say.
-        let place = if by_agent {
-            event
-                .get("cwd")
-                .and_then(Value::as_str)
-                .filter(|cwd| !cwd.is_empty())
-                .and_then(|cwd| crate::git::checkout(Path::new(cwd)))
-        } else {
-            None
-        };
-        let place = place
-            .as_ref()
-            .map(|(top, branch)| (top.to_str().unwrap_or_default(), branch.as_str()))
-            .filter(|(top, _)| !top.is_empty());
-        store.bind_agent_in(agent, &named, !by_agent, place)?;
+        store.bind_agent(agent, &named, !by_agent)?;
     }
     let call = event
         .get("tool_use_id")
@@ -271,7 +268,7 @@ pub fn beat_event(
             ended: false,
         }
     };
-    Ok(full(store.agent_beat(agent, &beat)?))
+    Ok(full(store.agent_beat_in(agent, &beat, place)?))
 }
 
 /// The bound keys' folder (the heartbeat hook's `keys_folder`): `TASKS_KEYS`; for a board

@@ -57,11 +57,13 @@ Sweep and delivery connections check that identity; a dead or replaced listener
 retires the registration, never transfers it to a new process at the same path.
 An address held by another valid registration is refused. In-process bindings
 are recorded outside session by the native hook, with the checkout the agent's
-last board command ran in (`worktree` and `branch` on
-`callback_state:['binding', KEY]`, written only when they change), which the
-agents view reads as where it works and where it looks, once a view and only
-for a quiet one, for a live process it waits on (`cli/agents/place.rs`; a long-lived
-reader keeps that `lsof` listing on its store, `store/kept.rs`). They cannot
+last tool call ran in (`worktree`, `branch` and `placed_at` on
+`callback_state:['binding', KEY]`, written by the beat only when they change),
+which the agents view reads as where it works and where it looks, once a view
+and only for a quiet one, for a live process it waits on: one working there that
+started between `placed_at` and its last tool call (`cli/agents/place.rs`; a
+long-lived reader keeps that listing on its store, dated when it ended,
+`store/kept.rs`). They cannot
 register callbacks or take over a handle that holds a native registration;
 unclassified bound keys also fail closed until a full-session hook binds them.
 An unclassified binding asks for a retry after the new tasks binary is linked;

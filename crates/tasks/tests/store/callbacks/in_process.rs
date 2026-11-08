@@ -26,16 +26,26 @@ impl Drop for Working {
     }
 }
 
+/// The time on this machine's clock, which a real process's start is read against.
+fn wall_clock() -> f64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs_f64()
+}
+
 /// 2026-11-08: the shared server told an orchestrator LOST of an in-process executor that was waiting
 /// on its own background test run, the only sign of it a process working in its worktree. While one
-/// works there the clock calls it neither stale nor lost nor its task orphaned; once it ends, the
-/// executor is lost as before.
+/// it started there works the clock calls it neither stale nor lost nor its task orphaned; once it
+/// ends, the executor is lost as before.
 #[test]
 fn an_in_process_child_waiting_on_a_process_in_its_worktree_is_told_lost_only_once_it_ends() {
     use symphony_board::cli::agents::PROCESS_SCAN_SECONDS;
-    use symphony_board::{Health, NewSession};
+    use symphony_board::{Beat, Health, NewSession};
 
     let f = Fixture::empty();
+    // The process's start is the machine's, so the board's clock is too, before any session beats.
+    f.advance(wall_clock() - f.now());
     let orchestrator = f.session("orchestrator");
     let child = f.session_with(NewSession {
         parent: Some(orchestrator.clone()),
@@ -53,11 +63,16 @@ fn an_in_process_child_waiting_on_a_process_in_its_worktree_is_told_lost_only_on
     std::fs::write(tree.join(".git"), "gitdir: /nowhere/worktrees/wt\n").unwrap();
     let tree = tree.canonicalize().unwrap();
     let place = Some((tree.to_str().unwrap(), "tools/waiting"));
-    assert!(
-        f.store
-            .bind_agent_in("agent-c", &child, false, place)
-            .unwrap()
-    );
+    assert!(f.store.bind_agent("agent-c", &child, false).unwrap());
+    // The background launch: its hook's beat before, the process, its hook's beat after.
+    let call = || {
+        f.advance(wall_clock() - f.now());
+        let beat = f.store.agent_beat_in("agent-c", &Beat::default(), place);
+        assert_eq!(beat.unwrap().as_deref(), Some(child.as_str()));
+    };
+    call();
+    let waited = Working::in_folder(&tree);
+    call();
     let listener = Listener::new(f.store.client().database());
     f.store
         .callback(
@@ -67,7 +82,6 @@ fn an_in_process_child_waiting_on_a_process_in_its_worktree_is_told_lost_only_on
             false,
         )
         .unwrap();
-    let waited = Working::in_folder(&tree);
     for wait in [91.0, 510.0, 30.0] {
         f.advance(wait);
         f.store.dispatch_callbacks_snapshot().unwrap();
