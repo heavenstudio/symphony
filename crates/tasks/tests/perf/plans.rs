@@ -39,7 +39,8 @@ pub fn bound(name: &str) -> Option<Value> {
         "candidates" | "acked" | "wanted" | "pool" | "keys" | "waiting_keys" | "said" => json!([]),
         "line" => json!({"slug": generated::thread(), "sid": 1}),
         "address" => json!("uds:/tmp/perf.sock"),
-        "dependent" => json!(generated::thread()),
+        // The pending-post read is planned outside the closure that supplies each task's slug.
+        "slug" | "dependent" => json!(generated::thread()),
         "sender" => json!(generated::writer()),
         "prefix" | "pull_kept" => json!("pull-1"),
         _ => return None,

@@ -25,6 +25,8 @@ pub(super) struct State {
     pub(super) pull: f64,
     pub(super) pull_entries: Option<BTreeSet<Entry>>,
     pub(super) pull_queued: Option<BTreeSet<Entry>>,
+    /// Acknowledged unanswered posts survive disappearing from a digest: once per post.
+    pub(super) pull_unanswered: BTreeSet<Entry>,
     /// The entries the recipient does not hear and no PULL it acknowledged told it: withheld from
     /// it, and recorded in `pull_entries` all the same, so an older dispatcher never sends them.
     /// Kept from its first PULL on, since an older one's acknowledgement records every entry of
@@ -82,10 +84,11 @@ impl State {
         let recorded = self.pull_entries.as_ref()?;
         let older_own = (self.pull_awaiting.as_ref())
             .is_some_and(|awaited| !recorded.is_subset(&awaited.entries));
-        Some(match older_own {
+        let told = match older_own {
             true => recorded.clone(),
             false => recorded - &self.pull_withheld,
-        })
+        };
+        Some(&told | &self.pull_unanswered)
     }
 }
 
@@ -212,6 +215,31 @@ mod tests {
         assert_eq!(state.acknowledged(), Some(recorded));
         assert_eq!(State::default().heard(), None);
         assert_eq!(State::default().acknowledged(), None);
+    }
+
+    #[test]
+    fn acknowledged_post_history_does_not_turn_withheld_or_queued_work_into_told_work() {
+        let post = ("unanswered".to_string(), "t/old:12".to_string());
+        let raw = entries(&["t/said", "t/withheld"]);
+        let state = State {
+            pull_entries: Some(raw.clone()),
+            pull_unanswered: BTreeSet::from([post.clone()]),
+            pull_withheld: entries(&["t/withheld"]),
+            pull_awaiting: Some(Awaiting {
+                entries: raw,
+                withheld: entries(&["t/withheld"]),
+            }),
+            ..State::default()
+        };
+        let mut expected = entries(&["t/said"]);
+        expected.insert(post.clone());
+        assert_eq!(state.acknowledged(), Some(expected));
+        let gone = State {
+            pull_entries: Some(BTreeSet::new()),
+            pull_unanswered: BTreeSet::from([post.clone()]),
+            ..State::default()
+        };
+        assert_eq!(gone.acknowledged(), Some(BTreeSet::from([post])));
     }
 
     fn entries(slugs: &[&str]) -> BTreeSet<Entry> {

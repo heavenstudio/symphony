@@ -66,6 +66,9 @@ fn callback_state(f: &Fixture, handle: &str) -> serde_json::Value {
         .remove(0)
 }
 
+#[path = "quiet_pull.rs"]
+mod pull_updates;
+
 #[test]
 fn a_stale_child_running_a_test_leaves_idle_callback_rows_unchanged() {
     // Run in a private repository so the real machine probe sees only this test's slot.
@@ -229,49 +232,6 @@ fn old_seen_write(f: &Fixture, handle: &str) {
     assert!(after["seen"].get("latest_message").is_none());
     assert_eq!(after["message_cursor"], before["message_cursor"]);
     assert_eq!(after["delivery_version"], before["delivery_version"]);
-}
-
-#[test]
-fn the_first_pull_is_delivered_once_even_when_its_lists_are_empty() {
-    for existing_gap in [false, true] {
-        let f = Fixture::empty();
-        let orch = f.session("orchestrator");
-        let sender = f.session("worker");
-        if existing_gap {
-            f.task("quiet-test/initial-ready");
-        }
-        let o = listen(&f, &orch);
-        let expected = if existing_gap {
-            "PULL executing=0 ready_unstaffed=1 in_progress_orphaned=0 review_unreviewed=0 landed_open=0 idle=0\nready_unstaffed p2 quiet-test/initial-ready — Jump departure"
-        } else {
-            EMPTY_PULL
-        };
-        assert_eq!(o.text(), expected);
-        assert_eq!(callback_state(&f, &orch)["delivery_version"], 1);
-        assert_eq!(
-            callback_state(&f, &orch)["pull_entries"],
-            if existing_gap {
-                json!([["ready_unstaffed", "quiet-test/initial-ready"]])
-            } else {
-                json!([])
-            }
-        );
-        for age in [0.0, 601.0, 86_400.0] {
-            f.advance(age);
-            f.store.touch(&orch).unwrap();
-            f.store.dispatch_callbacks().unwrap();
-            assert!(o.drain(&f, &sender, &orch).is_empty());
-        }
-        f.store
-            .callback(
-                &orch,
-                Some(&format!("uds:{}", o.path.display())),
-                false,
-                false,
-            )
-            .unwrap();
-        assert!(o.drain(&f, &sender, &orch).is_empty());
-    }
 }
 
 #[test]
