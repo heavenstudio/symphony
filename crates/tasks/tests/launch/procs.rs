@@ -1,14 +1,15 @@
 //! What runs under a pane, read: `ps`'s table walked, and each pattern as Python's `re` reads it,
 //! matched by hand (the protected work, `harmless`, `shell`, `helper` and `board`).
 
+mod codex_helpers;
+
 use crate::World;
 use symphony_board::cli::Env;
 use symphony_board::launch::LaunchError;
 use symphony_board::launch::procs::{
-    CODEX_REPL, board, busy_reason, descendants_by, harmless, helper, land, listed, named,
-    reap_busy_reason, shell, symphony_app, table, table_file, test_run, under, verify,
+    board, busy_reason, descendants_by, harmless, helper, land, listed, named, reap_busy_reason,
+    shell, symphony_app, table, table_file, test_run, under, verify,
 };
-use symphony_board::launch::reap::Sweep;
 
 fn all(commands: &[&str]) -> Vec<String> {
     commands.iter().map(|c| c.to_string()).collect()
@@ -458,78 +459,4 @@ fn a_shell_started_command_that_mentions_mcp_is_still_work() {
         busy_reason(&["node /x/mcp-server.js".into(), "claude --model x".into()]),
         None
     );
-}
-
-#[test]
-fn codexs_configured_repl_helper_is_harmless_but_any_other_node_program_is_work() {
-    let codex = "codex --no-daemon -s workspace-write -m gpt-6.1-sol";
-    for idle in [
-        all(&[codex, CODEX_REPL]),
-        all(&[codex, &format!("{CODEX_REPL} --stdio")]),
-    ] {
-        assert_eq!(busy_reason(&idle), None, "{idle:?}");
-        assert_eq!(reap_busy_reason(&idle), None, "{idle:?}");
-    }
-    let node = CODEX_REPL.strip_suffix("_repl").unwrap();
-    for work in [
-        "node script.js".to_string(),
-        "/usr/local/bin/node x.js".into(),
-        format!("{node} x.js"),
-        "node_repl".into(),
-        "/opt/cua_node/bin/node_repl".into(),
-        CODEX_REPL.to_lowercase(),
-        format!("x{CODEX_REPL}"),
-        format!("{CODEX_REPL}x"),
-        format!("/bin/zsh -c {CODEX_REPL}"),
-    ] {
-        assert!(!harmless(&work), "{work}");
-        let expected = Some(format!(
-            "runs {}",
-            work.chars().take(60).collect::<String>()
-        ));
-        assert_eq!(busy_reason(&all(&[codex, CODEX_REPL, &work])), expected);
-        assert_eq!(
-            reap_busy_reason(&all(&[codex, CODEX_REPL, &work])),
-            expected
-        );
-    }
-    // A real job beside the helper is still work; a protected one is named as such.
-    assert_eq!(
-        reap_busy_reason(&all(&[codex, CODEX_REPL, "cargo test -p x"])),
-        Some("runs cargo test -p x".into())
-    );
-    assert_eq!(
-        busy_reason(&all(&[CODEX_REPL, "just verify"])),
-        Some("runs a verify (just verify)".into())
-    );
-}
-
-#[test]
-fn a_finished_codex_with_only_its_repl_helper_under_it_closes_and_another_node_keeps_it() {
-    for sweep in [false, true] {
-        let w = World::new();
-        let (handle, terminal) = w.worker("sim/jump", Some("done"));
-        assert_eq!(w.program(&terminal)[0], "codex");
-        w.run_under(w.pid_of(&terminal), &[CODEX_REPL]);
-        if sweep {
-            assert_eq!(w.sweep_through(&w.hc()).idle, std::slice::from_ref(&handle));
-            assert_eq!(w.sweep_through(&w.hc()).closed.len(), 1);
-        } else {
-            let [closed] = <[_; 1]>::try_from(w.clean(false, &[])).unwrap();
-            assert!(closed.closed, "{closed:?}");
-        }
-        assert!(
-            !w.has_terminal(&terminal),
-            "{terminal} stayed, sweep {sweep}"
-        );
-    }
-    let w = World::new();
-    let (_, terminal) = w.worker("sim/jump", Some("done"));
-    w.run_under(w.pid_of(&terminal), &[CODEX_REPL, "node build.js"]);
-    let closures = w.clean(false, &[]);
-    assert!(closures.is_empty(), "{closures:?}");
-    for _ in 0..3 {
-        assert_eq!(w.sweep_through(&w.hc()), Sweep::default());
-    }
-    assert!(w.has_terminal(&terminal), "{terminal} was closed");
 }
