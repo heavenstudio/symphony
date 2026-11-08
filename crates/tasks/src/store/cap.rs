@@ -27,7 +27,7 @@
 //! transaction that reads the open tasks and the holds, so a start that wrote after that read is
 //! caught by the write, and one that wrote before it is in what was read.
 
-use super::{Failure, Opens, Store, View, Which, refused};
+use super::{Change, Error, Failure, Opens, Store, View, Which, refused};
 use crate::slots::{self, Entry, Ledger, OPEN};
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -114,7 +114,6 @@ pub(super) fn closing(view: &View, slug: &str, status: Option<&str>) -> Option<O
     let red = crate::red::marked(&task.fields) && crate::red::open(&task.status);
     red.then(|| Opens {
         status: Some(status.into()),
-        closes: true,
         ..Opens::default()
     })
 }
@@ -194,6 +193,33 @@ struct Level {
 }
 
 impl Store {
+    /// A rule's read of `which` ([`Store::ruling`]) and what `decide` makes of it, with the counters
+    /// a red's close holds under the cap: a close of an open red read without the cap's board is
+    /// read and decided again with it ([`closing`]). No counters for any other change.
+    pub(super) fn ruled(
+        &self,
+        which: &Which,
+        slug: &str,
+        decide: &impl Fn(&View) -> Result<Change, Error>,
+    ) -> Result<(View, Change, Vec<Value>), Failure> {
+        let mut view = self.view(which)?;
+        let mut change = decide(&view).map_err(Failure::Stop)?;
+        let closes = |view: &View, change: &Change| {
+            (change.opens.is_none() && self.slots.is_some())
+                .then(|| closing(view, slug, change.status.as_deref()))
+                .flatten()
+        };
+        if !matches!(which, Which::Starting(_)) && closes(&view, &change).is_some() {
+            view = self.view(&Which::Starting(slug))?;
+            change = decide(&view).map_err(Failure::Stop)?;
+        }
+        let closed = match closes(&view, &change) {
+            Some(opens) => self.holding(&view, slug, &opens, None)?,
+            None => Vec::new(),
+        };
+        Ok((view, change, closed))
+    }
+
     /// The slot counters the change `opens` describes holds under `cap`, each `{handle, last}` as
     /// read: one for each orchestrator whose open tasks it changes. Refused, naming the holder's
     /// open tasks, when it would raise one's past `cap`. Decided on what `view` read
@@ -204,6 +230,18 @@ impl Store {
         slug: &str,
         opens: &Opens,
         cap: usize,
+    ) -> Result<Vec<Value>, Failure> {
+        self.holding(view, slug, opens, Some(cap))
+    }
+
+    /// The counters the change `opens` describes holds ([`GUARD`]): refused past `cap` as
+    /// [`Store::slots_taken`] is, and never with none, a red's close ([`closing`]).
+    fn holding(
+        &self,
+        view: &View,
+        slug: &str,
+        opens: &Opens,
+        cap: Option<usize>,
     ) -> Result<Vec<Value>, Failure> {
         let Some(read) = &view.snap.slots else {
             return Err(Failure::Stop(super::Error::Db(
@@ -288,12 +326,7 @@ impl Store {
         if let Some(parent) = parent {
             after = after.reparented(slug, parent);
         }
-        let changed = if opens.closes {
-            Ok(slots::changed(&before, &after))
-        } else {
-            slots::started(&before, &after, cap)
-        };
-        let changed = changed.map_err(|full| {
+        let refusal = |full: slots::Full<'_>, cap: usize| {
             let place = after.place(slug);
             let children: Vec<&str> = if place.by_parent && place.owners.contains(&full.owner) {
                 (by.iter().copied())
@@ -305,7 +338,11 @@ impl Store {
                 Vec::new()
             };
             Failure::Stop(refused(slots::refusal(&opens.what, &full, &children, cap)))
-        })?;
+        };
+        let changed = match cap {
+            Some(cap) => slots::started(&before, &after, cap).map_err(|full| refusal(full, cap))?,
+            None => slots::changed(&before, &after),
+        };
         let mut counters = held("slots", &read.counted, &changed);
         counters.extend(held("red", &read.reds, &slots::reds(&before, &after)));
         Ok(counters)
@@ -314,12 +351,12 @@ impl Store {
     /// The counters a close of `slug` into `status` holds under the cap, for a write that reads
     /// nothing the cap decides on, the owner's: none unless it closes an open red ([`closing`]).
     pub(super) fn closing_slots(&self, slug: &str, status: &str) -> Result<Vec<Value>, Failure> {
-        let Some(cap) = self.slots else {
+        if self.slots.is_none() {
             return Ok(Vec::new());
-        };
+        }
         let view = self.view(&Which::Starting(slug))?;
         match closing(&view, slug, Some(status)) {
-            Some(opens) => self.slots_taken(&view, slug, &opens, cap),
+            Some(opens) => self.holding(&view, slug, &opens, None),
             None => Ok(Vec::new()),
         }
     }

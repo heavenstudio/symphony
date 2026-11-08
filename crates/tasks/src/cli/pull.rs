@@ -26,6 +26,7 @@ use crate::health::EXECUTING;
 use crate::orchestration::{Owners, claimable_work};
 use crate::red::UNSTAFFED_SECONDS;
 use crate::slots::Ledger;
+use crate::store::unanswered::Pending;
 use crate::sys::local_minute;
 use crate::{Board, Error, Session, Store, Task};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
@@ -33,12 +34,13 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 /// How many of a category are listed.
 pub const SHOWN: usize = 6;
 /// The categories, in the order they are listed; `idle` holds handles, the others tasks.
-pub const CATEGORIES: [&str; 7] = [
+pub const CATEGORIES: [&str; 8] = [
     "red_unstaffed",
     "ready_unstaffed",
     "dependency_blocked",
     "in_progress_orphaned",
     "review_unreviewed",
+    "unanswered",
     "landed_open",
     "idle",
 ];
@@ -58,6 +60,7 @@ pub struct Digest {
     pub notes: BTreeMap<String, String>,
     /// Work retained because its shared native presence signal expired.
     pub liveness_unknown: Vec<String>,
+    unanswered: Vec<Pending>,
     /// The cap on an orchestrator's open tasks the board holds starts to ([`crate::slots`]).
     pub cap: Option<usize>,
     /// The open slots the orchestrator the digest is for holds, under a cap ([`Digest::only_for`]).
@@ -72,6 +75,8 @@ impl Digest {
             .flat_map(|name| {
                 let entries: Vec<String> = if *name == "idle" {
                     self.idle.clone()
+                } else if *name == "unanswered" {
+                    self.unanswered.iter().map(pending_key).collect()
                 } else {
                     self.items(name).iter().map(|t| t.slug.clone()).collect()
                 };
@@ -83,9 +88,34 @@ impl Digest {
     }
     /// Stable event content, independent of when the board was observed.
     pub fn event_lines(&self) -> Vec<String> {
+        self.event_lines_since(&BTreeSet::new())
+    }
+
+    /// Pending-post lines are emitted once per post, including when another category changes.
+    pub fn event_lines_since(&self, seen: &BTreeSet<(String, String)>) -> Vec<String> {
         let mut lines = self.lines();
         lines[0] = format!("PULL {}", lines[0].splitn(3, ' ').nth(2).unwrap_or(""));
+        lines.retain(|line| !line.starts_with("  unanswered "));
+        lines.extend(self.unanswered_lines(seen));
         lines
+    }
+
+    fn unanswered_lines(&self, seen: &BTreeSet<(String, String)>) -> Vec<String> {
+        let mut by_post: BTreeMap<(String, i64), Vec<String>> = BTreeMap::new();
+        for pending in &self.unanswered {
+            if !seen.contains(&("unanswered".into(), pending_key(pending))) {
+                by_post
+                    .entry((pending.slug.clone(), pending.post.id))
+                    .or_default()
+                    .push(format!("{}: {}", pending.handle, pending.command()));
+            }
+        }
+        by_post
+            .into_iter()
+            .map(|((slug, id), commands)| {
+                format!("  unanswered {slug} post #{id} — {}", commands.join("; "))
+            })
+            .collect()
     }
     /// How many there are in `name`, `executing` or a category.
     pub fn count(&self, name: &str) -> usize {
@@ -111,6 +141,7 @@ impl Digest {
             listed.retain(|task| owners.reaches(&task.slug, handle));
         }
         self.tasks.retain(|_, listed| !listed.is_empty());
+        self.unanswered.retain(|p| owners.reaches(&p.slug, handle));
         self.running.retain(|slug| owners.reaches(slug, handle));
         self.executing = self.running.len();
         self.notes.retain(|slug, _| owners.reaches(slug, handle));
@@ -141,10 +172,13 @@ impl Digest {
         let mut counts: Vec<String> = ["executing"]
             .iter()
             .chain(CATEGORIES.iter())
-            // Keep the usual digest compact; cancellation blockers and unstaffed reds get a count
-            // when present.
+            // Keep the usual digest compact; cancellation blockers, unanswered posts and unstaffed
+            // reds get a count when present.
             .filter(|name| {
-                !["dependency_blocked", "red_unstaffed"].contains(name) || self.count(name) > 0
+                !matches!(
+                    **name,
+                    "dependency_blocked" | "unanswered" | "red_unstaffed"
+                ) || self.count(name) > 0
             })
             .map(|name| format!("{name}={}", self.count(name)))
             .collect();
@@ -162,6 +196,8 @@ impl Digest {
         for name in CATEGORIES {
             let listed: Vec<String> = if name == "idle" {
                 self.idle.iter().map(|h| format!("  idle {h}")).collect()
+            } else if name == "unanswered" {
+                self.unanswered_lines(&BTreeSet::new())
             } else {
                 self.items(name)
                     .iter()
@@ -242,6 +278,16 @@ pub fn digest(
     let mut found: BTreeMap<&'static str, Vec<Task>> = BTreeMap::new();
     let mut notes = BTreeMap::new();
     let mut executing = 0;
+    let unanswered: Vec<_> = store
+        .pending_posts(&tasks)?
+        .into_iter()
+        .filter(|p| p.overdue(now) && !busy.contains(p.handle.as_str()))
+        .collect();
+    for t in &tasks {
+        if unanswered.iter().any(|p| p.slug == t.slug) {
+            found.entry("unanswered").or_default().push(t.clone());
+        }
+    }
     for t in &tasks {
         let cancelled: Vec<&str> = t
             .depends
@@ -338,7 +384,12 @@ pub fn digest(
         idle: idle.to_vec(),
         notes,
         liveness_unknown,
+        unanswered,
         cap: store.slots(),
         slots: None,
     })
+}
+
+fn pending_key(pending: &Pending) -> String {
+    format!("{}#{}", pending.slug, pending.post.id)
 }

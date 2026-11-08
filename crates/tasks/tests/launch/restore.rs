@@ -2,6 +2,11 @@
 //! terminal closed outside the board), comes back in a new hc terminal, in its worktree, resuming
 //! its conversation.
 
+#[path = "recovery.rs"]
+mod recovery;
+#[path = "restore_review.rs"]
+mod review_instructions;
+
 use crate::common::refused;
 use crate::{World, git};
 use std::path::Path;

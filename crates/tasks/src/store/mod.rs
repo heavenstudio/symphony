@@ -35,9 +35,11 @@ mod messages;
 mod pool;
 mod pull_account;
 mod queued_lines;
+mod reading;
 pub(crate) mod search;
 mod sessions;
 mod transaction;
+pub(crate) mod unanswered;
 mod work;
 
 pub use callbacks::{Callback, Presence};
@@ -47,6 +49,7 @@ pub use copy::Moved;
 pub(crate) use copy::WRITTEN_SINCE;
 pub use embeddings::{EmbeddingStats, VectorHit, VectorSearchProfile};
 pub use launches::NewLaunch;
+use reading::{HELD, NATIVE_PRESENCE, native_bounds};
 pub use search::SearchHit;
 pub use sessions::{Beat, KINDS, NewSession, Pick};
 pub use work::{
@@ -141,11 +144,6 @@ impl Task {
             .filter(|r| r.role == role)
             .map(|r| r.handle.as_str())
             .collect()
-    }
-
-    /// Whether it was filed for a red ([`crate::red`]).
-    pub fn red(&self) -> bool {
-        crate::red::marked(&self.fields)
     }
 }
 
@@ -629,8 +627,7 @@ impl Store {
     }
 
     /// As [`Store::rule`]; one that `starts` work ([`Opens`]) under a cap also reads what the cap
-    /// decides on, in the same transaction as its task ([`cap`]), and so does a red's close, read
-    /// again for it once its task is read ([`cap::closing`]).
+    /// decides on, in the same transaction as its task, as does a red's close ([`Store::ruled`]).
     fn ruling(
         &self,
         slug: &str,
@@ -644,22 +641,10 @@ impl Store {
             Which::Slug(slug)
         };
         self.retrying(|| {
-            let mut view = self.view(&which)?;
-            let mut change = decide(&view).map_err(Failure::Stop)?;
-            let closes = |view: &View, change: &Change| {
-                (change.opens.is_none() && self.slots.is_some())
-                    .then(|| cap::closing(view, slug, change.status.as_deref()))
-                    .flatten()
-            };
-            // A red's close is decided again on what the cap reads, which a plain read lacks.
-            if !starts && closes(&view, &change).is_some() {
-                view = self.view(&Which::Starting(slug))?;
-                change = decide(&view).map_err(Failure::Stop)?;
-            }
-            let closing = closes(&view, &change);
-            let slots = match (change.opens.as_ref().or(closing.as_ref()), self.slots) {
+            let (view, change, closed) = self.ruled(&which, slug, &decide)?;
+            let slots = match (&change.opens, self.slots) {
                 (Some(opens), Some(cap)) => self.slots_taken(&view, slug, opens, cap)?,
-                _ => Vec::new(),
+                _ => closed,
             };
             let version = view.snap.tasks.first().map_or(0, |t| t.version);
             let mut body = if change.status.is_some() {
@@ -709,102 +694,6 @@ impl Store {
         let view = View::new(self, snap);
         view.task(slug).map_err(Failure::Stop)?;
         Ok(view.tasks().remove(0))
-    }
-
-    /// The statements that read `which`, ending in the `RETURN` of a `Snapshot`, and their variables.
-    fn reading(which: &Which) -> (String, Value) {
-        const SCOPED: &str = " WHERE slug IN $slugs";
-        const KNOWN: &str = "record::exists(type::record('task', $slug))";
-        let (pick, scope, known, mut vars) = match which {
-            Which::All => (
-                "SELECT * OMIT id FROM task ORDER BY priority, sid",
-                "",
-                "true",
-                json!({}),
-            ),
-            Which::Status(status) => (
-                "SELECT * OMIT id FROM task WHERE status = $status ORDER BY priority, sid",
-                SCOPED,
-                "true",
-                json!({"status": status}),
-            ),
-            Which::Slug(slug) | Which::Starting(slug) => (
-                "SELECT * OMIT id FROM type::record('task', $slug)",
-                SCOPED,
-                KNOWN,
-                json!({"slug": slug}),
-            ),
-            Which::Slugs(slugs) => (
-                "SELECT * OMIT id FROM $wanted.map(|$slug| type::record('task', $slug)) ORDER BY priority, sid",
-                SCOPED,
-                "true",
-                json!({"wanted": slugs}),
-            ),
-            Which::Children(slug) => (
-                "SELECT * OMIT id FROM task WHERE parent = $slug ORDER BY sid",
-                SCOPED,
-                KNOWN,
-                json!({"slug": slug}),
-            ),
-            Which::Pullable(handle) => (
-                "SELECT * OMIT id FROM task WHERE status IN $pullable ORDER BY sid",
-                SCOPED,
-                "record::exists(type::record('session', $handle))",
-                json!({"handle": handle, "pullable": PULLABLE}),
-            ),
-            Which::Linked(doc) => (
-                "SELECT * OMIT id FROM array::distinct(SELECT VALUE slug FROM link
-                     WHERE kind = 'doc' AND (target = $doc OR string::starts_with(target, $doc + '#')))
-                     .map(|$s| type::record('task', $s)) ORDER BY priority, slug",
-                SCOPED,
-                "true",
-                json!({"doc": doc}),
-            ),
-        };
-        let (deps, mine) = match which {
-            Which::Slug(_) | Which::Starting(_) | Which::Pullable(_) => (
-                "(SELECT slug, kind, target FROM link WHERE slug IN $slugs AND kind = 'dep'
-                  AND type::record('task', target).status NOT IN [NONE, 'done'] ORDER BY target)",
-                if matches!(which, Which::Pullable(_)) {
-                    "(SELECT VALUE slug FROM role WHERE handle = $handle)"
-                } else {
-                    "[]"
-                },
-            ),
-            _ => ("[]", "[]"),
-        };
-        let (slot_lets, slots) = if matches!(which, Which::Starting(_)) {
-            if let (Some(vars), Value::Object(more)) = (vars.as_object_mut(), cap::vars()) {
-                vars.extend(more);
-            }
-            (cap::lets(), cap::field())
-        } else {
-            (String::new(), String::new())
-        };
-        vars["executing"] = json!(EXECUTING);
-        native_bounds(&mut vars);
-        let read = format!(
-            "LET $tasks = ({pick});
-             LET $slugs = $tasks.slug;
-             {HELD}
-             {slot_lets}
-             RETURN {{
-                 tasks: $tasks,
-                 links: (SELECT slug, kind, target FROM link{scope} ORDER BY target),
-                 roles: (SELECT slug, handle, role, since, expires FROM role{scope} ORDER BY since, handle),
-                 sessions: (SELECT * OMIT id FROM session ORDER BY connected, handle),
-                 held: $held,
-                 latest: (SELECT VALUE last FROM ONLY counter:message) ?? 0,
-                 callback_sequence: $callback_sequence ?? 0,
-                 has_callbacks: $has_callbacks ?? false,
-                 native_presence: {NATIVE_PRESENCE},
-                 open_deps: {deps},
-                 known: {known},
-                 mine: {mine},
-                 {slots}
-             }};"
-        );
-        (read, vars)
     }
 
     fn retrying<T>(&self, mut once: impl FnMut() -> Result<T, Failure>) -> Result<T, Error> {
@@ -861,28 +750,6 @@ fn native_health(row: &SessionRow, health: Health, now: f64, until: Option<f64>)
     } else {
         health
     }
-}
-
-/// `$held`: every session holding work another could take over (`CLAIMABLE`, for everyone), for
-/// the `lost` line of health. Needs `$executing`. The roles are read by their tasks' slugs, through
-/// `role_slug`, and kept by role after: one condition over both would read every role.
-const HELD: &str = "LET $open = SELECT VALUE slug FROM task WHERE status IN $executing;
-LET $waiting = SELECT VALUE slug FROM task WHERE status = 'review';
-LET $held = array::distinct((SELECT handle, role, slug FROM role WHERE slug IN array::concat($open, $waiting))
-    .filter(|$r| ($r.role = 'executor' AND $r.slug IN $open) OR ($r.role = 'reviewer' AND $r.slug IN $waiting))
-    .map(|$r| $r.handle));";
-
-/// The Codex registrations' presence, through `callback_state_address`: an address starting
-/// `codex:` is one from `$codex` up to `$codex_after`, the bounds [`native_bounds`] gives. They
-/// are variables, not text: the client takes a request for a read only when no `;` but those
-/// between its statements is in it (`rpc::Kind::of` splits on every one, quoted or not), and a
-/// read it took for a write would never be sent again when late.
-pub(super) const NATIVE_PRESENCE: &str = "(SELECT handle, confirmed_until ?? 0 AS until FROM callback_state WHERE address >= $codex AND address < $codex_after)";
-
-/// `vars` with [`NATIVE_PRESENCE`]'s bounds: `codex:`, and `codex;`, the character after the colon.
-pub(super) fn native_bounds(vars: &mut Value) {
-    vars["codex"] = json!("codex:");
-    vars["codex_after"] = json!("codex;");
 }
 
 /// The tasks `$handle` holds that another could take over (`health::claimable`, in the database).
@@ -1173,9 +1040,6 @@ struct Opens {
     by: Vec<String>,
     /// What the refusal says cannot happen.
     what: String,
-    /// A red's close ([`cap::closing`]): never refused, though it raises the counts of the work
-    /// under the red, and holding the counters it changes as a start does.
-    closes: bool,
 }
 
 struct Say {
@@ -1312,117 +1176,4 @@ fn backoff(attempt: u32) -> Duration {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn an_expired_native_signal_never_overrules_a_heartbeat_or_an_explicit_departure() {
-        let row = SessionRow::default();
-        for (health, until, want) in [
-            (Health::Live, Some(0.0), Health::Live),
-            (Health::Lost, Some(100.0), Health::Lost),
-            (Health::Stale, Some(99.0), Health::Unknown),
-            (Health::Lost, Some(99.0), Health::Unknown),
-            (Health::Left, Some(99.0), Health::Unknown),
-            (Health::Lost, None, Health::Lost),
-        ] {
-            assert_eq!(native_health(&row, health, 100.0, until), want);
-        }
-        let left = SessionRow {
-            left_at: Some(1.0),
-            ..row
-        };
-        assert_eq!(
-            native_health(&left, Health::Left, 100.0, Some(0.0)),
-            Health::Left
-        );
-        assert!(Health::Unknown.holds());
-        assert_eq!(Health::Unknown.as_str(), "unknown");
-    }
-
-    #[test]
-    fn native_uncertainty_expires_without_overruling_the_heartbeat_health() {
-        let row = SessionRow::default();
-        for health in [Health::Live, Health::Stale, Health::Lost, Health::Left] {
-            let protected = if health == Health::Live {
-                health
-            } else {
-                Health::Unknown
-            };
-            for (now, expected) in [(699.0, protected), (700.0, protected), (701.0, health)] {
-                assert_eq!(native_health(&row, health, now, Some(100.0)), expected);
-            }
-        }
-    }
-
-    #[test]
-    fn a_name_is_quoted_as_python_quotes_it() {
-        assert_eq!(repr("nobody"), "'nobody'");
-        assert_eq!(repr(""), "''");
-        assert_eq!(repr("it's"), "\"it's\"");
-        assert_eq!(repr("it's \"x\""), "'it\\'s \"x\"'");
-        assert_eq!(repr("a\\b\nc\td\r\u{1}"), "'a\\\\b\\nc\\td\\r\\x01'");
-        assert_eq!(repr("sim/jump — ✓"), "'sim/jump — ✓'");
-    }
-
-    #[test]
-    fn only_a_namespace_or_this_database_not_on_the_server_reads_as_a_board_not_made_yet() {
-        assert!(undefined("The namespace 'sf' does not exist", "tasks"));
-        assert!(undefined("The database 'tasks' does not exist", "tasks"));
-        for other in [
-            "The database 'other' does not exist",
-            "The table 'meta' does not exist",
-            "The namespace 'sf' already exists",
-            "The namespace 'sf",
-            "the server at 127.0.0.1:1 is slow: The database 'tasks' does not exist",
-        ] {
-            assert!(!undefined(other, "tasks"), "{other}");
-        }
-    }
-
-    /// The open's check of the version is a read, so a late answer to it goes once more.
-    #[test]
-    fn the_schema_version_check_is_a_read() {
-        assert_eq!(crate::rpc::Kind::of(SCHEMA_VERSION), crate::rpc::Kind::Read);
-    }
-
-    /// Each snapshot a page or a list reads is a read, so a late answer to it goes once more: its
-    /// bounds are variables, so no `;` stands in it but between its statements.
-    #[test]
-    fn every_snapshot_read_is_a_read_and_binds_its_bounds() {
-        let slugs = ["p/a".to_string()];
-        for which in [
-            Which::All,
-            Which::Status("ready"),
-            Which::Slug("p/a"),
-            Which::Slugs(&slugs),
-            Which::Children("p/a"),
-            Which::Linked("docs/x.md"),
-            Which::Pullable("someone"),
-        ] {
-            let (read, vars) = Store::reading(&which);
-            assert_eq!(
-                crate::rpc::Kind::of(&read),
-                crate::rpc::Kind::Read,
-                "{read}"
-            );
-            assert_eq!(
-                (vars["codex"].as_str(), vars["codex_after"].as_str()),
-                (Some("codex:"), Some("codex;")),
-                "{vars}"
-            );
-        }
-    }
-
-    #[test]
-    fn a_refusal_is_its_words_and_a_database_failure_says_so() {
-        assert_eq!(
-            Error::Refused("no task 'x'".into()).to_string(),
-            "no task 'x'"
-        );
-        assert_eq!(
-            Error::Db("cannot reach it".into()).to_string(),
-            "SurrealDB: cannot reach it"
-        );
-    }
-}
+mod tests;

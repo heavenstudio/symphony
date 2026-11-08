@@ -137,14 +137,7 @@ fn look(
     }
     if let Some((stamp, statuses)) = pull {
         let digest = pull_digest(store, view.as_ref(), w.landed, stamp)?.only_for(&board, handle);
-        let entries = digest.entries();
-        memory.pull_entries.retain(|entry| entries.contains(entry));
-        if !entries.is_subset(&memory.pull_entries) {
-            for line in digest.event_lines() {
-                emit(&line);
-            }
-            memory.pull_entries = entries;
-        }
+        super::pull_updates::emit_new(&digest, &mut memory.pull_entries, emit);
         memory.last_pull = Some(stamp);
         memory.last_statuses = statuses;
     }

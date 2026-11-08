@@ -9,6 +9,9 @@ use symphony_board::health::{LIVE_SECONDS, RESERVE_SECONDS, STALE_SECONDS};
 use symphony_board::sys::local_minute;
 use symphony_board::{NewTask, Task};
 
+#[path = "pull_unanswered.rs"]
+mod unanswered;
+
 struct Case {
     f: Fixture,
     landed: BTreeSet<String>,

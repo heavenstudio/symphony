@@ -163,6 +163,13 @@ orchestrated work. The config belongs to the checkout running the command (main 
 the Symphony). `reap` runs staffing before its five-minute idle sweep. A shared
 `sf-tasks/staff.lock` keeps concurrent staffing passes from dispatching twice.
 
+`reap` also recovers missing agents with addressed work left unanswered for thirty
+minutes, even when staffing is disabled. It resumes a recorded conversation once
+per handle/post, after the hc terminal inventory confirms its absence, and posts the
+restore on the task thread. With no recorded conversation it only flags the work;
+it never starts a fresh conversation on its own. A failed automatic attempt stays
+flagged for manual action. `reap --dry-run` starts no recovery.
+
 Only ready tasks with dependencies done and no executor or reservation qualify;
 review tasks with no reviewer get one breakage-only reviewer through an instruction
 child. A land-request task's opening `Review` line records the branch under review;
@@ -195,8 +202,13 @@ hand) from running at once, and nothing goes into any monitor. It closes (`hc ki
 then `hc rm`) one of this board's terminals (label `sf.board`) whose named agent was
 idle (or stuck on the folder-trust prompt) at two sweeps at least five minutes apart,
 however many apps sweep, when neither its handle nor a subagent session under it holds
-an executor role on an in-progress or blocked task or a reviewer role on a task in
-review, and nothing runs under it but MCP helpers (Codex's configured `node_repl` among
+an executor role on an in-progress, blocked or review task, a reviewer role on a task in
+review, an unanswered addressed post, or a reviewer awaiting re-review after changes
+returned its task to in-progress. That last keep includes landing changes messages,
+on the branch task or any numbered review task. A pending post keeps the terminal
+immediately, before the thirty-minute recovery threshold. A post, status move or verdict
+by its addressed handle answers earlier work; reading its inbox does not.
+Nothing runs under it but MCP helpers (Codex's configured `node_repl` among
 them, by its path), caffeinate and board commands: anything else is work. Status, roles
 and the window are read again right before the close, and the terminal and the window once
 more after the close is recorded, right before the kill: work resumed by then (its agent
@@ -358,7 +370,20 @@ digest (`symphony/crates/tasks/src/cli/pull.rs`) once at its first dispatch, eve
 (the branch is on main, or `landed <slug> on main` is on the task's thread) and are still open (a status change on the task after that line voids it, whether a move, a verdict such as `changes`, or a re-claim: the task is new work, not a landing left open), and idle agents, each scoped to the orchestrator's own and unclaimed tasks (an idle agent another orchestrator launched is left out). An executor
 or reviewer that is `running_test` counts as present however quiet the board says it is.
 Counts and the clock do not trigger delivery. A departure alone pushes nothing;
-an entry that stays present is never re-sent, and an entry that leaves and returns pushes once.
+an entry that stays present is never re-sent, and an ordinary entry that leaves and returns pushes once.
+Unanswered work retains its task/post identity across departures and returns.
+`unanswered` lists an executor on an in-progress, blocked or review task, or a reviewer
+on a task in review, when it is lost or left (or its recorded terminal is closed) and an
+addressed post has waited thirty minutes without a later message, status move or
+verdict from that handle. A deliberate role release also answers earlier requests;
+an automatic departure does not. Posts belong to their recipients at post time,
+so a replacement never inherits its predecessor's role-addressed work. Each line
+names the post and the recorded conversation's `just tasks restore SLUG HANDLE`
+command, or the explicit launch command when no conversation was recorded. The
+orchestrator receives each task/post once, even if it leaves and returns; a new
+unanswered post can push a new line for the same task. Its count appears only when
+nonzero. `reap` makes the sole automatic recovery attempt described above.
+
 A legacy native observer starts from the current board on upgrade rather than replaying its history.
 Its upgrade marker and message cursor are separate callback-state fields that older writers leave intact.
 The fields writers older than that scoping read (the observation, the open-status map and the delivered PULL entries)

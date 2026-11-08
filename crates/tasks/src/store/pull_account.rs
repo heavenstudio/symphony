@@ -93,14 +93,18 @@ pub(super) struct Account {
 
 impl Account {
     /// The account of the recipient in `state`, with `queued` waiting for it, that hears `heard`
-    /// of the whole digest's `entries`. What left the digest is forgotten, so it pushes once more
-    /// if it returns.
+    /// of the whole digest's `entries`. Ordinary entries are forgotten when they leave;
+    /// acknowledged unanswered posts retain their identity across departures and returns.
     pub(super) fn of(state: &State, queued: &[Queued], entries: &Entries, heard: &Entries) -> Self {
-        let acknowledged = state.acknowledged().map(|told| &told & entries);
+        let acknowledged = state.acknowledged().map(|told| {
+            told.into_iter()
+                .filter(|entry| entry.0 == "unanswered" || entries.contains(entry))
+                .collect()
+        });
         let none = Entries::new();
         let told = acknowledged.as_ref().unwrap_or(&none);
         let unheard = entries - heard;
-        let recorded = (state.pull_entries.as_ref()).map(|_| told | &unheard);
+        let recorded = (state.pull_entries.as_ref()).map(|_| &(told & entries) | &unheard);
         let withheld = &unheard - told;
         let plan = pull_plan(queued, heard, acknowledged.as_ref());
         let waits = matches!(plan, PullPlan::Kept(_) | PullPlan::Queued);

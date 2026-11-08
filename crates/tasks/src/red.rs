@@ -36,6 +36,13 @@ pub fn marked(fields: &BTreeMap<String, BTreeMap<String, Value>>) -> bool {
         .is_some_and(|what| !what.is_null())
 }
 
+impl crate::Task {
+    /// Whether it was filed for a red ([`marked`]).
+    pub fn red(&self) -> bool {
+        marked(&self.fields)
+    }
+}
+
 /// Whether a task in `status` is open, so that its mark, when it has one, exempts the work under it.
 pub fn open(status: &str) -> bool {
     !matches!(status, "done" | "cancelled")

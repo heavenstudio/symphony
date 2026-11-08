@@ -133,6 +133,28 @@ Posts, verdicts and AGENT lines stay: they were said to whoever held the role th
 holder hears no backlog.
 A finished idle terminal still closes under the original cleanup rules, retiring its
 registration; an executor of a task in review is not finished, and keeps its terminal.
+PULL's `unanswered` category lists a missing executor on `in_progress`, `blocked` or `review`,
+or a missing reviewer on `review`, after an addressed post has waited thirty minutes. Each line
+names the post and its restore command (or an explicit launch when no conversation was recorded).
+The monitor and native stream emit that task/post once. Native acknowledgements retain those
+identities in `callback_state.pull_unanswered`, separate from main's whole-board PULL account;
+withheld or merely queued entries never enter that history. `store/unanswered.rs::unanswered_post`
+defines pending work for the digest, restore selection and sweep: a post since that handle took
+its role, without a later message, status move or verdict by it on the same thread. Acquiring the
+role also puts the predecessor's posts before the new holder's work, even at the same clock time.
+Role aliases bind to the holders in the thread prefix at each post; a later departure or
+replacement cannot transfer that request to another recorded conversation.
+Handle-addressed requests retain the recipient's role from that history even without a launch
+record. A deliberate role release answers older requests; an automatic departure does not.
+Reading an inbox does not answer it. The periodic reap command reserves one durable recovery
+attempt per handle/post and resumes the recorded conversation only after the hc terminal inventory
+confirms its absence; it never starts a fresh conversation. An unsuccessful attempt remains
+flagged for manual action.
+A reviewer launched on an instruction child resumes that child's recorded conversation when the
+unanswered post is on its parent; a departed reviewer explicitly named by handle still receives it.
+An unanswered post keeps a terminal immediately, including through descendant sessions. A reviewer
+whose changes verdict returned the task to `in_progress` keeps its terminal for re-review too.
+That includes landing changes posted as a message to the executor before it moves the task back.
 A post or changes verdict to `@executor`, or a post to the executor by handle, that no
 executor can read (no callback, and its launch record closed or no live beat) adds a
 `board` post to `@orchestrator` on the
