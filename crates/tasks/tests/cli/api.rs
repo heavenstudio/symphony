@@ -398,7 +398,7 @@ fn only_a_reds_filer_marks_a_task_red_through_the_api() {
             {"method": "mark_red", "args": {"slug": "sim/a", "red": "main", "by": filer}},
         ]),
     );
-    let unseries = |slug: &str| json!({"refused": format!("{slug} is of no red series: a red is marked only on a task of the series reds are filed in, tests/main-red-* and tests/nightly-red-*")});
+    let unseries = |slug: &str| json!({"refused": format!("{slug} is no red series' own task: a red is marked only on a task of the series reds are filed in, tests/main-red-* and tests/nightly-red-*, never on one named under it")});
     assert_eq!(made[0]["ok"]["priority"], json!(0));
     assert_eq!(made[1], unseries("work/escape"));
     assert_eq!(made[2]["ok"]["slug"], json!("sim/a"));

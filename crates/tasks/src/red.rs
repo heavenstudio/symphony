@@ -6,8 +6,8 @@
 //! its record, never its slug. Only a filer marks: a session of kind [`FILER`], as the tools that
 //! file reds register; the board refuses any other session's mark, and keeps its own fields out of
 //! `set_field`'s reach. A filer is a role a session takes as it registers, on its word as every
-//! role is, so the mark goes only on a task of the series reds are filed in ([`SERIES`]): no
-//! feature takes it, whoever marks it.
+//! role is, so the mark goes only on a task of the series reds are filed in ([`SERIES`]), never
+//! on one named under it ([`filed`]): no feature takes it, whoever marks it.
 //!
 //! The work that fixes a red waits for nothing: an open red task, and the work under it, takes no
 //! orchestrator slot ([`crate::slots`]), and the PULL digest names a red task first while no one
@@ -49,12 +49,17 @@ pub fn open(status: &str) -> bool {
 }
 
 /// Whether `slug` is a task of a series reds are filed in ([`SERIES`]), the one kind a red mark
-/// goes on: a series' own task, past its prefix.
+/// goes on ([`filed_in`]): never a task named under one, which is ordinary work.
 pub fn filed(slug: &str) -> bool {
-    (SERIES.iter()).any(|series| {
-        slug.strip_prefix(series)
-            .is_some_and(|rest| !rest.is_empty())
-    })
+    SERIES.iter().any(|series| filed_in(series, slug))
+}
+
+/// Whether `slug` is a task the series of slugs `series` begins files itself: a name past the
+/// prefix with no `/`, so `tests/main-red-3e0c` and not `tests/main-red-3e0c/fix`, a task named
+/// under it. What marks a red, reads a series' reds again to mark them, or stops a landing for
+/// one, judges a slug by this.
+pub fn filed_in(series: &str, slug: &str) -> bool {
+    (slug.strip_prefix(series)).is_some_and(|name| !name.is_empty() && !name.contains('/'))
 }
 
 #[cfg(test)]
@@ -112,7 +117,10 @@ mod tests {
         let cases = [
             ("tests/main-red-3e0c", true),
             ("tests/nightly-red-sim-determinism", true),
+            ("tests/nightly-red-sim-2", true),
             ("tests/main-red-", false),
+            ("tests/main-red-old/feature", false),
+            ("tests/nightly-red-sim/fix", false),
             ("work/feature", false),
             ("tests/main-verify", false),
             ("work/tests/main-red-3e0c", false),

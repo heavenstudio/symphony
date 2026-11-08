@@ -383,8 +383,9 @@ fn beside_a_red(led: usize, started: bool) -> Fixture {
 /// A write that closes [`RED`].
 type Close = fn(&Store) -> Result<Task, Error>;
 
-/// Each write that closes [`RED`]: its orchestrator's cancel, the owner's, its reviewer's approval.
-fn closes() -> [(&'static str, Close); 3] {
+/// Each write that closes [`RED`]: its orchestrator's cancel, the owner's, its reviewer's approval
+/// and its landing.
+fn closes() -> [(&'static str, Close); 4] {
     [
         ("its orchestrator's cancel", |s| {
             s.move_to(RED, "cancelled", O)
@@ -395,15 +396,34 @@ fn closes() -> [(&'static str, Close); 3] {
         ("its reviewer's approval", |s| {
             s.verdict(RED, "lark", "approve", "fixed")
         }),
+        ("its landing", |s| {
+            (s.landed(RED, W, "landed", false, &["review"])).map(|landed| landed.task)
+        }),
     ]
+}
+
+/// A store closing [`RED`]: one capping starts as the cap's board does, or one capping none, as the
+/// nightly's and any board without a cap: a red's close holds its counters on either.
+type Writer = fn(&Fixture) -> Store;
+
+/// Each closing store ([`Writer`]) with each close ([`closes`]), named.
+fn closers() -> Vec<(String, Writer, Close)> {
+    let writers: [(&str, Writer); 2] = [
+        ("a capped store", |f| capped(f, 8)),
+        ("an uncapped store", Fixture::other),
+    ];
+    let pairs = writers.into_iter().flat_map(|(by, writer)| {
+        (closes().into_iter()).map(move |(how, close)| (format!("{how} on {by}"), writer, close))
+    });
+    pairs.collect()
 }
 
 #[test]
 fn a_reds_close_past_the_cap_is_never_refused_and_the_work_under_it_counts_from_then() {
-    for (how, close) in closes() {
+    for (how, writer, close) in closers() {
         let f = beside_a_red(8, true);
+        close(&writer(&f)).unwrap_or_else(|why| panic!("{how}: {why:?}"));
         let store = capped(&f, 8);
-        close(&store).unwrap_or_else(|why| panic!("{how}: {why:?}"));
         assert_eq!(open(&store).len(), 9, "{how}");
         let said = refused(store.claim("work/next", K));
         assert!(
@@ -416,9 +436,9 @@ fn a_reds_close_past_the_cap_is_never_refused_and_the_work_under_it_counts_from_
 
 #[test]
 fn a_start_decided_before_a_red_closed_is_decided_again_the_work_under_it_counted() {
-    for (how, close) in closes() {
+    for (how, writer, close) in closers() {
         let f = beside_a_red(7, true);
-        let other = capped(&f, 8);
+        let other = writer(&f);
         // The claim reads seven slots, the red's work taking none; before it writes, the red
         // closes, and the work under it takes the eighth.
         let racing = f
@@ -438,9 +458,9 @@ fn a_start_decided_before_a_red_closed_is_decided_again_the_work_under_it_counte
 
 #[test]
 fn work_started_under_a_red_as_it_closes_is_decided_again_and_takes_a_slot() {
-    for (how, close) in closes() {
+    for (how, writer, close) in closers() {
         let f = beside_a_red(8, false);
-        let other = capped(&f, 8);
+        let other = writer(&f);
         // The claim reads the red open, so the work under it takes no slot; before it writes, the
         // red closes.
         let racing = f

@@ -15,9 +15,10 @@
 //! a field it does not know.
 //!
 //! A red's close ([`closing`]) is read so too: never refused, it raises the counts of the open work
-//! under the red, and holds the counters a start would. A red's own counter (`counter:['red',
-//! SLUG]`) is held by its close and by every start that takes no slot under it
-//! ([`crate::slots::reds`]).
+//! under the red, and holds the counters a start would, whether the closing store caps starts or
+//! not (the nightly's does not), since a store that does may have decided on the board before it. A
+//! red's own counter (`counter:['red', SLUG]`) is held by its close and by every start that takes
+//! no slot under it ([`crate::slots::reds`]).
 //!
 //! The write holds the counter of every orchestrator whose open tasks it changes, a start into a
 //! slot already open included, and moves it on: two starts at once under one orchestrator meet
@@ -128,6 +129,17 @@ fn held(kind: &str, read: &[(String, i64)], names: &[&str]) -> Vec<Value> {
         .collect()
 }
 
+/// A rule's read and decision ([`Store::ruled`]).
+pub(super) struct Ruled {
+    /// The board as the decision read it: the cap's read too for a red's close.
+    pub(super) view: View,
+    /// What the rule decided on `view`.
+    pub(super) change: Change,
+    /// The counters its write holds ([`GUARD`]): a start's under the cap, refused past it
+    /// ([`Store::slots_taken`]), and a red's close's ([`closing`]); none for any other change.
+    pub(super) slots: Vec<Value>,
+}
+
 /// A task as the cap reads it.
 #[derive(Clone, Deserialize)]
 struct Row {
@@ -194,30 +206,35 @@ struct Level {
 
 impl Store {
     /// A rule's read of `which` ([`Store::ruling`]) and what `decide` makes of it, with the counters
-    /// a red's close holds under the cap: a close of an open red read without the cap's board is
-    /// read and decided again with it ([`closing`]). No counters for any other change.
+    /// its write holds: a start's under this store's cap, and a red's close's whether this store
+    /// caps starts or not, a close of an open red read without the cap's board read and decided
+    /// again with it ([`closing`]). No counters for any other change.
     pub(super) fn ruled(
         &self,
         which: &Which,
         slug: &str,
         decide: &impl Fn(&View) -> Result<Change, Error>,
-    ) -> Result<(View, Change, Vec<Value>), Failure> {
+    ) -> Result<Ruled, Failure> {
         let mut view = self.view(which)?;
         let mut change = decide(&view).map_err(Failure::Stop)?;
         let closes = |view: &View, change: &Change| {
-            (change.opens.is_none() && self.slots.is_some())
-                .then(|| closing(view, slug, change.status.as_deref()))
-                .flatten()
+            let start = change.opens.is_some();
+            closing(view, slug, change.status.as_deref()).filter(|_| !start)
         };
         if !matches!(which, Which::Starting(_)) && closes(&view, &change).is_some() {
             view = self.view(&Which::Starting(slug))?;
             change = decide(&view).map_err(Failure::Stop)?;
         }
-        let closed = match closes(&view, &change) {
-            Some(opens) => self.holding(&view, slug, &opens, None)?,
-            None => Vec::new(),
+        let slots = match (&change.opens, self.slots, closes(&view, &change)) {
+            (Some(opens), Some(cap), _) => self.slots_taken(&view, slug, opens, cap)?,
+            (_, _, Some(closing)) => self.holding(&view, slug, &closing, None)?,
+            _ => Vec::new(),
         };
-        Ok((view, change, closed))
+        Ok(Ruled {
+            view,
+            change,
+            slots,
+        })
     }
 
     /// The slot counters the change `opens` describes holds under `cap`, each `{handle, last}` as
@@ -348,12 +365,10 @@ impl Store {
         Ok(counters)
     }
 
-    /// The counters a close of `slug` into `status` holds under the cap, for a write that reads
-    /// nothing the cap decides on, the owner's: none unless it closes an open red ([`closing`]).
+    /// The counters a close of `slug` into `status` holds, for a write that reads nothing the cap
+    /// decides on, the owner's: none unless it closes an open red ([`closing`]), whether this store
+    /// caps starts or not, since a store that does may have read the board before it.
     pub(super) fn closing_slots(&self, slug: &str, status: &str) -> Result<Vec<Value>, Failure> {
-        if self.slots.is_none() {
-            return Ok(Vec::new());
-        }
         let view = self.view(&Which::Starting(slug))?;
         match closing(&view, slug, Some(status)) {
             Some(opens) => self.holding(&view, slug, &opens, None),

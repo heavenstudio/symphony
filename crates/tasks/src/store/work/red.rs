@@ -23,12 +23,12 @@ pub(super) fn filing(actor: &str) -> Value {
 }
 
 /// What a red names, trimmed, for a red mark on `slug`: refused when it names nothing, or when
-/// `slug` is of no red series ([`filed`]).
+/// `slug` is no red series' own task ([`filed`]).
 pub(super) fn named<'w>(slug: &str, what: &'w str) -> Result<&'w str, Error> {
     if !filed(slug) {
         let series: Vec<String> = SERIES.iter().map(|s| format!("{s}*")).collect();
         return Err(refused(format!(
-            "{slug} is of no red series: a red is marked only on a task of the series reds are filed in, {}",
+            "{slug} is no red series' own task: a red is marked only on a task of the series reds are filed in, {}, never on one named under it",
             series.join(" and ")
         )));
     }

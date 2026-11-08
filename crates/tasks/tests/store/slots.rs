@@ -430,7 +430,10 @@ fn a_filer_marks_no_feature_red_so_the_cap_still_refuses_its_claim() {
     assert_eq!(refused(store.claim("work/next", K)), full);
     // A filer, which any worker may register, marks the feature the cap refused: no red series'.
     let said = refused(store.mark_red("work/next", "main", F));
-    assert!(said.starts_with("work/next is of no red series"), "{said}");
+    assert!(
+        said.starts_with("work/next is no red series' own task"),
+        "{said}"
+    );
     assert!(!store.get("work/next").unwrap().red());
     assert_eq!(refused(store.claim("work/next", K)), full);
     assert_eq!(store.get("work/next").unwrap().status, "ready");

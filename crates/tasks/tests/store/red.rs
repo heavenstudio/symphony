@@ -17,7 +17,7 @@ fn unfiled(actor: &str) -> String {
 /// What a mark on `slug`, of no red series, is told, whoever marks it.
 fn unseries(slug: &str) -> String {
     format!(
-        "{slug} is of no red series: a red is marked only on a task of the series reds are filed in, tests/main-red-* and tests/nightly-red-*"
+        "{slug} is no red series' own task: a red is marked only on a task of the series reds are filed in, tests/main-red-* and tests/nightly-red-*, never on one named under it"
     )
 }
 
@@ -174,4 +174,31 @@ fn a_closed_or_missing_task_is_no_red_to_mark() {
         ),
         "no task 'tests/nightly-red-gone'"
     );
+}
+
+#[test]
+fn a_task_named_under_a_closed_red_is_ordinary_work_no_filer_marks() {
+    let f = Fixture::empty();
+    let filer = f.session(FILER);
+    let old = "tests/main-red-old";
+    let filed = NewTask {
+        red: Some("main".into()),
+        ..NewTask::new(old, "Main red", &filer)
+    };
+    f.store.create(&filed).unwrap();
+    f.store.move_to(old, "cancelled", "owner").unwrap();
+    let child = format!("{old}/feature");
+    f.task(&child);
+    assert_eq!(
+        refused(f.store.mark_red(&child, "main", &filer)),
+        unseries(&child)
+    );
+    assert!(!f.store.get(&child).unwrap().red());
+    let fix = format!("{old}/fix");
+    let under = NewTask {
+        red: Some("main".into()),
+        ..NewTask::new(&fix, "A fix", &filer)
+    };
+    assert_eq!(refused(f.store.create(&under)), unseries(&fix));
+    assert!(f.store.get(&fix).is_err(), "a refused create files nothing");
 }

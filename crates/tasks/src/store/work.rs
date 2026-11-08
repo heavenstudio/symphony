@@ -515,7 +515,7 @@ LET $said = $actor + ' moved it ' + $task.status + ' → ' + $status;
             block_cancelled_dependencies(cancelling)
         );
         self.retrying(|| {
-            // A red's close holds the counters it changes, under a cap, as a start does.
+            // A red's close holds the counters it changes as a start does, capped store or not.
             let slots = if cancelling { self.closing_slots(slug, status)? } else { Vec::new() };
             let body = if slots.is_empty() { body.clone() } else { format!("{body}{GUARD}") };
             let vars = acting(
