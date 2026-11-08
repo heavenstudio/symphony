@@ -116,17 +116,19 @@ impl Worker {
         let tree = Tree::new();
         let root = repository(&tree);
         let (ask, asked) = mpsc::channel();
-        let (give, given) = mpsc::channel::<Connection>();
+        let (give, given) = mpsc::channel();
         let connect = move |_: &Path| -> Connection {
             ask.send(()).map_err(|e| e.to_string())?;
             given
                 .recv()
                 .map_err(|_| "the test gives no more connections".to_string())?
         };
+        // A private hub leaves the chat journal to the shared server.
+        let drain_chat = false;
         let hub = Hub::start_watching::<notify::NullWatcher>(
             &root,
             &root.join("build/client"),
-            false,
+            drain_chat,
             crate::backstop::PERIOD,
             connect,
         )
