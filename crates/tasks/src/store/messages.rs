@@ -120,7 +120,22 @@ impl Store {
         text: &str,
         to: Option<&str>,
     ) -> Result<Message, Error> {
-        self.post(slug, sender, text, to, None, false)
+        self.post(slug, sender, sender, text, to, None)
+    }
+
+    /// A tool's addressed notification, authorized as `actor` and authored by the board so even
+    /// a waiting actor receives it in its inbox. Ordinary agent posts keep their own author.
+    pub fn notify(
+        &self,
+        slug: &str,
+        actor: &str,
+        handle: &str,
+        text: &str,
+    ) -> Result<Message, Error> {
+        if handle == OWNER || handle.starts_with('@') {
+            return Err(refused("a notice needs a literal session handle".into()));
+        }
+        self.post(slug, actor, BOARD, text, Some(handle), None)
     }
 
     /// Post to a task's thread once per `key`: the first post under a key on a thread is made, and
@@ -137,7 +152,7 @@ impl Store {
         to: Option<&str>,
         key: &str,
     ) -> Result<Message, Error> {
-        self.post(slug, sender, text, to, Some(key), false)
+        self.post(slug, sender, sender, text, to, Some((key, false)))
     }
 
     /// `say_keyed`, but a key that names no line yet takes the thread's earliest line reading
@@ -151,17 +166,20 @@ impl Store {
         to: Option<&str>,
         key: &str,
     ) -> Result<Message, Error> {
-        self.post(slug, sender, text, to, Some(key), true)
+        self.post(slug, sender, sender, text, to, Some((key, true)))
     }
 
+    /// A post authorized as `actor` and authored by `sender` (the board's own, [`BOARD`], for a
+    /// notice), made once per key when `keyed` gives one, with whether that key adopts a line made
+    /// under no key ([`Store::adopt_or_say`]).
     fn post(
         &self,
         slug: &str,
+        actor: &str,
         sender: &str,
         text: &str,
         to: Option<&str>,
-        key: Option<&str>,
-        adopt: bool,
+        keyed: Option<(&str, bool)>,
     ) -> Result<Message, Error> {
         let text = text.trim();
         if text.is_empty() {
@@ -173,15 +191,24 @@ impl Store {
             format!("{REFUSED}no role @{role}; use one of {}", roles.join(", "))
         });
         let handle = to.filter(|to| *to != OWNER && role.is_none());
-        let act = if sender == OWNER { "" } else { ACT };
-        let line = logged("$slug", "$actor", "'msg'", "$text", "$to");
+        let act = if actor == OWNER {
+            ""
+        } else if sender == BOARD {
+            // A machine event is no tool call or heartbeat from the waiting session.
+            "LET $me = (SELECT left_at FROM ONLY type::record('session', $actor));
+IF $me = NONE { THROW $unknown_actor };
+IF $me.left_at != NONE { THROW $left_actor };"
+        } else {
+            ACT
+        };
+        let line = logged("$slug", "$sender", "'msg'", "$text", "$to");
         // The answer is the line on the record: this post's, or the one its key names.
-        let said = match key {
+        let said = match keyed {
             None => format!(
                 "{line}
 RETURN (SELECT * OMIT id FROM ONLY type::record('message', [$slug, $sid]));"
             ),
-            Some(_) => format!(
+            Some((_, adopt)) => format!(
                 "{}
 LET $made = (SELECT message FROM ONLY type::record('delivery_key', [$slug, $key]));
 RETURN (SELECT * OMIT id FROM ONLY type::record('message', [$slug, $made.message]));",
@@ -199,11 +226,12 @@ IF $handle != NONE AND !record::exists(type::record('session', $handle)) {{ THRO
 {said}"
         );
         let now = (self.clock)();
+        let key = keyed.map(|(key, _)| key);
         let vars = acting(
-            sender,
+            actor,
             now,
             json!({
-                "slug": slug, "text": text, "to": to, "handle": handle, "no_role": no_role, "key": key,
+                "slug": slug, "sender": sender, "text": text, "to": to, "handle": handle, "no_role": no_role, "key": key,
                 "no_task": format!("{REFUSED}{}", no_task(slug)),
                 "nobody": handle.map(|h| format!("{REFUSED}no session {} to send to", repr(h))),
             }),

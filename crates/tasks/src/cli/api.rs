@@ -16,14 +16,14 @@ use std::io::{BufRead, Read, Write};
 /// What a caller of these methods may rely on beyond the schema and the server's RPC: one more each
 /// time a method takes or does something an earlier build refused or did otherwise (1: `landed`'s
 /// `from`, before which a build declares none; 2: `say`'s `key`; 3: its `adopt`; 4: `hold`, a
-/// landing's move to blocked that keeps the task's slot). The live launcher (`tools/tasks.sh`)
-/// serves an earlier main build only while this matches main's, so no caller reaches a build
-/// without what it relies on.
+/// landing's move to blocked that keeps the task's slot; 5: board-authored `notify`, whose notices
+/// take literal session recipients). The live launcher (`tools/tasks.sh`) serves an earlier main
+/// build only while this matches main's, so no caller reaches a build without what it relies on.
 #[expect(
     dead_code,
     reason = "tools/tasks.sh reads it from the committed source; no Rust code compares builds"
 )]
-pub const VERSION: i64 = 4;
+pub const VERSION: i64 = 5;
 
 /// Why a call has no result.
 enum Fail {
@@ -468,6 +468,12 @@ fn dispatch<F: FnOnce() -> Result<Store, String>>(
                 None => board.say(&slug, &sender, &text, to.as_deref())?,
             };
             shape::message(&said)
+        }
+        "notify" => {
+            args!(slug: need, actor: actor, handle: need, text: need);
+            let (slug, actor, handle, text): (String, String, String, String) =
+                (slug, actor, handle, text);
+            shape::message(&board.get()?.notify(&slug, &actor, &handle, &text)?)
         }
         "last_messages" => {
             args!();
