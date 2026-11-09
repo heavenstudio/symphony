@@ -54,6 +54,11 @@ fn recipient_follows_background_scroll(page: &mut crate::Chrome) -> &'static str
     };
     let popup = before["popup"][popup_edge].as_f64().unwrap();
     let trigger = before["trigger"][trigger_edge].as_f64().unwrap();
+    let gap = if popup_edge == "top" { 4.0 } else { -4.0 };
+    assert!(
+        ((popup - trigger) - gap).abs() < 1.0,
+        "the popup must start at the select's 4px attachment gap: {before}"
+    );
     let scroll = before["scroll"].as_f64().unwrap();
     assert!(
         scroll > 24.0,
@@ -72,7 +77,7 @@ fn recipient_follows_background_scroll(page: &mut crate::Chrome) -> &'static str
                     && Math.abs((list.{popup_edge} - trigger.{trigger_edge}) - ({gap})) < 1
                     && list.top >= visualViewport.offsetTop
                     && list.bottom <= visualViewport.offsetTop + visualViewport.height;
-            }})()"#, gap = popup - trigger),
+            }})()"#),
             SHOWN
         ),
         "the popup follows its trigger when the document scrolls and stays in the viewport; before: {before}; after: {}",
