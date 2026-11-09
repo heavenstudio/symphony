@@ -12,10 +12,15 @@ use std::{fs, os::unix::fs::MetadataExt};
 
 /// Ignored files that go with a merged worktree, as `land` lets them go with a landed one: caches a
 /// checkout rebuilds, export output, and the logs and golden images verify writes.
-pub const DISPOSABLE: [&str; 14] = [
+pub const DISPOSABLE: [&str; 19] = [
     ".godot/",
+    ".godot/*",
     ".target/",
+    "symphony/.target/",
+    "symphony/build/",
+    ".codex/hooks*",
     ".venv/",
+    ".venv/*",
     "build/*",
     "__pycache__/",
     "*/__pycache__/",
@@ -29,9 +34,18 @@ pub const DISPOSABLE: [&str; 14] = [
     "tests/golden/*.diff.png",
 ];
 
-/// What else goes with a worktree whose work is finished (its branch in main, its task done or
-/// cancelled, or no task): its whole output, renders and probes under `artifacts/` included.
-pub const FINISHED_OUTPUT: [&str; 4] = ["artifacts/*", ".godot/*", ".venv/*", ".target/*"];
+/// Additional cache paths released when the worktree's task is finished.
+pub const FINISHED_OUTPUT: [&str; 3] = [".godot/*", ".venv/*", ".target/*"];
+
+const REGENERABLE: [&str; 7] = [
+    ".target/",
+    ".target/*",
+    "symphony/.target/",
+    "symphony/.target/*",
+    "symphony/build/",
+    "symphony/build/*",
+    ".codex/hooks*",
+];
 
 /// Where the owner's verdicts are written into a worktree.
 const DOCS: &str = "docs";
@@ -414,10 +428,18 @@ pub fn fnmatch(pattern: &str, text: &str) -> bool {
 }
 
 /// What in worktree `path` did not land: tracked changes, untracked files, and ignored files that
-/// are not disposable. A worktree whose work is `finished` lets its whole output go too
+/// are not disposable. A worktree whose work is `finished` lets its caches go too
 /// ([`FINISHED_OUTPUT`]). A status git cannot give is something left behind: it keeps the worktree.
 pub fn left_behind(path: &Path, finished: bool) -> Vec<String> {
-    let Some(text) = stdout(path, &["status", "--porcelain", "--ignored=matching"]) else {
+    let Some(text) = stdout(
+        path,
+        &[
+            "status",
+            "--porcelain",
+            "--ignored=matching",
+            "--untracked-files=all",
+        ],
+    ) else {
         return vec!["(git status could not be read there)".into()];
     };
     let Some(mut kept) = saved_locks(path) else {
@@ -427,12 +449,36 @@ pub fn left_behind(path: &Path, finished: bool) -> Vec<String> {
         let status = line.get(..2).unwrap_or(line);
         let named = line.get(3..).unwrap_or("").trim_matches('"');
         let goes = |patterns: &[&str]| patterns.iter().any(|p| fnmatch(p, named));
-        if status == "!!" && (goes(&DISPOSABLE) || (finished && goes(&FINISHED_OUTPUT))) {
+        let root_log = named
+            .strip_prefix("artifacts/")
+            .is_some_and(|name| !name.contains('/') && name.ends_with(".log"));
+        let disposable = !named.starts_with("artifacts/") && goes(&DISPOSABLE);
+        if matches!(status, "!!" | "??") && goes(&REGENERABLE) {
+            continue;
+        }
+        if status == "!!" && (root_log || disposable || (finished && goes(&FINISHED_OUTPUT))) {
             continue;
         }
         kept.push(named.to_string());
     }
     kept
+}
+
+/// Remove only untracked regenerable output, so the non-forced worktree removal can still let
+/// Git protect every tracked edit and every other untracked file.
+pub(super) fn clean_regenerable(path: &Path) -> bool {
+    succeeds(
+        path,
+        &[
+            "clean",
+            "-fdx",
+            "--",
+            ".target/",
+            "symphony/.target/",
+            "symphony/build/",
+            ".codex/hooks*",
+        ],
+    )
 }
 
 /// The files under docs/ in worktree `path` that hold an owner line no commit has: the owner's
@@ -459,12 +505,9 @@ pub fn owner_lines_left(path: &Path) -> Vec<String> {
 /// index and logs/HEAD (a checkout, a stage, a commit) and its top folder (a file made or removed
 /// there). Nothing readable (gone mid-sweep) is `now`: busy, never idle.
 pub fn last_touched(path: &Path, now: f64) -> f64 {
-    let admin = stdout(path, &["rev-parse", "--path-format=absolute", "--git-dir"])
-        .map(|out| out.trim().to_string())
-        .filter(|out| !out.is_empty());
+    let admin = admin(path);
     let mut candidates = vec![path.to_path_buf()];
     if let Some(admin) = admin {
-        let admin = PathBuf::from(admin);
         candidates.extend(["HEAD", "index", "logs/HEAD"].map(|name| admin.join(name)));
     }
     candidates
@@ -472,6 +515,21 @@ pub fn last_touched(path: &Path, now: f64) -> f64 {
         .filter_map(|candidate| modified(candidate))
         .reduce(f64::max)
         .unwrap_or(now)
+}
+
+/// A worktree's own admin folder, without spawning a process per worktree.
+pub(super) fn admin(path: &Path) -> Option<PathBuf> {
+    let dot = path.join(".git");
+    if dot.is_dir() {
+        return Some(dot);
+    }
+    let text = fs::read_to_string(dot).ok()?;
+    let named = Path::new(text.trim().strip_prefix("gitdir: ")?);
+    Some(if named.is_absolute() {
+        named.to_path_buf()
+    } else {
+        path.join(named)
+    })
 }
 
 /// When `path` was last modified, in seconds since the epoch.
