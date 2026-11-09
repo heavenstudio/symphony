@@ -311,9 +311,10 @@ chooser is answered on the way. Codex runs with `--no-daemon`; its configured
 REPL helper (`procs::CODEX_REPL`) and the ChatGPT app's computer-use REPL
 (`procs::CODEX_CUA_NODE` running `procs::CODEX_CUA_REPL`), each by that exact
 path, and the code-mode host Codex 0.167.0 on runs under each session
-(`procs::CODEX_CODE_MODE_HOST` in the `bin` folder of one version folder of
-`HOME/.codex/packages/standalone/releases/`, never the bare name elsewhere), are
-not work under it; a `codex exec` job is.
+(`procs::CODEX_CODE_MODE_HOST` in `FOLDER/.codex/packages/standalone/releases/VERSION/bin/`,
+for any absolute `FOLDER`, not only `$HOME`, and any one `VERSION` folder, no part of
+the path empty, `.` or `..`; never the bare name or another layout), are not work
+under it; a `codex exec` job is.
 Cleanup closes a live terminal only while its foreground is the program it
 started, and for no agent a shell (`hc get`'s `foreground`: a job a shell runs
 in front, or one it became by `exec`, is work). A
