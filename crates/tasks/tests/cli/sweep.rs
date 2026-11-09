@@ -8,7 +8,7 @@ use serde_json::json;
 use std::fs;
 use symphony_board::launch::hc::board_of;
 use symphony_board::launch::reap::lock_path;
-use symphony_board::{NewSession, NewTask};
+use symphony_board::{NewLaunch, NewSession, NewTask};
 
 // -- reap -------------------------------------------------------------------------------
 
@@ -189,6 +189,64 @@ fn clean_runs_cleanup_then_one_sweep_and_says_why_each_terminal_it_leaves_open_s
         (0, lines("closed"), String::new())
     );
     assert_eq!(p.addresses(), ["t2", "t3", "t4", "t5", "t6"]);
+}
+
+#[test]
+fn clean_says_why_an_ended_terminal_on_screen_stays_once_cleanup_closed_its_record() {
+    let mut p = Terminals::new("clean-shown");
+    p.set(
+        "TASKS_REAP_STATE",
+        &p.dir.join("reap.json").display().to_string(),
+    );
+    let board = p.board();
+    p.orchestrator();
+    let worker = board
+        .register(&NewSession::new("worker"))
+        .unwrap()
+        .row
+        .handle;
+    board.claim("sim/jump", &worker).unwrap();
+    board
+        .record_launch(&NewLaunch {
+            slug: "sim/jump".into(),
+            handle: worker.clone(),
+            role: "executor".into(),
+            claude_session: "c".into(),
+            pane: "t1".into(),
+            ..NewLaunch::default()
+        })
+        .unwrap();
+    // Its program ended, in the tab the window shows: cleanup closes its record, never the
+    // terminal, which the sweep keeps, saying why.
+    p.set_state(json!({
+        "terminals": [{
+            "address": "t1", "name": worker, "state": "finished", "status": null, "agent": null,
+            "pid": NO_PID, "cwd": "/somewhere", "turn": 3, "argv": ["claude"],
+            "labels": {"sf.board": board_of(&p.env), "sf.handle": worker, "herdr.tab": "tb-code"},
+        }],
+        "layout": {"spaces": []},
+        "screen": {"tab": "tb-code", "agent": null, "overlays": [], "floats": {}, "errors": []},
+    }));
+    let lines = |verb: &str| {
+        format!(
+            "{verb} pane t1 of {worker} (its pane is gone); restore: just tasks restore sim/jump \
+             {worker}\nkept pane t1 of {worker} (on screen in the Herdr app)\n"
+        )
+    };
+    let now = crate::common::NOW;
+    let dry = p.binary(now, &["clean", "--dry-run"]);
+    assert_eq!(
+        (dry.code, dry.out, dry.err),
+        (0, lines("would close"), String::new())
+    );
+    let ran = p.binary(now, &["clean"]);
+    assert_eq!(
+        (ran.code, ran.out, ran.err),
+        (0, lines("closed"), String::new())
+    );
+    assert_eq!(p.addresses(), ["t1"]);
+    let [record] = <[_; 1]>::try_from(board.sessions_of(&worker).unwrap()).unwrap();
+    assert!(record.closed.is_some(), "{record:?}");
 }
 
 #[test]

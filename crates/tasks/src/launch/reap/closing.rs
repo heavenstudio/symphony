@@ -1,9 +1,10 @@
 //! The close of a live terminal whose idle wait is over: the last looks that confirm it
-//! ([`still_idle`], then [`still_finished`] right before the kill), the record on its task thread
-//! first ([`record`]), and the sessions opened again when the close does not happen.
+//! ([`still_idle`], then [`still_finished`] right before the kill, each reading hc and the board
+//! again), the record on its task thread first ([`record`]), and the sessions opened again when
+//! the close does not happen.
 
 use super::work::{HOUR, Hold, holds};
-use super::{CHANGED, Closed, Due, NOT_REAPED_KINDS, Reap, Round, WHY, name, ready};
+use super::{CHANGED, Closed, Due, NOT_REAPED_KINDS, Reap, Round, TOOL_CALL, WHY, name, ready};
 use crate::launch::cleanup::{restore_line, stored_session};
 use crate::launch::hc::{self, Hc, Object, text_of};
 use crate::launch::procs;
@@ -21,12 +22,21 @@ impl Round<'_> {
             pid,
             key,
             hold,
+            beat,
         } = due;
         let (store, hc, how) = (self.store, self.hc, self.how);
-        let Some(confirmed) = still_idle(store, hc, how, &address, &handle, pid, hold.as_ref())?
-        else {
-            self.idle_now.remove(&key);
-            return Ok(Some(CHANGED.into()));
+        let judged = Judged {
+            handle: &handle,
+            pid,
+            hold: hold.as_ref(),
+            beat,
+        };
+        let confirmed = match still_idle(store, hc, how, &address, &judged)? {
+            Ok(confirmed) => confirmed,
+            Err(why) => {
+                self.idle_now.remove(&key);
+                return Ok(Some(why));
+            }
         };
         let why = hold
             .as_ref()
@@ -61,7 +71,7 @@ impl Round<'_> {
                 )));
             }
         };
-        let finished = |now: &Object| still_finished(hc, how, &address, pid, now);
+        let finished = |now: &Object| still_finished(store, hc, how, &address, &judged, now);
         match screen::close_unseen(hc, &address, &finished) {
             Ok(()) => {}
             Err(NotClosed::Refused(problem)) => {
@@ -95,61 +105,91 @@ impl Round<'_> {
     }
 }
 
+/// What the sweep judged a terminal's agent by: its session `handle`, its program's `pid`, what held
+/// it (`hold`: none, or a role) and when its last tool call was (`beat`), as the sweep read them.
+struct Judged<'a> {
+    handle: &'a str,
+    pid: i64,
+    hold: Option<&'a Hold>,
+    beat: Option<f64>,
+}
+
 /// Confirm the same program and owner right before closing, then recheck the confirmed occupant's
-/// eligibility: the same `hold` on it as the sweep found (none, or the same role). Any missing or
-/// changed evidence keeps the terminal and resets its idle wait.
+/// eligibility on the board ([`board_still`]). Any missing or changed evidence keeps the terminal,
+/// saying why, and resets its idle wait.
 fn still_idle(
     store: &Store,
     hc: &dyn Hc,
     how: &Reap<'_>,
     address: &str,
-    handle: &str,
-    pid: i64,
-    hold: Option<&Hold>,
-) -> Result<Option<Object>, Error> {
+    judged: &Judged<'_>,
+) -> Result<Result<Object, String>, Error> {
+    let changed = || Ok(Err(CHANGED.to_string()));
     let Ok(Some(now)) = hc.get(address) else {
-        return Ok(None);
+        return changed();
     };
     let Some(current_handle) = name(&now) else {
-        return Ok(None);
+        return changed();
     };
     if text_of(&now, "state") != "live"
-        || hc::top_pid(&now) != Some(pid)
+        || hc::top_pid(&now) != Some(judged.pid)
         || hc::agent(&now).is_none()
-        || current_handle != handle
+        || current_handle != judged.handle
         || Some(current_handle.as_str()) == how.caller
         || !ready(hc, address, &hc::status(&now))
     {
-        return Ok(None);
+        return changed();
     }
-    let sessions = store.sessions()?;
-    if sessions
-        .iter()
-        .find(|s| s.row.handle == current_handle)
-        .is_none_or(|s| NOT_REAPED_KINDS.contains(&s.row.kind.as_str()))
-        || holds(store)?.get(&current_handle) != hold
-        || !(how.processes)(pid).is_ok_and(|commands| procs::reap_busy_reason(&commands).is_none())
+    if let Err(why) = board_still(store, judged)? {
+        return Ok(Err(why));
+    }
+    if !(how.processes)(judged.pid)
+        .is_ok_and(|commands| procs::reap_busy_reason(&commands).is_none())
         || !matches!(screen::on_screen(hc, &now), Ok(false))
     {
-        return Ok(None);
+        return changed();
     }
-    Ok(Some(now))
+    Ok(Ok(now))
+}
+
+/// Whether the board still says of the agent what the sweep judged it by: a session of a kind the
+/// sweep closes, no tool call of its agent since the one the sweep read, and the same hold on it
+/// (none, or the same role: a post addressed to it since holds it). Else why it stays.
+fn board_still(store: &Store, judged: &Judged<'_>) -> Result<Result<(), String>, Error> {
+    let sessions = store.sessions()?;
+    let Some(session) = sessions.iter().find(|s| s.row.handle == judged.handle) else {
+        return Ok(Err(CHANGED.into()));
+    };
+    if NOT_REAPED_KINDS.contains(&session.row.kind.as_str()) {
+        return Ok(Err(CHANGED.into()));
+    }
+    if session.row.last_tool != judged.beat {
+        return Ok(Err(TOOL_CALL.into()));
+    }
+    Ok(match holds(store)?.get(judged.handle) {
+        now if now == judged.hold => Ok(()),
+        Some(post) if post.is_post() => Err(post.why()),
+        _ => Err(CHANGED.into()),
+    })
 }
 
 /// Whether the terminal, as the close's own `hc get` finds it (`now`), is still the idle agent the
-/// sweep confirmed: its program ended (nothing to lose), or the same agent under `pid`, ready
-/// ([`ready`]), with nothing under it that is work. Else why it stays.
+/// sweep confirmed: its program ended (nothing to lose), or the same agent under its pid, ready
+/// ([`ready`]), with nothing under it that is work, and the board saying of it what the sweep
+/// judged it by ([`board_still`]): read here again, since a tool call or a post may come while the
+/// close records itself. Else why it stays.
 fn still_finished(
+    store: &Store,
     hc: &dyn Hc,
     how: &Reap<'_>,
     address: &str,
-    pid: i64,
+    judged: &Judged<'_>,
     now: &Object,
 ) -> Result<(), String> {
     if text_of(now, "state") != "live" {
         return Ok(());
     }
-    if hc::top_pid(now) != Some(pid) || hc::agent(now).is_none() {
+    if hc::top_pid(now) != Some(judged.pid) || hc::agent(now).is_none() {
         return Err("another program runs in it now".into());
     }
     let status = hc::status(now);
@@ -157,11 +197,13 @@ fn still_finished(
         let status = if status.is_empty() { "silent" } else { &status };
         return Err(format!("its agent is {status} now"));
     }
-    match (how.processes)(pid) {
-        Ok(commands) => procs::reap_busy_reason(&commands)
-            .map_or(Ok(()), |why| Err(format!("work started under it: {why}"))),
-        Err(problem) => Err(screen::no_information(&problem)),
+    let commands =
+        (how.processes)(judged.pid).map_err(|problem| screen::no_information(&problem))?;
+    if let Some(why) = procs::reap_busy_reason(&commands) {
+        return Err(format!("work started under it: {why}"));
     }
+    board_still(store, judged)
+        .unwrap_or_else(|problem| Err(format!("never closed on no information: {problem}")))
 }
 
 /// One line on a task thread for the close, saying `why`: the restore line, or "" when the handle

@@ -323,7 +323,9 @@ Cleanup closes a live terminal only while its foreground is the program it
 started, and for no agent a shell (`hc get`'s `foreground`: a job a shell runs
 in front, or one it became by `exec`, is work). A
 close is `hc kill` then `hc rm`, the remove waiting, by `hc get`, up to ten seconds for a killed
-program to end (hc refuses to remove a live terminal), never of the caller's terminal
+program to end (hc refuses to remove a live terminal) and never tried while the last look found it
+live or could not say: one still live then is left killed, for the next sweep to remove once it
+finds the program ended. A close is never of the caller's terminal
 (`HC_TERMINAL_ID`) or session, an orchestrator's or a chat's, nor of one the owner may be looking at (`launch/screen.rs`,
 from `herdr-app status`: its `herdr.tab` label the tab the window shows, the
 agent it shows, or held by an overlay or float); cleanup, finish and the idle
@@ -333,7 +335,10 @@ sweep records the closure, right before the kill (`screen::close_unseen`). That
 program: its pid, and for cleanup its foreground, which `exec` changes under one
 pid, and nothing under it its busy classifier counts as work), and a window
 that cannot say (the call fails, it reports errors, or an overlay or float names
-no terminal) keeps the terminal; either keeps it, the sweep's record reopened. A record
+no terminal) keeps the terminal; either keeps it, the sweep's record reopened. The idle sweep's
+last looks read the board again too (`reap/closing.rs`): its agent's last tool call moved since
+the sweep read it (`reap::TOOL_CALL`), or what holds it changed, a post addressed to it say, keeps
+it, its record reopened. A record
 naming a herdr pane (`w1:p…`) is a gone terminal: cleanup records it closed
 with its restore line, and restore brings it back in an hc terminal. `close SLUG HANDLE`
 (`launch/close.rs`) closes one agent's terminal whatever role it holds, judged as cleanup judges
@@ -382,13 +387,18 @@ screen prints `kept pane T [of H] (on screen in the Herdr app)`.
 The idle sweep (`launch/reap.rs`) removes each terminal of the board whose program ended at the
 first sweep that finds it, out of the owner's sight, its open records closed first with their
 restore line (`its program ended`); one whose records are closed already goes without a line.
-It returns every terminal of the board it leaves open with its reason (`Sweep::kept`), and
+It holds each record's session while it writes them, as a close or a restore does, and writes each
+only as it read it, the same launch in that terminal (`reap/ended.rs`): a record a restore moved to
+another terminal since is never closed for this one's end, and a restore under way keeps the
+terminal until the next sweep. It returns every terminal of the board it leaves open with its reason (`Sweep::kept`), and
 `reap.json` keeps the reason last said of each idle one, so `reap` writes
 `· idle sweep keeps pane T of H (WHY)` to its stderr, the Symphony's log, once per change of
 reason; `reap --dry-run` prints `keeps pane …` for every one. `clean` (`just clean`) runs
 cleanup for its caller (`--as`, `cleanup_as`) and then one sweep, under their own rules, and
 prints each terminal it closed (`closed pane T of H (WHY); restore: …`) and why each one it left
-open stays (`kept pane T of H (WHY)`); with `--dry-run`, what it would close.
+open stays (`kept pane T of H (WHY)`); with `--dry-run`, what it would close. Only a terminal
+cleanup removed (or would) goes unsaid by the sweep: a record cleanup closes removes no terminal,
+so an ended one on screen is still said kept, and why.
 
 A child's input and output go through `sys::output` (or `sys::spawn_output`,
 `sys::spawn_piped` for one that reads stdin, and `sys::wait_output`), never

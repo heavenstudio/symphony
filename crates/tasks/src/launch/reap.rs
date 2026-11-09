@@ -273,14 +273,15 @@ enum Look {
     Due(Due),
 }
 
-/// A terminal whose idle wait is over: the agent `handle` under `pid`, its idle mark `key`, and
-/// what held it while it waited.
+/// A terminal whose idle wait is over: the agent `handle` under `pid`, its idle mark `key`, what
+/// held it while it waited, and when the sweep read its agent's last tool call (`beat`).
 struct Due {
     address: String,
     handle: String,
     pid: i64,
     key: String,
     hold: Option<Hold>,
+    beat: Option<f64>,
 }
 
 impl Round<'_> {
@@ -355,7 +356,7 @@ impl Round<'_> {
         if Some(handle.as_str()) == self.how.caller {
             return stays(&handle, "it is the session this sweep runs for".into());
         }
-        let beat = match self.sessions.get(&handle) {
+        let last_tool = match self.sessions.get(&handle) {
             None => return stays(&handle, NO_SESSION.into()),
             Some((kind, _)) if kind == "orchestrator" => {
                 return stays(&handle, "an orchestrator never closes".into());
@@ -363,8 +364,9 @@ impl Round<'_> {
             Some((kind, _)) if kind == "chat" => {
                 return stays(&handle, "a chat never closes".into());
             }
-            Some((_, beat)) => beat.unwrap_or(0.0),
+            Some((_, beat)) => *beat,
         };
+        let beat = last_tool.unwrap_or(0.0);
         let hold = self.holds.get(&handle).cloned();
         if let Some(post) = hold.as_ref().filter(|hold| hold.is_post()) {
             return stays(&handle, post.why());
@@ -419,6 +421,7 @@ impl Round<'_> {
             pid,
             key,
             hold,
+            beat: last_tool,
         }))
     }
 
@@ -447,6 +450,11 @@ pub const NO_SESSION: &str = "it names no board session: it may be the owner's";
 
 /// Why a terminal stays whose last looks before its close found it changed.
 pub const CHANGED: &str = "it changed while this sweep looked: its idle wait starts again";
+
+/// Why a terminal stays whose agent made a tool call after the sweep read its last one, found by
+/// the last looks before its close.
+pub const TOOL_CALL: &str =
+    "its agent made a tool call while this sweep looked: its idle wait starts again";
 
 /// Its handle: claude's `-n` (or `--name`), else its `sf.handle` label, else its terminal's name.
 fn name(terminal: &Object) -> Option<String> {

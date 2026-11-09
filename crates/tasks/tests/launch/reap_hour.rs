@@ -5,11 +5,14 @@
 //! screen never close.
 
 use super::{Agent, How, restore};
-use crate::World;
 use crate::common::RawWrite;
+use crate::{Hooked, World};
 use serde_json::json;
+use std::cell::Cell;
 use std::collections::BTreeMap;
-use symphony_board::launch::reap::{Closed, IDLE_HOUR, Kept, REAP_SECONDS, Sweep};
+use symphony_board::launch::reap::{
+    CHANGED, Closed, IDLE_HOUR, Kept, REAP_SECONDS, Sweep, TOOL_CALL,
+};
 use symphony_board::launch::screen::ON_SCREEN;
 
 impl World {
@@ -243,4 +246,98 @@ fn an_orchestrator_a_chat_the_caller_and_a_terminal_on_screen_never_close_and_ea
         "said at the first sweep"
     );
     assert_eq!(w.calls_of(&["kill"]), Vec::<Vec<String>>::new());
+}
+
+/// What happens on the board while the sweep's last looks at an agent's terminal wait.
+#[derive(Clone, Copy, Debug)]
+enum Meanwhile {
+    /// Its agent makes a tool call.
+    ToolCall,
+    /// The owner asks it something.
+    Post,
+    /// It moves its task to review.
+    Review,
+}
+
+#[test]
+fn a_tool_call_a_post_or_a_move_while_the_close_looks_keeps_the_terminal_its_record_open() {
+    for (status, nth, meanwhile) in [
+        ("in_progress", 3, Meanwhile::ToolCall),
+        ("in_progress", 3, Meanwhile::Post),
+        ("in_progress", 3, Meanwhile::Review),
+        ("in_progress", 2, Meanwhile::Post),
+        ("done", 3, Meanwhile::ToolCall),
+    ] {
+        let case = format!("{status}, look {nth}, {meanwhile:?}");
+        let w = World::new();
+        let handle = w.executor_on(status, "sim/jump");
+        let terminal = w.agent(Agent::named(&handle));
+        w.sweep();
+        if status == "in_progress" {
+            w.f.advance(IDLE_HOUR - REAP_SECONDS);
+        }
+        // Its wait is over. The second look at it is the close's first, before its closure is
+        // recorded; the third the close's own, after it, right before the kill. The board changes
+        // just before the `nth` answers.
+        let (gets, asked) = (Cell::new(0), Cell::new(0));
+        let mut hooked = Hooked::new(&w);
+        hooked.instead = Box::new(|args| {
+            if args[0] == "get" && args[1] == terminal {
+                gets.set(gets.get() + 1);
+                if gets.get() != nth {
+                    return None;
+                }
+                match meanwhile {
+                    Meanwhile::ToolCall => {
+                        w.f.other_client()
+                            .write(
+                                "UPDATE type::record('session', $handle) SET last_tool = $at RETURN NONE;",
+                                json!({"handle": handle, "at": w.f.now()}),
+                            )
+                            .unwrap();
+                    }
+                    Meanwhile::Post => {
+                        let said = w
+                            .store()
+                            .say("sim/jump", "owner", "and this?", Some(&handle));
+                        asked.set(said.unwrap().id);
+                    }
+                    Meanwhile::Review => {
+                        w.store().move_to("sim/jump", "review", &handle).unwrap();
+                    }
+                }
+            }
+            None
+        });
+        let (swept, warned) = w.sweep_with(&hooked, How::default());
+        assert_eq!((warned.as_str(), gets.get()), ("", nth), "{case}");
+        let why = match meanwhile {
+            Meanwhile::ToolCall => TOOL_CALL.to_string(),
+            Meanwhile::Post => format!(
+                "an addressed post #{} on sim/jump waits for its answer",
+                asked.get()
+            ),
+            Meanwhile::Review => CHANGED.to_string(),
+        };
+        let kept = Kept {
+            pane: terminal.clone(),
+            handle: handle.clone(),
+            why,
+            idle: true,
+            told: true,
+        };
+        assert_eq!((swept.closed, swept.kept), (vec![], vec![kept]), "{case}");
+        assert!(w.has_terminal(&terminal), "{case}");
+        assert_eq!(w.calls_of(&["kill"]), Vec::<Vec<String>>::new(), "{case}");
+        // Kept at its second look, it recorded nothing (its agent was started with no launch
+        // record); at its third, the closure it recorded is open again, on the same terminal.
+        let records = w.store().sessions_of(&handle).unwrap();
+        if nth == 2 {
+            assert!(records.is_empty(), "{case}: {records:?}");
+        } else {
+            let [s] = <[_; 1]>::try_from(records).unwrap();
+            let open = (s.closed, s.pane.as_str());
+            assert_eq!(open, (None, terminal.as_str()), "{case}");
+        }
+    }
 }

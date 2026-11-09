@@ -9,6 +9,7 @@ use crate::{Hooked, World};
 use serde_json::{Value, json};
 use std::cell::Cell;
 use symphony_board::NewLaunch;
+use symphony_board::launch::GONE;
 use symphony_board::launch::reap::{Closed, ENDED, Kept, Sweep};
 use symphony_board::launch::screen::ON_SCREEN;
 
@@ -290,4 +291,102 @@ fn a_shell_or_another_boards_or_projects_terminal_is_never_swept() {
             ..Sweep::default()
         }
     );
+}
+
+#[test]
+fn an_ended_terminal_never_closes_a_record_a_restore_moved_to_another_terminal_since() {
+    let w = World::new();
+    let handle = w.executor_on("in_progress", "sim/jump");
+    let terminal = w.ended_agent(&handle, "sim/jump");
+    // After the sweep read its record, a restore starts its session in a new terminal: as the
+    // sweep's own look at the ended one answers.
+    let moved = Cell::new(false);
+    let mut hooked = Hooked::new(&w);
+    hooked.instead = Box::new(|args| {
+        if args[0] == "get" && args[1] == terminal && !moved.replace(true) {
+            let store = w.store();
+            let [record] = <[_; 1]>::try_from(store.sessions_of(&handle).unwrap()).unwrap();
+            let hold = store.take_session(&handle, "a restore").unwrap();
+            let line = restore("sim/jump", &handle);
+            assert!(
+                store
+                    .close_task_session_as(&record, GONE, &line, hold)
+                    .unwrap()
+            );
+            assert!(
+                store
+                    .reopen_task_session_as(&record, "t-new", hold)
+                    .unwrap()
+            );
+            store.release_session(&handle, hold).unwrap();
+        }
+        None
+    });
+    let (swept, warned) = w.sweep_with(&hooked, How::default());
+    assert_eq!(warned, "");
+    // The ended terminal goes, with no line: the record is the new terminal's.
+    let gone = Closed {
+        pane: terminal.clone(),
+        handle: handle.clone(),
+        why: ENDED.into(),
+        restore: String::new(),
+    };
+    assert_eq!(swept.closed, [gone]);
+    assert!(!w.has_terminal(&terminal));
+    let [s] = <[_; 1]>::try_from(w.store().sessions_of(&handle).unwrap()).unwrap();
+    assert_eq!((s.closed, s.pane.as_str()), (None, "t-new"));
+}
+
+#[test]
+fn an_ended_terminal_stays_while_a_restore_of_its_session_is_under_way_and_holds_it_while_removed()
+{
+    let w = World::new();
+    let handle = w.executor_on("in_progress", "sim/jump");
+    let terminal = w.ended_agent(&handle, "sim/jump");
+    let store = w.store();
+    let hold = store.take_session(&handle, "a restore").unwrap();
+    let why = format!(
+        "the board took no record of its end: a restore of {handle} is under way: its hold lapses \
+         in 300 s"
+    );
+    let kept = Kept {
+        pane: terminal.clone(),
+        handle: handle.clone(),
+        why,
+        idle: false,
+        told: false,
+    };
+    assert_eq!(w.sweep().kept, [kept]);
+    assert!(w.has_terminal(&terminal));
+    assert!(store.sessions_of(&handle).unwrap()[0].closed.is_none());
+    store.release_session(&handle, hold).unwrap();
+    // Once it is done, the next sweep removes the terminal, holding the session meanwhile: a
+    // restore asked for while it removes it is refused, and one asked for as the sweep looks at
+    // the next terminal takes it.
+    let other = w.agent(Agent::named(&w.f.session("worker")));
+    let (refused, taken) = (Cell::new(None), Cell::new(false));
+    let mut hooked = Hooked::new(&w);
+    hooked.instead = Box::new(|args| {
+        let restore = || store.take_session(&handle, "a restore");
+        if args[0] == "rm" {
+            refused.set(restore().err());
+        } else if args[0] == "get" && args[1] == other && !taken.get() {
+            let hold = restore().unwrap();
+            store.release_session(&handle, hold).unwrap();
+            taken.set(true);
+        }
+        None
+    });
+    let (swept, warned) = w.sweep_with(&hooked, How::default());
+    assert_eq!(warned, "");
+    assert_eq!(super::terminals(&swept), [terminal.as_str()]);
+    assert_eq!(
+        refused.take().map(|e| e.to_string()),
+        Some(format!(
+            "the idle sweep's removal of its ended terminal of {handle} is under way: its hold \
+             lapses in 300 s"
+        ))
+    );
+    assert!(taken.get());
+    assert!(store.sessions_of(&handle).unwrap()[0].closed.is_some());
 }

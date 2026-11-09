@@ -172,10 +172,16 @@ pub(super) fn clean(store: &Store, c: &mut Context) -> Result<(), Stop> {
     let processes = procs::table(c.env);
     let hc = Binary::of(c.env);
     let closures = launch::cleanup_as(store, &hc, &*processes, dry_run, &[], caller.as_deref())?;
-    // what cleanup closed (or would): the sweep says nothing more of those terminals
-    let mut done = HashSet::new();
+    // The terminals cleanup removed (or would): the sweep says nothing more of those. A record
+    // whose pane is gone removes no terminal, and one hc refused stays: the sweep says why a
+    // terminal it names stays, on screen say.
+    let mut removed = HashSet::new();
+    let mut said = false;
     for closure in closures.iter().filter(|closure| !closure.kept) {
-        done.insert(closure.pane.clone());
+        said = true;
+        if closure.why != launch::GONE && (dry_run || closure.closed) {
+            removed.insert(closure.pane.clone());
+        }
         let verb = match (dry_run, closure.closed) {
             (true, _) => "would close",
             (false, true) => "closed",
@@ -208,13 +214,13 @@ pub(super) fn clean(store: &Store, c: &mut Context) -> Result<(), Stop> {
         return Ok(());
     };
     let verb = if dry_run { "would close" } else { "closed" };
-    for closed in swept.closed.iter().filter(|s| !done.contains(&s.pane)) {
+    for closed in swept.closed.iter().filter(|s| !removed.contains(&s.pane)) {
         c.say(&closed_line(verb, closed));
     }
-    for kept in swept.kept.iter().filter(|s| !done.contains(&s.pane)) {
+    for kept in swept.kept.iter().filter(|s| !removed.contains(&s.pane)) {
         c.say(&kept_line("kept", kept));
     }
-    if done.is_empty() && swept.closed.is_empty() && swept.kept.is_empty() {
+    if !said && swept.closed.is_empty() && swept.kept.is_empty() {
         c.say("nothing to clean up");
     }
     Ok(())
