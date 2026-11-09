@@ -106,7 +106,7 @@ fn works_in(cwd: &Path, tree: &Path) -> bool {
 /// An in-process agent's stay in the checkout its binding recorded, by the board's clock and by the
 /// clock since boot.
 #[derive(Debug, Clone, Copy)]
-pub(super) struct Stay<'a> {
+pub(super) struct Stay<'binding> {
     /// When its binding recorded that checkout (`placed_at`).
     pub came: f64,
     /// The earliest time a call of its there read: `came`, unless the clock went back while it was
@@ -116,8 +116,10 @@ pub(super) struct Stay<'a> {
     pub last: f64,
     /// The clock since boot when it came, and at its last call (`placed_boot`, `last_boot`): none
     /// when that call did not read it.
-    pub came_boot: Option<&'a Boottime>,
-    pub last_boot: Option<&'a Boottime>,
+    pub came_boot: Option<&'binding Boottime>,
+    pub last_boot: Option<&'binding Boottime>,
+    /// A missing reading in this stay leaves subsequent samples unable to prove an upper bound.
+    pub boot_uncertain: bool,
 }
 
 /// Whether a process working where an agent stayed is the agent's.
@@ -142,17 +144,22 @@ impl Stay<'_> {
                 (within, (from - slack..self.came - slack).contains(at))
             }
             Some(Began::AfterBoot(began)) => {
-                // Readings compare within one boot; a last call read in another boot came before
-                // this boot, and before every process now running.
+                // A different boot proves a process came after the last call only with complete
+                // readings. A gap may span a reboot too. A known later boot still retires the
+                // placement boot: its processes cannot return.
                 let came = self.came_boot.filter(|s| s.boot == began.boot);
                 let last = self.last_boot.filter(|s| s.boot == began.boot);
                 let before = came.is_some_and(|came| began.at < came.at - slack);
-                let after =
-                    self.last_boot.is_some() && last.is_none_or(|l| began.at > l.at + slack);
-                if before || after {
+                let retired =
+                    came.is_some() && self.last_boot.is_some_and(|l| l.boot != began.boot);
+                let after = !self.boot_uncertain
+                    && self.last_boot.is_some()
+                    && last.is_none_or(|l| began.at > l.at + slack);
+                if before || retired || after {
                     return Whose::Not;
                 }
-                (came.is_some() && last.is_some(), true)
+                let within = last.is_some_and(|l| began.at <= l.at + slack);
+                (came.is_some() && within, true)
             }
         };
         match (its, maybe) {

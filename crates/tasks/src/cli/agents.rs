@@ -529,6 +529,7 @@ pub fn describe_board(
                     last: s.row.last_tool.unwrap_or(b.placed_at),
                     came_boot: b.placed_boot.as_ref(),
                     last_boot: b.last_boot.as_ref(),
+                    boot_uncertain: b.boot_uncertain,
                 };
                 waited_on(&real(&row.worktree), &stay, &scan)
             }

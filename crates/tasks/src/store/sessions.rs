@@ -92,6 +92,10 @@ pub struct Binding {
     /// The clock since boot at its latest tool call, there or anywhere (the latest reading its calls
     /// gave, a new boot's replacing the last boot's): none when that call did not read it.
     pub last_boot: Option<Boottime>,
+    /// A call in this checkout stay could not read the boot clock. Subsequent samples can prove
+    /// ownership, but cannot bound absence: they may have been sampled before that unreadable call
+    /// and delivered later. A new checkout stay starts the evidence again.
+    pub boot_uncertain: bool,
 }
 
 /// Where a new session's handle comes from: Python's `random.Random`, as `register` draws on it.
@@ -180,7 +184,10 @@ IF !record::exists(type::record('barred_key', $agent)) {
 UPDATE session SET agent = NONE, busy_until = NONE, busy_call = NONE WHERE agent = $agent RETURN NONE;
 RETURN NONE;";
 
-/// The session bound to `$agent` is seen, and its busy mark kept, moved or cleared.
+/// The session bound to `$agent` is seen, and its busy mark kept, moved or cleared. `boot_order`
+/// keeps the known watermark even when `last_boot` is unreadable; retired boot ids prevent a
+/// delayed sample from moving it back across a reboot. No arrival order proves sample order across
+/// an unreadable call, so `boot_uncertain` lasts for the checkout stay.
 const BEAT: &str = "
 LET $s = (SELECT handle, busy_until, busy_call FROM session WHERE agent = $agent AND left_at = NONE LIMIT 1)[0];
 LET $mark = IF $s = NONE { NONE }
@@ -196,15 +203,21 @@ LET $bound = type::record('callback_state', ['binding', $agent]);
 IF $s != NONE AND $bound.in_process = true {
     IF $place != NONE AND [$bound.worktree, $bound.branch] != [$place.worktree, $place.branch] {
         UPDATE $bound SET worktree = $place.worktree, branch = $place.branch, placed_at = $now,
-            stay_from = $now, placed_boot = $boot, last_boot = $boot RETURN NONE;
+            stay_from = $now, placed_boot = $boot, last_boot = $boot, boot_order = $boot,
+            boot_previous = [], boot_uncertain = $boot = NONE RETURN NONE;
     } ELSE {
         IF $place != NONE AND $now < ($bound.stay_from ?? $bound.placed_at) {
             UPDATE $bound SET stay_from = $now RETURN NONE;
         };
-        LET $last = $bound.last_boot;
-        IF $boot != $last AND ($boot = NONE OR $last = NONE OR $boot.boot != $last.boot
-            OR $boot.at > $last.at) {
-            UPDATE $bound SET last_boot = $boot RETURN NONE;
+        LET $last = $bound.boot_order ?? $bound.last_boot ?? $bound.placed_boot;
+        IF $boot = NONE AND ($bound.last_boot != NONE OR $bound.boot_uncertain != true) {
+            UPDATE $bound SET last_boot = NONE, boot_order = $last, boot_uncertain = true RETURN NONE;
+        } ELSE IF $boot != NONE AND !array::includes($bound.boot_previous ?? [], $boot.boot)
+            AND ($last = NONE OR $boot.boot != $last.boot OR $boot.at > $last.at) {
+            UPDATE $bound SET last_boot = $boot, boot_order = $boot,
+                boot_previous = IF $last != NONE AND $boot.boot != $last.boot {
+                    array::append(boot_previous ?? [], $last.boot)
+                } ELSE { boot_previous ?? [] } RETURN NONE;
         };
     };
 };
@@ -367,7 +380,8 @@ impl Store {
     /// subagent's session is registered where its orchestrator ran `register`), and when it came
     /// there, by the board's clock and the clock since boot, written only when they change; a call
     /// there that reads a time before any other there did (the clock went back) lowers
-    /// [`Binding::stay_from`]; and each call, there or not, moves [`Binding::last_boot`] on. A full
+    /// [`Binding::stay_from`]; and each call, there or not, moves [`Binding::last_boot`] on while
+    /// preserving ordering evidence and any unreadable-clock uncertainty. A full
     /// session's binding keeps none: its terminal or launch says where it works.
     pub fn agent_beat_in(
         &self,
@@ -510,7 +524,8 @@ RETURN NONE;",
                 type::record('callback_state', ['binding', agent]).stay_from
                     ?? type::record('callback_state', ['binding', agent]).placed_at ?? 0 AS stay_from,
                 type::record('callback_state', ['binding', agent]).placed_boot AS placed_boot,
-                type::record('callback_state', ['binding', agent]).last_boot AS last_boot
+                type::record('callback_state', ['binding', agent]).last_boot AS last_boot,
+                type::record('callback_state', ['binding', agent]).boot_uncertain ?? false AS boot_uncertain
             FROM session WHERE agent != NONE AND left_at = NONE;";
         let bound: Vec<Bound> = self.retrying(|| self.transact(read, json!({})))?;
         Ok(bound.into_iter().map(|b| (b.handle, b.binding)).collect())

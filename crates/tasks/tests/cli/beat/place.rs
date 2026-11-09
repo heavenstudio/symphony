@@ -56,6 +56,7 @@ fn placed(top: &Path, branch: &str, came: f64, from: f64) -> Binding {
         stay_from: from,
         placed_boot: since_boot(came - NOW),
         last_boot: since_boot(came - NOW),
+        boot_uncertain: false,
     }
 }
 

@@ -7,6 +7,8 @@ use std::path::{Path, PathBuf};
 use symphony_board::cli::agents::{Began, PROCESS_SCAN_SECONDS};
 use symphony_board::sys::Boottime;
 
+mod clock;
+
 /// A linked worktree's top folder (its `.git` a file naming a git dir checked out on `sim/jump`), in
 /// a scratch folder of its own, resolved.
 fn linked_worktree(name: &str) -> PathBuf {
@@ -322,7 +324,8 @@ fn a_start_since_boot_is_its_between_the_readings_its_calls_took() {
 
 /// A start since boot is compared with readings of that clock alone: when the call that came read
 /// none, what began up to its last reading may be its, and the board cannot tell (unknown, never
-/// lost); what began after it is not. With no reading at all, nothing bounds it.
+/// lost). Once a reading was missing, subsequent samples may themselves be delayed and cannot
+/// prove an upper bound. With no reading at all, nothing bounds it.
 #[test]
 fn a_start_since_boot_with_no_reading_to_bound_it_is_a_doubt_not_an_absence() {
     let c = Case::new();
@@ -336,7 +339,7 @@ fn a_start_since_boot_with_no_reading_to_bound_it_is_a_doubt_not_an_absence() {
     c.past_the_lost_line();
     assert_eq!(c.agent(&handle).health, Health::Unknown);
     c.processes_in(vec![booted(&tree, 201.5)]);
-    assert_eq!(c.agent(&handle).health, Health::Lost);
+    assert_eq!(c.agent(&handle).health, Health::Unknown);
 }
 
 /// The adversarial review's other probe: bound in one checkout, the subagent's background build

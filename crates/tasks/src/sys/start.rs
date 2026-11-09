@@ -63,12 +63,7 @@ pub fn boot_clock() -> Option<Boottime> {
 #[cfg(any(target_os = "linux", test))]
 fn boot_read(id: std::io::Result<String>, uptime: std::io::Result<String>) -> Option<Boottime> {
     let boot = id.ok()?.trim().to_owned();
-    let at = uptime
-        .ok()?
-        .split_whitespace()
-        .next()?
-        .parse::<f64>()
-        .ok()?;
+    let at: f64 = uptime.ok()?.split_whitespace().next()?.parse().ok()?;
     (!boot.is_empty() && at.is_finite() && at >= 0.0).then_some(Boottime { boot, at })
 }
 
@@ -85,7 +80,8 @@ pub fn process_starts(pids: &[i64]) -> Vec<Start> {
         let boot = std::fs::read_to_string(BOOT_ID)
             .ok()
             .map(|id| id.trim().to_owned());
-        // SAFETY: sysconf reads a configuration value and touches no memory of ours.
+        // SAFETY: sysconf accepts this platform's constant and touches no memory of ours; a
+        // failure returns -1, rejected by the conversion below, leaving start evidence unreadable.
         let ticks = u32::try_from(unsafe { sysconf(LINUX_CLOCK_TICKS) })
             .ok()
             .filter(|t| *t > 0);
@@ -182,7 +178,9 @@ pub(crate) fn bsd_start(pid: c_int) -> std::io::Result<Option<(u64, u64)>> {
     }
     let mut info = BsdInfo::default();
     let size = c_int::try_from(std::mem::size_of::<BsdInfo>()).expect("proc_bsdinfo fits int");
-    // SAFETY: libproc receives a writable proc_bsdinfo buffer of exactly the requested size.
+    // SAFETY: libproc receives a writable proc_bsdinfo buffer of exactly the requested size and
+    // owns no pointer past the call. Invalid or exited pids return an error, checked before any
+    // buffer fields are read.
     let read = unsafe { proc_pidinfo(pid, 3, 0, (&raw mut info).cast(), size) };
     if read != size {
         return Err(std::io::Error::last_os_error());

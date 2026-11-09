@@ -22,6 +22,7 @@ fn kept(worktree: &str, branch: &str, came: f64, from: f64) -> Binding {
         branch: branch.into(),
         placed_at: came,
         stay_from: from,
+        boot_uncertain: !worktree.is_empty(),
         ..Binding::default()
     }
 }
@@ -129,32 +130,34 @@ fn a_subagents_binding_keeps_the_clock_since_boot_its_calls_read_when_it_came_an
     let s = Subagent::bound(&f);
     let h = s.handle.clone();
     let a = Some(("/wt/a", "tools/a"));
-    let at_a = |last: Option<Boottime>| Binding {
+    let at_a = |last: Option<Boottime>, boot_uncertain| Binding {
         placed_boot: read("boot-1", 100.0),
         last_boot: last,
+        boot_uncertain,
         ..kept("/wt/a", "tools/a", NOW, NOW - 5.0)
     };
     s.reading(0.0, a, read("boot-1", 100.0));
     // The wall clock set back 5 s: the clock since boot runs on, a call outside any checkout too.
     s.reading(-5.0, a, read("boot-1", 160.0));
     s.reading(0.0, None, read("boot-1", 220.0));
-    assert_eq!(binding_of(&f, &h), at_a(read("boot-1", 220.0)));
+    assert_eq!(binding_of(&f, &h), at_a(read("boot-1", 220.0), false));
     // Calls side by side may land out of order: the later reading stays.
     s.reading(0.0, a, read("boot-1", 200.0));
-    assert_eq!(binding_of(&f, &h), at_a(read("boot-1", 220.0)));
+    assert_eq!(binding_of(&f, &h), at_a(read("boot-1", 220.0), false));
     // A new boot's reading replaces the last boot's; when it came stays a reading of that boot.
     s.reading(0.0, a, read("boot-2", 5.0));
-    assert_eq!(binding_of(&f, &h), at_a(read("boot-2", 5.0)));
+    assert_eq!(binding_of(&f, &h), at_a(read("boot-2", 5.0), false));
     // A call that read none leaves its last reading unknown, until one reads it again.
     s.reading(0.0, a, None);
-    assert_eq!(binding_of(&f, &h), at_a(None));
+    assert_eq!(binding_of(&f, &h), at_a(None, true));
     s.reading(0.0, a, read("boot-2", 9.0));
-    assert_eq!(binding_of(&f, &h), at_a(read("boot-2", 9.0)));
+    assert_eq!(binding_of(&f, &h), at_a(read("boot-2", 9.0), true));
     // A move starts both again, from that call's reading, or from none.
     s.reading(0.0, Some(("/wt/b", "tools/b")), read("boot-2", 30.0));
     let b = Binding {
         placed_boot: read("boot-2", 30.0),
         last_boot: read("boot-2", 30.0),
+        boot_uncertain: false,
         ..kept("/wt/b", "tools/b", NOW - 5.0, NOW - 5.0)
     };
     assert_eq!(binding_of(&f, &h), b);
@@ -162,6 +165,138 @@ fn a_subagents_binding_keeps_the_clock_since_boot_its_calls_read_when_it_came_an
     assert_eq!(
         binding_of(&f, &h),
         kept("/wt/a", "tools/a", NOW - 5.0, NOW - 5.0)
+    );
+}
+
+/// Missing samples must not erase the ordering guard, even across repeated failures or reboots.
+/// Arrival order alone cannot retire the uncertainty; a new checkout stay can.
+#[test]
+fn unreadable_boot_samples_keep_the_watermark_and_uncertainty_until_a_new_stay() {
+    struct Sample {
+        reading: Option<Boottime>,
+        kept: Option<Boottime>,
+    }
+    let f = Fixture::empty();
+    let s = Subagent::bound(&f);
+    let place = Some(("/wt/a", "tools/a"));
+    s.reading(0.0, place, read("boot-1", 100.0));
+    s.reading(1.0, place, read("boot-1", 200.0));
+    for sample in [
+        Sample {
+            reading: None,
+            kept: None,
+        },
+        Sample {
+            reading: read("boot-1", 100.0),
+            kept: None,
+        },
+        Sample {
+            reading: read("boot-1", 200.0),
+            kept: None,
+        },
+        Sample {
+            reading: None,
+            kept: None,
+        },
+        Sample {
+            reading: read("boot-1", 199.0),
+            kept: None,
+        },
+        Sample {
+            reading: read("boot-1", 200.5),
+            kept: read("boot-1", 200.5),
+        },
+        Sample {
+            reading: None,
+            kept: None,
+        },
+        Sample {
+            reading: read("boot-1", 200.5),
+            kept: None,
+        },
+        Sample {
+            reading: read("boot-2", 5.0),
+            kept: read("boot-2", 5.0),
+        },
+        Sample {
+            reading: read("boot-1", 999.0),
+            kept: read("boot-2", 5.0),
+        },
+        Sample {
+            reading: None,
+            kept: None,
+        },
+        Sample {
+            reading: read("boot-1", 999.0),
+            kept: None,
+        },
+        Sample {
+            reading: read("boot-2", 6.0),
+            kept: read("boot-2", 6.0),
+        },
+        Sample {
+            reading: read("boot-3", 1.0),
+            kept: read("boot-3", 1.0),
+        },
+        Sample {
+            reading: read("boot-2", 99.0),
+            kept: read("boot-3", 1.0),
+        },
+    ] {
+        // A wall-clock correction must not change boot ordering either.
+        let reading = format!("{:?}", sample.reading);
+        s.reading(-0.25, place, sample.reading);
+        let expected = Binding {
+            placed_boot: read("boot-1", 100.0),
+            last_boot: sample.kept,
+            boot_uncertain: true,
+            ..kept("/wt/a", "tools/a", NOW, f.now().min(NOW))
+        };
+        assert_eq!(binding_of(&f, &s.handle), expected, "{reading}");
+    }
+    s.reading(10.0, Some(("/wt/b", "tools/b")), read("boot-3", 30.0));
+    let expected = Binding {
+        placed_boot: read("boot-3", 30.0),
+        last_boot: read("boot-3", 30.0),
+        boot_uncertain: false,
+        ..kept("/wt/b", "tools/b", f.now(), f.now())
+    };
+    assert_eq!(binding_of(&f, &s.handle), expected);
+}
+
+/// Unknown and duplicate samples leave the metadata untouched once their evidence is kept.
+#[test]
+fn repeated_unknown_or_older_samples_do_not_rewrite_binding_metadata() {
+    use serde_json::json;
+
+    let f = Fixture::empty();
+    let s = Subagent::bound(&f);
+    let place = Some(("/wt/a", "tools/a"));
+    s.reading(0.0, place, read("boot-1", 100.0));
+    f.store.client().query("DEFINE EVENT binding_writes ON callback_state WHEN true THEN { UPSERT callback_audit:writes SET count = (count ?? 0) + 1; };", json!({})).unwrap();
+    let writes = || {
+        f.store
+            .client()
+            .query("RETURN callback_audit:writes.count;", json!({}))
+            .unwrap()
+    };
+    s.reading(1.0, place, None);
+    assert_eq!(writes(), vec![json!(1)]);
+    s.reading(1.0, place, None);
+    s.reading(1.0, place, read("boot-1", 99.0));
+    s.reading(1.0, place, read("boot-1", 100.0));
+    assert_eq!(
+        writes(),
+        vec![json!(1)],
+        "uncertainty and watermark are already kept"
+    );
+    s.reading(1.0, place, read("boot-1", 101.0));
+    assert_eq!(writes(), vec![json!(2)], "new evidence is written");
+    s.reading(1.0, place, read("boot-1", 101.0));
+    assert_eq!(
+        writes(),
+        vec![json!(2)],
+        "a duplicate reading is already kept"
     );
 }
 

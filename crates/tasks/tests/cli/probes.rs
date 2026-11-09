@@ -499,6 +499,14 @@ fn wall_clock() -> f64 {
         .as_secs_f64()
 }
 
+/// A process start and the readings bounding its spawn, all in the kernel's clock domain.
+#[derive(Debug)]
+struct SpawnSpan {
+    from: f64,
+    started: f64,
+    to: f64,
+}
+
 #[test]
 fn the_machine_lists_each_process_with_its_working_directory_and_when_it_started() {
     let folder = scratch("working").canonicalize().unwrap();
@@ -518,19 +526,27 @@ fn the_machine_lists_each_process_with_its_working_directory_and_when_it_started
     assert_eq!(there.len(), 1, "{} in {listed:?}", folder.display());
     // Stamped by the wall clock to the microsecond on macOS; on Linux in clock ticks since boot, in
     // this boot, the clock `/proc/uptime` reads to the hundredth.
-    let started = there[0].started.clone().expect("its start is read");
-    let (from, at, to) = match (&started, &before.1, &after.1) {
-        (Began::At(at), None, None) => (before.0, *at, after.0),
+    let started = there[0].started.as_ref().expect("its start is read");
+    let span = match (started, &before.1, &after.1) {
+        (Began::At(at), None, None) => SpawnSpan {
+            from: before.0,
+            started: *at,
+            to: after.0,
+        },
         (Began::AfterBoot(at), Some(from), Some(to))
             if at.boot == from.boot && at.boot == to.boot =>
         {
-            (from.at, at.at, to.at)
+            SpawnSpan {
+                from: from.at,
+                started: at.at,
+                to: to.at,
+            }
         }
         _ => panic!("{started:?} on a machine whose clock since boot reads {before:?}"),
     };
     assert!(
-        (from - 0.01..=to + 0.01).contains(&at),
-        "{from} <= {at} <= {to}"
+        (span.from - 0.01..=span.to + 0.01).contains(&span.started),
+        "{span:?}; listed={listed:?}; before={before:?}; after={after:?}"
     );
     // This process, still running, is listed too: its working directory shared with the others.
     let here = std::env::current_dir().unwrap().canonicalize().unwrap();
