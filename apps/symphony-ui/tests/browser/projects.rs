@@ -189,25 +189,37 @@ fn quick_text(browser: &mut Chrome) {
 
 /// The visible switch leaves the project's shell and opens the machine picker.
 fn change_board(browser: &mut Chrome) {
-    assert!(browser.wait_for(
-        "document.querySelector('header a.project-switch') !== null",
-        SHOWN
-    ));
+    assert!(
+        browser.wait_for(
+            "document.querySelector('header a.project-switch') !== null",
+            SHOWN
+        ),
+        "switch control missing: {}",
+        observed_page(browser)
+    );
     browser.eval("document.querySelector('header a.project-switch').click()");
     wait_for_picker(browser);
 }
 
 fn wait_for_picker(browser: &mut Chrome) {
-    assert!(browser.wait_for(
-        "location.pathname === '/' && document.querySelector('h1')?.textContent === 'Projects'",
-        SHOWN
-    ));
+    assert!(
+        browser.wait_for(
+            "location.pathname === '/' && document.querySelector('h1')?.textContent === 'Projects'",
+            SHOWN
+        ),
+        "project picker missing: {}",
+        observed_page(browser)
+    );
     assert_eq!(
         browser.eval(
             "Array.from(document.querySelectorAll('.projects a')).map(a => a.getAttribute('href'))"
         ),
         json!(["/alpha/", "/pantry/"])
     );
+}
+
+fn observed_page(browser: &mut Chrome) -> Value {
+    browser.eval("({url:location.href, body:document.body?.innerText.slice(0, 2000)})")
 }
 
 #[test]
@@ -270,7 +282,7 @@ fn the_top_left_switch_and_picker_work_by_keyboard_on_a_compact_nested_page() {
         }),
     );
     browser.open(&server.url("/alpha/tasks"));
-    assert!(browser.wait_for("document.documentElement.dataset.navigation === 'ready' && document.querySelector('header a.project-switch') !== null", SHOWN));
+    assert!(browser.wait_for("document.documentElement.dataset.navigation === 'ready' && document.querySelector('header a.project-switch') !== null", SHOWN), "nested page missing: {}", observed_page(&mut browser));
     key(&mut browser, "Tab", "Tab", 9);
     assert_eq!(browser.eval(r#"(() => {
         const link = document.activeElement;
@@ -289,18 +301,26 @@ fn the_top_left_switch_and_picker_work_by_keyboard_on_a_compact_nested_page() {
         json!("The Shelf")
     );
     key(&mut browser, "Enter", "Enter", 13);
-    assert!(browser.wait_for(
-        "location.pathname === '/pantry/' && document.querySelector('.hero-title') !== null",
-        SHOWN
-    ));
+    assert!(
+        browser.wait_for(
+            "location.pathname === '/pantry/' && document.querySelector('.hero-title') !== null",
+            SHOWN
+        ),
+        "selected project missing: {}",
+        observed_page(&mut browser)
+    );
     browser.eval("document.querySelector('header a[href=\"/tasks\"]').click()");
-    assert!(browser.wait_for("location.pathname === '/pantry/tasks' && document.documentElement.dataset.navigation === 'ready'", SHOWN));
+    assert!(browser.wait_for("location.pathname === '/pantry/tasks' && document.documentElement.dataset.navigation === 'ready'", SHOWN), "project tasks missing: {}", observed_page(&mut browser));
     // The board-home link stays separate from the machine picker, even in the compact theme.
     browser.eval("document.querySelector('header a[href=\"/\"]:not(.project-switch)').click()");
-    assert!(browser.wait_for(
-        "location.pathname === '/pantry/' && document.querySelector('.hero-title') !== null",
-        SHOWN
-    ));
+    assert!(
+        browser.wait_for(
+            "location.pathname === '/pantry/' && document.querySelector('.hero-title') !== null",
+            SHOWN
+        ),
+        "project board home missing: {}",
+        observed_page(&mut browser)
+    );
     change_board(&mut browser);
     browser.open(&server.url("/"));
     wait_for_picker(&mut browser);

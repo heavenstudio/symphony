@@ -42,8 +42,8 @@ fn start_with(repo: &Repo, program: &str, dir: &Path) -> Process {
     repo.run(command)
 }
 
-/// The status and headers of a browser's navigation to `path`.
-fn navigate(port: u16, path: &str, cookie: Option<&str>) -> (u16, String) {
+/// The status, headers and body of a browser's navigation to `path`.
+fn navigate(port: u16, path: &str, cookie: Option<&str>) -> (u16, String, String) {
     let mut stream = TcpStream::connect(("127.0.0.1", port)).unwrap();
     stream.set_read_timeout(Some(PATIENCE)).unwrap();
     let cookie = cookie.map_or_else(String::new, |cookie| format!("Cookie: {cookie}\r\n"));
@@ -55,9 +55,9 @@ fn navigate(port: u16, path: &str, cookie: Option<&str>) -> (u16, String) {
     .unwrap();
     let mut reply = String::new();
     stream.read_to_string(&mut reply).unwrap();
-    let (head, _) = reply.split_once("\r\n\r\n").unwrap();
+    let (head, body) = reply.split_once("\r\n\r\n").unwrap();
     let status = head.split_whitespace().nth(1).unwrap().parse().unwrap();
-    (status, head.to_ascii_lowercase())
+    (status, head.to_ascii_lowercase(), body.to_string())
 }
 
 /// Both projects served by the one server holding the shelf, each its own page and theme, and a
@@ -97,21 +97,38 @@ fn both_served(repo: &Repo, starter: &str) {
     }
     // The shelf's own page answers under its project alone.
     assert_eq!(get(port, "/pantry/x/shelf/none.item").unwrap().0, 404);
-    let (status, head) = navigate(port, "/docs/A.md", None);
+    let (status, head, _) = navigate(port, "/docs/A.md", None);
     assert_eq!(status, 307, "{head}");
     assert!(
         head.contains(&format!("location: /{starter}/docs/a.md")),
         "{head}"
     );
-    let (status, head) = navigate(port, "/", Some("symphony-project=alpha"));
-    assert_eq!(status, 307, "{head}");
-    assert!(head.contains("location: /alpha/"), "{head}");
-    let (status, list) = get(port, "/").unwrap();
-    assert_eq!(status, 200);
-    assert!(
-        list.contains("href=\"/alpha/\"") && list.contains("href=\"/pantry/\""),
-        "{list}"
-    );
+    for cookie in [
+        None,
+        Some("symphony-project=alpha"),
+        Some("symphony-project=pantry"),
+        Some("symphony-project=gone"),
+    ] {
+        let (status, head, list) = navigate(port, "/", cookie);
+        assert_eq!(status, 200, "{cookie:?}: {head}\n{list}");
+        assert!(
+            !head.lines().any(|line| line.starts_with("location:")),
+            "{cookie:?}: {head}"
+        );
+        assert_eq!(
+            head.lines()
+                .find_map(|line| line.strip_prefix("cache-control: ")),
+            Some("no-store"),
+            "{cookie:?}: {head}"
+        );
+        assert!(list.contains("<h1>Projects</h1>"), "{cookie:?}: {list}");
+        for id in ["alpha", "pantry"] {
+            assert!(
+                list.contains(&format!("href=\"/{id}/\"")),
+                "{cookie:?}, {id}: {list}"
+            );
+        }
+    }
 }
 
 #[test]

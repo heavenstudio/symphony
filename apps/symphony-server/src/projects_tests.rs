@@ -142,7 +142,11 @@ async fn a_project_page_carries_its_base_and_theme_without_remembering_a_root_re
     let machine = Machine::new();
     let page = machine.get("/beta/", &[PAGE]).await;
     assert_eq!(page.status(), StatusCode::OK);
-    assert!(page.headers().get(header::SET_COOKIE).is_none());
+    assert!(
+        page.headers().get(header::SET_COOKIE).is_none(),
+        "beta navigation: {:?}",
+        page.headers()
+    );
     let body = text(page).await;
     assert!(body.contains("\"base\":\"/beta\""), "{body}");
     assert!(
@@ -153,7 +157,11 @@ async fn a_project_page_carries_its_base_and_theme_without_remembering_a_root_re
     assert!(body.contains("<title>beta works</title>"));
     // Fetches also need no project-selection cookie.
     let fetched = machine.get("/beta/", &[]).await;
-    assert!(fetched.headers().get(header::SET_COOKIE).is_none());
+    assert!(
+        fetched.headers().get(header::SET_COOKIE).is_none(),
+        "beta fetch: {:?}",
+        fetched.headers()
+    );
 }
 
 #[tokio::test]
@@ -177,9 +185,25 @@ async fn root_is_always_the_picker_with_one_or_multiple_projects_and_old_cookies
                 headers.push(("cookie", cookie));
             }
             let page = machine.get("/", &headers).await;
-            assert_eq!(page.status(), StatusCode::OK, "{ids:?} {cookie:?}");
-            assert!(page.headers().get(header::LOCATION).is_none());
-            assert_eq!(page.headers()[header::CACHE_CONTROL], "no-store");
+            assert_eq!(
+                page.status(),
+                StatusCode::OK,
+                "{ids:?} {cookie:?}: {:?}",
+                page.headers()
+            );
+            assert!(
+                page.headers().get(header::LOCATION).is_none(),
+                "{ids:?} {cookie:?}: {:?}",
+                page.headers()
+            );
+            assert_eq!(
+                page.headers()
+                    .get(header::CACHE_CONTROL)
+                    .and_then(|value| value.to_str().ok()),
+                Some("no-store"),
+                "{ids:?} {cookie:?}: {:?}",
+                page.headers()
+            );
             let body = text(page).await;
             assert!(body.contains("<h1>Projects</h1>"), "{body}");
             assert_eq!(body.matches("<li>").count(), ids.len(), "{body}");

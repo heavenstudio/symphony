@@ -6,6 +6,7 @@ use std::io::{BufRead, BufReader, Write};
 use std::net::TcpStream;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc::RecvTimeoutError;
 use std::time::Instant;
 
@@ -31,6 +32,27 @@ pub(super) struct ScratchBoard {
     tasks: &'static Path,
 }
 
+fn scratch_root(stamp: u128) -> PathBuf {
+    static NEXT: AtomicUsize = AtomicUsize::new(0);
+    std::env::temp_dir().join(format!(
+        "sf-owner-board-{}-{stamp}-{}",
+        std::process::id(),
+        NEXT.fetch_add(1, Ordering::Relaxed)
+    ))
+}
+
+#[test]
+fn scratch_roots_are_unique_when_clock_readings_repeat_across_threads() {
+    let threads: Vec<_> = (0..8)
+        .map(|_| std::thread::spawn(|| scratch_root(0)))
+        .collect();
+    let roots: std::collections::BTreeSet<_> = threads
+        .into_iter()
+        .map(|thread| thread.join().unwrap())
+        .collect();
+    assert_eq!(roots.len(), 8, "scratch paths collided: {roots:?}");
+}
+
 impl ScratchBoard {
     pub(super) fn start() -> Self {
         let workspace = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../..");
@@ -46,14 +68,12 @@ impl ScratchBoard {
             },
             PathBuf::from,
         );
-        let root = std::env::temp_dir().join(format!(
-            "sf-owner-board-{}-{}",
-            std::process::id(),
+        let root = scratch_root(
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
-                .as_nanos()
-        ));
+                .as_nanos(),
+        );
         std::fs::create_dir(&root).unwrap();
         let mut board = Self {
             child: None,
