@@ -62,6 +62,10 @@ pub use store::{
     can_transition,
 };
 
+/// The board schema this build reads and writes: the one server serves no project whose
+/// registering build wrote a newer one.
+pub const SCHEMA: i64 = schema::VERSION;
+
 /// The board's namespace and database on the server.
 pub const NAMESPACE: &str = "sf";
 pub const DATABASE: &str = "tasks";

@@ -61,3 +61,7 @@
 }
 /* A plugin component's wrapper names its kind for a project stylesheet and lays out nothing. */
 [data-component] { display:contents; }
+/* Layout variants a theme package selects on the page (symphony::theme::LAYOUTS). */
+html[data-layout-header=compact] .app-header { padding:4px 12px; flex-wrap:nowrap; overflow-x:auto; }
+html[data-layout-header=compact] .app-header > a { padding:3px 8px; }
+html[data-layout-header=compact] .app-header .crumbs { flex-basis:auto; }

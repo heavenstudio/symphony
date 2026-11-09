@@ -3,15 +3,15 @@
 
 use std::path::Path;
 
-/// The server's address for local tools that link to the app.
-pub(crate) const PORT_FILE: &str = "artifacts/docs-app.port";
+/// The port record of the project at `root`, in its artifacts folder.
+pub(crate) use symphony::triage::port_file;
 
 fn records(root: &Path, port: u16) -> bool {
-    std::fs::read_to_string(root.join(PORT_FILE)).is_ok_and(|said| said.trim() == port.to_string())
+    std::fs::read_to_string(port_file(root)).is_ok_and(|said| said.trim() == port.to_string())
 }
 
 pub(super) fn record_port(root: &Path, port: u16) {
-    let path = root.join(PORT_FILE);
+    let path = port_file(root);
     if let Some(folder) = path.parent()
         && std::fs::create_dir_all(folder).is_ok()
     {
@@ -22,6 +22,6 @@ pub(super) fn record_port(root: &Path, port: u16) {
 /// Remove the port record, unless another app has written its own over it since.
 pub(super) fn clear_port(root: &Path, port: u16) {
     if records(root, port) {
-        let _ = std::fs::remove_file(root.join(PORT_FILE));
+        let _ = std::fs::remove_file(port_file(root));
     }
 }

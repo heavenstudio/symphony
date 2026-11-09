@@ -169,6 +169,14 @@ impl Plugins {
         self.0.iter().flat_map(|p| p.generators()).collect()
     }
 
+    /// The theme package called `package`: the first plugin's that provides one by that name.
+    pub fn theme(&self, package: &str) -> Option<symphony_plugin::Theme> {
+        self.0
+            .iter()
+            .filter_map(|p| p.theme())
+            .find(|theme| theme.package == package)
+    }
+
     /// The component `name` for `argument` and `option` on `page`, its problem shown in its place.
     pub fn render(
         &self,
@@ -216,6 +224,7 @@ pub fn problems(project: &Project) -> Vec<String> {
         })
         .collect();
     found.extend(unlanded(project, &Plugins::for_project(project)));
+    found.extend(crate::theme::problems(project));
     found
 }
 

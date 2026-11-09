@@ -325,6 +325,9 @@ mod metadata_tests {
     }
 }
 
+/// The folder of queued verdict publications, in the [`home`] of the checkout's common dir.
+const JOURNAL: &str = "verdict-publications";
+
 fn home(root: &Path) -> Result<PathBuf, String> {
     let common = common_dir(root)?;
     // Serving generations share the existing journals, counters and lock inodes independently
@@ -1818,7 +1821,7 @@ impl Drop for JournalLease {
 
 impl OutputJob {
     fn folder(root: &Path) -> Result<PathBuf, String> {
-        let folder = home(root)?.join("verdict-publications");
+        let folder = home(root)?.join(JOURNAL);
         std::fs::create_dir_all(&folder).map_err(|e| e.to_string())?;
         Ok(folder)
     }
@@ -2183,8 +2186,8 @@ fn recover_outputs(
         }
         Err(error) => {
             let path = home(root)
-                .map(|home| home.join("verdict-publications"))
-                .unwrap_or_else(|_| root.join("artifacts/verdict-publications"));
+                .map(|home| home.join(JOURNAL))
+                .unwrap_or_else(|_| root.join(crate::project::Project::of(root).artifact(JOURNAL)));
             report_journal_error(root, &path, &error);
         }
     }

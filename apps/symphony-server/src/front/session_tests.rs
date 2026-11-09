@@ -1,7 +1,7 @@
 //! The server's maintenance children, the board's idle-session reap and its embedding catch-up,
 //! run without the session of the terminal the server was started from.
 
-use super::tests::SweepFixture;
+use super::sweep_tests::SweepFixture;
 use super::*;
 
 const TEST: &str = "front::session_tests::the_maintenance_children_run_without_the_session_of_the_servers_terminal";

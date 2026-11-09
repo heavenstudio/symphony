@@ -67,17 +67,20 @@ impl Platform for Browser {
         }
     }
 
+    /// The page's project's own value: the one server's projects share an origin
+    /// ([`crate::project::stored`]).
     fn load(&self, key: &str) -> Option<String> {
         web_sys::window()?
             .local_storage()
             .ok()??
-            .get_item(key)
+            .get_item(&crate::project::stored(&crate::project::current(), key))
             .ok()?
     }
 
     fn save(&self, key: &str, value: &str) {
         if let Some(Ok(Some(storage))) = web_sys::window().map(|window| window.local_storage()) {
-            let _ = storage.set_item(key, value);
+            let key = crate::project::stored(&crate::project::current(), key);
+            let _ = storage.set_item(&key, value);
         }
     }
 }
