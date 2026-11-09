@@ -29,11 +29,14 @@ use symphony_board::{Health, NewSession, NewTask, Store, Task};
 
 #[path = "seed.rs"]
 mod seed;
+#[path = "server_child.rs"]
+mod server_child;
 #[allow(
     unused_imports,
     reason = "each test binary including this file uses some of the seed's builders"
 )]
 pub use seed::{Seed, session, task};
+pub use server_child::ServerChild;
 
 pub const NOW: f64 = 1_800_000_000.0;
 /// Past the lost line.
@@ -109,7 +112,7 @@ fn raw_writes_retry_conflicts_and_return_other_results_without_repeating_them() 
 
 struct Server {
     addr: String,
-    shell: Mutex<Child>,
+    shell: Mutex<ServerChild>,
     log: PathBuf,
 }
 
@@ -120,13 +123,20 @@ unsafe extern "C" {
     fn atexit(at_exit: extern "C" fn()) -> std::ffi::c_int;
 }
 
+/// Register a fixture's synchronous cleanup for normal process exit. Local ownership handles
+/// unwinding before publication; the lifetime pipe remains the fallback for abrupt process death.
+pub fn on_exit(cleanup: extern "C" fn()) {
+    // SAFETY: atexit records a no-argument C callback to call once during this process's exit.
+    let registered = unsafe { atexit(cleanup) };
+    assert_eq!(registered, 0, "fixture cleanup is registered");
+}
+
 /// At the test binary's exit: the server ends, the shell it ran under is waited for, and its log goes
 /// (a server that never came up is reported, log and all, by `start`).
 extern "C" fn stop_server() {
     if let Some(server) = SERVER.get() {
         let mut shell = server.shell.lock().unwrap_or_else(|held| held.into_inner());
-        drop(shell.stdin.take());
-        let _ = shell.wait();
+        let _ = shell.shutdown();
         let _ = std::fs::remove_file(&server.log);
     }
 }
@@ -180,8 +190,7 @@ fn start() -> Server {
             log.display()
         )
     });
-    // SAFETY: `stop_server` takes nothing and reads only this process's own statics, at its exit.
-    assert_eq!(unsafe { atexit(stop_server) }, 0, "the server's end is set");
+    on_exit(stop_server);
     Server {
         addr,
         shell: Mutex::new(shell),
@@ -194,7 +203,7 @@ fn start() -> Server {
 /// server's go to `log`, made here with its folder: Cargo makes `CARGO_TARGET_TMPDIR` only while it
 /// compiles a test, so a test binary built earlier can find it gone. A server that ends before it
 /// answers is reported with its exit status and its log.
-pub fn launch(binary: &Path, log: &Path) -> Result<(String, Child), NotStarted<Infallible>> {
+pub fn launch(binary: &Path, log: &Path) -> Result<(String, ServerChild), NotStarted<Infallible>> {
     launch_on(binary, log, "memory")
 }
 
@@ -204,7 +213,7 @@ pub fn launch_on(
     binary: &Path,
     log: &Path,
     engine: &str,
-) -> Result<(String, Child), NotStarted<Infallible>> {
+) -> Result<(String, ServerChild), NotStarted<Infallible>> {
     if let Some(folder) = log.parent() {
         std::fs::create_dir_all(folder).unwrap_or_else(|error| {
             panic!(
@@ -234,7 +243,7 @@ pub fn launch_on(
             });
             let (announced, announcer) =
                 symphony_board::sys::pipe().expect("a pipe for the server's pid");
-            let mut shell = spawn_with_input(
+            let shell = spawn_with_input(
             Command::new("bash")
                 .arg("-c")
                 .arg(concat!(
@@ -250,11 +259,13 @@ pub fn launch_on(
                 .stderr(output),
         )
         .expect("sh starts the server");
+            // Own it before reading the announcement or checking readiness: either can unwind.
+            let mut shell = ServerChild { shell };
             let mut line = String::new();
             let _ = BufReader::new(announced).read_line(&mut line);
             let server: Option<u32> = line.trim().parse().ok();
             while Instant::now() < until {
-                if let Some(status) = shell.try_wait().unwrap() {
+                if let Some(status) = shell.shell.try_wait().unwrap() {
                     return Ok::<_, Infallible>(Start::Ended(format!(
                         "{status}; it said: {}",
                         said()
@@ -270,8 +281,7 @@ pub fn launch_on(
                 }
                 std::thread::sleep(Duration::from_millis(20));
             }
-            drop(shell.stdin.take()); // the shell stops the server, if it is still there, and ends
-            let _ = shell.wait();
+            let _ = shell.shutdown();
             panic!(
                 "the SurrealDB server did not answer on {addr} within 20 s; its log ({}):\n{}",
                 log.display(),
