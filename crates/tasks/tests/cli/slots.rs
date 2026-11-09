@@ -40,6 +40,9 @@ fn holding(c: &Case, open: usize) -> (String, String) {
     (orch, worker)
 }
 
+/// What a claim refused at the cap adds: the way on under the reservation.
+const RESERVE_HINT: &str = "; if the task is reserved for you, start work under the reservation now, renew it with `just tasks reserve work/2` within each hour and retry the claim after each renewal";
+
 /// What the orchestrator holding `work/0` and `work/1` in progress, at a cap of two, is said as.
 fn holds_two(orch: &str) -> String {
     format!(
@@ -55,7 +58,10 @@ fn a_claim_past_the_cap_the_project_file_sets_is_refused_naming_the_open_tasks()
     assert_eq!(ran.code, 1, "{}", ran.err);
     assert_eq!(
         ran.err,
-        format!("✖ work/2 cannot start: {}\n", holds_two(&orch))
+        format!(
+            "✖ work/2 cannot start: {}{RESERVE_HINT}\n",
+            holds_two(&orch)
+        )
     );
     let shown = c.ok(&worker, &["show", "work/2"]);
     assert!(shown.contains("[ready"), "{shown}");
@@ -99,7 +105,7 @@ fn the_api_holds_the_same_cap() {
     let answer: Value = serde_json::from_str(&ran.out).unwrap();
     assert_eq!(
         answer,
-        json!({"refused": format!("work/2 cannot start: {}", holds_two(&orch))})
+        json!({"refused": format!("work/2 cannot start: {}{RESERVE_HINT}", holds_two(&orch))})
     );
 }
 
@@ -115,7 +121,7 @@ fn the_apis_hold_keeps_a_slot_that_a_move_back_takes_again_at_the_cap() {
     assert_eq!(
         ran.err,
         format!(
-            "✖ work/2 cannot start: {}\n",
+            "✖ work/2 cannot start: {}{RESERVE_HINT}\n",
             holds_two(&orch).replace("work/1 (in_progress)", "work/1 (blocked, held)")
         )
     );

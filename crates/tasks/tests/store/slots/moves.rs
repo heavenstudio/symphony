@@ -3,7 +3,9 @@
 //! orchestrator; on a task two orchestrators hold; and a start racing the close of the slot it
 //! joins.
 
-use super::{EIGHT, HOLDS_EIGHT, K, O, P, W, board, capped, eight_and, open, sessions, with};
+use super::{
+    EIGHT, HOLDS_EIGHT, K, O, P, W, board, capped, eight_and, open, reserve_hint, sessions, with,
+};
 use crate::common::{Fixture, refused, task};
 use serde_json::json;
 use symphony_board::Store;
@@ -63,8 +65,9 @@ fn a_landings_hold_keeps_its_tasks_slot_and_returns_it_to_review_at_the_cap() {
     assert_eq!(
         refused(store.claim("work/next", K)),
         format!(
-            "work/next cannot start: {}",
-            HOLDS_EIGHT.replace("work/h (review)", "work/h (blocked, held)")
+            "work/next cannot start: {}{}",
+            HOLDS_EIGHT.replace("work/h (review)", "work/h (blocked, held)"),
+            reserve_hint("work/next")
         )
     );
     // The stamp arrives: back to review, at the cap.
@@ -265,7 +268,10 @@ fn open_work_moved_under_one_task_still_holds_a_slot_each_and_an_instruction_sha
     let store = capped(&f, 8);
     assert_eq!(
         refused(store.claim("work/next", K)),
-        format!("work/next cannot start: {HOLDS_EIGHT}")
+        format!(
+            "work/next cannot start: {HOLDS_EIGHT}{}",
+            reserve_hint("work/next")
+        )
     );
     // An instruction for work/a is no work of its own.
     assert_eq!(
@@ -277,7 +283,10 @@ fn open_work_moved_under_one_task_still_holds_a_slot_each_and_an_instruction_sha
             "work/a (in_progress)",
             "work/a (in_progress) with work/a/build (in_progress)",
         );
-        format!("work/next cannot start: {shared}")
+        format!(
+            "work/next cannot start: {shared}{}",
+            reserve_hint("work/next")
+        )
     });
 }
 
@@ -295,14 +304,18 @@ fn a_task_two_orchestrators_hold_counts_against_both_and_is_refused_if_either_is
     let store = capped(&f, 8);
     assert_eq!(
         refused(store.claim("both", K)),
-        format!("both cannot start: {HOLDS_EIGHT}")
+        format!("both cannot start: {HOLDS_EIGHT}{}", reserve_hint("both"))
     );
     store.move_to("work/a", "cancelled", "owner").unwrap();
     assert_eq!(store.claim("both", K).unwrap().status, "in_progress");
     // It is P's too: at a cap of one, P starts nothing more.
     assert_eq!(
         refused(capped(&f, 1).claim("pine/next", K)),
-        "pine/next cannot start: pine-orch holds 1 open tasks, the cap of 1 an orchestrator holds: both (in_progress); a slot frees when one of them is done or cancelled"
+        format!(
+            "pine/next cannot start: {}{}",
+            "pine-orch holds 1 open tasks, the cap of 1 an orchestrator holds: both (in_progress); a slot frees when one of them is done or cancelled",
+            reserve_hint("pine/next")
+        )
     );
 }
 
@@ -344,7 +357,11 @@ fn a_start_into_an_open_slot_racing_its_close_and_another_start_is_decided_again
         .capping(Some(2));
     assert_eq!(
         refused(racing.claim("review/work/a", K)),
-        "review/work/a cannot start: olive-orch holds 2 open tasks, the cap of 2 an orchestrator holds: work/b (in_progress), work/c (in_progress); a slot frees when one of them is done or cancelled"
+        format!(
+            "review/work/a cannot start: {}{}",
+            "olive-orch holds 2 open tasks, the cap of 2 an orchestrator holds: work/b (in_progress), work/c (in_progress); a slot frees when one of them is done or cancelled",
+            reserve_hint("review/work/a")
+        )
     );
     assert_eq!(open(&f.store), ["work/b", "work/c"]);
 }

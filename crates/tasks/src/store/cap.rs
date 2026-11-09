@@ -252,7 +252,9 @@ impl Store {
             } else {
                 Vec::new()
             };
-            Failure::Stop(refused(slots::refusal(&opens.what, &full, &children, cap)))
+            let said = slots::refusal(&opens.what, &full, &children, cap);
+            let hint = slots::claim_hint(slug, &opens.what);
+            Failure::Stop(refused(format!("{said}{hint}")))
         })?;
         let counted: HashMap<&str, i64> = (read.counted.iter())
             .map(|(handle, last)| (handle.as_str(), *last))

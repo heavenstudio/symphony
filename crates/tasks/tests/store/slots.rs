@@ -30,6 +30,13 @@ const EIGHT: [(&str, &str); 8] = [
     ("work/h", "review"),
 ];
 
+/// What a claim refused at the cap adds for the executor holding the reservation.
+pub fn reserve_hint(slug: &str) -> String {
+    format!(
+        "; if the task is reserved for you, start work under the reservation now, renew it with `just tasks reserve {slug}` within each hour and retry the claim after each renewal"
+    )
+}
+
 /// What O holding [`EIGHT`] is said as.
 const HOLDS_EIGHT: &str = "olive-orch holds 8 open tasks, the cap of 8 an orchestrator holds: work/a (in_progress), work/b (review), work/c (in_progress), work/d (review), work/e (in_progress), work/f (review), work/g (in_progress), work/h (review); a slot frees when one of them is done or cancelled";
 
@@ -110,7 +117,10 @@ fn the_ninth_claim_under_one_orchestrator_is_refused_naming_the_eight_and_their_
     let store = capped(&f, 8);
     assert_eq!(
         refused(store.claim("work/next", K)),
-        format!("work/next cannot start: {HOLDS_EIGHT}")
+        format!(
+            "work/next cannot start: {HOLDS_EIGHT}{}",
+            reserve_hint("work/next")
+        )
     );
     let next = store.get("work/next").unwrap();
     assert_eq!(
@@ -308,8 +318,9 @@ fn a_task_no_orchestrator_holds_counts_against_the_claimers_parent() {
     assert_eq!(
         refused(store.claim("loose/next", W)),
         format!(
-            "loose/next cannot start: olive-orch (no orchestrator holds it: olive-orch is the parent of wren) {}",
-            HOLDS_EIGHT.trim_start_matches("olive-orch ")
+            "loose/next cannot start: olive-orch (no orchestrator holds it: olive-orch is the parent of wren) {}{}",
+            HOLDS_EIGHT.trim_start_matches("olive-orch "),
+            reserve_hint("loose/next")
         )
     );
     // A worker with no parent counts it against no one.
