@@ -7,12 +7,18 @@ use std::borrow::Borrow;
 /// What `tasks sweep` was asked.
 #[derive(Debug, Clone, Default)]
 pub struct Request<'a> {
+    /// Report decisions without changing the board, caches or worktrees.
     pub dry_run: bool,
+    /// Override the recent-activity window in hours.
     pub hours: Option<f64>,
+    /// Tasks just done or cancelled.
     pub tasks: Vec<&'a str>,
+    /// Why work finishing started it; printed before the pass's lines.
     pub background: Option<&'a str>,
 }
 
+/// Run a sweep on an already connected board, from where `env` runs. Busy full passes
+/// record another request without waiting; callers without a connection use `command_connect`.
 pub fn command(store: &Store, env: &Env, request: &Request<'_>) -> Result<Vec<String>, String> {
     command_connect(env, request, || Ok(store))
 }

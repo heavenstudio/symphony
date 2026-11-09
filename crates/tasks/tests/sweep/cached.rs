@@ -2,9 +2,19 @@
 
 use crate::{Repo, git, text, write};
 use std::fs;
+use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 use std::process::Command;
 use symphony_board::sys::Spawning as _;
+
+fn saved(tree: &Path) -> serde_json::Value {
+    let admin = git(tree, &["rev-parse", "--absolute-git-dir"]);
+    let path = Path::new(&admin).join("sf-sweep-verdict.json");
+    serde_json::from_slice(
+        &fs::read(&path).unwrap_or_else(|error| panic!("{}: {error}", path.display())),
+    )
+    .unwrap()
+}
 
 fn traced(r: &Repo, trace: &Path) -> (String, usize) {
     let _ = fs::remove_file(trace);
@@ -145,17 +155,204 @@ fn removing_the_last_nested_blocker_invalidates_a_kept_verdict() {
 }
 
 #[test]
-fn a_cached_clean_verdict_never_authorizes_removal_after_a_nested_artifact() {
-    let r = Repo::new();
-    let tree = r.detached("kept");
-    fs::create_dir_all(tree.join("artifacts/solar-swift")).unwrap();
-    let first = r.sweep_with(|o| o.occupied = Box::new(|_| Some(true)));
-    r.assert_kept(&tree, &text(&first));
-    write(&tree, "artifacts/solar-swift/x.log", "keep this evidence\n");
-    let next = r.sweep_now(|_| {});
-    r.assert_kept(&tree, &text(&next));
-    assert_eq!(
-        fs::read_to_string(tree.join("artifacts/solar-swift/x.log")).unwrap(),
-        "keep this evidence\n"
-    );
+fn a_saved_clean_verdict_rescans_and_reports_new_nested_source_or_artifacts() {
+    for file in ["sim/new.gd", "artifacts/solar-swift/x.log"] {
+        let r = Repo::new();
+        let tree = r.detached("kept");
+        let first = r.sweep_with(|o| o.occupied = Box::new(|_| Some(true)));
+        r.assert_kept(&tree, &text(&first));
+        assert_eq!(saved(&tree)["verdict"]["left"], serde_json::json!([]));
+        let folder_time = fs::metadata(&tree).unwrap().modified().unwrap();
+        write(&tree, file, "keep this evidence\n");
+        if file.starts_with("sim/") {
+            assert_eq!(
+                fs::metadata(&tree).unwrap().modified().unwrap(),
+                folder_time
+            );
+        }
+        let next = r.sweep_now(|options| options.recent_hours = 0.0);
+        let out = text(&next);
+        r.assert_kept(&tree, &out);
+        assert!(
+            out.contains(file.split('/').next().unwrap()),
+            "new blocker has a retained reason: {out}"
+        );
+        if file.starts_with("sim/") {
+            assert!(out.contains(file), "nested source must be named: {out}");
+        }
+        assert_eq!(
+            fs::read_to_string(tree.join(file)).unwrap(),
+            "keep this evidence\n"
+        );
+        let refreshed = saved(&tree);
+        assert_ne!(
+            refreshed["verdict"]["left"],
+            serde_json::json!([]),
+            "{refreshed}"
+        );
+        let trace = r.dir.join("trace.jsonl");
+        // The child has an isolated HOME/config identity, so warm that identity, then prove reuse.
+        traced(&r, &trace);
+        assert_eq!(traced(&r, &trace).1, 0);
+    }
+}
+
+#[test]
+fn changed_ignore_policies_release_output_after_a_proven_cache_hit() {
+    for policy in [
+        "shared",
+        "global",
+        "global-home",
+        "global-relative",
+        "global-default",
+        "included",
+        "local",
+    ] {
+        let r = Repo::new();
+        fs::write(r.root.join(".gitignore"), "").unwrap();
+        git(&r.root, &["add", ".gitignore"]);
+        git(&r.root, &["commit", "-qm", "fixture without ignore rules"]);
+        let rules = match policy {
+            "shared" => r.root.join(".git/info/exclude"),
+            "global" => {
+                let path = r.dir.join("global-ignore");
+                git(
+                    &r.root,
+                    &["config", "core.excludesFile", path.to_str().unwrap()],
+                );
+                path
+            }
+            "global-home" | "global-relative" => {
+                let setting = if policy == "global-home" {
+                    "~/global-ignore"
+                } else {
+                    "../global-ignore"
+                };
+                git(&r.root, &["config", "core.excludesFile", setting]);
+                r.dir.join("global-ignore")
+            }
+            "global-default" => {
+                let path = r.dir.join(".config/git/ignore");
+                fs::create_dir_all(path.parent().unwrap()).unwrap();
+                path
+            }
+            "included" => {
+                let config = r.dir.join("included-config");
+                let rules = r.dir.join("global-ignore");
+                fs::write(
+                    &config,
+                    format!("[core]\nexcludesFile = {}\n", rules.display()),
+                )
+                .unwrap();
+                git(
+                    &r.root,
+                    &["config", "include.path", config.to_str().unwrap()],
+                );
+                rules
+            }
+            _ => r.dir.join("kept/.gitignore"),
+        };
+        let tree = r.detached("kept");
+        write(&tree, ".godot/cache", "regenerable output\n");
+        let trace = r.dir.join("trace.jsonl");
+        assert_eq!(traced(&r, &trace).1, 1);
+        assert_ne!(saved(&tree)["verdict"]["left"], serde_json::json!([]));
+        assert_eq!(traced(&r, &trace).1, 0, "warm {policy}");
+        fs::write(&rules, "/.godot/\n").unwrap();
+        let (out, count) = traced(&r, &trace);
+        assert!(
+            count > 0,
+            "changed {policy} requires a fresh verdict: {out}"
+        );
+        if policy == "local" {
+            r.assert_kept(&tree, &out);
+            assert_eq!(
+                saved(&tree)["verdict"]["left"],
+                serde_json::json!([".gitignore"])
+            );
+        } else {
+            r.assert_removed(&tree, &out);
+        }
+    }
+}
+
+#[test]
+fn restored_executable_mode_or_content_invalidates_a_proven_dirty_cache() {
+    for change in ["mode", "content"] {
+        let r = Repo::new();
+        let tree = r.detached("kept");
+        let tracked = tree.join("sim/world.gd");
+        let original = fs::read(&tracked).unwrap();
+        let permissions = fs::metadata(&tracked).unwrap().permissions();
+        if change == "mode" {
+            fs::set_permissions(
+                &tracked,
+                fs::Permissions::from_mode(permissions.mode() | 0o111),
+            )
+            .unwrap();
+        } else {
+            fs::write(&tracked, "extends Something!\n").unwrap();
+        }
+        let dirty_time = fs::metadata(&tracked).unwrap().modified().unwrap();
+        let trace = r.dir.join("trace.jsonl");
+        assert_eq!(traced(&r, &trace).1, 1);
+        assert_eq!(
+            saved(&tree)["verdict"]["left"],
+            serde_json::json!(["sim/world.gd"])
+        );
+        assert_eq!(traced(&r, &trace).1, 0);
+        if change == "mode" {
+            fs::set_permissions(&tracked, permissions).unwrap();
+        } else {
+            fs::write(&tracked, original).unwrap();
+            crate::set_time(&tracked, dirty_time);
+            assert_eq!(
+                fs::metadata(&tracked).unwrap().modified().unwrap(),
+                dirty_time
+            );
+        }
+        let (out, count) = traced(&r, &trace);
+        assert!(
+            count > 0,
+            "restored {change} requires a fresh verdict: {out}"
+        );
+        r.assert_removed(&tree, &out);
+    }
+}
+
+#[test]
+fn unproven_configuration_rescans_without_losing_positive_retention_reasons() {
+    for policy in ["conditional", "worktree", "attributes"] {
+        let r = Repo::new();
+        let tree = r.detached("kept");
+        write(&tree, "sim/new.gd", "keep this source\n");
+        let trace = r.dir.join("trace.jsonl");
+        assert_eq!(traced(&r, &trace).1, 1);
+        assert_eq!(
+            saved(&tree)["verdict"]["left"],
+            serde_json::json!(["sim/new.gd"])
+        );
+        assert_eq!(traced(&r, &trace).1, 0);
+        match policy {
+            "conditional" => {
+                let included = r.dir.join("conditional-config");
+                fs::write(&included, "[core]\nfilemode = false\n").unwrap();
+                let admin = git(&tree, &["rev-parse", "--absolute-git-dir"]);
+                let key = format!("includeIf.gitdir:{admin}/.path");
+                git(&r.root, &["config", &key, included.to_str().unwrap()]);
+            }
+            "worktree" => {
+                git(&r.root, &["config", "extensions.worktreeConfig", "true"]);
+            }
+            _ => {
+                write(&r.dir, ".config/git/attributes", "*.gd text\n");
+            }
+        }
+        for _ in 0..2 {
+            let (out, count) = traced(&r, &trace);
+            assert_eq!(count, 1, "{policy} requires fresh interpretation: {out}");
+            r.assert_kept(&tree, &out);
+            assert!(out.contains("sim/new.gd"), "{policy}: {out}");
+        }
+    }
 }

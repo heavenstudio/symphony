@@ -162,7 +162,8 @@ mod tests {
         let third = request(&dir, &[]).unwrap().unwrap();
         assert!(
             third.tasks.is_empty(),
-            "completed requests are not read again"
+            "completed requests are not read again: {:?}",
+            third.tasks
         );
         assert!(third.next().unwrap().is_none());
         fs::remove_dir_all(dir).unwrap();

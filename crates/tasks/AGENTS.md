@@ -431,9 +431,13 @@ git reads, `process.rs` the locks' pids (`kill(pid, 0)`, `ps`); the leaf
 `crates/process-cwd/` owns the bounded `lsof` scan shared with the cargo sweep.
 `coalesce.rs` appends requests before trying the sweep lock: a busy caller exits
 without opening the board, and the holder serves requests received during its
-pass in another pass. `verdicts.rs` reuses file verdicts by HEAD, index and
-folder metadata, plus witnesses for the files keeping it; removal always
-rechecks status. Regenerable `.target/`,
+pass in another pass. `verdicts.rs` reuses positive retention evidence by HEAD,
+index, folder and witness metadata (mode and change time included), plus ancestor
+ignore policies and shared/global ignore inputs. An empty verdict rescans: proving
+absence of new nested files would require walking the checkout. Warm kept-verdict
+reuse stats only its witnesses and their ancestor policy files, never the whole
+tree. Conditional/per-worktree configuration, attributes or unreadable policy
+inputs conservatively rescan; removal always rechecks status. Regenerable `.target/`,
 `symphony/.target/`, `symphony/build/` and `.codex/hooks*` go with a merged tree;
 `artifacts/<handle>/` keeps it. Foreground `--task` visits only that task's
 finished worktrees and asks for a detached full pass.

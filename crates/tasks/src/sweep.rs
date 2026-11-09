@@ -48,7 +48,8 @@
 //! `agent-ID` worktree; their id does not bind an arbitrarily named checkout. One sweep runs at a
 //! time (`sf-tasks/sweep.lock` in the git common dir). Contenders append a request and exit before
 //! connecting to the board; the holder runs another pass for requests received during its pass.
-//! File verdicts are reused by HEAD, index and folder metadata; removal checks are always fresh.
+//! Positive retention evidence is reused with stat and ignore-policy inputs; clean verdicts and
+//! removal checks are always fresh. Cache hits never walk the full checkout.
 //! Foreground `--task` cleanup visits only its finished worktrees, guarded per tree, and asks for
 //! a detached full pass. Tests: `symphony/crates/tasks/tests/sweep/`.
 
@@ -57,6 +58,7 @@ mod command;
 pub mod git;
 pub mod process;
 pub mod trigger;
+mod verdict_inputs;
 mod verdicts;
 
 pub use command::{Request, command, command_connect};
@@ -425,7 +427,7 @@ pub fn sweep(root: &Path, here: &Path, store: &Store, o: &Options) -> Result<Swe
     let mut working: Option<Option<Vec<PathBuf>>> = None;
     let mut gone: BTreeSet<PathBuf> = BTreeSet::new();
     let mut ancestry = BTreeMap::new();
-    let verdicts = verdicts::Verdicts::new(o.dry_run);
+    let verdicts = verdicts::Verdicts::new(root, o.dry_run);
     for (number, (entry, path)) in trees.iter().zip(&paths).enumerate() {
         if o.only.as_ref().is_some_and(|only| !only.contains(path)) {
             continue;
