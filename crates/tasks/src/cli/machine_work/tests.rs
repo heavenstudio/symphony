@@ -399,3 +399,68 @@ fn nonce_history_exhaustion_fails_closed_instead_of_evicting_retired_owners() {
         Err(Rejected::Ownership)
     );
 }
+
+#[test]
+fn raw_row_limit_latches_history_without_changing_receipt_sequence_or_another_machine() {
+    for complete in [false, true] {
+        let mut receiver = Projection::new(2, 1, 100);
+        let retained = operation("a", "retained", Kind::Test, State::Running);
+        let mut other = operation("b", "independent", Kind::Build, State::Queued);
+        receiver
+            .observe(sample("a", 5, vec![retained.clone()]), 10)
+            .unwrap();
+        receiver
+            .observe(sample("b", 1, vec![other.clone()]), 11)
+            .unwrap();
+        let mut overflow = sample(
+            "a",
+            6,
+            vec![
+                retained.clone(),
+                operation("a", "unseen", Kind::Test, State::Running),
+            ],
+        );
+        overflow.complete = complete;
+        assert_eq!(
+            receiver.observe(overflow, 12),
+            Err(Rejected::Limit),
+            "complete={complete}"
+        );
+        for restart in [false, true] {
+            let mut empty = sample("a", 7, vec![]);
+            if restart {
+                empty.generation = 2;
+                empty.producer_id = "replacement".into();
+                empty.sequence = 1;
+            }
+            assert_eq!(
+                receiver.observe(empty, 15),
+                Err(Rejected::Limit),
+                "complete={complete}, restart={restart}"
+            );
+            let view = receiver.snapshot(20);
+            let machine = &view.machines[0];
+            assert_eq!(machine.operations, vec![retained.clone()]);
+            assert_eq!(machine.freshness, Freshness::Conflict);
+            assert_eq!(machine.counts, None);
+            assert_eq!(machine.sequence, 5);
+            assert_eq!(machine.age_ms, Some(10));
+            assert_eq!(machine.producer_id, "publisher");
+            let independent = &view.machines[1];
+            assert_eq!(independent.operations, vec![other.clone()]);
+            assert_eq!(independent.freshness, Freshness::Fresh);
+            assert_eq!(independent.sequence, 1);
+            assert_eq!(independent.age_ms, Some(9));
+            assert_eq!(independent.counts.as_ref().unwrap().queued_builds, 1);
+        }
+        other.state = State::Running;
+        receiver
+            .observe(sample("b", 2, vec![other.clone()]), 21)
+            .unwrap();
+        let view = receiver.snapshot(21);
+        assert_eq!(view.machines[0].counts, None);
+        assert_eq!(view.machines[0].operations, vec![retained]);
+        assert_eq!(view.machines[1].operations, vec![other]);
+        assert_eq!(view.machines[1].counts.as_ref().unwrap().running_builds, 1);
+    }
+}

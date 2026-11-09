@@ -1,8 +1,37 @@
 //! Match observed pane ownership without treating paths, terminal ids or host labels as identity.
 
-use super::{MESSAGE_CHARS, Pane};
+use super::{MESSAGE_CHARS, Pane, Row};
 use crate::rows::TaskSessionRow;
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+
+/// The same positive, unique checkout ownership gates legacy runs and normalized reservations.
+/// Unobserved local registrations still count as possible sharers; a host label never proves an owner.
+pub(super) fn fallback_owners<'board>(
+    rows: &[Row<'board>],
+    local_host: &str,
+    real: &dyn Fn(&str) -> String,
+) -> HashMap<String, &'board str> {
+    let mut sharing: HashMap<String, usize> = HashMap::new();
+    for row in rows {
+        if row.record.is_none_or(|record| record.closed.is_none())
+            && (row.pane.is_some() || !local_host.is_empty() && row.session.row.host == local_host)
+        {
+            *sharing.entry(real(&row.worktree)).or_default() += 1;
+        }
+    }
+    let mut owners = HashMap::new();
+    for row in rows {
+        if row.pane.is_none() || row.record.is_some_and(|record| record.closed.is_some()) {
+            continue;
+        }
+        let checkout = real(&row.worktree);
+        if !checkout.is_empty() && sharing.get(&checkout) == Some(&1) {
+            owners.insert(checkout, row.session.row.handle.as_str());
+        }
+    }
+    owners
+}
 
 /// `path` with its symbolic links resolved, as Python's `os.path.realpath`: what does not exist is kept
 /// as written beneath the part that does. "" stays "".
@@ -126,15 +155,13 @@ mod tests {
             (Some("bound"), Some("bound"), "other", true),
             (Some("bound"), None, "other", false),
         ] {
-            let panes = [Pane {
-                id: "same-pane".into(),
-                agent: None,
-                status: None,
-                session: conversation.map(str::to_string),
-                cwd: "/same/path".into(),
-                title: None,
-                name: Some(name.into()),
-            }];
+            let terminal = serde_json::json!({
+                "address": "same-pane",
+                "cwd": "/same/path",
+                "name": name,
+                "argv": conversation.map(|id| vec!["claude", "--session-id", id]).unwrap_or_default(),
+            });
+            let panes = [Pane::from_hc(terminal.as_object().unwrap()).unwrap()];
             assert_eq!(
                 owned_pane(&panes, None, bound, "worker").is_some(),
                 matched,

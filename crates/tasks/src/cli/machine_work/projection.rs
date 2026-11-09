@@ -35,6 +35,13 @@ struct Accepted {
     owners: BTreeMap<String, Ownership>,
 }
 
+impl Accepted {
+    fn exhaust_history(&mut self) {
+        self.conflict = true;
+        self.history_exhausted = true;
+    }
+}
+
 /// History owns these fields because a complete inventory may drop the live operation.
 struct Ownership {
     handle: Option<String>,
@@ -96,11 +103,14 @@ impl Projection {
             }
             return Err(Rejected::Identity);
         }
-        if old.is_none() && self.machines.len() >= self.max_machines
-            || sample.operations.len() > self.max_operations
-        {
+        if old.is_none() && self.machines.len() >= self.max_machines {
+            return Err(Rejected::Limit);
+        }
+        if sample.operations.len() > self.max_operations {
             if let Some(old) = self.machines.get_mut(&sample.machine_id) {
-                old.conflict = true;
+                // Rejected rows may contain unseen nonces. This path must retain the same
+                // uncertainty as the normalized history bound, without accepting any rows.
+                old.exhaust_history();
             }
             return Err(Rejected::Limit);
         }
@@ -187,8 +197,7 @@ impl Projection {
             }
         }
         if old.history_exhausted || new_ids > self.max_operations.saturating_sub(old.owners.len()) {
-            old.conflict = true;
-            old.history_exhausted = true;
+            old.exhaust_history();
             return Err(Rejected::Limit);
         }
         Ok(())

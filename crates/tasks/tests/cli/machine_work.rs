@@ -28,15 +28,14 @@ fn launch(f: &Fixture, slug: &str, host: &str, checkout: &str) -> String {
 }
 
 fn owned_pane(handle: &str) -> Pane {
-    Pane {
-        id: "t1".into(),
-        agent: Some("codex".into()),
-        status: Some("blocked".into()),
-        session: None,
-        cwd: "/same/path".into(),
-        title: None,
-        name: Some(handle.into()),
-    }
+    let terminal = serde_json::json!({
+        "address": "t1",
+        "agent": "codex",
+        "status": "blocked",
+        "cwd": "/same/path",
+        "name": handle,
+    });
+    Pane::from_hc(terminal.as_object().unwrap()).unwrap()
 }
 
 fn reservation(checkout: &str) -> Run {
@@ -78,17 +77,7 @@ fn machine_work_projects_every_reservation_and_fences_foreign_path_and_pane_owne
     let foreign = launch(&f, "tools/foreign", "other-host", "/same/path");
     let unknown = launch(&f, "tools/unknown", "", "/same/path");
     let probes = Probes {
-        panes: Box::new(|| {
-            Ok(vec![Pane {
-                id: "t1".into(),
-                agent: Some("codex".into()),
-                status: Some("blocked".into()),
-                session: None,
-                cwd: "/same/path".into(),
-                title: None,
-                name: Some(local.clone()),
-            }])
-        }),
+        panes: Box::new(|| Ok(vec![owned_pane(&local)])),
         runs: Box::new(|| {
             Ok((0..3)
                 .map(|pid| Run {
@@ -387,4 +376,75 @@ fn machine_work_hostname_path_and_pane_id_collisions_require_observed_ownership(
             Some("tools/foreign")
         );
     }
+}
+
+#[test]
+fn machine_work_possible_sharers_block_both_fallbacks_but_preserve_explicit_tags() {
+    let f = Fixture::empty();
+    let seen = launch(&f, "tools/observed", HOST, "/same/path");
+    let possible = launch(&f, "tools/possible", HOST, "/same/path");
+    let pane = Pane {
+        session: Some(format!("conversation-{seen}")),
+        ..owned_pane(&seen)
+    };
+    for owner in [None, Some(seen.as_str()), Some(possible.as_str())] {
+        let mut run = reservation("/same/path");
+        run.handle = owner.map(str::to_string);
+        let view = observed(&f, vec![pane.clone()], vec![run]);
+        for handle in [&seen, &possible] {
+            let agent = view
+                .agents
+                .iter()
+                .find(|agent| &agent.handle == handle)
+                .unwrap();
+            if owner == Some(handle.as_str()) {
+                assert_eq!(agent.state, "running_test", "{agent:?}");
+                assert_eq!(
+                    agent.detail.as_ref().map(|detail| detail.recipe.as_str()),
+                    Some("verify")
+                );
+            } else {
+                assert_eq!(agent.detail, None, "{agent:?}");
+                assert_ne!(agent.state, "running_test", "{agent:?}");
+            }
+        }
+        let operation = &view.machine_work.unassigned[0];
+        assert_eq!(operation.handle.as_deref(), owner, "{operation:?}");
+        let task = owner.map(|handle| {
+            if handle == seen {
+                "tools/observed"
+            } else {
+                "tools/possible"
+            }
+        });
+        assert_eq!(operation.task.as_deref(), task, "{operation:?}");
+    }
+    // Ending the unobserved launch removes that possible owner, making the observed one unique.
+    f.store
+        .close_task_session("tools/possible", &possible, "closed", "checkout released")
+        .unwrap();
+    let view = observed(&f, vec![pane], vec![reservation("/same/path")]);
+    let agent = view
+        .agents
+        .iter()
+        .find(|agent| agent.handle == seen)
+        .unwrap();
+    assert_eq!(agent.state, "running_test", "{agent:?}");
+    let operation = &view.machine_work.unassigned[0];
+    assert_eq!(operation.handle.as_deref(), Some(seen.as_str()));
+    assert_eq!(operation.task.as_deref(), Some("tools/observed"));
+
+    let unlocated = launch(&f, "tools/unlocated", HOST, "");
+    let mut run = reservation("");
+    run.handle = Some(unlocated.clone());
+    let view = observed(&f, vec![], vec![run]);
+    let agent = view
+        .agents
+        .iter()
+        .find(|agent| agent.handle == unlocated)
+        .unwrap();
+    assert_eq!(agent.state, "running_test", "{agent:?}");
+    let operation = &view.machine_work.unassigned[0];
+    assert_eq!(operation.handle.as_deref(), Some(unlocated.as_str()));
+    assert_eq!(operation.task, None);
 }

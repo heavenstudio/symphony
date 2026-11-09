@@ -37,7 +37,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 mod attribution;
 mod selection;
 pub(crate) use attribution::find_pane;
-use attribution::{cut, owned_pane, resolve};
+use attribution::{cut, fallback_owners, owned_pane, resolve};
 use selection::{first, pane_state, primary, tasks_by_handle};
 
 /// The longest last message shown, in characters, before it is cut.
@@ -367,36 +367,18 @@ pub fn describe_board_observed(
     // Every session, listed or not, so `include_left` changes who is shown and nothing else.
     let known: HashSet<&str> = rows.iter().map(|r| r.session.row.handle.as_str()).collect();
     let some_runs = runs.as_deref().filter(|r| !r.is_empty());
-    let mut sharing: HashMap<String, usize> = HashMap::new();
-    if some_runs.is_some() {
-        for row in &rows {
-            // A matching host label only adds a possible sharer; it never proves ownership.
-            if row.record.is_none_or(|r| r.closed.is_none())
-                && (row.pane.is_some()
-                    || !evidence.local_host.is_empty()
-                        && row.session.row.host == evidence.local_host)
-            {
-                *sharing.entry(real(&row.worktree)).or_default() += 1;
-            }
-        }
-    }
-    let local_owners: HashSet<&str> = rows
-        .iter()
-        .filter(|row| row.pane.is_some())
-        .map(|row| row.session.row.handle.as_str())
-        .chain(
-            runs.as_deref()
-                .unwrap_or_default()
-                .iter()
-                .filter_map(|run| run.handle.as_deref()),
-        )
-        .collect();
+    let fallbacks = if some_runs.is_some() {
+        fallback_owners(&rows, &evidence.local_host, &real)
+    } else {
+        HashMap::new()
+    };
     let mut machine_work = evidence.snapshot;
     super::machine_work::attribute(
         &mut machine_work,
         runs.as_deref().unwrap_or_default(),
         &records,
-        &local_owners,
+        &fallbacks,
+        &real,
     );
     let mut agents = Vec::new();
     for row in rows {
@@ -410,14 +392,12 @@ pub fn describe_board_observed(
                 .iter()
                 .filter(|r| r.handle.as_deref() == Some(handle))
                 .collect();
-            let here = real(&row.worktree);
-            if !tagged.is_empty()
-                || sharing.get(&here) != Some(&1)
-                || here.is_empty()
-                || row.pane.is_none()
-                || row.record.is_some_and(|r| r.closed.is_some())
-            {
+            if !tagged.is_empty() {
                 return first(&tagged);
+            }
+            let here = real(&row.worktree);
+            if fallbacks.get(&here).copied() != Some(handle) {
+                return None;
             }
             let in_it: Vec<&Run> = runs
                 .iter()

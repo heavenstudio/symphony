@@ -3,7 +3,7 @@
 use super::{Kind, Operation, Snapshot, State};
 use crate::cli::agents::Run;
 use crate::rows::TaskSessionRow;
-use std::collections::HashSet;
+use std::collections::HashMap;
 
 /// Attribute from an explicit owner or one active, positively local checkout. Never use the
 /// agent's selected display task: it can be a historical review in another checkout.
@@ -11,7 +11,8 @@ pub(crate) fn attribute(
     work: &mut Snapshot,
     runs: &[Run],
     records: &[TaskSessionRow],
-    local_owners: &HashSet<&str>,
+    fallback_owners: &HashMap<String, &str>,
+    real: &dyn Fn(&str) -> String,
 ) {
     for run in runs {
         let mut operation = Operation {
@@ -32,26 +33,27 @@ pub(crate) fn attribute(
             reason: "local slot reservation; execution and stable machine identity unknown".into(),
             phase_since: run.since,
         };
-        assign(&mut operation, records, local_owners);
+        assign(&mut operation, records, fallback_owners, real);
         work.unassigned.push(operation);
     }
     // Native operations already carry receiver-validated attribution. Their foreign paths
     // are opaque, and current board roles cannot rewrite work that started under an earlier role.
 }
 
-fn assign(operation: &mut Operation, records: &[TaskSessionRow], local_owners: &HashSet<&str>) {
-    let local = |handle: &str| local_owners.contains(handle);
-    if operation.handle.is_none() && !operation.checkout.is_empty() {
-        let mut owners: Vec<_> = records
-            .iter()
-            .filter(|r| r.closed.is_none() && r.worktree == operation.checkout && local(&r.handle))
-            .map(|r| &r.handle)
-            .collect();
-        owners.sort();
-        owners.dedup();
-        if owners.len() == 1 {
-            operation.handle = Some(owners[0].clone());
-        }
+fn assign(
+    operation: &mut Operation,
+    records: &[TaskSessionRow],
+    fallback_owners: &HashMap<String, &str>,
+    real: &dyn Fn(&str) -> String,
+) {
+    // An explicit handle remains valid, but two missing paths cannot prove its task context.
+    if operation.checkout.is_empty() {
+        return;
+    }
+    if operation.handle.is_none() {
+        operation.handle = fallback_owners
+            .get(&real(&operation.checkout))
+            .map(|handle| (*handle).to_string());
     }
     let Some(handle) = operation.handle.as_deref() else {
         return;
