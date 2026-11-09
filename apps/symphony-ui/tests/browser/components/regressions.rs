@@ -28,6 +28,59 @@ fn recipient_at_bottom(page: &mut crate::Chrome, site: &Site) {
     popup_ready(page);
 }
 
+fn recipient_geometry(page: &mut crate::Chrome) -> serde_json::Value {
+    page.eval(r#"(() => {
+        const trigger = document.querySelector('#task-send button[aria-haspopup=listbox]');
+        const list = document.querySelector('[role=listbox]');
+        return {scroll: scrollY, pageHeight: document.documentElement.scrollHeight, height: innerHeight,
+            visual: {top: visualViewport.offsetTop, height: visualViewport.height},
+            trigger: trigger.getBoundingClientRect().toJSON(), popup: list.getBoundingClientRect().toJSON()};
+    })()"#)
+}
+
+fn recipient_follows_background_scroll(page: &mut crate::Chrome) -> &'static str {
+    let before = recipient_geometry(page);
+    let (popup_edge, trigger_edge) = if before["popup"]["top"].as_f64().unwrap()
+        >= before["trigger"]["bottom"].as_f64().unwrap()
+    {
+        ("top", "bottom")
+    } else {
+        assert!(
+            before["popup"]["bottom"].as_f64().unwrap()
+                <= before["trigger"]["top"].as_f64().unwrap(),
+            "the popup must start beside its trigger: {before}"
+        );
+        ("bottom", "top")
+    };
+    let popup = before["popup"][popup_edge].as_f64().unwrap();
+    let trigger = before["trigger"][trigger_edge].as_f64().unwrap();
+    let scroll = before["scroll"].as_f64().unwrap();
+    assert!(
+        scroll > 24.0,
+        "the task must allow background scrolling: {before}"
+    );
+    page.eval("scrollBy(0,-24)");
+    // A long list can fill the space below its trigger: its top follows the trigger while
+    // its bottom stays at the viewport edge. Above the trigger, its bottom is attached.
+    assert!(
+        page.wait_for(
+            &format!(r#"(() => {{
+                const list = document.querySelector('[role=listbox]').getBoundingClientRect();
+                const trigger = document.querySelector('#task-send button[aria-haspopup=listbox]').getBoundingClientRect();
+                return scrollY < {scroll} && list.{popup_edge} > {popup} + 20
+                    && trigger.{trigger_edge} > {trigger} + 20
+                    && Math.abs((list.{popup_edge} - trigger.{trigger_edge}) - ({gap})) < 1
+                    && list.top >= visualViewport.offsetTop
+                    && list.bottom <= visualViewport.offsetTop + visualViewport.height;
+            }})()"#, gap = popup - trigger),
+            SHOWN
+        ),
+        "the popup follows its trigger when the document scrolls and stays in the viewport; before: {before}; after: {}",
+        recipient_geometry(page)
+    );
+    popup_edge
+}
+
 #[test]
 fn select_options_stay_visible_at_panel_and_page_bottom_on_desktop_short_window_and_phone() {
     let site = site();
@@ -106,30 +159,17 @@ fn a_long_recipient_list_scrolls_each_option_into_view_and_repositions_on_resize
         offset,
         "option focus scrolls the list, not the page"
     );
-    assert!(
-        offset.as_f64().unwrap() > 24.0,
-        "the long task must allow background scrolling"
-    );
-    let bottom = page
-        .eval("document.querySelector('[role=listbox]').getBoundingClientRect().bottom")
-        .as_f64()
-        .unwrap();
-    page.eval("scrollBy(0,-24)");
-    assert!(
-        page.wait_for(
-            &format!(
-                "document.querySelector('[role=listbox]').getBoundingClientRect().bottom > {}",
-                bottom + 20.0
-            ),
-            SHOWN
-        ),
-        "the popup follows its trigger when the document scrolls"
-    );
+    let attached_edge = recipient_follows_background_scroll(&mut page);
     page.call(
         "Emulation.setDeviceMetricsOverride",
         json!({"width":390,"height":360,"deviceScaleFactor":1,"mobile":true}),
     );
     assert!(page.wait_for("(() => {const r=document.querySelector('[role=listbox]').getBoundingClientRect();return r.top>=0&&r.bottom<=innerHeight;})()", SHOWN));
+    assert_ne!(
+        recipient_follows_background_scroll(&mut page),
+        attached_edge,
+        "the shorter viewport exercises the opposite popup placement"
+    );
     key(&mut page, "Home", "Home", 36);
     assert!(page.wait_for("document.activeElement.textContent.trim()==='everyone on it' && document.activeElement.getBoundingClientRect().top>=0", SHOWN));
     key(&mut page, "End", "End", 35);
