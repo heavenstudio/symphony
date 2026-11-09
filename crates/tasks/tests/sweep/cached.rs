@@ -7,7 +7,8 @@ use std::path::Path;
 use std::process::Command;
 use symphony_board::sys::Spawning as _;
 
-fn saved(tree: &Path) -> serde_json::Value {
+/// Read the real published cache; a missing file fails the regression's cache precondition.
+pub(super) fn saved(tree: &Path) -> serde_json::Value {
     let admin = git(tree, &["rev-parse", "--absolute-git-dir"]);
     let path = Path::new(&admin).join("sf-sweep-verdict.json");
     serde_json::from_slice(
@@ -17,23 +18,38 @@ fn saved(tree: &Path) -> serde_json::Value {
 }
 
 fn traced(r: &Repo, trace: &Path) -> (String, usize) {
+    traced_with(r, trace, |_| {})
+}
+
+/// Run the native CLI with isolated board/config inputs and count actual native status starts.
+pub(super) fn traced_with(
+    r: &Repo,
+    trace: &Path,
+    change: impl FnOnce(&mut Command),
+) -> (String, usize) {
     let _ = fs::remove_file(trace);
-    let done = Command::new(env!("CARGO_BIN_EXE_tasks"))
+    let mut command = Command::new(env!("CARGO_BIN_EXE_tasks"));
+    command
         .args(["sweep", "--recent-hours", "0"])
         .env_clear()
         .envs(r.vars())
         .env("GIT_TRACE2_EVENT", trace)
         .env("TASKS_SWEEP", "off")
-        .current_dir(&r.root)
-        .output_locked()
-        .unwrap();
+        .current_dir(&r.root);
+    change(&mut command);
+    let done = command.output_locked().unwrap();
     let out = String::from_utf8(done.stdout).unwrap();
     assert!(
         done.status.success(),
         "{out}{}",
         String::from_utf8_lossy(&done.stderr)
     );
-    let count = fs::read_to_string(trace)
+    (out, status_calls(trace))
+}
+
+/// Git trace events distinguish process starts from status-like text in diagnostic output.
+pub(super) fn status_calls(trace: &Path) -> usize {
+    fs::read_to_string(trace)
         .unwrap()
         .lines()
         .filter(|line| {
@@ -43,8 +59,7 @@ fn traced(r: &Repo, trace: &Path) -> (String, usize) {
                     .as_array()
                     .is_some_and(|args| args.iter().any(|arg| arg == "status"))
         })
-        .count();
-    (out, count)
+        .count()
 }
 
 #[test]
@@ -83,6 +98,13 @@ fn a_second_pass_over_300_unchanged_worktrees_runs_no_status() {
         out.contains("kept 300 merged for files that did not land"),
         "{out}"
     );
+    for number in 0..300 {
+        let path = r.root.join(format!(
+            ".git/worktrees/cached-{number}/sf-sweep-verdict.json"
+        ));
+        let saved: serde_json::Value = serde_json::from_slice(&fs::read(path).unwrap()).unwrap();
+        assert_eq!(saved["verdict"]["left"], serde_json::json!(["sim/new.gd"]));
+    }
     let began = std::time::Instant::now();
     let (out, count) = traced(&r, &trace);
     eprintln!(
@@ -322,7 +344,13 @@ fn restored_executable_mode_or_content_invalidates_a_proven_dirty_cache() {
 
 #[test]
 fn unproven_configuration_rescans_without_losing_positive_retention_reasons() {
-    for policy in ["conditional", "worktree", "attributes"] {
+    for policy in [
+        "conditional",
+        "worktree",
+        "attributes",
+        "fsmonitor",
+        "split-index",
+    ] {
         let r = Repo::new();
         let tree = r.detached("kept");
         write(&tree, "sim/new.gd", "keep this source\n");
@@ -344,6 +372,12 @@ fn unproven_configuration_rescans_without_losing_positive_retention_reasons() {
             "worktree" => {
                 git(&r.root, &["config", "extensions.worktreeConfig", "true"]);
             }
+            "fsmonitor" => {
+                git(&r.root, &["config", "core.fsmonitor", "false"]);
+            }
+            "split-index" => {
+                git(&tree, &["update-index", "--split-index"]);
+            }
             _ => {
                 write(&r.dir, ".config/git/attributes", "*.gd text\n");
             }
@@ -354,5 +388,34 @@ fn unproven_configuration_rescans_without_losing_positive_retention_reasons() {
             r.assert_kept(&tree, &out);
             assert!(out.contains("sim/new.gd"), "{policy}: {out}");
         }
+    }
+}
+
+#[test]
+fn a_candidate_using_another_common_policy_declines_cache_reuse() {
+    let r = Repo::new();
+    let tree = r.detached("kept");
+    write(&tree, "sim/new.gd", "retained source\n");
+    let trace = r.dir.join("trace.jsonl");
+    assert_eq!(traced(&r, &trace).1, 1);
+    assert_eq!(traced(&r, &trace).1, 0);
+    let other = r.dir.join("other-common");
+    let copied = Command::new("cp")
+        .arg("-R")
+        .arg(r.root.join(".git"))
+        .arg(&other)
+        .status_locked()
+        .unwrap();
+    assert!(copied.success());
+    let admin = r.root.join(".git/worktrees/kept");
+    fs::write(admin.join("commondir"), format!("{}\n", other.display())).unwrap();
+    for _ in 0..2 {
+        let (out, count) = traced(&r, &trace);
+        assert_eq!(
+            count, 1,
+            "a different common config is outside this pass proof: {out}"
+        );
+        assert!(out.contains("sim/new.gd"), "{out}");
+        r.assert_kept(&tree, &out);
     }
 }

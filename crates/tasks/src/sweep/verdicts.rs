@@ -1,10 +1,11 @@
-//! Reuse positive retention evidence only. An empty verdict always rescans, so new nested files
-//! receive a fresh reason without walking the whole checkout to prove that nothing changed.
+//! Reuse positive retention witnesses or a complete clean-input inventory. Unproven inputs
+//! rescan, and collection races get one fresh retry so new blockers have current reasons.
 //! Live board, lock, age, process and final removal status decisions are always made again.
 
 use super::{
     git,
     verdict_inputs::{Policy, PolicyInputs, Stamp, entry_stamp, stamp},
+    verdict_inventory::{Inventory, admin_safe},
 };
 use serde::{Deserialize, Serialize};
 use std::cell::OnceCell;
@@ -15,6 +16,12 @@ use std::time::SystemTime;
 
 static WRITES: AtomicU64 = AtomicU64::new(0);
 
+#[derive(PartialEq)]
+enum CleanProof {
+    Collect,
+    Skip,
+}
+
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
 struct Inputs {
     head: String,
@@ -23,12 +30,19 @@ struct Inputs {
     folder: Stamp,
     index: Stamp,
     head_file: Stamp,
+    commondir: Option<Stamp>,
     config: String,
 }
 
 impl Inputs {
     fn read(entry: &git::Listed, finished: bool, policy: &Policy) -> Option<Self> {
         let admin = git::admin(&entry.path)?;
+        admin_safe(&entry.path).ok()?;
+        let commondir = match fs::metadata(admin.join("commondir")) {
+            Ok(meta) => Some(Stamp::of(meta)),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+            Err(_) => return None,
+        };
         Some(Self {
             head: entry.head.clone(),
             branch: entry.branch.clone(),
@@ -36,6 +50,7 @@ impl Inputs {
             folder: stamp(&entry.path)?,
             index: stamp(&admin.join("index"))?,
             head_file: stamp(&admin.join("HEAD"))?,
+            commondir,
             config: policy.config.clone(),
         })
     }
@@ -53,6 +68,8 @@ struct Saved {
     verdict: Verdict,
     witnesses: Vec<(PathBuf, Stamp)>,
     policy: PolicyInputs,
+    #[serde(default)]
+    inventory: Option<Inventory>,
 }
 
 /// A kept directory needs one remaining file as evidence. Walking happens only on a fresh
@@ -105,32 +122,45 @@ impl Verdicts {
     }
 
     pub fn read(&self, entry: &git::Listed, finished: bool) -> Verdict {
-        let began = SystemTime::now();
         let policy = self
             .policy
             .get_or_init(|| Policy::read(&self.root))
             .as_ref();
         let inputs = policy.and_then(|policy| Inputs::read(entry, finished, policy));
         let path = git::admin(&entry.path).map(|dir| dir.join("sf-sweep-verdict.json"));
-        if let (Some(inputs), Some(path)) = (&inputs, &path)
+        if let (Some(inputs), Some(path), Some(policy)) = (&inputs, &path, policy)
             && let Some(saved) = fs::read(path)
                 .ok()
                 .and_then(|bytes| serde_json::from_slice::<Saved>(&bytes).ok())
-            && !saved.verdict.left.is_empty()
             && saved.inputs == *inputs
-            && policy
-                .and_then(|policy| policy.inputs(&entry.path, &saved.witnesses))
-                .as_ref()
-                == Some(&saved.policy)
+            && (!saved.verdict.left.is_empty() || saved.inventory.is_some())
             && saved
                 .witnesses
                 .iter()
                 .all(|(path, was)| entry_stamp(path).as_ref() == Some(was))
+            && saved
+                .inventory
+                .as_ref()
+                .is_none_or(|inventory| inventory.matches(&entry.path))
+            && saved.policy_now(&entry.path, policy).as_ref() == Some(&saved.policy)
         {
             return saved.verdict;
         }
-        let left = git::left_behind(&entry.path, finished);
-        let owner = if left
+        self.fresh(entry, finished, policy, CleanProof::Collect)
+    }
+
+    fn fresh(
+        &self,
+        entry: &git::Listed,
+        finished: bool,
+        policy: Option<&Policy>,
+        proof: CleanProof,
+    ) -> Verdict {
+        let began = SystemTime::now();
+        let inputs = policy.and_then(|policy| Inputs::read(entry, finished, policy));
+        let status = git::file_status(&entry.path, finished);
+        let owner = if status
+            .left
             .iter()
             .any(|name| name == "docs" || name.contains("docs/"))
         {
@@ -138,34 +168,87 @@ impl Verdicts {
         } else {
             Vec::new()
         };
-        let verdict = Verdict { owner, left };
-        if !self.dry_run
-            && !verdict.left.iter().any(|s| s.starts_with('('))
-            && let (Some(inputs), Some(path)) = (inputs, path)
-            && let Some(policy) = policy
-            && Inputs::read(entry, finished, policy).as_ref() == Some(&inputs)
-            && let Some(witnesses) = witnesses(&entry.path, &verdict)
-            && witnesses.iter().all(|(_, stamp)| stamp.predates(began))
-            && let Some(policy) = policy.inputs(&entry.path, &witnesses)
-            && policy.values().flatten().all(|stamp| stamp.predates(began))
-        {
-            let temp = path.with_extension(format!(
-                "{}-{}.tmp",
-                std::process::id(),
-                WRITES.fetch_add(1, Ordering::Relaxed)
-            ));
-            if let Ok(bytes) = serde_json::to_vec(&Saved {
-                inputs,
-                verdict: verdict.clone(),
-                witnesses,
-                policy,
-            }) {
-                if fs::write(&temp, bytes).is_ok() {
-                    let _ = fs::rename(&temp, &path);
-                }
-                let _ = fs::remove_file(temp);
-            }
+        let verdict = Verdict {
+            owner,
+            left: status.left,
+        };
+        if self.dry_run || verdict.left.iter().any(|name| name.starts_with('(')) {
+            return verdict;
         }
-        verdict
+        let (Some(inputs), Some(policy), Some(admin)) = (inputs, policy, git::admin(&entry.path))
+        else {
+            return verdict;
+        };
+        let inventory = if verdict.left.is_empty() {
+            if proof == CleanProof::Skip {
+                return verdict;
+            }
+            match Inventory::collect(&entry.path, &status.ignored_dirs, began) {
+                Ok(inventory) => Some(inventory),
+                Err(_) => return self.fresh(entry, finished, Some(policy), CleanProof::Skip),
+            }
+        } else {
+            None
+        };
+        let witnesses = if inventory.is_some() {
+            Vec::new()
+        } else {
+            let Some(witnesses) = witnesses(&entry.path, &verdict) else {
+                return verdict;
+            };
+            witnesses
+        };
+        let mut saved = Saved {
+            inputs,
+            verdict,
+            witnesses,
+            policy: PolicyInputs::new(),
+            inventory,
+        };
+        let current = saved.policy_now(&entry.path, policy);
+        let stable = Inputs::read(entry, finished, policy).as_ref() == Some(&saved.inputs)
+            && saved.witnesses.iter().all(|(path, value)| {
+                value.predates(began) && entry_stamp(path).as_ref() == Some(value)
+            })
+            && saved
+                .inventory
+                .as_ref()
+                .is_none_or(|inventory| inventory.matches(&entry.path));
+        if let Some(current) = current
+            && stable
+            && current
+                .values()
+                .flatten()
+                .all(|value| value.predates(began))
+        {
+            saved.policy = current;
+            saved.publish(&admin.join("sf-sweep-verdict.json"));
+        } else if saved.inventory.is_some() && proof == CleanProof::Collect {
+            return self.fresh(entry, finished, Some(policy), CleanProof::Skip);
+        }
+        saved.verdict
+    }
+}
+
+impl Saved {
+    fn policy_now(&self, root: &Path, policy: &Policy) -> Option<PolicyInputs> {
+        match &self.inventory {
+            Some(inventory) => policy.for_directories(root, inventory.directories()),
+            None => policy.inputs(root, &self.witnesses),
+        }
+    }
+
+    fn publish(&self, path: &Path) {
+        let temp = path.with_extension(format!(
+            "{}-{}.tmp",
+            std::process::id(),
+            WRITES.fetch_add(1, Ordering::Relaxed)
+        ));
+        if let Ok(bytes) = serde_json::to_vec(self) {
+            if fs::write(&temp, bytes).is_ok() {
+                let _ = fs::rename(&temp, path);
+            }
+            let _ = fs::remove_file(temp);
+        }
     }
 }

@@ -56,9 +56,11 @@
 mod coalesce;
 mod command;
 pub mod git;
+mod guards;
 pub mod process;
 pub mod trigger;
 mod verdict_inputs;
+mod verdict_inventory;
 mod verdicts;
 
 pub use command::{Request, command, command_connect};
@@ -476,6 +478,13 @@ pub fn sweep(root: &Path, here: &Path, store: &Store, o: &Options) -> Result<Swe
             result.spared.push((listed.clone(), held));
             continue;
         }
+        let _removal_guard = match guards::acquire(path, o.dry_run) {
+            Ok(held) => held,
+            Err(why) => {
+                result.spared.push((listed.clone(), why));
+                continue;
+            }
+        };
         let seen = working.get_or_insert_with(|| {
             (o.cwds)()
                 .filter(|cwds| !cwds.is_empty())
@@ -535,7 +544,7 @@ pub fn sweep(root: &Path, here: &Path, store: &Store, o: &Options) -> Result<Swe
 
 /// Remove `path` if it is still at `head` with nothing left behind; git checks cleanliness again
 /// itself (no `--force`). Only the exact dead lock is lifted; refusal restores it without replacing
-/// another owner's lock.
+/// another owner's lock. The caller holds the per-tree removal guard throughout.
 fn remove(
     root: &Path,
     path: &Path,
@@ -543,14 +552,6 @@ fn remove(
     store: &Store,
     o: &Options,
 ) -> Result<bool, String> {
-    let _held = if o.dry_run {
-        None
-    } else {
-        let Some(held) = coalesce::tree_lock(path) else {
-            return Ok(false);
-        };
-        Some(held)
-    };
     let shown = path.to_string_lossy();
     // Re-read after the slow, shared scan and earlier removals: a launch, checkout or lock
     // acquired in that window must protect this tree, even when its HEAD is still merged.

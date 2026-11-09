@@ -15,6 +15,8 @@
 mod common;
 
 mod cached;
+mod clean_cache;
+mod clean_races;
 mod cli;
 mod finished;
 mod on_review;

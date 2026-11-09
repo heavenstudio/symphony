@@ -78,6 +78,39 @@ pub fn fnmatch(pattern: &str, text: &str) -> bool {
 /// are not disposable. A worktree whose work is `finished` lets its caches go too
 /// ([`FINISHED_OUTPUT`]). A status git cannot give is something left behind: it keeps the worktree.
 pub fn left_behind(path: &Path, finished: bool) -> Vec<String> {
+    file_status(path, finished).left
+}
+
+/// Keep the native ignored-directory decisions beside the verdict, so a clean proof can prune
+/// known disposable output without a second recursive Git enumeration.
+pub(in crate::sweep) struct FileStatus {
+    pub left: Vec<String>,
+    pub ignored_dirs: Vec<String>,
+}
+
+impl FileStatus {
+    fn blocked(reason: &str) -> Self {
+        Self {
+            left: vec![reason.into()],
+            ignored_dirs: Vec::new(),
+        }
+    }
+}
+
+pub(in crate::sweep) fn regenerable(name: &str) -> bool {
+    REGENERABLE.iter().any(|pattern| fnmatch(pattern, name))
+}
+
+fn ignored_disposable(name: &str, finished: bool) -> bool {
+    let root_log = name
+        .strip_prefix("artifacts/")
+        .is_some_and(|tail| !tail.contains('/') && tail.ends_with(".log"));
+    let goes = |patterns: &[&str]| patterns.iter().any(|pattern| fnmatch(pattern, name));
+    let disposable = !name.starts_with("artifacts/") && goes(&DISPOSABLE);
+    root_log || disposable || (finished && goes(&FINISHED_OUTPUT))
+}
+
+pub(in crate::sweep) fn file_status(path: &Path, finished: bool) -> FileStatus {
     let Some(text) = stdout(
         path,
         &[
@@ -87,28 +120,38 @@ pub fn left_behind(path: &Path, finished: bool) -> Vec<String> {
             "--untracked-files=all",
         ],
     ) else {
-        return vec!["(git status could not be read there)".into()];
+        return FileStatus::blocked("(git status could not be read there)");
     };
     let Some(mut kept) = saved_locks(path) else {
-        return vec!["(worktree lock state could not be read there)".into()];
+        return FileStatus::blocked("(worktree lock state could not be read there)");
     };
+    let mut ignored_dirs = Vec::new();
     for line in text.lines() {
         let status = line.get(..2).unwrap_or(line);
-        let named = line.get(3..).unwrap_or("").trim_matches('"');
-        let goes = |patterns: &[&str]| patterns.iter().any(|p| fnmatch(p, named));
-        let root_log = named
-            .strip_prefix("artifacts/")
-            .is_some_and(|name| !name.contains('/') && name.ends_with(".log"));
-        let disposable = !named.starts_with("artifacts/") && goes(&DISPOSABLE);
-        if matches!(status, "!!" | "??") && goes(&REGENERABLE) {
-            continue;
-        }
-        if status == "!!" && (root_log || disposable || (finished && goes(&FINISHED_OUTPUT))) {
+        let raw = line.get(3..).unwrap_or("");
+        let named = raw.trim_matches('"');
+        if (matches!(status, "!!" | "??") && regenerable(named))
+            || (status == "!!" && ignored_disposable(named, finished))
+        {
+            // Quoted or non-ASCII status paths need a lossless decoder before they can justify
+            // pruning. Leave those for the bounded inventory to read or conservatively refuse.
+            if status == "!!"
+                && named.ends_with('/')
+                && raw == named
+                && named.is_ascii()
+                && !named.contains('\\')
+                && !named.chars().any(char::is_control)
+            {
+                ignored_dirs.push(named.into());
+            }
             continue;
         }
         kept.push(named.to_string());
     }
-    kept
+    FileStatus {
+        left: kept,
+        ignored_dirs,
+    }
 }
 
 /// Remove only untracked regenerable output, so the non-forced worktree removal can still let

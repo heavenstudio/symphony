@@ -1,5 +1,5 @@
-//! Positive retention evidence depends on file metadata and Git's ignore policy. No recursive
-//! tree scan runs on reuse: only the retained witnesses and their ancestor policy files are read.
+//! Verdict evidence depends on file metadata and Git's ignore policy. Reuse stats saved witnesses
+//! or inventory entries and their policy files, without recursively enumerating the checkout.
 
 use super::git;
 use serde::{Deserialize, Serialize};
@@ -10,7 +10,7 @@ use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
-#[derive(Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub(super) struct Stamp {
     device: u64,
     inode: u64,
@@ -23,7 +23,8 @@ pub(super) struct Stamp {
 }
 
 impl Stamp {
-    fn of(meta: fs::Metadata) -> Self {
+    /// Reuse an already-read entry's full Unix metadata identity.
+    pub(super) fn of(meta: fs::Metadata) -> Self {
         Self {
             device: meta.dev(),
             inode: meta.ino(),
@@ -42,6 +43,11 @@ impl Stamp {
         };
         i128::from(self.changed_seconds) * 1_000_000_000 + i128::from(self.changed_nanos)
             <= elapsed.as_nanos().try_into().unwrap_or(i128::MAX)
+    }
+
+    /// Directory entries witness later changes to their immediate child names.
+    pub fn is_directory(&self) -> bool {
+        self.mode & 0o170_000 == 0o040_000
     }
 }
 
@@ -85,16 +91,21 @@ pub(super) struct Policy {
     common: PathBuf,
 }
 
+fn common(root: &Path) -> Option<PathBuf> {
+    let admin = git::admin(root)?;
+    let common = match fs::read_to_string(admin.join("commondir")) {
+        Ok(path) => admin.join(path.trim()),
+        Err(error) if error.kind() == ErrorKind::NotFound => admin,
+        Err(_) => return None,
+    };
+    fs::canonicalize(common).ok()
+}
+
 impl Policy {
     pub fn read(root: &Path) -> Option<Self> {
         let began = SystemTime::now();
-        let admin = git::admin(root)?;
-        let common = match fs::read_to_string(admin.join("commondir")) {
-            Ok(path) => admin.join(path.trim()),
-            Err(error) if error.kind() == ErrorKind::NotFound => admin,
-            Err(_) => return None,
-        };
-        let vars = git::stdout(root, &["var", "-l"])?;
+        let common = common(root)?;
+        let vars = String::from_utf8(git::read(root, &["var", "-l"])?.stdout).ok()?;
         let mut sources = BTreeSet::from([common.join("config")]);
         let mut external = BTreeSet::new();
         let mut attributes = BTreeSet::new();
@@ -118,16 +129,24 @@ impl Policy {
         if !saw_config {
             return None;
         }
-        let config = git::stdout(
-            root,
-            &["config", "--null", "--show-origin", "--includes", "--list"],
-        )?;
+        let config = String::from_utf8(
+            git::read(
+                root,
+                &["config", "--null", "--show-origin", "--includes", "--list"],
+            )?
+            .stdout,
+        )
+        .ok()?;
         let mut observed = BTreeSet::new();
         let mut fields = config.split_terminator('\0');
         while let Some(origin) = fields.next() {
             let field = fields.next()?;
             let (key, value) = field.split_once('\n').unwrap_or((field, ""));
-            if key.starts_with("includeif.") || key == "extensions.worktreeconfig" {
+            if key.starts_with("includeif.")
+                || key == "extensions.worktreeconfig"
+                || key == "core.fsmonitor"
+                || key == "core.worktree"
+            {
                 return None;
             }
             if let Some(path) = origin.strip_prefix("file:") {
@@ -183,7 +202,25 @@ impl Policy {
     }
 
     pub fn inputs(&self, root: &Path, witnesses: &[(PathBuf, Stamp)]) -> Option<PolicyInputs> {
-        if capture(self.sources.keys().cloned())? != self.sources {
+        let mut directories = BTreeSet::new();
+        for (path, _) in witnesses {
+            if path == root {
+                continue;
+            }
+            let parents = path.strip_prefix(root).ok()?.parent()?.ancestors();
+            directories.extend(parents.map(Path::to_path_buf));
+        }
+        self.for_directories(root, directories.iter().map(PathBuf::as_path))
+    }
+
+    /// Capture policy at all supplied relative directories, after checking this candidate uses
+    /// the common configuration interpreted for the pass.
+    pub fn for_directories<'directory>(
+        &self,
+        root: &Path,
+        directories: impl Iterator<Item = &'directory Path>,
+    ) -> Option<PolicyInputs> {
+        if common(root)? != self.common || capture(self.sources.keys().cloned())? != self.sources {
             return None;
         }
         let mut paths = self.external.clone();
@@ -193,15 +230,9 @@ impl Policy {
             root.join(".gitignore"),
             root.join(".gitattributes"),
         ]);
-        for (path, _) in witnesses {
-            if path == root {
-                continue;
-            }
-            let parents = path.strip_prefix(root).ok()?.parent()?.ancestors();
-            for parent in parents {
-                paths.insert(root.join(parent).join(".gitignore"));
-                paths.insert(root.join(parent).join(".gitattributes"));
-            }
+        for directory in directories {
+            paths.insert(root.join(directory).join(".gitignore"));
+            paths.insert(root.join(directory).join(".gitattributes"));
         }
         let inputs = capture(paths.into_iter().map(|path| root.join(path)))?;
         // Attributes may invoke filters that read arbitrary external state. Rescan rather than

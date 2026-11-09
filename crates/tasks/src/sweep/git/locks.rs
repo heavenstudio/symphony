@@ -44,7 +44,8 @@ impl RefLock {
     }
 }
 
-const SAVED_LOCK: &str = ".sf-sweep-lock-";
+/// A claimed worktree lock left for recovery prevents removal until recovered.
+pub(in crate::sweep) const SAVED_LOCK: &str = ".sf-sweep-lock-";
 static LOCK_NAMES: AtomicU64 = AtomicU64::new(0);
 
 fn lock_path(dir: &Path) -> Option<PathBuf> {
