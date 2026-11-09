@@ -2,6 +2,10 @@
 
 #[path = "reap_codex.rs"]
 mod codex;
+#[path = "reap_ended.rs"]
+mod ended;
+#[path = "reap_hour.rs"]
+mod hour;
 #[path = "reap_pending.rs"]
 mod pending;
 use codex::sweep_stopped_before_its_kill;
@@ -19,11 +23,14 @@ use symphony_board::cli::Env;
 use symphony_board::health::LIVE_SECONDS;
 use symphony_board::launch::hc::Hc;
 use symphony_board::launch::reap::{
-    self, Closed, REAP_SECONDS, Reap, Sweep, lock_path, state_path,
+    self, Closed, IDLE_ONCE, Kept, REAP_SECONDS, Reap, Sweep, lock_path, state_path,
 };
 use symphony_board::launch::{Ask, LaunchError, Processes, restore as restore_session};
 use symphony_board::{Error, NewLaunch, NewSession, NewTask, Store};
 use symphony_board::{Health, cli};
+
+/// Why a sweep closes the terminal of an agent idle with its work finished.
+const FINISHED: &str = "idle for two sweeps, its work finished";
 
 /// How an agent's terminal names its handle.
 #[derive(Clone, Copy)]
@@ -537,18 +544,29 @@ fn a_finished_idle_agent_is_killed_and_removed_on_the_second_idle_sweep() {
         first,
         Sweep {
             closed: vec![],
-            idle: vec![handle.clone()]
+            idle: vec![handle.clone()],
+            kept: vec![Kept {
+                pane: terminal.clone(),
+                handle: handle.clone(),
+                why: IDLE_ONCE.into(),
+                idle: true,
+                told: true,
+            }],
         }
     );
     assert!(w.has_terminal(&terminal));
     let second = w.sweep();
     assert_eq!(
-        second.closed,
-        [Closed {
-            pane: terminal.clone(),
-            handle: handle.clone(),
-            restore: restore("sim/jump", &handle),
-        }]
+        second,
+        Sweep {
+            closed: vec![Closed {
+                pane: terminal.clone(),
+                handle: handle.clone(),
+                why: FINISHED.into(),
+                restore: restore("sim/jump", &handle),
+            }],
+            ..Sweep::default()
+        }
     );
     assert!(!w.has_terminal(&terminal));
     assert_eq!(w.calls_of(&["kill", &terminal]).len(), 1);
@@ -851,44 +869,6 @@ fn the_callers_own_terminal_and_handle_are_kept() {
 }
 
 #[test]
-fn a_shell_another_boards_or_projects_terminal_or_an_ended_one_is_never_swept() {
-    let w = World::new();
-    let handle = w.executor_on("done", "sim/jump");
-    let mut others = vec![w.add_terminal(false, Some(&handle), json!({"status": "idle"}))];
-    for (key, value) in [
-        ("labels", json!({"sf.board": "web-bench/tasks"})),
-        ("labels", json!({"sf.board": "lamp-works/scratch"})),
-        ("labels", json!({"sf.board": null})),
-        ("state", json!("finished")),
-    ] {
-        let t = w.agent(Agent::named(&handle));
-        w.edit_terminal(&t, |row| {
-            if key == "labels" {
-                row["labels"]["sf.board"] = value.clone();
-            } else {
-                row.insert(key.into(), value.clone());
-            }
-        });
-        others.push(t);
-    }
-    w.twice(How::default());
-    for t in &others {
-        assert!(w.has_terminal(t), "{t}");
-    }
-    assert_eq!(w.closes(), Vec::<Vec<String>>::new());
-    let looked: Vec<String> = w
-        .calls_of(&["get"])
-        .into_iter()
-        .map(|c| c[1].clone())
-        .collect();
-    assert_eq!(
-        looked,
-        [others[0].clone(), others[0].clone()],
-        "only this board's live ones"
-    );
-}
-
-#[test]
 fn a_terminal_whose_processes_cannot_be_read_is_kept() {
     let w = World::new();
     let broken: &Processes = &|_| Err(LaunchError("ps printed nothing".into()));
@@ -1025,6 +1005,7 @@ fn an_agent_with_no_task_is_closed_with_nothing_to_record() {
         [Closed {
             pane: terminal.clone(),
             handle,
+            why: FINISHED.into(),
             restore: String::new(),
         }]
     );
@@ -1041,6 +1022,8 @@ fn a_close_hc_refuses_leaves_its_session_open() {
     w.set("FAKE_HC_FAIL", "kill");
     let swept = w.sweep();
     assert_eq!(swept.closed, []);
+    let [kept] = <[_; 1]>::try_from(swept.kept).unwrap();
+    assert!(kept.why.starts_with("hc refused to close it: "), "{kept:?}");
     assert!(w.has_terminal(&terminal));
     let sessions = w.store().sessions_of(&handle).unwrap();
     assert!(!sessions.is_empty());
@@ -1101,6 +1084,7 @@ fn an_interrupted_close_is_retried_without_repeating_its_thread_line() {
             [Closed {
                 pane: terminal.clone(),
                 handle: handle.clone(),
+                why: FINISHED.into(),
                 restore: restore("sim/jump", &handle),
             }]
         );

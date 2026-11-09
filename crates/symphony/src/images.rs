@@ -37,7 +37,8 @@ pub const THUMB_WIDTH: u32 = 540;
 /// For a picture the markup draws up to [`SMALL_SHOWN`] css pixels wide (matrix cells, strips).
 pub const THUMB_SMALL: u32 = 160;
 pub const SMALL_SHOWN: u32 = 80;
-pub const THUMB_DIR: &str = "artifacts/docs-thumbs";
+/// The thumbnails' folder in the project's artifacts folder.
+pub const THUMB_DIR: &str = "docs-thumbs";
 pub const THUMB_ROUTE: &str = "/thumb/";
 
 static IMG: LazyLock<Regex> =
@@ -239,7 +240,7 @@ pub fn thumbnail(
     let made = root
         .canonicalize()
         .ok()?
-        .join(THUMB_DIR)
+        .join(crate::project::Project::of(root).artifact(THUMB_DIR))
         .join(format!("{current}.jpg"));
     if !made.is_file() {
         std::fs::create_dir_all(made.parent()?).ok()?;

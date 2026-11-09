@@ -11,11 +11,12 @@ use crate::listeners::Listeners;
 use crate::proxy::{Proxy, Request};
 use crate::store;
 use serde_json::{Value, json};
+use std::ops::{Deref, DerefMut};
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard, OnceLock};
 use std::time::{Duration, Instant};
 use symphony_board::rpc::Client;
-use symphony_board::sys::{self, Child, Command};
+use symphony_board::sys::{self, Command};
 use symphony_board::{NAMESPACE, Store};
 
 /// The database the board is in on the suite's server.
@@ -39,22 +40,50 @@ pub struct Board {
     pub first_looks: Vec<Request>,
     /// The ready tasks not claimed yet.
     unclaimed: Vec<String>,
-    /// The shell the server runs under, held for its input: the shell stops the server once this
-    /// process's end of that pipe closes, as it does when the process ends, however it ends.
-    _server: Child,
+    /// Closing the lifetime pipe and waiting reaps the server and watchdog before teardown ends.
+    _server: store::ServerChild,
 }
 
-static BOARD: OnceLock<Mutex<Board>> = OnceLock::new();
+static BOARD: OnceLock<Mutex<Option<Board>>> = OnceLock::new();
+
+pub struct Held(MutexGuard<'static, Option<Board>>);
+
+impl Deref for Held {
+    type Target = Board;
+
+    fn deref(&self) -> &Board {
+        self.0.as_ref().expect("a held board is initialized")
+    }
+}
+
+impl DerefMut for Held {
+    fn deref_mut(&mut self) -> &mut Board {
+        self.0.as_mut().expect("a held board is initialized")
+    }
+}
+
+extern "C" fn stop_board() {
+    if let Some(board) = BOARD.get() {
+        let mut board = board.lock().unwrap_or_else(|failed| failed.into_inner());
+        // Statics do not drop at exit. Drop here, before the native runner inspects our children.
+        drop(board.take());
+    }
+}
 
 /// The suite's board, made on first use and held by the caller until it lets go.
-pub fn board() -> MutexGuard<'static, Board> {
+pub fn board() -> Held {
     // A test that failed holding the board (an assertion) left it as its commands left it: the
     // server, its rows and the sockets stand, and each test reads only what it makes itself or
     // what every test leaves as it was, so the next test may take it.
-    BOARD
-        .get_or_init(|| Mutex::new(Board::make()))
+    let mut held = BOARD
+        .get_or_init(|| {
+            store::on_exit(stop_board);
+            Mutex::new(None)
+        })
         .lock()
-        .unwrap_or_else(|failed| failed.into_inner())
+        .unwrap_or_else(|failed| failed.into_inner());
+    held.get_or_insert_with(Board::make);
+    Held(held)
 }
 
 /// The folder of each earlier run of the suite in `temp` (named for its process) whose process

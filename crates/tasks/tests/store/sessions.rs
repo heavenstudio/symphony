@@ -136,13 +136,13 @@ fn a_session_is_registered_with_what_it_says_of_itself() {
 #[test]
 fn every_kind_is_a_session_and_no_other() {
     let f = Fixture::empty();
-    for kind in ["orchestrator", "worker", "reviewer", "chat", "app"] {
+    for kind in ["orchestrator", "worker", "reviewer", "chat", "app", "filer"] {
         let h = f.session(kind);
         assert_eq!(f.store.session(&h).unwrap().row.kind, kind);
     }
     assert_eq!(
         refused(f.store.register(&NewSession::new("boss"))),
-        "kind must be one of orchestrator, worker, reviewer, chat, app"
+        "kind must be one of orchestrator, worker, reviewer, chat, app, filer"
     );
 }
 

@@ -344,6 +344,7 @@ fn the_home_links_the_projects_own_pages_and_its_register() {
             },
         ],
         entrypoints: vec!["notes".into()],
+        base: String::new(),
     };
     let board = board("board.json");
     let html = dioxus_ssr::render_element(rsx! { BoardView { board, now, project } });

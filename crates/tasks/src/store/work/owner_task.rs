@@ -1,11 +1,15 @@
 //! Task creation and its optional immutable owner-save receipt share one transaction.
 
+use super::red::{FILED, filing, named};
 use super::{
     ACT, BEFORE_WORK, CREATE, Error, NewTask, OWNER, REFUSED, Store, Task, acting,
     block_cancelled_dependencies, logged, no_task, plain_slug, refused, repr,
 };
 use serde_json::{Value, json};
 use std::fmt::Write as _;
+
+/// A red task's mark, written with the task by its filer alone ([`super::red`]).
+const RED: &str = "UPDATE type::record('task', $slug) SET fields._board.red = $red RETURN NONE;";
 
 impl Store {
     /// A new task, on the record. `assignee`: a session reserved without a lapse.
@@ -47,6 +51,8 @@ impl Store {
         if !(0..=4).contains(&new.priority) {
             return Err(refused("priority runs 0 (most urgent) to 4".into()));
         }
+        let red = (new.red.as_deref()).map(|what| named(&new.slug, what));
+        let red = red.transpose()?;
         let parent = new.parent.as_deref().filter(|p| !p.is_empty());
         if new.instruction && parent.is_none() {
             return Err(refused(
@@ -77,24 +83,34 @@ impl Store {
         } else {
             ""
         };
+        let marked = if red.is_some() {
+            format!("{FILED}\n{RED}")
+        } else {
+            String::new()
+        };
         let body = format!(
-            "{act}{CREATE}\n{stamp}\n{}\n{}",
+            "{act}{CREATE}\n{stamp}\n{marked}\n{}\n{}",
             logged("$slug", "$actor", "'system'", "$said", "NONE"),
             block_cancelled_dependencies(false)
         );
-        let vars = acting(
+        let mut vars = acting(
             &new.by,
             (self.clock)(),
             json!({
                 "slug": new.slug, "title": title, "body": new.body, "status": new.status,
                 "priority": new.priority, "parent": parent, "instruction": new.instruction,
                 "needed": needed, "links": links, "assignee": new.assignee, "said": said,
-                "owner_save": receipt,
+                "owner_save": receipt, "red": red,
                 "taken": format!("{REFUSED}task {} already exists", new.slug),
                 "unassignable": new.assignee.as_ref()
                     .map(|a| format!("{REFUSED}no session {} to assign it to", repr(a))),
             }),
         );
+        if red.is_some()
+            && let (Some(vars), Value::Object(filer)) = (vars.as_object_mut(), filing(&new.by))
+        {
+            vars.extend(filer);
+        }
         self.retrying(|| self.written(&body, vars.clone(), &new.slug))
     }
 }

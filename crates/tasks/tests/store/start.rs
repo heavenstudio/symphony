@@ -22,8 +22,7 @@ fn the_server_comes_up_with_its_log_in_a_folder_that_was_not_there() {
     let (addr, mut shell) = launch(&surreal(), &log).unwrap_or_else(|why| panic!("{why}"));
     assert!(rpc::healthy(&addr), "the server answers on {addr}");
     assert!(log.is_file(), "the log is at {}", log.display());
-    drop(shell.stdin.take());
-    shell.wait().unwrap();
+    shell.shutdown().unwrap();
     assert!(!rpc::healthy(&addr), "the server ends with its shell");
     std::fs::remove_dir_all(&dir).unwrap();
 }

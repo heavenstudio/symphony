@@ -6,15 +6,17 @@
 )]
 #[path = "../../../crates/tasks/tests/store/common.rs"]
 mod board;
+#[path = "after_http/client.rs"]
+mod client;
 #[path = "after_http/owner_save.rs"]
 mod owner_save;
 #[path = "../../../crates/symphony/tests/common/tree.rs"]
 mod tree;
 
+use client::{Feed, Fixture};
 use serde_json::{Value, json};
-use std::collections::BTreeMap;
-use std::io::{BufRead, BufReader, Read, Write};
-use std::net::{SocketAddr, TcpStream};
+use std::io::Write;
+use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -28,6 +30,8 @@ const LIMIT: Duration = Duration::from_secs(30);
 const DOCUMENT: &str = "/api/document?path=docs/TOPIC.md";
 const SCOPE: &str = "/@work~http";
 const PHASE: &str = "after_http phase: ";
+/// Where the fixture project, keeping the default artifacts folder, holds the queue order.
+const ORDER: &str = "artifacts/review-order/postponed.json";
 const DOC: &str = "# HTTP fixture\n\n[Other](OTHER.md)\n\n<!-- register:start -->\n- [ ] **one** — A question.\n<!-- register:end -->\n";
 
 fn repository(root: &Path, args: &[&str]) -> String {
@@ -270,167 +274,6 @@ fn run_on(test: &str, made: fn() -> tree::Tree, exercise: fn(&Fixture)) {
     });
 }
 
-struct Fixture {
-    root: PathBuf,
-    address: SocketAddr,
-}
-
-#[derive(Debug)]
-struct Response {
-    status: u16,
-    headers: BTreeMap<String, String>,
-    body: Vec<u8>,
-}
-
-impl Response {
-    #[track_caller]
-    fn text(&self) -> &str {
-        std::str::from_utf8(&self.body).unwrap()
-    }
-    #[track_caller]
-    fn json(&self) -> Value {
-        match serde_json::from_slice(&self.body) {
-            Ok(value) => value,
-            Err(error) => panic!("{self:?}: {error}"),
-        }
-    }
-    #[track_caller]
-    fn header(&self, name: &str) -> &str {
-        match self.headers.get(name) {
-            Some(value) => value,
-            None => panic!("missing {name}: {self:?}"),
-        }
-    }
-    #[track_caller]
-    fn status(self, status: u16) -> Self {
-        assert_eq!(self.status, status, "{self:?}");
-        self
-    }
-}
-
-impl Fixture {
-    fn connect(&self) -> TcpStream {
-        let stream = TcpStream::connect_timeout(&self.address, LIMIT).unwrap();
-        stream.set_read_timeout(Some(LIMIT)).unwrap();
-        stream.set_write_timeout(Some(LIMIT)).unwrap();
-        stream
-    }
-    fn request(&self, method: &str, path: &str, headers: &[(&str, &str)], body: &[u8]) -> Response {
-        let mut stream = self.connect();
-        write!(
-            stream,
-            "{method} {path} HTTP/1.0\r\nHost: {}\r\nConnection: close\r\nContent-Length: {}\r\n",
-            self.address,
-            body.len()
-        )
-        .unwrap();
-        for (name, value) in headers {
-            write!(stream, "{name}: {value}\r\n").unwrap();
-        }
-        stream.write_all(b"\r\n").unwrap();
-        stream.write_all(body).unwrap();
-        let mut bytes = Vec::new();
-        stream.read_to_end(&mut bytes).unwrap();
-        let at = bytes.windows(4).position(|s| s == b"\r\n\r\n").unwrap();
-        let header = std::str::from_utf8(&bytes[..at]).unwrap();
-        let status = header.split_whitespace().nth(1).unwrap().parse().unwrap();
-        let headers = header
-            .lines()
-            .skip(1)
-            .map(|line| {
-                let (key, value) = line.split_once(':').unwrap();
-                (key.to_ascii_lowercase(), value.trim().to_string())
-            })
-            .collect();
-        Response {
-            status,
-            headers,
-            body: bytes[at + 4..].to_vec(),
-        }
-    }
-    fn get(&self, path: &str) -> Response {
-        self.request("GET", path, &[], &[])
-    }
-    fn post(&self, path: &str, body: &Value) -> Response {
-        self.request(
-            "POST",
-            path,
-            &[("Content-Type", "application/json")],
-            body.to_string().as_bytes(),
-        )
-    }
-    fn feed(&self, scope: &str) -> Feed {
-        let document = self
-            .get(&format!("{scope}/api/document?path=docs/SHELF.md"))
-            .status(200)
-            .json();
-        let document_path: String = document["path"]
-            .as_str()
-            .unwrap()
-            .bytes()
-            .map(|byte| format!("%{byte:02X}"))
-            .collect();
-        let keys: Vec<_> = document["sections"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(|s| s["key"].as_str().unwrap())
-            .collect();
-        assert!(!keys.is_empty());
-        let sections: String = serde_json::to_string(&keys)
-            .unwrap()
-            .bytes()
-            .map(|byte| format!("%{byte:02X}"))
-            .collect();
-        let version = self.get(&format!("{scope}/api/board")).status(200).json()["version"]
-            .as_u64()
-            .unwrap();
-        let mut stream = self.connect();
-        write!(
-            stream,
-            "GET {scope}/api/feed?since={version}&document={document_path}&sections={sections} HTTP/1.0\r\nHost: {}\r\n\r\n",
-            self.address
-        )
-        .unwrap();
-        let mut reader = BufReader::new(stream);
-        let mut line = String::new();
-        reader.read_line(&mut line).unwrap();
-        assert!(line.starts_with("HTTP/1.0 200 "), "{line}");
-        loop {
-            line.clear();
-            assert!(reader.read_line(&mut line).unwrap() > 0);
-            if line == "\r\n" {
-                break;
-            }
-        }
-        let mut feed = Feed(reader);
-        // Server notice is emitted only after the feed has subscribed; there is no edit/read gap.
-        feed.until("server");
-        feed
-    }
-}
-
-struct Feed(BufReader<TcpStream>);
-impl Feed {
-    fn until(&mut self, marker: &str) {
-        let began = Instant::now();
-        loop {
-            let mut line = String::new();
-            assert!(
-                self.0.read_line(&mut line).unwrap() > 0,
-                "feed closed before {marker}"
-            );
-            if line.contains(marker) {
-                return;
-            }
-            assert!(
-                began.elapsed() < LIMIT,
-                "feed never delivered {marker}: {line}"
-            );
-        }
-    }
-}
-
 #[test]
 fn native_routes_media_and_persistence() {
     run("native_routes_media_and_persistence", contracts);
@@ -623,11 +466,11 @@ fn later_order(f: &Fixture) {
     )
     .status(200);
     assert!(
-        !std::fs::read_to_string(f.root.join(symphony::postpone::FILE))
+        !std::fs::read_to_string(symphony::postpone::order_file(&f.root))
             .unwrap()
             .contains("one")
     );
-    write(&f.root, symphony::postpone::FILE, "corrupt preferences");
+    write(&f.root, ORDER, "corrupt preferences");
     f.post(
         "/api/decision",
         &json!({"path":"docs/TOPIC.md","slug":"two","state":"approved"}),
@@ -653,7 +496,7 @@ fn later_order(f: &Fixture) {
     assert_ne!(queue["waiting"][0]["postponed"], true);
     f.get(DOCUMENT).status(200);
     assert_eq!(
-        std::fs::read_to_string(f.root.join(symphony::postpone::FILE)).unwrap(),
+        std::fs::read_to_string(symphony::postpone::order_file(&f.root)).unwrap(),
         "corrupt preferences"
     );
 }
@@ -677,7 +520,7 @@ fn later_expiry(f: &Fixture) {
     assert_eq!(before["waiting"][0]["slug"], "two");
     assert_eq!(before["waiting"][2]["postponed"], true);
     let mut feed = f.feed("");
-    let path = f.root.join(symphony::postpone::FILE);
+    let path = symphony::postpone::order_file(&f.root);
     let mut order: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
     order["owners"]["owner"]["one"]["until"] = json!(0);
     std::fs::write(&path, order.to_string()).unwrap();

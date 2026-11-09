@@ -1,5 +1,7 @@
 use super::*;
 
+mod red;
+
 fn entry<'a>(slug: &'a str, parent: Option<&'a str>, status: &'a str) -> Entry<'a> {
     Entry {
         slug,
@@ -9,6 +11,7 @@ fn entry<'a>(slug: &'a str, parent: Option<&'a str>, status: &'a str) -> Entry<'
         held: false,
         orchestrators: Vec::new(),
         executors: Vec::new(),
+        red: false,
     }
 }
 
@@ -388,6 +391,7 @@ fn the_refusal_names_as_many_open_tasks_as_it_counts_and_how_a_slot_frees() {
     let full = Full {
         owner: "o",
         held: ledger.held("o"),
+        red: Held::new(),
     };
     let said = refusal("c cannot start", &full, &[], 2);
     assert_eq!(
@@ -444,7 +448,8 @@ fn the_manifest_names_the_cap_or_none_and_a_broken_one_is_an_error() {
 fn only_a_claim_refused_at_the_cap_points_to_the_reservation() {
     let said = claim_hint("work/a", "work/a cannot start");
     assert!(
-        said.starts_with("; if the task is reserved for you, start work under the reservation now")
+        said.starts_with("; if the task is reserved for you, start work under the reservation now"),
+        "{said}"
     );
     assert!(said.contains("`just tasks reserve work/a`"), "{said}");
     assert!(said.contains("retry the claim"), "{said}");

@@ -502,8 +502,8 @@ impl AskStore {
     }
 }
 
-/// `ASKS_DB` when set, else `artifacts/asks/asks.db` in the main checkout every worktree of `root`'s
-/// repository shares, else under `root`.
+/// `ASKS_DB` when set, else `asks/asks.db` in the artifacts folder (`artifacts/`) of the main
+/// checkout every worktree of `root`'s repository shares, else under `root`.
 pub fn default_path(root: &Path, asks_db: Option<&str>) -> PathBuf {
     if let Some(db) = asks_db.filter(|db| !db.is_empty()) {
         return PathBuf::from(db);
@@ -525,7 +525,7 @@ pub fn default_path(root: &Path, asks_db: Option<&str>) -> PathBuf {
             base = checkout.to_path_buf();
         }
     }
-    base.join("artifacts").join("asks").join("asks.db")
+    base.join(crate::project::Project::of(&base).artifact("asks/asks.db"))
 }
 
 /// `ASK <id> <path>#<anchor> — <question>` on one line.

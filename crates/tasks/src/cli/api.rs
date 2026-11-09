@@ -18,14 +18,16 @@ use std::io::{BufRead, Read, Write};
 /// `from`, before which a build declares none; 2: `say`'s `key`; 3: its `adopt`; 4: `hold`, a
 /// landing's move to blocked that keeps the task's slot; 5: board-authored `notify`, whose notices
 /// take literal session recipients; 6: `move`'s `from`, the statuses alone it moves from, as a
-/// landing's changes verdict sends work in review back). The live launcher (`tools/tasks.sh`)
-/// serves an earlier main build only while this matches main's, so no caller reaches a build
-/// without what it relies on.
+/// landing's changes verdict sends work in review back; 7: `create`'s `red`, the mark of a task
+/// filed for a red, which takes no slot, `mark_red` for a red filed before it and `unmark_red` for
+/// one left open as ordinary work, each from a session of kind `filer` alone, which `register`
+/// takes). The live launcher (`tools/tasks.sh`) serves an earlier main build only while this
+/// matches main's, so no caller reaches a build without what it relies on.
 #[expect(
     dead_code,
     reason = "tools/tasks.sh reads it from the committed source; no Rust code compares builds"
 )]
-pub const VERSION: i64 = 6;
+pub const VERSION: i64 = 7;
 
 /// Why a call has no result.
 enum Fail {
@@ -346,6 +348,16 @@ fn dispatch<F: FnOnce() -> Result<Store, String>>(
             let new: NewTask = a.rest()?;
             super::check_actor(&new.by)?;
             shape::task(&board.get()?.create(&new)?)
+        }
+        "mark_red" => {
+            args!(slug: need, red: need, by: actor);
+            let (slug, red, by): (String, String, String) = (slug, red, by);
+            shape::task(&board.get()?.mark_red(&slug, &red, &by)?)
+        }
+        "unmark_red" => {
+            args!(slug: need, by: actor);
+            let (slug, by): (String, String) = (slug, by);
+            shape::task(&board.get()?.unmark_red(&slug, &by)?)
         }
         "ancestors" => {
             args!(slug: need);

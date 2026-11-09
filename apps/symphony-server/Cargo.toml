@@ -21,7 +21,6 @@ serde_json = "1"
 tokio = { version = "1", features = ["fs", "io-util", "macros", "net", "rt-multi-thread", "signal", "sync", "time"] }
 sha2.workspace = true
 tower-http = { version = "0.6", default-features = false, features = ["compression-gzip"] }
-
-# The router, called in its own tests without a socket (`ServiceExt::oneshot`): axum is built on it.
-[dev-dependencies]
+# The one server hands each request to its project's router (`ServiceExt::oneshot`), as the
+# router's own tests call it without a socket: axum is built on it.
 tower = { version = "0.5", default-features = false, features = ["util"] }

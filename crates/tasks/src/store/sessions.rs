@@ -14,7 +14,15 @@ use std::fmt::Write as _;
 use std::hash::{BuildHasher, RandomState};
 use std::sync::{Mutex, PoisonError};
 
-pub const KINDS: [&str; 5] = ["orchestrator", "worker", "reviewer", "chat", "app"];
+/// What a session is; a `filer` is a tool's session that files reds ([`crate::red::FILER`]).
+pub const KINDS: [&str; 6] = [
+    "orchestrator",
+    "worker",
+    "reviewer",
+    "chat",
+    "app",
+    crate::red::FILER,
+];
 
 const ADJECTIVES: [&str; 32] = [
     "amber", "azure", "brisk", "calm", "cobalt", "coral", "dusky", "ember", "fleet", "gilded",

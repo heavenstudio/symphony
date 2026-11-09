@@ -21,11 +21,13 @@ use std::time::SystemTime;
 
 mod board;
 mod file;
+mod theme;
 
 pub use crate::entrypoint::Entrypoint;
 use crate::entrypoint::{SYMPHONY_ROUTES, below, join};
 pub use board::Board;
 use file::{File, FileEntrypoint};
+pub use theme::Theme;
 
 /// The project file at a project's root.
 pub const FILE: &str = "symphony.toml";
@@ -60,14 +62,6 @@ pub struct Project {
     pub agents: Agents,
     pub verdicts: Verdicts,
     pub board: Board,
-}
-
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct Theme {
-    /// A theme package a plugin brings; `None` is the Symphony's own.
-    pub package: Option<String>,
-    pub icon: Option<String>,
-    pub stylesheet: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -214,12 +208,13 @@ impl Project {
         project
     }
 
-    /// The project as the client's header and home read it: its name, its register (by its route
-    /// when an entrypoint holds it, as every link names a document), its plugins' navigation and
-    /// its entrypoints' URLs.
+    /// The project as the client's header and home read it: its theme package's name, its register
+    /// (by its route when an entrypoint holds it, as every link names a document), its plugins'
+    /// navigation and its entrypoints' URLs, at the server's root (the server sets the base).
     pub fn view(&self) -> symphony_api::ProjectView {
         symphony_api::ProjectView {
-            name: self.name.clone(),
+            name: crate::theme::Package::of(self).name,
+            base: String::new(),
             register: self
                 .route(&self.register)
                 .unwrap_or_else(|| self.register.clone()),
@@ -279,19 +274,7 @@ impl Project {
         if default_branch.trim().is_empty() {
             return Err("[project] default_branch is empty".into());
         }
-        let theme = Theme {
-            package: file.theme.package,
-            icon: file
-                .theme
-                .icon
-                .map(|path| inside("[theme] icon", path))
-                .transpose()?,
-            stylesheet: file
-                .theme
-                .stylesheet
-                .map(|path| inside("[theme] stylesheet", path))
-                .transpose()?,
-        };
+        let theme = Theme::from_file(file.theme)?;
         let a = file.agents;
         let transports = a
             .transports

@@ -18,6 +18,15 @@
 //!   to review or lands) counts with the task it is an instruction for, its nearest ancestor that
 //!   is not one.
 //!
+//! Red work takes no slot ([`Ledger::red`]): an open task filed for a red that stops every landing
+//! ([`crate::red`]) and the work under it, its mirrors and instructions included, start at any count
+//! and free none, and a refusal names the red work its owner holds apart, as not counted. The
+//! work that fixes a red never waits for a slot. A red done or cancelled exempts nothing: the
+//! work still open under it, and any started there since, counts as other work does. So its
+//! close, never refused, raises its owners' counts: the write holds their slot counters
+//! ([`changed`]) and the red's own counter, which a start that took no slot under it holds too
+//! ([`reds`]), so no start decided on what it read before the close passes the cap after it.
+//!
 //! A task no orchestrator holds counts against its executor's parent session (`register
 //! --parent`). The cap is the project's (`[board] orchestrator_slots` in the main checkout's
 //! `symphony.toml`, [`of_env`]); a board with none configured caps nothing. It bites where work
@@ -33,6 +42,9 @@ use serde::Deserialize;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fmt::Write as _;
 use std::path::Path;
+
+mod change;
+pub use change::{changed, reds, started};
 
 /// The statuses a task holds a slot in.
 pub const OPEN: [&str; 2] = ["in_progress", "review"];
@@ -102,6 +114,8 @@ pub struct Entry<'a> {
     /// ([`crate::Health::holds`]).
     pub orchestrators: Vec<&'a str>,
     pub executors: Vec<&'a str>,
+    /// Filed for a red ([`crate::red`]): while it is open, it and the work under it take no slot.
+    pub red: bool,
 }
 
 impl<'a> Entry<'a> {
@@ -191,6 +205,7 @@ impl<'a> Ledger<'a> {
                 .filter(|r| r.role == "executor")
                 .map(|r| r.handle.as_str())
                 .collect(),
+            red: t.red(),
         });
         let parents = (board.sessions.iter())
             .filter_map(|s| Some((s.row.handle.as_str(), s.row.parent.as_deref()?)));
@@ -317,20 +332,47 @@ impl<'a> Ledger<'a> {
         }
     }
 
-    /// Every owner's open slots, in one pass over the open tasks.
-    pub fn holdings(&self) -> HashMap<&'a str, Held<'a>> {
-        let mut all: HashMap<&'a str, Held<'a>> = HashMap::new();
-        for task in self.tasks.values().filter(|t| t.open()) {
+    /// Whether `slug` is red work, which takes no slot: the task whose work it is
+    /// ([`Ledger::work`]), or a task above that one, is an open red ([`crate::red`]). So a mirror
+    /// and an instruction are red work with the task they serve, a slot is all red work or none,
+    /// and a red done or cancelled exempts nothing under it.
+    pub fn red(&self, slug: &'a str) -> bool {
+        self.exempting(slug).next().is_some()
+    }
+
+    /// Every owner's open slots, in one pass over the open tasks: those the cap counts, then the
+    /// red work it does not.
+    fn tally(&self) -> [HashMap<&'a str, Held<'a>>; 2] {
+        let mut tally: [HashMap<&'a str, Held<'a>>; 2] = Default::default();
+        let open = self.tasks.values().filter(|t| t.open());
+        for task in open {
             let place = self.place(task.slug);
+            let all = &mut tally[usize::from(self.red(task.slug))];
             for owner in place.owners {
                 let slot = all.entry(owner).or_default().entry(place.key).or_default();
                 slot.push((task.slug, task.shown()));
             }
         }
-        for slot in all.values_mut().flat_map(BTreeMap::values_mut) {
+        let slots = (tally.iter_mut())
+            .flat_map(HashMap::values_mut)
+            .flat_map(BTreeMap::values_mut);
+        for slot in slots {
             slot.sort_unstable();
         }
-        all
+        tally
+    }
+
+    /// Every owner's open slots the cap counts: red work is not among them ([`Ledger::reds`]).
+    pub fn holdings(&self) -> HashMap<&'a str, Held<'a>> {
+        let [counted, _] = self.tally();
+        counted
+    }
+
+    /// Every owner's open red work ([`Ledger::red`]), which the cap does not count, by the task
+    /// whose work each is.
+    pub fn reds(&self) -> HashMap<&'a str, Held<'a>> {
+        let [_, red] = self.tally();
+        red
     }
 
     /// The open slots `handle` holds: each slot's key, and its open tasks with their status.
@@ -351,33 +393,8 @@ impl<'a> Ledger<'a> {
 pub struct Full<'a> {
     pub owner: &'a str,
     pub held: Held<'a>,
-}
-
-/// What a change from `before` to `after` does under `cap`: the owners whose open tasks it changes,
-/// each of which the write holds the slot counter of, by handle. Refused, naming the first such
-/// owner and what it holds before, when it raises an owner's open slots past `cap`: one at the cap,
-/// or above it, starts nothing new.
-pub fn started<'a>(
-    before: &Ledger<'a>,
-    after: &Ledger<'a>,
-    cap: usize,
-) -> Result<Vec<&'a str>, Full<'a>> {
-    let (mut was, now) = (before.holdings(), after.holdings());
-    let mut owners: Vec<&'a str> = was.keys().chain(now.keys()).copied().collect();
-    owners.sort_unstable();
-    owners.dedup();
-    let mut changed = Vec::new();
-    for owner in owners {
-        let held = was.remove(owner).unwrap_or_default();
-        let next = now.get(owner).cloned().unwrap_or_default();
-        if next.len() > held.len() && next.len() > cap {
-            return Err(Full { owner, held });
-        }
-        if next != held {
-            changed.push(owner);
-        }
-    }
-    Ok(changed)
+    /// The open red work it holds before it, which the cap does not count ([`Ledger::reds`]).
+    pub red: Held<'a>,
 }
 
 /// An owner's open slots as a refusal names them, one entry a slot: the task whose work it is
@@ -406,7 +423,7 @@ pub fn named(held: &Held<'_>) -> String {
 /// What a claim refused at the cap adds, so an agent that never read the work skill still knows:
 /// the executor holding the reservation works under it, renewing it, and retries the claim.
 /// Other starts (a move, a role) add nothing.
-pub fn claim_hint(slug: &str, what: &str) -> String {
+pub(crate) fn claim_hint(slug: &str, what: &str) -> String {
     if what != format!("{slug} cannot start") {
         return String::new();
     }
@@ -417,7 +434,8 @@ pub fn claim_hint(slug: &str, what: &str) -> String {
 
 /// What a start refused at the cap says: `what` cannot happen, because `full`'s owner holds `cap`
 /// open slots or more, as many as it names. When it stands in for an orchestrator as the parent of
-/// the sessions starting a task no orchestrator holds, those `children` are named.
+/// the sessions starting a task no orchestrator holds, those `children` are named. Its red work is
+/// named apart, last, as not counted.
 pub fn refusal(what: &str, full: &Full<'_>, children: &[&str], cap: usize) -> String {
     let owner = full.owner;
     let standing = if children.is_empty() {
@@ -428,8 +446,16 @@ pub fn refusal(what: &str, full: &Full<'_>, children: &[&str], cap: usize) -> St
             children.join(", ")
         )
     };
+    let red = if full.red.is_empty() {
+        String::new()
+    } else {
+        format!(
+            "; not counted, as red work takes no slot: {}",
+            named(&full.red)
+        )
+    };
     format!(
-        "{what}: {owner}{standing} holds {} open tasks, the cap of {cap} an orchestrator holds: {}; a slot frees when one of them is done or cancelled",
+        "{what}: {owner}{standing} holds {} open tasks, the cap of {cap} an orchestrator holds: {}; a slot frees when one of them is done or cancelled{red}",
         full.held.len(),
         named(&full.held)
     )

@@ -3,6 +3,7 @@
 use crate::{FAKE, Hooked, SPACE, World};
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
+use std::time::Duration;
 use symphony_board::cli::Env;
 use symphony_board::launch::LaunchError;
 use symphony_board::launch::hc::{Binary, Hc, board_of, is_not_found, text_of};
@@ -142,6 +143,114 @@ fn close_kills_a_live_terminal_then_removes_it_and_a_gone_one_is_already_closed(
         ]
         .map(|c| c.map(String::from).to_vec())
     );
+}
+
+#[test]
+fn a_kill_that_leaves_its_terminal_live_a_while_waits_for_it_to_finish_before_the_remove() {
+    let w = World::new();
+    // Its program exits at the third look after the kill; hc refuses to remove it until then.
+    let slow = w.add_terminal(true, None, json!({"ending": 3}));
+    w.hc().close(&slow).unwrap();
+    assert!(w.addresses().is_empty());
+    let changes: Vec<String> = w
+        .calls()
+        .into_iter()
+        .filter(|c| c[0] != "ls")
+        .map(|c| c[..2].join(" "))
+        .collect();
+    let looked = format!("get {slow}");
+    assert_eq!(
+        changes,
+        [
+            looked.clone(),
+            format!("kill {slow}"),
+            looked.clone(),
+            looked.clone(),
+            looked,
+            format!("rm {slow}")
+        ]
+    );
+    // One hc forgets while it ends is closed already: nothing is left to remove.
+    let gone = w.add_terminal(true, None, json!({"ending": 3}));
+    let mut hooked = Hooked::new(&w);
+    hooked.instead = Box::new(|args| {
+        let forgot = args[0] == "get" && w.calls_of(&["kill"]).len() == 2;
+        forgot.then(|| {
+            Err(LaunchError(format!(
+                "hc get {}: not_found: no terminal",
+                args[1]
+            )))
+        })
+    });
+    hooked.close(&gone).unwrap();
+    assert_eq!(w.calls_of(&["rm", &gone]), Vec::<Vec<String>>::new());
+}
+
+/// hc as the world runs it, giving a killed terminal a fifth of a second to end.
+struct Brief<'a>(Hooked<'a>);
+
+impl Hc for Brief<'_> {
+    fn run(&self, args: &[&str]) -> Result<String, LaunchError> {
+        self.0.run(args)
+    }
+
+    fn feed(&self, args: &[&str], input: &str) -> Result<String, LaunchError> {
+        self.0.feed(args, input)
+    }
+
+    fn app(&self, args: &[&str]) -> Result<String, LaunchError> {
+        self.0.app(args)
+    }
+
+    fn caller(&self) -> Option<String> {
+        self.0.caller()
+    }
+
+    fn board(&self) -> String {
+        self.0.board()
+    }
+
+    fn ending(&self) -> Duration {
+        Duration::from_millis(200)
+    }
+}
+
+#[test]
+fn a_killed_terminal_is_never_removed_while_the_last_look_found_it_live_or_said_nothing() {
+    let w = World::new();
+    // Its program outlasts the wait: every look after the kill finds it live.
+    let slow = w.add_terminal(true, None, json!({"ending": 1000}));
+    let brief = Brief(Hooked::new(&w));
+    brief.close(&slow).unwrap();
+    assert_eq!(w.calls_of(&["rm", &slow]), Vec::<Vec<String>>::new());
+    let last = w.calls().into_iter().rfind(|c| c[0] != "ls").unwrap();
+    assert_eq!(last[..2].join(" "), format!("get {slow}"));
+    assert!(w.calls_of(&["get", &slow]).len() > 1);
+    assert!(w.has_terminal(&slow));
+    // A later close that finds it ended removes it.
+    w.edit_terminal(&slow, |t| {
+        t.insert("ending".into(), json!(1));
+    });
+    brief.close(&slow).unwrap();
+    assert!(!w.has_terminal(&slow));
+    assert_eq!(w.calls_of(&["rm", &slow]).len(), 1);
+
+    // A look that fails after the kill reads no state: the last one read, the kill's, said live.
+    let unread = w.add_terminal(true, None, json!({"ending": 3}));
+    let mut hooked = Hooked::new(&w);
+    let (world, killed) = (&w, unread.clone());
+    hooked.instead = Box::new(move |args| {
+        let failed = args[0] == "get" && !world.calls_of(&["kill", &killed]).is_empty();
+        failed.then(|| {
+            Err(LaunchError(
+                "hc get: unavailable: the core did not answer".into(),
+            ))
+        })
+    });
+    hooked.close(&unread).unwrap();
+    assert_eq!(w.calls_of(&["kill", &unread]).len(), 1);
+    assert_eq!(w.calls_of(&["rm", &unread]), Vec::<Vec<String>>::new());
+    assert!(w.has_terminal(&unread));
 }
 
 #[test]

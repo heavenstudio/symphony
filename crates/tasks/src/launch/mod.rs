@@ -15,8 +15,8 @@
 //! way. [`cleanup`] closes unneeded terminals (killed, then removed), each closure recorded on its
 //! task with the restore line; [`finish`] is the same for one task that just became done or
 //! cancelled (its worktree is the worktree sweep's, `tasks sweep --task`). [`reap`] is the periodic
-//! sweep of idle agents. [`close`] closes one agent's terminal on its orchestrator's word, whatever
-//! it holds, recorded the same way, under the rules its module gives.
+//! sweep of idle agents (`just clean` runs one). [`close`] closes one agent's terminal on its
+//! orchestrator's word, whatever it holds, recorded the same way, under the rules its module gives.
 //!
 //! A terminal is closed only when all of these hold: it is this board's (`sf.board`); its agent is
 //! idle (or it is a shell with nothing in it, or its program ended), its foreground is the program it
@@ -24,11 +24,11 @@
 //! process running under it other than the agent and its helpers (a shell, a monitor, anything);
 //! the last `hc get` before the kill finds that same program, still finished; no `verify`, test run,
 //! `land` or Symphony (`just symphony`) runs there; it is not the calling terminal
-//! (`HC_TERMINAL_ID`), an orchestrator's, or on screen in the Herdr app ([`screen`]); and the
-//! session it belongs to is on finished tasks only or holds nothing live. An agent terminal that
-//! matches no board session (by recorded terminal, `sf.handle`, `-n HANDLE` or its name) is kept:
-//! closing it would be a guess. A recorded pane hc does not run (a herdr pane id from before hc,
-//! `w1:p…`) is gone: cleanup records it closed, with its restore line.
+//! (`HC_TERMINAL_ID`) or the caller's, an orchestrator's, a chat's, or on screen in the Herdr app
+//! ([`screen`]); and the session it belongs to is on finished tasks only or holds nothing live. An
+//! agent terminal that matches no board session (by recorded terminal, `sf.handle`, `-n HANDLE` or
+//! its name) is kept: closing it would be a guess. A recorded pane hc does not run (a herdr pane id
+//! from before hc, `w1:p…`) is gone: cleanup records it closed, with its restore line.
 //!
 //! Every hc call goes through [`hc::Hc`], whose binaries are `$HC_BIN` (default `hc`) and
 //! `$HERDR_APP_BIN` (default `herdr-app`); the tests (`tests/launch/`) point both at `fake-hc`.
@@ -47,7 +47,7 @@ pub mod screen;
 pub mod staff;
 mod startup;
 
-pub use cleanup::{Closure, cleanup, finish};
+pub use cleanup::{Closure, cleanup, cleanup_as, finish};
 pub use close::close;
 use place::{name_place, place, stream};
 

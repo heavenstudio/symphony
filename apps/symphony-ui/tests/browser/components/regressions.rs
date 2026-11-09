@@ -28,6 +28,85 @@ fn recipient_at_bottom(page: &mut crate::Chrome, site: &Site) {
     popup_ready(page);
 }
 
+fn recipient_geometry(page: &mut crate::Chrome) -> serde_json::Value {
+    page.eval(r#"(() => {
+        const trigger = document.querySelector('#task-send button[aria-haspopup=listbox]');
+        const list = document.querySelector('[role=listbox]');
+        const anchor = trigger.getBoundingClientRect(), view = visualViewport;
+        return {scroll: scrollY, pageHeight: document.documentElement.scrollHeight, height: innerHeight,
+            visual: {top: view.offsetTop, height: view.height},
+            roomAbove: anchor.top - view.offsetTop, roomBelow: view.offsetTop + view.height - anchor.bottom,
+            trigger: anchor.toJSON(), popup: list.getBoundingClientRect().toJSON()};
+    })()"#)
+}
+
+fn recipient_follows_background_scroll(page: &mut crate::Chrome, above: bool) {
+    let (popup_edge, trigger_edge, gap, fraction, more_room) = if above {
+        ("bottom", "top", -4.0, 0.7, "above > below + 48")
+    } else {
+        ("top", "bottom", 4.0, 0.25, "below > above + 48")
+    };
+    // The task's deferred content can change its page end. Arrange the trigger from live
+    // geometry rather than assuming a viewport resize alone forces a different placement.
+    // A 24px scroll changes the two sides' room difference by 48px; keep room for that scroll.
+    assert!(
+        page.wait_for(
+            &format!(r#"(() => {{
+                const anchor = document.querySelector('#task-send button[aria-haspopup=listbox]').getBoundingClientRect();
+                const popup = document.querySelector('[role=listbox]');
+                const list = popup.getBoundingClientRect(), view = visualViewport;
+                const above = anchor.top - view.offsetTop;
+                const below = view.offsetTop + view.height - anchor.bottom;
+                const shift = anchor.top + anchor.height / 2 - (view.offsetTop + view.height * {fraction});
+                if (Math.abs(shift) > 1) {{
+                    scrollBy(0, shift);
+                    return false;
+                }}
+                return ({more_room}) && anchor.top >= view.offsetTop + 24
+                    && anchor.bottom <= view.offsetTop + view.height - 24
+                    && popup.scrollHeight > Math.max(above, below)
+                    && Math.abs(list.{popup_edge} - anchor.{trigger_edge} - ({gap})) < 1
+                    && list.top >= view.offsetTop && list.bottom <= view.offsetTop + view.height;
+            }})()"#),
+            SHOWN
+        ),
+        "arrange a long popup {} its trigger with room for background scrolling: {}",
+        if above { "above" } else { "below" },
+        recipient_geometry(page)
+    );
+    let before = recipient_geometry(page);
+    let popup = before["popup"][popup_edge].as_f64().unwrap();
+    let trigger = before["trigger"][trigger_edge].as_f64().unwrap();
+    assert!(
+        ((popup - trigger) - gap).abs() < 1.0,
+        "the popup must start at the select's 4px attachment gap: {before}"
+    );
+    let scroll = before["scroll"].as_f64().unwrap();
+    assert!(
+        scroll > 24.0,
+        "the task must allow background scrolling: {before}"
+    );
+    page.eval("scrollBy(0,-24)");
+    // A long list can fill the space below its trigger: its top follows the trigger while
+    // its bottom stays at the viewport edge. Above the trigger, its bottom is attached.
+    assert!(
+        page.wait_for(
+            &format!(r#"(() => {{
+                const list = document.querySelector('[role=listbox]').getBoundingClientRect();
+                const trigger = document.querySelector('#task-send button[aria-haspopup=listbox]').getBoundingClientRect();
+                return scrollY < {scroll} && list.{popup_edge} > {popup} + 20
+                    && trigger.{trigger_edge} > {trigger} + 20
+                    && Math.abs((list.{popup_edge} - trigger.{trigger_edge}) - ({gap})) < 1
+                    && list.top >= visualViewport.offsetTop
+                    && list.bottom <= visualViewport.offsetTop + visualViewport.height;
+            }})()"#),
+            SHOWN
+        ),
+        "the popup follows its trigger when the document scrolls and stays in the viewport; before: {before}; after: {}",
+        recipient_geometry(page)
+    );
+}
+
 #[test]
 fn select_options_stay_visible_at_panel_and_page_bottom_on_desktop_short_window_and_phone() {
     let site = site();
@@ -106,30 +185,13 @@ fn a_long_recipient_list_scrolls_each_option_into_view_and_repositions_on_resize
         offset,
         "option focus scrolls the list, not the page"
     );
-    assert!(
-        offset.as_f64().unwrap() > 24.0,
-        "the long task must allow background scrolling"
-    );
-    let bottom = page
-        .eval("document.querySelector('[role=listbox]').getBoundingClientRect().bottom")
-        .as_f64()
-        .unwrap();
-    page.eval("scrollBy(0,-24)");
-    assert!(
-        page.wait_for(
-            &format!(
-                "document.querySelector('[role=listbox]').getBoundingClientRect().bottom > {}",
-                bottom + 20.0
-            ),
-            SHOWN
-        ),
-        "the popup follows its trigger when the document scrolls"
-    );
+    recipient_follows_background_scroll(&mut page, false);
     page.call(
         "Emulation.setDeviceMetricsOverride",
         json!({"width":390,"height":360,"deviceScaleFactor":1,"mobile":true}),
     );
     assert!(page.wait_for("(() => {const r=document.querySelector('[role=listbox]').getBoundingClientRect();return r.top>=0&&r.bottom<=innerHeight;})()", SHOWN));
+    recipient_follows_background_scroll(&mut page, true);
     key(&mut page, "Home", "Home", 36);
     assert!(page.wait_for("document.activeElement.textContent.trim()==='everyone on it' && document.activeElement.getBoundingClientRect().top>=0", SHOWN));
     key(&mut page, "End", "End", 35);

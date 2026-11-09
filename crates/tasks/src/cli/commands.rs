@@ -317,6 +317,7 @@ pub fn run(store: &Store, c: &mut Context) -> Result<(), Stop> {
         "staff" => panes::staff(store, c)?,
         "restore" => panes::restore(store, c)?,
         "cleanup" => panes::cleanup(store, c)?,
+        "clean" => panes::clean(store, c)?,
         "close" => panes::close(store, c)?,
         "reap" => {
             panes::reap(store, c)?;
@@ -439,6 +440,8 @@ fn create(store: &Store, c: &mut Context) -> Result<(), Stop> {
         depends: p.all("depends").to_vec(),
         assignee: p.get("assignee").map(str::to_string),
         instruction: p.flag("instruction"),
+        // Reds are marked by what files them (`tasks api` `create`); work under one is red work.
+        red: None,
     };
     let t = store.create(&new)?;
     c.say(&format!("created {} ({})", t.slug, t.status));

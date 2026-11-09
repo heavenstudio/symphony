@@ -9,6 +9,9 @@ use symphony_api::{ActivityItem, Message, Role, Session, Task, TaskCounts, Tasks
 
 use crate::{clock, dashboard, render::Render};
 
+mod connect;
+pub use connect::{connect, connect_in, read_failure};
+
 pub fn snapshot(store: &symphony_board::Store) -> Result<(Tasks, i64), symphony_board::Error> {
     let board = store.board()?;
     Ok(snapshot_board(&board))
@@ -402,47 +405,6 @@ pub fn activity(store: &symphony_board::Store) -> Result<Vec<ActivityItem>, symp
                 .is_some_and(|thread| thread.iter().any(|o| o.sender == "owner" && o.id > m.id)),
         })
         .collect())
-}
-
-/// How long the server waits on each board request: its board tick shares the data worker's thread
-/// with every document refresh, and a page gives up on an answer after 15 s (`symphony-ui`'s
-/// `request.rs`). A read with no whole answer in that time goes once more
-/// ([`symphony_board::rpc::Kind`]), and so waits at most twice this.
-const BOARD_WAIT: std::time::Duration = std::time::Duration::from_secs(3);
-
-/// A page read's board failure: a board that took the request and answered too late is slow (504),
-/// any other failure 503, said after `unreachable` (the words a route puts before it).
-pub fn read_failure(error: &str, unreachable: &str) -> (u16, String) {
-    if symphony_board::rpc::slow(error) {
-        (504, format!("the task board is slow: {error}"))
-    } else {
-        (503, format!("{unreachable}{error}"))
-    }
-}
-
-pub fn connect(root: &Path) -> Result<symphony_board::Store, String> {
-    // A read-only web request is never a board session or a launcher.
-    let mut env = crate::children::board_env();
-    env.cwd = root.to_path_buf();
-    let client = symphony_board::cli::board_client(&env)?.waiting(BOARD_WAIT);
-    let store = if let Some(text) = env.vars.get("TASKS_NOW") {
-        let now = text
-            .parse::<f64>()
-            .ok()
-            .filter(|n| n.is_finite())
-            .ok_or_else(|| format!("TASKS_NOW={text} is not a time in seconds"))?;
-        symphony_board::Store::with(
-            client,
-            Box::new(move || now),
-            Box::new(symphony_board::sys::pid_alive),
-            &symphony_board::sys::hostname(),
-        )
-        .map_err(|e| e.to_string())?
-    } else {
-        symphony_board::Store::open(client).map_err(|e| e.to_string())?
-    };
-    // The cap the command line holds starts to, which the agents view and the PULL digest show.
-    Ok(symphony_board::cli::capped(store, &env))
 }
 
 /// A quick-task outcome read must identify the owner's intended task before confirming it.

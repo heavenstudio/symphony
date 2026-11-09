@@ -65,6 +65,33 @@ fn a_claim_past_the_cap_the_project_file_sets_is_refused_naming_the_open_tasks()
     );
     let shown = c.ok(&worker, &["show", "work/2"]);
     assert!(shown.contains("[ready"), "{shown}");
+    assert!(
+        !shown.contains("reserved"),
+        "cap refusal reserves nothing: {shown}"
+    );
+    c.ok(&worker, &["reserve", "work/2"]);
+    let ran = c.run_as(&worker, &["claim", "work/2"], "");
+    assert_eq!(ran.code, 1, "{}", ran.err);
+    assert_eq!(
+        ran.err,
+        format!(
+            "✖ work/2 cannot start: {}{RESERVE_HINT}\n",
+            holds_two(&orch)
+        )
+    );
+    let shown = c.ok(&worker, &["show", "work/2"]);
+    assert!(
+        shown.contains(&format!("reserved {worker} (live)")),
+        "{shown}"
+    );
+    c.ok(&worker, &["move", "work/0", "cancelled"]);
+    c.ok(&worker, &["claim", "work/2"]);
+    let shown = c.ok(&worker, &["show", "work/2"]);
+    assert!(shown.contains("[in_progress"), "{shown}");
+    assert!(
+        shown.lines().all(|line| !line.starts_with("  reserved ")),
+        "no current reservation after claim: {shown}"
+    );
 }
 
 #[test]
