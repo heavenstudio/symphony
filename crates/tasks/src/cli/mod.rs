@@ -292,7 +292,7 @@ fn boot_clock(env: &Env) -> Option<sys::Boottime> {
         return sys::boot_clock();
     };
     let (boot, at) = pinned.split_once(' ')?;
-    let at = at.parse::<f64>().ok().filter(|at| at.is_finite())?;
+    let at: f64 = at.parse::<f64>().ok().filter(|at| at.is_finite())?;
     (!boot.is_empty()).then(|| sys::Boottime {
         boot: boot.into(),
         at,
