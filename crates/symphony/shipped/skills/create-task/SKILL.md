@@ -5,8 +5,8 @@ description: File a task on the board so an executor can work from the brief alo
 
 # File a task on the board
 
-Mechanics live in [docs/workflow/TASKS.md](../../../docs/workflow/TASKS.md); this
-page is what to get right before and while filing. Load `/tasks` first if you
+Read the destination project's task conventions and permissions first. Use the
+board CLI help for supported arguments; this page describes how to prepare a brief. Load `/tasks` first if you
 are not yet attached to the board; a subagent has no monitor, so it gets its
 handle from `just tasks register` instead.
 
@@ -19,7 +19,7 @@ second one.
 
 ## 2. Pick the slug
 
-`area/name` — `app`, `tests`, `tools`, `data`, `art`, `docs`,
+`area/name` — `app`, `tests`, `tools`, `data`, `media`, `docs`,
 `skills`, `perf`, … It becomes the branch name too, so keep it short and
 distinct from anything in the list you just ran.
 
@@ -57,11 +57,9 @@ pending: what must not be built yet
 touches: files/areas it changes, and tasks it must not collide with
 acceptance: observable behavior and error cases
 evidence: the tests that cover the change and their green run, posted on the
-  thread after implementing (RULES.md `workflow/tests-after`)
-gates: just check, the targeted tests of what changed (its suites, the
-  crate's own targets, lint-rs for Rust, docs-index for docs) and just
-  precheck; no branch just verify: the full fast plan runs on the tip at the
-  move to review, and on main after the landing
+  thread after implementing under the project's test policy
+gates: the destination project's required checks, review evidence and landing
+  prerequisites, using its configured entrypoints; do not invent recipes
 rulings: owner answers that apply here, quoted as already approved principles,
   never proposed again on a card; unseen designs applying them still need review
 communication: post milestones only (tip ready for review, move to review or
@@ -76,14 +74,9 @@ communication: post milestones only (tip ready for review, move to review or
 … --parent … --body-file PATH`. This is the step that actually puts it on the
 board — the earlier sections only get the arguments right.
 
-A brief that adds, moves or deletes a doc must say to link it from the folder's `README.md`
-(and docs/README.md's Folders list for a folder); `just docs-index`, part of both verify
-scopes, fails on a page its README does not link, or a list README without a row for it.
-
-## 7. Never
-
-Never name a review card in a design doc's prose — both verify scopes refuse
-it.
+A documentation brief must state the destination project's navigation, link and
+validation requirements. Review-card citations and document status conventions
+also follow that project; this skill imposes no separate document execution lane.
 
 ## 8. Afterwards
 

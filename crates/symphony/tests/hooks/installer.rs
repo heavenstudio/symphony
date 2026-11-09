@@ -1,3 +1,5 @@
+//! The installed commands' ownership and whole-event forwarding through the real CLI.
+
 use super::{common::*, support::Tree};
 use serde_json::json;
 use std::process::{Command, Stdio};
@@ -51,6 +53,7 @@ fn installed_commands_forward_whole_events_and_skip_missing_builds_without_a_loo
                 .stdin(Stdio::piped())
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped());
+            retain_coverage_env(&mut shell);
             let done = spawn(shell, &raw);
             assert_eq!(
                 (done.code, done.stdout.as_str(), done.stderr.as_str()),
@@ -67,5 +70,69 @@ fn installed_commands_forward_whole_events_and_skip_missing_builds_without_a_loo
         );
         assert!(!tree.path("tools/rs-bin.sh.called").exists());
         assert!(!tree.path(".git/sf-tasks/server.json").exists());
+    }
+}
+
+#[test]
+fn real_init_preserves_unstamped_hooks_and_updates_stamped_paths_and_quoting() {
+    let tree = Tree::new();
+    for command in [
+        "\"$CLAUDE_PROJECT_DIR/.target/bin/symphony\" hook tasks-beat",
+        "'/old path/symphony' hook tasks-beat",
+        "/old/symphony hook tasks-beat",
+    ] {
+        for stamped in [false, true] {
+            let command = if stamped {
+                format!("{command} # symphony-stamp: heartbeat-v0")
+            } else {
+                command.to_string()
+            };
+            let own = json!({"matcher":"Read", "hooks":[{
+                "type":"command", "command":command, "async":true, "timeout":4
+            }]});
+            tree.write(
+                ".claude/settings.json",
+                &json!({"hooks":{
+                    "PreToolUse":[own.clone()], "PostToolUse":[own.clone()]
+                }})
+                .to_string(),
+            );
+            for _ in 0..2 {
+                let done = Command::new(BIN)
+                    .args(["init", "--root"])
+                    .arg(&tree.root)
+                    .output()
+                    .unwrap();
+                assert!(done.status.success(), "{done:?}");
+                let settings: serde_json::Value =
+                    serde_json::from_str(&tree.read(".claude/settings.json")).unwrap();
+                for event in ["PreToolUse", "PostToolUse"] {
+                    let groups = settings["hooks"][event].as_array().unwrap();
+                    assert_eq!(groups.len(), 1, "{event}: {groups:?}");
+                    if stamped {
+                        assert_eq!(
+                            groups[0]["matcher"],
+                            if event == "PreToolUse" { "Bash" } else { "" }
+                        );
+                        let hook = &groups[0]["hooks"][0];
+                        assert_eq!(hook["timeout"], 10);
+                        assert_eq!(hook["async"], serde_json::Value::Null);
+                        assert!(
+                            hook["command"]
+                                .as_str()
+                                .unwrap()
+                                .ends_with("# symphony-stamp: heartbeat-v1"),
+                            "{hook}"
+                        );
+                        assert!(
+                            !hook["command"].as_str().unwrap().contains("/old"),
+                            "{hook}"
+                        );
+                    } else {
+                        assert_eq!(groups[0], own, "unstamped override: {command}");
+                    }
+                }
+            }
+        }
     }
 }

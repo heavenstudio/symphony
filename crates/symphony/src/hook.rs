@@ -47,6 +47,6 @@ mod tests {
             ),
             0
         );
-        assert!(err.is_empty());
+        assert!(err.is_empty(), "unexpected hook diagnostics: {err:?}");
     }
 }

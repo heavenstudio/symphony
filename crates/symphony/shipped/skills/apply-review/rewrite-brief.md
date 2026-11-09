@@ -15,13 +15,13 @@ How to treat each verdict:
 - **Content the register never covered**: keep it only if it does not contradict any verdict.
 
 Writing rules:
-- The owner found these documents far too long to review. **Make them substantially shorter** — aim for well under half the current length. Keep direction and the reasons that matter; cut hedging, repeated caveats ("this is not approved…"), meta-commentary about review process, and process history. Per `history-is-not-reference`, a rejected approach keeps at most one line; do not create history files unless something is genuinely worth keeping, and then put it under `docs/history/` with a one-line pointer.
+- **Remove repetition and keep the length appropriate to the project's audience.** Keep direction and the reasons that matter; cut hedging, repeated caveats ("this is not approved…"), meta-commentary about review process, and process history. Follow the project's policy for current guidance and historical evidence; keep process history out of current instructions.
 - Plain words. Avoid jargon such as "grammar", "departure", "cell", "lineage allocation" unless defined in one line.
-- Documents have no status or frontmatter; add none. Only the owner approves a card.
+- Follow the project's document metadata conventions. Only the owner approves a card.
 - Keep headings that `docs/DECISIONS.md` links to via `[[FILE#Heading]]` if the section still exists; if you rename or remove a linked heading, list it in your report so the links can be fixed. Do NOT edit `docs/DECISIONS.md` yourself.
 - Keep valid relative links to images under `artifacts/` when the images still illustrate current direction; drop links to superseded studies unless labelled as such in one line.
 - Do not touch files outside your assignment. Other agents are rewriting other docs in parallel.
-- Do not run `just verify` (the full fast plan runs on the tip at the move to review, and on main after the landing). You may run `just symphony-status` and `just symphony-status --open` to check you did not create malformed callouts. Do not write `[!like]`/`[!dislike]`/`[!question]`/`[!decision]` callouts: those are the owner's.
-- Do not commit.
+- Run only the checks assigned by the task and destination project. Preserve other sessions' active commands and follow local shared-service rules. Do not invent a verifier or landing command. Owner callouts remain the owner's; replies follow the project's conventions.
+- Commit, delegate or land only within the assignment's authorization and project workflow.
 
 Report back: for each file, old and new word count (`wc -w`), the verdicts you applied (by slug), any heading linked from DECISIONS.md that you renamed/removed, anything you deliberately left out, and any contradiction between verdicts you found (state it; don't resolve it by choosing).

@@ -8,6 +8,14 @@ use serde_json::Value;
 
 pub(crate) const BIN: &str = env!("CARGO_BIN_EXE_symphony");
 
+/// An otherwise isolated child keeps the collector's per-process profile path. Dropping it makes
+/// concurrent instrumented hooks contend on one default profile and loses their coverage.
+pub(crate) fn retain_coverage_env(command: &mut Command) {
+    if let Some(path) = std::env::var_os("LLVM_PROFILE_FILE") {
+        command.env("LLVM_PROFILE_FILE", path);
+    }
+}
+
 /// What one hook call returned.
 #[derive(Debug)]
 pub(crate) struct Done {

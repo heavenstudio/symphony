@@ -1,3 +1,5 @@
+//! Installer ownership, updates, retirement and failure diagnostics in private projects.
+
 use super::*;
 use crate::test_tree::Tree;
 
@@ -268,8 +270,8 @@ fn the_symphonys_hook_command_is_brought_current_not_duplicated() {
     tree.write(
         ".claude/settings.json",
         r#"{"hooks": {
-  "PreToolUse": [{"matcher": "Bash", "hooks": [{"type": "command", "command": "/old/symphony\" hook tasks-beat", "timeout": 3}]}],
-  "PostToolUse": [{"matcher": "", "hooks": [{"type": "command", "command": "/old/symphony\" hook tasks-beat"}]}]
+  "PreToolUse": [{"matcher": "Bash", "hooks": [{"type": "command", "command": "/old/symphony hook tasks-beat # symphony-stamp: heartbeat-v0", "timeout": 3}]}],
+  "PostToolUse": [{"matcher": "", "hooks": [{"type": "command", "command": "'/old path/symphony' hook tasks-beat # symphony-stamp: heartbeat-v0"}]}]
 }}"#,
     );
     let report = init(&tree.root, &kit(vec![])).unwrap();
@@ -350,7 +352,7 @@ fn every_shipped_skill_is_a_skill_with_front_matter_and_no_stamp_of_its_own() {
         let text = &skill.files[0].1;
         assert!(text.starts_with("---\nname: "), "{}", skill.name);
         assert!(text.contains(&format!("name: {}\n", skill.name)));
-        assert!(!is_stamped(text), "{} ships a stamp", skill.name);
+        assert!(!is_stamped(text), "{} includes a stamp", skill.name);
     }
 }
 
@@ -404,7 +406,7 @@ fn all_builtin_skills_leave_a_projects_own_copies_in_use_byte_for_byte() {
 fn a_project_hook_wins_even_when_a_managed_hook_precedes_it_and_prompt_hooks_stay() {
     let tree = Tree::new();
     let hooks = json!({"hooks":{"PostToolUse":[{"matcher":"", "hooks":[
-        {"type":"command", "command":"/old/symphony\" hook tasks-beat"},
+        {"type":"command", "command":"/old/symphony hook tasks-beat # symphony-stamp: heartbeat-v0"},
         {"type":"command", "command":"our-hook tasks-beat"},
         {"type":"prompt", "prompt":"keep this prompt"}
     ]}]}});
@@ -467,7 +469,7 @@ fn a_stale_managed_matcher_is_repaired_without_changing_its_adjacent_guard() {
         SETTINGS,
         &json!({"hooks":{"PreToolUse":[{"matcher":"Read", "hooks":[
             {"type":"command","command":"our-read-guard"},
-            {"type":"command","command":"/old/symphony\" hook tasks-beat"}
+            {"type":"command","command":"/old/symphony hook tasks-beat # symphony-stamp: heartbeat-v0"}
         ]}]}})
         .to_string(),
     );

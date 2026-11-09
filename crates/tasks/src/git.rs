@@ -59,10 +59,11 @@ pub fn checkout_common_dir(top: &Path) -> Option<PathBuf> {
         return None;
     }
     let text = std::fs::read_to_string(dot).ok()?;
-    let gitdir = top
-        .join(text.trim().strip_prefix("gitdir:")?.trim())
-        .canonicalize()
-        .ok()?;
+    let destination = text.trim().strip_prefix("gitdir:")?.trim();
+    if destination.is_empty() {
+        return None;
+    }
+    let gitdir = top.join(destination).canonicalize().ok()?;
     if !gitdir.is_dir() {
         return None;
     }

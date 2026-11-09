@@ -1,4 +1,4 @@
-//! `sf-hooks tasks-beat`: a subagent's tool calls are its heartbeat on the task board. The hook hands an
+//! `symphony hook tasks-beat`: a subagent's tool calls are its heartbeat on the task board. The hook hands an
 //! event with a key, whole, to the `beat` of the board's binary (`symphony/crates/tasks/src/cli/beat.rs`, tested
 //! with the board), a build it never makes, and skips a full session's call whose key the bound keys'
 //! folder says is not bound. The binary here is a recorder that writes down how it was run.
@@ -315,6 +315,45 @@ fn a_worktree_with_no_link_beats_on_mains_live_build_and_links_it() {
     beat();
     assert_eq!(runs(&link), ["beat"]);
     assert_eq!(runs(&tree.recorder()), ["beat"]);
+}
+
+#[test]
+fn a_nested_manifest_uses_its_located_common_build_without_crossing_invalid_markers() {
+    let tree = Tree::new("beat-nested-manifest");
+    let (repo, linked) = repo_with_worktree(&tree);
+    record_live(&repo.join(".git"), "current", &tree.recorder());
+    let mut expected = String::new();
+    for checkout in [&repo, &linked] {
+        let component = checkout.join("component");
+        std::fs::create_dir_all(component.join("src")).unwrap();
+        std::fs::write(
+            component.join("symphony.toml"),
+            "[project]\nid='component'\n",
+        )
+        .unwrap();
+        let mut event = bash("ls", Some("child"), None);
+        event["cwd"] = json!(component.join("src"));
+        for explicit in [false, true] {
+            let named = [("CLAUDE_PROJECT_DIR", component.to_str().unwrap())];
+            quiet(&tree.beat(&event, if explicit { &named } else { &[] }));
+            expected.push_str(&event.to_string());
+            let link = component.join(".target/bin/tasks");
+            assert_eq!(std::fs::read_link(&link).unwrap(), tree.recorder());
+            assert_eq!(handed(&tree.recorder()), expected);
+            std::fs::remove_file(link).unwrap();
+        }
+        let invalid = component.join("invalid");
+        std::fs::create_dir_all(invalid.join("src")).unwrap();
+        std::fs::write(invalid.join(".git"), "gitdir: \n").unwrap();
+        std::fs::write(invalid.join("symphony.toml"), "[project]\nid='invalid'\n").unwrap();
+        event["cwd"] = json!(invalid.join("src"));
+        quiet(&tree.beat(&event, &[]));
+        assert!(
+            !invalid.join(".target").exists(),
+            "invalid marker reached a build: {invalid:?}"
+        );
+    }
+    assert_eq!(runs(&tree.recorder()), ["beat"; 4]);
 }
 
 #[test]

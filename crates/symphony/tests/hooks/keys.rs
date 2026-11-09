@@ -1,3 +1,5 @@
+//! Bound-key filtering, checkout identity and launcher behavior for isolated projects.
+
 use super::*;
 
 #[test]

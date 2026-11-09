@@ -129,18 +129,33 @@ fn binary(env: &HashMap<String, String>, raw: &[u8]) -> Option<PathBuf> {
             .filter(|cwd| !cwd.is_empty())
             .map(PathBuf::from)
             .or_else(|| std::env::current_dir().ok())?;
-        Some(symphony_board::project::locate_quick(&cwd)?.root)
+        symphony_board::project::locate_quick(&cwd)
     };
-    let root = set(env, "SYMPHONY_HOOK_ROOT")
+    let explicit = set(env, "SYMPHONY_HOOK_ROOT")
         .or_else(|| set(env, "SF_HOOKS_ROOT"))
         .or_else(|| set(env, "CLAUDE_PROJECT_DIR"))
-        .map(PathBuf::from)
-        .or_else(fallback)?;
+        .map(PathBuf::from);
+    // An explicit root is a checkout boundary. A located manifest may be below that boundary;
+    // retain the common directory the board lookup already resolved for it.
+    let (root, common) = match explicit {
+        Some(root) => {
+            let common = if root.join(symphony_board::project::FILE).is_file() {
+                symphony_board::project::locate_quick(&root).map(|place| place.common)
+            } else {
+                checkout_common_dir(&root)
+            };
+            (root, common)
+        }
+        None => {
+            let place = fallback()?;
+            (place.root, Some(place.common))
+        }
+    };
     let link = root.join(".target/bin/tasks");
     if link.exists() {
         return Some(link);
     }
-    let live = live_build(&root)?;
+    let live = live_build(&common?)?;
     link_to(&link, &live);
     Some(live)
 }
@@ -152,13 +167,10 @@ fn binary(env: &HashMap<String, String>, raw: &[u8]) -> Option<PathBuf> {
 /// share the folder; only a record whose first line names an executable is a build for this hook.
 const LIVE: [&str; 2] = ["sf-cargo", "tasks-main"];
 
-/// The live board's build of committed main for the checkout whose top is `root`: the newest record in
-/// its common dir's [`LIVE`] folder that names an executable file. The common dir is read from
-/// `root/.git` alone ([`checkout_common_dir`]), never from a folder above it, so a project that is no
-/// checkout, or whose `.git` names nothing, has none. None: no checkout, no record, or none naming a
-/// build that is there.
-fn live_build(root: &Path) -> Option<PathBuf> {
-    let mut folder = checkout_common_dir(root)?;
+/// The newest executable build recorded under the located repository's common directory.
+/// The caller resolves that directory within the project's checkout boundary.
+fn live_build(common: &Path) -> Option<PathBuf> {
+    let mut folder = common.to_path_buf();
     folder.extend(LIVE);
     std::fs::read_dir(folder)
         .ok()?
@@ -214,7 +226,12 @@ pub fn run(raw: &[u8], env: &HashMap<String, String>) {
         return;
     };
     let limit = Limit::of(env);
-    beat_within(&binary, raw, &mut |ran| limit.passed(ran));
+    let Ok(interrupts) = symphony_board::sys::Interrupts::listen() else {
+        return;
+    };
+    beat_within(&binary, raw, &mut |ran| {
+        interrupts.received() || limit.passed(ran)
+    });
 }
 
 /// The longest a beat may hold up the tool call.

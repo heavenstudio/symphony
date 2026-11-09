@@ -1,6 +1,6 @@
 //! `symphony init`: the agents' integration files a project needs, installed and kept current.
 //!
-//! The Symphony ships the generic skills, the allow rules (Claude's in `.claude/settings.json`,
+//! The Symphony provides the generic skills, the allow rules (Claude's in `.claude/settings.json`,
 //! Codex's in `.codex/rules/symphony.rules`) and the heartbeat hook. Each file it writes carries a
 //! stamp, which is how a later run knows the file is its own to bring up to date. A file of the same
 //! name without the stamp is the project's own: it is the one in use and this never writes over it.
@@ -25,8 +25,8 @@ const MARK: &str = "symphony-stamp:";
 /// The heartbeat hook's command. It runs the binary the project's `.target/bin/symphony` names and
 /// builds nothing; with none linked it passes quietly.
 const HOOK_COMMAND: &str = "\"$CLAUDE_PROJECT_DIR/.target/bin/symphony\" hook tasks-beat 2>/dev/null || true # symphony-stamp: heartbeat-v1";
-/// What every command the Symphony wrote has in it.
-const HOOK_OWN: &str = "symphony\" hook tasks-beat";
+/// The ownership stamp, independent of a managed command's executable path or quoting.
+const HOOK_STAMP: &str = "# symphony-stamp: heartbeat-";
 const HOOK_TIMEOUT: u64 = 10;
 /// The hook's events and the tool matcher of each.
 const HOOK_EVENTS: [(&str, &str); 2] = [("PreToolUse", "Bash"), ("PostToolUse", "")];
@@ -46,7 +46,7 @@ pub struct Skill {
     pub files: Vec<(String, String)>,
 }
 
-/// Everything the Symphony ships to a project.
+/// Everything the Symphony provides to a project.
 pub struct Shipped {
     pub skills: Vec<Skill>,
     pub codex_rules: String,
@@ -273,7 +273,7 @@ fn install_skills(root: &Path, shipped: &Shipped, report: &mut Report) -> io::Re
     Ok(())
 }
 
-/// A skill the Symphony wrote and no longer ships: its `SKILL.md` goes, its folder with it when
+/// A skill the Symphony wrote and no longer provides: its `SKILL.md` goes, its folder with it when
 /// nothing else of the project's is in it, and the link to it.
 fn remove_retired(root: &Path, shipped: &Shipped, report: &mut Report) -> io::Result<()> {
     let folders = match std::fs::read_dir(root.join(SKILLS)) {
@@ -348,7 +348,19 @@ fn is_mark_line(line: &str) -> bool {
 
 /// A command the project wrote for the heartbeat: it names the beat and is not the Symphony's.
 fn own_beat(command: &str) -> bool {
-    command.contains("tasks-beat") && !command.contains(HOOK_OWN)
+    command.contains("tasks-beat") && !managed_beat(command)
+}
+
+fn managed_beat(command: &str) -> bool {
+    command.lines().any(|line| {
+        line.rsplit_once(HOOK_STAMP).is_some_and(|(_, version)| {
+            let version = version.trim();
+            !version.is_empty()
+                && version
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_')
+        })
+    })
 }
 
 /// `hooks.EVENT` carries the heartbeat: the Symphony's command brought up to date, or the project's
@@ -378,7 +390,7 @@ fn ensure_beat(hooks: &mut Map<String, Value>, event: &str, matcher: &str) -> io
             return Err(invalid());
         }
     }
-    let managed = |hook: &Value| hook["command"].as_str().unwrap_or("").contains(HOOK_OWN);
+    let managed = |hook: &Value| hook["command"].as_str().is_some_and(managed_beat);
     let project_owns = groups.iter().any(|group| {
         group["hooks"].as_array().is_some_and(|list| {
             list.iter()

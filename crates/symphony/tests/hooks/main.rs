@@ -7,6 +7,7 @@ mod common;
 #[path = "../../../../../tools/gate/tests/verify/script_board.rs"]
 mod fixture_script;
 mod installer;
+mod lifetime;
 #[path = "../common/mod.rs"]
 mod support;
 mod tasks_beat;

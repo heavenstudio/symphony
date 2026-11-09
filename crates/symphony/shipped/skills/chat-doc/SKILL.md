@@ -5,8 +5,8 @@ description: Register as the Symphony chat recipient and answer each owner callb
 
 # Chat with the owner through the Symphony
 
-The owner reads and decides in the Symphony (`just symphony`, port 8765, the one app every worktree shares,
-convention in `docs/workflow/REVIEW.md`). Card messages and verdicts land in the
+The owner reads and decides in the configured Symphony. Follow the destination
+project's permissions, shared-server rules, review conventions and tool entrypoints. Card messages and verdicts land in the
 markdown; asks stay in their ephemeral store. This skill is how an agent hears
 them as they are saved and answers them in place, so the app works like a
 chat. The save operation queues an event and calls the registered session's
@@ -29,7 +29,7 @@ native channel. No file watcher or agent monitor discovers these messages.
    has no monitor expiry. Failed deliveries are retried three times and remain
    available in the inbox; check the explicit failure before re-registering.
 
-4. **If the app itself is not running**, ask the owner to start `just symphony`;
+4. **If the app itself is not running**, start it only under the destination project's authorization and service policy;
    callbacks originate in successful saves, so the app must be running.
    Server code lives in `symphony/apps/symphony-server` and `symphony/crates/symphony`; the Dioxus
    client lives in `symphony/apps/symphony-ui`. A server change needs a rebuild and
@@ -41,9 +41,9 @@ native channel. No file watcher or agent monitor discovers these messages.
 ```
 OWNER /api/message scope= {"path":"docs/DECISIONS.md","slug":"example","text":"what would option 2 look like?"}
 OWNER /api/decision scope= {"path":"docs/DECISIONS.md","slug":"example","state":"rejected","note":"too small"}
-OWNER /api/comment scope= {"path":"docs/factions/FACTIONS.md","after_line":88,"text":"Names — why these?"}
-OWNER /api/ask scope= {"path":"docs/stations/STATIONS.md","question":"why five bands and not three?"}
-Read: tools/rs-bin.sh symphony ask --db 'STORE' show 12. Answer: tools/rs-bin.sh symphony ask --db 'STORE' answer 12 TEXT --by HANDLE.
+OWNER /api/comment scope= {"path":"docs/components/COMPONENTS.md","after_line":88,"text":"Names — why these?"}
+OWNER /api/ask scope= {"path":"docs/architecture/ARCHITECTURE.md","question":"why five bands and not three?"}
+Read: symphony ask --db 'STORE' show 12. Answer: symphony ask --db 'STORE' answer 12 TEXT --by HANDLE.
 CALLBACK delivery failed: ...
 ```
 
@@ -127,11 +127,12 @@ card.
 
 ## Images in a reply
 
-When the owner asks to see something, make the requested artifact and inspect it before posting. Follow project-local art, media and review skills for generation, taste, asset paths and plugin card commands. Use the project components its plugins provide; the generic integration invents no domain-specific component or approval rule.
+When the owner asks to see something, make the requested artifact and inspect it before posting. Follow project-local visual, media and review skills for generation, taste, asset paths and plugin card commands. Use the project components its plugins provide; the generic integration invents no domain-specific component or approval rule.
 
 ## Disconnect
 
 When the owner says they are done, run `just tasks callback --off --as <handle>`
 (or `just tasks leave --as <handle>` for a dedicated chat session), and say so.
-If you changed any tool or document along the way, leave `just check` and the
-targeted tests green; the full fast plan runs on the tip at the move to review, and on main after the landing.
+If you changed a tool or document, run the destination project's required checks
+and follow its review and landing workflow. No project-specific verifier or recipe
+is required by this generic skill.

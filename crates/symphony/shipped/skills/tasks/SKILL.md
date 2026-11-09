@@ -5,7 +5,8 @@ description: Join the shared task board and register a native callback so messag
 
 # Work from the task board
 
-Several sessions share one board (`docs/workflow/TASKS.md`), from any worktree. It
+Several sessions share one Symphony board from their project checkouts. Read the
+project's board, permission, staffing, testing and landing instructions first. It
 records who holds each task and keeps a thread per task, visible in the
 Symphony (`just symphony` → ▦ tasks). You have
 to register your native channel so messages can start a turn directly.
@@ -114,11 +115,10 @@ Act on requests without an acknowledgement post.
    `just tasks move SLUG ready` once the documents are written.
 2. `just tasks claim SLUG`, then `just tasks show SLUG` for the brief, links and
    thread. Read the linked spec sections.
-3. Work in the task's slug as your branch or worktree, under this repo's usual
-   rules (`AGENTS.md`, `RULES.md`, tests with or after the code, `just check`,
-   the targeted tests of what you changed and `just precheck`). Run no branch
-   `just verify`: the full fast plan runs on the tip at the move to review, and
-   on main after the landing.
+3. Work in the assigned checkout and follow the task's scope and the destination
+   project's implementation and testing rules. Run its required targeted checks
+   before review and post exact results. Verification selection, certificates,
+   automated review hooks and landing are project policy, not generic board rules.
 4. When a teammate needs something, tell them on the thread. When you are
    stuck, `just tasks move SLUG blocked` and say why on the thread.
 5. Done and green: `just tasks move SLUG review`. **Never review your own task.**
@@ -136,8 +136,8 @@ Reviewers must be independent of the author and use the project's required stamp
 the thread. Finish with `just tasks verdict SLUG approve "why"` (it becomes
 `done`) or `just tasks verdict SLUG changes "what and where"`. Run the targeted
 tests of what changed yourself; do not take the executor's word for them being
-green. Ask for no branch certificate: the full fast plan runs on the tip at the
-move to review, and on main after the landing.
+green. Follow the destination project's requirements for review evidence and any
+additional verification. Do not assume a certificate or landing system exists.
 Read any review checklist the project provides for the changed languages or domains.
 
 ## Orchestrate (orchestrator)
@@ -194,7 +194,7 @@ Pull work from the board, don't only wait for events: [task-orchestrator](../tas
    Its first `just tasks …` command run as its handle (a leading
    `TASKS_SESSION=<handle>`, or that command's own `--as <handle>`) binds it,
    and from then on each of its tool calls is its heartbeat (the project hooks,
-   `just tasks beat`): a subagent coding or running `verify-full` reads live.
+   `just tasks beat`): an agent coding or running tests reads live.
    A handle only mentioned in a command binds nothing, and a session with its
    legacy monitor is never bound to a subagent. Native callback sessions bind
    their own tool-call heartbeat normally.
@@ -217,11 +217,10 @@ session id and worktree, so any of them can be restored; finished tasks cleansed
   given (an executor on its task's own branch; an instruction or reviewer detached at main).
   A given checkout with a live or stale executor is refused. The agent appears
   in an hc terminal of its own that outlives you, in its stream's tab of the
-  configured multiplexer's project space (`code`, `review`; four terminals a tab, then
-  `code-2`): Codex (`gpt-6.1-sol`, `xhigh`) by default, or Claude when selected,
-  already working `$work SLUG HANDLE` (Claude: `/work`; then `--prompt`'s text, if given; its handle is in
-  `$TASKS_SESSION` too). Launch records handle,
-  role, session id, worktree, branch, terminal and start time on the task. Subtasks too.
+  configured multiplexer's project space. Explicit flags and the destination
+  project's launch configuration select the agent, model and effort. Launch
+  records the handle, role, conversation, checkout, branch, terminal and start time.
+  Its prompt uses the work skill with the task slug and registered handle.
   Always pass `--kind`. Choose a terminal reviewer only when the project's
   launch policy calls for one; otherwise use its supported in-process or
   headless launch method.
@@ -263,36 +262,20 @@ session id and worktree, so any of them can be restored; finished tasks cleansed
 
 ## Commands from Codex
 
-Codex uses the project rules installed by `symphony init` in `.codex/rules/`.
-The project may add command permissions of its own. Check the active rules before
-assuming a command is allowed.
+Use just tasks ... --as HANDLE with the handle last. It binds the heartbeat
+without an environment prefix. Read the active permissions installed by Symphony
+and any project additions; command matching and filesystem restrictions depend
+on that environment. These instructions grant no permission beyond those rules.
 
-- **Board commands with the handle last:** `just tasks say SLUG "text" --as <handle>`.
-  Never a leading `TASKS_SESSION=`: that form matches no rule, so every board
-  post waits on a prompt (checked with `codex execpolicy`). `--as` binds the
-  heartbeat the same way.
-- **Every other command as plain words:** no `VAR=` prefix, no redirect
-  (`>`, `2>&1`), no pipe and no `script` wrapper, none of which matches a rule,
-  so each stops for the owner. Run `just verify`, `just land-approve BRANCH --tip SHA`
-  or `tools/rs-bin.sh sf-slots cargo test -p CRATE …` as they are, and read
-  their output directly; `TASKS_SESSION` is already in the environment
-  (the orchestrator starts Codex with it). `rm -f` always stops for approval:
-  remove a tracked file with `git rm`, and leave scratch where it is.
-- **A reviewer's probe goes in its own checkout,** not an export: cargo in an
-  export needs an `SF_GIT_COMMON_DIR=` prefix, which no rule allows. Restore
-  it with `git restore` after each run. An executor plants nothing
-  ([work](../work/SKILL.md) habit 10).
-- **No scripts:** `bash FILE` matches no rule and runs outside the sandbox
-  only on the owner's word, so run each step as its own plain command.
-- **Message text in double quotes,** with no apostrophes, dollar signs,
-  backticks or semicolons ("do not", not "don't").
-- **One command per call,** nothing chained with `&&` or `;`.
-- A "don't ask again" answer saves that exact command text only, so it never
-  helps the next command.
-- Codex's sandbox keeps `.agents/` read-only, so an edit to a skill stops for
-  the owner's approval whatever the rules say.
+Run commands through the destination project's configured entrypoints. Follow its
+rules for shell composition, scripts, scratch files, tests and cleanup. Do not
+assume a Cargo wrapper, verifier, landing command, approval exception or read-only
+folder policy from another project. A permission refusal must be handled through
+the active approval flow, without asking another agent to bypass it.
 
-Follow project-local skills for specialized tools and their permissions.
+A reviewer works in its assigned checkout and preserves the reviewed tip and
+reported evidence. Record review verdicts using the project's required mechanism.
+Follow project-local guidance for specialized tools and shared resources.
 
 ## Stop
 

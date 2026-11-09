@@ -20,9 +20,9 @@ product-specific policy or taste data.
    work and arrange independent reviews. File gaps between approved docs and
    implementation only with evidence, complete acceptance and no existing task.
    Use the create-task skill.
-4. Ensure approved inputs are committed and available in main before starting.
-   Import no unlanded files from another agent. Honor explicit slice stacking
-   rules in the project and task; record source conflicts on the thread.
+4. Follow the project's integration and dependency policy before starting. Honor
+   explicit stacking and source-availability rules in the task. Coordinate file
+   ownership and record actual conflicts on the thread.
 5. Assign disjoint files and complete briefs. Put repeated instructions in skills.
    Register a worker handle, reserve the instruction with --for HANDLE, and give
    it only $work SLUG HANDLE (Claude: /work SLUG HANDLE). The work skill owns
@@ -50,5 +50,5 @@ product-specific policy or taste data.
 
 Owner approvals travel with the ask: quote exact words and apply them within scope.
 Do not ask again for an approved requirement. Unseen designs and artifacts still
-need the project's review. Keep art procedures, taste, shared numbering and
+need the project's review. Keep visual procedures, taste, shared numbering and
 product-specific resources in project-local skills.

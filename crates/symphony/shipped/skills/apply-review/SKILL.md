@@ -1,20 +1,19 @@
 ---
 name: apply-review
-description: Apply the owner's review verdicts to the design docs. Use after the owner has reviewed in the Symphony (`just symphony`) — answers every open note in docs/DECISIONS.md, turns rejections into new proposal cards, and sends subagents to rewrite each document that disagrees with a verdict. Trigger on "apply my review", "I made decisions", "I left comments", or /apply-review.
+description: Apply the owner's review verdicts to the design docs. Use after the owner has reviewed in the Symphony (`just symphony`) — answers every open note in docs/DECISIONS.md, turns rejections into new proposal cards, and rewrites documents that disagree with a verdict under the project's workflow. Trigger on "apply my review", "I made decisions", "I left comments", or /apply-review.
 ---
 
 # Apply the owner's review
 
-The owner reviews in the web app (`just symphony`); verdicts land in the markdown
-(convention: `docs/workflow/REVIEW.md`). This skill is the agent side of that loop. It
-exists because the owner's standing instructions are:
+The owner reviews in the Symphony. Read the destination project's review
+conventions and locate its decision register before acting; paths below use the
+usual docs/DECISIONS.md convention. Follow local permissions, staffing, model,
+validation and landing rules. Only the owner decides the design direction.
 
-- A note on ANY card, approvals included, is work to act on.
-- Documents the owner disagreed with are **rewritten** to match, not given a
-  banner pointing at the register.
-- The rewriting is done by subagents as part of the review, one per disjoint
-  group of files, and the documents come out **shorter**: the owner found them
-  too long to review.
+Act on every unanswered note, including notes attached to approvals. Rewrite
+documents that disagree with an explicit direction so they read as current guidance.
+Keep replies and the owner's history in the register. Use delegation only when
+the task and project authorize it; this skill prescribes no agent family or model.
 
 ## Hear the owner live
 
@@ -74,21 +73,21 @@ do not treat it as approval, and change documents only when it asks for that.
    JSON data files and `docs/analysis/` / review records are evidence: list
    them as disagreeing but do not rewrite them unless the owner asks.
 
-6. **Rewrite with subagents, in parallel.** One `general-purpose` subagent per
-   disjoint group of files (a big document alone; small related ones
-   together), model `opus` unless the owner says otherwise. Each prompt: "Read
-   the brief at `.agents/skills/apply-review/rewrite-brief.md` and follow it
-   exactly", then the file list, the verdict slugs that touch those files, and
-   the headings `DECISIONS.md` links to in them. Subagents do not edit
-   `DECISIONS.md`, do not run `just verify`, and do not commit.
+6. **Rewrite the affected documents.** Use the bundled rewrite-brief.md for the
+   content rules, together with the destination project's instructions. If the
+   project permits delegation, assign disjoint file groups with their relevant
+   verdicts and linked headings. Follow its launch, model and concurrency policy.
+   Keep register updates with the integrating session so replies remain ordered.
+   Give each assignment an explicit scope, validation and commit boundary.
 
 7. **Integrate.** From the reports: fix any `[[FILE#Heading]]` link in
    `DECISIONS.md` whose heading was renamed; check `just symphony-status --open`
    shows nothing but what is waiting on the owner; check word counts went down;
    skim each rewritten file for anything presented as decided that is only a
    pending proposal. Run `just symphony-status --tidy` so the register ends
-   regrouped, then `just check` and `just docs-index` once; `just land` runs
-   `just verify`.
+   regrouped. Run the destination project's required document and link checks,
+   then follow its review and landing process. Do not assume a particular gate,
+   certificate, build recipe or landing command.
 
 8. **Report to the owner**: which cards got replies (call out comments on approved cards and what each changed), the new cards waiting on
    them (the highest-leverage first), each rewritten document with old and new
