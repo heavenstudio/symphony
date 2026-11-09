@@ -17,7 +17,7 @@ Owner, 2026-10-22: "The prompts that you send to other agents, when repeated,
 should be part of the skill". So everything every task assumes is on this page,
 never in the prompt, and a description says only the task itself.
 
-Follow the root guide's [verification and landing contract](../../../AGENTS.md#the-one-command):
+Follow the root guide's [verification and landing contract](../../../AGENTS.md):
 one full verify, run on the tip at the move to review and on main after the
 landing, input-bound certificates, reusable evidence, and the normal review tiers.
 
@@ -149,9 +149,8 @@ landing, input-bound certificates, reusable evidence, and the normal review tier
    - Codex: run `just verify` as plain words in your own shell (the handle
      is already in its environment); read its output directly.
    Keep `TASKS_SESSION=<handle>` on the run: it is how the agents API knows
-   whose verify it is. A run that truly outlasts 2 hours (a soak,
-   [tools guide](../../../tools/AGENTS.md)) may still use a terminal of its own
-   ([hc skill](../hc/SKILL.md#how-this-project-uses-hc)).
+   whose verify it is. A run that truly outlasts 2 hours may use a terminal
+   of its own when the project's launch policy calls for one.
 9. **Never spawn subagents or forks.** Do the work in this session.
 10. **Habits every task assumes:**
     - Logs go under `artifacts/<handle>/` (Claude, through the Bash tool).

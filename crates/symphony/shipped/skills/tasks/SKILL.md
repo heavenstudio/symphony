@@ -129,11 +129,8 @@ Act on requests without an acknowledgement post.
 
 ## Review (reviewer)
 
-Reviewers are Claude, started as subagents or `claude -p`, except the
-adversarial reviewer of a branch a Claude executor wrote: Codex, in an hc terminal
-(`just tasks launch SLUG --role reviewer --kind codex`, `gpt-6.1-sol` or better,
-`xhigh`). A branch Codex wrote (images, 3D) gets Claude reviewers only
-([standing rule](../../../RULES.md#workflowclaude-first-agents)).
+Choose reviewer families, models and launch methods under the project's policy.
+Reviewers must be independent of the author and use the project's required stamps.
 
 `just tasks role SLUG reviewer` on a task in `review`, then read the diff and
 the thread. Finish with `just tasks verdict SLUG approve "why"` (it becomes
@@ -141,13 +138,11 @@ the thread. Finish with `just tasks verdict SLUG approve "why"` (it becomes
 tests of what changed yourself; do not take the executor's word for them being
 green. Ask for no branch certificate: the full fast plan runs on the tip at the
 move to review, and on main after the landing.
-A diff that touches Rust is also read against the Rust checklist,
-[rust-conventions/REVIEW.md](../rust-conventions/REVIEW.md), in the same
-review: one line per item that fails, none when all hold.
+Read any review checklist the project provides for the changed languages or domains.
 
 ## Orchestrate (orchestrator)
 
-Pull work from the board, don't only wait for events: [task-orchestrator](../task-orchestrator/SKILL.md#pull-work-dont-wait-for-events).
+Pull work from the board, don't only wait for events: [task-orchestrator](../task-orchestrator/SKILL.md).
 
 1. Create the work: `just tasks create area/slug "title" --body "..."
    --link docs/X.md#Heading [--depends …] [--parent …]`. Then
@@ -167,10 +162,9 @@ Pull work from the board, don't only wait for events: [task-orchestrator](../tas
    prompt is `/work SLUG HANDLE` (Codex: `$work SLUG HANDLE`), and the steps
    below that put the handle and the rules in a brief are then already in that
    skill.
-   Start executors and reviewers as Claude subagents or `claude -p`, inside an
-   hc terminal too, and in a terminal of its own (`just tasks launch`, below)
-   only work that needs one:
-   [task-orchestrator](../task-orchestrator/SKILL.md#which-way-an-agent-starts).
+   Choose an agent launch method under the project's policy, with a terminal
+   of its own (`just tasks launch`, below) only when the work needs one:
+   [task-orchestrator](../task-orchestrator/SKILL.md).
 2. For a subagent or `claude -p`, executor or reviewer, give it its own handle:
    `just tasks register --kind worker|reviewer --parent <your handle>`, and
    create its subtask (a review: an `--instruction` one under the task it
@@ -228,10 +222,9 @@ session id and worktree, so any of them can be restored; finished tasks cleansed
   already working `$work SLUG HANDLE` (Claude: `/work`; then `--prompt`'s text, if given; its handle is in
   `$TASKS_SESSION` too). Launch records handle,
   role, session id, worktree, branch, terminal and start time on the task. Subtasks too.
-  Always pass `--kind`. The reviewer in a terminal is the Codex adversarial
-  reviewer of a Claude executor's branch (`--kind codex`), or one whose work
-  needs a terminal under project policy;
-  other reviewers start as subagents or `claude -p`.
+  Always pass `--kind`. Choose a terminal reviewer only when the project's
+  launch policy calls for one; otherwise use its supported in-process or
+  headless launch method.
 - `just tasks restore SLUG [HANDLE]`: a new terminal in the recorded worktree, resuming
   its recorded Codex or Claude conversation, for every closed session or the one named.
 - `just tasks show SLUG` has a `Sessions:` block: handle, role, session id,
