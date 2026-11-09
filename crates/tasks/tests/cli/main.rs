@@ -35,6 +35,7 @@ mod recipe;
 mod scratch_folder;
 mod search;
 mod slots;
+mod sweep;
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};

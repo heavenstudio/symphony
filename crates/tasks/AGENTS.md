@@ -132,7 +132,8 @@ not is an older one's own PULL acknowledged, which told every entry, withheld on
 Posts, verdicts and AGENT lines stay: they were said to whoever held the role then, and a new
 holder hears no backlog.
 A finished idle terminal still closes under the original cleanup rules, retiring its
-registration; an executor of a task in review is not finished, and keeps its terminal.
+registration; an executor of a task in review is not finished, and keeps its terminal until it
+has sat idle at its prompt an hour (`reap::IDLE_HOUR`), as every role on open work does.
 PULL's `unanswered` category lists a missing executor on `in_progress`, `blocked` or `review`,
 or a missing reviewer on `review`, after an addressed post has waited thirty minutes. Each line
 names the post and its restore command (or an explicit launch when no conversation was recorded).
@@ -152,9 +153,16 @@ confirms its absence; it never starts a fresh conversation. An unsuccessful atte
 flagged for manual action.
 A reviewer launched on an instruction child resumes that child's recorded conversation when the
 unanswered post is on its parent; a departed reviewer explicitly named by handle still receives it.
-An unanswered post keeps a terminal immediately, including through descendant sessions. A reviewer
-whose changes verdict returned the task to `in_progress` keeps its terminal for re-review too.
-That includes landing changes posted as a message to the executor before it moves the task back.
+An unanswered post keeps a terminal immediately, including through descendant sessions, for as
+long as it waits. A role on open work keeps it until its agent has sat idle at its prompt
+`reap::IDLE_HOUR` (the owner, 2026-11-08: "Only sessions doing active work or that will soon
+(less than one hour) have active work should be kept open"): an executor `in_progress`,
+`blocked` or in `review`, a reviewer of work in review, and a reviewer whose changes verdict
+returned the task to `in_progress`, awaiting its re-review. That includes landing changes posted
+as a message to the executor before it moves the task back. The hour starts again when the role
+or its task's status changes, and runs from the agent's last tool call (`last_tool`) when that is
+later. The close's line names what brings it back: a reviewer launch for the next tip resumes a
+reviewer, a changes verdict or a post restores an executor (`restore_unanswered`).
 A post or changes verdict to `@executor`, or a post to the executor by handle, that no
 executor can read (no callback, and its launch record closed or no live beat) adds a
 `board` post to `@orchestrator` on the
@@ -287,7 +295,7 @@ is a list of calls gets a list of answers), the methods being the store's, plus
 literal session handle on its task (neither `owner` nor a role). It reaches that
 session's inbox even when the actor is the recipient; ordinary `say` posts retain
 their agent author and self-post filtering.
-`launch`, `restore`, `cleanup`, `close`, `finish` and `reap` (the Symphony's idle
+`launch`, `restore`, `cleanup`, `clean`, `close`, `finish` and `reap` (the Symphony's idle
 sweep, every five minutes) drive hc's terminals and git's worktrees from
 `src/launch/`, through `launch::hc::Hc` alone; the crate calls no `herdr`.
 A launch is one `hc run --bg --no-parent --outlive-parent --keep` of the
@@ -306,12 +314,19 @@ launch naming the terminal, which is killed and removed; only Codex's hooks
 chooser is answered on the way. Codex runs with `--no-daemon`; its configured
 REPL helper (`procs::CODEX_REPL`) and the ChatGPT app's computer-use REPL
 (`procs::CODEX_CUA_NODE` running `procs::CODEX_CUA_REPL`), each by that exact
-path, are not work under it.
+path, and the code-mode host Codex 0.167.0 on runs under each session
+(`procs::CODEX_CODE_MODE_HOST` in `FOLDER/.codex/packages/standalone/releases/VERSION/bin/`,
+for any absolute `FOLDER`, not only `$HOME`, and any one `VERSION` folder, no part of
+the path empty, `.` or `..`; never the bare name or another layout), are not work
+under it; a `codex exec` job is.
 Cleanup closes a live terminal only while its foreground is the program it
 started, and for no agent a shell (`hc get`'s `foreground`: a job a shell runs
 in front, or one it became by `exec`, is work). A
-close is `hc kill` then `hc rm`, never of the caller's terminal
-(`HC_TERMINAL_ID`) nor of one the owner may be looking at (`launch/screen.rs`,
+close is `hc kill` then `hc rm`, the remove waiting, by `hc get`, up to ten seconds for a killed
+program to end (hc refuses to remove a live terminal) and never tried while the last look found it
+live or could not say: one still live then is left killed, for the next sweep to remove once it
+finds the program ended. A close is never of the caller's terminal
+(`HC_TERMINAL_ID`) or session, an orchestrator's or a chat's, nor of one the owner may be looking at (`launch/screen.rs`,
 from `herdr-app status`: its `herdr.tab` label the tab the window shows, the
 agent it shows, or held by an overlay or float); cleanup, finish and the idle
 sweep read the window last, after the close's own `hc get` and after the idle
@@ -320,7 +335,10 @@ sweep records the closure, right before the kill (`screen::close_unseen`). That
 program: its pid, and for cleanup its foreground, which `exec` changes under one
 pid, and nothing under it its busy classifier counts as work), and a window
 that cannot say (the call fails, it reports errors, or an overlay or float names
-no terminal) keeps the terminal; either keeps it, the sweep's record reopened. A record
+no terminal) keeps the terminal; either keeps it, the sweep's record reopened. The idle sweep's
+last looks read the board again too (`reap/closing.rs`): its agent's last tool call moved since
+the sweep read it (`reap::TOOL_CALL`), or what holds it changed, a post addressed to it say, keeps
+it, its record reopened. A record
 naming a herdr pane (`w1:p…`) is a gone terminal: cleanup records it closed
 with its restore line, and restore brings it back in an hc terminal. `close SLUG HANDLE`
 (`launch/close.rs`) closes one agent's terminal whatever role it holds, judged as cleanup judges
@@ -366,6 +384,21 @@ row for the terminal's process says nothing of it. A terminal the board would
 close whose `hc get`, table or window cannot be read stays, and cleanup and
 finish print `kept pane T [of H] (never closed on no information: WHY)`; one on
 screen prints `kept pane T [of H] (on screen in the Herdr app)`.
+The idle sweep (`launch/reap.rs`) removes each terminal of the board whose program ended at the
+first sweep that finds it, out of the owner's sight, its open records closed first with their
+restore line (`its program ended`); one whose records are closed already goes without a line.
+It holds each record's session while it writes them, as a close or a restore does, and writes each
+only as it read it, the same launch in that terminal (`reap/ended.rs`): a record a restore moved to
+another terminal since is never closed for this one's end, and a restore under way keeps the
+terminal until the next sweep. It returns every terminal of the board it leaves open with its reason (`Sweep::kept`), and
+`reap.json` keeps the reason last said of each idle one, so `reap` writes
+`· idle sweep keeps pane T of H (WHY)` to its stderr, the Symphony's log, once per change of
+reason; `reap --dry-run` prints `keeps pane …` for every one. `clean` (`just clean`) runs
+cleanup for its caller (`--as`, `cleanup_as`) and then one sweep, under their own rules, and
+prints each terminal it closed (`closed pane T of H (WHY); restore: …`) and why each one it left
+open stays (`kept pane T of H (WHY)`); with `--dry-run`, what it would close. Only a terminal
+cleanup removed (or would) goes unsaid by the sweep: a record cleanup closes removes no terminal,
+so an ended one on screen is still said kept, and why.
 
 A child's input and output go through `sys::output` (or `sys::spawn_output`,
 `sys::spawn_piped` for one that reads stdin, and `sys::wait_output`), never

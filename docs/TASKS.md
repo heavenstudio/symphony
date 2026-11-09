@@ -209,14 +209,24 @@ on the branch task or any numbered review task. A pending post keeps the termina
 immediately, before the thirty-minute recovery threshold. A post, status move or verdict
 by its addressed handle answers earlier work; reading its inbox does not.
 Nothing runs under it but MCP helpers (Codex's configured `node_repl` and the ChatGPT
-app's `cua-repl.mjs` under its own `node` among them, each by its exact path),
-caffeinate and board commands: anything else is work. Status, roles and the window are read again right before the close, and the terminal and the window once
+app's `cua-repl.mjs` under its own `node` among them, each by its exact path, and
+Codex's `codex-code-mode-host` in a standalone release's `bin` folder), caffeinate and
+board commands: anything else is work, a `codex exec` job included. The roles above
+keep it for an hour at most (owner, 2026-11-08: "Only sessions doing active work or that
+will soon (less than one hour) have active work should be kept open"): idle at its
+prompt that long, from its last tool call or the last change of its role or task
+status, it closes saying what brings it back; only an unanswered addressed post keeps
+it longer. A terminal whose program ended is removed at the first sweep, the open
+records naming it closed first with their restore line.
+Status, roles and the window are read again right before the close, and the terminal and the window once
 more after the close is recorded, right before the kill: work resumed by then (its agent
 working, or work under it) or the window showing it reopens the record. Never an unnamed terminal or another board's (it may be the owner's), an
-orchestrator, the caller's (`HC_TERMINAL_ID`), or one on screen in the Herdr app, which
+orchestrator or a chat, the caller's (`HC_TERMINAL_ID` or its session), or one on screen in the Herdr app, which
 starts its idle wait again (as does a window that cannot say what it shows).
 Each close is one line on the handle's task thread, with its restore line, written
-before the terminal is closed. `just tasks reap --dry-run` names what the next sweep would close.
+before the terminal is closed. `just tasks reap --dry-run` names what the next sweep would close
+and why each terminal stays; a sweep tells its log why it keeps an idle one, once per
+reason. `just clean` runs cleanup and one sweep at once, never closing the caller's.
 Code: `symphony/crates/tasks/src/launch/reap.rs`.
 
 **Finished worktrees go by themselves** (owner, 2026-10-21: "do any cleanups for worktrees

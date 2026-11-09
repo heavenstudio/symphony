@@ -219,20 +219,52 @@ pub const CODEX_CUA_NODE: &str = "/Applications/ChatGPT.app/Contents/Resources/c
 /// [`CODEX_CUA_NODE`] in every session, and it starts its own [`CODEX_REPL`].
 pub const CODEX_CUA_REPL: &str = "/Applications/ChatGPT.app/Contents/Resources/cua_node/lib/node_modules/@oai/cua-repl/bin/cua-repl.mjs";
 
-/// Codex's helpers, each by its exact path and with whatever arguments follow: [`CODEX_REPL`], and
-/// [`CODEX_CUA_NODE`] running [`CODEX_CUA_REPL`] as its first argument.
+/// The helper Codex runs under each session from its standalone release (0.167.0 on: the owner's
+/// board, 2026-11-08, found twelve idle Codex agents kept for it), by the release's layout:
+/// `HOME/.codex/packages/standalone/releases/VERSION/bin/codex-code-mode-host`
+/// ([`codex_release_helper`]). The name alone, or anywhere else on a path, is no helper.
+pub const CODEX_CODE_MODE_HOST: &str = "codex-code-mode-host";
+
+/// The folder of Codex's standalone releases, one folder per version, under a home folder.
+const CODEX_RELEASES: &str = "/.codex/packages/standalone/releases/";
+
+/// Whether `program` is [`CODEX_CODE_MODE_HOST`] in the `bin` folder of one version folder of
+/// Codex's standalone releases ([`CODEX_RELEASES`]) under an absolute home folder: any version, so
+/// an upgrade still matches, but one folder of it, and no `.`, `..` or empty part on the path.
+fn codex_release_helper(program: &str) -> bool {
+    let Some(release) = program
+        .strip_suffix(CODEX_CODE_MODE_HOST)
+        .and_then(|folder| folder.strip_suffix("/bin/"))
+    else {
+        return false;
+    };
+    let Some((home, version)) = release.rsplit_once(CODEX_RELEASES) else {
+        return false;
+    };
+    let plain = |part: &str| !part.is_empty() && part != "." && part != "..";
+    home.strip_prefix('/')
+        .is_some_and(|home| home.split('/').all(plain))
+        && !version.contains('/')
+        && plain(version)
+}
+
+/// Codex's helpers, each by its exact path and with whatever arguments follow: [`CODEX_REPL`],
+/// [`CODEX_CUA_NODE`] running [`CODEX_CUA_REPL`] as its first argument, and
+/// [`CODEX_CODE_MODE_HOST`] of a standalone release.
 fn codex_helper(command: &str) -> bool {
     let mut words = command.split(space);
     match words.next() {
         Some(CODEX_REPL) => true,
         Some(CODEX_CUA_NODE) => words.next() == Some(CODEX_CUA_REPL),
-        _ => false,
+        Some(program) => codex_release_helper(program),
+        None => false,
     }
 }
 
 /// `^(?:\S*/)?(?:claude|codex)(?:\s|$)|(?:^|[\s/@_-])mcp(?:[-_.\s]|$)`, ignoring case, but never a
 /// `codex exec` job; or one of Codex's helpers by its exact path ([`CODEX_REPL`], and
-/// [`CODEX_CUA_NODE`] running [`CODEX_CUA_REPL`]): the agent and its helper servers.
+/// [`CODEX_CUA_NODE`] running [`CODEX_CUA_REPL`]) or release layout ([`CODEX_CODE_MODE_HOST`]):
+/// the agent and its helper servers.
 pub fn harmless(command: &str) -> bool {
     let lower = command.to_ascii_lowercase();
     // Codex exec jobs are work even when their parent agent is idle.

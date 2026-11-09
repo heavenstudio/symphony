@@ -36,7 +36,7 @@ fn git(dir: &PathBuf, args: &[&str]) {
 /// of their own, and the fake hc's state (the Herdr app showing the space `lamp-works`) and log.
 pub(crate) struct Terminals {
     pub(crate) dir: PathBuf,
-    env: Env,
+    pub(crate) env: Env,
 }
 
 impl Terminals {
@@ -97,7 +97,7 @@ impl Terminals {
         connect(&self.env).unwrap()
     }
 
-    fn set_state(&self, state: Value) {
+    pub(crate) fn set_state(&self, state: Value) {
         fs::write(self.dir.join("hc.json"), state.to_string()).unwrap();
     }
 
@@ -653,7 +653,7 @@ fn a_launch_hc_fails_is_a_line_naming_the_call_and_exit_1() {
 impl Terminals {
     /// `tasks ARGS` as its own process, at `TASKS_NOW` `now`: the binary sweeps on one thread, so
     /// no process this test binary's other threads spawn holds a copy of its lock.
-    fn binary(&self, now: f64, args: &[&str]) -> Ran {
+    pub(crate) fn binary(&self, now: f64, args: &[&str]) -> Ran {
         let done = symphony_board::sys::output(
             Command::new(TASKS)
                 .args(args)
@@ -728,72 +728,4 @@ fn a_staffing_pass_launches_codex_for_ready_work_into_the_code_tab_and_says_so_o
         thread.iter().any(|m| m.sender == orch && m.text == line),
         "{thread:?}"
     );
-}
-
-#[test]
-fn a_reap_closes_an_agent_idle_for_two_sweeps_where_tasks_reap_state_names_its_state() {
-    let mut p = Terminals::new("reap");
-    let state = p.dir.join("server-reap.json");
-    p.set("TASKS_REAP_STATE", &state.display().to_string());
-    let worker = p
-        .board()
-        .register(&NewSession::new("worker"))
-        .unwrap()
-        .row
-        .handle;
-    p.idle_terminal(&worker);
-    let now = crate::common::NOW;
-    let said = |ran: Ran| (ran.code, ran.out, ran.err);
-    assert_eq!(
-        said(p.binary(now, &["reap", "--dry-run"])),
-        (
-            0,
-            format!("idle once, closed if still idle next sweep: {worker}\n"),
-            String::new()
-        )
-    );
-    assert!(!state.exists(), "a dry run keeps no state");
-    assert_eq!(
-        said(p.binary(now, &["reap"])),
-        (
-            0,
-            format!("idle once, closed if still idle next sweep: {worker}\n"),
-            String::new()
-        )
-    );
-    assert!(state.exists());
-    let later = now + symphony_board::launch::reap::REAP_SECONDS;
-    assert_eq!(
-        said(p.binary(later, &["reap", "--dry-run"])),
-        (0, format!("would close t1 ({worker})\n"), String::new())
-    );
-    assert_eq!(
-        said(p.binary(later, &["reap", "--dry-run", "--as", &worker])),
-        (0, "nothing to close\n".into(), String::new()),
-        "never the caller's own"
-    );
-    assert_eq!(
-        said(p.binary(later, &["reap"])),
-        (0, format!("closed t1 ({worker})\n"), String::new())
-    );
-    assert_eq!(p.addresses(), Vec::<String>::new());
-}
-
-#[test]
-fn a_reap_while_another_sweep_holds_the_lock_says_so() {
-    let mut p = Terminals::new("reap-held");
-    let state = p.dir.join("reap.json");
-    p.set("TASKS_REAP_STATE", &state.display().to_string());
-    let held = fs::File::create(symphony_board::launch::reap::lock_path(&state)).unwrap();
-    held.try_lock().unwrap();
-    let ran = p.binary(crate::common::NOW, &["reap"]);
-    assert_eq!(
-        (ran.code, ran.out.as_str(), ran.err.as_str()),
-        (
-            0,
-            "another sweep is running (the Symphony's timer): nothing done\n",
-            ""
-        )
-    );
-    assert_eq!(p.calls(), Vec::<Vec<String>>::new());
 }

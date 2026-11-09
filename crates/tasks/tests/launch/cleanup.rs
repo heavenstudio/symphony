@@ -249,20 +249,6 @@ fn codex_interactive_arguments_can_close_but_exec_jobs_stay() {
 }
 
 #[test]
-fn the_orchestrators_and_the_callers_terminal_are_never_closed() {
-    let w = World::new();
-    let terminal = w.add_terminal(true, Some(&w.orch.clone()), json!({}));
-    assert_eq!(w.clean(false, &[]), []);
-    assert!(w.has_terminal(&terminal));
-
-    let mut w = World::new();
-    let (_, terminal) = w.worker("sim/jump", Some("done"));
-    w.set("HC_TERMINAL_ID", &terminal);
-    assert_eq!(w.clean(false, &[]), []);
-    assert!(w.has_terminal(&terminal));
-}
-
-#[test]
 fn an_agent_terminal_that_maps_to_no_session_is_kept() {
     let w = World::new();
     let terminal = w.add_terminal(true, None, json!({}));

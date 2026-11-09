@@ -326,6 +326,11 @@ const COMMANDS: &[Command] = &[
         pos: &[],
         opts: &[AS, opt("--dry-run", "dry_run", Takes::Bool)],
     },
+    Command {
+        name: "clean",
+        pos: &[],
+        opts: &[AS, opt("--dry-run", "dry_run", Takes::Bool)],
+    },
     plain("close", &[pos("slug"), pos("handle")]),
     Command {
         name: "reap",
@@ -774,7 +779,7 @@ mod tests {
             .unwrap()
     }
 
-    const ALL: &str = "'callback', 'register', 'attach', 'list', 'search', 'embed', 'next', 'create', 'priority', 'field', 'claim', 'reserve', 'release', 'show', 'parent', 'depends', 'done', 'role', 'handover', 'move', 'verdict', 'say', 'launch', 'restore', 'cleanup', 'close', 'reap', 'staff', 'agents', 'who', 'inbox', 'leave', 'beat', 'export', 'finish', 'sweep'";
+    const ALL: &str = "'callback', 'register', 'attach', 'list', 'search', 'embed', 'next', 'create', 'priority', 'field', 'claim', 'reserve', 'release', 'show', 'parent', 'depends', 'done', 'role', 'handover', 'move', 'verdict', 'say', 'launch', 'restore', 'cleanup', 'clean', 'close', 'reap', 'staff', 'agents', 'who', 'inbox', 'leave', 'beat', 'export', 'finish', 'sweep'";
 
     #[test]
     fn every_command_of_the_usage_is_read_and_has_its_help() {
@@ -798,13 +803,29 @@ mod tests {
             (true, Some("amber-heron"))
         );
         assert!(!run(&["reap"]).flag("dry_run"));
-        assert!(usage::USAGE.contains(",cleanup,close,reap,staff,agents,"));
+        assert!(usage::USAGE.contains(",cleanup,clean,close,reap,staff,agents,"));
         assert_eq!(
             usage::HELP
-                .matches(",cleanup,close,reap,staff,agents,")
+                .matches(",cleanup,clean,close,reap,staff,agents,")
                 .count(),
             2
         );
+    }
+
+    #[test]
+    fn clean_reads_its_dry_run_and_its_help_says_what_it_runs() {
+        assert_eq!(
+            parse_of(&["clean", "-h"]),
+            Outcome::Help(
+                "usage: just tasks clean [-h] [--as ACTOR] [--dry-run]\n\ncleanup, then one idle sweep: what closed and why each open terminal stays\n\noptions:\n  -h, --help  show this help message and exit\n  --as ACTOR\n  --dry-run   name what it would close and why the rest stay; close nothing\n"
+            )
+        );
+        let parsed = run(&["clean", "--dry-run", "--as", "amber-heron"]);
+        assert_eq!(
+            (parsed.flag("dry_run"), parsed.get("actor")),
+            (true, Some("amber-heron"))
+        );
+        assert!(!run(&["clean"]).flag("dry_run"));
     }
 
     #[test]

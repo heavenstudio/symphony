@@ -7,20 +7,21 @@ mod panes;
 
 /// The usage line of `just tasks` itself.
 pub const USAGE: &str = r#"usage: just tasks [-h] [--as ACTOR]
-                  {callback,register,attach,list,search,embed,next,create,priority,field,claim,reserve,release,show,parent,depends,done,role,handover,move,verdict,say,launch,restore,cleanup,close,reap,staff,agents,who,inbox,leave,beat,export,finish,sweep} ...
+                  {callback,register,attach,list,search,embed,next,create,priority,field,claim,reserve,release,show,parent,depends,done,role,handover,move,verdict,say,launch,restore,cleanup,clean,close,reap,staff,agents,who,inbox,leave,beat,export,finish,sweep} ...
 "#;
 
 /// `just tasks --help`.
 pub const HELP: &str = r#"usage: just tasks [-h] [--as ACTOR]
-                  {callback,register,attach,list,search,embed,next,create,priority,field,claim,reserve,release,show,parent,depends,done,role,handover,move,verdict,say,launch,restore,cleanup,close,reap,staff,agents,who,inbox,leave,beat,export,finish,sweep} ...
+                  {callback,register,attach,list,search,embed,next,create,priority,field,claim,reserve,release,show,parent,depends,done,role,handover,move,verdict,say,launch,restore,cleanup,clean,close,reap,staff,agents,who,inbox,leave,beat,export,finish,sweep} ...
 
 The task board from the terminal — `just tasks …` and `just tasks-attach`.
 
 positional arguments:
-  {callback,register,attach,list,search,embed,next,create,priority,field,claim,reserve,release,show,parent,depends,done,role,handover,move,verdict,say,launch,restore,cleanup,close,reap,staff,agents,who,inbox,leave,beat,export,finish,sweep}
+  {callback,register,attach,list,search,embed,next,create,priority,field,claim,reserve,release,show,parent,depends,done,role,handover,move,verdict,say,launch,restore,cleanup,clean,close,reap,staff,agents,who,inbox,leave,beat,export,finish,sweep}
     callback            register a native channel or --off for inbox fallback
     depends             change what a task waits on
     handover            hand a task's orchestrator role to another session
+    clean               cleanup, then one idle sweep, at once (just clean)
     close               close an agent's terminal, whatever it holds, and
                         record it with its restore line
     beat               a hook: read one Claude Code tool event on stdin and
@@ -426,6 +427,7 @@ options:
     ("launch", launch::USAGE, launch::HELP),
     ("restore", panes::RESTORE.0, panes::RESTORE.1),
     ("cleanup", panes::CLEANUP.0, panes::CLEANUP.1),
+    ("clean", panes::CLEAN.0, panes::CLEAN.1),
     ("close", panes::CLOSE.0, panes::CLOSE.1),
     ("reap", panes::REAP.0, panes::REAP.1),
     (
