@@ -3,7 +3,7 @@
 //! branch scan (its own [`Shared`] and hub) and nothing of one is visible from another's pages.
 //!
 //! Before any project the server answers `/api/front` (itself, with the ids it serves), `/` (the
-//! project list, or the last project visited), `/<id>` (to `/<id>/`) and `/<id>/theme.css` (the
+//! project picker), `/<id>` (to `/<id>/`) and `/<id>/theme.css` (the
 //! project's theme tokens). A path of today, under no project, is the project's whose page asked
 //! for it (a same-origin Referer under `/<id>/`), else the starter's: a page load is redirected
 //! there, so a bookmark opens under `/<id>/`, and anything else is answered by that project in
@@ -31,9 +31,6 @@ use crate::host::{Build, Lack};
 mod retired;
 
 pub(crate) use retired::{Stopped, close_saves};
-
-/// The cookie naming the last project visited, which `/` opens.
-pub(crate) const LAST: &str = "symphony-project";
 
 /// The registered projects and the server that serves them.
 pub(crate) struct Projects {
@@ -301,7 +298,7 @@ async fn dispatch(
         return front(&projects, &served, request.headers());
     }
     if path == "/" {
-        return home(&served, request.headers());
+        return home(&served);
     }
     let (first, rest) = path[1..]
         .split_once('/')
@@ -369,8 +366,7 @@ pub(crate) fn referred<'a>(headers: &HeaderMap, served: &'a [Served]) -> Option<
     served.iter().find(|served| served.entry.id == first)
 }
 
-/// `request` answered by `project`'s router at `inner`, its redirects kept under the project, and
-/// a page it serves remembered as the last visited.
+/// `request` answered by `project`'s router at `inner`, its redirects kept under the project.
 async fn forward(project: &Served, inner: &str, mut request: Request) -> Response {
     let target = match request.uri().query() {
         Some(query) => format!("{inner}?{query}"),
@@ -380,7 +376,6 @@ async fn forward(project: &Served, inner: &str, mut request: Request) -> Respons
         return StatusCode::BAD_REQUEST.into_response();
     };
     *request.uri_mut() = uri;
-    let page = navigation(request.method(), request.headers());
     let Ok(mut response) = project.router.clone().oneshot(request).await;
     let base = &project.shared.base;
     if let Some(location) = response
@@ -391,21 +386,6 @@ async fn forward(project: &Served, inner: &str, mut request: Request) -> Respons
         && let Ok(rebased) = HeaderValue::from_str(&format!("{base}{location}"))
     {
         response.headers_mut().insert(header::LOCATION, rebased);
-    }
-    let html = response
-        .headers()
-        .get(header::CONTENT_TYPE)
-        .and_then(|value| value.to_str().ok())
-        .is_some_and(|kind| kind.starts_with("text/html"));
-    if page
-        && html
-        && response.status().is_success()
-        && let Ok(cookie) = HeaderValue::from_str(&format!(
-            "{LAST}={}; Path=/; Max-Age=31536000; SameSite=Lax",
-            project.entry.id
-        ))
-    {
-        response.headers_mut().append(header::SET_COOKIE, cookie);
     }
     response
 }
@@ -428,30 +408,8 @@ fn front(projects: &Projects, served: &[Served], headers: &HeaderMap) -> Respons
     Json(status).into_response()
 }
 
-/// `/`: the last project visited, while it is served, else the list of projects with their counts.
-fn home(served: &[Served], headers: &HeaderMap) -> Response {
-    let last = headers
-        .get_all(header::COOKIE)
-        .iter()
-        .filter_map(|value| value.to_str().ok())
-        .flat_map(|cookies| cookies.split(';'))
-        .find_map(|cookie| {
-            cookie
-                .trim()
-                .strip_prefix(&format!("{LAST}="))
-                .map(str::to_string)
-        });
-    if let Some(last) = last
-        && served
-            .iter()
-            .any(|served| served.entry.id == last && served.refused.is_none())
-    {
-        return (
-            StatusCode::TEMPORARY_REDIRECT,
-            [(header::LOCATION, format!("/{last}/"))],
-        )
-            .into_response();
-    }
+/// `/`: always the project picker with each registered project's counts.
+fn home(served: &[Served]) -> Response {
     // Each project is warmed as the registry is read, so its counts are the hub's at hand; one
     // still warming shows none yet.
     let rows: Vec<String> = served

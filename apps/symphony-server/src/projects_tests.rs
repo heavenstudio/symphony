@@ -138,15 +138,11 @@ async fn a_project_answers_under_its_prefix_and_a_subresource_in_its_page_in_pla
 }
 
 #[tokio::test]
-async fn a_project_page_carries_its_base_and_theme_and_is_remembered_for_the_list() {
+async fn a_project_page_carries_its_base_and_theme_without_remembering_a_root_redirect() {
     let machine = Machine::new();
     let page = machine.get("/beta/", &[PAGE]).await;
     assert_eq!(page.status(), StatusCode::OK);
-    let cookie = page.headers()[header::SET_COOKIE]
-        .to_str()
-        .unwrap()
-        .to_string();
-    assert!(cookie.starts_with("symphony-project=beta;"), "{cookie}");
+    assert!(page.headers().get(header::SET_COOKIE).is_none());
     let body = text(page).await;
     assert!(body.contains("\"base\":\"/beta\""), "{body}");
     assert!(
@@ -155,18 +151,43 @@ async fn a_project_page_carries_its_base_and_theme_and_is_remembered_for_the_lis
     );
     assert!(!body.contains("#a00"), "nothing of alpha's: {body}");
     assert!(body.contains("<title>beta works</title>"));
-    // A fetch, not a page load, leaves the cookie as it is.
+    // Fetches also need no project-selection cookie.
     let fetched = machine.get("/beta/", &[]).await;
     assert!(fetched.headers().get(header::SET_COOKIE).is_none());
-    // The list opens the last project visited, while it is served.
-    let back = machine
-        .get("/", &[("cookie", "a=b; symphony-project=beta")])
-        .await;
-    assert_eq!(location(&back), "/beta/");
-    let unknown = machine
-        .get("/", &[("cookie", "symphony-project=gone")])
-        .await;
-    assert_eq!(unknown.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn root_is_always_the_picker_with_one_or_multiple_projects_and_old_cookies() {
+    let machine = Machine::new();
+    for ids in [vec!["alpha", "beta"], vec!["alpha"]] {
+        Registry::change(&machine.tree.path("machine"), |registry| {
+            registry
+                .projects
+                .retain(|entry| ids.contains(&entry.id.as_str()));
+            Ok(())
+        })
+        .unwrap();
+        for cookie in [
+            None,
+            Some("a=b; symphony-project=alpha"),
+            Some("symphony-project=gone"),
+        ] {
+            let mut headers = vec![PAGE, ("referer", "http://127.0.0.1:1/alpha/tasks")];
+            if let Some(cookie) = cookie {
+                headers.push(("cookie", cookie));
+            }
+            let page = machine.get("/", &headers).await;
+            assert_eq!(page.status(), StatusCode::OK, "{ids:?} {cookie:?}");
+            assert!(page.headers().get(header::LOCATION).is_none());
+            assert_eq!(page.headers()[header::CACHE_CONTROL], "no-store");
+            let body = text(page).await;
+            assert!(body.contains("<h1>Projects</h1>"), "{body}");
+            assert_eq!(body.matches("<li>").count(), ids.len(), "{body}");
+            for id in &ids {
+                assert!(body.contains(&format!("href=\"/{id}/\"")), "{body}");
+            }
+        }
+    }
 }
 
 #[tokio::test]

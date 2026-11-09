@@ -1,6 +1,7 @@
 //! Two projects on the one real server, each as the owner first opens it: its home within the
 //! first visit's budget, its theme in the page's computed look and the rest of the look the
-//! other's, every link under its own `/<id>/`; and what one keeps in the browser, a draft or a
+//! other's, project links under its own `/<id>/`, and the header switch back to the root picker;
+//! what one keeps in the browser, a draft or a
 //! saved theme, never shows in the other, whose origin it shares. `alpha` is a plain project whose
 //! file sets a token and a layout; `pantry` names the shelf plugin and the theme package it
 //! provides.
@@ -186,6 +187,29 @@ fn quick_text(browser: &mut Chrome) {
     assert!(browser.wait_for("document.querySelector('#quick-text') !== null", SHOWN));
 }
 
+/// The visible switch leaves the project's shell and opens the machine picker.
+fn change_board(browser: &mut Chrome) {
+    assert!(browser.wait_for(
+        "document.querySelector('header a.project-switch') !== null",
+        SHOWN
+    ));
+    browser.eval("document.querySelector('header a.project-switch').click()");
+    wait_for_picker(browser);
+}
+
+fn wait_for_picker(browser: &mut Chrome) {
+    assert!(browser.wait_for(
+        "location.pathname === '/' && document.querySelector('h1')?.textContent === 'Projects'",
+        SHOWN
+    ));
+    assert_eq!(
+        browser.eval(
+            "Array.from(document.querySelectorAll('.projects a')).map(a => a.getAttribute('href'))"
+        ),
+        json!(["/alpha/", "/pantry/"])
+    );
+}
+
 #[test]
 fn a_draft_and_a_theme_one_project_keeps_never_appear_in_another() {
     let board = ScratchBoard::start();
@@ -211,13 +235,75 @@ fn a_draft_and_a_theme_one_project_keeps_never_appear_in_another() {
         browser.wait_for("document.querySelector('#studio-theme') !== null", SHOWN),
         "alpha's saved theme applies to alpha"
     );
-    browser.open(&server.url("/pantry/"));
+    // An old valid cookie cannot trap the switch in Alpha, including after a root revisit.
+    browser.eval("document.cookie = 'symphony-project=alpha; Path=/'");
+    change_board(&mut browser);
+    browser.eval("document.querySelector('.projects a[href=\"/pantry/\"]').click()");
     quick_text(&mut browser);
     assert_eq!(
         browser.eval("({draft: document.querySelector('#quick-text').value, theme: document.querySelector('#studio-theme') !== null})"),
         json!({"draft": "", "theme": false}),
         "pantry shows nothing alpha saved"
     );
+    browser.open(&server.url("/"));
+    wait_for_picker(&mut browser);
+    browser.eval("document.querySelector('.projects a[href=\"/alpha/\"]').click()");
+    quick_text(&mut browser);
+    assert_eq!(
+        browser.eval("({draft: document.querySelector('#quick-text').value, radius: getComputedStyle(document.documentElement).getPropertyValue('--radius').trim()})"),
+        json!({"draft": "Alpha private draft", "radius": "23px"}),
+        "returning through the picker restores Alpha's own draft and saved theme"
+    );
+}
+
+#[test]
+fn the_top_left_switch_and_picker_work_by_keyboard_on_a_compact_nested_page() {
+    use super::components::key;
+
+    let board = ScratchBoard::start();
+    let server = OneServer::start(board.address());
+    let Some(mut browser) = chrome() else { return };
+    browser.call(
+        "Emulation.setDeviceMetricsOverride",
+        json!({
+            "width":390,"height":844,"deviceScaleFactor":1,"mobile":true
+        }),
+    );
+    browser.open(&server.url("/alpha/tasks"));
+    assert!(browser.wait_for("document.documentElement.dataset.navigation === 'ready' && document.querySelector('header a.project-switch') !== null", SHOWN));
+    key(&mut browser, "Tab", "Tab", 9);
+    assert_eq!(browser.eval(r#"(() => {
+        const link = document.activeElement;
+        const box = link.getBoundingClientRect();
+        const first = document.querySelector('header a');
+        return {name:link.textContent.trim(), destination:link.getAttribute('href'),
+            first:link === first, focused:link.matches(':focus-visible'),
+            visible:box.width > 0 && box.height > 0 && box.left >= 0 && box.right <= innerWidth && box.top >= 0 && box.bottom <= innerHeight};
+    })()"#), json!({"name":"Change board","destination":"/","first":true,"focused":true,"visible":true}));
+    key(&mut browser, "Enter", "Enter", 13);
+    wait_for_picker(&mut browser);
+    key(&mut browser, "Tab", "Tab", 9);
+    key(&mut browser, "Tab", "Tab", 9);
+    assert_eq!(
+        browser.eval("document.activeElement.textContent.trim()"),
+        json!("The Shelf")
+    );
+    key(&mut browser, "Enter", "Enter", 13);
+    assert!(browser.wait_for(
+        "location.pathname === '/pantry/' && document.querySelector('.hero-title') !== null",
+        SHOWN
+    ));
+    browser.eval("document.querySelector('header a[href=\"/tasks\"]').click()");
+    assert!(browser.wait_for("location.pathname === '/pantry/tasks' && document.documentElement.dataset.navigation === 'ready'", SHOWN));
+    // The board-home link stays separate from the machine picker, even in the compact theme.
+    browser.eval("document.querySelector('header a[href=\"/\"]:not(.project-switch)').click()");
+    assert!(browser.wait_for(
+        "location.pathname === '/pantry/' && document.querySelector('.hero-title') !== null",
+        SHOWN
+    ));
+    change_board(&mut browser);
+    browser.open(&server.url("/"));
+    wait_for_picker(&mut browser);
 }
 
 #[test]

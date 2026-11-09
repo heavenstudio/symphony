@@ -20,8 +20,10 @@ Each registered project is served at `/<id>/` by its own read hub: its watcher, 
 board snapshot and branch scan (`src/projects.rs`). `/<id>/theme.css` serves its theme
 package's tokens with an ETag; its pages inline the same tokens in the head, then its
 stylesheets, its name and icon, and each layout region's variant as a `data-layout-*`
-attribute. `/` lists the projects with their counts, or redirects to the one the
-`symphony-project` cookie names, the last one visited. A navigation to a path of today
+attribute. `/` always lists the projects with their counts, including when there is only
+one project or the browser carries an old project-selection cookie. The top-left Change board
+link opens this picker; the separate board link opens the current project's home.
+A navigation to a path of today
 (`/docs/…`, `/tasks`, a bookmark) redirects to the project a same-origin referrer names, else
 the starter's; other requests on such a path are answered by that project in place. A
 project whose root is gone, or whose plugins the running build lacks, answers 503 saying why.
