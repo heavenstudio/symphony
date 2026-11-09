@@ -32,6 +32,7 @@ mod embeddings;
 mod fields;
 mod launches;
 mod messages;
+mod opening;
 mod pool;
 mod pull_account;
 mod queued_lines;
@@ -49,6 +50,7 @@ pub use copy::Moved;
 pub(crate) use copy::WRITTEN_SINCE;
 pub use embeddings::{EmbeddingStats, VectorHit, VectorSearchProfile};
 pub use launches::NewLaunch;
+pub use opening::Opening;
 use reading::{HELD, NATIVE_PRESENCE, native_bounds};
 pub use search::SearchHit;
 pub use sessions::{Beat, KINDS, NewSession, Pick};
@@ -71,18 +73,6 @@ const PATIENCE: Duration = Duration::from_secs(30);
 const STALE: &str = "stale";
 /// What a write throws to refuse goes before its words: the refusal comes back as `Error::Refused`.
 const REFUSED: &str = "refused: ";
-/// The board's schema version, or NONE before its tables are made: a read ([`crate::rpc::Kind`]).
-const SCHEMA_VERSION: &str = "RETURN IF (INFO FOR DB).tables.meta = NONE { NONE } ELSE { (SELECT VALUE version FROM ONLY meta:schema) };";
-
-/// Whether the server said `said` of a request in a namespace, or in the database `database`, that
-/// it does not hold yet: a board no one has opened. These are the pinned server's words.
-fn undefined(said: &str, database: &str) -> bool {
-    said == format!("The database '{database}' does not exist")
-        || said
-            .strip_prefix("The namespace '")
-            .is_some_and(|name| name.ends_with("' does not exist"))
-}
-
 /// Why a call gave no result.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Error {
@@ -193,83 +183,13 @@ pub struct Store {
     /// The open tasks an orchestrator may hold before a start is refused ([`crate::slots`]); none
     /// caps nothing.
     slots: Option<usize>,
+    /// The schema version this store writes, which every write's [`schema::GUARD`] checks.
+    schema: i64,
+    /// What a write on a board at another version is refused with, naming the board's project.
+    refusal: schema::Refusal,
 }
 
 impl Store {
-    /// The board in `client`'s database, its tables made if they are not there yet, read with this
-    /// machine's clock, host name and process table.
-    pub fn open(client: Client) -> Result<Store, Error> {
-        let host = crate::sys::hostname();
-        Store::with(
-            client,
-            Box::new(now),
-            Box::new(crate::sys::pid_alive),
-            &host,
-        )
-    }
-
-    /// As `open`, with the clock, the process probe and the host name given (the tests' own). A
-    /// board at this build's version opens on one read of it, which defines and writes nothing, so
-    /// a slow board's late answer to it goes once more ([`crate::rpc::Kind`]) as a page's read
-    /// does. Any other board is defined: its namespace and database first when the server lacks
-    /// either, then its tables and version.
-    pub fn with(
-        client: Client,
-        clock: Clock,
-        pid_alive: Probe,
-        host: &str,
-    ) -> Result<Store, Error> {
-        let store = Store::unchecked(client, clock, pid_alive, host);
-        store.retrying(|| {
-            let found = store.schema_version()?;
-            if found.as_ref() == Some(&json!(schema::VERSION)) {
-                return Ok(());
-            }
-            if found.is_none() {
-                store.client.define_then("RETURN NONE;", json!({}))?;
-            }
-            store.client.query(schema::ANALYZERS, json!({}))?;
-            // One transaction: a definition that fails, or loses to another open's at once, takes the
-            // version with it, so no open takes a board missing it for made.
-            let define = format!(
-                "{}\nUPSERT meta:schema SET version = $version RETURN NONE;\nRETURN NONE;",
-                schema::DEFINE
-            );
-            store.transact::<Value>(&define, json!({"version": schema::VERSION}))?;
-            Ok(())
-        })?;
-        Ok(store)
-    }
-
-    /// The board's schema version (null before its tables are made), or none when the server lacks
-    /// its namespace or its database: one read in them, which defines nothing.
-    fn schema_version(&self) -> Result<Option<Value>, Failure> {
-        match self.read(SCHEMA_VERSION, json!({})) {
-            Err(Failure::Stop(Error::Db(said))) if undefined(&said, self.client.database()) => {
-                Ok(None)
-            }
-            found => found.map(Some),
-        }
-    }
-
-    /// As `with`, taking the board's tables as they are, without the request that checks them: the
-    /// heartbeat's, one request on every tool call, on a board any other command has opened.
-    pub fn unchecked(client: Client, clock: Clock, pid_alive: Probe, host: &str) -> Store {
-        Store {
-            client,
-            clock,
-            pid_alive,
-            host: host.into(),
-            pick: Mutex::new(Box::new(sessions::Random::seeded())),
-            callback_snapshot: Mutex::new(None),
-            callback_idle: Mutex::new(None),
-            clock_panes: Mutex::new(None),
-            hand_off: None,
-            inbox_pool: Mutex::new(None),
-            slots: None,
-        }
-    }
-
     /// This store, its starts held to `slots` open tasks an orchestrator: a claim, a move into
     /// in_progress and taking the orchestrator role on open work are refused past it
     /// ([`crate::slots`]). None caps nothing, as a store opens.
