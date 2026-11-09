@@ -3,7 +3,7 @@ use serde_json::json;
 use symphony_board::embedding::{Chunk, DIMENSIONS, Embedder};
 use symphony_board::{EmbeddingStats, Store};
 
-struct Fake {
+pub(super) struct Fake {
     model: String,
     inputs: usize,
     broken: bool,

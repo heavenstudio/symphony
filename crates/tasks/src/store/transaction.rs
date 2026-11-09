@@ -7,11 +7,12 @@ use serde::de::DeserializeOwned;
 use serde_json::Value;
 
 /// How a transaction runs: a write behind the schema guard, its committed messages dispatched to
-/// their callbacks when `dispatch`; or with no guard, as a read, or the migration that checks the
-/// version itself.
+/// their callbacks when `dispatch`; staging preserves raw row values without dispatch; or with no
+/// guard, as a read, or the migration that checks the version itself.
 #[derive(Clone, Copy)]
 pub(super) enum Run {
     Guarded { dispatch: bool },
+    Staging,
     Unguarded,
 }
 
@@ -75,11 +76,16 @@ impl Store {
         mut vars: Value,
         run: Run,
     ) -> Result<T, Failure> {
-        unset_nulls(&mut vars);
+        if !matches!(run, Run::Staging) {
+            unset_nulls(&mut vars);
+        }
         let (guard, dispatch) = match run {
-            Run::Guarded { dispatch } => {
+            Run::Guarded { .. } | Run::Staging => {
                 schema::guard_vars(&mut vars, self.schema, &self.refusal, REFUSED);
-                (schema::GUARD, dispatch)
+                (
+                    schema::GUARD,
+                    matches!(run, Run::Guarded { dispatch: true }),
+                )
             }
             Run::Unguarded => ("", false),
         };

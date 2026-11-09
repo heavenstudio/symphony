@@ -42,6 +42,7 @@ mod relay;
 mod reserve;
 mod roles;
 mod schema;
+mod schema_copy;
 mod sessions;
 mod slots;
 mod sqlite;
