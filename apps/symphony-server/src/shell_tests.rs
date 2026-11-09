@@ -80,7 +80,11 @@ fn a_package_names_the_tab_and_sets_icon_tokens_stylesheet_and_layouts_under_the
         page.contains("<div id=\"main\"><section id=\"shell-notices\" aria-label=\"Server notices\"><p>banner</p></section>"),
         "{page}"
     );
-    assert!(page.find("shell-notices-style").unwrap() < page.find("</head>").unwrap());
+    assert!(
+        matches!((page.find("shell-notices-style"), page.find("</head>")),
+            (Some(style), Some(head)) if style < head),
+        "{page}"
+    );
 }
 
 #[test]
@@ -125,8 +129,11 @@ fn a_shell_without_its_marks_is_served_as_it_is_but_for_the_project() {
     let tree = project("[theme.tokens]\nprimary = \"#123\"\n");
     assert_eq!(page("plain text", &tree.root, "", ""), "plain text");
     let warning = page("plain text", &tree.root, "", "<b>x</b>");
-    assert!(warning.contains("aria-label=\"Server notices\"><b>x</b></section>"));
-    assert!(warning.ends_with("plain text"));
+    assert!(
+        warning.contains("aria-label=\"Server notices\"><b>x</b></section>"),
+        "{warning}"
+    );
+    assert!(warning.ends_with("plain text"), "{warning}");
 }
 
 #[test]
@@ -141,11 +148,18 @@ fn the_eager_shell_region_receives_the_warning_once_without_repeating_styles() {
     );
     let warning = crate::orphans::banner(1);
     let page = page(&shell, &tree.root, "", &warning);
-    assert_eq!(page.matches("id=\"shell-notices-style\"").count(), 1);
-    assert_eq!(page.matches("id=\"shell-notices\"").count(), 1);
-    assert!(page.contains(&format!(
-        "aria-label=\"Server notices\">{warning}</section>"
-    )));
+    assert_eq!(
+        page.matches("id=\"shell-notices-style\"").count(),
+        1,
+        "{page}"
+    );
+    assert_eq!(page.matches("id=\"shell-notices\"").count(), 1, "{page}");
+    assert!(
+        page.contains(&format!(
+            "aria-label=\"Server notices\">{warning}</section>"
+        )),
+        "{page}"
+    );
 }
 
 #[test]
@@ -157,5 +171,5 @@ fn an_older_shell_with_body_attributes_keeps_the_notice_in_its_body() {
         "",
         "warning",
     );
-    assert!(page.contains("<body class=\"old\"><section id=\"shell-notices\" aria-label=\"Server notices\">warning</section>"));
+    assert!(page.contains("<body class=\"old\"><section id=\"shell-notices\" aria-label=\"Server notices\">warning</section>"), "{page}");
 }

@@ -5,8 +5,22 @@ use super::{
 };
 use serde_json::json;
 
+enum HeaderPresence {
+    Absent,
+    Present,
+}
+
+fn wait_for(browser: &mut Chrome, condition: &str) {
+    assert!(
+        browser.wait_for(condition, SHOWN),
+        "{condition}\n{}",
+        browser.eval("({url:location.href, navigation:document.documentElement.dataset.navigation, panelReady:window.reviewPanelReady === true, panelError:document.querySelector('#panel-error')?.textContent, body:document.body?.innerText.slice(0,4000)})")
+    );
+}
+
 /// Geometry and computed paint, independently of the notice's class names.
-fn contained(browser: &mut Chrome, header: bool) {
+fn contained(browser: &mut Chrome, header: HeaderPresence) {
+    let header = matches!(header, HeaderPresence::Present);
     let look = browser.eval(r#"(() => {
         const region = document.querySelector('#shell-notices');
         const notice = region.querySelector('[role=status], [role=alert]');
@@ -32,7 +46,7 @@ fn contained(browser: &mut Chrome, header: bool) {
 }
 
 fn warning(browser: &mut Chrome, count: usize) {
-    contained(browser, false);
+    contained(browser, HeaderPresence::Absent);
     let noun = if count == 1 {
         "process from test runs is"
     } else {
@@ -97,10 +111,10 @@ fn server_warnings_are_contained_before_hydration_and_across_native_navigation()
         let server = OneServer::with_orphans(board.address(), count);
         let Some(mut browser) = chrome() else { return };
         browser.open(&server.url("/api/front"));
-        assert!(browser.wait_for(
+        wait_for(
+            &mut browser,
             "fetch('/api/front').then(r=>r.json()).then(front=>!front.uncounted)",
-            SHOWN
-        ));
+        );
         assert_eq!(
             browser.eval("fetch('/api/front').then(r=>r.json()).then(front=>front.orphans)"),
             json!(count)
@@ -129,33 +143,42 @@ fn server_warnings_are_contained_before_hydration_and_across_native_navigation()
             json!({"value":false}),
         );
         browser.open(&server.url("/alpha/"));
-        assert!(browser.wait_for("document.documentElement.dataset.navigation === 'ready' && document.querySelector('.app-header') !== null", SHOWN));
+        wait_for(
+            &mut browser,
+            "document.documentElement.dataset.navigation === 'ready' && document.querySelector('.app-header') !== null",
+        );
         browser.eval("window.keptWarningPage = true; document.querySelector('header a[href=\"/tasks\"]').click()");
-        assert!(browser.wait_for("location.pathname === '/alpha/tasks' && document.documentElement.dataset.navigation === 'ready'", SHOWN));
+        wait_for(
+            &mut browser,
+            "location.pathname === '/alpha/tasks' && document.documentElement.dataset.navigation === 'ready'",
+        );
         assert_eq!(
             browser.eval("window.keptWarningPage"),
             json!(true),
             "navigation must retain the document"
         );
         if count > 0 {
-            contained(&mut browser, true);
+            contained(&mut browser, HeaderPresence::Present);
             // A wider page may keep the command on one line; the phone assertion above proves wrapping.
             browser.call(
                 "Emulation.setDeviceMetricsOverride",
                 json!({"width":390,"height":900,"deviceScaleFactor":1,"mobile":true}),
             );
-            contained(&mut browser, true);
+            contained(&mut browser, HeaderPresence::Present);
             if count == 1 {
                 screenshot(&mut browser, "server-warning-mobile");
             }
             browser.eval("history.back()");
-            assert!(browser.wait_for("location.pathname === '/alpha/' && document.documentElement.dataset.navigation === 'ready'", SHOWN));
-            contained(&mut browser, true);
+            wait_for(
+                &mut browser,
+                "location.pathname === '/alpha/' && document.documentElement.dataset.navigation === 'ready'",
+            );
+            contained(&mut browser, HeaderPresence::Present);
             browser.call(
                 "Emulation.setDeviceMetricsOverride",
                 json!({"width":1024,"height":900,"deviceScaleFactor":1,"mobile":false}),
             );
-            contained(&mut browser, true);
+            contained(&mut browser, HeaderPresence::Present);
             if count == 1 {
                 screenshot(&mut browser, "server-warning-desktop");
             }
@@ -179,20 +202,23 @@ fn shell_loading_errors_use_the_notice_region_and_retry_in_place() {
         json!({"urls":["*assets/review-*.js"]}),
     );
     browser.open(&site.url("/"));
-    assert!(browser.wait_for(
+    wait_for(
+        &mut browser,
         "document.querySelector('#shell-notices #module-error[role=alert] button') !== null",
-        SHOWN
-    ));
-    contained(&mut browser, false);
+    );
+    contained(&mut browser, HeaderPresence::Absent);
     browser.call("Network.setBlockedURLs", json!({"urls":[]}));
     browser.eval("document.querySelector('#module-error button').click()");
-    assert!(browser.wait_for("document.querySelector('.hero-title') !== null && !document.querySelector('#module-error')", SHOWN));
+    wait_for(
+        &mut browser,
+        "document.querySelector('.hero-title') !== null && !document.querySelector('#module-error')",
+    );
     fail_panel(&mut browser);
     browser.eval("document.querySelector('#panel-error button').click()");
-    assert!(browser.wait_for(
+    wait_for(
+        &mut browser,
         "window.reviewPanelReady === true && !document.querySelector('#panel-error')",
-        SHOWN
-    ));
+    );
 }
 
 /// A real failed module request with a visible alert, restored network and no loaded panel.
@@ -202,11 +228,11 @@ fn fail_panel(browser: &mut Chrome) {
         json!({"urls":["*assets/panel-*.js"]}),
     );
     browser.eval("document.querySelector('#quick-open').click()");
-    assert!(browser.wait_for(
+    wait_for(
+        browser,
         "document.querySelector('#shell-notices #panel-error[role=alert] button') !== null",
-        SHOWN
-    ));
-    contained(browser, true);
+    );
+    contained(browser, HeaderPresence::Present);
     assert_eq!(
         browser.eval("window.reviewPanelReady === true"),
         json!(false)
@@ -227,9 +253,9 @@ fn a_panel_recovered_by_activity_removes_its_failed_load_alert() {
     fail_panel(&mut browser);
     screenshot(&mut browser, "panel-event-error");
     browser.eval("dispatchEvent(new Event('review:activity-arrived'))");
-    assert!(browser.wait_for(
+    wait_for(
+        &mut browser,
         "window.reviewPanelReady === true && document.querySelector('#quick-text') !== null && !document.querySelector('#panel-error')",
-        SHOWN
-    ));
+    );
     screenshot(&mut browser, "panel-event-recovered");
 }

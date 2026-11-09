@@ -59,16 +59,16 @@ impl OneServer {
         std::os::unix::fs::symlink("/usr/bin/false", bin.join("tailscale")).unwrap();
         // A deterministic process table goes through the real census. No host process is
         // manufactured or stopped; the server only counts these fixture rows.
-        use std::os::unix::fs::PermissionsExt as _;
         let table: String = (0..count)
             .map(|i| format!("{} 1 /fixture/docs_server --root /gone\n", 100_000 + i))
             .collect();
-        std::fs::write(
-            bin.join("ps"),
-            format!("#!/bin/sh\nprintf '%s' '{table}'\n"),
-        )
-        .unwrap();
-        std::fs::set_permissions(bin.join("ps"), std::fs::Permissions::from_mode(0o755)).unwrap();
+        // Prime the shared executable before the census's readiness bound; each case's
+        // rows remain interpreter input instead of a freshly assessed executable.
+        super::fixture_script::write(
+            &bin.join("ps"),
+            &format!("#!/bin/sh\nprintf '%s' '{table}'\n"),
+            false,
+        );
         let path = format!("{}:/usr/bin:/bin", bin.display());
         for (id, file) in [("alpha", ALPHA), ("pantry", PANTRY)] {
             let root = scratch.join(id);
