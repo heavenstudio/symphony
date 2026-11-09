@@ -142,11 +142,14 @@ IF record::exists(type::record('session', $handle)) { THROW 'stale' };
 CREATE type::record('session', $handle) CONTENT $row RETURN NONE;";
 
 /// What `bind_agent` decides on.
-const BINDING: &str = "RETURN {
+const BINDING: &str = "
+LET $held = type::record('session', $handle).agent;
+RETURN {
     row: (SELECT * OMIT id FROM ONLY type::record('session', $handle)),
     barred: record::exists(type::record('barred_key', $agent)),
     bound: (SELECT VALUE handle FROM session WHERE agent = $agent AND left_at = NONE),
     in_process: type::record('callback_state', ['binding', $agent]).in_process,
+    held_in_process: IF $held = NONE { NONE } ELSE { type::record('callback_state', ['binding', $held]).in_process },
     native: type::record('callback_state', $handle).address != NONE,
 };";
 
@@ -160,7 +163,11 @@ IF $row.pid != $pid OR $row.host != $host { THROW 'stale' };";
 // Session rows stay compatible with older readers. The hook knows whether this key is a full
 // session or an in-process agent; keep that provenance in callback metadata, never in session.
 const CHANNEL_BIND: &str = "
-IF !$full AND type::record('callback_state', $handle).address != NONE { THROW 'stale' };
+LET $held = type::record('session', $handle).agent;
+LET $held_in_process = IF $held = NONE { NONE } ELSE { type::record('callback_state', ['binding', $held]).in_process };
+IF !$full AND (type::record('callback_state', $handle).address != NONE
+    OR type::record('callback_state', ['binding', $agent]).in_process = false
+    OR $held_in_process = false) { THROW 'stale' };
 UPSERT type::record('callback_state', ['binding', $agent]) SET in_process = (in_process ?? false) OR !$full RETURN NONE;
 IF !$full {
     DELETE type::record('callback_state', $handle) RETURN NONE;
@@ -310,6 +317,8 @@ impl Store {
     /// handle it names: naming another (registering or relaying for a child) moves nothing. One that
     /// names a monitored handle is a monitored session: it lets go of what it held and is barred, so
     /// what it names after (a child's handle) is never kept alive by its calls.
+    /// An in-process call cannot replace or reclassify a binding recorded as a full session,
+    /// including before that session registers a native callback.
     pub fn bind_agent(&self, agent: &str, handle: &str, session: bool) -> Result<bool, Error> {
         #[derive(Deserialize)]
         struct Found {
@@ -317,6 +326,7 @@ impl Store {
             barred: bool,
             bound: Vec<String>,
             in_process: Option<bool>,
+            held_in_process: Option<bool>,
             native: bool,
         }
         self.retrying(|| {
@@ -324,7 +334,11 @@ impl Store {
             let Some(row) = found.row else {
                 return Ok(false);
             };
-            if !session && found.native {
+            if !session
+                && (found.native
+                    || found.in_process == Some(false)
+                    || found.held_in_process == Some(false))
+            {
                 return Ok(false);
             }
             if row.agent.as_deref() == Some(agent) {

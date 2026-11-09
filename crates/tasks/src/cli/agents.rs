@@ -35,7 +35,7 @@ use crate::health::{FINISHED, Health};
 use crate::pyjson::Py;
 use crate::rows::TaskSessionRow;
 use crate::{Binding, Error, Session, Store, Task};
-pub use place::{Began, PROCESS, PROCESS_SCAN_SECONDS, Process};
+pub use place::{Began, PROCESS, PROCESS_SCAN_SECONDS, Process, ProcessScan};
 use place::{Stay, resolve, waited_on};
 use std::cell::{OnceCell, RefCell};
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -92,7 +92,7 @@ pub struct Probes<'a> {
     pub branch_of: BranchOf<'a>,
     /// Every live process the machine lists, where it works and when it started, asked only for an
     /// in-process agent gone quiet in a worktree of its own.
-    pub processes: Probe<'a, Vec<Process>>,
+    pub processes: Probe<'a, ProcessScan>,
 }
 
 /// What a `running_test` agent runs.
@@ -481,7 +481,7 @@ pub fn describe_board(
         }
     }
     // The machine's processes are listed at most once a view, and only for a quiet in-process agent.
-    let scanned: OnceCell<Answer<Vec<Process>>> = OnceCell::new();
+    let scanned: OnceCell<Answer<ProcessScan>> = OnceCell::new();
     let scan = || scanned.get_or_init(|| (probes.processes)()).clone();
     let mut agents = Vec::new();
     for row in rows {

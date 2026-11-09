@@ -8,6 +8,8 @@ use symphony_board::cli::agents::{Began, PROCESS_SCAN_SECONDS};
 use symphony_board::sys::Boottime;
 
 mod clock;
+mod completeness;
+mod provenance;
 
 /// A linked worktree's top folder (its `.git` a file naming a git dir checked out on `sim/jump`), in
 /// a scratch folder of its own, resolved.
@@ -87,7 +89,10 @@ impl Case {
 
     /// The machine lists these processes.
     fn processes_in(&self, listed: Vec<Process>) {
-        *self.processes.borrow_mut() = Some(listed);
+        *self.processes.borrow_mut() = Some(ProcessScan {
+            listed,
+            complete: true,
+        });
     }
 
     /// Past the line where a quiet executor's work is claimable.
@@ -487,8 +492,10 @@ fn a_long_lived_readers_process_listing_is_kept_a_while_by_its_store() {
     // A listing that failed is kept the same while: it is asked again once the window passes.
     *c.processes.borrow_mut() = None;
     c.f.advance(PROCESS_SCAN_SECONDS);
-    assert!((probes.processes)().is_err());
-    assert!((probes.processes)().is_err());
+    for _ in 0..2 {
+        let answer = (probes.processes)();
+        assert!(answer.is_err(), "{answer:?}");
+    }
     assert_eq!(c.listed.get(), 4);
 }
 
@@ -501,7 +508,10 @@ fn a_slow_listing_is_kept_from_when_it_ended() {
         processes: Box::new(|| {
             c.listed.set(c.listed.get() + 1);
             c.f.advance(PROCESS_SCAN_SECONDS + 1.0);
-            Ok(Vec::new())
+            Ok(ProcessScan {
+                listed: Vec::new(),
+                complete: true,
+            })
         }),
         ..c.probes()
     }
@@ -529,6 +539,9 @@ fn a_listing_that_panicked_leaves_the_kept_one_readable() {
     c.processes_in(Vec::new());
     assert_eq!(
         c.f.store.kept_scan(&*probes.processes).unwrap(),
-        Vec::<Process>::new()
+        ProcessScan {
+            listed: Vec::new(),
+            complete: true
+        }
     );
 }

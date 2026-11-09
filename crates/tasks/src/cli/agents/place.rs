@@ -39,6 +39,13 @@ pub struct Process {
     pub started: Option<Began>,
 }
 
+/// Readable process evidence, with absence authoritative only when the listing is complete.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ProcessScan {
+    pub listed: Vec<Process>,
+    pub complete: bool,
+}
+
 /// When a listed process started, on the clock the kernel dates it by.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Began {
@@ -173,16 +180,17 @@ impl Stay<'_> {
 /// What the machine's processes (`scan`, listed once a view) say of an in-process agent gone quiet
 /// in `tree` (resolved) after `stay` there: its health and what it waits on. Live on a process
 /// working there that began in its stay, by the clock its start is dated on; unknown when they
-/// cannot be listed, or when one working there may be its but cannot be told to be: its start
+/// cannot be listed completely, or when one working there may be its but cannot be told to be: its start
 /// cannot be read, or it began while the board's clock had gone back (after the earliest time a
 /// call of its there read, before it came), or its start is dated since boot and the call that
 /// would bound it read no clock since boot. None when `tree` is no linked worktree (the main
 /// checkout, which every agent registered there shares, or a folder in no repository) or no process
-/// working there can be its.
+/// working there can be its in a complete listing. Readable ownership proves Live even in an
+/// incomplete listing.
 pub(super) fn waited_on(
     tree: &str,
     stay: &Stay,
-    scan: &dyn Fn() -> Answer<Vec<Process>>,
+    scan: &dyn Fn() -> Answer<ProcessScan>,
 ) -> Option<(Health, Detail)> {
     let tree = Path::new(tree);
     if tree.as_os_str().is_empty() || !crate::git::linked(tree) {
@@ -190,15 +198,16 @@ pub(super) fn waited_on(
     }
     let (health, phase) = match scan() {
         Err(_) => (Health::Unknown, "unknown"),
-        Ok(listed) => {
-            let whose: Vec<Whose> = listed
+        Ok(scan) => {
+            let whose: Vec<Whose> = scan
+                .listed
                 .iter()
                 .filter(|p| works_in(&p.cwd, tree))
                 .map(|p| stay.whose(p.started.as_ref()))
                 .collect();
             if whose.contains(&Whose::Its) {
                 (Health::Live, "running")
-            } else if whose.contains(&Whose::Maybe) {
+            } else if !scan.complete || whose.contains(&Whose::Maybe) {
                 (Health::Unknown, "unknown")
             } else {
                 return None;

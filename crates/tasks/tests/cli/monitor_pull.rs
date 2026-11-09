@@ -279,7 +279,12 @@ fn an_in_process_child_whose_worktree_holds_a_live_process_is_neither_lost_nor_o
     let began = m.now.get();
     m.watch(&orch, long_waits_past_the_lost_line(), &idle);
     drop(waited);
-    assert!(m.now.get() - began > LIVE_SECONDS + STALE_SECONDS);
+    assert!(
+        m.now.get() - began > LIVE_SECONDS + STALE_SECONDS,
+        "now={}, began={began}, required={}",
+        m.now.get(),
+        LIVE_SECONDS + STALE_SECONDS
+    );
     assert_eq!(
         m.health(&child),
         "lost",

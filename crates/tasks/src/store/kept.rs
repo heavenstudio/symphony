@@ -2,13 +2,13 @@
 //! live process, where it works and when it started, which a quiet in-process agent is judged by.
 
 use super::Store;
-use crate::cli::agents::{Answer, PROCESS_SCAN_SECONDS, Process};
+use crate::cli::agents::{Answer, PROCESS_SCAN_SECONDS, ProcessScan};
 use std::sync::Mutex;
 
 /// The machine's processes as a long-lived reader last listed them, and when that listing ended by
 /// its store's clock ([`Store::kept_scan`]).
 #[derive(Default)]
-pub(super) struct Scan(Mutex<Option<(f64, Answer<Vec<Process>>)>>);
+pub(super) struct Scan(Mutex<Option<(f64, Answer<ProcessScan>)>>);
 
 impl Store {
     /// What `scan` answers, asked at most once in [`PROCESS_SCAN_SECONDS`] of this store's clock: a
@@ -16,7 +16,7 @@ impl Store {
     /// second or so, and listing every process is a machine-wide `lsof`. A listing is dated when it
     /// ends, so one that took long still spares the views right after it another. An answer from a
     /// clock that went back is not kept.
-    pub fn kept_scan(&self, scan: &dyn Fn() -> Answer<Vec<Process>>) -> Answer<Vec<Process>> {
+    pub fn kept_scan(&self, scan: &dyn Fn() -> Answer<ProcessScan>) -> Answer<ProcessScan> {
         // A panic in `scan` poisons the lock with the kept listing untouched, since it is only ever
         // replaced whole, after `scan` returns: what it holds is a listing as it was taken, safe to
         // read and to replace.

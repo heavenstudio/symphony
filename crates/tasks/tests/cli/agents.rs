@@ -7,7 +7,8 @@ use serde_json::{Value, json};
 use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, BTreeSet};
 use symphony_board::cli::agents::{
-    self, Agent, Detail, MESSAGE_CHARS, Pane, Probes, Process, Run, View, describe, running_tests,
+    self, Agent, Detail, MESSAGE_CHARS, Pane, Probes, Process, ProcessScan, Run, View, describe,
+    running_tests,
 };
 use symphony_board::health::{LIVE_SECONDS, RESERVE_SECONDS, STALE_SECONDS};
 use symphony_board::{Beat, Health, NewLaunch, NewSession, NewTask};
@@ -59,7 +60,7 @@ struct Case {
     branches: RefCell<BTreeMap<String, String>>,
     /// The processes the machine lists (None: they cannot be listed), and how many times they were
     /// asked for.
-    processes: RefCell<Option<Vec<Process>>>,
+    processes: RefCell<Option<ProcessScan>>,
     listed: Cell<usize>,
     orch: String,
 }
@@ -76,7 +77,10 @@ impl Case {
             panes: RefCell::new(Some(Vec::new())),
             runs: RefCell::new(Some(Vec::new())),
             branches: RefCell::new(BTreeMap::new()),
-            processes: RefCell::new(Some(Vec::new())),
+            processes: RefCell::new(Some(ProcessScan {
+                listed: Vec::new(),
+                complete: true,
+            })),
             listed: Cell::new(0),
             orch,
         }
@@ -683,7 +687,10 @@ fn every_agent_with_a_run_is_answered_in_one_view() {
         branch_of: Box::new(|_| Ok(String::new())),
         processes: Box::new(|| {
             asked.borrow_mut().push("processes");
-            Ok(Vec::new())
+            Ok(ProcessScan {
+                listed: Vec::new(),
+                complete: true,
+            })
         }),
     };
     let found = running_tests(&c.f.store, &probes).unwrap();

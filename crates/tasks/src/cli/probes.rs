@@ -3,7 +3,7 @@
 //! working directory of every process, and whether a task's branch already landed on main.
 
 use super::Env;
-use super::agents::{Answer, Began, Pane, Probes, Process, Run};
+use super::agents::{Answer, Began, Pane, Probes, Process, ProcessScan, Run};
 use crate::git;
 use crate::launch::hc::{Binary, Hc};
 use crate::sys::{self, Command};
@@ -56,13 +56,16 @@ fn machine_with_common(env: &Env, common: Result<PathBuf, String>) -> Probes<'_>
 /// Every process `lsof` lists, where it works as the worktree sweep reads it (a sessionless `lsof`,
 /// [`process_cwd::pid_cwds_with`]) and when it started as the kernel stamped it, on the clock it
 /// dates starts by ([`sys::process_starts`]), none when that cannot be read; one that ended since it
-/// was listed is left out. A listing that cannot be read, or lists nothing, cannot say.
-pub fn processes() -> Answer<Vec<Process>> {
-    let listed = process_cwd::pid_cwds_with(sys::command("lsof"))
+/// was listed is left out. Readable rows can prove presence even when a partial listing cannot
+/// prove absence.
+pub fn processes() -> Answer<ProcessScan> {
+    let scan = process_cwd::pid_cwds_with(sys::command("lsof"))
         .ok_or_else(|| "lsof cannot list the processes' working directories".to_string())?;
-    let pids: Vec<i64> = listed.iter().map(|(pid, _)| *pid).collect();
+    let pids: Vec<i64> = scan.listed.iter().map(|(pid, _)| *pid).collect();
     let starts = sys::process_starts(&pids);
-    Ok(listed
+    let complete = scan.complete;
+    let listed = scan
+        .listed
         .into_iter()
         .zip(starts)
         .filter_map(|((_, cwd), start)| {
@@ -74,7 +77,8 @@ pub fn processes() -> Answer<Vec<Process>> {
             };
             Some(Process { cwd, started })
         })
-        .collect())
+        .collect();
+    Ok(ProcessScan { listed, complete })
 }
 
 /// The main checkout of the repository `cwd` is in, whichever worktree that is: the common dir's

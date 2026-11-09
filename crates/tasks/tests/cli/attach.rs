@@ -204,7 +204,10 @@ fn counting(asked: &Arc<Mutex<Vec<&'static str>>>) -> Probes<'static> {
         branch_of: Box::new(|_| Ok(String::new())),
         processes: Box::new(move || {
             listed.lock().unwrap().push("processes");
-            Ok(Vec::new())
+            Ok(symphony_board::cli::agents::ProcessScan {
+                listed: Vec::new(),
+                complete: true,
+            })
         }),
     }
 }

@@ -10,6 +10,8 @@ use symphony_board::cli::probes::{branch_of, hc_terminals, landed, machine, slot
 use symphony_board::git::{checkout, linked};
 use symphony_board::sys::{Command, boot_clock};
 
+mod completeness;
+
 /// A run's fields, in `Run`'s order, for comparing several at once.
 type RunFields<'a> = (
     i64,
@@ -522,7 +524,7 @@ fn the_machine_lists_each_process_with_its_working_directory_and_when_it_started
     let _ = working.kill();
     let _ = working.wait();
     let listed = listed.expect("lsof lists the working directories");
-    let there: Vec<_> = listed.iter().filter(|p| p.cwd == folder).collect();
+    let there: Vec<_> = listed.listed.iter().filter(|p| p.cwd == folder).collect();
     assert_eq!(there.len(), 1, "{} in {listed:?}", folder.display());
     // Stamped by the wall clock to the microsecond on macOS; on Linux in clock ticks since boot, in
     // this boot, the clock `/proc/uptime` reads to the hundredth.
@@ -551,7 +553,10 @@ fn the_machine_lists_each_process_with_its_working_directory_and_when_it_started
     // This process, still running, is listed too: its working directory shared with the others.
     let here = std::env::current_dir().unwrap().canonicalize().unwrap();
     assert!(
-        listed.iter().any(|p| p.cwd == here && p.started.is_some()),
+        listed
+            .listed
+            .iter()
+            .any(|p| p.cwd == here && p.started.is_some()),
         "{} not among {listed:?}",
         here.display()
     );

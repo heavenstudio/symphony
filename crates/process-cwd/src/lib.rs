@@ -1,5 +1,6 @@
 //! Working-directory scans shared by the board's worktree sweep and the cargo cache sweep.
-//! Unreadable scans keep trees; an empty global listing is unreadable. Partial listings remain useful.
+//! Path-only scans keep trees when unreadable or empty. PID-aware scans distinguish readable
+//! presence from completeness, so partial listings remain useful without proving absence.
 //! Their `lsof` starts without a fork and is read through close-on-exec pipes ([`spawn`]), the
 //! helper the board's children share, since this leaf is the one crate both sides link. A caller
 //! that chooses lsof's environment hands the scan its own command ([`process_cwds_with`],
@@ -13,9 +14,11 @@ use std::time::Duration;
 
 mod close_on_fork;
 pub mod exit;
+mod pid;
 pub mod spawn;
 
 pub use close_on_fork::close_on_fork;
+pub use pid::PidCwds;
 pub use spawn::Command;
 
 /// How long lsof may take to list every process's working directory.
@@ -35,11 +38,12 @@ pub fn process_cwds_with(mut lsof: Command) -> Option<Vec<PathBuf>> {
 }
 
 /// [`process_cwds_with`], each working directory with the pid of the process working there, so a
-/// caller can ask when that process started.
-pub fn pid_cwds_with(mut lsof: Command) -> Option<Vec<(i64, PathBuf)>> {
+/// caller can ask when that process started. Readable rows survive a failed or partial listing;
+/// only a complete listing can prove a process absent. None means the command could not finish.
+pub fn pid_cwds_with(mut lsof: Command) -> Option<PidCwds> {
     lsof.args(["-Fpn", "-d", "cwd"]);
     let done = within(&mut lsof, LSOF_PATIENCE)?;
-    parse_pid_cwds(&done.stdout)
+    Some(pid::read(&done))
 }
 
 /// Whether any process works in `tree` or a directory below it. The final removal check selects
@@ -106,22 +110,6 @@ fn parse_cwds(stdout: &[u8]) -> Option<Vec<PathBuf>> {
     (!found.is_empty()).then_some(found)
 }
 
-/// `lsof -Fpn` read as [`parse_cwds`] reads it, each path with the pid of the `p` line before it; a
-/// path under no readable pid is left out.
-fn parse_pid_cwds(stdout: &[u8]) -> Option<Vec<(i64, PathBuf)>> {
-    let text = String::from_utf8_lossy(stdout);
-    let mut pid = None;
-    let mut found = Vec::new();
-    for line in text.lines() {
-        if let Some(digits) = line.strip_prefix('p') {
-            pid = digits.parse::<i64>().ok().filter(|pid| *pid > 0);
-        } else if let (Some(path), Some(pid)) = (line.strip_prefix('n'), pid) {
-            found.push((pid, PathBuf::from(path)));
-        }
-    }
-    (!found.is_empty()).then_some(found)
-}
-
 /// `command`'s output, if it starts and ends within `limit`; else it is killed, by its own pid. Read
 /// through [`spawn::pipe`]s, so a child another thread spawns meanwhile cannot hold its end.
 fn within(command: &mut Command, limit: Duration) -> Option<Output> {
@@ -183,31 +171,47 @@ mod tests {
     #[test]
     fn each_cwd_is_read_with_the_pid_listed_before_it() {
         assert_eq!(
-            parse_pid_cwds(b"p12\nfcwd\nn/work/a\np7\nfcwd\nn/work/b\n"),
-            Some(vec![
-                (12, PathBuf::from("/work/a")),
-                (7, PathBuf::from("/work/b"))
-            ])
-        );
-        assert_eq!(
-            parse_pid_cwds(b"n/no/pid\npbad\nn/bad/pid\np0\nn/zero\np3\nn/work/c\n"),
-            Some(vec![(3, PathBuf::from("/work/c"))])
-        );
-        assert_eq!(parse_pid_cwds(b"p1\nfcwd\n"), None);
-        assert_eq!(
             pid_cwds_with(stand_in("printf 'p5\\nn%s\\n' \"$*\"")),
-            Some(vec![(5, PathBuf::from("-Fpn -d cwd"))])
+            Some(PidCwds {
+                listed: vec![(5, PathBuf::from("-Fpn -d cwd"))],
+                complete: true,
+            })
         );
         assert_eq!(pid_cwds_with(Command::new("/no/such/lsof")), None);
         let here = std::env::current_dir().unwrap().canonicalize().unwrap();
         let mine = i64::from(std::process::id());
         let seen = pid_cwds_with(Command::new("lsof")).unwrap();
         assert!(
-            seen.iter()
+            seen.listed
+                .iter()
                 .any(|(pid, cwd)| *pid == mine && cwd.canonicalize().ok().as_ref() == Some(&here)),
-            "{}",
-            here.display()
+            "here={here:?}, mine={mine}, seen={seen:?}"
         );
+    }
+
+    #[test]
+    fn pid_listing_retains_positive_rows_and_separates_authoritative_absence() {
+        for (script, rows, complete) in [
+            ("printf 'p5\\nn/work/a\\n'", true, true),
+            ("printf 'p5\\nn/work/a\\n'; exit 1", true, false),
+            (
+                "printf 'p5\\nn/work/a\\n'; printf 'Permission denied' >&2",
+                true,
+                false,
+            ),
+            ("exit 0", false, true),
+            ("exit 1", false, false),
+            ("exit 2", false, false),
+            ("printf 'Permission denied' >&2", false, false),
+        ] {
+            let scan = pid_cwds_with(stand_in(script)).unwrap();
+            let listed = if rows {
+                vec![(5, PathBuf::from("/work/a"))]
+            } else {
+                vec![]
+            };
+            assert_eq!(scan, PidCwds { listed, complete }, "{script}");
+        }
     }
 
     #[test]

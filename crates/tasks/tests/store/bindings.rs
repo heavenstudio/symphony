@@ -7,6 +7,8 @@ use std::collections::BTreeMap;
 use symphony_board::sys::Boottime;
 use symphony_board::{Beat, Binding, NewSession};
 
+mod provenance;
+
 /// What the board keeps of the key the session `h` beats through.
 fn binding_of(f: &Fixture, h: &str) -> Binding {
     f.store.agent_bindings().unwrap().remove(h).unwrap()
