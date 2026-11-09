@@ -28,7 +28,9 @@ impl Route {
                 normalized.push(ch);
             }
         }
-        let path = normalized.as_str();
+        // The one server serves the project under its base, `/<id>`: the route is below it.
+        let project = crate::project::current();
+        let path = project.strip(normalized.as_str());
         let mut path = path.trim_start_matches('/');
         path = path.strip_prefix("app/").unwrap_or(path);
         let (scope, path) = if let Some(rest) = path.strip_prefix('@') {
@@ -39,7 +41,6 @@ impl Route {
         };
         let slashed = path.strip_prefix("doc/").unwrap_or(path);
         let path = slashed.strip_suffix('/').unwrap_or(slashed);
-        let project = crate::project::current();
         // the route as the server answers it: a trailing slash names a folder page, whatever its
         // name holds
         let named = match crate::project::nav_page(&project.nav, path) {

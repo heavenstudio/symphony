@@ -2,6 +2,7 @@
 //! transaction, replacing what the board held, and read back in the same shape; the move from
 //! SQLite is a copy that records itself and refuses a board written since.
 
+use super::transaction::Run;
 use super::{Error, REFUSED, Store, values};
 use crate::cbor;
 use crate::rows::Dump;
@@ -46,10 +47,7 @@ impl Store {
             })
             .map(|table| format!("REMOVE TABLE IF EXISTS {table};"))
             .collect();
-        if !remove.is_empty() {
-            self.retrying(|| Ok(self.client.query(&remove, json!({}))?))?;
-        }
-        Ok(())
+        self.staging_write(&remove, json!({}))
     }
 
     fn copy_into(&self, dump: &Dump, from: Option<&str>) -> Result<(), Error> {
@@ -163,46 +161,64 @@ impl Store {
             });
             self.retrying(|| self.transact::<Value>(&swap, vars.clone())).map(|_| ())
         });
-        if copied.is_err() {
+        copied.map_err(|error| {
             let remove: String = tables
                 .iter()
                 .map(|(table, _)| format!("REMOVE TABLE IF EXISTS {staging}_{table};"))
                 .collect();
-            let _ = self.client.query(&remove, json!({}));
-        }
-        copied
+            self.cleanup_staging(&remove, error)
+        })
     }
 
     /// Every row of `tables` into schemaless tables named `{staging}_{table}`, each request at most
     /// `CHUNK_BYTES`: a board is bigger than the server takes in one. The copy's one transaction then
-    /// moves them in.
+    /// moves them in. Each request starts with the schema guard in its transaction, so a migration
+    /// between requests refuses the next batch before it writes.
     pub(super) fn stage(&self, staging: &str, tables: &[(&str, Vec<Value>)]) -> Result<(), Error> {
-        let send = |sql: &str, vars: Value| {
-            self.retrying(|| Ok(self.client.query(sql, vars.clone())?))
-                .map(|_| ())
-        };
         let define: String = tables
             .iter()
             .map(|(table, _)| format!("DEFINE TABLE {staging}_{table} SCHEMALESS;"))
             .collect();
-        send(&define, json!({}))?;
+        self.staging_write(&define, json!({}))?;
         for (table, rows) in tables {
             let insert = format!("INSERT INTO {staging}_{table} $rows RETURN NONE;");
             let (mut chunk, mut bytes) = (Vec::new(), 0);
             for row in rows {
                 let size = cbor::encode(row).len();
                 if bytes + size > CHUNK_BYTES && !chunk.is_empty() {
-                    send(&insert, json!({"rows": std::mem::take(&mut chunk)}))?;
+                    self.staging_write(&insert, json!({"rows": std::mem::take(&mut chunk)}))?;
                     bytes = 0;
                 }
                 chunk.push(json!({"row": row}));
                 bytes += size;
             }
             if !chunk.is_empty() {
-                send(&insert, json!({"rows": chunk}))?;
+                self.staging_write(&insert, json!({"rows": chunk}))?;
             }
         }
         Ok(())
+    }
+
+    /// Staging has no callback work, but each mutation must be fenced in its own transaction.
+    fn staging_write(&self, body: &str, vars: Value) -> Result<(), Error> {
+        self.retrying(|| {
+            self.run_transaction::<Value>(
+                &format!("{body}\nRETURN NONE;"),
+                vars.clone(),
+                Run::Staging,
+            )
+        })
+        .map(|_| ())
+    }
+
+    /// Keep the original failure and report cleanup's failure too. A newer writer owns any staging
+    /// left after a migration; this store may not remove it.
+    pub(super) fn cleanup_staging(&self, remove: &str, mut error: Error) -> Error {
+        if let Err(cleanup) = self.staging_write(remove, json!({})) {
+            let (Error::Refused(message) | Error::Db(message)) = &mut error;
+            let _ = write!(message, "; staging cleanup failed: {cleanup}");
+        }
+        error
     }
 
     /// Every row of the board, in the shape the copy reads, each table in the order of its key: what a

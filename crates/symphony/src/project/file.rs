@@ -13,6 +13,7 @@ use serde::Deserialize;
 
 use super::FILE;
 use super::board::FileBoard;
+use super::theme::FileTheme;
 use crate::landing::Generator;
 use toml::de::DeTable;
 
@@ -143,17 +144,6 @@ pub(super) struct FileEntrypoint {
 #[serde(default)]
 pub(super) struct FilePlugins {
     pub(super) crates: Vec<String>,
-    #[serde(flatten)]
-    pub(super) unknown: Unknown,
-}
-
-/// The `[theme]` table.
-#[derive(Default, Deserialize)]
-#[serde(default)]
-pub(super) struct FileTheme {
-    pub(super) package: Option<String>,
-    pub(super) icon: Option<String>,
-    pub(super) stylesheet: Option<String>,
     #[serde(flatten)]
     pub(super) unknown: Unknown,
 }

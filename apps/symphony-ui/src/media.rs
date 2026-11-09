@@ -62,6 +62,8 @@ pub fn MockupFrame(src: String, caption: String, #[props(default)] thumb: bool) 
         return rsx! {};
     }
     let caption = label(&src, &caption).to_string();
+    // A sandboxed frame sends no Referer: its address names the project itself.
+    let src = crate::project::current().here(&src);
     rsx! {
         span { class: if thumb { "mockup-shell thumb" } else { "mockup-shell" },
             ..reveal,

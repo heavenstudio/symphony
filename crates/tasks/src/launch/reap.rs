@@ -1,11 +1,14 @@
-//! Close the hc terminals of agents that sit idle with their board work finished: the periodic
-//! sweep.
+//! Close the hc terminals of agents that sit idle with their board work finished, or that have sat
+//! idle at their prompt an hour, and remove the terminals whose program ended: the periodic sweep.
 //!
 //! Owner, 2026-10-07: "there seems to be a ton of claude sessions doing nothing. Kill them if the work
-//! has finished (and this should happen periodically, not something that needs a reminder)". A task
-//! that becomes done or cancelled closes its own sessions at once ([`super::finish`], from `just
-//! tasks move/verdict/done`); this sweep catches the rest. `just tasks reap` is one sweep;
-//! Symphony (`just symphony`) runs it every [`REAP_SECONDS`].
+//! has finished (and this should happen periodically, not something that needs a reminder)"; and
+//! 2026-11-08: "Sessions that are done and aren't needed soon should be closed then resumed. Only
+//! sessions doing active work or that will soon (less than one hour) have active work should be
+//! kept open". A task that becomes done or cancelled closes its own sessions at once
+//! ([`super::finish`], from `just tasks move/verdict/done`); this sweep catches the rest. `just
+//! tasks reap` is one sweep; Symphony (`just symphony`) runs it every [`REAP_SECONDS`]; `just clean`
+//! runs cleanup and one sweep at once.
 //!
 //! Every sweep holds `reap.json.lock` (`flock`, not waited on), so two sweeps never overlap: a second
 //! app's timer, or `just tasks reap`, that comes while one runs sweeps nothing. Sweeps that follow
@@ -14,28 +17,44 @@
 //! are in `sf-tasks/` of the git common dir, beside the board's server ([`state_path`]). Nothing is
 //! printed into an agent's monitor; each close is one line on a task thread.
 //!
-//! Only this board's terminals (`sf.board`) are swept. One is closed (killed, then removed) when
-//! every one of these holds at two sweeps in a row, the first at least [`REAP_SECONDS`] before the
-//! second (so an agent just launched, or between two steps, is never closed):
+//! Only this board's terminals (`sf.board`) are swept. A live one is closed (killed, then removed)
+//! when every one of these holds at two sweeps in a row, the first at least its idle wait before
+//! the second (so an agent just launched, or between two steps, is never closed):
 //!
 //! - hc calls its agent `idle` or `done`, or `blocked` on the folder-trust prompt (a launch that
 //!   never started);
 //! - it is named (`claude -n HANDLE`, else its `sf.handle` label, else its terminal name) for a
 //!   board session that is not an orchestrator or a chat;
 //! - it is not the calling terminal (`HC_TERMINAL_ID`) or the caller's handle;
-//! - neither that handle nor any session under it (`parent`, at any depth, including through a
-//!   session that left) holds an executor role on an `in_progress`, `blocked` or `review` task or a
-//!   reviewer role on a task in `review`: an executor in review waits on its reviewers, whose
-//!   changes must reach it, and [`super::finish`] closes it once the task is done;
-//! - neither it nor its descendants has an unanswered addressed post, and no reviewer is waiting
-//!   for re-review after changes (a verdict or a landing changes message);
+//! - neither it nor any session under it (`parent`, at any depth, including through a session that
+//!   left) has an unanswered addressed post;
 //! - nothing runs under its agent but what is known to be harmless ([`procs::reap_busy_reason`]):
-//!   MCP helpers (Codex's REPL helper by its configured path, and the ChatGPT app's computer-use
-//!   REPL by its exact node and module path), caffeinate, a board command or monitor
-//!   (`just tasks…`, the `tasks` binary).
+//!   MCP helpers (Codex's REPL helper by its configured path, the ChatGPT app's computer-use REPL by
+//!   its exact node and module path, Codex's code-mode host by its standalone release's layout),
+//!   caffeinate, a board command or monitor (`just tasks…`, the `tasks` binary).
 //!   Anything else, whatever it is, is work. A terminal whose processes cannot be read is kept.
 //! - the owner is not looking at it ([`super::screen`]): not in the tab the Herdr app shows, not
 //!   the agent it shows, not held over them; when the window cannot say, it is kept.
+//!
+//! Its idle wait is [`REAP_SECONDS`] when its work is finished, and [`IDLE_HOUR`] while it, or a
+//! session under it, holds a role on open work: an executor of a task `in_progress`, `blocked` or
+//! in `review`, a reviewer of one in `review` or awaiting its re-review after its changes verdict
+//! (a verdict, or a landing's changes message). The hour starts again when the role or its task's
+//! status changes, and runs from its agent's last tool call when that is later (`last_tool`, the
+//! beat), so work between two sweeps that each find it at its prompt counts. Its close says what
+//! brings it back (`work::Hold::closing`): a reviewer launch for the next tip resumes a reviewer, a
+//! changes verdict or a post addressed to it restores an executor, as the unanswered post's restore
+//! does.
+//!
+//! A terminal whose program ended is removed at the first sweep that finds it, out of the owner's
+//! sight, its open records (those naming that terminal) closed first with their restore line
+//! ([`ENDED`]); one whose records are closed already goes without a line, and one whose program
+//! runs again by the remove's last look stays, its records open again. A kill waits for its
+//! terminal to end before the remove ([`Hc::end`]).
+//!
+//! Every terminal of the board a sweep leaves open is in [`Sweep::kept`], saying why. `reap.json`
+//! keeps the reason last said of each idle one (`said`), so the reap command tells the Symphony's
+//! log (its stderr) of each once per change of reason; a dry run lists them all.
 //!
 //! Native channels are checked during the sweep, independently of tool activity: a Codex thread is
 //! present while hc runs Codex in its terminal ([`crate::Presence`]). That does not exempt a
@@ -52,35 +71,65 @@
 //! session reopened and its idle wait started again. A sweep interrupted after
 //! recording a close reuses that record when it retries closing the same terminal and conversation.
 
+mod closing;
+mod ended;
+mod state;
 mod work;
-use work::live_work;
+use state::{lock, read_said, read_seen, read_state, write_state};
+pub use state::{lock_path, state_path};
+use work::{Hold, holds};
 
-use super::cleanup::{restore_line, stored_session};
 use super::hc::{self, Hc, Object, text_of};
-use super::{Processes, procs, screen};
-use crate::cli::Env;
-use crate::sys::FileLock;
-use crate::{Error, NewLaunch, Presence, Store, git};
-use serde_json::{Map, Value, json};
-use std::collections::{BTreeMap, HashMap, HashSet};
-use std::fs::{File, TryLockError};
+use super::screen;
+use super::{Processes, procs};
+use crate::rows::TaskSessionRow;
+use crate::{Callback, Error, Presence, Store};
+use std::collections::{BTreeMap, HashMap};
 use std::io::Write;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
-/// The Symphony sweeps this often, and a terminal must have been idle this long: 5 to 10 minutes.
+/// The Symphony sweeps this often, and a terminal whose work is finished must have been idle this
+/// long: 5 to 10 minutes.
 pub const REAP_SECONDS: f64 = 300.0;
+/// How long a terminal whose agent holds a role on open work must have sat idle at its prompt
+/// before a sweep closes it: the owner's hour ("less than one hour", 2026-11-08).
+pub const IDLE_HOUR: f64 = 3600.0;
 const READY: [&str; 2] = ["idle", "done"];
 const TRUST_PROMPT: &str = "trust this folder";
-const NOT_REAPED_KINDS: [&str; 2] = ["orchestrator", "chat"];
+/// The kinds of session whose terminal the board never closes while it runs: cleanup's rule too.
+pub(super) const NOT_REAPED_KINDS: [&str; 2] = ["orchestrator", "chat"];
 const WHY: &str = "idle for two sweeps, its work finished";
+/// Why a sweep removes a terminal whose program ended, and closes the records naming it.
+pub const ENDED: &str = "its program ended";
+/// Why a terminal whose work is finished stays at the first sweep that finds it idle.
+pub const IDLE_ONCE: &str = "idle once: it closes if still idle at the next sweep";
 
 /// A terminal the sweep closed, or for a dry run would close.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Closed {
     pub pane: String,
+    /// The board session it ran; empty for an ended terminal of no known session.
     pub handle: String,
-    /// Empty when the handle had no task to record the close on (and for a dry run).
+    /// Why it closed: its work finished ([`IDLE_ONCE`]'s second sweep), idle an hour holding a
+    /// role (with what brings it back), or its program ended ([`ENDED`]).
+    pub why: String,
+    /// Empty when there was no task to record the close on, when its records were closed already
+    /// (and for a dry run of a live one).
     pub restore: String,
+}
+
+/// A terminal of the board the sweep left open, and why.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Kept {
+    pub pane: String,
+    /// The board session it was taken for; empty when it names none.
+    pub handle: String,
+    pub why: String,
+    /// Whether its agent sat idle at its prompt.
+    pub idle: bool,
+    /// Whether this sweep is the first to keep it idle for this reason: what the reap command tells
+    /// the Symphony's log.
+    pub told: bool,
 }
 
 /// One sweep's result.
@@ -88,8 +137,10 @@ pub struct Closed {
 pub struct Sweep {
     /// Closed, or for a dry run would be.
     pub closed: Vec<Closed>,
-    /// Handles idle this sweep, waiting for a second one.
+    /// Handles idle this sweep with their work finished, waiting for a second one.
     pub idle: Vec<String>,
+    /// Every other terminal of the board, live or ended, left open, in the order hc lists them.
+    pub kept: Vec<Kept>,
 }
 
 /// How a sweep runs: where its state is, whether it closes anything, who calls it.
@@ -99,61 +150,6 @@ pub struct Reap<'a> {
     pub processes: &'a Processes,
     pub caller: Option<&'a str>,
     pub min_idle: f64,
-}
-
-/// Where the sweeps of the board `env` reaches from `cwd` keep their state: `TASKS_REAP_STATE`; for a
-/// board `TASKS_SERVER` names (a test's), a file of its own in the temp dir, never the live board's;
-/// else `sf-tasks/reap.json` in the git common dir, beside the board's server.
-pub fn state_path(env: &Env, cwd: &Path) -> Result<PathBuf, String> {
-    if let Some(named) = env.var("TASKS_REAP_STATE") {
-        return Ok(PathBuf::from(named));
-    }
-    if env.var("TASKS_SERVER").is_some()
-        || env
-            .var("TASKS_DATABASE")
-            .is_some_and(|db| db != crate::DATABASE)
-    {
-        let board = format!(
-            "{} {}",
-            env.var("TASKS_SERVER").unwrap_or("local"),
-            env.var("TASKS_DATABASE").unwrap_or("")
-        );
-        return Ok(std::env::temp_dir()
-            .join("sf-tasks-reap")
-            .join(format!("reap-{:016x}.json", fnv1a(board.as_bytes()))));
-    }
-    let common = git::common_dir(cwd)
-        .map_err(|why| format!("not in a git repository ({why}): no task board to sweep"))?;
-    Ok(common.join("sf-tasks").join("reap.json"))
-}
-
-/// FNV-1a, 64 bits: a name of its own for each test board's state file.
-fn fnv1a(bytes: &[u8]) -> u64 {
-    bytes.iter().fold(0xcbf2_9ce4_8422_2325, |hash, b| {
-        (hash ^ u64::from(*b)).wrapping_mul(0x0100_0000_01b3)
-    })
-}
-
-pub fn lock_path(state: &Path) -> PathBuf {
-    let mut name = state.file_name().unwrap_or_default().to_os_string();
-    name.push(".lock");
-    state.with_file_name(name)
-}
-
-/// The sweeps' lock beside `state`, not waited for: None while another sweep holds it.
-fn lock(state: &Path) -> std::io::Result<Option<FileLock>> {
-    if let Some(folder) = state.parent() {
-        std::fs::create_dir_all(folder)?;
-    }
-    let file = File::options()
-        .append(true)
-        .create(true)
-        .open(lock_path(state))?;
-    match file.try_lock() {
-        Ok(()) => Ok(Some(FileLock(file))),
-        Err(TryLockError::WouldBlock) => Ok(None),
-        Err(TryLockError::Error(e)) => Err(e),
-    }
 }
 
 /// What hc's live terminals say of Codex agents: the terminals running Codex, and the threads the
@@ -194,10 +190,10 @@ pub fn sweep(
     } else {
         None
     };
-    let sessions: HashMap<String, String> = store
+    let sessions: HashMap<String, (String, Option<f64>)> = store
         .sessions()?
         .into_iter()
-        .map(|s| (s.row.handle, s.row.kind))
+        .map(|s| (s.row.handle, (s.row.kind, s.row.last_tool)))
         .collect();
     // Probe sockets even when hc cannot answer: a native Claude inbox needs no terminal.
     let codex = match hc.live() {
@@ -215,145 +211,250 @@ pub fn sweep(
             return Ok(Some(Sweep::default()));
         }
     };
-    let current = hc.caller();
-    let callbacks = store.callbacks()?;
-    let held = live_work(store)?;
     let now = store.now();
-    let seen = read_seen(&how.state, now);
-    let mut idle_now: BTreeMap<String, f64> = BTreeMap::new();
-    let mut result = Sweep::default();
-    for listed in terminals {
-        let address = text_of(&listed, "address");
-        if address.is_empty()
-            || text_of(&listed, "state") != "live"
-            || Some(&address) == current.as_ref()
-            || !ready(hc, &address, &hc::status(&listed))
-        {
-            continue;
-        }
-        let Ok(Some(terminal)) = hc.get(&address) else {
-            continue;
-        };
-        if hc::agent(&terminal).is_none() {
-            continue;
-        }
-        let Some(handle) = name(&terminal) else {
-            continue;
-        };
-        if Some(handle.as_str()) == how.caller
-            || sessions
-                .get(&handle)
-                .is_none_or(|kind| NOT_REAPED_KINDS.contains(&kind.as_str()))
-            || held.contains(&handle)
-        {
-            continue;
-        }
-        let Some(pid) = hc::top_pid(&terminal) else {
-            continue;
-        };
-        match (how.processes)(pid) {
-            Ok(commands) if procs::reap_busy_reason(&commands).is_none() => {}
-            _ => continue, // work, or `ps` could not say: never closed on no information
-        }
-        if !matches!(screen::on_screen(hc, &terminal), Ok(false)) {
-            continue; // the owner may be looking at it: its idle wait starts again
-        }
-        let key = format!("{address} {handle} {pid}");
-        let since = *seen.get(&key).unwrap_or(&now);
-        idle_now.insert(key.clone(), since);
-        if !seen.contains_key(&key) || now - since < how.min_idle {
-            result.idle.push(handle);
-            continue;
-        }
-        let Some(confirmed) = still_idle(store, hc, how, &address, &handle, pid)? else {
-            idle_now.remove(&key);
-            continue;
-        };
-        if !how.apply {
-            result.closed.push(Closed {
-                pane: address,
-                handle,
-                restore: String::new(),
-            });
-            continue;
-        }
-        let closed_before: HashSet<String> = store
-            .sessions_of(&handle)?
-            .into_iter()
-            .filter(|s| s.closed.is_some())
-            .map(|s| s.slug)
-            .collect();
-        // first: a close is never left without its line
-        let restore = match record(store, &handle, &confirmed) {
-            Ok(restore) => restore,
-            Err(problem) => {
-                let _ = writeln!(
-                    warn,
-                    "· idle sweep kept {address} ({handle}): the board took no record: {problem}"
-                );
-                let _ = warn.flush();
-                continue;
-            }
-        };
-        let finished = |now: &Object| still_finished(hc, how, &address, pid, now);
-        match screen::close_unseen(hc, &address, &finished) {
-            Ok(()) => {}
-            Err(screen::NotClosed::Refused(_)) => {
-                reopen(store, &handle, &closed_before, &address)?;
-                continue;
-            }
-            Err(screen::NotClosed::Kept(_)) => {
-                // Work resumed, the owner looked, or a call could not say, after the record: its
-                // idle wait starts again.
-                reopen(store, &handle, &closed_before, &address)?;
-                idle_now.remove(&key);
-                continue;
-            }
-        }
-        if let Some(callback) = callbacks.get(&handle) {
-            store.clear_callback(callback, "finished idle terminal closed")?;
-        }
-        idle_now.remove(&key);
-        result.closed.push(Closed {
-            pane: address,
-            handle,
-            restore,
-        });
+    let saved = read_state(&how.state);
+    let mut round = Round {
+        store,
+        hc,
+        how,
+        warn,
+        current: hc.caller(),
+        sessions,
+        callbacks: store.callbacks()?,
+        holds: holds(store)?,
+        open: store.open_task_sessions()?,
+        now,
+        seen: read_seen(&saved, now),
+        said: read_said(&saved),
+        idle_now: BTreeMap::new(),
+        said_now: BTreeMap::new(),
+        result: Sweep::default(),
+    };
+    for listed in &terminals {
+        round.look(listed)?;
     }
     if how.apply {
-        let idle: Map<String, Value> = idle_now
-            .into_iter()
-            .map(|(key, since)| (key, json!(since)))
-            .collect();
-        std::fs::write(&how.state, json!({"idle": idle}).to_string()).map_err(io)?;
+        write_state(&how.state, round.idle_now, &round.said_now).map_err(io)?;
     }
-    Ok(Some(result))
+    Ok(Some(round.result))
 }
 
-/// Terminal key -> when a sweep first saw it idle (the board's clock); nothing for a state it cannot
-/// read.
-fn read_seen(state: &Path, now: f64) -> HashMap<String, f64> {
-    let Ok(text) = std::fs::read_to_string(state) else {
-        return HashMap::new();
-    };
-    let Ok(Value::Object(read)) = serde_json::from_str::<Value>(&text) else {
-        return HashMap::new();
-    };
-    let Some(Value::Object(idle)) = read.get("idle") else {
-        return HashMap::new();
-    };
-    let mut seen = HashMap::new();
-    for (key, since) in idle {
-        let Some(since) = since
-            .as_f64()
-            .filter(|since| since.is_finite() && *since > 0.0 && *since <= now)
-        else {
-            continue; // a malformed or impossible mark starts a fresh idle wait
-        };
-        seen.insert(key.clone(), since);
-    }
-    seen
+/// One sweep's look at the board's terminals: what it read before the first, and what it found.
+struct Round<'a> {
+    store: &'a Store,
+    hc: &'a dyn Hc,
+    how: &'a Reap<'a>,
+    warn: &'a mut dyn Write,
+    /// The calling terminal (`HC_TERMINAL_ID`).
+    current: Option<String>,
+    /// Handle -> its session's kind, and when a tool call of its agent last beat.
+    sessions: HashMap<String, (String, Option<f64>)>,
+    callbacks: BTreeMap<String, Callback>,
+    holds: BTreeMap<String, Hold>,
+    /// The board's open launch records.
+    open: Vec<TaskSessionRow>,
+    now: f64,
+    /// Terminal key -> when a sweep first saw it idle; and what this sweep keeps of it.
+    seen: HashMap<String, f64>,
+    idle_now: BTreeMap<String, f64>,
+    /// Terminal -> why the last sweep said it kept it idle; and what this sweep keeps of it.
+    said: HashMap<String, String>,
+    said_now: BTreeMap<String, String>,
+    result: Sweep,
 }
+
+/// What [`Round::judge`] made of a live terminal whose agent is at rest.
+enum Look {
+    /// hc no longer knows it.
+    Gone,
+    /// It stays: (its handle, or "" when it names none; why; whether an agent sits idle in it).
+    Stays(String, String, bool),
+    /// Its idle wait is over: closed if the last looks confirm it.
+    Due(Due),
+}
+
+/// A terminal whose idle wait is over: the agent `handle` under `pid`, its idle mark `key`, what
+/// held it while it waited, and when the sweep read its agent's last tool call (`beat`).
+struct Due {
+    address: String,
+    handle: String,
+    pid: i64,
+    key: String,
+    hold: Option<Hold>,
+    beat: Option<f64>,
+}
+
+impl Round<'_> {
+    /// One terminal as `hc ls` lists it: removed when its program ended, closed when its idle wait
+    /// is over, else kept, saying why.
+    fn look(&mut self, listed: &Object) -> Result<(), Error> {
+        let address = text_of(listed, "address");
+        if address.is_empty() {
+            return Ok(());
+        }
+        if text_of(listed, "state") != "live" {
+            return self.ended(&address);
+        }
+        if Some(&address) == self.current.as_ref() {
+            let why = "it is the terminal this sweep runs in".into();
+            let named = self.named(&address, listed);
+            self.keep(&address, &named, why, false);
+            return Ok(());
+        }
+        let status = hc::status(listed);
+        if !ready(self.hc, &address, &status) {
+            let why = match (hc::agent(listed), status.as_str()) {
+                (None, _) => "no agent runs in it".into(),
+                (Some(_), "") => "its agent says nothing of its state".into(),
+                (Some(_), status) => format!("its agent is {status}"),
+            };
+            let named = self.named(&address, listed);
+            self.keep(&address, &named, why, false);
+            return Ok(());
+        }
+        match self.judge(&address)? {
+            Look::Gone => {}
+            Look::Stays(handle, why, idle) => self.keep(&address, &handle, why, idle),
+            Look::Due(due) => {
+                let handle = due.handle.clone();
+                if let Some(why) = self.close(due)? {
+                    self.keep(&address, &handle, why, true);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// The session a terminal the sweep looks no further at runs, to say whose it is: the board's
+    /// open record of it, else its name as `hc ls` lists it, else as `hc get` finds it; "" when
+    /// none says.
+    fn named(&self, address: &str, listed: &Object) -> String {
+        if let Some(record) = self.open.iter().rev().find(|s| s.pane == address) {
+            return record.handle.clone();
+        }
+        name(listed)
+            .or_else(|| self.hc.get(address).ok().flatten().and_then(|t| name(&t)))
+            .unwrap_or_default()
+    }
+
+    /// A live terminal whose agent is at rest, by its own `hc get`: why it stays, or that its idle
+    /// wait is over. A terminal that it reads idle and out of the owner's sight gets its idle mark.
+    fn judge(&mut self, address: &str) -> Result<Look, Error> {
+        let stays = |handle: &str, why: String| Ok(Look::Stays(handle.to_string(), why, true));
+        let terminal = match self.hc.get(address) {
+            Ok(Some(terminal)) => terminal,
+            Ok(None) => return Ok(Look::Gone),
+            Err(problem) => return stays("", screen::no_information(&problem)),
+        };
+        if hc::agent(&terminal).is_none() {
+            let why = "no agent runs in it".into();
+            return Ok(Look::Stays(name(&terminal).unwrap_or_default(), why, false));
+        }
+        let Some(handle) = name(&terminal) else {
+            return stays("", NO_SESSION.into());
+        };
+        if Some(handle.as_str()) == self.how.caller {
+            return stays(&handle, "it is the session this sweep runs for".into());
+        }
+        let last_tool = match self.sessions.get(&handle) {
+            None => return stays(&handle, NO_SESSION.into()),
+            Some((kind, _)) if kind == "orchestrator" => {
+                return stays(&handle, "an orchestrator never closes".into());
+            }
+            Some((kind, _)) if kind == "chat" => {
+                return stays(&handle, "a chat never closes".into());
+            }
+            Some((_, beat)) => *beat,
+        };
+        let beat = last_tool.unwrap_or(0.0);
+        let hold = self.holds.get(&handle).cloned();
+        if let Some(post) = hold.as_ref().filter(|hold| hold.is_post()) {
+            return stays(&handle, post.why());
+        }
+        let Some(pid) = hc::top_pid(&terminal) else {
+            return stays(
+                &handle,
+                "hc knows no pid for it: what runs under it is unknown".into(),
+            );
+        };
+        match (self.how.processes)(pid) {
+            Ok(commands) => {
+                if let Some(why) = procs::reap_busy_reason(&commands) {
+                    return stays(&handle, format!("it {why}"));
+                }
+            }
+            Err(problem) => return stays(&handle, screen::no_information(&problem)),
+        }
+        match screen::on_screen(self.hc, &terminal) {
+            Ok(false) => {}
+            // the owner may be looking at it: its idle wait starts again
+            Ok(true) => return stays(&handle, screen::ON_SCREEN.into()),
+            Err(problem) => return stays(&handle, screen::no_information(&problem)),
+        }
+        // A role's mark names it, so its wait starts again when the role or its task's status
+        // changes, and a terminal it no longer holds waits two sweeps as finished work does.
+        let key = match &hold {
+            Some(role) => format!("{address} {handle} {pid} {}", role.mark()),
+            None => format!("{address} {handle} {pid}"),
+        };
+        let since = *self.seen.get(&key).unwrap_or(&self.now);
+        self.idle_now.insert(key.clone(), since);
+        // A role's hour runs from its agent's last tool call too, so work done between two sweeps
+        // (each finding it at its prompt) starts it again.
+        let (wait, from) = if hold.is_some() {
+            (IDLE_HOUR, since.max(beat))
+        } else {
+            (self.how.min_idle, since)
+        };
+        if !self.seen.contains_key(&key) || self.now - from < wait {
+            return match &hold {
+                Some(role) => stays(&handle, role.why()),
+                None => {
+                    self.result.idle.push(handle.clone());
+                    stays(&handle, IDLE_ONCE.into())
+                }
+            };
+        }
+        Ok(Look::Due(Due {
+            address: address.into(),
+            handle,
+            pid,
+            key,
+            hold,
+            beat: last_tool,
+        }))
+    }
+
+    /// Keep the terminal at `address` (of `handle`) for `why`: told when its agent is `idle` and the
+    /// last sweep said otherwise of it.
+    fn keep(&mut self, address: &str, handle: &str, why: String, idle: bool) {
+        let said = self.said.get(address);
+        let told = idle && said != Some(&why);
+        if idle {
+            self.said_now.insert(address.into(), why.clone());
+        } else if let Some(said) = said {
+            self.said_now.insert(address.into(), said.clone());
+        }
+        self.result.kept.push(Kept {
+            pane: address.into(),
+            handle: handle.into(),
+            why,
+            idle,
+            told,
+        });
+    }
+}
+
+/// Why a terminal that names no board session stays.
+pub const NO_SESSION: &str = "it names no board session: it may be the owner's";
+
+/// Why a terminal stays whose last looks before its close found it changed.
+pub const CHANGED: &str = "it changed while this sweep looked: its idle wait starts again";
+
+/// Why a terminal stays whose agent made a tool call after the sweep read its last one, found by
+/// the last looks before its close.
+pub const TOOL_CALL: &str =
+    "its agent made a tool call while this sweep looked: its idle wait starts again";
 
 /// Its handle: claude's `-n` (or `--name`), else its `sf.handle` label, else its terminal's name.
 fn name(terminal: &Object) -> Option<String> {
@@ -382,163 +483,4 @@ fn ready(hc: &dyn Hc, address: &str, status: &str) -> bool {
     }
     hc.read(address, 30)
         .is_ok_and(|screen| screen.to_lowercase().contains(TRUST_PROMPT))
-}
-
-/// Confirm the same program and owner right before closing, then recheck the confirmed occupant's
-/// eligibility. Any missing or changed evidence keeps the terminal and resets its idle wait.
-fn still_idle(
-    store: &Store,
-    hc: &dyn Hc,
-    how: &Reap<'_>,
-    address: &str,
-    handle: &str,
-    pid: i64,
-) -> Result<Option<Object>, Error> {
-    let Ok(Some(now)) = hc.get(address) else {
-        return Ok(None);
-    };
-    let Some(current_handle) = name(&now) else {
-        return Ok(None);
-    };
-    if text_of(&now, "state") != "live"
-        || hc::top_pid(&now) != Some(pid)
-        || hc::agent(&now).is_none()
-        || current_handle != handle
-        || Some(current_handle.as_str()) == how.caller
-        || !ready(hc, address, &hc::status(&now))
-    {
-        return Ok(None);
-    }
-    let sessions = store.sessions()?;
-    if sessions
-        .iter()
-        .find(|s| s.row.handle == current_handle)
-        .is_none_or(|s| NOT_REAPED_KINDS.contains(&s.row.kind.as_str()))
-        || live_work(store)?.contains(&current_handle)
-        || !(how.processes)(pid).is_ok_and(|commands| procs::reap_busy_reason(&commands).is_none())
-        || !matches!(screen::on_screen(hc, &now), Ok(false))
-    {
-        return Ok(None);
-    }
-    Ok(Some(now))
-}
-
-/// Whether the terminal, as the close's own `hc get` finds it (`now`), is still the idle agent the
-/// sweep confirmed: its program ended (nothing to lose), or the same agent under `pid`, ready
-/// ([`ready`]), with nothing under it that is work. Else why it stays.
-fn still_finished(
-    hc: &dyn Hc,
-    how: &Reap<'_>,
-    address: &str,
-    pid: i64,
-    now: &Object,
-) -> Result<(), String> {
-    if text_of(now, "state") != "live" {
-        return Ok(());
-    }
-    if hc::top_pid(now) != Some(pid) || hc::agent(now).is_none() {
-        return Err("another program runs in it now".into());
-    }
-    let status = hc::status(now);
-    if !ready(hc, address, &status) {
-        let status = if status.is_empty() { "silent" } else { &status };
-        return Err(format!("its agent is {status} now"));
-    }
-    match (how.processes)(pid) {
-        Ok(commands) => procs::reap_busy_reason(&commands)
-            .map_or(Ok(()), |why| Err(format!("work started under it: {why}"))),
-        Err(problem) => Err(screen::no_information(&problem)),
-    }
-}
-
-/// One line on a task thread for the close: the restore line, or "" when the handle had no task.
-fn record(store: &Store, handle: &str, terminal: &Object) -> Result<String, Error> {
-    let sessions = store.sessions_of(handle)?;
-    let still_open: Vec<_> = sessions.iter().filter(|s| s.closed.is_none()).collect();
-    if let Some(last) = still_open.last() {
-        for s in &still_open {
-            store.close_task_session(&s.slug, handle, WHY, &restore_line(&s.slug, handle))?;
-        }
-        return Ok(restore_line(&last.slug, handle));
-    }
-    let address = text_of(terminal, "address");
-    if let Some(recorded) = sessions.iter().rev().find(|s| {
-        s.closed.is_some()
-            && s.closed_why == WHY
-            && s.pane == address
-            && same_conversation(&s.claude_session, &stored_session(terminal))
-    }) {
-        // A previous sweep may have stopped after the board transaction but before hc closed the
-        // terminal. The durable record already carries its line; do not overwrite and log it again.
-        return Ok(recorded.restore.clone());
-    }
-    let mut roles: Vec<(f64, String, String)> = store
-        .tasks(None)?
-        .into_iter()
-        .flat_map(|t| {
-            t.roles
-                .into_iter()
-                .filter(|r| r.handle == handle && (r.role == "executor" || r.role == "reviewer"))
-                .map(move |r| (r.since, t.slug.clone(), r.role))
-        })
-        .collect();
-    roles.sort_by(|a, b| {
-        a.0.total_cmp(&b.0)
-            .then_with(|| (&a.1, &a.2).cmp(&(&b.1, &b.2)))
-    });
-    let Some((_, slug, role)) = roles.pop() else {
-        return Ok(String::new());
-    };
-    let board = store.session(handle)?.row;
-    let cwd = text_of(terminal, "cwd");
-    store.record_launch(&NewLaunch {
-        slug: slug.clone(),
-        handle: handle.into(),
-        role,
-        claude_session: stored_session(terminal),
-        worktree: if cwd.is_empty() { board.worktree } else { cwd },
-        branch: board.branch,
-        pane: address,
-        model: board.model,
-        how: "found".into(),
-        log: false,
-    })?;
-    store.close_task_session(&slug, handle, WHY, &restore_line(&slug, handle))?;
-    Ok(restore_line(&slug, handle))
-}
-
-/// Whether a record's conversation is the one a terminal runs: the same, or a Codex thread the record
-/// took from the agent's callback where the terminal's command line names none (`codex:`).
-fn same_conversation(recorded: &str, running: &str) -> bool {
-    recorded == running || (running == "codex:" && recorded.starts_with("codex:"))
-}
-
-/// hc refused a close already recorded: the sessions it closed are open again.
-fn reopen(store: &Store, handle: &str, before: &HashSet<String>, pane: &str) -> Result<(), Error> {
-    for s in store.sessions_of(handle)? {
-        if s.closed.is_some() && !before.contains(&s.slug) {
-            store.reopen_task_session(&s.slug, handle, pane)?;
-        }
-    }
-    Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn an_ended_sweep_frees_its_lock_while_a_forked_child_still_holds_the_descriptor() {
-        let dir = std::env::temp_dir().join(format!("sf-reap-release-{}", std::process::id()));
-        let state = dir.join("reap.json");
-        let held = lock(&state).unwrap().unwrap();
-        // What fork gives a child until it execs: the same open file, so the same lock.
-        let inherited = held.0.try_clone().unwrap();
-        drop(held);
-        let next = lock(&state).unwrap();
-        assert!(next.is_some(), "the ended sweep still holds its lock");
-        assert!(lock(&state).unwrap().is_none());
-        drop((inherited, next));
-        std::fs::remove_dir_all(dir).unwrap();
-    }
 }

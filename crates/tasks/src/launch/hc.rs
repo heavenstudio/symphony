@@ -11,13 +11,18 @@ use super::LaunchError;
 use crate::cli::{Env, probes};
 use crate::sys::{self, Command};
 use serde_json::{Map, Value};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 /// A JSON object hc answered.
 pub type Object = Map<String, Value>;
 
 /// How long hc or the Herdr app may take to answer one call.
 const PATIENCE: Duration = Duration::from_secs(120);
+
+/// How long a killed terminal is given to end before its remove is left to a later sweep
+/// ([`Hc::end`]), and how often hc is asked whether it has in that time.
+const ENDING: Duration = Duration::from_secs(10);
+const ENDING_LOOK: Duration = Duration::from_millis(100);
 
 /// The label naming the board a terminal was started for.
 pub const BOARD_LABEL: &str = "sf.board";
@@ -136,18 +141,47 @@ pub trait Hc {
     }
 
     /// Kill the terminal when it is `live`, then remove it, with no look first: one hc no longer
-    /// knows is already gone.
+    /// knows is already gone. hc removes no terminal still running, and a killed one may take a
+    /// while to end: unless the kill's answer finds it ended, the remove waits until a look finds it
+    /// so ([`Hc::ended`]), and is never tried while the last look found it live. One still live
+    /// when the wait is over is killed and left: the next sweep finds its program ended and
+    /// removes it.
     fn end(&self, terminal: &str, live: bool) -> Result<(), LaunchError> {
         if live {
-            match self.json(&["kill", terminal]) {
+            let killed = match self.json(&["kill", terminal]) {
                 Err(e) if is_not_found(&e) => return Ok(()),
-                other => other.map(|_| ())?,
+                other => other?,
+            };
+            let state = killed.get("state").and_then(Value::as_str);
+            if !state.is_some_and(|state| state != "live") && !self.ended(terminal) {
+                return Ok(());
             }
         }
         match self.json(&["rm", terminal]) {
             Err(e) if is_not_found(&e) => Ok(()),
             other => other.map(|_| ()),
         }
+    }
+
+    /// Wait for a killed terminal to end, by hc's own look (`hc get`) every [`ENDING_LOOK`], for
+    /// at most [`Hc::ending`]: true once a look finds it ended, the one answer the remove follows.
+    /// False when hc knows it no more (there is nothing left to remove), when a look fails, and
+    /// when it is still live once the wait is over: the last look then said live, or nothing.
+    fn ended(&self, terminal: &str) -> bool {
+        let until = Instant::now() + self.ending();
+        loop {
+            match self.get(terminal) {
+                Ok(Some(found)) if text(found.get("state")) != "live" => return true,
+                Ok(Some(_)) if Instant::now() < until => std::thread::sleep(ENDING_LOOK),
+                Ok(_) | Err(_) => return false,
+            }
+        }
+    }
+
+    /// How long [`Hc::ended`] waits for a killed terminal to end: [`ENDING`]. A test's hc waits
+    /// less, to show a wait that runs out.
+    fn ending(&self) -> Duration {
+        ENDING
     }
 
     /// The Herdr app's spaces, each with its `id`, `name` and `tabs` (`id`, `name`): what the

@@ -1,7 +1,12 @@
-//! Pending work that keeps an idle pane, including descendant sessions and re-review.
+//! Pending work that keeps an idle pane, including descendant sessions and re-review: an addressed
+//! post waiting for its answer keeps it at once, a role on open work until it has sat idle at its
+//! prompt for [`super::IDLE_HOUR`].
 
 use crate::{Error, Message, Store};
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
+
+/// How the reason a role holder's terminal closed for starts ([`Hold::closing`]).
+pub(super) const HOUR: &str = "idle an hour";
 
 /// Landing creates `review/BRANCH`, then `review-N/BRANCH` for N >= 2.
 fn reviewed_branch(slug: &str) -> Option<&str> {
@@ -45,14 +50,147 @@ fn awaits_rereview(thread: &[Message], handle: &str, slug: &str) -> bool {
         .is_some_and(|(_, changes)| changes)
 }
 
-/// Handles that hold live work, themselves or through a session under them (a subagent): an
-/// executor on a task `in_progress`, `blocked` or in `review`, a reviewer on one in `review`. A
-/// departed middle session still links its live descendants to their ancestors; leaving releases
-/// its own roles.
-pub(super) fn live_work(store: &Store) -> Result<HashSet<String>, Error> {
-    let mut own: Vec<String> = Vec::new();
+/// Why a handle's terminal is held: what it, or a session under it (`through`, a subagent), waits
+/// on. The variants go strongest first.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub(super) enum Hold {
+    /// An addressed post waits for its answer: the terminal is kept at once.
+    Post {
+        slug: String,
+        post: i64,
+        through: Option<String>,
+    },
+    /// A role on open work: an executor of a task `in_progress`, `blocked` or in `review`, a
+    /// reviewer of one in `review` or awaiting its re-review. The terminal is kept until it has sat
+    /// idle at its prompt for [`super::IDLE_HOUR`].
+    Role {
+        slug: String,
+        role: String,
+        status: String,
+        through: Option<String>,
+    },
+}
+
+impl Hold {
+    /// The same hold, for a session above `holder`, which holds it itself.
+    fn through(&self, holder: &str) -> Hold {
+        let mut above = self.clone();
+        let (Hold::Post { through, .. } | Hold::Role { through, .. }) = &mut above;
+        through.get_or_insert_with(|| holder.to_string());
+        above
+    }
+
+    /// Why the sweep keeps the terminal for it.
+    pub(super) fn why(&self) -> String {
+        match self {
+            Hold::Post {
+                slug,
+                post,
+                through,
+            } => {
+                let to = through
+                    .as_ref()
+                    .map_or(String::new(), |holder| format!(" to its session {holder}"));
+                format!("an addressed post #{post}{to} on {slug} waits for its answer")
+            }
+            Hold::Role {
+                slug,
+                role,
+                status,
+                through,
+            } => {
+                let who = through.as_ref().map_or("it is".to_string(), |holder| {
+                    format!("its session {holder} is")
+                });
+                let standing = standing(role, slug, status);
+                format!("{who} {standing}: it closes once idle an hour")
+            }
+        }
+    }
+
+    /// Why the sweep closes the terminal of a role it held once idle an hour, and what brings it
+    /// back besides the restore line said with it: a reviewer launch for the task's next tip (which
+    /// resumes the task's earlier reviewer), a changes verdict to the executor of work in review,
+    /// or a post addressed to it (the unanswered post's restore). None for a post, which never
+    /// closes.
+    pub(super) fn closing(&self) -> Option<String> {
+        let Hold::Role {
+            slug,
+            role,
+            status,
+            through,
+        } = self
+        else {
+            return None;
+        };
+        let back = if role == "reviewer" {
+            "a reviewer launch for its next tip resumes it, a post to it restores it"
+        } else if status == "review" {
+            "a changes verdict or a post to it restores it"
+        } else {
+            "a post to it restores it"
+        };
+        let standing = standing(role, slug, status);
+        Some(match through {
+            Some(holder) => format!("{HOUR} as the parent of {holder}, {standing}; {back}"),
+            None => format!("{HOUR} as {standing}; {back}"),
+        })
+    }
+
+    pub(super) fn is_post(&self) -> bool {
+        matches!(self, Hold::Post { .. })
+    }
+
+    /// What names this hold in an idle mark: `ROLE SLUG STATUS`, then `via HOLDER` for one held
+    /// through a session under it (`#POST` for a post, which marks nothing).
+    pub(super) fn mark(&self) -> String {
+        match self {
+            Hold::Post { post, .. } => format!("#{post}"),
+            Hold::Role {
+                slug,
+                role,
+                status,
+                through,
+            } => {
+                let via = through
+                    .as_ref()
+                    .map_or(String::new(), |holder| format!(" via {holder}"));
+                format!("{role} {slug} {status}{via}")
+            }
+        }
+    }
+}
+
+/// `ROLE of SLUG, STATUS`, the status as a reader says it.
+fn standing(role: &str, slug: &str, status: &str) -> String {
+    let status = match (role, status) {
+        ("reviewer", "in_progress") => "awaiting its re-review",
+        (_, "in_progress") => "in progress",
+        (_, "review") => "in review",
+        (_, other) => other,
+    };
+    format!("{role} of {slug}, {status}")
+}
+
+/// What holds each handle's terminal, itself or through a session under it (a subagent): an
+/// addressed post waiting for its answer, else a role on open work ([`Hold`]). A handle's own hold
+/// goes before one through a session under it, a post before a role, and among equals the first by
+/// task. A departed middle session still links its live descendants to their ancestors; leaving
+/// releases its own roles.
+pub(super) fn holds(store: &Store) -> Result<BTreeMap<String, Hold>, Error> {
     let tasks = store.tasks(None)?;
-    own.extend(store.pending_posts(&tasks)?.into_iter().map(|p| p.handle));
+    let mut own: Vec<(String, Hold)> = store
+        .pending_posts(&tasks)?
+        .into_iter()
+        .map(|p| {
+            let hold = Hold::Post {
+                slug: p.slug,
+                post: p.post.id,
+                through: None,
+            };
+            (p.handle, hold)
+        })
+        .collect();
     let threads = store.threads(
         &tasks
             .iter()
@@ -74,26 +212,46 @@ pub(super) fn live_work(store: &Store) -> Result<HashSet<String>, Error> {
                 _ => false,
             };
             if live {
-                own.push(role.handle.clone());
+                let hold = Hold::Role {
+                    slug: task.slug.clone(),
+                    role: role.role.clone(),
+                    status: task.status.clone(),
+                    through: None,
+                };
+                own.push((role.handle.clone(), hold));
             }
         }
     }
+    own.sort_by(|a, b| (&a.1, &a.0).cmp(&(&b.1, &b.0)));
     let parent: HashMap<String, String> = store
         .sessions()?
         .into_iter()
         .filter_map(|s| Some((s.row.handle, s.row.parent?)))
         .collect();
-    let mut held = HashSet::new();
-    for handle in own {
-        let mut seen = HashSet::new();
-        let mut at = Some(handle);
+    let mut held = BTreeMap::new();
+    for (handle, hold) in &own {
+        stronger(&mut held, handle, hold.clone());
+    }
+    for (handle, hold) in &own {
+        let mut seen = HashSet::from([handle.clone()]);
+        let mut at = parent.get(handle).cloned();
         while let Some(here) = at.filter(|h| seen.insert(h.clone())) {
-            // the holder and every session above it
-            held.insert(here.clone());
+            // every session above the holder
+            stronger(&mut held, &here, hold.through(handle));
             at = parent.get(&here).cloned();
         }
     }
     Ok(held)
+}
+
+/// `hold` for `handle`, unless it has one already that is as strong.
+fn stronger(held: &mut BTreeMap<String, Hold>, handle: &str, hold: Hold) {
+    match held.get(handle) {
+        Some(had) if had.is_post() || !hold.is_post() => {}
+        _ => {
+            held.insert(handle.to_string(), hold);
+        }
+    }
 }
 
 #[cfg(test)]

@@ -255,7 +255,11 @@ in-memory blob pages are allowed; file URLs and external hosts are blocked.
   the CLI to a version with [Dioxus #5843](https://github.com/DioxusLabs/dioxus/pull/5843)
   is an owner decision; no patched CLI is installed here.
 - **Platforms.** Every platform hook goes through `platform::Platform`; the
-  desktop slice adds its implementation and a `desktop` feature.
+  desktop slice adds its implementation and a `desktop` feature. The projects
+  of the machine's one server share its origin, so every key the browser
+  stores takes the page's project id first (`project::stored`,
+  `alpha:review-quick-draft`; the shell's `stored` for the saved theme); a
+  server of its own keeps its keys as they are.
 - **Media.** `PictureView(src, caption, thumb)` reserves a square for the board;
   typed document images carry real dimensions and thumbnail URLs from the
   API. The shared visibility latch defers native media shells, gallery rows, document blocks

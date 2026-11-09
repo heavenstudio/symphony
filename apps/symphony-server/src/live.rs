@@ -1445,6 +1445,9 @@ mod backstop_tests;
 mod startup_tests;
 
 #[cfg(test)]
+mod boards_tests;
+
+#[cfg(test)]
 mod status_tests;
 
 #[cfg(test)]

@@ -56,7 +56,7 @@ pub fn Controls(
                                 frame.refresh();
                                 if !postponed && let Some(next) = request::field(&value, "next").as_string()
                                     && let Some(window) = web_sys::window()
-                                { let _ = window.location().set_href(&next); }
+                                { let _ = window.location().set_href(&crate::project::current().here(&next)); }
                             }
                             Err(why) => error.set(Some(why)),
                         }

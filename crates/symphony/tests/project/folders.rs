@@ -225,7 +225,13 @@ fn a_documents_card_links_and_pictures_resolve_in_the_projects_folder() {
         &|_, made, _| std::fs::write(made, b"thumbnail").is_ok(),
         true,
     );
-    assert!(made.is_some_and(|(file, _)| file.is_file()));
+    let (file, _) = made.expect("a thumbnail is made");
+    assert!(file.is_file(), "{}", file.display());
+    assert!(
+        file.starts_with(tree.root.canonicalize().unwrap().join("output/docs-thumbs")),
+        "a thumbnail is kept in the project's artifacts folder: {}",
+        file.display()
+    );
 }
 
 #[test]
@@ -245,4 +251,31 @@ fn a_folder_spelled_with_dot_slash_names_its_documents_and_cards_as_any_other() 
     assert_eq!(Project::of(&tree.root).view().register, "docs/DECISIONS.md");
     let render = Render::new(&tree.root);
     assert!(docview::document(&render, "docs/DECISIONS.md", "").is_ok());
+}
+
+#[test]
+fn the_projects_own_state_is_kept_in_its_artifacts_folder() {
+    let tree = manual();
+    assert_eq!(
+        symphony::triage::port_file(&tree.root),
+        tree.path("output/docs-app.port")
+    );
+    assert_eq!(
+        symphony::postpone::order_file(&tree.root),
+        tree.path("output/review-order/postponed.json")
+    );
+    // Outside a repository the checkout itself holds the asks.
+    let asks = symphony::asks::default_path(&tree.root, None);
+    assert!(asks.ends_with("output/asks/asks.db"), "{}", asks.display());
+    tree.write("output/docs-app.port", "1\n");
+    assert_eq!(
+        symphony::triage::app_url(&tree.root),
+        symphony::triage::DEFAULT_APP,
+        "a record nothing listens on is stale"
+    );
+    let plain = Tree::new();
+    assert_eq!(
+        symphony::triage::port_file(&plain.root),
+        plain.path("artifacts/docs-app.port")
+    );
 }

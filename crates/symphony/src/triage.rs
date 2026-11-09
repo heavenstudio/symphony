@@ -11,7 +11,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::net::{SocketAddr, TcpStream};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
 use std::time::Duration;
 
@@ -23,7 +23,8 @@ use crate::register::{Decision, Group, REPLACES, Who};
 use crate::text::{S, is_space, strip};
 
 pub const DEFAULT_PORT: u16 = 8765;
-pub const PORT_FILE: &str = "artifacts/docs-app.port";
+/// The Symphony's port record, in the project's artifacts folder.
+pub const PORT_FILE: &str = "docs-app.port";
 /// Where the Symphony of the primary instance listens.
 pub const DEFAULT_APP: &str = "http://127.0.0.1:8765";
 
@@ -437,11 +438,17 @@ fn listening(port: u16) -> bool {
     TcpStream::connect_timeout(&address, Duration::from_millis(500)).is_ok()
 }
 
+/// Where the Symphony serving the checkout at `root` records its port: [`PORT_FILE`] in the
+/// project's artifacts folder.
+pub fn port_file(root: &Path) -> PathBuf {
+    root.join(crate::project::Project::of(root).artifact(PORT_FILE))
+}
+
 /// The Symphony of the tree at `root`: its recorded port while something listens there (a killed app
 /// leaves a stale record), else the primary instance's. Liveness is checked on loopback, so an app run
 /// with `--host <tailnet ip>` alone reads as stale.
 pub fn app_url(root: &Path) -> String {
-    let recorded = std::fs::read_to_string(root.join(PORT_FILE))
+    let recorded = std::fs::read_to_string(port_file(root))
         .ok()
         .and_then(|text| strip(&text).parse::<u16>().ok());
     let port = recorded

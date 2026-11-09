@@ -70,7 +70,7 @@ fn logged_port(folder: &Path) -> Hint {
 
 /// The port the listener's hint file under `root` names, read no further than a port's length.
 fn hinted_port(root: &Path) -> Hint {
-    match read_tail(&root.join(crate::front::PORT_FILE), PORT_HINT_BYTES) {
+    match read_tail(&crate::front::port_file(root), PORT_HINT_BYTES) {
         Ok((length, said)) if length <= PORT_HINT_BYTES => match said.trim().parse::<u16>() {
             Ok(port) if port != 0 => Hint::Port(port),
             _ => Hint::Unknown,

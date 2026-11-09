@@ -23,7 +23,7 @@ mod connections;
 mod embeddings;
 mod port_file;
 
-pub(crate) use port_file::PORT_FILE;
+pub(crate) use port_file::port_file;
 use port_file::{clear_port, record_port};
 
 /// How often the process table is read for leftovers.
@@ -55,8 +55,11 @@ pub struct Shared {
     /// One release client for every worktree, installed beside the shared server or built locally.
     pub(crate) ui_dist: PathBuf,
     pub(crate) installed_ui: bool,
+    /// Where the one server serves this project's pages, `/<id>`; empty for a server of its own,
+    /// which serves its one project at `/`.
+    pub(crate) base: String,
     common: Option<PathBuf>,
-    gate: Gate,
+    pub(crate) gate: Gate,
     orphans: AtomicUsize,
     /// Set as the first census ends, whether it counted or the process table could not be read.
     counted: AtomicBool,
@@ -70,22 +73,63 @@ pub struct Shared {
     sleep: Mutex<()>,
     wake: Condvar,
     pub(crate) replaced: AtomicBool,
+    /// A starter asked for the hand-off ([`handover_when_asked`]); the reload worker takes it.
+    pub(crate) handover: AtomicBool,
     pub(crate) api: tokio::sync::OnceCell<Arc<crate::live::Hub>>,
     pub(crate) saves: std::sync::OnceLock<symphony::save::Saves>,
 }
 
 impl Shared {
-    pub fn new(pid: i64, port: u16, root: &Path, home: Option<&Path>, gate: Gate) -> Arc<Shared> {
-        // --home is carried into the detached process as an argument. Its installed client does
-        // not depend on the starter's environment, which Home deliberately drops. Foreground
-        // servers retain their root's build and SF_SYMPHONY_UI_DIST override.
-        let ui_dist = home.map_or_else(|| crate::live::dist(root), |h| h.join("client/public"));
+    /// A server's one project, at `/`. `install` is the one server's install folder, whose client
+    /// it serves; none for a server of its own.
+    pub fn new(
+        pid: i64,
+        port: u16,
+        root: &Path,
+        install: Option<&Path>,
+        gate: Gate,
+    ) -> Arc<Shared> {
+        Shared::project(pid, port, root, install, gate, "")
+    }
+
+    /// [`Shared::new`] for a project the one server serves at `base`, `/<id>`.
+    pub fn project(
+        pid: i64,
+        port: u16,
+        root: &Path,
+        install: Option<&Path>,
+        gate: Gate,
+        base: &str,
+    ) -> Arc<Shared> {
+        // The install folder is carried into the detached process as an argument. Its installed
+        // client does not depend on the starter's environment, which Home deliberately drops.
+        // Foreground servers retain their root's build and SF_SYMPHONY_UI_DIST override.
+        let ui_dist = install.map_or_else(|| crate::live::dist(root), |h| h.join("client/public"));
+        Shared::made(pid, port, root, (ui_dist, install.is_some()), gate, base)
+    }
+
+    /// The one server's state for another registered project at `root`, served at `base`: this
+    /// server's process, port and client, that project's own hub, saves and gate.
+    pub(crate) fn beside(&self, root: &Path, base: &str) -> Arc<Shared> {
+        let client = (self.ui_dist.clone(), self.installed_ui);
+        Shared::made(self.pid, self.port, root, client, Gate::tailscale(), base)
+    }
+
+    fn made(
+        pid: i64,
+        port: u16,
+        root: &Path,
+        (ui_dist, installed_ui): (PathBuf, bool),
+        gate: Gate,
+        base: &str,
+    ) -> Arc<Shared> {
         Arc::new(Shared {
             pid,
             port,
             root: root.into(),
             ui_dist,
-            installed_ui: home.is_some(),
+            installed_ui,
+            base: base.into(),
             common: crate::repo::checkout(root)
                 .ok()
                 .map(|checkout| checkout.common),
@@ -99,6 +143,7 @@ impl Shared {
             sleep: Mutex::new(()),
             wake: Condvar::new(),
             replaced: AtomicBool::new(false),
+            handover: AtomicBool::new(false),
             api: tokio::sync::OnceCell::new(),
             saves: std::sync::OnceLock::new(),
         })
@@ -160,11 +205,18 @@ impl Shared {
         let _ = stopped.wait_for(|stopped| *stopped).await;
     }
 
-    fn status(&self) -> symphony_api::Front {
+    /// The server as `/api/front` says it, the projects it serves left to the one server's
+    /// dispatch ([`crate::projects`]).
+    pub(crate) fn status(&self) -> symphony_api::Front {
         // Read before the count: the census stores its count first, so a status that says counted
         // carries that count.
         let uncounted = !self.counted.load(Ordering::SeqCst);
+        let build = crate::host::Build::this(&self.root);
         symphony_api::Front {
+            plugins: build.plugins,
+            pin: build.pin,
+            schema: build.schema,
+            projects: Vec::new(),
             pid: self.pid,
             port: self.port,
             root: self.root.display().to_string(),
@@ -312,7 +364,7 @@ async fn front(State(shared): State<Arc<Shared>>, headers: HeaderMap) -> Respons
 }
 
 /// Whether a Host header names loopback: 127.0.0.1, [::1] or localhost, with any port.
-fn names_loopback(host: &str) -> bool {
+pub(crate) fn names_loopback(host: &str) -> bool {
     let suffix = if let Some(suffix) = host.strip_prefix("[::1]") {
         suffix
     } else {
@@ -672,6 +724,8 @@ fn stop_when(
 struct Started {
     serve: Serve,
     shared: Arc<Shared>,
+    /// The one server's other projects, stopped with it; none for a server of its own.
+    projects: Option<Arc<crate::projects::Projects>>,
     background: Background,
     serving: Vec<tokio::task::JoinHandle<()>>,
     /// This server wrote the port record, and clears it as it ends.
@@ -720,12 +774,19 @@ async fn start(mut serve: Serve, open: bool) -> Result<Started, i32> {
     if record {
         record_port(&serve.root, port);
     }
-    let shared = Shared::new(
+    // The one server serves its starter's project at `/<id>/`, beside every other registered one.
+    let base = if serve.home.is_some() {
+        format!("/{}", symphony::project::Project::of(&serve.root).id)
+    } else {
+        String::new()
+    };
+    let shared = Shared::project(
         i64::from(std::process::id()),
         port,
         &serve.root,
-        serve.home.as_deref(),
+        serve.installed(),
         Gate::tailscale(),
+        &base,
     );
     let mut background = Background {
         shared: shared.clone(),
@@ -790,7 +851,13 @@ async fn start(mut serve: Serve, open: bool) -> Result<Started, i32> {
             return Err(2);
         }
     };
-    let app = router(shared.clone());
+    let projects = serve
+        .home
+        .as_deref()
+        .map(|machine| crate::projects::Projects::new(machine, &shared));
+    let app = projects
+        .clone()
+        .map_or_else(|| router(shared.clone()), crate::projects::router);
     let mut serving = Vec::new();
     for listener in listeners {
         let shared = shared.clone();
@@ -828,6 +895,9 @@ async fn start(mut serve: Serve, open: bool) -> Result<Started, i32> {
         serve.home.as_deref(),
         Stamp::now,
     ));
+    if serve.home.is_some() {
+        handover_when_asked(&shared);
+    }
     let url = format!("http://127.0.0.1:{port}/");
     println!("→ Symphony at {url}  (pid {})", shared.pid);
     if let Some(hub) = shared.api.get() {
@@ -840,11 +910,36 @@ async fn start(mut serve: Serve, open: bool) -> Result<Started, i32> {
     Ok(Started {
         serve,
         shared,
+        projects,
         background,
         serving,
         record,
         stages,
     })
+}
+
+/// A starter whose build must replace this server asks with SIGUSR1, its request in the machine
+/// folder ([`crate::host::Handover`]); the reload worker reads it at its next look.
+fn handover_when_asked(shared: &Arc<Shared>) {
+    use tokio::signal::unix::{SignalKind, signal};
+    let Ok(mut asked) = signal(SignalKind::user_defined1()) else {
+        eprintln!("· Symphony server: cannot watch for hand-off requests");
+        return;
+    };
+    let shared = shared.clone();
+    tokio::spawn(async move {
+        loop {
+            tokio::select! {
+                () = shared.until_stopped() => return,
+                received = asked.recv() => {
+                    if received.is_none() {
+                        return;
+                    }
+                    shared.handover.store(true, Ordering::SeqCst);
+                }
+            }
+        }
+    });
 }
 
 impl Started {
@@ -854,6 +949,7 @@ impl Started {
         let Started {
             serve,
             shared,
+            projects,
             mut background,
             serving,
             record,
@@ -862,6 +958,15 @@ impl Started {
         let signals = stop_when(&shared, signal);
         shared.until_stopped().await;
         signals.abort();
+        let others = match projects {
+            Some(projects) => {
+                stages("the other projects");
+                tokio::task::spawn_blocking(move || projects.stop())
+                    .await
+                    .unwrap_or_default()
+            }
+            None => Vec::new(),
+        };
         // The stop ends the census, dropping a pending scan's child; this waits for that end.
         if let Some(census) = background.census.take() {
             stages("the orphan census");
@@ -885,6 +990,7 @@ impl Started {
             if let Some(saves) = draining.saves.get() {
                 saves.close_saying(|stage| closing(stage));
             }
+            crate::projects::close_saves(&others, &*closing);
         })
         .await;
         background.join(&*stages);
@@ -1027,6 +1133,12 @@ mod listen_tests;
 mod compression_tests;
 
 #[cfg(test)]
+mod tests;
+
+#[cfg(test)]
+mod sweep_tests;
+
+#[cfg(test)]
 mod head_tests;
 
 #[cfg(test)]
@@ -1034,667 +1146,3 @@ mod broken_stderr_tests;
 
 #[cfg(test)]
 mod session_tests;
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use axum::body::Body;
-    use axum::extract::connect_info::MockConnectInfo;
-    use tower::ServiceExt;
-
-    /// A confirmed tailnet peer, the one address the gate's `tailscale whois` knows.
-    const PEER: &str = "100.101.102.103";
-
-    #[test]
-    fn loopback_hosts_accept_exact_names_and_numeric_ports() {
-        for name in ["localhost", "LOCALHOST", "127.0.0.1", "[::1]"] {
-            for suffix in ["", ":0", ":1", ":80", ":65535", ":00080"] {
-                let host = format!("{name}{suffix}");
-                assert!(names_loopback(&host), "{host:?}");
-            }
-        }
-    }
-
-    #[test]
-    fn loopback_hosts_refuse_foreign_names_and_incomplete_authorities() {
-        for host in [
-            "",
-            "foreign.example",
-            "localhost.evil.example",
-            "127.0.0.1.evil.example",
-            "localhost.",
-            "127.1",
-            "127.0.0.2",
-            "::1",
-            "[::1",
-            "[::2]",
-            "[0:0:0:0:0:0:0:1]",
-            "[localhost]",
-            "[127.0.0.1]",
-            "[[::1]]",
-            "http://localhost",
-            "user@localhost",
-            " localhost",
-            "\tlocalhost",
-            "ｌocalhost",
-        ] {
-            assert!(!names_loopback(host), "{host:?}");
-        }
-        for name in ["localhost", "127.0.0.1", "[::1]"] {
-            for suffix in [
-                ".evil.example",
-                "]",
-                " ",
-                "\0",
-                "/path",
-                "?query",
-                "#fragment",
-                "@evil.example",
-                ":",
-                ":+1",
-                ":-1",
-                ": 80",
-                ":80 ",
-                ":80:90",
-                ":65536",
-                ":999999999999999999999999",
-                ":0x50",
-                ":８０",
-                ":80/path",
-                ":80?query",
-                ":80#fragment",
-                ":80.evil.example",
-                ":80@evil.example",
-            ] {
-                let host = format!("{name}{suffix}");
-                assert!(!names_loopback(&host), "{host:?}");
-            }
-        }
-    }
-
-    #[test]
-    fn idle_session_maintenance_starts_only_for_the_shared_installation() {
-        let gate = Gate::new(Arc::new(|_| Ok(None)), Arc::new(Instant::now));
-        let home = Path::new("/private-preview-fixture");
-        let shared = Shared::new(1, 1, home, Some(home), gate);
-        // Stop is sticky, so a started worker exits before any wait or external command.
-        shared.stop();
-        let private = session_maintenance(&shared, None, Stamp::now);
-        let installed = session_maintenance(&shared, Some(home), Stamp::now);
-        let private_started = private.is_some();
-        let installed_started = installed.is_some();
-        for worker in private.into_iter().chain(installed) {
-            worker.join().unwrap();
-        }
-        assert!(
-            !private_started,
-            "a private preview must not start a reaper"
-        );
-        assert!(
-            installed_started,
-            "the shared installation must start its reaper"
-        );
-    }
-
-    #[test]
-    fn leaving_the_server_scope_joins_its_owned_workers() {
-        let shared = Shared::new(
-            1,
-            1,
-            Path::new("/background-scope-fixture"),
-            None,
-            Gate::new(Arc::new(|_| Ok(None)), Arc::new(Instant::now)),
-        );
-        std::thread::scope(|scope| {
-            let (entered, stopping) = std::sync::mpsc::channel();
-            let (release, finish) = std::sync::mpsc::channel();
-            let (finished, completed) = std::sync::mpsc::channel();
-            let (returned, stopped) = std::sync::mpsc::channel();
-            let working = shared.clone();
-            let worker = std::thread::spawn(move || {
-                working.wait(Duration::from_secs(60));
-                entered.send(working.stopping()).unwrap();
-                // Closing release also lets an early assertion unwind without stranding a worker.
-                let _ = finish.recv();
-                finished.send(()).unwrap();
-            });
-            let background = Background {
-                shared,
-                workers: vec![worker],
-                census: None,
-            };
-            scope.spawn(move || {
-                drop(background);
-                returned.send(()).unwrap();
-            });
-            assert!(stopping.recv_timeout(Duration::from_secs(30)).unwrap());
-            let early = stopped.recv_timeout(Duration::from_millis(100));
-            release.send(()).unwrap();
-            if early.is_err() {
-                stopped.recv_timeout(Duration::from_secs(30)).unwrap();
-            }
-            completed.recv_timeout(Duration::from_secs(30)).unwrap();
-            assert!(
-                matches!(early, Err(std::sync::mpsc::RecvTimeoutError::Timeout)),
-                "the server scope returned before its worker finished: {early:?}"
-            );
-        });
-    }
-
-    #[tokio::test]
-    async fn the_status_is_uncounted_until_the_first_census_ends_counted_or_not() {
-        // None is a census that could not read the process table: it ends the wait all the same.
-        for count in [Some(3), None] {
-            let shared = Shared::new(
-                1,
-                1,
-                Path::new("/census-fixture"),
-                None,
-                Gate::new(Arc::new(|_| Ok(None)), Arc::new(Instant::now)),
-            );
-            // Each round answers what this test sends, and waits until it does.
-            let (send, rounds) = tokio::sync::mpsc::unbounded_channel::<Option<usize>>();
-            let rounds = Arc::new(tokio::sync::Mutex::new(rounds));
-            let background = Background {
-                shared: shared.clone(),
-                workers: vec![],
-                census: Some(census_worker(shared.clone(), move || {
-                    let rounds = rounds.clone();
-                    async move { rounds.lock().await.recv().await.flatten() }
-                })),
-            };
-            let held = shared.status();
-            assert!(held.uncounted, "counted before its census ended: {held:?}");
-            assert!(held.census_pending, "the starter needs the pending event");
-            assert_eq!(held.orphans, 0);
-            send.send(count).unwrap();
-            let began = Instant::now();
-            let counted = loop {
-                let status = shared.status();
-                if !status.uncounted {
-                    break status;
-                }
-                assert!(
-                    began.elapsed() < Duration::from_secs(15),
-                    "{count:?}: the first census never ended"
-                );
-                tokio::task::yield_now().await;
-            };
-            assert_eq!(counted.orphans, count.unwrap_or(0), "{count:?}");
-            assert!(!counted.census_pending);
-            drop(send);
-            drop(background);
-        }
-    }
-
-    #[tokio::test]
-    async fn a_server_stopped_before_the_census_starts_launches_no_scan() {
-        let shared = Shared::new(
-            1,
-            1,
-            Path::new("/stopped-census-fixture"),
-            None,
-            Gate::new(Arc::new(|_| Ok(None)), Arc::new(Instant::now)),
-        );
-        shared.stop();
-        census_worker(shared.clone(), || async {
-            panic!("a stopped server must not launch a census")
-        })
-        .await
-        .unwrap();
-        let status = shared.status();
-        assert!(status.uncounted);
-        assert!(!status.census_pending);
-    }
-
-    #[tokio::test]
-    async fn stopping_a_pending_census_cancels_its_scan_without_a_result() {
-        let shared = Shared::new(
-            1,
-            1,
-            Path::new("/cancelled-census-fixture"),
-            None,
-            Gate::new(Arc::new(|_| Ok(None)), Arc::new(Instant::now)),
-        );
-        let entered = Arc::new(tokio::sync::Notify::new());
-        let started = entered.clone();
-        let census = census_worker(shared.clone(), move || {
-            let started = started.clone();
-            async move {
-                started.notify_one();
-                std::future::pending().await
-            }
-        });
-        entered.notified().await;
-        assert!(shared.status().census_pending);
-        shared.stop();
-        census.await.unwrap();
-        let status = shared.status();
-        assert!(status.uncounted, "the scan returned no result");
-        assert!(
-            !status.census_pending,
-            "the stop must cancel the pending scan"
-        );
-    }
-
-    pub(super) struct SweepFixture {
-        pub(super) root: PathBuf,
-        pub(super) shared: Arc<Shared>,
-        background: Option<Background>,
-    }
-
-    impl SweepFixture {
-        pub(super) fn with_embedding_launcher(script: &str) -> Self {
-            use std::os::unix::fs::PermissionsExt;
-            let fixture = Self::new(script);
-            let launcher = fixture.root.join("tools/tasks.sh");
-            std::fs::write(&launcher, format!("#!/bin/sh\n{script}\n")).unwrap();
-            assert!(std::fs::symlink_metadata(&launcher).unwrap().is_file());
-            std::fs::set_permissions(&launcher, std::fs::Permissions::from_mode(0o644)).unwrap();
-            fixture
-        }
-
-        /// A shared installation whose launcher runs `script`; its sweep starts with `start`.
-        pub(super) fn new(script: &str) -> Self {
-            static NEXT: AtomicUsize = AtomicUsize::new(0);
-            let root = std::env::temp_dir().join(format!(
-                "sf-sweep-{}-{}",
-                std::process::id(),
-                NEXT.fetch_add(1, Ordering::Relaxed)
-            ));
-            std::fs::create_dir(&root).unwrap();
-            let gate = Gate::new(Arc::new(|_| Ok(None)), Arc::new(Instant::now));
-            let shared = Shared::new(i64::from(std::process::id()), 1, &root, Some(&root), gate);
-            let fixture = Self {
-                root,
-                shared,
-                background: None,
-            };
-            std::fs::create_dir(fixture.root.join("tools")).unwrap();
-            let program = fixture.root.join("tools/rs-bin.sh");
-            crate::fixture_script::write(&program, &format!("#!/bin/sh\n{script}\n"), false);
-            fixture
-        }
-
-        /// Own `worker` as the server does, until the fixture is dropped.
-        pub(super) fn start(&mut self, worker: std::thread::JoinHandle<()>) {
-            self.background = Some(Background {
-                shared: self.shared.clone(),
-                workers: vec![worker],
-                census: None,
-            });
-        }
-
-        pub(super) fn wait_for(&self, file: &str, expected: &str) {
-            let began = Instant::now();
-            loop {
-                let read = std::fs::read_to_string(self.root.join(file)).ok();
-                if read.as_deref() == Some(expected) {
-                    return;
-                }
-                assert!(
-                    began.elapsed() < Duration::from_secs(15),
-                    "sweep did not write {file}: it holds {read:?}"
-                );
-                std::thread::sleep(Duration::from_millis(10));
-            }
-        }
-    }
-
-    impl Drop for SweepFixture {
-        fn drop(&mut self) {
-            drop(self.background.take());
-            let _ = std::fs::remove_dir_all(&self.root);
-        }
-    }
-
-    /// A clock only the test moves. Every read is counted, so the test knows when the worker has
-    /// looked at a time it set and acted on it.
-    #[derive(Clone)]
-    struct TestClock {
-        start: Stamp,
-        /// How far past `start` the clock reads, and how often it was read.
-        state: Arc<(Mutex<(Duration, u64)>, Condvar)>,
-    }
-
-    impl TestClock {
-        fn new() -> Self {
-            Self {
-                start: Stamp::now(),
-                state: Arc::default(),
-            }
-        }
-
-        fn reader(&self) -> impl Fn() -> Stamp + Send + 'static {
-            let clock = self.clone();
-            move || {
-                let (state, read) = &*clock.state;
-                let mut state = state.lock().unwrap();
-                state.1 += 1;
-                read.notify_all();
-                Stamp {
-                    mono: clock.start.mono + state.0,
-                    wall: clock.start.wall + state.0,
-                }
-            }
-        }
-
-        /// Set the clock to `elapsed` past its start, when given, then wait for `more` reads.
-        fn read_at(&self, elapsed: Option<Duration>, more: u64) {
-            let (state, read) = &*self.state;
-            let mut state = state.lock().unwrap();
-            if let Some(elapsed) = elapsed {
-                state.0 = elapsed;
-            }
-            let seen = state.1;
-            let (_state, waited) = read
-                .wait_timeout_while(state, Duration::from_secs(30), |state| {
-                    state.1 < seen + more
-                })
-                .unwrap();
-            assert!(!waited.timed_out(), "the sweep stopped reading its clock");
-        }
-
-        /// Move the clock to `elapsed` past its start. The first read after decides on that time;
-        /// the second comes only once the worker has acted on the decision.
-        fn set(&self, elapsed: Duration) {
-            self.read_at(Some(elapsed), 2);
-        }
-    }
-
-    #[test]
-    fn the_shared_installation_ends_a_hung_reap_child_at_its_sweep_timeout() {
-        // The deadline is the shared installation's own SWEEP_TIMEOUT, read on a clock this test
-        // moves: the child below never ends by itself.
-        let clock = TestClock::new();
-        let mut fixture = SweepFixture::new("printf '%s\\n' \"$$\" > entered; exec sleep 86400");
-        let announced = crate::testing::fifo(&fixture.root.join("entered"));
-        fixture.start(
-            session_maintenance(&fixture.shared, Some(&fixture.root), clock.reader()).unwrap(),
-        );
-        let first = crate::testing::entered(&announced);
-        // The child may announce itself before its sweep reads the start of the deadline; the
-        // next read is that start or comes after it.
-        clock.read_at(None, 1);
-        clock.set(SWEEP_TIMEOUT - Duration::from_secs(1));
-        assert!(
-            sys::pid_alive(first),
-            "the reap child was ended before its timeout"
-        );
-        clock.set(SWEEP_TIMEOUT);
-        assert!(
-            !sys::pid_alive(first),
-            "the reap child outlived its {SWEEP_TIMEOUT:?} timeout"
-        );
-        // The next round starts at the reap interval, with a child of its own.
-        clock.set(Duration::from_secs_f64(REAP_SECONDS));
-        let second = crate::testing::entered(&announced);
-        assert_ne!(first, second);
-        drop(fixture);
-        assert!(!sys::pid_alive(second), "shutdown ends the round in flight");
-    }
-
-    #[test]
-    fn the_shared_installation_sweeps_at_startup_before_its_normal_interval() {
-        let mut fixture = SweepFixture::new("printf '%s' \"$*\" > started; exec sleep 30");
-        use std::os::unix::fs::MetadataExt;
-        let other = SweepFixture::new("exit 0");
-        let first = std::fs::metadata(fixture.root.join("tools/rs-bin.sh")).unwrap();
-        let second = std::fs::metadata(other.root.join("tools/rs-bin.sh")).unwrap();
-        assert_eq!((first.dev(), first.ino()), (second.dev(), second.ino()));
-        fixture
-            .start(session_maintenance(&fixture.shared, Some(&fixture.root), Stamp::now).unwrap());
-        fixture.wait_for("started", "tasks reap");
-        let stopping = Instant::now();
-        drop(fixture);
-        assert!(
-            stopping.elapsed() < Duration::from_secs(5),
-            "shutdown must cancel an active sweep instead of waiting for its four-minute deadline"
-        );
-    }
-
-    #[test]
-    fn a_private_preview_never_starts_embedding_maintenance() {
-        let fixture = SweepFixture::with_embedding_launcher("echo wrong > started");
-        assert!(embeddings::start(&fixture.shared, None, Stamp::now).is_none());
-        assert!(!fixture.root.join("started").exists());
-    }
-
-    /// Subprocess entry: measure the launched process rather than reconstructing its command.
-    #[test]
-    fn embedding_child_resource_probe() {
-        let Ok(args) = std::env::var("SF_EMBEDDING_RESOURCE_PROBE") else {
-            return;
-        };
-        // SAFETY: getpriority reads this process's scheduling priority without mutating it.
-        let priority = unsafe { libc::getpriority(libc::PRIO_PROCESS, 0) };
-        std::fs::write("resources", format!("{priority}\n{args}\n")).unwrap();
-        std::fs::write("resources-ready", "yes").unwrap();
-    }
-
-    #[test]
-    fn embedding_maintenance_runs_a_non_executable_launcher_niced_with_one_inference_thread() {
-        use std::os::unix::fs::PermissionsExt;
-        // SAFETY: getpriority reads this process's inherited scheduling priority.
-        let inherited = unsafe { libc::getpriority(libc::PRIO_PROCESS, 0) };
-        let exe = std::env::current_exe().unwrap();
-        let exe = exe.to_str().unwrap().replace('\'', "'\\''");
-        let script = format!(
-            "SF_EMBEDDING_RESOURCE_PROBE=\"$*\" exec '{exe}' --exact front::tests::embedding_child_resource_probe --nocapture"
-        );
-        let mut fixture = SweepFixture::with_embedding_launcher(&script);
-        assert_eq!(
-            std::fs::metadata(fixture.root.join("tools/tasks.sh"))
-                .unwrap()
-                .permissions()
-                .mode()
-                & 0o777,
-            0o644
-        );
-        fixture.start(embeddings::start(&fixture.shared, Some(&fixture.root), Stamp::now).unwrap());
-        fixture.wait_for("resources-ready", "yes");
-        assert_eq!(
-            std::fs::read_to_string(fixture.root.join("resources")).unwrap(),
-            format!(
-                "{}\nembed --maintenance --threads 1\n",
-                (inherited + 10).min(19)
-            ),
-            "the actual child must inherit nice +10 and select exactly one inference thread"
-        );
-    }
-
-    #[test]
-    fn embedding_maintenance_starts_at_startup_and_retries_a_failed_pass_each_minute() {
-        let clock = TestClock::new();
-        let mut fixture = SweepFixture::with_embedding_launcher(
-            "printf '%s\\n' \"$*\" >> calls; if [ ! -f attempted ]; then touch attempted; exit 1; fi",
-        );
-        fixture.start(
-            embeddings::start(&fixture.shared, Some(&fixture.root), clock.reader()).unwrap(),
-        );
-        fixture.wait_for("calls", "embed --maintenance --threads 1\n");
-        clock.set(embeddings::INTERVAL - Duration::from_secs(1));
-        assert_eq!(
-            std::fs::read_to_string(fixture.root.join("calls")).unwrap(),
-            "embed --maintenance --threads 1\n"
-        );
-        clock.set(embeddings::INTERVAL);
-        fixture.wait_for(
-            "calls",
-            "embed --maintenance --threads 1\nembed --maintenance --threads 1\n",
-        );
-    }
-
-    #[test]
-    fn embedding_maintenance_bounds_a_hung_pass_and_cancels_its_owned_child_on_shutdown() {
-        let clock = TestClock::new();
-        let mut fixture = SweepFixture::with_embedding_launcher(
-            "printf '%s\\n' \"$$\" > entered; exec sleep 86400",
-        );
-        let announced = crate::testing::fifo(&fixture.root.join("entered"));
-        fixture.start(
-            embeddings::start(&fixture.shared, Some(&fixture.root), clock.reader()).unwrap(),
-        );
-        let first = crate::testing::entered(&announced);
-        clock.read_at(None, 1);
-        clock.set(embeddings::TIMEOUT - Duration::from_secs(1));
-        assert!(
-            sys::pid_alive(first),
-            "a first backfill gets its own runtime budget"
-        );
-        clock.set(embeddings::TIMEOUT);
-        assert!(!sys::pid_alive(first), "a hung pass is bounded");
-        let second = crate::testing::entered(&announced);
-        assert_ne!(first, second);
-        drop(fixture);
-        assert!(!sys::pid_alive(second), "shutdown ends the pass in flight");
-    }
-
-    #[test]
-    fn a_sweep_is_due_when_either_clock_passes_the_interval() {
-        let interval = Duration::from_secs(300);
-        let (mono, wall) = (
-            Instant::now(),
-            SystemTime::UNIX_EPOCH + Duration::from_secs(1 << 30),
-        );
-        let last = Stamp { mono, wall };
-        let at = |awake: u64, elapsed: u64| Stamp {
-            mono: mono + Duration::from_secs(awake),
-            wall: wall + Duration::from_secs(elapsed),
-        };
-        assert!(sweep_due(None, last, interval), "the first round is due");
-        assert!(!sweep_due(Some(last), at(299, 299), interval));
-        assert!(sweep_due(Some(last), at(300, 300), interval));
-        // A 32-minute sleep: the monotonic clock advanced one second, the wall clock 1920.
-        assert!(
-            sweep_due(Some(last), at(1, 1920), interval),
-            "a wake runs a round at once"
-        );
-        // The wall clock set back must not hold a round off.
-        let back = Stamp {
-            mono: mono + Duration::from_secs(300),
-            wall: wall - Duration::from_secs(3600),
-        };
-        assert!(sweep_due(Some(last), back, interval));
-        assert!(!sweep_due(
-            Some(last),
-            Stamp {
-                wall: wall - Duration::from_secs(5),
-                ..at(10, 0)
-            },
-            interval
-        ));
-    }
-
-    #[test]
-    fn a_round_is_reported_late_by_its_whole_delay_past_the_threshold() {
-        let interval = Duration::from_secs(300);
-        let (mono, wall) = (
-            Instant::now(),
-            SystemTime::UNIX_EPOCH + Duration::from_secs(1 << 30),
-        );
-        let last = Stamp { mono, wall };
-        let after = |secs: u64| Stamp {
-            mono,
-            wall: wall + Duration::from_secs(secs),
-        };
-        assert_eq!(sweep_late(last, after(300), interval), None);
-        assert_eq!(
-            sweep_late(last, after(330), interval),
-            None,
-            "30 s is the threshold itself"
-        );
-        assert_eq!(
-            sweep_late(last, after(1920), interval),
-            Some(Duration::from_secs(1620)),
-            "a 32-minute sleep is 1620 s past the interval"
-        );
-        assert_eq!(sweep_late(last, after(10), interval), None);
-    }
-
-    #[test]
-    fn a_held_lifecycle_lock_does_not_stall_the_sweep_rounds() {
-        // Hub startup holds the lifecycle lock across SurrealDB calls; the rounds must go on.
-        let mut fixture = SweepFixture::new(
-            "if [ ! -f started ]; then printf first > started; exit 0; fi\nprintf again > retried",
-        );
-        fixture.start(maintenance_worker(
-            fixture.shared.clone(),
-            Duration::ZERO,
-            Duration::from_secs(3),
-            Stamp::now,
-        ));
-        let _hub_starting = fixture.shared.lifecycle.lock().unwrap();
-        fixture.wait_for("started", "first");
-        fixture.wait_for("retried", "again");
-    }
-
-    /// The status this server's routes give a GET of `path` from `client` with `host`, behind a gate
-    /// whose `tailscale whois` knows [`PEER`] alone.
-    async fn status_from(client: &str, path: &str, host: Option<&str>) -> StatusCode {
-        let gate = Gate::new(
-            Arc::new(|ip: &str| {
-                Ok::<_, String>((ip == PEER).then(|| r#"{"Node": {"Name": "phone"}}"#.to_string()))
-            }),
-            Arc::new(Instant::now),
-        );
-        let shared = Shared::new(1, 1, Path::new("/nowhere"), None, gate);
-        let app = router(shared).layer(MockConnectInfo(client.parse::<SocketAddr>().unwrap()));
-        let mut request = Request::builder().uri(path);
-        if let Some(host) = host {
-            request = request.header(header::HOST, host);
-        }
-        let request = request.body(Body::empty()).unwrap();
-        app.oneshot(request).await.unwrap().status()
-    }
-
-    #[tokio::test]
-    async fn a_lan_address_or_a_tailnet_stranger_is_refused_before_any_route() {
-        let strangers = [
-            "192.168.1.20:5000",
-            "10.0.0.2:5000",
-            "100.64.0.9:5000",
-            "[fd7a:115c:a1e0::9]:5000",
-            "[::ffff:192.168.1.20]:5000",
-        ];
-        for client in strangers {
-            for path in ["/api/front", "/docs/A.md"] {
-                let status = status_from(client, path, Some("127.0.0.1:1")).await;
-                assert_eq!(status, StatusCode::FORBIDDEN, "{client} {path}");
-            }
-        }
-    }
-
-    #[tokio::test]
-    async fn this_machine_and_a_confirmed_tailnet_peer_are_let_in() {
-        for client in [
-            "127.0.0.1:5000",
-            "[::1]:5000",
-            "[::ffff:127.0.0.1]:5000",
-            "100.101.102.103:5000",
-        ] {
-            let status = status_from(client, "/api/front", Some("127.0.0.1:1")).await;
-            assert_eq!(status, StatusCode::OK, "{client}");
-        }
-    }
-
-    /// `/api/front`, the server's own route, is for the starters on this machine, which ask it by
-    /// loopback's name: a page another site rebinds to loopback names that site instead, and reads
-    /// nothing. The app's routes are judged by the app's own Host check, after this server.
-    #[tokio::test]
-    async fn the_servers_own_route_answers_only_a_host_naming_loopback() {
-        for host in ["127.0.0.1:1", "localhost:1", "[::1]:1", "LOCALHOST"] {
-            let status = status_from("127.0.0.1:5000", "/api/front", Some(host)).await;
-            assert_eq!(status, StatusCode::OK, "{host}");
-        }
-        for host in [
-            Some("evil.example:1"),
-            Some("127.0.0.1.evil.example"),
-            Some(""),
-            None,
-        ] {
-            let status = status_from("127.0.0.1:5000", "/api/front", host).await;
-            assert_eq!(status, StatusCode::FORBIDDEN, "{host:?}");
-        }
-    }
-}

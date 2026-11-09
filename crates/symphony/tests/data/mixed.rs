@@ -87,7 +87,7 @@ fn the_home_and_full_queue_mix_topics_oldest_first_with_later_last() {
         ["pictures-0", "pictures-1"],
         "Later keeps its preference order at the category's tail"
     );
-    tree.write(symphony::postpone::FILE, "corrupt");
+    tree.write(crate::postpone::ORDER, "corrupt");
     let fallback = snapshot();
     assert_eq!(
         fallback.queue.waiting, before.queue.waiting,

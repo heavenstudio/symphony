@@ -1,14 +1,16 @@
 //! Codex's helpers under its terminal, each by its exact path: the configured REPL helper
-//! (`CODEX_REPL`) and the ChatGPT app's computer-use REPL (`CODEX_CUA_NODE` running
-//! `CODEX_CUA_REPL`) are not work, any other node program beside them is, and a finished Codex
-//! with only its helpers under it closes.
+//! (`CODEX_REPL`), the ChatGPT app's computer-use REPL (`CODEX_CUA_NODE` running
+//! `CODEX_CUA_REPL`) and the code-mode host of a standalone release (`CODEX_CODE_MODE_HOST`) are
+//! not work, any other node program or a `codex exec` beside them is, and a finished Codex with
+//! only its helpers under it closes.
 
 use super::all;
 use crate::World;
+use crate::screen::kept_only;
 use symphony_board::launch::procs::{
-    CODEX_CUA_NODE, CODEX_CUA_REPL, CODEX_REPL, busy_reason, harmless, reap_busy_reason,
+    CODEX_CODE_MODE_HOST, CODEX_CUA_NODE, CODEX_CUA_REPL, CODEX_REPL, busy_reason, harmless,
+    reap_busy_reason,
 };
-use symphony_board::launch::reap::Sweep;
 
 #[test]
 fn codexs_configured_repl_helper_is_harmless_but_any_other_node_program_is_work() {
@@ -134,12 +136,99 @@ fn a_finished_codex_with_only_its_repl_helper_under_it_closes_and_another_node_k
         }
     }
     let w = World::new();
-    let (_, terminal) = w.worker("sim/jump", Some("done"));
+    let (handle, terminal) = w.worker("sim/jump", Some("done"));
     w.run_under(w.pid_of(&terminal), &[CODEX_REPL, "node build.js"]);
     let closures = w.clean(false, &[]);
     assert!(closures.is_empty(), "{closures:?}");
-    for _ in 0..3 {
-        assert_eq!(w.sweep_through(&w.hc()), Sweep::default());
+    for n in 0..3 {
+        let kept = kept_only(&terminal, &handle, "it runs node build.js", n == 0);
+        assert_eq!(w.sweep_through(&w.hc()), kept);
+    }
+    assert!(w.has_terminal(&terminal), "{terminal} was closed");
+}
+
+/// Codex's code-mode host as `ps` prints it under a session of standalone release `version`.
+fn code_mode_host(version: &str) -> String {
+    format!(
+        "/Users/someone/.codex/packages/standalone/releases/{version}/bin/{CODEX_CODE_MODE_HOST}"
+    )
+}
+
+#[test]
+fn codexs_code_mode_host_is_harmless_only_in_a_standalone_releases_bin_folder() {
+    let codex = "codex --no-daemon -s workspace-write -m gpt-6.1-sol";
+    for idle in [
+        all(&[codex, &code_mode_host("0.167.0-aarch64-apple-darwin")]),
+        // any version, so an upgrade still matches; and whatever arguments follow
+        all(&[codex, &code_mode_host("0.168.2-x86_64-apple-darwin")]),
+        all(&[codex, &format!("{} --stdio", code_mode_host("1"))]),
+        all(&[codex, &cua_repl(), CODEX_REPL, &code_mode_host("0.167.0")]),
+    ] {
+        assert!(harmless(&idle[1]), "{idle:?}");
+        assert_eq!(busy_reason(&idle), None, "{idle:?}");
+        assert_eq!(reap_busy_reason(&idle), None, "{idle:?}");
+    }
+    let releases = "/Users/someone/.codex/packages/standalone/releases";
+    for work in [
+        // the name alone, or anywhere else on a path
+        CODEX_CODE_MODE_HOST.to_string(),
+        format!("/usr/local/bin/{CODEX_CODE_MODE_HOST}"),
+        format!("/Users/someone/.codex/bin/{CODEX_CODE_MODE_HOST}"),
+        format!("{releases}/bin/{CODEX_CODE_MODE_HOST}"),
+        format!("{releases}/0.167.0/{CODEX_CODE_MODE_HOST}"),
+        format!("{releases}/0.167.0/libexec/bin/{CODEX_CODE_MODE_HOST}"),
+        format!("{releases}/0.167.0/bin/sub/{CODEX_CODE_MODE_HOST}"),
+        format!("{releases}/../bin/{CODEX_CODE_MODE_HOST}"),
+        format!("{releases}/./bin/{CODEX_CODE_MODE_HOST}"),
+        format!("{releases}//bin/{CODEX_CODE_MODE_HOST}"),
+        format!("/Users/../.codex/packages/standalone/releases/1/bin/{CODEX_CODE_MODE_HOST}"),
+        format!("/Users//someone/.codex/packages/standalone/releases/1/bin/{CODEX_CODE_MODE_HOST}"),
+        format!("/.codex/packages/standalone/releases/1/bin/{CODEX_CODE_MODE_HOST}"),
+        // a relative home, another name in the release, or the host with more to its name
+        format!("Users/someone/.codex/packages/standalone/releases/1/bin/{CODEX_CODE_MODE_HOST}"),
+        format!("{releases}/1/bin/codex-code-mode"),
+        format!("{}x", code_mode_host("1")),
+        code_mode_host("1").to_uppercase(),
+        // a shell that starts it is a shell's job, as any is
+        format!("/bin/zsh -c {}", code_mode_host("1")),
+    ] {
+        assert!(!harmless(&work), "{work}");
+        let expected = Some(format!(
+            "runs {}",
+            work.chars().take(60).collect::<String>()
+        ));
+        assert_eq!(busy_reason(&all(&[codex, &work])), expected, "{work}");
+        assert_eq!(reap_busy_reason(&all(&[codex, &work])), expected, "{work}");
+    }
+    // A Codex exec job beside the host is work, whatever the host is.
+    let exec = "codex exec --json 'fix the jump'";
+    assert_eq!(
+        reap_busy_reason(&all(&[codex, &code_mode_host("0.167.0"), exec])),
+        Some(format!("runs {exec}"))
+    );
+}
+
+#[test]
+fn an_idle_codex_with_its_code_mode_host_under_it_closes_and_a_codex_exec_keeps_it() {
+    let host = code_mode_host("0.167.0-aarch64-apple-darwin");
+    let w = World::new();
+    let (handle, terminal) = w.worker("sim/jump", Some("done"));
+    w.run_under(w.pid_of(&terminal), &[&host, CODEX_REPL]);
+    assert_eq!(w.sweep_through(&w.hc()).idle, std::slice::from_ref(&handle));
+    let [closed] = <[_; 1]>::try_from(w.sweep_through(&w.hc()).closed).unwrap();
+    assert_eq!(
+        (closed.pane.as_str(), closed.handle.as_str()),
+        (terminal.as_str(), handle.as_str())
+    );
+    assert!(!w.has_terminal(&terminal), "{terminal} stayed");
+
+    let w = World::new();
+    let (handle, terminal) = w.worker("sim/jump", Some("done"));
+    let exec = "codex exec --json 'fix the jump'";
+    w.run_under(w.pid_of(&terminal), &[&host, exec]);
+    for n in 0..3 {
+        let kept = kept_only(&terminal, &handle, &format!("it runs {exec}"), n == 0);
+        assert_eq!(w.sweep_through(&w.hc()), kept);
     }
     assert!(w.has_terminal(&terminal), "{terminal} was closed");
 }
