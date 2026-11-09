@@ -32,6 +32,7 @@
 mod store;
 
 mod board;
+mod cleanup;
 mod findings;
 mod generated;
 mod listeners;
