@@ -1,6 +1,7 @@
 //! Real server delivery, driven by a fixture process table, and the shell's own failure notices.
 use super::{
     SHOWN, chrome, chrome::Chrome, owner_controls::ScratchBoard, projects::OneServer, site,
+    wait_for_board,
 };
 use serde_json::json;
 
@@ -186,6 +187,16 @@ fn shell_loading_errors_use_the_notice_region_and_retry_in_place() {
     browser.call("Network.setBlockedURLs", json!({"urls":[]}));
     browser.eval("document.querySelector('#module-error button').click()");
     assert!(browser.wait_for("document.querySelector('.hero-title') !== null && !document.querySelector('#module-error')", SHOWN));
+    fail_panel(&mut browser);
+    browser.eval("document.querySelector('#panel-error button').click()");
+    assert!(browser.wait_for(
+        "window.reviewPanelReady === true && !document.querySelector('#panel-error')",
+        SHOWN
+    ));
+}
+
+/// A real failed module request with a visible alert, restored network and no loaded panel.
+fn fail_panel(browser: &mut Chrome) {
     browser.call(
         "Network.setBlockedURLs",
         json!({"urls":["*assets/panel-*.js"]}),
@@ -195,11 +206,30 @@ fn shell_loading_errors_use_the_notice_region_and_retry_in_place() {
         "document.querySelector('#shell-notices #panel-error[role=alert] button') !== null",
         SHOWN
     ));
-    contained(&mut browser, true);
+    contained(browser, true);
+    assert_eq!(
+        browser.eval("window.reviewPanelReady === true"),
+        json!(false)
+    );
     browser.call("Network.setBlockedURLs", json!({"urls":[]}));
-    browser.eval("document.querySelector('#panel-error button').click()");
+}
+
+#[test]
+fn a_panel_recovered_by_activity_removes_its_failed_load_alert() {
+    let site = site();
+    let Some(mut browser) = chrome() else { return };
+    browser.call(
+        "Emulation.setDeviceMetricsOverride",
+        json!({"width":320,"height":900,"deviceScaleFactor":1,"mobile":true}),
+    );
+    browser.open(&site.url("/"));
+    wait_for_board(&mut browser);
+    fail_panel(&mut browser);
+    screenshot(&mut browser, "panel-event-error");
+    browser.eval("dispatchEvent(new Event('review:activity-arrived'))");
     assert!(browser.wait_for(
-        "window.reviewPanelReady === true && !document.querySelector('#panel-error')",
+        "window.reviewPanelReady === true && document.querySelector('#quick-text') !== null && !document.querySelector('#panel-error')",
         SHOWN
     ));
+    screenshot(&mut browser, "panel-event-recovered");
 }

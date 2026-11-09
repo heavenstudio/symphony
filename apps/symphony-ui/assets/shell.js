@@ -80,6 +80,7 @@ async function ensurePanel() {
         const imported = await initialize("panel");
         await styles(spec);
         await imported.run();
+        document.getElementById("panel-error")?.remove();
         window.reviewPanelReady = true;
         dispatchEvent(new Event("review:panel-ready"));
         return { imported };
