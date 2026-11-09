@@ -48,6 +48,20 @@ pub struct Project {
 ///
 /// When the folder is in no repository: a board lives in a repository's common dir.
 pub fn locate(cwd: &Path) -> Result<Place, String> {
+    let (root, file) = nearest(cwd);
+    let common = git::common_dir(&root).map_err(|e| e.to_string())?;
+    Ok(Place { root, file, common })
+}
+
+/// The same project boundary as [`locate`], read only from filesystem markers. A hook uses this
+/// on every tool call: an unknown layout returns none instead of starting a fallback process.
+pub fn locate_quick(cwd: &Path) -> Option<Place> {
+    let (root, file) = nearest(cwd);
+    let common = git::read(&root)?;
+    Some(Place { root, file, common })
+}
+
+fn nearest(cwd: &Path) -> (PathBuf, Option<PathBuf>) {
     let here = cwd.canonicalize().unwrap_or_else(|_| cwd.to_path_buf());
     let mut found = (here.clone(), None);
     for folder in here.ancestors() {
@@ -56,14 +70,12 @@ pub fn locate(cwd: &Path) -> Result<Place, String> {
             found = (folder.to_path_buf(), Some(file));
             break;
         }
-        if folder.join(".git").exists() {
+        if folder.join(".git").symlink_metadata().is_ok() {
             found = (folder.to_path_buf(), None);
             break;
         }
     }
-    let (root, file) = found;
-    let common = git::common_dir(&root).map_err(|e| e.to_string())?;
-    Ok(Place { root, file, common })
+    found
 }
 
 /// The project of a command run in `cwd` ([`locate`]), named by its file, else by the registry in
