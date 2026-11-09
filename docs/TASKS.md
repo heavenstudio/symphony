@@ -365,7 +365,7 @@ Slot holders and waiters come from `test_slots.runs` (a held slot file whose wri
 place in the pool's FIFO line, `<prefix>-<12-digit sequence>.place`, in the pool's own prefix: `slot-` and `render-`, that its waiter still holds); a slot file whose writer is dead is free and is not locked to find out.
 
 An orchestrator's callback uses it: it does not call an agent stale or lost while `running_test`, and it receives a PULL
-digest (`symphony/crates/tasks/src/cli/pull.rs`) once at its first dispatch, even when empty, then only when an actionable list gains an entry absent from the last delivered PULL after forgetting entries absent from any computed digest: ready tasks with no live executor
+digest (`symphony/crates/tasks/src/cli/pull.rs`) once at its first dispatch, even when empty, then only when an actionable list gains an entry absent from the last delivered PULL after forgetting entries absent from any computed digest: red tasks ([Slots](#slots)) with no live executor 10 minutes after they were filed, in any status short of review, listed first as `red_unstaffed`, counted in the header only when there is one, and in no other list, `dependency_blocked` included, a cancelled dependency of its named in its note; ready tasks with no live executor
 (one on a subtask still to be executed counts), in-progress with none, review with no reviewer, tasks that landed
 (the branch is on main, or `landed <slug> on main` is on the task's thread) and are still open (a status change on the task after that line voids it, whether a move, a verdict such as `changes`, or a re-claim: the task is new work, not a landing left open), and idle agents, each scoped to the orchestrator's own and unclaimed tasks (an idle agent another orchestrator launched is left out). An executor
 or reviewer that is `running_test` counts as present however quiet the board says it is.
@@ -639,6 +639,44 @@ capped. A value that does not parse, or one below 1, is said on stderr
   Work blocked by any other move holds no slot, and takes one to come back.
   The PULL header and the agents API do not read holds: they count a held task
   as the blocked task it is.
+- **Red work takes no slot.** A task filed for a red that stops every
+  landing is marked so where it is filed (`create`'s `red`, naming what is
+  red, `tasks api` version 7; kept as the board field `fields._board.red`,
+  `symphony/crates/tasks/src/red.rs`). Only a red's filer marks: a session of
+  kind `filer`, which `tasks api`'s `register` takes and the command line's
+  `register` does not, as the project's tools that file reds register. A
+  create naming `red` from any other session is refused, and `set_field`
+  refuses the board's own `_board` fields. The mark goes only on a task of a
+  series reds are filed in (`red::SERIES`: `tests/main-red-*`, a red verify
+  of main, and `tests/nightly-red-*`, a red night), whoever marks it, so no
+  feature takes it; never on a task named under one (`red::filed`: no `/`
+  past the series' prefix), which the nightly's reading of its reds and
+  land's of the standing reds take for ordinary work too. `mark_red` marks an open red its
+  filer filed before it marked reds, and makes it p0, once: what it judges is
+  read in the transaction that writes, so two at once post one line. While the
+  marked task is open, it and the work under it take no slot: subtasks,
+  review mirrors and instructions are judged by the task whose work they are
+  and the tasks above it. Red work starts at any count and frees none. A red
+  done or cancelled exempts nothing: the work under it counts again, new
+  work there included. Its close is never refused, though it raises its
+  owners' counts: whether or not the closing store caps starts (the
+  nightly's does not), it holds their slot counters and the red's own,
+  `counter:['red', SLUG]`, which every start of work under the open red holds
+  too, so a start decided on a board read before the close is decided again,
+  counted. A close decides what it holds on the task as it read it, and its
+  write goes on only from that version, so a red marked between the two
+  (an earlier red the nightly or main's verify marks) is read and decided
+  again, and a task it read as not on the board is refused there, never
+  closed unfenced as a red filed since. `unmark_red`, from a filer too, lifts
+  the mark of an open red that stays open as ordinary work (main's green
+  reached it once work on it started): it and the work under it count from
+  then, decided and held as a close is, never refused; a task unmarked or
+  closed is left as it is. A refusal names the owner's open red work after its
+  counted slots: `…; a slot frees when one of them is done or cancelled; not
+  counted, as red work takes no slot: tests/main-red-abc (in_progress)`. The
+  mark alone tells; a slug never does. The PULL header's `slots=` and the
+  agents API count no red work. As with review, nothing authenticates a
+  session: a filer is honour-based, guarding against a mistake, not malice.
 - **What it leaves alone.** The owner's moves, changes of parent and
   hand-overs are not capped.
 - **Not retroactive.** An orchestrator above the cap keeps every task and

@@ -460,7 +460,25 @@ tasks they review by id, a level a round trip. It decides on the board before
 and after the change (`slots::started`) and, for every orchestrator whose open
 tasks it changes, checks and bumps `counter:['slots', HANDLE]` in the write, so
 two starts at once are one retry, not two slots (`tests/store/slots.rs` and its
-`moves` and `cost` modules, `tests/cli/slots.rs`). A change of parent of open
+`moves` and `cost` modules, `tests/cli/slots.rs`). Red work takes no slot: an open task
+`create`'s `red` marks (`fields._board.red`, `red.rs`, api 7, which the cap's reads
+project beside each task) and the work under it, judged by the task whose work it is;
+a refusal names it apart, and PULL lists a red nobody executes 10 minutes after filing
+first, as `red_unstaffed`, before any cancelled dependency of its. Only a session of
+kind `filer` marks, on `create` or later with `mark_red` (`store/work/red.rs`, whose
+checks are read in its write's transaction), only a series' own task
+(`red::filed`, never one named under it: the nightly's board and land's standing reds
+judge by the same `red::filed_in`), and `set_field` refuses the board's own `_board`
+fields. A red's close is never refused: in its write, on a store capping starts or
+not, it holds the slot counters of the owners whose counts it raises
+(`slots::changed`) and `counter:['red', SLUG]`, which every start of work under the
+open red holds too (`slots::reds`, both in `slots/change.rs`), so a start decided
+before the close is decided again (`tests/store/slots/moves.rs`). The owner's cancel,
+which reads the cap's board before its own write, fences that write on the task's
+version as read (`cap::FENCE`), so a red marked between them is read and decided again, and
+refuses a task its read did not find. `unmark_red` (`store/work/red.rs`, a filer's) lifts an
+open red's mark, read, fenced and held as a close (`cap::unmarking_slots`,
+`tests/store/slots/red_marks.rs`). A change of parent of open
 work and a hand-over of its orchestrator role are decided the same way
 (`set_parent`, `hand_over`), but for the owner's. A hold (`Store::hold_blocked`,
 `tasks api`'s `hold` from api 4, land's while stamps wait) keeps blocked work's slot: it is a record, not a task

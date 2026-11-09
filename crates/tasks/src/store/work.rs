@@ -18,6 +18,8 @@ use moves::Moving;
 
 mod owner_task;
 
+mod red;
+
 mod roles;
 
 /// Who makes a task or posts to a thread without a session of its own.
@@ -80,6 +82,9 @@ pub struct NewTask {
     pub assignee: Option<String>,
     /// A subtask (it needs a `parent`) whose executor closes it with `done`.
     pub instruction: bool,
+    /// What is red, for a task filed to fix a red that stops every landing ([`crate::red`]): it
+    /// and the work under it take no orchestrator slot.
+    pub red: Option<String>,
 }
 
 impl Default for NewTask {
@@ -96,6 +101,7 @@ impl Default for NewTask {
             depends: Vec::new(),
             assignee: None,
             instruction: false,
+            red: None,
         }
     }
 }
@@ -508,11 +514,15 @@ LET $said = $actor + ' moved it ' + $task.status + ' → ' + $status;
             block_cancelled_dependencies(cancelling)
         );
         self.retrying(|| {
+            // A red's close holds the counters it changes as a start does, capped store or not,
+            // judged on the task as read: a red marked since is read and decided again.
+            let closed = self.closing_slots(slug, status)?;
+            let body = closed.guarding(&body);
             let vars = acting(
                 OWNER,
                 (self.clock)(),
                 json!({
-                    "slug": slug, "status": status, "from": from,
+                    "slug": slug, "status": status, "from": from, "slots": closed.slots, "version": closed.version,
                     "missing": format!("{REFUSED}{}", no_task(slug)),
                     "cannot": format!("{REFUSED}{slug} cannot go from "),
                     "instruction": format!("{REFUSED}{slug} is an instruction subtask: its executor closes it with `done`, not review"),

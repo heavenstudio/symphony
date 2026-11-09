@@ -627,7 +627,7 @@ impl Store {
     }
 
     /// As [`Store::rule`]; one that `starts` work ([`Opens`]) under a cap also reads what the cap
-    /// decides on, in the same transaction as its task ([`cap`]).
+    /// decides on, in the same transaction as its task, as does a red's close ([`Store::ruled`]).
     fn ruling(
         &self,
         slug: &str,
@@ -641,12 +641,8 @@ impl Store {
             Which::Slug(slug)
         };
         self.retrying(|| {
-            let view = self.view(&which)?;
-            let change = decide(&view).map_err(Failure::Stop)?;
-            let slots = match (&change.opens, self.slots) {
-                (Some(opens), Some(cap)) => self.slots_taken(&view, slug, opens, cap)?,
-                _ => Vec::new(),
-            };
+            let ruled = self.ruled(&which, slug, &decide)?;
+            let (view, change) = (&ruled.view, &ruled.change);
             let version = view.snap.tasks.first().map_or(0, |t| t.version);
             let mut body = if change.status.is_some() {
                 format!(
@@ -659,11 +655,11 @@ impl Store {
             } else {
                 WRITE.into()
             };
-            if !slots.is_empty() {
+            if !ruled.slots.is_empty() {
                 body.push_str(cap::GUARD);
             }
             let mut vars = change.vars(slug, actor, version, view.now);
-            vars["slots"] = Value::Array(slots);
+            vars["slots"] = Value::Array(ruled.slots);
             self.written(&body, vars, slug)
         })
     }
@@ -1036,6 +1032,8 @@ struct Opens {
     orchestrator: Option<String>,
     /// The task's new parent, or none, when that is the change.
     parent: Option<Option<String>>,
+    /// Whether the change lifts the task's red mark ([`Store::unmark_red`]).
+    unmarks: bool,
     /// The sessions whose parents stand in for an orchestrator when none holds the task: its
     /// executor once it starts.
     by: Vec<String>,
