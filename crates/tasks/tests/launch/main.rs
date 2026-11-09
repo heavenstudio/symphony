@@ -17,6 +17,7 @@ mod close_fences;
 mod close_holds;
 mod close_races;
 mod finish;
+mod fixtures;
 mod hc;
 mod last_look;
 mod launch;
@@ -163,13 +164,9 @@ impl World {
     pub fn new() -> World {
         let folder = Folder::new();
         let repo = folder.0.join("lamp-works");
-        fs::create_dir_all(&repo).unwrap();
-        git(&repo, &["init", "-q", "-b", "main"]);
-        git(&repo, &["commit", "-q", "--allow-empty", "-m", "x"]);
+        fixtures::repository(&repo);
         let wt = folder.0.join("lamp-works-wt");
-        let f = Fixture::empty();
-        let orch = f.session("orchestrator");
-        f.task("sim/jump");
+        let (f, orch) = fixtures::board();
         let mut env = Env {
             vars: Default::default(),
             cwd: repo.clone(),

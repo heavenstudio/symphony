@@ -313,13 +313,9 @@ impl Store {
             let _: Value = self.retrying(|| self.transact(&sql, vars.clone()))?;
             Ok(())
         });
-        if staged.is_err() {
-            let _ = self.client.query(
-                &format!("REMOVE TABLE IF EXISTS {staging}_chunks;"),
-                json!({}),
-            );
-        }
-        staged
+        staged.map_err(|error| {
+            self.cleanup_staging(&format!("REMOVE TABLE IF EXISTS {staging}_chunks;"), error)
+        })
     }
 
     /// Chunk neighbours fold to one task row by best cosine distance. Adaptive overfetch prevents

@@ -43,6 +43,7 @@ pub mod launch;
 pub mod on_review;
 pub mod orchestration;
 pub mod port;
+pub mod project;
 pub mod pyjson;
 pub mod red;
 pub mod rows;
@@ -55,11 +56,12 @@ pub mod sweep;
 pub mod sys;
 
 pub use health::Health;
+pub use schema::{Access, Schema};
 pub use store::{
     BEFORE_WORK, Beat, Board, Callback, EmbeddingStats, Error, HandOff, KINDS, LANDS_FROM, Landed,
-    Message, Moved, NewLaunch, NewSession, NewTask, PIPELINE, PULLABLE, Pick, Presence, ROLES,
-    Role, SLOT_READS, STATUSES, SearchHit, Session, Store, Task, VectorHit, VectorSearchProfile,
-    can_transition,
+    Message, Moved, NewLaunch, NewSession, NewTask, Opening, PIPELINE, PULLABLE, Pick, Presence,
+    ROLES, Role, SLOT_READS, STATUSES, SearchHit, Session, Store, Task, VectorHit,
+    VectorSearchProfile, can_transition,
 };
 
 /// The board schema this build reads and writes: the one server serves no project whose
