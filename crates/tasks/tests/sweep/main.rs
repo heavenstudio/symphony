@@ -20,6 +20,7 @@ mod clean_races;
 mod cli;
 mod finished;
 mod on_review;
+mod policy_cache;
 mod rules;
 mod sessionless;
 mod triggers;

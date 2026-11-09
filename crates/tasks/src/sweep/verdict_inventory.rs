@@ -106,7 +106,8 @@ fn relative(path: &Path) -> bool {
 /// file exists instead of treating the index pointer's metadata as that external file's identity.
 pub(super) fn admin_safe(root: &Path) -> Result<(), Unproven> {
     let admin = git::admin(root).ok_or(Unproven::Unknown)?;
-    for entry in fs::read_dir(admin).map_err(|_| Unproven::Unknown)? {
+    let entries = fs::read_dir(admin).map_err(|_| Unproven::Unknown)?;
+    for entry in entries {
         let entry = entry.map_err(|_| Unproven::Unknown)?;
         let name = entry.file_name();
         let name = name.to_string_lossy();
@@ -202,7 +203,8 @@ impl Capture<'_> {
         self.record(path, meta)?;
         if directory {
             let mut names = Vec::new();
-            for entry in fs::read_dir(self.root.join(path)).map_err(|_| Unproven::Unknown)? {
+            let entries = fs::read_dir(self.root.join(path)).map_err(|_| Unproven::Unknown)?;
+            for entry in entries {
                 names.push(entry.map_err(|_| Unproven::Unknown)?.file_name());
                 if names.len() > MAX_ENTRIES {
                     return Err(Unproven::Unknown);

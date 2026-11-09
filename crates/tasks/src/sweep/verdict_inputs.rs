@@ -173,6 +173,8 @@ impl Policy {
             }
         }
         let config_home = std::env::var_os("XDG_CONFIG_HOME")
+            // Git's xdg_config_home_for falls back only for absent or zero-length values.
+            .filter(|value| !value.is_empty())
             .map(PathBuf::from)
             .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".config")))?;
         external.insert(config_home.join("git/ignore"));

@@ -192,7 +192,8 @@ fn collection_changes_unsupported_admin_and_entry_bounds_decline_proof() {
     }
     fs::create_dir(tree.0.join("nested")).unwrap();
     fs::create_dir(tree.0.join("nested/.git")).unwrap();
-    assert!(matches!(tree.capture(&[], &[]), Err(Unproven::Unknown)));
+    let result = tree.capture(&[], &[]);
+    assert!(matches!(result, Err(Unproven::Unknown)), "{result:?}");
     let mut oversized = proof;
     oversized.version += 1;
     assert!(!oversized.matches(&tree.0));
@@ -212,7 +213,8 @@ fn unreadable_directories_special_files_and_capture_overflow_are_unproven() {
     fs::set_permissions(&directory, permissions).unwrap();
     assert!(matches!(result, Err(Unproven::Unknown)), "{result:?}");
     let _socket = std::os::unix::net::UnixListener::bind(tree.0.join("sim/socket")).unwrap();
-    assert!(matches!(tree.capture(&[], &[]), Err(Unproven::Unknown)));
+    let result = tree.capture(&[], &[]);
+    assert!(matches!(result, Err(Unproven::Unknown)), "{result:?}");
     let value = entry_stamp(&tree.0).unwrap();
     let mut capture = Capture {
         root: &tree.0,

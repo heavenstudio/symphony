@@ -406,7 +406,7 @@ fn a_candidate_using_another_common_policy_declines_cache_reuse() {
         .arg(&other)
         .status_locked()
         .unwrap();
-    assert!(copied.success());
+    assert!(copied.success(), "copy common repository: {copied}");
     let admin = r.root.join(".git/worktrees/kept");
     fs::write(admin.join("commondir"), format!("{}\n", other.display())).unwrap();
     for _ in 0..2 {

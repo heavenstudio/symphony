@@ -48,8 +48,9 @@
 //! `agent-ID` worktree; their id does not bind an arbitrarily named checkout. One sweep runs at a
 //! time (`sf-tasks/sweep.lock` in the git common dir). Contenders append a request and exit before
 //! connecting to the board; the holder runs another pass for requests received during its pass.
-//! Positive retention evidence is reused with stat and ignore-policy inputs; clean verdicts and
-//! removal checks are always fresh. Cache hits never walk the full checkout.
+//! Positive witnesses or bounded complete clean inventories reuse unchanged metadata/policy;
+//! unknown inputs rescan. Cache hits stat saved entries without walking. Both final status guards
+//! remain fresh; an early unavailable HEAD/removal guard retains the tree before lookup.
 //! Foreground `--task` cleanup visits only its finished worktrees, guarded per tree, and asks for
 //! a detached full pass. Tests: `symphony/crates/tasks/tests/sweep/`.
 
