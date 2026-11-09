@@ -16,7 +16,7 @@ use symphony::theme::Package;
 pub(crate) const THEME_MARK: &str = "data-symphony-theme";
 
 /// `shell` with the project at `root` in it, served at `base` (empty at the server's root), and
-/// `banner` at the top of the body.
+/// `banner` in the shell's notice region, styled even before the client loads.
 pub(crate) fn page(shell: &str, root: &Path, base: &str, banner: &str) -> String {
     let project = Project::of(root);
     let package = Package::of(&project);
@@ -60,10 +60,39 @@ pub(crate) fn page(shell: &str, root: &Path, base: &str, banner: &str) -> String
         view.base = base.into();
         Project::element(&view)
     });
-    if !element.is_empty() || !banner.is_empty() {
-        page.insert_str(body.unwrap_or(0), &format!("{element}{banner}"));
+    if !element.is_empty() {
+        page.insert_str(body.unwrap_or(0), &element);
+    }
+    if !banner.is_empty() {
+        notice(&mut page, banner);
     }
     page
+}
+
+/// Older installed client shells have no notice region or eager styles yet.
+fn notice(page: &mut String, banner: &str) {
+    const REGION: &str = "<section id=\"shell-notices\" aria-label=\"Server notices\">";
+    if !page.contains("id=\"shell-notices-style\"") {
+        let style = format!(
+            "<style id=\"shell-notices-style\">{}</style>",
+            include_str!("notices.css")
+        );
+        let at = page.find("</head>").unwrap_or(0);
+        page.insert_str(at, &style);
+    }
+    if let Some(at) = page.find(REGION) {
+        page.insert_str(at + REGION.len(), banner);
+    } else {
+        let at = page
+            .find("<div id=\"main\">")
+            .map(|at| at + "<div id=\"main\">".len())
+            .or_else(|| {
+                page.find("<body")
+                    .and_then(|at| page[at..].find('>').map(|end| at + end + 1))
+            })
+            .unwrap_or(0);
+        page.insert_str(at, &format!("{REGION}{banner}</section>"));
+    }
 }
 
 /// The package's tokens inline and its stylesheets after them, each marked [`THEME_MARK`].

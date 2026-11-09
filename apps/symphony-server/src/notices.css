@@ -1,0 +1,11 @@
+/* Shared by the server fallback and packaged client shell, before page modules load. */
+#shell-notices { box-sizing:border-box; max-width:1440px; margin:0 auto; padding:16px 20px; font:16px/1.55 var(--font-sans,system-ui,sans-serif); color:var(--foreground,#292524); }
+#shell-notices:empty { display:none; }
+#shell-notices .shell-notice { box-sizing:border-box; min-width:0; margin:0 0 12px; padding:16px 20px; border:1px solid var(--question,#946a00); border-left-width:4px; border-radius:var(--radius,12px); background:var(--card,#fffdf8); overflow-wrap:anywhere; }
+#shell-notices .shell-notice:last-child { margin-bottom:0; }
+#shell-notices [role=alert] { border-color:var(--dislike,#b3392b); }
+#shell-notices p { margin:0 0 8px; }
+#shell-notices p:last-child { margin-bottom:0; }
+#shell-notices code { display:block; margin:8px 0; padding:8px 12px; border-radius:6px; background:var(--muted,#f0ece6); color:inherit; font:0.875em/1.6 var(--font-mono,monospace); white-space:pre-wrap; overflow-wrap:anywhere; }
+#shell-notices button { margin-left:8px; padding:4px 12px; border:1px solid currentColor; border-radius:6px; font:inherit; color:inherit; background:transparent; cursor:pointer; }
+@media (max-width:760px) { #shell-notices { padding:12px; } #shell-notices .shell-notice { padding:12px; } }

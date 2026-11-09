@@ -32,6 +32,7 @@ mod owner_save;
 mod phone;
 mod projects;
 mod restored;
+mod server_notices;
 mod site;
 
 use std::time::Duration;

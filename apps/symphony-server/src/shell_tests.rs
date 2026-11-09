@@ -77,9 +77,10 @@ fn a_package_names_the_tab_and_sets_icon_tokens_stylesheet_and_layouts_under_the
     assert!(page.contains("<html data-layout-header=\"compact\" data-layout-home=\"focus\" lang"));
     assert_eq!(view(&page).base, "/lantern");
     assert!(
-        page.contains("</script><p>banner</p><div id=\"main\">"),
+        page.contains("<div id=\"main\"><section id=\"shell-notices\" aria-label=\"Server notices\"><p>banner</p></section>"),
         "{page}"
     );
+    assert!(page.find("shell-notices-style").unwrap() < page.find("</head>").unwrap());
 }
 
 #[test]
@@ -123,8 +124,38 @@ fn each_part_of_a_package_is_absent_on_its_own() {
 fn a_shell_without_its_marks_is_served_as_it_is_but_for_the_project() {
     let tree = project("[theme.tokens]\nprimary = \"#123\"\n");
     assert_eq!(page("plain text", &tree.root, "", ""), "plain text");
-    assert_eq!(
-        page("plain text", &tree.root, "", "<b>x</b>"),
-        "<b>x</b>plain text"
+    let warning = page("plain text", &tree.root, "", "<b>x</b>");
+    assert!(warning.contains("aria-label=\"Server notices\"><b>x</b></section>"));
+    assert!(warning.ends_with("plain text"));
+}
+
+#[test]
+fn the_eager_shell_region_receives_the_warning_once_without_repeating_styles() {
+    let tree = project("");
+    let shell = SHELL.replace(
+        "</head>",
+        "<style id=\"shell-notices-style\">/* packaged styles */</style></head>",
+    ).replace(
+        "<div id=\"main\">",
+        "<div id=\"main\"><section id=\"shell-notices\" aria-label=\"Server notices\"></section>",
     );
+    let warning = crate::orphans::banner(1);
+    let page = page(&shell, &tree.root, "", &warning);
+    assert_eq!(page.matches("id=\"shell-notices-style\"").count(), 1);
+    assert_eq!(page.matches("id=\"shell-notices\"").count(), 1);
+    assert!(page.contains(&format!(
+        "aria-label=\"Server notices\">{warning}</section>"
+    )));
+}
+
+#[test]
+fn an_older_shell_with_body_attributes_keeps_the_notice_in_its_body() {
+    let tree = project("");
+    let page = page(
+        "<html><head></head><body class=\"old\">content</body></html>",
+        &tree.root,
+        "",
+        "warning",
+    );
+    assert!(page.contains("<body class=\"old\"><section id=\"shell-notices\" aria-label=\"Server notices\">warning</section>"));
 }
