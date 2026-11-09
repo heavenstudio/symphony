@@ -127,43 +127,7 @@ card.
 
 ## Images in a reply
 
-When the owner asks to see something, make it rather than describe it: one
-image per card, generated on its own (the route is `docs/art/IMAGE_GENERATION.md`:
-Codex first, Civitai as fallback), saved under `artifacts/concepts/art/<topic>/`,
-and either linked in the reply or posted as a new card. A subfaction's people,
-ship or other picture is posted with `just faction-art post <page> --slug <slug>
---shows "<Subfaction> · <kind>" --image /artifacts/... [--replaces <slug>] "<one line>"`:
-it adds the card, and the section's `[[art:<Subfaction> · <kinds>]]` component
-shows it live (an approved picture wins, a rejected one drops out). Never paste
-`<img>` or other HTML into a page or reply to show a hull: write `[[ship:ID]]` or
-`[[ships:ID,ID]]` (docs/workflow/REVIEW.md, *Components*).
-
-**Inspect every picture before posting it.** Open it and check it against this
-list, not only against the owner's last note; regenerate on any failure rather
-than posting and waiting for the owner to find it:
-
-- concept art uses a three-quarter view that shows the form (owner, 2026-09-25:
-  fully top-down hurt the designs); the outline must still read from above;
-- an outline unlike the faction's other ships (any shape, long and thin
-  included; sameness is the failure). A silhouette may echo a franchise
-  (owner, 2026-09-25); only logos and emblems (rebel crest, aquila eagle)
-  and text are out;
-- every point on the card's own note and the notes of the cards it replaces;
-- weapons visible and mixed; anything firing fires consistently (same bolts
-  per port, every row the note names);
-- carriers: craft leaving, engine glow facing the carrier;
-- matches the subfaction's approved colours and people;
-- render defects: warped or merged parts, floating debris, cropped hull,
-  blur, duplicated objects.
-
-Generate three candidates per picture in parallel (owner, 2026-09-25: randomness
-makes one of several likely good) and post every one without an outright defect
-on the same card, `--image` repeated; the owner picks the letter. Do not choose
-for them. Say in the card line which points the picture meets, briefly. Generate new
-pictures from text alone, with a short prompt: `-i` switches Codex to
-image-to-image, a weaker path that copies the reference or loses quality with
-each pass. Keep a liked shape by describing it in words; use `-i` only for a
-tiny fix to a finished image.
+When the owner asks to see something, make the requested artifact and inspect it before posting. Follow project-local art, media and review skills for generation, taste, asset paths and plugin card commands. Use the project components its plugins provide; the generic integration invents no domain-specific component or approval rule.
 
 ## Disconnect
 

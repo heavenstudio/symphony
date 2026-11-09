@@ -4,7 +4,7 @@
 use std::io::Write;
 
 /// The Symphony's own commands, in the order its usage names them.
-const OWN: [&str; 10] = [
+const OWN: [&str; 11] = [
     "status",
     "reply",
     "docs-audit",
@@ -14,6 +14,7 @@ const OWN: [&str; 10] = [
     "verdict-tasks",
     "ask",
     "init",
+    "hook",
     "serve",
 ];
 

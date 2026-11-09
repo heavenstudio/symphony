@@ -61,13 +61,14 @@ landing, input-bound certificates, reusable evidence, and the normal review tier
    (`git branch -m SLUG`), a reviewer checks out the tip detached
    (`git checkout --detach SHA`).
 5. **Hear the board.** How depends on how you were started:
-   - In a herdr pane, or as a `claude -p` run: register your native callback,
+   - In an hc terminal of your own (`just tasks launch` started you there), or
+     as a `claude -p` run: register your native callback,
      `just tasks callback --as HANDLE`. It detects the Claude inbox socket (a
      `claude -p` run binds one while it runs) or Codex thread. Board messages
      and events then start a turn when idle, or arrive between tool calls. Act
      on each callback. A session without a native channel is explicitly
      listed as such and keeps `just tasks inbox` as a fallback; it never
-     receives messages through Herdr.
+     receives messages through hc.
    - As an in-process subagent (an Agent launch): run
      `just tasks inbox --as HANDLE` between steps. You inherit the parent's
      Claude socket; never register that socket as your callback: an
@@ -83,10 +84,10 @@ landing, input-bound certificates, reusable evidence, and the normal review tier
      when things happen".
    - When you wait on someone else (a stamp, a verdict, a merge, another
      agent's tip), say on the thread what you wait for, then end your turn. In
-     a pane the news arrives on your callback. A subagent or a `claude -p` run
-     ends its run instead, and its parent resumes it with the news
-     (`SendMessage`, `claude -p --resume`).
-   - Text typed into your pane, or sent when you are resumed, after the prompt
+     a terminal of your own the news arrives on your callback. A subagent or a
+     `claude -p` run ends its run instead, and its parent resumes it with the
+     news (`SendMessage`, `claude -p --resume`).
+   - Text typed into your terminal, or sent when you are resumed, after the prompt
      is your orchestrator's, not the owner's. Say so when you quote it on a
      thread.
 6. **Post milestones on the task's thread** (`just tasks say SLUG "…" --to @orchestrator`), not only in
@@ -127,8 +128,8 @@ landing, input-bound certificates, reusable evidence, and the normal review tier
    land: Review rounds use check + targeted tests + a 2-min static pre-check,
    reviewing in parallel; the full fast plan runs once, when landing." Before
    you move to review, run `just check` and the targeted tests of what you
-   changed: `just test-sim SUITE=…` for the suites you touch, a crate's own
-   targets through `tools/rs-bin.sh sf-slots cargo test -p PKG …` and
+   changed: the project suites you touch, a crate's own
+   targets through the project Cargo wrapper and
    `just lint-rs` for Rust, `just docs-index` for docs, then `just precheck`
    (the static pre-check: sf-verify's first phase alone, no workspace build
    and no certificate; its last line is `✅ precheck passed` or
@@ -137,10 +138,10 @@ landing, input-bound certificates, reusable evidence, and the normal review tier
    of main after the landing. Ending an intermediate turn or waiting runs no
    verification.
    When the description, the orchestrator or land asks for a verify
-   (`just verify`, `just verify-full`), run it in your own session, never in a
-   herdr pane. Owner, 2026-10-22: "when opening verify tasks, those
-   don't need herdr tabs, they can be ran directly" and "meaning running
-   `just verify` do not need their own herdr window".
+   (`just verify`, `just verify-full`), run it in your own session, never in an
+   hc terminal of its own. Owner, 2026-10-22, of herdr: "when opening verify
+   tasks, those don't need herdr tabs, they can be ran directly" and "meaning
+   running `just verify` do not need their own herdr window".
    - Claude: use the Bash tool with `run_in_background: true` and
      `timeout: 7200000`, running
      `TASKS_SESSION=<handle> just verify > artifacts/<handle>/verify-N.log 2>&1`
@@ -149,7 +150,8 @@ landing, input-bound certificates, reusable evidence, and the normal review tier
      is already in its environment); read its output directly.
    Keep `TASKS_SESSION=<handle>` on the run: it is how the agents API knows
    whose verify it is. A run that truly outlasts 2 hours (a soak,
-   [tools guide](../../../tools/AGENTS.md)) may still use a pane.
+   [tools guide](../../../tools/AGENTS.md)) may still use a terminal of its own
+   ([hc skill](../hc/SKILL.md#how-this-project-uses-hc)).
 9. **Never spawn subagents or forks.** Do the work in this session.
 10. **Habits every task assumes:**
     - Logs go under `artifacts/<handle>/` (Claude, through the Bash tool).
@@ -178,12 +180,7 @@ landing, input-bound certificates, reusable evidence, and the normal review tier
     - Board messages are short (post several rather than one long one) and
       never contain the word "git".
     - One command per call.
-    - No Python, not even throwaway: do scratch work, edits and
-      probes in bash, `jq`, the Edit tool or a Rust test. The carve-outs are
-      named in [RULES.md](../../../RULES.md) `tools/no-new-python`. Never run
-      a Python tool either, not even the one you port, for a baseline: read
-      it for its behaviour (the owner's ruling: no Python runs in Star
-      Foundry ever again).
+    - Follow the project language, tooling and scratch-file rules.
     - Run cargo only as `tools/rs-bin.sh sf-slots cargo …`, never bare.
     - Never find a process with `ps`, `grep`, `pgrep` or `lsof`, and never
       kill by pattern (RULES.md `tools/no-kill-by-pattern`). Stop only a run
@@ -199,7 +196,7 @@ landing, input-bound certificates, reusable evidence, and the normal review tier
       SHA is the full commit the reviewer checked, saved when starting review.
       A moved branch refuses the verdict; review its new tip before retrying.
 11. **Run tests wisely.** Verification time is the team's time.
-    - Inner loop: `just check` and `just test-sim SUITE=<the suites you touch>`;
+    - Inner loop: `just check` and the project targeted tests;
       never a whole verify to see one test.
     - No branch `just verify` and no `verify-full`, unless the description,
       the orchestrator or land asks for one: the full fast plan runs on the
@@ -213,10 +210,11 @@ landing, input-bound certificates, reusable evidence, and the normal review tier
       (`just test-times` has no Codex rule). Read or plan while it runs;
       never poll.
 
-A pane that is closed (by `just tasks cleanup`, or once the task is done) can be
-brought back with `just tasks restore SLUG`: your work is on the branch and the
+A terminal that is closed (by `just tasks cleanup` or `just clean`, once the task
+is done, after an hour idle at its prompt, or by its orchestrator) can be brought
+back with `just tasks restore SLUG`, and a post to you restores it: your work is on the branch and the
 conversation resumes, so end on the step the description names and leave the rest
-to the board. Never close panes or remove worktrees by hand for the session you
-were launched in.
+to the board. Never close terminals (`hc kill`, `hc rm`) or remove worktrees by
+hand for the session you were launched in.
 
 When you are finished, say in one line what you did and where the result is.

@@ -35,7 +35,7 @@ do not treat it as approval, and change documents only when it asks for that.
 
 1. **Tidy, then read the verdicts.** `just symphony-status --tidy` first: it marks
    plain approvals resolved (dated) and regroups every register owner-first
-   (`DECISIONS.md` and each faction page, whose art cards sit under *art* topics).
+   (the project register and its per-topic pages).
    Then `just symphony-status --open` and
    `just symphony-status --json`. Read `docs/DECISIONS.md` in
    full. Note every owner note, including those on approved cards, and every
@@ -70,7 +70,7 @@ do not treat it as approval, and change documents only when it asks for that.
 
 5. **Find the documents that disagree.** Start from the `[[FILE#Heading]]`
    links on rejected and noted cards, then grep `docs/` for the rejected
-   concepts to find documents built on them (art plans, matrices, handoffs).
+   concepts to find documents built on them (plans, matrices, handoffs).
    JSON data files and `docs/analysis/` / review records are evidence: list
    them as disagreeing but do not rewrite them unless the owner asks.
 

@@ -24,8 +24,7 @@ const MARK: &str = "symphony-stamp:";
 
 /// The heartbeat hook's command. It runs the binary the project's `.target/bin/symphony` names and
 /// builds nothing; with none linked it passes quietly.
-const HOOK_COMMAND: &str =
-    "\"$CLAUDE_PROJECT_DIR/.target/bin/symphony\" hook tasks-beat 2>/dev/null || true";
+const HOOK_COMMAND: &str = "\"$CLAUDE_PROJECT_DIR/.target/bin/symphony\" hook tasks-beat 2>/dev/null || true # symphony-stamp: heartbeat-v1";
 /// What every command the Symphony wrote has in it.
 const HOOK_OWN: &str = "symphony\" hook tasks-beat";
 const HOOK_TIMEOUT: u64 = 10;
@@ -153,11 +152,17 @@ fn is_stamped(text: &str) -> bool {
 /// The files a stamp names: what the Symphony wrote into the skill's folder.
 fn stamped_files(text: &str) -> Vec<&str> {
     text.lines()
+        .filter(|line| line.starts_with("<!-- symphony-stamp: "))
         .find_map(|line| line.split_once(" files=")?.1.strip_suffix(" -->"))
         .map(|names| {
             names
                 .split(',')
-                .filter(|name| !name.contains("..") && !name.starts_with('/'))
+                .filter(|name| {
+                    !name.is_empty()
+                        && Path::new(name)
+                            .components()
+                            .all(|part| matches!(part, std::path::Component::Normal(_)))
+                })
                 .collect()
         })
         .unwrap_or_default()
@@ -169,24 +174,61 @@ fn stamped_rules(text: &str) -> String {
 
 /// Writes `text` at `path` when it differs; whether it wrote.
 fn put(path: &Path, text: &str) -> io::Result<bool> {
-    if std::fs::read_to_string(path).is_ok_and(|have| have == text) {
+    if is_link(path) {
+        return Err(at(
+            path,
+            io::Error::other("managed file is a symlink; left as it is"),
+        ));
+    }
+    if read_optional(path)?.is_some_and(|have| have == text) {
         return Ok(false);
     }
     if let Some(folder) = path.parent() {
-        std::fs::create_dir_all(folder)?;
+        std::fs::create_dir_all(folder).map_err(|error| at(folder, error))?;
     }
-    std::fs::write(path, text)?;
+    std::fs::write(path, text).map_err(|error| at(path, error))?;
     Ok(true)
+}
+
+fn is_link(path: &Path) -> bool {
+    path.symlink_metadata().is_ok_and(|meta| meta.is_symlink())
+}
+
+fn at(path: &Path, error: io::Error) -> io::Error {
+    io::Error::new(error.kind(), format!("{}: {error}", path.display()))
+}
+
+fn read_optional(path: &Path) -> io::Result<Option<String>> {
+    match std::fs::read_to_string(path) {
+        Ok(text) => Ok(Some(text)),
+        Err(error)
+            if error.kind() == io::ErrorKind::NotFound && path.symlink_metadata().is_err() =>
+        {
+            Ok(None)
+        }
+        Err(error) => Err(at(path, error)),
+    }
+}
+
+fn remove_file(path: &Path) -> io::Result<()> {
+    match std::fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(at(path, error)),
+    }
 }
 
 /// Makes `.claude/skills/NAME` a link to the skill's folder when nothing is there.
 fn link_skill(root: &Path, name: &str) -> io::Result<()> {
     let link = root.join(CLAUDE_SKILLS).join(name);
-    if link.symlink_metadata().is_ok() {
-        return Ok(());
+    match link.symlink_metadata() {
+        Ok(_) => return Ok(()),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+        Err(error) => return Err(at(&link, error)),
     }
-    std::fs::create_dir_all(root.join(CLAUDE_SKILLS))?;
-    std::os::unix::fs::symlink(PathBuf::from("../../").join(SKILLS).join(name), link)
+    std::fs::create_dir_all(root.join(CLAUDE_SKILLS)).map_err(|error| at(&link, error))?;
+    std::os::unix::fs::symlink(PathBuf::from("../../").join(SKILLS).join(name), &link)
+        .map_err(|error| at(&link, error))
 }
 
 fn install_skills(root: &Path, shipped: &Shipped, report: &mut Report) -> io::Result<()> {
@@ -194,11 +236,20 @@ fn install_skills(root: &Path, shipped: &Shipped, report: &mut Report) -> io::Re
         let folder = root.join(SKILLS).join(&skill.name);
         let entry = format!("skill {}", skill.name);
         let main = folder.join("SKILL.md");
-        let have = std::fs::read_to_string(&main);
+        let have = read_optional(&main)?;
         let outcome = match &have {
-            Ok(text) if !is_stamped(text) => Outcome::Own,
+            _ if is_link(&folder) || is_link(&main) => Outcome::Own,
+            Some(text) if !is_stamped(text) => Outcome::Own,
             _ => {
                 let mut wrote = false;
+                if let Some(old) = &have {
+                    for path in stamped_files(old) {
+                        if !skill.files.iter().any(|(name, _)| name == path) {
+                            remove_file(&folder.join(path))?;
+                            wrote = true;
+                        }
+                    }
+                }
                 for (path, body) in &skill.files {
                     let text = if path == "SKILL.md" {
                         stamped_skill(skill, body)
@@ -207,7 +258,7 @@ fn install_skills(root: &Path, shipped: &Shipped, report: &mut Report) -> io::Re
                     };
                     wrote |= put(&folder.join(path), &text)?;
                 }
-                match (wrote, have.is_ok()) {
+                match (wrote, have.is_some()) {
                     (false, _) => Outcome::Current,
                     (true, true) => Outcome::Updated,
                     (true, false) => Outcome::Installed,
@@ -225,11 +276,15 @@ fn install_skills(root: &Path, shipped: &Shipped, report: &mut Report) -> io::Re
 /// A skill the Symphony wrote and no longer ships: its `SKILL.md` goes, its folder with it when
 /// nothing else of the project's is in it, and the link to it.
 fn remove_retired(root: &Path, shipped: &Shipped, report: &mut Report) -> io::Result<()> {
-    let Ok(folders) = std::fs::read_dir(root.join(SKILLS)) else {
-        return Ok(());
+    let folders = match std::fs::read_dir(root.join(SKILLS)) {
+        Ok(folders) => folders,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(at(&root.join(SKILLS), error)),
     };
     let mut names: Vec<String> = folders
-        .flatten()
+        .collect::<io::Result<Vec<_>>>()
+        .map_err(|error| at(&root.join(SKILLS), error))?
+        .into_iter()
         .map(|entry| entry.file_name().to_string_lossy().into_owned())
         .filter(|name| !shipped.skills.iter().any(|skill| &skill.name == name))
         .collect();
@@ -237,18 +292,30 @@ fn remove_retired(root: &Path, shipped: &Shipped, report: &mut Report) -> io::Re
     for name in names {
         let folder = root.join(SKILLS).join(&name);
         let main = folder.join("SKILL.md");
-        if !std::fs::read_to_string(&main).is_ok_and(|text| is_stamped(&text)) {
+        if is_link(&folder) || is_link(&main) {
             continue;
         }
-        let text = std::fs::read_to_string(&main)?;
-        for file in stamped_files(&text) {
-            let _ = std::fs::remove_file(folder.join(file));
+        let Some(text) = read_optional(&main)? else {
+            continue;
+        };
+        if !is_stamped(&text) {
+            continue;
         }
-        let _ = std::fs::remove_file(&main);
-        let _ = std::fs::remove_dir(&folder);
+        for file in stamped_files(&text) {
+            if file != "SKILL.md" {
+                remove_file(&folder.join(file))?;
+            }
+        }
+        remove_file(&main)?;
+        match std::fs::remove_dir(&folder) {
+            Ok(()) => {}
+            Err(error) if error.kind() == io::ErrorKind::DirectoryNotEmpty => {}
+            Err(error) => return Err(at(&folder, error)),
+        }
         let link = root.join(CLAUDE_SKILLS).join(&name);
-        if !folder.exists() && link.symlink_metadata().is_ok_and(|meta| meta.is_symlink()) {
-            std::fs::remove_file(link)?;
+        let target = PathBuf::from("../../").join(SKILLS).join(&name);
+        if std::fs::read_link(&link).is_ok_and(|have| have == target) {
+            remove_file(&link)?;
         }
         report.push((format!("skill {name}"), Outcome::Removed));
     }
@@ -257,12 +324,13 @@ fn remove_retired(root: &Path, shipped: &Shipped, report: &mut Report) -> io::Re
 
 fn install_codex_rules(root: &Path, shipped: &Shipped, report: &mut Report) -> io::Result<()> {
     let path = root.join(CODEX_RULES);
-    let have = std::fs::read_to_string(&path);
+    let have = read_optional(&path)?;
     let outcome = match &have {
-        Ok(text) if !text.lines().next().is_some_and(is_mark_line) => Outcome::Own,
+        _ if is_link(&path) => Outcome::Own,
+        Some(text) if !text.lines().next().is_some_and(is_mark_line) => Outcome::Own,
         _ => match (
             put(&path, &stamped_rules(&shipped.codex_rules))?,
-            have.is_ok(),
+            have.is_some(),
         ) {
             (false, _) => Outcome::Current,
             (true, true) => Outcome::Updated,
@@ -285,51 +353,77 @@ fn own_beat(command: &str) -> bool {
 
 /// `hooks.EVENT` carries the heartbeat: the Symphony's command brought up to date, or the project's
 /// own left alone, else a group added. Whether it changed anything.
-fn ensure_beat(hooks: &mut Map<String, Value>, event: &str, matcher: &str) -> bool {
+fn ensure_beat(hooks: &mut Map<String, Value>, event: &str, matcher: &str) -> io::Result<bool> {
+    let invalid = || {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("{SETTINGS}: hooks.{event} must be an array of hook groups; left as it is"),
+        )
+    };
     let groups = hooks
         .entry(event.to_string())
         .or_insert_with(|| json!([]))
         .as_array_mut();
-    let Some(groups) = groups else {
-        return false;
-    };
-    let mut own = false;
-    let mut changed = false;
-    for group in groups.iter_mut() {
-        let Some(list) = group.get_mut("hooks").and_then(Value::as_array_mut) else {
-            continue;
-        };
-        for hook in list {
-            let command = hook.get("command").and_then(Value::as_str).unwrap_or("");
-            if own_beat(command) {
-                return false;
-            }
-            if command.contains(HOOK_OWN) {
-                own = true;
-                if command != HOOK_COMMAND {
-                    hook["command"] = json!(HOOK_COMMAND);
-                    changed = true;
-                }
-                if hook.get("timeout") != Some(&json!(HOOK_TIMEOUT)) {
-                    hook["timeout"] = json!(HOOK_TIMEOUT);
-                    changed = true;
-                }
-            }
+    let groups = groups.ok_or_else(invalid)?;
+    for group in groups.iter() {
+        let list = group
+            .get("hooks")
+            .and_then(Value::as_array)
+            .ok_or_else(invalid)?;
+        if list.iter().any(|hook| {
+            !hook.is_object()
+                || (!matches!(hook["type"].as_str(), Some("prompt" | "agent"))
+                    && !hook.get("command").is_some_and(Value::is_string))
+        }) {
+            return Err(invalid());
         }
     }
-    if !own {
+    let managed = |hook: &Value| hook["command"].as_str().unwrap_or("").contains(HOOK_OWN);
+    let project_owns = groups.iter().any(|group| {
+        group["hooks"].as_array().is_some_and(|list| {
+            list.iter()
+                .any(|hook| own_beat(hook["command"].as_str().unwrap_or("")))
+        })
+    });
+    let found: Vec<_> = groups
+        .iter()
+        .flat_map(|group| {
+            group["hooks"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter(|hook| managed(hook))
+                .map(move |hook| (group, hook))
+        })
+        .collect();
+    let current = !project_owns
+        && found.len() == 1
+        && found[0].0["matcher"] == matcher
+        && found[0].1["command"] == HOOK_COMMAND
+        && found[0].1["timeout"] == HOOK_TIMEOUT
+        && found[0].1["type"] == "command";
+    if current || (project_owns && found.is_empty()) {
+        return Ok(false);
+    }
+    // Only managed heartbeat entries move. A guard sharing their old matcher keeps its group.
+    groups.retain_mut(|group| {
+        let list = group["hooks"].as_array_mut().expect("validated hook group");
+        let before = list.len();
+        list.retain(|hook| !managed(hook));
+        before == list.len() || !list.is_empty()
+    });
+    if !project_owns {
         groups.push(json!({
             "matcher": matcher,
-            "hooks": [{"type": "command", "command": HOOK_COMMAND, "timeout": HOOK_TIMEOUT}],
+            "hooks": [{"type":"command", "command":HOOK_COMMAND, "timeout":HOOK_TIMEOUT}]
         }));
-        changed = true;
     }
-    changed
+    Ok(true)
 }
 
 fn install_settings(root: &Path, report: &mut Report) -> io::Result<()> {
     let path = root.join(SETTINGS);
-    let have = std::fs::read_to_string(&path).ok();
+    let have = read_optional(&path)?;
     let mut settings: Value = match &have {
         Some(text) => serde_json::from_str(text).map_err(|error| {
             io::Error::new(io::ErrorKind::InvalidData, format!("{SETTINGS}: {error}"))
@@ -368,7 +462,7 @@ fn install_settings(root: &Path, report: &mut Report) -> io::Result<()> {
         .as_object_mut()
         .ok_or_else(not_object)?;
     for (event, matcher) in HOOK_EVENTS {
-        changed |= ensure_beat(hooks, event, matcher);
+        changed |= ensure_beat(hooks, event, matcher)?;
     }
 
     let outcome = match (changed, have.is_some()) {

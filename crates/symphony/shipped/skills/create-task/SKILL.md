@@ -19,7 +19,7 @@ second one.
 
 ## 2. Pick the slug
 
-`area/name` — `sim`, `view`, `tests`, `tools`, `content`, `art`, `docs`,
+`area/name` — `app`, `tests`, `tools`, `data`, `art`, `docs`,
 `skills`, `perf`, … It becomes the branch name too, so keep it short and
 distinct from anything in the list you just ran.
 
@@ -55,8 +55,7 @@ spec: docs/X.md#Heading — approved cards it builds ([x], [r], [a] only;
   [ ], [?], [-], [~] are not approved)
 pending: what must not be built yet
 touches: files/areas it changes, and tasks it must not collide with
-acceptance: a consequence over a run, never a constant
-  (AGENTS.md "Gameplay is not correctness")
+acceptance: observable behavior and error cases
 evidence: the tests that cover the change and their green run, posted on the
   thread after implementing (RULES.md `workflow/tests-after`)
 gates: just check, the targeted tests of what changed (its suites, the
@@ -97,11 +96,11 @@ it.
 ## Worked example
 
 ```
-TASKS_SESSION=<handle> just tasks create sim/jump-departure "Depart the jump point on schedule" \
+TASKS_SESSION=<handle> just tasks create app/scheduled-start "Start on schedule" \
   --priority 2 --stage ready \
-  --link "docs/game/SPEC.md#4. Weapons & damage" \
-  --depends sim/jump-arrival \
-  --body-file artifacts/jump-departure-brief.md
+  --link "docs/SPEC.md#Scheduling" \
+  --depends app/start-input \
+  --body-file artifacts/scheduled-start-brief.md
 ```
 
 (`--as <handle>` works in place of the `TASKS_SESSION` prefix.)

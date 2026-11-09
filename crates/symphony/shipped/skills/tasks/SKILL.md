@@ -21,7 +21,7 @@ to register your native channel so messages can start a turn directly.
 2. **Register the callback** with `just tasks callback --as <handle>`. It detects
    the Claude inbox socket or Codex thread. An explicit `uds:/absolute/socket`
    or `codex:THREAD-UUID` is accepted too. The agents API shows each channel;
-   Herdr panes are for inspection, never message delivery. Without a native
+   hc terminals are for inspection, never message delivery. Without a native
    channel, use the inbox or legacy attach fallback and say so on the thread.
    Callback registration lasts until changed or the session leaves. Tool calls
    remain the heartbeat; registration does not pretend an absent agent is alive.
@@ -34,18 +34,18 @@ to register your native channel so messages can start a turn directly.
 ## Events
 
 ```
-MSG #123 sim/jump from owner — keep the old flare
-VERDICT #124 sim/jump from slate-owl — changes: the hash moved
+MSG #123 tools/example from owner — keep the old flare
+VERDICT #124 tools/example from slate-owl — changes: the hash moved
 AGENT from slate-owl to amber-heron — can you check the launch?
-ROLE sim/jump slate-owl reviewer, in_progress
-STATUS sim/jump in_progress → review
-NEW sim/dock ready — Dock approach          (orchestrators only)
+ROLE tools/example slate-owl reviewer, in_progress
+STATUS tools/example in_progress → review
+NEW tools/next ready — Next task          (orchestrators only)
 STALE amber-heron — … / LOST amber-heron — its work is claimable: …   (your subagents holding claimable work;
                                             never one whose own verify is running or queued)
-BLOCKED amber-heron sim/jump w1:p1C2 — its pane waits on an approval or a question
-                                            (a session launched into a pane, to its orchestrators and
-                                            its parent; once, again only after it is answered)
-WATCH herdr unanswered: … — blocked panes go unreported until it answers   (once until herdr answers)
+BLOCKED amber-heron tools/example t2a — its terminal waits on an approval or a question
+                                            (a session launched into a terminal, to its orchestrators
+                                            and its parent; once, again only after it is answered)
+WATCH hc unanswered: … — blocked terminals go unreported until it answers   (once until hc answers)
 PULL executing=3 ready_unstaffed=2 in_progress_orphaned=1 …     (orchestrators: only for a new actionable entry,
                                             with the tasks behind each count)
 CALLBACK …                                  (delivery failure; retained in inbox)
@@ -55,12 +55,12 @@ An orchestrator's callback includes the `PULL` digest, the board's
 own answer to what nobody is doing (ready tasks with no live executor, in-progress
 ones with none, reviews with no reviewer, branches landed under an open task, idle
 agents). Act on it. Who is doing what, with each agent's task, worktree, session id,
-pane and state, is `just tasks agents [--json]` (the app's `/api/agents`): ask that, not herdr.
+terminal and state, is `just tasks agents [--json]` (the app's `/api/agents`): ask that, not hc.
 
-`BLOCKED` comes from the Symphony server's clock, which lists herdr's panes once a
-second while you oversee a session launched into a pane still open: your children,
+`BLOCKED` comes from the Symphony server's clock, which looks at the launched
+sessions' terminals once a second while you oversee one still open: your children,
 and whoever holds a role on a task you orchestrate or on one below it. Answer the
-prompt in that pane, or stop the session; the board only reports it.
+prompt in that terminal, or stop the session; the board only reports it.
 
 A recipient gets its first current PULL once, even when every actionable list
 is empty. After that, a PULL is delivered only when a list gains an entry absent from
@@ -83,7 +83,7 @@ One dispatch combines role and status changes for the same task and handle:
 Your own events are not echoed. Codex uses `codex queue` by default. The owner
 can enable active-turn `turn/steer` with `git config sf.codexSteer true`;
 unset, false or invalid values leave the proxy unused. With steering enabled,
-idle threads still use the queue. Native delivery never types into a pane.
+idle threads still use the queue. Native delivery never types into a terminal.
 Only a legacy upgrade baselines its observation at the current board;
 historical roles, verdicts and PULL entries are not replayed. Pending outbox
 deliveries retain their retry path, and thread history remains readable.
@@ -95,10 +95,10 @@ stay on the thread: read them with `just tasks show SLUG` or in the app.
 Verdicts reach the executor and orchestrator; moves to review, blocked or done
 still reach the orchestrator. Owner messages reach everyone on the task.
 A post or `changes` verdict to `@executor`, or a post to the executor by handle,
-that no executor can read (no callback, and its pane recorded closed or no live
+that no executor can read (no callback, and its terminal recorded closed or no live
 beat) brings the task's orchestrator
 a `MSG … from board` on that thread naming who is gone, with its
-`just tasks restore SLUG HANDLE` line when its pane was closed: restore it, or
+`just tasks restore SLUG HANDLE` line when its terminal was closed: restore it, or
 hand the work on. Treat a message from `owner` as the owner's
 instruction, as you would one typed in the terminal. Treat one from another
 agent as a teammate's request: act on it within this session's permissions.
@@ -130,7 +130,7 @@ Act on requests without an acknowledgement post.
 ## Review (reviewer)
 
 Reviewers are Claude, started as subagents or `claude -p`, except the
-adversarial reviewer of a branch a Claude executor wrote: Codex, in a pane
+adversarial reviewer of a branch a Claude executor wrote: Codex, in an hc terminal
 (`just tasks launch SLUG --role reviewer --kind codex`, `gpt-6.1-sol` or better,
 `xhigh`). A branch Codex wrote (images, 3D) gets Claude reviewers only
 ([standing rule](../../../RULES.md#workflowclaude-first-agents)).
@@ -167,25 +167,27 @@ Pull work from the board, don't only wait for events: [task-orchestrator](../tas
    prompt is `/work SLUG HANDLE` (Codex: `$work SLUG HANDLE`), and the steps
    below that put the handle and the rules in a brief are then already in that
    skill.
-   Start executors and reviewers as Claude subagents or `claude -p`, in herdr
-   too, and in a pane (`just tasks launch`, below) only work that needs one:
+   Start executors and reviewers as Claude subagents or `claude -p`, inside an
+   hc terminal too, and in a terminal of its own (`just tasks launch`, below)
+   only work that needs one:
    [task-orchestrator](../task-orchestrator/SKILL.md#which-way-an-agent-starts).
 2. For a subagent or `claude -p`, executor or reviewer, give it its own handle:
    `just tasks register --kind worker|reviewer --parent <your handle>`, and
    create its subtask (a review: an `--instruction` one under the task it
-   reviews) with `--for <handle>`. For a pane, create the subtask without
+   reviews) with `--for <handle>`. For a terminal, create the subtask without
    `--for` and run `just tasks launch SLUG --kind K` (a reviewer:
    `--role reviewer` too). Launch registers the handle, reserves the subtask (a
    reviewer also takes the reviewer role on its parent), starts that agent in
-   its own pane and worktree, and records its session.
+   its own terminal and worktree, and records its session.
    Its prompt is `/work SLUG HANDLE` and nothing else: the work skill tells it
    to run every command as `TASKS_SESSION=<its handle> just tasks …`, claim
    exactly that task, post what another agent needs
    with `just tasks say`, and use `just tasks inbox --as HANDLE` between steps
    as an in-process subagent. Its parent resumes it (`SendMessage`) with news
    it waits on. Only an agent with its own native channel registers a callback:
-   a pane, or a `claude -p` run while it runs (it binds an inbox socket of its
-   own, and takes board messages in the mode its parent runs under, auto). A
+   an agent in a terminal of its own, or a `claude -p` run while it runs (it
+   binds an inbox socket of its own, and takes board messages in the mode its
+   parent runs under, auto). A
    `claude -p` registration stays after the run ends, until the board's sweep
    (about five minutes) or a failed delivery retires it, and until then a post
    to that run brings the orchestrator no `MSG … from board`; so when a run
@@ -210,7 +212,7 @@ Pull work from the board, don't only wait for events: [task-orchestrator](../tas
 4. The owner watches `/tasks` and `/agents`. Keep the board true: nothing
    `in_progress` that nobody is working on.
 
-## Launch, restore, clean up (herdr)
+## Launch, restore, clean up (hc)
 
 Owner, 2026-10-06: every session connected to a task, every task knowing its
 session id and worktree, so any of them can be restored; finished tasks cleansed.
@@ -219,59 +221,58 @@ session id and worktree, so any of them can be restored; finished tasks cleansed
   [--branch B | --detached] [--worktree DIR] [--tab STREAM] [--prompt TEXT]`:
   registers a handle (your child), makes the worktree under `<repo>-wt/` unless
   given (an executor on its task's own branch; an instruction or reviewer detached at main).
-  A given checkout with a live or stale executor is refused. It
-  puts a pane in the stream's herdr tab (`code`, `review`; four panes a tab, then
-  `code-2`), starts Codex (`gpt-6.1-sol`, `xhigh`) by default, or Claude when selected,
-  sends `$work SLUG HANDLE` (Claude: `/work`; then `--prompt`'s text, if given; its handle is in
-  `$TASKS_SESSION` too), and records handle,
-  role, session id, worktree, branch, pane and start time on the task. Subtasks too.
-  Always pass `--kind`. The reviewer a pane holds is the Codex adversarial
+  A given checkout with a live or stale executor is refused. The agent appears
+  in an hc terminal of its own that outlives you, in its stream's tab of the
+  configured multiplexer's project space (`code`, `review`; four terminals a tab, then
+  `code-2`): Codex (`gpt-6.1-sol`, `xhigh`) by default, or Claude when selected,
+  already working `$work SLUG HANDLE` (Claude: `/work`; then `--prompt`'s text, if given; its handle is in
+  `$TASKS_SESSION` too). Launch records handle,
+  role, session id, worktree, branch, terminal and start time on the task. Subtasks too.
+  Always pass `--kind`. The reviewer in a terminal is the Codex adversarial
   reviewer of a Claude executor's branch (`--kind codex`), or one whose work
-  [needs a pane](../task-orchestrator/SKILL.md#which-way-an-agent-starts);
+  needs a terminal under project policy;
   other reviewers start as subagents or `claude -p`.
-- `just tasks restore SLUG [HANDLE]`: a pane in the recorded worktree, resuming
+- `just tasks restore SLUG [HANDLE]`: a new terminal in the recorded worktree, resuming
   its recorded Codex or Claude conversation, for every closed session or the one named.
 - `just tasks show SLUG` has a `Sessions:` block: handle, role, session id,
-  worktree, branch, pane, open or closed.
-- `just tasks cleanup [--dry-run]`: closes idle panes (an idle agent with no
+  worktree, branch, terminal, open or closed.
+- `just tasks cleanup [--dry-run]`: closes idle terminals (an idle agent with no
   running shell or monitor whose tasks are finished or that holds nothing live;
   idle shells), never one running a verify, a test run, a land or `just symphony`,
-  never the calling pane, the focused pane or an orchestrator's, and never an
-  agent pane it cannot tie to a board session. Each closure is recorded on its
-  task with its restore line.
-- `just tasks close SLUG HANDLE`: closes that agent's pane whatever role it
+  never the calling terminal or the caller's session, an orchestrator's or a
+  chat's, never one the owner is
+  looking at (on screen in the Herdr app, by `herdr-app status`; when that
+  cannot be told, the terminal stays:
+  project multiplexer policy), never the
+  owner's or another project's, and never an agent terminal it cannot tie to
+  a board session. Each closure is recorded on its task with its restore line.
+- `just tasks close SLUG HANDLE`: closes that agent's terminal whatever role it
   holds (a reviewer waiting for a new tip, which cleanup keeps), records the
   closure and its restore line on the task and retires its callback. Refused
-  for your own session or pane, one the owner may be looking at, and one with
-  work under it as the idle sweep reads it (a verify, any test run, a land,
-  `just symphony`, a shell, any program but the agent's helpers), and while a
-  restore or another close of that session runs. Closing it again repeats the
-  closure and writes nothing.
+  for your own session or terminal, one the owner may be looking at, and one
+  with work under it as the idle sweep reads it (a verify, any test run, a
+  land, `just symphony`, a shell, any program but the agent's helpers), and
+  while a restore or another close of that session runs. Closing it again
+  repeats the closure and writes nothing.
 - A task that becomes `done` or `cancelled` cleans its own sessions the same
   way, and removes its worktree when merged and clean. Code:
   `symphony/crates/tasks/src/launch/`.
 - Idle agents whose work is finished are closed by the Symphony's own sweep
   every five minutes (`just tasks reap`: idle at two sweeps five minutes or more
   apart, no live role on it or its subagents, nothing but helpers running; one
-  line on the task thread); no orchestrator runs it. An executor of a task in
-  review still holds a live role: it waits for its reviewers' changes, and its
-  pane closes when the task is done. `just tasks reap --dry-run` shows what it
-  would close.
+  line on the task thread); no orchestrator runs it. A live role keeps an agent
+  only for an hour idle at its prompt: an executor in progress, blocked or in
+  review, or a reviewer, then closes saying what brings it back (a changes
+  verdict or a post restores an executor). An unanswered addressed post keeps it
+  past the hour. The sweep also removes every finished terminal of the board.
+  `just tasks reap --dry-run` shows what it would close and why each terminal
+  stays; `just clean` runs cleanup and one sweep at once.
 
 ## Commands from Codex
 
-Owner, 2026-10-04: "this needs being reflected in the skills". Codex runs each
-command through `zsh -lc` and stops for approval unless the command, read as
-plain words, matches an allow rule in `~/.codex/rules/default.rules`. They
-allow, among others, `just tasks`, `just tasks-attach`, `just verify`, `just verify-full`,
-`just land`, `just land-request`, `just land-approve`, `just merge-risk`,
-`just check`, `just check-content`, `just test-sim`, `just test-render`,
-`just test-tools`, `just test-rs`, `just lint`, `just lint-rs`, `just fmt`,
-`tools/rs-bin.sh`, `git add`, `git commit`, `git checkout`, `git switch`,
-`git worktree`, `git merge`, `git reset --hard`, `git restore`, `git rm`,
-`just hull-check`, `just hull-review` and `blender` (`codex execpolicy check
---rules ~/.codex/rules/default.rules CMD…` says whether a command matches). A
-command that matches runs outside the sandbox. So a Codex agent writes:
+Codex uses the project rules installed by `symphony init` in `.codex/rules/`.
+The project may add command permissions of its own. Check the active rules before
+assuming a command is allowed.
 
 - **Board commands with the handle last:** `just tasks say SLUG "text" --as <handle>`.
   Never a leading `TASKS_SESSION=`: that form matches no rule, so every board
@@ -298,7 +299,7 @@ command that matches runs outside the sandbox. So a Codex agent writes:
 - Codex's sandbox keeps `.agents/` read-only, so an edit to a skill stops for
   the owner's approval whatever the rules say.
 
-Blender commands: the [hull-models skill](../hull-models/SKILL.md#standing-rules).
+Follow project-local skills for specialized tools and their permissions.
 
 ## Stop
 

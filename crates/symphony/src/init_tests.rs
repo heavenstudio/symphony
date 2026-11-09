@@ -221,7 +221,7 @@ fn beats(settings: &Value, event: &str) -> Vec<String> {
         .unwrap()
         .iter()
         .flat_map(|group| group["hooks"].as_array().unwrap())
-        .map(|hook| hook["command"].as_str().unwrap().to_string())
+        .filter_map(|hook| hook["command"].as_str().map(str::to_string))
         .filter(|command| command.contains("tasks-beat"))
         .collect()
 }
@@ -336,6 +336,8 @@ fn the_command_installs_and_reports_and_refuses_what_it_does_not_know() {
     let (code, _, err) = run(&["stray"]);
     assert_eq!(code, 2);
     assert!(err.contains("unrecognized arguments: stray"), "{err}");
+    assert_eq!(run(&["--unknown"]).0, 2);
+    assert_eq!(run(&["--root"]).0, 2);
     tree.write(".claude/settings.json", "{not json");
     let (code, _, err) = run(&["--root", root]);
     assert_eq!(code, 1);
@@ -350,4 +352,163 @@ fn every_shipped_skill_is_a_skill_with_front_matter_and_no_stamp_of_its_own() {
         assert!(text.contains(&format!("name: {}\n", skill.name)));
         assert!(!is_stamped(text), "{} ships a stamp", skill.name);
     }
+}
+
+#[test]
+fn removed_managed_support_files_retire_but_project_data_and_own_links_survive() {
+    let tree = Tree::new();
+    init(&tree.root, &kit(vec![skill("work", "v1")])).unwrap();
+    tree.write(".agents/skills/work/taste.md", "project data\n");
+    let mut next = skill("work", "v2");
+    next.files.retain(|(name, _)| name != "notes.md");
+    init(&tree.root, &kit(vec![next])).unwrap();
+    assert!(!tree.path(".agents/skills/work/notes.md").exists());
+    assert_eq!(tree.read(".agents/skills/work/taste.md"), "project data\n");
+    std::fs::remove_file(tree.path(".claude/skills/work")).unwrap();
+    std::os::unix::fs::symlink("../../own", tree.path(".claude/skills/work")).unwrap();
+    init(&tree.root, &kit(vec![])).unwrap();
+    assert_eq!(
+        std::fs::read_link(tree.path(".claude/skills/work")).unwrap(),
+        PathBuf::from("../../own")
+    );
+    assert_eq!(tree.read(".agents/skills/work/taste.md"), "project data\n");
+}
+
+#[test]
+fn all_builtin_skills_leave_a_projects_own_copies_in_use_byte_for_byte() {
+    let tree = Tree::new();
+    let shipped = Shipped::builtin();
+    assert_eq!(shipped.skills.len(), 7);
+    for skill in &shipped.skills {
+        tree.write(
+            &format!(".agents/skills/{}/SKILL.md", skill.name),
+            "own\n\nexact bytes\n",
+        );
+    }
+    for _ in 0..2 {
+        let report = init(&tree.root, &shipped).unwrap();
+        for skill in &shipped.skills {
+            assert_eq!(
+                outcome(&report, &format!("skill {}", skill.name)),
+                "kept (the project's own)"
+            );
+            assert_eq!(
+                tree.read(&format!(".claude/skills/{}/SKILL.md", skill.name)),
+                "own\n\nexact bytes\n"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_project_hook_wins_even_when_a_managed_hook_precedes_it_and_prompt_hooks_stay() {
+    let tree = Tree::new();
+    let hooks = json!({"hooks":{"PostToolUse":[{"matcher":"", "hooks":[
+        {"type":"command", "command":"/old/symphony\" hook tasks-beat"},
+        {"type":"command", "command":"our-hook tasks-beat"},
+        {"type":"prompt", "prompt":"keep this prompt"}
+    ]}]}});
+    tree.write(SETTINGS, &hooks.to_string());
+    init(&tree.root, &kit(vec![])).unwrap();
+    let after = settings(&tree);
+    assert_eq!(beats(&after, "PostToolUse"), ["our-hook tasks-beat"]);
+    assert_eq!(
+        after["hooks"]["PostToolUse"][0]["hooks"][1],
+        hooks["hooks"]["PostToolUse"][0]["hooks"][2]
+    );
+    assert_eq!(
+        outcome(&init(&tree.root, &kit(vec![])).unwrap(), "claude settings"),
+        "current"
+    );
+}
+
+#[test]
+fn file_and_hook_shape_errors_name_the_path_and_leave_existing_bytes() {
+    for file in [".agents/skills/work/SKILL.md", CODEX_RULES, SETTINGS] {
+        let tree = Tree::new();
+        std::fs::create_dir_all(tree.path(file)).unwrap();
+        let error = init(&tree.root, &kit(vec![skill("work", "v1")])).unwrap_err();
+        assert!(error.to_string().contains(file), "{error}");
+        assert!(tree.path(file).is_dir());
+    }
+    for event in [
+        json!(3),
+        json!([{"hooks":3}]),
+        json!([{"hooks":[{"type":"command","command":3}]}]),
+    ] {
+        let tree = Tree::new();
+        let text = json!({"hooks":{"PostToolUse":event}}).to_string();
+        tree.write(SETTINGS, &text);
+        let error = init(&tree.root, &kit(vec![])).unwrap_err();
+        assert!(error.to_string().contains("hooks.PostToolUse"), "{error}");
+        assert_eq!(tree.read(SETTINGS), text);
+    }
+}
+
+#[test]
+fn managed_retirement_refuses_an_unremovable_file_and_can_be_retried() {
+    let tree = Tree::new();
+    init(&tree.root, &kit(vec![skill("old", "v1")])).unwrap();
+    let before = tree.read(".agents/skills/old/SKILL.md");
+    std::fs::remove_file(tree.path(".agents/skills/old/notes.md")).unwrap();
+    std::fs::create_dir(tree.path(".agents/skills/old/notes.md")).unwrap();
+    let error = init(&tree.root, &kit(vec![])).unwrap_err();
+    assert!(error.to_string().contains("old/notes.md"), "{error}");
+    assert_eq!(tree.read(".agents/skills/old/SKILL.md"), before);
+    std::fs::remove_dir(tree.path(".agents/skills/old/notes.md")).unwrap();
+    init(&tree.root, &kit(vec![])).unwrap();
+    assert!(!tree.path(".agents/skills/old").exists());
+}
+
+#[test]
+fn a_stale_managed_matcher_is_repaired_without_changing_its_adjacent_guard() {
+    let tree = Tree::new();
+    tree.write(
+        SETTINGS,
+        &json!({"hooks":{"PreToolUse":[{"matcher":"Read", "hooks":[
+            {"type":"command","command":"our-read-guard"},
+            {"type":"command","command":"/old/symphony\" hook tasks-beat"}
+        ]}]}})
+        .to_string(),
+    );
+    init(&tree.root, &kit(vec![])).unwrap();
+    let after = settings(&tree);
+    assert_eq!(
+        after["hooks"]["PreToolUse"][0],
+        json!({"matcher":"Read", "hooks":[{"type":"command","command":"our-read-guard"}]})
+    );
+    assert_eq!(after["hooks"]["PreToolUse"][1]["matcher"], "Bash");
+    assert_eq!(beats(&after, "PreToolUse"), [HOOK_COMMAND]);
+    assert_eq!(
+        outcome(&init(&tree.root, &kit(vec![])).unwrap(), "claude settings"),
+        "current"
+    );
+}
+
+#[test]
+fn symlinked_project_skills_and_rules_win_and_managed_support_links_are_not_overwritten() {
+    let tree = Tree::new();
+    init(&tree.root, &kit(vec![skill("work", "v1")])).unwrap();
+    let before = tree.read(".agents/skills/work/SKILL.md");
+    std::fs::rename(tree.path(".agents/skills/work"), tree.path("own-work")).unwrap();
+    std::os::unix::fs::symlink(tree.path("own-work"), tree.path(".agents/skills/work")).unwrap();
+    std::fs::rename(tree.path(CODEX_RULES), tree.path("own.rules")).unwrap();
+    std::os::unix::fs::symlink(tree.path("own.rules"), tree.path(CODEX_RULES)).unwrap();
+    let rules = tree.read("own.rules");
+    init(&tree.root, &kit(vec![skill("work", "v2")])).unwrap();
+    init(&tree.root, &kit(vec![])).unwrap();
+    assert_eq!(tree.read("own-work/SKILL.md"), before);
+    assert_eq!(tree.read("own.rules"), rules);
+
+    init(&tree.root, &kit(vec![skill("other", "v1")])).unwrap();
+    std::fs::remove_file(tree.path(".agents/skills/other/notes.md")).unwrap();
+    tree.write("own-notes", "project notes\n");
+    std::os::unix::fs::symlink(
+        tree.path("own-notes"),
+        tree.path(".agents/skills/other/notes.md"),
+    )
+    .unwrap();
+    let error = init(&tree.root, &kit(vec![skill("other", "v2")])).unwrap_err();
+    assert!(error.to_string().contains("other/notes.md"), "{error}");
+    assert_eq!(tree.read("own-notes"), "project notes\n");
 }
