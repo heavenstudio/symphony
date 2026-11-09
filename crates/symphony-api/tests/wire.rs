@@ -5,6 +5,8 @@ use serde_json::Value;
 use symphony_api::{Board, Change, Delta, Front};
 #[path = "wire/fixture.rs"]
 mod fixture;
+#[path = "wire/machine_work.rs"]
+mod machine_work;
 
 fn fixture(name: &str) -> String {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");

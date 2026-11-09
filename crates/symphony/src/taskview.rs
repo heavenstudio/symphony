@@ -167,6 +167,7 @@ pub fn page(
     let mut task = task(record);
     task.body = record.body.get(..brief_next).unwrap_or_default().to_owned();
     Ok(symphony_api::TaskPage {
+        machine_work: symphony_api::MachineWork::default(),
         task,
         blocks,
         children: Vec::new(),

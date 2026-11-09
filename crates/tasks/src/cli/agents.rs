@@ -28,13 +28,17 @@
 //! handle, else by exact worktree to an agent alone in it: never by a directory prefix, never to agents
 //! sharing a worktree.
 
-use crate::health::{FINISHED, Health};
+use crate::health::Health;
 use crate::pyjson::Py;
 use crate::rows::TaskSessionRow;
 use crate::{Error, Session, Store, Task};
 use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap, HashSet};
-use std::path::{Path, PathBuf};
+mod attribution;
+mod selection;
+pub(crate) use attribution::find_pane;
+use attribution::{cut, owned_pane, resolve};
+use selection::{first, pane_state, primary, tasks_by_handle};
 
 /// The longest last message shown, in characters, before it is cut.
 pub const MESSAGE_CHARS: usize = 200;
@@ -149,6 +153,7 @@ pub struct Slots {
 /// The agents API's answer.
 #[derive(Debug, Clone, PartialEq)]
 pub struct View {
+    pub machine_work: super::machine_work::Snapshot,
     pub generated: f64,
     /// Whether hc could be asked (the `herdr` probe of the JSON, a name the wire keeps).
     pub herdr: bool,
@@ -173,6 +178,10 @@ impl View {
             (
                 "agents",
                 Py::List(self.agents.iter().map(Agent::json).collect()),
+            ),
+            (
+                "machine_work",
+                super::machine_work::json(&self.machine_work),
             ),
         ])
     }
@@ -234,165 +243,6 @@ impl Agent {
     }
 }
 
-fn rank(role: &str) -> u8 {
-    match role {
-        "executor" => 0,
-        "reviewer" => 1,
-        "reserved" => 2,
-        _ => 9,
-    }
-}
-
-fn pane_state(status: &str) -> Option<&'static str> {
-    match status {
-        "working" => Some("working"),
-        "blocked" => Some("waiting_on_input"),
-        "idle" | "done" => Some("idle"),
-        _ => None,
-    }
-}
-
-/// Index roles once, rather than scanning every task for every historical session on each tick.
-fn tasks_by_handle(tasks: &[Task]) -> HashMap<&str, Vec<(&Task, &str)>> {
-    let mut held = HashMap::<&str, Vec<(&Task, &str)>>::new();
-    for task in tasks {
-        let mut roles = HashMap::<&str, &str>::new();
-        for role in task.roles.iter().filter(|r| r.role != "orchestrator") {
-            let best = roles.entry(&role.handle).or_insert(&role.role);
-            if rank(&role.role) < rank(best) {
-                *best = &role.role;
-            }
-        }
-        for (handle, role) in roles {
-            held.entry(handle).or_default().push((task, role));
-        }
-    }
-    held
-}
-
-/// The task it works now: an open one by role, priority and slug; else the finished one updated last.
-fn primary<'t>(held: &[(&'t Task, &'t str)]) -> Option<(&'t Task, &'t str)> {
-    let open = held
-        .iter()
-        .filter(|(t, _)| !FINISHED.contains(&t.status.as_str()))
-        .min_by(|(a, ra), (b, rb)| {
-            (rank(ra), a.priority, &a.slug).cmp(&(rank(rb), b.priority, &b.slug))
-        });
-    if let Some(found) = open {
-        return Some(*found);
-    }
-    let mut last: Option<(&Task, &str)> = None;
-    for &(t, role) in held {
-        if last.is_none_or(|(l, _)| t.updated > l.updated) {
-            last = Some((t, role));
-        }
-    }
-    last
-}
-
-/// Of `runs`, a holding one before a waiting one, the earliest first.
-fn first<'r>(runs: &[&'r Run]) -> Option<&'r Run> {
-    let holding: Vec<&Run> = runs
-        .iter()
-        .copied()
-        .filter(|r| r.phase == "holding")
-        .collect();
-    let pool = if holding.is_empty() {
-        runs
-    } else {
-        holding.as_slice()
-    };
-    let since = |r: &Run| r.since.unwrap_or(0.0);
-    let mut found: Option<&Run> = None;
-    for &r in pool {
-        if found.is_none_or(|f| since(r) < since(f)) {
-            found = Some(r);
-        }
-    }
-    found
-}
-
-/// `path` with its symbolic links resolved, as Python's `os.path.realpath`: what does not exist is kept
-/// as written beneath the part that does. "" stays "".
-fn resolve(path: &str) -> String {
-    if path.is_empty() {
-        return String::new();
-    }
-    let given = Path::new(path);
-    let whole = if given.is_absolute() {
-        given.to_path_buf()
-    } else {
-        std::env::current_dir().unwrap_or_default().join(given)
-    };
-    let mut rest = Vec::new();
-    let mut at: &Path = &whole;
-    loop {
-        if let Ok(found) = at.canonicalize() {
-            let mut out: PathBuf = found;
-            out.extend(rest.iter().rev());
-            return out.to_string_lossy().into_owned();
-        }
-        match (at.parent(), at.file_name()) {
-            (Some(parent), Some(name)) => {
-                rest.push(name.to_owned());
-                at = parent;
-            }
-            _ => return whole.to_string_lossy().into_owned(),
-        }
-    }
-}
-
-/// The pane that is this agent's: its recorded one, else one running its conversation, else one
-/// named for its handle.
-pub(crate) fn find_pane<'p>(
-    panes: &'p [Pane],
-    record: Option<&TaskSessionRow>,
-    bound: Option<&str>,
-    handle: &str,
-) -> Option<&'p Pane> {
-    if let Some(record) = record
-        && let Some(pane) = panes.iter().rev().find(|p| p.id == record.pane)
-    {
-        return Some(pane);
-    }
-    let wanted: Vec<&str> = [
-        record.map(|r| {
-            r.claude_session
-                .strip_prefix("codex:")
-                .unwrap_or(&r.claude_session)
-        }),
-        bound,
-    ]
-    .into_iter()
-    .flatten()
-    .filter(|w| !w.is_empty())
-    .collect();
-    if let Some(pane) = panes
-        .iter()
-        .find(|p| p.session.as_deref().is_some_and(|s| wanted.contains(&s)))
-    {
-        return Some(pane);
-    }
-    panes
-        .iter()
-        .find(|p| p.title.as_deref() == Some(handle) || p.name.as_deref() == Some(handle))
-}
-
-/// Its words on one line, its whitespace as Python's `str.split` finds it, cut to [`MESSAGE_CHARS`].
-fn cut(text: &str) -> String {
-    let words: Vec<&str> = text
-        .split(|c: char| c.is_whitespace() || ('\x1c'..='\x1f').contains(&c))
-        .filter(|w| !w.is_empty())
-        .collect();
-    let line = words.join(" ");
-    if line.chars().count() <= MESSAGE_CHARS {
-        return line;
-    }
-    let mut short: String = line.chars().take(MESSAGE_CHARS).collect();
-    short.push('…');
-    short
-}
-
 /// One session as the board and the probes place it, before any run is matched.
 struct Row<'a> {
     session: &'a Session,
@@ -423,6 +273,29 @@ pub fn describe_board(
     now: f64,
     include_left: bool,
     board: &crate::Board,
+) -> Result<View, Error> {
+    describe_board_observed(
+        store,
+        probes,
+        now,
+        include_left,
+        board,
+        super::machine_work::Evidence {
+            local_host: crate::sys::hostname(),
+            snapshot: super::machine_work::Snapshot::default(),
+        },
+    )
+}
+
+/// Production projection seam for a receiver's authenticated machine snapshot. Without that
+/// transport evidence, describe_board retains local reservations and explicitly unknown capacity.
+pub fn describe_board_observed(
+    store: &Store,
+    probes: &Probes,
+    now: f64,
+    include_left: bool,
+    board: &crate::Board,
+    evidence: super::machine_work::Evidence,
 ) -> Result<View, Error> {
     // A tick of the server clock asks hc once: its pane watch's sample, when it took one.
     let panes = store.clock_panes().unwrap_or_else(|| (probes.panes)()).ok();
@@ -463,9 +336,22 @@ pub fn describe_board(
                 .copied()
                 .filter(|r| primary.is_some_and(|(t, _)| r.slug == t.slug))
                 .collect();
-            let record = on_primary.last().or(mine.last()).copied();
+            let active: Vec<_> = mine
+                .iter()
+                .copied()
+                .filter(|r| r.closed.is_none())
+                .collect();
+            let record = active.last().or(on_primary.last()).or(mine.last()).copied();
             let pane = some_panes.and_then(|panes| {
-                find_pane(panes, record, bound.get(handle).map(String::as_str), handle)
+                let bound = bound.get(handle).map(String::as_str);
+                let active_record = record.filter(|r| r.closed.is_none());
+                if !evidence.local_host.is_empty() && session.row.host == evidence.local_host {
+                    find_pane(panes, active_record, bound, handle)
+                } else if session.row.host.is_empty() {
+                    owned_pane(panes, active_record, bound, handle)
+                } else {
+                    None
+                }
             });
             let pane_cwd = pane.map_or("", |p| p.cwd.as_str());
             let (worktree, branch) = match record {
@@ -490,9 +376,22 @@ pub fn describe_board(
     let mut sharing: HashMap<String, usize> = HashMap::new();
     if some_runs.is_some() {
         for row in &rows {
-            *sharing.entry(real(&row.worktree)).or_default() += 1;
+            if !evidence.local_host.is_empty()
+                && row.session.row.host == evidence.local_host
+                && row.record.is_none_or(|r| r.closed.is_none())
+            {
+                *sharing.entry(real(&row.worktree)).or_default() += 1;
+            }
         }
     }
+    let mut machine_work = evidence.snapshot;
+    super::machine_work::attribute(
+        &mut machine_work,
+        runs.as_deref().unwrap_or_default(),
+        &board.sessions,
+        &records,
+        &evidence.local_host,
+    );
     let mut agents = Vec::new();
     for row in rows {
         let s = row.session;
@@ -506,7 +405,12 @@ pub fn describe_board(
                 .filter(|r| r.handle.as_deref() == Some(handle))
                 .collect();
             let here = real(&row.worktree);
-            if !tagged.is_empty() || sharing[&here] != 1 || here.is_empty() {
+            if !tagged.is_empty()
+                || sharing.get(&here) != Some(&1)
+                || here.is_empty()
+                || evidence.local_host.is_empty()
+                || s.row.host != evidence.local_host
+            {
                 return first(&tagged);
             }
             let in_it: Vec<&Run> = runs
@@ -569,7 +473,14 @@ pub fn describe_board(
         });
         let pane = match row.pane {
             Some(p) => Some(p.id.clone()),
-            None => nonempty(row.record.map(|r| r.pane.as_str())),
+            None if !evidence.local_host.is_empty() && s.row.host == evidence.local_host => {
+                nonempty(
+                    row.record
+                        .filter(|r| r.closed.is_none())
+                        .map(|r| r.pane.as_str()),
+                )
+            }
+            None => None,
         };
         agents.push(Agent {
             handle: handle.into(),
@@ -612,6 +523,7 @@ pub fn describe_board(
         });
     }
     Ok(View {
+        machine_work,
         generated: now,
         herdr: panes.is_some(),
         slots: runs.is_some(),
@@ -653,21 +565,4 @@ pub fn table(view: &View) -> Vec<String> {
             )
         })
         .collect()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::resolve;
-
-    #[test]
-    fn a_path_resolves_as_python_s_realpath_resolves_it() {
-        let here = std::env::current_dir().unwrap().canonicalize().unwrap();
-        assert_eq!(resolve(""), "");
-        assert_eq!(
-            resolve("not/there"),
-            here.join("not/there").to_string_lossy()
-        );
-        assert_eq!(resolve("/no-such-top/x"), "/no-such-top/x");
-        assert_eq!(resolve("/"), "/");
-    }
 }

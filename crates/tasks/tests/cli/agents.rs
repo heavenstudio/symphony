@@ -12,28 +12,8 @@ use symphony_board::cli::agents::{
 use symphony_board::health::{LIVE_SECONDS, RESERVE_SECONDS, STALE_SECONDS};
 use symphony_board::{Beat, Health, NewLaunch, NewSession, NewTask};
 
-const AGENT_KEYS: [&str; 20] = [
-    "handle",
-    "kind",
-    "model",
-    "parent",
-    "task",
-    "role",
-    "tasks",
-    "worktree",
-    "branch",
-    "agent",
-    "session_id",
-    "pane",
-    "callback",
-    "chat",
-    "state",
-    "state_detail",
-    "health",
-    "last_tool_call",
-    "last_message",
-    "slots",
-];
+mod fixtures;
+use fixtures::{AGENT_KEYS, local_session};
 
 #[test]
 fn idle_agent_projection_uses_the_supplied_board_snapshot() {
@@ -60,7 +40,7 @@ struct Case {
 impl Case {
     fn new() -> Case {
         let f = Fixture::empty();
-        let orch = f.session("orchestrator");
+        let orch = f.session_with(local_session("orchestrator"));
         f.store
             .create(&NewTask::new("sim/jump", "Jump", "owner"))
             .unwrap();
@@ -112,7 +92,7 @@ impl Case {
             parent: Some(self.orch.clone()),
             worktree: "/main".into(),
             model: "sonnet".into(),
-            ..NewSession::new("worker")
+            ..local_session("worker")
         });
         self.f
             .store
@@ -145,7 +125,7 @@ impl Case {
     fn main_session(&self) -> String {
         self.f.session_with(NewSession {
             worktree: "/main".into(),
-            ..NewSession::new("worker")
+            ..local_session("worker")
         })
     }
 
@@ -239,7 +219,9 @@ fn the_contract_keys_are_stable() {
     let view = parsed(&c.view());
     assert_eq!(
         keys(&view),
-        ["agents", "generated", "probes"].map(String::from).into()
+        ["agents", "generated", "machine_work", "probes"]
+            .map(String::from)
+            .into()
     );
     assert_eq!(
         keys(&view["agents"][0]),
@@ -399,7 +381,7 @@ fn the_open_task_comes_first_and_a_finished_one_stays_listed() {
         .unwrap();
     c.f.store.claim("sim/dock", &handle).unwrap();
     c.f.store.move_to("sim/jump", "review", &handle).unwrap();
-    let reviewer = c.f.session("reviewer");
+    let reviewer = c.f.session_with(local_session("reviewer"));
     c.f.store
         .take_role("sim/jump", &reviewer, "reviewer")
         .unwrap();
@@ -430,7 +412,7 @@ fn the_open_task_comes_first_and_a_finished_one_stays_listed() {
 fn the_primary_of_finished_work_alone_is_the_last_updated() {
     let c = Case::new();
     let handle = c.worker();
-    let reviewer = c.f.session("reviewer");
+    let reviewer = c.f.session_with(local_session("reviewer"));
     c.f.store
         .create(&NewTask::new("sim/dock", "Dock", "owner"))
         .unwrap();
@@ -629,7 +611,7 @@ fn a_run_is_attributed_the_same_with_and_without_all() {
     let a = c.worker_in("/wt/alone");
     let ghost = c.f.session_with(NewSession {
         worktree: "/wt/alone".into(),
-        ..NewSession::new("worker")
+        ..local_session("worker")
     });
     c.f.store.leave(&ghost).unwrap();
     c.run_of("holding", "/wt/alone", NOW, "verify");
@@ -1170,7 +1152,10 @@ mod command {
             .keys()
             .map(String::as_str)
             .collect();
-        assert_eq!(keys, BTreeSet::from(["generated", "probes", "agents"]));
+        assert_eq!(
+            keys,
+            BTreeSet::from(["generated", "probes", "agents", "machine_work"])
+        );
         let worker = data["agents"]
             .as_array()
             .unwrap()

@@ -1488,6 +1488,7 @@ mod tests {
             store,
             store.board().unwrap(),
             symphony_api::Agents {
+                machine_work: symphony_api::MachineWork::default(),
                 generated: store.now(),
                 probes: symphony_api::AgentProbes {
                     panes: "ok".into(),

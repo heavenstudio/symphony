@@ -429,6 +429,7 @@ pub(crate) async fn answer(shared: &Arc<Shared>, request: Request) -> Option<Res
                             .expect("a task paging key serializes")
                         });
                         no_store(Json(symphony_api::TaskListing {
+                            machine_work: symphony_api::MachineWork::default(),
                             statuses: symphony_board::STATUSES
                                 .iter()
                                 .map(|s| (*s).to_string())
