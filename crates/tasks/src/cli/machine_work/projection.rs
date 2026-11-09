@@ -1,3 +1,5 @@
+//! Bound receiver inventories and retain nonce ownership even after complete disappearance.
+
 use super::{Counts, Freshness, Kind, Machine, Operation, Snapshot, State};
 use std::collections::BTreeMap;
 
@@ -29,6 +31,34 @@ struct Accepted {
     receipt_ms: u64,
     connected: bool,
     conflict: bool,
+    history_exhausted: bool,
+    owners: BTreeMap<String, Ownership>,
+}
+
+/// History owns these fields because a complete inventory may drop the live operation.
+struct Ownership {
+    handle: Option<String>,
+    task: Option<String>,
+    checkout: String,
+    parent_id: Option<String>,
+}
+
+impl Ownership {
+    fn of(operation: &Operation) -> Self {
+        Self {
+            handle: operation.handle.clone(),
+            task: operation.task.clone(),
+            checkout: operation.checkout.clone(),
+            parent_id: operation.parent_id.clone(),
+        }
+    }
+
+    fn matches(&self, operation: &Operation) -> bool {
+        self.handle == operation.handle
+            && self.task == operation.task
+            && self.checkout == operation.checkout
+            && self.parent_id == operation.parent_id
+    }
 }
 
 /// Bounded receiver-side inventory. Limits bound reports, not admission or execution.
@@ -40,6 +70,9 @@ pub struct Projection {
 }
 
 impl Projection {
+    /// `max_operations` bounds both live rows and lifetime nonce ownership per machine.
+    /// History is never evicted, including on publisher restart. At its bound, unseen nonces
+    /// latch the machine unknown for this projection's lifetime, retaining last-known work.
     pub fn new(max_machines: usize, max_operations: usize, ttl_ms: u64) -> Self {
         Self {
             machines: BTreeMap::new(),
@@ -90,22 +123,7 @@ impl Projection {
             old.conflict = true;
         }
         sample.operations = normalized?;
-        if let Some(old) = self.machines.get(&sample.machine_id)
-            && sample.operations.iter().any(|next| {
-                old.sample.operations.iter().any(|before| {
-                    before.operation_id == next.operation_id
-                        && (before.handle != next.handle
-                            || before.task != next.task
-                            || before.checkout != next.checkout
-                            || before.parent_id != next.parent_id)
-                })
-            })
-        {
-            if let Some(old) = self.machines.get_mut(&sample.machine_id) {
-                old.conflict = true;
-            }
-            return Err(Rejected::Ownership);
-        }
+        self.validate_ownership(&sample)?;
         if !sample.complete
             && let Some(old) = self.machines.get(&sample.machine_id)
         {
@@ -118,12 +136,22 @@ impl Projection {
                     sample.operations.push(operation.clone());
                 }
             }
-            if sample.operations.len() > self.max_operations {
-                if let Some(old) = self.machines.get_mut(&sample.machine_id) {
-                    old.conflict = true;
-                }
-                return Err(Rejected::Limit);
-            }
+            // The ownership-history bound already covers the union of old and new live ids.
+        }
+        let mut owners = self
+            .machines
+            .remove(&sample.machine_id)
+            .map(|old| old.owners)
+            .unwrap_or_default();
+        for operation in &sample.operations {
+            owners
+                .entry(
+                    operation
+                        .operation_id
+                        .clone()
+                        .expect("normalized operation id"),
+                )
+                .or_insert_with(|| Ownership::of(operation));
         }
         self.machines.insert(
             sample.machine_id.clone(),
@@ -132,8 +160,37 @@ impl Projection {
                 receipt_ms,
                 connected: true,
                 conflict: false,
+                history_exhausted: false,
+                owners,
             },
         );
+        Ok(())
+    }
+
+    fn validate_ownership(&mut self, sample: &Sample) -> Result<(), Rejected> {
+        let Some(old) = self.machines.get_mut(&sample.machine_id) else {
+            return Ok(());
+        };
+        let mut new_ids = 0;
+        for operation in &sample.operations {
+            let id = operation
+                .operation_id
+                .as_deref()
+                .expect("normalized operation id");
+            match old.owners.get(id) {
+                Some(owner) if !owner.matches(operation) => {
+                    old.conflict = true;
+                    return Err(Rejected::Ownership);
+                }
+                Some(_) => {}
+                None => new_ids += 1,
+            }
+        }
+        if old.history_exhausted || new_ids > self.max_operations.saturating_sub(old.owners.len()) {
+            old.conflict = true;
+            old.history_exhausted = true;
+            return Err(Rejected::Limit);
+        }
         Ok(())
     }
 
@@ -170,6 +227,9 @@ impl Projection {
                     complete: old.sample.complete,
                     counts: (freshness == Freshness::Fresh).then(|| counts(&old.sample.operations)),
                     reason: match freshness {
+                        Freshness::Conflict if old.history_exhausted => {
+                            "nonce ownership history exhausted; last-known work retained"
+                        }
                         Freshness::Fresh => "complete receiver observation",
                         Freshness::Stale => "observation expired or receiver clock unavailable",
                         Freshness::Disconnected => "publisher disconnected; last-known work",

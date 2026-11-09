@@ -345,13 +345,7 @@ pub fn describe_board_observed(
             let pane = some_panes.and_then(|panes| {
                 let bound = bound.get(handle).map(String::as_str);
                 let active_record = record.filter(|r| r.closed.is_none());
-                if !evidence.local_host.is_empty() && session.row.host == evidence.local_host {
-                    find_pane(panes, active_record, bound, handle)
-                } else if session.row.host.is_empty() {
-                    owned_pane(panes, active_record, bound, handle)
-                } else {
-                    None
-                }
+                owned_pane(panes, active_record, bound, handle)
             });
             let pane_cwd = pane.map_or("", |p| p.cwd.as_str());
             let (worktree, branch) = match record {
@@ -376,21 +370,33 @@ pub fn describe_board_observed(
     let mut sharing: HashMap<String, usize> = HashMap::new();
     if some_runs.is_some() {
         for row in &rows {
-            if !evidence.local_host.is_empty()
-                && row.session.row.host == evidence.local_host
-                && row.record.is_none_or(|r| r.closed.is_none())
+            // A matching host label only adds a possible sharer; it never proves ownership.
+            if row.record.is_none_or(|r| r.closed.is_none())
+                && (row.pane.is_some()
+                    || !evidence.local_host.is_empty()
+                        && row.session.row.host == evidence.local_host)
             {
                 *sharing.entry(real(&row.worktree)).or_default() += 1;
             }
         }
     }
+    let local_owners: HashSet<&str> = rows
+        .iter()
+        .filter(|row| row.pane.is_some())
+        .map(|row| row.session.row.handle.as_str())
+        .chain(
+            runs.as_deref()
+                .unwrap_or_default()
+                .iter()
+                .filter_map(|run| run.handle.as_deref()),
+        )
+        .collect();
     let mut machine_work = evidence.snapshot;
     super::machine_work::attribute(
         &mut machine_work,
         runs.as_deref().unwrap_or_default(),
-        &board.sessions,
         &records,
-        &evidence.local_host,
+        &local_owners,
     );
     let mut agents = Vec::new();
     for row in rows {
@@ -408,8 +414,8 @@ pub fn describe_board_observed(
             if !tagged.is_empty()
                 || sharing.get(&here) != Some(&1)
                 || here.is_empty()
-                || evidence.local_host.is_empty()
-                || s.row.host != evidence.local_host
+                || row.pane.is_none()
+                || row.record.is_some_and(|r| r.closed.is_some())
             {
                 return first(&tagged);
             }
@@ -471,17 +477,7 @@ pub fn describe_board_observed(
                 .and_then(|callback| callback.address.strip_prefix("codex:"))
                 .map(str::to_string)
         });
-        let pane = match row.pane {
-            Some(p) => Some(p.id.clone()),
-            None if !evidence.local_host.is_empty() && s.row.host == evidence.local_host => {
-                nonempty(
-                    row.record
-                        .filter(|r| r.closed.is_none())
-                        .map(|r| r.pane.as_str()),
-                )
-            }
-            None => None,
-        };
+        let pane = row.pane.map(|p| p.id.clone());
         agents.push(Agent {
             handle: handle.into(),
             kind: s.row.kind.clone(),

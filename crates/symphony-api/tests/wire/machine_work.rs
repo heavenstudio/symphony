@@ -42,7 +42,7 @@ fn reservation_and_stale_operations_keep_their_wire_meaning() {
     }))
     .unwrap();
     assert_eq!(work.machines[0].freshness, WorkFreshness::Stale);
-    assert!(work.machines[0].counts.is_none());
+    assert_eq!(work.machines[0].counts, None);
     assert_eq!(work.machines[0].operations[0].kind, WorkKind::Reservation);
     let sent = serde_json::to_value(&work).unwrap();
     assert_eq!(

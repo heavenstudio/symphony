@@ -11,8 +11,8 @@ mod attribution;
 pub(crate) use attribution::attribute;
 pub(crate) use attribution::json;
 
-/// One receiver read and its positively local host label. The label fences fallback attribution;
-/// it is not a stable machine identity and never supplies capacity evidence.
+/// One receiver read and its local host label. Matching labels cannot establish ownership;
+/// they only identify possible checkout sharers and never supply capacity evidence.
 pub struct Evidence {
     pub local_host: String,
     pub snapshot: Snapshot,

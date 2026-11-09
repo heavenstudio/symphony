@@ -1,3 +1,5 @@
+//! Match observed pane ownership without treating paths, terminal ids or host labels as identity.
+
 use super::{MESSAGE_CHARS, Pane};
 use crate::rows::TaskSessionRow;
 use std::path::{Path, PathBuf};

@@ -129,52 +129,11 @@ impl Case {
         })
     }
 
-    /// An hc terminal: a claude agent in `/wt/sim-jump`, with `extra` keys over those.
-    fn pane(&self, id: &str, status: &str, extra: Value) {
-        let mut pane = json!({
-            "address": id, "agent": "claude", "status": status, "cwd": "/wt/sim-jump",
-            "state": "live", "argv": ["claude", "--session-id", "x"],
-        });
-        for (key, value) in extra.as_object().unwrap() {
-            pane[key] = value.clone();
-        }
-        self.panes
-            .borrow_mut()
-            .get_or_insert_with(Vec::new)
-            .push(pane);
-    }
-
     fn add_run(&self, run: Run) {
         self.runs
             .borrow_mut()
             .get_or_insert_with(Vec::new)
             .push(run);
-    }
-
-    /// A verify in `worktree`, in `phase`, by no session the slot names.
-    fn run_of(&self, phase: &str, worktree: &str, since: f64, recipe: &str) {
-        self.add_run(Run {
-            pid: 1,
-            worktree: worktree.into(),
-            recipe: recipe.into(),
-            phase: phase.into(),
-            since: Some(since),
-            pool: "run".into(),
-            handle: None,
-        });
-    }
-
-    /// A run the slot records as `handle`'s.
-    fn tagged(&self, handle: &str, worktree: &str) {
-        self.add_run(Run {
-            pid: 1,
-            worktree: worktree.into(),
-            recipe: "verify-full".into(),
-            phase: "holding".into(),
-            since: Some(NOW - 5.0),
-            pool: "run".into(),
-            handle: Some(handle.into()),
-        });
     }
 
     /// The executor goes quiet with its task in review: the board calls it left, as nothing it holds
@@ -263,7 +222,7 @@ fn under_a_cap_an_orchestrator_shows_its_open_tasks_against_it_and_a_worker_show
 fn the_json_is_written_in_the_contracts_key_order_as_python_writes_it() {
     let c = Case::new();
     let handle = c.worker();
-    c.pane("t5", "working", json!({}));
+    c.pane(&handle, "t5", "working", json!({}));
     c.f.store.say("sim/jump", &handle, "on it", None).unwrap();
     let text = symphony_board::pyjson::dumps(&c.view().json());
     let me = text.find(&format!("\"handle\": \"{handle}\"")).unwrap();
@@ -314,6 +273,7 @@ fn the_json_is_written_in_the_contracts_key_order_as_python_writes_it() {
 fn a_launched_agent_is_described_from_its_task_session() {
     let c = Case::new();
     let handle = c.worker();
+    c.pane(&handle, "t5", "working", json!({}));
     let a = c.agent(&handle);
     assert_eq!(
         (
@@ -514,7 +474,7 @@ fn an_agent_that_never_beat_for_a_tool_call_has_none() {
 fn a_quiet_executor_whose_task_waits_in_review_and_whose_pane_is_idle_is_listed() {
     let c = Case::new();
     let handle = c.quiet_executor_with_task_in_review();
-    c.pane("t5", "idle", json!({}));
+    c.pane(&handle, "t5", "idle", json!({}));
     assert_eq!(c.agent(&handle).state, "idle");
 }
 
@@ -557,7 +517,7 @@ fn the_agents_never_registered_to_work_are_not_listed() {
 fn a_session_that_left_is_listed_only_with_all() {
     let c = Case::new();
     let handle = c.worker();
-    c.pane("t5", "idle", json!({}));
+    c.pane(&handle, "t5", "idle", json!({}));
     c.f.store.leave(&handle).unwrap();
     assert!(!c.handles(&c.view()).contains(&handle));
     assert_eq!(found(&c.view_all(), &handle).handle, handle);
@@ -600,6 +560,7 @@ fn a_tagged_lost_agent_reads_live() {
 fn a_run_tagged_with_an_unknown_handle_falls_back_to_the_worktree() {
     let c = Case::new();
     let handle = c.worker_in("/wt/alone");
+    c.pane(&handle, "t5", "working", json!({}));
     c.tagged("nobody-here", "/wt/alone");
     assert_eq!(c.agent(&handle).state, "running_test");
 }
@@ -609,6 +570,7 @@ fn a_run_tagged_with_an_unknown_handle_falls_back_to_the_worktree() {
 fn a_run_is_attributed_the_same_with_and_without_all() {
     let c = Case::new();
     let a = c.worker_in("/wt/alone");
+    c.pane(&a, "t5", "working", json!({}));
     let ghost = c.f.session_with(NewSession {
         worktree: "/wt/alone".into(),
         ..local_session("worker")
@@ -639,6 +601,7 @@ fn every_agent_with_a_run_is_answered_in_one_view() {
         .unwrap();
     let b = c.worker_on("sim/other", "t5", "/wt/b");
     c.run_of("waiting", "/wt/a", NOW, "verify");
+    c.runs.borrow_mut().as_mut().unwrap()[0].handle = Some(a.clone());
     let asked = RefCell::new(Vec::new());
     let probes = Probes {
         panes: Box::new(|| {
@@ -665,6 +628,7 @@ fn a_branch_lookup_that_fails_does_not_stop_the_view() {
     let c = Case::new();
     let handle = c.main_session();
     c.pane(
+        &handle,
         "t9",
         "working",
         json!({"title": handle, "cwd": "/wt/other"}),
@@ -724,7 +688,7 @@ fn working_probes_say_ok() {
 fn a_working_pane_is_working() {
     let c = Case::new();
     let handle = c.worker();
-    c.pane("t5", "working", json!({}));
+    c.pane(&handle, "t5", "working", json!({}));
     assert_eq!(c.agent(&handle).state, "working");
 }
 
@@ -732,7 +696,7 @@ fn a_working_pane_is_working() {
 fn a_blocked_pane_is_waiting_on_input() {
     let c = Case::new();
     let handle = c.worker();
-    c.pane("t5", "blocked", json!({}));
+    c.pane(&handle, "t5", "blocked", json!({}));
     assert_eq!(c.agent(&handle).state, "waiting_on_input");
 }
 
@@ -740,7 +704,7 @@ fn a_blocked_pane_is_waiting_on_input() {
 fn idle_and_done_panes_are_idle() {
     let c = Case::new();
     let handle = c.worker();
-    c.pane("t5", "done", json!({}));
+    c.pane(&handle, "t5", "done", json!({}));
     assert_eq!(c.agent(&handle).state, "idle");
 }
 
@@ -748,7 +712,7 @@ fn idle_and_done_panes_are_idle() {
 fn a_terminal_in_a_state_hc_did_not_have_falls_back_to_the_beat() {
     let c = Case::new();
     let handle = c.worker();
-    c.pane("t5", "unknown", json!({}));
+    c.pane(&handle, "t5", "unknown", json!({}));
     assert_eq!(c.agent(&handle).state, "working");
     c.f.advance(LIVE_SECONDS + 5.0);
     assert_eq!(c.agent(&handle).state, "idle"); // stale
@@ -777,6 +741,7 @@ fn a_pane_found_by_its_claude_session_when_none_is_recorded() {
         .reserve("sim/jump", &handle, RESERVE_SECONDS)
         .unwrap();
     c.pane(
+        &handle,
         "t9",
         "blocked",
         json!({"argv": ["claude", "--session-id", "abc"], "cwd": "/wt/elsewhere"}),
@@ -799,6 +764,7 @@ fn an_unlaunched_agents_branch_comes_from_its_panes_directory() {
     let c = Case::new();
     let handle = c.main_session();
     c.pane(
+        &handle,
         "t9",
         "working",
         json!({"title": handle, "cwd": "/wt/other"}),
@@ -818,6 +784,7 @@ fn a_pane_named_for_the_handle_is_its_and_its_foreground_folder_is_where_it_work
     let c = Case::new();
     let handle = c.main_session();
     c.pane(
+        &handle,
         "t9",
         "working",
         json!({"name": handle, "foreground": {"cwd": "/wt/fg"}, "cwd": "/wt/shell"}),
@@ -833,7 +800,7 @@ fn a_pane_named_for_the_handle_is_its_and_its_foreground_folder_is_where_it_work
 fn the_agent_kind_comes_from_the_pane() {
     let c = Case::new();
     let handle = c.worker();
-    c.pane("t5", "idle", json!({"agent": "codex"}));
+    c.pane(&handle, "t5", "idle", json!({"agent": "codex"}));
     assert_eq!(c.agent(&handle).agent.as_deref(), Some("codex"));
 }
 
@@ -841,16 +808,16 @@ fn the_agent_kind_comes_from_the_pane() {
 fn a_pane_that_is_not_ours_is_not_matched() {
     let c = Case::new();
     let handle = c.worker();
-    c.pane("t77", "blocked", json!({}));
+    c.pane("other-worker", "t77", "blocked", json!({}));
     assert_eq!(c.agent(&handle).state, "working"); // no pane found: the live beat says so
 }
 
 #[test]
-fn a_recorded_terminal_hc_no_longer_has_is_still_named() {
+fn a_recorded_terminal_without_observed_local_ownership_is_not_named() {
     let c = Case::new();
     let handle = c.worker();
     let a = c.agent(&handle);
-    assert_eq!((a.pane.as_deref(), a.agent), (Some("t5"), None));
+    assert_eq!((a.pane.as_deref(), a.agent), (None, None));
 }
 
 // -- running a test --------------------------------------------------------------------
@@ -859,7 +826,7 @@ fn a_recorded_terminal_hc_no_longer_has_is_still_named() {
 fn an_agent_holding_a_slot_is_running_a_test() {
     let c = Case::new();
     let handle = c.worker();
-    c.pane("t5", "idle", json!({}));
+    c.pane(&handle, "t5", "idle", json!({}));
     c.run_of("holding", "/wt/sim-jump", NOW - 90.0, "verify-full");
     let a = c.agent(&handle);
     assert_eq!(a.state, "running_test");
@@ -870,6 +837,7 @@ fn an_agent_holding_a_slot_is_running_a_test() {
 fn a_running_test_is_its_state_detail_in_the_json() {
     let c = Case::new();
     let handle = c.worker();
+    c.pane(&handle, "t5", "working", json!({}));
     c.run_of("waiting", "/wt/sim-jump", NOW - 90.0, "verify");
     let waiting = c.runs.borrow().clone().unwrap().remove(0);
     c.add_run(Run {
@@ -893,6 +861,7 @@ fn a_running_test_is_its_state_detail_in_the_json() {
 fn an_agent_waiting_for_a_slot_says_so() {
     let c = Case::new();
     let handle = c.worker();
+    c.pane(&handle, "t5", "working", json!({}));
     c.run_of("waiting", "/wt/sim-jump", NOW - 90.0, "verify");
     let a = c.agent(&handle);
     assert_eq!(a.state, "running_test");
@@ -905,6 +874,7 @@ fn a_waiting_agent_is_never_lost() {
     let handle = c.worker();
     c.f.advance(LIVE_SECONDS + STALE_SECONDS + 600.0);
     assert_eq!(c.agent(&handle).health, Health::Lost);
+    c.pane(&handle, "t5", "working", json!({}));
     c.run_of("waiting", "/wt/sim-jump", NOW, "verify-full");
     let a = c.agent(&handle);
     assert_eq!((a.state, a.health), ("running_test", Health::Live));
@@ -923,7 +893,7 @@ fn the_same_agent_without_the_run_reads_gone_and_lost() {
 fn a_run_in_another_worktree_is_not_this_agents() {
     let c = Case::new();
     let handle = c.worker();
-    c.pane("t5", "idle", json!({}));
+    c.pane(&handle, "t5", "idle", json!({}));
     c.run_of("holding", "/wt/other", NOW - 90.0, "verify-full");
     assert_eq!(c.agent(&handle).state, "idle");
 }
@@ -932,6 +902,7 @@ fn a_run_in_another_worktree_is_not_this_agents() {
 fn a_run_in_a_subdirectory_of_the_worktree_is_not_its_agents() {
     let c = Case::new();
     let handle = c.worker();
+    c.pane(&handle, "t5", "working", json!({}));
     c.run_of(
         "holding",
         "/wt/sim-jump/artifacts/export",
@@ -966,6 +937,8 @@ fn a_run_in_a_worktree_nested_under_the_main_checkout_is_not_every_main_agents()
 fn a_run_in_the_main_checkout_is_not_attributed_to_agents_sharing_it() {
     let c = Case::new();
     let (a, b) = (c.main_session(), c.main_session());
+    c.pane(&a, "t1", "working", json!({"name": a, "cwd": "/main"}));
+    c.pane(&b, "t2", "working", json!({"name": b, "cwd": "/main"}));
     c.run_of("holding", "/main", NOW - 90.0, "verify-full");
     assert_eq!(
         (c.agent(&a).state, c.agent(&b).state),
@@ -977,6 +950,7 @@ fn a_run_in_the_main_checkout_is_not_attributed_to_agents_sharing_it() {
 fn a_run_is_attributed_when_one_agent_alone_holds_the_worktree() {
     let c = Case::new();
     let handle = c.worker_in("/wt/alone");
+    c.pane(&handle, "t5", "working", json!({}));
     c.main_session();
     c.run_of("holding", "/wt/alone", NOW - 90.0, "verify-full");
     assert_eq!(c.agent(&handle).state, "running_test");
@@ -992,6 +966,7 @@ fn a_run_matches_its_worktree_through_a_symbolic_link() {
     let _ = std::fs::remove_file(&link);
     std::os::unix::fs::symlink(&real, &link).unwrap();
     let handle = c.worker_in(link.to_str().unwrap());
+    c.pane(&handle, "t5", "working", json!({}));
     c.run_of("holding", real.to_str().unwrap(), NOW - 90.0, "verify-full");
     let state = c.agent(&handle).state;
     std::fs::remove_dir_all(&tmp).unwrap();
@@ -1002,6 +977,7 @@ fn a_run_matches_its_worktree_through_a_symbolic_link() {
 fn the_monitor_helper_agrees_with_the_view() {
     let c = Case::new();
     let handle = c.worker();
+    c.pane(&handle, "t5", "working", json!({}));
     c.run_of("waiting", "/wt/sim-jump", NOW - 90.0, "verify-full");
     assert_eq!(
         running_tests(&c.f.store, &c.probes()).unwrap()[&handle].phase,
@@ -1020,6 +996,7 @@ fn the_monitor_helper_agrees_with_the_view() {
 fn a_holding_run_beats_a_waiting_one() {
     let c = Case::new();
     let handle = c.worker();
+    c.pane(&handle, "t5", "working", json!({}));
     c.run_of("waiting", "/wt/sim-jump", NOW - 90.0, "verify");
     c.run_of("holding", "/wt/sim-jump", NOW - 90.0, "test-sim");
     assert_eq!(c.agent(&handle).detail.unwrap().phase, "holding");
@@ -1029,6 +1006,7 @@ fn a_holding_run_beats_a_waiting_one() {
 fn of_two_runs_the_one_that_began_first_is_shown() {
     let c = Case::new();
     let handle = c.worker();
+    c.pane(&handle, "t5", "working", json!({}));
     c.run_of("holding", "/wt/sim-jump", NOW - 10.0, "test-sim");
     c.run_of("holding", "/wt/sim-jump", NOW - 90.0, "verify");
     assert_eq!(
@@ -1043,6 +1021,7 @@ fn of_two_runs_the_one_that_began_first_is_shown() {
 fn the_table_is_a_column_per_field() {
     let c = Case::new();
     let handle = c.worker();
+    c.pane(&handle, "t5", "working", json!({}));
     c.run_of("waiting", "/wt/sim-jump", NOW - 90.0, "verify");
     let view = c.view();
     let lines = agents::table(&view);

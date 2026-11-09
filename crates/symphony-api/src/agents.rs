@@ -1,3 +1,5 @@
+//! Additive agent wire records preserve legacy state alongside optional machine-work evidence.
+
 use crate::{AgentProbes, MachineWork};
 use serde::{Deserialize, Serialize};
 

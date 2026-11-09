@@ -1,15 +1,17 @@
+//! Retain every local reservation and enrich it only from positively observed ownership.
+
 use super::{Kind, Operation, Snapshot, State};
 use crate::cli::agents::Run;
-use crate::{Session, rows::TaskSessionRow};
+use crate::rows::TaskSessionRow;
+use std::collections::HashSet;
 
 /// Attribute from an explicit owner or one active, positively local checkout. Never use the
 /// agent's selected display task: it can be a historical review in another checkout.
 pub(crate) fn attribute(
     work: &mut Snapshot,
     runs: &[Run],
-    sessions: &[Session],
     records: &[TaskSessionRow],
-    local_host: &str,
+    local_owners: &HashSet<&str>,
 ) {
     for run in runs {
         let mut operation = Operation {
@@ -30,24 +32,15 @@ pub(crate) fn attribute(
             reason: "local slot reservation; execution and stable machine identity unknown".into(),
             phase_since: run.since,
         };
-        assign(&mut operation, sessions, records, local_host);
+        assign(&mut operation, records, local_owners);
         work.unassigned.push(operation);
     }
     // Native operations already carry receiver-validated attribution. Their foreign paths
     // are opaque, and current board roles cannot rewrite work that started under an earlier role.
 }
 
-fn assign(
-    operation: &mut Operation,
-    sessions: &[Session],
-    records: &[TaskSessionRow],
-    local_host: &str,
-) {
-    let local = |handle: &str| {
-        sessions
-            .iter()
-            .any(|s| s.row.handle == handle && !local_host.is_empty() && s.row.host == local_host)
-    };
+fn assign(operation: &mut Operation, records: &[TaskSessionRow], local_owners: &HashSet<&str>) {
+    let local = |handle: &str| local_owners.contains(handle);
     if operation.handle.is_none() && !operation.checkout.is_empty() {
         let mut owners: Vec<_> = records
             .iter()
@@ -63,10 +56,7 @@ fn assign(
     let Some(handle) = operation.handle.as_deref() else {
         return;
     };
-    // A foreign checkout string cannot identify a local task launch, even for a known handle.
-    if !local(handle) {
-        return;
-    }
+    // A handle came from this local run or a positively observed owner, never a hostname match.
     let mut tasks: Vec<_> = records
         .iter()
         .filter(|r| r.closed.is_none() && r.handle == handle && r.worktree == operation.checkout)

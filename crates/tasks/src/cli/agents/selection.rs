@@ -1,3 +1,5 @@
+//! Select display roles and legacy run details independently of machine execution evidence.
+
 use super::Run;
 use crate::{Task, health::FINISHED};
 use std::collections::HashMap;
