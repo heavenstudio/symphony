@@ -5,14 +5,78 @@ use crate::cli::agents::{Answer, Pane, find_pane};
 use crate::orchestration::{Owners, claimable_work, hears, told_of};
 use crate::rows::TaskSessionRow;
 use crate::{Board, Task};
+use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
-/// A session whose hc terminal waits on an approval or a question: the task it was launched for,
-/// and the terminal.
+const WAITED: &str =
+    "observed waiting on an approval or a question; inspect its terminal before acting";
+const LEGACY_WAIT: &str = "its terminal waits on an approval or a question";
+const OUTAGE: &str = " — blocked terminals go unreported until it answers";
+const OBSERVED_OUTAGE: &str =
+    " — blocked terminals may have gone unreported; inspect hc before acting";
+
+fn generated_key(key: &str) -> bool {
+    key.strip_prefix("pane-")
+        .and_then(|tail| tail.split_once('-'))
+        .is_some_and(|(revision, index)| {
+            [revision, index]
+                .iter()
+                .all(|s| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit()))
+        })
+}
+
+fn blocked_line(text: &str) -> Option<(&str, &str, &str)> {
+    let (identity, words) = text.split_once(" — ")?;
+    if ![LEGACY_WAIT, WAITED].contains(&words) {
+        return None;
+    }
+    let mut fields = identity.split(' ');
+    match (
+        fields.next(),
+        fields.next(),
+        fields.next(),
+        fields.next(),
+        fields.next(),
+    ) {
+        (Some("BLOCKED"), Some(who), Some(task), Some(pane), None)
+            if !who.is_empty() && !task.is_empty() && !pane.is_empty() =>
+        {
+            Some((who, task, pane))
+        }
+        _ => None,
+    }
+}
+
+fn outage_line(text: &str) -> Option<&str> {
+    text.strip_prefix("WATCH hc unanswered: ")
+        .and_then(|why| why.strip_suffix(OUTAGE))
+        .or_else(|| {
+            text.strip_prefix("WATCH hc unanswered at observation: ")?
+                .strip_suffix(OBSERVED_OUTAGE)
+        })
+}
+
+/// The task/terminal identity and optional supported counter of an HC observation. In `blocked`
+/// it records the last observed wait; in `known` it is only a monotone watermark.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Blocked {
     pub task: String,
     pub pane: String,
+    #[serde(default)]
+    pub turn: Option<u64>,
+}
+
+impl Blocked {
+    fn same_place(&self, other: &Self) -> bool {
+        self.task == other.task && self.pane == other.pane
+    }
+
+    fn stronger_than(&self, sample: &Self) -> bool {
+        self.same_place(sample)
+            && self
+                .turn
+                .is_some_and(|known| sample.turn.is_none_or(|turn| turn < known))
+    }
 }
 
 /// What the pane watch last told a recipient: the sessions it said were blocked, and whether it
@@ -22,6 +86,173 @@ pub struct Blocked {
 pub struct PaneWatch {
     pub blocked: BTreeMap<String, Blocked>,
     pub unanswered: bool,
+    /// Per-current-launch observation watermarks, retained across resolved samples. A watermark
+    /// is neither current blocked status, prompt identity nor native callback liveness.
+    pub known: BTreeMap<String, Blocked>,
+}
+
+impl PaneWatch {
+    fn watermark(&self, who: &str, sample: &Blocked) -> Option<&Blocked> {
+        [self.known.get(who), self.blocked.get(who)]
+            .into_iter()
+            .flatten()
+            .filter(|b| b.same_place(sample))
+            .max_by_key(|b| b.turn)
+    }
+
+    fn observe(&mut self, before: &Self, who: &str, sample: Blocked, status: Option<&str>) {
+        if !matches!(
+            status,
+            Some("blocked" | "working" | "idle" | "done" | "error")
+        ) {
+            return;
+        }
+        let watermark = before.watermark(who, &sample);
+        if watermark.is_some_and(|known| known.stronger_than(&sample)) {
+            return;
+        }
+        let resolved = watermark
+            .is_some_and(|known| known.turn.is_some() && known.turn == sample.turn)
+            && !before
+                .blocked
+                .get(who)
+                .is_some_and(|b| b.same_place(&sample));
+        if sample.turn.is_some() {
+            self.known.insert(who.into(), sample.clone());
+        } else {
+            self.known.remove(who);
+        }
+        if status == Some("blocked") && !resolved {
+            self.blocked.insert(who.into(), sample);
+        } else {
+            self.blocked.remove(who);
+        }
+    }
+
+    /// Whether current watch evidence proves a generated, undelivered row obsolete. An absent
+    /// or ambiguous HC identity and a missing/older counter leave its observation uncertain.
+    pub fn retires(
+        &self,
+        board: &Board,
+        overseen: &Overseen,
+        open: &[TaskSessionRow],
+        panes: Option<&Answer<Vec<Pane>>>,
+        key: &str,
+        text: &str,
+    ) -> bool {
+        if !generated_key(key) {
+            return false;
+        }
+        if outage_line(text).is_some() {
+            return matches!(panes, Some(Ok(_)));
+        }
+        let Some((who, task, id)) = blocked_line(text) else {
+            return false;
+        };
+        let launched = launches(board, overseen, open);
+        let Some(record) = launched.get(who) else {
+            return true;
+        };
+        if record.slug != task {
+            return true;
+        }
+        let Some(Ok(panes)) = panes else {
+            return false;
+        };
+        let Some(pane) = pane_of(board, panes, record, who) else {
+            return false;
+        };
+        let sample = Blocked {
+            task: record.slug.clone(),
+            pane: pane.id.clone(),
+            turn: pane.turn,
+        };
+        if self
+            .watermark(who, &sample)
+            .is_some_and(|known| known.stronger_than(&sample))
+        {
+            return false;
+        }
+        if pane.id != id {
+            return true;
+        }
+        match pane.status.as_deref() {
+            Some("working" | "idle" | "done" | "error") => true,
+            Some("blocked") => self.blocked.get(who).is_none_or(|old| {
+                !old.same_place(&sample)
+                    || old
+                        .turn
+                        .zip(sample.turn)
+                        .is_some_and(|(old, new)| new > old)
+            }),
+            _ => false,
+        }
+    }
+
+    /// Generated pane notices describe an observation, including legacy rows and retries sent
+    /// outside a clock tick. A native recipient can read them after the terminal has moved on.
+    /// Addressed messages and all other event kinds retain their exact text.
+    pub fn delivery_text<'a>(key: &str, text: &'a str) -> Cow<'a, str> {
+        if generated_key(key) {
+            if let Some((who, task, pane)) = blocked_line(text) {
+                return Cow::Owned(format!("BLOCKED {who} {task} {pane} — {WAITED}"));
+            }
+            if let Some(why) = outage_line(text) {
+                return Cow::Owned(format!(
+                    "WATCH hc unanswered at observation: {why}{OBSERVED_OUTAGE}"
+                ));
+            }
+        }
+        Cow::Borrowed(text)
+    }
+}
+
+fn launches<'a>(
+    board: &Board,
+    overseen: &Overseen,
+    open: &'a [TaskSessionRow],
+) -> BTreeMap<&'a str, &'a TaskSessionRow> {
+    let owners = Owners::new(&board.tasks);
+    open.iter()
+        .filter(|record| overseen.hears(board, &owners, record))
+        .map(|record| (record.handle.as_str(), record))
+        .collect()
+}
+
+fn pane_of<'a>(
+    board: &Board,
+    panes: &'a [Pane],
+    record: &TaskSessionRow,
+    who: &str,
+) -> Option<&'a Pane> {
+    let bound = board
+        .sessions
+        .iter()
+        .find(|s| s.row.handle == who)
+        .and_then(|s| s.row.agent.as_deref());
+    let pane = find_pane(panes, Some(record), bound, who)?;
+    let conversation = record
+        .claude_session
+        .strip_prefix("codex:")
+        .unwrap_or(&record.claude_session);
+    let matches_conversation = |p: &&Pane| {
+        p.session
+            .as_deref()
+            .is_some_and(|s| (!conversation.is_empty() && s == conversation) || bound == Some(s))
+    };
+    // Keep the existing attribution preference, but do not turn multiple possible identities
+    // into evidence that a previously observed prompt was resolved.
+    let candidates = if pane.id == record.pane {
+        panes.iter().filter(|p| p.id == pane.id).count()
+    } else if matches_conversation(&pane) {
+        panes.iter().filter(matches_conversation).count()
+    } else {
+        panes
+            .iter()
+            .filter(|p| p.name.as_deref() == Some(who) || p.title.as_deref() == Some(who))
+            .count()
+    };
+    (candidates == 1).then_some(pane)
 }
 
 /// The sessions a recipient oversees ([`overseen`]), and whether it is an orchestrator, which hears
@@ -34,6 +265,7 @@ pub struct Overseen<'b> {
     pub orchestrator: bool,
     pub orchestrating: HashSet<&'b str>,
     pub sessions: BTreeSet<&'b str>,
+    delegated: BTreeSet<(&'b str, &'b str)>,
 }
 
 impl Overseen<'_> {
@@ -58,6 +290,7 @@ impl Overseen<'_> {
         !self.orchestrator
             || self.orchestrating.contains(slug)
             || hears(owners, slug, parent, self.recipient)
+            || self.delegated.contains(&(who, slug))
     }
 }
 
@@ -77,11 +310,33 @@ pub fn overseen<'b>(board: &'b Board, handle: &'b str) -> Overseen<'b> {
     let owners = Owners::new(&board.tasks);
     let mut orchestrating: HashSet<&str> = HashSet::new();
     let mut holders: HashSet<&str> = HashSet::new();
+    let mut delegated = BTreeSet::new();
     while let Some(task) = todo.pop() {
         if orchestrating.insert(&task.slug) {
             holders.extend(task.roles.iter().map(|r| r.handle.as_str()));
             let below = kids.get(task.slug.as_str()).into_iter().flatten();
-            todo.extend(below.filter(|kid| !owners.elsewhere(&kid.slug, handle)));
+            for kid in below {
+                if !owners.elsewhere(&kid.slug, handle) {
+                    todo.push(kid);
+                } else if owners.of(&task.slug).contains(&handle) {
+                    // The task owner hears its directly parented coordinator itself, without
+                    // taking over that coordinator's workers or any other task it holds.
+                    for role in kid
+                        .roles
+                        .iter()
+                        .filter(|r| r.role == "orchestrator" && r.health.holds())
+                    {
+                        if board.sessions.iter().any(|s| {
+                            s.row.handle == role.handle
+                                && s.row.kind == "orchestrator"
+                                && s.row.parent.as_deref() == Some(handle)
+                                && s.row.left_at.is_none()
+                        }) {
+                            delegated.insert((role.handle.as_str(), kid.slug.as_str()));
+                        }
+                    }
+                }
+            }
         }
     }
     let orchestrator =
@@ -91,7 +346,9 @@ pub fn overseen<'b>(board: &'b Board, handle: &'b str) -> Overseen<'b> {
         .map(|s| &s.row)
         .filter(|s| s.left_at.is_none() && s.handle != handle)
         .filter(|s| {
-            told_of(&owners, work.as_ref(), s, handle) || holders.contains(s.handle.as_str())
+            told_of(&owners, work.as_ref(), s, handle)
+                || holders.contains(s.handle.as_str())
+                || delegated.iter().any(|(who, _)| *who == s.handle)
         })
         .map(|s| s.handle.as_str())
         .collect();
@@ -100,6 +357,7 @@ pub fn overseen<'b>(board: &'b Board, handle: &'b str) -> Overseen<'b> {
         orchestrator,
         orchestrating,
         sessions,
+        delegated,
     }
 }
 
@@ -116,59 +374,44 @@ pub fn pane_watch(
     emit: &mut dyn FnMut(&str),
 ) -> PaneWatch {
     // Each session's latest open launch it hears of: the pane it was launched into.
-    let owners = Owners::new(&board.tasks);
-    let launched: BTreeMap<&str, &TaskSessionRow> = open
-        .iter()
-        .filter(|launch| overseen.hears(board, &owners, launch))
-        .map(|launch| (launch.handle.as_str(), launch))
-        .collect();
+    let launched = launches(board, overseen, open);
     if launched.is_empty() {
         return PaneWatch::default();
+    }
+    let mut after = before.clone();
+    // A launch retirement or task change is board evidence, independent of HC availability.
+    for remembered in [&mut after.blocked, &mut after.known] {
+        remembered.retain(|who, b| launched.get(who.as_str()).is_some_and(|r| r.slug == b.task));
     }
     let panes = match panes() {
         Ok(panes) => panes,
         Err(why) => {
             if !before.unanswered {
                 emit(&format!(
-                    "WATCH hc unanswered: {why} — blocked terminals go unreported until it answers"
+                    "WATCH hc unanswered at observation: {why}{OBSERVED_OUTAGE}"
                 ));
             }
-            let mut blocked = before.blocked.clone();
-            blocked.retain(|who, _| launched.contains_key(who.as_str()));
-            return PaneWatch {
-                blocked,
-                unanswered: true,
-            };
+            after.unanswered = true;
+            return after;
         }
     };
-    let bound: HashMap<&str, &str> = board
-        .sessions
-        .iter()
-        .filter_map(|s| Some((s.row.handle.as_str(), s.row.agent.as_deref()?)))
-        .collect();
-    let blocked: BTreeMap<String, Blocked> = launched
-        .iter()
-        .filter_map(|(&who, &record)| {
-            let pane = find_pane(&panes, Some(record), bound.get(who).copied(), who)?;
-            (pane.status.as_deref() == Some("blocked")).then(|| {
-                let blocked = Blocked {
-                    task: record.slug.clone(),
-                    pane: pane.id.clone(),
-                };
-                (who.to_string(), blocked)
-            })
-        })
-        .collect();
-    for (who, b) in &blocked {
-        if !before.blocked.contains_key(who) {
-            emit(&format!(
-                "BLOCKED {who} {} {} — its terminal waits on an approval or a question",
-                b.task, b.pane
-            ));
+    for (who, record) in launched {
+        if let Some(pane) = pane_of(board, &panes, record, who) {
+            let sample = Blocked {
+                task: record.slug.clone(),
+                pane: pane.id.clone(),
+                turn: pane.turn,
+            };
+            after.observe(before, who, sample, pane.status.as_deref());
         }
     }
-    PaneWatch {
-        blocked,
-        unanswered: false,
+    for (who, b) in &after.blocked {
+        if before.blocked.get(who).is_none_or(|old| {
+            !old.same_place(b) || old.turn.zip(b.turn).is_some_and(|(old, new)| new > old)
+        }) {
+            emit(&format!("BLOCKED {who} {} {} — {WAITED}", b.task, b.pane));
+        }
     }
+    after.unanswered = false;
+    after
 }

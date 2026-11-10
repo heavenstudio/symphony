@@ -221,6 +221,7 @@ impl Pane {
             id,
             agent: hc::agent(terminal).map(str::to_string),
             status: Some(hc::status(terminal)).filter(|s| !s.is_empty()),
+            turn: terminal.get("turn").and_then(Value::as_u64),
             session,
             cwd,
             title: text("title"),

@@ -335,6 +335,22 @@ fn a_terminal_is_read_whatever_else_hc_says_of_it() {
         ("t2", None, None, None, "/wt/x", Some("amber-heron"))
     );
     assert!(read(json!({"name": "amber-heron"})).is_none());
+    assert_eq!(pane.turn, None, "a missing counter is unknown");
+    for (value, expected) in [
+        (json!(0), Some(0)),
+        (json!(7), Some(7)),
+        (json!(u64::MAX), Some(u64::MAX)),
+        (Value::Null, None),
+        (json!(-1), None),
+        (json!("7"), None),
+        (json!(7.5), None),
+        (json!(true), None),
+    ] {
+        assert_eq!(
+            read(json!({"address": "t2", "turn": value})).unwrap().turn,
+            expected
+        );
+    }
     // As `hc get` shows it: the status an object, the conversation in the foreground's argv.
     let got = read(json!({
         "address": "t4", "status": {"app": "codex", "state": "idle"},

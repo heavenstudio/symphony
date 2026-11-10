@@ -43,10 +43,11 @@ STATUS tools/example in_progress → review
 NEW tools/next ready — Next task          (orchestrators only)
 STALE amber-heron — … / LOST amber-heron — its work is claimable: …   (your subagents holding claimable work;
                                             never one whose own verify is running or queued)
-BLOCKED amber-heron tools/example t2a — its terminal waits on an approval or a question
-                                            (a session launched into a terminal, to its orchestrators
-                                            and its parent; once, again only after it is answered)
-WATCH hc unanswered: … — blocked terminals go unreported until it answers   (once until hc answers)
+BLOCKED amber-heron tools/example t2a — observed waiting on an approval or a question; inspect its terminal before acting
+                                            (a launched session, to its responsible overseers;
+                                            once per observed episode)
+WATCH hc unanswered at observation: … — blocked terminals may have gone unreported; inspect hc before acting
+                                            (once until hc answers)
 PULL executing=3 ready_unstaffed=2 in_progress_orphaned=1 …     (orchestrators: only for a new actionable entry,
                                             with the tasks behind each count)
 CALLBACK …                                  (delivery failure; retained in inbox)
@@ -58,10 +59,16 @@ ones with none, reviews with no reviewer, branches landed under an open task, id
 agents). Act on it. Who is doing what, with each agent's task, worktree, session id,
 terminal and state, is `just tasks agents [--json]` (the app's `/api/agents`): ask that, not hc.
 
-`BLOCKED` comes from the Symphony server's clock, which looks at the launched
-sessions' terminals once a second while you oversee one still open: your children,
-and whoever holds a role on a task you orchestrate or on one below it. Answer the
-prompt in that terminal, or stop the session; the board only reports it.
+`BLOCKED` is a server-clock observation of an open launch you oversee under task
+ownership. A parent task owner also hears its directly parented coordinator's own
+launch on the delegated task that coordinator currently orchestrates. Delegated
+workers remain their coordinator's responsibility. Changed task/pane identity, a
+sampled transition from working to blocked or a supported known counter advance
+can start another observed episode;
+the counter is not a prompt id. HC failure leaves visibility unknown, and messages
+promise neither current approval nor delivery timing. Inspect the terminal before
+acting. Answer the prompt in that terminal, or stop the session; the board only
+reports it.
 
 A recipient gets its first current PULL once, even when every actionable list
 is empty. After that, a PULL is delivered only when a list gains an entry absent from

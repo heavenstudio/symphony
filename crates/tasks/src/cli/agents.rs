@@ -51,6 +51,8 @@ pub struct Pane {
     pub agent: Option<String>,
     /// hc's status word: `working`, `blocked`, `idle`, `done`, `error`.
     pub status: Option<String>,
+    /// HC's observation counter, increased when status leaves working; not a prompt id.
+    pub turn: Option<u64>,
     /// The agent's conversation id, when what runs in it names one.
     pub session: Option<String>,
     /// The folder its foreground process runs in, else the one it started in; "" if neither.
