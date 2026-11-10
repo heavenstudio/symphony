@@ -33,6 +33,14 @@
 #[cfg(test)]
 extern crate self as symphony_board;
 
+#[cfg(test)]
+#[path = "../tests/store/common.rs"]
+#[expect(
+    dead_code,
+    reason = "library regressions reuse parts of the shared scratch store harness"
+)]
+mod store_fixture;
+
 pub mod cbor;
 pub mod cli;
 pub mod cutover;

@@ -31,7 +31,7 @@ pub fn bound(name: &str) -> Option<Value> {
         "slugs" | "open" | "waiting" => open,
         "tasks" => json!([{"slug": generated::thread()}]),
         "orchestrators" => json!([[generated::thread(), generated::orchestrator()]]),
-        "sid" | "same" | "last" => json!(1),
+        "sid" | "same" | "last" | "post" => json!(1),
         "ts" => json!(NOW),
         "counted" => json!({"last": 1, "ts": NOW}),
         "agent" | "binding" | "old" | "other" | "had" | "made" | "was" => Value::Null,
@@ -41,7 +41,8 @@ pub fn bound(name: &str) -> Option<Value> {
         "address" => json!("uds:/tmp/perf.sock"),
         // The pending-post read is planned outside the closure that supplies each task's slug.
         "slug" | "dependent" => json!(generated::thread()),
-        "sender" => json!(generated::writer()),
+        "sender" | "handle" => json!(generated::writer()),
+        "kind" => json!("msg"),
         "prefix" | "pull_kept" => json!("pull-1"),
         _ => return None,
     })
@@ -309,6 +310,47 @@ fn request(sql: &str) -> Request {
 /// `sql`, as [`request`] sends it, as the check plans it on the board `client` reaches.
 fn checked(client: &Client, sql: &str) -> BTreeMap<String, Planned> {
     plan_all(client, &[request(sql)])
+}
+
+/// Exercise the actual pending-post read and its closure bindings on a small owned board. This
+/// uses the existing recording/planning check without replaying the generated board's commands.
+#[test]
+fn pending_answers_plan_the_actual_recipient_suffix_on_a_small_board() {
+    let f = store::Fixture::empty();
+    f.task("work");
+    let worker = f.session("worker");
+    f.store.claim("work", &worker).unwrap();
+    f.store
+        .say("work", "owner", "continue", Some(&worker))
+        .unwrap();
+    let proxy = Proxy::to(&store::server_addr());
+    let at = f.now() + 31.0 * 60.0;
+    let reader = symphony_board::Store::with(
+        Client::new(&proxy.addr, "sf", f.store.client().database()),
+        Box::new(move || at),
+        Box::new(|_| false),
+        store::HOST,
+    )
+    .unwrap();
+    proxy.take();
+    let digest = symphony_board::cli::pull::digest(&reader, &[], None, at, &[]).unwrap();
+    assert_eq!(digest.count("unanswered"), 1);
+    let planned = plan_all(f.store.client(), &proxy.take());
+    let suffix: Vec<_> = planned
+        .iter()
+        .filter(|(sql, _)| sql.contains("WITH INDEX message_sender"))
+        .collect();
+    assert_eq!(
+        suffix.len(),
+        1,
+        "the actual recipient suffix is planned: {planned:#?}"
+    );
+    assert!(
+        suffix[0].1.plan.contains("message_sender") && suffix[0].1.plan.contains("MoreThan 1"),
+        "{suffix:#?}"
+    );
+    let failed = failures(&planned);
+    assert!(failed.is_empty(), "{}", failed.join("\n\n"));
 }
 
 /// What the check finds in `planned`, every statement's findings in turn.

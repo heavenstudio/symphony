@@ -217,3 +217,112 @@ fn unanswered_digest_rows_follow_the_tasks_orchestrator() {
         assert_eq!(withheld.lines()[0].contains("slots=0/1"), cap.is_some());
     }
 }
+
+#[test]
+fn descendant_actions_answer_the_recipient_at_any_depth_with_equal_clocks() {
+    for action in [
+        "message", "verdict", "claim", "done", "move", "release", "join",
+    ] {
+        let c = Case::new();
+        c.task("sim/a", "review");
+        let recipient = c.f.session("reviewer");
+        c.f.store
+            .take_role("sim/a", &recipient, "reviewer")
+            .unwrap();
+        c.task_with(c.sub("instructions/one", "sim/a"), "ready");
+        let child = if action == "message" {
+            "instructions/one"
+        } else {
+            "elsewhere/deep"
+        };
+        c.task_with(c.sub("elsewhere/deep", "instructions/one"), "ready");
+        if matches!(action, "done" | "move" | "release") {
+            c.f.store.claim(child, &recipient).unwrap();
+        }
+        if action == "verdict" {
+            c.f.historical_review(child);
+            c.f.store.take_role(child, &recipient, "reviewer").unwrap();
+        }
+        let post =
+            c.f.store
+                .say("sim/a", "owner", "review instruction", Some("@reviewer"))
+                .unwrap();
+        match action {
+            "message" => {
+                c.f.store.say(child, &recipient, "answered", None).unwrap();
+            }
+            "verdict" => {
+                c.f.store
+                    .verdict(child, &recipient, "approve", "reviewed")
+                    .unwrap();
+            }
+            "claim" => {
+                c.f.store.claim(child, &recipient).unwrap();
+            }
+            "done" => {
+                c.f.store.done(child, &recipient, "integrated").unwrap();
+            }
+            "move" => {
+                c.f.store.move_to(child, "blocked", &recipient).unwrap();
+            }
+            "release" => {
+                c.f.store.release(child, &recipient, None).unwrap();
+            }
+            "join" => {
+                c.f.store.take_role(child, &recipient, "reviewer").unwrap();
+            }
+            _ => unreachable!(),
+        }
+        let reply = c.f.store.thread(child).unwrap().pop().unwrap();
+        assert!(reply.id > post.id, "{action}");
+        assert_eq!(reply.ts, post.ts, "equal-clock sequence: {action}");
+        c.f.advance(31.0 * 60.0);
+        assert_eq!(c.digest().count("unanswered"), 0, "{action}");
+    }
+}
+
+#[test]
+fn descendant_answers_keep_sender_sequence_ancestry_and_role_handoff_fences() {
+    for elapsed in [0.0, 1.0] {
+        let c = Case::new();
+        c.task("sim/a", "review");
+        c.task("unrelated", "ready");
+        c.task_with(c.sub("sim/a/same-prefix", "unrelated"), "ready");
+        c.task_with(c.sub("different-name", "sim/a"), "ready");
+        let old = c.f.session("reviewer");
+        let next = c.f.session("reviewer");
+        c.f.store.take_role("sim/a", &old, "reviewer").unwrap();
+        let earlier =
+            c.f.store
+                .say("different-name", &old, "before post", None)
+                .unwrap();
+        c.f.advance(elapsed);
+        let post =
+            c.f.store
+                .say("sim/a", "owner", "old instruction", Some("@reviewer"))
+                .unwrap();
+        assert!(earlier.id < post.id);
+        c.f.store.leave(&old).unwrap(); // Automatic departure does not answer the post.
+        c.f.store.take_role("sim/a", &next, "reviewer").unwrap();
+        c.f.store
+            .say("different-name", &next, "replacement answer", None)
+            .unwrap();
+        c.f.store.revive(&old).unwrap();
+        c.f.store
+            .say("sim/a/same-prefix", &old, "unrelated answer", None)
+            .unwrap();
+        c.f.store.leave(&old).unwrap();
+        c.f.store
+            .say("different-name", "owner", "other sender", None)
+            .unwrap();
+        c.f.advance(31.0 * 60.0);
+        let lines = c.digest().lines().join("\n");
+        assert!(lines.contains(&format!("post #{}", post.id)), "{lines}");
+        c.f.store.revive(&old).unwrap();
+        c.f.store
+            .say("different-name", &old, "actual recipient answer", None)
+            .unwrap();
+        c.f.store.leave(&old).unwrap();
+        assert_eq!(c.digest().count("unanswered"), 0);
+    }
+}
