@@ -139,3 +139,44 @@ fn a_red_child_exempts_only_its_repair_subtree_and_fences_its_close() {
     assert!(!closed.red("fix"));
     assert_eq!(reds(&after, &closed), ["red"]);
 }
+
+#[test]
+fn normalizing_an_independent_feature_keeps_its_instruction_in_the_feature_slot() {
+    let umbrella = "docs/process-evaluation";
+    let feature = "tools/pipeline-review-alarm";
+    let child = "tools/pipeline-review-alarm/codex-publisher-boundary-fixes";
+    let before = Ledger::new(
+        [
+            entry(umbrella, None, "done"),
+            led(feature, Some(umbrella), "in_progress", "sable-finch-625"),
+            Entry {
+                executors: vec!["nimble-lark-274"],
+                ..told(child, feature, "in_progress")
+            },
+        ],
+        [("nimble-lark-274", "another-session-parent")],
+    );
+    assert_eq!(before.work(child), umbrella);
+
+    let normalized = before.reparented(feature, None);
+    assert_eq!(normalized.counts(), HashMap::from([("sable-finch-625", 1)]));
+    assert_eq!(normalized.work(child), feature);
+    assert_eq!(normalized.place(child).owners, ["sable-finch-625"]);
+    assert_eq!(
+        normalized.held("sable-finch-625")[feature],
+        [(feature, "in_progress"), (child, "in_progress")]
+    );
+    assert_eq!(
+        started(&before, &normalized, 1),
+        Ok(vec!["sable-finch-625"])
+    );
+    assert_eq!(normalized.tasks[umbrella], before.tasks[umbrella]);
+    assert_eq!(normalized.tasks[child], before.tasks[child]);
+    assert!(normalized.tasks[feature].parent.is_none());
+    assert!(!normalized.tasks[feature].instruction);
+    assert_eq!(
+        normalized.tasks[feature].orchestrators,
+        before.tasks[feature].orchestrators
+    );
+    assert_eq!(normalized.tasks[feature].status, "in_progress");
+}
