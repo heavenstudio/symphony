@@ -282,7 +282,7 @@ fn a_verifying_reviewer_still_staffs_the_review() {
 // -- staffing through subtasks ---------------------------------------------------------
 
 #[test]
-fn only_a_subtask_still_to_be_done_staffs_its_parent() {
+fn a_historical_reviewing_subtasks_executor_does_not_staff_its_parent() {
     let c = Case::new();
     c.task("sim/a", "ready");
     c.task_with(
@@ -291,10 +291,10 @@ fn only_a_subtask_still_to_be_done_staffs_its_parent() {
             ..NewTask::new("sim/a/work", "Work", "owner")
         },
         "ready",
-    ); // a plain subtask, which can go to review
+    ); // Legacy child-review data remains readable; new subtasks cannot enter it.
     let who = c.worker();
     c.f.store.claim("sim/a/work", &who).unwrap();
-    c.f.store.move_to("sim/a/work", "review", &who).unwrap();
+    c.f.historical_review("sim/a/work");
     assert_eq!(c.digest().count("ready_unstaffed"), 1); // its executor waits on a reviewer, not on `sim/a`
 }
 

@@ -382,32 +382,8 @@ fn its_own_roles_are_not_echoed() {
     assert_eq!(m.starting(&["ROLE "]), Vec::<String>::new());
 }
 
-#[test]
-fn a_grandchilds_messages_and_status_reach_the_root_orchestrator() {
-    let m = Monitor::new("grandchild");
-    let (orch, exe) = (m.register("orchestrator"), m.register("worker"));
-    m.ok(&orch, &["create", "a", "Top"]);
-    m.ok(&orch, &["role", "a", "orchestrator"]);
-    m.ok(&orch, &["create", "a/b", "Middle", "--parent", "a"]);
-    m.ok(&orch, &["create", "a/b/c", "Bottom", "--parent", "a/b"]);
-    m.watch(&orch, Watch::polls(4), &|m, n| {
-        let step: &[&str] = match n {
-            0 => &["claim", "a/b/c"],
-            1 => &["say", "a/b/c", "measuring now"],
-            2 => &["move", "a/b/c", "review"],
-            _ => return,
-        };
-        m.ok(&exe, step);
-    });
-    assert_eq!(
-        m.starting(&["ROLE ", "STATUS "]),
-        [
-            "STATUS a/b/c ready → in_progress",
-            "STATUS a/b/c in_progress → review",
-        ]
-    );
-    assert!(m.starting(&["MSG "]).is_empty());
-}
+#[path = "monitor_grandchild.rs"]
+mod grandchild;
 
 #[test]
 fn a_released_role_is_reported() {

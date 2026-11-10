@@ -124,6 +124,7 @@ fn only_the_finished_tasks_terminals_close() {
 fn a_parent_done_closes_an_idle_executor_launched_on_its_subtask_but_not_a_busy_one() {
     for busy in [false, true] {
         let w = World::new();
+        crate::git(&w.repo, &["branch", "sim/jump"]);
         w.task("sim/jump/do", Some("sim/jump"));
         let s = w.launch("sim/jump/do").row;
         w.edit_terminal(&s.pane, |t| {
