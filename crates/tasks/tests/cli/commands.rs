@@ -636,7 +636,7 @@ fn create_for_a_handle_reserves_it_and_next_offers_it_to_that_handle_alone() {
 }
 
 #[test]
-fn done_closes_an_instruction_task_and_refuses_one_that_lands() {
+fn done_closes_both_kinds_of_subtask_without_a_landing() {
     let c = Case::new();
     let (orch, agent) = chain(&c);
     c.ok(
@@ -651,8 +651,8 @@ fn done_closes_an_instruction_task_and_refuses_one_that_lands() {
     assert_eq!(c.store().get("a/m").unwrap().status, "done");
     c.ok(&agent, &["claim", "a/b"]);
     let ran = c.run_as(&agent, &["done", "a/b", "finished"], "");
-    assert_eq!(ran.code, 1);
-    assert!(ran.err.contains("instruction"), "{}", ran.err);
+    assert_eq!(ran.code, 0, "{}", ran.err);
+    assert_eq!(c.store().get("a/b").unwrap().status, "done");
 }
 
 #[test]

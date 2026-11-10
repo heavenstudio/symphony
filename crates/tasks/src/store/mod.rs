@@ -499,7 +499,7 @@ impl Store {
         Ok(task)
     }
 
-    /// The executor of an instruction subtask closes it, the note being its result.
+    /// A slice's executor closes it with its integration result; only the parent lands.
     pub fn done(&self, slug: &str, handle: &str, note: &str) -> Result<Task, Error> {
         if note.trim().is_empty() {
             return Err(refused(
@@ -509,9 +509,9 @@ impl Store {
         self.rule(slug, handle, |view| {
             view.actor(handle)?;
             let task = view.task(slug)?;
-            if !task.instruction || task.parent.is_none() {
+            if task.parent.is_none() {
                 return Err(refused(format!(
-                    "{slug} is not an instruction subtask; it closes by a verdict or a landing"
+                    "{slug} is not a subtask; it closes by a verdict or a landing"
                 )));
             }
             if task.status != "in_progress" {

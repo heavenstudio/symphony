@@ -594,14 +594,8 @@ A second hook (`sf-hook wait-guard`) refuses a loop waiting on machine-wide proc
   that handle reads `lost` or `left` (ten minutes without a sign of life, holding
   nothing claimable yet), after which anyone may claim the task: start the agent
   promptly, or register the handle again and re-reserve.
-- `--instruction` marks a subtask that closes itself, which needs a parent. Its
-  executor ends it with `just tasks done SLUG "what came of it"`, the note
-  being its result, and it goes `in_progress → done`. An instruction task never goes to `review` (`move` refuses it). Nothing else reaches
-  `done` without a verdict or a landing: `done` is refused on any task not
-  made with `--instruction`. The flag is how the board tells a task nobody lands
-  from one that lands; the board does not look at branches. An instruction task
-  is never the task a branch lands under (`just land` ignores it), so a branch
-  of the same name gets its own `review/BRANCH`.
+- Every subtask closes with its executor's `just tasks done SLUG "integration commit and focused result"`, including ordinary implementation slices. Only the top-level parent enters review, gathers stamps and lands. `--instruction` still marks an agent instruction, but is not required for lightweight completion.
+- Source slices start from their parent feature branch, commit there or return commits for integration, and run only their focused checks. A separate agent is justified only by useful parallelism. No independent slice review, full verification or landing.
 - `just tasks show` lists a task's subtasks with each one's status and holder;
   `just tasks list` and the Symphony's **tasks** page show the same tree, at
   any depth.

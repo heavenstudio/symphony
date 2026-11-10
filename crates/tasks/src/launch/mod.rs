@@ -473,19 +473,36 @@ fn take_up(
     let Some(path) = made else {
         return Ok(());
     };
+    let mut base = "main".to_string();
+    if ask.role == "executor" && !ask.detached && task.parent.is_some() {
+        let mut feature = task.clone();
+        let mut seen = HashSet::new();
+        while let Some(parent) = feature.parent.as_deref() {
+            if !seen.insert(feature.slug.clone()) {
+                return Err(Error::Refused("cyclic feature ancestry".into()));
+            }
+            feature = store.get(parent)?;
+        }
+        base = crate::on_review::branch_of(&feature.slug).to_string();
+        if !branch_exists(&m.root, &base) {
+            return Err(Error::Refused(format!(
+                "create parent feature branch {base} before launching a slice; slices do not start independently from main"
+            )));
+        }
+    }
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)
             .map_err(|e| LaunchError(format!("cannot make {}: {e}", parent.display())))?;
     }
     let path = path.to_string_lossy();
     if detach {
-        git(&m.root, &["worktree", "add", "--detach", &path, "main"])?;
+        git(&m.root, &["worktree", "add", "--detach", &path, &base])?;
     } else if branch_exists(&m.root, use_branch) {
         git(&m.root, &["worktree", "add", &path, use_branch])?;
     } else {
         git(
             &m.root,
-            &["worktree", "add", "-b", use_branch, &path, "main"],
+            &["worktree", "add", "-b", use_branch, &path, &base],
         )?;
     }
     Ok(())

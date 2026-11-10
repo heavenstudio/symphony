@@ -1,4 +1,4 @@
-//! `done`, which closes an instruction subtask with a note.
+//! A slice closes with its integration note; its parent owns delivery.
 
 use crate::common::{Fixture, Seed, refused, task};
 use symphony_board::rows::TaskRow;
@@ -51,22 +51,25 @@ fn done_needs_a_note() {
 }
 
 #[test]
-fn done_is_refused_on_a_task_that_lands() {
+fn an_ordinary_subtask_closes_without_an_independent_review() {
     let f = subtask(false, "in_progress", Some("a"));
-    assert_eq!(
-        refused(f.store.done("a/m", "amber-heron", "finished")),
-        "a/m is not an instruction subtask; it closes by a verdict or a landing"
-    );
-    assert_eq!(f.store.get("a/m").unwrap().status, "in_progress");
+    let result = f
+        .store
+        .done("a/m", "amber-heron", "integrated commit abc123 into a")
+        .unwrap();
+    assert_eq!(result.status, "done");
+    assert_eq!(f.store.get("a").unwrap().status, "ready");
 }
 
 #[test]
-fn a_top_level_instruction_is_not_one() {
-    let f = subtask(true, "in_progress", None);
-    assert_eq!(
-        refused(f.store.done("a/m", "amber-heron", "finished")),
-        "a/m is not an instruction subtask; it closes by a verdict or a landing"
-    );
+fn neither_kind_of_top_level_task_closes_as_a_slice() {
+    for instruction in [false, true] {
+        let f = subtask(instruction, "in_progress", None);
+        assert_eq!(
+            refused(f.store.done("a/m", "amber-heron", "finished")),
+            "a/m is not a subtask; it closes by a verdict or a landing"
+        );
+    }
 }
 
 #[test]

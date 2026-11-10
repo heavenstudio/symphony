@@ -52,7 +52,10 @@ pub fn TaskBoard(
     };
     let mut filtered: Vec<_> = tasks
         .iter()
-        .filter(|task| selected.is_empty() || task.status == selected)
+        .filter(|task| {
+            (task.parent.is_none() || !query.is_empty())
+                && (selected.is_empty() || task.status == selected)
+        })
         .collect();
     if query.is_empty() {
         filtered.sort_unstable_by(|a, b| (a.priority, &a.slug).cmp(&(b.priority, &b.slug)));
@@ -254,6 +257,9 @@ fn TaskRow(task: Task) -> Element {
         a { href: "/task/{task.slug}", code { "{task.slug}" } } " " span { class: "prio", "p{task.priority}" }
         span { class: "task-status st-{task.status}", "{task.status.replace('_', \" \")}" }
         div { "{task.title}" }
+        if let Some(parent) = &task.parent {
+            div { class: "subtask-parent", "Subtask of " a { href: "/task/{parent}", "{parent}" } }
+        }
         div { class: "chips", for link in &task.links { a { class: "docchip", href: "/{link}", "{link.rsplit('/').next().unwrap_or(link)}" } } }
         Roles { roles: task.roles }
     } }

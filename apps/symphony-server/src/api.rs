@@ -305,6 +305,7 @@ pub(crate) async fn answer(shared: &Arc<Shared>, request: Request) -> Option<Res
                         let role = query(&request, "role");
                         let open_only = query(&request, "open").as_deref() == Some("1");
                         let roots = query(&request, "roots").as_deref() == Some("1");
+                        let top_level = parent.is_none() && holder.is_none() && search.is_empty();
                         let ids: std::collections::BTreeSet<_> =
                             tasks.tasks.iter().map(|t| t.slug.clone()).collect();
                         let parents: std::collections::BTreeSet<_> = tasks
@@ -313,9 +314,10 @@ pub(crate) async fn answer(shared: &Arc<Shared>, request: Request) -> Option<Res
                             .filter_map(|t| t.parent.clone())
                             .collect();
                         tasks.tasks.retain(|task| {
-                            (parent
-                                .as_ref()
-                                .is_none_or(|p| task.parent.as_ref() == Some(p)))
+                            (!top_level || task.parent.is_none())
+                                && (parent
+                                    .as_ref()
+                                    .is_none_or(|p| task.parent.as_ref() == Some(p)))
                                 && (!open_only
                                     || !["done", "cancelled"].contains(&task.status.as_str()))
                                 && holder.as_ref().is_none_or(|handle| {

@@ -370,7 +370,7 @@ fn a_changes_verdict_on_a_grandchild_reaches_the_root_orchestrator() {
     let (f, orch) = chain();
     let (agent, reviewer) = (f.session("worker"), f.session("reviewer"));
     f.store.claim("a/b/c", &agent).unwrap();
-    f.store.move_to("a/b/c", "review", &agent).unwrap();
+    f.historical_review("a/b/c");
     f.store.take_role("a/b/c", &reviewer, "reviewer").unwrap();
     f.store
         .verdict("a/b/c", &reviewer, "changes", "no")
@@ -863,7 +863,7 @@ fn an_orchestrator_above_the_task_is_told_too() {
     let (f, orch) = chain();
     let executor = f.session("worker");
     f.store.claim("a/b/c", &executor).unwrap();
-    f.store.move_to("a/b/c", "review", &executor).unwrap();
+    f.historical_review("a/b/c");
     f.advance(LIVE_SECONDS + 1.0);
     let reviewer = f.session("reviewer");
     f.store.take_role("a/b/c", &reviewer, "reviewer").unwrap();

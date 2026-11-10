@@ -5,6 +5,24 @@ description: Join the shared task board and register a native callback so messag
 
 # Work from the task board
 
+## Parent feature delivery
+
+A top-level task owns one feature branch and one delivery cycle. Subtasks are
+small implementation slices, not independent releases. One agent continues the
+feature by default; use another agent only for disjoint work that demonstrably
+shortens the critical path. Commit slices into the feature branch, or merge
+their worktree commits into it with `just merge-feature FEATURE [SOURCE]`.
+This command refuses the default branch and runs no delivery hooks or stamps;
+`land` remains the completed feature delivery command. Run only focused checks needed for that slice;
+no slice-level full build, full suite, lint/precheck campaign, reviewer staffing,
+certificate, stamps or landing. Close the slice with its integration commit and
+focused result using tasks done. When the complete feature is ready, the parent
+runs the required combined build/tests and review once, then lands. Review
+fixes stay with that parent and do not create independent delivery rounds.
+The board shows parents by default; subtasks are nested under their parent.
+This rule supersedes conflicting per-subtask gate instructions.
+
+
 Several sessions share one Symphony board from their project checkouts. Read the
 project's board, permission, staffing, testing and landing instructions first. It
 records who holds each task and keeps a thread per task, visible in the

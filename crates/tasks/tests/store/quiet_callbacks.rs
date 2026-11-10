@@ -411,7 +411,7 @@ fn a_new_root_subscription_has_no_history_or_subtask_role_pushes_but_keeps_futur
         f.store
             .take_role("tools/root/old", &rev, "reviewer")
             .unwrap();
-        f.store.move_to("tools/root/old", "review", &exe).unwrap();
+        f.historical_review("tools/root/old");
         f.store
             .verdict("tools/root/old", &rev, "approve", "old result")
             .unwrap();
@@ -454,13 +454,7 @@ fn a_new_root_subscription_has_no_history_or_subtask_role_pushes_but_keeps_futur
             o.drain(&f, &exe, &orch).is_empty(),
             "subtask role changes are not root role changes"
         );
-        f.store
-            .move_to("tools/root/current", "review", &exe)
-            .unwrap();
-        assert_eq!(
-            o.drain(&f, &exe, &orch),
-            ["STATUS tools/root/current in_progress → review"]
-        );
+        f.historical_review("tools/root/current");
         f.store
             .verdict("tools/root/current", &rev, "approve", "new result")
             .unwrap();

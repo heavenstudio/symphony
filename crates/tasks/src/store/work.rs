@@ -444,9 +444,11 @@ LET $said = $actor + ' changed priority p' + <string>$task.priority + ' → p' +
                     "{slug} cannot go from {current} to {status}"
                 )));
             }
-            if task.instruction && (status == "review" || status == "done") {
+            if (task.parent.is_some() || task.instruction)
+                && (status == "review" || status == "done")
+            {
                 return Err(refused(format!(
-                    "{slug} is an instruction subtask: its executor closes it with `done`, not {status}"
+                    "{slug} is a subtask: integrate into its parent and close it with `done`, not {status}"
                 )));
             }
             let held = !BEFORE_WORK.contains(&current) || view.holders("executor").next().is_some();
@@ -499,13 +501,13 @@ LET $said = $actor + ' changed priority p' + <string>$task.priority + ' → p' +
         // As in set_priority, status validation, the update and history share one transaction.
         // A concurrent edit conflicts and retries without extending the shared agent write path.
         let body = format!(
-            "LET $task = (SELECT status, instruction FROM ONLY type::record('task', $slug));
+            "LET $task = (SELECT status, instruction, parent FROM ONLY type::record('task', $slug));
 IF $task = NONE {{ THROW $missing }};
 IF $task.status NOT IN $from {{
     LET $refusal = $cannot + $task.status + ' to ' + $status;
     THROW $refusal;
 }};
-IF $status = 'review' AND $task.instruction {{ THROW $instruction }};
+IF $status = 'review' AND ($task.instruction OR $task.parent != NONE) {{ THROW $instruction }};
 UPDATE type::record('task', $slug) SET status = $status, updated = $now, version += 1 RETURN NONE;
 {UNHOLD}
 LET $said = $actor + ' moved it ' + $task.status + ' → ' + $status;
@@ -525,7 +527,7 @@ LET $said = $actor + ' moved it ' + $task.status + ' → ' + $status;
                     "slug": slug, "status": status, "from": from, "slots": closed.slots, "version": closed.version,
                     "missing": format!("{REFUSED}{}", no_task(slug)),
                     "cannot": format!("{REFUSED}{slug} cannot go from "),
-                    "instruction": format!("{REFUSED}{slug} is an instruction subtask: its executor closes it with `done`, not review"),
+                    "instruction": format!("{REFUSED}{slug} is a subtask: integrate into its parent and close it with `done`, not review"),
                 }),
             );
             self.written(&body, vars, slug)
