@@ -13,46 +13,104 @@ impl Drop for Working {
     }
 }
 
-/// Name, stdout script, completion script, expected health.
-const LISTINGS: [(&str, &str, &str, &str); 8] = [
-    (
-        "partial-unrelated",
-        "printf 'p%s\\nn/\\n' \"$PPID\"",
-        "printf 'Permission denied' >&2; exit 1",
-        "unknown",
-    ),
-    (
-        "failed-unrelated",
-        "printf 'p%s\\nn/\\n' \"$PPID\"",
-        "exit 1",
-        "unknown",
-    ),
-    (
-        "diagnostic-unrelated",
-        "printf 'p%s\\nn/\\n' \"$PPID\"",
-        "printf 'Permission denied' >&2",
-        "unknown",
-    ),
-    (
-        "complete-unrelated",
-        "printf 'p%s\\nn/\\n' \"$PPID\"",
-        "exit 0",
-        "lost",
-    ),
-    ("complete-empty", "", "exit 0", "lost"),
-    ("failed-empty", "", "exit 1", "unknown"),
-    (
-        "malformed",
-        "printf 'pbad\\nn/omitted\\n'",
-        "exit 0",
-        "unknown",
-    ),
-    (
-        "partial-owned",
-        "printf 'p%s\\nn%s\\n' \"$SCAN_PID\" \"$SCAN_CWD\"",
-        "printf 'Permission denied' >&2; exit 1",
-        "live",
-    ),
+struct Listing {
+    name: &'static str,
+    output: &'static str,
+    ending: &'static str,
+    health: &'static str,
+}
+
+const LISTINGS: [Listing; 15] = [
+    Listing {
+        name: "partial-unrelated",
+        output: "printf 'p%s\\nfcwd\\nn/\\n' \"$PPID\"",
+        ending: "printf 'Permission denied' >&2; exit 1",
+        health: "unknown",
+    },
+    Listing {
+        name: "failed-unrelated",
+        output: "printf 'p%s\\nfcwd\\nn/\\n' \"$PPID\"",
+        ending: "exit 1",
+        health: "unknown",
+    },
+    Listing {
+        name: "diagnostic-unrelated",
+        output: "printf 'p%s\\nfcwd\\nn/\\n' \"$PPID\"",
+        ending: "printf 'Permission denied' >&2",
+        health: "unknown",
+    },
+    Listing {
+        name: "complete-unrelated",
+        output: "printf 'p%s\\nfcwd\\nn/\\n' \"$PPID\"",
+        ending: "exit 0",
+        health: "lost",
+    },
+    Listing {
+        name: "complete-empty",
+        output: "",
+        ending: "exit 0",
+        health: "lost",
+    },
+    Listing {
+        name: "failed-empty",
+        output: "",
+        ending: "exit 1",
+        health: "unknown",
+    },
+    Listing {
+        name: "malformed",
+        output: "printf 'pbad\\nn/omitted\\n'",
+        ending: "exit 0",
+        health: "unknown",
+    },
+    Listing {
+        name: "partial-owned",
+        output: "printf 'p%s\\nfcwd\\nn%s\\n' \"$SCAN_PID\" \"$SCAN_CWD\"",
+        ending: "printf 'Permission denied' >&2; exit 1",
+        health: "live",
+    },
+    Listing {
+        name: "valid-owned",
+        output: "printf 'p%s\\nfcwd\\nn%s\\n' \"$SCAN_PID\" \"$SCAN_CWD\"",
+        ending: "exit 0",
+        health: "live",
+    },
+    Listing {
+        name: "relative-cwd",
+        output: "printf 'p%s\\nfcwd\\nnrelative/path\\n' \"$SCAN_PID\"",
+        ending: "exit 0",
+        health: "unknown",
+    },
+    Listing {
+        name: "unknown-cwd",
+        output: "printf 'p%s\\nfcwd\\nnunknown\\n' \"$SCAN_PID\"",
+        ending: "exit 0",
+        health: "unknown",
+    },
+    Listing {
+        name: "non-cwd-descriptor",
+        output: "printf 'p%s\\nftxt\\nn%s\\n' \"$SCAN_PID\" \"$SCAN_CWD\"",
+        ending: "exit 0",
+        health: "unknown",
+    },
+    Listing {
+        name: "missing-descriptor",
+        output: "printf 'p%s\\nn%s\\n' \"$SCAN_PID\" \"$SCAN_CWD\"",
+        ending: "exit 0",
+        health: "unknown",
+    },
+    Listing {
+        name: "cwd-after-non-cwd",
+        output: "printf 'p%s\\nftxt\\nn%s\\nfcwd\\nn%s\\n' \"$SCAN_PID\" \"$SCAN_CWD\" \"$SCAN_CWD\"",
+        ending: "exit 0",
+        health: "live",
+    },
+    Listing {
+        name: "bad-owned-with-valid-unrelated-neighbor",
+        output: "printf 'p%s\\nftxt\\nn%s\\np%s\\nfcwd\\nn/\\n' \"$SCAN_PID\" \"$SCAN_CWD\" \"$PPID\"",
+        ending: "exit 0",
+        health: "unknown",
+    },
 ];
 
 fn read_agent(env: &Env, root: &Path, handle: &str) -> Value {
@@ -141,7 +199,13 @@ fn partial_listings_cannot_make_a_still_running_owned_child_lost() {
     c.env
         .vars
         .insert("SCAN_CWD".into(), tree.to_str().unwrap().into());
-    for (name, output, ending, health) in LISTINGS {
+    for Listing {
+        name,
+        output,
+        ending,
+        health,
+    } in LISTINGS
+    {
         fs::write(&lsof, format!("#!/bin/sh\n{output}\n{ending}\n")).unwrap();
         fs::set_permissions(&lsof, fs::Permissions::from_mode(0o755)).unwrap();
         let a = read(&c.env);
@@ -171,7 +235,7 @@ fn partial_listings_cannot_make_a_still_running_owned_child_lost() {
     working.0.wait().unwrap();
     fs::write(
         &lsof,
-        "#!/bin/sh\nprintf 'p%s\\nn%s\\n' \"$SCAN_PID\" \"$SCAN_CWD\"\n",
+        "#!/bin/sh\nprintf 'p%s\\nfcwd\\nn%s\\n' \"$SCAN_PID\" \"$SCAN_CWD\"\n",
     )
     .unwrap();
     let ended = read(&c.env);

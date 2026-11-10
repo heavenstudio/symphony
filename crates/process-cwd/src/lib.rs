@@ -41,7 +41,8 @@ pub fn process_cwds_with(mut lsof: Command) -> Option<Vec<PathBuf>> {
 /// caller can ask when that process started. Readable rows survive a failed or partial listing;
 /// only a complete listing can prove a process absent. None means the command could not finish.
 pub fn pid_cwds_with(mut lsof: Command) -> Option<PidCwds> {
-    lsof.args(["-Fpn", "-d", "cwd"]);
+    // Request f explicitly: it is not implicit in every lsof version's field output.
+    lsof.args(["-Fpfn", "-d", "cwd"]);
     let done = within(&mut lsof, LSOF_PATIENCE)?;
     Some(pid::read(&done))
 }
@@ -171,9 +172,9 @@ mod tests {
     #[test]
     fn each_cwd_is_read_with_the_pid_listed_before_it() {
         assert_eq!(
-            pid_cwds_with(stand_in("printf 'p5\\nn%s\\n' \"$*\"")),
+            pid_cwds_with(stand_in("printf 'p5\\nfcwd\\nn/args/%s\\n' \"$*\"")),
             Some(PidCwds {
-                listed: vec![(5, PathBuf::from("-Fpn -d cwd"))],
+                listed: vec![(5, PathBuf::from("/args/-Fpfn -d cwd"))],
                 complete: true,
             })
         );
@@ -191,21 +192,54 @@ mod tests {
 
     #[test]
     fn pid_listing_retains_positive_rows_and_separates_authoritative_absence() {
-        for (script, rows, complete) in [
-            ("printf 'p5\\nn/work/a\\n'", true, true),
-            ("printf 'p5\\nn/work/a\\n'; exit 1", true, false),
-            (
-                "printf 'p5\\nn/work/a\\n'; printf 'Permission denied' >&2",
-                true,
-                false,
-            ),
-            ("exit 0", false, true),
-            ("exit 1", false, false),
-            ("exit 2", false, false),
-            ("printf 'Permission denied' >&2", false, false),
+        struct Listing {
+            script: &'static str,
+            has_rows: bool,
+            complete: bool,
+        }
+        for Listing {
+            script,
+            has_rows,
+            complete,
+        } in [
+            Listing {
+                script: "printf 'p5\\nfcwd\\nn/work/a\\n'",
+                has_rows: true,
+                complete: true,
+            },
+            Listing {
+                script: "printf 'p5\\nfcwd\\nn/work/a\\n'; exit 1",
+                has_rows: true,
+                complete: false,
+            },
+            Listing {
+                script: "printf 'p5\\nfcwd\\nn/work/a\\n'; printf 'Permission denied' >&2",
+                has_rows: true,
+                complete: false,
+            },
+            Listing {
+                script: "exit 0",
+                has_rows: false,
+                complete: true,
+            },
+            Listing {
+                script: "exit 1",
+                has_rows: false,
+                complete: false,
+            },
+            Listing {
+                script: "exit 2",
+                has_rows: false,
+                complete: false,
+            },
+            Listing {
+                script: "printf 'Permission denied' >&2",
+                has_rows: false,
+                complete: false,
+            },
         ] {
             let scan = pid_cwds_with(stand_in(script)).unwrap();
-            let listed = if rows {
+            let listed = if has_rows {
                 vec![(5, PathBuf::from("/work/a"))]
             } else {
                 vec![]

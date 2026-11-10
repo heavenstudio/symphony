@@ -346,8 +346,13 @@ impl Store {
                     return Ok(true);
                 }
                 self.transact::<Value>(
-                    &format!("{CHANNEL_BIND} RETURN NONE;"),
-                    json!({"agent":agent, "handle":handle, "full":session}),
+                    &format!(
+                        "{BIND_GUARD}
+IF type::record('session', $handle).agent != $agent {{ THROW 'stale' }};
+{CHANNEL_BIND} RETURN NONE;"
+                    ),
+                    json!({"agent":agent, "handle":handle, "full":session,
+                           "pid":row.pid, "host":row.host}),
                 )?;
                 return Ok(true);
             }

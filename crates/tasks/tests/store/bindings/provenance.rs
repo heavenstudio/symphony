@@ -4,6 +4,8 @@ use super::*;
 use crate::callbacks::Listener;
 use serde_json::json;
 
+mod freshness;
+
 #[test]
 fn legacy_bindings_without_provenance_can_be_classified_once_and_retried() {
     for full in [false, true] {
@@ -26,16 +28,28 @@ fn legacy_bindings_without_provenance_can_be_classified_once_and_retried() {
             )
             .unwrap();
         assert_eq!(unknown, vec![serde_json::Value::Null]);
+        let last_seen = f.store.session(&h).unwrap().row.last_seen;
+        f.advance(10.0);
         assert!(f.store.bind_agent("legacy-key", &h, full).unwrap());
         let classified = binding_of(&f, &h);
         assert_eq!(classified.agent, "legacy-key");
         assert_eq!(classified.in_process, !full, "{classified:?}");
+        assert_eq!(
+            f.store.session(&h).unwrap().row.last_seen,
+            last_seen,
+            "classification adds no heartbeat, full={full}"
+        );
         f.advance(10.0);
         assert!(f.store.bind_agent("legacy-key", &h, full).unwrap());
         assert_eq!(
             binding_of(&f, &h),
             classified,
             "full={full}: retry is stable"
+        );
+        assert_eq!(
+            f.store.session(&h).unwrap().row.last_seen,
+            last_seen,
+            "idempotent retry adds no heartbeat, full={full}"
         );
     }
 }
@@ -157,10 +171,27 @@ fn a_native_callback_registered_after_the_snapshot_is_retained_on_retry() {
     let h = f.session("worker");
     let listener = Listener::new(f.store.client().database());
     let address = format!("uds:{}", listener.path.display());
-    let (protect, handle, registered) = (f.other(), h.clone(), address.clone());
+    struct Registration {
+        store: symphony_board::Store,
+        handle: String,
+        address: String,
+    }
+    // The delayed call owns another Store connection and the registration inputs;
+    // the test retains its original handle/address for the final assertions.
+    let registration = Registration {
+        store: f.other(),
+        handle: h.clone(),
+        address: address.clone(),
+    };
     let late = f.late(move || {
-        protect
-            .callback(&handle, Some(&registered), false, false)
+        registration
+            .store
+            .callback(
+                &registration.handle,
+                Some(&registration.address),
+                false,
+                false,
+            )
             .unwrap();
     });
     assert!(!late.bind_agent("sub-key", &h, false).unwrap());
