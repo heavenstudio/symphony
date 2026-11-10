@@ -5,12 +5,14 @@ use serde_json::Value;
 use symphony_api::{Board, Change, Delta, Front};
 #[path = "wire/fixture.rs"]
 mod fixture;
+#[path = "wire/reader_tests.rs"]
+mod reader_tests;
 
 fn fixture(name: &str) -> String {
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
+    let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let reader =
         repository_read::Reader::process(root.clone()).expect("a valid repository audit context");
-    fixture::read(&reader, &root, name).expect(name)
+    fixture::read(&reader, &root.join("fixtures"), name).expect(name)
 }
 
 /// The fixture read into `T` and written back, as JSON values, beside the fixture itself.
