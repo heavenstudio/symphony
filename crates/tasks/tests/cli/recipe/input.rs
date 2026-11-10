@@ -272,16 +272,15 @@ pub(super) fn launch<T>(
     writer: &mut impl Write,
     subject: impl FnOnce(Option<&Capture>) -> T,
 ) -> (T, Option<Capture>) {
-    if let Some(c) = &capture {
-        if writeln!(
+    if let Some(c) = &capture
+        && writeln!(
             writer,
             "input receipt child={} caller={:?} pending",
             c.id, c.caller
         )
         .is_err()
-        {
-            capture = None; // Explicitly unavailable evidence; retain the private directory.
-        }
+    {
+        capture = None; // Explicitly unavailable evidence; retain the private directory.
     }
     let result = subject(capture.as_ref()); // Exactly once. A real subject panic propagates.
     (result, capture)
