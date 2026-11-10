@@ -331,7 +331,6 @@ pub(crate) async fn answer(shared: &Arc<Shared>, request: Request) -> Option<Res
                                         && task.parent.as_ref().is_none_or(|p| !ids.contains(p))))
                                 && (all
                                     || older
-                                    || !search.is_empty()
                                     || !["done", "cancelled"].contains(&task.status.as_str())
                                     || task.updated >= cutoff)
                                 && (search.is_empty() || scores.contains_key(&task.slug))
