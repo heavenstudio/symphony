@@ -4,7 +4,7 @@
 #
 #     cargo symphony-ui dist OUT            (`just symphony-ui-dist`, and the browser tests: bin/cargo-symphony-ui)
 #
-# It runs through the cargo wrapper (`sf-slots cargo`, tools/gate), which names the tree's own build
+# It runs through the workspace Cargo entrypoint, which names the tree's own build
 # folder in CARGO_TARGET_DIR. wasm-fresh.sh first cleans another tree's wasm32 build of this workspace's
 # crates from that folder (a new tree's folder starts from a seed another tree made), which the wrapper's
 # own clean never reaches.
@@ -27,7 +27,7 @@ case "${3:-z}" in
 esac
 here="$(cd "$(dirname "$0")" && pwd)"
 root="$(cd "$here/../.." && pwd)"
-target="${CARGO_TARGET_DIR:?bundle.sh runs under the cargo wrapper, sf-slots cargo, which names the build folder}"
+target="${CARGO_TARGET_DIR:?bundle.sh runs under the workspace Cargo entrypoint, which names the build folder}"
 common="${SF_GIT_COMMON_DIR:-$(git -C "$here" rev-parse --path-format=absolute --git-common-dir)}"
 dx="$common/sf-cargo/dx-0.7.10/bin/dx"
 export DX_HOME="$common/sf-cargo/dx-home"

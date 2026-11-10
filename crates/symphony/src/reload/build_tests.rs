@@ -43,12 +43,23 @@ fn each_build_is_mains_own_command_with_its_arguments() {
     for (host, package) in [
         (false, "symphony/apps/symphony-server"),
         (true, "apps/symphony-host"),
+        (true, "apps/symphony-server"),
     ] {
         if host {
             tree.write("apps/symphony-host/Cargo.toml", "[package]\n");
         }
+        if package == "apps/symphony-server" {
+            tree.write("apps/symphony-server/Cargo.toml", "[package]\n");
+        }
         let server = server_build(&tree.root, home);
-        assert_eq!(server.get_program(), tree.path("tools/rs-bin.sh"));
+        assert_eq!(
+            server.get_program(),
+            tree.path(if package == "apps/symphony-server" {
+                "tools/cargo.sh"
+            } else {
+                "tools/rs-bin.sh"
+            })
+        );
         let install = [
             "sf-slots",
             "cargo",
@@ -65,8 +76,13 @@ fn each_build_is_mains_own_command_with_its_arguments() {
         assert_eq!(
             server.get_args().collect::<Vec<_>>(),
             install
-                .map(OsStr::new)
                 .into_iter()
+                .skip(if package == "apps/symphony-server" {
+                    2
+                } else {
+                    0
+                })
+                .map(OsStr::new)
                 .chain([home.as_os_str()])
                 .collect::<Vec<_>>(),
             "host package {host}"
@@ -230,4 +246,48 @@ fn a_connection_not_yet_close_on_exec_reaches_no_build_and_its_answer_ends_while
         let (built, _reader) = build.join().unwrap();
         built.unwrap();
     });
+}
+
+#[test]
+fn standalone_sources_are_owned_and_missing_sources_never_search_a_hostile_parent() {
+    let tree = Tree::new();
+    tree.write("apps/symphony-host/Cargo.toml", "[package]\n");
+    tree.write("symphony/apps/symphony-server/Cargo.toml", "[package]\n");
+    let own = tree.path("own");
+    tree.write(
+        "own/apps/symphony-server/Cargo.toml",
+        "[package]\n[dependencies]\nleaf = { path = '../../crates/leaf' }\n",
+    );
+    tree.write("own/apps/symphony-server/src/lib.rs", "// owned\n");
+    tree.write("own/crates/leaf/Cargo.toml", "[package]\n");
+    tree.write("own/apps/symphony-ui/Cargo.toml", "[package]\n");
+    tree.write(
+        "own/symphony/apps/symphony-server/Cargo.toml",
+        "[package]\n",
+    );
+    let directories = super::source_directories(&own).unwrap();
+    let own = own.canonicalize().unwrap();
+    assert_eq!(
+        directories,
+        ["apps/symphony-server", "apps/symphony-ui", "crates/leaf"]
+            .map(|p| own.join(p))
+            .into()
+    );
+    let mut files = std::collections::BTreeSet::new();
+    super::crate_inputs(directories, &mut files).unwrap();
+    assert!(files.contains(&own.join("apps/symphony-server/src/lib.rs")));
+    tree.write(
+        "own/apps/symphony-server/client/public/index.html",
+        "release",
+    );
+    let mut changed = std::collections::BTreeSet::new();
+    super::crate_inputs(super::source_directories(&own).unwrap(), &mut changed).unwrap();
+    assert!(changed.contains(&own.join("apps/symphony-server/client/public/index.html")));
+    std::fs::remove_dir_all(own.join("apps")).unwrap();
+    std::fs::remove_dir_all(own.join("symphony")).unwrap();
+    let error = super::source_directories(&own).unwrap_err();
+    assert!(
+        error.contains("own/symphony/apps/symphony-server"),
+        "{error}"
+    );
 }

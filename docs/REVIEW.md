@@ -1,5 +1,10 @@
 # Concept review
 
+The standalone workspace provides the generic board and document commands.
+Verification, certificates and the landing/stamp recipes in the workflow examples
+are supplied by a consuming project; no project gate executable or standalone
+landing backend is bundled here. See the workspace [command ownership](../AGENTS.md#command-ownership).
+
 How design and concept work gets validated before more of it is made. The
 owner reads in a local web app and every verdict is written into the markdown
 itself; agents read the verdicts back with one command. Nothing leaves the

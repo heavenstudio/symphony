@@ -53,6 +53,7 @@ fn a_hub_whose_watcher_delivers_nothing_still_refreshes_within_a_period() {
         &root,
         &root.join("build/client"),
         false,
+        false,
         period,
         symphony::taskview::connect,
     )

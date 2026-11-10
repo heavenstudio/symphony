@@ -519,3 +519,30 @@ fn a_transfer_names_the_handover_pipes_or_an_older_generations_socket() {
     .unwrap();
     assert!(sent.get("control").is_none(), "{sent}");
 }
+
+#[test]
+fn standalone_source_watch_includes_client_assets_and_its_own_build_scripts() {
+    let root = Path::new("/standalone");
+    let directories = BTreeSet::from([root.join("apps/symphony-server")]);
+    for (path, expected) in [
+        ("apps/symphony-ui/assets/frame.css", true),
+        ("apps/symphony-server/client/public/index.html", true),
+        (
+            "apps/symphony-server/client/public/assets/current.wasm",
+            true,
+        ),
+        ("tools/rs-bin.sh", true),
+        ("tools/cargo.sh", true),
+        ("tools/test-rs.sh", true),
+        ("tools/check_lock.sh", true),
+        ("build/symphony-ui/public/index.html", false),
+        (".target/debug/symphony-server", false),
+        ("docs/README.md", false),
+    ] {
+        assert_eq!(
+            source_event(root, &directories, &root.join(path)),
+            expected,
+            "{path}"
+        );
+    }
+}

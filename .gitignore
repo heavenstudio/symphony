@@ -4,3 +4,4 @@
 /.venv/
 *.profraw
 *.profdata
+/artifacts/

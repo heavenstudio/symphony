@@ -93,7 +93,7 @@ fn warning(browser: &mut Chrome, count: usize) {
 fn screenshot(browser: &mut Chrome, name: &str) {
     let shot = browser.call("Page.captureScreenshot", json!({"format":"png"}));
     let output = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(format!(
-        "../../../artifacts/server-notices/{}",
+        "../../artifacts/server-notices/{}",
         std::process::id()
     ));
     std::fs::create_dir_all(&output).unwrap();

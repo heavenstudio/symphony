@@ -36,6 +36,7 @@ impl Project {
             &root,
             &root.join("build/client"),
             false,
+            false,
             crate::backstop::PERIOD,
             move |root| symphony::taskview::connect_in(root, reach.clone()),
         )

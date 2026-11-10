@@ -131,7 +131,7 @@ fn scratch_owner() {
         // A reused pid must not adopt or overwrite a previous owner's directory.
         let occupied = Scratch {
             path: Path::new(env!("CARGO_MANIFEST_DIR"))
-                .join("../../../artifacts/after_lifecycle")
+                .join("../../artifacts/after_lifecycle")
                 .canonicalize()
                 .unwrap()
                 .join(format!("{SCRATCH_PREFIX}{}-0", std::process::id())),

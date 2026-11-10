@@ -23,7 +23,12 @@ pub(crate) async fn start(shared: &Arc<Shared>) -> Result<Arc<Hub>, String> {
         }
         // Only --home servers hold the shared lease. A preview must never send the owner's
         // journal to its board, even when that board is a copied scratch database.
-        let hub = Hub::start(&shared.root, &shared.ui_dist, shared.installed_ui)?;
+        let hub = Hub::start(
+            &shared.root,
+            &shared.ui_dist,
+            shared.embedded_ui,
+            shared.installed_ui,
+        )?;
         assert!(
             shared.api.set(hub.clone()).is_ok(),
             "hub startup is serialized"

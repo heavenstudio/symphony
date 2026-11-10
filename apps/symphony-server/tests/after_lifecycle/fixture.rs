@@ -112,7 +112,7 @@ impl Scratch {
     fn new(name: &str) -> Self {
         static REAP: Once = Once::new();
         static NEXT: AtomicUsize = AtomicUsize::new(0);
-        let root = Path::new(FIXTURE_ROOT).join("../../../artifacts/after_lifecycle");
+        let root = Path::new(FIXTURE_ROOT).join("../../artifacts/after_lifecycle");
         fs::create_dir_all(&root).unwrap();
         let root = root.canonicalize().unwrap();
         REAP.call_once(|| scratch::reap_dead_scratch(&root, SCRATCH_PREFIX));

@@ -4,7 +4,7 @@
 #
 #     apps/symphony-ui/wasm-fresh.sh        (bundle.sh and `cargo symphony-ui clippy` run it)
 #
-# It runs under the cargo wrapper (`sf-slots cargo`, tools/gate), which names the tree's own build
+# It runs under the workspace Cargo entrypoint, which names the tree's own build
 # folder in CARGO_TARGET_DIR. Cargo names a workspace crate's artifacts by its path inside the workspace,
 # the same in every worktree, and judges them fresh by mtime, so another tree's newer build would pass
 # for this one's. The wrapper starts a new tree's folder from a seed another tree made, its wasm32 builds
@@ -17,7 +17,7 @@ set -euo pipefail
 
 here="$(cd "$(dirname "$0")" && pwd)"
 root="$(cd "$here/../.." && pwd)"
-target="${CARGO_TARGET_DIR:?wasm-fresh.sh runs under the cargo wrapper, sf-slots cargo, which names the build folder}"
+target="${CARGO_TARGET_DIR:?wasm-fresh.sh runs under the workspace Cargo entrypoint, which names the build folder}"
 cargo="${CARGO:-cargo}"
 
 # The tree: the workspace's path and its manifest's inode and birth time, or its ctime where the file

@@ -12,6 +12,7 @@ mod api;
 mod backstop;
 pub mod binary;
 pub mod cli;
+mod client;
 pub mod development;
 mod file_body;
 pub mod front;

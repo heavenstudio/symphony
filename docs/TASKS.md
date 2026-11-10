@@ -1,5 +1,10 @@
 # Task board
 
+The standalone workspace provides the generic board and document commands.
+Verification, certificates and the landing/stamp recipes in the workflow examples
+are supplied by a consuming project; no project gate executable or standalone
+landing backend is bundled here. See the workspace [command ownership](../AGENTS.md#command-ownership).
+
 How several agent sessions share work, and how they, and the owner, talk
 about it. Sessions may run in any worktree of this repository; the board is the
 same for all of them.
@@ -292,7 +297,7 @@ for sessions with no native channel. Tool calls are still the heartbeat.
 
 A **subagent** has no monitor; its own tool calls are its heartbeat. The
 project's `PreToolUse` (Bash) and `PostToolUse` hooks
-(`sf-hook tasks-beat`, `just tasks beat`) see the Claude Code agent id
+(`.target/bin/symphony hook tasks-beat`, `just tasks beat`) see the Claude Code agent id
 on each of its tool calls. A `just tasks …` command the subagent runs binds it
 to the handle that command acts as, and so does one naming a justfile or a
 folder before `tasks` (`--justfile PATH`, `-f PATH`, `--working-directory DIR`
@@ -581,11 +586,11 @@ EOF
 ```
 
 `--body-file -` reads the body from stdin, so a long instruction needs no file.
-A hook (`sf-hook brief-guard`) refuses writing a brief to a file: to
+A consuming project's optional brief guard refuses writing a brief to a file: to
 `artifacts/orchestrator/` (which must not exist), or to a brief in a session scratchpad (a file named
 `brief*` or `*-brief.*`, or under `briefs/` or `followups/`), and says to
 create a subtask instead.
-A second hook (`sf-hook wait-guard`) refuses a loop waiting on machine-wide process state
+A consuming project's optional wait guard refuses a loop waiting on machine-wide process state
 (`pgrep`/`ps` for verify, test-sim, godot): wait on your own run's log or PID.
 
 - `--for HANDLE` reserves it for that handle with no lapse of the hour (the

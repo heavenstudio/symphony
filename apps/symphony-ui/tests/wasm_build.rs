@@ -637,7 +637,7 @@ fn the_justfile_bundles_the_client_and_lints_its_browser_code_through_the_cargo_
     let tree = tree.canonicalize().unwrap();
     fs::copy(crate_dir().join("../../justfile"), tree.join("justfile")).unwrap();
     executable(
-        &tree.join("tools/rs-bin.sh"),
+        &tree.join("tools/cargo.sh"),
         r#"#!/bin/bash
 printf 'cwd=%s\n' "$PWD"
 case "$PATH" in "$PWD/apps/symphony-ui/bin:"*) printf 'client-path=yes\n' ;; *) printf 'client-path=no\n' ;; esac
@@ -654,7 +654,7 @@ printf 'arg=%s\n' "$@"
     assert_eq!(
         String::from_utf8(done.stdout).unwrap(),
         format!(
-            "cwd={}\nclient-path=yes\narg=sf-slots\narg=cargo\narg=symphony-ui\narg=dist\narg={}\narg=all\narg=z\n",
+            "cwd={}\nclient-path=yes\narg=symphony-ui\narg=dist\narg={}\narg=all\narg=z\n",
             tree.display(),
             output.display()
         )
@@ -669,9 +669,9 @@ printf 'arg=%s\n' "$@"
         String::from_utf8(done.stdout).unwrap(),
         format!(
             concat!(
-                "cwd={0}\nclient-path=no\narg=sf-slots\narg=cargo\narg=fmt\narg=--all\narg=--check\n",
-                "cwd={0}\nclient-path=no\narg=sf-slots\narg=cargo\narg=clippy\narg=--workspace\narg=--all-targets\narg=--locked\narg=--\narg=-D\narg=warnings\n",
-                "cwd={0}\nclient-path=yes\narg=sf-slots\narg=cargo\narg=symphony-ui\narg=clippy\n"
+                "cwd={0}\nclient-path=no\narg=fmt\narg=--all\narg=--check\n",
+                "cwd={0}\nclient-path=no\narg=clippy\narg=--workspace\narg=--all-targets\narg=--locked\narg=--\narg=-D\narg=warnings\n",
+                "cwd={0}\nclient-path=yes\narg=symphony-ui\narg=clippy\n"
             ),
             tree.display()
         )

@@ -227,7 +227,7 @@ impl Owner {
             ])
             .arg(concat!(
                 env!("CARGO_MANIFEST_DIR"),
-                "/../../../tools/fixture_process.sh"
+                "/../../tools/fixture_process.sh"
             ))
             .arg(std::env::current_exe().unwrap())
             .args(["--exact", "chrome::browser_leash", "--nocapture"])

@@ -128,6 +128,7 @@ impl Worker {
         let hub = Hub::start_watching::<notify::NullWatcher>(
             &root,
             &root.join("build/client"),
+            false,
             drain_chat,
             crate::backstop::PERIOD,
             connect,

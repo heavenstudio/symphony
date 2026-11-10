@@ -146,7 +146,7 @@ fn scratch_repository_is_removed_after_an_early_return() {
         assert!(
             !root.starts_with(
                 PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                    .join("../../..")
+                    .join("../..")
                     .canonicalize()
                     .unwrap()
             )
@@ -231,7 +231,7 @@ printf '%s\n' '{"Self":{"DNSName":"review-fixture.tail.test.","TailscaleIPs":["f
                     Command::new("bash")
                         .arg(
                             PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                                .join("../../../tools/surreal.sh"),
+                                .join("../../tools/surreal.sh"),
                         )
                         .env_remove("BASH_ENV"),
                 )

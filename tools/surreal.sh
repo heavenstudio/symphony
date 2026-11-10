@@ -69,7 +69,7 @@ resolved() {
 
 # `SF_GIT_COMMON_DIR`, by the rule the test slots take it by (an absolute path git takes as
 # --git-dir, else refused), else the git common dir of the repository holding workspace $1, else
-# nothing: as `sf-slots cargo` finds its build folder.
+# nothing: as Cargo finds its build folder.
 common_dir() {
     local common=""
     if [ -n "${SF_GIT_COMMON_DIR:-}" ]; then

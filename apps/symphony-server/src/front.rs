@@ -55,6 +55,7 @@ pub struct Shared {
     /// One release client for every worktree, installed beside the shared server or built locally.
     pub(crate) ui_dist: PathBuf,
     pub(crate) installed_ui: bool,
+    pub(crate) embedded_ui: bool,
     /// Where the one server serves this project's pages, `/<id>`; empty for a server of its own,
     /// which serves its one project at `/`.
     pub(crate) base: String,
@@ -101,17 +102,21 @@ impl Shared {
         gate: Gate,
         base: &str,
     ) -> Arc<Shared> {
-        // The install folder is carried into the detached process as an argument. Its installed
-        // client does not depend on the starter's environment, which Home deliberately drops.
-        // Foreground servers retain their root's build and SF_SYMPHONY_UI_DIST override.
-        let ui_dist = install.map_or_else(|| crate::live::dist(root), |h| h.join("client/public"));
-        Shared::made(pid, port, root, (ui_dist, install.is_some()), gate, base)
+        let (ui_dist, embedded_ui) = crate::client::selection(root, install);
+        Shared::made(
+            pid,
+            port,
+            root,
+            (ui_dist, install.is_some(), embedded_ui),
+            gate,
+            base,
+        )
     }
 
     /// The one server's state for another registered project at `root`, served at `base`: this
     /// server's process, port and client, that project's own hub, saves and gate.
     pub(crate) fn beside(&self, root: &Path, base: &str) -> Arc<Shared> {
-        let client = (self.ui_dist.clone(), self.installed_ui);
+        let client = (self.ui_dist.clone(), self.installed_ui, self.embedded_ui);
         Shared::made(self.pid, self.port, root, client, Gate::tailscale(), base)
     }
 
@@ -119,7 +124,7 @@ impl Shared {
         pid: i64,
         port: u16,
         root: &Path,
-        (ui_dist, installed_ui): (PathBuf, bool),
+        (ui_dist, installed_ui, embedded_ui): (PathBuf, bool, bool),
         gate: Gate,
         base: &str,
     ) -> Arc<Shared> {
@@ -129,6 +134,7 @@ impl Shared {
             root: root.into(),
             ui_dist,
             installed_ui,
+            embedded_ui,
             base: base.into(),
             common: crate::repo::checkout(root)
                 .ok()

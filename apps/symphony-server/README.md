@@ -120,7 +120,11 @@ touching the shared instance; N is never the shared server's port, on any
 address (outside Linux a bind of one address would sit beside its wildcard
 bind). A foreground server's static directory is
 `build/symphony-ui/public` under its root, or `SF_SYMPHONY_UI_DIST` when set.
-Direct `symphony-server --port N` needs `just symphony-ui-dist` first. Its default
+The server package embeds its committed `client/public` distribution. A direct
+`symphony-server --port N` uses it when the default local build directory is absent.
+An explicit install or `SF_SYMPHONY_UI_DIST` never falls back, and a present local
+bundle keeps its strict errors. `just client-update` in the Symphony workspace
+refreshes the real distribution before committing client changes. Its default
 root is the checkout's top level even when the command starts in a subfolder; `--root`
 selects another folder. A private server on the main checkout leaves the
 shared app's `artifacts/docs-app.port` record alone. A project's page serves the

@@ -136,7 +136,7 @@ impl Native {
             ])
             .arg(concat!(
                 env!("CARGO_MANIFEST_DIR"),
-                "/../../../tools/fixture_process.sh"
+                "/../../tools/fixture_process.sh"
             ))
             .arg(binary)
             .args(["serve", "--root"])

@@ -79,16 +79,11 @@ fn headings_without_a_space_keep_their_existing_python_anchors() {
 fn historical_arithmetic_keeps_its_plus_and_emphasis() {
     let tree = super::Tree::new();
     let render = symphony::render::Render::new(&tree.root);
-    // The pre-commit gate compiles a miniature workspace without these documents.
-    // Read the real regression inputs when this test runs, not while clippy builds it.
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/render/fixtures");
     for (path, words) in [
+        ("arithmetic-plus.md", "1015 headless\n+ 67 render tests"),
         (
-            "docs/history/agents-guide.md",
-            "1015 headless\n+ 67 render tests",
-        ),
-        (
-            "docs/history/render.md",
+            "arithmetic-emphasis.md",
             "CPU sim 3.8–4.7\n+ view sync 2.4–2.9 ≈ 7–8 ms</strong>",
         ),
     ] {

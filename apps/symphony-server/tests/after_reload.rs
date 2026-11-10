@@ -254,7 +254,7 @@ struct Fixture {
 impl Fixture {
     fn new(name: &str) -> Self {
         let logs =
-            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../artifacts/amber-kestrel-54");
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../artifacts/amber-kestrel-54");
         fs::create_dir_all(&logs).unwrap();
         let unique = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -389,7 +389,7 @@ impl Fixture {
                     Command::new("bash")
                         .arg(
                             PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                                .join("../../../tools/surreal.sh"),
+                                .join("../../tools/surreal.sh"),
                         )
                         .env_remove("BASH_ENV"),
                 )
@@ -742,7 +742,7 @@ fn tasks_binary() -> &'static Path {
             .map_or_else(
                 || {
                     let wrapper =
-                        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../tools/rs-bin.sh");
+                        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tools/rs-bin.sh");
                     let done =
                         sys::output(Command::new(wrapper).args(["--build", "tasks"])).unwrap();
                     assert!(done.status.success(), "tasks binary build: {done:?}");

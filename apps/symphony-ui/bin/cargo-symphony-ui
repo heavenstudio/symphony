@@ -1,6 +1,6 @@
 #!/bin/bash
 # `cargo symphony-ui dist OUT`, `cargo symphony-ui dev PORT`, `cargo symphony-ui clippy` and `cargo symphony-ui size`: the client's wasm32 builds as a cargo
-# subcommand, so they run through the cargo wrapper (`sf-slots cargo`) like any cargo command: in the
+# subcommand, so they run through the workspace Cargo entrypoint like any cargo command: in the
 # tree's own build folder, its CARGO_TARGET_DIR. Cargo finds this on PATH by its name and runs it
 # as `cargo-symphony-ui symphony-ui ARGS`; the justfile's recipes put apps/symphony-ui/bin/ on PATH.
 #
@@ -24,7 +24,7 @@ if [ "${1:-}" = symphony-ui ]; then
 fi
 case "${1:-}" in
 dev)
-    exec bash "$here/dev.sh" "${2:-0}"
+    exec bash "$here/dev.sh" "${2:-0}" "${3:-}"
     ;;
 dist)
     exec bash "$here/bundle.sh" "${2:?usage: cargo symphony-ui dist OUT [KIND] [OPT]}" "${3:-all}" "${4:-z}"

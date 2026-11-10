@@ -107,7 +107,10 @@ fn files(path: &Path, into: &mut BTreeSet<PathBuf>) -> Result<(), String> {
     Ok(())
 }
 
-fn crate_directories(root: &Path, app: &str) -> Result<BTreeSet<PathBuf>, String> {
+fn crate_directories(root: &Path, app: impl AsRef<Path>) -> Result<BTreeSet<PathBuf>, String> {
+    let root = root
+        .canonicalize()
+        .map_err(|e| format!("{}: {e}", root.display()))?;
     static PATHS: LazyLock<regex::Regex> = LazyLock::new(|| {
         regex::Regex::new(r#"\bpath\s*=\s*["']([^"']+)["']"#).expect("a constant path expression")
     });
@@ -117,7 +120,7 @@ fn crate_directories(root: &Path, app: &str) -> Result<BTreeSet<PathBuf>, String
         let folder = folder
             .canonicalize()
             .map_err(|e| format!("{}: {e}", folder.display()))?;
-        if !folder.starts_with(root) || !seen.insert(folder.clone()) {
+        if !folder.starts_with(&root) || !seen.insert(folder.clone()) {
             continue;
         }
         let manifest = folder.join("Cargo.toml");
@@ -135,12 +138,15 @@ fn crate_directories(root: &Path, app: &str) -> Result<BTreeSet<PathBuf>, String
 
 /// Both products and their transitive local crates, including path build dependencies.
 pub fn source_directories(root: &Path) -> Result<BTreeSet<PathBuf>, String> {
-    let mut directories = crate_directories(root, "symphony/apps/symphony-server")?;
-    if root.join("apps/symphony-host/Cargo.toml").is_file() {
+    let sdk = workspace(root);
+    let server = sdk.join("apps/symphony-server");
+    let mut directories = crate_directories(root, &server)?;
+    if sdk != root && root.join("apps/symphony-host/Cargo.toml").is_file() {
         directories.extend(crate_directories(root, "apps/symphony-host")?);
     }
-    if root.join("symphony/apps/symphony-ui/Cargo.toml").is_file() {
-        directories.extend(crate_directories(root, "symphony/apps/symphony-ui")?);
+    let ui = sdk.join("apps/symphony-ui");
+    if ui.join("Cargo.toml").is_file() {
+        directories.extend(crate_directories(root, &ui)?);
     }
     Ok(directories)
 }
@@ -153,8 +159,18 @@ fn crate_inputs(
         inputs.insert(folder.join("Cargo.toml"));
         files(&folder.join("src"), inputs)?;
         files(&folder.join("build.rs"), inputs)?;
+        files(&folder.join("client/public"), inputs)?;
     }
     Ok(())
+}
+
+/// The source workspace owned by this root: its own server package wins over a nested kit.
+pub fn workspace(root: &Path) -> PathBuf {
+    if root.join("apps/symphony-server/Cargo.toml").is_file() {
+        root.into()
+    } else {
+        root.join("symphony")
+    }
 }
 
 const CLIENT_INPUTS: &[&str] = &[
@@ -169,19 +185,21 @@ const CLIENT_INPUTS: &[&str] = &[
 ];
 
 fn client_inputs(root: &Path, inputs: &mut BTreeSet<PathBuf>) -> Result<(), String> {
-    if root.join("symphony/apps/symphony-ui/Cargo.toml").is_file() {
-        crate_inputs(
-            crate_directories(root, "symphony/apps/symphony-ui")?,
-            inputs,
-        )?;
+    let sdk = workspace(root);
+    let ui = sdk.join("apps/symphony-ui");
+    if ui.join("Cargo.toml").is_file() {
+        crate_inputs(crate_directories(root, &ui)?, inputs)?;
     }
     for name in CLIENT_INPUTS {
-        files(&root.join("symphony/apps/symphony-ui").join(name), inputs)?;
+        files(&ui.join(name), inputs)?;
     }
     // The recipe and cargo launcher configure the release bundle as well as dx itself.
     for name in [
         "justfile",
         "tools/rs-bin.sh",
+        "tools/cargo.sh",
+        "tools/test-rs.sh",
+        "tools/check_lock.sh",
         "symphony/justfile",
         "symphony/tools/rs-bin.sh",
         "symphony/tools/check_lock.sh",
@@ -201,6 +219,7 @@ fn common_inputs(root: &Path) -> Result<BTreeSet<PathBuf>, String> {
         "symphony/Cargo.toml",
         "symphony/Cargo.lock",
         "symphony/.cargo",
+        "symphony/rust-toolchain.toml",
     ] {
         files(&root.join(name), &mut inputs)?;
     }
@@ -418,17 +437,25 @@ fn client_build(stage: &Path) -> Command {
 
 /// The server binary, installed under `home` by main's cargo wrapper.
 fn server_build(root: &Path, home: &Path) -> Command {
-    let mut command = Command::new(root.join("tools/rs-bin.sh"));
+    let standalone = root.join("apps/symphony-server/Cargo.toml").is_file();
+    let mut command = Command::new(root.join(if standalone {
+        "tools/cargo.sh"
+    } else {
+        "tools/rs-bin.sh"
+    }));
+    if !standalone {
+        command.args(["sf-slots", "cargo"]);
+    }
     command
         .args([
-            "sf-slots",
-            "cargo",
             "install",
             "--quiet",
             "--locked",
             "--force",
             "--path",
-            if root.join("apps/symphony-host/Cargo.toml").is_file() {
+            if root.join("apps/symphony-server/Cargo.toml").is_file() {
+                "apps/symphony-server"
+            } else if root.join("apps/symphony-host/Cargo.toml").is_file() {
                 "apps/symphony-host"
             } else {
                 "symphony/apps/symphony-server"

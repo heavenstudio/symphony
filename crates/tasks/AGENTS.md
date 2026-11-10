@@ -619,8 +619,7 @@ three times each, each median within a bound stated once in
 word (its other one the board's first) and every message at once with the last
 words named, as a schema 12 copy does, each within a bound stated there.
 Its tier is nightly, so the fast plan leaves it out:
-run it by hand (`tools/rs-bin.sh sf-slots cargo test --manifest-path
-symphony/Cargo.toml -p symphony-board --test perf`) for a change to the board's
+run it by hand (`tools/cargo.sh test -p symphony-board --test perf`) for a change to the board's
 queries or the api. `SF_PERF_TASKS=PATH` times another `tasks` build on the
 same board. A run leaves its folder in the temporary directory; the next run
 removes each such folder whose process has ended.

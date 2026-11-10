@@ -55,7 +55,7 @@ fn scratch_roots_are_unique_when_clock_readings_repeat_across_threads() {
 
 impl ScratchBoard {
     pub(super) fn start() -> Self {
-        let workspace = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../..");
+        let workspace = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
         let tasks = binaries::tasks();
         let surreal = std::env::var_os("SF_SURREAL").map_or_else(
             || {
@@ -533,7 +533,7 @@ fn a_pasted_dropped_or_picked_picture_shows_on_the_message_task_and_card_it_was_
         json!({"expression": format!("document.querySelector({})", json!(picker))}),
     );
     let icon = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../../tools/static/apple-touch-icon.png")
+        .join("tests/browser/fixtures/apple-touch-icon.png")
         .canonicalize()
         .unwrap();
     page.call(

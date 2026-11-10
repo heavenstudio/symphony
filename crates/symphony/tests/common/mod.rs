@@ -54,7 +54,7 @@ pub fn plain() -> symphony::plugins::Plugins {
 /// The repository this crate is in.
 pub fn repo() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../..")
+        .join("../..")
         .canonicalize()
         .unwrap()
 }

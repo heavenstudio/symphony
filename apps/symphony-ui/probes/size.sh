@@ -27,7 +27,7 @@ if [ "$#" -eq 0 ]; then
 fi
 here="$(cd "$(dirname "$0")/.." && pwd)"
 root="$(cd "$here/../.." && pwd)"
-target="${CARGO_TARGET_DIR:?size.sh runs under the cargo wrapper, sf-slots cargo, which names the build folder}"
+target="${CARGO_TARGET_DIR:?size.sh runs under the workspace Cargo entrypoint, which names the build folder}"
 common="${SF_GIT_COMMON_DIR:-$(git -C "$here" rev-parse --path-format=absolute --git-common-dir)}"
 dx="$common/sf-cargo/dx-0.7.10/bin/dx"
 export DX_HOME="$common/sf-cargo/dx-home"

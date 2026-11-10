@@ -12,10 +12,16 @@ use std::time::{Duration, Instant};
 use symphony::taskview;
 
 impl Hub {
-    pub fn start(root: &Path, ui_dist: &Path, drain_chat: bool) -> Result<Arc<Self>, String> {
+    pub fn start(
+        root: &Path,
+        ui_dist: &Path,
+        embedded_ui: bool,
+        drain_chat: bool,
+    ) -> Result<Arc<Self>, String> {
         Self::start_watching::<notify::RecommendedWatcher>(
             root,
             ui_dist,
+            embedded_ui,
             drain_chat,
             crate::backstop::PERIOD,
             taskview::connect,
@@ -41,12 +47,14 @@ impl Hub {
     pub(super) fn start_watching<W: Watcher + Send + 'static>(
         root: &Path,
         ui_dist: &Path,
+        embedded_ui: bool,
         drain_chat: bool,
         period: Duration,
         mut connect: impl FnMut(&Path) -> Result<symphony_board::Store, String> + Send + 'static,
     ) -> Result<Arc<Self>, String> {
         let started = Instant::now();
         let mut hub = measured("hub new", || Self::new(root, ui_dist));
+        hub.embedded_ui = embedded_ui;
         if drain_chat {
             *hub.callbacks.get_mut().unwrap_or_else(|e| e.into_inner()) =
                 Some(symphony::callbacks::Flusher::new(root));

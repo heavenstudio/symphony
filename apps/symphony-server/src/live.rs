@@ -116,6 +116,7 @@ pub(crate) struct Page {
 pub(crate) struct Hub {
     pub root: PathBuf,
     ui_dist: PathBuf,
+    embedded_ui: bool,
     pub pages: RwLock<BTreeMap<String, Page>>,
     pub changed: watch::Sender<u64>,
     pub draining: watch::Sender<bool>,
@@ -177,29 +178,12 @@ impl OrderExpiry {
     }
 }
 
-fn build(dist: &Path) -> String {
-    let shell = std::fs::read_to_string(dist.join("index.html")).unwrap_or_default();
-    // dx writes the module script with a hashed filename. This is exactly the path the browser
-    // compares with Board.build.
-    shell
-        .split("src=\"")
-        .skip(1)
-        .filter_map(|s| s.split('"').next())
-        .find(|src| src.ends_with(".js"))
-        .unwrap_or("")
-        .to_string()
-}
-
-pub(crate) fn dist(root: &Path) -> PathBuf {
-    std::env::var_os("SF_SYMPHONY_UI_DIST")
-        .map_or_else(|| root.join("build/symphony-ui/public"), PathBuf::from)
-}
-
 impl Hub {
     pub(crate) fn new(root: &Path, ui_dist: &Path) -> Self {
         Self {
             root: root.into(),
             ui_dist: ui_dist.into(),
+            embedded_ui: false,
             pages: RwLock::new(BTreeMap::new()),
             changed: watch::Sender::new(0),
             draining: watch::Sender::new(false),
@@ -588,7 +572,11 @@ impl Hub {
         let snapshot = measured("dashboard", || {
             if scope.is_empty() {
                 let cards = self.branches.lock().unwrap_or_else(|e| e.into_inner());
-                dashboard::snapshot(root, &cards, &build(&self.ui_dist))
+                dashboard::snapshot(
+                    root,
+                    &cards,
+                    &crate::client::build(&self.ui_dist, self.embedded_ui),
+                )
             } else {
                 let pages = self.pages.read().unwrap_or_else(|e| e.into_inner());
                 let main = pages.get("").ok_or_else(|| {

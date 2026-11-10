@@ -69,6 +69,7 @@ impl Held {
                 &root,
                 &root.join("build/client"),
                 false,
+                false,
                 crate::backstop::PERIOD,
                 move |_| {
                     if let Some(entered) = entered.take() {

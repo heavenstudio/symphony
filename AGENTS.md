@@ -40,11 +40,25 @@ package (`crates/symphony/src/theme.rs`), served as `/<id>/theme.css` and inline
 its pages. Tests use a temporary machine folder.
 
 Use `just lint-rs`, `just test-rs`, `just symphony-ui-dist` and `just symphony-ui-dev`
-from this folder inside the containing project. These recipes use its source
-launcher and slot wrapper; they are not independent standalone entrypoints.
-Each workspace builds in its own `.target/`; the containing project's gates
-compile, discover and run both sets of tests. The workspace's toolchain pin is
-`rust-toolchain.toml`.
+from this folder. `tools/cargo.sh` execs ordinary Cargo in this workspace, preserving
+its arguments, streams, status and inherited limits. It uses this folder's `.target/`
+unless `CARGO_TARGET_DIR` names another. It supplies no project gate planner, test
+selection, certificate, shared slot pool or dependency seed service. The toolchain
+pin is `rust-toolchain.toml`. The containing project keeps its own source launcher,
+slot wrapper and gates, which compile, discover and run both workspaces.
+
+`tools/rs-bin.sh NAME` builds a declared workspace binary with Cargo before every
+run. `--build NAME` prints the freshly built path, `--where NAME` names its expected
+location without building or attesting freshness, and `--link NAME` builds and
+refreshes `.target/bin/NAME`. None searches a containing project. `just symphony
+--port 0` runs a server of its own; the server CLI retains shared-server selection.
+
+`just client-update` builds all six real client modules and publishes their bundle
+under `apps/symphony-server/client/public/`. Commit that generated distribution
+with client changes. The server package embeds those bytes at build time, so an
+installed binary serves them without dx, a source checkout or a runtime extraction.
+A local preview build wins over the embedded default. Explicit install directories
+and `SF_SYMPHONY_UI_DIST` retain their own missing-file errors and never fall back.
 
 Native board fixtures use the fixture source-root function to find
 `tools/surreal.sh`, or the explicit `SF_SURREAL` executable. Resolution and
@@ -70,3 +84,17 @@ common directory; scratch overrides remain explicit. It starts no server, builds
 hashes no sources, prints nothing and never refuses a tool call. Settings run the
 prebuilt `.target/bin/symphony` link; a missing link passes quietly. Project build
 setup refreshes that link explicitly, alongside its own policy hooks.
+
+## Command ownership
+
+`just symphony` runs the server, `just symphony-cli ARGS` the document CLI, and
+`just tasks ARGS` and `just agent-send ARGS` the board entrypoints. These execute
+this workspace's declared binaries through ordinary Cargo. The standalone
+workspace requires no project gate or landing executable.
+
+Board roles, verdicts and configured review callbacks belong to Symphony. The
+consumer supplies verification, certificates, approval policy and landing. The
+workflow examples' `land`, `land-approve`, `land-stamps`, `land-request`,
+`merge-risk` and `merge-feature` recipes are consumer integration, not standalone
+product commands. This workspace supplies no landing/stamp backend or aliases
+forwarding to a containing project.

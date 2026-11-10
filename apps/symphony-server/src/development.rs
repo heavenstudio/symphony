@@ -234,7 +234,7 @@ async fn run(root: PathBuf, dx: PathBuf, port: u16) -> Result<(), String> {
     let web_start = start_child(until, parent, &cancelled, |addr| {
         let mut command = Command::new(&dx);
         command
-            .current_dir(root.join("symphony/apps/symphony-ui"))
+            .current_dir(symphony::reload::workspace(&root).join("apps/symphony-ui"))
             .env("CARGO_INCREMENTAL", "1")
             .env("CARGO_TARGET_DIR", &target)
             .env("CARGO_PROFILE_WASM_DEV_PANIC", "abort")
