@@ -99,20 +99,124 @@ fn recipe_process_preserves_the_build_cache_without_inheriting_the_board() {
     );
 }
 
-/// The binary this tree's sources build, built once before any recipe runs it: a recipe's first run
-/// of new sources says on stderr that it builds them, which the binary itself never says. Building
-/// does not replace the live heartbeat link, including while recipe tests run concurrently.
-fn built() {
-    static BUILT: OnceLock<()> = OnceLock::new();
-    BUILT.get_or_init(|| {
-        let done = symphony_board::sys::output(
-            process(&root().join("tools/rs-bin.sh")).args(["--build", "tasks"]),
-        )
-        .unwrap();
-        assert!(done.status.success(), "{done:?}");
-    });
+/// Stored diagnostics only; actual per-use selection, bytes and lifetime remain unknown.
+#[derive(Debug)]
+struct Receipt {
+    status: Result<std::process::ExitStatus, (std::io::ErrorKind, Option<i32>)>,
+    stdout_bytes: Option<usize>,
+    stderr_bytes: Option<usize>,
+    selection: Result<(PathBuf, String), &'static str>,
+    file: Option<FileSummary>,
 }
 
+#[derive(Debug)]
+struct FileSummary {
+    regular: bool,
+    detail: String,
+}
+
+static WARM: OnceLock<Receipt> = OnceLock::new();
+
+fn selected_path(stdout: &[u8]) -> Result<(PathBuf, String), &'static str> {
+    let text = std::str::from_utf8(stdout).map_err(|_| "non-UTF-8 stdout")?;
+    let line = text.strip_suffix('\n').ok_or("unterminated path")?;
+    if line.contains('\n') || line.contains('\r') || line.contains('\0') {
+        return Err("ambiguous path framing");
+    }
+    let path = PathBuf::from(line);
+    let key = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .and_then(|n| n.strip_prefix("tasks-"))
+        .ok_or("not a tasks selector")?;
+    if key.len() != 16
+        || !key.bytes().all(|b| b.is_ascii_hexdigit())
+        || !path.is_absolute()
+        || !path.parent().is_some_and(|p| p.ends_with("sf-cargo/bin"))
+        || path
+            .components()
+            .any(|p| p == std::path::Component::ParentDir)
+    {
+        return Err("not a public selector path");
+    }
+    Ok((path.clone(), key.to_owned()))
+}
+
+impl Receipt {
+    fn of(result: &std::io::Result<std::process::Output>) -> Self {
+        match result {
+            Ok(done) => Self {
+                status: Ok(done.status),
+                stdout_bytes: Some(done.stdout.len()),
+                stderr_bytes: Some(done.stderr.len()),
+                selection: if done.status.success() {
+                    selected_path(&done.stdout)
+                } else {
+                    Err("command failed")
+                },
+                file: None,
+            },
+            Err(error) => Self {
+                status: Err((error.kind(), error.raw_os_error())),
+                stdout_bytes: None,
+                stderr_bytes: None,
+                selection: Err("command unavailable"),
+                file: None,
+            },
+        }
+    }
+}
+
+fn file_summary(result: std::io::Result<std::fs::Metadata>) -> FileSummary {
+    use std::os::unix::fs::MetadataExt;
+    match result {
+        Ok(m) => FileSummary {
+            regular: m.is_file(),
+            detail: format!(
+                "device={} inode={} mode={:o} length={}",
+                m.dev(),
+                m.ino(),
+                m.mode(),
+                m.len()
+            ),
+        },
+        Err(error) => FileSummary {
+            regular: false,
+            detail: format!(
+                "unavailable: kind={:?} os_code={:?}",
+                error.kind(),
+                error.raw_os_error()
+            ),
+        },
+    }
+}
+
+fn initialize_warm(
+    cell: &OnceLock<Receipt>,
+    attempt: impl FnOnce() -> std::io::Result<std::process::Output>,
+) -> &Receipt {
+    cell.get_or_init(|| {
+        let result = attempt();
+        let mut receipt = Receipt::of(&result);
+        let done = result.unwrap_or_else(|_| panic!("warm command unavailable: {receipt:?}"));
+        assert!(done.status.success(), "{receipt:?}");
+        drop(done); // Raw buffers are not retained or dumped, including on failed initialization.
+        if let Ok((path, _)) = &receipt.selection {
+            // One admitted extra observation, possibly blocking; not a pathname lifetime seal.
+            receipt.file = Some(file_summary(std::fs::metadata(path)));
+        }
+        receipt
+    })
+}
+
+/// Build once before a recipe; --build does not publish the live heartbeat link.
+fn built() {
+    initialize_warm(&WARM, || {
+        symphony_board::sys::output(
+            process(&root().join("tools/rs-bin.sh")).args(["--build", "tasks"]),
+        )
+    });
+}
 /// `just RECIPE ARGS` in this tree, given `env`'s variables and `input` on stdin.
 fn just(env: &Env, args: &[&str], input: &str) -> Ran {
     built();
@@ -145,16 +249,24 @@ fn same(recipe: &Ran, binary: &Ran) {
     assert_eq!(
         (recipe.code, &recipe.out),
         (binary.code, &binary.out),
-        "{}",
-        recipe.err
+        "{}; warm={:?}",
+        recipe.err,
+        WARM.get()
     );
     assert!(
         recipe.err.starts_with(&binary.err),
-        "{:?} / {:?}",
+        "{:?} / {:?}; warm={:?}",
         recipe.err,
-        binary.err
+        binary.err,
+        WARM.get()
     );
-    assert_eq!(recipe.err == binary.err, binary.code == 0, "{}", recipe.err);
+    assert_eq!(
+        recipe.err == binary.err,
+        binary.code == 0,
+        "{}; warm={:?}",
+        recipe.err,
+        WARM.get()
+    );
 }
 
 fn as_(env: &Env, who: &str) -> Env {
@@ -196,9 +308,14 @@ fn just_tasks_passes_stdin_through() {
     let h = c.register("worker");
     let event = bash(&format!("TASKS_SESSION={h} just tasks inbox")).agent("agent-1");
     let ran = just(&c.env, &["tasks", "beat"], &event.0.to_string());
-    assert_eq!((ran.code, ran.out.as_str(), ran.err.as_str()), (0, "", ""));
+    assert_eq!(
+        (ran.code, ran.out.as_str(), ran.err.as_str()),
+        (0, "", ""),
+        "warm={:?}",
+        WARM.get()
+    );
     let bound = c.store().agent_beat("agent-1", &Beat::default()).unwrap();
-    assert_eq!(bound, Some(h));
+    assert_eq!(bound, Some(h), "warm={:?}", WARM.get());
 }
 
 #[test]
@@ -223,11 +340,13 @@ fn just_tasks_runs_its_own_terminals_with_no_launcher() {
         .insert("FAKE_HC_STATE".into(), state.display().to_string());
     c.env.cwd = root();
     let recipe = just(&c.env, &["tasks", "cleanup", "--dry-run"], "");
-    assert_eq!(recipe.code, 0, "{}", recipe.err);
+    assert_eq!(recipe.code, 0, "{}; warm={:?}", recipe.err, WARM.get());
     let binary = run(&c.env, &["cleanup", "--dry-run"], "");
     assert_eq!(
         (recipe.code, &recipe.out, &recipe.err),
-        (binary.code, &binary.out, &binary.err)
+        (binary.code, &binary.out, &binary.err),
+        "warm={:?}",
+        WARM.get()
     );
 }
 
@@ -254,23 +373,203 @@ fn just_tasks_scratch_build_preserves_the_live_heartbeat_link() {
     let private_cache = root.join(".git/sf-cargo/bin");
     let shared_cache = common.join("sf-cargo/bin");
     if private_cache != shared_cache {
-        assert!(!private_cache.exists(), "{}", private_cache.display());
+        assert!(
+            !private_cache.exists(),
+            "{}; warm={:?}",
+            private_cache.display(),
+            WARM.get()
+        );
     }
-    let before = std::fs::read_link(root.join(".target/bin/tasks")).ok();
-    assert_eq!(just(&c.env, &["tasks", "--help"], "").code, 0);
+    let before_read = std::fs::read_link(root.join(".target/bin/tasks"));
+    let before = before_read.as_ref().ok();
+    assert_eq!(
+        just(&c.env, &["tasks", "--help"], "").code,
+        0,
+        "warm={:?}",
+        WARM.get()
+    );
     let selected = symphony_board::sys::output(
         process(&root.join("tools/rs-bin.sh")).args(["--where", "tasks"]),
-    )
-    .unwrap();
-    assert!(selected.status.success(), "{selected:?}");
-    let helper = PathBuf::from(String::from_utf8(selected.stdout).unwrap().trim());
-    assert!(helper.starts_with(&shared_cache), "{}", helper.display());
-    assert!(helper.is_file(), "{}", helper.display());
-    if private_cache != shared_cache {
-        assert!(!private_cache.exists(), "{}", private_cache.display());
-    }
-    assert_eq!(
-        std::fs::read_link(root.join(".target/bin/tasks")).ok(),
-        before
     );
+    let mut receipt = Receipt::of(&selected);
+    let selected = selected
+        .unwrap_or_else(|_| panic!("selector unavailable: {receipt:?}; warm={:?}", WARM.get()));
+    assert!(
+        selected.status.success(),
+        "{receipt:?}; warm={:?}",
+        WARM.get()
+    );
+    let helper = PathBuf::from(
+        std::str::from_utf8(&selected.stdout)
+            .unwrap_or_else(|_| panic!("non-UTF-8 selector: {receipt:?}; warm={:?}", WARM.get()))
+            .trim(),
+    );
+    assert!(
+        helper.starts_with(&shared_cache),
+        "{receipt:?}; warm={:?}",
+        WARM.get()
+    );
+    // Reuse the followed metadata operation formerly inside Path::is_file, at this same point.
+    let file = file_summary(std::fs::metadata(&helper));
+    let regular = file.regular;
+    receipt.file = Some(file);
+    assert!(regular, "{receipt:?}; warm={:?}", WARM.get());
+    if private_cache != shared_cache {
+        assert!(
+            !private_cache.exists(),
+            "{}; selector={receipt:?}; warm={:?}",
+            private_cache.display(),
+            WARM.get()
+        );
+    }
+    let after_read = std::fs::read_link(root.join(".target/bin/tasks"));
+    assert_eq!(
+        after_read.as_ref().ok(),
+        before,
+        "selector={receipt:?}; warm={:?}; link_error_kinds={:?}/{:?}",
+        WARM.get(),
+        before_read
+            .as_ref()
+            .err()
+            .map(|e| (e.kind(), e.raw_os_error())),
+        after_read
+            .as_ref()
+            .err()
+            .map(|e| (e.kind(), e.raw_os_error()))
+    );
+}
+
+fn receipt_output(code: i32, stdout: &[u8], stderr: &[u8]) -> std::process::Output {
+    use std::os::unix::process::ExitStatusExt;
+    std::process::Output {
+        status: std::process::ExitStatus::from_raw(code << 8),
+        stdout: stdout.to_vec(),
+        stderr: stderr.to_vec(),
+    }
+}
+
+#[test]
+fn receipt_framing_preserves_public_path_spaces_and_rejects_ambiguous_names() {
+    let path = "/public with spaces/sf-cargo/bin/tasks-0123456789abcdef";
+    assert_eq!(
+        selected_path(format!("{path}\n").as_bytes()),
+        Ok((PathBuf::from(path), "0123456789abcdef".into()))
+    );
+    for invalid in [
+        "",
+        "/x\n",
+        "relative/sf-cargo/bin/tasks-0123456789abcdef\n",
+        "/a/../sf-cargo/bin/tasks-0123456789abcdef\n",
+        "/wrong/tasks-0123456789abcdef\n",
+        "/bad\0/sf-cargo/bin/tasks-0123456789abcdef\n",
+        "/sf-cargo/bin/tasks-nothex\n",
+        "/sf-cargo/bin/tasks-0123456789abcdeg\n",
+        "/sf-cargo/bin/tasks-0123456789abcdef",
+        "/sf-cargo/bin/tasks-0123456789abcdef\r\n",
+        "/sf-cargo/bin/tasks-0123456789abcdef\nextra\n",
+    ] {
+        assert!(selected_path(invalid.as_bytes()).is_err(), "{invalid:?}");
+    }
+    assert_eq!(selected_path(&[0xff, b'\n']), Err("non-UTF-8 stdout"));
+}
+
+#[test]
+fn receipt_failed_and_malformed_results_stay_unknown_without_leaking_stdio() {
+    let raw = b"/secret=DO_NOT_PRINT\n";
+    let done = receipt_output(2, b"/sf-cargo/bin/tasks-0123456789abcdef\n", raw);
+    let receipt = Receipt::of(&Ok(done));
+    assert_eq!(receipt.status.unwrap().code(), Some(2));
+    assert_eq!(receipt.selection, Err("command failed"));
+    let result = Ok(receipt_output(0, raw, raw));
+    let receipt = Receipt::of(&result);
+    assert_eq!(receipt.stdout_bytes, Some(raw.len()));
+    assert_eq!(receipt.stderr_bytes, Some(raw.len()));
+    assert!(receipt.selection.is_err(), "{receipt:?}");
+    assert!(receipt.file.is_none(), "{receipt:?}");
+    let display = format!("{receipt:?}");
+    assert!(!display.contains("DO_NOT_PRINT"), "{display}");
+    assert_eq!(result.as_ref().unwrap().stdout, raw);
+    assert_eq!(result.as_ref().unwrap().stderr, raw);
+    let failure = Receipt::of(&Err(std::io::Error::new(
+        std::io::ErrorKind::PermissionDenied,
+        "SECRET",
+    )));
+    assert_eq!(
+        failure.status,
+        Err((std::io::ErrorKind::PermissionDenied, None))
+    );
+    assert_eq!((failure.stdout_bytes, failure.stderr_bytes), (None, None));
+    assert_eq!(failure.selection, Err("command unavailable"));
+    assert!(!format!("{failure:?}").contains("SECRET"), "{failure:?}");
+}
+
+#[test]
+fn receipt_metadata_summaries_follow_the_existing_regular_file_predicate() {
+    use std::os::unix::fs::symlink;
+    let root = crate::scratch("receipt-metadata");
+    let file = root.join("data");
+    std::fs::write(&file, b"abc").unwrap();
+    let summary = file_summary(std::fs::metadata(&file));
+    assert!(summary.regular, "{summary:?}");
+    for label in ["device=", "inode=", "mode=", "length=3"] {
+        assert!(summary.detail.contains(label), "{summary:?}");
+    }
+    let alias = root.join("alias");
+    symlink(&file, &alias).unwrap();
+    assert!(file_summary(std::fs::metadata(alias)).regular);
+    assert!(!file_summary(std::fs::metadata(&root)).regular);
+    let missing = file_summary(std::fs::metadata(root.join("missing")));
+    assert!(!missing.regular, "{missing:?}");
+    assert!(missing.detail.contains("NotFound"), "{missing:?}");
+    let denied = file_summary(Err(std::io::Error::new(
+        std::io::ErrorKind::PermissionDenied,
+        "SECRET",
+    )));
+    assert!(!denied.regular, "{denied:?}");
+    assert!(denied.detail.contains("PermissionDenied"), "{denied:?}");
+    assert!(!denied.detail.contains("SECRET"), "{denied:?}");
+}
+
+#[test]
+fn receipt_failed_initializers_leave_the_cell_empty_for_a_later_caller() {
+    use std::panic::{AssertUnwindSafe, catch_unwind};
+    for result in [
+        Err(std::io::Error::other("SECRET")),
+        Ok(receipt_output(1, b"failure\n", b"SECRET")),
+    ] {
+        let cell = OnceLock::new();
+        let failed = catch_unwind(AssertUnwindSafe(|| initialize_warm(&cell, || result)));
+        assert!(failed.is_err(), "failed warm must panic");
+        assert!(cell.get().is_none(), "failed result must not be published");
+        let receipt = initialize_warm(&cell, || Ok(receipt_output(0, b"malformed\n", b"")));
+        assert!(receipt.status.as_ref().unwrap().success(), "{receipt:?}");
+        assert!(receipt.selection.is_err(), "{receipt:?}");
+        assert!(receipt.file.is_none(), "{receipt:?}");
+        assert!(std::ptr::eq(
+            receipt,
+            initialize_warm(&cell, || panic!("initialized cell ran again"))
+        ));
+    }
+}
+
+#[test]
+fn receipt_successful_initializer_publishes_only_safe_observed_metadata() {
+    let root = crate::scratch("receipt-success");
+    let bin = root.join("sf-cargo/bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    let path = bin.join("tasks-0123456789abcdef");
+    // Owned unit-test data only; never an executable, launcher input or operational cache.
+    std::fs::write(&path, b"data").unwrap();
+    let cell = OnceLock::new();
+    let receipt = initialize_warm(&cell, || {
+        Ok(receipt_output(
+            0,
+            format!("{}\n", path.display()).as_bytes(),
+            b"SECRET",
+        ))
+    });
+    assert_eq!(receipt.selection, Ok((path, "0123456789abcdef".into())));
+    assert!(receipt.file.as_ref().unwrap().regular, "{receipt:?}");
+    assert!(!format!("{receipt:?}").contains("SECRET"), "{receipt:?}");
+    assert!(std::ptr::eq(receipt, cell.get().unwrap()));
 }
