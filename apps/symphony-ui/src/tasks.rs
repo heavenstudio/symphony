@@ -31,7 +31,6 @@ pub fn TaskBoard(
     counts: Vec<(String, usize)>,
     statuses: Vec<String>,
     refreshed: Signal<u64>,
-    older: Vec<String>,
     onfilter: EventHandler<(String, u8)>,
     onload: EventHandler<(String, bool, String, u8)>,
 ) -> Element {
@@ -87,7 +86,7 @@ pub fn TaskBoard(
                 div { class: group,
                     for state in statuses.iter().filter(|s| states.contains(&s.as_str())) {
                         if selected.is_empty() || selected == *state {
-                            TaskColumn { key: "{state}", status: state.clone(), tasks: filtered.iter().filter(|t| t.status == *state && !signoff.contains(&t.slug)).map(|t| (*t).clone()).collect(), count: counts.iter().find(|(s,_)| s == state).map_or(0, |(_,n)| *n), query: search, days, onload, refreshed, older: older.iter().any(|s| s == state) }
+                            TaskColumn { key: "{state}", status: state.clone(), tasks: filtered.iter().filter(|t| t.status == *state && !signoff.contains(&t.slug)).map(|t| (*t).clone()).collect(), count: counts.iter().find(|(s,_)| s == state).map_or(0, |(_,n)| *n), query: search, days, onload, refreshed }
                         }
                     }
                 }
@@ -206,7 +205,6 @@ fn TaskColumn(
     days: Signal<u8>,
     onload: EventHandler<(String, bool, String, u8)>,
     refreshed: Signal<u64>,
-    older: Option<bool>,
 ) -> Element {
     let mut visible = use_signal(|| false);
     let requested_status = status.clone();
@@ -235,8 +233,8 @@ fn TaskColumn(
         Near { id: "column-{status}", height: reserved, onenter: move |_| visible.set(true),
             if count > 0 && tasks.is_empty() { div { style: "min-height:{reserved}px", role: "status", "Loading tasks…" } }
             for task in rows { Near { key: "{task.slug}", id: "row-{task.slug}", height: 130, TaskRow { task: task.clone() } } }
-            if count > tasks.len() || ((status == "done" || status == "cancelled") && !older.unwrap_or(false) && query().is_empty()) {
-                crate::components::button::Button { actions: crate::entry_events::click(move || onload.call((more_status.clone(),true,query(),days()))), if status == "done" || status == "cancelled" { "Load older tasks" } else { "Load more tasks" } }
+            if count > tasks.len() {
+                crate::components::button::Button { actions: crate::entry_events::click(move || onload.call((more_status.clone(),true,query(),days()))), "Load more tasks" }
             }
         }
     } }

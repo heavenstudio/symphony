@@ -34,7 +34,6 @@ struct BoardData {
     days: u8,
     ready: bool,
     error: String,
-    older: Vec<String>,
     cursors: std::collections::BTreeMap<String, String>,
     requests: std::collections::BTreeMap<String, u64>,
     count_request: u64,
@@ -105,7 +104,7 @@ pub fn TasksPage() -> Element {
             crate::tasks::TaskBoard {
                 tasks: data.read().tasks.clone(), counts: data.read().counts.clone(),
                 statuses: data.read().statuses.clone(), signoff: data.read().signoff.clone(),
-                older: data.read().older.clone(), refreshed,
+                refreshed,
                 onfilter: move |(query, days)| { spawn(filter(query, days, data)); },
                 onload: move |(status, more, query, days)| { spawn(column(status, more, query, days, data)); },
             }
@@ -156,7 +155,6 @@ async fn filter(query: String, days: u8, mut data: Signal<BoardData>) {
         d.days = days;
         d.generation += 1;
         d.tasks.clear();
-        d.older.clear();
         d.cursors.clear();
         d.generation
     };
@@ -191,10 +189,8 @@ async fn column(status: String, more: bool, query: String, days: u8, mut data: S
     };
     let encoded = request::encode(&query);
     let cursor = crate::task_live::cursor_query(cursor.as_deref());
-    let older = more && matches!(status.as_str(), "done" | "cancelled");
     let result = request::get::<TaskListing>(&url(&format!(
-        "/api/task-board?q={encoded}&status={status}&days={days}{cursor}&older={}",
-        u8::from(older)
+        "/api/task-board?q={encoded}&status={status}&days={days}{cursor}"
     )))
     .await;
     if data.read().generation != generation || data.read().requests.get(&status) != Some(&version) {
@@ -207,9 +203,6 @@ async fn column(status: String, more: bool, query: String, days: u8, mut data: S
                 d.cursors.insert(status.clone(), cursor);
             } else {
                 d.cursors.remove(&status);
-            }
-            if older && !d.older.contains(&status) {
-                d.older.push(status.clone());
             }
             if !more {
                 d.tasks.retain(|t| t.status != status);
@@ -306,7 +299,6 @@ fn merge(value: &JsValue, d: &mut BoardData) -> Result<bool, String> {
                 if let Some(task) = &change.value
                     && !searching
                     && matches!(task.status.as_str(), "done" | "cancelled")
-                    && !d.older.contains(&task.status)
                     && task.updated < js_sys::Date::now() / 1000.0 - f64::from(d.days) * 86_400.0
                 {
                     change.removed = true;
@@ -346,9 +338,7 @@ fn merge(value: &JsValue, d: &mut BoardData) -> Result<bool, String> {
                 ))
                 .map_err(|e| e.to_string())?;
                 for (status, count) in counts {
-                    if !d.older.contains(&status) {
-                        set_count(&mut d.counts, status, count);
-                    }
+                    set_count(&mut d.counts, status, count);
                 }
             }
             "tasks-status" => {

@@ -305,7 +305,7 @@ pub(crate) async fn answer(shared: &Arc<Shared>, request: Request) -> Option<Res
                         let role = query(&request, "role");
                         let open_only = query(&request, "open").as_deref() == Some("1");
                         let roots = query(&request, "roots").as_deref() == Some("1");
-                        let top_level = parent.is_none() && holder.is_none() && search.is_empty();
+                        let top_level = parent.is_none() && holder.is_none();
                         let ids: std::collections::BTreeSet<_> =
                             tasks.tasks.iter().map(|t| t.slug.clone()).collect();
                         let parents: std::collections::BTreeSet<_> = tasks

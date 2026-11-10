@@ -888,7 +888,7 @@ impl Hub {
                 for status in symphony_board::STATUSES {
                     counts.insert(status, 0);
                 }
-                for task in &next.tasks {
+                for task in next.tasks.iter().filter(|task| task.parent.is_none()) {
                     *counts.entry(&task.status).or_default() += 1;
                 }
                 changed.push(
@@ -896,7 +896,7 @@ impl Hub {
                 );
                 let recent = |days: f64| {
                     let mut counts = BTreeMap::<&str, usize>::new();
-                    for task in &next.tasks {
+                    for task in next.tasks.iter().filter(|task| task.parent.is_none()) {
                         if ["done", "cancelled"].contains(&task.status.as_str())
                             && task.updated >= store.now() - days * 86_400.0
                         {
@@ -1920,15 +1920,23 @@ mod tests {
     }
 
     #[test]
-    fn owner_cancellation_sends_zero_for_the_last_ready_task() {
+    fn live_column_totals_count_only_parents_in_every_status() {
         let tree = Tree::new();
         let root = repository(&tree);
-        let f = Fixture::new(Seed::default().task("tools/owner-controls", "ready"));
+        let mut seed = Seed::default().task("tools/owner-controls", "ready");
+        for (index, status) in symphony_board::STATUSES.iter().enumerate() {
+            let mut child =
+                crate::testing::board::task(&format!("tools/owner-controls/{status}"), status);
+            child.id = index as i64 + 2;
+            child.parent = Some("tools/owner-controls".into());
+            seed = seed.task_row(child);
+        }
+        let f = Fixture::new(seed);
         let hub = Hub::new(&root, &root.join("build/client"));
         hub.refresh_page("", &root).unwrap();
         observe(&hub, &f.store);
         let before = hub.task_snapshot().unwrap();
-        assert_eq!(before.tasks.len(), 1);
+        assert_eq!(before.tasks.len(), symphony_board::STATUSES.len() + 1);
         assert_eq!(before.tasks[0].status, "ready");
 
         f.store
@@ -1954,6 +1962,21 @@ mod tests {
         assert_eq!(counts["done"], 0);
         assert_eq!(counts.len(), symphony_board::STATUSES.len());
         assert_eq!(counts.values().sum::<usize>(), 1);
+        let recent = event["changes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|change| change["region"] == "task-recent-counts")
+            .unwrap();
+        for period in ["day", "week"] {
+            let counts: std::collections::BTreeMap<String, usize> =
+                serde_json::from_value::<Vec<(String, usize)>>(recent["data"][period].clone())
+                    .unwrap()
+                    .into_iter()
+                    .collect();
+            assert_eq!(counts["done"], 0);
+            assert_eq!(counts["cancelled"], 1);
+        }
     }
 
     #[test]
