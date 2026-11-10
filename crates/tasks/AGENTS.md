@@ -179,7 +179,11 @@ The monitor and native stream emit that task/post once. Native acknowledgements 
 identities in `callback_state.pull_unanswered`, separate from main's whole-board PULL account;
 withheld or merely queued entries never enter that history. `store/unanswered.rs::unanswered_post`
 defines pending work for the digest, restore selection and sweep: a post since that handle took
-its role, without a later message, status move or verdict by it on the same thread. Acquiring the
+its role, without a later message, status move or verdict by it on that task or a descendant.
+The descendant lookup reads only that recipient's eligible records after the post through
+`message_sender`, then checks actual task parents. Direct `land-approve` approvals journal a
+message through the existing board API. The final recovery reservation rechecks the recipient's
+records and the parent edges used in its answer decision before reserving the attempt. Acquiring the
 role also puts the predecessor's posts before the new holder's work, even at the same clock time.
 Role aliases bind to the holders in the thread prefix at each post; a later departure or
 replacement cannot transfer that request to another recorded conversation.

@@ -577,12 +577,7 @@ fn reuse(
 }
 
 #[cfg(test)]
-#[path = "../../tests/store/common.rs"]
-#[expect(
-    dead_code,
-    reason = "reuse the scratch store harness; this regression needs only part of it"
-)]
-mod store_fixture;
+use crate::store_fixture;
 
 #[cfg(test)]
 mod tests;

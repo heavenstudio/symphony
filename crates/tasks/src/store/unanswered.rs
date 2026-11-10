@@ -6,6 +6,8 @@ use crate::rows::TaskSessionRow;
 use serde_json::json;
 use std::collections::{BTreeMap, BTreeSet};
 
+#[path = "unanswered_answers.rs"]
+mod answers;
 #[path = "unanswered_recipients.rs"]
 mod recipients;
 
@@ -230,25 +232,61 @@ OR (kind = 'system' AND string::starts_with(text, sender + ' released '))));"
                 }
             }
         }
-        Ok(pending)
+        if pending.is_empty() {
+            return Ok(pending);
+        }
+        // Resolve recipients on their original thread first. Only then read that recipient's
+        // eligible records after each still-pending post, never the descendant threads.
+        let activity: Vec<Vec<answers::Answer>> = self
+            .read(
+                &format!("RETURN $posts.map(|$p| {{ LET $handle = $p[0]; LET $post = $p[1]; RETURN {}; }});", answers::read()),
+                json!({"posts": pending.iter().map(|p| (&p.handle, p.post.id)).collect::<Vec<_>>()}),
+            )
+            .map_err(recovery_error)?;
+        let tree = by_slug
+            .values()
+            .map(|t| (t.slug.clone(), t.parent.clone()))
+            .collect();
+        Ok(pending
+            .into_iter()
+            .zip(activity)
+            .filter_map(|(p, rows)| (!answers::answered(&rows, &p.slug, &tree)).then_some(p))
+            .collect())
     }
 
     /// Reserve the sole automatic resume attempt for this handle/post, across restarts and sweeps.
     /// Reserve before starting a process: an interruption may leave it flagged, never duplicated.
     /// Role recipients come from the immutable thread prefix; later holders cannot reassign them.
     pub(crate) fn claim_unanswered_restore(&self, pending: &Pending) -> Result<bool, Error> {
+        let rows = answers::rows(self, &pending.handle, pending.post.id)?;
+        let parents = answers::parents(self, &rows)?;
+        let tree = parents.iter().cloned().collect();
+        if answers::answered(&rows, &pending.slug, &tree) {
+            return Ok(false);
+        }
+        self.reserve_unanswered_restore(pending, &rows, &parents)
+    }
+
+    /// Recheck the recipient suffix and every parent edge used in the answer decision in the
+    /// reservation transaction. A changed observation waits for the next sweep, unreserved.
+    fn reserve_unanswered_restore(
+        &self,
+        pending: &Pending,
+        rows: &[answers::Answer],
+        parents: &[(String, Option<String>)],
+    ) -> Result<bool, Error> {
         self.transact(
             &format!("LET $key = type::record('unanswered_restore', [$slug, $handle, $post]);
 IF record::exists($key) {{ RETURN false; }};
 IF type::record('session', $handle).last_seen != $seen {{ RETURN false; }};
-IF array::len(SELECT VALUE sid FROM message:[$slug, NONE]..[$slug, ..]
-    WHERE sender = $handle AND {ANSWER_SQL} AND sid > $post) > 0 {{ RETURN false; }};
+IF {} != $answers {{ RETURN false; }};
+IF $parents.map(|$p| [$p[0], type::record('task', $p[0]).parent ?? NULL]) != $parents {{ RETURN false; }};
 LET $status = type::record('task', $slug).status;
 IF ($role = 'executor' AND $status NOT IN ['in_progress', 'blocked', 'review'])
     OR ($role = 'reviewer' AND $status != 'review') {{ RETURN false; }};
 CREATE $key CONTENT {{ slug: $slug, handle: $handle, post: $post }} RETURN NONE;
-RETURN true;"),
-            json!({"slug": pending.slug, "handle": pending.handle, "post": pending.post.id, "seen":pending.seen, "role":pending.role}),
+RETURN true;", answers::read()),
+            json!({"slug": pending.slug, "handle": pending.handle, "post": pending.post.id, "seen":pending.seen, "role":pending.role, "answers":rows, "parents":parents}),
         )
         .map_err(recovery_error)
     }
@@ -275,6 +313,10 @@ fn recovery_error(error: Failure) -> Error {
         ),
     }
 }
+
+#[cfg(test)]
+#[path = "unanswered_scratch.rs"]
+mod scratch;
 
 #[cfg(test)]
 mod tests {
