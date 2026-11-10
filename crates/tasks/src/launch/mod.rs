@@ -346,6 +346,7 @@ pub fn launch(store: &Store, hc: &dyn Hc, m: &Machine, ask: &Ask) -> Result<Star
             handle: &handle,
             stream: tab.as_deref().unwrap_or(stream(role)),
             agent,
+            resumed_codex: false,
             args,
             text: &prompt_text(slug, &handle, &ask.prompt, agent),
         },
@@ -509,27 +510,24 @@ fn take_up(
     Ok(())
 }
 
-/// What one terminal starts: in `cwd`, for `handle`, in the tab of `stream`, the `agent` (`claude`
-/// or `codex`) with its `args`, and `text` its first message. It borrows them from the launch or
-/// restore that fills it.
+/// The terminal and its first message, borrowed from the launch or restore.
 struct Start<'launch> {
     cwd: &'launch str,
     handle: &'launch str,
     stream: &'launch str,
     agent: &'static str,
+    resumed_codex: bool,
     args: Vec<String>,
     text: &'launch str,
 }
 
-/// A terminal for `start.handle`, placed in its stream's tab, its agent started and given its first
-/// message once ready, and hc's receipt of that message taken (`startup`). The terminal, once there
-/// is one, is left in `terminal` for the caller to close if this fails.
+/// Start in the stream's tab and confirm the message (`startup`); leave the terminal for the caller.
 fn start_confirmed(
     hc: &dyn Hc,
     m: &Machine,
     terminal: &mut String,
     start: &Start<'_>,
-) -> Result<(), LaunchError> {
+) -> Result<startup::Message, LaunchError> {
     let mut place = place(hc, &m.project(), start.stream)?;
     let mut argv = vec!["env".to_string(), format!("TASKS_SESSION={}", start.handle)];
     argv.extend(m.board_env.iter().map(|(k, v)| format!("{k}={v}")));
@@ -567,6 +565,7 @@ fn start_confirmed(
         terminal,
         start.agent,
         start.text,
+        start.resumed_codex,
         &mut || name_place(hc, &mut place),
         &*m.sleep,
     )

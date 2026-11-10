@@ -6,6 +6,8 @@
 mod recovery;
 #[path = "restore_review.rs"]
 mod review_instructions;
+#[path = "restore_startup.rs"]
+mod startup;
 
 use crate::common::refused;
 use crate::{World, git};

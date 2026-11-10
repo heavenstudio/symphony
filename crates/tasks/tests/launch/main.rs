@@ -109,6 +109,10 @@ impl<'a> Hooked<'a> {
 }
 
 impl Hc for Hooked<'_> {
+    fn queue_codex(&self, thread: &str, text: &str) -> Result<(), LaunchError> {
+        self.inner.queue_codex(thread, text)
+    }
+
     fn run(&self, args: &[&str]) -> Result<String, LaunchError> {
         if let Some(answer) = (self.instead)(args) {
             return answer;
