@@ -161,6 +161,7 @@ pub fn page(
     let mut task = task(record);
     task.body = record.body.get(..brief_next).unwrap_or_default().to_owned();
     Ok(symphony_api::TaskPage {
+        machine_work: symphony_api::MachineWork::default(),
         task,
         blocks,
         children: Vec::new(),
@@ -427,6 +428,26 @@ pub fn agents_in(
     common: Option<&Path>,
     board: &symphony_board::Board,
 ) -> Result<symphony_api::Agents, String> {
+    agents_in_observed(
+        store,
+        root,
+        common,
+        board,
+        symphony_board::cli::machine_work::Evidence {
+            local_host: symphony_board::sys::hostname(),
+            snapshot: Default::default(),
+        },
+    )
+}
+
+/// A clock tick supplies its single trusted native observation; HTTP consumers reuse this view.
+pub fn agents_in_observed(
+    store: &symphony_board::Store,
+    root: &Path,
+    common: Option<&Path>,
+    board: &symphony_board::Board,
+    evidence: symphony_board::cli::machine_work::Evidence,
+) -> Result<symphony_api::Agents, String> {
     let mut env = crate::children::board_env();
     env.cwd = root.to_path_buf();
     // The server views its agents every tick: the process listing is kept by its store a while.
@@ -435,7 +456,16 @@ pub fn agents_in(
         None => symphony_board::cli::probes::machine(&env),
     }
     .kept_by(store);
-    agents_probed(store, &probes, Some(board))
+    let view = symphony_board::cli::agents::describe_board_observed(
+        store,
+        &probes,
+        store.now(),
+        false,
+        board,
+        evidence,
+    )
+    .map_err(|error| error.to_string())?;
+    wire_agents(&view)
 }
 
 fn agents_probed(
@@ -531,62 +561,4 @@ mod page_tests;
 mod agents_tests;
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::test_tree::Tree;
-
-    #[test]
-    fn project_task_counts_exclude_children_and_grandchildren() {
-        let task = |slug: &str, status: &str, parent: Option<&str>| Task {
-            slug: slug.into(),
-            title: slug.into(),
-            body: String::new(),
-            status: status.into(),
-            priority: 2,
-            parent: parent.map(String::from),
-            created_by: "owner".into(),
-            created: 0.0,
-            updated: 0.0,
-            links: Vec::new(),
-            depends: Vec::new(),
-            roles: Vec::new(),
-            instruction: false,
-            fields: BTreeMap::new(),
-        };
-        let board = Tasks {
-            version: "fixture".into(),
-            sessions: Vec::new(),
-            tasks: vec![
-                task("feature", "in_progress", None),
-                task("reviewed", "review", None),
-                task("finished", "done", None),
-                task("feature/implementation", "in_progress", Some("feature")),
-                task("feature/check", "review", Some("feature")),
-                task("feature/check/detail", "review", Some("feature/check")),
-            ],
-        };
-        assert_eq!(
-            counts(&board),
-            TaskCounts {
-                in_progress: 1,
-                in_review: 1,
-                agents_live: 0
-            }
-        );
-    }
-
-    #[test]
-    fn a_brief_within_the_limit_is_its_whole_reply() {
-        let tree = Tree::new();
-        let render = Render::new(&tree.root);
-        for body in [
-            "One paragraph.",
-            "# A heading\n\nA paragraph, and:\n\n- a list\n",
-        ] {
-            assert_eq!(
-                brief_part(&render, body, 0, BRIEF_LIMIT),
-                (reply_blocks(&render, body), body.len())
-            );
-        }
-    }
-}
+mod tests;

@@ -48,11 +48,10 @@ pub mod staff;
 mod startup;
 mod uuid;
 
-pub use uuid::new_uuid;
-
 pub use cleanup::{Closure, cleanup, cleanup_as, finish};
 pub use close::close;
 use place::{name_place, place, stream};
+pub use uuid::new_uuid;
 
 use crate::cli::{Env, probes};
 use crate::health::{FINISHED, RESERVE_SECONDS};

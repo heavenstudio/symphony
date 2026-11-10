@@ -27,6 +27,7 @@ use crate::{
 #[derive(Clone, Default, PartialEq)]
 struct BoardData {
     tasks: Vec<Task>,
+    work: crate::machine_work::SharedWork,
     counts: Vec<(String, usize)>,
     statuses: Vec<String>,
     signoff: Vec<String>,
@@ -103,6 +104,7 @@ pub fn TasksPage() -> Element {
         if data.read().ready {
             crate::tasks::TaskBoard {
                 tasks: data.read().tasks.clone(), counts: data.read().counts.clone(),
+                work: data.read().work.clone(), connected: !stale(),
                 statuses: data.read().statuses.clone(), signoff: data.read().signoff.clone(),
                 refreshed,
                 onfilter: move |(query, days)| { spawn(filter(query, days, data)); },
@@ -137,6 +139,7 @@ async fn counts(mut data: Signal<BoardData>) {
         Ok(list) => {
             let mut d = data.write();
             d.counts = list.counts;
+            d.work = list.machine_work.into();
             d.statuses = list.statuses;
             d.signoff = list.signoff;
             d.ready = true;
@@ -223,6 +226,7 @@ async fn column(status: String, more: bool, query: String, days: u8, mut data: S
                 }
             }
             d.signoff = list.signoff;
+            d.work = list.machine_work.into();
             replay(&since, &mut d);
             crate::live::mark_tasks_ready();
         }
@@ -293,6 +297,11 @@ fn merge(value: &JsValue, d: &mut BoardData) -> Result<bool, String> {
         let value = field(&change, "data");
         let searching = !d.query.is_empty();
         match region.as_str() {
+            "machine-work" => {
+                let work: symphony_api::MachineWork =
+                    serde_wasm_bindgen::from_value(value).map_err(|e| e.to_string())?;
+                d.work = work.into();
+            }
             "task" | "task-summary" => {
                 let mut change: ItemChange<Task> =
                     serde_wasm_bindgen::from_value(value).map_err(|e| e.to_string())?;

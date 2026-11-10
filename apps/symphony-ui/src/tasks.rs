@@ -1,5 +1,6 @@
 //! Task views and their local state. Drafts belong to the composer, never to feed snapshots.
 
+use crate::machine_work::{Scope, SharedWork, phases_view};
 use crate::viewport::NearViewport as Near;
 use dioxus::prelude::*;
 use std::rc::Rc;
@@ -27,6 +28,8 @@ pub fn merge(task: &mut Task, fields: &TaskFields) {
 #[component]
 pub fn TaskBoard(
     tasks: Vec<Task>,
+    #[props(default)] work: SharedWork,
+    #[props(default = true)] connected: bool,
     signoff: Vec<String>,
     counts: Vec<(String, usize)>,
     statuses: Vec<String>,
@@ -61,6 +64,7 @@ pub fn TaskBoard(
     }
     rsx! {
         div { class: "page-head", h1 { "Tasks" } a { href: "/agents", "Who is connected" } }
+        {crate::machine_work::machines_view(&work, connected)}
         div { class: "row filters",
             label { "Search tasks and messages " crate::components::input::Input { r#type: "search", value: "{search}", actions: search_input } }
             label { "Status " crate::components::select::SelectField {
@@ -80,13 +84,13 @@ pub fn TaskBoard(
         }
         div { class: "kanban",
             if !signoff.is_empty() {
-                TaskColumn { status: "signoff".to_string(), tasks: filtered.iter().filter(|t| signoff.contains(&t.slug)).map(|t| (*t).clone()).collect(), count: signoff.len(), query: search, days, onload, refreshed }
+                TaskColumn { work: work.clone(), connected, status: "signoff".to_string(), tasks: filtered.iter().filter(|t| signoff.contains(&t.slug)).map(|t| (*t).clone()).collect(), count: signoff.len(), query: search, days, onload, refreshed }
             }
             for (group, states) in [("pipeline", &["concept", "design", "ready", "in_progress", "review", "done"][..]), ("offline", &["backlog", "blocked", "cancelled"][..])] {
                 div { class: group,
                     for state in statuses.iter().filter(|s| states.contains(&s.as_str())) {
                         if selected.is_empty() || selected == *state {
-                            TaskColumn { key: "{state}", status: state.clone(), tasks: filtered.iter().filter(|t| t.status == *state && !signoff.contains(&t.slug)).map(|t| (*t).clone()).collect(), count: counts.iter().find(|(s,_)| s == state).map_or(0, |(_,n)| *n), query: search, days, onload, refreshed }
+                            TaskColumn { work: work.clone(), connected, key: "{state}", status: state.clone(), tasks: filtered.iter().filter(|t| t.status == *state && !signoff.contains(&t.slug)).map(|t| (*t).clone()).collect(), count: counts.iter().find(|(s,_)| s == state).map_or(0, |(_,n)| *n), query: search, days, onload, refreshed }
                         }
                     }
                 }
@@ -199,6 +203,8 @@ fn TreeNode(task: Task, known: Rc<Vec<Task>>) -> Element {
 #[component]
 fn TaskColumn(
     status: String,
+    work: SharedWork,
+    connected: bool,
     tasks: Vec<Task>,
     count: usize,
     query: Signal<String>,
@@ -232,7 +238,7 @@ fn TaskColumn(
         h2 { if status == "signoff" { "Waiting for your sign-off" } else { "{status.replace('_', \" \")}" } " " span { class: "count", "{count}" } }
         Near { id: "column-{status}", height: reserved, onenter: move |_| visible.set(true),
             if count > 0 && tasks.is_empty() { div { style: "min-height:{reserved}px", role: "status", "Loading tasks…" } }
-            for task in rows { Near { key: "{task.slug}", id: "row-{task.slug}", height: 130, TaskRow { task: task.clone() } } }
+            for task in rows { Near { key: "{task.slug}", id: "row-{task.slug}", height: 130, TaskRow { task: task.clone(), work: work.clone(), connected } } }
             if count > tasks.len() {
                 crate::components::button::Button { actions: crate::entry_events::click(move || onload.call((more_status.clone(),true,query(),days()))), "Load more tasks" }
             }
@@ -248,13 +254,18 @@ pub fn Roles(roles: Vec<Role>) -> Element {
 }
 
 #[component]
-fn TaskRow(task: Task) -> Element {
+fn TaskRow(
+    task: Task,
+    #[props(default)] work: SharedWork,
+    #[props(default = true)] connected: bool,
+) -> Element {
     #[cfg(target_arch = "wasm32")]
     use_effect(crate::live::mark_tasks_ready);
     rsx! { div { class: "taskcard p{task.priority}", "data-slug": "{task.slug}",
         a { href: "/task/{task.slug}", code { "{task.slug}" } } " " span { class: "prio", "p{task.priority}" }
         span { class: "task-status st-{task.status}", "{task.status.replace('_', \" \")}" }
         div { "{task.title}" }
+        {phases_view(&work, &Scope::Task(&task.slug), connected)}
         if let Some(parent) = &task.parent {
             div { class: "subtask-parent", "Subtask of " a { href: "/task/{parent}", "{parent}" } }
         }

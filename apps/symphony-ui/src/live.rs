@@ -364,7 +364,7 @@ fn BoardPage(route: Memo<String>, scope: String) -> Element {
         };
         #[cfg(feature = "page-tasks")]
         let front = if route().starts_with("/task/") || route() == "/agents" {
-            rsx! { crate::tasks::LiveTaskPage { route, data } }
+            rsx! { crate::tasks::LiveTaskPage { route, data, connected: !stale() } }
         } else {
             front
         };

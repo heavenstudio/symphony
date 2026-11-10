@@ -3,6 +3,70 @@ use dioxus::core::NoOpMutations;
 use std::cell::Cell;
 
 #[test]
+fn cards_and_agents_share_two_machine_phases_without_rewriting_task_lifecycle() {
+    use serde_json::json;
+    let task: Task = serde_json::from_value(json!({
+        "slug":"fixture/task","title":"Fixture","body":"","status":"review","priority":1,
+        "parent":null,"created_by":"fixture","created":1.0,"updated":1.0,
+        "links":[],"depends":[],"roles":[],"instruction":false,
+    }))
+    .unwrap();
+    let machine = |id: &str, kind: &str, state: &str| {
+        json!({
+            "machine_id":id,"label":id,"producer_id":"fixture","sequence":1,
+            "age_ms":0,"freshness":"fresh","complete":true,"reason":"",
+            "counts":{"running_builds":0,"queued_builds":0,"running_tests":0,"queued_tests":0},
+            "operations":[{
+                "machine_id":id,"operation_id":"separate-machine-same-nonce","parent_id":null,
+                "handle":"cobalt-otter","task":"fixture/task","checkout":"opaque",
+                "recipe":"fixture","kind":kind,"state":state,"resource":"","reason":"","phase_since":null,
+            }],
+        })
+    };
+    let mut work: symphony_api::MachineWork = serde_json::from_value(json!({
+        "freshness":"unknown","machines":[machine("alpha","build","queued"), machine("beta","test","running")],"unassigned":[],
+    })).unwrap();
+    for expected in [
+        vec!["Build queued · alpha", "Test running · beta"],
+        vec!["Build running · alpha", "Test running · beta"],
+        vec!["Test running · beta"],
+        vec!["Observed Test running · beta · disconnected"],
+    ] {
+        let card = dioxus_ssr::render_element(
+            rsx! { TaskRow { task: task.clone(), work: SharedWork::from(work.clone()) } },
+        );
+        let agent = dioxus_ssr::render_element(
+            rsx! { AgentRow { agent: agent("worker", None), tasks: Rc::new(Vec::new()), work: SharedWork::from(work.clone()) } },
+        );
+        for html in [&card, &agent] {
+            assert_eq!(
+                html.matches("data-work-kind=").count(),
+                expected.len(),
+                "{html}"
+            );
+            for label in &expected {
+                assert!(html.contains(label), "missing {label}: {html}");
+            }
+        }
+        assert!(
+            card.contains("st-review"),
+            "resource work changed task lifecycle: {card}"
+        );
+        assert!(
+            !agent.contains("open tasks:"),
+            "resource phases introduced author admission: {agent}"
+        );
+        match work.machines[0].operations.first() {
+            Some(operation) if operation.state == symphony_api::WorkState::Queued => {
+                work.machines[0].operations[0].state = symphony_api::WorkState::Running;
+            }
+            Some(_) => work.machines[0].operations.clear(),
+            None => work = crate::machine_work::connection(work, false),
+        }
+    }
+}
+
+#[test]
 fn owner_controls_show_current_priority_and_cancel_only_open_tasks() {
     for status in [
         "backlog",
@@ -74,11 +138,12 @@ fn an_agent_under_the_cap_shows_its_open_tasks_against_it_and_one_without_shows_
         "orchestrator",
         Some(symphony_api::AgentSlots { open: 3, cap: 8 }),
     );
-    let html =
-        dioxus_ssr::render_element(rsx! { AgentRow { agent: capped, tasks: Rc::new(Vec::new()) } });
+    let html = dioxus_ssr::render_element(
+        rsx! { AgentRow { agent: capped, tasks: Rc::new(Vec::new()), work: SharedWork::default() } },
+    );
     assert!(html.contains("<p>open tasks: 3 of 8</p>"), "{html}");
     let html = dioxus_ssr::render_element(
-        rsx! { AgentRow { agent: agent("worker", None), tasks: Rc::new(Vec::new()) } },
+        rsx! { AgentRow { agent: agent("worker", None), tasks: Rc::new(Vec::new()), work: SharedWork::default() } },
     );
     assert!(html.contains("cobalt-otter"), "{html}");
     assert!(!html.contains("open tasks:"), "{html}");

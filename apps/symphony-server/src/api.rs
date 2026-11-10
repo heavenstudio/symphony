@@ -426,6 +426,7 @@ pub(crate) async fn answer(shared: &Arc<Shared>, request: Request) -> Option<Res
                             .expect("a task paging key serializes")
                         });
                         no_store(Json(symphony_api::TaskListing {
+                            machine_work: hub.machine_snapshot(),
                             statuses: symphony_board::STATUSES
                                 .iter()
                                 .map(|s| (*s).to_string())
@@ -469,8 +470,7 @@ pub(crate) async fn answer(shared: &Arc<Shared>, request: Request) -> Option<Res
             match tokio::task::spawn_blocking(move || {
                 let store = symphony::taskview::connect(&root).map_err(|e| unavailable(&e, ""))?;
                 if agents {
-                    let mut view = symphony::taskview::agents(&store, &root)
-                        .map_err(|e| unavailable(&e, ""))?;
+                    let mut view = hub.agent_snapshot().map_err(|e| unavailable(&e, ""))?;
                     if agent_page {
                         view.agents.retain(|a| {
                             if lost {
@@ -545,7 +545,7 @@ pub(crate) async fn answer(shared: &Arc<Shared>, request: Request) -> Option<Res
                 } else if detail {
                     let record = store.get(&slug).map_err(task_failure)?;
                     symphony::taskview::page(&store, &record, &root)
-                        .map(Json)
+                        .map(|page| Json(hub.observed_page(page)))
                         .map(no_store)
                         .map_err(|e| unavailable(&e, ""))
                 } else {

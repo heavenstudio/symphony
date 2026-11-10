@@ -12,6 +12,7 @@ mod commands;
 mod detached;
 mod embedding;
 mod field;
+pub mod machine_work;
 pub mod probes;
 pub mod pull;
 mod search;

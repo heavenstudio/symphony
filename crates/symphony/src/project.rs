@@ -25,7 +25,7 @@ mod theme;
 
 pub use crate::entrypoint::Entrypoint;
 use crate::entrypoint::{SYMPHONY_ROUTES, below, join};
-pub use board::Board;
+pub use board::{Board, WipGuidance};
 use file::{File, FileEntrypoint};
 pub use theme::Theme;
 

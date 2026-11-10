@@ -1,6 +1,7 @@
 //! Keyboard interaction and runtime theme imports against the shipped controls.
 use super::{SHOWN, chrome, dist, look_parity, site::Site};
 use serde_json::json;
+mod machine_work;
 mod regressions;
 
 fn site() -> Site {

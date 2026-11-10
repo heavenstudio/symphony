@@ -12,9 +12,11 @@
 pub mod command;
 mod folder;
 pub mod host;
+mod identity;
 mod registry;
 
 pub use folder::dir;
+pub use identity::installation_id;
 pub use registry::{Added, Entry, Registry};
 
 /// Names the machine folder in place of the platform's: a test's own, never the owner's.
