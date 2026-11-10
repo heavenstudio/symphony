@@ -115,11 +115,6 @@ impl Native {
         Self::serve(root, outside, binary, board)
     }
 
-    pub(super) fn checkout(root: PathBuf, binary: &std::path::Path) -> Self {
-        let outside = root.with_extension("outside.html");
-        Self::serve(root, outside, binary, None)
-    }
-
     fn serve(
         root: PathBuf,
         outside: PathBuf,
