@@ -396,18 +396,22 @@ fn a_grandchilds_messages_and_status_reach_the_root_orchestrator() {
         let step: &[&str] = match n {
             0 => &["claim", "a/b/c"],
             1 => &["say", "a/b/c", "measuring now"],
-            2 => &["move", "a/b/c", "review"],
+            2 => &["done", "a/b/c", "integrated into parent feature"],
             _ => return,
         };
         m.ok(&exe, step);
     });
     assert_eq!(
         m.starting(&["ROLE ", "STATUS "]),
-        [
-            "STATUS a/b/c ready → in_progress",
-            "STATUS a/b/c in_progress → review",
-        ]
+        ["STATUS a/b/c ready → in_progress"]
     );
+    assert_eq!(
+        m.starting(&["VERDICT "]),
+        [format!(
+            "VERDICT a/b/c from {exe} — done: integrated into parent feature"
+        )]
+    );
+    assert_eq!(m.board().get("a/b/c").unwrap().status, "done");
     assert!(m.starting(&["MSG "]).is_empty());
 }
 
