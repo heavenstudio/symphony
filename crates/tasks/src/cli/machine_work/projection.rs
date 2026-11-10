@@ -106,14 +106,7 @@ impl Projection {
         if old.is_none() && self.machines.len() >= self.max_machines {
             return Err(Rejected::Limit);
         }
-        if sample.operations.len() > self.max_operations {
-            if let Some(old) = self.machines.get_mut(&sample.machine_id) {
-                // Rejected rows may contain unseen nonces. This path must retain the same
-                // uncertainty as the normalized history bound, without accepting any rows.
-                old.exhaust_history();
-            }
-            return Err(Rejected::Limit);
-        }
+        // Only a new observation from the current feed may exhaust accepted history.
         if let Some(old) = old {
             if receipt_ms < old.receipt_ms {
                 return Err(Rejected::ReceiverClock);
@@ -125,6 +118,14 @@ impl Projection {
             {
                 return Err(Rejected::OutOfOrder);
             }
+        }
+        if sample.operations.len() > self.max_operations {
+            if let Some(old) = self.machines.get_mut(&sample.machine_id) {
+                // Rejected rows may contain unseen nonces. This path must retain the same
+                // uncertainty as the normalized history bound, without accepting any rows.
+                old.exhaust_history();
+            }
+            return Err(Rejected::Limit);
         }
         let normalized = normalize(&sample);
         if normalized.is_err()

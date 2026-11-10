@@ -2,6 +2,8 @@
 
 use super::*;
 
+mod headers;
+
 fn operation(machine: &str, id: &str, kind: Kind, state: State) -> Operation {
     Operation {
         machine_id: Some(machine.into()),
