@@ -40,14 +40,22 @@ package (`crates/symphony/src/theme.rs`), served as `/<id>/theme.css` and inline
 its pages. Tests use a temporary machine folder.
 
 Use `just lint-rs`, `just test-rs`, `just symphony-ui-dist` and `just symphony-ui-dev`
-from this folder. `tools/rs-bin.sh` delegates to the containing project's source
-launcher and slot wrapper. Each workspace builds in its own `.target/`; the root
-gates compile, discover and run both sets of tests. Never run a shared-service
-restart as a test: use a private port and a scratch board.
+from this folder inside the containing project. These recipes use its source
+launcher and slot wrapper; they are not independent standalone entrypoints.
+Each workspace builds in its own `.target/`; the containing project's gates
+compile, discover and run both sets of tests. The workspace's toolchain pin is
+`rust-toolchain.toml`.
+
+Native board fixtures use the fixture source-root function to find
+`tools/surreal.sh`, or the explicit `SF_SURREAL` executable. Resolution and
+downloads finish before server readiness is measured. `tools/fixture_process.sh`
+closes inherited descriptors and supplies the owned EOF watchdog. These helpers
+do not start the shared board or Symphony server.
 
 Read [the client guide](apps/symphony-ui/AGENTS.md) and
-[the board guide](crates/tasks/AGENTS.md) before editing those packages. The Rust
-architecture and test rules in the containing project's guide apply here too.
+[the board guide](crates/tasks/AGENTS.md) before editing those packages. The
+containing project's Rust, review and resource policy applies to work there.
+Never run a shared-service restart as a test: use a private port and scratch board.
 
 ## Agent integration
 

@@ -1,0 +1,7 @@
+# The one Rust toolchain every worktree builds the workspace with (the owner, 2026-10-08: "yes, pin it
+# to 1.99.0"). rustup fetches it once per machine, on the first cargo run that needs it; Cargo.toml's
+# rust-version follows it. wasm32 is for the Symphony's web client.
+[toolchain]
+channel = "1.99.0"
+components = ["rustfmt", "clippy"]
+targets = ["wasm32-unknown-unknown"]
