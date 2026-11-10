@@ -12,7 +12,7 @@ mod common;
 mod copy;
 mod cutover;
 mod dispatch;
-#[path = "../../../../../tools/gate/tests/verify/script_process_cwd.rs"]
+#[path = "../../../../tools/test-support/script_process_cwd.rs"]
 mod fixture_script;
 mod git;
 mod helper;

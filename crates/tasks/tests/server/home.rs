@@ -572,7 +572,7 @@ fn the_board_lives_in_the_common_dir_served_by_the_pinned_surreal() {
 fn the_version_is_the_one_tools_surreal_sh_fetches() {
     let script = std::fs::read_to_string(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../../../tools/surreal.sh"
+        "/../../tools/surreal.sh"
     ))
     .unwrap();
     assert!(

@@ -4,7 +4,7 @@
 mod board;
 #[path = "mod.rs"]
 mod common;
-#[path = "../../../../../tools/gate/tests/verify/script_board.rs"]
+#[path = "../../../../tools/test-support/script_board.rs"]
 mod fixture_script;
 
 #[allow(unused_imports)]

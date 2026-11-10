@@ -17,10 +17,10 @@ use std::sync::{Mutex, Once, OnceLock};
 use std::time::{Duration, Instant};
 use symphony_board::sys::{Child, Command, Stdio};
 
-#[path = "../../../../../tools/gate/tests/gate/scratch.rs"]
+#[path = "../../../../tools/test-support/scratch.rs"]
 mod scratch;
 
-#[path = "../../../../../tools/gate/tests/verify/machine_copy.rs"]
+#[path = "../../../../tools/test-support/machine_copy.rs"]
 pub mod machine_copy;
 
 /// A machine copy's first run starts under the spawn lock the board's `sys` takes for every spawn.

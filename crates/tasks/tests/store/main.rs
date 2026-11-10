@@ -21,7 +21,7 @@ mod dispatch_later;
 mod done;
 mod embeddings;
 mod fields;
-#[path = "../../../../../tools/gate/tests/verify/script_process_cwd.rs"]
+#[path = "../../../../tools/test-support/script_process_cwd.rs"]
 mod fixture_script;
 mod hand_over_outage;
 mod health;

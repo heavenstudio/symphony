@@ -71,5 +71,5 @@ pub mod hook;
 mod test_tree;
 
 #[cfg(test)]
-#[path = "../../../../tools/gate/tests/verify/script_board.rs"]
+#[path = "../../../tools/test-support/script_board.rs"]
 mod fixture_script;

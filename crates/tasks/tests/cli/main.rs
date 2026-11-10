@@ -20,7 +20,7 @@ mod detached;
 mod finish;
 mod handover;
 // Each run's scratch in a folder of its own under the temp folder, swept when a killed run left it.
-#[path = "../../../../../tools/gate/tests/gate/harness_scratch.rs"]
+#[path = "../../../../tools/test-support/harness_scratch.rs"]
 mod harness_scratch;
 mod launch;
 mod monitor;

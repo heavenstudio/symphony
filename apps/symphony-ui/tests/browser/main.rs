@@ -24,7 +24,7 @@ mod chrome;
 #[path = "../common/mod.rs"]
 mod common;
 mod components;
-#[path = "../../../../../tools/gate/tests/verify/script_std.rs"]
+#[path = "../../../../tools/test-support/script_std.rs"]
 mod fixture_script;
 mod folder;
 mod look_parity;

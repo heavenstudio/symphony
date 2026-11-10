@@ -4,7 +4,7 @@
 mod board;
 mod board_beat;
 mod common;
-#[path = "../../../../../tools/gate/tests/verify/script_board.rs"]
+#[path = "../../../../tools/test-support/script_board.rs"]
 mod fixture_script;
 mod installer;
 mod lifetime;

@@ -36,5 +36,5 @@ mod write;
 mod testing;
 
 #[cfg(test)]
-#[path = "../../../../tools/gate/tests/verify/script_board.rs"]
+#[path = "../../../tools/test-support/script_board.rs"]
 mod fixture_script;

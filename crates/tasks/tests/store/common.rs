@@ -27,6 +27,8 @@ use symphony_board::rpc::{self, Client, DbError};
 use symphony_board::sys::{Child, Command};
 use symphony_board::{Health, NewSession, NewTask, Store, Task};
 
+#[path = "fixture_root.rs"]
+mod fixture_root;
 #[path = "seed.rs"]
 mod seed;
 #[path = "server_child.rs"]
@@ -157,17 +159,9 @@ pub fn surreal() -> PathBuf {
     PathBuf::from(String::from_utf8(found.stdout).unwrap().trim())
 }
 
-/// The project around the crate whose tests include this file: the nearest folder above it holding
-/// the owned server fixture scripts.
+/// The workspace of the native caller in this layout, with its owned fixture scripts.
 pub fn project_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .ancestors()
-        .find(|root| {
-            root.join("tools/surreal.sh").is_file()
-                && root.join("tools/fixture_process.sh").is_file()
-        })
-        .expect("the project supplies the owned server fixture scripts")
-        .to_path_buf()
+    fixture_root::workspace(Path::new(env!("CARGO_MANIFEST_DIR")))
 }
 
 /// `command` started with its stdin a [`symphony_board::sys::pipe`], kept as `child.stdin`, and its other

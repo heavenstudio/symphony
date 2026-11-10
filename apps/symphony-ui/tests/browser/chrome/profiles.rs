@@ -3,7 +3,7 @@
 //! kills Chrome, so Chrome removes none of them itself; they go with the profile, the process's
 //! folder goes when the binary exits, and a killed run's goes at the next run.
 
-#[path = "../../../../../../tools/gate/tests/gate/harness_scratch.rs"]
+#[path = "../../../../../tools/test-support/harness_scratch.rs"]
 mod harness_scratch;
 
 use std::io::{BufRead, BufReader};

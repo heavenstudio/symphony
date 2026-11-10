@@ -21,7 +21,7 @@ use std::sync::OnceLock;
 use std::time::Instant;
 use symphony_board::sys::{self, Command, Stdio};
 
-#[path = "../../../../../tools/gate/tests/verify/machine_copy.rs"]
+#[path = "../../../../tools/test-support/machine_copy.rs"]
 mod machine_copy;
 
 /// A machine copy's first run starts under the spawn lock the board's `sys` takes for every spawn.

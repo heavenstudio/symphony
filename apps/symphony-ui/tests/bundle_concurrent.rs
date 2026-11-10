@@ -12,7 +12,7 @@
 //! one machine-wide queue, seconds apiece under load. The stand-ins link to the project's
 //! prepared fixture script, which reads each one's body as data.
 
-#[path = "../../../../tools/gate/tests/verify/script_std.rs"]
+#[path = "../../../tools/test-support/script_std.rs"]
 mod fixture_script;
 
 use std::fs;

@@ -26,7 +26,7 @@ use std::time::{Duration, Instant};
 mod codex;
 
 #[cfg(test)]
-#[path = "../../../../../tools/gate/tests/verify/script_process_cwd.rs"]
+#[path = "../../../../tools/test-support/script_process_cwd.rs"]
 mod fixture_script;
 
 /// How long one dispatcher holds a recipient: past it, another may observe and deliver for it.
