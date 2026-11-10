@@ -888,7 +888,7 @@ impl Hub {
                 for status in symphony_board::STATUSES {
                     counts.insert(status, 0);
                 }
-                for task in next.tasks.iter().filter(|task| task.parent.is_none()) {
+                for task in symphony_api::tasks(&next.tasks) {
                     *counts.entry(&task.status).or_default() += 1;
                 }
                 changed.push(
@@ -896,10 +896,8 @@ impl Hub {
                 );
                 let recent = |days: f64| {
                     let mut counts = BTreeMap::<&str, usize>::new();
-                    for task in next.tasks.iter().filter(|task| task.parent.is_none()) {
-                        if ["done", "cancelled"].contains(&task.status.as_str())
-                            && task.updated >= store.now() - days * 86_400.0
-                        {
+                    for task in symphony_api::tasks(&next.tasks) {
+                        if task.is_finished() && task.updated >= store.now() - days * 86_400.0 {
                             *counts.entry(task.status.as_str()).or_default() += 1;
                         }
                     }

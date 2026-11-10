@@ -47,20 +47,8 @@ fn digest(bytes: &[u8]) -> String {
 
 pub fn counts(board: &Tasks) -> TaskCounts {
     TaskCounts {
-        in_progress: dashboard::count(
-            board
-                .tasks
-                .iter()
-                .filter(|t| t.parent.is_none() && t.status == "in_progress")
-                .count(),
-        ),
-        in_review: dashboard::count(
-            board
-                .tasks
-                .iter()
-                .filter(|t| t.parent.is_none() && t.status == "review")
-                .count(),
-        ),
+        in_progress: dashboard::count(symphony_api::tasks_in_progress(&board.tasks).count()),
+        in_review: dashboard::count(symphony_api::tasks_in_review(&board.tasks).count()),
         agents_live: dashboard::count(board.sessions.iter().filter(|s| s.health == "live").count()),
     }
 }
