@@ -39,7 +39,8 @@ pub fn process_cwds_with(mut lsof: Command) -> Option<Vec<PathBuf>> {
 
 /// [`process_cwds_with`], each working directory with the pid of the process working there, so a
 /// caller can ask when that process started. Readable rows survive a failed or partial listing;
-/// only a complete listing can prove a process absent. None means the command could not finish.
+/// only a complete listing can prove a process absent. None means the command could not finish, or
+/// reading its completed output did not finish before the scan deadline.
 pub fn pid_cwds_with(mut lsof: Command) -> Option<PidCwds> {
     let deadline = Instant::now() + LSOF_PATIENCE;
     // Request f explicitly: it is not implicit in every lsof version's field output.

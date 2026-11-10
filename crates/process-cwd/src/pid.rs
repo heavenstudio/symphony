@@ -139,17 +139,17 @@ enum File {
 
 impl File {
     fn finish(&mut self, pid: Option<i64>, scan: &mut PidCwds) -> bool {
-        match (std::mem::take(self), pid) {
-            (Self::Cwd(cwd), Some(pid)) if cwd.unambiguous() => {
-                let path = cwd.path.expect("unambiguous requires a usable path");
-                scan.listed.push((pid, path));
-                true
-            }
-            (Self::Missing, _) => false,
-            _ => {
-                scan.complete = false;
-                false
-            }
+        let row = match (std::mem::take(self), pid) {
+            (Self::Cwd(cwd), Some(pid)) => cwd.verified_path().map(|path| (pid, path)),
+            (Self::Missing, _) => return false,
+            _ => None,
+        };
+        if let Some(row) = row {
+            scan.listed.push(row);
+            true
+        } else {
+            scan.complete = false;
+            false
         }
     }
 }
@@ -179,10 +179,8 @@ impl Cwd {
         }
     }
 
-    fn unambiguous(&self) -> bool {
-        let Some(path) = &self.path else {
-            return false;
-        };
+    fn verified_path(self) -> Option<PathBuf> {
+        let path = self.path?;
         // lsof prints both a literal ^A and control byte 1 as ^A. Do not guess either.
         // A literal candidate is usable only with this file record's directory identity;
         // existence alone would allow a different real lookalike checkout to match.
@@ -191,13 +189,26 @@ impl Cwd {
                 pair[0] == b'^' && (pair[1] == b'?' || (b'@'..=b'_').contains(&pair[1]))
             });
         if !caret {
-            return true;
+            return Some(path);
         }
-        let (Some(device), Some(inode)) = (self.device, self.inode) else {
-            return false;
+        let (device, inode) = (self.device?, self.inode?);
+        let same_directory = |path: &Path| {
+            std::fs::metadata(path)
+                .is_ok_and(|found| found.is_dir() && found.dev() == device && found.ino() == inode)
         };
-        std::fs::metadata(path)
-            .is_ok_and(|found| found.is_dir() && found.dev() == device && found.ino() == inode)
+        if !same_directory(&path) {
+            return None;
+        }
+        let canonical = path.canonicalize().ok()?;
+        // This is a filesystem path, not another display field. Never decode it again.
+        (Self::usable_path(&canonical) && same_directory(&canonical)).then_some(canonical)
+    }
+
+    fn usable_path(path: &Path) -> bool {
+        path.is_absolute()
+            && path.to_str().is_some()
+            && !path.as_os_str().as_encoded_bytes().contains(&0)
+            && path.components().all(|part| part != Component::ParentDir)
     }
 }
 
@@ -219,6 +230,9 @@ fn number(slot: &mut Option<u64>, digits: &[u8], radix: u32) -> bool {
         .and_then(|digits| u64::from_str_radix(digits, radix).ok());
     slot.is_some()
 }
+
+#[cfg(test)]
+mod identity_tests;
 
 #[cfg(test)]
 mod tests {
@@ -273,86 +287,6 @@ mod tests {
         assert_eq!(result, None, "a stalled reader cannot establish a scan");
         assert_eq!(entered, Ok(()), "the reader really reached its barrier");
         assert_eq!(completed, Ok(()), "the owned stalled worker was released");
-    }
-
-    #[test]
-    fn caret_names_require_the_same_file_identity_and_preserve_valid_neighbors() {
-        let root = std::env::temp_dir().join(format!("sf-cwd-name-{}", std::process::id()));
-        let literal = root.join("name^A");
-        let control = root.join("name\x01");
-        std::fs::create_dir_all(&literal).unwrap();
-        std::fs::create_dir_all(&control).unwrap();
-        let literal = literal.canonicalize().unwrap();
-        let control = control.canonicalize().unwrap();
-        let identity = std::fs::metadata(&literal).unwrap();
-        let other = std::fs::metadata(&control).unwrap();
-        assert_ne!(identity.ino(), other.ino());
-        let name = format!("n{}\n", literal.display());
-        let device = format!("D0x{:x}\n", identity.dev());
-        let inode = format!("i{}\n", identity.ino());
-        let fields = format!("{name}{device}{inode}");
-        for valid in [&fields, &format!("{inode}{device}{name}")] {
-            let scan = parse(format!("p1\nfcwd\n{valid}").as_bytes(), true);
-            assert_eq!(
-                scan,
-                PidCwds {
-                    listed: vec![(1, literal.clone())],
-                    complete: true
-                }
-            );
-        }
-        for invalid in [
-            name.clone(),
-            format!("{name}{device}"),
-            format!("{name}{inode}"),
-            format!("{name}{device}i{}\n", other.ino()),
-            format!("{name}D0x{:x}\n{inode}", identity.dev() + 1),
-            format!("{fields}{device}"),
-            format!("{fields}{inode}"),
-            format!("{name}D0xgg\n{inode}"),
-            format!("{name}D0x\n{inode}"),
-            format!("{name}{device}i\n"),
-            format!("{name}{device}i+1\n"),
-            format!("{name}{device}i18446744073709551616\n"),
-            format!("{name}D0x10000000000000000\n{inode}"),
-            format!("n{}/missing^A\n{device}{inode}", root.display()),
-        ] {
-            let rows = format!("p9\nfcwd\nn/before\np1\nfcwd\n{invalid}p2\nfcwd\nn/after\n");
-            assert_eq!(
-                parse(rows.as_bytes(), true),
-                PidCwds {
-                    listed: vec![(9, "/before".into()), (2, "/after".into())],
-                    complete: false,
-                },
-                "{invalid:?}"
-            );
-        }
-        // A prior valid row's identity cannot authorize the next ambiguous file's name.
-        let rows = format!("p1\nfcwd\n{device}{inode}n/plain\nfcwd\n{name}");
-        assert_eq!(
-            parse(rows.as_bytes(), true),
-            PidCwds {
-                listed: vec![(1, "/plain".into())],
-                complete: false,
-            }
-        );
-        let file = root.join("file^A");
-        std::fs::write(&file, "not a directory").unwrap();
-        let identity = std::fs::metadata(&file).unwrap();
-        let rows = format!(
-            "p1\nfcwd\nD0x{:x}\ni{}\nn{}\n",
-            identity.dev(),
-            identity.ino(),
-            file.display()
-        );
-        assert_eq!(
-            parse(rows.as_bytes(), true),
-            PidCwds {
-                listed: vec![],
-                complete: false
-            }
-        );
-        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

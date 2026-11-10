@@ -1,7 +1,7 @@
 //! Real CLI reads of scratch lsof output: positive evidence and proof of absence stay distinct.
 
 use super::*;
-use std::os::unix::fs::PermissionsExt;
+use std::os::unix::fs::{MetadataExt, PermissionsExt, symlink};
 use symphony_board::{Beat, NewTask};
 
 struct Working(symphony_board::sys::Child);
@@ -166,29 +166,46 @@ struct NativeListing<'a> {
     health: &'static str,
 }
 
-/// Exercise the real producer and stored canonical path in the same scratch board.
-fn native_listing(c: &mut crate::Case, root: &Path, handle: &str, listing: NativeListing<'_>) {
+fn native_child(c: &mut crate::Case, handle: &str, recorded: &Path, working: &Path) -> Working {
     c.env
         .vars
         .insert("TASKS_NOW".into(), wall_clock().to_string());
     let store = c.store();
-    call_in(&store, listing.recorded);
+    call_in(&store, recorded);
     let mut cat = Command::new("/bin/cat");
-    cat.current_dir(listing.working)
+    cat.current_dir(working)
         .stdin(symphony_board::sys::Stdio::piped())
         .stdout(symphony_board::sys::Stdio::null());
-    let mut owned = Working(cat.spawn().unwrap());
+    let owned = Working(cat.spawn().unwrap());
     let after = wall_clock();
     c.env.vars.insert("TASKS_NOW".into(), after.to_string());
-    call_in(&c.store(), listing.recorded);
+    call_in(&c.store(), recorded);
     expire(&mut c.env, after);
     let kept = c.store().agent_bindings().unwrap().remove(handle).unwrap();
-    assert_eq!(kept.worktree, listing.recorded.to_str().unwrap());
+    assert_eq!(kept.worktree, recorded.to_str().unwrap());
     assert!(kept.in_process, "{kept:?}");
-    let pid = owned.0.id().to_string();
-    let mut command = symphony_board::sys::command_with("lsof", &c.env.vars);
+    owned
+}
+
+fn native_scan(env: &Env, pid: u32) -> process_cwd::PidCwds {
+    let pid = pid.to_string();
+    let mut command = symphony_board::sys::command_with("lsof", &env.vars);
     command.args(["-a", "-p", &pid]);
-    let scan = process_cwd::pid_cwds_with(command).unwrap();
+    process_cwd::pid_cwds_with(command).unwrap()
+}
+
+fn stopped_native(c: &crate::Case, root: &Path, handle: &str, owned: &mut Working) {
+    owned.0.kill().unwrap();
+    owned.0.wait().unwrap();
+    let stopped = read_agent(&c.env, root, handle);
+    assert_eq!(stopped["health"], "lost", "native stopped: {stopped}");
+    assert_eq!(stopped["state"], "gone", "{stopped}");
+}
+
+/// Exercise the real producer and stored canonical path in the same scratch board.
+fn native_listing(c: &mut crate::Case, root: &Path, handle: &str, listing: NativeListing<'_>) {
+    let mut owned = native_child(c, handle, listing.recorded, listing.working);
+    let scan = native_scan(&c.env, owned.0.id());
     if listing.health == "unknown" {
         assert!(!scan.complete, "ambiguous native name: {scan:?}");
         assert!(
@@ -219,11 +236,7 @@ fn native_listing(c: &mut crate::Case, root: &Path, handle: &str, listing: Nativ
     if listing.health == "unknown" {
         assert_eq!(agent["state_detail"]["phase"], "unknown", "{agent}");
     }
-    owned.0.kill().unwrap();
-    owned.0.wait().unwrap();
-    let stopped = read_agent(&c.env, root, handle);
-    assert_eq!(stopped["health"], "lost", "native stopped: {stopped}");
-    assert_eq!(stopped["state"], "gone", "{stopped}");
+    stopped_native(c, root, handle, &mut owned);
 }
 
 #[test]
@@ -401,4 +414,51 @@ fn native_names(c: &mut crate::Case, root: &Path, handle: &str) {
             },
         );
     }
+    canonical_native_name(c, root, handle);
+}
+
+fn canonical_native_name(c: &mut crate::Case, root: &Path, handle: &str) {
+    let actual_parent = root.join("canonical\x01");
+    let actual = actual_parent.join("literal\\x41").join("wt");
+    fs::create_dir_all(&actual).unwrap();
+    fs::write(actual.join(".git"), "gitdir: /unused/scratch-worktree\n").unwrap();
+    let actual = actual.canonicalize().unwrap();
+    let mut owned = native_child(c, handle, &actual, &actual);
+    let unresolved = native_scan(&c.env, owned.0.id());
+    assert!(!unresolved.complete, "{unresolved:?}");
+    assert!(unresolved.listed.is_empty(), "{unresolved:?}");
+    let before = read_agent(&c.env, root, handle);
+    assert_eq!(
+        owned.0.try_wait().unwrap(),
+        None,
+        "owned child remains alive"
+    );
+    assert_eq!(before["health"], "unknown", "{before}");
+
+    let alias_parent = root.join("canonical^A");
+    symlink(&actual_parent, &alias_parent).unwrap();
+    let alias = alias_parent.join("literal\\x41").join("wt");
+    assert_ne!(alias, actual);
+    assert_eq!(alias.canonicalize().unwrap(), actual);
+    let identity = fs::metadata(&actual).unwrap();
+    let alias_identity = fs::metadata(&alias).unwrap();
+    assert_eq!(alias_identity.dev(), identity.dev());
+    assert_eq!(alias_identity.ino(), identity.ino());
+    let resolved = native_scan(&c.env, owned.0.id());
+    assert!(resolved.complete, "{resolved:?}");
+    assert_eq!(
+        resolved.listed,
+        vec![(i64::from(owned.0.id()), actual)],
+        "publish the verified filesystem path without decoding its literal escape again"
+    );
+    let agent = read_agent(&c.env, root, handle);
+    assert_eq!(
+        owned.0.try_wait().unwrap(),
+        None,
+        "same owned child remains alive"
+    );
+    assert_eq!(agent["health"], "live", "{agent}");
+    assert_eq!(agent["state"], "running_test", "{agent}");
+    assert_eq!(agent["state_detail"]["phase"], "running", "{agent}");
+    stopped_native(c, root, handle, &mut owned);
 }
