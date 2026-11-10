@@ -106,10 +106,14 @@ fn a_restore_whose_hold_lapsed_as_its_terminal_started_gives_way_to_the_close_th
     world.close(handle).unwrap();
     let before = world.f.said("sim/jump").len();
     let closing = RefCell::new(None);
-    // Its new terminal has taken its first message, its record is not reopened yet, and its hold
-    // has lapsed: a close takes the session over and closes that terminal.
+    // Its new terminal finished its first turn, its record is not reopened yet, and its hold
+    // has lapsed: a close takes the session over and closes that idle terminal.
     let racing = after(&world, "send", 1, || {
         world.f.advance(300.0);
+        let [pane] = <[_; 1]>::try_from(world.addresses()).unwrap();
+        world.edit_terminal(&pane, |t| {
+            t.insert("status".into(), "idle".into());
+        });
         *closing.borrow_mut() = Some(world.close(handle));
     });
     let restored = restore(
@@ -310,6 +314,9 @@ fn a_close_stopped_after_its_record_has_its_callback_retired_by_the_next_with_no
 fn a_first_callback_registered_right_before_the_kill_completes_the_record_and_is_retired() {
     let world = World::new();
     let session = world.launch("sim/jump").row;
+    world.edit_terminal(&session.pane, |t| {
+        t.insert("status".into(), "idle".into());
+    });
     let handle = &session.handle;
     let before = world.f.said("sim/jump").len();
     let registering = ahead_of(&world, "kill", 1, || {

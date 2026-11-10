@@ -48,3 +48,17 @@ restart as a test: use a private port and a scratch board.
 Read [the client guide](apps/symphony-ui/AGENTS.md) and
 [the board guide](crates/tasks/AGENTS.md) before editing those packages. The Rust
 architecture and test rules in the containing project's guide apply here too.
+
+## Agent integration
+
+`symphony init --root ROOT` installs the seven generic skills, their Claude links,
+Claude allow rules and heartbeat commands, and Codex rules. Stamped copies are kept
+current; an unstamped project copy wins. Project-specific skills and taste data stay
+in the project. Retirement removes managed files and links, retaining project data.
+
+`symphony hook tasks-beat` reads the tool event from stdin and finds its board through
+the board's project lookup. Keys and live-build records belong to that repository's
+common directory; scratch overrides remain explicit. It starts no server, builds or
+hashes no sources, prints nothing and never refuses a tool call. Settings run the
+prebuilt `.target/bin/symphony` link; a missing link passes quietly. Project build
+setup refreshes that link explicitly, alongside its own policy hooks.

@@ -21,8 +21,8 @@ use std::fs::File;
 
 pub use process_cwd::exit::Exit;
 pub use process_cwd::spawn::{
-    Child, Command, Spawning, Stdio, connect, output, pipe, set_nonblocking, spawn_output,
-    spawn_piped, spawning, wait_output,
+    Child, Command, Interrupts, Spawning, Stdio, connect, output, pipe, set_nonblocking,
+    spawn_output, spawn_piped, spawning, wait_output,
 };
 
 unsafe extern "C" {

@@ -26,20 +26,56 @@ pub fn common_dir(cwd: &Path) -> Result<PathBuf, NotARepository> {
 /// whose `commondir` names the common dir. None for anything else, or anything unreadable: what a
 /// caller that may start no `git` process reads ([`crate::slots::of_env`], on every command).
 pub(crate) fn read(cwd: &Path) -> Option<PathBuf> {
-    let here = cwd.canonicalize().ok()?;
+    let here = resolve_existing(cwd)?;
     for folder in here.ancestors() {
         let dot = folder.join(".git");
-        if dot.is_dir() {
-            return dot.canonicalize().ok();
-        }
-        if dot.is_file() {
-            let text = std::fs::read_to_string(&dot).ok()?;
-            let gitdir = folder.join(text.trim().strip_prefix("gitdir:")?.trim());
-            let common = std::fs::read_to_string(gitdir.join("commondir")).ok()?;
-            return gitdir.join(common.trim()).canonicalize().ok();
+        if dot.symlink_metadata().is_ok() {
+            return checkout_common_dir(folder);
         }
     }
     None
+}
+
+/// Canonicalize the existing prefix, retaining missing child components for a deleted event cwd.
+fn resolve_existing(path: &Path) -> Option<PathBuf> {
+    if let Ok(real) = path.canonicalize() {
+        return Some(real);
+    }
+    let name = path.file_name()?;
+    Some(resolve_existing(path.parent()?)?.join(name))
+}
+
+/// The common dir of this checkout's own marker alone, with no parent lookup or child process.
+/// A separate git dir (a submodule's too) needs no `commondir`; a dangling or invalid marker
+/// never falls through to an enclosing repository.
+pub fn checkout_common_dir(top: &Path) -> Option<PathBuf> {
+    let top = top.canonicalize().ok()?;
+    let dot = top.join(".git");
+    let marker = std::fs::metadata(&dot).ok()?;
+    if marker.is_dir() {
+        return dot.canonicalize().ok();
+    }
+    if !marker.is_file() {
+        return None;
+    }
+    let text = std::fs::read_to_string(dot).ok()?;
+    let destination = text.trim().strip_prefix("gitdir:")?.trim();
+    if destination.is_empty() {
+        return None;
+    }
+    let gitdir = top.join(destination).canonicalize().ok()?;
+    if !gitdir.is_dir() {
+        return None;
+    }
+    match std::fs::read_to_string(gitdir.join("commondir")) {
+        Ok(common) => gitdir
+            .join(common.trim())
+            .canonicalize()
+            .ok()
+            .filter(|p| p.is_dir()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Some(gitdir),
+        Err(_) => None,
+    }
 }
 
 fn ask_git(cwd: &Path) -> Result<PathBuf, NotARepository> {

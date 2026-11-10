@@ -39,6 +39,9 @@ use std::fs::File;
 use std::io::{self, PipeReader, PipeWriter, Read};
 use std::net::{SocketAddr, TcpStream};
 use std::os::fd::{AsFd, AsRawFd, OwnedFd, RawFd};
+
+mod control;
+pub use control::{Interrupts, set_nonblocking};
 use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 use std::process::{ChildStderr, ChildStdin, ChildStdout, ExitStatus, Output};
@@ -609,26 +612,6 @@ fn connected_within(socket: &TcpStream, timeout: Duration) -> io::Result<()> {
             _ => return Ok(()),
         }
     }
-}
-
-/// `fd` made to read and write without blocking, or to block again.
-pub fn set_nonblocking(fd: &impl AsFd, nonblocking: bool) -> io::Result<()> {
-    let fd = fd.as_fd().as_raw_fd();
-    // SAFETY: F_GETFL reads the status flags of a descriptor the borrow keeps open.
-    let flags = unsafe { libc::fcntl(fd, libc::F_GETFL) };
-    if flags == -1 {
-        return Err(io::Error::last_os_error());
-    }
-    let flags = if nonblocking {
-        flags | libc::O_NONBLOCK
-    } else {
-        flags & !libc::O_NONBLOCK
-    };
-    // SAFETY: F_SETFL sets the status flags of that same open descriptor, from an int.
-    if unsafe { libc::fcntl(fd, libc::F_SETFL, flags) } == -1 {
-        return Err(io::Error::last_os_error());
-    }
-    Ok(())
 }
 
 /// `command` started as std's `Command::output` starts it, stdin null and both outputs read through

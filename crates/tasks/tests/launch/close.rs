@@ -165,6 +165,7 @@ fn a_terminal_whose_program_ended_is_only_removed() {
     let session = world.waiting_reviewer();
     world.edit_terminal(&session.pane, |terminal| {
         terminal.insert("state".into(), json!("finished"));
+        terminal.insert("status".into(), json!("working"));
     });
     let closed = world.close(&session.handle).unwrap();
     assert!(closed.closed, "{closed:?}");
@@ -524,4 +525,24 @@ fn a_handle_with_nothing_on_the_task_or_no_terminal_or_an_unknown_task_is_refuse
         &stranger,
     );
     assert_eq!(refused(elsewhere), "no task 'sim/none'");
+}
+
+#[test]
+fn a_live_non_agent_shell_keeps_its_existing_close_policy_without_native_status() {
+    let w = World::new();
+    let s = w.waiting_reviewer();
+    let pid = w.pid_of(&s.pane);
+    w.edit_terminal(&s.pane, |t| {
+        t.remove("agent");
+        t.insert("status".into(), json!(null));
+        t.insert("argv".into(), json!(["/bin/zsh", "-l"]));
+        t.insert(
+            "foreground".into(),
+            json!({"pid": pid, "name": "zsh", "argv": ["/bin/zsh", "-l"]}),
+        );
+    });
+    let closed = w.close(&s.handle).unwrap();
+    assert!(closed.closed);
+    assert_eq!(closed.restore, restore_line(&s.handle));
+    assert!(!w.has_terminal(&s.pane));
 }

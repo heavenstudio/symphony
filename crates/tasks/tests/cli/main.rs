@@ -14,15 +14,12 @@ mod api;
 mod attach;
 mod beat;
 mod boards;
-mod machine_work;
-// Launcher regressions use this board harness so the core gate needs no board dependency.
-#[path = "../../../../../tools/gate/tests/hooks/board_beat.rs"]
-mod board_beat;
 mod close;
 mod commands;
 mod detached;
 mod finish;
 mod handover;
+mod machine_work;
 // Each run's scratch in a folder of its own under the temp folder, swept when a killed run left it.
 #[path = "../../../../../tools/gate/tests/gate/harness_scratch.rs"]
 mod harness_scratch;
