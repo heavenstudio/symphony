@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 mod projection;
 pub use projection::{Projection, Rejected, Sample};
 mod attribution;
+pub mod native;
 pub(crate) use attribution::attribute;
 pub(crate) use attribution::json;
 

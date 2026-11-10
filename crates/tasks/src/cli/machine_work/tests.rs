@@ -3,6 +3,7 @@
 use super::*;
 
 mod headers;
+mod native;
 
 fn operation(machine: &str, id: &str, kind: Kind, state: State) -> Operation {
     Operation {

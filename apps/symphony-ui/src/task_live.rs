@@ -266,6 +266,15 @@ fn apply_event(value: &JsValue, mut data: Signal<Data>) -> Result<bool, String> 
                     agents.probes = decode(value)?;
                 }
             }
+            "machine-work" => {
+                let work: symphony_api::MachineWork = decode(value)?;
+                if let Some(page) = &mut next.detail {
+                    page.machine_work = work.clone();
+                }
+                if let Some(agents) = &mut next.agents {
+                    agents.machine_work = work;
+                }
+            }
             "tasks-status" => {
                 reload_page |= property(&value, "available").as_bool() == Some(true);
                 next.error = crate::words::BoardStatus {

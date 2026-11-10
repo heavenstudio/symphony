@@ -17,6 +17,7 @@ fn legacy_snapshots_default_machine_evidence_to_unknown() {
     }))
     .unwrap();
     assert_eq!(agents.machine_work, MachineWork::default());
+    assert!(agents.machine_work.guidance.is_empty());
     assert_eq!(listing.machine_work.freshness, WorkFreshness::Unknown);
     assert_eq!(
         listing.machine_work.machines,
@@ -29,7 +30,7 @@ fn legacy_snapshots_default_machine_evidence_to_unknown() {
 #[test]
 fn reservation_and_stale_operations_keep_their_wire_meaning() {
     let work: MachineWork = serde_json::from_value(json!({
-        "freshness": "unknown", "unassigned": [], "machines": [{
+        "freshness": "unknown", "unassigned": [], "guidance":{"machine-b":{"build":2,"test":1}}, "machines": [{
             "machine_id": "machine-b", "label": "builder", "producer_id": "publisher",
             "sequence": 7, "age_ms": 5000, "freshness": "stale", "complete": true,
             "reason": "observation expired", "counts": null, "operations": [{
@@ -42,6 +43,7 @@ fn reservation_and_stale_operations_keep_their_wire_meaning() {
     }))
     .unwrap();
     assert_eq!(work.machines[0].freshness, WorkFreshness::Stale);
+    assert_eq!(work.guidance["machine-b"].build, Some(2));
     assert_eq!(work.machines[0].counts, None);
     assert_eq!(work.machines[0].operations[0].kind, WorkKind::Reservation);
     let sent = serde_json::to_value(&work).unwrap();

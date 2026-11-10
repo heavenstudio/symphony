@@ -305,7 +305,7 @@ pub(crate) async fn answer(shared: &Arc<Shared>, request: Request) -> Option<Res
                         let role = query(&request, "role");
                         let open_only = query(&request, "open").as_deref() == Some("1");
                         let roots = query(&request, "roots").as_deref() == Some("1");
-                        let top_level = parent.is_none() && holder.is_none() && search.is_empty();
+                        let top_level = parent.is_none() && holder.is_none();
                         let ids: std::collections::BTreeSet<_> =
                             tasks.tasks.iter().map(|t| t.slug.clone()).collect();
                         let parents: std::collections::BTreeSet<_> = tasks
@@ -331,7 +331,6 @@ pub(crate) async fn answer(shared: &Arc<Shared>, request: Request) -> Option<Res
                                         && task.parent.as_ref().is_none_or(|p| !ids.contains(p))))
                                 && (all
                                     || older
-                                    || !search.is_empty()
                                     || !["done", "cancelled"].contains(&task.status.as_str())
                                     || task.updated >= cutoff)
                                 && (search.is_empty() || scores.contains_key(&task.slug))
@@ -431,7 +430,7 @@ pub(crate) async fn answer(shared: &Arc<Shared>, request: Request) -> Option<Res
                             .expect("a task paging key serializes")
                         });
                         no_store(Json(symphony_api::TaskListing {
-                            machine_work: symphony_api::MachineWork::default(),
+                            machine_work: hub.machine_snapshot(),
                             statuses: symphony_board::STATUSES
                                 .iter()
                                 .map(|s| (*s).to_string())
@@ -475,8 +474,7 @@ pub(crate) async fn answer(shared: &Arc<Shared>, request: Request) -> Option<Res
             match tokio::task::spawn_blocking(move || {
                 let store = symphony::taskview::connect(&root).map_err(|e| unavailable(&e, ""))?;
                 if agents {
-                    let mut view = symphony::taskview::agents(&store, &root)
-                        .map_err(|e| unavailable(&e, ""))?;
+                    let mut view = hub.agent_snapshot().map_err(|e| unavailable(&e, ""))?;
                     if agent_page {
                         view.agents.retain(|a| {
                             if lost {
@@ -551,7 +549,7 @@ pub(crate) async fn answer(shared: &Arc<Shared>, request: Request) -> Option<Res
                 } else if detail {
                     let record = store.get(&slug).map_err(task_failure)?;
                     symphony::taskview::page(&store, &record, &root)
-                        .map(Json)
+                        .map(|page| Json(hub.observed_page(page)))
                         .map(no_store)
                         .map_err(|e| unavailable(&e, ""))
                 } else {

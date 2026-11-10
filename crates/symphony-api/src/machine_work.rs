@@ -77,4 +77,13 @@ pub struct MachineWork {
     pub freshness: WorkFreshness,
     pub machines: Vec<MachineObservation>,
     pub unassigned: Vec<WorkOperation>,
+    /// Project-configured advisory targets by stable machine id. Never admission limits.
+    #[serde(default)]
+    pub guidance: std::collections::BTreeMap<String, WorkGuidance>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WorkGuidance {
+    pub build: Option<u32>,
+    pub test: Option<u32>,
 }

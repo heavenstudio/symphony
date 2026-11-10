@@ -33,6 +33,32 @@ pub fn machine_in<'a>(env: &'a Env, common: &Path) -> Probes<'a> {
     machine_with_common(env, Ok(common.to_path_buf()))
 }
 
+/// One read-only native scan through the existing bounded child/pipe owner. The reader is an
+/// already installed local executable; this never builds a launcher or forwards caller capabilities.
+pub fn native_inventory(env: &Env, reader: &Path, common: &Path) -> Answer<Vec<u8>> {
+    let vars = env
+        .vars
+        .iter()
+        .filter(|(key, _)| {
+            matches!(
+                key.as_str(),
+                "PATH" | "LANG" | "LC_ALL" | "LLVM_PROFILE_FILE"
+            )
+        })
+        .map(|(key, value)| (key.clone(), value.clone()))
+        .collect();
+    let mut command = sys::command_with(reader, &vars);
+    command
+        .args(["machine-work", "--common-dir"])
+        .arg(common)
+        .current_dir(&env.cwd);
+    let output = within(&mut command, Duration::from_secs(2))?;
+    if !output.status.success() || output.stdout.len() > super::machine_work::native::MAX_BYTES {
+        return Err("native inventory reader failed or exceeded its output bound".into());
+    }
+    Ok(output.stdout)
+}
+
 fn machine_with_common(env: &Env, common: Result<PathBuf, String>) -> Probes<'_> {
     let branches: RefCell<HashMap<String, String>> = RefCell::new(HashMap::new());
     Probes {

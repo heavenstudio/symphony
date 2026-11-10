@@ -1,7 +1,7 @@
 //! Bound receiver inventories and retain nonce ownership even after complete disappearance.
 
 use super::{Counts, Freshness, Kind, Machine, Operation, Snapshot, State};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 /// A complete inventory from one authenticated machine publisher. The transport assigns the
 /// generation on a publisher restart; a producer cannot retire another producer by its own clock.
@@ -32,6 +32,7 @@ struct Accepted {
     connected: bool,
     conflict: bool,
     history_exhausted: bool,
+    uncertain: bool,
     owners: BTreeMap<String, Ownership>,
 }
 
@@ -48,6 +49,7 @@ struct Ownership {
     task: Option<String>,
     checkout: String,
     parent_id: Option<String>,
+    terminal: bool,
 }
 
 impl Ownership {
@@ -57,6 +59,7 @@ impl Ownership {
             task: operation.task.clone(),
             checkout: operation.checkout.clone(),
             parent_id: operation.parent_id.clone(),
+            terminal: false,
         }
     }
 
@@ -92,7 +95,33 @@ impl Projection {
     /// Called only on new transport observations, with the original receiver-assigned receipt.
     /// Duplicate/older samples never renew a receipt. Partial inventories retain missing work;
     /// only a new complete inventory establishes completion.
-    pub fn observe(&mut self, mut sample: Sample, receipt_ms: u64) -> Result<(), Rejected> {
+    pub fn observe(&mut self, sample: Sample, receipt_ms: u64) -> Result<(), Rejected> {
+        self.observe_batch(sample, Vec::new(), receipt_ms, false)
+    }
+
+    /// Trusted-local raw evidence is always partial. Live rows and decoded completions share
+    /// every ordering, clock, identity, bound and ownership fence, before any active row retires.
+    pub fn observe_native(
+        &mut self,
+        mut sample: Sample,
+        inventory: super::native::Inventory,
+        receipt_ms: u64,
+    ) -> Result<(), Rejected> {
+        if inventory.machine_id.as_deref() != Some(sample.machine_id.as_str()) {
+            return Err(Rejected::Identity);
+        }
+        sample.complete = false;
+        sample.operations = inventory.operations;
+        self.observe_batch(sample, inventory.finished, receipt_ms, inventory.uncertain)
+    }
+
+    fn observe_batch(
+        &mut self,
+        mut sample: Sample,
+        finished: Vec<Operation>,
+        receipt_ms: u64,
+        uncertain: bool,
+    ) -> Result<(), Rejected> {
         let old = self.machines.get(&sample.machine_id);
         if !identity(&sample.machine_id)
             || !identity(&sample.producer_id)
@@ -119,7 +148,7 @@ impl Projection {
                 return Err(Rejected::OutOfOrder);
             }
         }
-        if sample.operations.len() > self.max_operations {
+        if sample.operations.len().saturating_add(finished.len()) > self.max_operations {
             if let Some(old) = self.machines.get_mut(&sample.machine_id) {
                 // Rejected rows may contain unseen nonces. This path must retain the same
                 // uncertainty as the normalized history bound, without accepting any rows.
@@ -127,22 +156,46 @@ impl Projection {
             }
             return Err(Rejected::Limit);
         }
-        let normalized = normalize(&sample);
+        let terminal: BTreeSet<_> = finished
+            .iter()
+            .filter_map(|operation| operation.operation_id.clone())
+            .collect();
+        let mut all = sample.clone();
+        all.operations.extend(finished);
+        let normalized = normalize(&all);
         if normalized.is_err()
             && let Some(old) = self.machines.get_mut(&sample.machine_id)
         {
             old.conflict = true;
         }
-        sample.operations = normalized?;
-        self.validate_ownership(&sample)?;
+        all.operations = normalized?;
+        self.validate_ownership(&all)?;
+        if let Some(old) = self.machines.get_mut(&sample.machine_id)
+            && all.operations.iter().any(|operation| {
+                let id = operation.operation_id.as_deref().expect("normalized id");
+                !terminal.contains(id) && old.owners.get(id).is_some_and(|owner| owner.terminal)
+            })
+        {
+            old.conflict = true;
+            return Err(Rejected::ConflictingOperation);
+        }
+        sample.operations = all
+            .operations
+            .iter()
+            .filter(|operation| {
+                !terminal.contains(operation.operation_id.as_ref().expect("normalized id"))
+            })
+            .cloned()
+            .collect();
         if !sample.complete
             && let Some(old) = self.machines.get(&sample.machine_id)
         {
             for operation in &old.sample.operations {
-                if !sample
-                    .operations
-                    .iter()
-                    .any(|o| o.operation_id == operation.operation_id)
+                if !terminal.contains(operation.operation_id.as_ref().expect("normalized id"))
+                    && !sample
+                        .operations
+                        .iter()
+                        .any(|o| o.operation_id == operation.operation_id)
                 {
                     sample.operations.push(operation.clone());
                 }
@@ -154,8 +207,8 @@ impl Projection {
             .remove(&sample.machine_id)
             .map(|old| old.owners)
             .unwrap_or_default();
-        for operation in &sample.operations {
-            owners
+        for operation in &all.operations {
+            let owner = owners
                 .entry(
                     operation
                         .operation_id
@@ -163,6 +216,8 @@ impl Projection {
                         .expect("normalized operation id"),
                 )
                 .or_insert_with(|| Ownership::of(operation));
+            owner.terminal |=
+                terminal.contains(operation.operation_id.as_ref().expect("normalized id"));
         }
         self.machines.insert(
             sample.machine_id.clone(),
@@ -172,6 +227,7 @@ impl Projection {
                 connected: true,
                 conflict: false,
                 history_exhausted: false,
+                uncertain,
                 owners,
             },
         );
@@ -211,6 +267,20 @@ impl Projection {
         }
     }
 
+    /// The adapter already matched accepted publication revisions. A scan changes connectivity
+    /// and read uncertainty only; it never accepts rows, retires work or renews phase receipt.
+    pub fn scanned_native(&mut self, machine_id: &str, inventory: &super::native::Inventory) {
+        if inventory.machine_id.as_deref() != Some(machine_id) {
+            return;
+        }
+        if let Some(old) = self.machines.get_mut(machine_id)
+            && !old.sample.complete
+        {
+            old.connected = true;
+            old.uncertain = inventory.uncertain;
+        }
+    }
+
     pub fn snapshot(&self, now_ms: u64) -> Snapshot {
         let machines: Vec<_> = self
             .machines
@@ -221,6 +291,8 @@ impl Projection {
                     Freshness::Conflict
                 } else if !old.connected {
                     Freshness::Disconnected
+                } else if old.uncertain {
+                    Freshness::Unknown
                 } else if age.is_none_or(|a| a > self.ttl_ms) {
                     Freshness::Stale
                 } else if !old.sample.complete {
@@ -244,6 +316,7 @@ impl Projection {
                         Freshness::Stale => "observation expired or receiver clock unavailable",
                         Freshness::Disconnected => "publisher disconnected; last-known work",
                         Freshness::Incomplete => "partial inventory; last-known work retained",
+                        Freshness::Unknown => "some native records unreadable or owners unconfirmed; last-known work retained",
                         _ => "inventory rejected; last-known work retained",
                     }
                     .into(),
@@ -298,7 +371,7 @@ fn normalize(sample: &Sample) -> Result<Vec<Operation>, Rejected> {
     Ok(found.into_values().cloned().collect())
 }
 
-fn identity(text: &str) -> bool {
+pub(super) fn identity(text: &str) -> bool {
     !text.trim().is_empty() && text.len() <= 256 && !text.chars().any(char::is_control)
 }
 

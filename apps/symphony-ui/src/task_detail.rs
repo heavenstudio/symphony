@@ -1,18 +1,27 @@
 //! Task detail and agent views, compiled separately from the summary-only board.
 use super::*;
+use std::rc::Rc;
 use symphony_api::{Agents, TaskPage};
 
 #[cfg(target_arch = "wasm32")]
 #[component]
-pub(crate) fn LiveTaskPage(route: Memo<String>, data: Signal<crate::task_live::Data>) -> Element {
+pub(crate) fn LiveTaskPage(
+    route: Memo<String>,
+    data: Signal<crate::task_live::Data>,
+    connected: bool,
+) -> Element {
     use crate::task_live;
+    let agents = data.read().agents.clone().map(|mut agents| {
+        agents.machine_work = crate::machine_work::connection(agents.machine_work, connected);
+        agents
+    });
     // The page's error is drawn in its notice stack (`live::BoardPage`), out of the page's flow.
     rsx! {
         if let Some(slug) = route().strip_prefix("/task/") {
             if let Some(page) = data.read().detail.clone().filter(|p| p.task.slug == slug) {
-                TaskDetail { key: "{page.task.slug}", tasks: page.children.clone(), page, entries: data.read().entries.clone(), older: data.read().before.is_some(), loaded: data.read().thread_loaded, offer: data.read().approval.clone(), onhistory: move |older| { spawn(task_live::history(older,route,data)); }, onchildren: move |more| { spawn(task_live::children(more,route,data)); }, onoffer: move |_| { spawn(task_live::offer(route,data)); } }
+                TaskDetail { key: "{page.task.slug}", work: crate::machine_work::connection(page.machine_work.clone(), connected), tasks: page.children.clone(), page, entries: data.read().entries.clone(), older: data.read().before.is_some(), loaded: data.read().thread_loaded, offer: data.read().approval.clone(), onhistory: move |older| { spawn(task_live::history(older,route,data)); }, onchildren: move |more| { spawn(task_live::children(more,route,data)); }, onoffer: move |_| { spawn(task_live::offer(route,data)); } }
             } else { p { "Loading task…" } }
-        } else if let Some(agents) = data.read().agents.clone() {
+        } else if let Some(agents) = agents {
             AgentsView { agents, tasks: data.read().tasks.clone().unwrap_or_default(), total: data.read().agent_total, more: data.read().has_more_agents(false), lost_more: data.read().has_more_agents(true), onmore: move |lost| { spawn(task_live::more_agents(lost,route,data)); } }
         } else { p { "Loading agents…" } }
     }
@@ -21,6 +30,7 @@ pub(crate) fn LiveTaskPage(route: Memo<String>, data: Signal<crate::task_live::D
 #[component(lazy)]
 pub fn TaskDetail(
     page: TaskPage,
+    #[props(default)] work: symphony_api::MachineWork,
     tasks: Vec<Task>,
     entries: Vec<symphony_api::TaskEntry>,
     older: bool,
@@ -47,6 +57,7 @@ pub fn TaskDetail(
             for link in &task.links { li { "implements " a { href: "/{link}", "{link}" } } }
         }
         Roles { roles: task.roles.clone() }
+        {phases_view(&work, &Scope::Task(&task.slug), true)}
         }
         if page.children_count > 0 { Near { id: "subtasks-{task.slug}", height: 60, onenter: move |_| onchildren.call(false),
             h2 { "Subtasks " span { class: "count", "{page.children_count}" } }
@@ -274,22 +285,24 @@ pub fn AgentsView(
 ) -> Element {
     agents.agents.sort_by(|a, b| a.handle.cmp(&b.handle));
     let tasks = Rc::new(tasks);
+    let work: SharedWork = std::mem::take(&mut agents.machine_work).into();
     rsx! {
         h1 { "Agents" } p { class: "lead", "Who is connected, and what they are working on." }
         p { class: "muted", "{agents.probes.panes} · {agents.probes.slots}" }
+        {crate::machine_work::machines_view(&work, true)}
         h2 { "Happening now" }
-        div { class: "agents-now", for task in tasks.iter().filter(|t| t.status == "in_progress" || t.status == "review") { Near { key: "{task.slug}", id: "now-{task.slug}", height: 120, TaskRow { task: task.clone() } } } }
+        div { class: "agents-now", for task in tasks.iter().filter(|t| t.status == "in_progress" || t.status == "review") { Near { key: "{task.slug}", id: "now-{task.slug}", height: 120, TaskRow { task: task.clone(), work: work.clone() } } } }
         h2 { "Connected" }
         div { class: "agents agents-card card", for agent in agents.agents.iter().filter(|a| a.health != "lost" && a.health != "left") {
-            Near { key: "{agent.handle}", id: "agent-{agent.handle}", height: 240, AgentRow { agent: agent.clone(), tasks: tasks.clone() } }
+            Near { key: "{agent.handle}", id: "agent-{agent.handle}", height: 240, AgentRow { agent: agent.clone(), tasks: tasks.clone(), work: work.clone() } }
         } }
         if more && agents.agents.iter().filter(|a| a.health != "lost" && a.health != "left").count() < total { Near { id: "more-agents".to_string(), onenter: move |_| onmore.call(false), crate::components::button::Button { onclick: move |_| onmore.call(false), "Load more agents" } } }
-        details { summary { onclick: move |_| onmore.call(true), "Lost agents" } div { for agent in agents.agents.into_iter().filter(|a| a.health == "lost") { Near { key: "{agent.handle}", id: "agent-{agent.handle}", height: 120, AgentRow { agent, tasks: tasks.clone() } } } if lost_more { crate::components::button::Button { onclick: move |_| onmore.call(true), "Load more lost agents" } } } }
+        details { summary { onclick: move |_| onmore.call(true), "Lost agents" } div { for agent in agents.agents.into_iter().filter(|a| a.health == "lost") { Near { key: "{agent.handle}", id: "agent-{agent.handle}", height: 120, AgentRow { agent, tasks: tasks.clone(), work: work.clone() } } } if lost_more { crate::components::button::Button { onclick: move |_| onmore.call(true), "Load more lost agents" } } } }
     }
 }
 
 #[component]
-fn AgentRow(agent: symphony_api::Agent, tasks: Rc<Vec<Task>>) -> Element {
+fn AgentRow(agent: symphony_api::Agent, tasks: Rc<Vec<Task>>, work: SharedWork) -> Element {
     let mut following = use_signal(|| false);
     let following_rows = use_signal(Vec::<Task>::new);
     let following_total = use_signal(|| 0_usize);
@@ -342,6 +355,7 @@ fn AgentRow(agent: symphony_api::Agent, tasks: Rc<Vec<Task>>) -> Element {
     rsx! { div { class: "agent",
         strong { "{agent.handle}" } " " span { class: "chip health-{agent.health}", "{agent.health}" }
         p { class: "muted", "{agent.kind} · {agent.model} · {agent.state} · {agent.branch} · {agent.worktree.rsplit('/').next().unwrap_or(&agent.worktree)}" }
+        {phases_view(&work, &Scope::Agent(&agent.handle), true)}
         details { class: "agent-connection", summary { "Connection details" }
         if let Some(address) = &agent.callback {
             p { "Native callback: " code { "{address}" } }

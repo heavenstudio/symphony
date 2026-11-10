@@ -45,7 +45,7 @@ fn the_wire_names_the_boards_panes_probe_panes_and_herdr_with_its_answer() {
                 "generated": 1.5,
                 "probes": {"panes": said, "herdr": said, "slots": "ok"},
                 "agents": [],
-                "machine_work": {"freshness": "unknown", "machines": [], "unassigned": []},
+                "machine_work": {"freshness": "unknown", "machines": [], "unassigned": [], "guidance": {}},
             })
         );
         // An open tab's client from before the rename reads the probe as it did.

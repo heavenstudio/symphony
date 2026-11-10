@@ -1,0 +1,374 @@
+//! Private native probe, receiver-clock and cache boundaries; no live board or machine identity.
+
+use super::*;
+use crate::testing::{
+    Tree,
+    board::{Fixture, Seed},
+    repository,
+};
+use symphony_board::cli::machine_work::Freshness;
+
+fn input(state: &str) -> Vec<u8> {
+    serde_json::to_vec(&json!({"version":1,"complete":false,"uncertain":false,"truncated":false,"records":[{
+        "evidence":if state == "finished" { "finished" } else { "active" },
+        "operation_id":"11111111111111111111111111111111","parent_id":null,"timing_run_id":"timing",
+        "handle":"worker","checkout":"/private/checkout","recipe":"cargo build","kind":"build","state":state,
+        "resource":"cargo-room","reason":"fixture","phase_since_epoch_ms":999999999999_u64,
+        "owner_pid":123,"child_pid":null,"exit_code":if state == "finished" { Some(0) } else { None },
+    }]})).unwrap()
+}
+
+fn sampler() -> Sampler {
+    let mut sampler = Sampler::new(Path::new("/private/fixture"), None);
+    sampler.identity = Some(Ok("machine-a".into()));
+    sampler
+}
+
+fn record(task: &str) -> TaskSessionRow {
+    serde_json::from_value(
+        json!({"slug":task,"handle":"worker","role":"executor","claude_session":"",
+        "worktree":"/private/checkout","started":1.0,"closed":null}),
+    )
+    .unwrap()
+}
+
+#[test]
+fn record_uncertainty_keeps_future_verified_phases_visible_without_renewing_old_publications() {
+    let mut sampler = sampler();
+    sampler.accept(&input("running"), &[], 10, "host").unwrap();
+    let mut next: Value = serde_json::from_slice(&input("queued")).unwrap();
+    next["uncertain"] = json!(true);
+    next["records"][0]["operation_id"] = json!("22222222222222222222222222222222");
+    sampler
+        .accept(&serde_json::to_vec(&next).unwrap(), &[], 20, "host")
+        .unwrap();
+    let view = sampler.snapshot(20).machines.remove(0);
+    assert_eq!(view.operations.len(), 2);
+    assert_eq!(view.freshness, Freshness::Unknown);
+    assert_eq!(view.counts, None);
+    let queued = view
+        .operations
+        .iter()
+        .find(|operation| {
+            operation.operation_id.as_deref() == Some("22222222222222222222222222222222")
+        })
+        .expect("new verified operation");
+    assert_eq!(
+        queued.state,
+        symphony_board::cli::machine_work::State::Queued
+    );
+    next["records"] = json!([]);
+    sampler
+        .accept(&serde_json::to_vec(&next).unwrap(), &[], 30, "host")
+        .unwrap();
+    let view = sampler.snapshot(30).machines.remove(0);
+    assert_eq!(view.operations.len(), 2);
+    assert_eq!(view.age_ms, Some(10));
+    assert_eq!(view.sequence, 2);
+}
+
+#[test]
+fn unchanged_native_bytes_keep_original_receipt_and_frozen_explicit_task_context() {
+    let mut sampler = sampler();
+    sampler
+        .accept(&input("queued"), &[record("task-a")], 10, "label")
+        .unwrap();
+    sampler
+        .accept(&input("running"), &[record("task-b")], 20, "label")
+        .unwrap();
+    assert_eq!(
+        sampler.snapshot(20).machines[0].operations[0]
+            .task
+            .as_deref(),
+        Some("task-a")
+    );
+    sampler
+        .accept(&input("running"), &[record("task-b")], 5000, "label")
+        .unwrap();
+    let mut reordered: Value = serde_json::from_slice(&input("running")).unwrap();
+    let row = reordered["records"][0].as_object_mut().unwrap();
+    let id = row.remove("operation_id").unwrap();
+    row.insert("operation_id".into(), id);
+    sampler
+        .accept(&serde_json::to_vec(&reordered).unwrap(), &[], 5000, "label")
+        .unwrap();
+    let empty = serde_json::to_vec(
+        &json!({"version":1,"complete":false,"uncertain":false,"truncated":false,"records":[]}),
+    )
+    .unwrap();
+    sampler.accept(&empty, &[], 5000, "label").unwrap();
+    let snapshot = sampler.snapshot(5000);
+    assert_eq!(snapshot.machines[0].age_ms, Some(4980));
+    assert_eq!(snapshot.machines[0].sequence, 2);
+    sampler.unavailable("unreadable source".into());
+    assert_eq!(
+        sampler.snapshot(5000).machines[0].freshness,
+        Freshness::Unknown
+    );
+    sampler
+        .accept(&input("running"), &[], 6000, "label")
+        .unwrap();
+    assert_eq!(sampler.snapshot(6000).machines[0].age_ms, Some(5980));
+    assert_eq!(
+        sampler.snapshot(10021).machines[0].freshness,
+        Freshness::Stale
+    );
+    sampler
+        .accept(&input("finished"), &[], 10022, "label")
+        .unwrap();
+    let snapshot = sampler.snapshot(10022);
+    assert!(snapshot.machines[0].operations.is_empty());
+    assert!(!snapshot.machines[0].complete);
+    assert_eq!(snapshot.machines[0].counts, None);
+    assert!(
+        sampler
+            .accept(&input("running"), &[], 10023, "label")
+            .is_err()
+    );
+    assert!(sampler.snapshot(10023).machines[0].operations.is_empty());
+}
+
+#[test]
+fn one_native_probe_feeds_cached_agents_task_pages_and_listings_then_preserves_failed_reads() {
+    let tree = Tree::new();
+    let root = repository(&tree);
+    let common = root.join(".git");
+    let cache = root.join(".target/bin");
+    std::fs::create_dir_all(&cache).unwrap();
+    let reader = cache.join("sf-slots");
+    crate::fixture_script::write(
+        &reader,
+        "#!/bin/sh\nprintf 'called\\n' >> \"$3/probe-calls\"\n/bin/cat \"$3/native.json\"\n",
+        true,
+    );
+    std::fs::write(common.join("native.json"), input("running")).unwrap();
+    let hub = Hub::new(&root, &root.join("client"));
+    let mut sampler = Sampler::new(&root, None);
+    sampler.identity = Some(Ok("machine-a".into()));
+    *hub.machine_work.lock().unwrap() = sampler;
+    let evidence = hub
+        .machine_work
+        .lock()
+        .unwrap()
+        .scan(&root, Some(&common), &[]);
+    let work: symphony_api::MachineWork =
+        serde_json::from_value(serde_json::to_value(evidence.snapshot).unwrap()).unwrap();
+    assert_eq!(work.machines.len(), 1);
+    assert_eq!(work.machines[0].operations.len(), 1);
+    let f = Fixture::new(Seed::default());
+    let agents = symphony_api::Agents {
+        machine_work: work.clone(),
+        generated: 1.0,
+        probes: symphony_api::AgentProbes {
+            panes: "unknown".into(),
+            slots: "unknown".into(),
+        },
+        agents: Vec::new(),
+    };
+    hub.update_board(&f.store, f.store.board().unwrap(), agents)
+        .unwrap();
+    let page: symphony_api::TaskPage = serde_json::from_value(json!({
+        "task":{"slug":"fixture/task","title":"Fixture","body":"","status":"review","priority":1,"parent":null,
+            "created_by":"fixture","created":1.0,"updated":1.0,"links":[],"depends":[],"roles":[],"instruction":false},
+        "blocks":[],"children":[],"children_count":0,
+    })).unwrap();
+    for _ in 0..5 {
+        assert_eq!(hub.machine_snapshot(), work);
+        assert_eq!(hub.agent_snapshot().unwrap().machine_work, work);
+        let shown = hub.observed_page(page.clone());
+        assert_eq!(shown.machine_work, work);
+        assert_eq!(shown.task.status, "review");
+    }
+    assert_eq!(
+        std::fs::read_to_string(common.join("probe-calls")).unwrap(),
+        "called\n"
+    );
+    std::fs::write(common.join("native.json"), "{").unwrap();
+    let failed = hub
+        .machine_work
+        .lock()
+        .unwrap()
+        .scan(&root, Some(&common), &[])
+        .snapshot;
+    assert_eq!(failed.machines[0].operations.len(), 1);
+    assert_eq!(failed.machines[0].freshness, Freshness::Unknown);
+    assert_eq!(failed.machines[0].sequence, 1);
+    assert_eq!(failed.machines[0].counts, None);
+    assert!(!failed.machines[0].complete);
+    assert_eq!(
+        std::fs::read_to_string(common.join("probe-calls")).unwrap(),
+        "called\ncalled\n"
+    );
+}
+
+#[test]
+fn unavailable_reader_or_identity_never_claims_a_machine_or_retires_unassigned_evidence() {
+    let tree = Tree::new();
+    let root = repository(&tree);
+    std::fs::create_dir_all(root.join("tools")).unwrap();
+    crate::fixture_script::write(
+        &root.join("tools/rs-bin.sh"),
+        "#!/bin/sh\nprintf invoked > launcher-called\nexit 99\n",
+        true,
+    );
+    let mut sampler = Sampler::new(&root, None);
+    let evidence = sampler.scan(&root, Some(&tree.path("missing-common")), &[]);
+    assert!(sampler.identity.is_none());
+    assert_eq!(evidence.snapshot.freshness, Freshness::Unknown);
+    assert!(evidence.snapshot.machines.is_empty());
+    assert!(
+        !root.join("launcher-called").exists(),
+        "a missing prepared reader invoked a source launcher"
+    );
+    assert!(
+        sampler
+            .reason
+            .contains(&root.join(".target/bin/sf-slots").display().to_string()),
+        "{}",
+        sampler.reason
+    );
+    let reader = root.join(".target/bin/sf-slots");
+    std::fs::create_dir_all(reader.parent().unwrap()).unwrap();
+    crate::fixture_script::write(&reader, "#!/bin/sh\n/bin/cat \"$3/native.json\"\n", true);
+    let common = root.join(".git");
+    sampler.identity = Some(Err("corrupt installation identity".into()));
+    std::fs::write(common.join("native.json"), input("running")).unwrap();
+    let first = sampler.scan(&root, Some(&common), &[]).snapshot;
+    assert!(first.machines.is_empty());
+    assert_eq!(first.unassigned.len(), 1);
+    assert_eq!(first.unassigned[0].machine_id, None);
+    assert_eq!(first.unassigned[0].task, None);
+    for bytes in [input("finished"), b"{".to_vec()] {
+        std::fs::write(common.join("native.json"), bytes).unwrap();
+        let retained = sampler.scan(&root, Some(&common), &[]).snapshot;
+        assert_eq!(retained.freshness, Freshness::Unknown);
+        assert!(retained.machines.is_empty());
+        assert_eq!(
+            retained.unassigned, first.unassigned,
+            "unassigned evidence was retired without machine identity"
+        );
+    }
+    assert_eq!(sampler.sequence, 0);
+}
+
+#[test]
+fn explicit_or_prepared_reader_paths_are_retained_without_a_launcher_or_cache_search() {
+    let tree = Tree::new();
+    let root = repository(&tree);
+    let common = root.join(".git");
+    let explicit = tree.path("private-reader");
+    assert_eq!(
+        Sampler::reader(&root, None).unwrap(),
+        root.join(".target/bin/sf-slots")
+    );
+    assert_eq!(Sampler::reader(&root, Some(&explicit)).unwrap(), explicit);
+    assert!(Sampler::reader(&root, Some(Path::new("sf-slots"))).is_err());
+    let script =
+        "#!/bin/sh\nprintf 'called\\n' >> \"$3/explicit-calls\"\n/bin/cat \"$3/native.json\"\n";
+    crate::fixture_script::write(&explicit, script, true);
+    std::fs::write(common.join("native.json"), "{").unwrap();
+    let mut sampler = Sampler::new(&root, Some(&explicit));
+    sampler.scan(&root, Some(&common), &[]);
+    assert!(
+        sampler.identity.is_none(),
+        "malformed output initialized identity"
+    );
+    sampler.identity = Some(Ok("machine-a".into()));
+    std::fs::write(common.join("native.json"), input("running")).unwrap();
+    assert_eq!(
+        sampler.scan(&root, Some(&common), &[]).snapshot.machines[0]
+            .operations
+            .len(),
+        1
+    );
+    let mut unsupported: Value = serde_json::from_slice(&input("running")).unwrap();
+    unsupported["version"] = json!(2);
+    std::fs::write(
+        common.join("native.json"),
+        serde_json::to_vec(&unsupported).unwrap(),
+    )
+    .unwrap();
+    for fault in ["unsupported", "removed", "not executable"] {
+        if fault == "removed" {
+            std::fs::remove_file(&explicit).unwrap();
+        }
+        if fault == "not executable" {
+            use std::os::unix::fs::PermissionsExt;
+            // The script helper shares executable inodes; this permission case owns a real file.
+            assert!(!explicit.exists());
+            std::fs::write(&explicit, script).unwrap();
+            std::fs::set_permissions(&explicit, std::fs::Permissions::from_mode(0o600)).unwrap();
+            assert_eq!(
+                std::fs::metadata(&explicit).unwrap().permissions().mode() & 0o111,
+                0
+            );
+        }
+        let view = sampler
+            .scan(&root, Some(&common), &[])
+            .snapshot
+            .machines
+            .remove(0);
+        assert_eq!(view.freshness, Freshness::Unknown, "{fault}");
+        assert_eq!(view.operations.len(), 1, "{fault}");
+        assert_eq!(view.sequence, 1, "{fault}");
+        assert_eq!(view.counts, None, "{fault}");
+        assert_eq!(sampler.reader.as_ref().unwrap(), &explicit);
+    }
+    crate::fixture_script::write(&explicit, script, true);
+    std::fs::write(common.join("native.json"), input("running")).unwrap();
+    let view = sampler
+        .scan(&root, Some(&common), &[])
+        .snapshot
+        .machines
+        .remove(0);
+    assert_eq!(view.freshness, Freshness::Incomplete);
+    assert_eq!(
+        view.sequence, 1,
+        "restored unchanged bytes renewed publication"
+    );
+    assert_eq!(
+        std::fs::read_to_string(common.join("explicit-calls")).unwrap(),
+        "called\ncalled\ncalled\ncalled\n"
+    );
+}
+
+#[test]
+fn ambiguous_or_later_task_roles_do_not_supply_an_initial_task_binding() {
+    let mut sampler = sampler();
+    sampler
+        .accept(&input("queued"), &[record("a"), record("b")], 1, "host")
+        .unwrap();
+    sampler
+        .accept(&input("running"), &[record("a")], 2, "host")
+        .unwrap();
+    assert_eq!(sampler.snapshot(2).machines[0].operations[0].task, None);
+}
+
+#[test]
+fn an_explicit_role_covers_native_package_cwds_but_never_siblings_or_traversal() {
+    for (checkout, expected) in [
+        ("/private/checkout/tools/gate", Some("task-a")),
+        ("/private/checkout-other/tools/gate", None),
+        ("/private/checkout/../elsewhere", None),
+        ("private/checkout/tools/gate", None),
+    ] {
+        let mut sampler = sampler();
+        let mut bytes: Value = serde_json::from_slice(&input("running")).unwrap();
+        bytes["records"][0]["checkout"] = json!(checkout);
+        sampler
+            .accept(
+                &serde_json::to_vec(&bytes).unwrap(),
+                &[record("task-a")],
+                1,
+                "host",
+            )
+            .unwrap();
+        assert_eq!(
+            sampler.snapshot(1).machines[0].operations[0]
+                .task
+                .as_deref(),
+            expected,
+            "cwd {checkout}"
+        );
+    }
+}

@@ -434,13 +434,42 @@ pub fn agents_in(
     common: Option<&Path>,
     board: &symphony_board::Board,
 ) -> Result<symphony_api::Agents, String> {
+    agents_in_observed(
+        store,
+        root,
+        common,
+        board,
+        symphony_board::cli::machine_work::Evidence {
+            local_host: symphony_board::sys::hostname(),
+            snapshot: Default::default(),
+        },
+    )
+}
+
+/// A clock tick supplies its single trusted native observation; HTTP consumers reuse this view.
+pub fn agents_in_observed(
+    store: &symphony_board::Store,
+    root: &Path,
+    common: Option<&Path>,
+    board: &symphony_board::Board,
+    evidence: symphony_board::cli::machine_work::Evidence,
+) -> Result<symphony_api::Agents, String> {
     let mut env = crate::children::board_env();
     env.cwd = root.to_path_buf();
     let probes = match common {
         Some(common) => symphony_board::cli::probes::machine_in(&env, common),
         None => symphony_board::cli::probes::machine(&env),
     };
-    agents_probed(store, &probes, Some(board))
+    let view = symphony_board::cli::agents::describe_board_observed(
+        store,
+        &probes,
+        store.now(),
+        false,
+        board,
+        evidence,
+    )
+    .map_err(|error| error.to_string())?;
+    wire_agents(&view)
 }
 
 fn agents_probed(

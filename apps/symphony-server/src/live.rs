@@ -126,6 +126,7 @@ pub(crate) struct Hub {
     trees: RwLock<BTreeMap<String, PathBuf>>,
     tasks: Mutex<TaskState>,
     agents: Mutex<Option<symphony_api::Agents>>,
+    machine_work: Mutex<machine_work::Sampler>,
     latest_message: Mutex<Option<i64>>,
     pub task_signoff: Mutex<Vec<String>>,
     branches: Mutex<Vec<branches::BranchCard>>,
@@ -197,6 +198,7 @@ pub(crate) fn dist(root: &Path) -> PathBuf {
 
 impl Hub {
     pub(crate) fn new(root: &Path, ui_dist: &Path) -> Self {
+        let native_reader = std::env::var_os(machine_work::READER_ENV);
         Self {
             root: root.into(),
             ui_dist: ui_dist.into(),
@@ -219,6 +221,10 @@ impl Hub {
                 error: Some("the task board is starting".into()),
             }),
             agents: Mutex::new(None),
+            machine_work: Mutex::new(machine_work::Sampler::new(
+                root,
+                native_reader.as_deref().map(Path::new),
+            )),
             latest_message: Mutex::new(None),
             task_signoff: Mutex::new(Vec::new()),
             branches: Mutex::new(Vec::new()),
@@ -769,34 +775,6 @@ impl Hub {
         self.changed.send_modify(|version| *version += 1);
     }
 
-    fn board_read(&self, store: &symphony_board::Store) -> Result<(), String> {
-        if let Some(callbacks) = self
-            .callbacks
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .as_mut()
-            && let Err(error) = measured("chat journal", || callbacks.flush(&self.root))
-        {
-            eprintln!("CHAT deferred: {error}");
-        }
-        // Timed events and retries belong to the shared server, never to an agent's monitor.
-        let snapshot = match measured("callbacks", || store.dispatch_callbacks_snapshot()) {
-            Ok(snapshot) => snapshot,
-            Err(error) => {
-                eprintln!("CALLBACK deferred: {error}");
-                None
-            }
-        };
-        let snapshot = match snapshot {
-            Some(snapshot) => snapshot,
-            None => measured("board read", || store.clock_board()).map_err(|e| e.to_string())?,
-        };
-        let agents = measured("agents", || {
-            taskview::agents_in(store, &self.root, self.common.as_deref(), &snapshot)
-        })?;
-        self.update_board(store, snapshot, agents)
-    }
-
     /// Apply one board observation after the journal, callback delivery and machine probes finish.
     fn update_board(
         &self,
@@ -888,7 +866,7 @@ impl Hub {
                 for status in symphony_board::STATUSES {
                     counts.insert(status, 0);
                 }
-                for task in &next.tasks {
+                for task in next.tasks.iter().filter(|task| task.parent.is_none()) {
                     *counts.entry(&task.status).or_default() += 1;
                 }
                 changed.push(
@@ -896,7 +874,7 @@ impl Hub {
                 );
                 let recent = |days: f64| {
                     let mut counts = BTreeMap::<&str, usize>::new();
-                    for task in &next.tasks {
+                    for task in next.tasks.iter().filter(|task| task.parent.is_none()) {
                         if ["done", "cancelled"].contains(&task.status.as_str())
                             && task.updated >= store.now() - days * 86_400.0
                         {
@@ -954,6 +932,9 @@ impl Hub {
             });
             if old.probes != agents.probes {
                 changed.push(json!({"region":"agent-probes","data":agents.probes}));
+            }
+            if old.machine_work != agents.machine_work {
+                changed.push(json!({"region":"machine-work","data":agents.machine_work}));
             }
         }
         *old_agents = Some(agents);
@@ -1424,6 +1405,7 @@ fn task_changes(changes: &mut Vec<Value>, old: &[symphony_api::Task], new: &[sym
 }
 
 mod board_status;
+mod machine_work;
 mod startup;
 
 #[cfg(test)]
@@ -1921,15 +1903,23 @@ mod tests {
     }
 
     #[test]
-    fn owner_cancellation_sends_zero_for_the_last_ready_task() {
+    fn live_column_totals_count_only_parents_in_every_status() {
         let tree = Tree::new();
         let root = repository(&tree);
-        let f = Fixture::new(Seed::default().task("tools/owner-controls", "ready"));
+        let mut seed = Seed::default().task("tools/owner-controls", "ready");
+        for (index, status) in symphony_board::STATUSES.iter().enumerate() {
+            let mut child =
+                crate::testing::board::task(&format!("tools/owner-controls/{status}"), status);
+            child.id = index as i64 + 2;
+            child.parent = Some("tools/owner-controls".into());
+            seed = seed.task_row(child);
+        }
+        let f = Fixture::new(seed);
         let hub = Hub::new(&root, &root.join("build/client"));
         hub.refresh_page("", &root).unwrap();
         observe(&hub, &f.store);
         let before = hub.task_snapshot().unwrap();
-        assert_eq!(before.tasks.len(), 1);
+        assert_eq!(before.tasks.len(), symphony_board::STATUSES.len() + 1);
         assert_eq!(before.tasks[0].status, "ready");
 
         f.store
@@ -1955,6 +1945,21 @@ mod tests {
         assert_eq!(counts["done"], 0);
         assert_eq!(counts.len(), symphony_board::STATUSES.len());
         assert_eq!(counts.values().sum::<usize>(), 1);
+        let recent = event["changes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|change| change["region"] == "task-recent-counts")
+            .unwrap();
+        for period in ["day", "week"] {
+            let counts: std::collections::BTreeMap<String, usize> =
+                serde_json::from_value::<Vec<(String, usize)>>(recent["data"][period].clone())
+                    .unwrap()
+                    .into_iter()
+                    .collect();
+            assert_eq!(counts["done"], 0);
+            assert_eq!(counts["cancelled"], 1);
+        }
     }
 
     #[test]

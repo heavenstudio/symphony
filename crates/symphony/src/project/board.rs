@@ -2,6 +2,15 @@
 //! guide task messages render as part of, and what the board starts when a task moves to review.
 
 use serde::Deserialize;
+use std::collections::BTreeMap;
+
+/// Optional per-machine orchestration advice. Zero is advice too; nothing enforces it.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct WipGuidance {
+    pub build: Option<u32>,
+    pub test: Option<u32>,
+}
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Board {
@@ -18,6 +27,7 @@ pub struct Board {
     /// The open tasks (in progress or in review) an orchestrator may hold before the board refuses
     /// it new work, which the board reads itself (`symphony_board::slots`); `None` caps nothing.
     pub orchestrator_slots: Option<u32>,
+    pub machine_wip: BTreeMap<String, WipGuidance>,
 }
 
 impl Board {
@@ -38,12 +48,20 @@ impl Board {
                 "[board] orchestrator_slots is 0; an orchestrator needs at least one slot".into(),
             );
         }
+        if file.machine_wip.len() > 64
+            || file.machine_wip.keys().any(|id| {
+                id.trim().is_empty() || id.len() > 256 || id.chars().any(char::is_control)
+            })
+        {
+            return Err("[board] machine_wip needs at most 64 nonempty, control-free machine ids of at most 256 bytes".into());
+        }
         Ok(Board {
             export: inside("[board] export", file.export)?,
             disposable: file.disposable,
             guide: inside("[board] guide", file.guide)?,
             on_review: file.on_review,
             orchestrator_slots: file.orchestrator_slots,
+            machine_wip: file.machine_wip,
         })
     }
 }
@@ -57,6 +75,7 @@ pub(super) struct FileBoard {
     guide: Option<String>,
     on_review: Vec<String>,
     orchestrator_slots: Option<u32>,
+    machine_wip: BTreeMap<String, WipGuidance>,
     #[serde(flatten)]
     pub(super) unknown: super::file::Unknown,
 }
