@@ -6,6 +6,7 @@
 
 mod cost;
 mod features;
+mod migration;
 mod moves;
 mod red_marks;
 
