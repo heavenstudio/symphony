@@ -1,7 +1,8 @@
 //! Pending work that keeps an idle pane, including descendant sessions and re-review: an addressed
-//! post waiting for its answer keeps it at once, a role on open work until it has sat idle at its
-//! prompt for [`super::IDLE_HOUR`].
+//! post waiting for its answer keeps it at once, a role or live reservation on open work until it
+//! has sat idle at its prompt for [`super::IDLE_HOUR`].
 
+use crate::health::FINISHED;
 use crate::{Error, Message, Store};
 use std::collections::{BTreeMap, HashMap, HashSet};
 
@@ -61,8 +62,8 @@ pub(super) enum Hold {
         through: Option<String>,
     },
     /// A role on open work: an executor of a task `in_progress`, `blocked` or in `review`, a
-    /// reviewer of one in `review` or awaiting its re-review. The terminal is kept until it has sat
-    /// idle at its prompt for [`super::IDLE_HOUR`].
+    /// reviewer of one in `review` or awaiting its re-review, or a live reservation on an unfinished
+    /// task. The terminal is kept until it has sat idle at its prompt for [`super::IDLE_HOUR`].
     Role {
         slug: String,
         role: String,
@@ -169,7 +170,11 @@ fn standing(role: &str, slug: &str, status: &str) -> String {
         (_, "review") => "in review",
         (_, other) => other,
     };
-    format!("{role} of {slug}, {status}")
+    if role == "reserved" {
+        format!("holder of the reservation on {slug}, {status}")
+    } else {
+        format!("{role} of {slug}, {status}")
+    }
 }
 
 /// What holds each handle's terminal, itself or through a session under it (a subagent): an
@@ -201,6 +206,8 @@ pub(super) fn holds(store: &Store) -> Result<BTreeMap<String, Hold>, Error> {
     for task in tasks {
         for role in &task.roles {
             let live = match role.role.as_str() {
+                // Store::tasks omits lapsed reservations; do not derive their expiry again here.
+                "reserved" => !FINISHED.contains(&task.status.as_str()),
                 "executor" => matches!(task.status.as_str(), "in_progress" | "blocked" | "review"),
                 "reviewer" => {
                     task.status == "review"
