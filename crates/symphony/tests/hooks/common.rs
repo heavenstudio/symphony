@@ -24,22 +24,6 @@ pub(crate) struct Done {
     pub stderr: String,
 }
 
-/// The repository this crate is in.
-pub(crate) fn root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../..")
-        .canonicalize()
-        .expect("the repository root")
-}
-
-pub(crate) fn read(relative: &str) -> String {
-    std::fs::read_to_string(root().join(relative)).unwrap_or_else(|e| panic!("{relative}: {e}"))
-}
-
-pub(crate) fn settings() -> Value {
-    serde_json::from_str(&read(".claude/settings.json")).expect(".claude/settings.json is JSON")
-}
-
 /// Runs `command`, writing `raw` to its stdin.
 pub(crate) fn spawn(mut command: Command, raw: &str) -> Done {
     let mut child = command.spawn().expect("the hook starts");
@@ -68,18 +52,6 @@ pub(crate) fn hook_commands(settings: &Value, event: &str) -> Vec<(String, Strin
         }
     }
     found
-}
-
-/// Whether a settings command runs `sf-hooks HOOK` through the project's launcher.
-pub(crate) fn runs_hook(command: &str, hook: &str) -> bool {
-    if hook == "tasks-beat" && command.contains("/.target/bin/symphony\" hook tasks-beat") {
-        return true;
-    }
-    let Some(at) = command.find("/.claude/hooks/sf-hook") else {
-        return false;
-    };
-    let rest = command[at + "/.claude/hooks/sf-hook".len()..].trim_start_matches('"');
-    rest.starts_with(' ') && rest.split_whitespace().next() == Some(hook)
 }
 
 /// A fresh folder under the system's temporary one, removed when dropped.

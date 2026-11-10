@@ -175,40 +175,6 @@ fn the_keys_folder_is_found_from_the_events_folder() {
     assert_eq!(runs(&recorder), ["beat", "beat"]);
 }
 
-/// A repository at `TREE/repo` with one commit, and a worktree of it at `TREE/linked`, as git makes
-/// them: the worktree's `.git` is a file naming its folder in the repository's common dir.
-pub(super) fn repo_with_worktree(tree: &Tree) -> (PathBuf, PathBuf) {
-    let repo = tree.root().join("repo");
-    std::fs::create_dir_all(&repo).unwrap();
-    git(&repo, &["init", "-q"]);
-    git(
-        &repo,
-        &[
-            "-c",
-            "user.name=t",
-            "-c",
-            "user.email=t@example.com",
-            "commit",
-            "-q",
-            "--allow-empty",
-            "-m",
-            "x",
-        ],
-    );
-    let linked = tree.root().join("linked");
-    git(
-        &repo,
-        &[
-            "worktree",
-            "add",
-            "-q",
-            "--detach",
-            linked.to_str().unwrap(),
-        ],
-    );
-    (repo, linked)
-}
-
 #[test]
 fn a_linked_worktree_looks_in_the_common_dirs_folder() {
     let tree = Tree::new("beat-linked");
@@ -331,67 +297,4 @@ fn the_beat_never_fails_the_tool_call() {
     quiet(&tree.beat(&event, &[("TASKS_BIN", loud.to_str().unwrap())]));
     // A project root that is not there: nothing to run.
     quiet(&tree.beat(&event, &[("SF_HOOKS_ROOT", gone.to_str().unwrap())]));
-}
-
-#[test]
-fn the_project_hooks_run_the_beat_before_bash_and_after_every_tool() {
-    let settings = settings();
-    let beats = |event: &str| -> Vec<(String, String)> {
-        hook_commands(&settings, event)
-            .into_iter()
-            .filter(|(_, c)| runs_hook(c, "tasks-beat"))
-            .collect()
-    };
-    let pre = beats("PreToolUse");
-    assert_eq!(
-        pre.iter().map(|(m, _)| m.as_str()).collect::<Vec<_>>(),
-        ["Bash"]
-    );
-    assert_eq!(
-        beats("PostToolUse")
-            .iter()
-            .map(|(m, _)| m.as_str())
-            .collect::<Vec<_>>(),
-        [""]
-    );
-    let command = pre[0].1.clone();
-
-    let run = |event: &Value, project: &Path| {
-        let mut shell = Command::new("sh");
-        shell.arg("-c").arg(&command);
-        for key in READS {
-            shell.env_remove(key);
-        }
-        std::fs::create_dir_all(project.join(".target/bin")).unwrap();
-        let pointer = project.join(".target/bin/symphony");
-        if !pointer.exists() && project.join(".target/bin/tasks").exists() {
-            std::os::unix::fs::symlink(BIN, &pointer).unwrap();
-        }
-        shell
-            .env("CLAUDE_PROJECT_DIR", project)
-            .env("SYMPHONY_HOOK_BIN", BIN)
-            .env(CLOCK, project.join("beat-clock"))
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
-        quiet(&spawn(shell, &event.to_string()));
-    };
-    let empty = TempDir::new("beat-no-hook");
-    run(&bash("ls", Some("agent-7"), Some("s-1")), empty.path()); // no hook file: still exit 0
-
-    // The launcher as the project holds it, in a tree whose last build of the board is the recorder.
-    let tree = Tree::new("beat-settings");
-    let hooks = tree.root().join(".claude/hooks");
-    std::fs::create_dir_all(&hooks).unwrap();
-    std::fs::write(hooks.join("sf-hook"), read(".claude/hooks/sf-hook")).unwrap();
-    executable(&hooks.join("sf-hook"));
-    tree.link_to(&tree.recorder());
-    let event = bash(
-        "TASKS_SESSION=h just tasks inbox",
-        Some("agent-7"),
-        Some("s-1"),
-    );
-    run(&event, tree.root());
-    assert_eq!(runs(&tree.link()), ["beat"]);
-    assert_eq!(handed(&tree.link()), event.to_string());
 }

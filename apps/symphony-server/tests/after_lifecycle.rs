@@ -2,7 +2,7 @@
 //! Builds are fixture commands; the recipe, sockets, records, recovery and shutdown are real.
 //! Every server has a scratch repository, an OS-assigned port and the owning test's lifetime pid.
 
-#[path = "after_lifecycle/fixture.rs"]
+#[path = "after_lifecycle/fixture_sdk.rs"]
 mod fixture;
 
 #[path = "common/bash_env.rs"]
@@ -17,7 +17,7 @@ mod projects_tests;
 #[path = "after_lifecycle/private_tests.rs"]
 mod private_tests;
 
-use fixture::{AGENTS, Repo, front, get, repository, until, write};
+use fixture::{Repo, front, get, repository, until, write};
 use std::fs;
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
@@ -26,60 +26,6 @@ use std::path::Path;
 use std::time::{Duration, Instant};
 use symphony_board::sys::{Command, Stdio};
 use symphony_server::home::{Home, ServerError};
-
-#[test]
-fn symphony_recipes_find_and_stop_a_live_predecessor_record_on_a_private_port() {
-    let repo = Repo::new("symphony-predecessor-record");
-    let legacy = repo.main.join(".git/sf-symphony");
-    fs::create_dir_all(&legacy).unwrap();
-    let mut command = repo.command(&repo.main);
-    command.args([
-        "serve",
-        "--home",
-        legacy.to_str().unwrap(),
-        "--root",
-        repo.main.to_str().unwrap(),
-        "--port",
-        "0",
-        "--host",
-        "127.0.0.1",
-    ]);
-    let mut predecessor = repo.run(command);
-    let actual = predecessor.ready();
-    assert_ne!(actual.port, 8765);
-    let recorded = symphony_server::home::Running {
-        port: actual.port,
-        pid: actual.pid,
-        root: actual.root.clone(),
-    };
-    write(
-        &legacy.join("server.json"),
-        &serde_json::to_string(&recorded).unwrap(),
-    );
-    // Port-zero ownership recovery reads the serving process's announced port from its home log.
-    write(&legacy.join("server.log"), &predecessor.output());
-    let mut find = repo.recipe(&repo.tree);
-    find.arg("--if-up");
-    let mut found = repo.run(find);
-    found.success();
-    assert!(
-        found
-            .output()
-            .contains(&format!("http://127.0.0.1:{}/", actual.port))
-    );
-    assert_eq!(front(actual.port).unwrap().pid, actual.pid);
-    assert!(
-        !repo.home.join("server.json").exists(),
-        "discovery must not start a second server"
-    );
-    let mut stop = repo.recipe(&repo.tree);
-    stop.arg("--stop");
-    let mut stopping = repo.run(stop);
-    predecessor.success();
-    stopping.success();
-    assert!(!legacy.join("server.json").exists());
-    assert!(front(actual.port).is_none());
-}
 
 #[test]
 fn bash_env_does_not_add_output_to_build_fixtures() {
@@ -252,115 +198,6 @@ fn concurrent_starts_from_main_and_a_worktree_publish_one_native_server() {
         );
     }
     assert!(TcpListener::bind(("127.0.0.1", repo.port())).is_err());
-}
-
-#[test]
-fn recipe_builds_main_for_shared_starts_and_reuses_the_installed_copy() {
-    // A first start in either checkout installs from main; an already answering copy needs no
-    // build. A branch never installs its own server into the shared scratch home.
-    for from_tree in [false, true] {
-        let repo = Repo::new("shared-recipe");
-        let dir = if from_tree { &repo.tree } else { &repo.main };
-        let start = repo.start(dir, true);
-        let running = repo.check_server();
-        assert!(start.output().contains(&format!("pid {}", running.pid)));
-        let builds = repo.build_events();
-        assert_eq!(builds.len(), 2, "{builds:?}");
-        assert!(
-            builds[0].starts_with(&format!("ui\t{}\t", repo.main.display())),
-            "{builds:?}"
-        );
-        assert!(
-            builds[1].starts_with(&format!("sf-slots\t{}\t", repo.main.display())),
-            "{builds:?}"
-        );
-        assert!(builds[1].contains("cargo install"));
-        assert!(repo.install.join("bin/symphony-server").is_file());
-        assert_eq!(
-            get(repo.port(), &repo.page(repo.port(), "/")).unwrap().1,
-            "<!doctype html><html>lifecycle client</html>\n"
-        );
-        repo.start(&repo.main, true);
-        repo.start(&repo.tree, true);
-        assert_eq!(repo.build_events(), builds, "healthy starts must not build");
-        assert_eq!(repo.check_server().pid, running.pid);
-        repo.stop();
-        assert!(!repo.home.join("server.json").exists());
-        if from_tree {
-            repo.start(&repo.tree, true);
-            assert_eq!(
-                repo.build_events(),
-                builds,
-                "worktree uses an installed copy even while stopped"
-            );
-        } else {
-            repo.start(&repo.main, true);
-            assert_eq!(
-                repo.build_events().len(),
-                4,
-                "main rebuilds a stopped installed copy"
-            );
-        }
-    }
-}
-
-#[test]
-fn recipe_private_starts_build_and_serve_the_current_checkout() {
-    let repo = Repo::new("private-recipe");
-    let external = repo.external("recipe-external");
-    let cases = [
-        (vec!["--port", "0"], &repo.tree),
-        (vec!["0"], &repo.tree),
-        (vec!["--root", external.to_str().unwrap()], &external),
-    ];
-    for (index, (args, root)) in cases.into_iter().enumerate() {
-        let mut command = repo.recipe(&repo.tree);
-        command.args(args).args(["--host", "127.0.0.1"]);
-        let mut private = repo.run(command);
-        let actual = private.ready();
-        assert_eq!(actual.root, root.to_str().unwrap());
-        assert!(repo.record().is_none());
-        let builds = repo.build_events();
-        assert_eq!(builds.len(), 2 * (index + 1), "{builds:?}");
-        assert!(
-            builds
-                .iter()
-                .all(|line| line.split('\t').nth(1) == repo.tree.to_str()),
-            "{builds:?}"
-        );
-        assert!(
-            builds
-                .last()
-                .unwrap()
-                .contains("cargo build --locked -p symphony-host --bin symphony-server")
-        );
-        assert_eq!(get(actual.port, "/").unwrap().0, 200);
-        private.signal(libc::SIGTERM);
-        private.success();
-        assert!(!root.join("artifacts/docs-app.port").exists());
-    }
-}
-
-#[test]
-fn if_up_never_starts_a_server_and_stop_never_requires_a_build() {
-    let repo = Repo::new("if-up");
-    let mut command = repo.command(&repo.tree);
-    command.arg("--if-up");
-    let mut absent = repo.run(command);
-    assert_eq!(absent.wait().code(), Some(3));
-    assert!(!repo.home.exists(), "the no-server path creates nothing");
-    repo.start(&repo.tree, true);
-    let running = repo.check_server();
-    let builds = repo.build_events();
-    let mut command = repo.recipe(&repo.main);
-    command.args(["--if-up", "--stop"]);
-    repo.run(command).success();
-    assert_eq!(repo.build_events(), builds);
-    assert!(!repo.home.join("server.json").exists());
-    assert!(!repo.main.join("artifacts/docs-app.port").exists());
-    until("stopped server pid", || {
-        (!symphony_server::sys::pid_alive(running.pid)).then_some(())
-    });
 }
 
 #[test]
@@ -841,128 +678,6 @@ fn a_server_of_its_own_is_refused_the_one_servers_port_on_every_address() {
         assert!(!repo.tree.join("artifacts/docs-app.port").exists());
     }
     assert!(repo.record().is_none());
-}
-
-#[test]
-fn removing_the_starter_worktree_preserves_the_server_and_its_environment_isolation() {
-    let repo = Repo::new("removed-starter");
-    fs::create_dir(repo.tree.join("starter-tmp")).unwrap();
-    let mut command = repo.recipe(&repo.tree);
-    command
-        .env("TASKS_SESSION", "starter-agent")
-        .env("CODEX_THREAD_ID", "starter-thread")
-        .env("CLAUDECODE", "1")
-        .env("TASKS_SERVER", "http://invalid.invalid:1")
-        .env("TASKS_DATABASE", "starter_private_board")
-        .env("ASKS_DB", repo.tree.join("starter-asks"))
-        .env("TMPDIR", repo.tree.join("starter-tmp"))
-        .env("SF_SYMPHONY_UI_DIST", "/wrong-client")
-        .env("LIFECYCLE_STARTER_ONLY", "must-not-arrive");
-    repo.run(command).success();
-    repo.remember();
-    let running = repo.check_server();
-    let env_path = repo.base.join(format!("env.{}", running.pid));
-    let environment = until("server environment observation", || {
-        fs::read_to_string(&env_path).ok()
-    });
-    let value = |name: &str| {
-        environment
-            .lines()
-            .find_map(|line| line.strip_prefix(&format!("{name}=")))
-    };
-    assert_eq!(value("parent"), Some(running.pid.to_string().as_str()));
-    assert_eq!(value("cwd"), repo.main.to_str());
-    assert_eq!(
-        value("TMPDIR"),
-        repo.main.join("artifacts/docs-tmp").to_str()
-    );
-    assert_eq!(value("HOME"), repo.base.to_str());
-    assert!(
-        value("PATH")
-            .unwrap()
-            .starts_with(repo.bin.to_str().unwrap())
-    );
-    assert_eq!(
-        value("SF_SYMPHONY_TEST_PID"),
-        Some(std::process::id().to_string().as_str())
-    );
-    for name in AGENTS.into_iter().chain([
-        "TASKS_SERVER",
-        "TASKS_DATABASE",
-        "ASKS_DB",
-        "SF_SYMPHONY_PORT",
-        "SF_SYMPHONY_UI_DIST",
-        "LIFECYCLE_STARTER_ONLY",
-    ]) {
-        assert!(value(name).is_none(), "starter variable {name} leaked");
-    }
-    repository(
-        &repo.main,
-        &["worktree", "remove", "--force", repo.tree.to_str().unwrap()],
-    );
-    assert!(!repo.tree.exists());
-    assert_eq!(get(repo.port(), "/").unwrap().0, 200);
-    assert_eq!(repo.check_server().pid, running.pid);
-    repo.start(&repo.main, true);
-    assert_eq!(repo.check_server().pid, running.pid);
-    assert!(!repo.base.join("opened").exists());
-}
-
-#[test]
-fn opener_decisions_cover_empty_agent_markers_piped_stdout_and_interactive_open() {
-    let repo = Repo::new("opener");
-    repo.start(&repo.main, true);
-    for recipe in [false, true] {
-        for name in AGENTS {
-            for value in ["", "agent-present"] {
-                let mut command = if recipe {
-                    repo.recipe(&repo.tree)
-                } else {
-                    repo.command(&repo.tree)
-                };
-                command.args(["--if-up", "--open"]).env(name, value);
-                let (mut child, _terminal) = repo.run_terminal(command);
-                child.success();
-                assert!(
-                    child
-                        .output()
-                        .contains("printing the URL without opening a browser"),
-                    "{name}={value:?}: {}",
-                    child.output()
-                );
-                assert!(
-                    !repo.base.join("opened").exists(),
-                    "{name}={value:?} opened a browser"
-                );
-            }
-        }
-        let mut command = if recipe {
-            repo.recipe(&repo.tree)
-        } else {
-            repo.command(&repo.tree)
-        };
-        command.args(["--if-up", "--open"]);
-        let mut piped = repo.run(command);
-        piped.success();
-        assert!(
-            piped
-                .output()
-                .contains("printing the URL without opening a browser")
-        );
-        assert!(!repo.base.join("opened").exists());
-        let mut command = if recipe {
-            repo.recipe(&repo.tree)
-        } else {
-            repo.command(&repo.tree)
-        };
-        command.args(["--if-up", "--open"]);
-        let (mut interactive, _terminal) = repo.run_terminal(command);
-        interactive.success();
-        let opened = fs::read_to_string(repo.base.join("opened")).unwrap();
-        let page = repo.page(repo.port(), "/@feature~lifecycle/");
-        assert_eq!(opened, format!("http://127.0.0.1:{}{page}\n", repo.port()));
-        fs::remove_file(repo.base.join("opened")).unwrap();
-    }
 }
 
 #[test]

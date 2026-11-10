@@ -1,6 +1,6 @@
-//! Owned processes, scratch repositories and build/opener fixtures for the lifecycle boundary.
-//! Every child starts through the board's forkless `symphony_board::sys::Command`: a child std forks
-//! holds every descriptor this process has until its exec, a sibling case's pipes among them.
+// Owned processes, scratch repositories and build/opener fixtures for the lifecycle boundary.
+// Every child starts through the board's forkless `symphony_board::sys::Command`: a child std forks
+// holds every descriptor this process has until its exec, a sibling case's pipes among them.
 
 use std::ffi::OsString;
 use std::fs::{self, File};
@@ -24,33 +24,24 @@ mod scratch;
 pub mod machine_copy;
 
 /// A machine copy's first run starts under the spawn lock the board's `sys` takes for every spawn.
-fn run_fixture(command: &mut std::process::Command) -> std::io::Result<std::process::ExitStatus> {
+fn run_fixture(command: &mut std::process::Command) -> std::io::Result<ExitStatus> {
     symphony_board::sys::Spawning::status_locked(command)
 }
 
 #[path = "stand_ins.rs"]
 mod stand_ins;
-use stand_ins::{STAND_IN_LIFETIME, StandIns};
+use stand_ins::StandIns;
 
 #[path = "owner.rs"]
 mod owner;
 use owner::stage as owner_stage;
 
-#[cfg(test)]
-#[path = "scratch_tests.rs"]
-mod scratch_tests;
-
-#[cfg(test)]
-#[path = "descendant_cleanup_tests.rs"]
-mod descendant_cleanup_tests;
-
-#[cfg(test)]
-#[path = "unsuccessful_child_tests.rs"]
-mod unsuccessful_child_tests;
+#[cfg(target_os = "macos")]
+#[path = "forkless.rs"]
+mod forkless;
 
 pub const APP: &str = env!("CARGO_BIN_EXE_symphony-server");
 pub const PATIENCE: Duration = Duration::from_secs(30);
-pub const AGENTS: [&str; 3] = ["TASKS_SESSION", "CODEX_THREAD_ID", "CLAUDECODE"];
 
 const SCRATCH_PREFIX: &str = "after-lifecycle-";
 
@@ -121,7 +112,7 @@ impl Scratch {
     fn new(name: &str) -> Self {
         static REAP: Once = Once::new();
         static NEXT: AtomicUsize = AtomicUsize::new(0);
-        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../artifacts/after_lifecycle");
+        let root = Path::new(FIXTURE_ROOT).join("../../../artifacts/after_lifecycle");
         fs::create_dir_all(&root).unwrap();
         let root = root.canonicalize().unwrap();
         REAP.call_once(|| scratch::reap_dead_scratch(&root, SCRATCH_PREFIX));
@@ -177,14 +168,14 @@ fn command_fixture(path: &Path, name: &str) {
 
 /// The tracked script a fixture command's machine-wide copy is made from.
 pub fn script_source(name: &str) -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
+    Path::new(FIXTURE_ROOT)
         .join("tests/after_lifecycle")
         .join(name)
 }
 
 pub fn repository(root: &Path, args: &[&str]) {
     let done = symphony_board::sys::output(
-        symphony_board::sys::Command::new("git")
+        Command::new("git")
             .args([
                 "-c",
                 "user.name=Lifecycle fixture",
@@ -736,7 +727,7 @@ pub struct Repo {
 }
 
 impl Repo {
-    pub fn new(name: &str) -> Self {
+    fn with_recipe(name: &str, recipes: Option<&str>) -> Self {
         let scratch = Scratch::new(name);
         // Before the first command: preparation runs the ps stand-in too.
         let stand_ins = StandIns::open(&scratch.path);
@@ -755,14 +746,17 @@ impl Repo {
 
         // Copy the actual recipe verbatim. Build fixtures stand in only for Cargo and bundling;
         // checkout selection, --if-up, argument filtering and exec still run in production bash.
-        let recipes = include_str!("../../../../../justfile");
-        let declaration = recipes.find("\nsymphony *ARGS:").unwrap();
-        let start = recipes[..declaration].rfind("\n\n").unwrap();
-        // Stop before the next production recipe's commentary; _symphony-build stays verbatim too.
-        let docs = recipes[start..]
-            .split("# The review board:")
-            .next()
-            .unwrap();
+        let docs = recipes
+            .map(|recipes| {
+                let declaration = recipes.find("\nsymphony *ARGS:").unwrap();
+                let start = recipes[..declaration].rfind("\n\n").unwrap();
+                // Preserve the supplied real recipe and its _symphony-build body verbatim.
+                recipes[start..]
+                    .split("# The review board:")
+                    .next()
+                    .unwrap()
+            })
+            .unwrap_or("");
         write(
             &main.join("justfile"),
             &format!(
@@ -1140,11 +1134,3 @@ pub fn terminal() -> (File, OwnedFd) {
     let slave = unsafe { OwnedFd::from_raw_fd(slave) };
     (master, slave)
 }
-
-#[cfg(test)]
-#[path = "fixture_tests.rs"]
-mod tests;
-
-#[cfg(test)]
-#[path = "fixture_children_tests.rs"]
-mod children_tests;

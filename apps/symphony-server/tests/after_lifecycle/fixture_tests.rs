@@ -3,6 +3,15 @@
 use super::*;
 
 #[test]
+fn generic_fixture_supplies_only_its_owned_expensive_build_standin() {
+    let repo = Repo::new("generic-build-input");
+    assert_eq!(
+        fs::read_to_string(repo.main.join("justfile")).unwrap(),
+        "\nsymphony-ui-dist OUT=\"build/symphony-ui\":\n    @tools/fixture-build ui \"{{OUT}}\"\n"
+    );
+}
+
+#[test]
 fn server_log_tail_bounds_a_large_log_and_keeps_its_latest_progress() {
     let scratch = Scratch::new("large-server-log-tail");
     let path = scratch.path.join("server.log");
@@ -113,44 +122,8 @@ fn a_traced_start_names_its_detached_server_waits() {
 /// readiness pipe or lifetime endpoint among them, and no wait can shorten that.
 #[cfg(target_os = "macos")]
 #[test]
-fn no_fixture_child_forks() {
-    use std::cell::Cell;
-    thread_local! {
-        /// The forks this thread made, counted by the handler `fork` runs before it forks.
-        static FORKS: Cell<u32> = const { Cell::new(0) };
-    }
-    extern "C" fn prepare() {
-        FORKS.set(FORKS.get() + 1);
-    }
-    static HANDLER: Once = Once::new();
-    HANDLER.call_once(|| {
-        // SAFETY: the handler only bumps the forking thread's count; it is registered once.
-        let registered = unsafe { libc::pthread_atfork(Some(prepare), None, None) };
-        assert_eq!(registered, 0);
-    });
-    {
-        // The repository's setup, a recipe's start (a bare `just` in a cleared environment),
-        // a piped child, a terminal's, and the drop's stop and descendant waits.
-        let repo = Repo::new("forkless");
-        repo.start(&repo.tree, true);
-        let mut command = Command::new("/bin/cat");
-        command.stdin(Stdio::piped());
-        let mut piped = repo.run(command);
-        piped
-            .child
-            .stdin
-            .take()
-            .unwrap()
-            .write_all(b"echo")
-            .unwrap();
-        piped.success();
-        assert_eq!(piped.output(), "echo");
-        let mut command = Command::new("/bin/sh");
-        command.args(["-c", "test -t 1"]);
-        let (mut terminal, _master) = repo.run_terminal(command);
-        terminal.success();
-    }
-    assert_eq!(FORKS.get(), 0, "a fixture child forked");
+fn native_fixture_children_use_the_owned_spawn_boundary() {
+    forkless::check(false);
 }
 
 #[test]
@@ -175,73 +148,6 @@ fn the_recipe_observer_uses_the_interpreter_from_the_original_path() {
         .args(["-c", "true"]);
     let mut observer = repo.run(command);
     assert_eq!(observer.wait().code(), Some(1), "{}", observer.output());
-}
-
-#[test]
-fn a_recipe_timeout_reports_runner_bash_and_the_pending_build_command() {
-    use std::os::unix::ffi::OsStrExt;
-
-    struct ReleaseLog(PathBuf);
-    impl Drop for ReleaseLog {
-        fn drop(&mut self) {
-            // An earlier assertion may unwind before the normal release. Unblock any
-            // opening writer before Repo waits on descendants, including on that path.
-            let _ = fs::OpenOptions::new().read(true).write(true).open(&self.0);
-        }
-    }
-
-    let repo = Repo::new("recipe-stage-timeout");
-    // The build's real log is a FIFO with no reader yet. Its opening writer waits here,
-    // giving the report a stable pending recipe stage without spending the wall deadline.
-    let name = std::ffi::CString::new(repo.builds.as_os_str().as_bytes()).unwrap();
-    // SAFETY: a terminated path in this test's owned scratch folder.
-    assert_eq!(unsafe { libc::mkfifo(name.as_ptr(), 0o600) }, 0);
-    let _release_on_failure = ReleaseLog(repo.builds.clone());
-    let mut starter = repo.run(repo.recipe(&repo.tree));
-    until("recipe's pending UI build", || {
-        let said = starter.output();
-        (said.contains("tools/fixture-build ui ")
-            && !said.contains("---> symphony-ui-dist completed"))
-        .then_some(())
-    });
-    starter.wait_elapsed = Box::new(|_| PATIENCE);
-    let failure = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| starter.wait()));
-    // Release the real writer, then let the same start finish and own its server normally.
-    let _release = fs::OpenOptions::new()
-        .read(true)
-        .write(true)
-        .open(&repo.builds)
-        .unwrap();
-    starter.wait_elapsed = Box::new(Instant::elapsed);
-    starter.success();
-    repo.remember();
-    repo.check_server();
-
-    let failure = failure.expect_err("the pending build must fail the exit wait");
-    let message = failure.downcast_ref::<String>().unwrap();
-    assert!(message.contains(&starter.launch), "{message}");
-    assert!(
-        message.contains("script executable=no"),
-        "bash must read the recipe without executing a fresh temporary image: {message}"
-    );
-    for stage in [
-        "===> running recipe `symphony`...",
-        "· symphony recipe bash entered at ",
-        "+ symphony recipe ",
-        "_symphony-build",
-        "===> running recipe `symphony-ui-dist`...",
-        "tools/fixture-build ui ",
-    ] {
-        assert!(
-            message.contains(stage),
-            "missing recipe stage {stage}: {message}"
-        );
-    }
-    assert!(
-        !message.contains("---> symphony-ui-dist completed"),
-        "{message}"
-    );
-    assert!(!message.contains("start command entered at"), "{message}");
 }
 
 #[test]

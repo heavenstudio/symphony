@@ -1,176 +1,10 @@
-//! `symphony hook tasks-beat`: a subagent's tool calls are its heartbeat on the task board. The hook hands an
-//! event with a key, whole, to the `beat` of the board's binary (`symphony/crates/tasks/src/cli/beat.rs`, tested
-//! with the board), a build it never makes, and skips a full session's call whose key the bound keys'
-//! folder says is not bound. The binary here is a recorder that writes down how it was run.
+//! Generic heartbeat binding, checkout lookup and recorder observations.
 
-use std::os::unix::fs::PermissionsExt;
-use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
-use std::time::{Duration, SystemTime};
-
+use crate::beat_fixture::*;
 use serde_json::{Value, json};
-
-use crate::common::{BIN, Done, TempDir, hook_commands, read, runs_hook, settings, spawn};
-use keys::repo_with_worktree;
-
-/// What the hook reads from its environment: each run starts with none of it but what the test sets,
-/// since this process may be an agent's.
-const READS: [&str; 9] = [
-    "TASKS_BIN",
-    "TASKS_KEYS",
-    "TASKS_SERVER",
-    "SF_HOOKS_ROOT",
-    "SYMPHONY_HOOK_ROOT",
-    "SYMPHONY_HOOK_BIN",
-    "CLAUDE_PROJECT_DIR",
-    "SF_GIT_COMMON_DIR",
-    CLOCK,
-];
-
-/// The beat's clock: every run here names a file in its tree that no case writes, so the beat's limit
-/// never passes and each beat ends when its binary does, however long a loaded machine takes to start
-/// it. A case's recorder is then never stopped before it records, and the case decides from what it
-/// recorded.
-const CLOCK: &str = "SF_HOOKS_BEAT_CLOCK";
-
-/// A hook event for one Bash call, as Claude Code sends it on stdin.
-fn bash(command: &str, agent: Option<&str>, session: Option<&str>) -> Value {
-    let mut data = json!({"hook_event_name": "PreToolUse", "tool_name": "Bash",
-                          "tool_input": {"command": command}, "cwd": "/somewhere"});
-    if let Some(session) = session {
-        data["session_id"] = Value::from(session);
-    }
-    if let Some(agent) = agent {
-        data["agent_id"] = Value::from(agent);
-    }
-    data
-}
-
-/// A full session's Read call, from wherever the hook runs.
-fn reading(session: &str) -> Value {
-    json!({"hook_event_name": "PostToolUse", "tool_name": "Read", "session_id": session})
-}
-
-fn executable(path: &Path) {
-    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
-}
-
-/// The runs of the recorder by the name `name`: its arguments, one line a run.
-fn runs(name: &Path) -> Vec<String> {
-    let mut log = name.as_os_str().to_owned();
-    log.push(".argv");
-    std::fs::read_to_string(log)
-        .unwrap_or_default()
-        .lines()
-        .map(str::to_string)
-        .collect()
-}
-
-/// What the recorder by the name `name` read on its stdin, every run's after the last.
-fn handed(name: &Path) -> String {
-    let mut log = name.as_os_str().to_owned();
-    log.push(".stdin");
-    std::fs::read_to_string(log).unwrap_or_default()
-}
-
-/// The names in `folder`, sorted; none when it is not there.
-fn names(folder: &Path) -> Vec<String> {
-    let mut found: Vec<String> = std::fs::read_dir(folder)
-        .into_iter()
-        .flatten()
-        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
-        .collect();
-    found.sort();
-    found
-}
-
-fn git(cwd: &Path, args: &[&str]) {
-    let done = Command::new("git")
-        .args(args)
-        .current_dir(cwd)
-        .output()
-        .unwrap();
-    assert!(
-        done.status.success(),
-        "git {args:?}: {}",
-        String::from_utf8_lossy(&done.stderr)
-    );
-}
-
-/// A tree of the project's, whose hook finds the board's binary at `.target/bin/tasks`, and a recorder
-/// to stand in for that binary: it writes down each run beside the name it was run by.
-struct Tree {
-    dir: TempDir,
-}
-
-/// A recorder at `path`: each run appends its arguments to `NAME.argv` and its stdin to `NAME.stdin`,
-/// NAME being the name it was run by.
-const RECORDER: &str = "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$0.argv\"\ncat >> \"$0.stdin\"\n";
-
-fn recorder_at(path: &Path) {
-    crate::fixture_script::write(path, RECORDER, false);
-}
-
-impl Tree {
-    fn new(tag: &str) -> Self {
-        let dir = TempDir::new(tag);
-        recorder_at(&dir.path().join("tasks-recorder"));
-        Self { dir }
-    }
-
-    fn root(&self) -> &Path {
-        self.dir.path()
-    }
-
-    fn recorder(&self) -> PathBuf {
-        self.root().join("tasks-recorder")
-    }
-
-    fn link(&self) -> PathBuf {
-        self.root().join(".target/bin/tasks")
-    }
-
-    /// The file this tree's beats read as their clock ([`CLOCK`]), never written.
-    fn clock(&self) -> PathBuf {
-        self.root().join("beat-clock")
-    }
-
-    /// `.target/bin/tasks` linked to `to`, as `tools/rs-bin.sh` links the build a tree last ran.
-    fn link_to(&self, to: &Path) {
-        std::fs::create_dir_all(self.link().parent().unwrap()).unwrap();
-        std::os::unix::fs::symlink(to, self.link()).unwrap();
-    }
-
-    /// The hook on `event`, run from this tree, with `env` set and nothing else it reads.
-    fn beat(&self, event: &Value, env: &[(&str, &str)]) -> Done {
-        self.beat_raw(&event.to_string(), env)
-    }
-
-    fn beat_raw(&self, raw: &str, env: &[(&str, &str)]) -> Done {
-        let mut command = Command::new(BIN);
-        command
-            .args(["hook", "tasks-beat"])
-            .current_dir(self.root())
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
-        for key in READS {
-            command.env_remove(key);
-        }
-        command.env(CLOCK, self.clock());
-        for (key, value) in env {
-            command.env(key, value);
-        }
-        spawn(command, raw)
-    }
-}
-
-fn quiet(done: &Done) {
-    assert_eq!(
-        (done.code, done.stdout.as_str(), done.stderr.as_str()),
-        (0, "", "")
-    );
-}
+use std::path::{Path, PathBuf};
+use std::process::Command;
+use std::time::{Duration, SystemTime};
 
 #[test]
 fn an_event_with_no_key_never_runs_the_binary() {
@@ -251,16 +85,6 @@ fn a_tree_that_ran_no_build_beats_on_none_and_builds_none() {
     );
 }
 
-/// `tools/tasks.sh`'s record, in the common dir `common`, that the live board's build of main's tree
-/// `tree` is `build`.
-fn record_live(common: &Path, tree: &str, build: &Path) -> PathBuf {
-    let folder = common.join("sf-cargo/tasks-main");
-    std::fs::create_dir_all(&folder).unwrap();
-    let record = folder.join(tree);
-    std::fs::write(&record, format!("{}\n", build.display())).unwrap();
-    record
-}
-
 /// `path` last written `hours` from now: before it when negative.
 fn written_at(path: &Path, hours: i32) {
     let now = SystemTime::now();
@@ -272,49 +96,6 @@ fn written_at(path: &Path, hours: i32) {
         .unwrap()
         .set_modified(at)
         .unwrap();
-}
-
-#[test]
-fn a_worktree_with_no_link_beats_on_mains_live_build_and_links_it() {
-    // teal-merlin-445: a session whose project is a worktree runs that worktree's launcher, and its board
-    // commands (`just --justfile MAIN/justfile tasks …`) link main's `.target/bin/tasks`, never the
-    // worktree's. Its beats run the live build `tools/tasks.sh` recorded, and link it for the next one.
-    let tree = Tree::new("beat-worktree-live");
-    let (repo, linked) = repo_with_worktree(&tree);
-    record_live(&repo.join(".git"), "f00d", &tree.recorder());
-    let launcher = linked.join(".claude/hooks/sf-hook");
-    std::fs::create_dir_all(launcher.parent().unwrap()).unwrap();
-    std::fs::write(&launcher, read(".claude/hooks/sf-hook")).unwrap();
-    executable(&launcher);
-    std::fs::create_dir_all(linked.join(".target/bin")).unwrap();
-    std::os::unix::fs::symlink(BIN, linked.join(".target/bin/symphony")).unwrap();
-    let mut event = bash("ls", Some("agent-1"), Some("s-1"));
-    event["cwd"] = Value::from(linked.to_str().unwrap());
-    let beat = || {
-        let mut command = Command::new(&launcher);
-        command.arg("tasks-beat").current_dir(&linked);
-        for key in READS {
-            command.env_remove(key);
-        }
-        command
-            .env_remove("SF_HOOKS_BIN")
-            .env("CLAUDE_PROJECT_DIR", &linked)
-            .env(CLOCK, tree.clock())
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
-        quiet(&spawn(command, &event.to_string()));
-    };
-    beat();
-    assert_eq!(runs(&tree.recorder()), ["beat"]); // the recorded build, by its own name
-    assert_eq!(handed(&tree.recorder()), event.to_string());
-    let link = linked.join(".target/bin/tasks");
-    assert_eq!(std::fs::read_link(&link).unwrap(), tree.recorder());
-    // The next beat runs the link, and looks for no record.
-    std::fs::remove_dir_all(repo.join(".git/sf-cargo")).unwrap();
-    beat();
-    assert_eq!(runs(&link), ["beat"]);
-    assert_eq!(runs(&tree.recorder()), ["beat"]);
 }
 
 #[test]
