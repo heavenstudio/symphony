@@ -28,6 +28,7 @@ pub mod components;
 pub mod doc_components;
 pub mod docs;
 pub(crate) mod entry_events;
+pub(crate) mod machine_work;
 pub mod media;
 pub mod platform;
 pub mod project;

@@ -10,6 +10,7 @@ pub enum Py {
     Null,
     Bool(bool),
     Int(i64),
+    UInt(u64),
     Float(f64),
     Str(String),
     List(Vec<Py>),
@@ -73,6 +74,7 @@ fn write(value: &Py, depth: Option<usize>, out: &mut String) {
         Py::Null => out.push_str("null"),
         Py::Bool(yes) => out.push_str(if *yes { "true" } else { "false" }),
         Py::Int(n) => out.push_str(&n.to_string()),
+        Py::UInt(n) => out.push_str(&n.to_string()),
         Py::Float(x) => out.push_str(&float(*x)),
         Py::Str(text) => string(text, out),
         Py::List(items) if items.is_empty() => out.push_str("[]"),
@@ -291,5 +293,6 @@ mod tests {
         assert_eq!(dumps(&Py::str("é")), "\"\\u00e9\"");
         assert_eq!(dumps(&Py::Bool(false)), "false");
         assert_eq!(dumps(&Py::Int(-3)), "-3");
+        assert_eq!(dumps(&Py::UInt(u64::MAX)), "18446744073709551615");
     }
 }
