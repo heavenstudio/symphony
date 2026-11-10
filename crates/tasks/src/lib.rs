@@ -58,9 +58,9 @@ pub mod sys;
 pub use health::Health;
 pub use schema::{Access, Schema};
 pub use store::{
-    BEFORE_WORK, Beat, Board, Callback, EmbeddingStats, Error, HandOff, KINDS, LANDS_FROM, Landed,
-    Message, Moved, NewLaunch, NewSession, NewTask, Opening, PIPELINE, PULLABLE, Pick, Presence,
-    ROLES, Role, SLOT_READS, STATUSES, SearchHit, Session, Store, Task, VectorHit,
+    BEFORE_WORK, Beat, Binding, Board, Callback, EmbeddingStats, Error, HandOff, KINDS, LANDS_FROM,
+    Landed, Message, Moved, NewLaunch, NewSession, NewTask, Opening, PIPELINE, PULLABLE, Pick,
+    Presence, ROLES, Role, SLOT_READS, STATUSES, SearchHit, Session, Store, Task, VectorHit,
     VectorSearchProfile, can_transition,
 };
 

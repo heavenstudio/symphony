@@ -5,9 +5,12 @@ use serde_json::{Value, json};
 use std::fs::{self, File};
 use std::path::{Path, PathBuf};
 use symphony_board::cli::Env;
-use symphony_board::cli::agents::Pane;
+use symphony_board::cli::agents::{Began, Pane};
 use symphony_board::cli::probes::{branch_of, hc_terminals, landed, machine, slot_runs, split};
-use symphony_board::sys::Command;
+use symphony_board::git::{checkout, linked};
+use symphony_board::sys::{Command, boot_clock};
+
+mod completeness;
 
 /// A run's fields, in `Run`'s order, for comparing several at once.
 type RunFields<'a> = (
@@ -462,4 +465,99 @@ fn the_machines_probes_outside_a_repository_read_no_slots_and_ask_git_once_a_fol
     git(&dir, &["checkout", "-q", "-b", "tools/z"]);
     assert_eq!((probes.branch_of)(folder).unwrap(), "tools/y"); // asked once a view
     fs::remove_dir_all(nowhere).unwrap();
+}
+
+#[test]
+fn a_folders_checkout_is_its_top_folder_and_branch_read_from_the_git_files() {
+    let main = repo("checkout").canonicalize().unwrap();
+    git(&main, &["checkout", "-q", "-b", "tools/x"]);
+    fs::create_dir_all(main.join("deep/er")).unwrap();
+    assert_eq!(
+        checkout(&main.join("deep/er")),
+        Some((main.clone(), "tools/x".to_string()))
+    );
+    assert!(!linked(&main), "the main checkout's .git is the common dir");
+    let tree = main.with_file_name(format!("probes-{}-checkout-wt", std::process::id()));
+    let _ = fs::remove_dir_all(&tree);
+    let at = tree.to_str().unwrap();
+    git(&main, &["worktree", "add", "-q", "-b", "tools/y", at]);
+    assert_eq!(checkout(&tree), Some((tree.clone(), "tools/y".to_string())));
+    assert!(linked(&tree));
+    git(&tree, &["checkout", "-q", "--detach"]);
+    assert_eq!(checkout(&tree), Some((tree.clone(), String::new())));
+    let nowhere = outside("no-checkout");
+    assert_eq!(checkout(&nowhere), None);
+    assert!(!linked(&nowhere));
+    assert_eq!(checkout(&nowhere.join("not-there")), None);
+    fs::remove_dir_all(nowhere).unwrap();
+    fs::remove_dir_all(tree).unwrap();
+}
+
+/// The time on this machine's clock, which a process's start is read against.
+fn wall_clock() -> f64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs_f64()
+}
+
+/// A process start and the readings bounding its spawn, all in the kernel's clock domain.
+#[derive(Debug)]
+struct SpawnSpan {
+    from: f64,
+    started: f64,
+    to: f64,
+}
+
+#[test]
+fn the_machine_lists_each_process_with_its_working_directory_and_when_it_started() {
+    let folder = scratch("working").canonicalize().unwrap();
+    let before = (wall_clock(), boot_clock());
+    let mut cat = Command::new("cat");
+    cat.current_dir(&folder)
+        .stdin(symphony_board::sys::Stdio::piped())
+        .stdout(symphony_board::sys::Stdio::null());
+    let mut working = cat.spawn().unwrap();
+    let after = (wall_clock(), boot_clock());
+    let env = hc_env("/nonexistent/hc", &[]);
+    let listed = (machine(&env).processes)();
+    let _ = working.kill();
+    let _ = working.wait();
+    let listed = listed.expect("lsof lists the working directories");
+    let there: Vec<_> = listed.listed.iter().filter(|p| p.cwd == folder).collect();
+    assert_eq!(there.len(), 1, "{} in {listed:?}", folder.display());
+    // Stamped by the wall clock to the microsecond on macOS; on Linux in clock ticks since boot, in
+    // this boot, the clock `/proc/uptime` reads to the hundredth.
+    let started = there[0].started.as_ref().expect("its start is read");
+    let span = match (started, &before.1, &after.1) {
+        (Began::At(at), None, None) => SpawnSpan {
+            from: before.0,
+            started: *at,
+            to: after.0,
+        },
+        (Began::AfterBoot(at), Some(from), Some(to))
+            if at.boot == from.boot && at.boot == to.boot =>
+        {
+            SpawnSpan {
+                from: from.at,
+                started: at.at,
+                to: to.at,
+            }
+        }
+        _ => panic!("{started:?} on a machine whose clock since boot reads {before:?}"),
+    };
+    assert!(
+        (span.from - 0.01..=span.to + 0.01).contains(&span.started),
+        "{span:?}; listed={listed:?}; before={before:?}; after={after:?}"
+    );
+    // This process, still running, is listed too: its working directory shared with the others.
+    let here = std::env::current_dir().unwrap().canonicalize().unwrap();
+    assert!(
+        listed
+            .listed
+            .iter()
+            .any(|p| p.cwd == here && p.started.is_some()),
+        "{} not among {listed:?}",
+        here.display()
+    );
 }

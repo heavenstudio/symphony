@@ -325,7 +325,7 @@ fn release(caller: &TcpStream, shared: &Arc<Shared>) -> mpsc::Sender<Option<Vec<
 
 /// `request` sent to the server on the connection `upstream` keeps, made if there is none: its
 /// answer, or none when the server closed the connection first.
-fn forward(
+pub(super) fn forward(
     upstream: &mut Option<BufReader<TcpStream>>,
     server: &str,
     request: &[u8],
@@ -361,7 +361,7 @@ fn head(message: &[u8]) -> String {
 /// the end of the connection, or for a message that gives no length (the client's requests and the
 /// server's answers all do), which ends the connection rather than a relay thread, whose end
 /// would leave [`Relay::requests`] waiting.
-fn message(from: &mut impl BufRead) -> Option<Vec<u8>> {
+pub(super) fn message(from: &mut impl BufRead) -> Option<Vec<u8>> {
     let mut raw = Vec::new();
     loop {
         let start = raw.len();
@@ -385,7 +385,7 @@ fn message(from: &mut impl BufRead) -> Option<Vec<u8>> {
 }
 
 /// The statements of `request`, one whole RPC request.
-fn statements(request: &[u8]) -> String {
+pub(super) fn statements(request: &[u8]) -> String {
     let body = request
         .windows(4)
         .position(|w| w == b"\r\n\r\n")

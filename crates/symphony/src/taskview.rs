@@ -429,10 +429,12 @@ pub fn agents_in(
 ) -> Result<symphony_api::Agents, String> {
     let mut env = crate::children::board_env();
     env.cwd = root.to_path_buf();
+    // The server views its agents every tick: the process listing is kept by its store a while.
     let probes = match common {
         Some(common) => symphony_board::cli::probes::machine_in(&env, common),
         None => symphony_board::cli::probes::machine(&env),
-    };
+    }
+    .kept_by(store);
     agents_probed(store, &probes, Some(board))
 }
 

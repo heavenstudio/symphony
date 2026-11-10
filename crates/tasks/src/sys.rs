@@ -25,6 +25,11 @@ pub use process_cwd::spawn::{
     spawn_output, spawn_piped, spawning, wait_output,
 };
 
+mod start;
+#[cfg(target_os = "macos")]
+pub(crate) use start::bsd_start;
+pub use start::{Boottime, Start, boot_clock, process_starts};
+
 unsafe extern "C" {
     fn gethostname(name: *mut c_char, len: usize) -> c_int;
     fn kill(pid: c_int, sig: c_int) -> c_int;

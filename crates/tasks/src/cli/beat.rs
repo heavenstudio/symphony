@@ -6,6 +6,7 @@
 use super::Env;
 use crate::git::common_dir;
 use crate::server::FOLDER;
+use crate::sys::Boottime;
 use crate::{Beat, Error, Store};
 use serde_json::{Map, Value};
 use std::path::{Path, PathBuf};
@@ -202,11 +203,16 @@ fn truthy(value: Option<&Value>) -> bool {
 /// subagent), else its `session_id` (a full session with no monitor, as one started in an hc terminal);
 /// `bind_agent` never binds a handle with a live monitor, which beats on its own. A foreground Bash
 /// call marks the session busy for as long as it may run, so a long `verify-full` reads live; its
-/// PostToolUse clears that call's mark. The key, and whether a full session is bound by it now (None for a
-/// subagent's, or an event with no key).
+/// PostToolUse clears that call's mark. Each tool call of a bound subagent also records, on its
+/// binding, the checkout the call runs in (the event's `cwd`), and when it came there, by the board's
+/// clock and by `boot`, the clock since boot as the hook read it: where the agents view looks for
+/// what it left running once it goes quiet, and which of what runs there began while it was there.
+/// The key, and whether a full session is bound by it now (None for a subagent's, or an event with
+/// no key).
 pub fn beat_event(
     store: &Store,
     event: &Map<String, Value>,
+    boot: Option<&Boottime>,
 ) -> Result<Option<(String, bool)>, Error> {
     let by_agent = truthy(event.get("agent_id"));
     let key = if by_agent {
@@ -218,13 +224,31 @@ pub fn beat_event(
         return Ok(None);
     };
     let full = |bound: Option<String>| (!by_agent).then(|| (agent.to_string(), bound.is_some()));
+    // A subagent's checkout is where its own calls run, which its session (registered where its
+    // orchestrator ran `register`) does not say: each of its calls says it again, so one that moved
+    // is looked for where it went.
+    let checkout = by_agent
+        .then(|| event.get("cwd").and_then(Value::as_str))
+        .flatten()
+        .filter(|cwd| !cwd.is_empty())
+        .and_then(|cwd| crate::git::checkout(Path::new(cwd)));
+    let place = checkout
+        .as_ref()
+        .map(|(top, branch)| (top.to_str().unwrap_or_default(), branch.as_str()))
+        .filter(|(top, _)| !top.is_empty());
+    let boot = boot.filter(|_| by_agent);
     let empty = Map::new();
     let tool = event
         .get("tool_input")
         .and_then(Value::as_object)
         .unwrap_or(&empty);
     if event.get("tool_name").and_then(Value::as_str) != Some("Bash") {
-        return Ok(full(store.agent_beat(agent, &Beat::default())?));
+        return Ok(full(store.agent_beat_in(
+            agent,
+            &Beat::default(),
+            place,
+            boot,
+        )?));
     }
     let command = tool.get("command").and_then(Value::as_str).unwrap_or("");
     if let Some(named) = named_handle(command) {
@@ -254,7 +278,7 @@ pub fn beat_event(
             ended: false,
         }
     };
-    Ok(full(store.agent_beat(agent, &beat)?))
+    Ok(full(store.agent_beat_in(agent, &beat, place, boot)?))
 }
 
 /// The bound keys' folder (the heartbeat hook's `keys_folder`): `TASKS_KEYS`; for a board
@@ -331,7 +355,8 @@ pub fn run(input: &mut dyn std::io::Read, env: &Env) -> i32 {
             ..reached
         };
         let store = super::open_unchecked(reached, &super::Clock::of(env).ok()?);
-        let (key, bound) = beat_event(&store, event).ok()??;
+        let boot = super::boot_clock(env);
+        let (key, bound) = beat_event(&store, event, boot.as_ref()).ok()??;
         mark(&keys_folder(env, &cwd)?, &key, bound);
         Some(())
     })();
