@@ -10,27 +10,38 @@ use super::hc::{self, Hc, Object, text_of};
 use super::{CONFIRM_LOOKS, LaunchError, PROMPT_WAIT, READY_STATES};
 use serde_json::Value;
 
+/// A resumed turn can outlast startup confirmation; it has not received the new message yet.
+#[derive(PartialEq, Eq)]
+pub(super) enum Message {
+    Started,
+    Working,
+}
+
 /// Give the agent in `terminal` (`claude` or `codex`) its first message, `text`, once it is
 /// [`ready`], and take hc's word that it started working on it: `hc send` answering `started`. A
 /// send hc refuses (a program blocked on a person), or whose turn did not start, or that hc cannot
 /// tell of (a program that reports no status), fails naming the terminal. `look` runs before each
-/// look at the terminal.
+/// look at the terminal. Only a resumed Codex turn still working at the deadline returns
+/// [`Message::Working`], unsent, so restore can keep it and queue its next message natively.
 pub(super) fn first_message(
     hc: &dyn Hc,
     terminal: &str,
     agent: &str,
     text: &str,
+    resumed_codex: bool,
     look: &mut dyn FnMut(),
     sleep: &dyn Fn(f64),
-) -> Result<(), LaunchError> {
-    ready(hc, terminal, agent, look, sleep)?;
+) -> Result<Message, LaunchError> {
+    if !ready(hc, terminal, agent, resumed_codex, look, sleep)? {
+        return Ok(Message::Working);
+    }
     let said = hc.json(&["send", terminal, text]).map_err(|problem| {
         LaunchError(format!(
             "terminal {terminal} did not take its first message: {problem}"
         ))
     })?;
     match said.get("started") {
-        Some(Value::Bool(true)) => Ok(()),
+        Some(Value::Bool(true)) => Ok(Message::Started),
         Some(Value::Bool(false)) => {
             let status = hc::text(said.get("status"));
             Err(LaunchError(format!(
@@ -49,16 +60,18 @@ pub(super) fn first_message(
 /// Wait until hc calls the agent in `terminal` ready for a message (`idle` or `done`). A look hc
 /// cannot answer is no evidence; a terminal that ended, or that hc no longer knows, fails at once,
 /// as does an agent blocked on a person (a folder-trust dialog), and one still not ready after
-/// [`CONFIRM_LOOKS`]. A Codex start that shows its hooks chooser is answered "Continue without
+/// [`CONFIRM_LOOKS`]. A resumed Codex still live and working then is reported separately. A Codex
+/// start that shows its hooks chooser is answered "Continue without
 /// trusting", the one answer that keeps the hooks off: navigation first, then enter only once a
 /// fresh look shows that item selected. The look right after a key press is not yet judged blocked.
 fn ready(
     hc: &dyn Hc,
     terminal: &str,
     agent: &str,
+    resumed_codex: bool,
     look: &mut dyn FnMut(),
     sleep: &dyn Fn(f64),
-) -> Result<(), LaunchError> {
+) -> Result<bool, LaunchError> {
     let mut last = String::from("unknown");
     let (mut moved, mut answered, mut pressed) = (false, false, false);
     for _ in 0..CONFIRM_LOOKS {
@@ -85,7 +98,7 @@ fn ready(
         }
         let status = hc::status(&found);
         if READY_STATES.contains(&status.as_str()) {
-            return Ok(());
+            return Ok(true);
         }
         last = if status.is_empty() {
             "none".into()
@@ -125,6 +138,9 @@ fn ready(
                 asks(&found)
             )));
         }
+    }
+    if resumed_codex && last == "working" {
+        return Ok(false);
     }
     Err(LaunchError(format!(
         "the agent in terminal {terminal} was never ready for its first message (its last status: \

@@ -14,7 +14,6 @@ use super::queued_lines::{Hearing, Queued, Rescoped};
 use super::{ACT, Error, Store, acting, logged, refused};
 use crate::cli::agents::{Answer, Pane};
 use crate::cli::{attach, pull};
-use crate::sys::Stdio;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
@@ -1543,43 +1542,21 @@ fn deliver(callback: &Callback, text: &str) -> Result<(), DeliveryError> {
 /// connection the Symphony server accepted and has not yet marked close-on-exec stays out of it, so
 /// that client's read to the end of its answer never waits for the queue.
 fn queue(thread: &str, text: &str) -> Result<(), DeliveryError> {
-    queue_until(thread, text, |waited| waited >= Duration::from_secs(5))
+    crate::codex_queue::queue(crate::sys::command("codex"), thread, text)
+        .map_err(DeliveryError::retry)
 }
 
 /// `queue` with its deadline handed in: `due` is asked, with the time since the spawn, whether a
 /// queue still running is ended there. A test's deadline can be an event of its stand-in's rather
 /// than a time a loaded machine may not even start it in.
+#[cfg(test)]
 fn queue_until(
     thread: &str,
     text: &str,
     due: impl Fn(Duration) -> bool,
 ) -> Result<(), DeliveryError> {
-    let mut child = crate::sys::command("codex")
-        .args(["queue", "--thread", thread, "--message", text])
-        .env_remove("CLAUDE_CODE_MESSAGING_TOKEN")
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .map_err(DeliveryError::retry)?;
-    let started = Instant::now();
-    loop {
-        match child.try_wait().map_err(DeliveryError::retry)? {
-            Some(status) => {
-                return if status.success() {
-                    Ok(())
-                } else {
-                    Err(DeliveryError::retry(format!("codex queue exited {status}")))
-                };
-            }
-            None if !due(started.elapsed()) => std::thread::sleep(Duration::from_millis(20)),
-            None => {
-                let _ = child.kill();
-                let _ = child.wait();
-                return Err(DeliveryError::retry("codex queue timed out"));
-            }
-        }
-    }
+    crate::codex_queue::queue_until(crate::sys::command("codex"), thread, text, due)
+        .map_err(DeliveryError::retry)
 }
 
 fn connection_failure(callback: &Callback, error: std::io::Error) -> DeliveryError {
