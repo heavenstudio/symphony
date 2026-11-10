@@ -49,6 +49,12 @@ pub trait Hc {
     /// the board's database.
     fn board(&self) -> String;
 
+    /// Queue a resumed Codex conversation's next message through its native channel. Acceptance
+    /// does not say the resumed turn ended or that a turn on this text has started.
+    fn queue_codex(&self, _thread: &str, _text: &str) -> Result<(), LaunchError> {
+        Err(LaunchError("native Codex queue unavailable".into()))
+    }
+
     /// The JSON `hc ARGS --json` printed. `--json` is hc's own: it goes before a `--`, past which
     /// the words are the program's.
     fn json(&self, args: &[&str]) -> Result<Value, LaunchError> {
@@ -289,6 +295,12 @@ impl Binary {
 }
 
 impl Hc for Binary {
+    fn queue_codex(&self, thread: &str, text: &str) -> Result<(), LaunchError> {
+        let mut command = sys::command_with("codex", &self.env.vars);
+        command.current_dir(&self.env.cwd);
+        crate::codex_queue::queue(command, thread, text).map_err(LaunchError)
+    }
+
     fn run(&self, args: &[&str]) -> Result<String, LaunchError> {
         let mut command = self.command(&self.hc, "HC_BIN", args)?;
         let done = probes::within(&mut command, PATIENCE)

@@ -35,6 +35,7 @@ extern crate self as symphony_board;
 
 pub mod cbor;
 pub mod cli;
+mod codex_queue;
 pub mod cutover;
 pub mod embedding;
 pub mod git;
