@@ -5,10 +5,11 @@ use std::fs;
 use std::io::ErrorKind;
 use std::io::Write as _;
 use std::os::unix::fs::{MetadataExt, PermissionsExt, symlink};
-use std::panic::catch_unwind;
+use std::panic::{catch_unwind, panic_any, resume_unwind};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, Barrier};
+use std::sync::{Arc, Condvar, Mutex, PoisonError};
+use std::thread::{self, Scope, ScopedJoinHandle};
 
 #[path = "script_board.rs"]
 mod board;
@@ -59,6 +60,129 @@ fn entries(root: &Path) -> Vec<String> {
         .collect();
     names.sort();
     names
+}
+
+type Handout = (PathBuf, String);
+
+#[derive(Default)]
+struct Start {
+    arrived: usize,
+    run: Option<bool>,
+}
+
+/// Eight owned handouts. Drop aborts partial startup and joins while the enclosing scope's
+/// fixture still exists; the scope also owns every thread if a join itself unwinds.
+struct Handouts<'scope> {
+    start: Arc<(Mutex<Start>, Condvar)>,
+    threads: Vec<ScopedJoinHandle<'scope, Option<Handout>>>,
+    joined: Arc<AtomicUsize>,
+}
+
+impl<'scope> Handouts<'scope> {
+    fn new(joined: Arc<AtomicUsize>) -> Self {
+        Self {
+            start: Arc::new((Mutex::new(Start::default()), Condvar::new())),
+            threads: Vec::with_capacity(8),
+            joined,
+        }
+    }
+
+    fn spawn<'env>(
+        &mut self,
+        scope: &'scope Scope<'scope, 'env>,
+        work: impl FnOnce() -> Handout + Send + 'scope,
+    ) -> std::io::Result<()> {
+        assert!(self.threads.len() < 8);
+        let start = Arc::clone(&self.start);
+        let worker = thread::Builder::new().spawn_scoped(scope, move || {
+            let (state, ready) = &*start;
+            let mut state = state.lock().unwrap_or_else(PoisonError::into_inner);
+            state.arrived += 1;
+            ready.notify_all();
+            state = ready
+                .wait_while(state, |state| state.run.is_none())
+                .unwrap_or_else(PoisonError::into_inner);
+            let run = state.run == Some(true);
+            drop(state);
+            run.then(work)
+        })?;
+        self.threads.push(worker);
+        Ok(())
+    }
+
+    fn release(&self, run: bool) {
+        let (state, ready) = &*self.start;
+        let mut state = state.lock().unwrap_or_else(PoisonError::into_inner);
+        if run {
+            state = ready
+                .wait_while(state, |state| state.arrived < self.threads.len())
+                .unwrap_or_else(PoisonError::into_inner);
+        }
+        state.run = Some(run);
+        ready.notify_all();
+    }
+
+    fn join_all(&mut self) -> thread::Result<Vec<Handout>> {
+        let (mut values, mut first_panic) = (Vec::new(), None);
+        for worker in self.threads.drain(..) {
+            let result = worker.join();
+            self.joined.fetch_add(1, Ordering::SeqCst);
+            match result {
+                Ok(Some(value)) => values.push(value),
+                Ok(None) => {}
+                Err(panic) if first_panic.is_none() => first_panic = Some(panic),
+                Err(_) => {}
+            }
+        }
+        first_panic.map_or(Ok(values), Err)
+    }
+
+    fn finish(mut self) -> Vec<Handout> {
+        self.release(true);
+        match self.join_all() {
+            Ok(values) => values,
+            Err(panic) => resume_unwind(panic),
+        }
+    }
+}
+
+impl Drop for Handouts<'_> {
+    fn drop(&mut self) {
+        self.release(false);
+        if let Err(panic) = self.join_all()
+            && !thread::panicking()
+        {
+            resume_unwind(panic);
+        }
+    }
+}
+
+struct WatchedTmp {
+    _tmp: Tmp,
+    joined: Arc<AtomicUsize>,
+    at_teardown: Arc<AtomicUsize>,
+}
+
+impl Drop for WatchedTmp {
+    fn drop(&mut self) {
+        self.at_teardown
+            .store(self.joined.load(Ordering::SeqCst), Ordering::SeqCst);
+    }
+}
+
+struct WorkerExit {
+    path: PathBuf,
+    exited: Arc<AtomicUsize>,
+    before_teardown: Arc<AtomicUsize>,
+}
+
+impl Drop for WorkerExit {
+    fn drop(&mut self) {
+        if self.path.is_dir() {
+            self.before_teardown.fetch_add(1, Ordering::SeqCst);
+        }
+        self.exited.fetch_add(1, Ordering::SeqCst);
+    }
 }
 
 #[test]
@@ -245,26 +369,22 @@ fn concurrent_handouts_prime_once_per_device_inode_before_return_and_reprime_a_r
         "#!/bin/sh\nprintf '%s %s\\n' \"$#\" \"${{0##*/}}\" >> '{}'\nprintf x > \"${{0%/*}}/../beside\"\n",
         runs.display()
     ));
-    let barrier = Arc::new(Barrier::new(8));
-    let threads: Vec<_> = (0..8)
-        .map(|_| {
-            let (root, script, runs, barrier) = (
-                root.clone(),
-                script.clone(),
-                runs.clone(),
-                Arc::clone(&barrier),
-            );
-            std::thread::spawn(move || {
-                barrier.wait();
-                let copy = machine_copy::copy_into(&root, &script);
-                (copy, fs::read_to_string(runs).unwrap())
-            })
-        })
-        .collect();
-    let handed: Vec<_> = threads
-        .into_iter()
-        .map(|thread| thread.join().unwrap())
-        .collect();
+    let joined = Arc::new(AtomicUsize::new(0));
+    let handed = thread::scope(|scope| {
+        let mut workers = Handouts::new(Arc::clone(&joined));
+        for _ in 0..8 {
+            let (root, script, runs) = (root.clone(), script.clone(), runs.clone());
+            workers
+                .spawn(scope, move || {
+                    let copy = machine_copy::copy_into(&root, &script);
+                    (copy, fs::read_to_string(runs).unwrap())
+                })
+                .unwrap();
+        }
+        workers.finish()
+    });
+    assert_eq!(joined.load(Ordering::SeqCst), 8);
+    assert_eq!(handed.len(), 8);
     let copy = &handed[0].0;
     let line = format!("0 {}\n", copy.file_name().unwrap().to_str().unwrap());
     for (path, before_handout) in &handed {
@@ -285,6 +405,120 @@ fn concurrent_handouts_prime_once_per_device_inode_before_return_and_reprime_a_r
     assert_ne!(fs::metadata(copy).unwrap().ino(), inode);
     assert_eq!(fs::read_to_string(&runs).unwrap(), format!("{line}{line}"));
     assert_eq!(entries(&root), [name]);
+}
+
+#[test]
+fn partial_startup_panics_abort_and_join_every_started_worker_before_teardown() {
+    for started in [0, 3, 7] {
+        let tmp = Tmp::new();
+        let path = tmp.0.clone();
+        let (joined, at_teardown, entered, exited, alive) = (
+            Arc::new(AtomicUsize::new(0)),
+            Arc::new(AtomicUsize::new(usize::MAX)),
+            Arc::new(AtomicUsize::new(0)),
+            Arc::new(AtomicUsize::new(0)),
+            Arc::new(AtomicUsize::new(0)),
+        );
+        let failure = Arc::new("owned startup failure".to_owned());
+        let raised = catch_unwind(|| {
+            let _fixture = WatchedTmp {
+                _tmp: tmp,
+                joined: Arc::clone(&joined),
+                at_teardown: Arc::clone(&at_teardown),
+            };
+            thread::scope(|scope| {
+                let mut workers = Handouts::new(Arc::clone(&joined));
+                for _ in 0..started {
+                    let exit = WorkerExit {
+                        path: path.clone(),
+                        exited: Arc::clone(&exited),
+                        before_teardown: Arc::clone(&alive),
+                    };
+                    let (path, entered) = (path.clone(), Arc::clone(&entered));
+                    workers
+                        .spawn(scope, move || {
+                            let _exit = exit;
+                            entered.fetch_add(1, Ordering::SeqCst);
+                            (path, "must not run after aborted startup".into())
+                        })
+                        .unwrap();
+                }
+                // An owned construction failure, not an OS resource-pressure experiment.
+                panic_any(Arc::clone(&failure));
+            });
+        })
+        .unwrap_err();
+        assert!(Arc::ptr_eq(
+            raised.downcast_ref::<Arc<String>>().unwrap(),
+            &failure
+        ));
+        assert_eq!(entered.load(Ordering::SeqCst), 0);
+        assert_eq!(exited.load(Ordering::SeqCst), started);
+        assert_eq!(alive.load(Ordering::SeqCst), started);
+        assert_eq!(joined.load(Ordering::SeqCst), started);
+        assert_eq!(at_teardown.load(Ordering::SeqCst), started);
+        assert_eq!(fs::metadata(&path).unwrap_err().kind(), ErrorKind::NotFound);
+    }
+}
+
+#[test]
+fn worker_unwinds_join_all_eight_before_teardown_and_propagate_the_first_payload() {
+    let tmp = Tmp::new();
+    let path = tmp.0.clone();
+    let (joined, at_teardown, entered, exited, alive) = (
+        Arc::new(AtomicUsize::new(0)),
+        Arc::new(AtomicUsize::new(usize::MAX)),
+        Arc::new(AtomicUsize::new(0)),
+        Arc::new(AtomicUsize::new(0)),
+        Arc::new(AtomicUsize::new(0)),
+    );
+    let first = Arc::new("first owned worker failure".to_owned());
+    let raised = catch_unwind(|| {
+        let _fixture = WatchedTmp {
+            _tmp: tmp,
+            joined: Arc::clone(&joined),
+            at_teardown: Arc::clone(&at_teardown),
+        };
+        thread::scope(|scope| {
+            let mut workers = Handouts::new(Arc::clone(&joined));
+            for index in 0..8 {
+                let exit = WorkerExit {
+                    path: path.clone(),
+                    exited: Arc::clone(&exited),
+                    before_teardown: Arc::clone(&alive),
+                };
+                let (path, entered, first) =
+                    (path.clone(), Arc::clone(&entered), Arc::clone(&first));
+                workers
+                    .spawn(scope, move || {
+                        let _exit = exit;
+                        entered.fetch_add(1, Ordering::SeqCst);
+                        if index == 0 {
+                            panic_any(first);
+                        }
+                        assert_ne!(
+                            index, 4,
+                            "a later worker failure must not replace the first"
+                        );
+                        fs::write(path.join(format!("worker-{index}")), "completed").unwrap();
+                        (path, "completed".into())
+                    })
+                    .unwrap();
+            }
+            workers.finish();
+        });
+    })
+    .unwrap_err();
+    assert!(Arc::ptr_eq(
+        raised.downcast_ref::<Arc<String>>().unwrap(),
+        &first
+    ));
+    assert_eq!(entered.load(Ordering::SeqCst), 8);
+    assert_eq!(exited.load(Ordering::SeqCst), 8);
+    assert_eq!(alive.load(Ordering::SeqCst), 8);
+    assert_eq!(joined.load(Ordering::SeqCst), 8);
+    assert_eq!(at_teardown.load(Ordering::SeqCst), 8);
+    assert_eq!(fs::metadata(&path).unwrap_err().kind(), ErrorKind::NotFound);
 }
 
 #[test]

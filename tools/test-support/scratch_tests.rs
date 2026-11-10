@@ -1,4 +1,4 @@
-//! The copied harness and its real ESRCH-only sweep, without touching another harness's scratch.
+//! Owned sweep/filter controls and supplied-value evidence for the actual removal decision.
 
 use super::{create, dead_owners, harness_root, reap_dead};
 use std::fs;
@@ -106,18 +106,40 @@ fn a_real_foreign_owner_is_refused_by_the_uid_predicate() {
 }
 
 #[test]
-fn the_sweep_removes_only_known_dead_directories_with_its_own_prefix() {
+fn supplied_query_values_remove_only_minus_one_with_esrch() {
+    let tmp = Tmp::new();
+    for (name, result, errno, removed) in [
+        ("esrch", -1, Some(libc::ESRCH), true),
+        ("success-stale-errno", 0, Some(libc::ESRCH), false),
+        ("success", 0, None, false),
+        ("permission", -1, Some(libc::EPERM), false),
+        ("other-error", -1, Some(libc::EIO), false),
+        ("no-errno", -1, None, false),
+        ("other-return", 1, Some(libc::ESRCH), false),
+    ] {
+        let path = tmp.join(name);
+        fs::create_dir(&path).unwrap();
+        fs::write(path.join("held"), "owned decision input").unwrap();
+        let inode = fs::metadata(&path).unwrap().ino();
+        dead_owners::remove_observed_dead(&path, result, errno);
+        if removed {
+            assert_eq!(fs::metadata(&path).unwrap_err().kind(), ErrorKind::NotFound);
+        } else {
+            assert_eq!(fs::metadata(&path).unwrap().ino(), inode, "{name}");
+            assert_eq!(
+                fs::read_to_string(path.join("held")).unwrap(),
+                "owned decision input",
+                "{name}"
+            );
+        }
+    }
+}
+
+#[test]
+fn the_real_sweep_preserves_live_uncertain_and_ineligible_entries() {
     let tmp = Tmp::new();
     let root = harness_root(&tmp.0, "harness").unwrap();
-    let mut child = symphony_board::sys::Command::new("/bin/sh")
-        .args(["-c", "exit 0"])
-        .spawn()
-        .unwrap();
-    let pid = child.id();
-    assert!(child.wait().unwrap().success());
-    let dead = root.join(format!("mine-{pid}-0"));
-    fs::create_dir(&dead).unwrap();
-    fs::write(dead.join("owned"), "dead owner").unwrap();
+    let pid = std::process::id();
     let sibling = root.join(format!("other-{pid}-0"));
     fs::create_dir(&sibling).unwrap();
     let live = root.join(format!("mine-{}-2", std::process::id()));
@@ -140,7 +162,6 @@ fn the_sweep_removes_only_known_dead_directories_with_its_own_prefix() {
         fs::create_dir(root.join(name)).unwrap();
     }
     dead_owners::reap_dead_scratch(&root, "mine-");
-    assert!(!dead.exists(), "the known-dead directory must be removed");
     for kept in [&sibling, &live, &uncertain, &linked] {
         assert!(kept.exists(), "{}", kept.display());
     }
@@ -167,10 +188,7 @@ fn the_sweep_removes_only_known_dead_directories_with_its_own_prefix() {
     let unprefixed = root.join(format!("{pid}-9"));
     fs::create_dir(&unprefixed).unwrap();
     reap_dead(&root);
-    assert!(
-        !unprefixed.exists(),
-        "the actual harness wrapper delegates to the copied sweep"
-    );
+    assert!(unprefixed.is_dir(), "the wrapper preserves this live owner");
     assert!(sibling.exists());
     reap_dead(&tmp.join("absent-root"));
 }

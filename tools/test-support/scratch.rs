@@ -36,10 +36,19 @@ pub(super) fn reap_dead_scratch(root: &Path, prefix: &str) {
         }
         // SAFETY: a positive pid and signal 0 only query existence; no signal is sent. Permission
         // errors and any other uncertainty preserve the folder, as does pid reuse by a live process.
-        if unsafe { libc::kill(pid, 0) } == -1
-            && io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH)
-        {
-            let _ = fs::remove_dir_all(entry.path());
-        }
+        let result = unsafe { libc::kill(pid, 0) };
+        let errno = if result == -1 {
+            io::Error::last_os_error().raw_os_error()
+        } else {
+            None
+        };
+        remove_observed_dead(&entry.path(), result, errno);
+    }
+}
+
+/// Decide from this query's captured values, never from a prior or later view of the pid.
+pub(super) fn remove_observed_dead(path: &Path, result: libc::c_int, errno: Option<libc::c_int>) {
+    if result == -1 && errno == Some(libc::ESRCH) {
+        let _ = fs::remove_dir_all(path);
     }
 }
