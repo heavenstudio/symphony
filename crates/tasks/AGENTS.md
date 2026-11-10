@@ -487,6 +487,20 @@ that prefix, and the agents API strips it from the conversation id.
 doc and [tools/AGENTS.md](../../../tools/AGENTS.md#landing-on-main)): `git.rs` its
 git reads, `process.rs` the locks' pids (`kill(pid, 0)`, `ps`); the leaf
 `crates/process-cwd/` owns the bounded `lsof` scan shared with the cargo sweep.
+`coalesce.rs` appends requests before trying the sweep lock: a busy caller exits
+without opening the board, and the holder serves requests received during its
+pass in another pass. `verdicts.rs` reuses positive retention evidence by HEAD,
+index, folder and witness metadata (mode and change time included), plus ancestor
+ignore policies and shared/global ignore inputs. Supported empty verdicts reuse a
+bounded complete metadata inventory, including tracked exceptions under output cuts.
+Warm reuse stats saved witnesses or inventory entries and their policy files without
+walking the checkout. Unknown, oversized or unstable inputs conservatively rescan;
+conditional/per-worktree configuration, attributes and unreadable policy decline reuse.
+Fresh unavailable HEAD/removal guards retain a tree before lookup; eligible removal
+holds its removal lease through both fresh final status guards and deletion. Regenerable `.target/`,
+`symphony/.target/`, `symphony/build/` and `.codex/hooks*` go with a merged tree;
+`artifacts/<handle>/` keeps it. Foreground `--task` visits only that task's
+finished worktrees and asks for a detached full pass.
 `trigger.rs` owns
 the detached sweeps work finishing starts (`done`, `move`,
 `verdict`, `leave`, `reap`, and `inbox` once an hour). Those run the main

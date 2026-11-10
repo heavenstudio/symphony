@@ -14,9 +14,13 @@
 #[allow(dead_code)]
 mod common;
 
+mod cached;
+mod clean_cache;
+mod clean_races;
 mod cli;
 mod finished;
 mod on_review;
+mod policy_cache;
 mod rules;
 mod sessionless;
 mod triggers;
@@ -331,8 +335,11 @@ impl Repo {
         .into_iter()
         .map(|(k, v)| (k.to_string(), v))
         .collect();
-        if let Ok(tz) = std::env::var("TZ") {
-            vars.insert("TZ".into(), tz);
+        // Child coverage belongs to the runner even though each child's board is isolated.
+        for key in ["TZ", "LLVM_PROFILE_FILE"] {
+            if let Ok(value) = std::env::var(key) {
+                vars.insert(key.into(), value);
+            }
         }
         vars
     }
@@ -404,7 +411,20 @@ impl Repo {
 
     pub fn assert_removed(&self, wt: &Path, text: &str) {
         let listed = self.worktrees();
-        assert!(!listed.contains(wt), "{}\n{text}", wt.display());
+        assert!(
+            !listed.contains(wt),
+            "{}\n{text}\nstatus: {}",
+            wt.display(),
+            git(
+                wt,
+                &[
+                    "status",
+                    "--porcelain",
+                    "--ignored=matching",
+                    "--untracked-files=all"
+                ]
+            )
+        );
         assert!(!wt.exists(), "{text}");
         assert!(text.contains(&*wt.to_string_lossy()), "{text}");
     }

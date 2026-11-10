@@ -326,26 +326,6 @@ pub fn run(store: &Store, c: &mut Context) -> Result<(), Stop> {
             }
         }
         "finish" => panes::finish(store, c)?,
-        "sweep" => {
-            let request = sweep::Request {
-                dry_run: p.flag("dry_run"),
-                hours: p.get("recent_hours").map(|_| p.float("recent_hours", 0.0)),
-                tasks: p.all("task").iter().map(String::as_str).collect(),
-                background: p.get("background"),
-            };
-            let lines = sweep::command(store, c.env, &request).map_err(|why| {
-                Stop::Board(match request.background {
-                    Some(started) => {
-                        format!("[{}] {started}: {why}", sys::local_minute(trigger::now()))
-                    }
-                    None => why,
-                })
-            })?;
-            let mut text = lines.join("\n");
-            text.push('\n');
-            let _ = c.out.write_all(text.as_bytes());
-            let _ = c.out.flush();
-        }
         "show" => show(store, c)?,
         "who" => who(store, c)?,
         "inbox" => {

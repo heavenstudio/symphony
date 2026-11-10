@@ -16,6 +16,7 @@ pub mod probes;
 pub mod pull;
 mod search;
 mod shape;
+mod sweep;
 mod text;
 mod usage;
 
@@ -160,10 +161,11 @@ fn run(
     if parsed.command == "field" {
         return field::run(&parsed, env, out, err);
     }
-    // A sweep work finishing started never starts the board's server: it runs only on a board in use.
-    let start = !(parsed.command == "sweep" && parsed.flag("background"));
+    if parsed.command == "sweep" {
+        return sweep::run(&parsed, env, out, err);
+    }
     let reached = Clock::of(env).and_then(|clock| {
-        let store = open(reach(env, &env.cwd, start)?, &clock)?;
+        let store = open(reach(env, &env.cwd, true)?, &clock)?;
         let store = capped_saying(store, env, &mut |problem| {
             let _ = writeln!(err, "⚠ {problem}");
         });

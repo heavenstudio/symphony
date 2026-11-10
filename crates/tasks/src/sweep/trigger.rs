@@ -21,7 +21,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 /// When the last sweep started, in seconds since the epoch, as text.
 pub const STAMP: &str = "sweep.stamp";
-/// Held by the sweep that runs; the next waits for it.
+/// Held by the sweep that runs; another caller records its request and never waits.
 pub const LOCK: &str = "sweep.lock";
 /// What the triggered sweeps said, each under a line saying when and why.
 pub const LOG: &str = "sweep.log";
@@ -134,9 +134,8 @@ fn write_stamp(file: &mut File, now: f64) -> std::io::Result<()> {
     file.write_all(crate::pyjson::float(now).as_bytes())
 }
 
-/// The sweep's lock in the git common dir `common`, waited for and held until the file is dropped,
-/// and the stamp written: a sweep has started now.
-pub fn hold(common: &Path) -> Result<sys::FileLock, String> {
+/// Try the sweep's lock without waiting. Only a holder writes the start stamp.
+pub fn hold(common: &Path) -> Result<Option<sys::FileLock>, String> {
     let dir = folder(common);
     let path = dir.join(LOCK);
     let lock = fs::create_dir_all(&dir)
@@ -147,15 +146,26 @@ pub fn hold(common: &Path) -> Result<sys::FileLock, String> {
                 .truncate(false)
                 .open(&path)
         })
-        .and_then(|file| file.lock().map(|()| sys::FileLock(file)))
         .map_err(|e| format!("cannot take the sweep's lock {}: {e}", path.display()))?;
+    match lock.try_lock() {
+        Err(TryLockError::WouldBlock) => return Ok(None),
+        Err(TryLockError::Error(e)) => {
+            return Err(format!(
+                "cannot take the sweep's lock {}: {e}",
+                path.display()
+            ));
+        }
+        Ok(()) => {}
+    }
+    let lock = sys::FileLock(lock);
     let stamp = dir.join(STAMP);
-    let _ = open_stamp(&stamp).and_then(|file| {
-        file.lock()?;
-        let mut file = sys::FileLock(file);
-        write_stamp(&mut file.0, now())
+    let _ = lock_stamp(&stamp).and_then(|held| {
+        if let Some(mut held) = held {
+            write_stamp(&mut held.0, now())?;
+        }
+        Ok(())
     });
-    Ok(lock)
+    Ok(Some(lock))
 }
 
 /// The sweep's log, opened to append, moved aside first when it has grown past `LOG_LIMIT`.
@@ -370,26 +380,21 @@ mod tests {
     }
 
     #[test]
-    fn a_sweep_waits_for_the_one_that_runs_and_writes_the_stamp() {
+    fn a_sweep_never_waits_for_the_one_that_runs_and_only_the_holder_writes_the_stamp() {
         let common = scratch("hold");
-        let first = hold(&common).unwrap();
+        let first = hold(&common).unwrap().unwrap();
         let stamp = folder(&common).join(STAMP);
         assert!(fresh(&fs::read_to_string(&stamp).unwrap(), now()));
-        let (tell, told) = std::sync::mpsc::channel();
-        let second = {
-            let common = common.clone();
-            std::thread::spawn(move || {
-                let held = hold(&common).unwrap();
-                tell.send(()).unwrap();
-                drop(held);
-            })
-        };
-        let waited = told.recv_timeout(std::time::Duration::from_millis(200));
-        assert!(waited.is_err(), "the second took the lock the first holds");
+        let written = fs::read_to_string(&stamp).unwrap();
+        assert!(hold(&common).unwrap().is_none());
+        assert_eq!(fs::read_to_string(&stamp).unwrap(), written);
         drop(first);
-        told.recv_timeout(std::time::Duration::from_secs(10))
-            .expect("the second takes it once the first lets go");
-        second.join().unwrap();
+        assert!(hold(&common).unwrap().is_some());
+        let written = fs::read_to_string(&stamp).unwrap();
+        let stamped = lock_stamp(&stamp).unwrap().unwrap();
+        assert!(hold(&common).unwrap().is_some());
+        assert_eq!(fs::read_to_string(&stamp).unwrap(), written);
+        drop(stamped);
         fs::remove_dir_all(&common).unwrap();
     }
 

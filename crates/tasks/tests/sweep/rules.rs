@@ -57,7 +57,7 @@ fn an_untracked_file_keeps_it() {
 
 #[test]
 fn an_ignored_file_that_is_not_output_keeps_it_and_is_named() {
-    // Its probes under artifacts/ go with a finished worktree (no task here); local settings never.
+    // Both probes and local settings survive, even when no task is bound here.
     let r = Repo::new();
     let wt = r.detached("probes");
     write(&wt, "artifacts/solar-swift/probe.json", "x\n");
@@ -70,7 +70,7 @@ fn an_ignored_file_that_is_not_output_keeps_it_and_is_named() {
         .collect();
     assert_eq!(kept.len(), 1, "{said}");
     assert!(kept[0].contains(".claude/"), "{said}");
-    assert!(!kept[0].contains("artifacts/"), "{said}");
+    assert!(kept[0].contains("artifacts/"), "{said}");
 }
 
 #[test]
