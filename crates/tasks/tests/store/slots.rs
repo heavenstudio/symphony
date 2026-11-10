@@ -380,7 +380,8 @@ fn an_orchestrator_at_the_cap_still_starts_main_and_nightly_red_work_and_names_i
         store.claim("fix/static", "lark").unwrap().status,
         "in_progress"
     );
-    store.move_to("fix/static", "review", "lark").unwrap();
+    // Historical reviewed red children remain excluded from the feature cap.
+    f.historical_review("fix/static");
     assert_eq!(open(&store).len(), 11);
     // A feature at the cap is refused as before, the red work named apart as not counted.
     assert_eq!(
