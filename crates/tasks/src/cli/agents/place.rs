@@ -13,13 +13,15 @@
 //! the board cannot tell (the machine's processes cannot be listed, or one working there may be the
 //! agent's but its start cannot be read, or the board's clock went back while the agent was there
 //! and the process began in the time that leaves in doubt, or a call that bounds the stay read no
-//! clock since boot): `running_test` with `"phase": "unknown"`, health `unknown`, so it is not called
+//! clock since boot, or an intervening repository boundary cannot be read): `running_test` with
+//! `"phase": "unknown"`, health `unknown`, so it is not called
 //! lost either. With none working there that can be its it ages as before ([`waited_on`]).
 
 use super::{Answer, Detail, Probes};
 use crate::Store;
 use crate::health::Health;
 use crate::sys::Boottime;
+use std::io;
 use std::path::{Path, PathBuf};
 
 /// How long a long-lived reader keeps the machine's process listing ([`Store::kept_scan`]): a
@@ -99,15 +101,49 @@ pub(super) fn resolve(path: &str) -> String {
     }
 }
 
-/// Whether a process whose working directory is `cwd` works in the worktree whose top folder is
-/// `tree`: `cwd` is that folder or below it, and no checkout lies between (a `.git` beneath `tree`
-/// is another repository's, a scratch one or a nested worktree).
-fn works_in(cwd: &Path, tree: &Path) -> bool {
-    cwd.starts_with(tree)
-        && cwd
-            .ancestors()
+/// Whether the nearest marker permits attribution to the enclosing worktree.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum Location {
+    Inside,
+    Outside,
+    Unknown,
+}
+
+impl Location {
+    /// Only NotFound proves marker absence. Even an invalid marker object is a boundary;
+    /// unreadable ancestors leave ownership uncertain unless another marker excludes it.
+    fn boundaries(markers: impl IntoIterator<Item = io::Result<()>>) -> Self {
+        let mut location = Self::Inside;
+        for marker in markers {
+            match marker {
+                Ok(()) => return Self::Outside,
+                Err(e) if e.kind() == io::ErrorKind::NotFound => {}
+                Err(_) => location = Self::Unknown,
+            }
+        }
+        location
+    }
+
+    fn with_start(self, whose: Whose) -> Whose {
+        match (self, whose) {
+            (Self::Outside, _) | (_, Whose::Not) => Whose::Not,
+            (Self::Inside, Whose::Its) => Whose::Its,
+            _ => Whose::Maybe,
+        }
+    }
+}
+
+/// A process belongs beneath `tree` only when no intervening marker object exists.
+/// Inspect the object itself: a dangling marker still excludes an enclosing checkout.
+fn works_in(cwd: &Path, tree: &Path) -> Location {
+    if !cwd.starts_with(tree) {
+        return Location::Outside;
+    }
+    Location::boundaries(
+        cwd.ancestors()
             .take_while(|folder| *folder != tree)
-            .all(|folder| !folder.join(".git").exists())
+            .map(|folder| folder.join(".git").symlink_metadata().map(|_| ())),
+    )
 }
 
 /// An in-process agent's stay in the checkout its binding recorded, by the board's clock and by the
@@ -183,8 +219,9 @@ impl Stay<'_> {
 /// cannot be listed completely, or when one working there may be its but cannot be told to be: its start
 /// cannot be read, or it began while the board's clock had gone back (after the earliest time a
 /// call of its there read, before it came), or its start is dated since boot and the call that
-/// would bound it read no clock since boot. None when `tree` is no linked worktree (the main
-/// checkout, which every agent registered there shares, or a folder in no repository) or no process
+/// would bound it read no clock since boot, or its intervening markers cannot be read. None when
+/// `tree` is no linked worktree (the main checkout, which every agent registered there shares, or
+/// a folder in no repository) or no process
 /// working there can be its in a complete listing. Readable ownership proves Live even in an
 /// incomplete listing.
 pub(super) fn waited_on(
@@ -202,8 +239,7 @@ pub(super) fn waited_on(
             let whose: Vec<Whose> = scan
                 .listed
                 .iter()
-                .filter(|p| works_in(&p.cwd, tree))
-                .map(|p| stay.whose(p.started.as_ref()))
+                .map(|p| works_in(&p.cwd, tree).with_start(stay.whose(p.started.as_ref())))
                 .collect();
             if whose.contains(&Whose::Its) {
                 (Health::Live, "running")
@@ -221,6 +257,9 @@ pub(super) fn waited_on(
     };
     Some((health, detail))
 }
+
+#[cfg(test)]
+mod boundary_tests;
 
 #[cfg(test)]
 mod tests {

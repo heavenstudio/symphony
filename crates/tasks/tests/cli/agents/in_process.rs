@@ -9,6 +9,7 @@ use symphony_board::sys::Boottime;
 
 mod clock;
 mod completeness;
+mod markers;
 mod provenance;
 
 /// A linked worktree's top folder (its `.git` a file naming a git dir checked out on `sim/jump`), in
@@ -363,21 +364,6 @@ fn a_subagent_that_moved_is_judged_by_the_checkout_its_last_calls_ran_in() {
     assert_eq!(c.agent(&handle).state, "running_test");
     // What it left in the first is not looked at; nor, in the second, what began before it came.
     c.processes_in(vec![process(&first, NOW), process(&then, NOW)]);
-    assert_eq!(c.agent(&handle).health, Health::Lost);
-}
-
-#[test]
-fn a_process_in_a_checkout_beneath_its_worktree_is_not_its() {
-    let c = Case::new();
-    let tree = linked_worktree("nested");
-    let scratch_repo = tree.join(".target/tmp/case/repo");
-    std::fs::create_dir_all(scratch_repo.join(".git")).unwrap();
-    let handle = c.subagent_in(&tree);
-    c.processes_in(vec![
-        process(&scratch_repo.join("sub"), NOW),
-        process(&scratch_repo, NOW),
-    ]);
-    c.past_the_lost_line();
     assert_eq!(c.agent(&handle).health, Health::Lost);
 }
 
