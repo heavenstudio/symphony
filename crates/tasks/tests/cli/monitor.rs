@@ -16,6 +16,8 @@ use std::path::PathBuf;
 use std::rc::Rc;
 use symphony_board::health::{LIVE_SECONDS, STALE_SECONDS};
 use symphony_board::{NewLaunch, NewTask, Store, cli, sys};
+mod fixtures;
+use fixtures::launched_child;
 
 /// Three-second polls past the lost line.
 const GONE_POLLS: usize = ((LIVE_SECONDS + STALE_SECONDS) / 3.0) as usize + 3;
@@ -680,24 +682,11 @@ fn attach_resume_of_a_session_that_is_not_there_is_refused() {
 #[path = "monitor_pull.rs"]
 mod pull_observations;
 
-fn launched_child(m: &Monitor) -> (String, String) {
-    let (orch, child) = quiet_child(m);
-    let launch = NewLaunch {
-        claude_session: "sess-c".into(),
-        worktree: "/wt/child".into(),
-        branch: "sim/a".into(),
-        pane: "t1".into(),
-        ..NewLaunch::new("sim/a", &child, "executor")
-    };
-    m.board().record_launch(&launch).unwrap();
-    (orch, child)
-}
-
 #[test]
 fn a_child_waiting_on_its_verify_is_not_called_lost() {
     let m = Monitor::new("waiting-verify");
-    let (orch, _) = launched_child(&m);
-    let _run = m.slot("/wt/child", false, m.now.get(), None, "verify");
+    let (orch, child) = launched_child(&m);
+    let _run = m.slot("/wt/child", false, m.now.get(), Some(&child), "verify");
     m.watch(&orch, Watch::past_the_lost_line(), &idle);
     assert_eq!(
         m.starting(&["LOST ", "STALE "]),
@@ -710,8 +699,14 @@ fn a_child_waiting_on_its_verify_is_not_called_lost() {
 #[test]
 fn the_same_child_is_lost_once_its_run_is_gone() {
     let m = Monitor::new("run-gone");
-    let (orch, _) = launched_child(&m);
-    let run = RefCell::new(Some(m.slot("/wt/child", true, m.now.get(), None, "verify")));
+    let (orch, child) = launched_child(&m);
+    let run = RefCell::new(Some(m.slot(
+        "/wt/child",
+        true,
+        m.now.get(),
+        Some(&child),
+        "verify",
+    )));
     m.watch(&orch, Watch::past_the_lost_line(), &|_, n| {
         if n == GONE_STEPS / 2 {
             drop(run.borrow_mut().take());

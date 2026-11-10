@@ -16,10 +16,23 @@ struct AgentProbes {
     slots: String,
 }
 
+#[derive(Deserialize)]
+struct LegacyAgent {
+    handle: String,
+    state: String,
+    state_detail: Option<symphony_api::AgentRun>,
+}
+
+#[derive(Deserialize)]
+struct LegacyAgents {
+    agents: Vec<LegacyAgent>,
+}
+
 #[test]
 fn the_wire_names_the_boards_panes_probe_panes_and_herdr_with_its_answer() {
     for (asked, said) in [(true, "ok"), (false, "unavailable")] {
         let view = View {
+            machine_work: Default::default(),
             generated: 1.5,
             herdr: asked,
             slots: true,
@@ -32,6 +45,7 @@ fn the_wire_names_the_boards_panes_probe_panes_and_herdr_with_its_answer() {
                 "generated": 1.5,
                 "probes": {"panes": said, "herdr": said, "slots": "ok"},
                 "agents": [],
+                "machine_work": {"freshness": "unknown", "machines": [], "unassigned": []},
             })
         );
         // An open tab's client from before the rename reads the probe as it did.
@@ -44,6 +58,103 @@ fn the_wire_names_the_boards_panes_probe_panes_and_herdr_with_its_answer() {
             }
         );
     }
+}
+
+#[test]
+fn machine_work_board_projection_serializes_on_the_typed_wire_without_changing_legacy_state() {
+    use symphony_board::cli::{agents, machine_work as work};
+    let f = Fixture::empty();
+    let handle = f.session("reviewer");
+    let mut projection = work::Projection::new(2, 8, 10);
+    projection
+        .observe(
+            work::Sample {
+                machine_id: "machine-a".into(),
+                label: "builder".into(),
+                producer_id: "publisher".into(),
+                generation: 1,
+                sequence: u64::MAX,
+                complete: true,
+                operations: vec![work::Operation {
+                    machine_id: Some("machine-a".into()),
+                    operation_id: Some("native-test-1".into()),
+                    parent_id: None,
+                    handle: Some(handle.clone()),
+                    task: None,
+                    checkout: "/foreign/path".into(),
+                    recipe: "native test".into(),
+                    kind: work::Kind::Test,
+                    state: work::State::Running,
+                    resource: "process".into(),
+                    reason: "executable observed".into(),
+                    phase_since: None,
+                }],
+            },
+            0,
+        )
+        .unwrap();
+    let probes = agents::Probes {
+        panes: Box::new(|| Ok(vec![])),
+        runs: Box::new(|| {
+            Ok(vec![agents::Run {
+                pid: 1,
+                handle: Some(handle.clone()),
+                worktree: "/foreign/path".into(),
+                recipe: "verify".into(),
+                phase: "holding".into(),
+                since: Some(7.0),
+                pool: "run".into(),
+            }])
+        }),
+        branch_of: Box::new(|_| Ok(String::new())),
+    };
+    let view = agents::describe_board_observed(
+        &f.store,
+        &probes,
+        f.now(),
+        false,
+        &f.store.board().unwrap(),
+        work::Evidence {
+            local_host: "local".into(),
+            snapshot: projection.snapshot(0),
+        },
+    )
+    .unwrap();
+    let typed = wire_agents(&view).unwrap();
+    for value in [0, u64::try_from(i64::MAX).unwrap() + 1, u64::MAX] {
+        let mut boundary = view.clone();
+        boundary.machine_work = projection.snapshot(value);
+        boundary.machine_work.machines[0].sequence = value;
+        let sent = wire_agents(&boundary).unwrap();
+        assert_eq!(sent.machine_work.machines[0].sequence, value);
+        assert_eq!(sent.machine_work.machines[0].age_ms, Some(value));
+    }
+    assert_eq!(typed.agents[0].kind, "reviewer");
+    assert_eq!(typed.machine_work.machines[0].sequence, u64::MAX);
+    assert_eq!(
+        typed.machine_work.machines[0]
+            .counts
+            .as_ref()
+            .unwrap()
+            .running_tests,
+        1
+    );
+    assert_eq!(
+        typed.machine_work.machines[0].operations[0]
+            .handle
+            .as_deref(),
+        Some(handle.as_str())
+    );
+    let legacy: LegacyAgents =
+        serde_json::from_str(&symphony_board::pyjson::dumps_line(&view.json())).unwrap();
+    assert_eq!(legacy.agents[0].handle, handle);
+    assert_eq!(legacy.agents[0].state, "running_test");
+    assert_eq!(
+        legacy.agents[0].state_detail.as_ref().unwrap().recipe,
+        "verify"
+    );
+    assert_eq!(legacy.agents[0].state, typed.agents[0].state);
+    assert_eq!(legacy.agents[0].state_detail, typed.agents[0].state_detail);
 }
 
 /// The agents view asks hc for its terminals with this process's environment as the board reads
