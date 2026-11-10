@@ -49,5 +49,6 @@ mod sessions;
 mod slots;
 mod sqlite;
 mod start;
+mod subtask_roles;
 mod tree;
 mod verdict;

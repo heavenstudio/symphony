@@ -107,7 +107,7 @@ mod tests {
             depends: Vec::new(),
             roles: Vec::new(),
             instruction: false,
-            fields: Default::default(),
+            fields: std::collections::BTreeMap::default(),
         }
     }
 

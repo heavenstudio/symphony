@@ -500,44 +500,6 @@ fn a_launched_reviewer_of_a_review_subtask_reserves_it_and_judges_its_parent() {
 }
 
 #[test]
-fn an_instruction_launches_on_the_parent_feature_tip_at_any_depth() {
-    for slug in ["sim/jump/r2", "sim/jump/r2/deep"] {
-        let w = World::new();
-        const NOTE: &str = "parent feature slice";
-        let root = w.launch("sim/jump").row;
-        git(
-            Path::new(&root.worktree),
-            &["commit", "--allow-empty", "-m", NOTE],
-        );
-        let feature_tip = git(Path::new(&root.worktree), &["rev-parse", "HEAD"]);
-        w.task("sim/jump/r2", Some("sim/jump"));
-        w.task("sim/jump/r2/deep", Some("sim/jump/r2"));
-        let s = w.launch(slug).row;
-        assert_eq!(
-            git(Path::new(&s.worktree), &["rev-parse", "HEAD"]),
-            feature_tip
-        );
-        assert_ne!(feature_tip, git(&w.repo, &["rev-parse", "main"]));
-        assert_eq!((s.slug.as_str(), s.branch.as_str()), (slug, ""));
-        assert_eq!(
-            Path::new(&s.worktree)
-                .file_name()
-                .unwrap()
-                .to_str()
-                .unwrap(),
-            slug.replace('/', "-")
-        );
-        assert_eq!(
-            git(
-                Path::new(&s.worktree),
-                &["rev-parse", "--abbrev-ref", "HEAD"]
-            ),
-            "HEAD"
-        );
-    }
-}
-
-#[test]
 fn an_explicit_root_branch_checked_out_elsewhere_is_a_clear_refusal() {
     let w = World::new();
     let first = w.launch("sim/jump").row; // the root's own worktree holds sim/jump

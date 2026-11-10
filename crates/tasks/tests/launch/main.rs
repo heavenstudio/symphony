@@ -16,6 +16,7 @@ mod close;
 mod close_fences;
 mod close_holds;
 mod close_races;
+mod feature_branch;
 mod finish;
 mod fixtures;
 mod hc;
