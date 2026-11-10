@@ -2,7 +2,7 @@
 use super::super::callbacks::Listener;
 use super::*;
 use symphony_board::cli::attach::PaneWatch;
-use symphony_board::{NewSession, NewTask};
+use symphony_board::{NewSession, NewTask, Store};
 
 fn terminal(id: &str, status: &str, turn: Option<u64>) -> Value {
     let mut value = pane(id, status);
@@ -27,8 +27,11 @@ fn blocked(lines: &[String]) -> Vec<String> {
 }
 
 fn watch(f: &Fixture, handle: &str) -> PaneWatch {
-    let mut values = f
-        .store
+    watch_store(&f.store, handle)
+}
+
+fn watch_store(store: &Store, handle: &str) -> PaneWatch {
+    let mut values = store
         .client()
         .query(
             "RETURN (SELECT VALUE pane_watch FROM ONLY type::record('callback_state', $handle));",
@@ -39,7 +42,11 @@ fn watch(f: &Fixture, handle: &str) -> PaneWatch {
 }
 
 fn pending(f: &Fixture, handle: &str) -> Vec<Value> {
-    f.store.client().query(
+    pending_store(&f.store, handle)
+}
+
+fn pending_store(store: &Store, handle: &str) -> Vec<Value> {
+    store.client().query(
         "RETURN SELECT key, text, attempts, sequence FROM callback_event WHERE handle = $handle AND delivered != true ORDER BY sequence;",
         json!({"handle":handle})).unwrap()[0].as_array().unwrap().clone()
 }
@@ -146,7 +153,8 @@ fn pane_task_and_supported_counter_advances_reach_the_native_recipient() {
             .iter()
             .any(|line| line.starts_with("WATCH hc unanswered at observation:"))
     );
-    assert!(watch(&f, &orch).known.is_empty());
+    let saved = watch(&f, &orch);
+    assert!(saved.known.is_empty(), "{saved:?}");
     panes(Some(json!([terminal("t3", "blocked", Some(0))])));
     tick(&f);
     assert_eq!(
@@ -177,24 +185,22 @@ fn pending_rows_keep_uncertainty_and_retire_only_proven_obsolete_observations() 
     uncertain_samples(&f, &orch, &worker, &initial);
     panes(Some(json!([terminal("t2", "working", Some(1))])));
     tick(&f);
-    assert!(pending(&f, &orch).is_empty());
-    assert!(watch(&f, &orch).blocked.is_empty());
-    assert_eq!(watch(&f, &orch).known[&worker].turn, Some(1));
+    let queued = pending(&f, &orch);
+    assert!(queued.is_empty(), "{queued:?}");
+    let saved = watch(&f, &orch);
+    assert!(saved.blocked.is_empty(), "{saved:?}");
+    assert_eq!(saved.known[&worker].turn, Some(1));
     let legacy =
         format!("BLOCKED {worker} tests/pane t2 — its terminal waits on an approval or a question");
     seed(&f, &orch, "pane-900-0", &legacy);
     tick(&f);
-    assert!(
-        pending(&f, &orch).is_empty(),
-        "unchanged checkpoints still reconcile legacy rows"
-    );
+    let queued = pending(&f, &orch);
+    assert!(queued.is_empty(), "unchanged checkpoint: {queued:?}");
     for turn in [1, 0] {
         panes(Some(json!([terminal("t2", "blocked", Some(turn))])));
         tick(&f);
-        assert!(
-            pending(&f, &orch).is_empty(),
-            "resolved equal/older turns cannot reannounce"
-        );
+        let queued = pending(&f, &orch);
+        assert!(queued.is_empty(), "resolved turn {turn}: {queued:?}");
     }
     panes(Some(json!([terminal("t2", "blocked", Some(2))])));
     tick(&f);
@@ -209,12 +215,7 @@ fn pending_rows_keep_uncertainty_and_retire_only_proven_obsolete_observations() 
         1,
         "the new pane supersedes the queued old episode"
     );
-    assert!(
-        latest[0]["text"]
-            .as_str()
-            .unwrap()
-            .contains(" tests/pane t3 — ")
-    );
+    assert_eq!(latest[0]["text"], notice(&worker, "tests/pane", "t3"));
     let back = restore(&f, &orch);
     f.advance(6.0);
     tick(&f);
@@ -232,11 +233,10 @@ fn pending_rows_keep_uncertainty_and_retire_only_proven_obsolete_observations() 
         &notice(&worker, "tests/pane", "t3"),
     );
     tick(&f);
-    assert!(watch(&f, &orch).known.is_empty());
-    assert!(
-        blocked(&back.drain(&f, &worker, &orch)).is_empty(),
-        "closed launches withdraw old pane notices"
-    );
+    let saved = watch(&f, &orch);
+    assert!(saved.known.is_empty(), "{saved:?}");
+    let heard = blocked(&back.drain(&f, &worker, &orch));
+    assert!(heard.is_empty(), "closed launch: {heard:?}");
 }
 
 #[test]
@@ -384,6 +384,7 @@ fn delayed_clock_samples_cannot_rewind_newer_blocked_or_resolved_evidence() {
         let log = PathBuf::from(std::env::var("FAKE_HC_LOG").unwrap());
         let before = std::fs::read_to_string(&log).unwrap().lines().count();
         panes(Some(json!([terminal("t2", old_status, Some(old_turn))])));
+        // Share the one-shot interleaving barrier with the owned delayed clock closure.
         let ran = Arc::new(AtomicBool::new(false));
         let fired = Arc::clone(&ran);
         let newer = f.other();
@@ -421,6 +422,92 @@ fn delayed_clock_samples_cannot_rewind_newer_blocked_or_resolved_evidence() {
         assert_eq!(
             blocked(&back.drain(&f, &worker, &orch)),
             vec![notice(&worker, "tests/pane", "t2"); usize::from(new_status == "blocked")]
+        );
+    }
+}
+
+#[test]
+fn an_old_named_pane_cannot_rewind_a_newer_observed_launch() {
+    if !in_child_with_hc(
+        "blocked_panes::freshness::an_old_named_pane_cannot_rewind_a_newer_observed_launch",
+    ) {
+        return;
+    }
+    use std::sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
+    };
+    for (status, turn) in [
+        ("blocked", Some(0)),
+        ("working", Some(0)),
+        ("blocked", None),
+        ("working", None),
+    ] {
+        let f = Fixture::empty();
+        let (orch, worker, o) = waiting_worker(&f);
+        drop(o);
+        let named = |id, status, turn| {
+            let mut value = terminal(id, status, turn);
+            value["name"] = worker.clone().into();
+            value
+        };
+        panes(Some(json!([named("t2", "blocked", Some(3))])));
+        tick(&f);
+        assert_eq!(watch(&f, &orch).known[&worker].turn, Some(3));
+        assert_eq!(pending(&f, &orch).len(), 1);
+        f.advance(1.0);
+        let log = PathBuf::from(std::env::var("FAKE_HC_LOG").unwrap());
+        let baseline = std::fs::read_to_string(&log).unwrap().lines().count();
+        // Arm an advance so the delayed clock enters the write path before the new launch.
+        panes(Some(json!([named("t2", "blocked", Some(4))])));
+        // The delayed clock owns the closure; retain its barrier and committed evidence here.
+        let ran = Arc::new(AtomicBool::new(false));
+        let fired = Arc::clone(&ran);
+        let committed = Arc::new(Mutex::new(None));
+        let captured = Arc::clone(&committed);
+        let newer = f.other();
+        let (new_worker, new_orch) = (worker.clone(), orch.clone());
+        let slow = f.busy(move || {
+            if std::fs::read_to_string(&log).unwrap().lines().count() > baseline
+                && !fired.swap(true, Ordering::SeqCst)
+            {
+                newer
+                    .record_launch(&NewLaunch {
+                        pane: "t3".into(),
+                        ..NewLaunch::new("tests/pane", &new_worker, "executor")
+                    })
+                    .unwrap();
+                let mut current = terminal("t3", status, turn);
+                current["name"] = new_worker.clone().into();
+                panes(Some(json!([current])));
+                newer.dispatch_callbacks_snapshot().unwrap();
+                let saved = watch_store(&newer, &new_orch);
+                assert_eq!(saved.known[&new_worker].pane, "t3");
+                assert_eq!(saved.known[&new_worker].turn, turn);
+                assert_eq!(saved.blocked.contains_key(&new_worker), status == "blocked");
+                let queued = pending_store(&newer, &new_orch);
+                assert_eq!(queued.len(), usize::from(status == "blocked"));
+                if status == "blocked" {
+                    assert_eq!(queued[0]["text"], notice(&new_worker, "tests/pane", "t3"));
+                }
+                *captured.lock().unwrap() = Some((saved, queued));
+            }
+        });
+        slow.dispatch_callbacks_snapshot().unwrap();
+        assert!(ran.load(Ordering::SeqCst), "newer clock must commit first");
+        let (saved, queued) = committed.lock().unwrap().take().unwrap();
+        assert_eq!(watch(&f, &orch), saved, "{status} {turn:?}");
+        assert_eq!(
+            pending(&f, &orch),
+            queued,
+            "queued rows must remain unchanged"
+        );
+        let back = restore(&f, &orch);
+        f.advance(6.0);
+        tick(&f);
+        assert_eq!(
+            blocked(&back.drain(&f, &worker, &orch)),
+            vec![notice(&worker, "tests/pane", "t3"); usize::from(status == "blocked")]
         );
     }
 }

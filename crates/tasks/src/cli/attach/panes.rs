@@ -25,7 +25,13 @@ fn generated_key(key: &str) -> bool {
         })
 }
 
-fn blocked_line(text: &str) -> Option<(&str, &str, &str)> {
+struct BlockedLine<'text> {
+    who: &'text str,
+    task: &'text str,
+    pane: &'text str,
+}
+
+fn blocked_line(text: &str) -> Option<BlockedLine<'_>> {
     let (identity, words) = text.split_once(" — ")?;
     if ![LEGACY_WAIT, WAITED].contains(&words) {
         return None;
@@ -41,7 +47,7 @@ fn blocked_line(text: &str) -> Option<(&str, &str, &str)> {
         (Some("BLOCKED"), Some(who), Some(task), Some(pane), None)
             if !who.is_empty() && !task.is_empty() && !pane.is_empty() =>
         {
-            Some((who, task, pane))
+            Some(BlockedLine { who, task, pane })
         }
         _ => None,
     }
@@ -86,12 +92,29 @@ impl Blocked {
 pub struct PaneWatch {
     pub blocked: BTreeMap<String, Blocked>,
     pub unanswered: bool,
-    /// Per-current-launch observation watermarks, retained across resolved samples. A watermark
-    /// is neither current blocked status, prompt identity nor native callback liveness.
+    /// Per-current-launch observed identities and counter watermarks, retained across resolved
+    /// samples. A watermark is neither current blocked status, prompt identity nor native liveness.
     pub known: BTreeMap<String, Blocked>,
 }
 
 impl PaneWatch {
+    fn observed_pane<'panes>(
+        &self,
+        board: &Board,
+        panes: &'panes [Pane],
+        record: &TaskSessionRow,
+        who: &str,
+    ) -> Option<&'panes Pane> {
+        let pane = pane_of(board, panes, record, who)?;
+        // A cached fallback can predate the current launch. Once that launch's recorded pane
+        // was observed, weaker attribution cannot replace it or resolve its queued notice.
+        let bound = [self.known.get(who), self.blocked.get(who)]
+            .into_iter()
+            .flatten()
+            .any(|b| b.task == record.slug && b.pane == record.pane);
+        (pane.id == record.pane || !bound).then_some(pane)
+    }
+
     fn watermark(&self, who: &str, sample: &Blocked) -> Option<&Blocked> {
         [self.known.get(who), self.blocked.get(who)]
             .into_iter()
@@ -117,11 +140,7 @@ impl PaneWatch {
                 .blocked
                 .get(who)
                 .is_some_and(|b| b.same_place(&sample));
-        if sample.turn.is_some() {
-            self.known.insert(who.into(), sample.clone());
-        } else {
-            self.known.remove(who);
-        }
+        self.known.insert(who.into(), sample.clone());
         if status == Some("blocked") && !resolved {
             self.blocked.insert(who.into(), sample);
         } else {
@@ -146,7 +165,12 @@ impl PaneWatch {
         if outage_line(text).is_some() {
             return matches!(panes, Some(Ok(_)));
         }
-        let Some((who, task, id)) = blocked_line(text) else {
+        let Some(BlockedLine {
+            who,
+            task,
+            pane: id,
+        }) = blocked_line(text)
+        else {
             return false;
         };
         let launched = launches(board, overseen, open);
@@ -159,7 +183,7 @@ impl PaneWatch {
         let Some(Ok(panes)) = panes else {
             return false;
         };
-        let Some(pane) = pane_of(board, panes, record, who) else {
+        let Some(pane) = self.observed_pane(board, panes, record, who) else {
             return false;
         };
         let sample = Blocked {
@@ -192,9 +216,9 @@ impl PaneWatch {
     /// Generated pane notices describe an observation, including legacy rows and retries sent
     /// outside a clock tick. A native recipient can read them after the terminal has moved on.
     /// Addressed messages and all other event kinds retain their exact text.
-    pub fn delivery_text<'a>(key: &str, text: &'a str) -> Cow<'a, str> {
+    pub fn delivery_text<'text>(key: &str, text: &'text str) -> Cow<'text, str> {
         if generated_key(key) {
-            if let Some((who, task, pane)) = blocked_line(text) {
+            if let Some(BlockedLine { who, task, pane }) = blocked_line(text) {
                 return Cow::Owned(format!("BLOCKED {who} {task} {pane} — {WAITED}"));
             }
             if let Some(why) = outage_line(text) {
@@ -207,11 +231,11 @@ impl PaneWatch {
     }
 }
 
-fn launches<'a>(
+fn launches<'launches>(
     board: &Board,
     overseen: &Overseen,
-    open: &'a [TaskSessionRow],
-) -> BTreeMap<&'a str, &'a TaskSessionRow> {
+    open: &'launches [TaskSessionRow],
+) -> BTreeMap<&'launches str, &'launches TaskSessionRow> {
     let owners = Owners::new(&board.tasks);
     open.iter()
         .filter(|record| overseen.hears(board, &owners, record))
@@ -219,12 +243,12 @@ fn launches<'a>(
         .collect()
 }
 
-fn pane_of<'a>(
+fn pane_of<'panes>(
     board: &Board,
-    panes: &'a [Pane],
+    panes: &'panes [Pane],
     record: &TaskSessionRow,
     who: &str,
-) -> Option<&'a Pane> {
+) -> Option<&'panes Pane> {
     let bound = board
         .sessions
         .iter()
@@ -235,8 +259,8 @@ fn pane_of<'a>(
         .claude_session
         .strip_prefix("codex:")
         .unwrap_or(&record.claude_session);
-    let matches_conversation = |p: &&Pane| {
-        p.session
+    let matches_conversation = |pane: &&Pane| {
+        pane.session
             .as_deref()
             .is_some_and(|s| (!conversation.is_empty() && s == conversation) || bound == Some(s))
     };
@@ -294,6 +318,25 @@ impl Overseen<'_> {
     }
 }
 
+fn delegated_coordinators<'board>(
+    board: &'board Board,
+    task: &'board Task,
+    parent: &'board str,
+) -> impl Iterator<Item = &'board str> {
+    task.roles
+        .iter()
+        .filter(|role| role.role == "orchestrator" && role.health.holds())
+        .filter(|role| {
+            board.sessions.iter().any(|session| {
+                session.row.handle == role.handle
+                    && session.row.kind == "orchestrator"
+                    && session.row.parent.as_deref() == Some(parent)
+                    && session.row.left_at.is_none()
+            })
+        })
+        .map(|role| role.handle.as_str())
+}
+
 /// The sessions `handle` oversees: its children as LOST reaches them (an orchestrator's only when
 /// their work is its own or nobody's), and whoever holds a role on a task it orchestrates or on one
 /// below it that no other orchestrator holds. Never itself, and none that left.
@@ -321,20 +364,8 @@ pub fn overseen<'b>(board: &'b Board, handle: &'b str) -> Overseen<'b> {
                 } else if owners.of(&task.slug).contains(&handle) {
                     // The task owner hears its directly parented coordinator itself, without
                     // taking over that coordinator's workers or any other task it holds.
-                    for role in kid
-                        .roles
-                        .iter()
-                        .filter(|r| r.role == "orchestrator" && r.health.holds())
-                    {
-                        if board.sessions.iter().any(|s| {
-                            s.row.handle == role.handle
-                                && s.row.kind == "orchestrator"
-                                && s.row.parent.as_deref() == Some(handle)
-                                && s.row.left_at.is_none()
-                        }) {
-                            delegated.insert((role.handle.as_str(), kid.slug.as_str()));
-                        }
-                    }
+                    let coordinators = delegated_coordinators(board, kid, handle);
+                    delegated.extend(coordinators.map(|who| (who, kid.slug.as_str())));
                 }
             }
         }
@@ -396,7 +427,7 @@ pub fn pane_watch(
         }
     };
     for (who, record) in launched {
-        if let Some(pane) = pane_of(board, &panes, record, who) {
+        if let Some(pane) = before.observed_pane(board, &panes, record, who) {
             let sample = Blocked {
                 task: record.slug.clone(),
                 pane: pane.id.clone(),
