@@ -81,8 +81,21 @@ UDS registrations pin the listener's kernel peer pid and process start time.
 Sweep and delivery connections check that identity; a dead or replaced listener
 retires the registration, never transfers it to a new process at the same path.
 An address held by another valid registration is refused. In-process bindings
-are recorded outside session by the native hook, and cannot register callbacks
-or take over a handle that holds a native registration;
+are recorded outside session by the native hook, with the checkout the agent's
+last tool call ran in (`worktree`, `branch` and `placed_at` on
+`callback_state:['binding', KEY]`, written by the beat only when they change,
+and `stay_from`, lowered by a call there whose clock went back; on Linux
+`placed_boot` and `last_boot` too, the clock since boot as the hook read it,
+`sys/start.rs`), which the agents view reads as where it works and where it
+looks, once a view and only for a quiet one, for a live process it waits on:
+one working there that started between `placed_at` and its last tool call (a
+start Linux dates since boot: between `placed_boot` and `last_boot` in the same
+boot, never by a wall time), or `unknown` for one there whose start cannot be
+read, falls between `stay_from` and `placed_at`, or is dated since boot with a
+bounding reading missing (`cli/agents/place.rs`; a
+long-lived reader keeps that listing on its store, dated when it ended,
+`store/kept.rs`). They cannot
+register callbacks or take over a handle that holds a native registration;
 unclassified bound keys also fail closed until a full-session hook binds them.
 An unclassified binding asks for a retry after the new tasks binary is linked;
 a known in-process binding uses its board inbox. Reads use cached evidence,
@@ -487,6 +500,20 @@ that prefix, and the agents API strips it from the conversation id.
 doc and [tools/AGENTS.md](../../../tools/AGENTS.md#landing-on-main)): `git.rs` its
 git reads, `process.rs` the locks' pids (`kill(pid, 0)`, `ps`); the leaf
 `crates/process-cwd/` owns the bounded `lsof` scan shared with the cargo sweep.
+`coalesce.rs` appends requests before trying the sweep lock: a busy caller exits
+without opening the board, and the holder serves requests received during its
+pass in another pass. `verdicts.rs` reuses positive retention evidence by HEAD,
+index, folder and witness metadata (mode and change time included), plus ancestor
+ignore policies and shared/global ignore inputs. Supported empty verdicts reuse a
+bounded complete metadata inventory, including tracked exceptions under output cuts.
+Warm reuse stats saved witnesses or inventory entries and their policy files without
+walking the checkout. Unknown, oversized or unstable inputs conservatively rescan;
+conditional/per-worktree configuration, attributes and unreadable policy decline reuse.
+Fresh unavailable HEAD/removal guards retain a tree before lookup; eligible removal
+holds its removal lease through both fresh final status guards and deletion. Regenerable `.target/`,
+`symphony/.target/`, `symphony/build/` and `.codex/hooks*` go with a merged tree;
+`artifacts/<handle>/` keeps it. Foreground `--task` visits only that task's
+finished worktrees and asks for a detached full pass.
 `trigger.rs` owns
 the detached sweeps work finishing starts (`done`, `move`,
 `verdict`, `leave`, `reap`, and `inbox` once an hour). Those run the main

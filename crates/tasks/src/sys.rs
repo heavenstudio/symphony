@@ -21,9 +21,14 @@ use std::fs::File;
 
 pub use process_cwd::exit::Exit;
 pub use process_cwd::spawn::{
-    Child, Command, Spawning, Stdio, connect, output, pipe, set_nonblocking, spawn_output,
-    spawn_piped, spawning, wait_output,
+    Child, Command, Interrupts, Spawning, Stdio, connect, output, pipe, set_nonblocking,
+    spawn_output, spawn_piped, spawning, wait_output,
 };
+
+mod start;
+#[cfg(target_os = "macos")]
+pub(crate) use start::bsd_start;
+pub use start::{Boottime, Start, boot_clock, process_starts};
 
 unsafe extern "C" {
     fn gethostname(name: *mut c_char, len: usize) -> c_int;

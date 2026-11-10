@@ -42,6 +42,10 @@ pub use blocks::*;
 pub use media::{GalleryItem, Media, View, Viewer};
 mod project;
 pub use project::*;
+mod task_queries;
+pub use task_queries::{
+    TaskKind, TaskStatus, subtasks, tasks, tasks_in_progress, tasks_in_review, tasks_in_status,
+};
 
 /// The route that answers a [`Front`].
 pub const FRONT_PATH: &str = "/api/front";

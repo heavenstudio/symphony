@@ -1,5 +1,5 @@
 //! The sweep's rules for finished work (tools/worktree-sweep-on-done): a task still live keeps a
-//! worktree its session or its launch is tied to; a finished worktree's output goes with it; and a
+//! worktree its session or its launch is tied to; regenerable output goes with it; and a
 //! task just done or cancelled (`--task`) has its closed sessions' worktrees go without the window.
 
 use crate::common::{GONE, Seed};
@@ -89,12 +89,14 @@ fn once_the_task_launched_here_is_done_the_worktree_goes() {
 
 // -- a finished worktree's output goes with it ------------------------------------------------
 
-const OUTPUT: [&str; 5] = [
-    "artifacts/render-check/frame.png",
-    "artifacts/solar-swift/probe.json",
+const OUTPUT: [&str; 7] = [
     ".godot/editor/cache",
     ".venv/lib/x.py",
     ".target/debug/tasks",
+    "symphony/.target/debug/tasks",
+    "symphony/build/client.js",
+    ".codex/hooks.json",
+    ".codex/hooks/callback",
 ];
 
 #[test]
@@ -120,10 +122,72 @@ fn a_worktree_with_no_task_lets_its_output_go() {
 }
 
 #[test]
+fn output_is_not_cleaned_when_the_final_process_scan_keeps_the_tree() {
+    let r = Repo::new();
+    let wt = r.detached("busy");
+    for file in [".target/debug/tasks", ".codex/hooks.json"] {
+        write(&wt, file, "active output\n");
+    }
+    let result = r.sweep_with(|o| o.occupied = Box::new(|_| Some(true)));
+    r.assert_kept(&wt, &text(&result));
+    for file in [".target/debug/tasks", ".codex/hooks.json"] {
+        assert_eq!(
+            std::fs::read_to_string(wt.join(file)).unwrap(),
+            "active output\n"
+        );
+    }
+}
+
+#[test]
+fn artifacts_keep_finished_and_unassigned_worktrees_and_name_the_file() {
+    for status in [Some("done"), Some("cancelled"), None] {
+        let seed = status.map_or_else(Seed::default, |status| {
+            Seed::default().task("sim/landed", status)
+        });
+        let r = Repo::with(seed);
+        let wt = r.merged("landed", "sim/landed");
+        write(&wt, "artifacts/solar-swift/x.log", "keep this evidence\n");
+        let said = r.sweep();
+        r.assert_kept(&wt, &said);
+        assert!(said.contains("artifacts/solar-swift/"), "{said}");
+        assert_eq!(
+            std::fs::read_to_string(wt.join("artifacts/solar-swift/x.log")).unwrap(),
+            "keep this evidence\n"
+        );
+    }
+}
+
+#[test]
+fn tracked_hooks_edits_and_files_outside_the_regenerable_paths_survive() {
+    let r = Repo::new();
+    write(&r.root, ".codex/hooks.toml", "tracked = true\n");
+    git(&r.root, &["add", ".codex/hooks.toml"]);
+    git(&r.root, &["commit", "-qm", "tracked hook source"]);
+    let files = [
+        ".codex/hooks.toml",
+        ".codex/config.toml",
+        "symphony/building/new.rs",
+        ".target-backup/source.rs",
+    ];
+    let trees: Vec<_> = files
+        .iter()
+        .map(|file| {
+            let wt = r.detached(&format!("kept-{}", file.replace('/', "-")));
+            write(&wt, file, "keep this source\n");
+            wt
+        })
+        .collect();
+    let said = r.sweep();
+    for (&file, wt) in files.iter().zip(&trees) {
+        r.assert_kept(wt, &said);
+        assert!(said.contains(file), "{said}");
+    }
+}
+
+#[test]
 fn a_worktree_whose_task_is_not_finished_keeps_its_output_and_names_it() {
     let r = Repo::with(Seed::default().task("sim/parked", "backlog"));
-    // Unlike explicit landing cleanup, a sweep does not infer that a parked task's test output
-    // can go. Only done/cancelled (or no task) releases all artifacts.
+    // A sweep retains a parked task's artifacts as well as a finished task's.
     write(
         &r.root,
         "tests/probe_test.gd",

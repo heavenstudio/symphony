@@ -47,14 +47,8 @@ fn digest(bytes: &[u8]) -> String {
 
 pub fn counts(board: &Tasks) -> TaskCounts {
     TaskCounts {
-        in_progress: dashboard::count(
-            board
-                .tasks
-                .iter()
-                .filter(|t| t.status == "in_progress")
-                .count(),
-        ),
-        in_review: dashboard::count(board.tasks.iter().filter(|t| t.status == "review").count()),
+        in_progress: dashboard::count(symphony_api::tasks_in_progress(&board.tasks).count()),
+        in_review: dashboard::count(symphony_api::tasks_in_review(&board.tasks).count()),
         agents_live: dashboard::count(board.sessions.iter().filter(|s| s.health == "live").count()),
     }
 }
@@ -435,10 +429,12 @@ pub fn agents_in(
 ) -> Result<symphony_api::Agents, String> {
     let mut env = crate::children::board_env();
     env.cwd = root.to_path_buf();
+    // The server views its agents every tick: the process listing is kept by its store a while.
     let probes = match common {
         Some(common) => symphony_board::cli::probes::machine_in(&env, common),
         None => symphony_board::cli::probes::machine(&env),
-    };
+    }
+    .kept_by(store);
     agents_probed(store, &probes, Some(board))
 }
 
@@ -538,6 +534,46 @@ mod agents_tests;
 mod tests {
     use super::*;
     use crate::test_tree::Tree;
+
+    #[test]
+    fn project_task_counts_exclude_children_and_grandchildren() {
+        let task = |slug: &str, status: &str, parent: Option<&str>| Task {
+            slug: slug.into(),
+            title: slug.into(),
+            body: String::new(),
+            status: status.into(),
+            priority: 2,
+            parent: parent.map(String::from),
+            created_by: "owner".into(),
+            created: 0.0,
+            updated: 0.0,
+            links: Vec::new(),
+            depends: Vec::new(),
+            roles: Vec::new(),
+            instruction: false,
+            fields: BTreeMap::new(),
+        };
+        let board = Tasks {
+            version: "fixture".into(),
+            sessions: Vec::new(),
+            tasks: vec![
+                task("feature", "in_progress", None),
+                task("reviewed", "review", None),
+                task("finished", "done", None),
+                task("feature/implementation", "in_progress", Some("feature")),
+                task("feature/check", "review", Some("feature")),
+                task("feature/check/detail", "review", Some("feature/check")),
+            ],
+        };
+        assert_eq!(
+            counts(&board),
+            TaskCounts {
+                in_progress: 1,
+                in_review: 1,
+                agents_live: 0
+            }
+        );
+    }
 
     #[test]
     fn a_brief_within_the_limit_is_its_whole_reply() {

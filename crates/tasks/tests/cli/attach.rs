@@ -191,7 +191,7 @@ fn a_digest_interval_that_is_no_number_is_refused_before_anything_is_written() {
 
 /// Probes that answer nothing and write down each time they are asked, by name.
 fn counting(asked: &Arc<Mutex<Vec<&'static str>>>) -> Probes<'static> {
-    let (panes, runs) = (Arc::clone(asked), Arc::clone(asked));
+    let (panes, runs, listed) = (Arc::clone(asked), Arc::clone(asked), Arc::clone(asked));
     Probes {
         panes: Box::new(move || {
             panes.lock().unwrap().push("panes");
@@ -202,6 +202,13 @@ fn counting(asked: &Arc<Mutex<Vec<&'static str>>>) -> Probes<'static> {
             Ok(Vec::new())
         }),
         branch_of: Box::new(|_| Ok(String::new())),
+        processes: Box::new(move || {
+            listed.lock().unwrap().push("processes");
+            Ok(symphony_board::cli::agents::ProcessScan {
+                listed: Vec::new(),
+                complete: true,
+            })
+        }),
     }
 }
 

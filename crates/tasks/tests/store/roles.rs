@@ -310,7 +310,7 @@ fn the_owner_and_a_role_holder_return_blocked_work_to_review_but_never_an_instru
     let before = f.store.dump().unwrap();
     assert_eq!(
         refused(f.store.move_to("sim/jump/step", "review", "owner")),
-        "sim/jump/step is an instruction subtask: its executor closes it with `done`, not review"
+        "sim/jump/step is a subtask: integrate into its parent and close it with `done`, not review"
     );
     assert_eq!(f.store.dump().unwrap(), before);
     f.advance(1.0);
@@ -390,28 +390,6 @@ fn moving_a_started_task_needs_a_role_on_it() {
         refused(f.store.move_to("sim/jump", "blocked", &b)),
         format!("{b} holds no role on sim/jump, which is in_progress")
     );
-}
-
-#[test]
-fn an_instruction_task_is_never_moved_to_review_or_done() {
-    let f = Fixture::empty();
-    let agent = f.session("worker");
-    f.task("a");
-    f.task_with(NewTask {
-        parent: Some("a".into()),
-        instruction: true,
-        ..NewTask::new("a/m", "Measure", "owner")
-    });
-    f.store.claim("a/m", &agent).unwrap();
-    assert_eq!(
-        refused(f.store.move_to("a/m", "review", &agent)),
-        "a/m is an instruction subtask: its executor closes it with `done`, not review"
-    );
-    assert_eq!(
-        refused(f.store.move_to("a/m", "done", &agent)),
-        "a/m cannot go from in_progress to done"
-    );
-    assert_eq!(f.store.get("a/m").unwrap().status, "in_progress");
 }
 
 #[test]

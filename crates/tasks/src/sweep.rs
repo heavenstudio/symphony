@@ -32,9 +32,8 @@
 //! * no process has its working directory inside it (`lsof`; when that cannot be read or lists
 //!   nothing, nothing is removed);
 //! * nothing in it is left behind: no tracked change, no untracked file, and no ignored file beyond
-//!   the caches and verify output `land` lets go with a landed worktree. A finished worktree (every
-//!   task its branch names, its sessions hold or was launched there done or cancelled, or none) lets
-//!   its whole output go with it: `artifacts/`, `.godot`, `.venv`, `.target`.
+//!   caches and root verify logs. Regenerable `.target/`, `symphony/.target/`, `symphony/build/`
+//!   and `.codex/hooks*` go with it; artifacts under a handle still keep it.
 //!
 //! Right before removing, it refreshes board sessions and launches, the worktree listing and lock,
 //! activity, HEAD and what is left behind, then searches that tree alone for process working
@@ -47,13 +46,26 @@
 //! worktree holds is deleted, only if it still points where it did when listed and no live or stale
 //! session still binds its agent's detached worktree. In-process agents must use their own
 //! `agent-ID` worktree; their id does not bind an arbitrarily named checkout. One sweep runs at a
-//! time (`sf-tasks/sweep.lock` in the git common dir). Tests: `symphony/crates/tasks/tests/sweep/`.
+//! time (`sf-tasks/sweep.lock` in the git common dir). Contenders append a request and exit before
+//! connecting to the board; the holder runs another pass for requests received during its pass.
+//! Positive witnesses or bounded complete clean inventories reuse unchanged metadata/policy;
+//! unknown inputs rescan. Cache hits stat saved entries without walking. Both final status guards
+//! remain fresh; an early unavailable HEAD/removal guard retains the tree before lookup.
+//! Foreground `--task` cleanup visits only its finished worktrees, guarded per tree, and asks for
+//! a detached full pass. Tests: `symphony/crates/tasks/tests/sweep/`.
 
+mod coalesce;
+mod command;
 pub mod git;
+mod guards;
 pub mod process;
 pub mod trigger;
+mod verdict_inputs;
+mod verdict_inventory;
+mod verdicts;
 
-use crate::cli::Env;
+pub use command::{Request, command, command_connect};
+
 use crate::health::FINISHED;
 use crate::rows::TaskSessionRow;
 use crate::{Error, Session, Store, Task, sys};
@@ -141,6 +153,8 @@ pub struct Options {
     /// The window of recent activity, in hours.
     pub recent_hours: f64,
     pub finished: Finished,
+    /// An explicit task cleanup visits only these worktrees, with no repository-wide pruning.
+    pub only: Option<BTreeSet<PathBuf>>,
     pub alive: Probe,
     pub started: Dates,
     pub cwds: Scan,
@@ -157,6 +171,7 @@ impl Options {
             dry_run: false,
             recent_hours: RECENT_HOURS,
             finished: Finished::default(),
+            only: None,
             alive: Box::new(process::pid_alive),
             started: Box::new(move |pid| process::process_start(pid, &vars)),
             cwds: Box::new(|| process_cwd::process_cwds_with(sys::command("lsof"))),
@@ -414,7 +429,12 @@ pub fn sweep(root: &Path, here: &Path, store: &Store, o: &Options) -> Result<Swe
     // The processes' directories, asked once and only when a worktree gets that far.
     let mut working: Option<Option<Vec<PathBuf>>> = None;
     let mut gone: BTreeSet<PathBuf> = BTreeSet::new();
+    let mut ancestry = BTreeMap::new();
+    let verdicts = verdicts::Verdicts::new(root, o.dry_run);
     for (number, (entry, path)) in trees.iter().zip(&paths).enumerate() {
+        if o.only.as_ref().is_some_and(|only| !only.contains(path)) {
+            continue;
+        }
         if number == 0 || *path == here || entry.bare || entry.prunable || !path.is_dir() {
             continue;
         }
@@ -442,7 +462,12 @@ pub fn sweep(root: &Path, here: &Path, store: &Store, o: &Options) -> Result<Swe
         } else {
             &nobody
         };
-        if index.bound(path, unbound) || head.is_empty() || !git::ancestor(root, head, &main) {
+        if index.bound(path, unbound)
+            || head.is_empty()
+            || !*ancestry
+                .entry(head)
+                .or_insert_with(|| git::ancestor(root, head, &main))
+        {
             continue;
         }
         let listed = &entry.path;
@@ -454,6 +479,13 @@ pub fn sweep(root: &Path, here: &Path, store: &Store, o: &Options) -> Result<Swe
             result.spared.push((listed.clone(), held));
             continue;
         }
+        let _removal_guard = match guards::acquire(path, o.dry_run) {
+            Ok(held) => held,
+            Err(why) => {
+                result.spared.push((listed.clone(), why));
+                continue;
+            }
+        };
         let seen = working.get_or_insert_with(|| {
             (o.cwds)()
                 .filter(|cwds| !cwds.is_empty())
@@ -475,7 +507,9 @@ pub fn sweep(root: &Path, here: &Path, store: &Store, o: &Options) -> Result<Swe
             }
             Some(_) => {}
         }
-        let owner = git::owner_lines_left(path);
+        let finished = index.finished(path, branch);
+        let verdict = verdicts.read(entry, finished);
+        let owner = verdict.owner;
         if !owner.is_empty() {
             result.spared.push((
                 listed.clone(),
@@ -483,8 +517,7 @@ pub fn sweep(root: &Path, here: &Path, store: &Store, o: &Options) -> Result<Swe
             ));
             continue;
         }
-        let finished = index.finished(path, branch);
-        let left = git::left_behind(path, finished);
+        let left = verdict.left;
         if !left.is_empty() {
             result.kept.push((listed.clone(), left));
             continue;
@@ -501,16 +534,18 @@ pub fn sweep(root: &Path, here: &Path, store: &Store, o: &Options) -> Result<Swe
         result.removed.push((listed.clone(), why));
         gone.insert(path.clone());
     }
-    if !o.dry_run {
+    if !o.dry_run && o.only.is_none() {
         let _ = git::git(root, &["worktree", "prune"]);
     }
-    result.branches = agent_branches(root, &main, &trees, &paths, &gone, store, o)?;
+    if o.only.is_none() {
+        result.branches = agent_branches(root, &main, &trees, &paths, &gone, store, o)?;
+    }
     Ok(result)
 }
 
 /// Remove `path` if it is still at `head` with nothing left behind; git checks cleanliness again
 /// itself (no `--force`). Only the exact dead lock is lifted; refusal restores it without replacing
-/// another owner's lock.
+/// another owner's lock. The caller holds the per-tree removal guard throughout.
 fn remove(
     root: &Path,
     path: &Path,
@@ -630,8 +665,10 @@ fn remove(
     if index.bound(&at, unbound)
         || index.live(&at, branch).is_some()
         || index.finished(&at, branch) != finished
-        || !git::left_behind(path, finished).is_empty()
     {
+        return Ok(false);
+    }
+    if !git::left_behind(path, finished).is_empty() {
         return Ok(false);
     }
     let now = (o.now)();
@@ -640,7 +677,9 @@ fn remove(
     }
     // No status or board scan after this tree's process scan. Ref writers remain excluded
     // until removal completes; git itself checks tracked and untracked changes once more.
-    Ok(git::succeeds(root, &["worktree", "remove", &shown]) && !path.exists())
+    Ok(git::clean_regenerable(path)
+        && git::succeeds(root, &["worktree", "remove", &shown])
+        && !path.exists())
 }
 
 /// Delete each `worktree-agent-*` branch merged into main that no worktree left holds, only if it
@@ -735,47 +774,6 @@ pub fn recent_hours(vars: &BTreeMap<String, String>, flag: Option<f64>) -> Resul
             "the window of recent activity must be 0 hours or more, not {hours}"
         ))
     }
-}
-
-/// What `tasks sweep` was asked.
-#[derive(Debug, Clone, Default)]
-pub struct Request<'a> {
-    pub dry_run: bool,
-    pub hours: Option<f64>,
-    /// Tasks just done or cancelled.
-    pub tasks: Vec<&'a str>,
-    /// Why it was started, when work finishing started it ([`trigger`]): said first.
-    pub background: Option<&'a str>,
-}
-
-/// `tasks sweep`, on the board `store`, from where `env` runs: its lines, the summary last. A real
-/// sweep waits for any other to end, and reads the board after.
-pub fn command(store: &Store, env: &Env, request: &Request<'_>) -> Result<Vec<String>, String> {
-    let recent = recent_hours(&env.vars, request.hours)?;
-    let here = git::toplevel(&env.cwd)?;
-    let _held = if request.dry_run {
-        None
-    } else {
-        let common = crate::git::common_dir(&here).map_err(|e| e.to_string())?;
-        Some(trigger::hold(&common)?)
-    };
-    let mut finished = Finished::default();
-    for slug in &request.tasks {
-        let of = Finished::of(store, slug).map_err(|e| e.to_string())?;
-        finished.worktrees.extend(of.worktrees);
-        finished.handles.extend(of.handles);
-    }
-    let options = Options {
-        dry_run: request.dry_run,
-        recent_hours: recent,
-        finished,
-        ..Options::machine(&env.vars)
-    };
-    let mut lines = sweep(&here, &here, store, &options)?.lines();
-    if let Some(why) = request.background {
-        lines.insert(0, format!("[{}] {why}", sys::local_minute(trigger::now())));
-    }
-    Ok(lines)
 }
 
 #[cfg(test)]

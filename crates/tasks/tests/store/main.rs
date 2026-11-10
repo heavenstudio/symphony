@@ -5,6 +5,7 @@
     reason = "a test starts its fixtures and stand-ins as it likes; the board's children are sys's"
 )]
 
+mod bindings;
 mod blocked_panes;
 mod board;
 mod callbacks;
@@ -48,5 +49,6 @@ mod sessions;
 mod slots;
 mod sqlite;
 mod start;
+mod subtask_roles;
 mod tree;
 mod verdict;

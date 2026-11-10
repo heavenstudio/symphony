@@ -10,7 +10,9 @@ use crate::{Store, Task};
 /// `task` has moved: what its new status starts.
 pub(super) fn after_move(store: &Store, c: &mut Context, task: &Task) {
     after_finish(store, c, task);
-    if task.status != "review" {
+    if task.status != "review"
+        || !on_review::delivery_task(task.parent.as_deref(), task.instruction)
+    {
         return;
     }
     match on_review::trigger(c.env, &c.env.cwd, &task.slug) {

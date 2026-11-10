@@ -17,6 +17,10 @@ let panel;
 const styleLoads = new Map();
 const failed = new Set();
 
+function notices() {
+    return document.getElementById("shell-notices");
+}
+
 async function initialize(kind) {
     const spec = modules[kind];
     const module = await import(spec.script);
@@ -76,16 +80,24 @@ async function ensurePanel() {
         const imported = await initialize("panel");
         await styles(spec);
         await imported.run();
+        document.getElementById("panel-error")?.remove();
         window.reviewPanelReady = true;
         dispatchEvent(new Event("review:panel-ready"));
         return { imported };
     })().catch(error => {
         panel = null;
         console.error("Conversation could not be loaded", error);
-        const notice = document.createElement("button");
-        notice.textContent = "Retry loading conversation";
-        notice.onclick = () => { notice.remove(); ensurePanel(); };
-        document.body.prepend(notice);
+        if (document.getElementById("panel-error")) return;
+        const notice = document.createElement("div");
+        notice.id = "panel-error";
+        notice.className = "shell-notice";
+        notice.setAttribute("role", "alert");
+        notice.textContent = "Conversation could not be loaded. ";
+        const retry = document.createElement("button");
+        retry.textContent = "Retry loading conversation";
+        retry.onclick = () => { notice.remove(); ensurePanel(); };
+        notice.append(retry);
+        notices().append(notice);
     });
     return panel;
 }
@@ -192,6 +204,7 @@ async function show(generation, scroll) {
         await imported.run();
         active = { kind, imported, mount };
     }
+    document.getElementById("module-error")?.remove();
     const root = document.scrollingElement;
     const position = {
         x: scrollX, y: scrollY,
@@ -229,10 +242,11 @@ function navigate() {
         console.error("Page could not be loaded", error);
         let notice = document.getElementById("module-error");
         if (!notice) {
-            notice = document.createElement("p");
+            notice = document.createElement("div");
             notice.id = "module-error";
+            notice.className = "shell-notice";
             notice.setAttribute("role", "alert");
-            document.body.prepend(notice);
+            notices().append(notice);
         }
         notice.replaceChildren(document.createTextNode("This page could not be loaded. "));
         const retry = document.createElement("button");

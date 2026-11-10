@@ -182,7 +182,7 @@ impl TwoOrchestrators {
         subtask(&fixture, "scratch/b/1", "scratch/b");
         subtask(&fixture, "scratch/b/rev", "scratch/b");
         fixture.store.claim("scratch/b/rev", &worker).unwrap();
-        (fixture.store.move_to("scratch/b/rev", "review", &worker)).unwrap();
+        fixture.historical_review("scratch/b/rev");
         role("scratch/b/rev", &kid, "reviewer");
         fixture.task("scratch/free");
         fixture.store.claim("scratch/free", &worker).unwrap();

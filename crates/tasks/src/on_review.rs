@@ -21,6 +21,11 @@ pub const MANIFEST: &str = "symphony.toml";
 /// What each start said, under a line saying when and for which task.
 pub const LOG: &str = "on-review.log";
 
+/// Only a complete top-level feature enters the delivery pipeline.
+pub fn delivery_task(parent: Option<&str>, instruction: bool) -> bool {
+    parent.is_none() && !instruction
+}
+
 /// Whether a task moving to review in `env` may start the command: `TASKS_ON_REVIEW=on` or `off`
 /// says; else only on the repository's own board, which no `TASKS_SERVER` names.
 pub fn enabled(env: &Env) -> bool {
@@ -191,6 +196,14 @@ fn spawn(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn slices_never_start_their_own_delivery_pipeline() {
+        assert!(delivery_task(None, false));
+        assert!(!delivery_task(Some("feature"), false));
+        assert!(!delivery_task(Some("feature"), true));
+        assert!(!delivery_task(None, true));
+    }
 
     fn env(pairs: &[(&str, &str)]) -> Env {
         Env {

@@ -86,9 +86,9 @@ pub fn banner(count: usize) -> String {
         ("processes", "are", "them")
     };
     format!(
-        "<div class=\"code-banner\" role=\"status\"><p><strong>{count} Symphony {noun} from test runs \
+        "<div class=\"code-banner shell-notice\" role=\"status\" aria-atomic=\"true\"><p><strong>{count} Symphony {noun} from test runs \
          {verb} running with no parent</strong>: nothing ends {them} on its own, and the Symphony kills \
-         none. <code>ps -axo pid,ppid,command | grep -e docs_server -e 'symphony-server serve'</code> lists \
+         none.</p><p><code>ps -axo pid,ppid,command | grep -e docs_server -e 'symphony-server serve'</code> lists \
          {them}, with parent 1; stop {them} by pid.</p></div>"
     )
 }
@@ -367,8 +367,20 @@ mod tests {
     fn the_banner_names_the_count_and_says_nothing_is_killed() {
         let said = banner(3);
         assert!(said.contains("3 "), "{said}");
-        assert!(said.contains("class=\"code-banner\""), "{said}");
+        assert!(
+            said.contains("class=\"code-banner shell-notice\""),
+            "{said}"
+        );
         assert!(banner(1).contains("1 Symphony process "), "{}", banner(1));
         assert!(said.contains("symphony-server serve"), "{said}");
+        assert!(said.contains("Symphony kills none."), "{said}");
+        assert!(
+            said.contains("role=\"status\" aria-atomic=\"true\""),
+            "{said}"
+        );
+        assert!(
+            said.contains("3 Symphony processes from test runs are"),
+            "{said}"
+        );
     }
 }

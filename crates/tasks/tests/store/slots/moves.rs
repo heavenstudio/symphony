@@ -134,8 +134,11 @@ fn a_hold_ends_with_a_change_of_parent_and_frees_the_slot() {
     store.set_parent("work/h", Some("work/a"), O).unwrap();
     assert_eq!(store.claim("work/next", K).unwrap().status, "in_progress");
     assert_eq!(
-        refused(store.move_to("work/h", "review", O)),
-        format!("work/h cannot go from blocked to review: {}", holds_next())
+        refused(store.move_to("work/h", "in_progress", O)),
+        format!(
+            "work/h cannot go from blocked to in_progress: {}",
+            holds_next()
+        )
     );
 }
 

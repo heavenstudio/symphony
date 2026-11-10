@@ -215,6 +215,35 @@ fn a_folder_in_no_repository_has_no_board() {
 }
 
 #[test]
+fn quick_lookup_rejects_empty_checkout_destinations_but_keeps_blank_commondir() {
+    let dir = scratch("project-marker-destinations");
+    let outer = repository(&dir.join("outer"));
+    for (name, marker) in [("empty", "gitdir:"), ("spaces", "gitdir:   \n")] {
+        let inner = outer.join(name);
+        write(&inner.join(".git"), marker);
+        write(
+            &inner.join("component/symphony.toml"),
+            "[project]\nid='inner'\n",
+        );
+        for cwd in [&inner, &inner.join("component")] {
+            assert_eq!(project::locate_quick(cwd), None, "{name}: {cwd:?}");
+            let error = project::locate(cwd).unwrap_err();
+            assert!(error.contains("not inside a git repository"), "{error}");
+        }
+    }
+    let linked = outer.join("linked");
+    write(&linked.join(".git"), "gitdir: ../admin\n");
+    write(&outer.join("admin/commondir"), " \n");
+    let expected = Place {
+        root: linked.clone(),
+        file: None,
+        common: outer.join("admin"),
+    };
+    assert_eq!(project::locate_quick(&linked), Some(expected.clone()));
+    assert_eq!(project::locate(&linked).unwrap(), expected);
+}
+
+#[test]
 fn the_machine_folder_is_the_one_a_test_names_else_the_platforms() {
     let vars = |pairs: &'static [(&'static str, &'static str)]| {
         move |name: &str| {

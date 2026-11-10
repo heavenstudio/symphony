@@ -343,6 +343,17 @@ impl Fixture {
         self.store.create(&new).expect("the task is made")
     }
 
+    /// Seed legacy child-review state for compatibility tests; new slices cannot enter it.
+    pub fn historical_review(&self, slug: &str) {
+        self.store
+            .client()
+            .write(
+                "UPDATE type::record('task', $slug) SET status = 'review'",
+                serde_json::json!({"slug": slug}),
+            )
+            .unwrap();
+    }
+
     /// The text of each line on `slug`'s thread.
     pub fn said(&self, slug: &str) -> Vec<String> {
         let thread = self.store.thread(slug).expect("the task is there");

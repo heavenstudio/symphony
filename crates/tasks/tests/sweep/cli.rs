@@ -364,8 +364,70 @@ fn a_sweep_work_finishing_started_never_starts_the_boards_server() {
     assert_eq!(code, 2);
     assert!(err.starts_with("✖ no server of the board in "), "{err}");
     let home = folder(&r.root.join(".git"));
-    let made: Vec<_> = std::fs::read_dir(&home)
-        .map(|entries| entries.flatten().map(|e| e.file_name()).collect())
-        .unwrap_or_default();
-    assert!(made.is_empty(), "{made:?}");
+    assert!(
+        !home.join("server.json").exists(),
+        "no board server was started"
+    );
+}
+
+#[test]
+fn a_busy_trigger_returns_without_opening_the_board_connection() {
+    let r = Repo::new();
+    let wt = r.detached("kept");
+    write(&wt, "sim/new.gd", "keep this source\n");
+    let request = symphony_board::sweep::Request {
+        hours: Some(0.0),
+        background: Some("first"),
+        ..Default::default()
+    };
+    // The connector runs after taking the lock and before reading the board. All ten callers
+    // must return while it holds that lock, without trying their invalid board destination.
+    let lines = symphony_board::sweep::command_connect(&r.env(&r.root), &request, || {
+        for _ in 0..10 {
+            let (code, out, err) = run(&r, &r.root, &["sweep", "--background", "busy"], |vars| {
+                vars.insert("TASKS_SERVER".into(), "not-a-valid-address".into());
+            });
+            assert_eq!(code, 0, "{out}{err}");
+            assert!(out.contains("another pass requested"), "{out}");
+        }
+        Ok(&r.board.store)
+    })
+    .unwrap();
+    assert_eq!(
+        lines
+            .iter()
+            .filter(|line| line.starts_with("worktree sweep: "))
+            .count(),
+        2,
+        "{lines:?}"
+    );
+    r.assert_kept(&wt, &lines.join("\n"));
+}
+
+#[test]
+fn an_explicit_task_sweep_visits_only_its_worktrees_even_during_a_full_pass() {
+    let r = Repo::with(Seed::default().task("sim/jump", "done"));
+    let own = r.merged("jump", "sim/jump");
+    let other = r.detached("unrelated");
+    let handle = r.bind(&own);
+    r.board
+        .store
+        .record_launch(&NewLaunch {
+            worktree: own.to_string_lossy().into_owned(),
+            ..NewLaunch::new("sim/jump", &handle, "executor")
+        })
+        .unwrap();
+    r.board
+        .store
+        .close_task_session("sim/jump", &handle, "done", "restore")
+        .unwrap();
+    Repo::age(&other, crate::IDLE_HOURS);
+    let held = symphony_board::sweep::trigger::hold(&r.root.join(".git"))
+        .unwrap()
+        .unwrap();
+    let (code, out, err) = run(&r, &r.root, &["sweep", "--task", "sim/jump"], |_| {});
+    assert_eq!(code, 0, "{out}{err}");
+    r.assert_removed(&own, &out);
+    r.assert_kept(&other, &out);
+    drop(held);
 }

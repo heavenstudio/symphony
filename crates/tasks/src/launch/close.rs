@@ -8,7 +8,8 @@
 //! close is refused for the caller's own session or terminal (`HC_TERMINAL_ID`), for one the owner
 //! may be looking at ([`screen`], the rule cleanup keeps), and for a live one whose program is not at
 //! rest: hc knows no pid for it, its foreground is not its agent (or, with no agent, a shell) as
-//! cleanup reads it ([`foreground_idle`]), or anything runs under it that the idle sweep counts as
+//! cleanup reads it ([`foreground_idle`]), its agent is not known to be idle or done, or anything
+//! runs under it that the idle sweep counts as
 //! work ([`procs::reap_busy_reason`]: a verify, a test run of any kind, a land, the Symphony, a
 //! shell, any program but the agent's helpers and board commands). A call that cannot say refuses
 //! as well.
@@ -34,7 +35,7 @@
 use super::cleanup::{Judged, Running, foreground_idle, restore_line, stored_session};
 use super::hc::{self, BOARD_LABEL, HANDLE_LABEL, Hc, Object, text_of};
 use super::screen::{self, NotClosed};
-use super::{Closure, GONE, LaunchError, Processes, procs};
+use super::{Closure, GONE, LaunchError, Processes, READY_STATES, procs};
 use crate::rows::{SessionRow, TaskSessionRow};
 use crate::{Callback, Error, NewLaunch, Store, Task};
 use serde_json::Value;
@@ -294,8 +295,19 @@ fn at_rest(terminal: &Object, processes: &Processes) -> Result<Judged, String> {
             format!("{shown} holds its foreground, not its agent or a shell at rest")
         });
     }
+    agent_at_rest(terminal)?;
     idle_under(processes, pid)?;
     Ok(Judged::Live(Running::of(terminal)))
+}
+
+/// A live agent must positively report idle or done; a non-agent keeps its foreground rule.
+fn agent_at_rest(terminal: &Object) -> Result<(), String> {
+    let status = hc::status(terminal);
+    if hc::agent(terminal).is_some() && !READY_STATES.contains(&status.as_str()) {
+        let status = if status.is_empty() { "silent" } else { &status };
+        return Err(format!("its agent is {status}, not idle or done"));
+    }
+    Ok(())
 }
 
 /// Whether nothing under `pid` is work, as the idle sweep reads an agent's processes; else why not.
@@ -325,7 +337,9 @@ fn still_closable(ask: &Ask<'_>, now: &Object, judged: &Judged) -> Result<(), St
     let Judged::Live(judged) = judged else {
         return Err("its program runs again".into());
     };
-    idle_under(ask.processes, judged.still(now)?)
+    let pid = judged.still(now)?;
+    agent_at_rest(now)?;
+    idle_under(ask.processes, pid)
 }
 
 /// Record the closure on every open record of the handle in `terminal`, now killed, each only while

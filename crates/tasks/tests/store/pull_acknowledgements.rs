@@ -214,10 +214,7 @@ fn theirs_in_review(outage: &Outage) {
         .store
         .claim("scratch/theirs/review", sender)
         .unwrap();
-    (fixture
-        .store
-        .move_to("scratch/theirs/review", "review", sender))
-    .unwrap();
+    fixture.historical_review("scratch/theirs/review");
 }
 
 /// What the former orchestrator hears once the successor's task is its own: the ROLE, and a PULL

@@ -133,6 +133,7 @@ impl Store {
             callback_snapshot: Mutex::new(None),
             callback_idle: Mutex::new(None),
             clock_panes: Mutex::new(None),
+            process_scan: super::kept::Scan::default(),
             hand_off: None,
             inbox_pool: Mutex::new(None),
             slots: None,
