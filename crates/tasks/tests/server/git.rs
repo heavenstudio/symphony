@@ -2,7 +2,7 @@
 //! temporary folder is inside it).
 
 use std::path::{Path, PathBuf};
-use symphony_board::git::common_dir;
+use symphony_board::git::{checkout, checkout_common_dir, common_dir, linked};
 use symphony_board::sys::Command;
 
 struct Temp(PathBuf);
@@ -104,4 +104,62 @@ fn outside_any_repository_is_an_error_naming_where() {
     let t = Temp::new("outside");
     let error = common_dir(&t.0).unwrap_err();
     assert!(error.to_string().contains(path(&t.0)), "{error}");
+}
+
+/// Placement and project lookup must stop at the same marker, even when an enclosing checkout
+/// has a readable HEAD. A broken inner marker cannot attribute a tool call to that outer branch.
+#[test]
+fn checkout_placement_respects_invalid_inner_markers_and_valid_linked_heads() {
+    let t = Temp::new("placement-markers");
+    let outer = t.0.join("outer");
+    std::fs::create_dir_all(outer.join(".git")).unwrap();
+    std::fs::write(outer.join(".git/HEAD"), "ref: refs/heads/tools/outer\n").unwrap();
+    assert_eq!(
+        checkout(&outer),
+        Some((outer.clone(), "tools/outer".into()))
+    );
+    assert!(!linked(&outer));
+
+    let bad_admin = outer.join("bad-admin");
+    std::fs::create_dir_all(&bad_admin).unwrap();
+    std::fs::write(bad_admin.join("HEAD"), "ref: refs/heads/tools/invalid\n").unwrap();
+    std::fs::write(bad_admin.join("commondir"), "missing\n").unwrap();
+    for (name, marker) in [
+        ("empty", "gitdir: \n"),
+        ("malformed", "not a marker\n"),
+        ("missing", "gitdir: ../missing-admin\n"),
+        ("bad-common", "gitdir: ../bad-admin\n"),
+        ("dangling", ""),
+    ] {
+        let inner = outer.join(name);
+        let deep = inner.join("component");
+        std::fs::create_dir_all(&deep).unwrap();
+        if name == "dangling" {
+            std::os::unix::fs::symlink("missing", inner.join(".git")).unwrap();
+        } else {
+            std::fs::write(inner.join(".git"), marker).unwrap();
+        }
+        assert_eq!(checkout_common_dir(&inner), None, "{name}");
+        for at in [&inner, &deep] {
+            assert_eq!(checkout(at), None, "{name}: {}", at.display());
+        }
+    }
+
+    let admin = outer.join("admin");
+    let inner = outer.join("linked");
+    let deep = inner.join("component");
+    std::fs::create_dir_all(&admin).unwrap();
+    std::fs::create_dir_all(&deep).unwrap();
+    std::fs::write(inner.join(".git"), "gitdir: ../admin\n").unwrap();
+    std::fs::write(admin.join("commondir"), "../.git\n").unwrap();
+    std::fs::write(admin.join("HEAD"), "ref: refs/heads/tools/inner\n").unwrap();
+    assert_eq!(checkout_common_dir(&inner), Some(outer.join(".git")));
+    assert!(linked(&inner));
+    assert_eq!(checkout(&deep), Some((inner.clone(), "tools/inner".into())));
+    std::fs::write(
+        admin.join("HEAD"),
+        "0123456789abcdef0123456789abcdef01234567\n",
+    )
+    .unwrap();
+    assert_eq!(checkout(&deep), Some((inner, String::new())));
 }

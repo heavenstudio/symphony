@@ -107,6 +107,7 @@ fn machine_work_board_projection_serializes_on_the_typed_wire_without_changing_l
             }])
         }),
         branch_of: Box::new(|_| Ok(String::new())),
+        processes: Box::new(|| Err("no process probe in this fixture".into())),
     };
     let view = agents::describe_board_observed(
         &f.store,

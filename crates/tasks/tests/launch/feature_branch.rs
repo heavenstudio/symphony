@@ -1,4 +1,4 @@
-//! Instruction launches retain the parent feature tip at every nesting depth.
+//! Nested implementation slices launch from their parent feature's current tip.
 
 use crate::{World, git};
 use std::path::Path;

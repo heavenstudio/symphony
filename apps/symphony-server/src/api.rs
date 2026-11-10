@@ -314,12 +314,11 @@ pub(crate) async fn answer(shared: &Arc<Shared>, request: Request) -> Option<Res
                             .filter_map(|t| t.parent.clone())
                             .collect();
                         tasks.tasks.retain(|task| {
-                            (!top_level || task.parent.is_none())
+                            (!top_level || task.is_task())
                                 && (parent
                                     .as_ref()
                                     .is_none_or(|p| task.parent.as_ref() == Some(p)))
-                                && (!open_only
-                                    || !["done", "cancelled"].contains(&task.status.as_str()))
+                                && (!open_only || !task.is_finished())
                                 && holder.as_ref().is_none_or(|handle| {
                                     task.roles.iter().any(|r| {
                                         r.handle == *handle
@@ -329,10 +328,7 @@ pub(crate) async fn answer(shared: &Arc<Shared>, request: Request) -> Option<Res
                                 && (!roots
                                     || (parents.contains(&task.slug)
                                         && task.parent.as_ref().is_none_or(|p| !ids.contains(p))))
-                                && (all
-                                    || older
-                                    || !["done", "cancelled"].contains(&task.status.as_str())
-                                    || task.updated >= cutoff)
+                                && (all || older || !task.is_finished() || task.updated >= cutoff)
                                 && (search.is_empty() || scores.contains_key(&task.slug))
                         });
                         tasks.tasks.sort_by(|a, b| {
@@ -345,7 +341,7 @@ pub(crate) async fn answer(shared: &Arc<Shared>, request: Request) -> Option<Res
                                 return (a.priority, &a.slug).cmp(&(b.priority, &b.slug));
                             }
                             a.status.cmp(&b.status).then_with(|| {
-                                if ["done", "cancelled"].contains(&a.status.as_str()) {
+                                if a.is_finished() {
                                     b.updated.total_cmp(&a.updated).then(a.slug.cmp(&b.slug))
                                 } else {
                                     (a.priority, &a.slug).cmp(&(b.priority, &b.slug))

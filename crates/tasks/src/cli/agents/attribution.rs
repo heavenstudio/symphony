@@ -3,7 +3,6 @@
 use super::{MESSAGE_CHARS, Pane, Row};
 use crate::rows::TaskSessionRow;
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
 
 /// The same positive, unique checkout ownership gates legacy runs and normalized reservations.
 /// Unobserved local registrations still count as possible sharers; a host label never proves an owner.
@@ -31,36 +30,6 @@ pub(super) fn fallback_owners<'board>(
         }
     }
     owners
-}
-
-/// `path` with its symbolic links resolved, as Python's `os.path.realpath`: what does not exist is kept
-/// as written beneath the part that does. "" stays "".
-pub(super) fn resolve(path: &str) -> String {
-    if path.is_empty() {
-        return String::new();
-    }
-    let given = Path::new(path);
-    let whole = if given.is_absolute() {
-        given.to_path_buf()
-    } else {
-        std::env::current_dir().unwrap_or_default().join(given)
-    };
-    let mut rest = Vec::new();
-    let mut at: &Path = &whole;
-    loop {
-        if let Ok(found) = at.canonicalize() {
-            let mut out: PathBuf = found;
-            out.extend(rest.iter().rev());
-            return out.to_string_lossy().into_owned();
-        }
-        match (at.parent(), at.file_name()) {
-            (Some(parent), Some(name)) => {
-                rest.push(name.to_owned());
-                at = parent;
-            }
-            _ => return whole.to_string_lossy().into_owned(),
-        }
-    }
 }
 
 /// The pane that is this agent's: its recorded one, else one running its conversation, else one
@@ -144,7 +113,7 @@ pub(super) fn cut(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::Pane;
-    use super::{owned_pane, resolve};
+    use super::owned_pane;
 
     #[test]
     fn unknown_host_panes_need_an_explicit_owner_without_a_conflicting_conversation() {
@@ -168,17 +137,5 @@ mod tests {
                 "bound={bound:?}, conversation={conversation:?}, name={name}"
             );
         }
-    }
-
-    #[test]
-    fn a_path_resolves_as_python_s_realpath_resolves_it() {
-        let here = std::env::current_dir().unwrap().canonicalize().unwrap();
-        assert_eq!(resolve(""), "");
-        assert_eq!(
-            resolve("not/there"),
-            here.join("not/there").to_string_lossy()
-        );
-        assert_eq!(resolve("/no-such-top/x"), "/no-such-top/x");
-        assert_eq!(resolve("/"), "/");
     }
 }

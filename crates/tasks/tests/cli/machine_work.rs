@@ -55,6 +55,7 @@ fn observed(f: &Fixture, panes: Vec<Pane>, runs: Vec<Run>) -> agents::View {
         panes: Box::new(|| Ok(panes.clone())),
         runs: Box::new(|| Ok(runs.clone())),
         branch_of: Box::new(|_| Ok(String::new())),
+        processes: Box::new(|| Err("no process probe in this fixture".into())),
     };
     agents::describe_board_observed(
         &f.store,
@@ -92,6 +93,7 @@ fn machine_work_projects_every_reservation_and_fences_foreign_path_and_pane_owne
                 .collect())
         }),
         branch_of: Box::new(|_| Ok(String::new())),
+        processes: Box::new(|| Err("no process probe in this fixture".into())),
     };
     let view = agents::describe_board_observed(
         &f.store,
@@ -188,6 +190,7 @@ fn machine_work_receiver_snapshot_survives_board_projection_without_foreign_path
         panes: Box::new(|| Ok(vec![])),
         runs: Box::new(|| Ok(vec![])),
         branch_of: Box::new(|_| Ok(String::new())),
+        processes: Box::new(|| Err("no process probe in this fixture".into())),
     };
     let view = agents::describe_board_observed(
         &f.store,
@@ -255,6 +258,7 @@ fn machine_work_uses_the_active_checkout_even_when_primary_role_names_a_closed_l
     let probes = Probes {
         panes: Box::new(|| Ok(panes.borrow().clone())),
         branch_of: Box::new(|_| Ok(String::new())),
+        processes: Box::new(|| Err("no process probe in this fixture".into())),
         runs: Box::new(|| {
             Ok(vec![Run {
                 pid: 1,

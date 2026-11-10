@@ -36,16 +36,16 @@ use serde::{Deserialize, Serialize};
 
 mod agent_probes;
 mod agents;
-pub use agents::*;
 mod blocks;
 mod machine_work;
 mod media;
-pub use agent_probes::AgentProbes;
-pub use blocks::*;
-pub use machine_work::*;
-pub use media::{GalleryItem, Media, View, Viewer};
 mod project;
-pub use project::*;
+mod task_queries;
+pub use media::{GalleryItem, Media, View, Viewer};
+pub use task_queries::{
+    TaskKind, TaskStatus, subtasks, tasks, tasks_in_progress, tasks_in_review, tasks_in_status,
+};
+pub use {agent_probes::AgentProbes, agents::*, blocks::*, machine_work::*, project::*};
 
 /// The route that answers a [`Front`].
 pub const FRONT_PATH: &str = "/api/front";

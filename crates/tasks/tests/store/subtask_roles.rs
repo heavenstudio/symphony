@@ -1,4 +1,4 @@
-//! Neither implementation slices nor instructions start a separate review lifecycle.
+//! Subtasks keep review and completion inside their parent feature's delivery cycle.
 
 use crate::common::{Fixture, refused};
 use symphony_board::NewTask;

@@ -124,6 +124,8 @@ impl Event {
     }
 }
 
+mod place;
+
 /// Beat command health and session updates.
 mod beats {
     use super::{bash, tool};
@@ -137,20 +139,35 @@ mod beats {
     /// Three-second polls past the lost line.
     const GONE_POLLS: usize = ((LIVE_SECONDS + STALE_SECONDS) / 3.0) as usize + 3;
 
-    struct Clocked {
+    /// The boot a [`Clocked`] case's hooks read the clock since boot in, and its reading at `NOW`.
+    pub(super) const BOOT: (&str, f64) = ("boot-1", 1000.0);
+
+    /// A case whose board clock a test moves (`TASKS_NOW`), from `NOW`, and whose hooks read the
+    /// clock since boot (`TASKS_BOOT_CLOCK`) in [`BOOT`], from its reading.
+    pub(super) struct Clocked {
         c: Case,
         now: Cell<f64>,
+        since_boot: Cell<f64>,
     }
 
     impl Clocked {
-        fn new() -> Clocked {
+        pub(super) fn new() -> Clocked {
             Clocked {
                 c: Case::new(),
                 now: Cell::new(NOW),
+                since_boot: Cell::new(BOOT.1),
             }
         }
 
-        fn pass(&self, seconds: f64) {
+        /// `seconds` go by, on both clocks.
+        pub(super) fn pass(&self, seconds: f64) {
+            self.now.set(self.now.get() + seconds);
+            self.since_boot.set(self.since_boot.get() + seconds);
+        }
+
+        /// The wall clock is set by `seconds` (as a time server or a person sets it): the board's
+        /// clock moves, the clock since boot does not.
+        pub(super) fn set_wall(&self, seconds: f64) {
             self.now.set(self.now.get() + seconds);
         }
 
@@ -158,6 +175,8 @@ mod beats {
             let mut env = self.c.env.clone();
             env.vars
                 .insert("TASKS_NOW".into(), format!("{:?}", self.now.get()));
+            let since_boot = format!("{} {:?}", BOOT.0, self.since_boot.get());
+            env.vars.insert("TASKS_BOOT_CLOCK".into(), since_boot);
             Case { env }
         }
 
@@ -169,15 +188,15 @@ mod beats {
             self.at().ok(who, args)
         }
 
-        fn register(&self, kind: &str) -> String {
+        pub(super) fn register(&self, kind: &str) -> String {
             self.at().register(kind)
         }
 
-        fn board(&self) -> Store {
+        pub(super) fn board(&self) -> Store {
             self.at().store()
         }
 
-        fn beat(&self, event: &Value) {
+        pub(super) fn beat(&self, event: &Value) {
             let ran = self.run(&["beat"], &event.to_string());
             assert_eq!(
                 (ran.code, ran.out.as_str(), ran.err.as_str()),
@@ -215,7 +234,7 @@ mod beats {
         }
     }
 
-    fn inbox(handle: &str) -> String {
+    pub(super) fn inbox(handle: &str) -> String {
         format!("TASKS_SESSION={handle} just tasks inbox")
     }
 

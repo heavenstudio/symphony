@@ -47,14 +47,8 @@ fn digest(bytes: &[u8]) -> String {
 
 pub fn counts(board: &Tasks) -> TaskCounts {
     TaskCounts {
-        in_progress: dashboard::count(
-            board
-                .tasks
-                .iter()
-                .filter(|t| t.status == "in_progress")
-                .count(),
-        ),
-        in_review: dashboard::count(board.tasks.iter().filter(|t| t.status == "review").count()),
+        in_progress: dashboard::count(symphony_api::tasks_in_progress(&board.tasks).count()),
+        in_review: dashboard::count(symphony_api::tasks_in_review(&board.tasks).count()),
         agents_live: dashboard::count(board.sessions.iter().filter(|s| s.health == "live").count()),
     }
 }
@@ -456,10 +450,12 @@ pub fn agents_in_observed(
 ) -> Result<symphony_api::Agents, String> {
     let mut env = crate::children::board_env();
     env.cwd = root.to_path_buf();
+    // The server views its agents every tick: the process listing is kept by its store a while.
     let probes = match common {
         Some(common) => symphony_board::cli::probes::machine_in(&env, common),
         None => symphony_board::cli::probes::machine(&env),
-    };
+    }
+    .kept_by(store);
     let view = symphony_board::cli::agents::describe_board_observed(
         store,
         &probes,
@@ -565,22 +561,4 @@ mod page_tests;
 mod agents_tests;
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::test_tree::Tree;
-
-    #[test]
-    fn a_brief_within_the_limit_is_its_whole_reply() {
-        let tree = Tree::new();
-        let render = Render::new(&tree.root);
-        for body in [
-            "One paragraph.",
-            "# A heading\n\nA paragraph, and:\n\n- a list\n",
-        ] {
-            assert_eq!(
-                brief_part(&render, body, 0, BRIEF_LIMIT),
-                (reply_blocks(&render, body), body.len())
-            );
-        }
-    }
-}
+mod tests;

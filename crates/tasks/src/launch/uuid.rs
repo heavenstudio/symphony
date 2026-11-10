@@ -1,4 +1,4 @@
-//! The existing launch session UUID generator, kept independent from launch orchestration.
+//! Session and terminal UUID generation, kept behind the launch module's existing public export.
 
 use std::hash::{BuildHasher, RandomState};
 use std::io::Read;

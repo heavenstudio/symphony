@@ -291,7 +291,7 @@ pub fn AgentsView(
         p { class: "muted", "{agents.probes.panes} · {agents.probes.slots}" }
         {crate::machine_work::machines_view(&work, true)}
         h2 { "Happening now" }
-        div { class: "agents-now", for task in tasks.iter().filter(|t| t.status == "in_progress" || t.status == "review") { Near { key: "{task.slug}", id: "now-{task.slug}", height: 120, TaskRow { task: task.clone(), work: work.clone() } } } }
+        div { class: "agents-now", for task in tasks.iter().filter(|t| t.has_status(symphony_api::TaskStatus::InProgress) || t.has_status(symphony_api::TaskStatus::Review)) { Near { key: "{task.slug}", id: "now-{task.slug}", height: 120, TaskRow { task: task.clone(), work: work.clone() } } } }
         h2 { "Connected" }
         div { class: "agents agents-card card", for agent in agents.agents.iter().filter(|a| a.health != "lost" && a.health != "left") {
             Near { key: "{agent.handle}", id: "agent-{agent.handle}", height: 240, AgentRow { agent: agent.clone(), tasks: tasks.clone(), work: work.clone() } }

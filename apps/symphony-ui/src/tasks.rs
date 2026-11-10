@@ -55,7 +55,7 @@ pub fn TaskBoard(
     let mut filtered: Vec<_> = tasks
         .iter()
         .filter(|task| {
-            (task.parent.is_none() || !query.is_empty())
+            (task.is_task() || !query.is_empty())
                 && (selected.is_empty() || task.status == selected)
         })
         .collect();

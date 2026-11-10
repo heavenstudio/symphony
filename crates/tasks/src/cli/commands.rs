@@ -341,8 +341,8 @@ pub fn run(store: &Store, c: &mut Context) -> Result<(), Stop> {
                 store.ack(&me, &ids)?;
             }
             let callbacks = store.callback_inbox(&me)?;
-            for (_, text) in &callbacks {
-                c.say(text);
+            for (key, text) in &callbacks {
+                c.say(&super::attach::PaneWatch::delivery_text(key, text));
             }
             store.ack_callbacks(
                 &me,

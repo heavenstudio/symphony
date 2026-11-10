@@ -1,9 +1,9 @@
 //! What the agents API and the monitor ask of the machine: the test runs holding or queued for a
-//! slot, hc's terminals (as [`crate::launch::hc`] asks), the branch checked out in a folder, and
-//! whether a task's branch already landed on main.
+//! slot, hc's terminals (as [`crate::launch::hc`] asks), the branch checked out in a folder, the
+//! working directory of every process, and whether a task's branch already landed on main.
 
 use super::Env;
-use super::agents::{Answer, Pane, Probes, Run};
+use super::agents::{Answer, Began, Pane, Probes, Process, ProcessScan, Run};
 use crate::git;
 use crate::launch::hc::{Binary, Hc};
 use crate::sys::{self, Command};
@@ -75,7 +75,36 @@ fn machine_with_common(env: &Env, common: Result<PathBuf, String>) -> Probes<'_>
             branches.borrow_mut().insert(cwd.into(), found.clone());
             Ok(found)
         }),
+        processes: Box::new(processes),
     }
+}
+
+/// Every process `lsof` lists, where it works as the worktree sweep reads it (a sessionless `lsof`,
+/// [`process_cwd::pid_cwds_with`]) and when it started as the kernel stamped it, on the clock it
+/// dates starts by ([`sys::process_starts`]), none when that cannot be read; one that ended since it
+/// was listed is left out. Readable rows can prove presence even when a partial listing cannot
+/// prove absence.
+pub fn processes() -> Answer<ProcessScan> {
+    let scan = process_cwd::pid_cwds_with(sys::command("lsof"))
+        .ok_or_else(|| "lsof cannot list the processes' working directories".to_string())?;
+    let pids: Vec<i64> = scan.listed.iter().map(|(pid, _)| *pid).collect();
+    let starts = sys::process_starts(&pids);
+    let complete = scan.complete;
+    let listed = scan
+        .listed
+        .into_iter()
+        .zip(starts)
+        .filter_map(|((_, cwd), start)| {
+            let started = match start {
+                sys::Start::At(at) => Some(Began::At(at)),
+                sys::Start::AfterBoot(read) => Some(Began::AfterBoot(read)),
+                sys::Start::Unreadable => None,
+                sys::Start::Ended => return None,
+            };
+            Some(Process { cwd, started })
+        })
+        .collect();
+    Ok(ProcessScan { listed, complete })
 }
 
 /// The main checkout of the repository `cwd` is in, whichever worktree that is: the common dir's
@@ -247,6 +276,7 @@ impl Pane {
             id,
             agent: hc::agent(terminal).map(str::to_string),
             status: Some(hc::status(terminal)).filter(|s| !s.is_empty()),
+            turn: terminal.get("turn").and_then(Value::as_u64),
             session,
             cwd,
             title: text("title"),
