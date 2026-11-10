@@ -63,8 +63,80 @@ fn record_uncertainty_keeps_future_verified_phases_visible_without_renewing_old_
         .unwrap();
     let view = sampler.snapshot(30).machines.remove(0);
     assert_eq!(view.operations.len(), 2);
-    assert_eq!(view.age_ms, Some(10));
+    assert_eq!(view.age_ms, Some(20));
     assert_eq!(view.sequence, 2);
+}
+
+#[test]
+fn a_new_or_changed_sibling_never_renews_an_absent_or_byte_unchanged_native_phase() {
+    for include_unchanged in [false, true] {
+        let mut sampler = sampler();
+        sampler
+            .accept(&input("running"), &[record("task-a")], 10, "host")
+            .unwrap();
+        let original = sampler.snapshot(10).machines[0].operations[0].clone();
+        assert_eq!(
+            sampler.snapshot(10_011).machines[0].freshness,
+            Freshness::Stale
+        );
+        let mut next: Value = serde_json::from_slice(&input("queued")).unwrap();
+        next["records"][0]["operation_id"] = json!("22222222222222222222222222222222");
+        if include_unchanged {
+            let old: Value = serde_json::from_slice(&input("running")).unwrap();
+            next["records"]
+                .as_array_mut()
+                .unwrap()
+                .push(old["records"][0].clone());
+        }
+        for (now, state, sequence) in [(10_012, "queued", 2), (10_013, "running", 3)] {
+            next["records"][0]["state"] = json!(state);
+            sampler
+                .accept(
+                    &serde_json::to_vec(&next).unwrap(),
+                    &[record("task-b")],
+                    now,
+                    "host",
+                )
+                .unwrap();
+            let snapshot = sampler.snapshot(now);
+            let view = &snapshot.machines[0];
+            assert_eq!(
+                (view.sequence, view.age_ms, &view.freshness),
+                (sequence, Some(now - 10), &Freshness::Stale),
+                "unchanged={include_unchanged}: {view:?}"
+            );
+            assert_eq!(view.operations.len(), 2, "{view:?}");
+            assert!(view.operations.contains(&original), "{view:?}");
+            let sibling = view
+                .operations
+                .iter()
+                .find(|operation| {
+                    operation.operation_id.as_deref() == Some("22222222222222222222222222222222")
+                })
+                .expect("accepted independent sibling");
+            assert_eq!(sibling.task.as_deref(), Some("task-b"));
+            assert_eq!(
+                sibling.state,
+                if state == "queued" {
+                    symphony_board::cli::machine_work::State::Queued
+                } else {
+                    symphony_board::cli::machine_work::State::Running
+                }
+            );
+            assert_eq!(view.counts, None);
+            assert!(!view.complete);
+            // The same conservative mixed-age evidence reaches every cached API consumer.
+            let wire: symphony_api::MachineWork =
+                serde_json::from_value(serde_json::to_value(snapshot).unwrap()).unwrap();
+            assert_eq!(
+                wire.machines[0].freshness,
+                symphony_api::WorkFreshness::Stale
+            );
+            assert_eq!(wire.machines[0].age_ms, Some(now - 10));
+            assert_eq!(wire.machines[0].operations.len(), 2);
+            assert_eq!(wire.machines[0].counts, None);
+        }
+    }
 }
 
 #[test]

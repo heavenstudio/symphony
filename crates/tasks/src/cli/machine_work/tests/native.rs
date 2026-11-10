@@ -27,6 +27,20 @@ fn inventory(machine: &str, rows: Vec<Value>) -> Inventory {
     Inventory::decode(&bytes(rows), Some(machine)).unwrap()
 }
 
+fn observe_rows(
+    receiver: &mut Projection,
+    machine: &str,
+    sequence: u64,
+    rows: Vec<Value>,
+    now: u64,
+) -> Result<(), Rejected> {
+    receiver.observe_native(
+        sample(machine, sequence, vec![]),
+        inventory(machine, rows),
+        now,
+    )
+}
+
 #[test]
 fn unreadable_native_records_keep_unknown_work_without_suppressing_independent_verified_rows() {
     let mut receiver = Projection::new(2, 4, 100);
@@ -86,9 +100,97 @@ fn unreadable_native_records_keep_unknown_work_without_suppressing_independent_v
     receiver.scanned_native("a", &inventory("a", vec![]));
     let retained = receiver.snapshot(4).machines.remove(0);
     assert_eq!(retained.freshness, Freshness::Incomplete);
-    assert_eq!((retained.sequence, retained.age_ms), (3, Some(1)));
+    assert_eq!((retained.sequence, retained.age_ms), (3, Some(3)));
     assert_eq!(retained.operations[0].operation_id.as_deref(), Some(ONE));
     assert_eq!(retained.counts, None);
+}
+
+#[test]
+fn mixed_native_publications_keep_the_oldest_phase_age_until_that_exact_nonce_finishes() {
+    for include_unchanged in [false, true] {
+        let mut receiver = Projection::new(2, 4, 10_000);
+        observe_rows(&mut receiver, "a", 1, vec![row(ONE, "running")], 10).unwrap();
+        assert_eq!(
+            receiver.snapshot(10_011).machines[0].freshness,
+            Freshness::Stale
+        );
+        observe_rows(&mut receiver, "b", 1, vec![row(ONE, "running")], 10_012).unwrap();
+        let original = receiver.snapshot(10_012).machines[0].operations[0].clone();
+        let mut rows = vec![row(TWO, "queued")];
+        if include_unchanged {
+            rows.push(row(ONE, "running"));
+        }
+        observe_rows(&mut receiver, "a", 2, rows, 10_012).unwrap();
+        let snapshot = receiver.snapshot(10_012);
+        let mixed = &snapshot.machines[0];
+        assert_eq!(
+            (mixed.age_ms, &mixed.freshness),
+            (Some(10_002), &Freshness::Stale),
+            "unchanged={include_unchanged}: {mixed:?}"
+        );
+        assert_eq!(mixed.operations.len(), 2, "{mixed:?}");
+        assert!(mixed.operations.contains(&original), "{mixed:?}");
+        assert!(
+            mixed
+                .operations
+                .iter()
+                .any(|operation| operation.operation_id.as_deref() == Some(TWO)
+                    && operation.state == State::Queued),
+            "new sibling was not accepted: {mixed:?}"
+        );
+        assert_eq!(mixed.counts, None);
+        assert!(!mixed.complete);
+        assert_eq!(
+            (snapshot.machines[1].age_ms, &snapshot.machines[1].freshness),
+            (Some(0), &Freshness::Incomplete)
+        );
+        let backwards = receiver.snapshot(20).machines.remove(0);
+        assert_eq!(
+            (backwards.age_ms, backwards.freshness),
+            (None, Freshness::Stale)
+        );
+        assert_eq!(backwards.counts, None);
+        // Ordering still fences the latest feed receipt, not the oldest displayed phase.
+        assert_eq!(
+            observe_rows(&mut receiver, "a", 3, vec![row(ONE, "finished")], 10_011),
+            Err(Rejected::ReceiverClock)
+        );
+        for sequence in [3, 4] {
+            observe_rows(
+                &mut receiver,
+                "a",
+                sequence,
+                vec![row(ONE, "finished"), row(TWO, "queued")],
+                10_010 + sequence,
+            )
+            .unwrap();
+            let view = receiver.snapshot(10_010 + sequence).machines.remove(0);
+            assert_eq!(view.operations.len(), 1, "{view:?}");
+            assert_eq!(view.operations[0].operation_id.as_deref(), Some(TWO));
+            assert_eq!(
+                (view.age_ms, view.freshness),
+                (Some(sequence - 2), Freshness::Incomplete)
+            );
+            assert_eq!(view.counts, None);
+            assert!(!view.complete);
+        }
+        observe_rows(&mut receiver, "a", 5, vec![row(TWO, "running")], 10_015).unwrap();
+        let changed = receiver.snapshot(10_015).machines.remove(0);
+        assert_eq!(
+            (changed.age_ms, changed.freshness),
+            (Some(0), Freshness::Incomplete)
+        );
+        assert_eq!(changed.operations[0].state, State::Running);
+        assert_eq!(
+            observe_rows(&mut receiver, "a", 6, vec![row(ONE, "running")], 10_016),
+            Err(Rejected::ConflictingOperation)
+        );
+        assert_eq!(
+            receiver.snapshot(10_016).machines[0].operations,
+            changed.operations
+        );
+        assert_eq!(receiver.snapshot(10_016).machines[1].sequence, 1);
+    }
 }
 
 #[test]

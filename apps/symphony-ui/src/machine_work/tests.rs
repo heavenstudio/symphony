@@ -177,6 +177,30 @@ fn partial_stale_and_conflicting_rows_retain_observation_without_claiming_curren
         phase_label(&phases(&work, &target)[0]),
         "Observed Test running · alpha · stale"
     );
+    // A newly observed sibling shares the machine's conservative oldest-phase freshness.
+    // Cards, agents and machine rows must keep the original task's stale qualification.
+    let mut sibling = operation("alpha", "new-sibling", "build", "queued");
+    sibling.task = Some("sim/new".into());
+    work.machines[0].operations.push(sibling);
+    work.machines[0].age_ms = Some(10_002);
+    for scope in [
+        Scope::Task("sim/a"),
+        Scope::Agent("worker-a"),
+        Scope::Machine("alpha"),
+    ] {
+        let html = dioxus_ssr::render_element(phases_view(&work, &scope, true));
+        assert!(
+            html.contains("Observed Test running · alpha · stale"),
+            "{html}"
+        );
+    }
+    let html = dioxus_ssr::render_element(machines_view(&work, true));
+    assert!(html.contains("Occupancy unknown · stale"), "{html}");
+    assert!(
+        html.contains("Observed Build queued · alpha · stale"),
+        "{html}"
+    );
+    assert!(!html.contains("Builds: 0 running"), "{html}");
     work.machines[0].operations[0].machine_id = Some("foreign".into());
     assert_eq!(
         phase_label(&phases(&work, &target)[0]),

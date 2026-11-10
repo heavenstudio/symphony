@@ -28,7 +28,10 @@ pub enum Rejected {
 
 struct Accepted {
     sample: Sample,
+    /// Last accepted feed receipt, used by the receiver-clock fence even for mixed-age work.
     receipt_ms: u64,
+    /// Native phase receipts remain separate: a changed sibling cannot renew retained work.
+    native_receipts: BTreeMap<String, u64>,
     connected: bool,
     conflict: bool,
     history_exhausted: bool,
@@ -96,7 +99,7 @@ impl Projection {
     /// Duplicate/older samples never renew a receipt. Partial inventories retain missing work;
     /// only a new complete inventory establishes completion.
     pub fn observe(&mut self, sample: Sample, receipt_ms: u64) -> Result<(), Rejected> {
-        self.observe_batch(sample, Vec::new(), receipt_ms, false)
+        self.observe_batch(sample, Vec::new(), receipt_ms, None)
     }
 
     /// Trusted-local raw evidence is always partial. Live rows and decoded completions share
@@ -112,7 +115,12 @@ impl Projection {
         }
         sample.complete = false;
         sample.operations = inventory.operations;
-        self.observe_batch(sample, inventory.finished, receipt_ms, inventory.uncertain)
+        self.observe_batch(
+            sample,
+            inventory.finished,
+            receipt_ms,
+            Some(inventory.uncertain),
+        )
     }
 
     fn observe_batch(
@@ -120,7 +128,7 @@ impl Projection {
         mut sample: Sample,
         finished: Vec<Operation>,
         receipt_ms: u64,
-        uncertain: bool,
+        native_uncertainty: Option<bool>,
     ) -> Result<(), Rejected> {
         let old = self.machines.get(&sample.machine_id);
         if !identity(&sample.machine_id)
@@ -202,6 +210,11 @@ impl Projection {
             }
             // The ownership-history bound already covers the union of old and new live ids.
         }
+        let native_receipts = if native_uncertainty.is_some() {
+            native_receipts(&sample, self.machines.get(&sample.machine_id), receipt_ms)
+        } else {
+            BTreeMap::new()
+        };
         let mut owners = self
             .machines
             .remove(&sample.machine_id)
@@ -224,10 +237,11 @@ impl Projection {
             Accepted {
                 sample,
                 receipt_ms,
+                native_receipts,
                 connected: true,
                 conflict: false,
                 history_exhausted: false,
-                uncertain,
+                uncertain: native_uncertainty.unwrap_or(false),
                 owners,
             },
         );
@@ -286,7 +300,12 @@ impl Projection {
             .machines
             .values()
             .map(|old| {
-                let age = now_ms.checked_sub(old.receipt_ms);
+                // One machine freshness is conservative for mixed-age native work: even a
+                // new sibling remains qualified by the oldest retained phase. An empty partial
+                // inventory still has unknown capacity, regardless of its accepted feed receipt.
+                let receipt = old.native_receipts.values().min().copied().unwrap_or(old.receipt_ms);
+                let age = now_ms.checked_sub(old.receipt_ms)
+                    .and_then(|_| now_ms.checked_sub(receipt));
                 let freshness = if old.conflict {
                     Freshness::Conflict
                 } else if !old.connected {
@@ -313,6 +332,9 @@ impl Projection {
                             "nonce ownership history exhausted; last-known work retained"
                         }
                         Freshness::Fresh => "complete receiver observation",
+                        Freshness::Stale if !old.native_receipts.is_empty() => {
+                            "oldest retained phase expired or receiver clock unavailable; partial inventory"
+                        }
                         Freshness::Stale => "observation expired or receiver clock unavailable",
                         Freshness::Disconnected => "publisher disconnected; last-known work",
                         Freshness::Incomplete => "partial inventory; last-known work retained",
@@ -331,6 +353,40 @@ impl Projection {
             ..Snapshot::default()
         }
     }
+}
+
+/// Called only after all observation fences and partial carry-forward. Normalized native phases
+/// keep their receipt when unchanged or absent; metadata outside Operation cannot make them newer.
+fn native_receipts(
+    sample: &Sample,
+    old: Option<&Accepted>,
+    receipt_ms: u64,
+) -> BTreeMap<String, u64> {
+    let previous: BTreeMap<_, _> = old
+        .into_iter()
+        .flat_map(|old| &old.sample.operations)
+        .map(|operation| {
+            (
+                operation.operation_id.as_deref().expect("normalized id"),
+                operation,
+            )
+        })
+        .collect();
+    sample
+        .operations
+        .iter()
+        .map(|operation| {
+            let id = operation.operation_id.as_deref().expect("normalized id");
+            let retained = old.filter(|_| previous.get(id).copied() == Some(operation));
+            let receipt = retained.map_or(receipt_ms, |old| {
+                old.native_receipts
+                    .get(id)
+                    .copied()
+                    .unwrap_or(old.receipt_ms)
+            });
+            (id.to_owned(), receipt)
+        })
+        .collect()
 }
 
 fn normalize(sample: &Sample) -> Result<Vec<Operation>, Rejected> {
