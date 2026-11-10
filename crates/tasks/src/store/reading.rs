@@ -82,10 +82,12 @@ impl Store {
         let read = format!(
             "LET $tasks = ({pick});
              LET $slugs = $tasks.slug;
+             LET $slot_wanted = $slugs;
              {HELD}
              {slot_lets}
              RETURN {{
                  tasks: $tasks,
+                 branches: ({}),
                  links: (SELECT slug, kind, target FROM link{scope} ORDER BY target),
                  roles: (SELECT slug, handle, role, since, expires FROM role{scope} ORDER BY since, handle),
                  sessions: (SELECT * OMIT id FROM session ORDER BY connected, handle),
@@ -98,7 +100,7 @@ impl Store {
                  known: {known},
                  mine: {mine},
                  {slots}
-             }};"
+             }};", super::branches::OF_TASKS
         );
         (read, vars)
     }

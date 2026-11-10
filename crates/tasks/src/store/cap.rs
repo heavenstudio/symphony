@@ -28,6 +28,7 @@
 //! transaction that reads the open tasks and the holds, so a start that wrote after that read is
 //! caught by the write, and one that wrote before it is in what was read.
 
+use super::branches::{self, OF_TASKS, ON_BRANCHES, Recorded};
 use super::{Change, Error, Failure, Opens, Store, View, Which, refused};
 use crate::slots::{self, Entry, Ledger, OPEN};
 use serde::Deserialize;
@@ -57,7 +58,7 @@ pub const HOLDS: &str =
 pub const HELD_TASKS: &str = "SELECT slug, parent, status, instruction, fields._board.red AS red, updated FROM $slot_holds.map(|$h| type::record('task', $h[0]))";
 
 /// Every statement the cap sends, which `tests/store/slots/cost.rs` has the server plan.
-pub const STATEMENTS: [&str; 7] = [
+pub const STATEMENTS: [&str; 9] = [
     OPEN_TASKS,
     BY_ID,
     ROLES_OF,
@@ -65,6 +66,8 @@ pub const STATEMENTS: [&str; 7] = [
     HOLDS,
     HELD_TASKS,
     RED_COUNTERS,
+    OF_TASKS,
+    ON_BRANCHES,
 ];
 
 /// What `Which::Starting` sets before its `RETURN`: the open tasks, the holds and the tasks they
@@ -235,6 +238,7 @@ impl Read {
 struct Level {
     tasks: Vec<Row>,
     roles: Vec<RoleRead>,
+    branches: Vec<Recorded>,
 }
 
 impl Store {
@@ -316,6 +320,7 @@ impl Store {
         }
         let parent = opens.parent.as_ref().map(Option::as_deref);
         let mut roles = read.roles.clone();
+        let mut branches = view.snap.branches.clone();
         let mut looked: BTreeSet<String> = rows.keys().cloned().collect();
         for _ in 0..DEPTH {
             let above = (rows.values()).map(|r| (r.slug.as_str(), r.parent.as_deref()));
@@ -329,13 +334,14 @@ impl Store {
             }
             looked.extend(wanted.iter().cloned());
             let level: Level = self.transact(
-                &format!("RETURN {{ tasks: ({BY_ID}), roles: ({ROLES_OF}) }};"),
+                &format!("LET $slot_wanted = array::union($slot_wanted, ({ON_BRANCHES})); RETURN {{ tasks: ({BY_ID}), roles: ({ROLES_OF}), branches: ({OF_TASKS}) }};"),
                 json!({"slot_wanted": wanted}),
             )?;
             for row in level.tasks {
-                rows.insert(row.slug.clone(), row);
+                rows.entry(row.slug.clone()).or_insert(row);
             }
             roles.extend(level.roles);
+            branches.extend(level.branches);
         }
         let mut orchestrators: HashMap<&str, Vec<&str>> = HashMap::new();
         let mut executors: HashMap<&str, Vec<&str>> = HashMap::new();
@@ -355,6 +361,7 @@ impl Store {
         }
         let tasks = rows.values().map(|row| Entry {
             slug: &row.slug,
+            branch: branches::latest(&branches, &row.slug),
             parent: row.parent.as_deref(),
             status: &row.status,
             instruction: row.instruction.unwrap_or(false),

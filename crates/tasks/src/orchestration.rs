@@ -209,6 +209,7 @@ mod tests {
 
     fn task(slug: &str, parent: Option<&str>, roles: Vec<Role>) -> Task {
         Task {
+            branch: None,
             id: 0,
             slug: slug.into(),
             title: String::new(),

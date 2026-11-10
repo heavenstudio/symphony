@@ -6,17 +6,12 @@
 //! A task is **open** while it is in progress or in review ([`OPEN`]), or blocked under a hold that
 //! keeps its slot (`Store::hold_blocked`, a landing waiting on its stamps: [`Entry::held`]); other blocked
 //! work and work not started hold no slot, and a slot frees only when its task is done or cancelled
-//! (or leaves the open statuses some other way). Each open task holds a slot of its own, of its
-//! orchestrator's:
-//! the session holding the role on it, or on the nearest task above it that has a holder still
-//! there, as [`crate::orchestration`] reads whose a task is. Two kinds of task are no work of their
-//! own and share the slot of the task they serve ([`Ledger::work`]):
+//! (or leaves the open statuses some other way). All descendants share their parent feature's
+//! slot, charged to that feature's owner, regardless of their instruction flag. Active work under
+//! an inactive or finished umbrella still holds that slot; accounting changes no task state.
 //!
 //! - a review mirror counts with the task it reviews: `review/BRANCH` (`review-N/BRANCH`) with the
-//!   task `BRANCH`, and `SLUG/review` with `SLUG`, when the board holds that task;
-//! - an instruction subtask (`--instruction`, an orchestrator's word to an agent, which never goes
-//!   to review or lands) counts with the task it is an instruction for, its nearest ancestor that
-//!   is not one.
+//!   task whose slug or recorded executor branch is `BRANCH`, and `SLUG/review` with `SLUG`.
 //!
 //! Red work takes no slot ([`Ledger::red`]): an open task filed for a red that stops every landing
 //! ([`crate::red`]) and the work under it, its mirrors and instructions included, start at any count
@@ -104,6 +99,8 @@ pub fn of_env(env: &Env) -> Result<Option<usize>, String> {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Entry<'a> {
     pub slug: &'a str,
+    /// The latest nonempty recorded executor branch.
+    pub branch: Option<&'a str>,
     pub parent: Option<&'a str>,
     pub status: &'a str,
     /// An instruction subtask, which counts with the task it is part of.
@@ -151,6 +148,32 @@ pub type Slot<'a> = Vec<(&'a str, &'a str)>;
 /// The open slots of one owner, by the task whose work each is.
 pub type Held<'a> = BTreeMap<&'a str, Slot<'a>>;
 
+/// The task a branch belongs to: its slug first, then a recorded executor branch. If legacy
+/// records name multiple tasks, prefer a top-level feature, then choose by slug. A mirror's own
+/// executor launch never makes it the primary task of the branch it reviews.
+pub fn branch_task<'a>(
+    branch: &str,
+    tasks: impl IntoIterator<Item = (&'a str, Option<&'a str>, Option<&'a str>)>,
+) -> Option<&'a str> {
+    let tasks: Vec<_> = tasks.into_iter().collect();
+    let mut found = None;
+    for &(slug, recorded, parent) in &tasks {
+        if slug == branch {
+            return Some(slug);
+        }
+        let mirror = branch_of(slug) != slug
+            || slug
+                .strip_suffix("/review")
+                .is_some_and(|base| tasks.iter().any(|task| task.0 == base));
+        let candidate = (parent.is_some(), slug);
+        if !mirror && recorded == Some(branch) && found.is_none_or(|previous| candidate < previous)
+        {
+            found = Some(candidate);
+        }
+    }
+    found.map(|(_, slug)| slug)
+}
+
 /// The tasks a ledger of `tasks` (each slug with its parent) needs read as well, to place them: each
 /// one's parent, and the task its slug names as the one it reviews, which the board may not hold.
 pub fn wanted<'a>(
@@ -193,6 +216,7 @@ impl<'a> Ledger<'a> {
     pub fn of_board(board: &'a Board) -> Ledger<'a> {
         let tasks = board.tasks.iter().map(|t| Entry {
             slug: &t.slug,
+            branch: t.branch.as_deref(),
             parent: t.parent.as_deref(),
             status: &t.status,
             instruction: t.instruction,
@@ -250,52 +274,64 @@ impl<'a> Ledger<'a> {
         after
     }
 
-    /// The task a review mirror reviews, when the board holds it: `review/BRANCH` (`review-N/BRANCH`)
-    /// reviews `BRANCH`, `SLUG/review` reviews `SLUG`. Any other task is its own.
+    /// The task a review mirror reviews, by slug or recorded branch, using [`branch_task`].
+    /// `SLUG/review` reviews `SLUG`. Any other task is its own.
     pub fn reviewed(&self, slug: &'a str) -> &'a str {
         let mut at = slug;
-        for _ in 0..4 {
-            let branch = branch_of(at);
-            let next = if branch != at && self.tasks.contains_key(branch) {
-                branch
-            } else {
-                match at.strip_suffix("/review") {
-                    Some(base) if self.tasks.contains_key(base) => base,
-                    _ => break,
-                }
-            };
-            at = next;
-        }
-        at
-    }
-
-    /// The task whose work `slug` is, the key of its slot: the task a mirror reviews, and the task an
-    /// instruction subtask is part of, its nearest ancestor that is no instruction; any other task
-    /// is its own work.
-    pub fn work(&self, slug: &'a str) -> &'a str {
-        let mut at = self.reviewed(slug);
         let mut seen = HashSet::new();
         while seen.insert(at) {
-            let parent = (self.tasks.get(at))
-                .filter(|t| t.instruction)
-                .and_then(|t| t.parent)
-                .filter(|p| self.tasks.contains_key(p));
-            match parent {
-                Some(parent) => at = self.reviewed(parent),
+            let branch = branch_of(at);
+            let next = if branch != at {
+                branch_task(
+                    branch,
+                    self.tasks.values().map(|t| (t.slug, t.branch, t.parent)),
+                )
+            } else {
+                at.strip_suffix("/review")
+                    .filter(|base| self.tasks.contains_key(base))
+            };
+            match next {
+                Some(next) if seen.contains(next) => return slug,
+                Some(next) => at = next,
                 None => break,
             }
         }
         at
     }
 
-    /// The task, its parent, and so on as far as the ledger holds them, once round a loop at most.
+    /// The task whose work `slug` is, the key of its slot: the task a mirror reviews, and the task a
+    /// subtask is part of, at every depth. Missing parents stop the walk. A cycle falls back to the
+    /// reviewed task rather than inventing a feature root.
+    pub fn work(&self, slug: &'a str) -> &'a str {
+        let mut at = self.reviewed(slug);
+        let mut seen = HashSet::new();
+        while seen.insert(at) {
+            let parent = (self.tasks.get(at))
+                .and_then(|t| t.parent)
+                .filter(|p| self.tasks.contains_key(p));
+            match parent {
+                Some(parent) => {
+                    let next = self.reviewed(parent);
+                    if seen.contains(next) {
+                        return self.reviewed(slug);
+                    }
+                    at = next;
+                }
+                None => break,
+            }
+        }
+        at
+    }
+
+    /// The reviewed task and its reviewed ancestors, as far as the ledger holds them, once round
+    /// a loop at most. A repair below a review mirror follows that mirror's actual task too.
     fn chain(&self, slug: &'a str) -> Vec<&'a str> {
         let mut seen = HashSet::new();
         let mut found = Vec::new();
-        let mut at = self.tasks.get(slug);
+        let mut at = self.tasks.get(self.reviewed(slug));
         while let Some(task) = at.filter(|t| seen.insert(t.slug)) {
             found.push(task.slug);
-            at = task.parent.and_then(|p| self.tasks.get(p));
+            at = task.parent.and_then(|p| self.tasks.get(self.reviewed(p)));
         }
         found
     }
@@ -303,7 +339,13 @@ impl<'a> Ledger<'a> {
     /// Whose slot `slug` takes and which ([`Place`]), its executors' parents standing in for an
     /// orchestrator when none holds it.
     pub fn place(&self, slug: &'a str) -> Place<'a> {
-        let executors = self.tasks.get(slug).map_or(&[][..], |t| &t.executors[..]);
+        let key = self.work(slug);
+        let executors = self
+            .tasks
+            .get(key)
+            .filter(|t| !t.executors.is_empty())
+            .or_else(|| self.tasks.get(slug))
+            .map_or(&[][..], |t| &t.executors[..]);
         self.place_by(slug, executors)
     }
 
@@ -311,18 +353,32 @@ impl<'a> Ledger<'a> {
     /// when no orchestrator holds the task. A mirror is its reviewed task's orchestrator's.
     pub fn place_by(&self, slug: &'a str, sessions: &[&'a str]) -> Place<'a> {
         let key = self.work(slug);
-        let nearest = (self.chain(self.reviewed(slug)).into_iter())
-            .map(|at| &self.tasks[at].orchestrators)
-            .find(|held| !held.is_empty());
-        let (mut owners, by_parent) = match nearest {
-            Some(held) => (held.clone(), false),
-            None => (
-                (sessions.iter())
-                    .filter_map(|s| self.parents.get(s).copied())
-                    .collect(),
-                true,
-            ),
+        let parent_owners = |sessions: &[&'a str]| -> Vec<&'a str> {
+            sessions
+                .iter()
+                .filter_map(|s| self.parents.get(s).copied())
+                .collect()
         };
+        let root = self.tasks.get(key);
+        let root_parents = root.map_or_else(Vec::new, |t| parent_owners(&t.executors));
+        let (mut owners, by_parent) =
+            if let Some(root) = root.filter(|t| !t.orchestrators.is_empty()) {
+                (root.orchestrators.clone(), false)
+            } else if !root_parents.is_empty() {
+                (root_parents, true)
+            } else {
+                // Legacy inactive umbrellas can lack an owner. Keep their active children's work
+                // visible under the nearest remaining holder until ancestry is normalized.
+                let nearest = self
+                    .chain(self.reviewed(slug))
+                    .into_iter()
+                    .map(|at| &self.tasks[at].orchestrators)
+                    .find(|held| !held.is_empty());
+                nearest.map_or_else(
+                    || (parent_owners(sessions), true),
+                    |held| (held.clone(), false),
+                )
+            };
         owners.sort_unstable();
         owners.dedup();
         Place {
@@ -332,10 +388,9 @@ impl<'a> Ledger<'a> {
         }
     }
 
-    /// Whether `slug` is red work, which takes no slot: the task whose work it is
-    /// ([`Ledger::work`]), or a task above that one, is an open red ([`crate::red`]). So a mirror
-    /// and an instruction are red work with the task they serve, a slot is all red work or none,
-    /// and a red done or cancelled exempts nothing under it.
+    /// Whether `slug` is red work: its reviewed task or an ancestor is an open red. Red repair
+    /// children share the feature key but exempt neither their ordinary parent nor siblings.
+    /// A red done or cancelled exempts nothing under it.
     pub fn red(&self, slug: &'a str) -> bool {
         self.exempting(slug).next().is_some()
     }

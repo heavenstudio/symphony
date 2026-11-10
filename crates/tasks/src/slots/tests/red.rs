@@ -39,7 +39,7 @@ fn a_reds_close_holds_the_counts_it_raises_and_the_red_that_work_started_under_i
         (vec!["o"], vec!["red"]),
         "red and red/fix count once it is no red"
     );
-    assert_eq!(unmarked.holdings()["o"].len(), 3, "red, red/fix and a");
+    assert_eq!(unmarked.holdings()["o"].len(), 2, "red's feature and a");
     assert_eq!(
         reds(&unmarked, &unmarked.unmarked("red")),
         Vec::<&str>::new(),
@@ -74,6 +74,8 @@ fn red_work_takes_no_slot_with_its_mirrors_instructions_and_the_work_under_it() 
             entry("tests/red/fix", Some("tests/red"), "review"),
             entry("review/tests/red/fix", None, "review"),
             entry("tests/red/fix/part", Some("tests/red/fix"), "in_progress"),
+            entry("review/tests/red", None, "ready"),
+            told("mirror/repair", "review/tests/red", "ready"),
             red(led("tests/other", None, "ready", "o")),
             led("a", None, "in_progress", "o"),
             entry("review/a", None, "review"),
@@ -87,6 +89,7 @@ fn red_work_takes_no_slot_with_its_mirrors_instructions_and_the_work_under_it() 
         "tests/red/fix",
         "review/tests/red/fix",
         "tests/red/fix/part",
+        "mirror/repair",
     ] {
         assert!(ledger.red(slug), "{slug}");
     }
@@ -101,7 +104,7 @@ fn red_work_takes_no_slot_with_its_mirrors_instructions_and_the_work_under_it() 
     assert_eq!(ledger.counts()["o"], 2);
     assert_eq!(
         named(&ledger.reds()["o"]),
-        "tests/red (in_progress) with tests/red/do (in_progress), tests/red/fix (review) with review/tests/red/fix (review), tests/red/fix/part (in_progress)",
+        "tests/red (in_progress) with review/tests/red/fix (review) with tests/red/do (in_progress) with tests/red/fix (review) with tests/red/fix/part (in_progress)",
         "the red work is listed by slot, and only open work"
     );
 }
@@ -153,10 +156,7 @@ fn red_work_starts_at_any_count_and_a_feature_start_at_the_cap_is_still_refused(
     assert_eq!(started(&before, &reds, 1), Ok(vec![]), "above the cap too");
     let full = started(&reds, &start(&reds, "next"), 3).expect_err("a feature at the cap");
     assert_eq!((full.owner, full.held.len()), ("o", 3));
-    assert_eq!(
-        full.red.keys().copied().collect::<Vec<_>>(),
-        ["red", "red/fix"]
-    );
+    assert_eq!(full.red.keys().copied().collect::<Vec<_>>(), ["red"]);
     assert_eq!(
         Some(full.red),
         reds.reds().remove("o"),
@@ -191,6 +191,6 @@ fn a_refusal_names_the_red_work_apart_as_not_counted() {
     };
     assert_eq!(
         refusal("c cannot start", &full, &[], 1),
-        "c cannot start: o holds 1 open tasks, the cap of 1 an orchestrator holds: a (in_progress); a slot frees when one of them is done or cancelled; not counted, as red work takes no slot: fix (in_progress), tests/red (in_progress) with review/tests/red (review)"
+        "c cannot start: o holds 1 open tasks, the cap of 1 an orchestrator holds: a (in_progress); a slot frees when one of them is done or cancelled; not counted, as red work takes no slot: tests/red (in_progress) with fix (in_progress) with review/tests/red (review)"
     );
 }

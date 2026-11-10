@@ -21,6 +21,7 @@ use std::hash::{BuildHasher, RandomState};
 use std::sync::Mutex;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+mod branches;
 mod callback_peer;
 mod callback_state;
 mod callbacks;
@@ -105,6 +106,8 @@ pub struct Role {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Task {
+    /// The latest nonempty recorded executor branch, independent of session health or closure.
+    pub branch: Option<String>,
     /// The order it was created in.
     pub id: i64,
     pub slug: String,
@@ -722,6 +725,8 @@ impl From<DbError> for Failure {
 /// claimable work, and the newest message's id.
 #[derive(Clone, Deserialize)]
 struct Snapshot {
+    #[serde(default)]
+    branches: Vec<branches::Recorded>,
     native_presence: Vec<NativePresence>,
     callback_sequence: u64,
     has_callbacks: bool,
@@ -877,6 +882,7 @@ impl View {
             .tasks
             .iter()
             .map(|TaskRecord { row, .. }| Task {
+                branch: branches::latest(&self.snap.branches, &row.slug).map(String::from),
                 id: row.id,
                 slug: row.slug.clone(),
                 title: row.title.clone(),

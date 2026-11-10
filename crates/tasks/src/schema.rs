@@ -70,7 +70,7 @@
 /// as it was. Changing one (a field's type, an assertion, an index) also needs `DEFINE … OVERWRITE`
 /// for it. The steps are additive, so a reader one version behind still reads what a newer build
 /// writes.
-pub const VERSION: i64 = 13;
+pub const VERSION: i64 = 14;
 
 /// A board schema: its version, and the steps that bring a board of any older version to it.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -369,6 +369,8 @@ DEFINE FIELD IF NOT EXISTS started ON task_session TYPE float;
 DEFINE FIELD IF NOT EXISTS closed ON task_session TYPE option<float>;
 DEFINE FIELD IF NOT EXISTS closed_why ON task_session TYPE string;
 DEFINE FIELD IF NOT EXISTS restore ON task_session TYPE string;
+DEFINE INDEX IF NOT EXISTS task_session_slug ON task_session FIELDS slug;
+DEFINE INDEX IF NOT EXISTS task_session_branch ON task_session FIELDS branch;
 
 DEFINE TABLE IF NOT EXISTS counter SCHEMAFULL;
 DEFINE FIELD IF NOT EXISTS last ON counter TYPE int;

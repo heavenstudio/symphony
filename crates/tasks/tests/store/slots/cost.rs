@@ -98,7 +98,12 @@ fn the_caps_reads_are_planned_on_an_index_and_a_capped_claim_adds_a_round_trip_a
             );
         }
     }
-    for (statement, index) in [(SLOT_READS[0], "task_status"), (SLOT_READS[2], "role_slug")] {
+    for (statement, index) in [
+        (SLOT_READS[0], "task_status"),
+        (SLOT_READS[2], "role_slug"),
+        (SLOT_READS[7], "task_session_slug"),
+        (SLOT_READS[8], "task_session_branch"),
+    ] {
         let plan = format!(
             "{:?}",
             client.query(&format!("EXPLAIN {statement};"), vars.clone())

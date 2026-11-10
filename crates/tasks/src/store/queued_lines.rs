@@ -172,6 +172,7 @@ mod tests {
     /// `idle`, its child, holds nothing, and so does `theirs`, the child of `next`.
     fn handed_over() -> Board {
         let task = |slug: &str, status: &str, roles: &[(&str, &str)]| Task {
+            branch: None,
             id: 0,
             slug: slug.into(),
             title: "T".into(),
