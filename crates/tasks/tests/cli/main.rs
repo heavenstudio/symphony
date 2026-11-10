@@ -30,7 +30,6 @@ mod priority;
 mod probes;
 mod project;
 mod pull;
-mod recipe;
 mod scratch_folder;
 mod search;
 mod slots;
