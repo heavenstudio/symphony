@@ -168,6 +168,151 @@ fn a_subtree_another_orchestrator_holds_is_that_ones_to_see() {
 }
 
 #[test]
+fn a_parent_task_owner_hears_only_its_direct_coordinator_on_the_delegated_task() {
+    let mut root = session("root", None);
+    root.row.kind = "orchestrator".into();
+    let mut coordinator = session("coordinator", Some("root"));
+    coordinator.row.kind = "orchestrator".into();
+    let mut board = Board {
+        tasks: vec![
+            task("root", None, &[("root", "orchestrator")]),
+            task(
+                "delegated",
+                Some("root"),
+                &[
+                    ("coordinator", "orchestrator"),
+                    ("coordinator", "executor"),
+                    ("worker", "reviewer"),
+                ],
+            ),
+            task(
+                "foreign",
+                None,
+                &[("foreign", "orchestrator"), ("coordinator", "reviewer")],
+            ),
+        ],
+        sessions: vec![
+            root,
+            coordinator,
+            session("worker", Some("coordinator")),
+            session("foreign", None),
+        ],
+        latest_message: 0,
+    };
+    let hears = |board: &Board, who: &str, slug: &str| {
+        overseen(board, "root").hears_of(
+            board,
+            &crate::orchestration::Owners::new(&board.tasks),
+            who,
+            slug,
+        )
+    };
+    assert!(hears(&board, "coordinator", "delegated"));
+    assert!(!hears(&board, "worker", "delegated"));
+    assert!(!hears(&board, "coordinator", "foreign"));
+    assert!(!hears(&board, "root", "root"));
+    board.sessions[1].row.left_at = Some(1.0);
+    assert!(!hears(&board, "coordinator", "delegated"));
+    board.sessions[1].row.left_at = None;
+    board.sessions[1].row.parent = None;
+    assert!(!hears(&board, "coordinator", "delegated"));
+    board.sessions[1].row.parent = Some("root".into());
+    board.tasks[1].roles[0].handle = "foreign".into();
+    assert!(!hears(&board, "coordinator", "delegated"));
+}
+
+#[test]
+fn only_recognized_generated_pane_notices_receive_historical_wording() {
+    let legacy = "BLOCKED worker task t2 — its terminal waits on an approval or a question";
+    let observed = "BLOCKED worker task t2 — observed waiting on an approval or a question; inspect its terminal before acting";
+    assert_eq!(PaneWatch::delivery_text("pane-2-0", legacy), observed);
+    assert_eq!(PaneWatch::delivery_text("pane-2-0", observed), observed);
+    for key in [
+        "message-1",
+        "event-2",
+        "pull-3",
+        "pane-user",
+        "pane-2-0-extra",
+        "pane--0",
+    ] {
+        assert_eq!(PaneWatch::delivery_text(key, legacy), legacy, "{key}");
+    }
+    for text in [
+        "BLOCKED worker task t2 — please approve",
+        "BLOCKED worker task t2 extra — its terminal waits on an approval or a question",
+        "WATCH hc unanswered: user prose",
+    ] {
+        assert_eq!(PaneWatch::delivery_text("pane-2-0", text), text);
+    }
+    assert_eq!(
+        PaneWatch::delivery_text(
+            "pane-2-1",
+            "WATCH hc unanswered: down — blocked terminals go unreported until it answers"
+        ),
+        "WATCH hc unanswered at observation: down — blocked terminals may have gone unreported; inspect hc before acting"
+    );
+    let observed = "WATCH hc unanswered at observation: down — blocked terminals may have gone unreported; inspect hc before acting";
+    assert_eq!(PaneWatch::delivery_text("pane-2-1", observed), observed);
+}
+
+#[test]
+fn watermarks_reject_older_unknown_and_resolved_equal_turn_observations() {
+    let board = Board {
+        tasks: vec![task(
+            "t/a",
+            None,
+            &[("orch", "orchestrator"), ("w", "executor")],
+        )],
+        sessions: vec![session("orch", None), session("w", None)],
+        latest_message: 0,
+    };
+    let open = [launched("w", "t/a", "t1", "")];
+    let legacy: PaneWatch = serde_json::from_value(json!({
+        "blocked": {"w": {"task":"t/a", "pane":"t1"}}, "unanswered":false
+    }))
+    .unwrap();
+    assert!(legacy.known.is_empty());
+    assert_eq!(legacy.blocked["w"].turn, None);
+    let mut before = PaneWatch::default();
+    for (status, turn, alerts, blocked, known) in [
+        ("blocked", Some(3), 1, true, 3),
+        ("blocked", Some(3), 0, true, 3),
+        ("blocked", Some(4), 1, true, 4),
+        ("blocked", Some(3), 0, true, 4),
+        ("working", Some(3), 0, true, 4),
+        ("blocked", None, 0, true, 4),
+        ("working", None, 0, true, 4),
+        ("working", Some(4), 0, false, 4),
+        ("blocked", Some(4), 0, false, 4),
+        ("blocked", Some(3), 0, false, 4),
+        ("blocked", Some(5), 1, true, 5),
+        ("idle", Some(5), 0, false, 5),
+        ("blocked", Some(6), 1, true, 6),
+    ] {
+        let mut observed = pane("t1", status, "");
+        observed.turn = turn;
+        let (after, said) = look(&board, "orch", &open, Ok(vec![observed]), &before);
+        assert_eq!(said.len(), alerts, "{status} {turn:?}: {said:?}");
+        assert_eq!(
+            after.blocked.contains_key("w"),
+            blocked,
+            "{status} {turn:?}"
+        );
+        assert_eq!(after.known["w"].turn, Some(known));
+        if blocked {
+            assert_eq!(after.blocked["w"].turn, Some(known));
+        }
+        before = after;
+    }
+    let (unknown, said) = look(&board, "orch", &open, Err("down".into()), &before);
+    assert_eq!(said.len(), 1);
+    assert_eq!(unknown.blocked, before.blocked);
+    assert_eq!(unknown.known, before.known);
+    let (retired, _) = look(&board, "orch", &[], Err("down".into()), &unknown);
+    assert_eq!(retired, PaneWatch::default());
+}
+
+#[test]
 fn a_launched_terminal_is_found_by_its_conversation_once_its_recorded_address_is_gone() {
     let board = Board {
         tasks: vec![task(
@@ -188,7 +333,9 @@ fn a_launched_terminal_is_found_by_its_conversation_once_its_recorded_address_is
     );
     assert_eq!(
         said,
-        ["BLOCKED w t/a t7 — its terminal waits on an approval or a question"]
+        [
+            "BLOCKED w t/a t7 — observed waiting on an approval or a question; inspect its terminal before acting"
+        ]
     );
     assert_eq!(after.blocked["w"].pane, "t7");
 }
@@ -215,21 +362,26 @@ fn a_session_no_longer_launched_is_forgotten_while_hc_cannot_be_asked() {
     let blocked = |pane: &str| Blocked {
         task: "t/a".into(),
         pane: pane.into(),
+        turn: None,
     };
     let before = PaneWatch {
         blocked: BTreeMap::from([("w".into(), blocked("t1")), ("v".into(), blocked("t2"))]),
         unanswered: false,
+        ..PaneWatch::default()
     };
     // v's pane closed: only w is still launched.
     let open = [launched("w", "t/a", "t1", "")];
     let (after, said) = look(&board, "orch", &open, Err("down".into()), &before);
     assert_eq!(
         said,
-        ["WATCH hc unanswered: down — blocked terminals go unreported until it answers"]
+        [
+            "WATCH hc unanswered at observation: down — blocked terminals may have gone unreported; inspect hc before acting"
+        ]
     );
     let expected = PaneWatch {
         blocked: BTreeMap::from([("w".into(), blocked("t1"))]),
         unanswered: true,
+        ..PaneWatch::default()
     };
     assert_eq!(after, expected);
     let (again, said) = look(&board, "orch", &open, Err("down".into()), &after);
@@ -250,6 +402,7 @@ fn with_nothing_launched_hc_is_not_asked_and_the_watch_forgets() {
     let before = PaneWatch {
         blocked: BTreeMap::new(),
         unanswered: true,
+        ..PaneWatch::default()
     };
     let after = pane_watch(
         &board,
@@ -291,7 +444,7 @@ fn a_blocked_terminal_is_said_only_to_the_orchestrator_of_the_task_it_was_launch
         let panes = Ok(vec![pane("t1", "blocked", "")]);
         look(&board, who, &open, panes, &PaneWatch::default()).1
     };
-    let blocked = "BLOCKED w scratch/b t1 — its terminal waits on an approval or a question";
+    let blocked = "BLOCKED w scratch/b t1 — observed waiting on an approval or a question; inspect its terminal before acting";
     assert_eq!(
         [heard("a"), heard("b")],
         [vec![], vec![blocked.to_string()]]

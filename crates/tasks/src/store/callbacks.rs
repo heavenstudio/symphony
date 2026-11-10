@@ -27,6 +27,9 @@ mod codex;
 mod visit;
 use visit::Visit;
 
+#[path = "pane_watch.rs"]
+mod pane_watch;
+
 #[cfg(test)]
 #[path = "../../../../../tools/gate/tests/verify/script_process_cwd.rs"]
 mod fixture_script;
@@ -662,92 +665,6 @@ RETURN NONE;");
         Ok((board, observed))
     }
 
-    /// One look of the pane watch for each recipient on this host ([`attach::pane_watch`]): hc is
-    /// asked once a tick, and only when some recipient oversees a session launched into an open
-    /// pane. A look that changes nothing writes nothing. It plans from what the recipient's row said
-    /// and, under its lease, looks again from what the row says now: another clock on the board may
-    /// have said the same thing meanwhile.
-    fn watch_panes(
-        &self,
-        board: &super::Board,
-        callbacks: &BTreeMap<String, Callback>,
-    ) -> Result<(), Error> {
-        let recipients: Vec<(&Callback, attach::Overseen)> = callbacks
-            .values()
-            .filter(|c| c.host == self.host)
-            .map(|c| (c, attach::overseen(board, &c.handle)))
-            .collect();
-        let open = if recipients.iter().any(|(_, overseen)| !overseen.is_empty()) {
-            self.open_task_sessions()?
-        } else {
-            Vec::new()
-        };
-        let env = crate::cli::Env::of_process();
-        let panes = || {
-            self.clock_panes
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .get_or_insert_with(|| crate::cli::probes::hc_terminals(&env))
-                .clone()
-        };
-        for (callback, overseen) in recipients {
-            let look = |before: &attach::PaneWatch| {
-                let mut lines = Vec::new();
-                let after =
-                    attach::pane_watch(board, &overseen, &open, &panes, before, &mut |line| {
-                        lines.push(event_line(line))
-                    });
-                (lines, after)
-            };
-            let (lines, after) = look(&callback.pane_watch);
-            if lines.is_empty() && after == callback.pane_watch {
-                continue;
-            }
-            let handle = callback.handle.as_str();
-            self.with_callback_lease(handle, |deadline, revision| {
-                let stored: attach::PaneWatch = self.retrying(|| {
-                    self.transact(
-                        "RETURN (SELECT VALUE pane_watch FROM ONLY type::record('callback_state', $handle)) ?? {};",
-                        json!({"handle":handle}),
-                    )
-                })?;
-                let (lines, after) = look(&stored);
-                if lines.is_empty() && after == stored {
-                    return Ok(());
-                }
-                let events: Vec<Event> = lines
-                    .iter()
-                    .enumerate()
-                    .map(|(i, text)| Event {
-                        key: format!("pane-{revision}-{i}"),
-                        handle: handle.to_string(),
-                        text: text.clone(),
-                        slug: session_task(board, handle),
-                        message: None,
-                        attempts: 0,
-                        sequence: 0,
-                        pull_entries: None,
-                        pull_withheld: None,
-                    })
-                    .collect();
-                self.retrying(|| self.transact::<Value>(
-                    "FOR $event IN $events {
-                        IF !record::exists(type::record('callback_event', [$handle, $event.key])) {
-                            LET $counted = (UPSERT ONLY type::record('counter', ['callback-event', $handle]) SET last = (last ?? 0) + 1);
-                            CREATE type::record('callback_event', [$handle, $event.key]) CONTENT $event RETURN NONE;
-                            UPDATE type::record('callback_event', [$handle, $event.key]) SET sequence = $counted.last RETURN NONE;
-                        };
-                     };
-                     UPDATE type::record('callback_state', $handle) SET pane_watch = $after RETURN NONE;
-                     RETURN NONE;",
-                    json!({"handle":handle, "events":events, "after":after}),
-                ))?;
-                self.deliver_pending(handle, callback, deadline)
-            })?;
-        }
-        Ok(())
-    }
-
     /// Direct messages need only the native outbox, never a machine/pane probe or a board digest.
     /// Whether it reached the recipient: false while another dispatcher holds its lease.
     fn dispatch_agent(&self, handle: &str) -> Result<bool, Error> {
@@ -1355,7 +1272,16 @@ RETURN NONE;");
             &mut |batch| {
                 let text = batch
                     .iter()
-                    .map(|event| event.text.as_str())
+                    .map(|event| {
+                        attach::PaneWatch::delivery_text(
+                            if event.message.is_none() {
+                                &event.key
+                            } else {
+                                ""
+                            },
+                            &event.text,
+                        )
+                    })
                     .collect::<Vec<_>>()
                     .join("\n");
                 deliver(callback, &text)
