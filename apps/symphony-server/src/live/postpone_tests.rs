@@ -33,7 +33,7 @@ fn expiry_backs_off_failed_prunes_and_resumes_after_recovery() {
     postpone();
     let expires = 3 * 86_400;
     assert!(symphony::postpone::expired(&root, expires));
-    let persisted = std::fs::read(root.join(symphony::postpone::FILE)).unwrap();
+    let persisted = std::fs::read(symphony::postpone::order_file(&root)).unwrap();
     // The store is readable, but atomic replacement cannot write its temporary file.
     let blocked = root.join(format!(
         "artifacts/review-order/postponed.{}.tmp",
@@ -55,7 +55,7 @@ fn expiry_backs_off_failed_prunes_and_resumes_after_recovery() {
         "301 ticks must not refresh on every expiry check"
     );
     assert_eq!(
-        std::fs::read(root.join(symphony::postpone::FILE)).unwrap(),
+        std::fs::read(symphony::postpone::order_file(&root)).unwrap(),
         persisted
     );
     assert_eq!(hub.pages.read().unwrap()[""].board, before);
@@ -314,7 +314,7 @@ async fn visits_without_visible_changes_skip_scans_snapshots_and_hub_refreshes()
         }
         if postponed {
             let order: Value = serde_json::from_slice(
-                &std::fs::read(root.join(symphony::postpone::FILE)).unwrap(),
+                &std::fs::read(symphony::postpone::order_file(&root)).unwrap(),
             )
             .unwrap();
             assert_eq!(

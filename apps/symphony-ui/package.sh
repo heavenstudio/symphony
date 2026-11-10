@@ -59,13 +59,15 @@ done
 # The shell's hash includes the page module manifest: a new module changes Board.build, while
 # returning to any unchanged kind still uses its immutable browser-cache entries.
 jq -nr --arg source "$(cat assets/shell.js)" --argjson modules "$manifest" '$source | sub("__MODULES__"; ($modules | tojson))' > "$stage/shell.js"
+# Eager notice styles are part of this shell's build identity too.
+printf '\n// Notice styles: %s\n' "$(shasum -a 256 ../symphony-server/src/notices.css | cut -c1-16)" >> "$stage/shell.js"
 hash="$(shasum -a 256 "$stage/shell.js" | cut -c1-16)"
 shell="symphony-shell-$hash.js"
 mv "$stage/shell.js" "$stage/assets/$shell"
 cat > "$stage/index.html" <<HTML
 <!DOCTYPE html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Symphony</title><link rel="icon" href="data:,"></head><body><div id="main"></div>
+<title>Symphony</title><link rel="icon" href="data:,"><style id="shell-notices-style">$(cat ../symphony-server/src/notices.css)</style></head><body><div id="main"><section id="shell-notices" aria-label="Server notices"></section></div>
 <script type="module" src="$prefix/assets/$shell"></script></body></html>
 HTML
 "$here/../../tools/rs-bin.sh" symphony publish-client "$stage" "$out/public"

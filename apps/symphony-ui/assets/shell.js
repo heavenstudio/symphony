@@ -1,7 +1,7 @@
 // One history adapter; switching page kinds awaits the old runtime's cleanup.
 const modules = __MODULES__;
 try {
-    const css = localStorage.getItem("studio.cssVars");
+    const css = localStorage.getItem(stored("studio.cssVars"));
     if (css) {
         const style = document.createElement("style");
         style.id = "studio-theme";
@@ -16,6 +16,10 @@ let switching = Promise.resolve();
 let panel;
 const styleLoads = new Map();
 const failed = new Set();
+
+function notices() {
+    return document.getElementById("shell-notices");
+}
 
 async function initialize(kind) {
     const spec = modules[kind];
@@ -58,7 +62,8 @@ function styles(spec) {
                         reject(new Error(`Styles could not load: ${href}`));
                     }, { once: true });
                 });
-                if (fresh) { link.rel = "stylesheet"; link.href = href; document.head.append(link); }
+                // Page styles go before the project's theme package, which wins the cascade.
+                if (fresh) { link.rel = "stylesheet"; link.href = href; document.head.insertBefore(link, document.head.querySelector("[data-symphony-theme]")); }
             }
             styleLoads.set(href, loaded);
         }
@@ -75,16 +80,24 @@ async function ensurePanel() {
         const imported = await initialize("panel");
         await styles(spec);
         await imported.run();
+        document.getElementById("panel-error")?.remove();
         window.reviewPanelReady = true;
         dispatchEvent(new Event("review:panel-ready"));
         return { imported };
     })().catch(error => {
         panel = null;
         console.error("Conversation could not be loaded", error);
-        const notice = document.createElement("button");
-        notice.textContent = "Retry loading conversation";
-        notice.onclick = () => { notice.remove(); ensurePanel(); };
-        document.body.prepend(notice);
+        if (document.getElementById("panel-error")) return;
+        const notice = document.createElement("div");
+        notice.id = "panel-error";
+        notice.className = "shell-notice";
+        notice.setAttribute("role", "alert");
+        notice.textContent = "Conversation could not be loaded. ";
+        const retry = document.createElement("button");
+        retry.textContent = "Retry loading conversation";
+        retry.onclick = () => { notice.remove(); ensurePanel(); };
+        notice.append(retry);
+        notices().append(notice);
     });
     return panel;
 }
@@ -115,8 +128,24 @@ function project() {
     try { return JSON.parse(document.getElementById("symphony-project")?.textContent || "{}"); } catch { return {}; }
 }
 
+// `key` as the project keeps it in the browser (project::stored): the one server's projects share
+// its origin, so each key takes the project's id first; a server of its own keeps it as it is.
+function stored(key) {
+    const id = (project().base || "").replace(/^\/+/, "");
+    return id ? `${id}:${key}` : key;
+}
+
+// The page's path under the project's base (ProjectView::here): the one server serves each
+// project at `/<id>/`, a server of its own at `/`.
+function here(path) {
+    const base = project().base || "";
+    return !base || path === base || path.startsWith(`${base}/`) ? path : base + path;
+}
+
 function route(path) {
     try { path = decodeURIComponent(path); } catch { return null; }
+    const base = project().base || "";
+    if (base && (path === base || path.startsWith(`${base}/`))) path = path.slice(base.length) || "/";
     // Keep module selection aligned with navigation.rs for scoped URLs and repeated slashes.
     // The empty task route below uses the board module.
     path = path.replace(/\/{2,}/g, "/").replace(/^\//, "").replace(/^app\//, "");
@@ -175,6 +204,7 @@ async function show(generation, scroll) {
         await imported.run();
         active = { kind, imported, mount };
     }
+    document.getElementById("module-error")?.remove();
     const root = document.scrollingElement;
     const position = {
         x: scrollX, y: scrollY,
@@ -212,10 +242,11 @@ function navigate() {
         console.error("Page could not be loaded", error);
         let notice = document.getElementById("module-error");
         if (!notice) {
-            notice = document.createElement("p");
+            notice = document.createElement("div");
             notice.id = "module-error";
+            notice.className = "shell-notice";
             notice.setAttribute("role", "alert");
-            document.body.prepend(notice);
+            notices().append(notice);
         }
         notice.replaceChildren(document.createTextNode("This page could not be loaded. "));
         const retry = document.createElement("button");
@@ -230,7 +261,9 @@ document.addEventListener("click", event => {
     const link = event.target instanceof Element && event.target.closest("a[href]");
     if (!link || link.hasAttribute("download") || link.dataset.native === "true" || (link.target && link.target !== "_self")) return;
     const url = new URL(link.href, location.href);
-    if (url.origin !== location.origin || !route(url.pathname)) return;
+    if (url.origin !== location.origin) return;
+    url.pathname = here(url.pathname);
+    if (!route(url.pathname)) return;
     event.preventDefault();
     if (document.querySelector("[data-posting=true]")) return;
     history.pushState(null, "", url);

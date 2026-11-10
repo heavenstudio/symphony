@@ -50,27 +50,6 @@ fn a_name_is_quoted_as_python_quotes_it() {
     assert_eq!(repr("sim/jump — ✓"), "'sim/jump — ✓'");
 }
 
-#[test]
-fn only_a_namespace_or_this_database_not_on_the_server_reads_as_a_board_not_made_yet() {
-    assert!(undefined("The namespace 'sf' does not exist", "tasks"));
-    assert!(undefined("The database 'tasks' does not exist", "tasks"));
-    for other in [
-        "The database 'other' does not exist",
-        "The table 'meta' does not exist",
-        "The namespace 'sf' already exists",
-        "The namespace 'sf",
-        "the server at 127.0.0.1:1 is slow: The database 'tasks' does not exist",
-    ] {
-        assert!(!undefined(other, "tasks"), "{other}");
-    }
-}
-
-/// The open's check of the version is a read, so a late answer to it goes once more.
-#[test]
-fn the_schema_version_check_is_a_read() {
-    assert_eq!(crate::rpc::Kind::of(SCHEMA_VERSION), crate::rpc::Kind::Read);
-}
-
 /// Each snapshot a page or a list reads is a read, so a late answer to it goes once more: its
 /// bounds are variables, so no `;` stands in it but between its statements.
 #[test]

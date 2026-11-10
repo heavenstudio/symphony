@@ -72,7 +72,21 @@ impl Plugin for Shelf {
             document: DOC.into(),
         }]
     }
+
+    /// Its theme package, [`THEME`]: a name, one token and the compact header.
+    fn theme(&self) -> Option<symphony_plugin::Theme> {
+        Some(symphony_plugin::Theme {
+            package: THEME.into(),
+            name: "The Shelf".into(),
+            tokens: [("primary".to_string(), "#2a6f4e".to_string())].into(),
+            layouts: [("header".to_string(), "compact".to_string())].into(),
+            ..symphony_plugin::Theme::default()
+        })
+    }
 }
+
+/// The theme package the plugin provides, as a fixture project's `[theme] package` names it.
+pub const THEME: &str = "fixture-shelf";
 
 /// The renderer's name, as an entrypoint's `types` gives it, and its files' type.
 pub const ITEM: &str = "shelf-item";

@@ -99,7 +99,8 @@ mod live {
             .set_attribute("data-studio-theme", "")
             .map_err(|e| format!("{e:?}"))?;
         if let Ok(Some(storage)) = window.local_storage() {
-            let _ = storage.set_item(KEY, css);
+            let key = crate::project::stored(&crate::project::current(), KEY);
+            let _ = storage.set_item(&key, css);
         }
         Ok(())
     }

@@ -3,7 +3,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, OpenOptions};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 use symphony_api::Card;
@@ -11,7 +11,13 @@ use symphony_api::Card;
 use crate::plugins::Plugins;
 use crate::{Doc, Group, ReviewError, Who};
 
-pub const FILE: &str = "artifacts/review-order/postponed.json";
+/// The order's file, in the project's artifacts folder.
+pub const FILE: &str = "review-order/postponed.json";
+
+/// Where the order of the project at `root` is kept: [`FILE`] in its artifacts folder.
+pub fn order_file(root: &Path) -> PathBuf {
+    root.join(crate::project::Project::of(root).artifact(FILE))
+}
 pub const OWNER: &str = "owner";
 pub const DAYS: u64 = 3;
 const LIFETIME: u64 = DAYS * 86_400;
@@ -38,7 +44,7 @@ fn problem(path: &Path, error: impl std::fmt::Display) -> ReviewError {
 /// Read and atomically replace the shared state under a file lock, including across preview
 /// processes. A malformed file is reported, never reset.
 fn update<T>(root: &Path, change: impl FnOnce(&mut Order) -> T) -> Result<(T, bool), ReviewError> {
-    let path = root.join(FILE);
+    let path = order_file(root);
     let dir = path.parent().expect("the state has a parent");
     fs::create_dir_all(dir).map_err(|e| problem(dir, e))?;
     let lock_path = dir.join("lock");
@@ -223,10 +229,9 @@ fn apply_cards(
     waiting: &mut [Card],
     now: u64,
 ) -> Result<BTreeMap<String, u64>, ReviewError> {
-    if !root
-        .join(FILE)
+    if !order_file(root)
         .try_exists()
-        .map_err(|e| problem(&root.join(FILE), e))?
+        .map_err(|e| problem(&order_file(root), e))?
     {
         return Ok(BTreeMap::new());
     }
@@ -305,10 +310,9 @@ fn act_with_cards(
     }
     let id = key(path, slug);
     if action != "later" {
-        let changed = root
-            .join(FILE)
+        let changed = order_file(root)
             .try_exists()
-            .map_err(|e| problem(&root.join(FILE), e))
+            .map_err(|e| problem(&order_file(root), e))
             .and_then(|exists| {
                 if !exists {
                     return Ok(false);
@@ -380,7 +384,7 @@ fn act_with_cards(
 /// An owner answer clears the entry immediately, including when the marker stays pending.
 /// A branch proposal's id includes its scoped document; main retains the bare slug.
 pub fn answered(root: &Path, owner: &str, id: &str) -> Result<(), ReviewError> {
-    if !root.join(FILE).exists() {
+    if !order_file(root).exists() {
         return Ok(());
     }
     update(root, |order| {
@@ -397,7 +401,7 @@ pub fn answered(root: &Path, owner: &str, id: &str) -> Result<(), ReviewError> {
 
 /// Cheap timer check: an actual expiry triggers a refresh of the cached queue.
 pub fn expired(root: &Path, now: u64) -> bool {
-    fs::read(root.join(FILE))
+    fs::read(order_file(root))
         .ok()
         .and_then(|bytes| serde_json::from_slice::<Order>(&bytes).ok())
         .is_some_and(|order| {

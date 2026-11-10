@@ -7,6 +7,7 @@ use crate::common::refused;
 use crate::{Hooked, World};
 use serde_json::{Map, Value, json};
 use std::cell::Cell;
+use symphony_board::launch::hc::Hc;
 use symphony_board::launch::{Closure, GONE};
 use symphony_board::rows::TaskSessionRow;
 use symphony_board::{Error, NewLaunch};
@@ -320,4 +321,170 @@ fn a_herdr_pane_of_the_record_is_gone_without_asking_hc() {
         world.store().open_task_sessions().unwrap(),
         Vec::<TaskSessionRow>::new()
     );
+}
+
+/// The fake's terminal and process responses, with either native status encoding on each get.
+/// `after_get` changes the fixture only after that response has been captured.
+fn native_hc<'w>(w: &'w World, detailed: bool, after_get: impl Fn(usize) + 'w) -> Hooked<'w> {
+    let mut hc = Hooked::new(w);
+    let gets = Cell::new(0);
+    hc.instead = Box::new(move |args| {
+        if args[0] != "get" {
+            return None;
+        }
+        let answer = w.hc().run(args).map(|out| {
+            let mut found: Value = serde_json::from_str(&out).unwrap();
+            let state = w.terminal(args[1])["status"].clone();
+            found["status"] = if detailed {
+                json!({"app": found["agent"], "state": state})
+            } else {
+                state
+            };
+            found.to_string()
+        });
+        gets.set(gets.get() + 1);
+        after_get(gets.get());
+        Some(answer)
+    });
+    hc
+}
+
+/// Registration identity remains present and bound to the same terminal after a refused close.
+fn callbacks(w: &World) -> Vec<Value> {
+    w.store()
+        .callbacks()
+        .unwrap()
+        .into_iter()
+        .map(|(handle, c)| {
+            json!({"key": handle, "handle": c.handle, "address": c.address,
+               "host": c.host, "chat": c.chat, "terminal": c.terminal})
+        })
+        .collect()
+}
+
+#[test]
+fn only_a_known_idle_or_done_native_agent_closes_even_with_no_descendants() {
+    for agent in ["claude", "codex"] {
+        for detailed in [false, true] {
+            for ready in ["idle", "done"] {
+                let w = World::new();
+                let s = w.waiting_reviewer();
+                let pid = w.pid_of(&s.pane);
+                w.run_under(pid, &[]);
+                let hc = native_hc(&w, detailed, |_| {});
+                w.store()
+                    .callback_in(&s.handle, Some("codex:0abc"), false, false, Some(&s.pane))
+                    .unwrap();
+                let registered = callbacks(&w);
+                assert_eq!(registered.len(), 1);
+                let records = w.store().sessions_of(&s.handle).unwrap();
+                let before = w.f.said("sim/jump").len();
+                for state in [
+                    json!("working"),
+                    json!("blocked"),
+                    json!("waiting"),
+                    json!("unknown"),
+                    json!(null),
+                    json!(42),
+                ] {
+                    w.edit_terminal(&s.pane, |t| {
+                        t.insert("agent".into(), json!(agent));
+                        t.insert("argv".into(), json!([agent]));
+                        t.insert(
+                            "foreground".into(),
+                            json!({"pid": pid, "name": agent, "argv": [agent]}),
+                        );
+                        t.insert("status".into(), state.clone());
+                    });
+                    // No child can provide the independent busy-work refusal.
+                    assert!(w.procs.borrow()[&w.pid_of(&s.pane)].is_empty());
+                    let status = state.as_str().unwrap_or("silent");
+                    assert_eq!(
+                        refused(w.close_through(&hc, &s.handle)),
+                        format!(
+                            "terminal {} stays: its agent is {status}, not idle or done",
+                            s.pane
+                        )
+                    );
+                    w.untouched();
+                    assert_eq!(w.store().sessions_of(&s.handle).unwrap(), records);
+                    assert_eq!(callbacks(&w), registered);
+                    assert!(w.said_since(before).is_empty());
+                }
+                w.edit_terminal(&s.pane, |t| {
+                    t.insert("status".into(), json!(ready));
+                });
+                let closed = w.close_through(&hc, &s.handle).unwrap();
+                assert!(closed.closed);
+                assert_eq!(closed.restore, restore_line(&s.handle));
+                assert!(!w.has_terminal(&s.pane));
+                assert!(!w.store().callbacks().unwrap().contains_key(&s.handle));
+                let [read] = <[_; 1]>::try_from(w.store().sessions_of(&s.handle).unwrap()).unwrap();
+                assert!(read.closed.is_some());
+                assert_eq!(read.restore, restore_line(&s.handle));
+                assert_eq!(
+                    w.store().get("sim/jump").unwrap().holders("reviewer"),
+                    [s.handle.as_str()]
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn a_native_state_change_alone_at_the_final_look_keeps_the_agent_and_its_callback() {
+    for agent in ["claude", "codex"] {
+        for detailed in [false, true] {
+            for state in [
+                json!("working"),
+                json!("blocked"),
+                json!("waiting"),
+                json!("unknown"),
+                json!(null),
+            ] {
+                let w = World::new();
+                let s = w.waiting_reviewer();
+                let pid = w.pid_of(&s.pane);
+                w.run_under(pid, &[]);
+                w.edit_terminal(&s.pane, |t| {
+                    t.insert("agent".into(), json!(agent));
+                    t.insert("argv".into(), json!([agent]));
+                    t.insert(
+                        "foreground".into(),
+                        json!({"pid": pid, "name": agent, "argv": [agent]}),
+                    );
+                    t.insert("status".into(), json!("idle"));
+                });
+                w.store()
+                    .callback_in(&s.handle, Some("codex:0abc"), false, false, Some(&s.pane))
+                    .unwrap();
+                let registered = callbacks(&w);
+                assert_eq!(registered.len(), 1);
+                let records = w.store().sessions_of(&s.handle).unwrap();
+                let terminal = w.terminal(&s.pane);
+                let before = w.f.said("sim/jump").len();
+                let changed = native_hc(&w, detailed, |n| {
+                    if n == 1 {
+                        w.edit_terminal(&s.pane, |t| {
+                            t.insert("status".into(), state.clone());
+                        });
+                    }
+                });
+                let status = state.as_str().unwrap_or("silent");
+                kept_at_the_last_look(
+                    &w,
+                    &s,
+                    before,
+                    w.close_through(&changed, &s.handle),
+                    &format!("its agent is {status}, not idle or done"),
+                );
+                assert_eq!(w.terminal(&s.pane)["pid"], terminal["pid"]);
+                assert!(terminal["foreground"].is_object());
+                assert_eq!(w.terminal(&s.pane)["foreground"], terminal["foreground"]);
+                assert!(w.procs.borrow()[&w.pid_of(&s.pane)].is_empty());
+                assert_eq!(w.store().sessions_of(&s.handle).unwrap(), records);
+                assert_eq!(callbacks(&w), registered);
+            }
+        }
+    }
 }

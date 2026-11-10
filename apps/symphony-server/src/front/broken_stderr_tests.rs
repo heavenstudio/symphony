@@ -69,8 +69,10 @@ async fn stop_with_stderr_broken() {
             root,
             port: 0,
             hosts: Vec::new(),
+            install: None,
         },
         shared: shared.clone(),
+        projects: None,
         background: Background {
             shared: shared.clone(),
             workers: vec![panicking, held],

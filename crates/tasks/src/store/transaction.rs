@@ -1,8 +1,20 @@
-//! Transaction execution, answer decoding and durable post-commit dispatch.
+//! Transaction execution: the schema guard a write starts with, answer decoding and durable
+//! post-commit dispatch.
 
-use super::{Error, Failure, Store};
+use super::{Error, Failure, REFUSED, Store};
+use crate::schema;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
+
+/// How a transaction runs: a write behind the schema guard, its committed messages dispatched to
+/// their callbacks when `dispatch`; staging preserves raw row values without dispatch; or with no
+/// guard, as a read, or the migration that checks the version itself.
+#[derive(Clone, Copy)]
+pub(super) enum Run {
+    Guarded { dispatch: bool },
+    Staging,
+    Unguarded,
+}
 
 impl Store {
     /// `body`'s statements in one transaction; the last of them is a `RETURN` of the answer. A null
@@ -44,12 +56,41 @@ impl Store {
     pub(super) fn transact_dispatch<T: DeserializeOwned>(
         &self,
         body: &str,
-        mut vars: Value,
+        vars: Value,
         dispatch: bool,
     ) -> Result<T, Failure> {
-        unset_nulls(&mut vars);
+        let run = if schema::mutates(body) {
+            Run::Guarded { dispatch }
+        } else {
+            Run::Unguarded
+        };
+        self.run_transaction(body, vars, run)
+    }
+
+    /// `body` in one transaction, as `run` says: a write starts with the schema guard, so on a
+    /// board at another version than this store's it is refused before any statement of its own.
+    #[track_caller]
+    pub(super) fn run_transaction<T: DeserializeOwned>(
+        &self,
+        body: &str,
+        mut vars: Value,
+        run: Run,
+    ) -> Result<T, Failure> {
+        if !matches!(run, Run::Staging) {
+            unset_nulls(&mut vars);
+        }
+        let (guard, dispatch) = match run {
+            Run::Guarded { .. } | Run::Staging => {
+                schema::guard_vars(&mut vars, self.schema, &self.refusal, REFUSED);
+                (
+                    schema::GUARD,
+                    matches!(run, Run::Guarded { dispatch: true }),
+                )
+            }
+            Run::Unguarded => ("", false),
+        };
         let results = self.client.query(
-            &format!("BEGIN TRANSACTION;\n{body}\nCOMMIT TRANSACTION;"),
+            &format!("BEGIN TRANSACTION;\n{guard}\n{body}\nCOMMIT TRANSACTION;"),
             vars,
         )?;
         // The write has committed. Delivery failure must never turn it into a failed write that a

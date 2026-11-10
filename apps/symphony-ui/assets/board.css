@@ -243,3 +243,5 @@ a.bar:hover { background:var(--background); }
   .hero { padding:18px; } .hero-title { font-size:1.35em !important; }
   a.go { width:100%; justify-content:center; box-sizing:border-box; }
 }
+/* The focus home: the next card and the queue, without the tiles and the progress. */
+html[data-layout-home=focus] .dash > .tiles, html[data-layout-home=focus] .dash > .dash-grid { display:none; }

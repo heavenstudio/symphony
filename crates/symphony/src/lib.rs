@@ -33,8 +33,10 @@ pub mod docview;
 pub mod edit;
 pub mod entrypoint;
 pub mod images;
+pub mod init;
 pub mod landing;
 pub mod lint;
+pub mod machine;
 pub mod markup;
 pub mod page;
 pub mod plugins;
@@ -49,6 +51,7 @@ pub use symphony_schema as schema;
 pub mod taskcli;
 pub mod taskview;
 pub mod text;
+pub mod theme;
 pub mod tree;
 pub mod triage;
 pub mod uploads;
@@ -60,8 +63,13 @@ pub use callouts::Comment;
 pub use edit::EditError;
 pub use register::{Decision, Entry, Group, ReviewError, State, Who};
 pub mod blocks;
+pub mod hook;
 
 /// The temporary project tree the unit tests share with the integration tests.
 #[cfg(test)]
 #[path = "../tests/common/tree.rs"]
 mod test_tree;
+
+#[cfg(test)]
+#[path = "../../../../tools/gate/tests/verify/script_board.rs"]
+mod fixture_script;

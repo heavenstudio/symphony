@@ -338,6 +338,7 @@ async fn a_started_server_keeps_every_worker_it_owns_until_it_returns() {
             root: root.clone(),
             port: 0,
             hosts: vec!["127.0.0.1".into()],
+            install: None,
         },
         false,
     )
@@ -349,7 +350,9 @@ async fn a_started_server_keeps_every_worker_it_owns_until_it_returns() {
         .shared
         .saves
         .get_or_init(|| symphony::save::Saves::start(&root));
+    // A server with a home is the one server, which stops its other projects first.
     let mut waits: Vec<String> = [
+        "the other projects",
         "the orphan census",
         "the open requests",
         "the save in flight",
@@ -378,10 +381,10 @@ async fn a_started_server_keeps_every_worker_it_owns_until_it_returns() {
             "the {name} worker is not kept for the join: {owned:?}"
         );
     }
-    assert!(root.join(PORT_FILE).is_file());
+    assert!(port_file(&root).is_file());
     assert_eq!(started.serve_until_stopped(std::future::ready(())).await, 0);
     assert!(
-        !root.join(PORT_FILE).exists(),
+        !port_file(&root).exists(),
         "the server returned without clearing its port record"
     );
     assert_eq!(said.try_iter().collect::<Vec<_>>(), waits);
@@ -416,8 +419,10 @@ fn generation(
             root: shared.root.clone(),
             port: 0,
             hosts: Vec::new(),
+            install: None,
         },
         shared: shared.clone(),
+        projects: None,
         background: Background {
             shared: shared.clone(),
             workers: Vec::new(),

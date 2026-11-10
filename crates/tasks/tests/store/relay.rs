@@ -32,10 +32,13 @@ pub(super) struct Relay {
 #[derive(Default)]
 struct Shared {
     state: Mutex<State>,
+    before: Mutex<Option<Before>>,
     /// Told when a connection first says something or ends, when the server answers a request,
     /// when the caller of a held connection closes it, and when the relay ends.
     changed: Condvar,
 }
+
+type Before = Box<dyn FnMut(&str) + Send>;
 
 #[derive(Default)]
 struct State {
@@ -65,9 +68,18 @@ impl Relay {
     /// A relay to the server at `server`, holding the answers of the first `held` connections it
     /// takes (none: it holds nothing yet).
     pub(super) fn to(server: &str, held: usize) -> Relay {
+        Self::with_before(server, held, None)
+    }
+
+    /// As `to`, with an action immediately before forwarding each request, for a second writer to
+    /// commit between this client's transactions without racing a clock.
+    pub(super) fn with_before(server: &str, held: usize, before: Option<Before>) -> Relay {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let addr = listener.local_addr().unwrap().to_string();
-        let shared = Arc::new(Shared::default());
+        let shared = Arc::new(Shared {
+            before: Mutex::new(before),
+            ..Shared::default()
+        });
         let (server, taken) = (server.to_owned(), Arc::clone(&shared));
         std::thread::spawn(move || {
             for caller in listener.incoming().map_while(Result::ok) {
@@ -267,6 +279,9 @@ fn serve(caller: TcpStream, server: &str, shared: &Arc<Shared>, connection: usiz
         heard = true;
         let (held, rehearsed) = shared.took(connection, &request);
         let answer = rehearsed.or_else(|| {
+            if let Some(before) = shared.before.lock().unwrap().as_mut() {
+                before(&statements(&request));
+            }
             let answer = forward(&mut upstream, server, &request);
             shared.answered(&request, answer.as_deref());
             answer

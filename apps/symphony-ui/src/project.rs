@@ -17,6 +17,17 @@ pub fn nav_for_document<'a>(nav: &'a [NavItem], document: &str) -> Option<&'a Na
     nav.iter().find(|item| item.document == document)
 }
 
+/// `key` as `view`'s pages keep it in the browser: the projects of the machine's one server share
+/// its origin, and so its storage, so each key takes the project's id first
+/// (`alpha:review-quick-draft`); a server of its own has the origin to itself and keeps the key
+/// as it is. `shell.js`'s `stored` is the same rule.
+pub fn stored(view: &ProjectView, key: &str) -> String {
+    match view.base.trim_start_matches('/') {
+        "" => key.to_string(),
+        id => format!("{id}:{key}"),
+    }
+}
+
 /// The page's project, read from its element once.
 #[cfg(target_arch = "wasm32")]
 pub fn current() -> ProjectView {
@@ -35,6 +46,15 @@ fn read() -> ProjectView {
         .and_then(|text| js_sys::JSON::parse(&text).ok())
         .and_then(|value| serde_wasm_bindgen::from_value(value).ok())
         .unwrap_or_default()
+}
+
+/// The browser's page in the project: its path under the base, with its fragment.
+#[cfg(target_arch = "wasm32")]
+pub fn page() -> Option<String> {
+    let location = web_sys::window()?.location();
+    let path = location.pathname().ok()?;
+    let hash = location.hash().unwrap_or_default();
+    Some(format!("{}{hash}", current().strip(&path)))
 }
 
 /// Off the browser there is no served page: the plain project.
@@ -93,6 +113,45 @@ mod tests {
         );
         assert_eq!(nav_for_document(&nav, "docs/OTHER.md"), None);
         assert_eq!(current(), ProjectView::default());
+    }
+
+    #[test]
+    fn a_key_is_the_projects_own_on_the_one_server_and_as_it_is_on_a_server_of_its_own() {
+        let under = |base: &str| ProjectView {
+            base: base.into(),
+            ..ProjectView::default()
+        };
+        assert_eq!(
+            stored(&under("/alpha"), "review-quick-draft"),
+            "alpha:review-quick-draft"
+        );
+        assert_eq!(
+            stored(&under("/pantry"), "task-draft:a/b"),
+            "pantry:task-draft:a/b"
+        );
+        assert_ne!(
+            stored(&under("/alpha"), "studio.cssVars"),
+            stored(&under("/pantry"), "studio.cssVars"),
+            "two projects never share a key"
+        );
+        assert_eq!(
+            stored(&under(""), "review-quick-draft"),
+            "review-quick-draft"
+        );
+    }
+
+    #[test]
+    fn the_shell_keys_storage_by_the_same_rule() {
+        let shell = include_str!("../assets/shell.js");
+        assert!(
+            shell.contains("return id ? `${id}:${key}` : key;"),
+            "shell.js's stored takes the project's id first, as stored does"
+        );
+        assert!(
+            !shell.contains("localStorage.getItem(\"")
+                && !shell.contains("localStorage.setItem(\""),
+            "every key the shell reads or writes goes through stored"
+        );
     }
 
     #[test]

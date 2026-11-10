@@ -122,13 +122,7 @@ pub(super) fn QuickPanel(route: Route, mut draft: Signal<Draft>) -> Element {
         let route = route.clone();
         spawn(async move {
             let result = if d.task {
-                let page = web_sys::window()
-                    .and_then(|w| {
-                        w.location().pathname().ok().map(|path| {
-                            format!("{path}{}", w.location().hash().unwrap_or_default())
-                        })
-                    })
-                    .unwrap_or_default();
+                let page = crate::project::page().unwrap_or_default();
                 // Document tasks keep the canonical page URL and its anchor.
                 let page = if !d.request_page.is_empty() {
                     d.request_page.clone()

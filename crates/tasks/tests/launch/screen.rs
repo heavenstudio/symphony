@@ -6,7 +6,7 @@ use serde_json::{Value, json};
 use std::cell::Cell;
 use std::slice::from_ref;
 use symphony_board::launch::hc::{Hc, Object};
-use symphony_board::launch::reap::{self, REAP_SECONDS, Reap, Sweep};
+use symphony_board::launch::reap::{self, CHANGED, Kept, REAP_SECONDS, Reap, Sweep};
 use symphony_board::launch::screen::{ON_SCREEN, Screen};
 use symphony_board::launch::{Closure, LaunchError};
 
@@ -55,6 +55,21 @@ impl World {
         let swept = reap::sweep(self.store(), hc, &how, &mut Vec::new()).unwrap();
         self.f.advance(REAP_SECONDS);
         swept.expect("no other sweep holds the lock")
+    }
+}
+
+/// A sweep that closed nothing and kept the idle agent's `terminal` of `handle` alone, for `why`:
+/// `told` when that is not what the sweep before it said.
+pub(crate) fn kept_only(terminal: &str, handle: &str, why: &str, told: bool) -> Sweep {
+    Sweep {
+        kept: vec![Kept {
+            pane: terminal.into(),
+            handle: handle.into(),
+            why: why.into(),
+            idle: true,
+            told,
+        }],
+        ..Sweep::default()
     }
 }
 
@@ -257,13 +272,16 @@ fn the_idle_sweep_never_closes_a_terminal_on_screen_and_waits_again_once_the_own
     let w = World::new();
     let (handle, terminal) = w.worker("sim/jump", Some("done"));
     w.shows(json!({"agent": terminal}));
-    for _ in 0..3 {
-        assert_eq!(w.sweep_through(&w.hc()), Sweep::default());
+    // Said once while it stays for the same reason, and again once the reason changes.
+    for n in 0..3 {
+        let kept = kept_only(&terminal, &handle, ON_SCREEN, n == 0);
+        assert_eq!(w.sweep_through(&w.hc()), kept);
     }
     w.shows(json!({}));
     assert_eq!(w.sweep_through(&w.hc()).idle, from_ref(&handle));
     w.shows(json!({"tab": w.tab_of(&terminal)}));
-    assert_eq!(w.sweep_through(&w.hc()), Sweep::default());
+    let kept = kept_only(&terminal, &handle, ON_SCREEN, true);
+    assert_eq!(w.sweep_through(&w.hc()), kept);
     // Out of sight again, it waits a whole idle wait from the start.
     w.shows(json!({}));
     assert_eq!(w.sweep_through(&w.hc()).idle, from_ref(&handle));
@@ -283,7 +301,8 @@ fn the_idle_sweep_keeps_a_terminal_the_owner_looks_at_or_cannot_be_told_of_right
         // close: the owner looks while that call waits.
         let gets = Cell::new(0);
         let hooked = looks_during_get(&w, 2, looked.clone(), &gets);
-        assert_eq!(w.sweep_through(&hooked), Sweep::default(), "{looked}");
+        let kept = kept_only(&terminal, &handle, CHANGED, true);
+        assert_eq!(w.sweep_through(&hooked), kept, "{looked}");
         assert!(w.has_terminal(&terminal), "{terminal} was closed");
         assert_eq!(w.calls_of(&["kill"]), Vec::<Vec<String>>::new());
         // Its idle wait starts again.
@@ -303,7 +322,8 @@ fn the_idle_sweep_keeps_a_terminal_the_owner_looks_at_after_its_closure_is_recor
         // the kill, which may wait long.
         let gets = Cell::new(0);
         let hooked = looks_during_get(&w, 3, looked.clone(), &gets);
-        assert_eq!(w.sweep_through(&hooked), Sweep::default(), "{looked}");
+        let kept = kept_only(&terminal, &handle, &kept_for(&looked), true);
+        assert_eq!(w.sweep_through(&hooked), kept, "{looked}");
         assert_eq!(gets.get(), 3, "{looked}");
         assert!(w.has_terminal(&terminal), "{terminal} was closed");
         assert_eq!(w.calls_of(&["kill"]), Vec::<Vec<String>>::new());

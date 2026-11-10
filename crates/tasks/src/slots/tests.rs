@@ -1,5 +1,7 @@
 use super::*;
 
+mod red;
+
 fn entry<'a>(slug: &'a str, parent: Option<&'a str>, status: &'a str) -> Entry<'a> {
     Entry {
         slug,
@@ -9,6 +11,7 @@ fn entry<'a>(slug: &'a str, parent: Option<&'a str>, status: &'a str) -> Entry<'
         held: false,
         orchestrators: Vec::new(),
         executors: Vec::new(),
+        red: false,
     }
 }
 
@@ -388,6 +391,7 @@ fn the_refusal_names_as_many_open_tasks_as_it_counts_and_how_a_slot_frees() {
     let full = Full {
         owner: "o",
         held: ledger.held("o"),
+        red: Held::new(),
     };
     let said = refusal("c cannot start", &full, &[], 2);
     assert_eq!(

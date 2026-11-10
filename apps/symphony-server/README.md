@@ -2,7 +2,39 @@
 
 `just symphony` runs this server. The native read models live in `crates/symphony`, and
 their serde-only wire records in `crates/symphony-api`. All routes run natively:
-the Dioxus SPA at `/`, reads, saves and media.
+the Dioxus SPA, reads, saves and media, under each project's `/<id>/` on the one server and
+at `/` on a server of its own.
+
+## Projects
+
+The one server (`serve --home`) keeps its record (`server.json`), log, lease and lock in the
+machine folder: `~/Library/Application Support/Symphony/` on macOS, `$XDG_DATA_HOME/symphony`
+elsewhere, `SYMPHONY_MACHINE_DIR` when set (every test sets a temporary one). The registry
+beside them (`projects.json`) holds each project's root, id and `symphony.toml`; `symphony
+project add [DIR]` writes it, and every start runs it. A record left in `sf-symphony/` by an
+older server is read once. The build and client stay in the starter's install folder
+(`--install`, `sf-symphony/` in its git common dir); a project's own state (asks, thumbnails,
+the queue order, the port record) stays in its artifacts folder.
+
+Each registered project is served at `/<id>/` by its own read hub: its watcher, feed cursor,
+board snapshot and branch scan (`src/projects.rs`). `/<id>/theme.css` serves its theme
+package's tokens with an ETag; its pages inline the same tokens in the head, then its
+stylesheets, its name and icon, and each layout region's variant as a `data-layout-*`
+attribute. `/` always lists the projects with their counts, including when there is only
+one project or the browser carries an old project-selection cookie. The top-left Change board
+link opens this picker; the separate board link opens the current project's home.
+A navigation to a path of today
+(`/docs/…`, `/tasks`, a bookmark) redirects to the project a same-origin referrer names, else
+the starter's; other requests on such a path are answered by that project in place. A
+project whose root is gone, or whose plugins the running build lacks, answers 503 saying why.
+
+The running server compiles every registered project's plugins. A start judges it
+(`symphony::machine::host`): served, when it holds the project's plugins at the project's pin
+and schema or newer; waiting, when it lacks a plugin, naming the project whose build holds them;
+refused, registering nothing, when the project's pin or schema is newer than the running
+build's and the start's build cannot replace it. A project with no plugins never replaces it. A start whose build holds every registered plugin replaces it by
+hand-off: it writes `handover.json` (its executable, root and install folder) in the machine
+folder and sends `SIGUSR1`; the server hands its sockets to that build as a reload does.
 
 The shared server watches main's server sources and transitive local crate sources. It builds
 through main's cargo wrapper under `sf-symphony/reload-build.lock`, while continuing to serve.
@@ -82,7 +114,7 @@ the peer gate and the Host check; sandboxed frames cannot read the API.
 
 `just symphony` installs the release client with the shared server, in
 `sf-symphony/client/public` beside `sf-symphony/bin`, built from main. The detached
-server uses its `--home` argument to find that bundle for every branch URL.
+server uses its `--install` argument to find that bundle for every project and branch URL.
 `just symphony --port N` builds and runs this checkout's client and server without
 touching the shared instance; N is never the shared server's port, on any
 address (outside Linux a bind of one address would sit beside its wildcard
@@ -91,7 +123,7 @@ bind). A foreground server's static directory is
 Direct `symphony-server --port N` needs `just symphony-ui-dist` first. Its default
 root is the checkout's top level even when the command starts in a subfolder; `--root`
 selects another folder. A private server on the main checkout leaves the
-shared app's `artifacts/docs-app.port` record alone. `/` serves the
+shared app's `artifacts/docs-app.port` record alone. A project's page serves the
 shell with revalidation; content-hashed assets have immutable caching. Gzip
 compression covers snapshots and client files. SSE is never compressed or
 buffered. A changed shell script path emits a `client` region, which the

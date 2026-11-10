@@ -1,5 +1,5 @@
 //! `just tasks beat`: the hook that turns an agent's tool calls into its heartbeat (Claude Code's
-//! PreToolUse on Bash and PostToolUse on every tool, `sf-hooks tasks-beat` in tools/gate). It runs around
+//! PreToolUse on Bash and PostToolUse on every tool, `symphony hook tasks-beat`). It runs around
 //! every tool call of every session in the repository, so it prints nothing, never fails, never
 //! starts the board's server and waits on it at most `WAIT`: any trouble, and the call goes on.
 
@@ -349,8 +349,12 @@ pub fn run(input: &mut dyn std::io::Read, env: &Env) -> i32 {
             .and_then(Value::as_str)
             .filter(|cwd| !cwd.is_empty())
             .map_or_else(|| env.cwd.clone(), PathBuf::from);
-        let client = super::reach(env, &cwd, false).ok()?.waiting(WAIT);
-        let store = super::open_unchecked(client, &super::Clock::of(env).ok()?);
+        let reached = super::reach(env, &cwd, false).ok()?;
+        let reached = super::Reached {
+            client: reached.client.waiting(WAIT),
+            ..reached
+        };
+        let store = super::open_unchecked(reached, &super::Clock::of(env).ok()?);
         let boot = super::boot_clock(env);
         let (key, bound) = beat_event(&store, event, boot.as_ref()).ok()??;
         mark(&keys_folder(env, &cwd)?, &key, bound);

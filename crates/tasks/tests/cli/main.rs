@@ -13,9 +13,7 @@ mod agents;
 mod api;
 mod attach;
 mod beat;
-// Launcher regressions use this board harness so the core gate needs no board dependency.
-#[path = "../../../../../tools/gate/tests/hooks/board_beat.rs"]
-mod board_beat;
+mod boards;
 mod close;
 mod commands;
 mod detached;
@@ -30,11 +28,13 @@ mod moved;
 mod output;
 mod priority;
 mod probes;
+mod project;
 mod pull;
 mod recipe;
 mod scratch_folder;
 mod search;
 mod slots;
+mod sweep;
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};

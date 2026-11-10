@@ -272,6 +272,9 @@ pub fn Frame(route: Route, children: Element) -> Element {
     rsx! {
         div { class: if open { "app-frame quick-expanded" } else { "app-frame" },
             header { class: "app-header", id: "top",
+                if !project.base.is_empty() {
+                    a { href: "/", "data-native": "true", class: "project-switch", "Change board" }
+                }
                 for (href, label, active) in links {
                     a { href: if matches!(href.as_str(), "/" | "/tasks" | "/agents") { href.clone() } else { docs::scoped(&route.scope, &href) }, class: if active { "active" } else { "" }, "{label}" }
                 }

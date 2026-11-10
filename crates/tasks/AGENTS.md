@@ -30,9 +30,34 @@ To run branch code, explicitly select a non-live database with `TASKS_DATABASE`
 or a leading `--database NAME`; a leading option overrides the environment.
 With the live `tasks` database, `TASKS_SERVER` selects branch code only when its
 validated TCP port differs from the canonical local listener in
-`sf-tasks/server.json`. The exact live address runs main. Different spellings
-on that port, invalid ports and missing or malformed records refuse the
-override; explicitly name a scratch database to use branch code there.
+`sf-tasks/server.json`, in the launcher's own common dir and in that of the
+repository the caller's folder is in. The exact live address runs main.
+Different spellings on that port, invalid ports and missing or malformed
+records refuse the override; explicitly name a scratch database to use branch
+code there.
+
+A run's board is its project's (`src/project.rs`): the nearest `symphony.toml`
+from its working directory up, never past the top of the checkout it is in (the
+first folder holding `.git`), names the project by its `[project] id`; with
+none, or none naming an id, the machine registry (`projects.json` in
+`SYMPHONY_MACHINE_DIR`, else the platform's Symphony folder) names it by the
+entry for the repository's main checkout, else that checkout's folder name
+does. The board is the repository's own, its server in that common dir and its
+namespace and database unchanged. The heartbeat keys, the idle sweep's state
+and the staffing lock stay there too. A fixture repository under a checkout's
+`artifacts/` is its own project, so no test reaches the board around it.
+
+The schema rule (`src/schema.rs`, `Store::opening`): a store opens with one
+read of `meta:schema`. A writer opens only a board at its own version. A newer
+one migrates an older board, or one not made yet, forward once: its additive
+steps and the new version in one transaction, before any other write, which
+one of several openers commits while the others find it done. An older writer
+is refused before any write, naming the project and `just symphony`. A reader
+(the Symphony's `taskview::connect_in`) one version behind reads; more than
+one behind, it is refused before it reads. Every write transaction starts with
+the schema guard, which refuses a write to a board at another version in the
+same transaction, so a reader's writes and those of a store opened before a
+newer build migrated are refused there, the same way.
 `TASKS_DB` is the old SQLite cutover input, not a scratch selector. Never run
 `tools/rs-bin.sh tasks` directly against the live board from a branch.
 The crate's tests keep running their own binary; `SF_TASKS_CLI` continues to
@@ -145,7 +170,8 @@ not is an older one's own PULL acknowledged, which told every entry, withheld on
 Posts, verdicts and AGENT lines stay: they were said to whoever held the role then, and a new
 holder hears no backlog.
 A finished idle terminal still closes under the original cleanup rules, retiring its
-registration; an executor of a task in review is not finished, and keeps its terminal.
+registration; an executor of a task in review is not finished, and keeps its terminal until it
+has sat idle at its prompt an hour (`reap::IDLE_HOUR`), as every role on open work does.
 PULL's `unanswered` category lists a missing executor on `in_progress`, `blocked` or `review`,
 or a missing reviewer on `review`, after an addressed post has waited thirty minutes. Each line
 names the post and its restore command (or an explicit launch when no conversation was recorded).
@@ -165,9 +191,16 @@ confirms its absence; it never starts a fresh conversation. An unsuccessful atte
 flagged for manual action.
 A reviewer launched on an instruction child resumes that child's recorded conversation when the
 unanswered post is on its parent; a departed reviewer explicitly named by handle still receives it.
-An unanswered post keeps a terminal immediately, including through descendant sessions. A reviewer
-whose changes verdict returned the task to `in_progress` keeps its terminal for re-review too.
-That includes landing changes posted as a message to the executor before it moves the task back.
+An unanswered post keeps a terminal immediately, including through descendant sessions, for as
+long as it waits. A role on open work keeps it until its agent has sat idle at its prompt
+`reap::IDLE_HOUR` (the owner, 2026-11-08: "Only sessions doing active work or that will soon
+(less than one hour) have active work should be kept open"): an executor `in_progress`,
+`blocked` or in `review`, a reviewer of work in review, and a reviewer whose changes verdict
+returned the task to `in_progress`, awaiting its re-review. That includes landing changes posted
+as a message to the executor before it moves the task back. The hour starts again when the role
+or its task's status changes, and runs from the agent's last tool call (`last_tool`) when that is
+later. The close's line names what brings it back: a reviewer launch for the next tip resumes a
+reviewer, a changes verdict or a post restores an executor (`restore_unanswered`).
 A post or changes verdict to `@executor`, or a post to the executor by handle, that no
 executor can read (no callback, and its launch record closed or no live beat) adds a
 `board` post to `@orchestrator` on the
@@ -300,7 +333,7 @@ is a list of calls gets a list of answers), the methods being the store's, plus
 literal session handle on its task (neither `owner` nor a role). It reaches that
 session's inbox even when the actor is the recipient; ordinary `say` posts retain
 their agent author and self-post filtering.
-`launch`, `restore`, `cleanup`, `close`, `finish` and `reap` (the Symphony's idle
+`launch`, `restore`, `cleanup`, `clean`, `close`, `finish` and `reap` (the Symphony's idle
 sweep, every five minutes) drive hc's terminals and git's worktrees from
 `src/launch/`, through `launch::hc::Hc` alone; the crate calls no `herdr`.
 A launch is one `hc run --bg --no-parent --outlive-parent --keep` of the
@@ -319,12 +352,19 @@ launch naming the terminal, which is killed and removed; only Codex's hooks
 chooser is answered on the way. Codex runs with `--no-daemon`; its configured
 REPL helper (`procs::CODEX_REPL`) and the ChatGPT app's computer-use REPL
 (`procs::CODEX_CUA_NODE` running `procs::CODEX_CUA_REPL`), each by that exact
-path, are not work under it.
+path, and the code-mode host Codex 0.167.0 on runs under each session
+(`procs::CODEX_CODE_MODE_HOST` in `FOLDER/.codex/packages/standalone/releases/VERSION/bin/`,
+for any absolute `FOLDER`, not only `$HOME`, and any one `VERSION` folder, no part of
+the path empty, `.` or `..`; never the bare name or another layout), are not work
+under it; a `codex exec` job is.
 Cleanup closes a live terminal only while its foreground is the program it
 started, and for no agent a shell (`hc get`'s `foreground`: a job a shell runs
 in front, or one it became by `exec`, is work). A
-close is `hc kill` then `hc rm`, never of the caller's terminal
-(`HC_TERMINAL_ID`) nor of one the owner may be looking at (`launch/screen.rs`,
+close is `hc kill` then `hc rm`, the remove waiting, by `hc get`, up to ten seconds for a killed
+program to end (hc refuses to remove a live terminal) and never tried while the last look found it
+live or could not say: one still live then is left killed, for the next sweep to remove once it
+finds the program ended. A close is never of the caller's terminal
+(`HC_TERMINAL_ID`) or session, an orchestrator's or a chat's, nor of one the owner may be looking at (`launch/screen.rs`,
 from `herdr-app status`: its `herdr.tab` label the tab the window shows, the
 agent it shows, or held by an overlay or float); cleanup, finish and the idle
 sweep read the window last, after the close's own `hc get` and after the idle
@@ -333,7 +373,10 @@ sweep records the closure, right before the kill (`screen::close_unseen`). That
 program: its pid, and for cleanup its foreground, which `exec` changes under one
 pid, and nothing under it its busy classifier counts as work), and a window
 that cannot say (the call fails, it reports errors, or an overlay or float names
-no terminal) keeps the terminal; either keeps it, the sweep's record reopened. A record
+no terminal) keeps the terminal; either keeps it, the sweep's record reopened. The idle sweep's
+last looks read the board again too (`reap/closing.rs`): its agent's last tool call moved since
+the sweep read it (`reap::TOOL_CALL`), or what holds it changed, a post addressed to it say, keeps
+it, its record reopened. A record
 naming a herdr pane (`w1:p…`) is a gone terminal: cleanup records it closed
 with its restore line, and restore brings it back in an hc terminal. `close SLUG HANDLE`
 (`launch/close.rs`) closes one agent's terminal whatever role it holds, judged as cleanup judges
@@ -379,6 +422,21 @@ row for the terminal's process says nothing of it. A terminal the board would
 close whose `hc get`, table or window cannot be read stays, and cleanup and
 finish print `kept pane T [of H] (never closed on no information: WHY)`; one on
 screen prints `kept pane T [of H] (on screen in the Herdr app)`.
+The idle sweep (`launch/reap.rs`) removes each terminal of the board whose program ended at the
+first sweep that finds it, out of the owner's sight, its open records closed first with their
+restore line (`its program ended`); one whose records are closed already goes without a line.
+It holds each record's session while it writes them, as a close or a restore does, and writes each
+only as it read it, the same launch in that terminal (`reap/ended.rs`): a record a restore moved to
+another terminal since is never closed for this one's end, and a restore under way keeps the
+terminal until the next sweep. It returns every terminal of the board it leaves open with its reason (`Sweep::kept`), and
+`reap.json` keeps the reason last said of each idle one, so `reap` writes
+`· idle sweep keeps pane T of H (WHY)` to its stderr, the Symphony's log, once per change of
+reason; `reap --dry-run` prints `keeps pane …` for every one. `clean` (`just clean`) runs
+cleanup for its caller (`--as`, `cleanup_as`) and then one sweep, under their own rules, and
+prints each terminal it closed (`closed pane T of H (WHY); restore: …`) and why each one it left
+open stays (`kept pane T of H (WHY)`); with `--dry-run`, what it would close. Only a terminal
+cleanup removed (or would) goes unsaid by the sweep: a record cleanup closes removes no terminal,
+so an ended one on screen is still said kept, and why.
 
 A child's input and output go through `sys::output` (or `sys::spawn_output`,
 `sys::spawn_piped` for one that reads stdin, and `sys::wait_output`), never
@@ -473,7 +531,25 @@ tasks they review by id, a level a round trip. It decides on the board before
 and after the change (`slots::started`) and, for every orchestrator whose open
 tasks it changes, checks and bumps `counter:['slots', HANDLE]` in the write, so
 two starts at once are one retry, not two slots (`tests/store/slots.rs` and its
-`moves` and `cost` modules, `tests/cli/slots.rs`). A change of parent of open
+`moves` and `cost` modules, `tests/cli/slots.rs`). Red work takes no slot: an open task
+`create`'s `red` marks (`fields._board.red`, `red.rs`, api 7, which the cap's reads
+project beside each task) and the work under it, judged by the task whose work it is;
+a refusal names it apart, and PULL lists a red nobody executes 10 minutes after filing
+first, as `red_unstaffed`, before any cancelled dependency of its. Only a session of
+kind `filer` marks, on `create` or later with `mark_red` (`store/work/red.rs`, whose
+checks are read in its write's transaction), only a series' own task
+(`red::filed`, never one named under it: the nightly's board and land's standing reds
+judge by the same `red::filed_in`), and `set_field` refuses the board's own `_board`
+fields. A red's close is never refused: in its write, on a store capping starts or
+not, it holds the slot counters of the owners whose counts it raises
+(`slots::changed`) and `counter:['red', SLUG]`, which every start of work under the
+open red holds too (`slots::reds`, both in `slots/change.rs`), so a start decided
+before the close is decided again (`tests/store/slots/moves.rs`). The owner's cancel,
+which reads the cap's board before its own write, fences that write on the task's
+version as read (`cap::FENCE`), so a red marked between them is read and decided again, and
+refuses a task its read did not find. `unmark_red` (`store/work/red.rs`, a filer's) lifts an
+open red's mark, read, fenced and held as a close (`cap::unmarking_slots`,
+`tests/store/slots/red_marks.rs`). A change of parent of open
 work and a hand-over of its orchestrator role are decided the same way
 (`set_parent`, `hand_over`), but for the owner's. A hold (`Store::hold_blocked`,
 `tasks api`'s `hold` from api 4, land's while stamps wait) keeps blocked work's slot: it is a record, not a task

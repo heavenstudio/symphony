@@ -4,6 +4,8 @@
 use crate::{Case, env, run};
 use serde_json::{Value, json};
 
+mod red;
+
 fn answer(env: &symphony_board::cli::Env, call: Value) -> Value {
     let ran = run(env, &["api"], &call.to_string());
     assert_eq!(ran.code, 0, "{}", ran.err);

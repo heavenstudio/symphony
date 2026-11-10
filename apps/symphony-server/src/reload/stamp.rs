@@ -94,7 +94,7 @@ fn binary_fingerprint(path: &Path) -> std::io::Result<String> {
 /// process's link of that output and every rebuild's unlink of its name move the ctime of the
 /// installed file without changing a byte.
 pub(super) fn installed_source(serve: &Serve, lease: &File) -> Option<String> {
-    let home = serve.home.as_ref()?;
+    let home = serve.installed()?;
     let binary = home.join("bin/symphony-server");
     if std::env::current_exe().ok()?.canonicalize().ok()? != binary.canonicalize().ok()? {
         return None;

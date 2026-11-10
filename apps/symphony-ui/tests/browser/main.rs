@@ -24,12 +24,17 @@ mod chrome;
 #[path = "../common/mod.rs"]
 mod common;
 mod components;
+#[path = "../../../../../tools/gate/tests/verify/script_std.rs"]
+mod fixture_script;
 mod folder;
 mod look_parity;
 mod notice_layout;
 mod owner_controls;
 mod owner_save;
+mod phone;
+mod projects;
 mod restored;
+mod server_notices;
 mod site;
 
 use std::time::Duration;
@@ -41,7 +46,6 @@ use site::Site;
 
 const FIRST_VISIT_BYTES: f64 = 250_000.0;
 const RETURN_VISIT_BYTES: f64 = 20_000.0;
-const PHONE_MS: f64 = 2_000.0;
 /// How long a page may take to show the board at all before a test gives up on it.
 const SHOWN: Duration = Duration::from_secs(30);
 
@@ -811,56 +815,6 @@ fn the_transfer_budget_counts_api_failures_and_open_streams_but_excludes_images_
         },
     ];
     assert_eq!(needed_bytes(&requests), 222.0);
-}
-
-/// The time the phone budget holds: the median wall of `rounds` first visits on the emulated mid
-/// phone, in ms, with each round's.
-fn phone_ms(site: &Site, chrome: &mut Chrome, rounds: usize) -> (f64, Vec<f64>) {
-    chrome.mid_phone();
-    chrome.call("Network.setCacheDisabled", json!({"cacheDisabled": true}));
-    let mut seen = Vec::new();
-    for _ in 0..rounds {
-        chrome.open(&site.url("/"));
-        let ready = chrome.eval(&format!(
-            "Promise.race([new Promise(r => {{ const look = () => {{ const e = performance.getEntriesByName('board-ready')[0]; \
-             e ? r(e.startTime) : setTimeout(look, 20) }}; look() }}), new Promise(r => setTimeout(() => r(null), {}))])",
-            SHOWN.as_millis()
-        ));
-        let Some(wall) = ready.as_f64() else {
-            panic!(
-                "the board never marked itself ready on the emulated phone (performance mark `board-ready`)"
-            );
-        };
-        seen.push(wall);
-        chrome.open("about:blank");
-    }
-    let mut sorted = seen.clone();
-    sorted.sort_by(f64::total_cmp);
-    (sorted[sorted.len() / 2], seen)
-}
-
-#[test]
-fn the_board_is_interactive_within_two_seconds_on_a_mid_phone() {
-    let site = site();
-    let Some(mut chrome) = chrome() else { return };
-    let (median, rounds) = phone_ms(&site, &mut chrome, 3);
-    eprintln!("phone rounds (wall ms): {rounds:?}; median {median:.0} ms");
-    assert!(
-        median <= PHONE_MS,
-        "the board is interactive after {median:.0} ms, over {PHONE_MS} ms: {rounds:?}"
-    );
-}
-
-#[test]
-fn a_board_answered_after_two_and_a_half_seconds_misses_the_phone_budget() {
-    let site = site();
-    let Some(mut chrome) = chrome() else { return };
-    site.delay_board(Duration::from_millis(2_500));
-    let (ms, rounds) = phone_ms(&site, &mut chrome, 1);
-    assert!(
-        ms > PHONE_MS,
-        "a board answered after 2.5 s measures {ms:.0} ms, within the {PHONE_MS} ms budget: {rounds:?}"
-    );
 }
 
 #[test]

@@ -27,6 +27,18 @@ patterns and renderers leave out is never listed or read. The Symphony's own rou
 (`symphony_api::SYMPHONY_ROUTES`, which `assets/shell.js` repeats) win over every
 entrypoint.
 
+One server serves every project the machine folder's registry holds
+(`crates/symphony/src/machine/registry.rs`: `projects.json` beside the server's record,
+in `SYMPHONY_MACHINE_DIR` when set), each under `/<id>/` with its own watcher, feed,
+board snapshot and branch scan. A project's state stays in its checkout: paths under
+its artifacts folder go through `Project::artifact`, never an `artifacts/` literal.
+The projects share the server's origin, so the client keys what it keeps in the
+browser by the project's id (`project::stored` in `apps/symphony-ui`).
+The host rule (`crates/symphony/src/machine/host.rs`) decides whether a start's build
+serves, waits for or replaces the running one. A project's look is its theme
+package (`crates/symphony/src/theme.rs`), served as `/<id>/theme.css` and inlined in
+its pages. Tests use a temporary machine folder.
+
 Use `just lint-rs`, `just test-rs`, `just symphony-ui-dist` and `just symphony-ui-dev`
 from this folder. `tools/rs-bin.sh` delegates to the containing project's source
 launcher and slot wrapper. Each workspace builds in its own `.target/`; the root
@@ -36,3 +48,17 @@ restart as a test: use a private port and a scratch board.
 Read [the client guide](apps/symphony-ui/AGENTS.md) and
 [the board guide](crates/tasks/AGENTS.md) before editing those packages. The Rust
 architecture and test rules in the containing project's guide apply here too.
+
+## Agent integration
+
+`symphony init --root ROOT` installs the seven generic skills, their Claude links,
+Claude allow rules and heartbeat commands, and Codex rules. Stamped copies are kept
+current; an unstamped project copy wins. Project-specific skills and taste data stay
+in the project. Retirement removes managed files and links, retaining project data.
+
+`symphony hook tasks-beat` reads the tool event from stdin and finds its board through
+the board's project lookup. Keys and live-build records belong to that repository's
+common directory; scratch overrides remain explicit. It starts no server, builds or
+hashes no sources, prints nothing and never refuses a tool call. Settings run the
+prebuilt `.target/bin/symphony` link; a missing link passes quietly. Project build
+setup refreshes that link explicitly, alongside its own policy hooks.

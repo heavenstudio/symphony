@@ -1,4 +1,6 @@
-//! PULL digest: actionable board work without a corresponding event.
+//! PULL digest: actionable board work without a corresponding event; red tasks are [`reds`]'.
+
+mod reds;
 
 use crate::common::{Fixture, NOW};
 use std::collections::BTreeSet;

@@ -3,13 +3,13 @@
 //! then, another program in the terminal, or a call that cannot say keeps it, and the sweep reopens
 //! its record. A shell is closable only with the shell itself in its foreground.
 
-use crate::screen::left;
+use crate::screen::{kept_only, left};
 use crate::{Hooked, World};
 use serde_json::{Value, json};
 use std::cell::Cell;
 use std::rc::Rc;
 use std::slice::from_ref;
-use symphony_board::launch::reap::Sweep;
+use symphony_board::launch::procs::reap_busy_reason;
 use symphony_board::launch::{Closure, LaunchError};
 
 /// What happens to a terminal (its address) in the world.
@@ -191,7 +191,11 @@ fn cleanup_keeps_a_terminal_its_last_get_finds_at_work_again_or_running_another_
 
 #[test]
 fn the_idle_sweep_keeps_a_terminal_its_last_get_finds_at_work_again_and_reopens_its_record() {
-    for resume in [WORKING, JOB] {
+    let job = reap_busy_reason(&["cargo test -p x".to_string()]).unwrap();
+    for (resume, why) in [
+        (WORKING, "its agent is working now".to_string()),
+        (JOB, format!("work started under it: {job}")),
+    ] {
         let w = World::new();
         let (handle, terminal) = w.worker("sim/jump", Some("done"));
         assert_eq!(w.sweep_through(&w.hc()).idle, from_ref(&handle));
@@ -199,7 +203,8 @@ fn the_idle_sweep_keeps_a_terminal_its_last_get_finds_at_work_again_and_reopens_
         let gets = Cell::new(0);
         let resume = |t: &str| resume(&w, t);
         let hooked = changes_at_get(&w, 3, &resume, &gets);
-        assert_eq!(w.sweep_through(&hooked), Sweep::default());
+        let kept = kept_only(&terminal, &handle, &why, true);
+        assert_eq!(w.sweep_through(&hooked), kept);
         assert_eq!(gets.get(), 3);
         assert!(w.has_terminal(&terminal), "{terminal} was closed");
         assert_eq!(w.calls_of(&["kill"]), Vec::<Vec<String>>::new());
