@@ -37,8 +37,9 @@
 //!   the agent it shows, not held over them; when the window cannot say, it is kept.
 //!
 //! Its idle wait is [`REAP_SECONDS`] when its work is finished, and [`IDLE_HOUR`] while it, or a
-//! session under it, holds a role on open work: an executor of a task `in_progress`, `blocked` or
-//! in `review`, a reviewer of one in `review` or awaiting its re-review after its changes verdict
+//! session under it, holds a live reservation on an unfinished task or a role on open work: an
+//! executor of a task `in_progress`, `blocked` or in `review`, a reviewer of one in `review` or
+//! awaiting its re-review after its changes verdict
 //! (a verdict, or a landing's changes message). The hour starts again when the role or its task's
 //! status changes, and runs from its agent's last tool call when that is later (`last_tool`, the
 //! beat), so work between two sweeps that each find it at its prompt counts. Its close says what

@@ -397,7 +397,9 @@ impl Store {
             } else {
                 Vec::new()
             };
-            Failure::Stop(refused(slots::refusal(&opens.what, &full, &children, cap)))
+            let said = slots::refusal(&opens.what, &full, &children, cap);
+            let hint = slots::claim_hint(slug, &opens.what);
+            Failure::Stop(refused(format!("{said}{hint}")))
         };
         let changed = match cap {
             Some(cap) => slots::started(&before, &after, cap).map_err(|full| refusal(full, cap))?,

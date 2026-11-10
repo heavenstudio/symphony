@@ -448,3 +448,25 @@ fn the_manifest_names_the_cap_or_none_and_a_broken_one_is_an_error() {
     }
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn only_a_claim_refused_at_the_cap_points_to_the_reservation() {
+    let said = claim_hint("work/a", "work/a cannot start");
+    assert!(
+        said.starts_with("; if the task is reserved for you, start work under the reservation now"),
+        "{said}"
+    );
+    assert!(said.contains("`just tasks reserve work/a`"), "{said}");
+    assert!(said.contains("retry the claim"), "{said}");
+    assert_eq!(
+        claim_hint("work/a", "work/a cannot go from blocked to review"),
+        ""
+    );
+    assert_eq!(
+        claim_hint(
+            "work/a",
+            "o cannot take orchestrator on work/a, which is ready"
+        ),
+        ""
+    );
+}

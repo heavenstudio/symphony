@@ -15,6 +15,133 @@ use symphony_board::launch::reap::{
 };
 use symphony_board::launch::screen::ON_SCREEN;
 
+#[test]
+fn a_live_reservation_keeps_a_ready_agents_pane_and_names_it_in_a_dry_run() {
+    let w = World::new();
+    let (handle, terminal) = w.worker("sim/jump", None);
+    let task = w.store().get("sim/jump").unwrap();
+    assert_eq!(task.status, "ready");
+    assert_eq!(task.roles.len(), 1, "the reservation is its only hold");
+    assert_eq!(task.holders("reserved"), [handle.as_str()]);
+    let before = w.changes();
+    let dry = w.sweep_as(How {
+        dry: true,
+        ..How::default()
+    });
+    let why = "it is holder of the reservation on sim/jump, ready: it closes once idle an hour";
+    assert_eq!(dry.closed, []);
+    assert_eq!(
+        dry.kept,
+        [Kept {
+            pane: terminal.clone(),
+            handle: handle.clone(),
+            why: why.into(),
+            idle: true,
+            told: true,
+        }]
+    );
+    assert_eq!(w.changes(), before, "the dry run changes no terminal");
+    assert!(!w.reap_state().exists(), "the dry run records no idle mark");
+    w.kept(&terminal, How::default());
+}
+
+#[test]
+fn a_lapsed_done_or_cancelled_reservation_releases_the_pane_after_two_sweeps() {
+    for end in ["expired", "done", "cancelled"] {
+        let w = World::new();
+        let (handle, terminal) = w.worker("sim/jump", None);
+        assert_eq!(w.sweep().closed, [], "{end}: live reservation");
+        if end == "expired" {
+            // No write removes it: the board's view must age the reservation out itself.
+            w.f.advance(IDLE_HOUR);
+        } else {
+            w.finish_reserved_task(&handle, end);
+            assert_eq!(
+                w.store().get("sim/jump").unwrap().holders("reserved"),
+                [handle.as_str()]
+            );
+        }
+        let first = w.sweep();
+        assert_eq!(
+            first.closed,
+            [],
+            "{end}: the changed hold starts the finished wait"
+        );
+        assert_eq!(first.idle, std::slice::from_ref(&handle), "{end}");
+        let [closed] = <[_; 1]>::try_from(w.sweep().closed).unwrap();
+        assert_eq!(closed.pane, terminal, "{end}");
+        assert_eq!(closed.why, super::FINISHED, "{end}");
+        assert!(!w.has_terminal(&terminal), "{end}");
+        assert!(
+            w.store().sessions_of(&handle).unwrap()[0].closed.is_some(),
+            "{end}"
+        );
+    }
+}
+
+#[test]
+fn a_reservation_uses_the_existing_idle_hour_and_holds_its_parent_too() {
+    for descendant in [false, true] {
+        let w = World::new();
+        let parent = w.f.session("worker");
+        let holder = if descendant {
+            w.sub_session("worker", &parent)
+        } else {
+            parent.clone()
+        };
+        w.store()
+            .reserve("sim/jump", &holder, 2.0 * IDLE_HOUR)
+            .unwrap();
+        let terminal = w.agent(Agent::named(&parent));
+        let who = if descendant {
+            format!("its session {holder} is")
+        } else {
+            "it is".into()
+        };
+        let held = format!(
+            "{who} holder of the reservation on sim/jump, ready: it closes once idle an hour"
+        );
+        w.short_of_the_hour(&terminal, &parent, &held);
+        let [closed] = <[_; 1]>::try_from(w.sweep().closed).unwrap();
+        assert_eq!(closed.pane, terminal);
+        assert!(closed.why.starts_with("idle an hour"), "{closed:?}");
+        assert!(
+            closed.why.contains("reservation on sim/jump, ready"),
+            "{closed:?}"
+        );
+        assert!(!w.has_terminal(&terminal));
+    }
+}
+
+#[test]
+fn a_reservation_acquired_during_either_last_look_prevents_the_close() {
+    for nth in [2, 3] {
+        let w = World::new();
+        let (handle, terminal) = w.worker("sim/jump", Some("done"));
+        w.task("sim/dock", None);
+        w.sweep();
+        let gets = Cell::new(0);
+        let mut hooked = Hooked::new(&w);
+        hooked.instead = Box::new(|args| {
+            if args[0] == "get" && args[1] == terminal {
+                gets.set(gets.get() + 1);
+                if gets.get() == nth {
+                    w.store().reserve("sim/dock", &handle, IDLE_HOUR).unwrap();
+                }
+            }
+            None
+        });
+        let (swept, warned) = w.sweep_with(&hooked, How::default());
+        assert_eq!(warned, "");
+        assert_eq!(gets.get(), nth);
+        assert_eq!(swept.closed, []);
+        assert_eq!(swept.kept[0].why, CHANGED);
+        assert!(w.has_terminal(&terminal));
+        assert!(w.store().sessions_of(&handle).unwrap()[0].closed.is_none());
+        assert!(w.calls_of(&["kill"]).is_empty());
+    }
+}
+
 impl World {
     /// A reviewer of `slug`, which its executor took to review: the reviewer's handle.
     fn reviewer_on(&self, slug: &str) -> String {

@@ -475,6 +475,18 @@ pub fn named(held: &Held<'_>) -> String {
     text
 }
 
+/// What a claim refused at the cap adds, so an agent that never read the work skill still knows:
+/// the executor holding the reservation works under it, renewing it, and retries the claim.
+/// Other starts (a move, a role) add nothing.
+pub(crate) fn claim_hint(slug: &str, what: &str) -> String {
+    if what != format!("{slug} cannot start") {
+        return String::new();
+    }
+    format!(
+        "; if the task is reserved for you, start work under the reservation now, renew it with `just tasks reserve {slug}` within each hour and retry the claim after each renewal"
+    )
+}
+
 /// What a start refused at the cap says: `what` cannot happen, because `full`'s owner holds `cap`
 /// open slots or more, as many as it names. When it stands in for an orchestrator as the parent of
 /// the sessions starting a task no orchestrator holds, those `children` are named. Its red work is

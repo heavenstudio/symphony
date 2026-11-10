@@ -9,6 +9,7 @@ mod features;
 mod migration;
 mod moves;
 mod red_marks;
+mod reservations;
 
 use crate::common::{Fixture, Seed, refused, session, task};
 use symphony_board::rows::{SessionRow, TaskRow};
@@ -36,6 +37,13 @@ const EIGHT: [(&str, &str); 8] = [
     ("work/g", "in_progress"),
     ("work/h", "review"),
 ];
+
+/// What a claim refused at the cap adds for the executor holding the reservation.
+fn reserve_hint(slug: &str) -> String {
+    format!(
+        "; if the task is reserved for you, start work under the reservation now, renew it with `just tasks reserve {slug}` within each hour and retry the claim after each renewal"
+    )
+}
 
 /// What O holding [`EIGHT`] is said as.
 const HOLDS_EIGHT: &str = "olive-orch holds 8 open tasks, the cap of 8 an orchestrator holds: work/a (in_progress), work/b (review), work/c (in_progress), work/d (review), work/e (in_progress), work/f (review), work/g (in_progress), work/h (review); a slot frees when one of them is done or cancelled";
@@ -118,7 +126,10 @@ fn the_ninth_claim_under_one_orchestrator_is_refused_naming_the_eight_and_their_
     let store = capped(&f, 8);
     assert_eq!(
         refused(store.claim("work/next", K)),
-        format!("work/next cannot start: {HOLDS_EIGHT}")
+        format!(
+            "work/next cannot start: {HOLDS_EIGHT}{}",
+            reserve_hint("work/next")
+        )
     );
     let next = store.get("work/next").unwrap();
     assert_eq!(
@@ -126,6 +137,10 @@ fn the_ninth_claim_under_one_orchestrator_is_refused_naming_the_eight_and_their_
         ("ready", vec![])
     );
     assert!(f.said("work/next").is_empty(), "nothing written");
+    assert!(
+        next.holders("reserved").is_empty(),
+        "a cap refusal reserves nothing: {next:?}"
+    );
 }
 
 #[test]
@@ -316,8 +331,9 @@ fn a_task_no_orchestrator_holds_counts_against_the_claimers_parent() {
     assert_eq!(
         refused(store.claim("loose/next", W)),
         format!(
-            "loose/next cannot start: olive-orch (no orchestrator holds it: olive-orch is the parent of wren) {}",
-            HOLDS_EIGHT.trim_start_matches("olive-orch ")
+            "loose/next cannot start: olive-orch (no orchestrator holds it: olive-orch is the parent of wren) {}{}",
+            HOLDS_EIGHT.trim_start_matches("olive-orch "),
+            reserve_hint("loose/next")
         )
     );
     // A worker with no parent counts it against no one.
@@ -389,7 +405,8 @@ fn an_orchestrator_at_the_cap_still_starts_main_and_nightly_red_work_and_names_i
     assert_eq!(
         refused(store.claim("work/next", K)),
         format!(
-            "work/next cannot start: {HOLDS_EIGHT}; not counted, as red work takes no slot: tests/main-red-abc (in_progress) with fix/static (review), tests/nightly-red-sim (in_progress)"
+            "work/next cannot start: {HOLDS_EIGHT}; not counted, as red work takes no slot: tests/main-red-abc (in_progress) with fix/static (review), tests/nightly-red-sim (in_progress){}",
+            reserve_hint("work/next")
         )
     );
     assert_eq!(store.get("work/next").unwrap().status, "ready");
@@ -432,13 +449,17 @@ fn a_cancelled_reds_children_share_one_counted_feature_without_exempting_other_w
         "{said}"
     );
     assert!(!said.contains("not counted"), "{said}");
+    assert!(said.ends_with(&reserve_hint("unrelated")), "{said}");
 }
 
 #[test]
 fn a_filer_marks_no_feature_red_so_the_cap_still_refuses_its_claim() {
     let f = eight_and(&[("work/next", "ready")]);
     let store = capped(&f, 8);
-    let full = format!("work/next cannot start: {HOLDS_EIGHT}");
+    let full = format!(
+        "work/next cannot start: {HOLDS_EIGHT}{}",
+        reserve_hint("work/next")
+    );
     assert_eq!(refused(store.claim("work/next", K)), full);
     // A filer, which any worker may register, marks the feature the cap refused: no red series'.
     let said = refused(store.mark_red("work/next", "main", F));
@@ -456,7 +477,10 @@ fn a_task_only_named_like_a_red_takes_a_slot() {
     let f = eight_and(&[("tests/main-red-old", "ready")]);
     assert_eq!(
         refused(capped(&f, 8).claim("tests/main-red-old", K)),
-        format!("tests/main-red-old cannot start: {HOLDS_EIGHT}")
+        format!(
+            "tests/main-red-old cannot start: {HOLDS_EIGHT}{}",
+            reserve_hint("tests/main-red-old")
+        )
     );
 }
 
