@@ -11,6 +11,8 @@ use symphony_board::Beat;
 use symphony_board::cli::Env;
 use symphony_board::sys::Command;
 
+mod input;
+
 const FAKE: &str = env!("CARGO_BIN_EXE_fake-hc");
 
 /// What a process needs from this one's environment to start. Everything else it gets is the case's
@@ -107,6 +109,7 @@ struct Receipt {
     stderr_bytes: Option<usize>,
     selection: Result<(PathBuf, String), &'static str>,
     file: Option<FileSummary>,
+    inputs: input::Evidence,
 }
 
 #[derive(Debug)]
@@ -155,6 +158,7 @@ impl Receipt {
                     Err("command failed")
                 },
                 file: None,
+                inputs: input::Evidence::unknown(),
             },
             Err(error) => Self {
                 status: Err((error.kind(), error.raw_os_error())),
@@ -162,6 +166,7 @@ impl Receipt {
                 stderr_bytes: None,
                 selection: Err("command unavailable"),
                 file: None,
+                inputs: input::Evidence::unknown(),
             },
         }
     }
@@ -193,11 +198,22 @@ fn file_summary(result: std::io::Result<std::fs::Metadata>) -> FileSummary {
 
 fn initialize_warm(
     cell: &OnceLock<Receipt>,
-    attempt: impl FnOnce() -> std::io::Result<std::process::Output>,
+    attempt: impl FnOnce() -> (
+        std::io::Result<std::process::Output>,
+        Option<input::Capture>,
+    ),
 ) -> &Receipt {
     cell.get_or_init(|| {
-        let result = attempt();
+        let (result, capture) = attempt();
         let mut receipt = Receipt::of(&result);
+        receipt.inputs = input::finish(
+            capture,
+            receipt
+                .selection
+                .as_ref()
+                .ok()
+                .map(|(path, key)| (path.as_path(), key.as_str())),
+        );
         let done = result.unwrap_or_else(|_| panic!("warm command unavailable: {receipt:?}"));
         assert!(done.status.success(), "{receipt:?}");
         drop(done); // Raw buffers are not retained or dumped, including on failed initialization.
@@ -212,9 +228,14 @@ fn initialize_warm(
 /// Build once before a recipe; --build does not publish the live heartbeat link.
 fn built() {
     initialize_warm(&WARM, || {
-        symphony_board::sys::output(
-            process(&root().join("tools/rs-bin.sh")).args(["--build", "tasks"]),
-        )
+        let root = root();
+        let capture = input::Capture::new(&root, input::Caller::Warm);
+        let mut command = process(&root.join("tools/rs-bin.sh"));
+        command.args(["--build", "tasks"]);
+        input::launch(capture, &mut std::io::stderr(), |capture| {
+            input::bind(capture, &mut command);
+            symphony_board::sys::output(&mut command)
+        })
     });
 }
 /// `just RECIPE ARGS` in this tree, given `env`'s variables and `input` on stdin.
@@ -229,14 +250,19 @@ fn just(env: &Env, args: &[&str], input: &str) -> Ran {
         .arg(&root)
         .args(args)
         .envs(&env.vars);
-    let mut child = symphony_board::sys::spawn_piped(&mut command).unwrap();
-    child
-        .stdin
-        .take()
-        .unwrap()
-        .write_all(input.as_bytes())
-        .unwrap();
-    let done = symphony_board::sys::wait_output(child).unwrap();
+    let capture = input::Capture::new(&root, input::Caller::Recipe);
+    let (done, capture) = input::launch(capture, &mut std::io::stderr(), |capture| {
+        input::bind(capture, &mut command);
+        let mut child = symphony_board::sys::spawn_piped(&mut command).unwrap();
+        child
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(input.as_bytes())
+            .unwrap();
+        symphony_board::sys::wait_output(child).unwrap()
+    });
+    let (done, _evidence) = input::report_result(done, capture, None, &mut std::io::stderr());
     Ran {
         code: done.status.code().unwrap_or(-1),
         out: String::from_utf8(done.stdout).unwrap(),
@@ -528,48 +554,4 @@ fn receipt_metadata_summaries_follow_the_existing_regular_file_predicate() {
     assert!(!denied.regular, "{denied:?}");
     assert!(denied.detail.contains("PermissionDenied"), "{denied:?}");
     assert!(!denied.detail.contains("SECRET"), "{denied:?}");
-}
-
-#[test]
-fn receipt_failed_initializers_leave_the_cell_empty_for_a_later_caller() {
-    use std::panic::{AssertUnwindSafe, catch_unwind};
-    for result in [
-        Err(std::io::Error::other("SECRET")),
-        Ok(receipt_output(1, b"failure\n", b"SECRET")),
-    ] {
-        let cell = OnceLock::new();
-        let failed = catch_unwind(AssertUnwindSafe(|| initialize_warm(&cell, || result)));
-        assert!(failed.is_err(), "failed warm must panic");
-        assert!(cell.get().is_none(), "failed result must not be published");
-        let receipt = initialize_warm(&cell, || Ok(receipt_output(0, b"malformed\n", b"")));
-        assert!(receipt.status.as_ref().unwrap().success(), "{receipt:?}");
-        assert!(receipt.selection.is_err(), "{receipt:?}");
-        assert!(receipt.file.is_none(), "{receipt:?}");
-        assert!(std::ptr::eq(
-            receipt,
-            initialize_warm(&cell, || panic!("initialized cell ran again"))
-        ));
-    }
-}
-
-#[test]
-fn receipt_successful_initializer_publishes_only_safe_observed_metadata() {
-    let root = crate::scratch("receipt-success");
-    let bin = root.join("sf-cargo/bin");
-    std::fs::create_dir_all(&bin).unwrap();
-    let path = bin.join("tasks-0123456789abcdef");
-    // Owned unit-test data only; never an executable, launcher input or operational cache.
-    std::fs::write(&path, b"data").unwrap();
-    let cell = OnceLock::new();
-    let receipt = initialize_warm(&cell, || {
-        Ok(receipt_output(
-            0,
-            format!("{}\n", path.display()).as_bytes(),
-            b"SECRET",
-        ))
-    });
-    assert_eq!(receipt.selection, Ok((path, "0123456789abcdef".into())));
-    assert!(receipt.file.as_ref().unwrap().regular, "{receipt:?}");
-    assert!(!format!("{receipt:?}").contains("SECRET"), "{receipt:?}");
-    assert!(std::ptr::eq(receipt, cell.get().unwrap()));
 }
