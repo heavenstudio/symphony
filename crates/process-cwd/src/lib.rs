@@ -10,7 +10,7 @@
 use std::path::{Path, PathBuf};
 use std::process::Output;
 use std::sync::mpsc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 mod close_on_fork;
 pub mod exit;
@@ -41,10 +41,15 @@ pub fn process_cwds_with(mut lsof: Command) -> Option<Vec<PathBuf>> {
 /// caller can ask when that process started. Readable rows survive a failed or partial listing;
 /// only a complete listing can prove a process absent. None means the command could not finish.
 pub fn pid_cwds_with(mut lsof: Command) -> Option<PidCwds> {
+    let deadline = Instant::now() + LSOF_PATIENCE;
     // Request f explicitly: it is not implicit in every lsof version's field output.
-    lsof.args(["-Fpfn", "-d", "cwd"]);
-    let done = within(&mut lsof, LSOF_PATIENCE)?;
-    Some(pid::read(&done))
+    // Device/inode disambiguate literal caret names from lsof's control-byte display.
+    lsof.args(["-FpfnDi", "-d", "cwd"]);
+    let done = within(
+        &mut lsof,
+        deadline.saturating_duration_since(Instant::now()),
+    )?;
+    pid::read(done, deadline)
 }
 
 /// Whether any process works in `tree` or a directory below it. The final removal check selects
@@ -174,7 +179,7 @@ mod tests {
         assert_eq!(
             pid_cwds_with(stand_in("printf 'p5\\nfcwd\\nn/args/%s\\n' \"$*\"")),
             Some(PidCwds {
-                listed: vec![(5, PathBuf::from("/args/-Fpfn -d cwd"))],
+                listed: vec![(5, PathBuf::from("/args/-FpfnDi -d cwd"))],
                 complete: true,
             })
         );

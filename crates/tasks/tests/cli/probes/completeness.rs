@@ -20,7 +20,13 @@ struct Listing {
     health: &'static str,
 }
 
-const LISTINGS: [Listing; 15] = [
+const LISTINGS: [Listing; 16] = [
+    Listing {
+        name: "ambiguous-caret-cwd",
+        output: "printf 'p%s\\nfcwd\\nn/ambiguous^A\\n' \"$SCAN_PID\"",
+        ending: "exit 0",
+        health: "unknown",
+    },
     Listing {
         name: "partial-unrelated",
         output: "printf 'p%s\\nfcwd\\nn/\\n' \"$PPID\"",
@@ -146,6 +152,80 @@ fn call_in(store: &symphony_board::Store, tree: &Path) {
         .unwrap();
 }
 
+fn expire(env: &mut Env, after: f64) {
+    let lost_after =
+        symphony_board::health::LIVE_SECONDS + symphony_board::health::STALE_SECONDS + 600.0;
+    env.vars
+        .insert("TASKS_NOW".into(), (after + lost_after).to_string());
+}
+
+#[derive(Debug)]
+struct NativeListing<'a> {
+    recorded: &'a Path,
+    working: &'a Path,
+    health: &'static str,
+}
+
+/// Exercise the real producer and stored canonical path in the same scratch board.
+fn native_listing(c: &mut crate::Case, root: &Path, handle: &str, listing: NativeListing<'_>) {
+    c.env
+        .vars
+        .insert("TASKS_NOW".into(), wall_clock().to_string());
+    let store = c.store();
+    call_in(&store, listing.recorded);
+    let mut cat = Command::new("/bin/cat");
+    cat.current_dir(listing.working)
+        .stdin(symphony_board::sys::Stdio::piped())
+        .stdout(symphony_board::sys::Stdio::null());
+    let mut owned = Working(cat.spawn().unwrap());
+    let after = wall_clock();
+    c.env.vars.insert("TASKS_NOW".into(), after.to_string());
+    call_in(&c.store(), listing.recorded);
+    expire(&mut c.env, after);
+    let kept = c.store().agent_bindings().unwrap().remove(handle).unwrap();
+    assert_eq!(kept.worktree, listing.recorded.to_str().unwrap());
+    assert!(kept.in_process, "{kept:?}");
+    let pid = owned.0.id().to_string();
+    let mut command = symphony_board::sys::command_with("lsof", &c.env.vars);
+    command.args(["-a", "-p", &pid]);
+    let scan = process_cwd::pid_cwds_with(command).unwrap();
+    if listing.health == "unknown" {
+        assert!(!scan.complete, "ambiguous native name: {scan:?}");
+        assert!(
+            scan.listed.is_empty(),
+            "no guessed caret ownership: {scan:?}"
+        );
+    } else {
+        assert!(scan.complete, "{scan:?}");
+        assert_eq!(
+            scan.listed,
+            vec![(i64::from(owned.0.id()), listing.working.to_path_buf())],
+            "supported native name must decode exactly once"
+        );
+    }
+    let agent = read_agent(&c.env, root, handle);
+    assert_eq!(
+        owned.0.try_wait().unwrap(),
+        None,
+        "owned child remains alive"
+    );
+    assert_eq!(agent["health"], listing.health, "{listing:?}: {agent}");
+    let state = if listing.health != "lost" {
+        "running_test"
+    } else {
+        "gone"
+    };
+    assert_eq!(agent["state"], state, "{agent}");
+    if listing.health == "unknown" {
+        assert_eq!(agent["state_detail"]["phase"], "unknown", "{agent}");
+    }
+    owned.0.kill().unwrap();
+    owned.0.wait().unwrap();
+    let stopped = read_agent(&c.env, root, handle);
+    assert_eq!(stopped["health"], "lost", "native stopped: {stopped}");
+    assert_eq!(stopped["state"], "gone", "{stopped}");
+}
+
 #[test]
 fn partial_listings_cannot_make_a_still_running_owned_child_lost() {
     let root = crate::scratch("process-listing-completeness");
@@ -176,11 +256,7 @@ fn partial_listings_cannot_make_a_still_running_owned_child_lost() {
     let after = wall_clock();
     c.env.vars.insert("TASKS_NOW".into(), after.to_string());
     call_in(&c.store(), &tree);
-    let lost_after =
-        symphony_board::health::LIVE_SECONDS + symphony_board::health::STALE_SECONDS + 600.0;
-    c.env
-        .vars
-        .insert("TASKS_NOW".into(), (after + lost_after).to_string());
+    expire(&mut c.env, after);
     let read = |env: &Env| read_agent(env, &root, &handle);
     let live = read(&c.env);
     assert_eq!(live["health"], "live", "native owned-child control: {live}");
@@ -247,4 +323,82 @@ fn partial_listings_cannot_make_a_still_running_owned_child_lost() {
         "native stopped-child control: {stopped}"
     );
     assert_eq!(stopped["state"], "gone", "{stopped}");
+
+    native_names(&mut c, &root, &handle);
+}
+
+fn native_names(c: &mut crate::Case, root: &Path, handle: &str) {
+    struct Name {
+        actual: &'static str,
+        lookalike: &'static str,
+        health: &'static str,
+    }
+    // Each lookalike really exists. Existence/canonicalization of a display spelling is
+    // insufficient, and a second decoding pass would attribute the literal escapes wrongly.
+    for name in [
+        Name {
+            actual: "ordinary",
+            lookalike: "unrelated",
+            health: "live",
+        },
+        Name {
+            actual: "tab\tname",
+            lookalike: "tab\\tname",
+            health: "live",
+        },
+        Name {
+            actual: "café",
+            lookalike: "caf\\xc3\\xa9",
+            health: "live",
+        },
+        Name {
+            actual: "literal\\t^A",
+            lookalike: "literal\t^A",
+            health: "live",
+        },
+        Name {
+            actual: "literal\\x41",
+            lookalike: "literalA",
+            health: "live",
+        },
+        Name {
+            actual: "control\x01",
+            lookalike: "control^A",
+            health: "unknown",
+        },
+    ] {
+        let actual = root.join(name.actual).join("wt");
+        let other = root.join(name.lookalike).join("wt");
+        for path in [&actual, &other] {
+            fs::create_dir_all(path).unwrap();
+            fs::write(path.join(".git"), "gitdir: /unused/scratch-worktree\n").unwrap();
+        }
+        let actual = actual.canonicalize().unwrap();
+        let other = other.canonicalize().unwrap();
+        assert_ne!(actual, other);
+        native_listing(
+            c,
+            root,
+            handle,
+            NativeListing {
+                recorded: &actual,
+                working: &actual,
+                health: name.health,
+            },
+        );
+        native_listing(
+            c,
+            root,
+            handle,
+            NativeListing {
+                recorded: &other,
+                working: &actual,
+                health: if name.health == "unknown" {
+                    "unknown"
+                } else {
+                    "lost"
+                },
+            },
+        );
+    }
 }
