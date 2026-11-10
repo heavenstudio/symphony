@@ -9,7 +9,6 @@ use symphony_board::rows::TaskSessionRow;
 const HISTORY_LIMIT: usize = 4096;
 pub(super) const READER_ENV: &str = "SF_MACHINE_WORK_READER";
 
-/// A recorded role supplies task identity; a clean absolute cwd may be inside its checkout.
 /// Component matching excludes sibling names and traversal, and is never machine identity.
 fn in_checkout(cwd: &str, checkout: &str) -> bool {
     use std::path::Component;
@@ -22,6 +21,25 @@ fn in_checkout(cwd: &str, checkout: &str) -> bool {
             .chain(checkout.components())
             .all(|part| !matches!(part, Component::ParentDir | Component::CurDir))
         && cwd.starts_with(checkout)
+}
+
+/// A first observation has no trusted launch time. Require one task across all possible
+/// recorded contexts for this handle, including closed launches and other checkouts.
+/// A matching open checkout is supporting context, never proof to discard conflicting history.
+/// Frozen bindings are handled by the caller and never rewritten when the current role changes.
+fn initial_task(operation: &Operation, records: &[TaskSessionRow]) -> Option<String> {
+    let handle = operation.handle.as_deref()?;
+    let mut task = None;
+    let mut open = false;
+    for record in records.iter().filter(|record| record.handle == handle) {
+        let matching = in_checkout(&operation.checkout, &record.worktree);
+        if task.is_some_and(|task| task != record.slug.as_str()) {
+            return None;
+        }
+        task = Some(record.slug.as_str());
+        open |= matching && record.closed.is_none();
+    }
+    if open { task.map(str::to_owned) } else { None }
 }
 
 pub(super) struct Sampler {
@@ -100,21 +118,7 @@ impl Sampler {
         inventory.attribute(|operation| {
             let id = operation.operation_id.as_ref()?;
             if !bindings.contains_key(id) && bindings.len() < HISTORY_LIMIT {
-                let mut matching: Vec<_> = records
-                    .iter()
-                    .filter(|record| {
-                        record.closed.is_none()
-                            && Some(&record.handle) == operation.handle.as_ref()
-                            && in_checkout(&operation.checkout, &record.worktree)
-                    })
-                    .map(|record| record.slug.clone())
-                    .collect();
-                matching.sort();
-                matching.dedup();
-                bindings.insert(
-                    id.clone(),
-                    (matching.len() == 1).then(|| matching[0].clone()),
-                );
+                bindings.insert(id.clone(), initial_task(operation, records));
             }
             bindings.get(id).cloned().flatten()
         });

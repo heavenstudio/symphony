@@ -405,6 +405,135 @@ fn explicit_or_prepared_reader_paths_are_retained_without_a_launcher_or_cache_se
 }
 
 #[test]
+fn first_native_scan_uses_full_recorded_task_context_without_trusting_phase_clocks() {
+    let mut prior = record("task-a");
+    prior.started = 1.0;
+    prior.closed = Some(2.0);
+    let mut current = record("task-b");
+    current.started = 3.0;
+    let mut same_task = prior.clone();
+    same_task.slug = "task-b".into();
+    let mut other_owner = prior.clone();
+    other_owner.handle = "other-worker".into();
+    let mut sibling_checkout = prior.clone();
+    sibling_checkout.worktree = "/private/checkout-other".into();
+    let mut parent_checkout = prior.clone();
+    parent_checkout.worktree = "/private".into();
+    let mut unknown_checkout = prior.clone();
+    unknown_checkout.worktree.clear();
+    let mut relative_checkout = prior.clone();
+    relative_checkout.worktree = "private/checkout".into();
+    for (name, records, expected) in [
+        ("one supported role", vec![current.clone()], Some("task-b")),
+        ("reused launch", vec![prior.clone(), current.clone()], None),
+        (
+            "reverse history",
+            vec![current.clone(), prior.clone()],
+            None,
+        ),
+        ("closed only", vec![prior], None),
+        (
+            "concurrent tasks",
+            vec![record("task-a"), current.clone()],
+            None,
+        ),
+        (
+            "same task history",
+            vec![same_task, current.clone()],
+            Some("task-b"),
+        ),
+        (
+            "other owner",
+            vec![other_owner, current.clone()],
+            Some("task-b"),
+        ),
+        (
+            "sibling checkout",
+            vec![sibling_checkout, current.clone()],
+            None,
+        ),
+        (
+            "parent checkout",
+            vec![parent_checkout, current.clone()],
+            None,
+        ),
+        (
+            "unknown history",
+            vec![unknown_checkout, current.clone()],
+            None,
+        ),
+        (
+            "relative history",
+            vec![relative_checkout, current.clone()],
+            None,
+        ),
+        ("missing context", vec![], None),
+    ] {
+        for epoch in [1500, 9_999_999_999_999_u64] {
+            let mut sampler = sampler();
+            let publication = |state| {
+                let mut value: Value = serde_json::from_slice(&input(state)).unwrap();
+                value["records"][0]["phase_since_epoch_ms"] = json!(epoch);
+                serde_json::to_vec(&value).unwrap()
+            };
+            sampler
+                .accept(&publication("running"), &records, 10, "host")
+                .unwrap();
+            let view = sampler.snapshot(10).machines.remove(0);
+            assert_eq!(view.operations.len(), 1, "{name}: {view:?}");
+            let operation = &view.operations[0];
+            assert_eq!(operation.task.as_deref(), expected, "{name}, epoch={epoch}");
+            assert_eq!(operation.handle.as_deref(), Some("worker"));
+            assert_eq!(operation.machine_id.as_deref(), Some("machine-a"));
+            assert_eq!(operation.phase_since, Some(epoch as f64 / 1000.0));
+            assert_eq!(view.counts, None);
+            assert!(!view.complete);
+            // A first unknown remains unknown even if a later read loses historical rows.
+            // A supported initial binding remains exactly the same through later phases.
+            sampler
+                .accept(&publication("queued"), &[current.clone()], 20, "host")
+                .unwrap();
+            assert_eq!(
+                sampler.snapshot(20).machines[0].operations[0]
+                    .task
+                    .as_deref(),
+                expected,
+                "{name}: binding changed"
+            );
+            sampler
+                .accept(&publication("finished"), &[current.clone()], 21, "host")
+                .unwrap();
+            let finished = sampler.snapshot(21).machines.remove(0);
+            assert!(finished.operations.is_empty(), "{name}: {finished:?}");
+            assert_eq!(finished.counts, None);
+            assert!(!finished.complete);
+        }
+    }
+}
+
+#[test]
+fn a_native_phase_without_a_handle_stays_visible_without_acquiring_the_checkout_task() {
+    let mut sampler = sampler();
+    let mut value: Value = serde_json::from_slice(&input("running")).unwrap();
+    value["records"][0]["handle"] = Value::Null;
+    sampler
+        .accept(
+            &serde_json::to_vec(&value).unwrap(),
+            &[record("task-a")],
+            10,
+            "host",
+        )
+        .unwrap();
+    let view = sampler.snapshot(10).machines.remove(0);
+    assert_eq!(view.operations.len(), 1, "{view:?}");
+    assert_eq!(view.operations[0].handle, None);
+    assert_eq!(view.operations[0].task, None);
+    assert_eq!(view.operations[0].machine_id.as_deref(), Some("machine-a"));
+    assert_eq!(view.counts, None);
+    assert!(!view.complete);
+}
+
+#[test]
 fn ambiguous_or_later_task_roles_do_not_supply_an_initial_task_binding() {
     let mut sampler = sampler();
     sampler
