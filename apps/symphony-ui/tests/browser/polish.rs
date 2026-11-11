@@ -459,3 +459,52 @@ fn the_task_groups_say_when_they_could_not_be_loaded_and_retry() {
         "document.querySelector('#task-groups .trouble') === null && document.querySelector('#task-groups ul li') !== null",
     );
 }
+
+/// Each callout badge's text, with the WCAG contrast of its colour on its background.
+const BADGE_CONTRAST: &str = "(() => {
+    const linear = v => (v /= 255) <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4;
+    const luminance = c => { const [r, g, b] = c.match(/[\\d.]+/g).slice(0, 3).map(Number).map(linear); return 0.2126 * r + 0.7152 * g + 0.0722 * b; };
+    return [...document.querySelectorAll('.callout-kind')].map(badge => {
+        const look = getComputedStyle(badge), [a, b] = [luminance(look.color), luminance(look.backgroundColor)];
+        return [badge.textContent, Math.round((Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05) * 100) / 100];
+    });
+})()";
+
+#[test]
+fn every_callout_badge_reads_at_four_and_a_half_to_one_in_both_schemes() {
+    let site = bare_site();
+    let kinds = [
+        "comment", "like", "dislike", "question", "decision", "resolved",
+    ];
+    super::restored::document(
+        &site,
+        kinds
+            .iter()
+            .map(|kind| json!({"type":"callout","kind":kind,"title":[{"type":"text","text":format!("A {kind}")}],"resolved":false,"blocks":[paragraph("Its body.")]}))
+            .collect(),
+    );
+    let Some(mut page) = chrome() else { return };
+    for (mode, _) in SURFACES {
+        scheme(&mut page, mode);
+        page.open(&site.url("/docs/PROBE.md"));
+        assert!(page.wait_for(
+            "document.querySelectorAll('.callout-kind').length === 6",
+            SHOWN
+        ));
+        let badges = page.eval(BADGE_CONTRAST);
+        let read: Vec<(String, f64)> = serde_json::from_value(badges.clone()).unwrap();
+        assert_eq!(
+            read.iter()
+                .map(|(kind, _)| kind.as_str())
+                .collect::<Vec<_>>(),
+            kinds,
+            "{mode}: {badges}"
+        );
+        for (kind, ratio) in read {
+            assert!(
+                ratio >= 4.5,
+                "{mode}: the {kind} badge reads at {ratio}:1, under 4.5:1: {badges}"
+            );
+        }
+    }
+}
