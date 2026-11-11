@@ -140,13 +140,23 @@ Runs · symphony                    2 running · 1 queued
 
 ### Where runs are kept
 
-- **A, run files in the common dir, a core page.** The recorder appends one line per finished
-  run and per step to a file for the UTC day, `sf-runs/DAY.jsonl` in the git common dir beside
-  `sf-tasks/`, and keeps each run's log in `sf-runs/logs/`. The server reads the newest files for
-  the list and a run, and rolls the trends up every hour ([Per view or rolled up](#per-view-or-rolled-up)).
-  Cost: a page kind, an API, a roll-up, the log handling. Nothing touches the board and the
-  schema stays. Star Foundry's verify summaries are this shape already: one framed line per run
-  appended to a day file, pruned at 30 days (`tools/gate/src/verify/summary.rs`, `Run::finish`).
+**Decided: A, run files in the common dir, a core page** (the owner, 2026-11-11), with the send of
+[Several machines, one board](#several-machines-one-board). The recorder appends one line per
+finished run and per step to a file for the UTC day, `sf-runs/DAY.jsonl` in the git common dir
+beside `sf-tasks/`, and keeps each run's log in `sf-runs/logs/`. The server reads the newest files
+for the list and a run, and rolls the trends up every hour
+([Per view or rolled up](#per-view-or-rolled-up)). Cost: a page kind, an API, a roll-up, the log
+handling. Nothing touches the board and the schema stays. Star Foundry's verify summaries are this
+shape already: one framed line per run appended to a day file, pruned at 30 days
+(`tools/gate/src/verify/summary.rs`, `Run::finish`).
+
+The work is on the board, in the order it lands: `tools/run-record` (after
+`tools/build-test-recorded-generic`), `tools/run-logs`, `tools/run-suites`, `tools/run-send`,
+`tools/runs-rollup` and `tools/runs-page`. Six smaller choices they meet wait on the card
+`reports-small-choices` ([Open questions](#open-questions)).
+
+Not chosen:
+
 - **B, runs on the board.** `run` and `step` tables written by the recorder. Cost: a schema
   version, which makes every older server on the machine refuse writes until it updates; a write
   at each run's start, step and end on the board's write path, at Star Foundry's rate hundreds of
@@ -156,8 +166,8 @@ Runs · symphony                    2 running · 1 queued
   read, charts are raw vector shapes with no values on a tap, nothing updates while a run goes, and
   a project without the document shows nothing.
 
-**Recommended: A.** Every project gets it without a plugin, including Symphony, which has none;
-the board takes no load; it follows a format already proven on this machine.
+**Why A.** Every project gets it without a plugin, including Symphony, which has none; the board
+takes no load; it follows a format already proven on this machine.
 
 ### The run record
 
@@ -178,6 +188,11 @@ the board takes no load; it follows a format already proven on this machine.
 | `suites` | per test binary: passed, failed, ignored and its time |
 | `failed` | the failing tests' names and first failure line |
 | `rerun_of` | a run started again on the same tree |
+
+Filed as `tools/run-record`, a follow-up to `tools/build-test-recorded-generic` that leaves that
+task's scope alone. Read 2026-11-11, while it was in review: its record already keeps the operation
+and parent ids, branch, commit and host; inside a recorded run it runs commands plainly, so a
+verify's steps are not yet recorded apart.
 
 One line per run and per step, never per child process: of Star Foundry's newest 3,000 native
 operations, 2,605 are `verify discovery` commands, and 32,311 operations took 245 MB in two days.
@@ -430,13 +445,18 @@ The work is on the board: `tools/reports-rollup`, `tools/reports-page`,
 The chart block is a wire change, so it reaches main in a task of its own first (RULES
 `workflow/shared-data-lands-first`).
 
+The core pages are decided (Runs and Reports, both A) and the gates seam is filed. The
+report-section seam and the chart block are not filed: the core pages draw their own charts, and
+whether a project's own section is built before a project asks for it is choice 6 on the card
+`reports-small-choices`.
+
 ## One machine or several
 
 - **One machine, every project.** The machine's one server serves each registered project
   (`projects.json`; read 2026-11-11: `symphony` and `star-foundry`), and each project's run files
   are in its own common dir, so a machine view (beside the project picker) sums them: running
   now, machine minutes per project per day.
-- **One project, several machines.** Not possible yet, and below is how it would work.
+- **One project, several machines.** Not possible yet; below is how it will work.
 
 ### Several machines, one board
 
@@ -518,8 +538,9 @@ gets its end within the run's own timeout reads "lost contact", never "running".
 `refs/…/runs/<machine>`. That needs a shared remote, and pushes contend with each other. Lines would
 arrive minutes late, and logs would grow history.
 
-**Recommendation: A, with the send.** It changes nothing on one machine. It adds one endpoint on
-the server and a send in the recorder.
+**Decided: A, with the send** (the owner approved A after this answer, 2026-11-11). It changes
+nothing on one machine. It adds one endpoint on the server and a send in the recorder: filed as
+`tools/run-send`.
 
 ## Per view or rolled up
 
@@ -551,10 +572,13 @@ No report writes to the board. The only board load is one read per project an ho
 
 Once approved, as board tasks, the shared data first:
 
-1. The run line and its folder, agreed with `tools/build-test-recorded-generic`: the fields above,
-   cargo's test output read, logs and their bounds.
-2. The chart block in `symphony-api` and its component.
-3. The Runs page and its API, with the machine view.
+1. The run line and its folder, after `tools/build-test-recorded-generic`: the fields above,
+   cargo's test output read, logs and their bounds, and the send to the hosting server: filed as
+   `tools/run-record`, `tools/run-suites`, `tools/run-logs` and `tools/run-send`.
+2. The chart block in `symphony-api` and its component: not filed (choice 6 on the card
+   `reports-small-choices`).
+3. The Runs page and its API, with the machine view, and the runs' hourly roll-up: filed as
+   `tools/runs-page` and `tools/runs-rollup`.
 4. The replay's segments in `stages.rs`, and the task page's timeline: filed as
    `tools/task-timeline`.
 5. The gates seam, its wire type and Symphony's own gates, and the component: filed as
@@ -562,20 +586,26 @@ Once approved, as board tasks, the shared data first:
    to its board, `tools/star-foundry-gates-adapter`.
 6. The hourly roll-up and the health history: filed as `tools/reports-rollup`,
    `tools/board-health-history`, `tools/agent-activity-history` and `tools/red-landing-origin`.
-7. The Reports page (filed as `tools/reports-page`), and the report-section seam.
+7. The Reports page (filed as `tools/reports-page`), and the report-section seam (not filed:
+   choice 6 on the card `reports-small-choices`).
 
 ## Open questions
 
-1. Retention: runs 90 days, logs 14 (a red's 30, at most 2 GB a project), roll-ups for good?
+Questions 2, 3, 5, 6 and 7 are choices 1 to 5 on the card `reports-small-choices`, each with the
+default the filed tasks follow until the owner answers.
+
+1. Settled by the approval of `reports-ci-runs`: runs 90 days, logs 14 (a red's 30, at most 2 GB a
+   project), roll-ups for good.
 2. The slowest tests need each test's time, which stable cargo does not print. Adopt cargo-nextest
-   (a new tool), or show suites only?
+   (a new tool), or show suites only? Until answered, suites only.
 3. A cost in money needs a price per model from the owner, and on a subscription per-token money
-   is not what is paid. Show tokens only?
+   is not what is paid. Show tokens only? Until answered, tokens only.
 4. Settled by the approval: a red names the commits it came between (`tools/red-landing-origin`).
    Star Foundry's landing and nightly passing them is Star Foundry's change, on its own board.
 5. Symphony has no land command: its merges to main are made by hand. Count each merge commit on
-   main as a landing run?
+   main as a landing run? Until answered, yes.
 6. Queue wait where no pool queues work: show none, or count the time Cargo waits on its build lock?
+   Until answered, none.
 7. Should a project's gates, once shown, also replace Symphony's review gate everywhere the board
    judges review (the sign-off lane, the PULL digest)? Until answered they replace it on the page
    alone.

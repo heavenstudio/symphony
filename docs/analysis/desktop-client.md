@@ -288,16 +288,27 @@ Two tasks, the shared data first (RULES.md `workflow/shared-data-lands-first`):
 
 ## Open questions
 
+The owner answered all five on 2026-11-11 (15:26), quoted after each; what each answer changes is
+on the card. The owner also asked how an iPhone app would shape the choice, answered on the card
+as well. How the app is built, A, B or C, is still the card's question.
+
 1. Should the badge and notifications also cover questions agents ask you on tasks (`--to owner`),
    or reviewers' verdicts on tasks? Each needs one more count on the wire. Until answered, cards
    only ([What notifies](#what-notifies)).
+   **Answered:** "Yes. We should also have different users in the future, so that asks /
+   notifications could be targetted to specific people."
 2. When two servers serve the same project's board (several machines on one board), should the
    app count it once? Until answered it lists and counts each server's own.
+   **Answered:** "For now I think the model should be indeed two separate boards. Albeit we will
+   soon move to a "central board" with "multiple machines connected"".
 3. Should the shell's own screens be Dioxus, if the first slice shows Dioxus desktop can host the
    server's web view, or plain pages? Until answered, Dioxus if it can.
+   **Answered:** "Yeah, why not dioxus." This settles the shell's own screens, not A, B or C.
 4. Is an Apple developer account (signing, notarisation, a self-updating app) wanted now, or once
    the app runs on a second machine? Until answered, once it does.
+   **Answered:** "once it does."
 5. Should the global shortcut be in the first release? Until answered, the second.
+   **Answered:** "can be skipped for now."
 
 ## Verified and inferred
 
