@@ -268,6 +268,71 @@ fn owner_and_agent_notes_render_markdown_alike() {
     }
 }
 
+/// Raw HTML in a note is the words typed, the owner's and an agent's alike, on the page and in the
+/// typed thread the client draws: `Vec<String>` and `<b>raw</b>` are not markup. The document and
+/// card links the note names are links all the same, one alone in its paragraph too.
+#[test]
+fn raw_html_in_a_note_stays_as_typed_and_its_links_stay_links() {
+    let (tree, render) = bare();
+    tree.write(
+        "docs/makers/MAKERS.md",
+        "# Makers\n\n- [ ] **elsewhere** — A card.\n",
+    );
+    let typed = "The call returns Result<Task, Error> and Vec<String>; a < b > c. <b>raw</b>";
+    for who in ["owner · question", "agent"] {
+        let card = format!(
+            "- [?] **a** — one.\n  [2026-09-24] {who} — {typed}\n    See [[MAKERS#Makers]] and **elsewhere**.\n\n    [[MAKERS]]\n"
+        );
+        let text = entry_text(&render.html(&card, "docs/DECISIONS.md"), 0).to_string();
+        assert!(
+            text.starts_with("<p>The call returns Result&lt;Task, Error&gt; and Vec&lt;String&gt;; a &lt; b &gt; c. &lt;b&gt;raw&lt;/b&gt;<br />"),
+            "{who}: {text}"
+        );
+        assert!(
+            text.contains("<a href=\"/docs/makers/MAKERS.md#makers\">MAKERS</a>"),
+            "{who}: {text}"
+        );
+        assert!(
+            text.contains(
+                "<strong><a href=\"/docs/makers/MAKERS.md#elsewhere\">elsewhere</a></strong>"
+            ),
+            "{who}: {text}"
+        );
+        let thread = render.typed_history(&card, "docs/DECISIONS.md");
+        let blocks = symphony::blocks::fragment(&thread["a"], "docs/DECISIONS.md");
+        let [Block::Thread { entries }] = blocks.as_slice() else {
+            panic!("{blocks:?}")
+        };
+        let [
+            Block::Paragraph { spans },
+            Block::Paragraph { spans: alone },
+        ] = entries[0].blocks.as_slice()
+        else {
+            panic!("{who}: {:?}", entries[0].blocks)
+        };
+        assert!(
+            matches!(spans.first(), Some(Span::Text { text }) if text == typed),
+            "{who}: {spans:?}"
+        );
+        let wiki = |span: &Span| matches!(span, Span::WikiLink { href, .. } if href == "/docs/makers/MAKERS.md#makers");
+        assert!(spans.iter().any(wiki), "{who}: {spans:?}");
+        assert!(
+            spans.iter().any(|span| matches!(
+                span,
+                Span::Strong { spans } if matches!(
+                    spans.as_slice(),
+                    [Span::Link { href, target: None, .. }] if href == "/docs/makers/MAKERS.md#elsewhere"
+                )
+            )),
+            "{who}: {spans:?}"
+        );
+        assert!(
+            matches!(alone.as_slice(), [Span::WikiLink { href, .. }] if href == "/docs/makers/MAKERS.md"),
+            "{who}: {alone:?}"
+        );
+    }
+}
+
 /// The `n`th entry's drawn words in `html`.
 fn entry_text(html: &str, n: usize) -> &str {
     html.split("<span class=\"entry-text\">")

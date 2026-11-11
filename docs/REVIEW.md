@@ -128,15 +128,20 @@ is how anyone can tell when something was decided and whether it changed.
 a single line break is a line break and a blank line a paragraph gap; bold,
 italics, inline code, links, bulleted and numbered lists, tables, fenced code,
 pictures, `.html` mockups and the files a plugin draws, `[[wiki links]]`, a
-card named in bold, and `[[name:argument]]` components all show. Three things
-are the register's own structure and never come out of a note: a `#` line, or
-a line underlined with `=` or `-`, stays as typed and is never a heading; a
+card named in bold, and `[[name:argument]]` components all show. Raw HTML does
+not: `Vec<String>` or `<b>` in a note is the words typed, on the lines typed.
+Three things are the register's own structure and never come out of a note: a
+`#` line, in a list item or a quote too (`- # Intro`, `> ## Q`), or a line
+underlined with `=` or `-`, stays as typed and is never a heading; a
 `- [ ] **slug**` line is a list item, never a card, since a card starts at
 column 0; and a review callout (`> [!comment]` and the other review kinds)
 cannot be written in one, because the document's comment reader would take it
 for a comment on the page and archiving it would cut lines out of the card.
-A note's lines keep their words but not their indentation, so a nested list
-or indented code inside one comes out flat.
+For the same reader a note's code must be closed (a fence left open would make
+the rest of the file code, later comments among it) and cannot open on its
+first line, which the file keeps on the entry's own line; such a note is
+refused when it is saved. A note's lines keep their words but not their
+indentation, so a nested list or indented code inside one comes out flat.
 
 **An agent that needs the owner to answer** writes its line as
 `[YYYY-MM-DD HH:MM] agent · question — <the question>` (`just symphony-reply PATH
