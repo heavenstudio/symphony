@@ -92,7 +92,8 @@ if [ "$mode" = run ] && [ "$board" = yes ] && [ ! -d "$root/.git" ]; then
     fi
 fi
 
-"$root/tools/cargo.sh" build --quiet --locked -p "$package" --bin "$name" >&2
+# A freshness check before a board or server command is no build of a task's: it is not recorded.
+TASKS_RECORDER=off "$root/tools/cargo.sh" build --quiet --locked -p "$package" --bin "$name" >&2
 if [ ! -x "$binary" ]; then
     printf 'symphony rs-bin: Cargo produced no native executable at %s\n' "$binary" >&2
     exit 2

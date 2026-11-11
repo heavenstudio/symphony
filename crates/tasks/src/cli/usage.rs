@@ -44,6 +44,9 @@ positional arguments:
     pull                print the whole PULL digest as ACTOR hears it
     wait                print what a callback would push ACTOR, once there is
                         any
+    run                 run a build or test command, recorded for the board's
+                        Build and Test columns (tasks run --phase build|test
+                        -- COMMAND)
 
 options:
   -h, --help            show this help message and exit

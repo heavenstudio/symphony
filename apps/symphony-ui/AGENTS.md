@@ -63,11 +63,10 @@ never the whole target, which the nightly runs.
   `Last-Event-ID`. A board or a `client` change naming another build than the
   page's own module script loads the page again, once per build
   (`state::reload_for`, remembered in `sessionStorage`).
-- **Budget.** Both `/` and `/tasks` have a 250 KB first-visit gzip budget and
+- **Budget.** Both `/` and `/tasks` have a 300 KB first-visit gzip budget and
   a 20 KB return-visit budget (`tests/browser/`, restored after the port;
   the owner's, never loosened by an agent; the first-visit cap is the owner's
-  of 2026-10-29: "lets increase the cap to 250KB for now and revisit options
-  later"). A visit counts each response the page loaded at what Chrome's
+  of 2026-11-11: "lets increase the budget to 300"). A visit counts each response the page loaded at what Chrome's
   network events say it took on the wire, gzip body and response head: the
   HTML, the shell, the module's glue and WASM, the style sheets, API replies
   (refusals too) and the live feed's head and content messages, as the page
@@ -89,7 +88,7 @@ never the whole target, which the nightly runs.
   browser profile and reports the complete published output.
   Measure loaded resources, including API data, rather than summing every
   deferred module or retained historical asset hash in the published output.
-  The 250,000 and 20,000 byte limits are the owner's; a lower first-visit
+  The 300,000 and 20,000 byte limits are the owner's; a lower first-visit
   line needs an architectural change the owner approves, and the first-visit
   analysis below prices those the owner left to revisit.
   `cargo symphony-ui size OUT NAME...` (`probes/size.sh`) builds a page kind or

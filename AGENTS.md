@@ -40,8 +40,17 @@ package (`crates/symphony/src/theme.rs`), served as `/<id>/theme.css` and inline
 its pages. Tests use a temporary machine folder.
 
 Use `just lint-rs`, `just test-rs`, `just symphony-ui-dist` and `just symphony-ui-dev`
-from this folder. `tools/cargo.sh` execs ordinary Cargo in this workspace, preserving
-its arguments, streams, status and inherited limits. It uses this folder's `.target/`
+from this folder. `tools/cargo.sh` runs ordinary Cargo in this workspace, preserving
+its arguments, streams, status and inherited limits. A build or test goes through
+`tools/record.sh`, as do the `lint-rs`, `test-rs`, `client-check`, `client-update`
+and `verify` recipes, each as one operation: the board's recorder (`tasks run`, the
+prepared `.target/bin/tasks` of this checkout or of the main checkout a worktree
+belongs to) records it for the Build and Test columns (docs/MACHINE_WORK.md), and
+with none that answers within 2 s, `TASKS_RECORDER=off`, inside a recorded run or in a
+tree without `tools/record.sh` it is exec'd as it is. On macOS the recorder becomes
+the build it records and watches it from a process of its own, so descriptors, the
+signal mask, ignored signals and a kill reach the build as they would without it.
+It uses this folder's `.target/`
 unless `CARGO_TARGET_DIR` names another. It supplies no project gate planner, test
 selection, certificate, shared slot pool or dependency seed service. The toolchain
 pin is `rust-toolchain.toml`. The containing project keeps its own source launcher,
@@ -51,7 +60,8 @@ slot wrapper and gates, which compile and test its own consumers.
 run and runs `rs-bin/NAME` in the target folder, a hard link renewed only when Cargo
 relinked, so a no-op build costs no new executable's first run. `--build NAME` prints
 that path, `--where NAME` names Cargo's own copy without building or attesting
-freshness, and `--link NAME` builds and points `.target/bin/NAME` at it. A board
+freshness, and `--link NAME` builds and points `.target/bin/NAME` at it; that build
+is never recorded. A board
 binary run from a linked worktree against the live board runs the main checkout's
 launcher instead ([the board guide](crates/tasks/AGENTS.md)). None searches a
 containing project. `just symphony
@@ -116,7 +126,10 @@ started on.
 
 **Board commands.** Run them as `just tasks … --as HANDLE`: a subagent's tool calls
 count as its heartbeat only after a command of that shape binds it, and one that runs
-the binary by its path reads lost while it works.
+the binary by its path reads lost while it works. A build or test is recorded for the
+task its session holds; an orchestrator running one for a task, or a subagent without
+a session of its own, names it: `TASKS_TASK=SLUG just verify`, with
+`TASKS_SESSION=HANDLE` when it has a handle (docs/MACHINE_WORK.md).
 
 **Evidence, not the suite.** A task's gate is the tests closest to what it changed and
 `just lint-rs`, with `just client-update` for a client change, posted on its thread as evidence
