@@ -508,3 +508,76 @@ fn every_callout_badge_reads_at_four_and_a_half_to_one_in_both_schemes() {
         }
     }
 }
+
+/// Where focus is: the active element's id and text, and the panel it is in.
+const FOCUS: &str = "(() => {const a=document.activeElement;return {id:a.id,text:a.textContent.trim().slice(0,40),\
+    sheet:a.closest('#quick-sheet')!==null,activity:a.closest('#activity-panel')!==null};})()";
+
+/// Presses Escape and waits for `closed`, with focus back on the element `opener` names.
+fn escape_returns_to(page: &mut Chrome, closed: &str, opener: &str) {
+    key(page, "Escape", "Escape", 27);
+    assert!(
+        page.wait_for(
+            &format!(
+                "({closed}) && document.activeElement === document.querySelector({})",
+                json!(opener)
+            ),
+            SHOWN
+        ),
+        "Escape must close the panel and return focus to {opener}: {}",
+        page.eval(FOCUS)
+    );
+}
+
+#[test]
+fn the_chat_and_activity_panels_take_focus_on_open_and_escape_returns_it_to_their_opener() {
+    let site = site();
+    let Some(mut page) = chrome() else { return };
+    page.open(&site.url("/"));
+    let sheet_closed = "document.querySelector('#quick-sheet')?.hidden !== false";
+    let activity_closed = "document.querySelector('#activity-panel') === null";
+
+    open_panel(&mut page);
+    assert!(
+        page.wait_for(
+            "document.activeElement.id === 'quick-text' && document.activeElement.closest('#quick-sheet') !== null",
+            SHOWN
+        ),
+        "opening the chat moves focus to its message field: {}",
+        page.eval(FOCUS)
+    );
+    escape_returns_to(&mut page, sheet_closed, "#quick-open");
+
+    // An open list in the sheet takes the first Escape itself; the next closes the sheet.
+    open_panel(&mut page);
+    super::components::task_tab(&mut page);
+    page.eval("document.querySelector('#quick-sheet button[aria-label=\"Priority\"]').focus()");
+    key(&mut page, " ", "Space", 32);
+    popup_ready(&mut page);
+    key(&mut page, "Escape", "Escape", 27);
+    assert!(page.wait_for("document.querySelector('[role=listbox]') === null", SHOWN));
+    assert_eq!(
+        page.eval("document.querySelector('#quick-sheet').hidden"),
+        json!(false),
+        "the list's Escape is the list's: {}",
+        page.eval(FOCUS)
+    );
+    escape_returns_to(&mut page, sheet_closed, "#quick-open");
+
+    for opener in ["#bell", ".tile.tone-answered"] {
+        page.eval(&format!(
+            "document.querySelector({}).focus()",
+            json!(opener)
+        ));
+        key(&mut page, "Enter", "Enter", 13);
+        assert!(
+            page.wait_for(
+                "document.activeElement.closest('#activity-panel') !== null",
+                SHOWN
+            ),
+            "{opener}: opening the activity moves focus into it: {}",
+            page.eval(FOCUS)
+        );
+        escape_returns_to(&mut page, activity_closed, opener);
+    }
+}
