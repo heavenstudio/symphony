@@ -41,10 +41,12 @@ mod machine_work;
 mod media;
 mod project;
 mod task_queries;
+mod task_stage;
 pub use media::{GalleryItem, Media, View, Viewer};
 pub use task_queries::{
     TaskKind, TaskStatus, subtasks, tasks, tasks_in_progress, tasks_in_review, tasks_in_status,
 };
+pub use task_stage::{TaskListing, TaskStage};
 pub use {agent_probes::AgentProbes, agents::*, blocks::*, machine_work::*, project::*};
 
 /// The route that answers a [`Front`].
@@ -515,21 +517,6 @@ pub struct Message {
     pub kind: String,
     pub text: String,
     pub ts: f64,
-}
-
-/// Compact task board: briefs are fetched only when the owner opens a task.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct TaskListing {
-    #[serde(default)]
-    pub machine_work: MachineWork,
-    pub tasks: Vec<Task>,
-    #[serde(default)]
-    pub statuses: Vec<String>,
-    #[serde(default)]
-    pub signoff: Vec<String>,
-    #[serde(default)]
-    pub counts: Vec<(String, usize)>,
-    pub next: Option<String>,
 }
 
 /// Task metadata and its brief. Thread pages and the landing offer are fetched separately

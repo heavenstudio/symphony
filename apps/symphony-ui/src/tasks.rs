@@ -4,7 +4,7 @@ use crate::machine_work::{Scope, SharedWork, phases_view};
 use crate::viewport::NearViewport as Near;
 use dioxus::prelude::*;
 use std::rc::Rc;
-use symphony_api::{Role, Task, TaskFields};
+use symphony_api::{Role, Task, TaskFields, TaskStage};
 
 pub fn merge(task: &mut Task, fields: &TaskFields) {
     macro_rules! field {
@@ -47,24 +47,33 @@ pub fn TaskBoard(
     });
     let query = search();
     let selected = status();
-    let statuses = if statuses.is_empty() {
+    let mut statuses = if statuses.is_empty() {
         counts.iter().map(|(s, _)| s.clone()).collect()
     } else {
         statuses
     };
+    for stage in [TaskStage::Build, TaskStage::Test] {
+        if !statuses.iter().any(|s| s == stage.as_str()) {
+            statuses.push(stage.as_str().to_string());
+        }
+    }
     let mut filtered: Vec<_> = tasks
         .iter()
         .filter(|task| {
             (task.is_task() || !query.is_empty())
-                && (selected.is_empty() || task.status == selected)
+                && (selected.is_empty() || work.task_stage(task, connected).as_str() == selected)
         })
         .collect();
     if query.is_empty() {
         filtered.sort_unstable_by(|a, b| (a.priority, &a.slug).cmp(&(b.priority, &b.slug)));
     }
+    let column = |state: &str| {
+        rsx! {
+            TaskColumn { work: work.clone(), connected, key: "{state}", status: state.to_string(), tasks: filtered.iter().filter(|t| work.task_stage(t, connected).as_str() == state && !signoff.contains(&t.slug)).map(|t| (*t).clone()).collect(), count: counts.iter().find(|(s,_)| s == state).map_or(0, |(_,n)| *n), query: search, days, onload, refreshed }
+        }
+    };
     rsx! {
         div { class: "page-head", h1 { "Tasks" } a { href: "/agents", "Who is connected" } }
-        {crate::machine_work::machines_view(&work, connected)}
         div { class: "row filters",
             label { "Search tasks and messages " crate::components::input::Input { r#type: "search", value: "{search}", actions: search_input } }
             label { "Status " crate::components::select::SelectField {
@@ -86,15 +95,27 @@ pub fn TaskBoard(
             if !signoff.is_empty() {
                 TaskColumn { work: work.clone(), connected, status: "signoff".to_string(), tasks: filtered.iter().filter(|t| signoff.contains(&t.slug)).map(|t| (*t).clone()).collect(), count: signoff.len(), query: search, days, onload, refreshed }
             }
-            for (group, states) in [("pipeline", &["concept", "design", "ready", "in_progress", "review", "done"][..]), ("offline", &["backlog", "blocked", "cancelled"][..])] {
-                div { class: group,
-                    for state in statuses.iter().filter(|s| states.contains(&s.as_str())) {
-                        if selected.is_empty() || selected == *state {
-                            TaskColumn { work: work.clone(), connected, key: "{state}", status: state.clone(), tasks: filtered.iter().filter(|t| t.status == *state && !signoff.contains(&t.slug)).map(|t| (*t).clone()).collect(), count: counts.iter().find(|(s,_)| s == state).map_or(0, |(_,n)| *n), query: search, days, onload, refreshed }
+            if selected.is_empty() {
+                p { id: "board-scroll-hint", class: "board-scroll-hint muted", "Columns continue right → · Swipe, scroll, or focus the board and use arrow keys." }
+            }
+            if selected.is_empty() || TaskStage::PIPELINE.iter().any(|stage| stage.as_str() == selected) {
+            div { class: "board-scroll", tabindex: "0", role: "region", aria_label: "Task pipeline columns", aria_describedby: if selected.is_empty() { "board-scroll-hint" } else { "" },
+                div { class: "pipeline",
+                    for stage in TaskStage::PIPELINE {
+                        if statuses.iter().any(|s| s == stage.as_str()) && (selected.is_empty() || selected == stage.as_str()) {
+                            {column(stage.as_str())}
                         }
                     }
                 }
             }
+            }
+                div { class: "offline",
+                    for state in statuses.iter().filter(|s| ["backlog", "blocked", "cancelled"].contains(&s.as_str())) {
+                        if selected.is_empty() || selected == *state {
+                            {column(state)}
+                        }
+                    }
+                }
         }
         crate::components::button::Button { aria_expanded: subtree(), actions: crate::entry_events::click(move || subtree.set(!subtree())), "Subtasks" }
         if subtree() {
@@ -214,14 +235,17 @@ fn TaskColumn(
 ) -> Element {
     let mut visible = use_signal(|| false);
     let requested_status = status.clone();
-    use_effect(move || {
+    // Complete totals make empty-column reads unnecessary. Retained rows still refresh so a
+    // reconnect can remove stale cards, and a newly populated column must request its page.
+    let needs_page = count > 0 || !tasks.is_empty();
+    use_effect(use_reactive!(|needs_page| {
         let query = query();
         let days = days();
         let _ = refreshed();
-        if visible() {
+        if visible() && needs_page {
             onload.call((requested_status.clone(), false, query, days));
         }
-    });
+    }));
     let mut rows: Vec<_> = tasks.iter().collect();
     if query().is_empty() && (status == "done" || status == "cancelled") {
         rows.sort_unstable_by(|a, b| b.updated.total_cmp(&a.updated).then(a.slug.cmp(&b.slug)));
@@ -236,6 +260,10 @@ fn TaskColumn(
     };
     rsx! { section { class: if status == "signoff" { "column signoff" } else { "column" }, "data-status": "{status}",
         h2 { if status == "signoff" { "Waiting for your sign-off" } else { "{status.replace('_', \" \")}" } " " span { class: "count", "{count}" } }
+        if status == "build" { {crate::machine_work::board_context(&work, connected)} }
+        if count == 0 && (status == "build" || status == "test") {
+            p { class: "muted work-empty", "No tasks with fresh {status} activity." }
+        }
         Near { id: "column-{status}", height: reserved, onenter: move |_| visible.set(true),
             if count > 0 && tasks.is_empty() { div { style: "min-height:{reserved}px", role: "status", "Loading tasks…" } }
             for task in rows { Near { key: "{task.slug}", id: "row-{task.slug}", height: 130, TaskRow { task: task.clone(), work: work.clone(), connected } } }

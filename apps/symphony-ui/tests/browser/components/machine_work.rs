@@ -3,6 +3,27 @@
 use crate::{SHOWN, chrome, look_parity, site, texts, wait_for_feed};
 use serde_json::{Value, json};
 
+mod columns;
+
+fn install_work(site: &crate::Site, work: &Value) {
+    for (endpoint, mut response) in look_parity::responses() {
+        match endpoint.as_str() {
+            "/api/task-board" => {
+                response["machine_work"] = work.clone();
+                let current_test = work["machines"][1]["freshness"] == "incomplete";
+                response["counts"] = json!([
+                    ["in_progress", usize::from(!current_test)],
+                    ["test", usize::from(current_test)]
+                ]);
+            }
+            "/api/task-page" => response["machine_work"] = work.clone(),
+            "/api/agent-page" => response["view"]["machine_work"] = work.clone(),
+            _ => continue,
+        }
+        site.set_json(&endpoint, &response);
+    }
+}
+
 fn machine(id: &str, kind: &str, state: &str) -> Value {
     json!({"machine_id":id,"label":id,"producer_id":"fixture","sequence":1,"age_ms":0,
         "freshness":"incomplete","complete":false,"reason":"partial native inventory","counts":null,
@@ -42,7 +63,7 @@ fn machine_work_phases_and_advisory_targets_stay_consistent_through_live_complet
         (
             "/tasks",
             ".taskcard[data-slug='visual/in-progress'] .work-phase",
-            "document.querySelector('[data-status=in_progress]')",
+            "document.querySelector('[data-status=test]')",
         ),
         (
             "/agents",
@@ -65,6 +86,17 @@ fn machine_work_phases_and_advisory_targets_stay_consistent_through_live_complet
             }
             site.set_json(&endpoint, &response);
         }
+        install_work(&site, &work);
+        if path == "/agents" {
+            chrome.call(
+                "Emulation.setDeviceMetricsOverride",
+                json!({"width":1280,"height":900,"deviceScaleFactor":1,"mobile":false}),
+            );
+            chrome.call(
+                "Emulation.setEmulatedMedia",
+                json!({"features":[{"name":"prefers-color-scheme","value":"light"}]}),
+            );
+        }
         chrome.open(&site.url(path));
         assert!(
             chrome.wait_for(&format!("({reveal}) !== null"), SHOWN),
@@ -79,8 +111,15 @@ fn machine_work_phases_and_advisory_targets_stay_consistent_through_live_complet
                 "Observed Test running · beta · partial inventory",
             ],
         );
+        if path == "/agents" {
+            chrome.eval("scrollTo(0,0)");
+            columns::screenshot(&mut chrome, "agents-desktop");
+        }
         assert!(wait_for_feed(&site));
-        if path != "/task/visual/in-progress" {
+        if path == "/tasks" {
+            assert_eq!(chrome.eval("document.querySelector('[data-status=build] .machine-work a').getAttribute('href')"), json!("/agents#machine-context"));
+        }
+        if path == "/agents" {
             let targets = texts(&mut chrome, ".machine-guidance summary");
             assert_eq!(
                 targets,
@@ -92,6 +131,7 @@ fn machine_work_phases_and_advisory_targets_stay_consistent_through_live_complet
         }
         let beta = texts(&mut chrome, ".machine-work-row[data-machine-id=beta]");
         work["machines"][0]["operations"][0]["state"] = json!("running");
+        install_work(&site, &work);
         site.push(
             version,
             &json!({"version":version,"changes":[{"region":"machine-work","data":work}]})
@@ -107,6 +147,7 @@ fn machine_work_phases_and_advisory_targets_stay_consistent_through_live_complet
             ],
         );
         work["machines"][0]["operations"] = json!([]);
+        install_work(&site, &work);
         site.push(
             version,
             &json!({"version":version,"changes":[{"region":"machine-work","data":work}]})
@@ -124,12 +165,16 @@ fn machine_work_phases_and_advisory_targets_stay_consistent_through_live_complet
             "alpha consumed another machine's displayed work or guidance"
         );
         work["machines"][1]["freshness"] = json!("stale");
+        install_work(&site, &work);
         site.push(
             version,
             &json!({"version":version,"changes":[{"region":"machine-work","data":work}]})
                 .to_string(),
         );
         version += 1;
+        if path == "/tasks" {
+            columns::reveal(&mut chrome, "in_progress");
+        }
         labels(
             &mut chrome,
             selector,

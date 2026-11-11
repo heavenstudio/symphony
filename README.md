@@ -18,8 +18,9 @@ command ownership and [the server guide](apps/symphony-server/README.md) for pro
 compares their paths and bytes with the committed client, then runs the workspace's native tests
 and headless Chrome acceptance. The toolchain includes the wasm target. The client build needs
 Git, Bash, jq, curl and a C/C++ build toolchain; native board fixtures need lsof. Install Chrome
-or name it with `SF_CHROME`. CI requires Chrome explicitly so a missing browser cannot pass as
-unexecuted acceptance. No game engine, display server or window is required.
+or name it with `SF_CHROME`. Local acceptance requires Chrome explicitly so a missing browser
+cannot pass as unexecuted acceptance. No game engine, display server or window is required.
+Verification is local; hosted GitHub CI is not required.
 
 After changing SDK source inputs, run `just client-update` and commit
 `apps/symphony-server/client/public` with the source. `just client-check` rebuilds into an
@@ -29,8 +30,8 @@ Older immutable assets may remain for pages that deferred an import across a pub
 Release builds copy verified inputs and the already locked component source into a private,
 content-addressed snapshot under `/private/tmp`. Compiler path remapping makes the result independent
 of the original checkout and Cargo home, while preserving existing flags, wrappers and resource
-settings. Linux build hosts need that parent directory (`sudo install -d -m 1777 /private/tmp`);
-CI creates it. Private snapshot patches retain the existing dependency versions and features;
+settings. Linux build hosts create that parent directory (`sudo install -d -m 1777 /private/tmp`).
+Private snapshot patches retain the existing dependency versions and features;
 the source workspace's manifests and lockfile stay intact. Old immutable assets are retained,
 and a same-name byte collision refuses publication.
 

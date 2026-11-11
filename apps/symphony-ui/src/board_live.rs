@@ -29,6 +29,8 @@ struct BoardData {
     tasks: Vec<Task>,
     work: crate::machine_work::SharedWork,
     counts: Vec<(String, usize)>,
+    lifecycle_counts: Vec<(String, usize)>,
+    connected: bool,
     statuses: Vec<String>,
     signoff: Vec<String>,
     query: String,
@@ -36,6 +38,7 @@ struct BoardData {
     ready: bool,
     error: String,
     cursors: std::collections::BTreeMap<String, String>,
+    pending_more: Vec<String>,
     requests: std::collections::BTreeMap<String, u64>,
     count_request: u64,
     generation: u64,
@@ -93,6 +96,7 @@ pub fn TasksPage() -> Element {
     let frame = use_context::<FrameRefresh>();
     let data = use_signal(|| BoardData {
         days: 1,
+        connected: true,
         ..BoardData::default()
     });
     let refreshed = use_signal(|| 0_u64);
@@ -116,7 +120,7 @@ pub fn TasksPage() -> Element {
 }
 
 async fn counts(mut data: Signal<BoardData>) {
-    let (query, days, generation, request, since) = {
+    let (query, days, generation, request, since, activity) = {
         let mut d = data.write();
         d.count_request += 1;
         (
@@ -125,11 +129,12 @@ async fn counts(mut data: Signal<BoardData>) {
             d.generation,
             d.count_request,
             ReadCursor::new(d.journal.clone()),
+            u8::from(d.connected),
         )
     };
     let encoded = request::encode(&query);
     let result = request::get::<TaskListing>(&url(&format!(
-        "/api/task-board?counts=1&q={encoded}&days={days}"
+        "/api/task-board?counts=1&q={encoded}&days={days}&activity={activity}"
     )))
     .await;
     if data.read().generation != generation || data.read().count_request != request {
@@ -139,6 +144,7 @@ async fn counts(mut data: Signal<BoardData>) {
         Ok(list) => {
             let mut d = data.write();
             d.counts = list.counts;
+            d.lifecycle_counts = list.lifecycle_counts;
             d.work = list.machine_work.into();
             d.statuses = list.statuses;
             d.signoff = list.signoff;
@@ -159,6 +165,7 @@ async fn filter(query: String, days: u8, mut data: Signal<BoardData>) {
         d.generation += 1;
         d.tasks.clear();
         d.cursors.clear();
+        d.pending_more.clear();
         d.generation
     };
     sleep(250).await;
@@ -170,6 +177,14 @@ async fn filter(query: String, days: u8, mut data: Signal<BoardData>) {
 async fn column(status: String, more: bool, query: String, days: u8, mut data: Signal<BoardData>) {
     let (generation, version) = {
         let mut d = data.write();
+        // A live refresh resets the first page's cursor. Keep a Load more click behind that
+        // read instead of cancelling it and accidentally asking for the first page again.
+        if more && !d.cursors.contains_key(&status) {
+            if !d.pending_more.contains(&status) {
+                d.pending_more.push(status);
+            }
+            return;
+        }
         let generation = d.generation;
         let version = d.requests.entry(status.clone()).or_default();
         *version += 1;
@@ -179,7 +194,7 @@ async fn column(status: String, more: bool, query: String, days: u8, mut data: S
     if data.read().generation != generation || data.read().requests.get(&status) != Some(&version) {
         return;
     }
-    let (since, cursor) = {
+    let (since, cursor, activity) = {
         let d = data.read();
         (
             ReadCursor::new(d.journal.clone()),
@@ -188,12 +203,13 @@ async fn column(status: String, more: bool, query: String, days: u8, mut data: S
             } else {
                 None
             },
+            u8::from(d.connected),
         )
     };
     let encoded = request::encode(&query);
     let cursor = crate::task_live::cursor_query(cursor.as_deref());
     let result = request::get::<TaskListing>(&url(&format!(
-        "/api/task-board?q={encoded}&status={status}&days={days}{cursor}"
+        "/api/task-board?q={encoded}&status={status}&days={days}{cursor}&activity={activity}"
     )))
     .await;
     if data.read().generation != generation || data.read().requests.get(&status) != Some(&version) {
@@ -202,13 +218,17 @@ async fn column(status: String, more: bool, query: String, days: u8, mut data: S
     match result {
         Ok(list) => {
             let mut d = data.write();
+            let has_next = list.next.is_some();
             if let Some(cursor) = list.next {
                 d.cursors.insert(status.clone(), cursor);
             } else {
                 d.cursors.remove(&status);
             }
             if !more {
-                d.tasks.retain(|t| t.status != status);
+                let work = d.work.clone();
+                let connected = d.connected;
+                d.tasks
+                    .retain(|t| work.task_stage(t, connected).as_str() != status);
             }
             for task in list.tasks {
                 upsert(
@@ -220,15 +240,18 @@ async fn column(status: String, more: bool, query: String, days: u8, mut data: S
                     },
                 );
             }
-            for (s, n) in list.counts {
-                if s == status {
-                    set_count(&mut d.counts, s, n);
-                }
-            }
+            d.counts = list.counts;
+            d.lifecycle_counts = list.lifecycle_counts;
             d.signoff = list.signoff;
             d.work = list.machine_work.into();
             replay(&since, &mut d);
             crate::live::mark_tasks_ready();
+            let queued = !more && has_next && d.pending_more.contains(&status);
+            d.pending_more.retain(|waiting| waiting != &status);
+            drop(d);
+            if queued {
+                spawn(column(status, true, query, days, data));
+            }
         }
         Err(err) => data.write().error = err,
     }
@@ -247,14 +270,6 @@ fn upsert(tasks: &mut Vec<Task>, change: ItemChange<Task>) {
         } else {
             tasks.push(task);
         }
-    }
-}
-
-fn set_count(counts: &mut Vec<(String, usize)>, status: String, count: usize) {
-    if let Some((_, old)) = counts.iter_mut().find(|(s, _)| *s == status) {
-        *old = count;
-    } else {
-        counts.push((status, count));
     }
 }
 
@@ -301,6 +316,7 @@ fn merge(value: &JsValue, d: &mut BoardData) -> Result<bool, String> {
                 let work: symphony_api::MachineWork =
                     serde_wasm_bindgen::from_value(value).map_err(|e| e.to_string())?;
                 d.work = work.into();
+                refresh = true;
             }
             "task" | "task-summary" => {
                 let mut change: ItemChange<Task> =
@@ -324,32 +340,17 @@ fn merge(value: &JsValue, d: &mut BoardData) -> Result<bool, String> {
                 if let Some(task) = d.tasks.iter_mut().find(|t| t.slug == change.key) {
                     crate::tasks::merge(task, &change.fields);
                 }
-                refresh |= searching;
+                refresh |=
+                    searching || change.fields.status.is_some() || change.fields.parent.is_some();
             }
             "message" => refresh |= searching,
             "task-signoff" if searching => refresh = true,
             "task-signoff" => {
                 d.signoff = serde_wasm_bindgen::from_value(value).map_err(|e| e.to_string())?
             }
-            "task-counts" if !searching => {
-                let counts: Vec<(String, usize)> =
-                    serde_wasm_bindgen::from_value(value).map_err(|e| e.to_string())?;
-                for (status, count) in counts {
-                    if status != "done" && status != "cancelled" {
-                        set_count(&mut d.counts, status, count);
-                    }
-                }
-            }
-            "task-recent-counts" if !searching => {
-                let counts: Vec<(String, usize)> = serde_wasm_bindgen::from_value(field(
-                    &value,
-                    if d.days == 7 { "week" } else { "day" },
-                ))
-                .map_err(|e| e.to_string())?;
-                for (status, count) in counts {
-                    set_count(&mut d.counts, status, count);
-                }
-            }
+            // Legacy feed totals describe lifecycle. Ask for the complete stage projection
+            // under this client's search/window, never infer totals from loaded pages.
+            "task-counts" | "task-recent-counts" => refresh = true,
             "tasks-status" => {
                 refresh |= field(&value, "available").as_bool() == Some(true);
                 d.error = crate::words::BoardStatus {
@@ -361,6 +362,13 @@ fn merge(value: &JsValue, d: &mut BoardData) -> Result<bool, String> {
             }
             _ => {}
         }
+    }
+    if refresh {
+        // Every change affecting a query's complete totals invalidates older pages/counts.
+        // The pending refresh retries if another such event arrives while its read is held.
+        d.generation += 1;
+        d.cursors.clear();
+        d.pending_more.clear();
     }
     Ok(refresh)
 }
@@ -394,6 +402,17 @@ async fn keep_live(
                         match select(heard.next(), pin!(sleep(quiet))).await {
                             Either::Left((Some(Heard::Open), _)) => {
                                 stale.set(false);
+                                if !data.read().connected {
+                                    {
+                                        let mut d = data.write();
+                                        d.connected = true;
+                                        d.generation += 1;
+                                        d.cursors.clear();
+                                        d.pending_more.clear();
+                                    }
+                                    counts(data).await;
+                                    refreshed += 1;
+                                }
                                 frame.connected();
                                 opened = Some(js_sys::Date::now());
                             }
@@ -428,10 +447,16 @@ async fn keep_live(
                                 if refresh && !pending.replace(true) {
                                     let pending = pending.clone();
                                     spawn(async move {
-                                        sleep(750).await;
-                                        counts(data).await;
-                                        refreshed += 1;
-                                        pending.set(false);
+                                        loop {
+                                            sleep(750).await;
+                                            let generation = data.read().generation;
+                                            counts(data).await;
+                                            if generation == data.read().generation {
+                                                refreshed += 1;
+                                                pending.set(false);
+                                                break;
+                                            }
+                                        }
                                     });
                                 }
                             }
@@ -444,6 +469,17 @@ async fn keep_live(
             Err(err) => data.write().error = err,
         }
         stale.set(true);
+        {
+            let mut d = data.write();
+            d.connected = false;
+            d.generation += 1;
+            d.cursors.clear();
+            d.pending_more.clear();
+            if !d.lifecycle_counts.is_empty() {
+                d.counts = d.lifecycle_counts.clone();
+            }
+        }
+        refreshed += 1;
         sleep(backoff.after(held)).await;
     }
 }
