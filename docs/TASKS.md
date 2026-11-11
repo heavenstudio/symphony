@@ -41,6 +41,12 @@ version in one transaction before any other write. An older build is refused
 before it writes, naming the project and `just symphony`. A Symphony one version
 behind still reads the board, and every write it would send is refused the same
 way. A store opened before a newer build migrated is refused at its next write.
+The Symphony never moves a board forward or makes one, so a branch's command line
+or preview server with a newer schema leaves the live board as it is: a board
+behind its build, or not made yet, it refuses before it reads, naming `just tasks
+list` in the project, the board command that moves or makes it. A branch tries a
+newer schema on a scratch board (`TASKS_DATABASE=NAME`), which its own `just
+tasks --database NAME` moves.
 
 The store takes about what it holds. Every server the board starts keeps each
 value beside its key, where compaction drops the versions a rewrite leaves, and
