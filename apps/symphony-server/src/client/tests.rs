@@ -107,9 +107,22 @@ fn installed_consumer_uses_its_pinned_release_even_with_a_stale_external_client(
     tree.write("install/client/public/index.html", "old unrelated release");
     let root = tree.path("project");
     let install = tree.path("install");
+    tree.write(
+        "project/build/symphony-ui/public/index.html",
+        "old local release",
+    );
     assert_eq!(
         super::select(&root, Some(&install), Some(tree.path("override"))),
         (install.join("client/public"), true)
+    );
+    assert_eq!(
+        super::select(&root, None, None),
+        (root.join("build/symphony-ui/public"), true)
+    );
+    let preview = tree.path("explicit-preview");
+    assert_eq!(
+        super::select(&root, None, Some(preview.clone())),
+        (preview, false)
     );
     // A source kit still owns its explicitly installed bundle and its errors.
     tree.write(
@@ -119,6 +132,10 @@ fn installed_consumer_uses_its_pinned_release_even_with_a_stale_external_client(
     assert_eq!(
         super::select(&root, Some(&install), None),
         (install.join("client/public"), false)
+    );
+    assert_eq!(
+        super::select(&root, None, None),
+        (root.join("build/symphony-ui/public"), false)
     );
 }
 

@@ -13,18 +13,22 @@ pub(crate) fn asset(name: &str) -> Option<&'static [u8]> {
         .map(|index| shipped::FILES[index].1)
 }
 
-/// An explicit installed bundle or preview override always owns its failures. A local build
-/// wins over the shipped bundle; only the ordinary default can select the embedded release.
+fn consuming_host(root: &Path) -> bool {
+    !symphony::reload::workspace(root)
+        .join("apps/symphony-server/Cargo.toml")
+        .is_file()
+        && root.join("apps/symphony-host/Cargo.toml").is_file()
+}
+
+/// Source kits retain their installed bundles and local previews. A consuming host defaults
+/// to its embedded release, including in the foreground; explicit preview overrides own failures.
 pub(crate) fn select(
     root: &Path,
     install: Option<&Path>,
     override_dir: Option<PathBuf>,
 ) -> (PathBuf, bool) {
     if let Some(install) = install {
-        let source = symphony::reload::workspace(root);
-        if !source.join("apps/symphony-server/Cargo.toml").is_file()
-            && root.join("apps/symphony-host/Cargo.toml").is_file()
-        {
+        if consuming_host(root) {
             // An installed consuming host ships the release at its immutable Cargo pin.
             // A leftover external bundle from before extraction cannot replace those bytes.
             return (install.join("client/public"), true);
@@ -35,6 +39,9 @@ pub(crate) fn select(
         return (directory, false);
     }
     let directory = root.join("build/symphony-ui/public");
+    if consuming_host(root) {
+        return (directory, true);
+    }
     let absent = matches!(std::fs::symlink_metadata(&directory), Err(error) if error.kind() == std::io::ErrorKind::NotFound);
     let embedded = absent && asset("index.html").is_some();
     (directory, embedded)

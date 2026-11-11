@@ -57,8 +57,10 @@ refreshes `.target/bin/NAME`. None searches a containing project. `just symphony
 under `apps/symphony-server/client/public/`. Commit that generated distribution
 with client changes. The server package embeds those bytes at build time, so an
 installed binary serves them without dx, a source checkout or a runtime extraction.
-A local preview build wins over the embedded default. Explicit install directories
-and `SF_SYMPHONY_UI_DIST` retain their own missing-file errors and never fall back.
+A source kit's local preview build wins over the embedded default. Explicit source-kit
+install directories and `SF_SYMPHONY_UI_DIST` retain their own missing-file errors.
+A consuming host uses its pinned embedded client for installed and foreground defaults;
+retired implicit bundles cannot replace it. A foreground preview override remains explicit.
 
 `just client-check` rebuilds into a separate directory and compares every freshly
 built path and byte with that committed distribution. Retained older hashes are
