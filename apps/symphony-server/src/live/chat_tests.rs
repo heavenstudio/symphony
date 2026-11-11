@@ -34,6 +34,13 @@ fn only_the_shared_server_drains_the_chat_journal() {
                 ],
             );
             let board = board::client();
+            // The board's command line makes the board; the Symphony, a reader, never does.
+            symphony_board::Store::open(symphony_board::rpc::Client::new(
+                board.addr(),
+                "sf",
+                board.database(),
+            ))
+            .unwrap();
             let mut child = Command::new(std::env::current_exe().unwrap());
             child
                 .args(["--exact", TEST, "--nocapture"])

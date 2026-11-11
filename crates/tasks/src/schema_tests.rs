@@ -12,13 +12,72 @@ fn a_board_at_this_builds_version_opens_with_nothing_to_write_for_either_access(
 }
 
 #[test]
-fn an_older_board_or_none_is_migrated_by_a_newer_build_whatever_it_opens_it_for() {
-    for access in [Access::Write, Access::Read] {
-        for found in [None, Some(0), Some(9), Some(10)] {
-            assert_eq!(
-                decide(found, 11, access, None),
+fn an_older_board_or_none_is_migrated_by_a_newer_writer() {
+    for found in [None, Some(0), Some(9), Some(10)] {
+        assert_eq!(
+            decide(found, 11, Access::Write, None),
+            Opened::Migrate,
+            "{found:?}"
+        );
+    }
+}
+
+#[test]
+fn a_reader_never_migrates_an_older_board_but_refuses_it_naming_the_board_command() {
+    for found in [0, 9, 10] {
+        assert_eq!(
+            decide(Some(found), 11, Access::Read, Some("alpha")),
+            Opened::Refused(format!(
+                "the alpha board is at schema {found}, behind this build's 11, and a reader never \
+                 moves a board forward: nothing was read or written; `just tasks list` in alpha \
+                 moves it once the project's board command is at schema 11, and a newer schema is \
+                 tried on a scratch board (`TASKS_DATABASE=NAME`)"
+            )),
+        );
+    }
+    let Opened::Refused(unnamed) = decide(Some(10), 11, Access::Read, None) else {
+        panic!("an older board is refused to a reader");
+    };
+    assert!(
+        unnamed.starts_with("this board is at schema 10, behind"),
+        "{unnamed}"
+    );
+    assert!(
+        unnamed.contains("`just tasks list` in its project"),
+        "{unnamed}"
+    );
+}
+
+#[test]
+fn a_reader_never_makes_a_board_but_refuses_one_not_made_yet_naming_the_board_command() {
+    assert_eq!(
+        decide(None, 11, Access::Read, Some("alpha")),
+        Opened::Refused(
+            "the alpha board is not made yet, and a reader never makes a board: nothing was read \
+             or written; `just tasks list` in alpha makes it"
+                .into()
+        )
+    );
+    let Opened::Refused(unnamed) = decide(None, 11, Access::Read, None) else {
+        panic!("a board not made yet is refused to a reader");
+    };
+    assert_eq!(
+        unnamed,
+        "this board is not made yet, and a reader never makes a board: nothing was read or \
+         written; `just tasks list` in its project makes it"
+    );
+}
+
+/// Whatever version a board is at, or none, a reader's open never migrates it.
+#[test]
+fn no_board_a_reader_opens_is_migrated() {
+    let own = 11;
+    for found in std::iter::once(None).chain((0..=own + 3).map(Some)) {
+        for project in [None, Some("alpha")] {
+            assert_ne!(
+                decide(found, own, Access::Read, project),
                 Opened::Migrate,
-                "{found:?}"
+                "{found:?} {project:?}"
             );
         }
     }

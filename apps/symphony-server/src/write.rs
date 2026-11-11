@@ -38,9 +38,20 @@ fn refusal(path: &str, why: &str, headers: &HeaderMap) -> String {
 }
 
 pub(crate) fn handles(request: &Request) -> bool {
-    let (_, route) = crate::api::scope_path(request.uri().path());
-    (symphony::save::ROUTES.contains(&route) || route == symphony_api::UPLOAD_PATH)
-        && request.method() == Method::POST
+    methods(request.uri().path()).is_some() && request.method() == Method::POST
+}
+
+/// The methods the save route at `path` takes, as an `Allow` header names them: POST, and the
+/// reads of the one route that is also read (`/api/ask`); none for a path no save answers.
+pub(crate) fn methods(path: &str) -> Option<&'static str> {
+    let (_, route) = crate::api::scope_path(path);
+    if route == "/api/ask" {
+        Some("GET, HEAD, POST")
+    } else if symphony::save::ROUTES.contains(&route) || route == symphony_api::UPLOAD_PATH {
+        Some("POST")
+    } else {
+        None
+    }
 }
 
 pub(crate) async fn answer(shared: &Arc<Shared>, request: Request) -> Response {

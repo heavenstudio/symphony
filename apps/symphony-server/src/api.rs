@@ -137,11 +137,40 @@ pub(crate) async fn answer(shared: &Arc<Shared>, request: Request) -> Option<Res
             | "/api/task-history"
             | "/api/task-thread"
             | "/api/task-offer"
-    ) && query(&request, "slug").is_none_or(|slug| slug.trim().is_empty())
+    ) && let Err(why) = argument(&request, "slug")
     {
-        return Some(error(StatusCode::BAD_REQUEST, "slug is required"));
+        return Some(error(StatusCode::BAD_REQUEST, why));
+    }
+    if matches!(
+        path,
+        "/api/document"
+            | "/api/folder"
+            | "/api/section"
+            | "/api/history"
+            | "/api/versions"
+            | "/api/diff"
+            | "/api/asks"
+    ) && let Err(why) = document_argument(&request)
+    {
+        return Some(error(StatusCode::BAD_REQUEST, why));
+    }
+    // A status no listing selects is refused before the board is read, slow or down.
+    if path == "/api/task-board"
+        && let Err(why) = task_board::status_argument(&request)
+    {
+        return Some(error(StatusCode::BAD_REQUEST, why));
     }
     if !scope.is_empty() && shared.api.get().and_then(|hub| hub.tree(scope)).is_none() {
+        // A link to a branch's page outlives its worktree once the branch merges: a page says so.
+        if !uri_scope.is_empty() && !crate::pages::data(path, request.headers()) {
+            return Some(crate::pages::gone(
+                &shared.root,
+                &shared.base,
+                scope,
+                path,
+                request.uri().query(),
+            ));
+        }
         return Some(error(StatusCode::NOT_FOUND, "no worktree for this branch"));
     }
     // The board's health is the hub's memory: it waits on no board read, the first one included,
@@ -762,6 +791,42 @@ fn query(request: &Request, key: &str) -> Option<String> {
     query_in(request.uri(), key)
 }
 
+/// The query parameter `key`, which a route needs: refused when it is missing or blank, or when it
+/// does not decode (its percent-encoding is not UTF-8), saying which.
+fn argument(request: &Request, key: &str) -> Result<String, String> {
+    match query(request, key) {
+        Some(value) if !value.trim().is_empty() => Ok(value),
+        Some(_) => Err(format!("{key} is required")),
+        None if raw_query(request.uri(), key).is_some() => Err(format!(
+            "{key} is not valid: its percent-encoding is not UTF-8"
+        )),
+        None => Err(format!("{key} is required")),
+    }
+}
+
+/// A document read's `path`, which may be empty (the folder of an entrypoint at the project's
+/// root) but must be given, decode, and hold no control character, which no document's name does.
+fn document_argument(request: &Request) -> Result<(), String> {
+    match query(request, "path") {
+        Some(path) if path.chars().any(char::is_control) => {
+            Err("path is not valid: it holds a control character".into())
+        }
+        Some(_) => Ok(()),
+        None if raw_query(request.uri(), "path").is_some() => {
+            Err("path is not valid: its percent-encoding is not UTF-8".into())
+        }
+        None => Err("path is required".into()),
+    }
+}
+
+/// The query parameter `key` as sent, undecoded.
+fn raw_query<'a>(uri: &'a axum::http::Uri, key: &str) -> Option<&'a str> {
+    uri.query()?.split('&').find_map(|pair| {
+        let (name, value) = pair.split_once('=').unwrap_or((pair, ""));
+        (name == key).then_some(value)
+    })
+}
+
 /// A query parameter, decoded (`+` is a space).
 pub(crate) fn query_in(uri: &axum::http::Uri, key: &str) -> Option<String> {
     uri.query()?.split('&').find_map(|pair| {
@@ -1059,7 +1124,8 @@ pub(crate) fn project_view(root: &Path) -> symphony_api::ProjectView {
 /// a document or folder page of one of its entrypoints.
 pub(crate) fn client_page(project: &symphony_api::ProjectView, path: &str) -> bool {
     let page = path.trim_end_matches('/');
-    matches!(page, "" | "/tasks" | "/agents" | "/queue")
+    // `/task` with no slug is the board, as the shell's routes read it.
+    matches!(page, "" | "/tasks" | "/task" | "/agents" | "/queue")
         || project
             .nav
             .iter()
@@ -1086,7 +1152,8 @@ fn legacy_page(path: &str) -> Option<String> {
         .map(|(_, document)| format!("/{}", document.trim_start_matches('/')))
 }
 
-fn encode_location(path: &str) -> String {
+/// `path` as a URL path: every byte but letters, digits and `/-._~@` percent-encoded.
+pub(crate) fn encode_location(path: &str) -> String {
     path.bytes()
         .map(|byte| {
             if byte.is_ascii_alphanumeric() || b"/-._~@".contains(&byte) {

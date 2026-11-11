@@ -340,10 +340,15 @@ fn send(shared: &Mutex<Shared>, event: &str) {
     });
 }
 
+/// The keep-alive ping, as the stand-in and the server (apps/symphony-server/src/api.rs) write it.
+pub fn ping() -> String {
+    format!("event: {}\ndata:\n\n", symphony_api::PING_EVENT)
+}
+
 /// Ping every open stream each `ping_ms` the board now names, until the site stops or falls
 /// silent.
 fn ping_every_ping_ms(shared: &Mutex<Shared>, stop: &AtomicBool) {
-    let ping = format!("event: {}\ndata:\n\n", symphony_api::PING_EVENT);
+    let ping = ping();
     let mut last = Instant::now();
     while !stop.load(Ordering::SeqCst) {
         std::thread::sleep(Duration::from_millis(50));

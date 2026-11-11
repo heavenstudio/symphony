@@ -61,11 +61,13 @@
 //!
 //! The rule for writers of different versions on one board ([`decide`]): a build opens a board for
 //! writing only at its own version. A board at an older version, or none, is migrated forward once
-//! by the first newer build to open it: the analyzer, then the version's steps and its record in one
-//! transaction that first checks the version it read is still the board's, before any other write.
-//! An older build refuses a newer board before any mutation, naming the project and `just
-//! symphony`; a reader one version behind reads it. Every write transaction starts with the
-//! [`guard`], so a store opened before a newer build migrated stops at its next write.
+//! by the first newer build to open it for writing: the analyzer, then the version's steps and its
+//! record in one transaction that first checks the version it read is still the board's, before any
+//! other write. An older build refuses a newer board before any mutation, naming the project and
+//! `just symphony`; a reader one version behind reads it. A reader never moves a board forward or
+//! makes one: a board behind it, or none, it refuses before it reads, naming `just tasks`. Every
+//! write transaction starts with the [`guard`], so a store opened before a newer build migrated
+//! stops at its next write.
 
 /// Bumped when `DEFINE` gains a table, field, index or event: a board at an older version runs
 /// `DEFINE` once, and its `IF NOT EXISTS` adds what is new but leaves every definition already there
@@ -122,10 +124,12 @@ impl Schema {
 /// What a store opens a board for.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Access {
-    /// Reads and writes, at the store's own version only.
+    /// Reads and writes, at the store's own version only: an older board, or one not made yet, is
+    /// migrated forward to it.
     Write,
-    /// Reads, of a board at the store's own version or one ahead. Its writes still meet the
-    /// [`guard`], so one version behind it writes nothing.
+    /// Reads, of a board at the store's own version or one ahead, and never moves or makes one: a
+    /// board behind it, or not made yet, is refused. Its writes still meet the [`guard`], so one
+    /// version behind it writes nothing.
     Read,
 }
 
@@ -136,39 +140,49 @@ pub(crate) enum Opened {
     Current,
     /// The board is one version ahead and the store only reads it.
     Ahead,
-    /// The board is older, or none: this build migrates it forward.
+    /// The board is older, or none, and the store writes: this build migrates it forward.
     Migrate,
     /// Refused, in these words, before anything is read or written.
     Refused(String),
 }
 
 /// The schema rule for a build of version `own` opening, for `access`, a board at `found` of the
-/// project `project` (none: a board no project names, such as a scratch one).
+/// project `project` (none: a board no project names, such as a scratch one). Only a writer moves
+/// a board forward or makes one: a reader is the Symphony, whose build may be a branch's, and it
+/// would move the live board past the build its project's board command runs, which then refuses it.
 pub(crate) fn decide(
     found: Option<i64>,
     own: i64,
     access: Access,
     project: Option<&str>,
 ) -> Opened {
-    match found {
-        None => Opened::Migrate,
-        Some(found) if found == own => Opened::Current,
-        Some(found) if found < own => Opened::Migrate,
-        Some(found) if found == own + 1 && access == Access::Read => Opened::Ahead,
-        Some(found) => Opened::Refused(match access {
-            Access::Write => {
-                let refusal = Refusal::of(project, own);
-                format!("{}{found}{}", refusal.before, refusal.after)
-            }
-            Access::Read => {
-                let named = Named::of(project);
-                format!(
-                    "{} is at schema {found}, more than one ahead of this build's {own}: nothing \
-                     was read; `just symphony` in {} brings its Symphony to the board's schema",
-                    named.board, named.project
-                )
-            }
-        }),
+    let named = Named::of(project);
+    match (access, found) {
+        (_, Some(found)) if found == own => Opened::Current,
+        (Access::Write, None) => Opened::Migrate,
+        (Access::Write, Some(found)) if found < own => Opened::Migrate,
+        (Access::Write, Some(found)) => {
+            let refusal = Refusal::of(project, own);
+            Opened::Refused(format!("{}{found}{}", refusal.before, refusal.after))
+        }
+        (Access::Read, Some(found)) if found == own + 1 => Opened::Ahead,
+        (Access::Read, Some(found)) if found > own => Opened::Refused(format!(
+            "{} is at schema {found}, more than one ahead of this build's {own}: nothing was \
+             read; `just symphony` in {} brings its Symphony to the board's schema",
+            named.board, named.project
+        )),
+        (Access::Read, Some(found)) => Opened::Refused(format!(
+            "{} is at schema {found}, behind this build's {own}, and a reader never moves a board \
+             forward: nothing was read or written; `just tasks list` in {} moves it once the \
+             project's board command is at schema {own}, and a newer schema is tried on a \
+             scratch board (`TASKS_DATABASE=NAME`)",
+            named.board, named.project
+        )),
+        (Access::Read, None) => Opened::Refused(format!(
+            "{} is not made yet, and a reader never makes a board: nothing was read or written; \
+             `just tasks list` in {} makes it",
+            named.board, named.project
+        )),
     }
 }
 

@@ -116,6 +116,153 @@ async fn a_project_without_its_slash_and_todays_pages_redirect_into_a_project() 
         )
         .await;
     assert_eq!(location(&foreign), "/alpha/tasks");
+    // A branch's pages are the Symphony's routes too, its board among them.
+    for (path, target) in [
+        ("/@work~x/tasks", "/alpha/@work~x/tasks"),
+        ("/@work~x/", "/alpha/@work~x/"),
+        ("/@work~x/docs/README.md", "/alpha/@work~x/docs/README.md"),
+    ] {
+        assert_eq!(location(&machine.get(path, &[PAGE]).await), target);
+    }
+}
+
+/// The page a path under no project answers when no project answers it.
+async fn unknown(machine: &Machine, path: &str, headers: &[(&str, &str)]) -> String {
+    let response = machine.get(path, headers).await;
+    assert_eq!(
+        response.status(),
+        StatusCode::NOT_FOUND,
+        "{path} {headers:?}"
+    );
+    assert!(
+        response.headers().get(header::LOCATION).is_none(),
+        "{path} {headers:?}: {:?}",
+        response.headers()
+    );
+    assert_eq!(
+        response.headers()[header::CONTENT_TYPE],
+        "text/html; charset=utf-8"
+    );
+    text(response).await
+}
+
+#[tokio::test]
+async fn an_unknown_project_id_is_the_list_saying_so_never_another_projects_page() {
+    let machine = Machine::new();
+    let from_beta = ("referer", "http://127.0.0.1:1/beta/docs/");
+    for path in [
+        "/nope/",
+        "/nope",
+        "/alpha-typo/tasks",
+        "/Alpha/",
+        "/@work~x",
+    ] {
+        for headers in [vec![PAGE], vec![PAGE, from_beta], vec![]] {
+            let page = unknown(&machine, path, &headers).await;
+            let first = path.trim_start_matches('/').split('/').next().unwrap();
+            assert!(
+                page.contains(&format!("No project is called <q>{first}</q> here")),
+                "{path}: {page}"
+            );
+            assert!(page.contains("<h1>Projects</h1>"), "{path}: {page}");
+            for id in ["alpha", "beta"] {
+                assert!(page.contains(&format!("href=\"/{id}/\"")), "{path}: {page}");
+            }
+        }
+    }
+    // An id the wrong case names one project's: the page says which.
+    let near = unknown(&machine, "/Alpha/docs/README.md?x=1", &[PAGE]).await;
+    assert!(
+        near.contains("Did you mean <a href=\"/alpha/docs/README.md\">alpha</a>?"),
+        "{near}"
+    );
+    let far = unknown(&machine, "/nope/", &[PAGE]).await;
+    assert!(!far.contains("Did you mean"), "{far}");
+    let escaped = unknown(&machine, "/%3Cb%3E/", &[PAGE]).await;
+    assert!(
+        escaped.contains("No project is called <q>&lt;b&gt;</q> here"),
+        "{escaped}"
+    );
+}
+
+/// A document's picture or link to a file of its checkout outside the entrypoints is written
+/// root-relative (`/look/icon.svg`, `/src/main.rs`): the project of the page that names it, which
+/// holds that folder, answers it, a file missing there with its own miss.
+#[tokio::test]
+async fn a_documents_picture_or_link_to_a_file_of_its_checkout_reaches_its_project() {
+    let machine = Machine::new();
+    machine.tree.write("alpha/look/icon.svg", "<svg/>");
+    machine.tree.write("alpha/src/main.rs", "fn main() {}\n");
+    let from_alpha = ("referer", "http://127.0.0.1:1/alpha/docs/README.md");
+    // The picture, fetched by the page, is answered in place.
+    let picture = machine.get("/look/icon.svg?v=4b77", &[from_alpha]).await;
+    assert_eq!(picture.status(), StatusCode::OK);
+    assert_eq!(picture.headers()[header::CONTENT_TYPE], "image/svg+xml");
+    assert_eq!(text(picture).await, "<svg/>");
+    // A link, followed, opens under the project.
+    for (path, target) in [
+        ("/src/main.rs", "/alpha/src/main.rs"),
+        ("/symphony.toml", "/alpha/symphony.toml"),
+        ("/look/gone.svg", "/alpha/look/gone.svg"),
+    ] {
+        let link = machine.get(path, &[PAGE, from_alpha]).await;
+        assert_eq!(link.status(), StatusCode::TEMPORARY_REDIRECT, "{path}");
+        assert_eq!(location(&link), target);
+    }
+    // A picture missing from a folder the project holds is the project's own miss.
+    let missing = machine.get("/look/gone.svg", &[from_alpha]).await;
+    assert_eq!(missing.status(), StatusCode::NOT_FOUND);
+    let missing = text(missing).await;
+    assert!(missing.contains("Nothing is here"), "{missing}");
+    assert!(!missing.contains("No project is called"), "{missing}");
+    // Beta holds no such folder, and alpha's files are not beta's page's to reach; nor is a name
+    // the checkout holds that the router serves no file for.
+    let from_beta = ("referer", "http://127.0.0.1:1/beta/docs/README.md");
+    let page = unknown(&machine, "/look/icon.svg", &[from_beta]).await;
+    assert!(page.contains("No project is called <q>look</q>"), "{page}");
+    for path in ["/src/", "/src", "/../alpha/look/icon.svg"] {
+        let page = unknown(&machine, path, &[PAGE, from_alpha]).await;
+        assert!(page.contains("No project is called"), "{path}: {page}");
+    }
+}
+
+/// An id spelled with escapes names its project (`/%61lpha/` is `/alpha/`), and the page of a
+/// mistyped one never offers the id it already spells.
+#[tokio::test]
+async fn an_escaped_id_is_its_projects_plain_address() {
+    let machine = Machine::new();
+    for (path, target) in [
+        ("/%61lpha/tasks?x=1", "/alpha/tasks?x=1"),
+        ("/%61lpha", "/alpha/"),
+        ("/b%65ta/docs/A%20b.md", "/beta/docs/A%20b.md"),
+    ] {
+        let response = machine.get(path, &[PAGE]).await;
+        assert_eq!(response.status(), StatusCode::TEMPORARY_REDIRECT, "{path}");
+        assert_eq!(location(&response), target, "{path}");
+    }
+    let near = unknown(&machine, "/%41lpha/", &[PAGE]).await;
+    assert!(near.contains("No project is called <q>Alpha</q>"), "{near}");
+    assert!(
+        near.contains("Did you mean <a href=\"/alpha/\">alpha</a>?"),
+        "{near}"
+    );
+}
+
+#[tokio::test]
+async fn a_project_served_at_the_root_answers_only_the_names_its_folder_holds() {
+    let machine = Machine::new();
+    machine.tree.write(
+        "alpha/symphony.toml",
+        "[project]\nname = \"alpha works\"\nid = \"alpha\"\n[[entrypoints]]\nurl = \"/\"\nfolder \
+         = \"spec\"\n",
+    );
+    machine.tree.write("alpha/spec/guide/A.md", "# A\n");
+    let held = machine.get("/guide/A.md", &[PAGE]).await;
+    assert_eq!(location(&held), "/alpha/guide/A.md");
+    let tasks = machine.get("/tasks", &[PAGE]).await;
+    assert_eq!(location(&tasks), "/alpha/tasks");
+    let page = unknown(&machine, "/docs/README.md", &[PAGE]).await;
+    assert!(page.contains("No project is called <q>docs</q>"), "{page}");
 }
 
 #[tokio::test]
@@ -212,6 +359,39 @@ async fn root_is_always_the_picker_with_one_or_multiple_projects_and_old_cookies
             }
         }
     }
+}
+
+#[tokio::test]
+async fn the_list_wears_the_apps_frame_tokens_and_icon() {
+    let machine = Machine::new();
+    let list = machine.get("/", &[PAGE]).await;
+    assert_eq!(
+        list.headers()[header::CONTENT_TYPE],
+        "text/html; charset=utf-8"
+    );
+    let list = text(list).await;
+    assert!(list.contains("<title>Symphony</title>"), "{list}");
+    assert!(
+        list.contains("<header class=\"app-header\" id=\"top\">"),
+        "{list}"
+    );
+    assert!(list.contains("<span>projects</span>"), "{list}");
+    assert!(
+        list.contains("--background:"),
+        "the client's tokens: {list}"
+    );
+    assert!(
+        list.contains("<link rel=\"icon\" href=\"data:image/svg+xml,"),
+        "{list}"
+    );
+    assert!(
+        !list.contains("system-ui,sans-serif;margin:0;background:#fff"),
+        "{list}"
+    );
+    assert!(
+        list.contains("<ul class=\"projects\"><li><a href=\"/alpha/\">alpha works</a>"),
+        "{list}"
+    );
 }
 
 #[tokio::test]
@@ -424,16 +604,22 @@ async fn a_refused_project_is_refused_through_todays_paths_as_under_its_prefix()
         }
         registry.write(&path).unwrap();
         let from_beta = ("referer", "http://127.0.0.1:1/beta/docs/");
-        for (route, headers) in [
-            ("/beta/tasks", vec![]),
-            ("/tasks", vec![from_beta]),
-            ("/tasks", vec![from_beta, PAGE]),
-            ("/api/board", vec![from_beta]),
+        for (route, headers, kind) in [
+            ("/beta/tasks", vec![], "text/html; charset=utf-8"),
+            ("/tasks", vec![from_beta], "text/html; charset=utf-8"),
+            ("/tasks", vec![from_beta, PAGE], "text/html; charset=utf-8"),
+            ("/api/board", vec![from_beta], "application/json"),
+            ("/beta/@work~x/api/board", vec![], "application/json"),
         ] {
             let response = machine.get(route, &headers).await;
             assert_eq!(
                 response.status(),
                 StatusCode::SERVICE_UNAVAILABLE,
+                "{lack}: {route} {headers:?}"
+            );
+            assert_eq!(
+                response.headers()[header::CONTENT_TYPE],
+                kind,
                 "{lack}: {route} {headers:?}"
             );
             let said = text(response).await;
@@ -442,6 +628,25 @@ async fn a_refused_project_is_refused_through_todays_paths_as_under_its_prefix()
                 !said.contains(folders.as_str()),
                 "{lack}: the page names no folder: {said}"
             );
+            if kind == "application/json" {
+                let error: serde_json::Value = serde_json::from_str(&said).unwrap();
+                assert!(
+                    error["error"]
+                        .as_str()
+                        .unwrap()
+                        .starts_with("The Symphony does not serve beta now: this Symphony"),
+                    "{lack}: {said}"
+                );
+            } else {
+                assert!(
+                    said.contains(
+                        "<div class=\"shell-notice\" role=\"alert\"><p><strong>The \
+                                   Symphony does not serve beta now</strong>: this Symphony"
+                    ),
+                    "{lack}: {said}"
+                );
+                assert!(said.contains("href=\"/alpha/\""), "the list: {said}");
+            }
         }
         // The starter's project, which this build serves, still answers today's paths.
         let starter = machine.get("/tasks", &[PAGE]).await;
