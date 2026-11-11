@@ -23,7 +23,7 @@ const PANTRY: &str = "[project]\nname = \"Pantry\"\nid = \"pantry\"\n\
 const REGISTER: &str = "# Decisions\n\n- [ ] **first** — The first question.\n";
 
 /// The one server of a scratch machine folder, its client installed, both projects registered.
-pub(super) struct OneServer {
+struct OneServer {
     child: Child,
     scratch: PathBuf,
     base: String,
@@ -31,10 +31,6 @@ pub(super) struct OneServer {
 
 impl OneServer {
     fn start(board: &str) -> Self {
-        Self::with_orphans(board, 0)
-    }
-
-    pub(super) fn with_orphans(board: &str, count: usize) -> Self {
         // Each server its own folder: the cases of this binary run on threads side by side.
         static STARTED: AtomicUsize = AtomicUsize::new(0);
         let binary = binaries::shelf_server();
@@ -57,18 +53,6 @@ impl OneServer {
         let bin = scratch.join("bin");
         std::fs::create_dir_all(&bin).unwrap();
         std::os::unix::fs::symlink("/usr/bin/false", bin.join("tailscale")).unwrap();
-        // A deterministic process table goes through the real census. No host process is
-        // manufactured or stopped; the server only counts these fixture rows.
-        let table: String = (0..count)
-            .map(|i| format!("{} 1 /fixture/docs_server --root /gone\n", 100_000 + i))
-            .collect();
-        // Prime the shared executable before the census's readiness bound; each case's
-        // rows remain interpreter input instead of a freshly assessed executable.
-        super::fixture_script::write(
-            &bin.join("ps"),
-            &format!("#!/bin/sh\nprintf '%s' '{table}'\n"),
-            false,
-        );
         let path = format!("{}:/usr/bin:/bin", bin.display());
         for (id, file) in [("alpha", ALPHA), ("pantry", PANTRY)] {
             let root = scratch.join(id);
@@ -139,7 +123,7 @@ impl OneServer {
         server
     }
 
-    pub(super) fn url(&self, path: &str) -> String {
+    fn url(&self, path: &str) -> String {
         format!("{}{path}", self.base)
     }
 }

@@ -1,7 +1,7 @@
 //! Axum serves the Symphony client, JSON API and project media directly. Every request is judged by
 //! client address first; read and save handlers also check Host and Origin.
 
-use crate::{cli::Serve, gate::Gate, orphans, sys};
+use crate::{cli::Serve, gate::Gate, sys};
 use axum::Router;
 use axum::body::{Body, HttpBody};
 use axum::extract::{ConnectInfo, Request, State};
@@ -13,7 +13,7 @@ use futures_util::StreamExt;
 use std::future::Future;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant, SystemTime};
 use symphony_board::{launch::reap::REAP_SECONDS, sys::Command};
@@ -26,14 +26,17 @@ mod port_file;
 pub(crate) use port_file::port_file;
 use port_file::{clear_port, record_port};
 
-/// How often the process table is read for leftovers.
-const ORPHAN_SECONDS: Duration = Duration::from_secs(60);
 /// Allow a cold launcher build, but end a stuck command before the next five-minute sweep.
 const SWEEP_TIMEOUT: Duration = Duration::from_secs(240);
 /// How far past its interval a round may start before the log says the worker was stalled.
 const LATE_SWEEP: Duration = Duration::from_secs(30);
 /// Existing connection-shutdown grace, also used to bound a rejected socket's read-side drain.
 const SHUTDOWN_GRACE: Duration = Duration::from_secs(5);
+/// How long a replaced generation lets the requests it accepted finish before it ends anyway, as
+/// long as a replacement is given to start: a save's body, a download. A peer that stops reading
+/// a response (a browser's suspended page, a connection left on a sleeping network) holds it no
+/// longer, and the generation, the replacement's parent, ends.
+const REPLACED_DRAIN: Duration = Duration::from_secs(120);
 /// Names the test process that started this server, which then ends with it, however it ends: a test
 /// killed by a signal runs no cleanup, and a started server is in a session of its own, out of the
 /// runner's process group (`tests/app.rs` sets it on everything it runs).
@@ -61,10 +64,6 @@ pub struct Shared {
     pub(crate) base: String,
     common: Option<PathBuf>,
     pub(crate) gate: Gate,
-    orphans: AtomicUsize,
-    /// Set as the first census ends, whether it counted or the process table could not be read.
-    counted: AtomicBool,
-    census_pending: AtomicBool,
     tailnet: Mutex<Option<String>>,
     /// Set once, when the server stops: whoever waits on it sees it, however late it looks.
     stopped: watch::Sender<bool>,
@@ -140,9 +139,6 @@ impl Shared {
                 .ok()
                 .map(|checkout| checkout.common),
             gate,
-            orphans: AtomicUsize::new(0),
-            counted: AtomicBool::new(false),
-            census_pending: AtomicBool::new(false),
             tailnet: Mutex::new(None),
             stopped: watch::Sender::new(false),
             lifecycle: Mutex::new(()),
@@ -161,11 +157,6 @@ impl Shared {
 
     pub(crate) fn allows_host(&self, host: &str) -> bool {
         self.gate.allows_host(host)
-    }
-
-    pub(crate) fn orphan_banner(&self) -> Option<String> {
-        let count = self.orphans.load(Ordering::SeqCst);
-        (count > 0).then(|| orphans::banner(count))
     }
 
     /// A canonical file path must stay out of repository metadata, including a common directory
@@ -214,9 +205,6 @@ impl Shared {
     /// The server as `/api/front` says it, the projects it serves left to the one server's
     /// dispatch ([`crate::projects`]).
     pub(crate) fn status(&self) -> symphony_api::Front {
-        // Read before the count: the census stores its count first, so a status that says counted
-        // carries that count.
-        let uncounted = !self.counted.load(Ordering::SeqCst);
         let build = crate::host::Build::this(&self.root);
         symphony_api::Front {
             plugins: build.plugins,
@@ -233,9 +221,7 @@ impl Shared {
                 .lock()
                 .unwrap_or_else(|e| e.into_inner())
                 .clone(),
-            orphans: self.orphans.load(Ordering::SeqCst),
-            uncounted,
-            census_pending: self.census_pending.load(Ordering::SeqCst),
+            orphans: 0,
         }
     }
 }
@@ -417,52 +403,6 @@ pub(crate) fn worker(
         .unwrap_or_else(|problem| panic!("cannot start the {name} thread: {problem}"))
 }
 
-/// The census of leftovers, a round every [`ORPHAN_SECONDS`] until the server stops, each one's count
-/// from `scan` ([`orphans::scan`] outside tests; `None` when the process table cannot be read).
-/// A pending scan never holds a starter or shutdown. The server's stop is the one way the task
-/// ends: it drops a pending scan, and with it the scan's owned child.
-fn census_worker<F: Future<Output = Option<usize>> + Send>(
-    shared: Arc<Shared>,
-    scan: impl Fn() -> F + Send + 'static,
-) -> tokio::task::JoinHandle<()> {
-    // Publish the start event before returning the task, even if it has not been scheduled yet.
-    shared.census_pending.store(true, Ordering::SeqCst);
-    tokio::spawn(async move {
-        let mut said = 0;
-        while !shared.stopping() {
-            shared.census_pending.store(true, Ordering::SeqCst);
-            // Timed until the scan answers or the stop drops it, so a profile shows how long a
-            // round that never answers was pending.
-            let scanning = scan();
-            let round = crate::live::measured_async("orphan census", async {
-                tokio::select! {
-                    biased;
-                    () = shared.until_stopped() => None,
-                    count = scanning => Some(count),
-                }
-            })
-            .await;
-            let Some(count) = round else { break };
-            if let Some(count) = count {
-                shared.orphans.store(count, Ordering::SeqCst);
-                if count > said {
-                    eprintln!(
-                        "· {count} Symphony processes from test runs run with no parent (none is stopped)"
-                    );
-                }
-                said = count;
-            }
-            shared.census_pending.store(false, Ordering::SeqCst);
-            shared.counted.store(true, Ordering::SeqCst);
-            tokio::select! {
-                () = shared.until_stopped() => break,
-                () = tokio::time::sleep(ORPHAN_SECONDS) => {},
-            }
-        }
-        shared.census_pending.store(false, Ordering::SeqCst);
-    })
-}
-
 /// A thread `name` that stops the server once `ended` says so, polled ten times a second, saying
 /// `why`.
 fn end_when(
@@ -490,8 +430,6 @@ fn end_when(
 struct Background {
     shared: Arc<Shared>,
     workers: Vec<std::thread::JoinHandle<()>>,
-    /// Ends on the stop, as the threads do; a started server waits for it as it returns.
-    census: Option<tokio::task::JoinHandle<()>>,
 }
 
 impl Background {
@@ -738,6 +676,9 @@ struct Started {
     record: bool,
     /// Where the stop names its waits ([`stages_on_stderr`] outside tests).
     stages: Stages,
+    /// How long its open requests are waited for once it was replaced ([`REPLACED_DRAIN`]
+    /// outside tests).
+    drain: Duration,
 }
 
 /// Listen, start the owned workers and print the URL; a failed start is its exit status.
@@ -797,7 +738,6 @@ async fn start(mut serve: Serve, open: bool) -> Result<Started, i32> {
     let mut background = Background {
         shared: shared.clone(),
         workers: Vec::new(),
-        census: Some(census_worker(shared.clone(), orphans::scan)),
     };
     {
         let shared = shared.clone();
@@ -921,6 +861,7 @@ async fn start(mut serve: Serve, open: bool) -> Result<Started, i32> {
         serving,
         record,
         stages,
+        drain: REPLACED_DRAIN,
     })
 }
 
@@ -960,6 +901,7 @@ impl Started {
             serving,
             record,
             stages,
+            drain,
         } = self;
         let signals = stop_when(&shared, signal);
         shared.until_stopped().await;
@@ -973,19 +915,19 @@ impl Started {
             }
             None => Vec::new(),
         };
-        // The stop ends the census, dropping a pending scan's child; this waits for that end.
-        if let Some(census) = background.census.take() {
-            stages("the orphan census");
-            if let Err(problem) = census.await {
-                tell(format_args!(
-                    "· review orphan census failed while stopping: {problem}"
-                ));
-            }
-        }
         stages("the open requests");
+        // A replaced generation finishes what it accepted, within `drain` in all; what is still
+        // open then is dropped as this process ends, and its peer asks the replacement again.
+        let drained = tokio::time::Instant::now() + drain;
         for task in serving {
             if shared.replaced.load(Ordering::SeqCst) {
-                let _ = task.await;
+                if tokio::time::timeout_at(drained, task).await.is_err() {
+                    stages(&format!(
+                        "the open requests outlasted {} s: dropping what is still open",
+                        drain.as_secs_f64()
+                    ));
+                    break;
+                }
             } else {
                 let _ = tokio::time::timeout(SHUTDOWN_GRACE, task).await;
             }

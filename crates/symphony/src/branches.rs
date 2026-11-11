@@ -93,8 +93,8 @@ struct Shape {
 
 type Shapes = HashMap<String, HashSet<Shape>>;
 
-/// Read through [`symphony_board::sys::output`]: a child another thread spawns meanwhile (the server's
-/// census) never holds the answer open.
+/// Read through [`symphony_board::sys::output`]: a child another thread spawns meanwhile never holds
+/// the answer open.
 fn git(at: &Path, args: &[&str]) -> Option<String> {
     let done = symphony_board::sys::output(
         command("git")
@@ -173,7 +173,7 @@ fn registers(at: &Path, rev: &str, project: &Project) -> Vec<String> {
 
 /// The text at each `<rev>:<path>`, "" where there is none: one `git cat-file --batch` for all of them.
 /// Its input and output go through [`symphony_board::sys::spawn_piped`]: it runs before readiness, and a
-/// child another thread spawns meanwhile (the census) must hold neither end open.
+/// child another thread spawns meanwhile must hold neither end open.
 fn blobs(at: &Path, specs: &[String]) -> Vec<String> {
     let none = || vec![String::new(); specs.len()];
     if specs.is_empty() {

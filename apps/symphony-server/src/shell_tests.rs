@@ -32,7 +32,7 @@ fn view(page: &str) -> symphony_api::ProjectView {
 #[test]
 fn with_no_package_the_symphony_defaults_stand_and_only_the_project_rides_in() {
     let tree = project("");
-    let page = page(SHELL, &tree.root, "", "");
+    let page = page(SHELL, &tree.root, "");
     assert!(page.contains("<title>Lantern</title>"), "{page}");
     assert!(page.contains("<link rel=\"icon\" href=\"data:,\">"));
     assert!(
@@ -61,7 +61,7 @@ fn a_package_names_the_tab_and_sets_icon_tokens_stylesheet_and_layouts_under_the
     );
     tree.write("look/icon.svg", "<svg/>");
     tree.write("look/look.css", "main{}");
-    let page = page(SHELL, &tree.root, "/lantern", "<p>banner</p>");
+    let page = page(SHELL, &tree.root, "/lantern");
     assert!(
         page.contains("<title>Lantern &lt;Works&gt;</title>"),
         "{page}"
@@ -76,24 +76,15 @@ fn a_package_names_the_tab_and_sets_icon_tokens_stylesheet_and_layouts_under_the
     assert!(tokens_at < sheet_at && sheet_at < page.find("</head>").unwrap());
     assert!(page.contains("<html data-layout-header=\"compact\" data-layout-home=\"focus\" lang"));
     assert_eq!(view(&page).base, "/lantern");
-    assert!(
-        page.contains("<div id=\"main\"><section id=\"shell-notices\" aria-label=\"Server notices\"><p>banner</p></section>"),
-        "{page}"
-    );
-    assert!(
-        matches!((page.find("shell-notices-style"), page.find("</head>")),
-            (Some(style), Some(head)) if style < head),
-        "{page}"
-    );
 }
 
 #[test]
 fn a_changed_file_gets_a_new_version_and_a_missing_one_none() {
     let tree = project("[theme]\nstylesheet = \"look/look.css\"\n");
     tree.write("look/look.css", "main{}");
-    let first = page(SHELL, &tree.root, "", "");
+    let first = page(SHELL, &tree.root, "");
     tree.write("look/look.css", "main{color:red}");
-    let second = page(SHELL, &tree.root, "", "");
+    let second = page(SHELL, &tree.root, "");
     let href = |page: &str| {
         let at = page.find("href=\"/look/look.css").unwrap() + "href=\"".len();
         page[at..at + page[at..].find('"').unwrap()].to_string()
@@ -115,7 +106,7 @@ fn each_part_of_a_package_is_absent_on_its_own() {
         ("[theme.layouts]\nheader = \"default\"\n", "data-layout"),
     ] {
         let tree = project(theme);
-        let page = page(SHELL, &tree.root, "", "");
+        let page = page(SHELL, &tree.root, "");
         assert!(!page.contains(absent), "{theme}: {page}");
         assert!(
             page.contains("<link rel=\"icon\" href=\"data:,\">"),
@@ -127,49 +118,31 @@ fn each_part_of_a_package_is_absent_on_its_own() {
 #[test]
 fn a_shell_without_its_marks_is_served_as_it_is_but_for_the_project() {
     let tree = project("[theme.tokens]\nprimary = \"#123\"\n");
-    assert_eq!(page("plain text", &tree.root, "", ""), "plain text");
-    let warning = page("plain text", &tree.root, "", "<b>x</b>");
-    assert!(
-        warning.contains("aria-label=\"Server notices\"><b>x</b></section>"),
-        "{warning}"
-    );
-    assert!(warning.ends_with("plain text"), "{warning}");
+    assert_eq!(page("plain text", &tree.root, ""), "plain text");
 }
 
 #[test]
-fn the_eager_shell_region_receives_the_warning_once_without_repeating_styles() {
+fn the_packaged_shells_notice_region_is_served_empty_with_its_styles_once() {
     let tree = project("");
-    let shell = SHELL.replace(
-        "</head>",
-        "<style id=\"shell-notices-style\">/* packaged styles */</style></head>",
-    ).replace(
-        "<div id=\"main\">",
-        "<div id=\"main\"><section id=\"shell-notices\" aria-label=\"Server notices\"></section>",
+    let shell = SHELL
+        .replace(
+            "</head>",
+            "<style id=\"shell-notices-style\">/* packaged styles */</style></head>",
+        )
+        .replace(
+            "<div id=\"main\">",
+            "<div id=\"main\"><section id=\"shell-notices\" aria-label=\"Server notices\"></section>",
+        );
+    let page = page(&shell, &tree.root, "");
+    assert_eq!(page.matches("id=\"shell-notices-style\"").count(), 1);
+    assert!(
+        page.contains("<section id=\"shell-notices\" aria-label=\"Server notices\"></section>"),
+        "only the shell's own errors go in the region: {page}"
     );
-    let warning = crate::orphans::banner(1);
-    let page = page(&shell, &tree.root, "", &warning);
+    let view = view(&page);
     assert_eq!(
-        page.matches("id=\"shell-notices-style\"").count(),
-        1,
-        "{page}"
+        page.replace(&Project::element(&view), "")
+            .replace("Lantern", "Symphony"),
+        shell
     );
-    assert_eq!(page.matches("id=\"shell-notices\"").count(), 1, "{page}");
-    assert!(
-        page.contains(&format!(
-            "aria-label=\"Server notices\">{warning}</section>"
-        )),
-        "{page}"
-    );
-}
-
-#[test]
-fn an_older_shell_with_body_attributes_keeps_the_notice_in_its_body() {
-    let tree = project("");
-    let page = page(
-        "<html><head></head><body class=\"old\">content</body></html>",
-        &tree.root,
-        "",
-        "warning",
-    );
-    assert!(page.contains("<body class=\"old\"><section id=\"shell-notices\" aria-label=\"Server notices\">warning</section>"), "{page}");
 }

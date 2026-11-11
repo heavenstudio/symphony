@@ -37,9 +37,8 @@ pub(super) async fn static_response(shared: &Shared, path: &str, request: &Reque
         }
     };
     if relative == "index.html" {
-        let banner = shared.orphan_banner().unwrap_or_default();
         let shell = String::from_utf8_lossy(&bytes).into_owned();
-        bytes = crate::shell::page(&shell, &shared.root, &shared.base, &banner).into_bytes();
+        bytes = crate::shell::page(&shell, &shared.root, &shared.base).into_bytes();
     }
     let content_type = match extension.as_str() {
         "html" => "text/html; charset=utf-8",
