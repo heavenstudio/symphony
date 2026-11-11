@@ -72,6 +72,8 @@ pub enum Step {
 /// since the epoch on the recorder's clock: shown and kept, never a reader's freshness.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Record {
+    /// Always `1`, a field added later included: a reader ignores a field it does not know, and
+    /// takes a record of another version for one it cannot read, its machine unknown until swept.
     pub version: u8,
     /// 32 hex digits, its file's name.
     pub operation_id: String,
@@ -525,10 +527,11 @@ fn entries(folder: &Path) -> io::Result<(Vec<PathBuf>, Vec<PathBuf>)> {
 
 /// Tidy the work folder `folder` at `now`, under its lock, or not at all while another recorder
 /// tidies it: each unfinished operation whose recorder is gone is kept in the history, then
-/// finished without an exit, as its recorder last said it ran. A finished operation changed more
-/// than [`RETAIN`] ago goes, as does anything else there older than that which no live recorder
-/// holds: a write's own file left by a writer that ended, a lease with no record, a record that is
-/// not one. What this sweep finished.
+/// finished without an exit, as its recorder last said it ran. A record no live recorder holds that
+/// is not one this build reads (unreadable, malformed, or of another version) goes at once, with
+/// its lease. A finished operation changed more than [`RETAIN`] ago goes, as does anything else
+/// there older than that which no live recorder holds: a write's own file left by a writer that
+/// ended, a lease with no record. What this sweep finished.
 pub fn sweep(folder: &Path, now: f64) -> io::Result<Vec<Record>> {
     let operations = folder.join(OPERATIONS);
     if !operations.is_dir() {
@@ -563,6 +566,13 @@ pub fn sweep(folder: &Path, now: f64) -> io::Result<Vec<Record>> {
         if held(&lease) != Some(false) {
             continue;
         }
+        let Some((mut found, _)) = record(&path) else {
+            // No recorder holds it and no reader can read it, now or later: it goes at once, so
+            // the machine it makes uncertain is certain again.
+            let _ = fs::remove_file(&path);
+            let _ = fs::remove_file(&lease);
+            continue;
+        };
         if !lease.exists() {
             // Its recorder finished it and let its lease go.
             if old(&path) {
@@ -570,18 +580,12 @@ pub fn sweep(folder: &Path, now: f64) -> io::Result<Vec<Record>> {
             }
             continue;
         }
-        match record(&path) {
-            None => {
-                if old(&path) {
-                    let _ = fs::remove_file(&path);
-                    let _ = fs::remove_file(&lease);
-                }
-            }
+        match found.state {
             // It ended between saying so and letting its lease go.
-            Some((found, _)) if found.state == Step::Finished => {
+            Step::Finished => {
                 let _ = fs::remove_file(&lease);
             }
-            Some((mut found, _)) => {
+            Step::Queued | Step::Running => {
                 found.state = Step::Finished;
                 found.ended_at = Some(found.beat_at);
                 found.exit_code = None;

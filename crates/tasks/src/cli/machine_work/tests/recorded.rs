@@ -158,6 +158,17 @@ fn a_record_that_is_not_one_a_recorder_writes_is_uncertainty_and_a_partial_write
     }
     fs::write(path(&dir, TWO), "{").unwrap();
     assert!(recorded::read(&dir).uncertain);
+    // A field added later, under the same version, is passed over: the record is read.
+    let mut later = serde_json::to_value(record(TWO, Step::Finished)).unwrap();
+    later["added_later"] = serde_json::json!({"any": ["shape"]});
+    fs::write(path(&dir, TWO), serde_json::to_vec(&later).unwrap()).unwrap();
+    let found = recorded::read(&dir);
+    assert_eq!(
+        ids(&found),
+        [(ONE, Step::Running), (TWO, Step::Finished)],
+        "{later}"
+    );
+    assert!(!found.uncertain);
     fs::remove_file(path(&dir, TWO)).unwrap();
     // A write's own file before its rename is no record.
     fs::write(dir.join(OPERATIONS).join(format!(".{TWO}.json.1.0")), "{").unwrap();
@@ -412,22 +423,30 @@ fn a_sweep_finishes_lost_work_without_an_exit_keeps_it_once_and_drops_what_is_an
 }
 
 #[test]
-fn a_sweep_clears_what_no_live_recorder_holds_once_it_is_an_hour_old() {
+fn a_sweep_clears_a_record_no_live_recorder_holds_and_no_reader_reads_at_once_and_the_rest_once_an_hour_old()
+ {
     let dir = folder("tidy");
     let operations = dir.join(OPERATIONS);
     let partial = operations.join(format!(".{ONE}.json.1.0"));
     // A history write of an older recorder's own, cut short in the work folder itself.
     let history_partial = dir.join(format!(".{HISTORY}.1.0"));
     let orphan = path(&dir, TWO).with_extension("lease");
-    let unreadable = path(&dir, THREE);
-    for (file, text) in [
-        (&partial, "{"),
-        (&history_partial, "{"),
-        (&orphan, ""),
-        (&unreadable, "{"),
-    ] {
+    for (file, text) in [(&partial, "{"), (&history_partial, "{"), (&orphan, "")] {
         fs::write(file, text).unwrap();
     }
+    // Records no reader here reads, whose recorders are gone: one cut short with no lease, and one
+    // of another version beside the lease its recorder let go.
+    let unreadable = path(&dir, THREE);
+    fs::write(&unreadable, "{").unwrap();
+    let six = "6".repeat(32);
+    let mut newer = record(&six, Step::Running);
+    newer.version = 2;
+    gone(running(&dir, &newer));
+    let unread = [
+        unreadable,
+        path(&dir, &six),
+        path(&dir, &six).with_extension("lease"),
+    ];
     // A live recorder's lease before its first record, and beside one that cannot be read.
     let (four, five) = ("4".repeat(32), "5".repeat(32));
     let lease = |id: &str| {
@@ -439,11 +458,14 @@ fn a_sweep_clears_what_no_live_recorder_holds_once_it_is_an_hour_old() {
     fs::write(path(&dir, &five), "{").unwrap();
     let now = now();
     recorded::sweep(&dir, now).unwrap();
-    for file in [&partial, &history_partial, &orphan, &unreadable] {
+    for file in &unread {
+        assert!(!file.exists(), "{} stayed unread", file.display());
+    }
+    for file in [&partial, &history_partial, &orphan] {
         assert!(file.exists(), "{} went within the hour", file.display());
     }
     recorded::sweep(&dir, now + RETAIN + 60.0).unwrap();
-    for file in [&partial, &history_partial, &orphan, &unreadable] {
+    for file in [&partial, &history_partial, &orphan] {
         assert!(!file.exists(), "{} stayed", file.display());
     }
     for kept in [
