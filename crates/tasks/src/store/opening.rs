@@ -3,6 +3,7 @@
 
 use super::transaction::Run;
 use super::{Clock, Error, Failure, Probe, STALE, Store, now, sessions};
+use crate::live::{self, Live};
 use crate::rpc::{Client, DbError};
 use crate::schema::{self, Access, Opened, Schema};
 use serde_json::{Value, json};
@@ -15,6 +16,12 @@ pub struct Opening {
     pub schema: Schema,
     pub access: Access,
     pub project: Option<String>,
+    /// The project's live board this is, when the caller reached it as one ([`crate::live`]); none
+    /// asks the client's address ([`crate::live::find_here`]) where it matters.
+    pub live: Option<Live>,
+    /// Opened by `tasks migrate` in the live board's main checkout: what alone moves a live board
+    /// whose main checkout holds no board source ([`crate::live::may_move`]).
+    pub migrating: bool,
 }
 
 impl Opening {
@@ -24,6 +31,8 @@ impl Opening {
             schema: Schema::this_build(),
             access: Access::Write,
             project: None,
+            live: None,
+            migrating: false,
         }
     }
 
@@ -47,6 +56,19 @@ impl Opening {
     /// The board opened at `schema` instead.
     pub fn at(self, schema: Schema) -> Opening {
         Opening { schema, ..self }
+    }
+
+    /// The board as the project's live one, `live` (none: a scratch board, or not known).
+    pub fn live(self, live: Option<Live>) -> Opening {
+        Opening { live, ..self }
+    }
+
+    /// The board opened by `tasks migrate`, run in its main checkout.
+    pub fn migrating(self) -> Opening {
+        Opening {
+            migrating: true,
+            ..self
+        }
     }
 }
 
@@ -84,7 +106,9 @@ impl Store {
     /// version is taken as it is, after one read and no write; an older board, or none, is
     /// migrated forward once by a writer and refused to a reader, before anything is written; a
     /// newer one is refused before anything is written, but to a reader one version behind, which
-    /// reads it.
+    /// reads it. A project's live board is moved forward only by a build its main checkout says is
+    /// its own ([`live::may_move`]), and never opened by a process Cargo runs from its repository
+    /// ([`live::cargo_refusal`]), which is refused before the read.
     pub fn opening(
         client: Client,
         clock: Clock,
@@ -92,21 +116,52 @@ impl Store {
         host: &str,
         how: &Opening,
     ) -> Result<Store, Error> {
+        if let Some(why) =
+            live::cargo_refusal_here(how.live.as_ref(), client.addr(), client.database())
+        {
+            return Err(Error::Refused(why));
+        }
         let store = Store::unchecked_as(client, clock, pid_alive, host, how);
+        let own = how.schema.version();
         store.retrying(|| {
             let (found, defined) = store.board_schema()?;
-            match schema::decide(
-                found,
-                how.schema.version(),
-                how.access,
-                how.project.as_deref(),
-            ) {
+            match schema::decide(found, own, how.access, how.project.as_deref()) {
                 Opened::Current | Opened::Ahead => Ok(()),
                 Opened::Refused(why) => Err(Failure::Stop(Error::Refused(why))),
-                Opened::Migrate => store.migrate(&how.schema, found, defined),
+                Opened::Migrate => {
+                    store.may_move(how, found)?;
+                    store.migrate(&how.schema, found, defined)
+                }
             }
         })?;
         Ok(store)
+    }
+
+    /// Whether this store, opened by `how`, may move its board, found at `found` (none: not made
+    /// yet), forward: a scratch board always; a project's live board ([`Opening::live`], else the
+    /// one its client's address names) by [`live::may_move`].
+    fn may_move(&self, how: &Opening, found: Option<i64>) -> Result<(), Failure> {
+        let board = how
+            .live
+            .clone()
+            .or_else(|| live::find_here(self.client.addr(), self.client.database()));
+        let Some(board) = board else {
+            return Ok(());
+        };
+        live::may_move(
+            &board,
+            how.schema == Schema::this_build(),
+            how.migrating,
+            found,
+            how.schema.version(),
+        )
+        .map_err(|why| Failure::Stop(Error::Refused(why)))
+    }
+
+    /// The board's schema version, none for a board not made yet: one read, which defines and
+    /// writes nothing.
+    pub fn board_version(&self) -> Result<Option<i64>, Error> {
+        self.retrying(|| self.board_schema().map(|(found, _)| found))
     }
 
     /// As `with`, taking the board's tables as they are, without the request that checks them: the
