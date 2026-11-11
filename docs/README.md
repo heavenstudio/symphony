@@ -4,7 +4,7 @@
   the evidence behind a card is under [analysis](analysis/).
 - [REVIEW](REVIEW.md) — review cards, comments, questions and the owner queue.
 - [TASKS](TASKS.md) — the board, sessions, roles and agent communication.
-- [MACHINE_WORK](MACHINE_WORK.md) — observed build/test phases and advisory machine targets.
+- [MACHINE_WORK](MACHINE_WORK.md) — observed build/test phases, the board's build and test recorder (`tasks run`), and advisory machine targets.
 
 Agents working in this repository follow the standing rules in [RULES](../RULES.md).
 
