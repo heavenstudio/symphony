@@ -142,6 +142,17 @@ fn a_branch_with_no_commits_ahead_of_main_is_not_merged_work() {
 }
 
 #[test]
+fn work_that_never_landed_keeps_its_build_output() {
+    // Its task done, but its branch's commit is on no line of main's.
+    let r = Repo::with(Seed::default().task("sim/unlanded", "done"));
+    let wt = r.add("unlanded", Some("sim/unlanded"), "main");
+    r.commit(&wt, "extends RefCounted\n# unlanded\n");
+    held(&r, &wt);
+    let folders = built(&wt);
+    assert_untouched(&r, &wt, &folders, &sweep_at(&r, LATER, false));
+}
+
+#[test]
 fn a_task_in_progress_keeps_the_build_output_of_merged_work() {
     for status in ["in_progress", "review", "blocked", "ready"] {
         let r = Repo::with(Seed::default().task("sim/landed", status));
