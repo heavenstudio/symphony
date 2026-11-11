@@ -509,8 +509,9 @@ A push through a channel arrives wrapped in the receiving client's notice and co
 hold a background command reads the same lines instead: `just tasks wait --as HANDLE [--timeout S]` exits
 printing what a channel would have carried since its last read, once there is any, and the session runs it
 again. It is the dispatch's own pass for HANDLE (`crates/tasks/src/cli/commands/wait.rs`,
-`Store::collect_callbacks`), its lines printed rather than delivered and recorded as delivered, so it says
-the same lines by the same diff and account, from the same callback state: the first read is the whole digest
+`Store::collect_callbacks`), its lines printed rather than delivered, each text flushed before it is recorded
+as delivered (one that does not print is retried five seconds on, so a failure repeats a line and never loses
+one), so it says the same lines by the same diff and account, from the same callback state: the first read is the whole digest
 and any posts waiting, each later one only what changed. It looks when the board's marker moved, every two
 seconds at most, and at least every fifteen, since a child going quiet or a PULL falling due changes with time
 alone; with `--timeout` it gives up after S seconds with `WAIT nothing changed in S s` (`0` looks once). It

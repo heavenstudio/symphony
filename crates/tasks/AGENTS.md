@@ -186,8 +186,9 @@ transition, from the observation's stored health; one it hears as stale, lost or
 also listed idle.
 `tasks wait` is the dispatch's own pass for one session with no channel (`Pass::Collect`,
 `Store::collect_callbacks`): it plans as a delivering pass, takes the recipient's lease though no
-address is registered, and its `Visit::send` keeps what `deliver` would have sent for the reader,
-recorded as delivered by the same `record_callback_delivery`, which records the PULL's
+address is registered, and its `Visit::send` prints what `deliver` would have sent, flushed, before
+it is recorded as delivered by the same `record_callback_delivery` (a print that fails is a retry, as
+a socket that refuses is, so a line is repeated and never lost), which records the PULL's
 acknowledgement and the messages' deliveries. No other dispatcher visits a session without an
 address, so its callback state is that reader's alone between reads; one with an address is
 refused, since its channel takes the lines. The command beats for its session before a look, at

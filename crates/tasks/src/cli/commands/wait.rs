@@ -40,11 +40,11 @@ pub(super) fn run(store: &Store, c: &mut Context) -> Result<(), Stop> {
                 store.touch(&me)?;
                 beat = Some(store.now());
             }
-            let (said, marker) = store.collect_callbacks(&me, c.env)?;
-            if !said.is_empty() {
-                for text in &said {
-                    c.say(text);
-                }
+            // Each text printed whole and flushed before the look records it delivered.
+            let out = &mut *c.out;
+            let mut print = |text: &str| writeln!(out, "{text}").and_then(|()| out.flush());
+            let (printed, marker) = store.collect_callbacks(&me, c.env, &mut print)?;
+            if printed > 0 {
                 return Ok(());
             }
             last = Some((marker, store.now()));

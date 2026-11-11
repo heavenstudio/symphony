@@ -525,16 +525,18 @@ RETURN NONE;");
     }
 
     /// One look for `handle`, a session with no channel (`tasks wait`): what a dispatch would queue
-    /// and deliver to it, returned here instead and recorded as delivered, so the next look says
-    /// only what changed since; and the board's marker as the look left it. It is the dispatch's
-    /// own pass ([`Pass::Collect`]), so it says what a channel would carry, by the same diff and
-    /// the same account, from the same state. Refused while a channel is registered, which takes
-    /// those, and for a session not here.
+    /// and deliver to it, each text printed by `print` instead and, once printed whole, recorded as
+    /// delivered, so the next look says only what changed since; how many texts it printed, and
+    /// the board's marker as the look left it. It is the dispatch's own pass ([`Pass::Collect`]),
+    /// so it says what a channel would carry, by the same diff and the same account, from the
+    /// same state. Refused while a channel is registered, which takes those, and for a session not
+    /// here.
     pub fn collect_callbacks(
         &self,
         handle: &str,
         env: &crate::cli::Env,
-    ) -> Result<(Vec<String>, u64), Error> {
+        print: &mut dyn FnMut(&str) -> std::io::Result<()>,
+    ) -> Result<(usize, u64), Error> {
         #[derive(Deserialize)]
         struct Reader {
             address: Option<String>,
@@ -583,9 +585,9 @@ RETURN NONE;");
         let holdings = (callback.session.kind == "orchestrator")
             .then(|| self.slot_holdings())
             .transpose()?;
-        let visit = Visit::new(Pass::Collect, env, self, holdings.as_ref());
+        let visit = Visit::collecting(env, self, holdings.as_ref(), print);
         self.dispatch_one(handle, &callback, &mut board, &mut sequence, &visit, None)?;
-        Ok((visit.collected(), sequence))
+        Ok((visit.printed(), sequence))
     }
 
     /// The board's marker: it moves with every committed board write.

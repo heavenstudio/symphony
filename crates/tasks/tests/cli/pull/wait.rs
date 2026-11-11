@@ -89,6 +89,35 @@ fn wait_never_says_its_own_writes() {
     assert_eq!(c.ok(&orch, &["wait", "--timeout", "0"]), nothing(0));
 }
 
+/// An output a reader closed: it takes nothing.
+struct Closed;
+
+impl std::io::Write for Closed {
+    fn write(&mut self, _: &[u8]) -> std::io::Result<usize> {
+        Err(std::io::ErrorKind::BrokenPipe.into())
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+#[test]
+fn a_line_a_wait_could_not_print_is_printed_by_the_next_one() {
+    let c = case("wait-closed");
+    let orch = orchestrator(&c);
+    let other = c.register("orchestrator");
+    c.ok(&other, &["create", "sim/free", "Free"]);
+    let mut env = c.env.clone();
+    env.vars.insert("TASKS_SESSION".into(), orch.clone());
+    let args: Vec<String> = ["wait", "--timeout", "0"].map(String::from).to_vec();
+    let mut err = Vec::new();
+    symphony_board::cli::main(&args, &env, &mut std::io::empty(), &mut Closed, &mut err);
+    // Not printed, so not delivered: the next wait prints it once its retry falls due, five
+    // seconds on.
+    let again = c.ok(&orch, &["wait", "--timeout", "20"]);
+    assert!(again.starts_with("NEW sim/free ready — Free\n"), "{again}");
+}
+
 #[test]
 fn wait_blocks_until_something_changes() {
     let c = case("wait-blocks");

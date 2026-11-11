@@ -219,14 +219,18 @@ fn a_quiet_child_is_said_stale_once_a_transition_not_once_a_pass() {
     assert_eq!(quiet(LIVE_SECONDS + 30.0), [stale.as_str()]);
 }
 
-/// The lines of what a collecting look returned: each text is one delivery's.
+/// The lines a collecting look printed: each text is one delivery's.
 fn read(f: &Fixture, handle: &str) -> Vec<String> {
-    let (said, _) = (f.store)
-        .collect_callbacks(handle, &Env::of_process())
+    let mut said: Vec<String> = Vec::new();
+    let mut print = |text: &str| {
+        said.extend(text.lines().map(str::to_owned));
+        Ok(())
+    };
+    let (printed, _) = (f.store)
+        .collect_callbacks(handle, &Env::of_process(), &mut print)
         .unwrap();
-    said.iter()
-        .flat_map(|text| text.lines().map(str::to_owned))
-        .collect()
+    assert_eq!(printed > 0, !said.is_empty(), "{said:?}");
+    said
 }
 
 #[test]
@@ -298,7 +302,7 @@ fn a_session_with_a_channel_or_gone_cannot_read_by_waiting() {
     let f = Fixture::empty();
     let (heard, _o) = orchestrator(&f);
     let env = Env::of_process();
-    let refused = |handle: &str| match f.store.collect_callbacks(handle, &env) {
+    let refused = |handle: &str| match f.store.collect_callbacks(handle, &env, &mut |_| Ok(())) {
         Err(Error::Refused(why)) => why,
         other => panic!("{handle}: {other:?}"),
     };
