@@ -123,6 +123,14 @@ has no such group. Chat asks and task messages show in neither. The ask panel an
 say who receives chat (`apps/symphony-ui/src/asks.rs`; `task_detail.rs`, `AgentRow`); the card's
 own editor does not.
 
+**Reported on this task's thread, 2026-11-11.** The owner's rejection of orphans-end-by-age reached
+the other orchestrator's wait, not the orchestrator of its task. An owner question on desktop-client,
+saved at 14:34 against a worktree's copy of the register, never reached main, and the owner asked
+again on main at 15:26 (that line is on main). Two more are about cards, not asks, and this design
+does not settle them: the owner was shown a worktree's cards while their agent was still writing
+them, with pictures not yet on disk; and finished worktrees kept old copies of resolved cards in the
+owner's counts until the worktrees were removed.
+
 ## What an ask is
 
 One ask for each thing the owner is waiting on:
@@ -187,7 +195,9 @@ delivered and forgotten, an ask is kept until it is answered. Each row holds:
 - the answer's time, who gave it, and where it is (the card, the comment, the ask's id, the post).
 
 The owner's words and the answers stay where they are written. The record says only who has the
-ask and whether it is answered.
+ask and whether it is answered. Because it is on the board, an ask saved against a worktree's copy
+of a card is listed and held like any other, by that branch's executor first, and stays open until
+it is answered, whatever becomes of the copy.
 
 A new table is one schema step, from 16 to 17 (`crates/tasks/src/schema.rs`, `VERSION`): additive,
 run once by the first newer build that writes; until they update, older builds are refused writes,
