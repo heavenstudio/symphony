@@ -629,14 +629,19 @@ the timestamp names one occurrence of that tip; ambiguous or malformed evidence
 supplies no saved end. The digest cache and replay boundaries retain the same
 thread identity, even when independent assessments share a timestamp.
 
-The production publisher uses API8's typed `assessment_state` and
+The production publisher uses API9's typed `assessment_state` and
 `record_waits` operations (`assessment/1`). The former reads a task's status
 and version; the checked mutation requires that pair atomically for a fresh
 write. A committed assessment/text retry returns its original positive thread
 sequence and time, even after task state moved, with `current: false` when a
 newer assessment stands. That historical receipt confirms the occurrence,
-never a current assessment. Unknown methods, incompatible payloads and
-unconfirmed replies remain pending in the landing publisher's local journal.
+never a current assessment. The guarded `assessment/2` route also validates
+the immutable publication, original task/event binding, fence and verification
+against the actual caller's repository and explicitly selected board context.
+Its echoed publication witness and canonical receipt must match exactly;
+the numeric API version alone proves no endpoint capability. Unknown methods,
+incompatible payloads and unconfirmed replies remain pending in the landing
+publisher's local journal.
 
 A move that names where it goes from (`Store::move_from`, `tasks api`'s `move`
 with `from` from api 6, `store/work/moves.rs`) is refused unless the task's

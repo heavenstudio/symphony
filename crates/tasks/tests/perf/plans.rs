@@ -28,7 +28,8 @@ pub fn bound(name: &str) -> Option<Value> {
     Some(match name {
         "me" => json!({"connected": NOW - 5.0 * 86_400.0, "left_at": null}),
         "connected" => json!(NOW - 5.0 * 86_400.0),
-        "slugs" | "open" | "waiting" => open,
+        "slugs" | "open" | "waiting" | "slot_wanted" => open,
+        "slot_holds" => json!([[generated::thread(), NOW]]),
         "tasks" => json!([{"slug": generated::thread()}]),
         "orchestrators" => json!([[generated::thread(), generated::orchestrator()]]),
         "sid" | "same" | "last" | "post" => json!(1),
