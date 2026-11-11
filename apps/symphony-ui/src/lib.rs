@@ -4,6 +4,7 @@
 //! - [`state`]: a feed event applied to the board, pure; what moved, what to tell the owner.
 //! - [`words`]: the board's words and times.
 //! - [`view`]: the components, pure functions of a [`symphony_api::Board`].
+//! - [`cache`]: what a page drew, kept on the device by the shell's store (`assets/cache.js`).
 //! - [`platform`]: the one trait every platform hook goes behind (notifications, a link opened
 //!   outside, storage), so the browser and the desktop window run the same app.
 //! - `live` (wasm only): the fetch and the feed.
@@ -24,6 +25,7 @@ pub mod attach;
     feature = "page-panel"
 ))]
 pub mod block_view;
+pub mod cache;
 pub mod components;
 pub mod doc_components;
 pub mod docs;
