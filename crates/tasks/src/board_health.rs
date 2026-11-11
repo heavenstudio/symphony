@@ -717,5 +717,7 @@ impl Recorder {
     }
 }
 
+pub mod disk;
+
 #[cfg(test)]
 mod tests;

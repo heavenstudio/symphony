@@ -4,7 +4,7 @@ use serde_json::json;
 mod machine_work;
 mod regressions;
 
-fn site() -> Site {
+pub(super) fn site() -> Site {
     let site = Site::start(dist(), &super::common::fixture("board.json"));
     for (path, value) in look_parity::responses() {
         if path != "/api/board" {
@@ -40,7 +40,9 @@ pub(super) fn choose(page: &mut super::Chrome, selector: &str, text: &str) {
         "document.querySelector('[role=listbox] [role=option]') !== null",
         SHOWN
     ));
-    let point = page.eval(&format!("(() => {{const box=[...document.querySelectorAll('[role=listbox] [role=option]')].find(option=>option.textContent.trim()==={}).getBoundingClientRect();return {{x:box.x+box.width/2,y:box.y+box.height/2}}}})()", json!(text)));
+    // A list taller than its 20rem popup scrolls: bring the option into the list's view first,
+    // as a reader scrolls to it, and click where it is drawn.
+    let point = page.eval(&format!("(() => {{const option=[...document.querySelectorAll('[role=listbox] [role=option]')].find(option=>option.textContent.trim()==={});option.scrollIntoView({{block:'nearest'}});const box=option.getBoundingClientRect();return {{x:box.x+box.width/2,y:box.y+box.height/2}}}})()", json!(text)));
     for kind in ["mousePressed", "mouseReleased"] {
         page.call(
             "Input.dispatchMouseEvent",
@@ -74,7 +76,7 @@ pub(super) fn task_tab(page: &mut super::Chrome) {
     assert!(page.wait_for("document.querySelector('#quick-title') !== null && [...document.querySelectorAll('[role=tab]')].find(t=>t.textContent==='Add task')?.getAttribute('aria-selected')==='true'", SHOWN));
 }
 
-fn appearance(page: &mut super::Chrome) {
+pub(super) fn appearance(page: &mut super::Chrome) {
     page.eval("document.querySelector('.theme-menu button[aria-haspopup=menu]').focus()");
     key(page, "Enter", "Enter", 13);
     assert!(page.wait_for(
