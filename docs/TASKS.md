@@ -785,8 +785,11 @@ on first.
 The Symphony answers three of its own:
 
 - **review**: the reviewer verdicts on the task's thread, one round each
-  (`gates::review_rounds`, the one reader of review rounds): met by an `approve`
-  in the last round, missing until then, the earlier rounds its past. A subtask
+  (`gates::review_rounds`, the Symphony's one reader of review rounds; the board's
+  own commands in `crates/tasks` read the verdict words apart): met by an `approve`
+  in the last round, missing until then, the earlier rounds its past. A task done
+  with no round landed without review, as a bug fix may
+  (RULES.md `workflow/fast-bugfixes`): waived. A subtask
   has none: only its top-level task goes to review.
 - **check**: the project's `[verdicts] check`, its words joined by spaces, as the
   board's recorder labels a run of it ([MACHINE_WORK](MACHINE_WORK.md#recording-builds-and-tests)),
@@ -799,12 +802,17 @@ The Symphony answers three of its own:
 A project's plugin answers its own through the gates seam (`symphony_plugin::Gates`,
 `Plugin::gates`) as the same typed data, so every project's gates are drawn the
 same way and can be counted. A plugin's gate with the same name as one of the
-Symphony's takes its place. The server keeps each answer by the branch's tip and
-what the answerer says it reads besides (`Gates::kept_while`), so an answer that
-starts a landing binary runs once a tip. A read waits 10 s for an answer; past
-that, or when the plugin errs, it shows one gate named after the answerer,
-`unknown`, the error as its detail, and the rest of the answer still arrives. A
-late answer is kept for the next read, and an error is asked again after 30 s.
+Symphony's takes its place. The server asks all of a project's answerers at once
+and keeps each answer by the task's status, its branch's tip and what the answerer
+says it reads besides (`Gates::kept_while`), so an answer that starts a landing
+binary runs once a tip. A read waits 10 s for an answer. Past that, or when the
+answerer errs or panics, each gate it answered before shows `unknown`, the error as
+its detail, in place of the Symphony's of that name (before it ever answered, one
+gate named after the answerer), and the rest of the answer still arrives. A late
+answer is kept for the next read, and an error is asked again after 30 s. A call
+still running after 60 s is abandoned and asked again; while four of one
+answerer's calls run, abandoned ones among them, none starts, so an answerer bounds
+its own work.
 
 ## Subtasks
 

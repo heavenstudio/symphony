@@ -3,16 +3,19 @@
 //! [`check`], the project's `[verdicts] check` at the tip, from the run records the board's
 //! recorder keeps (docs/MACHINE_WORK.md); and [`owner`], a card the task posted that waits on the
 //! owner, by the sign-off lane's rule ([`posted_cards`]). A project's plugins answer its own
-//! through the gates seam (`symphony_plugin::Gates`), each answer [`Kept`] by the branch's tip, and
-//! a plugin's gate replaces the Symphony's of its name ([`merged`]).
+//! through the gates seam (`symphony_plugin::Gates`), all asked at once ([`theirs`]), each answer
+//! [`Kept`] by the task and its branch's tip, and a plugin's gate replaces the Symphony's of its
+//! name ([`merged`]), also while the plugin cannot answer ([`failed`]).
 //!
-//! [`answer`] puts them together for the task page's `/api/task-gates`; the board's other readers
+//! [`answer`] puts them together for the task page's `/api/task-gates`; the server's other readers
 //! of a gate ask it the same way, through the same [`Kept`], so a plugin is asked once a tip.
 
+use std::any::Any;
 use std::collections::HashMap;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Condvar, Mutex, PoisonError};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant};
 
 use symphony_api::gates::{CHECK, OWNER, REVIEW, ranked};
@@ -28,6 +31,10 @@ use crate::project::Project;
 pub const WAIT: Duration = Duration::from_secs(10);
 /// How long a plugin's error is shown before it is asked again for the same tip.
 pub const RETRY: Duration = Duration::from_secs(30);
+/// How long a plugin's call may run before it is abandoned and asked again.
+pub const CEILING: Duration = Duration::from_secs(60);
+/// How many of one answerer's calls may run at once, abandoned ones among them.
+pub const CALLS: usize = 4;
 
 /// One review round: an `approve` or `changes` verdict a reviewer gave the task.
 #[derive(Clone, Debug, PartialEq)]
@@ -43,8 +50,9 @@ pub struct Round {
     pub tip: Option<String>,
 }
 
-/// The review rounds on `thread`, oldest first. Every reader of a task's review rounds reads them
-/// here, so where rounds are recorded can change in this one place.
+/// The review rounds on `thread`, oldest first: the Symphony's one reader of a task's review rounds,
+/// so where rounds are recorded changes here. The board's own commands (`crates/tasks`: its stages,
+/// alarms and reaper) read the verdict words apart.
 pub fn review_rounds(thread: &[symphony_board::Message]) -> Vec<Round> {
     thread
         .iter()
@@ -67,7 +75,8 @@ pub fn review_rounds(thread: &[symphony_board::Message]) -> Vec<Round> {
 }
 
 /// The review gate of the task `slug`, from its `rounds`, its `reviewers` now and its `status`:
-/// met by the last round's approval, missing until one, the earlier rounds its past.
+/// met by the last round's approval, missing until one, the earlier rounds its past. A task done
+/// with no round landed without review, as a bug fix may (`workflow/fast-bugfixes`): waived.
 pub fn review(slug: &str, status: &str, reviewers: &[&str], rounds: &[Round]) -> Gate {
     let total = rounds.len();
     let state = |round: &Round| {
@@ -87,6 +96,19 @@ pub fn review(slug: &str, status: &str, reviewers: &[&str], rounds: &[Round]) ->
         }
     };
     let Some(last) = rounds.last() else {
+        if status == "done" {
+            return Gate {
+                name: REVIEW.into(),
+                state: GateState::Waived,
+                why: Some(
+                    "a bug fix lands on its evidence, with a reviewer only when its risk calls \
+                     for one (workflow/fast-bugfixes)"
+                        .into(),
+                ),
+                detail: "Landed with no review verdict".into(),
+                ..Gate::default()
+            };
+        }
         let (by, detail) = match reviewers.first() {
             Some(reviewer) if status == "review" => {
                 (Some((*reviewer).to_string()), "In review, no verdict yet")
@@ -339,13 +361,21 @@ pub fn merged(own: Vec<Gate>, project: Vec<Gate>) -> Vec<Gate> {
     ranked(gates)
 }
 
-/// The gate shown for an answerer called `name` that could not answer: unknown, `why` its detail.
-pub fn failed(name: &str, why: &str) -> Gate {
-    Gate {
+/// The gates shown for the answerer `answerer` while it cannot answer, `why` their detail: one
+/// unknown gate for each of `names`, the gates it answered before, so the Symphony's own of those
+/// names never shows in their place; before it ever answered, one gate named after it.
+pub fn failed(answerer: &str, names: &[String], why: &str) -> Vec<Gate> {
+    let gate = |name: &str| Gate {
         name: name.into(),
         state: GateState::Unknown,
+        by: Some(answerer.into()),
         detail: first_line(why).to_string(),
         ..Gate::default()
+    };
+    if names.is_empty() {
+        vec![gate(answerer)]
+    } else {
+        names.iter().map(|name| gate(name)).collect()
     }
 }
 
@@ -354,7 +384,7 @@ fn first_line(text: &str) -> &str {
 }
 
 /// A task as a gates answerer is asked about it, owned, so the answer can run on a thread of its
-/// own.
+/// own. An answer is kept for all of it: a new status, branch or tip asks again.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Asked {
     pub slug: String,
@@ -376,72 +406,145 @@ impl Asked {
 /// What an answerer gave: its gates, or why it could not say.
 pub type Answer = Result<Vec<Gate>, String>;
 
-/// One answerer's answer for one task: asked at a branch, tip and [`Gates::kept_while`], and what
-/// came back, once it did.
+/// How long a read waits, an error is kept and a call may run, and how many calls of one answerer
+/// run at once.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Limits {
+    /// How long a read waits for an answer, from when it was asked, before it says none came; the
+    /// call goes on, its answer kept for the next read.
+    pub wait: Duration,
+    /// How long an error is kept before the answerer is asked again.
+    pub retry: Duration,
+    /// How long a call may run before a read abandons it and asks again.
+    pub ceiling: Duration,
+    /// How many calls of one answerer may run at once, abandoned ones among them; past it none
+    /// starts, so calls that never return cannot pile up.
+    pub calls: usize,
+}
+
+impl Default for Limits {
+    /// [`WAIT`], [`RETRY`], [`CEILING`] and [`CALLS`].
+    fn default() -> Self {
+        Self {
+            wait: WAIT,
+            retry: RETRY,
+            ceiling: CEILING,
+            calls: CALLS,
+        }
+    }
+}
+
+/// One answerer's answer for one task: asked as `asked` at [`Gates::kept_while`], and what came
+/// back, once it did.
 struct Slot {
-    branch: String,
-    tip: Option<String>,
+    asked: Asked,
     kept_while: String,
-    asked: Instant,
+    at: Instant,
     done: Mutex<Option<(Answer, Instant)>>,
     ready: Condvar,
 }
 
 impl Slot {
     fn holds(&self, asked: &Asked, kept_while: &str) -> bool {
-        self.branch == asked.branch && self.tip == asked.tip && self.kept_while == kept_while
+        self.asked == *asked && self.kept_while == kept_while
     }
-}
 
-/// Whose answer a slot holds: an answerer of a plugin, for a task of a project.
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-struct Key {
-    root: PathBuf,
-    plugin: String,
-    answerer: String,
-    slug: String,
-}
+    /// What came back and when, once it has.
+    fn answer(&self) -> Option<(Answer, Instant)> {
+        lock(&self.done).clone()
+    }
 
-impl Key {
-    fn new(root: &Path, plugin: &str, answerer: &str, slug: &str) -> Key {
-        Key {
-            root: root.to_path_buf(),
-            plugin: plugin.to_string(),
-            answerer: answerer.to_string(),
-            slug: slug.to_string(),
+    /// What came back, waited for until `deadline`; `None` if nothing did by then.
+    fn wait_until(&self, deadline: Instant) -> Option<Answer> {
+        let mut done = lock(&self.done);
+        loop {
+            if let Some((answer, _)) = &*done {
+                return Some(answer.clone());
+            }
+            let left = deadline.saturating_duration_since(Instant::now());
+            if left.is_zero() {
+                return None;
+            }
+            done = self
+                .ready
+                .wait_timeout(done, left)
+                .unwrap_or_else(PoisonError::into_inner)
+                .0;
         }
     }
 }
 
-/// The plugins' answers, kept by the task's branch tip and what each answerer says it reads besides
-/// ([`Gates::kept_while`]): one answer an answerer and task, the newest asked, so an answer that
-/// starts a landing binary runs once a tip. A read waits for an answer at most `wait` from when
-/// it was asked, then says it is unknown while the answer goes on, to be kept for the next read;
-/// no second call starts while one runs. An error is kept for `retry`, then asked again.
+/// An answerer of a plugin in a project.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+struct Who {
+    root: PathBuf,
+    plugin: String,
+    answerer: String,
+}
+
+impl Who {
+    fn new(root: &Path, plugin: &str, answerer: &str) -> Who {
+        Who {
+            root: root.to_path_buf(),
+            plugin: plugin.to_string(),
+            answerer: answerer.to_string(),
+        }
+    }
+}
+
+/// What is kept of one answerer: its newest answer for each task, by slug; how many of its calls
+/// run; and the names of the gates it has answered, in the order first answered.
+#[derive(Default)]
+struct Ledger {
+    slots: HashMap<String, Arc<Slot>>,
+    running: Arc<AtomicUsize>,
+    names: Vec<String>,
+}
+
+/// One call counted among its answerer's running ones until it ends, however it ends.
+struct Running(Arc<AtomicUsize>);
+
+impl Drop for Running {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
+/// A read's hold on an answer: there now, or a call to wait for.
+enum Waiting {
+    Now(Answer),
+    For(Arc<Slot>),
+}
+
+/// The plugins' answers, kept by the task (its status, branch and tip, [`Asked`]) and what each
+/// answerer says it reads besides ([`Gates::kept_while`]): one answer an answerer and task, the
+/// newest asked, so an answer that starts a landing binary runs once a tip. A read waits for an
+/// answer at most [`Limits::wait`] from when it was asked, then says none came while the call goes
+/// on, its answer kept for the next read; no second call starts while one runs, until it has run
+/// [`Limits::ceiling`]. An error is kept for [`Limits::retry`], then asked again. At most
+/// [`Limits::calls`] of one answerer's calls run at once.
 pub struct Kept {
-    slots: Mutex<HashMap<Key, Arc<Slot>>>,
-    wait: Duration,
-    retry: Duration,
+    ledgers: Mutex<HashMap<Who, Ledger>>,
+    limits: Limits,
 }
 
 impl Default for Kept {
-    /// Waiting [`WAIT`], an error asked again after [`RETRY`].
+    /// [`Limits::default`].
     fn default() -> Self {
-        Self::new(WAIT, RETRY)
+        Self::new(Limits::default())
     }
 }
 
 impl Kept {
-    pub fn new(wait: Duration, retry: Duration) -> Self {
+    pub fn new(limits: Limits) -> Self {
         Self {
-            slots: Mutex::new(HashMap::new()),
-            wait,
-            retry,
+            ledgers: Mutex::new(HashMap::new()),
+            limits,
         }
     }
 
-    /// The answer of `answerer`, of the plugin `plugin`, for `asked` in the project at `root`: kept,
-    /// or asked now, on a thread of its own.
+    /// The answer of `answerer`, of the plugin `plugin`, for `asked` in the project at `root`:
+    /// kept, or asked now, on a thread of its own.
     pub fn ask(
         &self,
         root: &Path,
@@ -449,101 +552,205 @@ impl Kept {
         answerer: &'static dyn Gates,
         asked: &Asked,
     ) -> Answer {
-        let kept_while = answerer.kept_while(root, &asked.task());
-        let key = Key::new(root, plugin, answerer.name(), &asked.slug);
-        let slot = {
-            let mut slots = self.slots.lock().unwrap_or_else(PoisonError::into_inner);
-            let current = slots
-                .get(&key)
-                .filter(|slot| slot.holds(asked, &kept_while))
-                .filter(|slot| {
-                    let done = slot.done.lock().unwrap_or_else(PoisonError::into_inner);
-                    match &*done {
-                        Some((Err(_), at)) => at.elapsed() < self.retry,
-                        _ => true,
-                    }
-                })
-                .cloned();
-            match current {
-                Some(slot) => slot,
-                None => {
-                    let slot = Arc::new(Slot {
-                        branch: asked.branch.clone(),
-                        tip: asked.tip.clone(),
-                        kept_while,
-                        asked: Instant::now(),
-                        done: Mutex::new(None),
-                        ready: Condvar::new(),
-                    });
-                    if let Err(why) = start(&slot, root, answerer, asked) {
-                        *slot.done.lock().unwrap_or_else(PoisonError::into_inner) =
-                            Some((Err(why), Instant::now()));
-                    }
-                    slots.insert(key, Arc::clone(&slot));
-                    slot
-                }
-            }
-        };
-        let deadline = slot.asked + self.wait;
-        let mut done = slot.done.lock().unwrap_or_else(PoisonError::into_inner);
-        loop {
-            if let Some((answer, _)) = &*done {
-                return answer.clone();
-            }
-            let left = deadline.saturating_duration_since(Instant::now());
-            if left.is_zero() {
-                return Err(format!(
-                    "{} gave no answer within {} s",
-                    answerer.name(),
-                    self.wait.as_secs_f64()
-                ));
-            }
-            done = slot
-                .ready
-                .wait_timeout(done, left)
-                .unwrap_or_else(PoisonError::into_inner)
-                .0;
-        }
+        let waiting = self.begin(root, plugin, answerer, asked);
+        self.finish(root, plugin, answerer, waiting)
     }
 
-    /// What is kept of `answerer`'s answer, of the plugin `plugin`, for the task `slug` at `branch`
-    /// and `tip` in the project at `root`, asking nothing: `None` when nothing came back for that
-    /// tip yet.
+    /// The answers of `answerers`, each with its plugin's name, for `asked` in the project at
+    /// `root`, in their order: all asked before any is waited for, so a read waits for the slowest
+    /// alone.
+    pub fn ask_all(
+        &self,
+        root: &Path,
+        answerers: &[(&str, &'static dyn Gates)],
+        asked: &Asked,
+    ) -> Vec<Answer> {
+        let waiting: Vec<Waiting> = answerers
+            .iter()
+            .map(|(plugin, answerer)| self.begin(root, plugin, *answerer, asked))
+            .collect();
+        waiting
+            .into_iter()
+            .zip(answerers)
+            .map(|(waiting, (plugin, answerer))| self.finish(root, plugin, *answerer, waiting))
+            .collect()
+    }
+
+    /// What is kept of `answerer`'s answer, of the plugin `plugin`, for `asked` in the project at
+    /// `root`, asking nothing: the answer a read would use now, `None` while there is none.
     pub fn kept(
         &self,
         root: &Path,
         plugin: &str,
-        answerer: &str,
-        slug: &str,
-        branch: &str,
-        tip: Option<&str>,
+        answerer: &dyn Gates,
+        asked: &Asked,
     ) -> Option<Answer> {
-        let slots = self.slots.lock().unwrap_or_else(PoisonError::into_inner);
-        let slot = slots
-            .get(&Key::new(root, plugin, answerer, slug))
-            .filter(|slot| slot.branch == branch && slot.tip.as_deref() == tip)?;
-        let done = slot.done.lock().unwrap_or_else(PoisonError::into_inner);
-        done.as_ref().map(|(answer, _)| answer.clone())
+        let kept_while = match told(answerer, root, asked) {
+            Ok(kept_while) => kept_while,
+            Err(why) => return Some(Err(why)),
+        };
+        let ledgers = lock(&self.ledgers);
+        let slot = ledgers
+            .get(&Who::new(root, plugin, answerer.name()))?
+            .slots
+            .get(&asked.slug)
+            .filter(|slot| slot.holds(asked, &kept_while))?;
+        match slot.answer()? {
+            (Err(_), at) if at.elapsed() >= self.limits.retry => None,
+            (answer, _) => Some(answer),
+        }
+    }
+
+    /// The names of the gates `answerer`, of the plugin `plugin`, has answered in the project at
+    /// `root`, in the order first answered.
+    pub fn names(&self, root: &Path, plugin: &str, answerer: &str) -> Vec<String> {
+        lock(&self.ledgers)
+            .get(&Who::new(root, plugin, answerer))
+            .map(|ledger| ledger.names.clone())
+            .unwrap_or_default()
+    }
+
+    /// The answer a read of `answerer` for `asked` uses: kept, or a call started now.
+    fn begin(
+        &self,
+        root: &Path,
+        plugin: &str,
+        answerer: &'static dyn Gates,
+        asked: &Asked,
+    ) -> Waiting {
+        let name = answerer.name();
+        let kept_while = match told(answerer, root, asked) {
+            Ok(kept_while) => kept_while,
+            Err(why) => return Waiting::Now(Err(why)),
+        };
+        let mut ledgers = lock(&self.ledgers);
+        let ledger = ledgers.entry(Who::new(root, plugin, name)).or_default();
+        if let Some(slot) = ledger
+            .slots
+            .get(&asked.slug)
+            .filter(|slot| slot.holds(asked, &kept_while))
+        {
+            let used = match slot.answer() {
+                Some((Ok(_), _)) => true,
+                Some((Err(_), at)) => at.elapsed() < self.limits.retry,
+                None => slot.at.elapsed() < self.limits.ceiling,
+            };
+            if used {
+                return Waiting::For(Arc::clone(slot));
+            }
+        }
+        let running = ledger.running.load(Ordering::SeqCst);
+        if running >= self.limits.calls {
+            return Waiting::Now(Err(format!("{name} has {running} calls still running")));
+        }
+        let slot = Arc::new(Slot {
+            asked: asked.clone(),
+            kept_while,
+            at: Instant::now(),
+            done: Mutex::new(None),
+            ready: Condvar::new(),
+        });
+        if let Err(why) = start(&slot, root, answerer, &ledger.running) {
+            *lock(&slot.done) = Some((Err(why), Instant::now()));
+        }
+        ledger.slots.insert(asked.slug.clone(), Arc::clone(&slot));
+        Waiting::For(slot)
+    }
+
+    /// What `waiting` holds once it came or the wait ran out; the names of a set of gates learnt.
+    fn finish(&self, root: &Path, plugin: &str, answerer: &dyn Gates, waiting: Waiting) -> Answer {
+        let answer = match waiting {
+            Waiting::Now(answer) => answer,
+            Waiting::For(slot) => {
+                slot.wait_until(slot.at + self.limits.wait)
+                    .unwrap_or_else(|| {
+                        Err(format!(
+                            "{} gave no answer within {} s",
+                            answerer.name(),
+                            self.limits.wait.as_secs_f64()
+                        ))
+                    })
+            }
+        };
+        if let Ok(gates) = &answer {
+            let mut ledgers = lock(&self.ledgers);
+            let ledger = ledgers
+                .entry(Who::new(root, plugin, answerer.name()))
+                .or_default();
+            for gate in gates {
+                if !ledger.names.contains(&gate.name) {
+                    ledger.names.push(gate.name.clone());
+                }
+            }
+        }
+        answer
     }
 }
 
-/// Run `answerer` for `asked` on a thread of its own, its answer (a panic an error) put in `slot`.
+/// The gates `answerers`, each with its plugin's name, give for `asked` in the project at `root`,
+/// all asked at once through `kept`; one that cannot answer stands in as [`failed`].
+pub fn theirs(
+    kept: &Kept,
+    root: &Path,
+    answerers: &[(&str, &'static dyn Gates)],
+    asked: &Asked,
+) -> Vec<Gate> {
+    kept.ask_all(root, answerers, asked)
+        .into_iter()
+        .zip(answerers)
+        .flat_map(|(answer, (plugin, answerer))| match answer {
+            Ok(gates) => gates,
+            Err(why) => failed(
+                answerer.name(),
+                &kept.names(root, plugin, answerer.name()),
+                &why,
+            ),
+        })
+        .collect()
+}
+
+fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
+    mutex.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
+/// What `answerer` says its answer for `asked` reads besides the tip; a panic is why it cannot.
+fn told(answerer: &dyn Gates, root: &Path, asked: &Asked) -> Result<String, String> {
+    catch_unwind(AssertUnwindSafe(|| {
+        answerer.kept_while(root, &asked.task())
+    }))
+    .map_err(|panic| panicked(answerer.name(), "telling what its answer reads", &*panic))
+}
+
+/// Why `name` could not answer: it panicked while `doing` it, saying what `payload` says.
+fn panicked(name: &str, doing: &str, payload: &(dyn Any + Send)) -> String {
+    let said = payload
+        .downcast_ref::<&str>()
+        .copied()
+        .or_else(|| payload.downcast_ref::<String>().map(String::as_str))
+        .unwrap_or("no message");
+    format!("{name} panicked {doing}: {said}")
+}
+
+/// Run `answerer` for `slot`'s task on a thread of its own, counted in `running` until it ends,
+/// its answer (a panic an error) put in `slot`.
 fn start(
     slot: &Arc<Slot>,
     root: &Path,
     answerer: &'static dyn Gates,
-    asked: &Asked,
+    running: &Arc<AtomicUsize>,
 ) -> Result<(), String> {
-    let (slot, root, asked) = (Arc::clone(slot), root.to_path_buf(), asked.clone());
+    let (slot, root) = (Arc::clone(slot), root.to_path_buf());
+    running.fetch_add(1, Ordering::SeqCst);
+    let counted = Running(Arc::clone(running));
     std::thread::Builder::new()
         .name(format!("gates {}", answerer.name()))
         .spawn(move || {
+            let _counted = counted;
             let answer = catch_unwind(AssertUnwindSafe(|| {
-                answerer.answer(&root, &asked.task(), asked.tip.as_deref())
+                answerer.answer(&root, &slot.asked.task(), slot.asked.tip.as_deref())
             }))
-            .unwrap_or_else(|_| Err(format!("{} panicked", answerer.name())));
-            *slot.done.lock().unwrap_or_else(PoisonError::into_inner) =
-                Some((answer, Instant::now()));
+            .unwrap_or_else(|panic| Err(panicked(answerer.name(), "answering", &*panic)));
+            *lock(&slot.done) = Some((answer, Instant::now()));
             slot.ready.notify_all();
         })
         .map(drop)
@@ -609,21 +816,22 @@ pub fn answer(
         branch: branch.clone(),
         tip: tip.clone(),
     };
-    let mut theirs = Vec::new();
-    for plugin in Plugins::for_project(&project).list() {
-        let plugin: &'static dyn symphony_plugin::Plugin = *plugin;
-        for answerer in plugin.gates() {
-            match kept.ask(root, plugin.name(), answerer, &asked) {
-                Ok(gates) => theirs.extend(gates),
-                Err(why) => theirs.push(failed(answerer.name(), &why)),
-            }
-        }
-    }
+    let answerers: Vec<(&str, &'static dyn Gates)> = Plugins::for_project(&project)
+        .list()
+        .iter()
+        .flat_map(|plugin| {
+            let plugin: &'static dyn symphony_plugin::Plugin = *plugin;
+            plugin
+                .gates()
+                .into_iter()
+                .map(move |answerer| (plugin.name(), answerer))
+        })
+        .collect();
     Ok(TaskGates {
         slug: record.slug.clone(),
         branch,
         tip,
-        gates: merged(own, theirs),
+        gates: merged(own, theirs(kept, root, &answerers, &asked)),
     })
 }
 

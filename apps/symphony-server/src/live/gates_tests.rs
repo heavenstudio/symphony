@@ -36,7 +36,11 @@ fn hub(root: &Path, f: &Fixture, wait: Duration) -> Hub {
     let mut hub = Hub::new(root, &root.join("build/client"));
     let board = f.other_client();
     hub.connect_reader = Box::new(move |_| Ok(store_on(&board)));
-    hub.gates = symphony::gates::Kept::new(wait, Duration::from_secs(60));
+    hub.gates = symphony::gates::Kept::new(symphony::gates::Limits {
+        wait,
+        retry: Duration::from_secs(60),
+        ..symphony::gates::Limits::default()
+    });
     hub.refresh_page("", root).unwrap();
     observe(&hub, &f.store, &[]);
     hub
@@ -220,7 +224,10 @@ fn a_plugin_that_errs_panics_or_is_slow_is_one_unknown_gate_and_the_answer_still
     );
     for (slug, said) in [
         ("tools/err", "land exited 2"),
-        ("tools/panic", "shelf-gates panicked"),
+        (
+            "tools/panic",
+            "shelf-gates panicked answering: gates.json says to panic for tools/panic",
+        ),
         ("tools/slow", "shelf-gates gave no answer within 0.3 s"),
     ] {
         let began = Instant::now();

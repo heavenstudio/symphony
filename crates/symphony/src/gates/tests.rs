@@ -176,6 +176,23 @@ fn a_review_gate_with_no_round_says_whether_the_task_waits_on_a_reviewer() {
         none("in_progress", &["lucid-heron"]),
         (None, "Not reviewed yet".into())
     );
+    // A task done with no round landed without review, as a bug fix may: waived, saying why.
+    let landed = review("tools/x", "done", &["lucid-heron"], &[]);
+    assert_eq!(
+        (landed.state, landed.detail.as_str(), landed.by, landed.link),
+        (
+            GateState::Waived,
+            "Landed with no review verdict",
+            None,
+            None
+        )
+    );
+    assert!(
+        landed
+            .why
+            .is_some_and(|why| why.contains("workflow/fast-bugfixes")),
+        "a waiver says why"
+    );
 }
 
 /// A run of `label` as the board's recorder keeps it: `id` its operation, finished with `exit`
@@ -478,26 +495,43 @@ fn a_projects_gate_takes_the_place_of_the_symphonys_of_its_name_and_the_rest_fol
 }
 
 #[test]
-fn an_answerer_that_failed_is_one_unknown_gate_saying_the_first_line_of_why() {
+fn an_answerer_that_cannot_answer_stands_in_for_the_gates_it_answered_before() {
     assert_eq!(
-        failed("stamps", "land exited 2\nits whole log"),
-        Gate {
+        failed("stamps", &[], "land exited 2\nits whole log"),
+        [Gate {
             name: "stamps".into(),
             state: GateState::Unknown,
+            by: Some("stamps".into()),
             detail: "land exited 2".into(),
             ..Gate::default()
-        }
+        }],
+        "before it ever answered, one gate named after it"
+    );
+    let answered = ["review".to_string(), "certificate".to_string()];
+    let standing = failed("stamps", &answered, "land exited 2");
+    assert_eq!(
+        names(&standing),
+        [
+            ("review", GateState::Unknown),
+            ("certificate", GateState::Unknown)
+        ]
+    );
+    assert!(
+        standing
+            .iter()
+            .all(|gate| gate.detail == "land exited 2" && gate.by.as_deref() == Some("stamps"))
     );
 }
 
-/// An answerer whose answer the test sets, counting its calls: it answers `gates`, or `error`,
-/// after `delay`, or panics.
+/// An answerer whose answer the test sets, counting its calls: it answers a gate of each of
+/// `answers`, or `error`, after `delay`, or panics.
 struct Fake {
     calls: AtomicUsize,
     delay: Mutex<Duration>,
     error: Mutex<Option<String>>,
     panics: bool,
     kept_while: Mutex<String>,
+    answers: Mutex<Vec<&'static str>>,
 }
 
 impl Fake {
@@ -508,6 +542,7 @@ impl Fake {
             error: Mutex::new(None),
             panics,
             kept_while: Mutex::new(String::new()),
+            answers: Mutex::new(vec!["certificate"]),
         }))
     }
 
@@ -528,10 +563,15 @@ impl Gates for Fake {
         if let Some(error) = self.error.lock().unwrap().clone() {
             return Err(error);
         }
-        let mut gate = gate("certificate", GateState::Met);
-        gate.commit = tip.map(str::to_string);
-        gate.detail = format!("{} {}", task.slug, task.branch);
-        Ok(vec![gate])
+        let answers = self.answers.lock().unwrap().clone();
+        Ok(answers
+            .into_iter()
+            .map(|name| Gate {
+                commit: tip.map(str::to_string),
+                detail: format!("{} {} {}", task.slug, task.branch, task.status),
+                ..gate(name, GateState::Met)
+            })
+            .collect())
     }
 
     fn kept_while(&self, _: &Path, _: &TaskRef<'_>) -> String {
@@ -548,29 +588,34 @@ fn asked(tip: &str) -> Asked {
     }
 }
 
+fn limits(wait: Duration, retry: Duration) -> Limits {
+    Limits {
+        wait,
+        retry,
+        ..Limits::default()
+    }
+}
+
 #[test]
-fn an_answer_is_kept_by_the_tip_and_what_the_answerer_reads_besides() {
+fn an_answer_is_kept_by_the_task_its_tip_and_what_the_answerer_reads_besides() {
     let root = Path::new("/project");
     let fake = Fake::leaked(false);
-    let kept = Kept::new(Duration::from_secs(30), Duration::from_secs(30));
-    assert_eq!(
-        kept.kept(root, "plugin", "fake", "tools/x", "tools/x", Some(OLD)),
-        None
-    );
+    let kept = Kept::new(limits(Duration::from_secs(30), Duration::from_secs(30)));
+    assert_eq!(kept.kept(root, "plugin", fake, &asked(OLD)), None);
     let first = kept.ask(root, "plugin", fake, &asked(OLD)).unwrap();
     assert_eq!(first[0].commit.as_deref(), Some(OLD));
-    assert_eq!(first[0].detail, "tools/x tools/x");
+    assert_eq!(first[0].detail, "tools/x tools/x review");
     assert_eq!(kept.ask(root, "plugin", fake, &asked(OLD)).unwrap(), first);
     assert_eq!(fake.calls(), 1, "the same tip is asked once");
     assert_eq!(
-        kept.kept(root, "plugin", "fake", "tools/x", "tools/x", Some(OLD)),
+        kept.kept(root, "plugin", fake, &asked(OLD)),
         Some(Ok(first.clone()))
     );
     let moved = kept.ask(root, "plugin", fake, &asked(TIP)).unwrap();
     assert_eq!(moved[0].commit.as_deref(), Some(TIP));
     assert_eq!(fake.calls(), 2, "a new tip is asked");
     assert_eq!(
-        kept.kept(root, "plugin", "fake", "tools/x", "tools/x", Some(OLD)),
+        kept.kept(root, "plugin", fake, &asked(OLD)),
         None,
         "one answer is kept a task: the newest tip's"
     );
@@ -589,11 +634,65 @@ fn an_answer_is_kept_by_the_tip_and_what_the_answerer_reads_besides() {
 }
 
 #[test]
+fn an_answer_follows_the_status_it_was_handed() {
+    let root = Path::new("/project");
+    let fake = Fake::leaked(false);
+    let kept = Kept::new(limits(Duration::from_secs(30), Duration::from_secs(30)));
+    let mut task = asked(TIP);
+    task.status = "in_progress".into();
+    kept.ask(root, "plugin", fake, &task).unwrap();
+    task.status = "done".into();
+    let now = kept.ask(root, "plugin", fake, &task).unwrap();
+    assert_eq!(
+        now[0].detail, "tools/x tools/x done",
+        "the kept answer is of the status before"
+    );
+    assert_eq!(fake.calls(), 2);
+}
+
+#[test]
+fn kept_reads_only_what_ask_would_still_use() {
+    let root = Path::new("/project");
+    let fake = Fake::leaked(false);
+    let kept = Kept::new(limits(Duration::from_secs(30), Duration::from_millis(100)));
+    kept.ask(root, "plugin", fake, &asked(TIP)).unwrap();
+    assert!(kept.kept(root, "plugin", fake, &asked(TIP)).is_some());
+    let mut done = asked(TIP);
+    done.status = "done".into();
+    assert_eq!(
+        kept.kept(root, "plugin", fake, &done),
+        None,
+        "an answer of another status"
+    );
+    *fake.kept_while.lock().unwrap() = "main moved".into();
+    assert_eq!(
+        kept.kept(root, "plugin", fake, &asked(TIP)),
+        None,
+        "kept() gave an answer whose kept_while no longer holds"
+    );
+    // An error, until it is to be asked again.
+    *fake.error.lock().unwrap() = Some("land exited 2".into());
+    kept.ask(root, "plugin", fake, &asked(TIP)).unwrap_err();
+    assert_eq!(
+        kept.kept(root, "plugin", fake, &asked(TIP)),
+        Some(Err("land exited 2".into()))
+    );
+    std::thread::sleep(Duration::from_millis(150));
+    assert_eq!(kept.kept(root, "plugin", fake, &asked(TIP)), None);
+    // Nothing while a call runs.
+    *fake.error.lock().unwrap() = None;
+    *fake.delay.lock().unwrap() = Duration::from_millis(300);
+    let slow = Kept::new(limits(Duration::from_millis(10), Duration::from_secs(30)));
+    slow.ask(root, "plugin", fake, &asked(TIP)).unwrap_err();
+    assert_eq!(slow.kept(root, "plugin", fake, &asked(TIP)), None);
+}
+
+#[test]
 fn an_error_is_kept_until_it_is_asked_again_and_a_panic_is_an_error() {
     let root = Path::new("/project");
     let fake = Fake::leaked(false);
     *fake.error.lock().unwrap() = Some("land exited 2".into());
-    let kept = Kept::new(Duration::from_secs(30), Duration::from_millis(200));
+    let kept = Kept::new(limits(Duration::from_secs(30), Duration::from_millis(200)));
     assert_eq!(
         kept.ask(root, "plugin", fake, &asked(TIP)),
         Err("land exited 2".into())
@@ -613,7 +712,51 @@ fn an_error_is_kept_until_it_is_asked_again_and_a_panic_is_an_error() {
     let panics = Fake::leaked(true);
     assert_eq!(
         kept.ask(root, "panicking", panics, &asked(TIP)),
-        Err("fake panicked".into())
+        Err("fake panicked answering: the fake panics".into())
+    );
+}
+
+/// An answerer whose [`Gates::kept_while`] panics, as one reading a stamp file that is gone.
+struct PanicsInKeptWhile;
+
+impl Gates for PanicsInKeptWhile {
+    fn name(&self) -> &str {
+        "kw"
+    }
+
+    fn answer(&self, _: &Path, _: &TaskRef<'_>, _: Option<&str>) -> Result<Vec<Gate>, String> {
+        Ok(Vec::new())
+    }
+
+    fn kept_while(&self, _: &Path, _: &TaskRef<'_>) -> String {
+        panic!("stamp file missing")
+    }
+}
+
+#[test]
+fn a_panic_in_kept_while_stays_inside_ask_as_the_answerers_error() {
+    let root = Path::new("/project");
+    let kept = Kept::new(limits(Duration::from_secs(1), Duration::from_secs(1)));
+    let answerer: &'static PanicsInKeptWhile = Box::leak(Box::new(PanicsInKeptWhile));
+    let said: Answer =
+        Err("kw panicked telling what its answer reads: stamp file missing".to_string());
+    let caught = std::panic::catch_unwind(AssertUnwindSafe(|| {
+        kept.ask(root, "plugin", answerer, &asked(TIP))
+    }));
+    assert_eq!(
+        caught.ok(),
+        Some(said.clone()),
+        "a panic in kept_while escaped Kept::ask"
+    );
+    assert_eq!(kept.kept(root, "plugin", answerer, &asked(TIP)), Some(said));
+    assert_eq!(
+        names(&theirs(
+            &kept,
+            root,
+            &[("plugin", answerer as &dyn Gates)],
+            &asked(TIP)
+        )),
+        [("kw", GateState::Unknown)]
     );
 }
 
@@ -622,7 +765,7 @@ fn a_slow_answer_reads_unknown_while_it_goes_on_and_is_kept_once_it_comes() {
     let root = Path::new("/project");
     let fake = Fake::leaked(false);
     *fake.delay.lock().unwrap() = Duration::from_millis(600);
-    let kept = Kept::new(Duration::from_millis(100), Duration::from_secs(30));
+    let kept = Kept::new(limits(Duration::from_millis(100), Duration::from_secs(30)));
     let began = Instant::now();
     assert_eq!(
         kept.ask(root, "plugin", fake, &asked(TIP)),
@@ -637,10 +780,7 @@ fn a_slow_answer_reads_unknown_while_it_goes_on_and_is_kept_once_it_comes() {
     assert!(kept.ask(root, "plugin", fake, &asked(TIP)).is_err());
     assert!(again.elapsed() < Duration::from_millis(50));
     assert_eq!(fake.calls(), 1);
-    while kept
-        .kept(root, "plugin", "fake", "tools/x", "tools/x", Some(TIP))
-        .is_none()
-    {
+    while kept.kept(root, "plugin", fake, &asked(TIP)).is_none() {
         assert!(
             began.elapsed() < Duration::from_secs(30),
             "the answer never came"
@@ -651,7 +791,7 @@ fn a_slow_answer_reads_unknown_while_it_goes_on_and_is_kept_once_it_comes() {
     assert_eq!(fake.calls(), 1, "the answer that came late is the one kept");
     // A read that waits for a call under way gets its answer once it comes.
     *fake.delay.lock().unwrap() = Duration::from_millis(100);
-    let patient = Kept::new(Duration::from_secs(30), Duration::from_secs(30));
+    let patient = Kept::new(limits(Duration::from_secs(30), Duration::from_secs(30)));
     std::thread::scope(|scope| {
         let first = scope.spawn(|| patient.ask(root, "plugin", fake, &asked(OLD)));
         let second = scope.spawn(|| patient.ask(root, "plugin", fake, &asked(OLD)));
@@ -659,6 +799,119 @@ fn a_slow_answer_reads_unknown_while_it_goes_on_and_is_kept_once_it_comes() {
         assert!(second.join().unwrap().is_ok());
     });
     assert_eq!(fake.calls(), 2, "two reads at once start one call");
+}
+
+#[test]
+fn a_call_that_never_returns_is_asked_again_after_its_ceiling() {
+    let root = Path::new("/project");
+    let fake = Fake::leaked(false);
+    *fake.delay.lock().unwrap() = Duration::from_secs(5);
+    let kept = Kept::new(Limits {
+        wait: Duration::from_millis(50),
+        retry: Duration::from_millis(100),
+        ceiling: Duration::from_millis(200),
+        calls: 4,
+    });
+    assert!(kept.ask(root, "plugin", fake, &asked(TIP)).is_err());
+    kept.ask(root, "plugin", fake, &asked(TIP)).unwrap_err();
+    assert_eq!(fake.calls(), 1, "under its ceiling a call is waited for");
+    std::thread::sleep(Duration::from_millis(400));
+    assert!(kept.ask(root, "plugin", fake, &asked(TIP)).is_err());
+    assert_eq!(
+        fake.calls(),
+        2,
+        "an in-flight call pins its tip: never asked again"
+    );
+}
+
+#[test]
+fn calls_that_never_return_stop_at_the_answerers_cap() {
+    let root = Path::new("/project");
+    let fake = Fake::leaked(false);
+    *fake.delay.lock().unwrap() = Duration::from_secs(3);
+    let kept = Kept::new(Limits {
+        wait: Duration::from_millis(10),
+        retry: Duration::from_secs(30),
+        ceiling: Duration::from_millis(50),
+        calls: 2,
+    });
+    kept.ask(root, "plugin", fake, &asked(TIP)).unwrap_err();
+    std::thread::sleep(Duration::from_millis(80));
+    kept.ask(root, "plugin", fake, &asked(TIP)).unwrap_err();
+    std::thread::sleep(Duration::from_millis(80));
+    assert_eq!(fake.calls(), 2);
+    for _ in 0..3 {
+        assert_eq!(
+            kept.ask(root, "plugin", fake, &asked(TIP)),
+            Err("fake has 2 calls still running".into())
+        );
+    }
+    let mut other = asked(TIP);
+    other.slug = "tools/y".into();
+    assert_eq!(
+        kept.ask(root, "plugin", fake, &other),
+        Err("fake has 2 calls still running".into()),
+        "the cap is the answerer's, over all its tasks"
+    );
+    assert_eq!(fake.calls(), 2, "no call starts past the cap");
+    assert!(
+        kept.ask(root, "another", fake, &asked(TIP)).is_err(),
+        "another plugin's answerer has its own"
+    );
+    assert_eq!(fake.calls(), 3);
+}
+
+#[test]
+fn answerers_are_asked_at_once_so_a_read_waits_for_the_slowest_alone() {
+    let root = Path::new("/project");
+    let (one, two) = (Fake::leaked(false), Fake::leaked(false));
+    *one.delay.lock().unwrap() = Duration::from_millis(400);
+    *two.delay.lock().unwrap() = Duration::from_millis(400);
+    *two.answers.lock().unwrap() = vec!["nightly"];
+    let kept = Kept::new(limits(Duration::from_secs(10), Duration::from_secs(30)));
+    let began = Instant::now();
+    let answerers: [(&str, &'static dyn Gates); 2] = [("one", one), ("two", two)];
+    let gates = theirs(&kept, root, &answerers, &asked(TIP));
+    assert!(
+        began.elapsed() < Duration::from_millis(750),
+        "two answers of 0.4 s took {:?}",
+        began.elapsed()
+    );
+    assert_eq!(
+        names(&gates),
+        [("certificate", GateState::Met), ("nightly", GateState::Met)],
+        "in the answerers' order"
+    );
+}
+
+#[test]
+fn a_failing_answerer_stands_in_for_the_names_it_answered_so_the_symphonys_never_show() {
+    let root = Path::new("/project");
+    let fake = Fake::leaked(false);
+    *fake.answers.lock().unwrap() = vec!["review", "certificate"];
+    let kept = Kept::new(limits(Duration::from_secs(10), Duration::from_secs(30)));
+    let answerers: [(&str, &'static dyn Gates); 1] = [("plugin", fake)];
+    let first = theirs(&kept, root, &answerers, &asked(OLD));
+    assert_eq!(
+        names(&first),
+        [("review", GateState::Met), ("certificate", GateState::Met)]
+    );
+    assert_eq!(
+        kept.names(root, "plugin", "fake"),
+        ["review", "certificate"]
+    );
+    *fake.error.lock().unwrap() = Some("land exited 2".into());
+    let own = vec![gate("review", GateState::Missing)];
+    let gates = merged(own, theirs(&kept, root, &answerers, &asked(TIP)));
+    assert_eq!(
+        names(&gates),
+        [
+            ("review", GateState::Unknown),
+            ("certificate", GateState::Unknown)
+        ],
+        "the plugin's unknown review in the Symphony's place, never beside it"
+    );
+    assert!(gates.iter().all(|gate| gate.detail == "land exited 2"));
 }
 
 /// `git` with `args` in `root`, its output trimmed.
