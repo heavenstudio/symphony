@@ -221,10 +221,19 @@ impl Hub {
         {
             eprintln!("CHAT deferred: {error}");
         }
+        self.health.reading(store.client().queries());
         let snapshot = match measured("callbacks", || store.dispatch_callbacks_snapshot()) {
-            Ok(snapshot) => snapshot,
+            Ok(snapshot) => {
+                self.health
+                    .dispatched(symphony_board::sweep::trigger::now(), Ok(()));
+                snapshot
+            }
             Err(error) => {
                 eprintln!("CALLBACK deferred: {error}");
+                self.health.dispatched(
+                    symphony_board::sweep::trigger::now(),
+                    Err(&error.to_string()),
+                );
                 None
             }
         };

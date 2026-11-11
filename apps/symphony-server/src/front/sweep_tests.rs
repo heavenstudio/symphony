@@ -332,6 +332,46 @@ fn a_round_is_reported_late_by_its_whole_delay_past_the_threshold() {
 }
 
 #[test]
+fn each_sweep_is_recorded_in_the_boards_health_failed_with_its_error_or_ok() {
+    let mut fixture = SweepFixture::new(
+        "if [ ! -f failed ]; then touch failed; echo 'the board did not answer' >&2; exit 3; fi",
+    );
+    let hub = Arc::new(crate::live::Hub::new(
+        &fixture.root,
+        &fixture.root.join("client"),
+    ));
+    assert!(fixture.shared.api.set(hub.clone()).is_ok());
+    fixture.start(maintenance_worker(
+        fixture.shared.clone(),
+        Duration::ZERO,
+        Duration::from_secs(3),
+        Stamp::now,
+    ));
+    let began = Instant::now();
+    let report = loop {
+        let report = hub.health.report(symphony_board::sweep::trigger::now());
+        if report.sweep.ok > 0 {
+            break report;
+        }
+        assert!(
+            began.elapsed() < Duration::from_secs(15),
+            "no sweep was recorded ok: {report:?}"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    };
+    assert_eq!(report.sweep.failed, 1, "{report:?}");
+    assert_eq!(
+        report.sweep.error.as_deref(),
+        Some("exit status: 3: the board did not answer")
+    );
+    assert!(
+        report.warnings.is_empty(),
+        "the good sweep after it cleared the warning: {:?}",
+        report.warnings
+    );
+}
+
+#[test]
 fn a_held_lifecycle_lock_does_not_stall_the_sweep_rounds() {
     // Hub startup holds the lifecycle lock across SurrealDB calls; the rounds must go on.
     let mut fixture = SweepFixture::new(

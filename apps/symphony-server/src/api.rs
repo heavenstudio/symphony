@@ -47,6 +47,7 @@ const READS: &[&str] = &[
     "/api/diff",
     "/api/asks",
     "/api/ask",
+    "/api/health",
 ];
 
 type Request = axum::http::Request<()>;
@@ -142,6 +143,19 @@ pub(crate) async fn answer(shared: &Arc<Shared>, request: Request) -> Option<Res
     }
     if !scope.is_empty() && shared.api.get().and_then(|hub| hub.tree(scope)).is_none() {
         return Some(error(StatusCode::NOT_FOUND, "no worktree for this branch"));
+    }
+    // The board's health is the hub's memory: it waits on no board read, the first one included,
+    // so a board too slow to answer is still said.
+    if path == "/api/health" {
+        return Some(match shared.api.get() {
+            Some(hub) => no_store(Json(
+                hub.health.report(symphony_board::sweep::trigger::now()),
+            )),
+            None => error(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "the Symphony server is starting",
+            ),
+        });
     }
     // Uploads are the server's own, the same file for every branch's pages: a branch card's
     // picture names `/@tree/artifacts/uploads/…` and is read from this checkout's store.
