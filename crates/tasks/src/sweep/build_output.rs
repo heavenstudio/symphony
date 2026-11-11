@@ -194,8 +194,11 @@ pub(super) fn clear(
         {
             continue;
         }
-        if !o.dry_run && !still_finished(root, store, &mut history, entry, path, o)? {
-            continue;
+        if !o.dry_run {
+            (o.pause)("judged", &path.to_string_lossy());
+            if !still_finished(root, store, &mut history, entry, path, o)? {
+                continue;
+            }
         }
         for folder in found {
             if !o.dry_run {

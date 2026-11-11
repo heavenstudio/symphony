@@ -5,8 +5,11 @@
 
 use crate::common::{NOW, Seed};
 use crate::{Repo, git, started, text, write};
+use std::cell::Cell;
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 use symphony_board::sweep::Sweep;
+use symphony_board::sweep::trigger::now;
 
 /// Two hours on the board's clock: past the hour the build output waits for.
 const LATER: f64 = NOW + 7200.0;
@@ -179,6 +182,52 @@ fn an_agent_that_beat_within_the_hour_keeps_it() {
     let past = sweep_at(&r, NOW + 3601.0, false);
     assert_eq!(past.cleared.len(), 2, "{}", text(&past));
     assert!(folders.iter().all(|f| !f.exists()));
+}
+
+#[test]
+fn a_worktree_touched_within_the_hour_keeps_it() {
+    // Its git files or its top folder, by the machine's clock: here it was made, committed in
+    // and built, every one of them after `before`, and the sweep finds them as they are.
+    let before = now();
+    let r = Repo::with(Seed::default().task("sim/landed", "done"));
+    let wt = landed(&r, "landed", "sim/landed");
+    held(&r, &wt);
+    let folders = built(&wt);
+    let within = r.sweep_now(|o| o.now = Box::new(move || before + 3599.0));
+    assert_untouched(&r, &wt, &folders, &within);
+
+    let after = now();
+    let past = r.sweep_now(|o| o.now = Box::new(move || after + 3601.0));
+    assert_eq!(past.cleared.len(), 2, "{}", text(&past));
+    assert!(folders.iter().all(|f| !f.exists()));
+}
+
+#[test]
+fn a_commit_made_after_the_judgement_keeps_it() {
+    // Right before it clears, the sweep reads the worktree again: a HEAD that moved keeps it.
+    let r = Repo::with(Seed::default().task("sim/landed", "done"));
+    let wt = landed(&r, "landed", "sim/landed");
+    held(&r, &wt);
+    let folders = built(&wt);
+    let (there, watched) = (wt.clone(), wt.canonicalize().unwrap());
+    let reached = Rc::new(Cell::new(false));
+    let seen = Rc::clone(&reached);
+    let done = r.sweep_with(|o| {
+        o.now = Box::new(|| LATER);
+        o.pause = Box::new(move |stage, what| {
+            if stage == "judged" && Path::new(what).canonicalize().ok() == Some(watched.clone()) {
+                seen.set(true);
+                write(&there, "sim/world.gd", "extends RefCounted\n# more\n");
+                git(&there, &["commit", "-qam", "more"]);
+            }
+        });
+    });
+    assert!(
+        reached.get(),
+        "the sweep judged it finished: {}",
+        text(&done)
+    );
+    assert_untouched(&r, &wt, &folders, &done);
 }
 
 #[test]

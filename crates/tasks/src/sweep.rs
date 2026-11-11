@@ -152,8 +152,9 @@ type Pause = Box<dyn Fn(&str, &str)>;
 /// How a sweep runs. `pause(stage, what)` runs between the checks and each removal ("remove", the
 /// path; "checked", after status; "unlock", before claiming a dead lock; "lock-claimed", after
 /// its atomic rename; "unlocked", after releasing it and before the final guard) or branch deletion
-/// ("delete", the branch): what happens there is what the
-/// re-checks guard against.
+/// ("delete", the branch), and before a build folder is cleared ("judged", the worktree, before
+/// the rule is read again; "clear", the folder): what happens there is what the re-checks guard
+/// against.
 pub struct Options {
     pub dry_run: bool,
     /// The window of recent activity, in hours.
