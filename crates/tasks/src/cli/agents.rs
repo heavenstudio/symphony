@@ -443,7 +443,7 @@ pub fn describe_board_observed(
             continue;
         }
         let mut health = s.health;
-        let quiet = matches!(health, Health::Stale | Health::Lost | Health::Unknown);
+        let quiet = health.quiet();
         // An in-process agent makes no tool call while it waits on what it started in the
         // background: a process it started, still working in its own worktree, is that wait.
         let waiting = match (run, row.placed) {

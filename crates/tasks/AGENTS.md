@@ -173,6 +173,57 @@ for good. A record naming an entry the PULL this generation left awaiting (`pull
 not is an older one's own PULL acknowledged, which told every entry, withheld ones too.
 Posts, verdicts and AGENT lines stay: they were said to whoever held the role then, and a new
 holder hears no backlog.
+What a PULL says is a separate question from whether one is sent. The first is the whole digest;
+each later one this generation queues says what changed since the last one acknowledged
+(`Digest::changes_since`): a baseline `pull_said` (`cli::pull::Said`: the counts, every entry
+named, the sessions of unknown liveness), carried on the queued event and recorded by both
+acknowledgement sites, in a field older binaries ignore, so no schema change. Rows added are the
+entries heard and not told, the trigger's own test (`pull_account::told`), not those absent from
+`pull_said`, so a row that left and came back is said once more, as it is pushed once more. An
+older dispatcher's acknowledgement ends `pull_queued` but leaves `pull_awaiting`, and
+`State::said` reads that as no baseline: the next PULL is the whole digest. One that keeps
+`pull_awaiting` but not `pull_said` (built before PULLs said only what changed, as the shared
+server may still be) ends both and records the PULL's entries; `pull_account::baseline` reads an
+entry the recipient hears, recorded as told and not withheld, that `pull_said` does not name as
+such a PULL, and the next PULL is the whole digest. What that cannot see, exactly: once every row
+such a PULL told has left the recipient's digest before this generation's next PULL, that PULL is
+measured against the baseline before it, so its header can say a count that moved before it
+again, with the older `(was N)`, its liveness line can repeat or miss a change that PULL said, and
+those rows are not said `resolved`. Rows added are exact, from `pull_entries`, which both record:
+none is lost or said twice. The next PULL this generation's acknowledgement records is exact
+again, and `tasks pull` says the whole digest meanwhile. `tasks pull` prints
+the whole digest the recipient hears now (`pull::heard_now`) and writes nothing.
+A channel registered anew starts from the whole digest: `callback_in` clears the PULL account
+(`pull_entries`, `pull_said`, `pull_withheld`, `pull_awaiting`, `pull_queued`) and takes back a
+waiting PULL when the address goes to or comes from none, or the listener's `owner` differs from
+the one recorded; `pull_unanswered` stays, so a told post stays told. The same listener at a new
+socket keeps the account, which is how a channel that waited out an outage hears what waited
+(`hand_over_outage`, `pending_pull`).
+A recipient is not told its own writes nor its children's staffing (`attach::diff_on`): its own
+moves, a role move it wrote, the roles a session it registered (`parent`) takes or lets go, and
+the move and readiness that child's claim or release makes. A quiet child is said once a health
+transition, from the observation's stored health; one it hears as stale, lost or unknown is not
+also listed idle (`pull::idle_and_busy`, which the dispatch, the legacy monitor and `tasks pull`
+share, each passing the children its look follows).
+`tasks wait` is the dispatch's own pass for one session with no channel (`Pass::Collect`,
+`Store::collect_callbacks`): it plans as a delivering pass, takes the recipient's lease though no
+address is registered, and its `Visit::send` prints what `deliver` would have sent, flushed, before
+it is recorded as delivered by the same `record_callback_delivery` (a print that fails is a retry, as
+a socket that refuses is, so a line is repeated and never lost), which records the PULL's
+acknowledgement and the messages' deliveries. No other dispatcher visits a session without an
+address, so its callback state is that reader's alone between reads; one with an address is
+refused, since its channel takes the lines. A look also runs that session's pane watch
+(`Store::watch_pane`, hc from the command's environment) and holds the chat seat when
+`Store::chat_recipient` names it: with no channel able to, the live orchestrator first by handle
+on `callback_state:chat`'s `waiting` list, which a session joins at its first look and leaves at
+any `callback` registration. While nobody holds the seat, `Store::unheard_owner_events` gives
+every orchestrator's `pull` and `inbox` what the owner said, and an inbox acknowledgement takes
+it. The command beats for its session before a look, at
+most every 20 s, as a monitor does, so the look reads the board its beat moved and the next poll
+does not take its own beat for news. A look writes only to set its session up (its state row, the
+waiting list) or to record what it printed: at a board that stood still it is nine reads and no
+write (`pushes::a_waiting_session_looking_at_a_board_that_stood_still_writes_nothing`), and the
+perf suite times one at scale (`timings`, `wait`); docs/TASKS.md says the cost per idle minute.
 A finished idle terminal still closes under the original cleanup rules, retiring its
 registration; an executor of a task in review is not finished, and keeps its terminal until it
 has sat idle at its prompt an hour (`reap::IDLE_HOUR`), as every role on open work does.
@@ -236,8 +287,14 @@ Restore prompts re-register the resumed process's callback first.
 Neither channel checks nor delivery fabricate tool calls.
 Outbox rows are indexed by handle
 and delivery state, with a numeric sequence for ordering; chat retries belong
-only to the current recipient. Transactional mutation events advance `counter:board` for board
-inputs, callback registration/observation changes and owner chat. A Store caches the raw board
+only to the current recipient. Transactional mutation events advance `counter:board_structure` for structural
+inputs, callback registration/observation changes and owner chat. Session mutations instead advance
+their own `session_revision` rows; authorization and liveness guards write those rows too, without
+advancing the mutation count or heartbeat. Readers use the combined `schema::BOARD_MARKER`.
+The schema16 migration preserves the structural count and retires the legacy scalar
+`counter:board` at the minimum signed integer, which old unsigned cached readers refuse.
+The version floor also refuses newly-opening schema14 readers. Beats advance only their
+per-session revisions. A Store caches the raw board
 snapshot together with that marker, read in one transaction, and rebuilds its derived health,
 presence grace and reservation state against the current clock. The Symphony server uses those
 cached inputs even without a callback recipient; machine/test probes and the agents view still
@@ -592,6 +649,66 @@ field, since a reader built before it refuses a task row with a field it does
 not know, and every write that moves the task, changes its parent or its
 dependencies deletes it. Each statement the cap sends is in `SLOT_READS`, which
 `tests/store/slots/cost.rs` has the server plan.
+`alarm.rs` owns the pipeline alarm PULL says: `[board] review_alarm_ratio`,
+`review_alarm_hours` and `review_alarm_clear_hours`, read as the cap is
+(`cli::capped`, `Store::alarming`). It writes only where rework ended (below):
+each digest reads the
+status lines of the lookback window through `message_ts` (`store/history.rs`),
+walks each task's back from its status now and replays the counts
+(`cli/pull/pipeline.rs`). What held when the window opened is read, never
+assumed: a task's newest lines before it, from its own thread's key range,
+read back a page at a time past any field value that only reads like one
+(`Store::lines_before`), where its status or record then rests on them
+(`alarm::rests_on_before`), and the alarm's state then by replaying a window
+twice as long while the replays from raised and from lowered disagree, back to
+the board's first task. Which work a mirror or an instruction subtask counted
+with is the tree as it stood then (`alarm/tree.rs`): each task from when it was
+made, each instruction under the parent its moves' lines left it (`set_parent`
+writes the parent left, `(was PARENT)`). What a
+task's landing waits on is the landing tool's record in `fields._board.waits`
+(`TIP: name, …`, `Store::record_waits`, given the assessment it states, kept
+with its time and unique thread sequence in `fields._board.assessed`: the
+mutation transaction retains committed assessment/text pairs in
+`fields._board.assessments`, so retries, including older receipts after a newer
+assessment, write nothing. A fresh assessment writes its own line whatever its
+text), judged against the branch's tip (`cli::probes::tip`); a
+record naming `changes` of the tip now, that the branch has not answered since
+(the same `Fixes` as the alarm's), makes review rework, counted in
+progress, and in the replay each record stands to the next, or to when the
+branch first moved past the tip it judged after the record was written
+(`alarm::reworked`, whatever the task's status now, `cli/pull/pipeline.rs`
+`Fixes`; `tests/cli/pull/alarm/rework.rs`). The reader asks the branch's
+reference log for the commit it first moved to from that tip after then (the
+next made on it, what amended or rebased it away, or, for a tip it came back
+to, the move after that), else the branch's line of first parents, where only
+a commit whose first parent is that tip follows it (`cli::probes::tip`,
+`tests/cli/probes/tips.rs`). The first answer of each record, by its tip and
+unique thread sequence (`line:SID`), is kept in `fields._board.fixed`
+(`Store::record_fixed`,
+first write wins, with no line, and no new version to fence a concurrent move
+as stale) and read back before asking again (`alarm::kept_fix`), so no later
+commit, amend, rebase or reference log moves it, and a new record of changes
+on a tip the branch came back to waits on a move of its own, in PULL and the
+alarm alike, while the record answered, retried, asks no rework of either.
+Historical timestamp-keyed ends are adopted only when the thread proves that
+the timestamp names one occurrence of that tip; ambiguous or malformed evidence
+supplies no saved end. The digest cache and replay boundaries retain the same
+thread identity, even when independent assessments share a timestamp.
+
+The production publisher uses API9's typed `assessment_state` and
+`record_waits` operations (`assessment/1`). The former reads a task's status
+and version; the checked mutation requires that pair atomically for a fresh
+write. A committed assessment/text retry returns its original positive thread
+sequence and time, even after task state moved, with `current: false` when a
+newer assessment stands. That historical receipt confirms the occurrence,
+never a current assessment. The guarded `assessment/2` route also validates
+the immutable publication, original task/event binding, fence and verification
+against the actual caller's repository and explicitly selected board context.
+Its echoed publication witness and canonical receipt must match exactly;
+the numeric API version alone proves no endpoint capability. Unknown methods,
+incompatible payloads and unconfirmed replies remain pending in the landing
+publisher's local journal.
+
 A move that names where it goes from (`Store::move_from`, `tasks api`'s `move`
 with `from` from api 6, `store/work/moves.rs`) is refused unless the task's
 status, as the move's own write reads it, is one of those: a caller that decided

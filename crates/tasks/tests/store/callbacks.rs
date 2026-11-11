@@ -750,13 +750,19 @@ fn cached_board_inputs_age_without_a_board_read_and_refresh_after_mutation() {
     let marker = f
         .store
         .client()
-        .query("RETURN counter:board.last;", json!({}))
+        .query(
+            &format!("RETURN {};", symphony_board::schema::BOARD_MARKER),
+            json!({}),
+        )
         .unwrap();
     assert!(f.store.client().query("BEGIN TRANSACTION; UPDATE task SET title = 'Uncommitted'; THROW 'rollback'; COMMIT TRANSACTION;", json!({})).is_err());
     assert_eq!(
         f.store
             .client()
-            .query("RETURN counter:board.last;", json!({}))
+            .query(
+                &format!("RETURN {};", symphony_board::schema::BOARD_MARKER),
+                json!({})
+            )
             .unwrap(),
         marker,
         "a rolled-back write must not publish a marker"
@@ -799,13 +805,19 @@ fn an_idle_clock_reports_stale_and_lost_children_without_a_board_mutation() {
     let marker = f
         .store
         .client()
-        .query("RETURN counter:board.last;", json!({}))
+        .query(
+            &format!("RETURN {};", symphony_board::schema::BOARD_MARKER),
+            json!({}),
+        )
         .unwrap();
     f.advance(91.0);
     assert_eq!(
         f.store
             .client()
-            .query("RETURN counter:board.last;", json!({}))
+            .query(
+                &format!("RETURN {};", symphony_board::schema::BOARD_MARKER),
+                json!({})
+            )
             .unwrap(),
         marker
     );

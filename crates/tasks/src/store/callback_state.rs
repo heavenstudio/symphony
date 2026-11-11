@@ -35,6 +35,12 @@ pub(super) struct State {
     pub(super) pull_withheld: BTreeSet<Entry>,
     /// The PULL this generation left queued, as its acknowledgement records it.
     pub(super) pull_awaiting: Option<Awaiting>,
+    /// What the last PULL the recipient acknowledged said, when this generation queued it: the
+    /// next one says only what changed since ([`State::said`]). Older dispatchers neither read nor
+    /// write it; this one's acknowledgement of a PULL it did not queue clears it, so the next one
+    /// says the whole digest, and one an older dispatcher acknowledged since is read from what it
+    /// recorded ([`super::pull_account::baseline`]).
+    pub(super) pull_said: Option<crate::cli::pull::Said>,
     // Legacy dispatchers replace Seen wholesale. They leave these stream fields untouched.
     pub(super) message_cursor: Option<i64>,
     pub(super) delivery_version: Option<u32>,
@@ -57,6 +63,15 @@ impl State {
                 }
             }
         }
+    }
+
+    /// What the last PULL the recipient acknowledged said, when this generation queued it and
+    /// recorded its acknowledgement. An older dispatcher's acknowledgement ends `pull_queued` and
+    /// leaves `pull_awaiting`, which it does not know, as it found it: the recipient then heard a
+    /// PULL `pull_said` does not record, and hears the whole digest next.
+    pub(super) fn said(&self) -> Option<&crate::cli::pull::Said> {
+        let older_acknowledged = self.pull_awaiting.is_some() && self.pull_queued.is_none();
+        self.pull_said.as_ref().filter(|_| !older_acknowledged)
     }
 
     /// What the recipient was told, as it hears it: the legacy record as it stands, narrowed as a
@@ -240,6 +255,33 @@ mod tests {
             ..State::default()
         };
         assert_eq!(gone.acknowledged(), Some(BTreeSet::from([post])));
+    }
+
+    #[test]
+    fn what_was_said_is_a_baseline_only_while_no_older_dispatchers_acknowledgement_came_since() {
+        let said = crate::cli::pull::Said {
+            entries: entries(&["t/a"]),
+            ..Default::default()
+        };
+        let awaiting = || Awaiting {
+            entries: entries(&["t/a", "t/b"]),
+            withheld: BTreeSet::new(),
+        };
+        let state = |queued: bool, awaited: bool| State {
+            pull_said: Some(said.clone()),
+            pull_queued: queued.then(|| entries(&["t/a", "t/b"])),
+            pull_awaiting: awaited.then(awaiting),
+            ..State::default()
+        };
+        // This generation's acknowledgement ends what it left awaiting: the baseline stands.
+        assert_eq!(state(false, false).said(), Some(&said));
+        // A PULL it queued waits: the last acknowledged one is still the baseline.
+        assert_eq!(state(true, true).said(), Some(&said));
+        // An older dispatcher acknowledged the PULL awaited, ending `pull_queued` only: the
+        // recipient heard what the baseline does not record.
+        assert_eq!(state(false, true).said(), None);
+        // None was ever recorded: a whole digest.
+        assert_eq!(State::default().said(), None);
     }
 
     fn entries(slugs: &[&str]) -> BTreeSet<Entry> {

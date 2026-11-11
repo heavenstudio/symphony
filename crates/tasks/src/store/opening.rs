@@ -139,6 +139,7 @@ impl Store {
             hand_off: None,
             inbox_pool: Mutex::new(None),
             slots: None,
+            alarm: crate::alarm::Thresholds::default(),
         }
     }
 

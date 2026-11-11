@@ -25,6 +25,7 @@ mod finish;
 mod list;
 mod panes;
 mod stats;
+mod wait;
 
 /// Why a command stopped short.
 pub enum Stop {
@@ -134,12 +135,14 @@ fn attach(store: &Store, c: &mut Context) -> Result<(), Stop> {
         root.as_ref()
             .is_some_and(|root| probes::landed(root, &t.slug))
     };
+    let tips = probes::tips(root.as_deref());
     let settings = Watch {
         interval: p.float("interval", 3.0),
         beat: p.float("beat", 20.0),
         polls: p.get("polls").map(|_| p.int("polls", 0)),
         probes: Some(&probes),
         landed: Some(&landed),
+        tips: Some(&tips),
         pull_every: Some(pull_every),
     };
     let (out, err, input, clock) = (&mut *c.out, &mut *c.err, &mut *c.input, c.clock);
@@ -356,6 +359,18 @@ pub fn run(store: &Store, c: &mut Context) -> Result<(), Stop> {
             )?;
             trigger::hourly(c.env, &c.env.cwd);
         }
+        "pull" => {
+            let me = c.actor()?;
+            for line in super::pull::heard_now(store, c.env, &me)?.lines() {
+                c.say(&line);
+            }
+            // What the owner said that nobody received, while nobody holds the chat seat; it
+            // stays until an orchestrator's inbox or the seat's holder takes it.
+            for (_, text) in store.unheard_owner_events(&me)? {
+                c.say(&text);
+            }
+        }
+        "wait" => wait::run(store, c)?,
         "leave" => {
             let me = c.actor()?;
             store.leave(&me)?;

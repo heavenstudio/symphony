@@ -8,7 +8,6 @@
       "Bash(just symphony-ask:*)"
     ],
     "deny": [
-      "Write(~/.claude/projects/**/memory/**)",
       "Edit(~/.claude/projects/**/memory/**)"
     ]
   },
@@ -20,6 +19,16 @@
           {
             "type": "command",
             "command": "\"$CLAUDE_PROJECT_DIR/.target/bin/symphony\" hook tasks-beat 2>/dev/null || true # symphony-stamp: heartbeat-v1",
+            "timeout": 10
+          }
+        ]
+      },
+      {
+        "matcher": "Write|Edit|MultiEdit|NotebookEdit|Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "r=$(\"$CLAUDE_PROJECT_DIR/.target/bin/symphony\" hook memory-guard 2>&1 >/dev/null) || case $r in Blocked:*) printf '%s\\n' \"$r\" >&2; exit 2;; esac # symphony-stamp: memory-guard-v1",
             "timeout": 10
           }
         ]

@@ -9,8 +9,10 @@
 //! SQLite's row ids are kept as `sid`; `counter:message` and `counter:task` hold the last id given out,
 //! `counter:tree` counts the moves of a task under another, and `counter:['agent', key]` the binds of
 //! one agent (`Store::bind_agent`): each a record the writes that must not pass each other write.
-//! Mutation events advance `counter:board` in the transaction that changes board inputs,
-//! callback registration/observations or owner chat. Readers compare that marker without writing it.
+//! Mutation events advance `counter:board_structure` in the transaction that changes board inputs,
+//! callback registration/observations or owner chat. Session mutations advance per-handle revisions
+//! instead, so independent tool-call beats never write the structural counter. Readers compare the
+//! combined BOARD_MARKER; guard-only writes on a revision row do not invalidate cached inputs.
 //! An event UPDATEs the marker, or CREATEs it on a board's first write, and never UPSERTs it: an
 //! UPSERT of a record that exists tries a create and rolls it back to a savepoint, and SurrealKV's
 //! rollback walks every key the transaction has written, so the copy's one transaction, an event a
@@ -70,9 +72,13 @@
 /// Bumped when `DEFINE` gains a table, field, index or event: a board at an older version runs
 /// `DEFINE` once, and its `IF NOT EXISTS` adds what is new but leaves every definition already there
 /// as it was. Changing one (a field's type, an assertion, an index) also needs `DEFINE … OVERWRITE`
-/// for it. The steps are additive, so a reader one version behind still reads what a newer build
-/// writes.
-pub const VERSION: i64 = 14;
+/// for it. Protocol changes can require a wider version step and retirement of old read tokens:
+/// an already-open store does not repeat its opening check.
+pub const VERSION: i64 = 16;
+
+/// Structural mutations plus all committed session changes, including deletions and re-creations.
+/// The separate structural record keeps the retired legacy scalar outside this identity.
+pub const BOARD_MARKER: &str = "((SELECT VALUE last FROM ONLY counter:board_structure) ?? 0) + ((SELECT VALUE math::sum(last) FROM session_revision GROUP ALL)[0] ?? 0)";
 
 /// A board schema: its version, and the steps that bring a board of any older version to it.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -327,6 +333,10 @@ DEFINE FIELD IF NOT EXISTS busy_call ON session TYPE option<string>;
 DEFINE FIELD IF NOT EXISTS last_tool ON session TYPE option<float>;
 DEFINE INDEX IF NOT EXISTS session_agent ON session FIELDS agent;
 
+DEFINE TABLE IF NOT EXISTS session_revision SCHEMAFULL;
+DEFINE FIELD IF NOT EXISTS last ON session_revision TYPE int;
+DEFINE FIELD IF NOT EXISTS writes ON session_revision TYPE option<int>;
+
 DEFINE TABLE IF NOT EXISTS role SCHEMAFULL;
 DEFINE FIELD IF NOT EXISTS slug ON role TYPE string;
 DEFINE FIELD IF NOT EXISTS handle ON role TYPE string;
@@ -405,18 +415,22 @@ DEFINE TABLE IF NOT EXISTS callback_event SCHEMALESS;
 DEFINE INDEX IF NOT EXISTS callback_event_handle ON callback_event FIELDS handle, delivered;
 DEFINE TABLE IF NOT EXISTS chat_event SCHEMALESS;
 
-DEFINE EVENT OVERWRITE board_changed ON task WHEN $before != $after THEN { IF record::exists(counter:board) { UPDATE counter:board SET last = (last ?? 0) + 1 RETURN NONE; } ELSE { CREATE counter:board SET last = 1 RETURN NONE; }; };
-DEFINE EVENT OVERWRITE board_changed ON session WHEN $before != $after THEN { IF record::exists(counter:board) { UPDATE counter:board SET last = (last ?? 0) + 1 RETURN NONE; } ELSE { CREATE counter:board SET last = 1 RETURN NONE; }; };
-DEFINE EVENT OVERWRITE board_changed ON role WHEN $before != $after THEN { IF record::exists(counter:board) { UPDATE counter:board SET last = (last ?? 0) + 1 RETURN NONE; } ELSE { CREATE counter:board SET last = 1 RETURN NONE; }; };
-DEFINE EVENT OVERWRITE board_changed ON link WHEN $before != $after THEN { IF record::exists(counter:board) { UPDATE counter:board SET last = (last ?? 0) + 1 RETURN NONE; } ELSE { CREATE counter:board SET last = 1 RETURN NONE; }; };
-DEFINE EVENT OVERWRITE board_changed ON message WHEN $before != $after THEN { IF record::exists(counter:board) { UPDATE counter:board SET last = (last ?? 0) + 1 RETURN NONE; } ELSE { CREATE counter:board SET last = 1 RETURN NONE; }; };
-DEFINE EVENT OVERWRITE board_changed ON delivery WHEN $before != $after THEN { IF record::exists(counter:board) { UPDATE counter:board SET last = (last ?? 0) + 1 RETURN NONE; } ELSE { CREATE counter:board SET last = 1 RETURN NONE; }; };
-DEFINE EVENT OVERWRITE board_changed ON task_session WHEN $before != $after THEN { IF record::exists(counter:board) { UPDATE counter:board SET last = (last ?? 0) + 1 RETURN NONE; } ELSE { CREATE counter:board SET last = 1 RETURN NONE; }; };
+DEFINE EVENT OVERWRITE board_changed ON task WHEN $before != $after THEN { IF record::exists(counter:board_structure) { UPDATE counter:board_structure SET last = (last ?? 0) + 1 RETURN NONE; } ELSE { CREATE counter:board_structure SET last = 1 RETURN NONE; }; };
+DEFINE EVENT OVERWRITE board_changed ON session WHEN $before != $after THEN {
+    LET $revision = type::record('session_revision', record::id($after.id ?? $before.id));
+    IF record::exists($revision) { UPDATE $revision SET last += 1 RETURN NONE; }
+    ELSE { CREATE $revision SET last = 1 RETURN NONE; };
+};
+DEFINE EVENT OVERWRITE board_changed ON role WHEN $before != $after THEN { IF record::exists(counter:board_structure) { UPDATE counter:board_structure SET last = (last ?? 0) + 1 RETURN NONE; } ELSE { CREATE counter:board_structure SET last = 1 RETURN NONE; }; };
+DEFINE EVENT OVERWRITE board_changed ON link WHEN $before != $after THEN { IF record::exists(counter:board_structure) { UPDATE counter:board_structure SET last = (last ?? 0) + 1 RETURN NONE; } ELSE { CREATE counter:board_structure SET last = 1 RETURN NONE; }; };
+DEFINE EVENT OVERWRITE board_changed ON message WHEN $before != $after THEN { IF record::exists(counter:board_structure) { UPDATE counter:board_structure SET last = (last ?? 0) + 1 RETURN NONE; } ELSE { CREATE counter:board_structure SET last = 1 RETURN NONE; }; };
+DEFINE EVENT OVERWRITE board_changed ON delivery WHEN $before != $after THEN { IF record::exists(counter:board_structure) { UPDATE counter:board_structure SET last = (last ?? 0) + 1 RETURN NONE; } ELSE { CREATE counter:board_structure SET last = 1 RETURN NONE; }; };
+DEFINE EVENT OVERWRITE board_changed ON task_session WHEN $before != $after THEN { IF record::exists(counter:board_structure) { UPDATE counter:board_structure SET last = (last ?? 0) + 1 RETURN NONE; } ELSE { CREATE counter:board_structure SET last = 1 RETURN NONE; }; };
 DEFINE EVENT OVERWRITE board_changed ON callback_state
     WHEN [$before.address, $before.owner, $before.host, $before.chat, $before.chat_fallback, $before.chat_resume, $before.confirmed_until, $before.in_process, $before.seen, $before.pull, $before.registration_revision]
       != [$after.address, $after.owner, $after.host, $after.chat, $after.chat_fallback, $after.chat_resume, $after.confirmed_until, $after.in_process, $after.seen, $after.pull, $after.registration_revision]
-    THEN { IF record::exists(counter:board) { UPDATE counter:board SET last = (last ?? 0) + 1 RETURN NONE; } ELSE { CREATE counter:board SET last = 1 RETURN NONE; }; };
-DEFINE EVENT OVERWRITE board_changed ON chat_event WHEN $before != $after THEN { IF record::exists(counter:board) { UPDATE counter:board SET last = (last ?? 0) + 1 RETURN NONE; } ELSE { CREATE counter:board SET last = 1 RETURN NONE; }; };
+    THEN { IF record::exists(counter:board_structure) { UPDATE counter:board_structure SET last = (last ?? 0) + 1 RETURN NONE; } ELSE { CREATE counter:board_structure SET last = 1 RETURN NONE; }; };
+DEFINE EVENT OVERWRITE board_changed ON chat_event WHEN $before != $after THEN { IF record::exists(counter:board_structure) { UPDATE counter:board_structure SET last = (last ?? 0) + 1 RETURN NONE; } ELSE { CREATE counter:board_structure SET last = 1 RETURN NONE; }; };
 
 DEFINE EVENT OVERWRITE said ON message
     WHEN $event != 'UPDATE' OR [$before.sender, $before.sid, $before.slug, $before.kind IN ['msg', 'verdict']]
@@ -451,6 +465,21 @@ IF (SELECT VALUE id FROM said LIMIT 1) = [] {
         LET $newest = $spoke.last[0];
         CREATE type::record('said', [$spoke.sender]) SET sid = $newest[0], slug = $newest[1] RETURN NONE;
     };
+};
+
+// Transfer the structural count once. Session revisions remain independent and are not reset.
+// A retired legacy token without its successor is corruption, never an empty board.
+IF !record::exists(counter:board_structure) {
+    LET $legacy_marker = (SELECT VALUE last FROM ONLY counter:board) ?? 0;
+    IF $legacy_marker < 0 { THROW 'refused: structural marker missing after legacy marker retirement'; };
+    CREATE counter:board_structure SET last = $legacy_marker RETURN NONE;
+};
+// Old cached readers decode this scalar as u64 before consulting their cache. A finite signed
+// retirement makes them fail closed; current events never write this record again.
+IF record::exists(counter:board) {
+    UPDATE counter:board SET last = -9223372036854775807 - 1 RETURN NONE;
+} ELSE {
+    CREATE counter:board SET last = -9223372036854775807 - 1 RETURN NONE;
 };
 ";
 
