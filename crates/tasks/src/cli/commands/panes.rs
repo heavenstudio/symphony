@@ -7,26 +7,24 @@ use super::{Context, Stop};
 use crate::Store;
 use crate::launch::hc::Binary;
 use crate::launch::reap::{self, REAP_SECONDS, Reap};
-use crate::launch::{self, Ask, Machine, procs};
+use crate::launch::{self, Ask, Defaults, Machine, procs};
 use std::collections::HashSet;
 
-/// `launch SLUG --model M ...`.
+/// `launch SLUG --model M ...`: the agent and model named, else the project's `[agents] launch`
+/// ([`Defaults`]), else the board's own.
 pub(super) fn launch(store: &Store, c: &mut Context) -> Result<(), Stop> {
     let p = c.parsed;
+    let actor = c.actor()?;
+    let machine = Machine::of(c.env);
+    let resolved = Defaults::configured(&machine.root)
+        .map_err(Stop::Refused)?
+        .resolve(p.get("kind"), p.get("model"));
     let ask = Ask {
         slug: c.arg("slug"),
-        actor: c.actor()?,
-        model: p
-            .or(
-                "model",
-                if matches!(p.get("kind"), Some("claude" | "worker" | "reviewer")) {
-                    "sonnet"
-                } else {
-                    "gpt-6.1-sol"
-                },
-            )
-            .into(),
-        kind: p.get("kind").map(str::to_string),
+        actor,
+        model: resolved.model.clone(),
+        effort: resolved.effort.clone(),
+        kind: Some(p.get("kind").unwrap_or(resolved.agent).to_string()),
         role: p.or("role", "executor").into(),
         branch: p.get("branch").map(str::to_string),
         detached: p.flag("detached"),
@@ -34,11 +32,17 @@ pub(super) fn launch(store: &Store, c: &mut Context) -> Result<(), Stop> {
         prompt: p.or("prompt", "").into(),
         tab: p.get("tab").map(str::to_string),
     };
-    let started = launch::launch(store, &Binary::of(c.env), &Machine::of(c.env), &ask)?;
+    let started = launch::launch(store, &Binary::of(c.env), &machine, &ask)?;
     let s = &started.row;
     c.say(&format!(
-        "launched {} on {} as {}: pane {}, agent session {}, worktree {}",
-        s.handle, s.slug, s.role, s.pane, s.claude_session, s.worktree
+        "launched {} on {} as {}: {}, pane {}, agent session {}, worktree {}",
+        s.handle,
+        s.slug,
+        s.role,
+        resolved.said(),
+        s.pane,
+        s.claude_session,
+        s.worktree
     ));
     Ok(())
 }
