@@ -6,7 +6,7 @@ mod common;
 use common::{board, delta};
 use symphony_api::{Change, Delta};
 use symphony_ui::state::{
-    Backoff, Notice, Region, Toasts, apply, keeps_panel_baseline, reload_for,
+    Backoff, FewMap, Notice, Region, Toasts, apply, keeps_panel_baseline, reload_for,
 };
 
 #[test]
@@ -319,4 +319,41 @@ fn the_panel_baseline_holds_from_an_arrival_until_the_panel_is_ready() {
         !keeps_panel_baseline(empty, one, true),
         "a ready panel follows the activity itself"
     );
+}
+
+#[test]
+fn a_few_map_keeps_one_value_per_key_in_key_order() {
+    let mut map = FewMap::<String, u64>::default();
+    assert!(map.is_empty());
+    assert_eq!(map.first_key(), None);
+    assert_eq!(map.insert("ready".into(), 1), None);
+    assert_eq!(map.insert("done".into(), 2), None);
+    assert_eq!(map.insert("review".into(), 3), None);
+    assert_eq!(
+        map.insert("ready".into(), 4),
+        Some(1),
+        "a key holds one value"
+    );
+    assert_eq!(map.first_key().map(String::as_str), Some("done"));
+    assert_eq!(map.get("ready"), Some(&4));
+    assert!(map.contains_key("review"));
+    assert!(!map.contains_key("blocked"));
+    *map.or_default("blocked".into()) += 5;
+    *map.or_default("blocked".into()) += 1;
+    assert_eq!(map.get("blocked"), Some(&6));
+    assert_eq!(map.first_key().map(String::as_str), Some("blocked"));
+    if let Some(value) = map.get_mut("done") {
+        *value = 7;
+    }
+    assert_eq!(map.remove("done"), Some(7));
+    assert_eq!(map.remove("done"), None);
+    assert_eq!(map.get_mut("done"), None);
+    let mut other = FewMap::default();
+    for (key, value) in [("review", 3), ("blocked", 6), ("ready", 4)] {
+        other.insert(key.to_string(), value);
+    }
+    assert_eq!(map, other, "equal whatever order the keys came in");
+    map.clear();
+    assert!(map.is_empty());
+    assert_eq!(map.get("ready"), None);
 }
