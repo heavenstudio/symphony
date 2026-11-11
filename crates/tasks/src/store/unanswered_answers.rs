@@ -7,19 +7,30 @@ use std::collections::BTreeSet;
 
 pub(super) type Answer = (i64, String);
 
+pub(super) fn batch() -> String {
+    format!(
+        "RETURN $posts.map(|$p| {{ LET $handle = $p[0]; LET $post = $p[1]; RETURN {}; }});",
+        read()
+    )
+}
+
 /// Equality on the first two index columns leaves only this sender/kind's sequence suffix.
 /// Keep the original action predicate, including deliberate releases and role acquisitions.
 pub(super) fn read() -> String {
     format!(
-        "array::sort(array::flatten(['msg', 'verdict', 'system'].map(|$kind| ({}))))",
+        "array::sort(array::flatten(['msg', 'verdict', 'system'].map(|$kind| \
+({}).filter(|$row| $row.eligible).map(|$row| [$row.sid, $row.slug]))))",
         select()
     )
 }
 
 pub(super) fn select() -> String {
+    // Closures run through the legacy planner. Putting ANSWER_SQL's string predicates in WHERE
+    // makes it abandon the index for a full table scan, even with WITH INDEX. Compute eligibility
+    // on the indexed suffix instead; read() filters it before returning only row identities.
     format!(
-        "SELECT VALUE [sid, slug] FROM message WITH INDEX message_sender \
-WHERE sender = $handle AND kind = $kind AND sid > $post AND {ANSWER_SQL}"
+        "SELECT sid, slug, ({ANSWER_SQL}) AS eligible FROM message WITH INDEX message_sender \
+WHERE sender = $handle AND kind = $kind AND sid > $post"
     )
 }
 
