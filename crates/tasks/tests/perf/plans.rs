@@ -43,6 +43,9 @@ pub fn bound(name: &str) -> Option<Value> {
         "slug" | "dependent" => json!(generated::thread()),
         "sender" | "handle" => json!(generated::writer()),
         "kind" => json!("msg"),
+        // The slot ledger's reads name their tasks and holds in an earlier statement.
+        "slot_wanted" => json!([generated::thread()]),
+        "slot_holds" => json!([[generated::thread(), NOW]]),
         "prefix" | "pull_kept" => json!("pull-1"),
         _ => return None,
     })

@@ -4,6 +4,9 @@ use super::*;
 use crate::NewTask;
 use crate::store_fixture::Fixture;
 
+#[path = "unanswered_batch.rs"]
+mod batch;
+
 fn setup() -> (Fixture, Pending) {
     let f = Fixture::empty();
     f.task("work");
