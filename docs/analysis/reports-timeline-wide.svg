@@ -1,0 +1,117 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="512" viewBox="0 0 1200 512" role="img" aria-labelledby="title desc">
+<title id="title">A task's timeline on a wide screen</title>
+<desc id="desc">Lanes over time from 09:00 to now, 15:20: the task's stages, the executor's claims, the reviewer's two rounds with their verdicts, the builds and tests with their queue waits, and each gate's state, missing, met or waived, over the same hours.</desc>
+<style>
+:root{--background:#fbfaf7;--foreground:#1d1c1a;--muted-foreground:#6b6862;--border:#e4e0d8;--primary:#2f5d9e;--like:#2e7d4f;--dislike:#b3392b;--question:#946a00;--decision:#4a3f9e;--resolved:#5f6b73;--auto:#1f7a8c;--card:#ffffff}
+@media (prefers-color-scheme:dark){:root{--background:#161513;--foreground:#e8e4dc;--muted-foreground:#a19c93;--border:#2c2a26;--primary:#7fa7e0;--like:#6fc48f;--dislike:#e57a6a;--question:#e0b84c;--decision:#a89ce8;--resolved:#8f9aa3;--auto:#5cc4d6;--card:#1d1c19}}
+text{font-family:-apple-system,"Segoe UI",Helvetica,Arial,sans-serif;font-size:14px;fill:var(--foreground)}
+.page{fill:var(--background)}
+.card{fill:var(--card);stroke:var(--border)}
+.m{fill:var(--muted-foreground)}
+.s{font-size:13px}
+.xs{font-size:12px}
+.lane{font-size:13px;font-weight:600}
+.tick{font-size:12px;fill:var(--muted-foreground);text-anchor:middle;font-variant-numeric:tabular-nums}
+.rule{stroke:var(--border)}
+.grid{stroke:var(--border);stroke-dasharray:2 4}
+.now{stroke:var(--primary);stroke-width:1.5;stroke-dasharray:4 3}
+.seg{fill:var(--c);fill-opacity:.16;stroke:var(--c);stroke-opacity:.55}
+.seg-wait{fill:var(--c);fill-opacity:.06;stroke:var(--c);stroke-opacity:.6;stroke-dasharray:3 3}
+.in{font-size:12px;font-weight:600;fill:var(--c)}
+.under{font-size:11.5px;fill:var(--muted-foreground)}
+.track{stroke:var(--border);stroke-width:2}
+.met,.miss,.waived{stroke-width:4;stroke-linecap:round;fill:none}
+.met{stroke:var(--like)}
+.miss{stroke:var(--question);stroke-dasharray:1 7}
+.waived{stroke:var(--resolved)}
+.pill rect{fill:var(--c);fill-opacity:.1;stroke:var(--c);stroke-opacity:.35}
+.pill text{fill:var(--c);font-size:12px;font-weight:600;text-anchor:middle}
+.sbg{fill:var(--primary);fill-opacity:.2}
+.sfg{fill:var(--primary);fill-opacity:.85}
+</style>
+<defs>
+<pattern id="running" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect class="sbg" width="6" height="6"/><rect class="sfg" width="3" height="6"/></pattern>
+</defs>
+<rect class="page" width="1200" height="512"/>
+
+<g class="pill" style="--c:var(--decision)"><rect x="20.5" y="10.5" width="196" height="21" rx="10.5"/><text x="118.5" y="25.5">Timeline · lanes over time</text></g>
+<text x="20" y="72" style="font-size:22px;font-weight:700;letter-spacing:-.22px">Timeline</text>
+<text class="m s" x="20" y="96">6 h 18 m so far · 2 review rounds · 1 bounce · machine 1 h 33 m, queued 26 m</text>
+
+<rect class="card" x="20.5" y="112.5" width="1159" height="353" rx="14"/>
+
+<!-- hours: x = 180 + 2.5 px a minute from 09:00 -->
+<text class="tick" x="180" y="138">09:00</text><text class="tick" x="330" y="138">10:00</text><text class="tick" x="480" y="138">11:00</text>
+<text class="tick" x="630" y="138">12:00</text><text class="tick" x="780" y="138">13:00</text><text class="tick" x="930" y="138">14:00</text>
+<text class="tick" x="1080" y="138">15:00</text>
+<text class="xs" x="1130" y="138" style="text-anchor:middle;font-weight:600;fill:var(--primary)">now 15:20</text>
+<line class="grid" x1="180.5" y1="146" x2="180.5" y2="452"/><line class="grid" x1="330.5" y1="146" x2="330.5" y2="452"/>
+<line class="grid" x1="480.5" y1="146" x2="480.5" y2="452"/><line class="grid" x1="630.5" y1="146" x2="630.5" y2="452"/>
+<line class="grid" x1="780.5" y1="146" x2="780.5" y2="452"/><line class="grid" x1="930.5" y1="146" x2="930.5" y2="452"/>
+<line class="grid" x1="1080.5" y1="146" x2="1080.5" y2="452"/>
+
+<line class="rule" x1="44" y1="148.5" x2="1156" y2="148.5"/>
+<line class="rule" x1="44" y1="198.5" x2="1156" y2="198.5"/>
+<line class="rule" x1="44" y1="248.5" x2="1156" y2="248.5"/>
+<line class="rule" x1="44" y1="298.5" x2="1156" y2="298.5"/>
+<line class="rule" x1="44" y1="348.5" x2="1156" y2="348.5"/>
+
+<!-- stages -->
+<text class="lane" x="44" y="178">Stage</text>
+<g style="--c:var(--auto)"><rect class="seg" x="185.5" y="160.5" width="101" height="26" rx="5"/><text class="in" x="193" y="178">ready 41 m</text></g>
+<g style="--c:var(--primary)"><rect class="seg" x="288.5" y="160.5" width="278" height="26" rx="5"/><text class="in" x="296" y="178">in progress 1 h 52 m</text></g>
+<g style="--c:var(--question)"><rect class="seg" x="568.5" y="160.5" width="128" height="26" rx="5"/><text class="in" x="576" y="178">review 52 m</text></g>
+<g style="--c:var(--primary)"><rect class="seg" x="698.5" y="160.5" width="173" height="26" rx="5"/><text class="in" x="706" y="178">in progress 1 h 10 m</text></g>
+<g style="--c:var(--question)"><rect class="seg" x="873.5" y="160.5" width="68" height="26" rx="5"/><text class="in" x="881" y="178">28 m</text></g>
+<g style="--c:var(--question)"><rect class="seg-wait" x="943.5" y="160.5" width="186" height="26" rx="5"/><text class="in" x="951" y="178">waiting to land 1 h 15 m</text></g>
+
+<!-- the executor's claims -->
+<text class="lane" x="44" y="220">Executor</text><text class="m xs" x="44" y="236">quiet-wren</text>
+<g style="--c:var(--primary)"><rect class="seg" x="288.5" y="210.5" width="278" height="26" rx="5"/><text class="in" x="296" y="228">claimed 1 h 52 m</text></g>
+<g style="--c:var(--primary)"><rect class="seg" x="698.5" y="210.5" width="173" height="26" rx="5"/><text class="in" x="706" y="228">1 h 10 m</text></g>
+
+<!-- the reviewer's rounds and verdicts -->
+<text class="lane" x="44" y="270">Reviewer</text><text class="m xs" x="44" y="286">lucid-heron</text>
+<g style="--c:var(--question)"><rect class="seg-wait" x="568.5" y="260.5" width="43" height="26" rx="5"/><rect class="seg" x="613.5" y="260.5" width="83" height="26" rx="5"/><text class="in" x="621" y="278">round 1</text></g>
+<text class="in" style="--c:var(--dislike)" x="704" y="278">changes</text>
+<g style="--c:var(--question)"><rect class="seg-wait" x="873.5" y="260.5" width="8" height="26" rx="3"/><rect class="seg" x="883.5" y="260.5" width="58" height="26" rx="5"/><text class="in" x="890" y="278">round 2</text></g>
+<text class="in" style="--c:var(--like)" x="948" y="278">approved</text>
+
+<!-- builds and tests, from the run files -->
+<text class="lane" x="44" y="320">Builds &amp; tests</text><text class="m xs" x="44" y="336">studio</text>
+<g style="--c:var(--primary)"><rect class="seg-wait" x="400.5" y="306.5" width="7" height="20" rx="3"/></g>
+<g style="--c:var(--like)"><rect class="seg" x="408.5" y="306.5" width="9" height="20" rx="3"/></g>
+<text class="under" x="400" y="342">build 4 m</text>
+<g style="--c:var(--primary)"><rect class="seg-wait" x="460.5" y="306.5" width="14" height="20" rx="3"/></g>
+<g style="--c:var(--like)"><rect class="seg" x="475.5" y="306.5" width="59" height="20" rx="4"/></g>
+<text class="under" x="460" y="342">verify 24 m</text>
+<g style="--c:var(--primary)"><rect class="seg-wait" x="780.5" y="306.5" width="4" height="20" rx="2"/></g>
+<g style="--c:var(--like)"><rect class="seg" x="785.5" y="306.5" width="57" height="20" rx="4"/></g>
+<text class="under" x="780" y="342">verify 23 m</text>
+<g style="--c:var(--primary)"><rect class="seg-wait" x="943.5" y="306.5" width="11" height="20" rx="3"/></g>
+<g style="--c:var(--like)"><rect class="seg" x="955.5" y="306.5" width="59" height="20" rx="4"/></g>
+<text class="under" x="943" y="342">certificate 24 m</text>
+<g style="--c:var(--primary)"><rect class="seg-wait" x="1060.5" y="306.5" width="24" height="20" rx="3"/></g>
+<rect x="1085" y="306" width="45" height="21" rx="4" fill="url(#running)"/>
+<text class="under" x="1060" y="342">running 18 m</text>
+
+<!-- gates over the same hours -->
+<text class="lane" x="44" y="368">Gates</text>
+<text class="m xs" x="56" y="389">certificate</text><text class="m xs" x="56" y="407">dependency</text>
+<text class="m xs" x="56" y="425">nightly</text><text class="m xs" x="56" y="443">review</text>
+<line class="track" x1="185" y1="385" x2="1130" y2="385"/><line class="track" x1="185" y1="403" x2="1130" y2="403"/>
+<line class="track" x1="185" y1="421" x2="1130" y2="421"/><line class="track" x1="185" y1="439" x2="1130" y2="439"/>
+<path class="miss" d="M944 385H1013"/><path class="met" d="M1017 385H1053"/><path class="miss" d="M1059 385H1128"/>
+<path class="miss" d="M187 403H958"/><path class="waived" d="M962 403H1128"/>
+<path class="met" d="M187 421H1128"/>
+<path class="miss" d="M570 439H940"/><path class="met" d="M944 439H1128"/>
+<line class="now" x1="1130" y1="146" x2="1130" y2="452"/>
+
+<!-- legend -->
+<g style="--c:var(--primary)"><rect class="seg" x="20.5" y="484.5" width="18" height="12" rx="3"/></g><text class="m xs" x="44" y="495">worked or ran</text>
+<g style="--c:var(--primary)"><rect class="seg-wait" x="140.5" y="484.5" width="18" height="12" rx="3"/></g><text class="m xs" x="164" y="495">queued or waiting</text>
+<rect x="280" y="484" width="18" height="13" rx="3" fill="url(#running)"/><text class="m xs" x="304" y="495">running now</text>
+<path class="met" d="M404 490H420"/><text class="m xs" x="428" y="495">gate met</text>
+<path class="miss" d="M504 490H526"/><text class="m xs" x="532" y="495">gate missing</text>
+<path class="waived" d="M626 490H642"/><text class="m xs" x="650" y="495">gate waived</text>
+</svg>
