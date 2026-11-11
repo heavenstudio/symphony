@@ -7,7 +7,10 @@ use std::time::Duration;
 #[derive(Debug)]
 pub(super) struct Member {
     pub pid: u32,
+    // Read by the diagnostics, which print a whole member, and by the tests.
+    #[cfg_attr(not(test), expect(dead_code, reason = "printed by the diagnostics"))]
     pub parent: u32,
+    #[cfg_attr(not(test), expect(dead_code, reason = "printed by the diagnostics"))]
     pub state: u32,
     pub cpu: Duration,
 }
