@@ -28,8 +28,10 @@ static REFERENCE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"\[\[(?P<name>[a-z][a-z-]*):(?P<arg>[^\]|]*)(?:\|(?P<option>[^\]]*))?\]\]")
         .expect("the component pattern")
 });
-static TOKEN: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"(?:<p>)?SFCOMPONENT(\d+)Z(?:</p>)?").expect("the token pattern"));
+static TOKEN: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?:<p>)?SF(?P<kind>COMPONENT|LINK)(?P<n>\d+)Z(?:</p>)?")
+        .expect("the token pattern")
+});
 
 /// The length of the code span or fenced block that starts at `at`, if one does.
 fn code_at(text: &str, at: usize) -> Option<usize> {
@@ -136,10 +138,30 @@ fn resolve_wikilink(target: &str, doc_path: &str, paths: &[String]) -> String {
 
 /// `[[NAME#Heading|label]]` as a markdown link to the document and the heading's anchor.
 pub(crate) fn wikilinks(text: &str, doc_path: &str, paths: &[String]) -> String {
-    wikilinks_for(text, doc_path, paths, false)
+    wikilinks_for(text, doc_path, paths, false, None)
 }
 
-pub(crate) fn wikilinks_for(text: &str, doc_path: &str, paths: &[String], typed: bool) -> String {
+/// A typed link's HTML as the converter is handed it: the HTML itself, or, given a stash (for a
+/// converter that escapes raw HTML, a note's), a token [`restore`] puts it back for.
+fn anchor(html: String, held: &mut Option<&mut Vec<String>>) -> String {
+    match held {
+        Some(stash) => {
+            stash.push(html);
+            format!("SFLINK{}Z", stash.len() - 1)
+        }
+        None => html,
+    }
+}
+
+/// [`wikilinks`], or with `typed` the typed page's anchors, held in `held` when one is given
+/// ([`anchor`]).
+pub(crate) fn wikilinks_for(
+    text: &str,
+    doc_path: &str,
+    paths: &[String],
+    typed: bool,
+    mut held: Option<&mut Vec<String>>,
+) -> String {
     outside_code(text, &mut |part| {
         WIKILINK
             .replace_all(part, |found: &Captures<'_>| {
@@ -150,10 +172,13 @@ pub(crate) fn wikilinks_for(text: &str, doc_path: &str, paths: &[String], typed:
                 }
                 let label = found.name("label").map_or(&found["target"], |m| m.as_str());
                 if typed {
-                    format!(
-                        "<a data-wiki=\"true\" href=\"{}\">{}</a>",
-                        crate::markup::escape(&href),
-                        crate::markup::escape(label)
+                    anchor(
+                        format!(
+                            "<a data-wiki=\"true\" href=\"{}\">{}</a>",
+                            crate::markup::escape(&href),
+                            crate::markup::escape(label)
+                        ),
+                        &mut held,
                     )
                 } else {
                     format!("[{label}]({href})")
@@ -203,9 +228,15 @@ pub(crate) fn card_docs(
 }
 
 /// A card slug (in bold, or after *Replaces:*) links to its card. Typed references mark that their
-/// fragment names a card rather than a heading, so the client does not offer a heading excerpt.
-pub(crate) fn card_links(text: &str, cards: &HashMap<String, String>, typed: bool) -> String {
-    let swap = |piece: &str| -> String {
+/// fragment names a card rather than a heading, so the client does not offer a heading excerpt; with
+/// `held`, their HTML is held there ([`anchor`]).
+pub(crate) fn card_links(
+    text: &str,
+    cards: &HashMap<String, String>,
+    typed: bool,
+    mut held: Option<&mut Vec<String>>,
+) -> String {
+    let mut swap = |piece: &str| -> String {
         let mut out = String::with_capacity(piece.len());
         let mut last = 0;
         for found in CARD_REF.captures_iter(piece).flatten() {
@@ -216,9 +247,12 @@ pub(crate) fn card_links(text: &str, cards: &HashMap<String, String>, typed: boo
                 .map_or("", |m| m.as_str());
             out.push_str(&piece[last..whole.start()]);
             match cards.get(slug) {
-                Some(doc) if typed => out.push_str(&format!(
-                    "<a data-card=\"true\" href=\"{}\">{slug}</a>",
-                    crate::markup::escape(&format!("/{doc}#{slug}"))
+                Some(doc) if typed => out.push_str(&anchor(
+                    format!(
+                        "<a data-card=\"true\" href=\"{}\">{slug}</a>",
+                        crate::markup::escape(&format!("/{doc}#{slug}"))
+                    ),
+                    &mut held,
                 )),
                 Some(doc) => out.push_str(&format!("[{slug}](/{doc}#{slug})")),
                 None => out.push_str(slug),
@@ -269,22 +303,24 @@ pub(crate) fn expand_for(
     (out, stash)
 }
 
-/// The converted HTML with each token swapped for its component; a token alone in a paragraph loses the `<p>`.
+/// The converted HTML with each token swapped for its component or held link ([`anchor`]); a
+/// component's token alone in a paragraph loses the `<p>`, a link's keeps it.
 pub(crate) fn restore(converted: &str, stash: &[String]) -> String {
     if stash.is_empty() {
         return converted.to_string();
     }
     TOKEN
         .replace_all(converted, |found: &Captures<'_>| {
-            let n: usize = found[1].parse().unwrap_or(usize::MAX);
+            let n: usize = found["n"].parse().unwrap_or(usize::MAX);
             let Some(body) = stash.get(n) else {
                 return found[0].to_string();
             };
             let whole = &found[0];
-            if whole.starts_with("<p>") && whole.ends_with("</p>") {
+            let component = &found["kind"] == "COMPONENT";
+            if component && whole.starts_with("<p>") && whole.ends_with("</p>") {
                 body.clone()
             } else {
-                whole.replace(&token(n), body)
+                whole.replace(&format!("SF{}{n}Z", &found["kind"]), body)
             }
         })
         .into_owned()
