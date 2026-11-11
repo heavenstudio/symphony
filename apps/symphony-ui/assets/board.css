@@ -123,8 +123,6 @@ li > .viewport-slot > p + p { margin-top:1em; }
 .history::before { content:""; position:absolute; left:6px; top:10px; bottom:10px; width:2px; border-radius:2px; background:var(--border); }
 .history:empty { display:none; }
 .task-head .eyebrow { text-transform:none; letter-spacing:0; margin:0 0 4px; }
-/* Every page's h1 is the page head's (below), the task's title among them. */
-.task-head h1 { font-size:var(--fs-3xl); letter-spacing:-.02em; line-height:1.15; margin:.2em 0 .4em; }
 .task-head .row { font-size:var(--fs-sm); }
 .task-state { margin-bottom:14px; }
 .facts { font-size:var(--fs-sm); margin:0 0 12px; display:grid; gap:2px; }
@@ -172,12 +170,14 @@ form input, form textarea, .filters input { font:inherit; font-size:var(--fs-sm)
 .muted { color:var(--muted-foreground); }
 .lead { color:var(--muted-foreground); margin:0; font-size:1.05em; }
 .page-head { display:flex; justify-content:space-between; align-items:flex-end; gap:var(--sp-4); flex-wrap:wrap; margin:var(--sp-2) 0 var(--sp-5); }
-.page-head h1 { font-size:var(--fs-3xl); letter-spacing:-.02em; line-height:1.15; margin:.2em 0 .15em; }
+/* Every page's one h1 is this size, a task's title and a trouble block's (below) among them. */
+.page-head h1, .task-head h1, .trouble h1 { font-size:var(--fs-3xl); letter-spacing:-.02em; line-height:1.15; margin:.2em 0 .15em; }
+.task-head h1 { margin:.2em 0 .4em; }
 .page-head .lead { max-width:80ch; }
 /* What a page shows in place of what it could not: its title, a sentence, a retry and the way back. */
 .trouble { max-width:42rem; margin:var(--sp-6) auto; padding:var(--sp-5); overflow-wrap:anywhere; }
-.trouble h3 { font-size:var(--fs-lg); margin:0 0 var(--sp-2); }
-.trouble h1 { font-size:var(--fs-3xl); letter-spacing:-.02em; line-height:1.15; margin:0 0 var(--sp-2); }
+.trouble h1, .trouble h3 { margin:0 0 var(--sp-2); }
+.trouble h3 { font-size:var(--fs-lg); }
 .trouble p { color:var(--muted-foreground); margin:0 0 var(--sp-4); }
 .trouble p.trouble-actions { display:flex; flex-wrap:wrap; align-items:center; gap:var(--sp-2); margin:0; }
 .docchip { font-size:.75em; border:1px solid var(--border); border-radius:var(--r-pill); padding:0 7px; text-decoration:none; overflow-wrap:anywhere; max-width:100%; background:var(--card); }

@@ -15,13 +15,10 @@ pub fn Trouble(
     /// Reads again; a page that retries on its own still offers it.
     #[props(default)]
     retry: Option<EventHandler<()>>,
-    /// A part of a page, under that part's own h2, rather than the whole page.
-    #[props(default)]
-    part: bool,
 ) -> Element {
     rsx! {
         section { class: "trouble card", role: "status",
-            if part { h3 { "{title}" } } else { h1 { "{title}" } }
+            h1 { "{title}" }
             p { "{text}" }
             p { class: "trouble-actions",
                 // A plain action: the entry modules that draw this block keep no mouse-event decoder.
@@ -79,11 +76,6 @@ mod tests {
         );
         let bare = render(rsx! { Trouble { title: "Gone", text: "Nothing here." } });
         assert!(!bare.contains("Retry") && !bare.contains("<a "), "{bare}");
-        let part = render(rsx! { Trouble { title: "Groups", text: "Failed.", part: true } });
-        assert!(
-            part.contains("<h3>Groups</h3>") && !part.contains("<h1>"),
-            "a part of a page keeps the page's one h1, under the part's h2: {part}"
-        );
     }
 
     #[test]

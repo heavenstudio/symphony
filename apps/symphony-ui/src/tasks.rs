@@ -41,6 +41,7 @@ pub fn TaskBoard(
     let mut status = use_signal(String::new);
     let mut days = use_signal(|| 1_u8);
     let mut subtree = use_signal(|| false);
+    let toggle = if subtree() { "Hide" } else { "Show" };
     let search_input = crate::entry_events::use_value("oninput", move |query| {
         search.set(query.clone());
         onfilter.call((query, days()));
@@ -119,9 +120,8 @@ pub fn TaskBoard(
         }
         section { class: "task-groups", aria_labelledby: "task-groups-title",
             h2 { id: "task-groups-title", "Task groups" }
-            p { class: "muted", "Each top-level task that has subtasks, with its subtasks beneath it." }
             crate::components::button::Button { aria_expanded: subtree(), "aria-controls": "task-groups", actions: crate::entry_events::click(move || subtree.set(!subtree())),
-                if subtree() { "Hide task groups" } else { "Show task groups" }
+                "{toggle} task groups"
             }
             if subtree() {
                 TreePanel { known: Rc::new(tasks) }
@@ -141,8 +141,16 @@ fn TreePanel(known: Rc<Vec<Task>>) -> Element {
     });
     rsx! {
         div { id: "task-groups",
+            // `trouble::Trouble`'s markup for a part of a page, written out: the component would add
+            // to the board module's first load, which only this block of it would use.
             if !trouble.read().is_empty() {
-                crate::trouble::Trouble { title: "The task groups could not be loaded", text: crate::trouble::failed(&trouble()), part: true, retry: move |_| load_tree(None, false, roots, total, cursor, trouble) }
+                section { class: "trouble card", role: "status",
+                    h3 { "The task groups could not be loaded" }
+                    p { "{crate::trouble::failed(&trouble())}" }
+                    p { class: "trouble-actions",
+                        crate::components::button::Button { r#type: "button", actions: crate::entry_events::click(move || load_tree(None, false, roots, total, cursor, trouble)), "Retry" }
+                    }
+                }
             }
             ul { for task in roots() { TreeNode { key: "{task.slug}", task, known: known.clone() } } }
             if roots.read().len() < total() { crate::components::button::Button { actions: crate::entry_events::click(move || load_tree(None,true,roots,total,cursor,trouble)), "Load more task groups" } }
