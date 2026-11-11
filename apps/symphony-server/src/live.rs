@@ -149,6 +149,10 @@ pub(crate) struct Hub {
     /// The time the board's health is recorded and read at, in seconds since the epoch: the wall
     /// clock's, or a test's.
     pub(crate) clock: Box<dyn Fn() -> f64 + Send + Sync>,
+    /// The disk holding the project, when it runs low, read at each tick ([`health::low_disk`]): the
+    /// machine's, or a test's.
+    pub(crate) low_disk:
+        Box<dyn Fn() -> Option<symphony_board::board_health::disk::Low> + Send + Sync>,
     /// Held by a document's render from its read of the file until its copy is in its page, so the
     /// copy a page keeps is the last one read. It is never taken with `pages` held, and `pages` is
     /// taken only to place the copy, so the board, the feed and the project list, which read
@@ -247,6 +251,7 @@ impl Hub {
             health: symphony_board::board_health::Recorder::default(),
             notices: Mutex::new(health::Notices::default()),
             clock: Box::new(symphony_board::sweep::trigger::now),
+            low_disk: health::low_disk(root),
             rendering: Mutex::new(()),
             reader: Mutex::new(None),
             connect_reader: Box::new(taskview::connect),

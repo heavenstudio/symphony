@@ -32,7 +32,8 @@
 //! * no process has its working directory inside it (`lsof`; when that cannot be read or lists
 //!   nothing, nothing is removed);
 //! * nothing in it is left behind: no tracked change, no untracked file, and no ignored file beyond
-//!   caches and root verify logs. Regenerable `.target/`, `symphony/.target/`, `symphony/build/`
+//!   caches and root verify logs. Regenerable `.target/`, `symphony/.target/` (and beside each a
+//!   seed's staging, `.target.seed.PID`, or a clear's, `.target.clear.PID`), `symphony/build/`
 //!   and `.codex/hooks*` go with it; artifacts under a handle still keep it.
 //!
 //! Right before removing, it refreshes board sessions and launches, the worktree listing and lock,
@@ -52,8 +53,14 @@
 //! unknown inputs rescan. Cache hits stat saved entries without walking. Both final status guards
 //! remain fresh; an early unavailable HEAD/removal guard retains the tree before lookup.
 //! Foreground `--task` cleanup visits only its finished worktrees, guarded per tree, and asks for
-//! a detached full pass. Tests: `symphony/crates/tasks/tests/sweep/`.
+//! a detached full pass.
+//!
+//! Of the worktrees that stay, it then removes the build output of finished work: a worktree's
+//! build folders ([`build_output::FOLDERS`]) once every task it is tied to is done or cancelled,
+//! one of them done, its HEAD is merged work (never a branch with no commits ahead of `main`), no
+//! agent bound to it beat within the hour and no process works inside it ([`build_output`]). Tests: `symphony/crates/tasks/tests/sweep/`.
 
+pub mod build_output;
 mod coalesce;
 mod command;
 pub mod git;
@@ -146,8 +153,9 @@ type Pause = Box<dyn Fn(&str, &str)>;
 /// How a sweep runs. `pause(stage, what)` runs between the checks and each removal ("remove", the
 /// path; "checked", after status; "unlock", before claiming a dead lock; "lock-claimed", after
 /// its atomic rename; "unlocked", after releasing it and before the final guard) or branch deletion
-/// ("delete", the branch): what happens there is what the
-/// re-checks guard against.
+/// ("delete", the branch), and before a build folder is cleared ("judged", the worktree, before
+/// the rule is read again; "clear", the folder, before its locks are taken; "locked", the folder,
+/// under them): what happens there is what the re-checks guard against.
 pub struct Options {
     pub dry_run: bool,
     /// The window of recent activity, in hours.
@@ -190,6 +198,11 @@ pub struct Sweep {
     pub kept: Vec<(PathBuf, Vec<String>)>,
     /// Merged, but in use.
     pub spared: Vec<(PathBuf, String)>,
+    /// The build folders of finished work, removed from worktrees that stay ([`build_output`]).
+    pub cleared: Vec<(PathBuf, String)>,
+    /// Why that pass removed nothing, when the board could not be read for it; the rest of the
+    /// sweep went on.
+    pub uncleared: Option<String>,
     pub branches: Vec<String>,
     pub total: usize,
     pub dry_run: bool,
@@ -220,6 +233,16 @@ impl Sweep {
             self.spared
                 .iter()
                 .map(|(path, why)| format!("kept {}: {why}", path.display())),
+        );
+        let clear = if self.dry_run {
+            "would clear"
+        } else {
+            "cleared"
+        };
+        out.extend(
+            self.cleared
+                .iter()
+                .map(|(path, why)| format!("{clear} build output {} ({why})", path.display())),
         );
         let deleted = if self.dry_run {
             "would delete"
@@ -257,6 +280,21 @@ impl Sweep {
         if !self.spared.is_empty() {
             said += &format!("; kept {} in use", self.spared.len());
         }
+        if !self.cleared.is_empty() {
+            said += &format!(
+                "; {} {} build folder{} of finished work",
+                if self.dry_run {
+                    "would clear"
+                } else {
+                    "cleared"
+                },
+                self.cleared.len(),
+                if self.cleared.len() == 1 { "" } else { "s" }
+            );
+        }
+        if let Some(why) = &self.uncleared {
+            said += &format!("; cleared no build output: {why}");
+        }
         said
     }
 }
@@ -277,6 +315,8 @@ struct Index<'a> {
     bound: Vec<(PathBuf, &'a str)>,
     /// Every session, whatever its health, by its worktree.
     sessions_at: BTreeMap<PathBuf, Vec<&'a str>>,
+    /// The newest beat or tool call of the sessions at each worktree, whatever their health.
+    beats_at: BTreeMap<PathBuf, f64>,
     /// Every launch, closed or not, by its worktree.
     launched_at: BTreeMap<PathBuf, Vec<&'a TaskSessionRow>>,
     tasks: BTreeMap<&'a str, &'a Task>,
@@ -317,6 +357,7 @@ impl<'a> Index<'a> {
         let mut index = Index {
             bound: Vec::new(),
             sessions_at: BTreeMap::new(),
+            beats_at: BTreeMap::new(),
             launched_at: BTreeMap::new(),
             tasks: facts.tasks.iter().map(|t| (t.slug.as_str(), t)).collect(),
             spelled: BTreeMap::new(),
@@ -327,10 +368,16 @@ impl<'a> Index<'a> {
             }
         }
         for s in &facts.sessions {
+            let beat = s.row.last_seen.max(s.row.last_tool.unwrap_or(f64::MIN));
             for at in places(s, worktrees) {
                 if s.health.holds() {
                     index.bound.push((at.clone(), &s.row.handle));
                 }
+                index
+                    .beats_at
+                    .entry(at.clone())
+                    .and_modify(|newest| *newest = newest.max(beat))
+                    .or_insert(beat);
                 index.sessions_at.entry(at).or_default().push(&s.row.handle);
             }
         }
@@ -339,6 +386,12 @@ impl<'a> Index<'a> {
             index.launched_at.entry(at).or_default().push(launched);
         }
         index
+    }
+
+    /// When an agent at `path` last beat or made a tool call, whatever its health; none when no
+    /// session works there.
+    fn last_beat(&self, path: &Path) -> Option<f64> {
+        self.beats_at.get(path).copied()
     }
 
     /// Whether a live or stale session other than `unbound` is bound to `path`.
@@ -533,6 +586,12 @@ pub fn sweep(root: &Path, here: &Path, store: &Store, o: &Options) -> Result<Swe
         }
         result.removed.push((listed.clone(), why));
         gone.insert(path.clone());
+    }
+    // A board that cannot be read for it costs that pass alone, never the removals said above, the
+    // prune or the branches.
+    match build_output::clear(root, &here, &main, store, o, &gone, &mut working, &trees) {
+        Ok(cleared) => result.cleared = cleared,
+        Err(why) => result.uncleared = Some(why),
     }
     if !o.dry_run && o.only.is_none() {
         let _ = git::git(root, &["worktree", "prune"]);
@@ -838,6 +897,20 @@ mod tests {
         assert_eq!(
             done.summary(),
             "worktree sweep: would remove 0 of 3 worktrees, would delete 1 merged worktree-agent-* branch; kept 1 merged for files that did not land; kept 1 in use"
+        );
+    }
+
+    #[test]
+    fn the_summary_says_why_no_build_output_was_cleared() {
+        let done = Sweep {
+            total: 2,
+            removed: vec![(PathBuf::from("/wt/a"), "merged".into())],
+            uncleared: Some("the board did not answer".into()),
+            ..Sweep::default()
+        };
+        assert_eq!(
+            done.summary(),
+            "worktree sweep: removed 1 of 2 worktrees, deleted 0 merged worktree-agent-* branches; cleared no build output: the board did not answer"
         );
     }
 
