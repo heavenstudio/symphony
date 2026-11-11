@@ -38,7 +38,8 @@ pub(super) struct State {
     /// What the last PULL the recipient acknowledged said, when this generation queued it: the
     /// next one says only what changed since ([`State::said`]). Older dispatchers neither read nor
     /// write it; this one's acknowledgement of a PULL it did not queue clears it, so the next one
-    /// says the whole digest.
+    /// says the whole digest, and one an older dispatcher acknowledged since is read from what it
+    /// recorded ([`super::pull_account::baseline`]).
     pub(super) pull_said: Option<crate::cli::pull::Said>,
     // Legacy dispatchers replace Seen wholesale. They leave these stream fields untouched.
     pub(super) message_cursor: Option<i64>,

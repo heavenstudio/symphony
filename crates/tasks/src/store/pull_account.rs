@@ -104,6 +104,22 @@ pub(super) fn told(state: &State, entries: &Entries) -> Option<Entries> {
     })
 }
 
+/// What the last PULL this generation recorded said ([`State::said`]), while it is still the
+/// baseline of what the recipient in `state`, which hears `heard`, was told. A dispatcher that keeps
+/// `pull_awaiting` but not `pull_said` records the entries a PULL told when it acknowledges one
+/// and leaves `pull_said` as it was. So an entry the recipient hears, recorded as told and not
+/// withheld, that the baseline does not name was told by a PULL acknowledged since: there is no
+/// baseline, and the whole digest is said. Unanswered posts are not read, since one told stays
+/// told across a departure the baseline does not keep.
+pub(super) fn baseline<'s>(state: &'s State, heard: &Entries) -> Option<&'s Said> {
+    let said = state.said()?;
+    let recorded = state.pull_entries.as_ref()?;
+    let since = (recorded - &state.pull_withheld).into_iter().find(|entry| {
+        entry.0 != "unanswered" && heard.contains(entry) && !said.entries.contains(entry)
+    });
+    since.is_none().then_some(said)
+}
+
 impl Account {
     /// The account of the recipient in `state`, with `queued` waiting for it, that hears `heard`
     /// of the whole digest's `entries`, told of them as [`told`] says.
@@ -202,6 +218,43 @@ mod tests {
     fn entries(slugs: &[&str]) -> Entries {
         let entry = |slug: &&str| ("ready_unstaffed".to_string(), slug.to_string());
         slugs.iter().map(entry).collect()
+    }
+
+    #[test]
+    fn what_was_said_stays_the_baseline_until_a_pull_it_does_not_name_was_acknowledged() {
+        let post = ("unanswered".to_string(), "t/old:12".to_string());
+        // The last PULL this generation recorded named t/a and the post; t/w was withheld.
+        let said = Said {
+            entries: &entries(&["t/a"]) | &Entries::from([post.clone()]),
+            ..Said::default()
+        };
+        let state = |recorded: &[&str]| State {
+            pull_entries: Some(&entries(recorded) | &Entries::from([post.clone()])),
+            pull_withheld: entries(&["t/w"]),
+            pull_unanswered: Entries::from([post.clone()]),
+            pull_said: Some(said.clone()),
+            ..State::default()
+        };
+        let heard = |slugs: &[&str]| &entries(slugs) | &Entries::from([post.clone()]);
+        // As this generation recorded it, t/a now handed away: the baseline stands.
+        let ours = state(&["t/a", "t/w"]);
+        assert_eq!(baseline(&ours, &heard(&["t/a"])), Some(&said));
+        assert_eq!(baseline(&ours, &heard(&[])), Some(&said));
+        // Withheld work handed to it is not what a PULL told: the baseline stands.
+        assert_eq!(baseline(&ours, &heard(&["t/a", "t/w"])), Some(&said));
+        // A PULL acknowledged since, by a dispatcher that does not record what it said, told t/b,
+        // which the recipient hears: no baseline.
+        let since = state(&["t/a", "t/b", "t/w"]);
+        assert_eq!(baseline(&since, &heard(&["t/a", "t/b"])), None);
+        // Told t/b, which left the recipient's digest since: nothing shows it.
+        assert_eq!(baseline(&since, &heard(&["t/a"])), Some(&said));
+        // Nothing recorded, or an older acknowledgement since: no baseline either way.
+        let none = State {
+            pull_entries: None,
+            ..ours
+        };
+        assert_eq!(baseline(&none, &heard(&["t/a"])), None);
+        assert_eq!(baseline(&State::default(), &Entries::new()), None);
     }
 
     #[test]

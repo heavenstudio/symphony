@@ -486,7 +486,13 @@ acknowledged: the counts that moved (`PULL ready_unstaffed=34 (was 33)`, or `PUL
 liveness and low-volume lines it was not told, each row a list gained, and `resolved LIST a, b` for the rows
 that left it. A backlog of 33 that gains one row is that header and one row. What the last acknowledged PULL said
 is kept in the recipient's callback state (`pull_said`, which older dispatchers ignore); after an older
-dispatcher's acknowledgement, which does not record it, the next PULL is the whole digest again.
+dispatcher's acknowledgement, which does not record it, the next PULL is the whole digest again. A dispatcher
+built before PULLs said only what changed (the shared server's, until it is rebuilt) records the entries of the
+PULL it acknowledges and not what it said: a row it told that the recipient still hears shows it, and the next PULL
+is the whole digest. Only when every row it told has left the recipient's digest by then is the next PULL measured
+against the baseline before it: its header can repeat a count that moved before, with the older `(was N)`, its
+liveness line can repeat or miss a change, and those rows are not said `resolved`. Rows added are exact either way,
+never lost or said twice, and the next PULL this generation records is exact again.
 A channel registered anew starts again from the whole digest: `--off`, a registration where none was (after
 `--off` or a `tasks wait`) or one another process listens on (`Store::callback_in`) forgets which PULL the
 session acknowledged, and a PULL waiting for it gives way to the whole digest; the posts it was told stay told.

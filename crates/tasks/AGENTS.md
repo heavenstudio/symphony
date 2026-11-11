@@ -177,7 +177,17 @@ acknowledgement sites, in a field older binaries ignore, so no schema change. Ro
 entries heard and not told, the trigger's own test (`pull_account::told`), not those absent from
 `pull_said`, so a row that left and came back is said once more, as it is pushed once more. An
 older dispatcher's acknowledgement ends `pull_queued` but leaves `pull_awaiting`, and
-`State::said` reads that as no baseline: the next PULL is the whole digest. `tasks pull` prints
+`State::said` reads that as no baseline: the next PULL is the whole digest. One that keeps
+`pull_awaiting` but not `pull_said` (built before PULLs said only what changed, as the shared
+server may still be) ends both and records the PULL's entries; `pull_account::baseline` reads an
+entry the recipient hears, recorded as told and not withheld, that `pull_said` does not name as
+such a PULL, and the next PULL is the whole digest. What that cannot see, exactly: once every row
+such a PULL told has left the recipient's digest before this generation's next PULL, that PULL is
+measured against the baseline before it, so its header can say a count that moved before it
+again, with the older `(was N)`, its liveness line can repeat or miss a change that PULL said, and
+those rows are not said `resolved`. Rows added are exact, from `pull_entries`, which both record:
+none is lost or said twice. The next PULL this generation's acknowledgement records is exact
+again, and `tasks pull` says the whole digest meanwhile. `tasks pull` prints
 the whole digest the recipient hears now (`pull::heard_now`) and writes nothing.
 A channel registered anew starts from the whole digest: `callback_in` clears the PULL account
 (`pull_entries`, `pull_said`, `pull_withheld`, `pull_awaiting`, `pull_queued`) and takes back a

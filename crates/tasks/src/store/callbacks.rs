@@ -1195,7 +1195,8 @@ RETURN NONE;");
             let heard = digest.entries();
             // Once it acknowledged a PULL this generation queued, it hears what changed since.
             let told = super::pull_account::told(&state, &entries);
-            let lines = match (state.said(), &told) {
+            let baseline = super::pull_account::baseline(&state, &heard);
+            let lines = match (baseline, &told) {
                 (Some(said), Some(told)) if !legacy_upgrade => digest.changes_since(said, told),
                 // The whole digest; after a new channel reset the account, the posts it was told
                 // stay told.
@@ -1206,7 +1207,7 @@ RETURN NONE;");
             pull_text = (lines.iter().map(|l| event_line(l)))
                 .collect::<Vec<_>>()
                 .join("\n");
-            pull_said = Some(digest.said_after(state.said()));
+            pull_said = Some(digest.said_after(baseline));
             account = Some(match legacy_upgrade {
                 true => Account::upgrade(&state, &entries, &heard),
                 false => Account::of(&state, &queued, &entries, &heard),
