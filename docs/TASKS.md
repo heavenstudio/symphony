@@ -85,6 +85,8 @@ the steps left. The board says so when it is missing.
 | `just tasks search QUERY [--status S] [--limit N] [--json]` | ranked full-text matches in task titles, briefs, slugs and threads; task rows with matching excerpts (default: 20); query capped at 1024 UTF-8 bytes and 32 terms (word/number runs and punctuation/symbols, after lowercasing) |
 | `just tasks stats [--days N] [--json]` | where the pipeline's time goes: lead time, time in each status, bounces, tasks done per day and what sits longest ([Where the time goes](#where-the-time-goes)) |
 | `just tasks status [--json]` | the board's health over the last hour, as its Symphony server recorded it: failed dispatches and sweeps, the slowest request, write latency ([Board health](#board-health)) |
+| `just tasks asks [--all] [--json]` | what the owner waits on an agent for: the open asks, oldest first, each with its age and who holds it; `--all` adds those answered in the last day ([Asks](#asks)) |
+| `just tasks asks close ID "WHY" --as HANDLE` | close an ask that needs no answer, saying why |
 | `just tasks callback [ADDRESS] --as HANDLE` | register a native channel; addressed events start a turn directly |
 | `just tasks pull --as HANDLE` | the whole PULL digest as HANDLE hears it now; a callback carries only what changed since the last PULL it received |
 | `just tasks wait --as HANDLE [--timeout S]` | for a session with no channel: exits printing what a callback would have pushed it since its last read, once there is any; run it as a background command and again when it exits |
@@ -1145,6 +1147,42 @@ An agent message addressed to `owner` rings the app's 🔔. Creating, claiming,
 other moves and verdicts go through agents, and one task the app files itself: a verdict
 that waits on an agent goes on a `verdicts/…` task, created as the app's
 own `app` session, never as the owner ([document review](REVIEW.md)).
+
+## Asks
+
+An **ask** is one thing the owner waits on an agent for: a verdict with a note or
+a rejection, a message on a card, a comment in a document, a chat, a message on a
+task's thread. It is a record of its own (`ask:N`, schema 17), never a task: it has
+no stage, no claim and no review, and no task count includes it. Each one says
+what it is about (the card on its document, the commented block, the chat's
+thread or the task, and the worktree's branch when the owner said it on one), the
+owner's first words (cut at 200 characters), when they were said, how many lines
+followed, who holds it now and since when, and each earlier holder with when it
+had it and why it moved on.
+
+While an ask is open, another line from the owner about the same thing joins it:
+the line is counted, and the ask keeps its first words and its age. A verdict and
+a message on one card are one thing. A line after the ask was answered opens a new
+one. The first answer closes an ask, whoever holds it, and a later answer changes
+nothing. An agent closes an ask that needs no answer, such as a thank-you, with
+`just tasks asks close ID "WHY"`. An open ask shows as late from ten minutes
+(`LATE_SECONDS`, the same for every kind), and an answered one never does: its
+age is how long it waited for its answer. The
+owner's words and the answers stay where they were written: the ask records only
+what it is about, who has it and whether it is answered.
+
+`just tasks asks` lists the open asks, the oldest first:
+
+```
+ask 3  verdict  card on docs/DECISIONS.md @tools/x  14 min, late  held by umber-stoat for 12 min
+  "why not B?"
+```
+
+`tasks api` opens, holds and answers them: `open_ask` (the kind, what it is about,
+the words and, if not now, `at`), `ask`, `asks` (`since`: answered ones too),
+`hold_ask` (`holder`, none for nobody, and `why`), `answer_ask` and `answer_about`
+(`by`, an agent's handle, and `answer`, where the answer is), and `close_ask`.
+The [design](analysis/owner-asks.md) has who holds an ask and when it moves.
 
 ## Links with the documents
 

@@ -8,7 +8,7 @@
 
 use super::shape;
 use crate::pyjson::{self, Py};
-use crate::{Beat, Error, NewLaunch, NewSession, NewTask, Store};
+use crate::{Beat, Error, NewAsk, NewLaunch, NewSession, NewTask, Store};
 use serde::de::DeserializeOwned;
 use serde_json::{Map, Value};
 use std::io::{BufRead, Read, Write};
@@ -35,14 +35,16 @@ pub use context::{run, serve};
 /// the task fence or the original committed occurrence; assessment/2 additionally requires the
 /// versioned producer publication binding and observes its source on every checked attempt;
 /// 10: `amend`, a task's new title and further document links in one write, which the Symphony's
-/// verdict roll-up keeps current with). The live launcher (`tools/tasks.sh`)
+/// verdict roll-up keeps current with; 11: the owner's asks, `open_ask`, `ask`, `asks`,
+/// `hold_ask`, `answer_ask`, `answer_about` and `close_ask`, over the board's `ask` table, schema
+/// 17). The live launcher (`tools/tasks.sh`)
 /// serves an earlier main build only while this
 /// matches main's, so no caller reaches a build without what it relies on.
 #[expect(
     dead_code,
     reason = "tools/tasks.sh reads it from the committed source; no Rust code compares builds"
 )]
-pub const VERSION: i64 = 10;
+pub const VERSION: i64 = 11;
 
 /// Why a call has no result.
 enum Fail {
@@ -581,6 +583,75 @@ fn dispatch<F: FnOnce() -> Result<Store, String>>(
         "to_owner" => {
             args!(limit: or(40usize));
             shape::messages(&board.get()?.to_owner(limit)?)
+        }
+        // Asks: what the owner waits on an agent for
+        "open_ask" => {
+            let new: NewAsk = a.rest()?;
+            let store = board.get()?;
+            shape::ask(&store.open_ask(&new)?, store.now())
+        }
+        "ask" => {
+            args!(id: need);
+            let store = board.get()?;
+            shape::ask(&store.ask(id)?, store.now())
+        }
+        "asks" => {
+            args!(since: take);
+            let store = board.get()?;
+            let now = store.now();
+            Py::List(
+                store
+                    .asks(since)?
+                    .iter()
+                    .map(|ask| shape::ask(ask, now))
+                    .collect(),
+            )
+        }
+        "hold_ask" => {
+            args!(id: need, holder: take, why: need);
+            let (holder, why): (Option<String>, String) = (holder, why);
+            let store = board.get()?;
+            shape::ask(&store.hold_ask(id, holder.as_deref(), &why)?, store.now())
+        }
+        "answer_ask" => {
+            args!(id: need, by: take, answer: need);
+            let (by, answer): (Option<String>, String) = (by, answer);
+            if let Some(by) = &by {
+                super::check_actor(by)?;
+            }
+            let store = board.get()?;
+            shape::ask(&store.answer_ask(id, by.as_deref(), &answer)?, store.now())
+        }
+        "answer_about" => {
+            args!(
+                kind: need, path: take, card: take, block: take, tree: take, task: take,
+                thread: take, by: take, answer: need,
+            );
+            let about = NewAsk {
+                kind,
+                path,
+                card,
+                block,
+                tree,
+                task,
+                thread,
+                ..NewAsk::default()
+            };
+            let (by, answer): (Option<String>, String) = (by, answer);
+            if let Some(by) = &by {
+                super::check_actor(by)?;
+            }
+            let store = board.get()?;
+            let now = store.now();
+            store
+                .answer_about(&about, by.as_deref(), &answer)?
+                .map_or(Py::Null, |ask| shape::ask(&ask, now))
+        }
+        "close_ask" => {
+            args!(id: need, by: actor, why: need);
+            let (by, why): (String, String) = (by, why);
+            let store = board.get()?;
+            shape::ask(&store.close_ask(id, &by, &why)?, store.now())
         }
         _ => return Err(Fail::Error(format!("the board has no method {method}"))),
     })

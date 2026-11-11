@@ -4,8 +4,8 @@
 
 use crate::common::{Fixture, NOW, Seed, client, server_addr, session, task};
 use symphony_board::rows::{
-    BarredKeyRow, DeliveryKeyRow, DeliveryRow, Dump, LinkRow, MessageRow, RoleRow, SessionRow,
-    TaskRow, TaskSessionRow,
+    AskRow, BarredKeyRow, DeliveryKeyRow, DeliveryRow, Dump, HeldRow, LinkRow, MessageRow, RoleRow,
+    SessionRow, TaskRow, TaskSessionRow,
 };
 use symphony_board::sys::{self, Command};
 use symphony_board::{Error, Store, cli, copy_main};
@@ -115,6 +115,48 @@ pub fn everything() -> Dump {
             message: 4,
             ts: NOW + 2.0,
         }],
+        asks: vec![
+            AskRow {
+                id: 2,
+                kind: "chat".into(),
+                about: r#"["chat","7"]"#.into(),
+                thread: Some("7".into()),
+                words: "is it on?".into(),
+                asked: NOW,
+                lines: 1,
+                last: NOW,
+                open: true,
+                ..AskRow::default()
+            },
+            AskRow {
+                id: 3,
+                kind: "verdict".into(),
+                about: r#"["card","tools/x","docs/DECISIONS.md","owner-asks"]"#.into(),
+                path: Some("docs/DECISIONS.md".into()),
+                card: Some("owner-asks".into()),
+                block: Some("12".into()),
+                tree: Some("tools/x".into()),
+                task: Some("sim/jump".into()),
+                thread: Some("8".into()),
+                words: "why not B?".into(),
+                asked: NOW,
+                lines: 2,
+                last: NOW + 1.0,
+                holder: Some("brisk-finch".into()),
+                held: Some(NOW + 600.0),
+                before: vec![HeldRow {
+                    handle: "amber-heron".into(),
+                    since: NOW,
+                    until: NOW + 600.0,
+                    why: "no answer in 10 min".into(),
+                }],
+                open: false,
+                answered: Some(NOW + 700.0),
+                answered_by: Some("brisk-finch".into()),
+                answer: Some("the card".into()),
+                closed: true,
+            },
+        ],
     }
 }
 
@@ -195,7 +237,7 @@ fn the_copy_command_reads_a_dump_and_says_what_it_copied() {
     assert_eq!(
         String::from_utf8(out).unwrap(),
         format!(
-            "tasks-copy: 2 tasks, 2 links, 2 sessions, 2 roles, 2 messages, 1 deliveries, 1 barred keys, 1 task sessions, 1 delivery keys into sf/{} at {}\n",
+            "tasks-copy: 2 tasks, 2 links, 2 sessions, 2 roles, 2 messages, 1 deliveries, 1 barred keys, 1 task sessions, 1 delivery keys, 2 asks into sf/{} at {}\n",
             db.database(),
             server_addr()
         )
@@ -396,7 +438,8 @@ fn tables(f: &Fixture) -> Vec<String> {
     names
 }
 
-const BOARD_TABLES: [&str; 21] = [
+const BOARD_TABLES: [&str; 22] = [
+    "ask",
     "barred_key",
     "callback_event",
     "callback_lease",

@@ -287,6 +287,11 @@ the recipient, one made under no key, and writes nothing. The board's notice tha
 reads a line is itself under the line's key (`unread:<id>`, taking a notice of the line made under
 no key), so a post repeated under a key, or one that took a line, says it when nothing said so
 yet, and never twice. The copy carries the keys with the board.
+The owner's asks (`store/asks.rs`, schema 17, `tasks api` version 11) are the `ask` table,
+numbered by `counter:ask`, never a task and in no task count. The board keys each by what it is
+about (`NewAsk::about`), so a line about something an open ask is about joins it in the same
+transaction, and the first answer closes it. A hold keeps the earlier holder in `before`. The
+copy carries the asks and their counter, and their event moves the board's marker.
 Restore prompts re-register the resumed process's callback first.
 Neither channel checks nor delivery fabricate tool calls.
 Outbox rows are indexed by handle

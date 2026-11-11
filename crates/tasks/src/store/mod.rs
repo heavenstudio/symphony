@@ -20,6 +20,7 @@ use std::hash::{BuildHasher, RandomState};
 use std::sync::Mutex;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+pub(crate) mod asks;
 mod branches;
 mod callback_peer;
 mod callback_state;
@@ -53,6 +54,7 @@ mod write;
 use write::{ACT, WRITE};
 
 pub(crate) use crate::stages::{BLOCK_LINE, UNBLOCK_LINE};
+pub use asks::{ASK_KINDS, Ask, LATE_SECONDS, NewAsk};
 pub use callbacks::{Callback, Presence};
 /// Every statement the cap on an orchestrator's open tasks sends: the plan test's to plan.
 pub use cap::STATEMENTS as SLOT_READS;

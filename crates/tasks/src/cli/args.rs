@@ -374,6 +374,23 @@ const COMMANDS: &[Command] = &[
         pos: &[],
         opts: &[AS, opt("--json", "json", Takes::Bool)],
     },
+    Command {
+        name: "asks",
+        pos: &[
+            Pos {
+                dest: "action",
+                optional: true,
+                choices: &["close"],
+            },
+            maybe("id"),
+            maybe("why"),
+        ],
+        opts: &[
+            AS,
+            opt("--all", "all", Takes::Bool),
+            opt("--json", "json", Takes::Bool),
+        ],
+    },
     plain("inbox", &[]),
     plain("pull", &[]),
     Command {
@@ -799,7 +816,7 @@ mod tests {
             .unwrap()
     }
 
-    const ALL: &str = "'callback', 'register', 'attach', 'list', 'search', 'stats', 'embed', 'next', 'create', 'priority', 'field', 'claim', 'reserve', 'release', 'show', 'parent', 'depends', 'done', 'role', 'handover', 'move', 'verdict', 'say', 'launch', 'restore', 'cleanup', 'clean', 'close', 'reap', 'staff', 'agents', 'who', 'status', 'inbox', 'pull', 'wait', 'leave', 'beat', 'export', 'finish', 'sweep'";
+    const ALL: &str = "'callback', 'register', 'attach', 'list', 'search', 'stats', 'embed', 'next', 'create', 'priority', 'field', 'claim', 'reserve', 'release', 'show', 'parent', 'depends', 'done', 'role', 'handover', 'move', 'verdict', 'say', 'launch', 'restore', 'cleanup', 'clean', 'close', 'reap', 'staff', 'agents', 'who', 'status', 'asks', 'inbox', 'pull', 'wait', 'leave', 'beat', 'export', 'finish', 'sweep'";
 
     #[test]
     fn every_command_of_the_usage_is_read_and_has_its_help() {
@@ -840,12 +857,53 @@ mod tests {
             ("status", true)
         );
         assert!(!run(&["status"]).flag("json"));
-        assert_eq!(usage::HELP.matches(",agents,who,status,inbox,").count(), 2);
-        assert!(usage::USAGE.contains(",agents,who,status,inbox,"));
+        assert_eq!(
+            usage::HELP
+                .matches(",agents,who,status,asks,inbox,")
+                .count(),
+            2
+        );
+        assert!(usage::USAGE.contains(",agents,who,status,asks,inbox,"));
         let Outcome::Help(help) = parse_of(&["status", "-h"]) else {
             panic!("status -h is its help");
         };
         assert!(help.starts_with("usage: just tasks status [-h] [--as ACTOR] [--json]\n\n"));
+    }
+
+    #[test]
+    fn asks_lists_with_its_flags_and_closes_one_by_its_id_and_reason() {
+        let listed = run(&["asks", "--all", "--json"]);
+        assert_eq!(listed.command, "asks");
+        assert!(listed.flag("all") && listed.flag("json"));
+        assert_eq!(listed.get("action"), None);
+        let closed = run(&["asks", "close", "3", "answered on the card", "--as", "a"]);
+        assert_eq!(
+            (
+                closed.get("action"),
+                closed.get("id"),
+                closed.get("why"),
+                closed.get("actor")
+            ),
+            (
+                Some("close"),
+                Some("3"),
+                Some("answered on the card"),
+                Some("a")
+            )
+        );
+        let Outcome::Usage(refused) = parse_of(&["asks", "open"]) else {
+            panic!("asks takes close alone");
+        };
+        assert!(
+            refused.ends_with(
+                "just tasks asks: error: argument action: invalid choice: 'open' (choose from 'close')\n"
+            ),
+            "{refused}"
+        );
+        let Outcome::Help(help) = parse_of(&["asks", "-h"]) else {
+            panic!("asks -h is its help");
+        };
+        assert!(help.contains("close ID WHY  close ask ID"), "{help}");
     }
 
     #[test]

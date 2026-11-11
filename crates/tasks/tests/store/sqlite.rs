@@ -283,6 +283,7 @@ pub fn sample() -> Dump {
             },
         ],
         delivery_keys: Vec::new(),
+        asks: Vec::new(),
     }
 }
 

@@ -19,17 +19,17 @@ pub fn shown(text: &str, env: &Env) -> String {
 
 /// The usage line of `just tasks` itself.
 pub const USAGE: &str = r#"usage: just tasks [-h] [--as ACTOR]
-                  {callback,register,attach,list,search,stats,embed,next,create,priority,field,claim,reserve,release,show,parent,depends,done,role,handover,move,verdict,say,launch,restore,cleanup,clean,close,reap,staff,agents,who,status,inbox,pull,wait,leave,beat,export,finish,sweep} ...
+                  {callback,register,attach,list,search,stats,embed,next,create,priority,field,claim,reserve,release,show,parent,depends,done,role,handover,move,verdict,say,launch,restore,cleanup,clean,close,reap,staff,agents,who,status,asks,inbox,pull,wait,leave,beat,export,finish,sweep} ...
 "#;
 
 /// `just tasks --help`.
 pub const HELP: &str = r#"usage: just tasks [-h] [--as ACTOR]
-                  {callback,register,attach,list,search,stats,embed,next,create,priority,field,claim,reserve,release,show,parent,depends,done,role,handover,move,verdict,say,launch,restore,cleanup,clean,close,reap,staff,agents,who,status,inbox,pull,wait,leave,beat,export,finish,sweep} ...
+                  {callback,register,attach,list,search,stats,embed,next,create,priority,field,claim,reserve,release,show,parent,depends,done,role,handover,move,verdict,say,launch,restore,cleanup,clean,close,reap,staff,agents,who,status,asks,inbox,pull,wait,leave,beat,export,finish,sweep} ...
 
 The task board from the terminal — `just tasks …`.
 
 positional arguments:
-  {callback,register,attach,list,search,stats,embed,next,create,priority,field,claim,reserve,release,show,parent,depends,done,role,handover,move,verdict,say,launch,restore,cleanup,clean,close,reap,staff,agents,who,status,inbox,pull,wait,leave,beat,export,finish,sweep}
+  {callback,register,attach,list,search,stats,embed,next,create,priority,field,claim,reserve,release,show,parent,depends,done,role,handover,move,verdict,say,launch,restore,cleanup,clean,close,reap,staff,agents,who,status,asks,inbox,pull,wait,leave,beat,export,finish,sweep}
     callback            register a native channel or --off for inbox fallback
     depends             change what a task waits on
     handover            hand a task's orchestrator role to another session
@@ -40,6 +40,8 @@ positional arguments:
                         beat for the subagent making it
     status              the board's health: failed dispatches and sweeps,
                         slow requests, write latency
+    asks                what the owner waits on an agent for, oldest first,
+                        with who holds each and for how long
     finish              close the panes of a finished task's sessions
     pull                print the whole PULL digest as ACTOR hears it
     wait                print what a callback would push ACTOR, once there is
@@ -522,6 +524,27 @@ options:
   -h, --help  show this help message and exit
   --as ACTOR
   --json      the record as /api/health answers it, the file and the warnings
+"#,
+    ),
+    (
+        "asks",
+        "usage: just tasks asks [-h] [--as ACTOR] [--all] [--json] [close ID WHY]\n",
+        r#"usage: just tasks asks [-h] [--as ACTOR] [--all] [--json] [close ID WHY]
+
+What the owner said that waits on an agent's answer: a verdict with a note or
+a rejection, a message on a card, a comment, a chat, a message on a task. Each
+is an ask, never a task: open, oldest first, with who holds it and for how
+long, late past ten minutes; or answered. `close ID WHY` closes one by hand,
+as needing no answer.
+
+positional arguments:
+  close ID WHY  close ask ID, saying why it needs no answer (needs --as)
+
+options:
+  -h, --help    show this help message and exit
+  --as ACTOR
+  --all         the asks answered in the last day too, the newest first
+  --json        the asks as the board holds them
 "#,
     ),
     (
