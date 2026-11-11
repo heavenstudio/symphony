@@ -81,14 +81,10 @@ pub(super) fn callout(lines: &[String], ctx: &Ctx<'_>) -> String {
     out.join("\n")
 }
 
-/// Owner words stay literal text, but for the files they attached; an agent entry is markdown, so it
-/// can link, show images and use components.
+/// A note under a card, the owner's or an agent's, drawn as a document's body is, so it can link,
+/// show pictures and files, and use components; its line breaks stay and no line is a heading.
 fn entry_html(entry: &Entry, ctx: &Ctx<'_>) -> String {
-    let body = if entry.who == Who::Agent {
-        single_paragraph(ctx.convert(&entry.text))
-    } else {
-        owner_html(&entry.text, ctx)
-    };
+    let body = single_paragraph(ctx.convert_note(&entry.text));
     let mut parts = Vec::new();
     if let Some(ts) = &entry.ts {
         parts.push(format!("<time>{}</time>", escape(ts)));
