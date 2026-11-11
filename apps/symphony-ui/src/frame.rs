@@ -244,12 +244,10 @@ pub fn Frame(route: Route, children: Element) -> Element {
     let has_pending = array(field(&snapshot("reviewPendingSnapshot"), "items")).length() > 0;
     let project = crate::project::current();
     let plugin_page = crate::project::nav_for_document(&project.nav, &route.path);
-    let crumbs: Vec<_> = if let Some(item) = plugin_page {
-        vec![item.href.trim_matches('/')]
-    } else if route.path.is_empty() {
-        vec!["board"]
+    let (crumbs, under_tasks) = if let Some(item) = plugin_page {
+        (vec![item.href.trim_matches('/')], false)
     } else {
-        route.path.trim_end_matches('/').split('/').collect()
+        docs::crumbs(&route.path)
     };
     let mut links = vec![
         (
@@ -289,7 +287,7 @@ pub fn Frame(route: Route, children: Element) -> Element {
                     for (index, crumb) in crumbs.iter().enumerate() {
                         if index > 0 { " / " }
                         if index + 1 < crumbs.len() {
-                            a { href: docs::scoped(&route.scope, &format!("/{}/", crumbs[..=index].join("/"))), "{crumb}" }
+                            a { href: if under_tasks { "/tasks".to_string() } else { docs::scoped(&route.scope, &format!("/{}/", crumbs[..=index].join("/"))) }, "{crumb}" }
                         } else { span { "{crumb}" } }
                     }
                 }

@@ -428,11 +428,12 @@ fn every_header_and_home_link_lands_in_a_project_whose_guide_is_docs_review() {
     );
     let links = landings(&mut browser, "/alpha", "header a[href], .dash a[href]");
     assert!(
-        links
-            .iter()
-            .any(|(href, _)| href == "/docs/REVIEW.md"),
+        links.iter().any(|(href, _)| href == "/docs/REVIEW.md"),
         "the home links the project's own review guide: {links:?}"
     );
     let lost: Vec<_> = links.iter().filter(|(_, status)| *status != 200).collect();
-    assert!(lost.is_empty(), "links that lead nowhere: {lost:?} of {links:?}");
+    assert!(
+        lost.is_empty(),
+        "links that lead nowhere: {lost:?} of {links:?}"
+    );
 }

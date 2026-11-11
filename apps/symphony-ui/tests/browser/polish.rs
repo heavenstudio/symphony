@@ -3,8 +3,19 @@
 //! missing pages say so, panels answer the keyboard, badges stay readable and native controls
 //! follow the scheme, in both schemes.
 use super::components::{appearance, key, open_panel, site};
-use super::{SHOWN, chrome, chrome::Chrome};
+use super::{SHOWN, chrome, chrome::Chrome, dist, site::Site};
 use serde_json::{Value, json};
+
+/// The board and nothing else: every other read answers 404, as a server without the task or
+/// document a page names does.
+fn bare_site() -> Site {
+    Site::start(dist(), &super::common::fixture("board.json"))
+}
+
+/// The page's breadcrumbs, as `[text, href]`, `href` null for the page itself.
+fn crumbs(page: &mut Chrome) -> Value {
+    page.eval("[...document.querySelectorAll('nav.crumbs > a, nav.crumbs > span')].map(e => [e.textContent, e.getAttribute('href')])")
+}
 
 /// The page's colour scheme, as the operating system would set it.
 fn scheme(page: &mut Chrome, mode: &str) {
@@ -263,5 +274,37 @@ fn the_count_of_todays_replies_opens_the_activity_panel_where_they_are_listed() 
         page.eval("location.pathname + location.hash"),
         json!("/"),
         "and leads nowhere else"
+    );
+}
+
+#[test]
+fn a_task_page_crumbs_only_the_tasks_page_and_an_unknown_slug_says_there_is_no_such_task() {
+    let site = site();
+    let Some(mut page) = chrome() else { return };
+    page.open(&site.url("/task/visual/in-progress"));
+    assert!(page.wait_for("document.querySelector('article.task') !== null", SHOWN));
+    assert_eq!(
+        crumbs(&mut page),
+        json!([["tasks", "/tasks"], ["visual/in-progress", null]]),
+        "no crumb makes a task of a part of the slug"
+    );
+    let bare = bare_site();
+    page.open(&bare.url("/task/product/nope"));
+    assert!(
+        page.wait_for("document.querySelector('.trouble h1') !== null", SHOWN),
+        "{}",
+        page.eval("document.querySelector('main').innerText")
+    );
+    let shown = page.eval("(() => {const block=document.querySelector('.trouble');return {title:block.querySelector('h1').textContent,\
+        back:block.querySelector('a').getAttribute('href'),retry:[...block.querySelectorAll('button')].map(b=>b.textContent),\
+        loading:document.querySelector('main').innerText.includes('Loading task')};})()");
+    assert_eq!(
+        shown,
+        json!({"title":"No task product/nope","back":"/tasks","retry":["Retry"],"loading":false}),
+        "the body says the task is not there, instead of loading forever"
+    );
+    assert_eq!(
+        crumbs(&mut page),
+        json!([["tasks", "/tasks"], ["product/nope", null]])
     );
 }

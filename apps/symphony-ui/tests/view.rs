@@ -374,7 +374,10 @@ fn the_home_links_the_projects_own_pages_and_its_register() {
         .find(r#"<a class="pill" href="/notes/REVIEW.md">How review works</a>"#)
         .expect("the guide pill, by the project's own route");
     assert!(
-        links.find("All docs").unwrap() < lamps && lamps < cues && cues < register && register < guide,
+        links.find("All docs").unwrap() < lamps
+            && lamps < cues
+            && cues < register
+            && register < guide,
         "{links}"
     );
 }

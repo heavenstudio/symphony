@@ -161,7 +161,11 @@ fn the_review_guide_is_linked_by_its_route_and_not_at_all_when_the_project_has_n
     let tree = manual();
     assert_eq!(guide(&tree), "", "docs/ is not this project's folder");
     tree.write("docs/REVIEW.md", "# Stray\n");
-    assert_eq!(guide(&tree), "", "a file outside every entrypoint is no guide");
+    assert_eq!(
+        guide(&tree),
+        "",
+        "a file outside every entrypoint is no guide"
+    );
     tree.write("manual/REVIEW.md", "# Review\n");
     assert_eq!(
         guide(&tree),
