@@ -203,8 +203,9 @@ pub(super) fn heard(f: &Fixture, sender: &str, who: &[(&Listener, &str)]) -> Vec
         .collect()
 }
 
+/// A hand-over is the giver's own write: only the session it reached hears it, once.
 #[test]
-fn a_hand_over_sends_one_role_event_to_each_side() {
+fn a_hand_over_sends_one_role_event_to_the_session_it_reached() {
     let (f, a, b) = two_orchestrators();
     let w = f.session("worker");
     f.store.claim("scratch/one", &w).unwrap();
@@ -218,10 +219,7 @@ fn a_hand_over_sends_one_role_event_to_each_side() {
     );
     f.store.hand_over("scratch/one", &a, &b).unwrap();
     let role = format!("ROLE scratch/one {b} orchestrator, in_progress (from {a})");
-    assert_eq!(
-        heard(&f, &w, &[(&la, &a), (&lb, &b)]),
-        [vec![role.clone()], vec![role]]
-    );
+    assert_eq!(heard(&f, &w, &[(&la, &a), (&lb, &b)]), [vec![], vec![role]]);
     assert_eq!(
         heard(&f, &w, &[(&la, &a), (&lb, &b)]),
         [Vec::<String>::new(), vec![]]
@@ -239,7 +237,7 @@ fn a_hand_over_to_a_reviewer_of_the_task_is_still_one_role_event() {
     heard(&f, &w, &ears);
     f.store.hand_over("scratch/one", &a, &b).unwrap();
     let role = format!("ROLE scratch/one {b} orchestrator, in_progress (from {a})");
-    assert_eq!(heard(&f, &w, &ears), [vec![role.clone()], vec![role]]);
+    assert_eq!(heard(&f, &w, &ears), [vec![], vec![role]]);
 }
 
 #[test]
@@ -296,7 +294,7 @@ fn each_orchestrator_hears_its_own_tasks_and_the_unclaimed_ones_only() {
         heard_now[0][..2],
         [
             format!("LOST {wa} — its work is claimable: scratch/a"),
-            "PULL executing=0 ready_unstaffed=0 in_progress_orphaned=1 review_unreviewed=0 landed_open=0 idle=0".to_string(),
+            "PULL executing=0 (was 1) in_progress_orphaned=1 (was 0)".to_string(),
         ]
     );
     assert_eq!(

@@ -80,6 +80,8 @@ the steps left. The board says so when it is missing.
 | `just tasks stats [--days N] [--json]` | where the pipeline's time goes: lead time, time in each status, bounces, tasks done per day and what sits longest ([Where the time goes](#where-the-time-goes)) |
 | `just tasks status [--json]` | the board's health over the last hour, as its Symphony server recorded it: failed dispatches and sweeps, the slowest request, write latency ([Board health](#board-health)) |
 | `just tasks callback [ADDRESS] --as HANDLE` | register a native channel; addressed events start a turn directly |
+| `just tasks pull --as HANDLE` | the whole PULL digest as HANDLE hears it now; a callback carries only what changed since the last PULL it received |
+| `just tasks wait --as HANDLE [--timeout S]` | for a session with no channel: exits printing what a callback would have pushed it since its last read, once there is any; run it as a background command and again when it exits |
 | `just agent-send HANDLE "text" [--as SENDER]` | message an agent directly through its registered channel |
 | `just symphony` → **▦ tasks**, **◉ agents** | the board, each task's page and thread, and who is connected |
 
@@ -110,7 +112,15 @@ a native callback, choosing the lexicographically smallest handle among plain
 orchestrators. A normal `just tasks callback --as HANDLE` is enough for that
 last fallback; `--chat --if-free` opts into the higher-priority fallback without
 displacing the seat. Sweep-confirmed native presence counts as live. A recipient
-suspended after delivery failures waits for the sweep to restore it.
+suspended after delivery failures waits for the sweep to restore it. While no
+channel holds the seat, an orchestrator reading by `just tasks wait` holds it:
+a session is waiting from its first `wait` until it registers a channel (or
+turns one off) or leaves, and of the live waiting orchestrators the smallest
+handle receives chat at its next read; one that stops waiting holds it while it
+stays live, so what the owner says waits for that read. While nobody holds the
+seat, every orchestrator's `just tasks pull` ends with what the owner said that
+nobody received, and its `just tasks inbox` takes it, after which nobody reads
+it again: an owner's word never goes to no one unseen.
 The app names the recipient, and says when nobody receives chat. Saves queue
 asks, follow-ups, card messages, verdict notes and callouts directly; an outbox
 beside the asks preserves them across a board outage. No file watcher discovers
@@ -486,6 +496,28 @@ digest (`crates/tasks/src/cli/pull.rs`) once at its first dispatch, even when em
 or reviewer that is `running_test` counts as present however quiet the board says it is.
 Counts and the clock do not trigger delivery. A departure alone pushes nothing;
 an entry that stays present is never re-sent, and an ordinary entry that leaves and returns pushes once.
+The first PULL a recipient receives is the whole digest: `PULL HH:MM` with every count, then each list's
+first six rows and how many more it holds, but `unanswered`, whose every post is listed with the command that
+answers it, since a post a PULL tells is never told again. Each later one says only what changed since the last PULL it
+acknowledged: the counts that moved (`PULL ready_unstaffed=34 (was 33)`, or `PULL counts unchanged`), the
+liveness and low-volume lines it was not told, each row a list gained, and `resolved LIST a, b` for the rows
+that left it. A backlog of 33 that gains one row is that header and one row. What the last acknowledged PULL said
+is kept in the recipient's callback state (`pull_said`, which older dispatchers ignore); after an older
+dispatcher's acknowledgement, which does not record it, the next PULL is the whole digest again. A dispatcher
+built before PULLs said only what changed (the shared server's, until it is rebuilt) records the entries of the
+PULL it acknowledges and not what it said: a row it told that the recipient still hears shows it, and the next PULL
+is the whole digest. Only when every row it told has left the recipient's digest by then is the next PULL measured
+against the baseline before it: its header can repeat a count that moved before, with the older `(was N)`, its
+liveness line can repeat or miss a change, and those rows are not said `resolved`. Rows added are exact either way,
+never lost or said twice, and the next PULL this generation records is exact again.
+A channel registered anew starts again from the whole digest: `--off`, a registration where none was (after
+`--off` or a `tasks wait`) or one another process listens on (`Store::callback_in`) forgets which PULL the
+session acknowledged, and a PULL waiting for it gives way to the whole digest; the posts it was told stay told.
+Only the same listener moving to a new socket keeps its account, so what waited out an outage is said there as it
+stands. An orchestrator reads the whole digest at its decision points with `just tasks pull` whatever it heard.
+A pass whose unanswered-post scan fails says why on stderr and delivers the rest, and its PULL says nothing of
+those posts, neither their count nor any of them resolved; their count is then unknown to the recipient, so the
+next PULL whose scan answers says it (`unanswered=1 (was unknown)`) and resolves the posts answered meanwhile.
 Unanswered work retains its task/post identity across departures and returns.
 `unanswered` lists an executor on an in-progress, blocked or review task, or a reviewer
 on a task in review, when it is lost or left (or its recorded terminal is closed) and an
@@ -498,6 +530,42 @@ command, or the explicit launch command when no conversation was recorded. The
 orchestrator receives each task/post once, even if it leaves and returns; a new
 unanswered post can push a new line for the same task. Its count appears only when
 nonzero. `reap` makes the sole automatic recovery attempt described above.
+
+What is pushed is what the recipient cannot predict and must act on, said once: posts and verdicts, NEW,
+STATUS, ROLE, BLOCKED, the PULL above, and STALE, LOST or LIVENESS UNKNOWN once for each transition of a quiet
+child, never once a pass (a child it already hears as stale is not also listed idle, in a pushed PULL, a wait
+or `tasks pull` alike). A recipient is never told its own writes: not its own moves, not a role move it made (a hand-over, a take-over), and not what its own
+children (the sessions it registered, `--parent`) take on or let go, their reservations, claims and releases
+and the moves and readiness those make; a child's own move, to review say, is still said, and so is one it made
+before a claim or release between two looks (a block, then a release, says the block). What is read is the
+rest: `just tasks pull --as HANDLE` prints the whole digest as HANDLE hears it now, whatever was pushed, and
+changes nothing; `just tasks show`, `list` and `agents` read the board as it is.
+
+A push through a channel arrives wrapped in the receiving client's notice and costs a turn. A session that can
+hold a background command reads the same lines instead: `just tasks wait --as HANDLE [--timeout S]` exits
+printing what a channel would have carried since its last read, once there is any, and the session runs it
+again. It is the dispatch's own pass for HANDLE (`crates/tasks/src/cli/commands/wait.rs`,
+`Store::collect_callbacks`), its lines printed rather than delivered, each text flushed before it is recorded
+as delivered (one that does not print is retried five seconds on, so a failure repeats a line and never loses
+one), so it says the same lines by the same diff and account, from the same callback state: the first read is the whole digest
+and any posts waiting, each later one only what changed. It looks when the board's marker moved, every two
+seconds at most, and at least every fifteen, since a child going quiet or a PULL falling due changes with time
+alone; with `--timeout` it gives up after S seconds with `WAIT nothing changed in S s` (`0` looks once). It
+is refused while HANDLE has a channel, which takes those lines (`just tasks callback --off --as HANDLE` gives
+them to `wait`), and nothing else dispatches to a session without one, so between reads nothing is said and
+nothing lost. Waiting is the session's sign of life, as a monitor's is: it beats for HANDLE every twenty seconds
+or so, at a look, so an orchestrator waiting on its board is not called stale for it. Each look also watches
+the panes HANDLE oversees, one hc sample a look, as the server's clock does for a channel, so a pane waiting on
+a prompt is said as `BLOCKED` by the second look that sees it; and while HANDLE holds the chat seat (see the
+callback section above) the owner's chat events come with the rest.
+What waiting costs, measured on 2026-11-11: once HANDLE has its callback state and is on the chat seat's waiting
+list (its first look puts it there), a look at a board that stood still is nine reads and no write; a poll between
+looks is one read of the board's marker; a beat is one write. While the board stands still that is about 30
+marker reads, four looks and two beats a minute: some 66 reads and 2 writes. Every write to the board moves the
+marker, a session's heartbeat too, so on a board where other sessions beat a look comes at nearly every poll, up to
+30 a minute (about 300 reads). A look took 7 ms on a small board and 0.8 to 0.9 s as a command of its own on
+the 2.2k-task board of the perf suite (its process's start and connection included, a debug build at load 35 to
+80), and the first look there, which says the whole digest, 18 s.
 
 A legacy native observer starts from the current board on upgrade rather than replaying its history.
 Its upgrade marker and message cursor are separate callback-state fields that older writers leave intact.
@@ -623,14 +691,14 @@ holds while it is live, stale or of unknown liveness is refused, naming the
 holder and the command that moves it: `just tasks handover SLUG HANDLE`, run by
 the holder, drops its role and gives the role to HANDLE in one write. The
 thread says `A handed orchestrator over to B; address B or @orchestrator`,
-and each of the two hears one `ROLE SLUG B orchestrator, STATUS (from A)`,
-whatever other role B holds there. HANDLE must still be there (live, stale or
+and B hears one `ROLE SLUG B orchestrator, STATUS (from A)`, whatever other
+role B holds there; A made the move and is not told it. HANDLE must still be there (live, stale or
 of unknown liveness); a hand-over to a session gone quiet, or leaving as it is
 written, is refused, naming its health; under a cap, so is one that would raise
 HANDLE's open tasks past it ([Slots](#slots)). Taking the role over a holder that is
 lost or left drops that one in the same write, and the thread says `B took
-orchestrator over from A (lost)`; so does taking it again where a left holder
-still sits beside you. A task is its orchestrator's when that session holds the
+orchestrator over from A (lost)`, which A hears and B, who made it, does not; so
+does taking it again where a left holder still sits beside you. A task is its orchestrator's when that session holds the
 role on it, or on the nearest task above it that has a holder still there; a
 task with none is **unclaimed**, as are a lost or left orchestrator's tasks
 until another takes them over. Each orchestrator hears its own tasks and the

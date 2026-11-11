@@ -152,8 +152,8 @@ shape already: one framed line per run appended to a day file, pruned at 30 days
 
 The work is on the board, in the order it lands: `tools/run-record` (after
 `tools/build-test-recorded-generic`), `tools/run-logs`, `tools/run-suites`, `tools/run-send`,
-`tools/runs-rollup` and `tools/runs-page`. Six smaller choices they meet wait on the card
-`reports-small-choices` ([Open questions](#open-questions)).
+`tools/runs-rollup` and `tools/runs-page`, with `tools/nextest` before `tools/run-suites`. The
+six smaller choices they met are answered ([Open questions](#open-questions)).
 
 Not chosen:
 
@@ -227,16 +227,23 @@ a test binary of this workspace), and `--report-time` is nightly-only too. What 
 
 So per suite (binary) the counts and the time are known, and per test the result, but not each
 test's time. The slowest *suites* can be shown; the slowest *tests* need nightly libtest or
-cargo-nextest ([Open questions](#open-questions)). Passing tests are counted, not listed, which
-keeps a line small: this workspace has several thousand tests.
+cargo-nextest.
+
+**Decided: cargo-nextest** (the owner, 2026-11-11: "can absolutely adopt cargo nextest"). This
+workspace's tests run through it at a pinned version (`tools/nextest`), and its report gives each
+test's time. Doc-tests, which nextest does not run, keep libtest's plain output above. The run line
+keeps per-suite counts and the failed tests, so it stays small with several thousand tests; each
+test's time is kept beside the run's log, and the roll-up gives the slowest and flakiest tests from
+it.
 
 A **flaky** test is one that failed and passed on the same tree, in a rerun or a later run. The
 page counts each test's flaky and red runs over 14 days.
 
 **Queue wait** is the time from queued to started. Star Foundry's slots queue work, and its
 summaries keep each check's wait. This workspace has no pool (`tools/cargo.sh` supplies none), so
-its runs wait only on Cargo's build-directory lock, which Cargo announces on stderr; whether the
-recorder should count that is an open question.
+its runs wait only on Cargo's build-directory lock, which Cargo announces on stderr. Decided (the
+owner, 2026-11-11): where nothing queues work, no queue wait is shown, and the lock's wait is not
+counted.
 
 ### Kept, and for how long
 
@@ -275,6 +282,13 @@ What Symphony shows without a plugin:
 A project's gates come from its plugin. Star Foundry's are its stamps: certificate, nightly,
 dependency, review, adversarial, owner and holds. A plugin's gate with the same name as Symphony's
 takes its place. Star Foundry's review stamp, for example, is the approval its landing counts.
+
+**The rule: the more specific level's answer replaces the general one's** (the owner, 2026-11-11:
+"lower level replaces higher level. Should replace it everywhere for itself."). A project's gate
+replaces Symphony's same-named gate for that project everywhere the board judges it: the task page,
+the sign-off lane, the PULL digest orchestrators get, the move to blocked and the default land
+command. A project with no answer keeps Symphony's gates. The page's part is
+`tools/task-gates-seam`; the rest is `tools/project-gates-everywhere`.
 
 **Decided: A, a typed gates seam** (the owner, 2026-11-11, after the pictures below).
 - A plugin trait answers a task's gates as data: name, state, by, when, commit, why, detail, link
@@ -399,8 +413,15 @@ Where a defect was caught, how long it took to fix, and whether it escaped.
 Second in line: sessions started per day by kind and model (session rows); tokens per task, role
 and review round (`tools/board-token-usage`); time working against waiting, which needs tool-call
 times the board does not keep (the token rows, one per call, give them); stale and lost counts per
-day, which the server can count as its clock says them. Money: unknown, see
-[What exists today](#what-exists-today).
+day, which the server can count as its clock says them.
+
+**Money, estimated at API prices** (the owner, 2026-11-11: "tokens are hard to measure, since
+cache vs non cache hits counts differently. This should be counted "as if we were paying API costs"
+for it. Best assumption/guess on pricing actual cost"). Cost is input, output, cache writes and
+cache reads, each priced apart per model from a dated price table in the repository, taken from
+the providers' published prices, and always labelled an estimate. A model the table lacks takes its
+family's newest price, marked as a guess; one with no family is shown unpriced and named. The work
+is `tools/agent-cost-estimate`, after `tools/board-token-usage`.
 
 ### Board health over days
 
@@ -446,9 +467,8 @@ The chart block is a wire change, so it reaches main in a task of its own first 
 `workflow/shared-data-lands-first`).
 
 The core pages are decided (Runs and Reports, both A) and the gates seam is filed. The
-report-section seam and the chart block are not filed: the core pages draw their own charts, and
-whether a project's own section is built before a project asks for it is choice 6 on the card
-`reports-small-choices`.
+report-section seam and the chart block wait until a project asks for its own section (the owner,
+2026-11-11); the core pages draw their own charts.
 
 ## One machine or several
 
@@ -574,9 +594,10 @@ Once approved, as board tasks, the shared data first:
 
 1. The run line and its folder, after `tools/build-test-recorded-generic`: the fields above,
    cargo's test output read, logs and their bounds, and the send to the hosting server: filed as
-   `tools/run-record`, `tools/run-suites`, `tools/run-logs` and `tools/run-send`.
-2. The chart block in `symphony-api` and its component: not filed (choice 6 on the card
-   `reports-small-choices`).
+   `tools/run-record`, `tools/run-suites`, `tools/run-logs` and `tools/run-send`, with the tests
+   run through cargo-nextest first (`tools/nextest`).
+2. The chart block in `symphony-api` and its component: not filed, until a project asks for its
+   own section.
 3. The Runs page and its API, with the machine view, and the runs' hourly roll-up: filed as
    `tools/runs-page` and `tools/runs-rollup`.
 4. The replay's segments in `stages.rs`, and the task page's timeline: filed as
@@ -586,29 +607,36 @@ Once approved, as board tasks, the shared data first:
    to its board, `tools/star-foundry-gates-adapter`.
 6. The hourly roll-up and the health history: filed as `tools/reports-rollup`,
    `tools/board-health-history`, `tools/agent-activity-history` and `tools/red-landing-origin`.
-7. The Reports page (filed as `tools/reports-page`), and the report-section seam (not filed:
-   choice 6 on the card `reports-small-choices`).
+7. The Reports page (filed as `tools/reports-page`), and the report-section seam (not filed,
+   until a project asks for its own section).
+8. From the answers below: agents' cost in money (`tools/agent-cost-estimate`), a default land
+   command (`tools/land-command`), and a project's gates replacing Symphony's everywhere
+   (`tools/project-gates-everywhere`).
 
 ## Open questions
 
-Questions 2, 3, 5, 6 and 7 are choices 1 to 5 on the card `reports-small-choices`, each with the
-default the filed tasks follow until the owner answers.
+None is open. The owner answered questions 2, 3, 5, 6 and 7, and whether to build a project's own
+report section now, on 2026-11-11 (16:22).
 
 1. Settled by the approval of `reports-ci-runs`: runs 90 days, logs 14 (a red's 30, at most 2 GB a
    project), roll-ups for good.
 2. The slowest tests need each test's time, which stable cargo does not print. Adopt cargo-nextest
-   (a new tool), or show suites only? Until answered, suites only.
+   (a new tool), or show suites only? **Answered:** "can absolutely adopt cargo nextest"
+   (`tools/nextest`).
 3. A cost in money needs a price per model from the owner, and on a subscription per-token money
-   is not what is paid. Show tokens only? Until answered, tokens only.
+   is not what is paid. Show tokens only? **Answered:** "nope", money as if paying API prices, a
+   best guess where a price is unknown ([Agents](#agents), `tools/agent-cost-estimate`).
 4. Settled by the approval: a red names the commits it came between (`tools/red-landing-origin`).
    Star Foundry's landing and nightly passing them is Star Foundry's change, on its own board.
 5. Symphony has no land command: its merges to main are made by hand. Count each merge commit on
-   main as a landing run? Until answered, yes.
+   main as a landing run? **Answered:** "add a land command, should be offered by default on init.
+   Remember -> convention over configuration approach" (`tools/land-command`). Landings are counted
+   from its runs, not from merge commits.
 6. Queue wait where no pool queues work: show none, or count the time Cargo waits on its build lock?
-   Until answered, none.
+   **Answered:** none.
 7. Should a project's gates, once shown, also replace Symphony's review gate everywhere the board
-   judges review (the sign-off lane, the PULL digest)? Until answered they replace it on the page
-   alone.
+   judges review (the sign-off lane, the PULL digest)? **Answered:** yes, everywhere for that
+   project ([Gates](#gates), `tools/project-gates-everywhere`).
 
 ## Verified and inferred
 

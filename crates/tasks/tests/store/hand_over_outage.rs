@@ -191,19 +191,21 @@ fn what_waited_out_an_outage_says_nothing_of_the_work_a_hand_over_took_away() {
         let back = outage.back();
         let mut told = Vec::new();
         if keeps_work {
-            // The PULL, in its place, says the work it still hears.
+            // The PULL, in its place, says what changed in the work it still hears: of the three
+            // running tasks it heard, two are the successor's now and the third lost its executor,
+            // and scratch/one/st went back to the backlog.
             told.extend([
                 format!("LOST {lost} — its work is claimable: scratch/kept"),
-                "PULL executing=0 ready_unstaffed=0 in_progress_orphaned=1 review_unreviewed=0 landed_open=0 idle=0".to_string(),
+                "PULL executing=0 (was 3) ready_unstaffed=0 (was 1) in_progress_orphaned=1 (was 0)"
+                    .to_string(),
                 "in_progress_orphaned p2 scratch/kept — Jump departure".to_string(),
+                "resolved ready_unstaffed scratch/one/st".to_string(),
             ]);
         }
-        // A post was said to whoever held the role then; the hand-over is said to both sides.
+        // A post was said to whoever held the role then; the hand-over is its own write, which it
+        // is not told.
         told.push(format!(
             "MSG #{post} scratch/one from {sender} — for the orchestrator"
-        ));
-        told.push(format!(
-            "ROLE scratch/one {successor} orchestrator, in_progress (from {former})"
         ));
         assert_eq!(back.drain(fixture, sender, former), told);
         // What older dispatchers read still records what it was told, so they never say it.
@@ -301,32 +303,26 @@ fn a_child_quiet_meanwhile_is_said_after_a_hand_over_only_to_an_orchestrator_tol
         }
         let told = outage.back().drain(fixture, sender, former);
         let status = if released { "ready" } else { "in_progress" };
+        // Its own hand-over is not said to it.
         let moved = format!("ROLE scratch/one {successor} orchestrator, {status} (from {former})");
-        assert!(told.contains(&moved), "{case}: {told:?}");
+        assert!(!told.contains(&moved), "{case}: {told:?}");
         let heard = (told.iter()).any(|line| line.starts_with(&notice));
         assert_eq!(heard, said, "{case}: {told:?}");
     }
 }
 
-/// The head of a PULL with one ready task nobody staffs, and `executing` running.
-pub(super) fn pull(executing: u8) -> String {
-    format!(
-        "PULL executing={executing} ready_unstaffed=1 in_progress_orphaned=0 review_unreviewed=0 landed_open=0 idle=0"
-    )
-}
+/// The head of a PULL of one ready task nobody staffs, come up since the last PULL the former
+/// orchestrator heard, which counted none.
+pub(super) const FREE: &str = "PULL ready_unstaffed=1 (was 0)";
 
-/// What the lines waiting for the former orchestrator after a hand-over of `scratch/one` come to,
-/// with `scratch/free` (nobody's) made during the outage: its NEW, the PULL of it, which keeps its
-/// place, and the move.
-fn after_hand_over(outage: &Outage, status: &str) -> Vec<String> {
-    let Outage {
-        successor, former, ..
-    } = outage;
+/// What the lines waiting for the former orchestrator after its hand-over of `scratch/one` come
+/// to, with `scratch/free` (nobody's) made during the outage: its NEW and the PULL of it (`head`),
+/// which keeps its place; its own move is not said to it.
+fn after_hand_over(head: &str) -> Vec<String> {
     vec![
         "NEW scratch/free ready — Jump departure".to_string(),
-        pull(0),
+        head.to_string(),
         "ready_unstaffed p2 scratch/free — Jump departure".to_string(),
-        format!("ROLE scratch/one {successor} orchestrator, {status} (from {former})"),
     ]
 }
 
@@ -369,22 +365,20 @@ fn a_pull_waiting_out_an_outage_is_said_as_the_digest_is_at_delivery_whoever_wro
         fixture.store.claim("scratch/one", &child).unwrap();
         outage.cut();
         // While it cannot be reached, work nobody orchestrates comes up: its PULL counts its own
-        // running task beside it.
+        // running task beside it, as the last PULL it heard did (`executing` has not moved).
         let free = NewTask::new("scratch/free", "Jump departure", "owner");
         elsewhere.create(&free).unwrap();
         let waiting = outage.waiting();
-        let counted = (waiting.iter()).any(|text| text.starts_with(&pull(1)));
-        assert!(counted, "{waiting:?}");
+        let counted = format!("{FREE}\nready_unstaffed p2 scratch/free — Jump departure");
+        assert!(waiting.contains(&counted), "{waiting:?}");
         if older {
             as_an_older_dispatcher_wrote_it(&outage);
         }
         (elsewhere.hand_over("scratch/one", former, successor)).unwrap();
         let told = outage.back().drain(fixture, sender, former);
-        assert_eq!(
-            told,
-            after_hand_over(&outage, "in_progress"),
-            "older: {older}"
-        );
+        // The running task is the successor's now: the count it heard moves.
+        let head = "PULL executing=0 (was 1) ready_unstaffed=1 (was 0)";
+        assert_eq!(told, after_hand_over(head), "older: {older}");
         assert_eq!(older_fields(fixture, former), older_record(fixture, former));
     }
 }
@@ -428,5 +422,5 @@ fn a_pull_waiting_out_an_outage_names_no_session_whose_work_a_hand_over_took_awa
     elsewhere.touch(&reviewer).unwrap();
     assert_eq!(fixture.health(&reviewer), Health::Live);
     let told = outage.back().drain(fixture, sender, former);
-    assert_eq!(told, after_hand_over(&outage, "review"));
+    assert_eq!(told, after_hand_over(FREE));
 }

@@ -42,6 +42,10 @@ pub(super) const CALLBACK_LEASE_SECONDS: u64 = 60;
 pub(super) enum Pass {
     Observe,
     Deliver,
+    /// A session with no channel reads what a delivery would send it (`tasks wait`): the pass
+    /// plans as a delivering one does, and what it would send goes to the reader instead
+    /// ([`Visit::send`]), recorded as delivered.
+    Collect,
 }
 
 pub(super) struct Idle {
@@ -66,6 +70,9 @@ struct Event {
     pull_entries: Option<BTreeSet<(String, String)>>,
     #[serde(default)]
     pull_withheld: Option<BTreeSet<(String, String)>>,
+    /// What a PULL says, which its acknowledgement records as the next one's baseline.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pull_said: Option<pull::Said>,
 }
 
 /// A recipient's callback state as a dispatch reads it, with when its PULL was last checked and
@@ -196,6 +203,12 @@ RETURN $key;"),
     /// [`Store::callback`] from the hc terminal `terminal`, if the agent runs in one. A Codex
     /// thread also completes the conversation its open launch records left unknown (`codex:`), so
     /// that `restore` can resume it.
+    ///
+    /// A new channel starts from the whole digest: turning the channel off, registering one where
+    /// none was (after `--off` or a `tasks wait`) or one another process listens on forgets which
+    /// PULL the session acknowledged, and a PULL waiting for it gives way to the whole digest. The
+    /// posts it was told stay told. Only the same listener moving to a new socket keeps its
+    /// account, so what waited out an outage is said there as it stands.
     pub fn callback_in(
         &self,
         handle: &str,
@@ -231,7 +244,7 @@ RETURN $key;"),
             }
         }
         let body = format!("{ACT}
-UPSERT callback_state:chat SET revision = (revision ?? 0) + 1 RETURN NONE;
+UPSERT callback_state:chat SET revision = (revision ?? 0) + 1, waiting = array::complement(waiting ?? [], [$actor]) RETURN NONE;
 LET $agent = type::record('session', $actor).agent;
 LET $binding = IF $agent = NONE {{ NONE }} ELSE {{ type::record('callback_state', ['binding', $agent]).in_process }};
 IF $address != NONE AND $agent != NONE AND $binding = NONE {{ THROW string::concat('refused: binding provenance is not recorded yet; retry just tasks callback --as ', $actor, ' so the current hook can classify the session'); }};
@@ -239,6 +252,11 @@ IF $address != NONE AND $agent != NONE AND $binding = true {{ THROW 'refused: in
 LET $other = (SELECT VALUE handle FROM callback_state WHERE address = $address AND handle != $actor AND type::record('session', handle).left_at = NONE ORDER BY handle LIMIT 1)[0];
 IF $address != NONE AND $other != NONE {{ THROW string::concat('refused: callback address already held by ', $other, '; in-process subagents use just tasks inbox'); }};
 LET $old = (SELECT VALUE address FROM ONLY type::record('callback_state', $actor));
+LET $old_owner = (SELECT VALUE owner FROM ONLY type::record('callback_state', $actor));
+IF $old != $address AND ($old = NONE OR $address = NONE OR $old_owner = NONE OR $old_owner != $owner) {{
+    UPDATE type::record('callback_state', $actor) SET pull_entries = NONE, pull_said = NONE, pull_withheld = [], pull_awaiting = NONE, pull_queued = NONE RETURN NONE;
+    UPDATE callback_event SET delivered = true, text = '' WHERE handle = $actor AND delivered != true AND pull_entries != NONE RETURN NONE;
+}};
 IF $address != NONE AND ($old != $address OR ($chat AND !$if_free)) {{
     UPDATE callback_event SET attempts = 0, retry_at = 0, capacity_limited = false WHERE handle = $actor AND delivered != true RETURN NONE;
 }};
@@ -273,8 +291,76 @@ RETURN NONE;");
         self.dispatch_or_hand_off()
     }
 
+    /// Who receives the owner's chat events: a registered channel's session, as [`recipient`]
+    /// chooses one; while none can, the waiting orchestrator ([`Store::waiting_orchestrator`]).
     pub fn chat_recipient(&self) -> Result<Option<String>, Error> {
-        Ok(recipient(&self.cached_callbacks()?).map(str::to_owned))
+        match recipient(&self.cached_callbacks()?) {
+            Some(handle) => Ok(Some(handle.to_owned())),
+            None => self.waiting_orchestrator(),
+        }
+    }
+
+    /// The orchestrator that holds the vacant chat seat by waiting (`tasks wait`): of the sessions
+    /// that read by waiting and registered no channel since, the live orchestrators', the first by
+    /// handle. A waiter that stops waiting holds it while it stays live, so what the owner says
+    /// waits for its next read rather than for nobody.
+    fn waiting_orchestrator(&self) -> Result<Option<String>, Error> {
+        let waiting: Vec<crate::rows::SessionRow> = self.retrying(|| self.read(
+            "LET $waiting = (SELECT VALUE waiting FROM ONLY callback_state:chat) ?? [];
+             RETURN SELECT * OMIT id FROM $waiting.map(|$h| type::record('session', $h))
+                WHERE kind = 'orchestrator' AND left_at = NONE AND type::record('callback_state', handle).address = NONE;",
+            json!({}),
+        ))?;
+        let live = |s: &&crate::rows::SessionRow| {
+            crate::health::health(s, self.now(), &self.host, &*self.pid_alive, false)
+                == crate::Health::Live
+        };
+        Ok((waiting.iter().filter(live))
+            .map(|s| s.handle.clone())
+            .min())
+    }
+
+    /// Whether `handle` reads the owner's chat events: it holds the seat, or nobody does and it is
+    /// an orchestrator, which then reads them on demand (`tasks inbox`, `tasks pull`).
+    fn reads_chat(&self, handle: &str) -> Result<bool, Error> {
+        Ok(match self.chat_recipient()? {
+            Some(recipient) => recipient == handle,
+            None => self.session_kind(handle)?.as_deref() == Some("orchestrator"),
+        })
+    }
+
+    fn session_kind(&self, handle: &str) -> Result<Option<String>, Error> {
+        self.retrying(|| {
+            self.read(
+                "RETURN (SELECT VALUE kind FROM ONLY type::record('session', $handle));",
+                json!({"handle":handle}),
+            )
+        })
+    }
+
+    /// The owner's chat events no session received: what an orchestrator reads on demand while
+    /// nobody holds the seat ([`Store::reads_chat`]), each keyed as its callback is (`chat-N`).
+    pub fn unheard_owner_events(&self, handle: &str) -> Result<Vec<(String, String)>, Error> {
+        if self.chat_recipient()?.is_some()
+            || self.session_kind(handle)?.as_deref() != Some("orchestrator")
+        {
+            return Ok(Vec::new());
+        }
+        #[derive(Deserialize)]
+        struct Chat {
+            key: String,
+            text: String,
+        }
+        let chat: Vec<Chat> = self.retrying(|| {
+            self.read(
+                "RETURN SELECT key, text FROM chat_event WHERE delivered = false ORDER BY key NUMERIC;",
+                json!({}),
+            )
+        })?;
+        Ok(chat
+            .into_iter()
+            .map(|c| (format!("chat-{}", c.key), c.text))
+            .collect())
     }
 
     pub fn callbacks(&self) -> Result<BTreeMap<String, Callback>, Error> {
@@ -486,35 +572,149 @@ RETURN NONE;");
         )).map(|_| ())
     }
 
-    /// Failed or pending non-message events also remain readable through the ordinary inbox.
+    /// Failed or pending non-message events also remain readable through the ordinary inbox, and,
+    /// while nobody holds the chat seat, an orchestrator's lists the owner's chat events nobody
+    /// received ([`Store::unheard_owner_events`]).
     pub fn callback_inbox(&self, handle: &str) -> Result<Vec<(String, String)>, Error> {
-        let chat = self.chat_recipient()?.as_deref() == Some(handle);
+        let chat = self.reads_chat(handle)?;
         let events: Vec<Event> = self.retrying(|| self.transact(
             "RETURN SELECT * OMIT id FROM callback_event WHERE handle = $handle AND delivered != true AND message = NONE
                 AND (!string::starts_with(key, 'chat-') OR ($chat AND type::record('chat_event', string::slice(key, 5)).delivered != true)) ORDER BY sequence, key NUMERIC;",
             json!({"handle":handle, "chat":chat}),
         ))?;
-        Ok(events
-            .into_iter()
+        let mut events: Vec<(String, String)> = (events.into_iter())
             .map(|event| (event.key, event.text))
-            .collect())
+            .collect();
+        for (key, text) in self.unheard_owner_events(handle)? {
+            if !events.iter().any(|(queued, _)| *queued == key) {
+                events.push((key, text));
+            }
+        }
+        Ok(events)
     }
 
     pub fn ack_callbacks(&self, handle: &str, keys: &[String]) -> Result<(), Error> {
-        let recipient = self.chat_recipient()?;
+        let chat = self.reads_chat(handle)?;
         let chats: Vec<&str> = keys
             .iter()
-            .filter(|_| recipient.as_deref() == Some(handle))
+            .filter(|_| chat)
             .filter_map(|key| key.strip_prefix("chat-"))
             .collect();
         self.retrying(|| self.transact::<Value>(
-            &format!("{ACT}\nLET $pull = (SELECT pull_entries, pull_withheld, sequence FROM callback_event WHERE handle = $actor AND key IN $keys AND pull_entries != NONE ORDER BY sequence DESC LIMIT 1)[0];
-                IF $pull != NONE {{ UPDATE type::record('callback_state', $actor) SET pull_unanswered = array::union(pull_unanswered ?? [], $pull.pull_entries.filter(|$entry| $entry[0] = 'unanswered' AND $entry NOT IN ($pull.pull_withheld ?? []))), pull_entries = $pull.pull_entries, pull_withheld = $pull.pull_withheld ?? [], pull_awaiting = NONE, pull_queued = NONE RETURN NONE; }};
+            &format!("{ACT}\nLET $pull = (SELECT pull_entries, pull_withheld, pull_said, sequence FROM callback_event WHERE handle = $actor AND key IN $keys AND pull_entries != NONE ORDER BY sequence DESC LIMIT 1)[0];
+                IF $pull != NONE {{ UPDATE type::record('callback_state', $actor) SET pull_unanswered = array::union(pull_unanswered ?? [], $pull.pull_entries.filter(|$entry| $entry[0] = 'unanswered' AND $entry NOT IN ($pull.pull_withheld ?? []))), pull_entries = $pull.pull_entries, pull_withheld = $pull.pull_withheld ?? [], pull_said = $pull.pull_said, pull_awaiting = NONE, pull_queued = NONE RETURN NONE; }};
                 FOR $key IN $keys {{ UPDATE type::record('callback_event', [$actor, $key]) SET delivered = true RETURN NONE; }};
                 FOR $key IN $chats {{ UPDATE type::record('chat_event', $key) SET delivered = true, text = '' RETURN NONE; }};
                 UPDATE callback_event SET text = '' WHERE handle = $actor AND delivered = true AND string::starts_with(key, 'chat-') RETURN NONE; RETURN NONE;"),
             acting(handle, self.now(), json!({"keys":keys, "chats":chats})),
         )).map(|_| ())
+    }
+
+    /// One look for `handle`, a session with no channel (`tasks wait`): what a dispatch would queue
+    /// and deliver to it, each text printed by `print` instead and, once printed whole, recorded as
+    /// delivered, so the next look says only what changed since; how many texts it printed, and
+    /// the board's marker as the look left it. It is the dispatch's own pass ([`Pass::Collect`]),
+    /// so it says what a channel would carry, by the same diff and the same account, from the
+    /// same state. Refused while a channel is registered, which takes those, and for a session not
+    /// here.
+    pub fn collect_callbacks(
+        &self,
+        handle: &str,
+        env: &crate::cli::Env,
+        print: &mut dyn FnMut(&str) -> std::io::Result<()>,
+    ) -> Result<(usize, u64), Error> {
+        #[derive(Deserialize)]
+        struct State {
+            address: Option<String>,
+            #[serde(default)]
+            pane_watch: Option<attach::PaneWatch>,
+        }
+        #[derive(Deserialize)]
+        struct Reader {
+            state: Option<State>,
+            session: Option<crate::rows::SessionRow>,
+            waiting: bool,
+        }
+        // A read, once the reader has its state row and is on the chat seat's waiting list.
+        let read = || {
+            self.read::<Reader>(
+                "RETURN {
+                    session: (SELECT * OMIT id FROM ONLY type::record('session', $handle)),
+                    state: (SELECT address, pane_watch FROM ONLY type::record('callback_state', $handle)),
+                    waiting: $handle IN ((SELECT VALUE waiting FROM ONLY callback_state:chat) ?? []),
+                };",
+                json!({"handle":handle}),
+            )
+        };
+        let mut reader = self.retrying(read)?;
+        let here = reader.session.as_ref().is_some_and(|s| s.left_at.is_none());
+        let unaddressed = reader.state.as_ref().is_none_or(|s| s.address.is_none());
+        if here && unaddressed && (reader.state.is_none() || !reader.waiting) {
+            self.retrying(|| self.transact::<Value>(
+                "IF type::record('session', $handle).left_at = NONE AND type::record('callback_state', $handle).address = NONE {
+                    IF !record::exists(type::record('callback_state', $handle)) {
+                        CREATE type::record('callback_state', $handle) SET handle = $handle RETURN NONE;
+                    };
+                    UPSERT callback_state:chat SET waiting = array::union(waiting ?? [], [$handle]) RETURN NONE;
+                 }; RETURN NONE;",
+                json!({"handle":handle}),
+            ))?;
+            reader = self.retrying(read)?;
+        }
+        let state = reader.state.unwrap_or(State {
+            address: None,
+            pane_watch: None,
+        });
+        if let Some(address) = state.address {
+            return Err(refused(format!(
+                "{handle} has a channel ({address}), which takes what is pushed to it; read it there, or run {} callback --off --as {handle} first",
+                self.board_command()
+            )));
+        }
+        let Some(session) = reader.session.filter(|s| s.left_at.is_none()) else {
+            return Err(refused(format!("no session {handle} here to wait for")));
+        };
+        let callback = Callback {
+            handle: handle.to_string(),
+            address: String::new(),
+            host: self.host.clone(),
+            // The owner's chat events, while it holds the seat: no channel does, and it is the
+            // waiting orchestrator ([`Store::chat_recipient`]).
+            chat: self.chat_recipient()?.as_deref() == Some(handle),
+            chat_fallback: false,
+            owner: None,
+            in_process: false,
+            confirmed_until: 0.0,
+            session,
+            chat_resume: false,
+            pane_watch: state.pane_watch.unwrap_or_default(),
+            terminal: None,
+            registration_revision: 0,
+            registration_nonce: None,
+            live_orchestrator: false,
+        };
+        // Each look reads the messages afresh, as each pass does.
+        *self.inbox_pool.lock().unwrap_or_else(|e| e.into_inner()) = None;
+        let (mut board, mut sequence) = self.callback_board()?;
+        let holdings = (callback.session.kind == "orchestrator")
+            .then(|| self.slot_holdings())
+            .transpose()?;
+        let visit = Visit::collecting(env, self, holdings.as_ref(), print);
+        // The terminals it oversees, as the server's clock watches a channel's: one sample a look.
+        let open = match attach::overseen(&board, handle).is_empty() {
+            true => Vec::new(),
+            false => self.open_task_sessions()?,
+        };
+        let sample = std::cell::OnceCell::new();
+        let panes = || (sample.get_or_init(|| crate::cli::probes::hc_terminals(env))).clone();
+        self.watch_pane(&board, &callback, &open, &panes, &visit)?;
+        self.dispatch_one(handle, &callback, &mut board, &mut sequence, &visit, None)?;
+        Ok((visit.printed(), sequence))
+    }
+
+    /// The board's marker: it moves with every committed board write.
+    pub fn board_mark(&self) -> Result<u64, Error> {
+        self.board_marker()
     }
 
     /// The app calls this after a successful owner save. The event and any undelivered record stay
@@ -680,16 +880,20 @@ RETURN NONE;");
             .get(handle)
             .filter(|c| c.host == self.host)
         {
-            Some(callback) => self.with_callback_lease(handle, |deadline, _| {
-                self.deliver_pending(handle, callback, deadline)
+            Some(callback) => self.with_callback_lease(handle, false, |deadline, _| {
+                self.deliver_pending(handle, callback, deadline, &|text| deliver(callback, text))
             }),
             None => Ok(true),
         }
     }
 
+    /// `send` under `handle`'s lease, when no other dispatcher holds it: whether it ran. Only a
+    /// registered channel is dispatched to, but for a collecting pass (`collect`), whose reader has
+    /// none.
     fn with_callback_lease(
         &self,
         handle: &str,
+        collect: bool,
         send: impl FnOnce(Instant, u64) -> Result<(), Error>,
     ) -> Result<bool, Error> {
         // The same per-recipient lease serializes board callbacks and direct messages.
@@ -698,12 +902,12 @@ RETURN NONE;");
                 self.transact(
                     "LET $s = (SELECT address, lease, revision FROM ONLY type::record('callback_state', $handle));
                  LET $lease = (SELECT * FROM ONLY type::record('callback_lease', $handle));
-                 IF $s.address = NONE OR type::record('session', $handle).left_at != NONE { RETURN NONE; };
+                 IF ($s.address = NONE AND !$collect) OR type::record('session', $handle).left_at != NONE { RETURN NONE; };
                  IF math::max([$s.lease ?? 0, $lease.until ?? 0]) > $now { RETURN NONE; };
                  LET $revision = math::max([$lease.revision ?? 0, $s.revision ?? 0]) + 1;
                  UPSERT type::record('callback_lease', $handle) SET until = $now + $lease_seconds, revision = $revision RETURN NONE;
                  RETURN $revision;",
-                    json!({"handle":handle, "now":self.now(), "lease_seconds":CALLBACK_LEASE_SECONDS}),
+                    json!({"handle":handle, "now":self.now(), "lease_seconds":CALLBACK_LEASE_SECONDS, "collect":collect}),
                 )
         })?;
         if let Some(revision) = acquired {
@@ -770,9 +974,10 @@ RETURN NONE;");
         // A write's observation keeps the board it read once its write committed: what the write
         // caused is read against the board as the write left it. A delivering pass reads the board
         // again under the lease, so a delayed plan cannot publish a transient from an older board.
-        if lease.is_some() && visit.pass == Pass::Deliver {
+        if lease.is_some() && visit.pass != Pass::Observe {
             (*board, *sequence) = self.callback_board()?;
         }
+        let collect = visit.pass == Pass::Collect;
         let Stored {
             state,
             checked_pull,
@@ -780,7 +985,7 @@ RETURN NONE;");
         } = self.retrying(|| {
             self.read(
                 "RETURN { state: (SELECT * OMIT id FROM ONLY type::record('callback_state', $handle)), checked_pull: type::record('callback_lease', $handle).pull ?? 0,
-                    queued: (SELECT key, text, sequence, pull_entries, pull_withheld FROM callback_event WHERE handle = $handle AND delivered != true
+                    queued: (SELECT key, text, sequence, pull_entries, pull_withheld, pull_said FROM callback_event WHERE handle = $handle AND delivered != true
                         AND (string::starts_with(key, 'pull-') OR string::starts_with(key, 'event-') OR (string::starts_with(key, 'pane-') AND string::starts_with(text, 'BLOCKED ')))) };",
                 json!({"handle":handle}),
             )
@@ -885,7 +1090,7 @@ RETURN NONE;");
         // A PULL that falls due with time, or one still queued, which is built again before it is
         // said, waits for the pass that delivers: an observation leaves both as it found them, so
         // that pass still finds them due. What the observation would record as heard is not left.
-        let delivering = visit.pass == Pass::Deliver;
+        let delivering = visit.pass != Pass::Observe;
         let scheduled = orchestrator
             && (initializing
                 || (state.pull_entries.is_none() && state.pull_queued.is_none())
@@ -895,12 +1100,7 @@ RETURN NONE;");
         let changed = orchestrator && attach::pull_changed(before.as_ref(), &compact(&seen));
         let quiet = (seen.children.values())
             .chain(legacy.children.values())
-            .any(|health| {
-                matches!(
-                    health,
-                    crate::Health::Stale | crate::Health::Lost | crate::Health::Unknown
-                )
-            });
+            .any(|health| health.quiet());
         let env = crate::cli::Env::of_process();
         let view = if scheduled || changed || quiet {
             Some(crate::cli::agents::describe_board(
@@ -913,20 +1113,13 @@ RETURN NONE;");
         } else {
             None
         };
-        let mut idle = Vec::new();
-        let mut busy = Vec::new();
-        for agent in view.as_ref().map_or(&[][..], |view| view.agents.as_slice()) {
-            if agent.state == "running_test" {
-                busy.push(agent.handle.clone());
-                for look in [&mut seen, &mut legacy] {
-                    if let Some(health) = look.children.get_mut(&agent.handle) {
-                        *health = crate::Health::Live;
-                    }
+        let (idle, busy) = pull::idle_and_busy(view.as_ref(), &seen.children);
+        // One running a test is present however quiet the board says it is.
+        for agent in &busy {
+            for look in [&mut seen, &mut legacy] {
+                if let Some(health) = look.children.get_mut(agent) {
+                    *health = crate::Health::Live;
                 }
-            } else if agent.state == "idle"
-                && !matches!(agent.kind.as_str(), "orchestrator" | "chat")
-            {
-                idle.push(agent.handle.clone());
             }
         }
         // Compare the same effective child health that observation checkpoints persist.
@@ -941,7 +1134,7 @@ RETURN NONE;");
         };
         if due && lease.is_none() {
             return self
-                .with_callback_lease(handle, |deadline, revision| {
+                .with_callback_lease(handle, collect, |deadline, revision| {
                     self.dispatch_one(
                         handle,
                         callback,
@@ -959,7 +1152,7 @@ RETURN NONE;");
             && !legacy_upgrade
             && before != &compact(&seen)
         {
-            attach::diff(self, before, &seen, handle, &mut |line| {
+            attach::diff_on(self, board, before, &seen, handle, &mut |line| {
                 lines.push(event_line(line))
             })?;
         }
@@ -967,6 +1160,7 @@ RETURN NONE;");
         // the recipient was told of them is in the PULLs it acknowledged ([`Account`]).
         let mut account: Option<Account> = None;
         let (mut pull_text, mut pull_current) = (String::new(), BTreeSet::new());
+        let mut pull_said: Option<pull::Said> = None;
         if due {
             let root = crate::cli::probes::repo_root(&env.cwd);
             let landed = |task: &crate::Task| {
@@ -988,12 +1182,21 @@ RETURN NONE;");
             let entries = digest.entries();
             let digest = digest.only_for(board, handle);
             let heard = digest.entries();
-            let said: Vec<String> = digest
-                .event_lines_since(&state.acknowledged().unwrap_or_default())
-                .iter()
-                .map(|l| event_line(l))
-                .collect();
-            pull_text = said.join("\n");
+            // Once it acknowledged a PULL this generation queued, it hears what changed since.
+            let told = super::pull_account::told(&state, &entries);
+            let baseline = super::pull_account::baseline(&state, &heard);
+            let lines = match (baseline, &told) {
+                (Some(said), Some(told)) if !legacy_upgrade => digest.changes_since(said, told),
+                // The whole digest; after a new channel reset the account, the posts it was told
+                // stay told.
+                _ => digest.event_lines_since(
+                    &(state.acknowledged()).unwrap_or_else(|| state.pull_unanswered.clone()),
+                ),
+            };
+            pull_text = (lines.iter().map(|l| event_line(l)))
+                .collect::<Vec<_>>()
+                .join("\n");
+            pull_said = Some(digest.said_after(baseline));
             account = Some(match legacy_upgrade {
                 true => Account::upgrade(&state, &entries, &heard),
                 false => Account::of(&state, &queued, &entries, &heard),
@@ -1020,6 +1223,7 @@ RETURN NONE;");
                 sequence: 0,
                 pull_entries: None,
                 pull_withheld: None,
+                pull_said: None,
             })
             .collect();
         if let Some(Account {
@@ -1038,6 +1242,7 @@ RETURN NONE;");
                 sequence: 0,
                 pull_entries: Some(awaiting.entries.clone()),
                 pull_withheld: Some(awaiting.withheld.clone()),
+                pull_said: pull_said.clone(),
             });
         }
         let legacy = compact(&legacy);
@@ -1078,6 +1283,7 @@ RETURN NONE;");
                 sequence: 0,
                 pull_entries: None,
                 pull_withheld: None,
+                pull_said: None,
             });
         }
         if callback.chat {
@@ -1104,6 +1310,7 @@ RETURN NONE;");
                     sequence: 0,
                     pull_entries: None,
                     pull_withheld: None,
+                    pull_said: None,
                 });
             }
         }
@@ -1123,7 +1330,8 @@ RETURN NONE;");
             && state.registration_revision == state.observed_registration
             && state.statuses == statuses
             && state.unknown_children == unknown_children
-            && (account.as_ref()).is_none_or(|a| a.changes_nothing(&state, &queued, &pull_text))
+            && (account.as_ref())
+                .is_none_or(|a| a.changes_nothing(&state, &queued, &pull_text, pull_said.as_ref()))
             && rescoped.is_empty();
         let current = unchanged && state.inbox_cursor == Some(board.latest_message);
         // A write's observation leaves a recipient whose look moved by the newest message alone, and
@@ -1158,13 +1366,15 @@ RETURN NONE;");
             }
             if let Some((deadline, _)) = lease {
                 return self
-                    .deliver_pending(handle, callback, deadline)
+                    .deliver_pending(handle, callback, deadline, &|text| {
+                        visit.send(callback, text)
+                    })
                     .map(|()| (true, pull_at));
             }
         }
         if lease.is_none() {
             return self
-                .with_callback_lease(handle, |deadline, revision| {
+                .with_callback_lease(handle, collect, |deadline, revision| {
                     self.dispatch_one(
                         handle,
                         callback,
@@ -1193,7 +1403,7 @@ RETURN NONE;");
              IF $pull_kept != NONE {
                 DELETE callback_event WHERE handle = $handle AND delivered != true AND string::starts_with(key, 'pull-') AND key != $pull_kept RETURN NONE;
                 UPDATE type::record('callback_event', [$handle, $pull_kept]) SET text = $pull_text, pull_entries = $pull_awaiting.entries,
-                    pull_withheld = $pull_awaiting.withheld WHERE delivered != true RETURN NONE;
+                    pull_withheld = $pull_awaiting.withheld, pull_said = $pull_said WHERE delivered != true RETURN NONE;
              };
              IF $replace_pull { DELETE callback_event WHERE handle = $handle AND delivered != true AND string::starts_with(key, 'pull-') RETURN NONE; };
              FOR $key IN $rescoped.dropped { DELETE type::record('callback_event', [$handle, $key]) WHERE delivered != true RETURN NONE; };
@@ -1236,7 +1446,7 @@ RETURN NONE;");
                 "pull_account":account.as_ref().map(|a| json!({"recorded":a.recorded, "unheard":a.unheard, "untold":a.untold, "withheld":a.withheld})),
                 "message_cursor":board.latest_message, "inbox_cursor":board.latest_message,
                 "computed":due, "pull_current":pull_current, "rescoped":rescoped,
-                "pull_kept":pull_kept, "pull_text":pull_text, "replace_pull":pull_replaced}),
+                "pull_kept":pull_kept, "pull_text":pull_text, "pull_said":pull_said, "replace_pull":pull_replaced}),
         ))?;
         if *sequence == accounted.marker.before {
             *sequence = accounted.marker.after;
@@ -1245,8 +1455,11 @@ RETURN NONE;");
         if !accounted.current {
             return self.dispatch_one(handle, callback, board, sequence, visit, lease);
         }
-        if visit.pass == Pass::Deliver {
-            self.deliver_pending(handle, callback, lease.expect("writes hold a lease").0)?;
+        if delivering {
+            let deadline = lease.expect("writes hold a lease").0;
+            self.deliver_pending(handle, callback, deadline, &|text| {
+                visit.send(callback, text)
+            })?;
         }
         Ok((true, pull_at))
     }
@@ -1277,11 +1490,13 @@ RETURN NONE;");
         ))
     }
 
+    /// Send what waits for `handle` by `send`, in batches, and record each batch's outcome.
     fn deliver_pending(
         &self,
         handle: &str,
         callback: &Callback,
         deadline: Instant,
+        send: &dyn Fn(&str) -> Result<(), DeliveryError>,
     ) -> Result<(), Error> {
         let pending: Vec<Event> = self.retrying(|| self.transact(
             "UPDATE callback_event SET delivered = true WHERE handle = $handle AND delivered != true AND message != NONE AND record::exists(type::record('delivery', [message, $handle])) RETURN NONE;
@@ -1308,7 +1523,7 @@ RETURN NONE;");
                     })
                     .collect::<Vec<_>>()
                     .join("\n");
-                deliver(callback, &text)
+                send(&text)
             },
             &mut |batch, result| self.record_callback_delivery(handle, callback, batch, result),
         )
@@ -1343,7 +1558,7 @@ RETURN NONE;");
                     capacity_limited = $capacity OR (capacity_limited ?? false) RETURN NONE;
              };
              IF $success {
-                IF $pull != NONE { UPDATE type::record('callback_state', $handle) SET pull_unanswered = array::union(pull_unanswered ?? [], $pull.pull_entries.filter(|$entry| $entry[0] = 'unanswered' AND $entry NOT IN ($pull.pull_withheld ?? []))), pull_entries = $pull.pull_entries, pull_withheld = $pull.pull_withheld ?? [], pull_awaiting = NONE, pull_queued = NONE RETURN NONE; };
+                IF $pull != NONE { UPDATE type::record('callback_state', $handle) SET pull_unanswered = array::union(pull_unanswered ?? [], $pull.pull_entries.filter(|$entry| $entry[0] = 'unanswered' AND $entry NOT IN ($pull.pull_withheld ?? []))), pull_entries = $pull.pull_entries, pull_withheld = $pull.pull_withheld ?? [], pull_said = $pull.pull_said, pull_awaiting = NONE, pull_queued = NONE RETURN NONE; };
                 FOR $message IN $messages { UPSERT type::record('delivery', [$message, $handle]) SET message = $message, handle = $handle, acked = $now RETURN NONE; };
                 FOR $key IN $chat { UPDATE type::record('chat_event', $key) SET delivered = true, text = '' RETURN NONE; };
                 UPDATE callback_event SET text = '' WHERE handle = $handle AND delivered = true AND string::starts_with(key, 'chat-') RETURN NONE;
