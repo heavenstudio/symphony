@@ -25,6 +25,9 @@ pub struct Watch<'a> {
     pub probes: Option<&'a Probes<'a>>,
     /// Whether a task's branch is on main.
     pub landed: Option<&'a dyn Fn(&Task) -> bool>,
+    /// The tip of a task's branch, which the pipeline alarm judges a landing's record of what the
+    /// task waits for against; with none, the record is taken as it stands.
+    pub tips: Option<crate::alarm::Tips<'a>>,
     /// Seconds between computing PULL inputs; only new actionable entries emit a digest.
     pub pull_every: Option<f64>,
 }
@@ -151,11 +154,14 @@ fn look(
         let told = &now.children;
         let digest = viewed(
             store,
-            &board,
-            holdings,
+            crate::cli::pull::Observation {
+                board: &board,
+                holdings,
+            },
             view.as_ref(),
             told,
             w.landed,
+            w.tips,
             stamp,
         )?
         .only_for(&board, handle);

@@ -13,12 +13,13 @@ run from a linked worktree against this repository's live board runs the main
 checkout's launcher instead: main's build, in main's own target folder (the
 caller's `CARGO_TARGET_DIR` is dropped), in the caller's folder and environment,
 so no branch's build of a board binary runs on the live board. A branch's
-`symphony` (`just symphony-cli`, a preview server) is not held to this: it opens
-the board itself (`taskview::connect`, through `Store::opening`), and a reader,
-like a writer, migrates an older board forward (`schema::decide`), so a branch
-with a newer schema moves the live board from there
-(tools/board-read-never-migrates). The main checkout is the common dir less
-`/.git`, as git finds it; the build is of what it holds, committed or not. A run
+`symphony` (`just symphony-cli`, a preview server) runs its own build: it opens
+the board itself, only through `taskview::connect_in` and only to read (its
+`connect_tests.rs` holds the symphony and server sources to that), and a reader
+never moves a board forward or makes one (`schema::decide`), so a branch with
+a newer schema cannot move the live board from there. The main checkout is the
+common dir less `/.git`, as git finds it; the build is of what it holds,
+committed or not. A run
 is on the live board unless it names another database (the last leading
 `--database NAME`, else `TASKS_DATABASE`, not `tasks`), or its working directory
 is in another repository or none, or `TASKS_SERVER` names a port other than the
@@ -51,8 +52,13 @@ steps and the new version in one transaction, before any other write, which
 one of several openers commits while the others find it done. An older writer
 is refused before any write, naming the project and `just symphony`. A reader
 (the Symphony's `taskview::connect_in`) one version behind reads; more than
-one behind, it is refused before it reads. Every write transaction starts with
-the schema guard, which refuses a write to a board at another version in the
+one behind, it is refused before it reads. A reader never moves a board
+forward or makes one: a board behind it, or not made yet, it refuses after
+that one read, defining and writing nothing, naming `just tasks list` in the
+project (the project's board command, which moves or makes it) and a scratch
+board for a newer schema. A scratch board is moved by its own `just tasks
+--database NAME`, which runs the branch's build. Every write transaction
+starts with the schema guard, which refuses a write to a board at another version in the
 same transaction, so a reader's writes and those of a store opened before a
 newer build migrated are refused there, the same way.
 `TASKS_DB` is the old SQLite cutover input, not a scratch selector. A branch's
@@ -281,8 +287,14 @@ Restore prompts re-register the resumed process's callback first.
 Neither channel checks nor delivery fabricate tool calls.
 Outbox rows are indexed by handle
 and delivery state, with a numeric sequence for ordering; chat retries belong
-only to the current recipient. Transactional mutation events advance `counter:board` for board
-inputs, callback registration/observation changes and owner chat. A Store caches the raw board
+only to the current recipient. Transactional mutation events advance `counter:board_structure` for structural
+inputs, callback registration/observation changes and owner chat. Session mutations instead advance
+their own `session_revision` rows; authorization and liveness guards write those rows too, without
+advancing the mutation count or heartbeat. Readers use the combined `schema::BOARD_MARKER`.
+The schema16 migration preserves the structural count and retires the legacy scalar
+`counter:board` at the minimum signed integer, which old unsigned cached readers refuse.
+The version floor also refuses newly-opening schema14 readers. Beats advance only their
+per-session revisions. A Store caches the raw board
 snapshot together with that marker, read in one transaction, and rebuilds its derived health,
 presence grace and reservation state against the current clock. The Symphony server uses those
 cached inputs even without a callback recipient; machine/test probes and the agents view still
@@ -637,6 +649,66 @@ field, since a reader built before it refuses a task row with a field it does
 not know, and every write that moves the task, changes its parent or its
 dependencies deletes it. Each statement the cap sends is in `SLOT_READS`, which
 `tests/store/slots/cost.rs` has the server plan.
+`alarm.rs` owns the pipeline alarm PULL says: `[board] review_alarm_ratio`,
+`review_alarm_hours` and `review_alarm_clear_hours`, read as the cap is
+(`cli::capped`, `Store::alarming`). It writes only where rework ended (below):
+each digest reads the
+status lines of the lookback window through `message_ts` (`store/history.rs`),
+walks each task's back from its status now and replays the counts
+(`cli/pull/pipeline.rs`). What held when the window opened is read, never
+assumed: a task's newest lines before it, from its own thread's key range,
+read back a page at a time past any field value that only reads like one
+(`Store::lines_before`), where its status or record then rests on them
+(`alarm::rests_on_before`), and the alarm's state then by replaying a window
+twice as long while the replays from raised and from lowered disagree, back to
+the board's first task. Which work a mirror or an instruction subtask counted
+with is the tree as it stood then (`alarm/tree.rs`): each task from when it was
+made, each instruction under the parent its moves' lines left it (`set_parent`
+writes the parent left, `(was PARENT)`). What a
+task's landing waits on is the landing tool's record in `fields._board.waits`
+(`TIP: name, …`, `Store::record_waits`, given the assessment it states, kept
+with its time and unique thread sequence in `fields._board.assessed`: the
+mutation transaction retains committed assessment/text pairs in
+`fields._board.assessments`, so retries, including older receipts after a newer
+assessment, write nothing. A fresh assessment writes its own line whatever its
+text), judged against the branch's tip (`cli::probes::tip`); a
+record naming `changes` of the tip now, that the branch has not answered since
+(the same `Fixes` as the alarm's), makes review rework, counted in
+progress, and in the replay each record stands to the next, or to when the
+branch first moved past the tip it judged after the record was written
+(`alarm::reworked`, whatever the task's status now, `cli/pull/pipeline.rs`
+`Fixes`; `tests/cli/pull/alarm/rework.rs`). The reader asks the branch's
+reference log for the commit it first moved to from that tip after then (the
+next made on it, what amended or rebased it away, or, for a tip it came back
+to, the move after that), else the branch's line of first parents, where only
+a commit whose first parent is that tip follows it (`cli::probes::tip`,
+`tests/cli/probes/tips.rs`). The first answer of each record, by its tip and
+unique thread sequence (`line:SID`), is kept in `fields._board.fixed`
+(`Store::record_fixed`,
+first write wins, with no line, and no new version to fence a concurrent move
+as stale) and read back before asking again (`alarm::kept_fix`), so no later
+commit, amend, rebase or reference log moves it, and a new record of changes
+on a tip the branch came back to waits on a move of its own, in PULL and the
+alarm alike, while the record answered, retried, asks no rework of either.
+Historical timestamp-keyed ends are adopted only when the thread proves that
+the timestamp names one occurrence of that tip; ambiguous or malformed evidence
+supplies no saved end. The digest cache and replay boundaries retain the same
+thread identity, even when independent assessments share a timestamp.
+
+The production publisher uses API9's typed `assessment_state` and
+`record_waits` operations (`assessment/1`). The former reads a task's status
+and version; the checked mutation requires that pair atomically for a fresh
+write. A committed assessment/text retry returns its original positive thread
+sequence and time, even after task state moved, with `current: false` when a
+newer assessment stands. That historical receipt confirms the occurrence,
+never a current assessment. The guarded `assessment/2` route also validates
+the immutable publication, original task/event binding, fence and verification
+against the actual caller's repository and explicitly selected board context.
+Its echoed publication witness and canonical receipt must match exactly;
+the numeric API version alone proves no endpoint capability. Unknown methods,
+incompatible payloads and unconfirmed replies remain pending in the landing
+publisher's local journal.
+
 A move that names where it goes from (`Store::move_from`, `tasks api`'s `move`
 with `from` from api 6, `store/work/moves.rs`) is refused unless the task's
 status, as the move's own write reads it, is one of those: a caller that decided
@@ -655,11 +727,14 @@ again; a request whose text proves it a read (`rpc::Kind::of`: only `SELECT`,
 and every `::` a call in a namespace that only computes, its word right against
 the `::`: `fn ::bump()` is a write) goes once more on a new connection, never a
 third time. A store opens a board at its build's schema version on one such
-read of the version (`Store::with`), defining and writing nothing, so a page's
-open over a slow board goes once more as its read does; a board not made yet,
-or at another version, is defined: its namespace and database first when the
-server lacks either, then its tables and version in one transaction
-(`tests/store/open_read.rs`). Each sending waits the client's wait for its whole answer, however
+read of the version, defining and writing nothing, so a page's open over a slow
+board goes once more as its read does. Only a writer (`Store::open`,
+`Store::with`) defines a board, and only one not made yet or behind its build:
+its namespace and database first when the server lacks either, then its tables
+and version in one transaction (`tests/store/open_read.rs`); a board newer than
+its build it refuses before any write. A reader (the Symphony's
+`taskview::connect_in`) refuses a board not made yet or behind its build after
+that one read, defining and writing nothing (`tests/store/schema.rs`). Each sending waits the client's wait for its whole answer, however
 it trickles in, so a read waits at most twice that. A late answer on a working
 connection says the server is slow (`rpc::slow`), which the Symphony's read routes answer with 504, not the 503 of
 a board that cannot be reached. Each request a `Client` sends is counted, with no request of its

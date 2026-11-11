@@ -64,7 +64,7 @@ fn an_entrypoint_at_the_root_serves_its_folders_index_there() {
     assert_eq!(project.file(""), "spec");
     assert_eq!(project.view().register, "DECISIONS.md");
     let render = Render::new(&tree.root);
-    let doc = docview::document(&render, "index.md", "").unwrap();
+    let doc = docview::document(&render, "index.md", "", &[]).unwrap();
     assert_eq!(
         (doc.path.as_str(), doc.title.as_str()),
         ("index.md", "Spec")
@@ -76,7 +76,7 @@ fn an_entrypoint_at_the_root_serves_its_folders_index_there() {
             .collect::<Vec<_>>(),
         [("spec", Some("/")), ("Spec", None)]
     );
-    let start = docview::document(&render, "guide/START.md", "").unwrap();
+    let start = docview::document(&render, "guide/START.md", "", &[]).unwrap();
     assert_eq!(
         start
             .crumbs
@@ -95,7 +95,7 @@ fn an_entrypoint_at_the_root_serves_its_folders_index_there() {
         "pictures/lamp.png",
     ] {
         assert!(
-            docview::document(&render, refused, "").is_err(),
+            docview::document(&render, refused, "", &[]).is_err(),
             "{refused}"
         );
     }
@@ -106,7 +106,7 @@ fn an_entrypoints_pages_list_only_what_its_patterns_include_and_its_renderers_ha
     let tree = spec();
     let render = Render::new(&tree.root);
     let entries = |rel: &str| {
-        docview::folder(&render, rel, "")
+        docview::folder(&render, rel, "", &[])
             .unwrap()
             .entries
             .iter()
@@ -134,7 +134,10 @@ fn an_entrypoints_pages_list_only_what_its_patterns_include_and_its_renderers_ha
         ]
     );
     for refused in ["drafts", ".hidden", "spec", "docs"] {
-        assert!(docview::folder(&render, refused, "").is_err(), "{refused}");
+        assert!(
+            docview::folder(&render, refused, "", &[]).is_err(),
+            "{refused}"
+        );
     }
     let docs = scan(&tree.root).unwrap();
     assert_eq!(
@@ -159,7 +162,7 @@ fn links_cards_and_pictures_follow_the_mapping() {
     let tree = spec();
     let render = Render::new(&tree.root);
     let blocks = |rel: &str| {
-        serde_json::to_string(&docview::document(&render, rel, "").unwrap().sections).unwrap()
+        serde_json::to_string(&docview::document(&render, rel, "", &[]).unwrap().sections).unwrap()
     };
     let start = blocks("guide/START.md");
     for href in [
@@ -330,7 +333,7 @@ fn a_folder_linked_out_of_the_project_is_refused_and_a_linked_file_opens_where_i
         ]
     );
     let render = Render::new(&tree.root);
-    let listed: Vec<String> = docview::folder(&render, "guide", "")
+    let listed: Vec<String> = docview::folder(&render, "guide", "", &[])
         .unwrap()
         .entries
         .iter()
@@ -342,7 +345,10 @@ fn a_folder_linked_out_of_the_project_is_refused_and_a_linked_file_opens_where_i
         "by title: Other, Spec (the alias), Start"
     );
     for opens in &listed {
-        assert!(docview::document(&render, opens, "").is_ok(), "{opens}");
+        assert!(
+            docview::document(&render, opens, "", &[]).is_ok(),
+            "{opens}"
+        );
     }
     for refused in [
         "guide/LEAK.md",
@@ -352,7 +358,7 @@ fn a_folder_linked_out_of_the_project_is_refused_and_a_linked_file_opens_where_i
         "alias/START.md",
     ] {
         assert!(
-            docview::document(&render, refused, "").is_err(),
+            docview::document(&render, refused, "", &[]).is_err(),
             "{refused}"
         );
         assert!(
@@ -361,7 +367,10 @@ fn a_folder_linked_out_of_the_project_is_refused_and_a_linked_file_opens_where_i
         );
     }
     for refused in ["linked", "alias"] {
-        assert!(docview::folder(&render, refused, "").is_err(), "{refused}");
+        assert!(
+            docview::folder(&render, refused, "", &[]).is_err(),
+            "{refused}"
+        );
     }
 }
 
@@ -407,7 +416,7 @@ fn an_excluded_folder_takes_everything_under_it_from_every_reader() {
     for refused in ["drafts/PRIVATE.md", "drafts/deep/D.md"] {
         assert!(!project.is_page(&project.file(refused)), "{refused}");
         assert!(
-            docview::document(&render, refused, "").is_err(),
+            docview::document(&render, refused, "", &[]).is_err(),
             "{refused}"
         );
         assert!(
@@ -415,7 +424,7 @@ fn an_excluded_folder_takes_everything_under_it_from_every_reader() {
             "the save target too: {refused}"
         );
     }
-    assert!(docview::folder(&render, "drafts/deep", "").is_err());
+    assert!(docview::folder(&render, "drafts/deep", "", &[]).is_err());
     assert_eq!(
         scan(&tree.root)
             .unwrap()
@@ -473,7 +482,7 @@ fn uploads_are_the_symphonys_store_never_a_collision_nor_documents() {
     assert_eq!(tree.read("artifacts/uploads/5ca1ab1e.md"), register);
     let render = Render::new(&tree.root);
     assert_eq!(
-        docview::folder(&render, "artifacts", "")
+        docview::folder(&render, "artifacts", "", &[])
             .unwrap()
             .entries
             .iter()
@@ -481,11 +490,11 @@ fn uploads_are_the_symphonys_store_never_a_collision_nor_documents() {
             .collect::<Vec<_>>(),
         ["artifacts/notes.md"]
     );
-    assert!(docview::folder(&render, "artifacts/uploads", "").is_err());
-    assert!(docview::document(&render, "artifacts/uploads/5ca1ab1e.md", "").is_err());
+    assert!(docview::folder(&render, "artifacts/uploads", "", &[]).is_err());
+    assert!(docview::document(&render, "artifacts/uploads/5ca1ab1e.md", "", &[]).is_err());
     for refused in ["KEY.md", "PASTED.md"] {
         assert!(
-            docview::document(&render, refused, "").is_err(),
+            docview::document(&render, refused, "", &[]).is_err(),
             "{refused}"
         );
         assert!(
@@ -544,7 +553,7 @@ fn an_entrypoint_folder_linked_into_the_uploads_is_refused_and_one_above_them_ne
     assert_eq!(Project::of(&tree.root).entrypoints[0].folder, "spec");
     let render = Render::new(&tree.root);
     assert_eq!(
-        docview::folder(&render, "", "")
+        docview::folder(&render, "", "", &[])
             .unwrap()
             .entries
             .iter()
@@ -560,7 +569,7 @@ fn an_entrypoint_folder_linked_into_the_uploads_is_refused_and_one_above_them_ne
             .collect::<Vec<_>>(),
         ["index.md"]
     );
-    assert!(docview::folder(&render, "uploads", "").is_err());
+    assert!(docview::folder(&render, "uploads", "", &[]).is_err());
     assert!(docview::target(&tree.root, "uploads/0123abcd.md", true).is_err());
 }
 
@@ -581,12 +590,15 @@ fn a_dotted_or_markdown_named_entrypoint_and_folder_are_folder_pages_on_both_sid
             (url.to_string(), url.to_string()),
             (inner.clone(), format!("{inner}/")),
         ] {
-            assert!(docview::folder(&render, &route, "").is_ok(), "{route}");
-            assert!(docview::document(&render, &route, "").is_err(), "{route}");
+            assert!(docview::folder(&render, &route, "", &[]).is_ok(), "{route}");
+            assert!(
+                docview::document(&render, &route, "", &[]).is_err(),
+                "{route}"
+            );
             assert!(view.is_folder_route(&page), "{page}");
         }
         let document = format!("{inner}/A.md");
-        assert!(docview::document(&render, &document, "").is_ok());
+        assert!(docview::document(&render, &document, "", &[]).is_ok());
         assert!(view.is_document_route(&document) && !view.is_folder_route(&document));
     }
 }

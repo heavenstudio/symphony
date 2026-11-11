@@ -34,6 +34,7 @@
 //! Every hc call goes through [`hc::Hc`], whose binaries are `$HC_BIN` (default `hc`) and
 //! `$HERDR_APP_BIN` (default `herdr-app`); the tests (`tests/launch/`) point both at `fake-hc`.
 
+mod checkout;
 mod cleanup;
 mod close;
 pub mod defaults;
@@ -41,6 +42,7 @@ pub mod hc;
 mod place;
 mod recover;
 mod restore;
+mod rollback;
 pub use recover::restore_unanswered;
 pub use restore::restore;
 pub mod procs;
@@ -319,84 +321,72 @@ pub fn launch(store: &Store, hc: &dyn Hc, m: &Machine, ask: &Ask) -> Result<Star
         ..NewSession::default()
     })?;
     let handle = session.row.handle;
-    if let Err(problem) = take_up(
-        store,
-        m,
-        ask,
-        &task,
-        &handle,
-        made_worktree.then_some(&path),
-        detach,
-        &use_branch,
-    ) {
-        if matches!(problem, Error::Refused(_)) {
-            store.leave(&handle)?;
-        }
-        return Err(problem);
-    }
     let mut terminal = String::new();
-    let tab = ask.tab.clone().filter(|t| !t.is_empty());
-    let agent = agent_kind(ask);
-    let conversation = (m.new_id)();
-    let args = if agent == "codex" {
-        codex_args(&ask.model, ask.effort.as_deref(), &handle, m)
-    } else {
-        claude_args(
-            &ask.model,
-            ask.effort.as_deref(),
+    let mut checkout_made = false;
+    let started = (|| {
+        take_up(store, ask, &task, &handle)?;
+        if made_worktree {
+            let base = checkout::base(store, m, ask, &task)?;
+            checkout::make(m, &path, &use_branch, detach, &base, &mut checkout_made)?;
+        }
+        let tab = ask.tab.clone().filter(|t| !t.is_empty());
+        let agent = agent_kind(ask);
+        let conversation = (m.new_id)();
+        let args = if agent == "codex" {
+            codex_args(&ask.model, ask.effort.as_deref(), &handle, m)
+        } else {
+            claude_args(
+                &ask.model,
+                ask.effort.as_deref(),
+                &handle,
+                &m.mode,
+                ["--session-id", &conversation],
+            )
+        };
+        start_confirmed(
+            hc,
+            m,
+            &mut terminal,
+            &Start {
+                cwd: &where_,
+                handle: &handle,
+                stream: tab.as_deref().unwrap_or(stream(role)),
+                agent,
+                resumed_codex: false,
+                args,
+                text: &prompt_text(slug, &handle, &ask.prompt, agent),
+            },
+        )?;
+        let claude_session = if agent == "codex" {
+            // The thread is known once the agent registers its callback (`just tasks callback`).
+            "codex:".to_string()
+        } else {
+            conversation
+        };
+        let row = store.record_launch(&NewLaunch {
+            slug: slug.into(),
+            handle: handle.clone(),
+            role: role.into(),
+            claude_session,
+            worktree: where_,
+            branch: use_branch,
+            pane: terminal.clone(),
+            model: ask.model.clone(),
+            ..NewLaunch::default()
+        })?;
+        Ok(Started { row })
+    })();
+    started.map_err(|problem| {
+        rollback::failed(
+            store,
+            hc,
+            m,
             &handle,
-            &m.mode,
-            ["--session-id", &conversation],
+            &terminal,
+            checkout_made.then_some(path.as_path()),
+            problem,
         )
-    };
-    let started = start_confirmed(
-        hc,
-        m,
-        &mut terminal,
-        &Start {
-            cwd: &where_,
-            handle: &handle,
-            stream: tab.as_deref().unwrap_or(stream(role)),
-            agent,
-            resumed_codex: false,
-            args,
-            text: &prompt_text(slug, &handle, &ask.prompt, agent),
-        },
-    );
-    if let Err(problem) = started {
-        if !terminal.is_empty() {
-            let _ = hc.close(&terminal);
-        }
-        store.leave(&handle)?;
-        if made_worktree && path.exists() {
-            let _ = sys::output(
-                sys::command("git")
-                    .arg("-C")
-                    .arg(&m.root)
-                    .args(["worktree", "remove", "--force"])
-                    .arg(&path),
-            );
-        }
-        return Err(problem.into());
-    }
-    let claude_session = if agent == "codex" {
-        // The thread is known once the agent registers its callback (`just tasks callback`).
-        "codex:".to_string()
-    } else {
-        conversation
-    };
-    let row = store.record_launch(&NewLaunch {
-        slug: slug.into(),
-        handle,
-        role: role.into(),
-        claude_session,
-        worktree: where_,
-        branch: use_branch,
-        pane: terminal,
-        model: ask.model.clone(),
-        ..NewLaunch::default()
-    })?;
-    Ok(Started { row })
+    })
 }
 
 /// A checkout with unfinished work held by a present executor cannot host another agent.
@@ -454,22 +444,8 @@ fn agent_kind(ask: &Ask) -> &'static str {
 }
 
 /// The new session takes its part on the task (an executor reserves it; a review subtask's reviewer
-/// reserves the subtask and judges its parent; any other reviewer takes the reviewer role), and its
-/// worktree is made when the launch makes one.
-#[expect(
-    clippy::too_many_arguments,
-    reason = "one step of `launch`, named by what it reads"
-)]
-fn take_up(
-    store: &Store,
-    m: &Machine,
-    ask: &Ask,
-    task: &crate::Task,
-    handle: &str,
-    made: Option<&PathBuf>,
-    detach: bool,
-    use_branch: &str,
-) -> Result<(), Error> {
+/// reserves the subtask and judges its parent; any other reviewer takes the reviewer role).
+fn take_up(store: &Store, ask: &Ask, task: &crate::Task, handle: &str) -> Result<(), Error> {
     let slug = ask.slug.as_str();
     if ask.role == "executor" {
         store.reserve(slug, handle, RESERVE_SECONDS)?;
@@ -483,41 +459,6 @@ fn take_up(
         }
     } else {
         store.take_role(slug, handle, "reviewer")?;
-    }
-    let Some(path) = made else {
-        return Ok(());
-    };
-    let mut base = "main".to_string();
-    if ask.role == "executor" && !ask.detached && task.parent.is_some() {
-        let mut feature = task.clone();
-        let mut seen = HashSet::new();
-        while let Some(parent) = feature.parent.as_deref() {
-            if !seen.insert(feature.slug.clone()) {
-                return Err(Error::Refused("cyclic feature ancestry".into()));
-            }
-            feature = store.get(parent)?;
-        }
-        base = crate::on_review::branch_of(&feature.slug).to_string();
-        if !branch_exists(&m.root, &base) {
-            return Err(Error::Refused(format!(
-                "create parent feature branch {base} before launching a slice; slices do not start independently from main"
-            )));
-        }
-    }
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)
-            .map_err(|e| LaunchError(format!("cannot make {}: {e}", parent.display())))?;
-    }
-    let path = path.to_string_lossy();
-    if detach {
-        git(&m.root, &["worktree", "add", "--detach", &path, &base])?;
-    } else if branch_exists(&m.root, use_branch) {
-        git(&m.root, &["worktree", "add", &path, use_branch])?;
-    } else {
-        git(
-            &m.root,
-            &["worktree", "add", "-b", use_branch, &path, &base],
-        )?;
     }
     Ok(())
 }

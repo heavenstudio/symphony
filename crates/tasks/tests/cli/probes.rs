@@ -1,5 +1,7 @@
 //! What the agents API and the monitor ask of the machine: the test-slot locks, hc's terminals, the
-//! branch checked out in a folder, and whether a task's branch landed.
+//! branch checked out in a folder, whether a task's branch landed, and its tip ([`tips`]).
+
+mod tips;
 
 use serde_json::{Value, json};
 use std::fs::{self, File};

@@ -176,7 +176,10 @@ fn an_armed_idle_gate_delivers_a_reservation_lapse_without_a_marker_change() {
     let marker = || {
         f.store
             .client()
-            .query("RETURN counter:board.last;", json!({}))
+            .query(
+                &format!("RETURN {};", symphony_board::schema::BOARD_MARKER),
+                json!({}),
+            )
             .unwrap()
     };
     let before = marker();

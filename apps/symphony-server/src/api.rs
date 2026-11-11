@@ -331,8 +331,10 @@ pub(crate) async fn answer(shared: &Arc<Shared>, request: Request) -> Option<Res
             let query_from = query(&request, "from").and_then(|n| n.parse::<usize>().ok());
             let offer = path == "/api/task-offer";
             match tokio::task::spawn_blocking(move || {
-                let store = symphony::taskview::connect(&root).map_err(|e| unavailable(&e, ""))?;
                 if agents {
+                    // The agents and their work as the hub's board tick last read them: while the
+                    // board cannot be read, neither can they, as with its tasks.
+                    let board = hub.tasks_read().map_err(|e| unavailable(&e, ""))?;
                     let mut view = hub.agent_snapshot().map_err(|e| unavailable(&e, ""))?;
                     if agent_page {
                         view.agents.retain(|a| {
@@ -353,69 +355,52 @@ pub(crate) async fn answer(shared: &Arc<Shared>, request: Request) -> Option<Res
                             .last()
                             .filter(|_| view.agents.len() == 20)
                             .map(|a| a.handle.clone());
-                        let (mut tasks, _) = symphony::taskview::snapshot(&store)
-                            .map_err(|e| unavailable(&e.to_string(), ""))?;
-                        let mut shown = std::collections::BTreeSet::new();
-                        for agent in &view.agents {
-                            let mut finished: Vec<_> = tasks
-                                .tasks
-                                .iter()
-                                .filter(|t| {
-                                    ["done", "cancelled"].contains(&t.status.as_str())
-                                        && t.roles.iter().any(|r| r.handle == agent.handle)
-                                })
-                                .collect();
-                            finished.sort_by(|a, b| b.updated.total_cmp(&a.updated));
-                            shown.extend(finished.into_iter().take(5).map(|t| t.slug.clone()));
-                            shown.extend(
-                                tasks
-                                    .tasks
-                                    .iter()
-                                    .filter(|t| {
-                                        !["done", "cancelled"].contains(&t.status.as_str())
-                                            && t.roles.iter().any(|r| {
-                                                r.handle == agent.handle && r.role != "orchestrator"
-                                            })
-                                    })
-                                    .map(|t| t.slug.clone()),
-                            );
-                        }
-                        tasks.tasks.retain(|t| shown.contains(&t.slug));
-                        for task in &mut tasks.tasks {
-                            task.body.clear();
-                        }
+                        let tasks = agent_page::tasks(
+                            &board.tasks,
+                            view.agents.iter().map(|a| a.handle.as_str()),
+                        );
                         Ok(no_store(Json(symphony_api::AgentPage {
                             view,
-                            tasks: tasks.tasks,
+                            tasks,
                             total,
                             next,
                         })))
                     } else {
                         Ok(no_store(Json(view)))
                     }
-                } else if offer {
-                    store.get(&slug).map_err(task_failure)?;
-                    let plugins = symphony::plugins::Plugins::of(&root);
-                    symphony::taskview::owner_offer(&store, &plugins, &slug, &root)
-                        .map(|offer| no_store(Json(offer)))
-                        .map_err(|e| unavailable(&e, ""))
-                } else if brief {
-                    let record = store.get(&slug).map_err(task_failure)?;
-                    let from = query_from.unwrap_or(0);
-                    Ok(no_store(Json(symphony::taskview::brief(
-                        &record, from, &root,
-                    ))))
-                } else if detail {
-                    let record = store.get(&slug).map_err(task_failure)?;
-                    symphony::taskview::page(&store, &record, &root)
-                        .map(|page| Json(hub.observed_page(page)))
-                        .map(no_store)
-                        .map_err(|e| unavailable(&e, ""))
                 } else {
-                    symphony::taskview::history(&store, &slug, before, after, &root)
-                        .map(Json)
-                        .map(no_store)
-                        .map_err(task_failure)
+                    let store = hub.reader().map_err(|e| unavailable(&e, ""))?;
+                    let read = if offer {
+                        store.get(&slug).map_err(task_failure).and_then(|_| {
+                            let plugins = symphony::plugins::Plugins::of(&root);
+                            symphony::taskview::owner_offer(&store, &plugins, &slug, &root)
+                                .map(|offer| no_store(Json(offer)))
+                                .map_err(|e| unavailable(&e, ""))
+                        })
+                    } else if brief {
+                        store.get(&slug).map_err(task_failure).map(|record| {
+                            let from = query_from.unwrap_or(0);
+                            no_store(Json(symphony::taskview::brief(&record, from, &root)))
+                        })
+                    } else if detail {
+                        store.get(&slug).map_err(task_failure).and_then(|record| {
+                            symphony::taskview::page(&store, &record, &root)
+                                .map(|page| no_store(Json(hub.observed_page(page))))
+                                .map_err(|e| unavailable(&e, ""))
+                        })
+                    } else {
+                        symphony::taskview::history(&store, &slug, before, after, &root)
+                            .map(|history| no_store(Json(history)))
+                            .map_err(task_failure)
+                    };
+                    // The board's server may have gone, or moved: the next read opens it anew.
+                    if read.as_ref().is_err_and(|(status, _)| {
+                        [StatusCode::SERVICE_UNAVAILABLE, StatusCode::GATEWAY_TIMEOUT]
+                            .contains(status)
+                    }) {
+                        hub.reader_failed(&store);
+                    }
+                    read
                 }
             })
             .await
@@ -1172,6 +1157,8 @@ pub(crate) fn encode_location(path: &str) -> String {
         })
         .collect()
 }
+
+mod agent_page;
 
 #[cfg(test)]
 mod tests;
