@@ -10,10 +10,14 @@
 //!
 //! Every server it starts keeps the board's values in its sstables ([`Storage`]), where compaction
 //! reclaims what a rewrite leaves, and [`Home::reclaim`] rebuilds a store that grew before it did.
+//!
+//! A board kept in a scratch place ([`scratch`]: under the temporary folder or a checkout's
+//! `artifacts/`) is a fixture's: its server is not detached but supervised ([`OWNED_START`]), and
+//! ends when the process that started it ends, however it ends.
 
 use crate::port::{self, NotStarted, Start};
 use crate::rpc;
-use crate::sys::{command, output, pid_alive, terminate};
+use crate::sys::{Stdio, command, output, pid_alive, terminate, wait_output};
 use std::fmt;
 use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom};
@@ -22,9 +26,12 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 mod reclaim;
+mod scratch;
 mod storage;
 
 pub use reclaim::{Reclaimed, bytes};
+use scratch::Lifeline;
+pub use scratch::scratch;
 pub use storage::Storage;
 use storage::store;
 
@@ -52,6 +59,23 @@ const GRACE: Duration = Duration::from_secs(20);
 /// starter's agent session and hc terminal ([`crate::sys::SESSION_VARS`]), and reaped by init, as
 /// `sh` ends at once.
 const START: &str = r#""$0" start --unauthenticated --no-banner --log warn --bind "$1" "$2" >>"$3" 2>&1 </dev/null & echo $!"#;
+/// [`START`] for a scratch board's server: the same server, with the same command line, under a
+/// supervisor shell of its own session, its parent while it runs, so it is never left without
+/// one. The supervisor's watchdog reads the starter's [`Lifeline`], given as `sh`'s input, and
+/// ends the server once that reads its end: when the process that started it ends, however it
+/// ends. The supervisor ends with the server and says its pid, as `START` does.
+const OWNED_START: &str = r#"exec 3<&0 </dev/null
+(
+    "$0" start --unauthenticated --no-banner --log warn --bind "$1" "$2" >>"$3" 2>&1 3<&- &
+    server=$!
+    echo "$server"
+    exec >/dev/null 2>&1
+    ( while IFS= read -r line; do :; done <&3; kill "$server" 2>/dev/null ) &
+    watchdog=$!
+    exec 3<&-
+    wait "$server"
+    kill "$watchdog" 2>/dev/null
+) &"#;
 
 /// Why the board's server cannot be had.
 #[derive(Debug, Clone, PartialEq)]
@@ -343,20 +367,46 @@ impl Home {
         }
         let log = self.dir.join(LOG);
         let until = Instant::now() + self.patience;
+        // A scratch board's server is supervised, on this process's lifeline.
+        let lifeline = if scratch(&self.dir) {
+            let lifeline = Lifeline::of_this_process()
+                .map_err(io("could not make a lifeline for", &self.dir))?;
+            Some(lifeline)
+        } else {
+            None
+        };
         let started = port::start_on_free_port_except(except, port::ATTEMPTS, until, |reserved| {
             let addr = reserved.to_string();
             let from = fs::metadata(&log).map_or(0, |meta| meta.len());
-            let out = output(
-                command("/bin/sh")
-                    .new_session()
-                    .envs(self.storage.environment())
-                    .arg("-c")
-                    .arg(START)
-                    .arg(&self.surreal)
-                    .arg(&addr)
-                    .arg(data)
-                    .arg(&log),
-            )
+            let mut start = command("/bin/sh");
+            start
+                .new_session()
+                .envs(self.storage.environment())
+                .arg("-c")
+                .arg(if lifeline.is_some() {
+                    OWNED_START
+                } else {
+                    START
+                })
+                .arg(&self.surreal)
+                .arg(&addr)
+                .arg(data)
+                .arg(&log);
+            let out = match lifeline {
+                // As `output` reads it, but with the lifeline as its input.
+                Some(lifeline) => {
+                    let input = lifeline
+                        .reader()
+                        .map_err(io("could not hand a lifeline to", &self.surreal))?;
+                    start
+                        .stdin(Stdio::from(input))
+                        .stdout(Stdio::piped())
+                        .stderr(Stdio::piped())
+                        .spawn()
+                        .and_then(wait_output)
+                }
+                None => output(&mut start),
+            }
             .map_err(io("could not start", &self.surreal))?;
             let not_started =
                 || ServerError::NotUp(format!("{} was not started", self.surreal.display()));
