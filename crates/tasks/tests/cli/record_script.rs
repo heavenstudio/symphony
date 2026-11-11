@@ -444,7 +444,10 @@ fn a_recipe_records_through_the_script_and_runs_as_it_is_in_a_tree_without_it() 
     let setup = Setup::new("record-script-recipe");
     let tree = setup.dir.join("tree with spaces");
     fs::create_dir_all(tree.join("tools")).unwrap();
-    fs::copy(tool("../justfile"), tree.join("justfile")).unwrap();
+    // The justfile and the Symphony's recipes it imports.
+    for name in ["justfile", "symphony.just"] {
+        fs::copy(tool("..").join(name), tree.join(name)).unwrap();
+    }
     executable(
         &tree.join("tools/cargo.sh"),
         "#!/bin/sh\nprintf 'arg=<%s>\\n' \"$@\"\nexit 5\n",
