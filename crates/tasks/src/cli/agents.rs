@@ -564,26 +564,32 @@ pub fn running_tests(store: &Store, probes: &Probes) -> Result<BTreeMap<String, 
         .collect())
 }
 
-/// The same answer as columns, for the terminal.
+/// The same answer as columns under a header, for the terminal: what each agent does (its state)
+/// beside the board's health of it, in the words `who` says it in; none for a view of nobody.
 pub fn table(view: &View) -> Vec<String> {
-    view.agents
-        .iter()
-        .map(|a| {
-            let state = match &a.detail {
-                Some(d) => format!("{} ({} {})", a.state, d.phase, d.recipe),
-                None => a.state.to_string(),
-            };
-            let or_dash = |v: Option<&str>| v.filter(|v| !v.is_empty()).unwrap_or("-").to_string();
-            format!(
-                "{:<18} {:<12} {:<17} {:<28} {:<9} {:<24} {}",
-                a.handle,
-                a.kind,
-                state,
-                or_dash(a.task.as_deref()),
-                or_dash(a.role.as_deref()),
-                or_dash(Some(&a.branch)),
-                or_dash(a.pane.as_deref()),
-            )
-        })
-        .collect()
+    if view.agents.is_empty() {
+        return Vec::new();
+    }
+    let header = [
+        "HANDLE", "KIND", "STATE", "HEALTH", "TASK", "ROLE", "BRANCH", "TERMINAL",
+    ];
+    let mut rows = vec![header.iter().map(|h| h.to_string()).collect::<Vec<_>>()];
+    rows.extend(view.agents.iter().map(|a| {
+        let state = match &a.detail {
+            Some(d) => format!("{} ({} {})", a.state, d.phase, d.recipe),
+            None => a.state.to_string(),
+        };
+        let or_dash = |v: Option<&str>| v.filter(|v| !v.is_empty()).unwrap_or("-").to_string();
+        vec![
+            a.handle.clone(),
+            a.kind.clone(),
+            state,
+            a.health.as_str().to_string(),
+            or_dash(a.task.as_deref()),
+            or_dash(a.role.as_deref()),
+            or_dash(Some(&a.branch)),
+            or_dash(a.pane.as_deref()),
+        ]
+    }));
+    super::text::columns(&rows)
 }

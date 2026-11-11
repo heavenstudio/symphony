@@ -57,8 +57,7 @@ distinct from anything in the list you just ran.
 
 ## 3. Priority and stage
 
-- `--priority` is an integer 0 (most urgent) to 4. `--priority p2` is refused
-  — the flag takes a number, not a p-label.
+- `--priority` is 0 (most urgent) to 4; `p0` to `p4` read the same.
 - `--stage` is one of `backlog`, `concept`, `design`, `ready` (omit it for the
   default, `ready`):
   - `ready` — work with no design step.

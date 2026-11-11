@@ -31,6 +31,17 @@ fn could_reach(m: &str) -> String {
     )
 }
 
+/// The refusal of a post to `handle`, which no session has: a role's name written without its `@`
+/// says how it is written.
+fn nobody(handle: &str) -> String {
+    let role = ROLES
+        .iter()
+        .find(|role| role.eq_ignore_ascii_case(handle))
+        .map(|role| format!("; the task's {role} is --to @{role}"))
+        .unwrap_or_default();
+    format!("{REFUSED}no session {} to send to{role}", repr(handle))
+}
+
 /// What an inbox is worked out from: the session's roles, the tree, and the messages since it
 /// connected (after `$since`, when it is given) that are not its own, that it has not acknowledged,
 /// and that could reach it. Read from the message table, through `message_ts` from the session's
@@ -231,7 +242,7 @@ IF $handle != NONE AND !record::exists(type::record('session', $handle)) {{ THRO
             json!({
                 "slug": slug, "sender": sender, "text": text, "to": to, "handle": handle, "no_role": no_role, "key": key,
                 "no_task": format!("{REFUSED}{}", no_task(slug)),
-                "nobody": handle.map(|h| format!("{REFUSED}no session {} to send to", repr(h))),
+                "nobody": handle.map(nobody),
             }),
         );
         let row: MessageRow = self.retrying(|| self.transact(&body, vars.clone()))?;

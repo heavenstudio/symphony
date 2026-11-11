@@ -138,3 +138,57 @@ pub fn parse(args: &[String], flags: &[Flag]) -> Result<Parsed, String> {
     }
     Ok(parsed)
 }
+
+/// The words of `among` nearest to `word`, taken for a mistyping of one, in `among`'s order: those
+/// it takes the fewest single edits to reach (a letter added, dropped or changed, or two side by
+/// side swapped; case, and `-` against `_`, are no edit), when that is at most a third of `word`'s
+/// letters and at least one; else the one word `word` begins, when it begins just one.
+pub fn nearest<'a>(word: &str, among: impl IntoIterator<Item = &'a str>) -> Vec<&'a str> {
+    let folded = |text: &str| text.trim().to_lowercase().replace('-', "_");
+    let word = folded(word);
+    let among: Vec<&str> = among.into_iter().collect();
+    let limit = (word.chars().count() / 3).max(1);
+    let scored: Vec<(usize, &str)> = among
+        .iter()
+        .map(|candidate| (edits(&word, &folded(candidate)), *candidate))
+        .filter(|(distance, _)| *distance <= limit)
+        .collect();
+    if let Some(best) = scored.iter().map(|(distance, _)| *distance).min() {
+        return scored
+            .into_iter()
+            .filter(|(distance, _)| *distance == best)
+            .map(|(_, candidate)| candidate)
+            .collect();
+    }
+    let begun: Vec<&str> = among
+        .into_iter()
+        .filter(|candidate| word.chars().count() >= 2 && folded(candidate).starts_with(&word))
+        .collect();
+    if begun.len() == 1 { begun } else { Vec::new() }
+}
+
+/// The single edits from `a` to `b`: a character added, dropped or changed, or two adjacent ones
+/// swapped (the optimal string alignment distance).
+fn edits(a: &str, b: &str) -> usize {
+    let (a, b): (Vec<char>, Vec<char>) = (a.chars().collect(), b.chars().collect());
+    let mut rows = vec![vec![0usize; b.len() + 1]; a.len() + 1];
+    for (i, row) in rows.iter_mut().enumerate() {
+        row[0] = i;
+    }
+    for (j, cell) in rows[0].iter_mut().enumerate() {
+        *cell = j;
+    }
+    for i in 1..=a.len() {
+        for j in 1..=b.len() {
+            let change = usize::from(a[i - 1] != b[j - 1]);
+            let mut best = (rows[i - 1][j] + 1)
+                .min(rows[i][j - 1] + 1)
+                .min(rows[i - 1][j - 1] + change);
+            if i > 1 && j > 1 && a[i - 1] == b[j - 2] && a[i - 2] == b[j - 1] {
+                best = best.min(rows[i - 2][j - 2] + 1);
+            }
+            rows[i][j] = best;
+        }
+    }
+    rows[a.len()][b.len()]
+}

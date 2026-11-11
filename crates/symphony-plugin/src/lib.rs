@@ -230,6 +230,11 @@ pub trait CardKind: Send + Sync {
 pub trait Command: Send + Sync {
     /// The binary's first argument that runs it.
     fn name(&self) -> &str;
+    /// What it does, in one line, lowercase and under 60 characters, which `symphony help` lists
+    /// beside its name; none says it is the project's.
+    fn summary(&self) -> &str {
+        ""
+    }
     /// Runs it with `args`, what follows its name, writing to `out` and `err`; its exit code.
     fn run(&self, args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i32;
 }

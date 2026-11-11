@@ -289,6 +289,14 @@ fn an_unknown_addressee_is_refused() {
         refused(f.store.say("sim/jump", &a, "hi", Some("@janitor"))),
         "no role @janitor; use one of @orchestrator, @executor, @reviewer, @reserved"
     );
+    // A role's name without its `@` is a handle nobody has: the refusal says how it is written.
+    for (to, role) in [("orchestrator", "orchestrator"), ("Reviewer", "reviewer")] {
+        assert_eq!(
+            refused(f.store.say("sim/jump", &a, "hi", Some(to))),
+            format!("no session '{to}' to send to; the task's {role} is --to @{role}")
+        );
+    }
+    assert_eq!(f.store.thread("sim/jump").unwrap().len(), 1);
 }
 
 #[test]

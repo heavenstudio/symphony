@@ -4,7 +4,7 @@
 use super::agents::{describe, table};
 use super::args::Parsed;
 use super::attach::{Watch, watch};
-use super::text::{event, export_markdown, message_line, roles_text};
+use super::text::{columns, event, export_markdown, message_line, roles_text};
 use super::{Clock, Env, probes, shape};
 use crate::health::RESERVE_SECONDS;
 use crate::pyjson::{self, Py};
@@ -207,7 +207,15 @@ pub fn run(store: &Store, c: &mut Context) -> Result<(), Stop> {
                 c.say(&pyjson::dumps(&view.json()));
                 return Ok(());
             }
-            for line in table(&view) {
+            let lines = table(&view);
+            if lines.is_empty() {
+                c.say(if p.flag("all") {
+                    "no agents"
+                } else {
+                    "no agents (--all adds the sessions that left)"
+                });
+            }
+            for line in lines {
                 c.say(&line);
             }
             let down: Vec<&str> = [("hc", view.herdr), ("slots", view.slots)]
@@ -399,6 +407,14 @@ pub fn run(store: &Store, c: &mut Context) -> Result<(), Stop> {
 /// ([`imported_worktree`]).
 fn create(store: &Store, c: &mut Context) -> Result<(), Stop> {
     let p = c.parsed;
+    // The board's own rule takes one plain word too; a task filed here names its area.
+    let slug = c.arg("slug");
+    if !slug.contains('/') {
+        return Err(Stop::Refused(format!(
+            "slug {} names no area: a task's slug is area/short-name, such as tools/{slug}",
+            pyjson::repr(&slug)
+        )));
+    }
     let body = match p.get("body_file") {
         Some("-") => {
             let mut body = String::new();
@@ -427,7 +443,7 @@ fn create(store: &Store, c: &mut Context) -> Result<(), Stop> {
         }
     }
     let new = NewTask {
-        slug: c.arg("slug"),
+        slug,
         title: c.arg("title"),
         by: c.actor()?,
         body,
@@ -535,11 +551,16 @@ fn show(store: &Store, c: &mut Context) -> Result<(), Stop> {
     c.say(&format!("  {}", stages::summary_line(&stages)));
     if !children.is_empty() {
         c.say("  subtasks:");
+        let width = children
+            .iter()
+            .map(|child| child.slug.chars().count())
+            .max()
+            .unwrap_or(0);
         for child in &children {
             let held = roles_text(child);
             let held = if held.is_empty() { "-".into() } else { held };
             c.say(&format!(
-                "    {:<28} {:<11} {held}",
+                "    {:<width$} {:<11} {held}",
                 child.slug, child.status
             ));
         }
@@ -604,34 +625,50 @@ fn who(store: &Store, c: &mut Context) -> Result<(), Stop> {
                 .push(format!("{}({})", t.slug, r.role));
         }
     }
+    if sessions.is_empty() {
+        c.say(if all {
+            "no sessions"
+        } else {
+            "no sessions (--all adds the ones that left)"
+        });
+        return Ok(());
+    }
     let names: Vec<&str> = sessions.iter().map(|s| s.row.handle.as_str()).collect();
-    fn line(
+    /// `s`'s row, its handle indented under its parent's, then its children's rows.
+    fn rows(
         s: &Session,
         depth: usize,
         sessions: &[Session],
         held: &BTreeMap<String, Vec<String>>,
-        c: &mut Context,
+        out: &mut Vec<Vec<String>>,
     ) {
         let r = &s.row;
-        let holds = held.get(&r.handle).map(|h| h.join(" ")).unwrap_or_default();
-        c.say(&format!(
-            "{}{:<20} {:<12} {:<6} {:<24} {holds}",
-            "  ".repeat(depth),
-            r.handle,
-            r.kind,
-            s.health.as_str(),
-            if r.branch.is_empty() { "-" } else { &r.branch },
-        ));
+        out.push(vec![
+            format!("{}{}", "  ".repeat(depth), r.handle),
+            r.kind.clone(),
+            s.health.as_str().to_string(),
+            if r.branch.is_empty() { "-" } else { &r.branch }.to_string(),
+            held.get(&r.handle).map(|h| h.join(" ")).unwrap_or_default(),
+        ]);
         for child in sessions {
             if child.row.parent.as_deref() == Some(r.handle.as_str()) {
-                line(child, depth + 1, sessions, held, c);
+                rows(child, depth + 1, sessions, held, out);
             }
         }
     }
+    let mut table = vec![
+        ["HANDLE", "KIND", "HEALTH", "BRANCH", "ROLES"]
+            .iter()
+            .map(|h| h.to_string())
+            .collect(),
+    ];
     for s in &sessions {
         if !s.row.parent.as_deref().is_some_and(|p| names.contains(&p)) {
-            line(s, 0, &sessions, &held, c);
+            rows(s, 0, &sessions, &held, &mut table);
         }
+    }
+    for line in columns(&table) {
+        c.say(&line);
     }
     Ok(())
 }

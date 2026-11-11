@@ -112,17 +112,43 @@ fn list_is_a_tree_of_aligned_rows() {
     let mut held = [(&exe, "executor"), (&orch, "orchestrator")];
     held.sort();
     let held: Vec<String> = held.iter().map(|(h, role)| format!("{role} {h}")).collect();
+    // Every title starts one column after the longest slug, a child's indent counted.
+    let long = "a-very-long-slug/that-overflows-the-column";
     assert_eq!(
         c.ok("", &["list"]),
         [
             format!(
-                "p1 in_progress sim/a                        Alpha  [{}]\n",
+                "p1 in_progress {:<42} Alpha  [{}]\n",
+                "sim/a",
                 held.join(", ")
             ),
-            "  p2 ready       sim/a/b                      Beta\n".to_string(),
-            "p2 ready       a-very-long-slug/that-overflows-the-column Long\n".to_string(),
+            format!("  p2 ready       {:<40} Beta\n", "sim/a/b"),
+            format!("p2 ready       {long} Long\n"),
         ]
         .concat()
+    );
+}
+
+#[test]
+fn list_leaves_finished_tasks_out_unless_asked_and_says_when_nothing_is_open() {
+    let c = Case::new();
+    assert_eq!(c.ok("", &["list"]), "no tasks\n");
+    let orch = c.register("orchestrator");
+    c.ok(&orch, &["create", "sim/a", "Alpha"]);
+    c.ok(&orch, &["create", "sim/b", "Beta"]);
+    c.ok(&orch, &["move", "sim/b", "cancelled"]);
+    let open = c.ok("", &["list"]);
+    assert!(open.contains("sim/a") && !open.contains("sim/b"), "{open}");
+    for args in [&["list", "--all"][..], &["list", "--status", "cancelled"]] {
+        assert!(c.ok("", args).contains("sim/b"), "{args:?}");
+    }
+    let json = c.ok("", &["list", "--json"]);
+    assert!(json.contains("sim/a") && !json.contains("sim/b"), "{json}");
+    assert!(c.ok("", &["list", "--json", "--all"]).contains("sim/b"));
+    c.ok(&orch, &["move", "sim/a", "cancelled"]);
+    assert_eq!(
+        c.ok("", &["list"]),
+        "no open tasks (--all lists done and cancelled ones too)\n"
     );
 }
 
@@ -424,8 +450,9 @@ fn show_prints_the_task_its_people_its_subtasks_its_body_and_its_thread() {
         "  parent: sim/base".into(),
         "  Stages: ready 0.0 h; never claimed in 0.0 h".into(),
         "  subtasks:".into(),
-        format!("    sim/a/do                     in_progress executor {exe}"),
-        "    sim/a/two                    ready       -".into(),
+        // The slugs padded to the longest of them.
+        format!("    sim/a/do  in_progress executor {exe}"),
+        "    sim/a/two ready       -".into(),
         String::new(),
         "First line.\n\nSecond.".into(),
         String::new(),
@@ -531,13 +558,15 @@ fn who_is_a_tree_of_sessions_with_what_each_holds() {
         }
     };
     let row = |indent: &str, h: &str, kind: &str, holds: &str| {
-        format!(
-            "{indent}{h:<20} {kind:<12} {:<6} {:<24} {holds}",
-            "live",
-            branch(h)
-        )
+        [
+            format!("{indent}{h}"),
+            kind.into(),
+            "live".into(),
+            branch(h),
+            holds.into(),
+        ]
     };
-    let mut expected = Vec::new();
+    let mut expected = vec![["HANDLE", "KIND", "HEALTH", "BRANCH", "ROLES"].map(String::from)];
     for s in sessions.iter().filter(|s| s.health.as_str() != "left") {
         let h = &s.row.handle;
         if *h == exe {
@@ -550,8 +579,23 @@ fn who_is_a_tree_of_sessions_with_what_each_holds() {
             expected.push(row("", h, "reviewer", ""));
         }
     }
-    assert_eq!(expected.len(), 3);
-    assert_eq!(c.ok("", &["who"]), expected.join("\n") + "\n");
+    assert_eq!(expected.len(), 4);
+    // A column as wide as its widest cell and two spaces between; the last unpadded.
+    let widths: Vec<usize> = (0..5)
+        .map(|i| expected.iter().map(|r| r[i].chars().count()).max().unwrap())
+        .collect();
+    let lines: Vec<String> = expected
+        .iter()
+        .map(|r| {
+            let cells: Vec<String> = r
+                .iter()
+                .zip(&widths)
+                .map(|(cell, width)| format!("{cell:<width$}"))
+                .collect();
+            cells.join("  ").trim_end().to_string()
+        })
+        .collect();
+    assert_eq!(c.ok("", &["who"]), lines.join("\n") + "\n");
 }
 
 #[test]

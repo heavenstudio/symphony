@@ -65,5 +65,8 @@ fn the_doubled_listing_names_each_task_two_orchestrators_hold() {
     let listing = c.ok(&a, &["list"]);
     assert!(listing.contains("scratch/single"), "{listing}");
     c.ok(&b, &["handover", "scratch/double", &a]);
-    assert_eq!(c.ok(&a, &["list", "--doubled"]), "");
+    assert_eq!(
+        c.ok(&a, &["list", "--doubled"]),
+        "no task holds two orchestrators\n"
+    );
 }

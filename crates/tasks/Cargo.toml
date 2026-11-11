@@ -12,6 +12,8 @@ publish.workspace = true
 # without (docs/engineering/analysis/review-app-rust-port.md, "Clean release build").
 [dependencies]
 process-cwd = { path = "../process-cwd" }
+# The command a mistyped word was nearest to, shared with the `symphony` command line.
+symphony-args = { path = "../symphony-args" }
 serde = { version = "1", features = ["derive"] }
 # float_roundtrip: a time in a dump reads as exactly the float Python wrote, not one ulp off.
 serde_json = { version = "1", features = ["float_roundtrip"] }

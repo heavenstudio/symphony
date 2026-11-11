@@ -63,6 +63,22 @@ pub const TASK_VAR: &str = "TASKS_TASK";
 pub const PROBE: &str = "run 1";
 const USAGE: &str = "usage: tasks run --phase build|test [--label TEXT] [--task SLUG] [--as HANDLE] -- COMMAND [ARGS...]\n       tasks run --probe\n";
 
+/// `tasks run --help`, `just tasks help run`: its usage and what it does.
+pub fn help() -> String {
+    format!(
+        "{USAGE}\nRun COMMAND as it would run alone, its exit status yours, and record it for the\n\
+         board's Build or Test column while it runs (docs/MACHINE_WORK.md). The task is\n\
+         --task, else $TASKS_TASK, else the one task the session holds.\n\n\
+         options:\n  \
+         -h, --help    show this help message and exit\n  \
+         --phase       build or test: the column it is recorded in\n  \
+         --label TEXT  how the column names it (default: the command's words)\n  \
+         --task SLUG   the task it runs for\n  \
+         --as HANDLE   the session it runs for (default: $TASKS_SESSION)\n  \
+         --probe       print `{PROBE}`, the command line this build reads\n"
+    )
+}
+
 /// A command line read.
 #[derive(Debug, PartialEq)]
 struct Asked {
@@ -146,6 +162,17 @@ pub fn run(
     err: &mut dyn Write,
     process: bool,
 ) -> i32 {
+    // Asked where one of its own options' names stands (each takes a value), before `--`: what
+    // follows that is the command's.
+    let options = args.split(|arg| arg == "--").next().unwrap_or_default();
+    if options
+        .iter()
+        .step_by(2)
+        .any(|arg| arg == "-h" || arg == "--help")
+    {
+        let _ = write!(out, "{}", help());
+        return 0;
+    }
     let asked = match parse(args) {
         Ok(Some(asked)) => asked,
         Ok(None) => {
@@ -995,7 +1022,7 @@ mod tests {
             }
         );
         assert_eq!(parse(&args(&["--probe"])), Ok(None));
-        assert!(super::super::usage::HELP.contains("\n    run "));
+        assert!(super::super::usage::top().contains("\n  run "));
     }
 
     #[test]

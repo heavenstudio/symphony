@@ -512,7 +512,17 @@ impl Store {
                 return Err(refused(format!("{slug} is {}, not in review", task.status)));
             }
             if !view.holds(handle, "reviewer") {
-                return Err(refused(format!("{handle} is not a reviewer of {slug}")));
+                return Err(refused(if view.holds(handle, "executor") {
+                    format!(
+                        "{handle} is not a reviewer of {slug}: it executes {slug}, and a reviewer \
+                         who did not do the work gives the verdict"
+                    )
+                } else {
+                    format!(
+                        "{handle} is not a reviewer of {slug}; take the role first: just tasks \
+                         role {slug} reviewer"
+                    )
+                }));
             }
             let approve = verdict == "approve";
             Ok(Change {

@@ -545,13 +545,13 @@ fn a_body_file_that_cannot_be_read_is_a_refusal_naming_it() {
     );
 }
 
-/// `a` over `a/b` over `a/b/c`, and `other`, made by an orchestrator; then a worker: both handles.
+/// `x/a` over `x/a/b` over `x/a/b/c`, and `x/other`, made by an orchestrator; then a worker: both handles.
 fn chain(c: &Case) -> (String, String) {
     let orch = c.register("orchestrator");
-    c.ok(&orch, &["create", "a", "Top"]);
-    c.ok(&orch, &["create", "a/b", "Middle", "--parent", "a"]);
-    c.ok(&orch, &["create", "a/b/c", "Bottom", "--parent", "a/b"]);
-    c.ok(&orch, &["create", "other", "Other"]);
+    c.ok(&orch, &["create", "x/a", "Top"]);
+    c.ok(&orch, &["create", "x/a/b", "Middle", "--parent", "x/a"]);
+    c.ok(&orch, &["create", "x/a/b/c", "Bottom", "--parent", "x/a/b"]);
+    c.ok(&orch, &["create", "x/other", "Other"]);
     (orch, c.register("worker"))
 }
 
@@ -560,7 +560,7 @@ fn list_indents_children_under_their_parent_at_any_depth() {
     let c = Case::new();
     chain(&c);
     let out = c.ok("", &["list"]);
-    let named = ["a", "a/b", "a/b/c", "other"];
+    let named = ["x/a", "x/a/b", "x/a/b/c", "x/other"];
     let rows: Vec<(&str, usize)> = out
         .lines()
         .map(|row| {
@@ -570,18 +570,18 @@ fn list_indents_children_under_their_parent_at_any_depth() {
         .collect();
     let at = |slug: &str| rows.iter().position(|(s, _)| *s == slug).unwrap();
     let indent = |slug: &str| rows[at(slug)].1;
-    assert_eq!(indent("a"), indent("other"), "{out}");
-    assert!(indent("a/b") > indent("a"), "{out}");
-    assert!(indent("a/b/c") > indent("a/b"), "{out}");
-    assert_eq!(at("a/b/c"), at("a/b") + 1, "{out}");
-    assert_eq!(at("a/b"), at("a") + 1, "{out}");
+    assert_eq!(indent("x/a"), indent("x/other"), "{out}");
+    assert!(indent("x/a/b") > indent("x/a"), "{out}");
+    assert!(indent("x/a/b/c") > indent("x/a/b"), "{out}");
+    assert_eq!(at("x/a/b/c"), at("x/a/b") + 1, "{out}");
+    assert_eq!(at("x/a/b"), at("x/a") + 1, "{out}");
 }
 
 #[test]
 fn list_with_a_filter_keeps_a_child_whose_parent_it_hides_at_the_top() {
     let c = Case::new();
     let (_, agent) = chain(&c);
-    c.ok(&agent, &["claim", "a/b/c"]);
+    c.ok(&agent, &["claim", "x/a/b/c"]);
     let out = c.ok("", &["list", "--status", "in_progress"]);
     let rows: Vec<&str> = out.lines().collect();
     assert_eq!(rows.len(), 1, "{out}");
@@ -592,8 +592,8 @@ fn list_with_a_filter_keeps_a_child_whose_parent_it_hides_at_the_top() {
 fn show_lists_the_children_with_their_status_and_holder() {
     let c = Case::new();
     let (_, agent) = chain(&c);
-    c.ok(&agent, &["claim", "a/b"]);
-    let out = c.ok("", &["show", "a"]);
+    c.ok(&agent, &["claim", "x/a/b"]);
+    let out = c.ok("", &["show", "x/a"]);
     let below = out.split("subtasks:\n").nth(1).unwrap_or_default();
     let first: Vec<&str> = below
         .lines()
@@ -601,14 +601,14 @@ fn show_lists_the_children_with_their_status_and_holder() {
         .unwrap_or_default()
         .split_whitespace()
         .collect();
-    assert_eq!(first, ["a/b", "in_progress", "executor", &agent], "{out}");
+    assert_eq!(first, ["x/a/b", "in_progress", "executor", &agent], "{out}");
     assert!(
-        !out.contains("a/b/c"),
+        !out.contains("x/a/b/c"),
         "one level; the child's own show lists its own: {out}"
     );
-    assert!(c.ok("", &["show", "a/b"]).contains("a/b/c"));
-    let data = json(&c.ok("", &["show", "a", "--json"]));
-    assert_eq!(slugs(&data["children"]), ["a/b"]);
+    assert!(c.ok("", &["show", "x/a/b"]).contains("x/a/b/c"));
+    let data = json(&c.ok("", &["show", "x/a", "--json"]));
+    assert_eq!(slugs(&data["children"]), ["x/a/b"]);
 }
 
 #[test]
@@ -620,19 +620,19 @@ fn create_for_a_handle_reserves_it_and_next_offers_it_to_that_handle_alone() {
         &orch,
         &[
             "create",
-            "a/review",
+            "x/a/review",
             "Review",
             "--parent",
-            "a",
+            "x/a",
             "--for",
             &agent,
             "--instruction",
         ],
     );
-    assert!(!c.ok(&other, &["next"]).contains("a/review"));
-    assert!(c.ok(&agent, &["next"]).starts_with("a/review"));
-    assert_eq!(c.run_as(&other, &["claim", "a/review"], "").code, 1);
-    c.ok(&agent, &["claim", "a/review"]);
+    assert!(!c.ok(&other, &["next"]).contains("x/a/review"));
+    assert!(c.ok(&agent, &["next"]).starts_with("x/a/review"));
+    assert_eq!(c.run_as(&other, &["claim", "x/a/review"], "").code, 1);
+    c.ok(&agent, &["claim", "x/a/review"]);
 }
 
 #[test]
@@ -641,34 +641,41 @@ fn done_closes_both_kinds_of_subtask_without_a_landing() {
     let (orch, agent) = chain(&c);
     c.ok(
         &orch,
-        &["create", "a/m", "Measure", "--parent", "a", "--instruction"],
+        &[
+            "create",
+            "x/a/m",
+            "Measure",
+            "--parent",
+            "x/a",
+            "--instruction",
+        ],
     );
-    c.ok(&agent, &["claim", "a/m"]);
+    c.ok(&agent, &["claim", "x/a/m"]);
     assert!(
-        c.ok(&agent, &["done", "a/m", "median 4 ms"])
+        c.ok(&agent, &["done", "x/a/m", "median 4 ms"])
             .contains("done")
     );
-    assert_eq!(c.store().get("a/m").unwrap().status, "done");
-    c.ok(&agent, &["claim", "a/b"]);
-    let ran = c.run_as(&agent, &["done", "a/b", "finished"], "");
+    assert_eq!(c.store().get("x/a/m").unwrap().status, "done");
+    c.ok(&agent, &["claim", "x/a/b"]);
+    let ran = c.run_as(&agent, &["done", "x/a/b", "finished"], "");
     assert_eq!(ran.code, 0, "{}", ran.err);
-    assert_eq!(c.store().get("a/b").unwrap().status, "done");
+    assert_eq!(c.store().get("x/a/b").unwrap().status, "done");
 }
 
 #[test]
 fn parent_moves_a_task_and_refuses_a_cycle() {
     let c = Case::new();
     let (orch, _) = chain(&c);
-    c.ok(&orch, &["parent", "other", "a/b/c"]);
+    c.ok(&orch, &["parent", "x/other", "x/a/b/c"]);
     assert_eq!(
-        c.store().get("other").unwrap().parent.as_deref(),
-        Some("a/b/c")
+        c.store().get("x/other").unwrap().parent.as_deref(),
+        Some("x/a/b/c")
     );
-    let ran = c.run_as(&orch, &["parent", "a", "other"], "");
+    let ran = c.run_as(&orch, &["parent", "x/a", "x/other"], "");
     assert_eq!(ran.code, 1);
     assert!(ran.err.contains("ancestor"), "{}", ran.err);
-    c.ok(&orch, &["parent", "other", "--none"]);
-    assert_eq!(c.store().get("other").unwrap().parent, None);
+    c.ok(&orch, &["parent", "x/other", "--none"]);
+    assert_eq!(c.store().get("x/other").unwrap().parent, None);
 }
 
 #[test]
@@ -738,4 +745,62 @@ fn depends_points_a_cancellation_blocked_task_at_the_successor_and_unblocks_it()
         assert!(ran.err.contains(why), "{args:?}: {}", ran.err);
     }
     assert!(c.store().get("sim/dep").unwrap().depends.is_empty());
+}
+
+#[test]
+fn help_and_the_spellings_people_type_read_and_a_mistake_says_what_to_type_instead() {
+    let c = Case::new();
+    let top = c.ok("", &["help"]);
+    assert!(top.starts_with("usage: just tasks "), "{top}");
+    assert!(top.contains("\n  claim "), "{top}");
+    assert!(
+        c.ok("", &["help", "claim"])
+            .contains("\n\ntake a task as its executor.\n")
+    );
+    let ran = c.run_as("", &["shwo", "sim/a"], "");
+    assert_eq!((ran.code, ran.out.as_str()), (2, ""));
+    assert!(
+        ran.err.ends_with(
+            "just tasks: error: no command 'shwo'; did you mean 'show'? (`just tasks help` lists \
+             them)\n"
+        ),
+        "{}",
+        ran.err
+    );
+    let orch = c.register("orchestrator");
+    c.ok(&orch, &["create", "sim/a", "A", "--priority", "p1"]);
+    assert_eq!(c.store().get("sim/a").unwrap().priority, 1);
+    assert_eq!(c.ok(&orch, &["priority", "sim/a", "P0"]), "sim/a is p0\n");
+    let exe = c.register("worker");
+    c.ok(&exe, &["claim", "sim/a"]);
+    assert!(
+        c.ok("", &["list", "--status", "in-progress"])
+            .contains("sim/a")
+    );
+    for (args, why) in [
+        (
+            &["create", "noslash", "X"][..],
+            "✖ slug 'noslash' names no area: a task's slug is area/short-name, such as \
+             tools/noslash\n",
+        ),
+        (
+            &["say", "sim/a", "hi", "--to", "orchestrator"][..],
+            "✖ no session 'orchestrator' to send to; the task's orchestrator is --to \
+             @orchestrator\n",
+        ),
+    ] {
+        let ran = c.run_as(&orch, args, "");
+        assert_eq!((ran.code, ran.err.as_str()), (1, why), "{args:?}");
+    }
+    assert!(c.store().get("noslash").is_err());
+}
+
+#[test]
+fn an_empty_who_says_so() {
+    let c = Case::new();
+    assert_eq!(
+        c.ok("", &["who"]),
+        "no sessions (--all adds the ones that left)\n"
+    );
+    assert_eq!(c.ok("", &["who", "--all"]), "no sessions\n");
 }

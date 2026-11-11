@@ -112,12 +112,24 @@ fn a_verdict_without_words_is_only_the_verdict() {
 }
 
 #[test]
-fn only_the_reviewer_gives_a_verdict() {
+fn only_the_reviewer_gives_a_verdict_and_a_refusal_says_who_does() {
     let f = in_review();
-    for who in ["amber-heron", "ochre-owl"] {
+    // The executor is told why it cannot; anyone else, the role to take.
+    for (who, why) in [
+        (
+            "amber-heron",
+            "amber-heron is not a reviewer of sim/jump: it executes sim/jump, and a reviewer who \
+             did not do the work gives the verdict",
+        ),
+        (
+            "ochre-owl",
+            "ochre-owl is not a reviewer of sim/jump; take the role first: just tasks role \
+             sim/jump reviewer",
+        ),
+    ] {
         assert_eq!(
             refused(f.store.verdict("sim/jump", who, "approve", "")),
-            format!("{who} is not a reviewer of sim/jump")
+            why
         );
     }
     assert_eq!(f.store.get("sim/jump").unwrap().status, "review");

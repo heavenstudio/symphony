@@ -130,3 +130,38 @@ fn the_command_follows_options_and_their_values_without_consuming_positionals() 
         assert_eq!(command_at(&args(&input), FLAGS), expected, "{input:?}");
     }
 }
+
+#[test]
+fn nearest_names_the_words_a_mistyping_is_fewest_edits_from() {
+    const COMMANDS: [&str; 8] = [
+        "show",
+        "stats",
+        "status",
+        "say",
+        "claim",
+        "verdict",
+        "docs-audit",
+        "handover",
+    ];
+    for (word, expected) in [
+        // a letter swapped, added, dropped or changed
+        ("shwo", vec!["show"]),
+        ("claime", vec!["claim"]),
+        ("verdct", vec!["verdict"]),
+        ("stat", vec!["stats"]),
+        // case and `-` against `_` cost nothing
+        ("Verdict", vec!["verdict"]),
+        ("docs_audit", vec!["docs-audit"]),
+        // as near to two: both, in their order
+        ("statsu", vec!["stats", "status"]),
+        // past a third of its letters: none, unless it begins just one
+        ("handove", vec!["handover"]),
+        ("ver", vec!["verdict"]),
+        ("s", vec![]),
+        ("st", vec![]),
+        ("frobnicate", vec![]),
+        ("", vec![]),
+    ] {
+        assert_eq!(symphony_args::nearest(word, COMMANDS), expected, "{word:?}");
+    }
+}

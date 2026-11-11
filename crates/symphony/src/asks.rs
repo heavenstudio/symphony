@@ -589,14 +589,14 @@ const HELP: &str = "The Symphony's asks: ephemeral questions the owner asks abou
 
   symphony ask list [--open]                      every ask, most recently active first
   symphony ask show ID                            one thread
-  symphony ask answer ID \"markdown\" [--by HANDLE] answer an ask ([[doc#heading]] links and images render)
+  symphony ask answer ID \"markdown\" [--as HANDLE] answer an ask ([[doc#heading]] links and images render)
 
 options:
   -h, --help   show this help message and exit
   --root ROOT  the checkout to find the store from (ASKS_DB names it outright)
   --db PATH    the exact asks store (also used by scratch-server callbacks)
   --open       list only the asks waiting for an answer
-  --by HANDLE  your task-board handle (default: agent)";
+  --as HANDLE  your task-board handle (default: agent); --by HANDLE reads the same";
 
 fn when(stamp: f64) -> String {
     // the minute it fell in: whole seconds, as Python's strftime drops the fraction
@@ -648,7 +648,8 @@ fn show(thread: &Thread) -> String {
     lines.join("\n")
 }
 
-/// `symphony ask [--root ROOT] list [--open] | show ID | answer ID TEXT [--by HANDLE]`; `ASKS_DB` in `env`
+/// `symphony ask [--root ROOT] list [--open] | show ID | answer ID TEXT [--as HANDLE]` (`--by`
+/// reads the same); `ASKS_DB` in `env`
 /// names the store. Its exit code.
 pub fn main(
     args: &[String],
@@ -674,10 +675,16 @@ pub fn main(
             name: "--open",
             value: false,
         }],
-        Some("answer") => &[Flag {
-            name: "--by",
-            value: true,
-        }],
+        Some("answer") => &[
+            Flag {
+                name: "--as",
+                value: true,
+            },
+            Flag {
+                name: "--by",
+                value: true,
+            },
+        ],
         _ => &[],
     };
     let (top, parsed) = match (parse(&args[..at], &root_flag), parse(&args[at..], own)) {
@@ -742,7 +749,8 @@ pub fn main(
             Ok(())
         }
         Some((ask, Some(text))) => {
-            store.answer(ask, text, parsed.value("--by").unwrap_or("agent"))?;
+            let by = parsed.value("--as").or_else(|| parsed.value("--by"));
+            store.answer(ask, text, by.unwrap_or("agent"))?;
             let _ = writeln!(out, "answered ask {ask}");
             Ok(())
         }
