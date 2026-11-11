@@ -7,7 +7,7 @@
 //! provides.
 use super::{
     FIRST_VISIT_BYTES, SHOWN, binaries, chrome, chrome::Chrome, completed_requests, dist,
-    needed_bytes, owner_controls::ScratchBoard,
+    needed_bytes, owner_controls::ScratchBoard, ping_bytes,
 };
 use serde_json::{Value, json};
 use std::io::{BufRead, BufReader};
@@ -362,7 +362,10 @@ fn each_project_fits_the_first_visit_budget_in_its_own_theme_and_the_shared_look
         );
         let requests = completed_requests(&mut browser);
         let bytes = needed_bytes(&requests);
-        eprintln!("/{id}/ first visit: {bytes} bytes");
+        eprintln!(
+            "/{id}/ first visit: {bytes} bytes; keep-alive pings beside it: {} bytes",
+            ping_bytes(&requests)
+        );
         assert!(
             bytes <= FIRST_VISIT_BYTES,
             "/{id}/ first visit loads {bytes} bytes, over {FIRST_VISIT_BYTES}: {requests:#?}"

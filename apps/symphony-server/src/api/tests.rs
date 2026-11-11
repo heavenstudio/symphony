@@ -18,6 +18,8 @@ fn the_client_draws_the_symphonys_pages_and_each_entrypoints_documents() {
     for (path, by_convention, at_root) in [
         ("/", true, true),
         ("/tasks", true, true),
+        ("/task", true, true),
+        ("/task/", true, true),
         ("/task/tools/x", true, true),
         ("/shelf/", true, true),
         ("/docs/", true, true),
@@ -36,6 +38,66 @@ fn the_client_draws_the_symphonys_pages_and_each_entrypoints_documents() {
         assert_eq!(client_page(&convention, path), by_convention, "{path}");
         assert_eq!(client_page(&root, path), at_root, "{path} at /");
     }
+}
+
+/// A listing's status no listing selects is a bad request said before anything reads the board,
+/// so a board that is slow or down never answers for it first: no hub is started for it.
+#[tokio::test]
+async fn a_listing_status_no_listing_selects_is_refused_before_the_board_is_read() {
+    let tree = crate::testing::Tree::new();
+    let root = crate::testing::repository(&tree);
+    let shared = crate::front::Shared::new(
+        1,
+        1234,
+        &root,
+        None,
+        crate::gate::Gate::new(Arc::new(|_| Ok(None)), Arc::new(std::time::Instant::now)),
+    );
+    for (status, refused) in [
+        ("nope", true),
+        ("Review", true),
+        ("", true),
+        ("review", false),
+        ("signoff", false),
+        ("build", false),
+    ] {
+        let request = Request::builder()
+            .uri(format!("/api/task-board?status={status}"))
+            .header("Host", "localhost:1234")
+            .body(())
+            .unwrap();
+        let said = status_argument_of(&request);
+        assert_eq!(said.is_err(), refused, "{status}: {said:?}");
+        if refused {
+            let response = answer(&shared, request).await.unwrap();
+            assert_eq!(response.status(), StatusCode::BAD_REQUEST, "{status}");
+            let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+                .await
+                .unwrap();
+            let body: serde_json::Value = serde_json::from_slice(&body).unwrap();
+            assert_eq!(body, serde_json::json!({ "error": said.unwrap_err() }));
+        }
+    }
+    assert!(shared.api.get().is_none(), "no hub was started");
+    let said = status_argument_of(
+        &Request::builder()
+            .uri("/api/task-board?status=nope")
+            .body(())
+            .unwrap(),
+    )
+    .unwrap_err();
+    assert!(
+        said.starts_with("no status \"nope\": a listing selects one of ")
+            && said.ends_with(" or signoff, build, test"),
+        "{said}"
+    );
+    assert!(
+        status_argument_of(&Request::builder().uri("/api/task-board").body(()).unwrap()).is_ok()
+    );
+}
+
+fn status_argument_of(request: &Request) -> Result<(), String> {
+    task_board::status_argument(request)
 }
 
 #[test]

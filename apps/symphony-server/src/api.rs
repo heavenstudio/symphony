@@ -137,11 +137,40 @@ pub(crate) async fn answer(shared: &Arc<Shared>, request: Request) -> Option<Res
             | "/api/task-history"
             | "/api/task-thread"
             | "/api/task-offer"
-    ) && query(&request, "slug").is_none_or(|slug| slug.trim().is_empty())
+    ) && let Err(why) = argument(&request, "slug")
     {
-        return Some(error(StatusCode::BAD_REQUEST, "slug is required"));
+        return Some(error(StatusCode::BAD_REQUEST, why));
+    }
+    if matches!(
+        path,
+        "/api/document"
+            | "/api/folder"
+            | "/api/section"
+            | "/api/history"
+            | "/api/versions"
+            | "/api/diff"
+            | "/api/asks"
+    ) && let Err(why) = document_argument(&request)
+    {
+        return Some(error(StatusCode::BAD_REQUEST, why));
+    }
+    // A status no listing selects is refused before the board is read, slow or down.
+    if path == "/api/task-board"
+        && let Err(why) = task_board::status_argument(&request)
+    {
+        return Some(error(StatusCode::BAD_REQUEST, why));
     }
     if !scope.is_empty() && shared.api.get().and_then(|hub| hub.tree(scope)).is_none() {
+        // A link to a branch's page outlives its worktree once the branch merges: a page says so.
+        if !uri_scope.is_empty() && !crate::pages::data(path, request.headers()) {
+            return Some(crate::pages::gone(
+                &shared.root,
+                &shared.base,
+                scope,
+                path,
+                request.uri().query(),
+            ));
+        }
         return Some(error(StatusCode::NOT_FOUND, "no worktree for this branch"));
     }
     // The board's health is the hub's memory: it waits on no board read, the first one included,
@@ -308,8 +337,10 @@ pub(crate) async fn answer(shared: &Arc<Shared>, request: Request) -> Option<Res
             let query_from = query(&request, "from").and_then(|n| n.parse::<usize>().ok());
             let offer = path == "/api/task-offer";
             match tokio::task::spawn_blocking(move || {
-                let store = symphony::taskview::connect(&root).map_err(|e| unavailable(&e, ""))?;
                 if agents {
+                    // The agents and their work as the hub's board tick last read them: while the
+                    // board cannot be read, neither can they, as with its tasks.
+                    let board = hub.tasks_read().map_err(|e| unavailable(&e, ""))?;
                     let mut view = hub.agent_snapshot().map_err(|e| unavailable(&e, ""))?;
                     if agent_page {
                         view.agents.retain(|a| {
@@ -330,69 +361,52 @@ pub(crate) async fn answer(shared: &Arc<Shared>, request: Request) -> Option<Res
                             .last()
                             .filter(|_| view.agents.len() == 20)
                             .map(|a| a.handle.clone());
-                        let (mut tasks, _) = symphony::taskview::snapshot(&store)
-                            .map_err(|e| unavailable(&e.to_string(), ""))?;
-                        let mut shown = std::collections::BTreeSet::new();
-                        for agent in &view.agents {
-                            let mut finished: Vec<_> = tasks
-                                .tasks
-                                .iter()
-                                .filter(|t| {
-                                    ["done", "cancelled"].contains(&t.status.as_str())
-                                        && t.roles.iter().any(|r| r.handle == agent.handle)
-                                })
-                                .collect();
-                            finished.sort_by(|a, b| b.updated.total_cmp(&a.updated));
-                            shown.extend(finished.into_iter().take(5).map(|t| t.slug.clone()));
-                            shown.extend(
-                                tasks
-                                    .tasks
-                                    .iter()
-                                    .filter(|t| {
-                                        !["done", "cancelled"].contains(&t.status.as_str())
-                                            && t.roles.iter().any(|r| {
-                                                r.handle == agent.handle && r.role != "orchestrator"
-                                            })
-                                    })
-                                    .map(|t| t.slug.clone()),
-                            );
-                        }
-                        tasks.tasks.retain(|t| shown.contains(&t.slug));
-                        for task in &mut tasks.tasks {
-                            task.body.clear();
-                        }
+                        let tasks = agent_page::tasks(
+                            &board.tasks,
+                            view.agents.iter().map(|a| a.handle.as_str()),
+                        );
                         Ok(no_store(Json(symphony_api::AgentPage {
                             view,
-                            tasks: tasks.tasks,
+                            tasks,
                             total,
                             next,
                         })))
                     } else {
                         Ok(no_store(Json(view)))
                     }
-                } else if offer {
-                    store.get(&slug).map_err(task_failure)?;
-                    let plugins = symphony::plugins::Plugins::of(&root);
-                    symphony::taskview::owner_offer(&store, &plugins, &slug, &root)
-                        .map(|offer| no_store(Json(offer)))
-                        .map_err(|e| unavailable(&e, ""))
-                } else if brief {
-                    let record = store.get(&slug).map_err(task_failure)?;
-                    let from = query_from.unwrap_or(0);
-                    Ok(no_store(Json(symphony::taskview::brief(
-                        &record, from, &root,
-                    ))))
-                } else if detail {
-                    let record = store.get(&slug).map_err(task_failure)?;
-                    symphony::taskview::page(&store, &record, &root)
-                        .map(|page| Json(hub.observed_page(page)))
-                        .map(no_store)
-                        .map_err(|e| unavailable(&e, ""))
                 } else {
-                    symphony::taskview::history(&store, &slug, before, after, &root)
-                        .map(Json)
-                        .map(no_store)
-                        .map_err(task_failure)
+                    let store = hub.reader().map_err(|e| unavailable(&e, ""))?;
+                    let read = if offer {
+                        store.get(&slug).map_err(task_failure).and_then(|_| {
+                            let plugins = symphony::plugins::Plugins::of(&root);
+                            symphony::taskview::owner_offer(&store, &plugins, &slug, &root)
+                                .map(|offer| no_store(Json(offer)))
+                                .map_err(|e| unavailable(&e, ""))
+                        })
+                    } else if brief {
+                        store.get(&slug).map_err(task_failure).map(|record| {
+                            let from = query_from.unwrap_or(0);
+                            no_store(Json(symphony::taskview::brief(&record, from, &root)))
+                        })
+                    } else if detail {
+                        store.get(&slug).map_err(task_failure).and_then(|record| {
+                            symphony::taskview::page(&store, &record, &root)
+                                .map(|page| no_store(Json(hub.observed_page(page))))
+                                .map_err(|e| unavailable(&e, ""))
+                        })
+                    } else {
+                        symphony::taskview::history(&store, &slug, before, after, &root)
+                            .map(|history| no_store(Json(history)))
+                            .map_err(task_failure)
+                    };
+                    // The board's server may have gone, or moved: the next read opens it anew.
+                    if read.as_ref().is_err_and(|(status, _)| {
+                        [StatusCode::SERVICE_UNAVAILABLE, StatusCode::GATEWAY_TIMEOUT]
+                            .contains(status)
+                    }) {
+                        hub.reader_failed(&store);
+                    }
+                    read
                 }
             })
             .await
@@ -777,6 +791,42 @@ fn query(request: &Request, key: &str) -> Option<String> {
     query_in(request.uri(), key)
 }
 
+/// The query parameter `key`, which a route needs: refused when it is missing or blank, or when it
+/// does not decode (its percent-encoding is not UTF-8), saying which.
+fn argument(request: &Request, key: &str) -> Result<String, String> {
+    match query(request, key) {
+        Some(value) if !value.trim().is_empty() => Ok(value),
+        Some(_) => Err(format!("{key} is required")),
+        None if raw_query(request.uri(), key).is_some() => Err(format!(
+            "{key} is not valid: its percent-encoding is not UTF-8"
+        )),
+        None => Err(format!("{key} is required")),
+    }
+}
+
+/// A document read's `path`, which may be empty (the folder of an entrypoint at the project's
+/// root) but must be given, decode, and hold no control character, which no document's name does.
+fn document_argument(request: &Request) -> Result<(), String> {
+    match query(request, "path") {
+        Some(path) if path.chars().any(char::is_control) => {
+            Err("path is not valid: it holds a control character".into())
+        }
+        Some(_) => Ok(()),
+        None if raw_query(request.uri(), "path").is_some() => {
+            Err("path is not valid: its percent-encoding is not UTF-8".into())
+        }
+        None => Err("path is required".into()),
+    }
+}
+
+/// The query parameter `key` as sent, undecoded.
+fn raw_query<'a>(uri: &'a axum::http::Uri, key: &str) -> Option<&'a str> {
+    uri.query()?.split('&').find_map(|pair| {
+        let (name, value) = pair.split_once('=').unwrap_or((pair, ""));
+        (name == key).then_some(value)
+    })
+}
+
 /// A query parameter, decoded (`+` is a space).
 pub(crate) fn query_in(uri: &axum::http::Uri, key: &str) -> Option<String> {
     uri.query()?.split('&').find_map(|pair| {
@@ -1074,7 +1124,8 @@ pub(crate) fn project_view(root: &Path) -> symphony_api::ProjectView {
 /// a document or folder page of one of its entrypoints.
 pub(crate) fn client_page(project: &symphony_api::ProjectView, path: &str) -> bool {
     let page = path.trim_end_matches('/');
-    matches!(page, "" | "/tasks" | "/agents" | "/queue")
+    // `/task` with no slug is the board, as the shell's routes read it.
+    matches!(page, "" | "/tasks" | "/task" | "/agents" | "/queue")
         || project
             .nav
             .iter()
@@ -1101,7 +1152,8 @@ fn legacy_page(path: &str) -> Option<String> {
         .map(|(_, document)| format!("/{}", document.trim_start_matches('/')))
 }
 
-fn encode_location(path: &str) -> String {
+/// `path` as a URL path: every byte but letters, digits and `/-._~@` percent-encoded.
+pub(crate) fn encode_location(path: &str) -> String {
     path.bytes()
         .map(|byte| {
             if byte.is_ascii_alphanumeric() || b"/-._~@".contains(&byte) {
@@ -1112,6 +1164,8 @@ fn encode_location(path: &str) -> String {
         })
         .collect()
 }
+
+mod agent_page;
 
 #[cfg(test)]
 mod tests;

@@ -2,7 +2,7 @@
 name: chat-doc
 description: Register as the Symphony chat recipient and answer each owner callback on its ask, card or callout. Trigger on "connect to the chat", "listen to the docs", "I'll chat with you in the app", "watch my review", or /chat-doc.
 ---
-<!-- symphony-stamp: f8144ce57b277faa files=SKILL.md -->
+<!-- symphony-stamp: e9868823b595c49f files=SKILL.md -->
 
 # Chat with the owner through the Symphony
 
@@ -32,8 +32,9 @@ native channel. No file watcher or agent monitor discovers these messages.
 
 4. **If the app itself is not running**, start it only under the destination project's authorization and service policy;
    callbacks originate in successful saves, so the app must be running.
-   Server code lives in `symphony/apps/symphony-server` and `symphony/crates/symphony`; the Dioxus
-   client lives in `symphony/apps/symphony-ui`. A server change needs a rebuild and
+   The server and its Dioxus client are the Symphony's, not the project's
+   (`apps/symphony-server`, `crates/symphony` and `apps/symphony-ui` in its
+   repository). A server change needs a rebuild and
    restart; coordinate the shared server's restart with its owner. Exercise
    changes privately with `just symphony --port N`, never stop their process.
 
@@ -44,7 +45,7 @@ OWNER /api/message scope= {"path":"docs/DECISIONS.md","slug":"example","text":"w
 OWNER /api/decision scope= {"path":"docs/DECISIONS.md","slug":"example","state":"rejected","note":"too small"}
 OWNER /api/comment scope= {"path":"docs/components/COMPONENTS.md","after_line":88,"text":"Names — why these?"}
 OWNER /api/ask scope= {"path":"docs/architecture/ARCHITECTURE.md","question":"why five bands and not three?"}
-Read: symphony ask --db 'STORE' show 12. Answer: symphony ask --db 'STORE' answer 12 TEXT --by HANDLE.
+Read: just symphony-ask --db 'STORE' show 12. Answer: just symphony-ask --db 'STORE' answer 12 TEXT --by HANDLE.
 CALLBACK delivery failed: ...
 ```
 
@@ -96,8 +97,7 @@ app is a chat, not a report.
   Update any document that still calls the card pending.
 - **Plain rejection or question**: reply with what you will do next, or ask
   what the owner wants when it is not clear.
-- **Callout**: reply with a nested `> > [!resolved]` note under it, as
-  `docs/workflow/REVIEW.md` describes.
+- **Callout**: reply with a nested `> > [!resolved]` note under it.
 - Agent replies do not produce owner callbacks.
 
 After each answer run `just symphony-status --tidy`, then `just symphony-status --open`

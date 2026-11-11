@@ -11,16 +11,30 @@ A top-level task owns one feature branch and one delivery cycle. Subtasks are
 small implementation slices, not independent releases. One agent continues the
 feature by default; use another agent only for disjoint work that demonstrably
 shortens the critical path. Commit slices into the feature branch, or merge
-their worktree commits into it with `just merge-feature FEATURE [SOURCE]`.
-This command refuses the default branch and runs no delivery hooks or stamps;
-`land` remains the completed feature delivery command. Run only focused checks needed for that slice;
-no slice-level full build, full suite, lint/precheck campaign, reviewer staffing,
-certificate, stamps or landing. Close the slice with its integration commit and
-focused result using tasks done. When the complete feature is ready, the parent
-runs the required combined build/tests and review once, then lands. Review
-fixes stay with that parent and do not create independent delivery rounds.
+their worktree commits into it with the project's `just merge-feature FEATURE [SOURCE]`
+where it has one: that refuses the default branch and runs no delivery hooks or stamps,
+and the project's landing (`land` where it has one) remains the completed feature
+delivery command. Run only focused checks needed for that slice;
+no slice-level full build, full suite, reviewer staffing, certificate, stamps or
+landing. Close the slice with its integration commit and focused result using
+tasks done. When the complete feature is ready, the parent goes to review once
+with its evidence, then lands. Review fixes stay with that parent and do not
+create independent delivery rounds.
 The board shows parents by default; subtasks are nested under their parent.
 This rule supersedes conflicting per-subtask gate instructions.
+
+## Evidence is the gate
+
+A task's gate, parent or slice, feature or fix, is evidence that what it changed
+works, not the full suite: the tests closest to the change and the project's
+lint, posted with their exact commands and results, plus what the kind of change
+calls for (before and after screenshots of a changed page, a measurement before
+and after). A reviewer reruns those tests, never the suite, judges whether the
+evidence is good enough for the change's risk, and records its approval as the
+task's stamp. Higher risk asks for stronger evidence, never for the whole suite.
+The full verification runs on the project's main line on its own schedule, such
+as a nightly, and a red run there is filed as a task of its own. The project's
+guidance names its focused checks, its stamp and its nightly.
 
 
 Read the destination project's task conventions and permissions first. Use the
@@ -75,8 +89,10 @@ pending: what must not be built yet
 touches: files/areas it changes, and tasks it must not collide with
 acceptance: observable behavior and error cases
 evidence: the tests that cover the change and their green run, posted on the
-  thread after implementing under the project's test policy
-gates: the destination project's required checks, review evidence and landing
+  thread after implementing under the project's test policy, and what the kind
+  of change calls for (before and after screenshots of a changed page)
+gates: the focused checks the change needs (the tests closest to it and the
+  project's lint, never the full suite), review evidence and landing
   prerequisites, using its configured entrypoints; do not invent recipes
 rulings: owner answers that apply here, quoted as already approved principles,
   never proposed again on a card; unseen designs applying them still need review

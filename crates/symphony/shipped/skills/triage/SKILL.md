@@ -9,8 +9,8 @@ The owner decides. Read the project's review conventions, permissions and local
 taste guidance. Follow its model, validation and landing policy.
 Generic Symphony supplies no visual taste data.
 
-1. Run just symphony-status --tidy, then symphony triage stats --root ROOT through
-   the project's CLI entrypoint. Use live numbers, never remembered approval rates.
+1. Run `just symphony-status --tidy`, then `just symphony-cli triage stats --root .`.
+   Use live numbers, never remembered approval rates.
 2. Read open notes and inspect every candidate. An approval with a note still
    creates work. Use apply-review for document changes.
 3. Record a design as answered only when the owner's exact words decide it. Real
@@ -19,7 +19,7 @@ Generic Symphony supplies no visual taste data.
 4. Check dependencies and project quality checks before recommending approval.
    Rank an unapproved source artifact first. Repair concrete defects within scope
    and post replacements using project plugin commands.
-5. Run symphony triage queue 10 --root ROOT and give the owner the ranked list
+5. Run `just symphony-cli triage queue 10 --root .` and give the owner the ranked list
    with reasons. Say what was fixed, what their words answered and what still
    needs their judgment.
 6. Record owner corrections in project-local taste or guidance with their source.

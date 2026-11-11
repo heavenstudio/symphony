@@ -79,7 +79,8 @@ retired implicit bundles cannot replace it. A foreground preview override remain
 `just client-check` rebuilds into a separate directory and compares every freshly
 built path and byte with that committed distribution. Retained older hashes are
 allowed for open pages. `just verify` runs lint, that real client check and the
-workspace's native/headless browser tests locally. Local acceptance requires a working
+workspace's native/headless browser tests locally: the nightly's full verification, never a
+task's gate ([CHECKS](docs/CHECKS.md#the-nightly)). Local acceptance requires a working
 Chrome executable; the consuming project's game, display and gate binaries are not prerequisites.
 This repository has no hosted GitHub CI requirement.
 
@@ -117,17 +118,36 @@ started on.
 count as its heartbeat only after a command of that shape binds it, and one that runs
 the binary by its path reads lost while it works.
 
-**Verify in a clean checkout.** Run `just verify` in a worktree outside this folder
-(`../symphony-wt/`), on a tip whose client distribution was rebuilt with
-`just client-update` when the check asks for it.
+**Evidence, not the suite.** A task's gate is the tests closest to what it changed and
+`just lint-rs`, with `just client-update` for a client change, posted on its thread as evidence
+a reviewer judges and stamps (RULES.md `workflow/evidence-is-the-gate`; how to pick the tests and
+what each kind of change shows: [CHECKS](docs/CHECKS.md)). No task runs `just verify`, whatever
+its brief asks: it is the nightly's, on main's tip in a clean checkout outside this folder
+(`../symphony-wt/`), which the task `tools/release-nightly` makes.
 
 ## Agent integration
 
 `symphony init --root ROOT` installs the seven generic skills, their Claude links,
-Claude allow rules, heartbeat and memory-guard commands, and Codex rules. Stamped
-copies are kept current; an unstamped project copy wins. Project-specific skills and
-taste data stay in the project. Retirement removes managed files and links, retaining
-project data. It writes no permission rule but the allow rules.
+Claude allow rules, heartbeat and memory-guard commands, Codex rules and the recipes
+the skills name (`crates/symphony/shipped/symphony.just`: `tasks`, `agent-send`,
+`symphony`, `symphony-cli`, `symphony-status`, `symphony-reply`, `symphony-ask`). A
+project's justfile imports `symphony.just` under `set allow-duplicate-recipes`, so a
+recipe of its own of the same name wins; init writes that justfile only where there is
+none, and adds `/.target/` and the artifacts folder to `.gitignore`. Each recipe runs
+the project's build linked at `.target/bin/NAME`, else the main checkout's link from a
+linked worktree, else NAME on PATH (`crates/symphony/src/builds.rs`, which the
+Symphony's board clients share). Stamped copies are kept current; an unstamped
+project copy wins. Project-specific skills and taste data stay in the project.
+Retirement removes managed files and links, retaining project data. It writes no
+permission rule but the allow rules, which, like the Codex rules, allow the board and
+reply recipes (`tasks`, `agent-send`, `symphony-status`, `symphony-reply`,
+`symphony-ask`) and not the two server recipes: `just symphony` starts, replaces or
+stops the machine's shared server, and `just symphony-cli` reaches `serve`, `init`
+and `publish-client`, so an agent is asked first. Init ends by printing what is left (`Next:`): the project file, its document folders, the justfile's import, the
+links to the project's builds, the board's SurrealDB and the machine's registration,
+and warns on stderr while the heartbeat's links are missing. Every `just NAME` in
+the shipped skills, the docs and the binaries' strings is an installed recipe or the
+consumer's landing (`crates/symphony/tests/hooks/named_recipes.rs`).
 
 `symphony hook tasks-beat` reads the tool event from stdin and finds its board through
 the board's project lookup. Keys and live-build records belong to that repository's
@@ -157,9 +177,11 @@ alone: with no link, or a link to a build older than the guard, the call goes th
 ## Command ownership
 
 `just symphony` runs the server, `just symphony-cli ARGS` the document CLI, and
-`just tasks ARGS` and `just agent-send ARGS` the board entrypoints. These execute
-this workspace's declared binaries through ordinary Cargo. The standalone
-workspace requires no project gate or landing executable.
+`just tasks ARGS` and `just agent-send ARGS` the board entrypoints. This
+repository's justfile imports the installed `symphony.just` like any project's, and
+its own recipes of those names win: they execute this workspace's declared binaries
+through ordinary Cargo. The standalone workspace requires no project gate or landing
+executable.
 
 Board roles, verdicts and configured review callbacks belong to Symphony. The
 consumer supplies verification, certificates, approval policy and landing. The

@@ -167,7 +167,7 @@ fn kept_line(verb: &str, kept: &reap::Kept) -> String {
     )
 }
 
-/// `clean [--dry-run]`: cleanup, then one idle sweep, at once (`just clean`), under their own rules
+/// `clean [--dry-run]`: cleanup, then one idle sweep, at once (`just tasks clean`), under their own rules
 /// and never closing the caller's terminal or session: what closed, and why each terminal of the
 /// board left open stays.
 pub(super) fn clean(store: &Store, c: &mut Context) -> Result<(), Stop> {

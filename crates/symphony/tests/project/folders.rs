@@ -179,7 +179,7 @@ fn a_document_and_its_folder_open_by_their_route_from_the_projects_folder() {
     let tree = manual();
     tree.write("manual/guide/README.md", "# The guide\n\nRead me.\n");
     let render = Render::new(&tree.root);
-    let doc = docview::document(&render, "docs/guide/START.md", "").unwrap();
+    let doc = docview::document(&render, "docs/guide/START.md", "", &[]).unwrap();
     assert_eq!(
         (doc.path.as_str(), doc.title.as_str()),
         ("docs/guide/START.md", "Start")
@@ -202,11 +202,11 @@ fn a_document_and_its_folder_open_by_their_route_from_the_projects_folder() {
         "docs/../docs/STRAY.md",
     ] {
         assert!(
-            docview::document(&render, refused, "").is_err(),
+            docview::document(&render, refused, "", &[]).is_err(),
             "{refused}"
         );
     }
-    let folder = docview::folder(&render, "docs/guide", "").unwrap();
+    let folder = docview::folder(&render, "docs/guide", "", &[]).unwrap();
     assert_eq!(
         folder.intro.map(|intro| intro.path),
         Some("docs/guide/README.md".to_string())
@@ -219,7 +219,7 @@ fn a_document_and_its_folder_open_by_their_route_from_the_projects_folder() {
             .collect::<Vec<_>>(),
         ["docs/guide/START.md"]
     );
-    assert!(docview::folder(&render, "manual/guide", "").is_err());
+    assert!(docview::folder(&render, "manual/guide", "", &[]).is_err());
     assert_eq!(
         symphony::tree::index_order(&tree.root, "docs"),
         [
@@ -241,7 +241,7 @@ fn a_documents_card_links_and_pictures_resolve_in_the_projects_folder() {
         "# Start\n\nAs **pick** says.\n\n![shot](shot.png)\n",
     );
     std::fs::write(tree.path("manual/guide/shot.png"), PNG_5X7).unwrap();
-    let doc = docview::document(&Render::new(&tree.root), "docs/guide/START.md", "").unwrap();
+    let doc = docview::document(&Render::new(&tree.root), "docs/guide/START.md", "", &[]).unwrap();
     let blocks = serde_json::to_string(&doc.sections).unwrap();
     assert!(blocks.contains("\"/docs/DECISIONS.md#pick\""), "{blocks}");
     assert!(
@@ -285,7 +285,7 @@ fn a_folder_spelled_with_dot_slash_names_its_documents_and_cards_as_any_other() 
     );
     assert_eq!(Project::of(&tree.root).view().register, "docs/DECISIONS.md");
     let render = Render::new(&tree.root);
-    assert!(docview::document(&render, "docs/DECISIONS.md", "").is_ok());
+    assert!(docview::document(&render, "docs/DECISIONS.md", "", &[]).is_ok());
 }
 
 #[test]
