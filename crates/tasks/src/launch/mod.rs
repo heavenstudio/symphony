@@ -16,7 +16,7 @@
 //! way. [`cleanup`] closes unneeded terminals (killed, then removed), each closure recorded on its
 //! task with the restore line; [`finish`] is the same for one task that just became done or
 //! cancelled (its worktree is the worktree sweep's, `tasks sweep --task`). [`reap`] is the periodic
-//! sweep of idle agents (`just clean` runs one). [`close`] closes one agent's terminal on its
+//! sweep of idle agents (`just tasks clean` runs one). [`close`] closes one agent's terminal on its
 //! orchestrator's word, whatever it holds, recorded the same way, under the rules its module gives.
 //!
 //! A terminal is closed only when all of these hold: it is this board's (`sf.board`); its agent is

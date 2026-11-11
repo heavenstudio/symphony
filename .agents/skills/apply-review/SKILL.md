@@ -2,7 +2,7 @@
 name: apply-review
 description: Apply the owner's review verdicts to the design docs. Use after the owner has reviewed in the Symphony (`just symphony`) — answers every open note in docs/DECISIONS.md, turns rejections into new proposal cards, and rewrites documents that disagree with a verdict under the project's workflow. Trigger on "apply my review", "I made decisions", "I left comments", or /apply-review.
 ---
-<!-- symphony-stamp: 4d4c9c53f0947e11 files=SKILL.md,rewrite-brief.md -->
+<!-- symphony-stamp: 1d9dae56bdebf827 files=SKILL.md,rewrite-brief.md -->
 
 # Apply the owner's review
 
@@ -51,7 +51,7 @@ do not treat it as approval, and change documents only when it asks for that.
 
 3. **Answer every open item in the register** with one dated line appended
    under the card, `  [YYYY-MM-DD HH:MM] agent — <reply>` (continuation lines
-   indented four spaces; see `docs/workflow/REVIEW.md`). Never edit the owner's words
+   indented four spaces). Never edit the owner's words
    or marker, and never rewrite an earlier line: history is append-only. Plain words; explain jargon the owner asked about. A reply may use
    markdown links and images (the web app renders them), which is how to answer
    "show me side by side" with an existing picture under `artifacts/`.
