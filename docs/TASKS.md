@@ -472,7 +472,8 @@ or reviewer that is `running_test` counts as present however quiet the board say
 Counts and the clock do not trigger delivery. A departure alone pushes nothing;
 an entry that stays present is never re-sent, and an ordinary entry that leaves and returns pushes once.
 The first PULL a recipient receives is the whole digest: `PULL HH:MM` with every count, then each list's
-first six rows and how many more it holds. Each later one says only what changed since the last PULL it
+first six rows and how many more it holds, but `unanswered`, whose every post is listed with the command that
+answers it, since a post a PULL tells is never told again. Each later one says only what changed since the last PULL it
 acknowledged: the counts that moved (`PULL ready_unstaffed=34 (was 33)`, or `PULL counts unchanged`), the
 liveness and low-volume lines it was not told, each row a list gained, and `resolved LIST a, b` for the rows
 that left it. A backlog of 33 that gains one row is that header and one row. What the last acknowledged PULL said

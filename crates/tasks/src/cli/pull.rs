@@ -390,9 +390,10 @@ impl Digest {
     }
 }
 
-/// The first [`SHOWN`] lines of list `name`, and how many more it holds.
+/// The first [`SHOWN`] lines of list `name`, and how many more it holds; every unanswered post, each
+/// with the command that answers it, since a post a PULL tells is never told again.
 fn shown(name: &str, mut listed: Vec<String>) -> Vec<String> {
-    if listed.len() > SHOWN {
+    if listed.len() > SHOWN && name != "unanswered" {
         let more = listed.len() - SHOWN;
         listed.truncate(SHOWN);
         listed.push(format!("  {name} … and {more} more"));

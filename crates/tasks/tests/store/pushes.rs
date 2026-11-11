@@ -96,6 +96,40 @@ fn what_its_own_children_take_on_and_let_go_is_not_pushed_but_their_moves_are() 
 }
 
 #[test]
+fn a_pull_names_every_unanswered_post_it_tells_however_many() {
+    let f = Fixture::empty();
+    let (orch, o) = orchestrator(&f);
+    let barrier = f.session("worker");
+    // Eight executors, each sent a post, all gone quiet past the half hour a post waits.
+    let posts: Vec<i64> = (0..8)
+        .map(|n| {
+            let slug = format!("tools/gap-{n}");
+            f.task(&slug);
+            f.store.claim(&slug, &f.session("worker")).unwrap();
+            let post = f.store.say(&slug, "owner", "continue", Some("@executor"));
+            post.unwrap().id
+        })
+        .collect();
+    o.drain(&f, &barrier, &orch);
+    f.advance(31.0 * 60.0);
+    for handle in [&orch, &barrier] {
+        f.store.touch(handle).unwrap();
+    }
+    f.store.dispatch_callbacks().unwrap();
+    let told = o.drain(&f, &barrier, &orch);
+    // Each line names a post and the command that answers it: none is cut, since each is told once.
+    let unanswered: Vec<&String> = (told.iter())
+        .filter(|line| line.starts_with("unanswered "))
+        .collect();
+    assert_eq!(unanswered.len(), posts.len(), "{told:?}");
+    for id in posts {
+        let named = format!(" post #{id} — ");
+        assert!(unanswered.iter().any(|l| l.contains(&named)), "{told:?}");
+    }
+    assert!(!told.iter().any(|l| l.contains("unanswered …")), "{told:?}");
+}
+
+#[test]
 fn its_own_move_is_never_echoed_to_it() {
     let f = Fixture::empty();
     let (orch, o) = orchestrator(&f);
