@@ -604,6 +604,112 @@ fn revised_cards_count_once_and_answered_branch_questions_stay_in_navigation() {
     );
 }
 
+/// The owner's register on 2026-11-11 16:2x, as main held it: `reports-small-choices` never answered
+/// and `desktop-client` asked at 15:26 and answered at 15:44 by an agent ending in a question, while
+/// the card's branch kept an older copy with a question the owner left there at 14:34.
+#[test]
+fn a_card_main_answered_since_the_fork_counts_as_mains_beside_its_branch_copy() {
+    isolated(
+        "a_card_main_answered_since_the_fork_counts_as_mains_beside_its_branch_copy",
+        |_| {
+            let desktop = "### Desktop client\n\n- [ ] **desktop-client** — A Symphony app for the Mac.\n  [2026-11-11 14:07] agent — Posted for the board task `product/desktop-client`.\n\n    **A, a thin shell.** Each server's window loads that server's own pages.\n  [2026-11-11 14:33] agent — Corrections to the entry above, after a review of its clarity.\n";
+            let tree = repository();
+            tree.write(
+                DOC,
+                &register(&format!("## Needs your decision\n\n{desktop}\n")),
+            );
+            commit(&tree.root, "base", 1);
+            let wt = branch(&tree, "product/desktop-client", "desktop");
+            std::fs::write(wt.join("docs/analysis.md"), "# Desktop client\n").unwrap();
+            commit(&wt, "analysis", 2);
+            let asked_there = desktop.replace("[ ]", "[?]")
+                + "  [2026-11-11 14:34] owner · question — Consider that a phone app would come next.\n";
+            std::fs::write(
+                wt.join(DOC),
+                register(&format!("## Waiting on an agent\n\n{asked_there}\n")),
+            )
+            .unwrap();
+            let answered = desktop.replace("[ ]", "[?]")
+                + "  [2026-11-11 15:26] owner · question — 1. Should the badge also cover questions agents ask you on tasks?\n    Yes.\n    But considering there will be an iOS app, how would this change the decided upon solution here?\n  [2026-11-11 15:44] agent — Your five answers, each with what it changes, then the iPhone app.\n\n    So the phone strengthens A.\n  [2026-11-11 15:44] agent · question — How is the app built? A, B or C. Recommended: A.\n";
+            let small = "### Reports, small choices\n\n- [ ] **reports-small-choices** — Six smaller choices for the Runs and Reports pages.\n  [2026-11-11 15:45] agent — Posted for the board task `product/reports-and-monitoring`.\n";
+            let main = register(&format!("## Needs your decision\n\n{small}\n{answered}\n"));
+            tree.write(DOC, &main);
+            commit(&tree.root, "docs: owner verdicts", 3);
+
+            let cards = branches::branch_cards(&tree.root);
+            let listed: Vec<_> = cards
+                .iter()
+                .map(|c| {
+                    (
+                        c.card.slug.as_str(),
+                        c.beside_main,
+                        c.card.group(&common::plain()),
+                    )
+                })
+                .collect();
+            assert_eq!(listed, [("desktop-client", true, symphony::Group::Agent)]);
+
+            // The tidy puts both of main's cards under "Needs your decision" ...
+            let tidied = symphony::register::sort_register(&main, &common::plain()).unwrap();
+            let needs = tidied
+                .split("\n## ")
+                .find(|group| group.starts_with("Needs your decision"))
+                .unwrap();
+            let mut tidy_slugs: Vec<&str> = ["desktop-client", "reports-small-choices"]
+                .into_iter()
+                .filter(|slug| needs.contains(&format!("**{slug}**")))
+                .collect();
+            tidy_slugs.sort_unstable();
+            assert_eq!(tidy_slugs, ["desktop-client", "reports-small-choices"]);
+            // ... and so do the status, the board's header and progress, its queue and its pages.
+            let status = common::status_ok(&tree.root, &[]);
+            assert!(
+                common::matches(r"(?m)^  needs your decision +2$", &status),
+                "{status}"
+            );
+            let snapshot = symphony::dashboard::snapshot(&tree.root, &cards, "test").unwrap();
+            assert_eq!(snapshot.board.counts.waiting, 2);
+            assert_eq!(snapshot.board.counts.docs_waiting, 1);
+            assert_eq!(snapshot.board.progress.decisions_waiting, 2);
+            let mut waiting: Vec<_> = snapshot
+                .queue
+                .waiting
+                .iter()
+                .map(|c| (c.doc.as_str(), c.slug.as_str(), c.why.as_str()))
+                .collect();
+            waiting.sort_unstable();
+            assert_eq!(
+                waiting,
+                [
+                    (DOC, "desktop-client", "design · an agent asks you"),
+                    (DOC, "reports-small-choices", "design call"),
+                ]
+            );
+            let pending: Vec<_> = snapshot
+                .pending
+                .items
+                .iter()
+                .map(|c| c.href.as_str())
+                .collect();
+            assert_eq!(
+                pending,
+                [
+                    "/docs/DECISIONS.md#reports-small-choices",
+                    "/docs/DECISIONS.md#desktop-client"
+                ]
+            );
+            // The branch's copy still waits on an agent there, on its own page.
+            assert!(
+                snapshot
+                    .queue
+                    .agent
+                    .iter()
+                    .any(|c| c.href == "/@product~desktop-client/docs/DECISIONS.md#desktop-client")
+            );
+        },
+    );
+}
+
 #[test]
 fn distinct_branch_revisions_keep_their_counts_actions_and_navigation_after_one_is_approved() {
     isolated(
