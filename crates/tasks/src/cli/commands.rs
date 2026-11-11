@@ -161,6 +161,14 @@ pub fn run(store: &Store, c: &mut Context) -> Result<(), Stop> {
     match p.command.as_str() {
         "callback" => {
             let actor = c.actor()?;
+            let web = p.get("session_url");
+            if let Some(url) = web {
+                let kept = store.set_session_url(&actor, url)?;
+                c.say(&format!(
+                    "SESSION URL {actor} {}",
+                    kept.as_deref().unwrap_or("none")
+                ));
+            }
             let address = if p.flag("off") {
                 None
             } else {
@@ -174,6 +182,9 @@ pub fn run(store: &Store, c: &mut Context) -> Result<(), Stop> {
                     .or_else(|| c.env.var("CODEX_THREAD_ID").map(|id| format!("codex:{id}")))
             };
             if !p.flag("off") && address.is_none() {
+                if web.is_some() {
+                    return Ok(());
+                }
                 return Err(Stop::Refused("no native callback detected; pass an address, use inbox for an in-process subagent, or --off to unregister".into()));
             }
             store.callback_in(
@@ -196,7 +207,17 @@ pub fn run(store: &Store, c: &mut Context) -> Result<(), Stop> {
             ));
         }
         "register" => {
+            // Checked before the session exists, so a refused address registers nothing.
+            let web = p
+                .get("session_url")
+                .map(crate::session_url::checked)
+                .transpose()
+                .map_err(Stop::Refused)?
+                .flatten();
             let session = store.register(&new_session(c, None))?;
+            if let Some(url) = web {
+                store.set_session_url(&session.row.handle, &url)?;
+            }
             c.say(&session.row.handle);
         }
         "attach" => attach(store, c)?,

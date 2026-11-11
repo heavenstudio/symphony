@@ -22,6 +22,8 @@ pub struct Data {
     pub before: Option<i64>,
     pub agent_total: usize,
     pub approval: Option<(symphony_api::TaskOffer, f64)>,
+    /// The agents page was asked from the server's own machine (`AgentPage::local`).
+    pub local: bool,
     page: String,
     child_cursor: Option<String>,
     agent_cursor: Option<String>,
@@ -99,6 +101,7 @@ pub async fn load(route: Memo<String>, mut data: Signal<Data>) {
             Ok(page) => {
                 if route() == selected {
                     data.write().agents = Some(page.view);
+                    data.write().local = page.local;
                     data.write().tasks = Some(page.tasks);
                     data.write().agent_total = page.total;
                     data.write().agent_cursor = page.next;
@@ -492,6 +495,7 @@ pub async fn more_agents(lost: bool, route: Memo<String>, mut data: Signal<Data>
     {
         Ok(page) if route() == "/agents" => {
             let mut shown = data.write();
+            shown.local = page.local;
             if lost {
                 shown.lost_cursor = page.next;
                 shown.lost_loaded = true;

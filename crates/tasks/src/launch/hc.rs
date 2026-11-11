@@ -42,6 +42,12 @@ pub trait Hc {
     /// What `herdr-app ARGS` printed: `LaunchError` when the window did not answer.
     fn app(&self, args: &[&str]) -> Result<String, LaunchError>;
 
+    /// Bring the Herdr app's window in front of the others on this machine: whether it did. Only a
+    /// macOS app bundle can be brought forward ([`Binary`]); a stand-in has none, and nothing is.
+    fn raise(&self) -> Result<bool, LaunchError> {
+        Ok(false)
+    }
+
     /// The terminal the caller runs in (`HC_TERMINAL_ID`), never closed by the board.
     fn caller(&self) -> Option<String>;
 
@@ -322,6 +328,30 @@ impl Hc for Binary {
         answer("herdr-app", args, done)
     }
 
+    /// `open -a BUNDLE`, which brings a running app forward without starting another: the macOS
+    /// app bundle `HERDR_APP_BIN`'s program lies in, its links followed. A program in no bundle (a
+    /// stand-in, another system's build) has no window macOS can bring forward: nothing is run.
+    fn raise(&self) -> Result<bool, LaunchError> {
+        if !cfg!(target_os = "macos") {
+            return Ok(false);
+        }
+        let Some(program) = self.app.as_ref().ok().and_then(|words| words.first()) else {
+            return Ok(false);
+        };
+        let Some(bundle) = located(program, &self.env)
+            .and_then(|found| std::fs::canonicalize(found).ok())
+            .and_then(|found| bundle_of(&found))
+        else {
+            return Ok(false);
+        };
+        let mut command = sys::command_with("/usr/bin/open", &self.env.vars);
+        command.arg("-a").arg(&bundle).current_dir(&self.env.cwd);
+        let done = probes::within(&mut command, PATIENCE)
+            .map_err(|why| LaunchError(format!("open -a {}: {why}", bundle.display())))?;
+        let named = bundle.to_string_lossy();
+        answer("open", &["-a", &named], done).map(|_| true)
+    }
+
     fn caller(&self) -> Option<String> {
         self.env
             .var("HC_TERMINAL_ID")
@@ -332,6 +362,25 @@ impl Hc for Binary {
     fn board(&self) -> String {
         board_of(&self.env)
     }
+}
+
+/// Where `program` is: a path (one with a `/`) from `env`'s working directory, else the first
+/// file of that name in `env`'s `PATH`.
+fn located(program: &str, env: &Env) -> Option<std::path::PathBuf> {
+    if program.contains('/') {
+        return Some(env.cwd.join(program));
+    }
+    std::env::split_paths(env.var("PATH")?)
+        .map(|dir| dir.join(program))
+        .find(|candidate| candidate.is_file())
+}
+
+/// The macOS app bundle (a folder named `NAME.app`) the program at `path` lies in, if any.
+fn bundle_of(path: &std::path::Path) -> Option<std::path::PathBuf> {
+    path.ancestors()
+        .skip(1)
+        .find(|dir| dir.extension().is_some_and(|ext| ext == "app"))
+        .map(std::path::Path::to_path_buf)
 }
 
 /// The [`BOARD_LABEL`] of the board `env` reaches: the main checkout's folder name, then the
@@ -591,5 +640,60 @@ mod tests {
         assert!(!is_not_found(&window));
         let plain = answer("hc", &["ls"], failed("", "socket gone")).unwrap_err();
         assert_eq!(plain.0, "hc ls: socket gone");
+    }
+
+    #[test]
+    fn the_bundle_a_program_lies_in_is_the_nearest_folder_named_app() {
+        use std::path::{Path, PathBuf};
+        let bundle = |path: &str| bundle_of(Path::new(path));
+        assert_eq!(
+            bundle("/Applications/Herdr.app/Contents/MacOS/Herdr"),
+            Some(PathBuf::from("/Applications/Herdr.app"))
+        );
+        assert_eq!(
+            bundle("/Users/x/Apps/Outer.app/Contents/Helpers/Inner.app/Contents/MacOS/inner"),
+            Some(PathBuf::from(
+                "/Users/x/Apps/Outer.app/Contents/Helpers/Inner.app"
+            ))
+        );
+        // The program itself is never its own bundle, and a build folder is none.
+        assert_eq!(bundle("/tmp/Odd.app"), None);
+        assert_eq!(bundle("/repo/.target/debug/fake-hc"), None);
+        assert_eq!(bundle("herdr-app"), None);
+    }
+
+    #[test]
+    fn a_program_is_located_by_its_path_or_on_path_and_a_stand_in_is_never_raised() {
+        let dir = std::env::temp_dir().join(format!("hc-located-{}", std::process::id()));
+        let bin = dir.join("bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        std::fs::write(bin.join("herdr-app"), "").unwrap();
+        let env = |vars: &[(&str, String)]| Env {
+            vars: vars
+                .iter()
+                .map(|(k, v)| ((*k).to_string(), v.clone()))
+                .collect(),
+            cwd: dir.clone(),
+        };
+        let path = format!("/nowhere:{}", bin.display());
+        assert_eq!(
+            located("herdr-app", &env(&[("PATH", path.clone())])),
+            Some(bin.join("herdr-app"))
+        );
+        assert_eq!(located("hc", &env(&[("PATH", path)])), None);
+        assert_eq!(located("herdr-app", &env(&[])), None);
+        assert_eq!(
+            located("bin/herdr-app", &env(&[])),
+            Some(dir.join("bin/herdr-app"))
+        );
+        // A program in no bundle has no window to bring forward: nothing runs.
+        let stand_in = Binary::of(&env(&[(
+            "HERDR_APP_BIN",
+            format!("{} app", bin.join("herdr-app").display()),
+        )]));
+        assert_eq!(stand_in.raise(), Ok(false));
+        let unnamed = Binary::of(&env(&[("HERDR_APP_BIN", String::new())]));
+        assert_eq!(unnamed.raise(), Ok(false));
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 }

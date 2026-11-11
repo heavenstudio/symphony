@@ -302,9 +302,12 @@ async fn head(mut request: Request, next: Next) -> Response {
 async fn judge(
     State(shared): State<Arc<Shared>>,
     ConnectInfo(peer): ConnectInfo<SocketAddr>,
-    request: Request,
+    mut request: Request,
     next: Next,
 ) -> Response {
+    // The peer as judged, for the routes that ask where a request came from: the extractor reads
+    // a connection's address or a test's mock alike, a plain extension read only the first.
+    request.extensions_mut().insert(ConnectInfo(peer));
     let ip = peer.ip();
     let allowed = ip.is_loopback() || {
         let shared = shared.clone();
@@ -413,6 +416,10 @@ async fn answer(State(shared): State<Arc<Shared>>, request: Request) -> Response
     *metadata.method_mut() = request.method().clone();
     *metadata.uri_mut() = request.uri().clone();
     *metadata.headers_mut() = request.headers().clone();
+    // Where the request came from: a Go to session focuses a pane only for this machine's own.
+    if let Some(peer) = request.extensions().get::<ConnectInfo<SocketAddr>>() {
+        metadata.extensions_mut().insert(*peer);
+    }
     let response = match crate::api::answer(&shared, metadata).await {
         Some(response) => response,
         None => match crate::write::methods(request.uri().path()) {
