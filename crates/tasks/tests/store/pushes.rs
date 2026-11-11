@@ -359,6 +359,88 @@ fn what_the_owner_says_to_nobody_is_read_by_every_orchestrator_until_one_takes_i
     assert!(f.store.callback_inbox(&second).unwrap().is_empty());
 }
 
+/// Whether `lines` are a whole digest: its header, first, names every count, changed or not.
+fn whole(lines: &[String]) -> bool {
+    lines.first().is_some_and(|header| {
+        header.starts_with("PULL ") && header.contains(" executing=") && header.contains(" idle=")
+    })
+}
+
+#[test]
+fn a_waiter_that_registers_a_channel_hears_the_whole_digest_there_first() {
+    let f = Fixture::empty();
+    let reader = f.session("orchestrator");
+    assert!(whole(&read(&f, &reader)));
+    f.task("tools/new");
+    read(&f, &reader);
+    let o = listen(&f, &reader);
+    let first: Vec<String> = o.text().lines().map(str::to_owned).collect();
+    assert!(whole(&first), "{first:?}");
+    assert!(first.contains(&"ready_unstaffed p2 tools/new — Jump departure".to_string()));
+}
+
+#[test]
+fn a_channel_another_process_listens_on_starts_from_the_whole_digest() {
+    for elsewhere in [false, true] {
+        let f = Fixture::empty();
+        let (orch, o) = orchestrator(&f);
+        let barrier = f.session("worker");
+        f.task("tools/told");
+        o.drain(&f, &barrier, &orch);
+        if elsewhere {
+            // The registration as a listener in another process made it.
+            let other = f.store.client().query(
+                "UPDATE type::record('callback_state', $handle) SET owner = { pid: 1, started: 'before' } RETURN NONE;",
+                serde_json::json!({"handle": orch}),
+            );
+            other.unwrap();
+        }
+        let moved = Listener::new(&format!("{}-moved", f.store.client().database()));
+        let address = format!("uds:{}", moved.path.display());
+        f.store
+            .callback(&orch, Some(&address), false, false)
+            .unwrap();
+        let first = moved.drain(&f, &barrier, &orch);
+        if elsewhere {
+            assert!(whole(&first), "{first:?}");
+            let told = "ready_unstaffed p2 tools/told — Jump departure";
+            assert!(first.iter().any(|line| line == told), "{first:?}");
+        } else {
+            // The same listener on a new socket keeps what it was told.
+            assert!(first.is_empty(), "{first:?}");
+        }
+    }
+}
+
+#[test]
+fn a_channel_turned_off_starts_the_wait_from_the_whole_digest_but_a_told_post() {
+    let f = Fixture::empty();
+    let (orch, o) = orchestrator(&f);
+    let barrier = f.session("worker");
+    f.task("tools/gap");
+    f.store.claim("tools/gap", &f.session("worker")).unwrap();
+    let post = (f.store)
+        .say("tools/gap", "owner", "continue", Some("@executor"))
+        .unwrap();
+    o.drain(&f, &barrier, &orch);
+    f.advance(31.0 * 60.0);
+    for handle in [&orch, &barrier] {
+        f.store.touch(handle).unwrap();
+    }
+    f.store.dispatch_callbacks().unwrap();
+    let named = format!("unanswered tools/gap post #{} — ", post.id);
+    let told = o.drain(&f, &barrier, &orch);
+    assert!(told.iter().any(|l| l.starts_with(&named)), "{told:?}");
+    f.store.callback(&orch, None, false, false).unwrap();
+    let again = read(&f, &orch);
+    assert!(whole(&again), "{again:?}");
+    assert!(again[0].contains(" unanswered=1 "), "{again:?}");
+    assert!(
+        !again.iter().any(|l| l.starts_with("unanswered ")),
+        "{again:?}"
+    );
+}
+
 #[test]
 fn a_session_with_a_channel_or_gone_cannot_read_by_waiting() {
     let f = Fixture::empty();

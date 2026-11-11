@@ -2,7 +2,7 @@
 name: task-orchestrator
 description: Keep the development pipeline healthy through the task board: find approved work, file complete briefs, staff executors and independent reviewers, and follow the project's landing contract.
 ---
-<!-- symphony-stamp: ada57f8295f13a2c files=SKILL.md -->
+<!-- symphony-stamp: ab679c7450b5c148 files=SKILL.md -->
 
 # Orchestrate development from the board
 
@@ -42,14 +42,19 @@ product-specific policy or taste data.
 1. Reuse your handle or register as an orchestrator. Take the orchestrator role
    with just tasks role SLUG orchestrator --as HANDLE. Register your native callback
    with just tasks callback --as HANDLE. A registered chat recipient wins over the
-   orchestrator fallback; an agent without a native channel uses its board inbox.
+   orchestrator fallback. Without a native channel, run just tasks wait --as HANDLE
+   in the background and again each time it exits: it carries the same lines and
+   holds a vacant chat seat. An agent that cannot wait uses its board inbox.
 2. Read just tasks list and just tasks agents --json. The agents API reports work,
    roles, branch, checkout, presence, active tests and blocked input. Use it to find
    who is doing what; the configured multiplexer is only a control surface.
-3. Act on the PULL digest as well as events. Staff ready work, restore orphaned
-   work and arrange independent reviews. File gaps between approved docs and
-   implementation only with evidence, complete acceptance and no existing task.
-   Use the create-task skill.
+3. Act on the PULL digest as well as events. Pushes say only what changed; at each
+   decision point (resuming, before staffing, after a verdict or landing) run
+   just tasks pull --as HANDLE for the whole digest as you hear it, with any owner
+   verdict nobody received. Staff ready work, restore orphaned work and arrange
+   independent reviews. File gaps between approved docs and implementation only
+   with evidence, complete acceptance and no existing task. Use the create-task
+   skill.
 4. Follow the project's integration and dependency policy before starting. Honor
    explicit stacking and source-availability rules in the task. Coordinate file
    ownership and record actual conflicts on the thread.

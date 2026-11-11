@@ -179,6 +179,12 @@ entries heard and not told, the trigger's own test (`pull_account::told`), not t
 older dispatcher's acknowledgement ends `pull_queued` but leaves `pull_awaiting`, and
 `State::said` reads that as no baseline: the next PULL is the whole digest. `tasks pull` prints
 the whole digest the recipient hears now (`pull::heard_now`) and writes nothing.
+A channel registered anew starts from the whole digest: `callback_in` clears the PULL account
+(`pull_entries`, `pull_said`, `pull_withheld`, `pull_awaiting`, `pull_queued`) and takes back a
+waiting PULL when the address goes to or comes from none, or the listener's `owner` differs from
+the one recorded; `pull_unanswered` stays, so a told post stays told. The same listener at a new
+socket keeps the account, which is how a channel that waited out an outage hears what waited
+(`hand_over_outage`, `pending_pull`).
 A recipient is not told its own writes nor its children's staffing (`attach::diff_on`): its own
 moves, a role move it wrote, the roles a session it registered (`parent`) takes or lets go, and
 the move and readiness that child's claim or release makes. A quiet child is said once a health

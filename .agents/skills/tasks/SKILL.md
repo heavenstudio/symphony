@@ -2,7 +2,7 @@
 name: tasks
 description: Join the shared task board and register a native callback so messages reach this session directly. Pull, claim, review or orchestrate tasks and answer on their threads. Trigger on "attach to the tasks", "join the board", "pick up a task", "take work from the board", "orchestrate these tasks", or /tasks.
 ---
-<!-- symphony-stamp: 8b11a26c3aab9752 files=SKILL.md -->
+<!-- symphony-stamp: c6205c4abdc5c442 files=SKILL.md -->
 
 # Work from the task board
 
@@ -105,7 +105,9 @@ repeats on its own. Each PULL after the first says only what changed since the l
 one you received: `PULL name=now (was then)` for each count that moved (`PULL counts
 unchanged` when none did), each row a list gained, and `resolved LIST a, b` for rows
 that left it. `just tasks pull --as HANDLE` prints the whole digest as you hear it
-now, whenever you want it; it changes nothing.
+now, whenever you want it; it changes nothing. A channel you register anew (after
+`--off` or a wait, or from another process) starts again from the whole digest;
+posts you were told stay told.
 
 A session that can hold a background command can take the same lines without a
 channel, unwrapped: run `just tasks wait --as HANDLE` in the background (after

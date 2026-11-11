@@ -203,6 +203,12 @@ RETURN $key;"),
     /// [`Store::callback`] from the hc terminal `terminal`, if the agent runs in one. A Codex
     /// thread also completes the conversation its open launch records left unknown (`codex:`), so
     /// that `restore` can resume it.
+    ///
+    /// A new channel starts from the whole digest: turning the channel off, registering one where
+    /// none was (after `--off` or a `tasks wait`) or one another process listens on forgets which
+    /// PULL the session acknowledged, and a PULL waiting for it gives way to the whole digest. The
+    /// posts it was told stay told. Only the same listener moving to a new socket keeps its
+    /// account, so what waited out an outage is said there as it stands.
     pub fn callback_in(
         &self,
         handle: &str,
@@ -246,6 +252,11 @@ IF $address != NONE AND $agent != NONE AND $binding = true {{ THROW 'refused: in
 LET $other = (SELECT VALUE handle FROM callback_state WHERE address = $address AND handle != $actor AND type::record('session', handle).left_at = NONE ORDER BY handle LIMIT 1)[0];
 IF $address != NONE AND $other != NONE {{ THROW string::concat('refused: callback address already held by ', $other, '; in-process subagents use just tasks inbox'); }};
 LET $old = (SELECT VALUE address FROM ONLY type::record('callback_state', $actor));
+LET $old_owner = (SELECT VALUE owner FROM ONLY type::record('callback_state', $actor));
+IF $old != $address AND ($old = NONE OR $address = NONE OR $old_owner = NONE OR $old_owner != $owner) {{
+    UPDATE type::record('callback_state', $actor) SET pull_entries = NONE, pull_said = NONE, pull_withheld = [], pull_awaiting = NONE, pull_queued = NONE RETURN NONE;
+    UPDATE callback_event SET delivered = true, text = '' WHERE handle = $actor AND delivered != true AND pull_entries != NONE RETURN NONE;
+}};
 IF $address != NONE AND ($old != $address OR ($chat AND !$if_free)) {{
     UPDATE callback_event SET attempts = 0, retry_at = 0, capacity_limited = false WHERE handle = $actor AND delivered != true RETURN NONE;
 }};
@@ -1206,7 +1217,11 @@ RETURN NONE;");
             let told = super::pull_account::told(&state, &entries);
             let lines = match (state.said(), &told) {
                 (Some(said), Some(told)) if !legacy_upgrade => digest.changes_since(said, told),
-                _ => digest.event_lines_since(&state.acknowledged().unwrap_or_default()),
+                // The whole digest; after a new channel reset the account, the posts it was told
+                // stay told.
+                _ => digest.event_lines_since(
+                    &(state.acknowledged()).unwrap_or_else(|| state.pull_unanswered.clone()),
+                ),
             };
             pull_text = (lines.iter().map(|l| event_line(l)))
                 .collect::<Vec<_>>()

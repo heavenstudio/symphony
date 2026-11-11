@@ -104,7 +104,9 @@ repeats on its own. Each PULL after the first says only what changed since the l
 one you received: `PULL name=now (was then)` for each count that moved (`PULL counts
 unchanged` when none did), each row a list gained, and `resolved LIST a, b` for rows
 that left it. `just tasks pull --as HANDLE` prints the whole digest as you hear it
-now, whenever you want it; it changes nothing.
+now, whenever you want it; it changes nothing. A channel you register anew (after
+`--off` or a wait, or from another process) starts again from the whole digest;
+posts you were told stay told.
 
 A session that can hold a background command can take the same lines without a
 channel, unwrapped: run `just tasks wait --as HANDLE` in the background (after
