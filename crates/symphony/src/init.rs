@@ -1,24 +1,55 @@
 //! `symphony init`: the agents' integration files a project needs, installed and kept current.
 //!
-//! The Symphony provides the generic skills, the allow rules (Claude's in `.claude/settings.json`,
-//! Codex's in `.codex/rules/symphony.rules`), the heartbeat hook and the memory guard. Each file it
-//! writes carries a stamp, which is how a later run knows the file is its own to bring up to date. A
-//! file of the same name without the stamp is the project's own: it is the one in use and this never
-//! writes over it. Where the project has none, the Symphony's is used. The project's own skills and
-//! guards sit beside the shipped ones and are never touched. It writes no permission rule but the
-//! allow rules.
+//! The Symphony provides the generic skills, the recipes they run (`symphony.just`), the allow rules
+//! (Claude's in `.claude/settings.json`, Codex's in `.codex/rules/symphony.rules`), the heartbeat
+//! hook and the memory guard. Each file it writes carries a stamp, which is how a later run knows the
+//! file is its own to bring up to date. A file of the same name without the stamp is the project's
+//! own: it is the one in use and this never writes over it. Where the project has none, the
+//! Symphony's is used. The project's own skills and guards sit beside the shipped ones and are never
+//! touched. It writes no permission rule but the allow rules, and each allow rule names a recipe
+//! `symphony.just` holds.
+//!
+//! A project with no justfile gets one importing the recipes; a justfile of the project's is never
+//! written. The project's `.gitignore` gets a line for each folder the Symphony fills that it does
+//! not ignore yet: the build links' `.target/` and the artifacts folder. The run ends with what is
+//! left for the owner to do ([`steps`]), and warns when the heartbeat has no build to run.
 
+use std::ffi::OsStr;
 use std::io;
 use std::path::{Path, PathBuf};
 
 use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
 
+use crate::builds;
+
 /// Where the skills live in a project, and where Claude Code loads them from.
 const SKILLS: &str = ".agents/skills";
 const CLAUDE_SKILLS: &str = ".claude/skills";
 const SETTINGS: &str = ".claude/settings.json";
 const CODEX_RULES: &str = ".codex/rules/symphony.rules";
+/// The Symphony's recipes, beside the project's justfile.
+const RECIPES: &str = "symphony.just";
+const IGNORE: &str = ".gitignore";
+/// The folder of the build links (`builds::LINKS`), which the project's git ignores.
+const TARGET: &str = ".target";
+
+/// The justfile a project without one gets: the recipes, which a recipe written here overrides.
+const JUSTFILE: &str = "\
+# The project's commands. The Symphony's are in symphony.just, which `symphony init` keeps current;
+# a recipe of the same name here is the project's own and wins.
+set allow-duplicate-recipes
+
+import 'symphony.just'
+";
+
+/// Each recipe `symphony.just` holds that runs a binary, and that binary.
+const RUNS: [(&str, &str); 4] = [
+    ("tasks", "tasks"),
+    ("agent-send", "agent-send"),
+    ("symphony", "symphony-server"),
+    ("symphony-cli", "symphony"),
+];
 
 /// The mark on a skill's `SKILL.md` and on the Codex rules file.
 const MARK: &str = "symphony-stamp:";
@@ -58,10 +89,13 @@ const MEMORY_GUARD: Hook = Hook {
 
 const HOOKS: [Hook; 2] = [HEARTBEAT, MEMORY_GUARD];
 
-/// What an agent on the board runs, which Claude allows without a prompt.
-const ALLOW: [&str; 5] = [
+/// What Claude allows without a prompt: the recipes of `symphony.just`, each one, and nothing else.
+const ALLOW: [&str; 8] = [
     "Bash(just tasks:*)",
     "Bash(TASKS_SESSION=* just tasks *)",
+    "Bash(just agent-send:*)",
+    "Bash(just symphony:*)",
+    "Bash(just symphony-cli:*)",
     "Bash(just symphony-status:*)",
     "Bash(just symphony-reply:*)",
     "Bash(just symphony-ask:*)",
@@ -77,6 +111,8 @@ pub struct Skill {
 pub struct Shipped {
     pub skills: Vec<Skill>,
     pub codex_rules: String,
+    /// `symphony.just`: the recipes the skills, docs and messages name.
+    pub recipes: String,
 }
 
 macro_rules! skill {
@@ -105,6 +141,7 @@ impl Shipped {
                 skill!("work"),
             ],
             codex_rules: include_str!("../shipped/codex.rules").to_string(),
+            recipes: include_str!("../shipped/symphony.just").to_string(),
         }
     }
 }
@@ -349,22 +386,118 @@ fn remove_retired(root: &Path, shipped: &Shipped, report: &mut Report) -> io::Re
     Ok(())
 }
 
-fn install_codex_rules(root: &Path, shipped: &Shipped, report: &mut Report) -> io::Result<()> {
-    let path = root.join(CODEX_RULES);
+/// A file the Symphony writes whole, its stamp on its first line (the Codex rules, the recipes),
+/// reported as `entry`.
+fn install_stamped(
+    root: &Path,
+    rel: &str,
+    entry: &str,
+    text: &str,
+    report: &mut Report,
+) -> io::Result<()> {
+    let path = root.join(rel);
     let have = read_optional(&path)?;
     let outcome = match &have {
         _ if is_link(&path) => Outcome::Own,
         Some(text) if !text.lines().next().is_some_and(is_mark_line) => Outcome::Own,
-        _ => match (
-            put(&path, &stamped_rules(&shipped.codex_rules))?,
-            have.is_some(),
-        ) {
-            (false, _) => Outcome::Current,
-            (true, true) => Outcome::Updated,
-            (true, false) => Outcome::Installed,
-        },
+        _ => written(put(&path, &stamped_rules(text))?, have.is_some()),
     };
-    report.push(("codex rules".to_string(), outcome));
+    report.push((entry.to_string(), outcome));
+    Ok(())
+}
+
+/// What a write did: nothing, or brought an old copy up to date, or made the file.
+fn written(wrote: bool, existed: bool) -> Outcome {
+    match (wrote, existed) {
+        (false, _) => Outcome::Current,
+        (true, true) => Outcome::Updated,
+        (true, false) => Outcome::Installed,
+    }
+}
+
+/// The project's justfile at `root`, by any name `just` reads one by: `justfile` in any case, or
+/// `.justfile`.
+fn justfile(root: &Path) -> io::Result<Option<PathBuf>> {
+    let entries = match std::fs::read_dir(root) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(at(root, error)),
+    };
+    let mut names: Vec<String> = entries
+        .collect::<io::Result<Vec<_>>>()
+        .map_err(|error| at(root, error))?
+        .into_iter()
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .filter(|name| matches!(name.to_lowercase().as_str(), "justfile" | ".justfile"))
+        .collect();
+    names.sort();
+    Ok(names.first().map(|name| root.join(name)))
+}
+
+/// Whether a justfile's `text` imports the recipes.
+fn imports(text: &str) -> bool {
+    text.lines().any(|line| {
+        let line = line.split('#').next().unwrap_or_default().trim();
+        let Some(path) = line
+            .strip_prefix("import?")
+            .or_else(|| line.strip_prefix("import"))
+            .filter(|rest| rest.starts_with(char::is_whitespace))
+        else {
+            return false;
+        };
+        let path = path.trim().trim_matches(['\'', '"']);
+        path.strip_prefix("./").unwrap_or(path) == RECIPES
+    })
+}
+
+/// A justfile importing the recipes where the project has none; the project's own is left as it is.
+fn install_justfile(root: &Path, report: &mut Report) -> io::Result<()> {
+    let outcome = if justfile(root)?.is_some() {
+        Outcome::Own
+    } else {
+        put(&root.join("justfile"), JUSTFILE)?;
+        Outcome::Installed
+    };
+    report.push(("justfile".to_string(), outcome));
+    Ok(())
+}
+
+/// Whether a `.gitignore`'s `text` ignores the folder `folder` (project-relative) whole.
+fn ignores(text: &str, folder: &str) -> bool {
+    text.lines().map(str::trim).any(|line| {
+        let line = line.strip_prefix('/').unwrap_or(line);
+        let line = ["/**", "/*", "/"]
+            .iter()
+            .find_map(|end| line.strip_suffix(end))
+            .unwrap_or(line);
+        line == folder
+    })
+}
+
+/// A line in the project's `.gitignore` for each folder the Symphony fills that it does not ignore
+/// yet: the build links' and the artifacts folder `artifacts`.
+fn install_ignores(root: &Path, artifacts: &str, report: &mut Report) -> io::Result<()> {
+    let path = root.join(IGNORE);
+    if is_link(&path) {
+        report.push((IGNORE.to_string(), Outcome::Own));
+        return Ok(());
+    }
+    let have = read_optional(&path)?;
+    let mut text = have.clone().unwrap_or_default();
+    let missing: Vec<&str> = [TARGET, artifacts]
+        .into_iter()
+        .filter(|folder| !ignores(&text, folder))
+        .collect();
+    if !missing.is_empty() {
+        if !text.is_empty() && !text.ends_with('\n') {
+            text.push('\n');
+        }
+        for folder in missing {
+            text.push_str(&format!("/{folder}/\n"));
+        }
+    }
+    let outcome = written(put(&path, &text)?, have.is_some());
+    report.push((IGNORE.to_string(), outcome));
     Ok(())
 }
 
@@ -537,13 +670,229 @@ pub fn init(root: &Path, shipped: &Shipped) -> io::Result<Report> {
     let mut report = Report::new();
     install_skills(root, shipped, &mut report)?;
     remove_retired(root, shipped, &mut report)?;
-    install_codex_rules(root, shipped, &mut report)?;
+    install_stamped(
+        root,
+        CODEX_RULES,
+        "codex rules",
+        &shipped.codex_rules,
+        &mut report,
+    )?;
     install_settings(root, &mut report)?;
+    install_stamped(root, RECIPES, RECIPES, &shipped.recipes, &mut report)?;
+    install_justfile(root, &mut report)?;
+    let artifacts = crate::project::Project::load(root)
+        .map_or_else(|_| "artifacts".to_string(), |project| project.artifacts);
+    install_ignores(root, &artifacts, &mut report)?;
     Ok(report)
 }
 
+/// What the machine tells [`steps`]: its Symphony's folder (the registry's), the search path and
+/// the SurrealDB `SF_SURREAL` names.
+pub struct Machine<'a> {
+    /// None when the machine has no Symphony folder to read.
+    pub folder: Option<&'a Path>,
+    pub path: Option<&'a OsStr>,
+    pub surreal: Option<&'a Path>,
+}
+
+/// The SurrealDB the board of the checkout at `root` would start, when it is not there to run:
+/// `named` (`SF_SURREAL`), else the pinned one in the repository's common dir. None outside a
+/// checkout.
+fn missing_surreal(root: &Path, named: Option<&Path>) -> Option<PathBuf> {
+    let common = symphony_board::git::checkout_common_dir(root)?;
+    let home = symphony_board::server::Home::in_common(&common, named);
+    (!builds::runnable(home.surreal())).then(|| home.surreal().to_path_buf())
+}
+
+/// The heartbeat's builds, which the hooks run from the checkout's links alone.
+const HEARTBEAT_BUILDS: [&str; 2] = ["symphony", "tasks"];
+
+/// The heartbeat's builds the checkout at `root` has no link to.
+fn unlinked_heartbeat(root: &Path) -> Vec<&'static str> {
+    HEARTBEAT_BUILDS
+        .into_iter()
+        .filter(|name| builds::link(root, name).is_none())
+        .collect()
+}
+
+/// What is left for the owner to do after a run at `root`, each one line: what init cannot do for
+/// the project. None left means agents can run the board.
+pub fn steps(root: &Path, machine: &Machine) -> Vec<String> {
+    let mut steps = Vec::new();
+    let project = match crate::project::Project::load(root) {
+        Ok(project) => Some(project),
+        Err(problem) => {
+            steps.push(format!("fix {}: {problem}", crate::project::FILE));
+            None
+        }
+    };
+    if let Some(project) = &project {
+        if !root.join(crate::project::FILE).is_file() {
+            steps.push(format!(
+                "write {} to name the project (until then it is `{}`, after its folder) and to set \
+                 its agents, verdicts and board",
+                crate::project::FILE,
+                project.id
+            ));
+        }
+        for entry in &project.entrypoints {
+            if !root.join(&entry.folder).is_dir() {
+                let url = if entry.url.is_empty() {
+                    String::new()
+                } else {
+                    format!("{}/", entry.url)
+                };
+                steps.push(format!(
+                    "make {}/ for the documents the Symphony serves at /{}/{url}, or name the \
+                     folders it serves with [[entrypoints]] in {}",
+                    entry.folder,
+                    project.id,
+                    crate::project::FILE
+                ));
+            }
+        }
+    }
+    if let Ok(Some(justfile)) = justfile(root)
+        && !std::fs::read_to_string(&justfile).is_ok_and(|text| imports(&text))
+    {
+        steps.push(format!(
+            "import the recipes in {}: add `import '{RECIPES}'`, with `set allow-duplicate-recipes` \
+             so a recipe of its own of the same name wins",
+            justfile.file_name().unwrap_or_default().to_string_lossy()
+        ));
+    }
+    let unlinked = unlinked_heartbeat(root);
+    if !unlinked.is_empty() {
+        let (noun, them) = if unlinked.len() == 1 {
+            ("build", "it")
+        } else {
+            ("builds", "them")
+        };
+        steps.push(format!(
+            "link the project's {noun} at {}: the heartbeat and the memory guard run {them} \
+             and build nothing{}",
+            names_and(&unlinked, |name| format!("{}/{name}", builds::LINKS)),
+            link_commands(&unlinked, machine.path)
+        ));
+    }
+    let unfound: Vec<&str> = RUNS
+        .iter()
+        .filter(|(_, binary)| builds::find(root, binary, machine.path).is_none())
+        .map(|(_, binary)| *binary)
+        .filter(|binary| !unlinked.contains(binary))
+        .collect();
+    if !unfound.is_empty() {
+        let (noun, them, run) = if unfound.len() == 1 {
+            ("build", "it", "runs")
+        } else {
+            ("builds", "them", "run")
+        };
+        steps.push(format!(
+            "link the project's {noun} at {}, or put {them} on PATH: {} {run} {them}",
+            names_and(&unfound, |name| format!("{}/{name}", builds::LINKS)),
+            names_and(&unfound, |name| {
+                let recipe = RUNS.iter().find(|(_, binary)| *binary == name);
+                format!("`just {}`", recipe.map_or(name, |(recipe, _)| *recipe))
+            })
+        ));
+    }
+    if let Some(surreal) = missing_surreal(root, machine.surreal) {
+        steps.push(format!(
+            "put SurrealDB's v{} release binary at {}, or name one with SF_SURREAL: the board's \
+             server runs it",
+            symphony_board::server::SURREAL_VERSION,
+            surreal.display()
+        ));
+    }
+    if let Some(folder) = machine.folder
+        && !registered(root, folder)
+    {
+        steps.push(
+            "register the project with the machine's Symphony: `just symphony-cli project add` \
+             (a start of `just symphony` registers it too)"
+                .to_string(),
+        );
+    }
+    steps
+}
+
+/// `names` as words, each made by `word`, the last two joined by "and".
+fn names_and(names: &[&str], word: impl Fn(&str) -> String) -> String {
+    let words: Vec<String> = names.iter().map(|name| word(name)).collect();
+    match words.split_last() {
+        Some((last, rest)) if !rest.is_empty() => format!("{} and {last}", rest.join(", ")),
+        Some((last, _)) => last.clone(),
+        None => String::new(),
+    }
+}
+
+/// The commands that link each of `names` the search path `path` holds, after a colon; none when it
+/// holds none of them.
+fn link_commands(names: &[&str], path: Option<&OsStr>) -> String {
+    let commands: Vec<String> = names
+        .iter()
+        .filter_map(|name| {
+            let found = builds::on_path(name, path)?;
+            let quoted = found.to_string_lossy().replace('\'', "'\\''");
+            Some(format!("ln -s '{quoted}' {}/{name}", builds::LINKS))
+        })
+        .collect();
+    if commands.is_empty() {
+        String::new()
+    } else {
+        format!(
+            " (`mkdir -p {} && {}`)",
+            builds::LINKS,
+            commands.join(" && ")
+        )
+    }
+}
+
+/// Whether the machine's registry in `folder` holds the project of `root`'s main checkout. A
+/// registry that cannot be read holds nothing.
+fn registered(root: &Path, folder: &Path) -> bool {
+    let Ok(main) = crate::machine::command::main_checkout(root).canonicalize() else {
+        return false;
+    };
+    crate::machine::Registry::read(folder)
+        .is_ok_and(|registry| registry.projects.iter().any(|entry| entry.root == main))
+}
+
+/// The warning a run at `root` ends with when the heartbeat has no build to run there.
+pub fn heartbeat_warning(root: &Path) -> Option<String> {
+    let unlinked = unlinked_heartbeat(root);
+    if unlinked.is_empty() {
+        return None;
+    }
+    let links = names_and(&unlinked, |name| format!("{}/{name}", builds::LINKS));
+    let verb = if unlinked.len() == 1 { "is" } else { "are" };
+    let guard = if unlinked.contains(&"symphony") {
+        " and the memory guard refuses nothing"
+    } else {
+        ""
+    };
+    Some(format!(
+        "warning: {links} {verb} missing: no tool call counts as a beat{guard} until the \
+         project's builds are linked there (see Next)"
+    ))
+}
+
+/// The run's last words: the steps left, one a line, or that none is.
+fn next(steps: &[String]) -> String {
+    if steps.is_empty() {
+        return "Next: nothing; agents can run the board (`just tasks register`).".to_string();
+    }
+    let mut text = "Next:".to_string();
+    for step in steps {
+        text.push_str(&format!("\n- {step}"));
+    }
+    text
+}
+
 const USAGE: &str = "usage: symphony init [-h] [--root ROOT]";
-const HELP: &str = "Install the agents' integration files and keep them current.
+const HELP: &str = "Install the agents' integration files and keep them current: the skills, the
+recipes (symphony.just, and a justfile importing it where the project has none), the allow rules,
+the heartbeat and the memory guard. Then say what is left to do.
 
 options:
   -h, --help   show this help message and exit
@@ -576,6 +925,18 @@ pub fn main(args: &[String], out: &mut dyn io::Write, err: &mut dyn io::Write) -
         Ok(report) => {
             for (entry, outcome) in report {
                 let _ = writeln!(out, "{entry}: {}", outcome.word());
+            }
+            let folder = crate::machine::dir().ok();
+            let path = std::env::var_os("PATH");
+            let surreal = std::env::var_os("SF_SURREAL").filter(|named| !named.is_empty());
+            let machine = Machine {
+                folder: folder.as_deref(),
+                path: path.as_deref(),
+                surreal: surreal.as_deref().map(Path::new),
+            };
+            let _ = writeln!(out, "\n{}", next(&steps(&root, &machine)));
+            if let Some(warning) = heartbeat_warning(&root) {
+                let _ = writeln!(err, "symphony init: {warning}");
             }
             0
         }

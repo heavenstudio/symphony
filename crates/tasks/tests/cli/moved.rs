@@ -1,5 +1,5 @@
 //! A board still in SQLite (`<project id>-tasks.db` in the git common dir, `lamp-works-tasks.db` here)
-//! is refused until `just tasks-cutover` has copied it to SurrealDB and said so beside it, in
+//! is refused until `tasks-cutover` has copied it to SurrealDB and said so beside it, in
 //! `<file>.moved`: an agent that merged main before the move would write where the copy is about to
 //! replace everything. The copy itself reaches the board either way.
 
@@ -10,8 +10,8 @@ use std::path::PathBuf;
 use symphony_board::cli::Env;
 use symphony_board::sys::Command;
 
-const REFUSED: &str = "the task board has not moved to SurrealDB yet: the lander runs `just tasks-cutover` once, right after landing (docs/workflow/TASKS.md#the-move-to-surrealdb)";
-const UNFINISHED: &str = "the task board is frozen by a move to SurrealDB that has not finished: unless one is running, run `just tasks-cutover` again (docs/workflow/TASKS.md#the-move-to-surrealdb)";
+const REFUSED: &str = "the task board has not moved to SurrealDB yet: the lander runs `tasks-cutover` once, right after landing";
+const UNFINISHED: &str = "the task board is frozen by a move to SurrealDB that has not finished: unless one is running, run `tasks-cutover` again";
 
 /// A repository of its own holding a SQLite board in its git dir, and an environment that names no
 /// server, so the board is the one in that common dir, whose server cannot start (`SF_SURREAL`

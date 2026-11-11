@@ -137,6 +137,7 @@ impl Store {
             hand_off: None,
             inbox_pool: Mutex::new(None),
             slots: None,
+            named_server: false,
         }
     }
 

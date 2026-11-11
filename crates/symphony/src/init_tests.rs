@@ -20,6 +20,7 @@ fn kit(skills: Vec<Skill>) -> Shipped {
     Shipped {
         skills,
         codex_rules: "prefix_rule(pattern=[\"just\"], decision=\"allow\")\n".to_string(),
+        recipes: "tasks *ARGS:\n    @echo tasks\n".to_string(),
     }
 }
 
@@ -54,6 +55,16 @@ fn a_fresh_project_gets_every_file_stamped_and_linked() {
         tree.read(".codex/rules/symphony.rules")
             .starts_with("# symphony-stamp: ")
     );
+    let recipes = tree.read("symphony.just");
+    let (stamp, rest) = recipes.split_once('\n').unwrap();
+    assert!(stamp.starts_with("# symphony-stamp: "), "{recipes}");
+    assert_eq!(rest, "tasks *ARGS:\n    @echo tasks\n");
+    for entry in ["symphony.just", "justfile", ".gitignore"] {
+        assert_eq!(outcome(&report, entry), "installed", "{entry}");
+    }
+    assert_eq!(tree.read("justfile"), JUSTFILE);
+    assert!(imports(JUSTFILE));
+    assert_eq!(tree.read(".gitignore"), "/.target/\n/artifacts/\n");
 }
 
 #[test]
@@ -61,21 +72,28 @@ fn a_second_run_changes_nothing() {
     let tree = Tree::new();
     let shipped = kit(vec![skill("work", "v1")]);
     init(&tree.root, &shipped).unwrap();
-    let before = (
-        tree.read(".agents/skills/work/SKILL.md"),
-        tree.read(".claude/settings.json"),
-    );
+    let files = [
+        ".agents/skills/work/SKILL.md",
+        ".claude/settings.json",
+        "symphony.just",
+        "justfile",
+        ".gitignore",
+    ];
+    let before: Vec<String> = files.iter().map(|file| tree.read(file)).collect();
     let report = init(&tree.root, &shipped).unwrap();
-    for entry in ["skill work", "codex rules", "claude settings"] {
+    for entry in [
+        "skill work",
+        "codex rules",
+        "claude settings",
+        "symphony.just",
+        ".gitignore",
+    ] {
         assert_eq!(outcome(&report, entry), "current", "{entry}");
     }
-    assert_eq!(
-        before,
-        (
-            tree.read(".agents/skills/work/SKILL.md"),
-            tree.read(".claude/settings.json")
-        )
-    );
+    // The justfile init wrote is the project's from then on.
+    assert_eq!(outcome(&report, "justfile"), "kept (the project's own)");
+    let after: Vec<String> = files.iter().map(|file| tree.read(file)).collect();
+    assert_eq!(before, after);
 }
 
 #[test]
@@ -195,22 +213,134 @@ fn a_skill_folder_without_its_skill_file_is_installed() {
     assert_eq!(outcome(&report, "skill work"), "installed");
 }
 
-#[test]
-fn codex_rules_follow_the_same_stamp_rule() {
-    let tree = Tree::new();
-    init(&tree.root, &kit(vec![])).unwrap();
-    let mut newer = kit(vec![]);
-    newer
-        .codex_rules
-        .push_str("prefix_rule(pattern=[\"x\"], decision=\"allow\")\n");
-    let report = init(&tree.root, &newer).unwrap();
-    assert_eq!(outcome(&report, "codex rules"), "updated");
-    assert!(tree.read(".codex/rules/symphony.rules").contains("\"x\""));
+/// Where a kit holds one stamped file's text.
+type ShippedText = fn(&mut Shipped) -> &mut String;
 
-    tree.write(".codex/rules/symphony.rules", "# ours\n");
-    let report = init(&tree.root, &newer).unwrap();
-    assert_eq!(outcome(&report, "codex rules"), "kept (the project's own)");
-    assert_eq!(tree.read(".codex/rules/symphony.rules"), "# ours\n");
+#[test]
+fn codex_rules_and_recipes_follow_the_same_stamp_rule() {
+    let cases: [(&str, &str, ShippedText); 2] = [
+        (CODEX_RULES, "codex rules", |kit| &mut kit.codex_rules),
+        (RECIPES, "symphony.just", |kit| &mut kit.recipes),
+    ];
+    for (file, entry, text) in cases {
+        let tree = Tree::new();
+        init(&tree.root, &kit(vec![])).unwrap();
+        let mut newer = kit(vec![]);
+        text(&mut newer).push_str("# a newer line\n");
+        let report = init(&tree.root, &newer).unwrap();
+        assert_eq!(outcome(&report, entry), "updated");
+        assert!(tree.read(file).ends_with("# a newer line\n"), "{entry}");
+
+        // The stamp must be the first line: one further down is the project's text.
+        let own = format!("# ours\n{}", tree.read(file));
+        tree.write(file, &own);
+        let report = init(&tree.root, &newer).unwrap();
+        assert_eq!(outcome(&report, entry), "kept (the project's own)");
+        assert_eq!(tree.read(file), own);
+    }
+}
+
+#[test]
+fn a_project_justfile_by_any_name_just_reads_is_never_written() {
+    for name in ["justfile", "Justfile", "JUSTFILE", ".justfile"] {
+        let tree = Tree::new();
+        tree.write(name, "build:\n    echo ours\n");
+        let report = init(&tree.root, &kit(vec![])).unwrap();
+        assert_eq!(outcome(&report, "justfile"), "kept (the project's own)");
+        assert_eq!(tree.names(""), {
+            let mut names = vec![
+                ".claude".to_string(),
+                ".codex".to_string(),
+                ".gitignore".to_string(),
+                name.to_string(),
+                "symphony.just".to_string(),
+            ];
+            names.sort();
+            names
+        });
+        assert_eq!(tree.read(name), "build:\n    echo ours\n");
+    }
+}
+
+#[test]
+fn a_justfile_imports_the_recipes_by_any_spelling_just_reads() {
+    for text in [
+        "import 'symphony.just'\n",
+        "import? 'symphony.just'\n",
+        "import \"symphony.just\"\n",
+        "  import './symphony.just'   # the Symphony's\n",
+        "set allow-duplicate-recipes\n\nbuild:\n    true\n\nimport 'symphony.just'",
+    ] {
+        assert!(imports(text), "{text:?}");
+    }
+    for text in [
+        "",
+        "# import 'symphony.just'\n",
+        "import 'tools/symphony.just'\n",
+        "import 'symphony.justfile'\n",
+        "imports:\n    echo 'symphony.just'\n",
+        "mod symphony 'symphony.just'\n",
+    ] {
+        assert!(!imports(text), "{text:?}");
+    }
+}
+
+#[test]
+fn the_ignore_file_gains_only_the_folders_it_does_not_ignore_yet() {
+    for (have, want) in [
+        ("", "/.target/\n/artifacts/\n"),
+        ("node_modules", "node_modules\n/.target/\n/artifacts/\n"),
+        (
+            "artifacts/*\n!artifacts/.keep\n",
+            "artifacts/*\n!artifacts/.keep\n/.target/\n",
+        ),
+        ("/.target/\nartifacts/**\n", "/.target/\nartifacts/**\n"),
+        (".target\n/artifacts\n", ".target\n/artifacts\n"),
+        // A folder of the same name deeper down, or a file beside it, is not the folder.
+        (
+            "docs/artifacts/\n.target.bak\n",
+            "docs/artifacts/\n.target.bak\n/.target/\n/artifacts/\n",
+        ),
+    ] {
+        let tree = Tree::new();
+        if !have.is_empty() {
+            tree.write(".gitignore", have);
+        }
+        let report = init(&tree.root, &kit(vec![])).unwrap();
+        assert_eq!(tree.read(".gitignore"), want, "{have:?}");
+        let said = match (have.is_empty(), have == want) {
+            (true, _) => "installed",
+            (false, true) => "current",
+            (false, false) => "updated",
+        };
+        assert_eq!(outcome(&report, ".gitignore"), said, "{have:?}");
+    }
+}
+
+#[test]
+fn the_artifacts_folder_ignored_is_the_one_the_project_names() {
+    let tree = Tree::new();
+    tree.write(
+        "symphony.toml",
+        "[project]\nid = \"lamps\"\nartifacts = \"out/art\"\n",
+    );
+    init(&tree.root, &kit(vec![])).unwrap();
+    assert_eq!(tree.read(".gitignore"), "/.target/\n/out/art/\n");
+    // A project file that does not load leaves the default folder.
+    let tree = Tree::new();
+    tree.write("symphony.toml", "[project\n");
+    init(&tree.root, &kit(vec![])).unwrap();
+    assert_eq!(tree.read(".gitignore"), "/.target/\n/artifacts/\n");
+}
+
+#[test]
+fn a_linked_ignore_file_is_the_projects_own() {
+    let tree = Tree::new();
+    tree.write("shared.gitignore", "x\n");
+    std::os::unix::fs::symlink(tree.path("shared.gitignore"), tree.path(".gitignore")).unwrap();
+    let report = init(&tree.root, &kit(vec![])).unwrap();
+    assert_eq!(outcome(&report, ".gitignore"), "kept (the project's own)");
+    assert_eq!(tree.read("shared.gitignore"), "x\n");
 }
 
 fn settings(tree: &Tree) -> Value {
@@ -406,10 +536,21 @@ fn the_command_installs_and_reports_and_refuses_what_it_does_not_know() {
         )
     };
     let root = tree.root.to_str().unwrap();
-    let (code, out, _) = run(&["--root", root]);
+    let (code, out, err) = run(&["--root", root]);
     assert_eq!(code, 0);
     assert!(out.contains("skill work: installed\n"), "{out}");
     assert!(out.contains("claude settings: installed\n"), "{out}");
+    assert!(
+        out.contains(".gitignore: installed\n\nNext:\n- write symphony.toml to name the project"),
+        "{out}"
+    );
+    assert_eq!(
+        err,
+        format!(
+            "symphony init: {}\n",
+            heartbeat_warning(&tree.root).unwrap()
+        )
+    );
     let (code, out, _) = run(&["--root", root]);
     assert_eq!((code, out.contains("skill work: current\n")), (0, true));
     assert_eq!(run(&["--help"]).0, 0);
@@ -504,7 +645,13 @@ fn a_project_hook_wins_even_when_a_managed_hook_precedes_it_and_prompt_hooks_sta
 
 #[test]
 fn file_and_hook_shape_errors_name_the_path_and_leave_existing_bytes() {
-    for file in [".agents/skills/work/SKILL.md", CODEX_RULES, SETTINGS] {
+    for file in [
+        ".agents/skills/work/SKILL.md",
+        CODEX_RULES,
+        SETTINGS,
+        RECIPES,
+        IGNORE,
+    ] {
         let tree = Tree::new();
         std::fs::create_dir_all(tree.path(file)).unwrap();
         let error = init(&tree.root, &kit(vec![skill("work", "v1")])).unwrap_err();
@@ -591,4 +738,282 @@ fn symlinked_project_skills_and_rules_win_and_managed_support_links_are_not_over
     let error = init(&tree.root, &kit(vec![skill("other", "v2")])).unwrap_err();
     assert!(error.to_string().contains("other/notes.md"), "{error}");
     assert_eq!(tree.read("own-notes"), "project notes\n");
+}
+
+/// A runnable stand-in at `rel`.
+fn program(tree: &Tree, rel: &str) -> PathBuf {
+    use std::os::unix::fs::PermissionsExt;
+    let path = tree.write(rel, "#!/bin/sh\n");
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    path
+}
+
+/// The steps left at `tree`'s `Lamp Shop/`, with the machine folder `machine/` and the search path
+/// `path`.
+fn left(tree: &Tree, path: &str) -> Vec<String> {
+    let folder = tree.path("machine");
+    std::fs::create_dir_all(&folder).unwrap();
+    std::fs::create_dir_all(tree.path("Lamp Shop")).unwrap();
+    let path = std::ffi::OsString::from(path);
+    steps(
+        &tree.path("Lamp Shop"),
+        &Machine {
+            folder: Some(&folder),
+            path: Some(&path),
+            surreal: None,
+        },
+    )
+}
+
+#[test]
+fn a_fresh_project_is_told_every_step_it_has_left() {
+    let tree = Tree::new();
+    std::fs::create_dir_all(tree.path("Lamp Shop")).unwrap();
+    init(&tree.path("Lamp Shop"), &kit(vec![])).unwrap();
+    assert_eq!(
+        left(&tree, ""),
+        [
+            "write symphony.toml to name the project (until then it is `lamp-shop`, after its \
+             folder) and to set its agents, verdicts and board",
+            "make docs/ for the documents the Symphony serves at /lamp-shop/docs/, or name the \
+             folders it serves with [[entrypoints]] in symphony.toml",
+            "link the project's builds at .target/bin/symphony and .target/bin/tasks: the \
+             heartbeat and the memory guard run them and build nothing",
+            "link the project's builds at .target/bin/agent-send and .target/bin/symphony-server, \
+             or put them on PATH: `just agent-send` and `just symphony` run them",
+            "register the project with the machine's Symphony: `just symphony-cli project add` \
+             (a start of `just symphony` registers it too)",
+        ]
+    );
+}
+
+#[test]
+fn a_project_with_everything_in_place_has_nothing_left() {
+    let tree = Tree::new();
+    tree.write("Lamp Shop/symphony.toml", "[project]\nid = \"lamps\"\n");
+    tree.write("Lamp Shop/docs/README.md", "# Lamps\n");
+    init(&tree.path("Lamp Shop"), &kit(vec![])).unwrap();
+    for name in ["symphony", "tasks", "agent-send", "symphony-server"] {
+        program(&tree, &format!("Lamp Shop/.target/bin/{name}"));
+    }
+    let entry = crate::machine::Entry::of(&tree.path("Lamp Shop")).unwrap();
+    crate::machine::Registry {
+        projects: vec![entry],
+    }
+    .write(&tree.path("machine"))
+    .unwrap();
+    assert_eq!(left(&tree, ""), Vec::<String>::new());
+    assert_eq!(heartbeat_warning(&tree.path("Lamp Shop")), None);
+    assert_eq!(
+        next(&[]),
+        "Next: nothing; agents can run the board (`just tasks register`)."
+    );
+    assert_eq!(
+        next(&["one".to_string(), "two".to_string()]),
+        "Next:\n- one\n- two"
+    );
+}
+
+#[test]
+fn builds_on_the_search_path_serve_the_recipes_but_the_heartbeat_needs_links() {
+    let tree = Tree::new();
+    tree.write("Lamp Shop/symphony.toml", "[project]\nid = \"lamps\"\n");
+    tree.write("Lamp Shop/docs/README.md", "# Lamps\n");
+    init(&tree.path("Lamp Shop"), &kit(vec![])).unwrap();
+    for name in ["symphony", "tasks", "agent-send", "symphony-server"] {
+        program(&tree, &format!("it's here/{name}"));
+    }
+    let folder = tree.path("it's here");
+    let quoted = |name: &str| {
+        folder
+            .join(name)
+            .display()
+            .to_string()
+            .replace('\'', "'\\''")
+    };
+    let steps = left(&tree, &format!("/nowhere:{}", folder.display()));
+    assert_eq!(
+        steps[0],
+        format!(
+            "link the project's builds at .target/bin/symphony and .target/bin/tasks: the \
+             heartbeat and the memory guard run them and build nothing (`mkdir -p .target/bin && \
+             ln -s '{}' .target/bin/symphony && ln -s '{}' .target/bin/tasks`)",
+            quoted("symphony"),
+            quoted("tasks")
+        )
+    );
+    assert!(steps[1].starts_with("register the project"), "{steps:?}");
+    assert_eq!(steps.len(), 2, "{steps:?}");
+}
+
+#[test]
+fn one_build_left_to_link_is_told_in_the_singular() {
+    let tree = Tree::new();
+    tree.write("Lamp Shop/symphony.toml", "[project]\nid = \"lamps\"\n");
+    tree.write("Lamp Shop/docs/README.md", "# Lamps\n");
+    init(&tree.path("Lamp Shop"), &kit(vec![])).unwrap();
+    for name in ["symphony", "agent-send"] {
+        program(&tree, &format!("Lamp Shop/.target/bin/{name}"));
+    }
+    let steps = left(&tree, "");
+    assert_eq!(
+        steps[..2],
+        [
+            "link the project's build at .target/bin/tasks: the heartbeat and the memory guard \
+             run it and build nothing",
+            "link the project's build at .target/bin/symphony-server, or put it on PATH: \
+             `just symphony` runs it",
+        ]
+    );
+}
+
+#[test]
+fn a_justfile_of_the_projects_without_the_import_is_told_how_to_take_the_recipes() {
+    let tree = Tree::new();
+    tree.write("Lamp Shop/Justfile", "build:\n    true\n");
+    init(&tree.path("Lamp Shop"), &kit(vec![])).unwrap();
+    let step = "import the recipes in Justfile: add `import 'symphony.just'`, with \
+                `set allow-duplicate-recipes` so a recipe of its own of the same name wins";
+    assert!(left(&tree, "").contains(&step.to_string()));
+    tree.write(
+        "Lamp Shop/Justfile",
+        "set allow-duplicate-recipes\nimport 'symphony.just'\n",
+    );
+    assert!(left(&tree, "").iter().all(|step| !step.contains("import")));
+}
+
+#[test]
+fn a_project_file_that_does_not_load_is_the_first_step_and_the_rest_still_say() {
+    let tree = Tree::new();
+    tree.write(
+        "Lamp Shop/symphony.toml",
+        "[project]\nid = \"Not A Slug\"\n",
+    );
+    let steps = left(&tree, "");
+    assert!(
+        steps[0].starts_with("fix symphony.toml: ") && steps[0].contains("is not a slug"),
+        "{steps:?}"
+    );
+    assert!(
+        steps
+            .iter()
+            .any(|step| step.starts_with("link the project's builds at .target/bin/symphony")),
+        "{steps:?}"
+    );
+}
+
+#[test]
+fn an_entrypoint_at_the_root_or_elsewhere_names_its_own_folder_and_route() {
+    let tree = Tree::new();
+    tree.write(
+        "Lamp Shop/symphony.toml",
+        "[project]\nid = \"lamps\"\n\n[[entrypoints]]\nurl = \"/\"\nfolder = \".\"\n\n\
+         [[entrypoints]]\nurl = \"/notes/\"\nfolder = \"design/notes\"\n",
+    );
+    let steps = left(&tree, "");
+    let made: Vec<&String> = steps.iter().filter(|s| s.starts_with("make ")).collect();
+    assert_eq!(
+        made,
+        [
+            "make design/notes/ for the documents the Symphony serves at /lamps/notes/, or name \
+          the folders it serves with [[entrypoints]] in symphony.toml"
+        ],
+        "{steps:?}"
+    );
+}
+
+#[test]
+fn the_warning_names_the_missing_links_and_what_goes_without_them() {
+    let tree = Tree::new();
+    assert_eq!(
+        heartbeat_warning(&tree.root).unwrap(),
+        "warning: .target/bin/symphony and .target/bin/tasks are missing: no tool call counts as \
+         a beat and the memory guard refuses nothing until the project's builds are linked there \
+         (see Next)"
+    );
+    program(&tree, ".target/bin/symphony");
+    assert_eq!(
+        heartbeat_warning(&tree.root).unwrap(),
+        "warning: .target/bin/tasks is missing: no tool call counts as a beat until the \
+         project's builds are linked there (see Next)"
+    );
+    program(&tree, ".target/bin/tasks");
+    assert_eq!(heartbeat_warning(&tree.root), None);
+}
+
+#[test]
+fn a_registry_that_cannot_be_read_holds_nothing_and_no_machine_folder_asks_nothing() {
+    let tree = Tree::new();
+    tree.write("machine/projects.json", "{not json");
+    assert!(!registered(&tree.root, &tree.path("machine")));
+    let steps = steps(
+        &tree.root,
+        &Machine {
+            folder: None,
+            path: None,
+            surreal: None,
+        },
+    );
+    assert!(
+        steps.iter().all(|step| !step.starts_with("register")),
+        "no machine folder, no registry to ask: {steps:?}"
+    );
+}
+
+#[test]
+fn a_checkout_is_told_where_its_boards_surrealdb_goes_until_one_is_there() {
+    let tree = Tree::new();
+    tree.write("Lamp Shop/.git/HEAD", "ref: refs/heads/main\n");
+    let root = tree.path("Lamp Shop");
+    let pinned = root
+        .canonicalize()
+        .unwrap()
+        .join(".git/sf-surreal")
+        .join(symphony_board::server::SURREAL_VERSION)
+        .join("surreal");
+    let surreal_step = |named: Option<&Path>| {
+        let found = steps(
+            &root,
+            &Machine {
+                folder: None,
+                path: None,
+                surreal: named,
+            },
+        );
+        let mut asked = found.into_iter().filter(|step| step.contains("SurrealDB"));
+        let step = asked.next();
+        assert_eq!(asked.next(), None);
+        step
+    };
+    let told = |at: &Path| {
+        format!(
+            "put SurrealDB's v{} release binary at {}, or name one with SF_SURREAL: the board's \
+             server runs it",
+            symphony_board::server::SURREAL_VERSION,
+            at.display()
+        )
+    };
+    assert_eq!(surreal_step(None), Some(told(&pinned)));
+    let named = tree.path("elsewhere/surreal");
+    assert_eq!(surreal_step(Some(&named)), Some(told(&named)));
+    program(&tree, "elsewhere/surreal");
+    assert_eq!(surreal_step(Some(&named)), None);
+    tree.write(
+        &format!(
+            "Lamp Shop/.git/sf-surreal/{}/surreal",
+            symphony_board::server::SURREAL_VERSION
+        ),
+        "not runnable",
+    );
+    assert_eq!(surreal_step(None), Some(told(&pinned)));
+    program(
+        &tree,
+        &format!(
+            "Lamp Shop/.git/sf-surreal/{}/surreal",
+            symphony_board::server::SURREAL_VERSION
+        ),
+    );
+    assert_eq!(surreal_step(None), None);
+    let outside = Tree::new();
+    assert_eq!(missing_surreal(&outside.root, None), None);
 }

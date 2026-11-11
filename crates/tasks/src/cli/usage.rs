@@ -26,14 +26,14 @@ pub const USAGE: &str = r#"usage: just tasks [-h] [--as ACTOR]
 pub const HELP: &str = r#"usage: just tasks [-h] [--as ACTOR]
                   {callback,register,attach,list,search,stats,embed,next,create,priority,field,claim,reserve,release,show,parent,depends,done,role,handover,move,verdict,say,launch,restore,cleanup,clean,close,reap,staff,agents,who,status,inbox,leave,beat,export,finish,sweep} ...
 
-The task board from the terminal — `just tasks …` and `just tasks-attach`.
+The task board from the terminal — `just tasks …`.
 
 positional arguments:
   {callback,register,attach,list,search,stats,embed,next,create,priority,field,claim,reserve,release,show,parent,depends,done,role,handover,move,verdict,say,launch,restore,cleanup,clean,close,reap,staff,agents,who,status,inbox,leave,beat,export,finish,sweep}
     callback            register a native channel or --off for inbox fallback
     depends             change what a task waits on
     handover            hand a task's orchestrator role to another session
-    clean               cleanup, then one idle sweep, at once (just clean)
+    clean               cleanup, then one idle sweep, at once
     close               close an agent's terminal, whatever it holds, and
                         record it with its restore line
     beat               a hook: read one Claude Code tool event on stdin and

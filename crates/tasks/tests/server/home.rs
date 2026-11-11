@@ -535,8 +535,8 @@ fn no_pinned_surreal_is_refused_with_how_to_fetch_it() {
     assert_eq!(
         error.to_string(),
         format!(
-            "SurrealDB {SURREAL_VERSION} is not at {}: it is fetched once per machine \
-             (docs/workflow/TASKS.md#where-it-lives)",
+            "SurrealDB {SURREAL_VERSION} is not at {}: put SurrealDB's \
+             v{SURREAL_VERSION} release binary there, or name one with SF_SURREAL",
             missing.display()
         )
     );

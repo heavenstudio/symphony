@@ -46,24 +46,32 @@ The store takes about what it holds. Every server the board starts keeps each
 value beside its key, where compaction drops the versions a rewrite leaves, and
 logs at most 256 MiB of writes before it moves them to an sstable. SurrealKV's
 default had sent every value over 4 KiB to a value log that only grows: 102 GiB
-held a board of 0.5 GiB. `just tasks-reclaim`, the owner's to run from the main checkout,
+held a board of 0.5 GiB. The `tasks-reclaim` binary, the owner's to run from the main checkout,
 rebuilds a store that grew that way. It stops the server, exports every
 database, imports them into a new store, and checks that store's exports byte
 for byte against the old ones. Only then does it swap the stores and remove the
 old one. The exports stay in `sf-tasks/reclaim/exports/`. `--dir FOLDER`
 rehearses on a copy of `sf-tasks/` (`cp -c`, a clone).
 
-The command is the `tasks` binary (`crates/tasks`), which `tools/rs-bin.sh`
-builds before every run: the first command after a change to its sources takes
-a minute or two, later ones only Cargo's check that nothing changed. On the
-live board it is the main checkout's build, from whichever worktree it runs; a
-branch's own build runs only on a scratch board (`--database NAME`). The
-heartbeat hook runs the build its tree last linked (`.target/bin/tasks`) and
-builds nothing. There is no Python board adapter.
+The command is the `tasks` binary (`crates/tasks`). In a project `symphony init`
+set up, `just tasks` is the recipe it installs in `symphony.just`: the project's
+build linked at `.target/bin/tasks`, else, from a linked worktree, the main
+checkout's link, else `tasks` on `PATH`; it builds nothing, and says which link
+to make when it finds none. The Symphony's own board clients find it the same
+way. This repository's `justfile` has a `tasks` recipe of its own, which wins:
+`tools/rs-bin.sh` builds the binary before every run, so the first command after
+a change to its sources takes a minute or two, later ones only Cargo's check
+that nothing changed. On the live board it is the main checkout's build, from
+whichever worktree it runs; a branch's own build runs only on a scratch board
+(`--database NAME`). The heartbeat hook runs the build its tree last linked
+(`.target/bin/tasks`) and builds nothing. There is no Python board adapter.
 `launch`, `restore`, `cleanup`, `close` and `reap` are its own, hc's terminals and all
-(`crates/tasks/src/launch/`); the board calls no `herdr`. The server is the pinned SurrealDB, fetched once
-per machine into `sf-surreal/` in the git common dir by `bash tools/surreal.sh`
-(the Rust tests fetch it the same way); the board says so when it is missing.
+(`crates/tasks/src/launch/`); the board calls no `herdr`. The server is the pinned
+SurrealDB at `sf-surreal/VERSION/surreal` in the git common dir, or the binary
+`SF_SURREAL` names. In this repository `bash tools/surreal.sh` fetches it there,
+checked against its pinned SHA-256 (the Rust tests fetch it the same way); a
+project puts SurrealDB's release binary there, which `symphony init` lists among
+the steps left. The board says so when it is missing.
 
 | | |
 |---|---|
@@ -280,7 +288,7 @@ starts its idle wait again (as does a window that cannot say what it shows).
 Each close is one line on the handle's task thread, with its restore line, written
 before the terminal is closed. `just tasks reap --dry-run` names what the next sweep would close
 and why each terminal stays; a sweep tells its log why it keeps an idle one, once per
-reason. `just clean` runs cleanup and one sweep at once, never closing the caller's.
+reason. `just tasks clean` runs cleanup and one sweep at once, never closing the caller's.
 Code: `crates/tasks/src/launch/reap.rs`.
 
 **Finished worktrees go by themselves** (owner, 2026-10-21: "do any cleanups for worktrees

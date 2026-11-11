@@ -5,7 +5,10 @@
       "Bash(TASKS_SESSION=* just tasks *)",
       "Bash(just symphony-status:*)",
       "Bash(just symphony-reply:*)",
-      "Bash(just symphony-ask:*)"
+      "Bash(just symphony-ask:*)",
+      "Bash(just agent-send:*)",
+      "Bash(just symphony:*)",
+      "Bash(just symphony-cli:*)"
     ],
     "deny": [
       "Edit(~/.claude/projects/**/memory/**)"

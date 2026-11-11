@@ -2,7 +2,7 @@
 name: tasks
 description: Join the shared task board and register a native callback so messages reach this session directly. Pull, claim, review or orchestrate tasks and answer on their threads. Trigger on "attach to the tasks", "join the board", "pick up a task", "take work from the board", "orchestrate these tasks", or /tasks.
 ---
-<!-- symphony-stamp: 85e626e08fae215a files=SKILL.md -->
+<!-- symphony-stamp: 7ba58ba4aa626e34 files=SKILL.md -->
 
 # Work from the task board
 
@@ -12,9 +12,10 @@ A top-level task owns one feature branch and one delivery cycle. Subtasks are
 small implementation slices, not independent releases. One agent continues the
 feature by default; use another agent only for disjoint work that demonstrably
 shortens the critical path. Commit slices into the feature branch, or merge
-their worktree commits into it with `just merge-feature FEATURE [SOURCE]`.
-This command refuses the default branch and runs no delivery hooks or stamps;
-`land` remains the completed feature delivery command. Run only focused checks needed for that slice;
+their worktree commits into it with the project's `just merge-feature FEATURE [SOURCE]`
+where it has one: that refuses the default branch and runs no delivery hooks or stamps,
+and the project's landing (`land` where it has one) remains the completed feature
+delivery command. Run only focused checks needed for that slice;
 no slice-level full build, full suite, lint/precheck campaign, reviewer staffing,
 certificate, stamps or landing. Close the slice with its integration commit and
 focused result using tasks done. When the complete feature is ready, the parent
@@ -273,8 +274,7 @@ session id and worktree, so any of them can be restored; finished tasks cleansed
   while a restore or another close of that session runs. Closing it again
   repeats the closure and writes nothing.
 - A task that becomes `done` or `cancelled` cleans its own sessions the same
-  way, and removes its worktree when merged and clean. Code:
-  `symphony/crates/tasks/src/launch/`.
+  way, and removes its worktree when merged and clean.
 - Idle agents whose work is finished are closed by the Symphony's own sweep
   every five minutes (`just tasks reap`: idle at two sweeps five minutes or more
   apart, no live role on it or its subagents, nothing but helpers running; one
@@ -284,7 +284,7 @@ session id and worktree, so any of them can be restored; finished tasks cleansed
   verdict or a post restores an executor). An unanswered addressed post keeps it
   past the hour. The sweep also removes every finished terminal of the board.
   `just tasks reap --dry-run` shows what it would close and why each terminal
-  stays; `just clean` runs cleanup and one sweep at once.
+  stays; `just tasks clean` runs cleanup and one sweep at once.
 
 ## Commands from Codex
 

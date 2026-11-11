@@ -72,8 +72,8 @@ impl fmt::Display for ServerError {
         match self {
             ServerError::NoSurreal(path) => write!(
                 f,
-                "SurrealDB {SURREAL_VERSION} is not at {}: it is fetched once per machine \
-                 (docs/workflow/TASKS.md#where-it-lives)",
+                "SurrealDB {SURREAL_VERSION} is not at {}: put SurrealDB's \
+                 v{SURREAL_VERSION} release binary there, or name one with SF_SURREAL",
                 path.display()
             ),
             ServerError::NotUp(why) | ServerError::Io(why) => f.write_str(why),
@@ -318,7 +318,7 @@ impl Home {
         if !self.dir.join(DATA).exists() && old.exists() {
             return Err(ServerError::Io(format!(
                 "the board's store is at {}: a reclaim moved it there and stopped; \
-                 `just tasks-reclaim` puts it back",
+                 `tasks-reclaim` puts it back",
                 old.display()
             )));
         }

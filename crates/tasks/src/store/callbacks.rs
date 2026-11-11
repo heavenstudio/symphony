@@ -147,7 +147,7 @@ impl Store {
             return Err(refused("an empty message says nothing".into()));
         }
         let text = format!("AGENT from {sender} to {handle} — {text}");
-        let board_command = self.callback_command();
+        let board_command = self.board_command();
         let key: String = self.retrying(|| self.transact(
             &format!("{ACT}
 LET $recipient = (SELECT left_at FROM ONLY type::record('session', $handle));
@@ -716,17 +716,6 @@ RETURN NONE;");
             released?;
         }
         Ok(acquired.is_some())
-    }
-
-    fn callback_command(&self) -> String {
-        if self.client.database() == crate::DATABASE {
-            "just tasks".to_string()
-        } else {
-            format!(
-                "tools/rs-bin.sh tasks --database {}",
-                self.client.database()
-            )
-        }
     }
 
     /// The mutation marker and snapshot are read in the same transaction. Cached inputs are
@@ -1332,7 +1321,7 @@ RETURN NONE;");
         pending: &[Event],
         result: Result<(), DeliveryError>,
     ) -> Result<(), Error> {
-        let command = self.callback_command();
+        let command = self.board_command();
         let success = result.is_ok();
         let capacity = result
             .as_ref()

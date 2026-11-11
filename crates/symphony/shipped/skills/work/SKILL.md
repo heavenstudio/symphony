@@ -14,7 +14,7 @@ gate cleanup, recording remaining failures honestly. Do not create separate
 review/gate subtasks. After recovery, another agent performs a bounded root-cause
 and recurrence-prevention postmortem, reusing a relevant analysis task; it does
 not block recovery or start another delivery cycle. This recovery rule supersedes blanket feature-cycle
-instructions below; see RULES.md `workflow/fast-bugfixes`.
+instructions below.
 
 ## Parent feature delivery
 
@@ -22,9 +22,10 @@ A top-level task owns one feature branch and one delivery cycle. Subtasks are
 small implementation slices, not independent releases. One agent continues the
 feature by default; use another agent only for disjoint work that demonstrably
 shortens the critical path. Commit slices into the feature branch, or merge
-their worktree commits into it with `just merge-feature FEATURE [SOURCE]`.
-This command refuses the default branch and runs no delivery hooks or stamps;
-`land` remains the completed feature delivery command. Run only focused checks needed for that slice;
+their worktree commits into it with the project's `just merge-feature FEATURE [SOURCE]`
+where it has one: that refuses the default branch and runs no delivery hooks or stamps,
+and the project's landing (`land` where it has one) remains the completed feature
+delivery command. Run only focused checks needed for that slice;
 no slice-level full build, full suite, lint/precheck campaign, reviewer staffing,
 certificate, stamps or landing. Close the slice with its integration commit and
 focused result using tasks done. When the complete feature is ready, the parent

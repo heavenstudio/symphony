@@ -194,9 +194,41 @@ pub struct Store {
     schema: i64,
     /// What a write on a board at another version is refused with, naming the board's project.
     refusal: schema::Refusal,
+    /// Whether `TASKS_SERVER` named the board's server, so the command that reaches the board again
+    /// names it too ([`Store::board_command`]).
+    named_server: bool,
+}
+
+/// The command that reaches the board on `database` again: `just tasks`, naming the database when
+/// it is not the project's own, and `server` when `TASKS_SERVER` named it.
+pub fn board_command(server: Option<&str>, database: &str) -> String {
+    let mut command = String::new();
+    if let Some(server) = server {
+        command.push_str(&format!("TASKS_SERVER={server} "));
+    }
+    command.push_str("just tasks");
+    if database != crate::DATABASE {
+        command.push_str(&format!(" --database {database}"));
+    }
+    command
 }
 
 impl Store {
+    /// This store, reached on a server `TASKS_SERVER` named: the commands it tells a session to run
+    /// name that server ([`board_command`]).
+    pub fn on_named_server(mut self) -> Store {
+        self.named_server = true;
+        self
+    }
+
+    /// The command that reaches this store's board again ([`board_command`]).
+    pub fn board_command(&self) -> String {
+        board_command(
+            self.named_server.then(|| self.client.addr()),
+            self.client.database(),
+        )
+    }
+
     /// This store, its starts held to `slots` open tasks an orchestrator: a claim, a move into
     /// in_progress and taking the orchestrator role on open work are refused past it
     /// ([`crate::slots`]). None caps nothing, as a store opens.
@@ -1011,7 +1043,7 @@ fn refused(message: String) -> Error {
 
 fn unknown_actor(handle: &str) -> String {
     format!(
-        "no session {}; attach first (just tasks-attach)",
+        "no session {}; register first (`just tasks register`)",
         repr(handle)
     )
 }

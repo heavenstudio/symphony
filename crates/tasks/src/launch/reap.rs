@@ -7,7 +7,7 @@
 //! sessions doing active work or that will soon (less than one hour) have active work should be
 //! kept open". A task that becomes done or cancelled closes its own sessions at once
 //! ([`super::finish`], from `just tasks move/verdict/done`); this sweep catches the rest. `just
-//! tasks reap` is one sweep; Symphony (`just symphony`) runs it every [`REAP_SECONDS`]; `just clean`
+//! tasks reap` is one sweep; Symphony (`just symphony`) runs it every [`REAP_SECONDS`]; `just tasks clean`
 //! runs cleanup and one sweep at once.
 //!
 //! Every sweep holds `reap.json.lock` (`flock`, not waited on), so two sweeps never overlap: a second

@@ -1,4 +1,9 @@
 set positional-arguments
+# The Symphony's recipes as `symphony init` installs them in a project; the ones below of the same
+# name win, building this workspace's binaries before they run.
+set allow-duplicate-recipes
+
+import 'symphony.just'
 
 # Independent workspace commands use ordinary Cargo. The containing project keeps its own gates.
 fmt:
