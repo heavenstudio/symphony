@@ -140,9 +140,20 @@ fn a_reader_of_a_newer_build_never_moves_an_older_board_forward_but_refuses_it()
             before.version()
         )
     );
+    // A reader whose schema has a table of its own does not define it either.
+    let why = refused(opened(again(&client), &Opening::read().at(newer())).map(drop));
+    assert!(
+        why.starts_with(&format!(
+            "this board is at schema {}, behind this build's {}",
+            before.version(),
+            newer().version()
+        )),
+        "{why}"
+    );
     // The board is the older build's as it left it, to read and to write.
     assert_eq!(version(&client), Some(before.version()));
     assert_eq!(tables(&client), held);
+    assert!(!held.contains(&"fixture_next".to_string()), "{held:?}");
     older
         .say("old/one", "owner", "after the reader", None)
         .unwrap();
