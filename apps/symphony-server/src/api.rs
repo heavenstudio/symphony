@@ -1111,6 +1111,7 @@ fn typed_anchors(value: &serde_json::Value) -> Vec<String> {
     ids
 }
 
+pub(crate) use client::compressed_per_request;
 use client::static_response;
 mod client;
 

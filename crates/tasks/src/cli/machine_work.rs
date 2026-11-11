@@ -6,9 +6,11 @@
 use serde::{Deserialize, Serialize};
 
 mod projection;
+pub(crate) use projection::identity;
 pub use projection::{Projection, Rejected, Sample};
 mod attribution;
 pub mod native;
+pub mod recorded;
 pub(crate) use attribution::attribute;
 pub(crate) use attribution::json;
 

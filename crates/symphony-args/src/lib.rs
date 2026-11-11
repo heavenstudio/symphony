@@ -25,6 +25,14 @@ impl Parsed {
             .map(|(_, v)| v.as_str())
     }
 
+    /// Every option given, by its full name, with its value (empty for a flag), in command-line
+    /// order across names: what a command whose options are steps runs, one after another.
+    pub fn options(&self) -> impl Iterator<Item = (&'static str, &str)> {
+        self.values
+            .iter()
+            .map(|(name, value)| (*name, value.as_str()))
+    }
+
     pub fn flag(&self, name: &str) -> bool {
         self.values.iter().any(|(n, _)| *n == name)
     }

@@ -63,31 +63,32 @@ never the whole target, which the nightly runs.
   `Last-Event-ID`. A board or a `client` change naming another build than the
   page's own module script loads the page again, once per build
   (`state::reload_for`, remembered in `sessionStorage`).
-- **Budget.** Both `/` and `/tasks` have a 250 KB first-visit gzip budget and
+- **Budget.** Both `/` and `/tasks` have a 300 KB first-visit gzip budget and
   a 20 KB return-visit budget (`tests/browser/`, restored after the port;
   the owner's, never loosened by an agent; the first-visit cap is the owner's
-  of 2026-10-29: "lets increase the cap to 250KB for now and revisit options
-  later"). A visit counts each response the page loaded at what Chrome's
+  of 2026-11-11: "lets increase the budget to 300"). A visit counts each response the page loaded at what Chrome's
   network events say it took on the wire, gzip body and response head: the
   HTML, the shell, the module's glue and WASM, the style sheets, API replies
   (refusals too) and the live feed's head and content messages, as the page
-  reads them. It leaves out document-content images, browser-cache hits and
+  reads them. The stand-in server sends the build as the server does, gzipped
+  at the best level, and the page and API replies at the default level
+  (`tests/browser/site.rs`). It leaves out document-content images, browser-cache hits and
   the feed's keep-alive pings, which arrive every `ping_ms` for as long as the
   page is open and are reported beside the total (the owner's, 2026-11-11).
   Other page kinds are reported separately for review.
-  On the fixture a first visit to `/tasks` takes 239,323 bytes, 10,677 under the
-  cap: the board WASM 213,070, its glue 10,757, the shared style sheet 8,307,
-  the shell 3,413, the HTML 1,143, API replies 2,548 and the feed's head and
-  opening comment 85. `/` takes 216,208; cached returns take 1,981 and
-  2,713. The same run reports `/agents` at 430,345, `/docs/` at 443,422,
-  `/queue` at 227,701, a task page at 430,891, a document at 445,315 and opening
-  the deferred panel at another 517,543 bytes. Each kind pays for its own
+  On the fixture a first visit to `/tasks` takes 238,409 bytes, 61,591 under the
+  cap: the board WASM 212,193, its glue 10,728, the shared style sheet 8,295,
+  the shell 3,417, the HTML 1,143, API replies 2,548 and the feed's head and
+  opening comment 85. `/` takes 215,319; cached returns take 1,981 and
+  2,713. The same run reports `/agents` at 428,309, `/docs/` at 441,009,
+  `/queue` at 226,898, a task page at 428,855, a document at 442,624 and opening
+  the deferred panel at another 515,202 bytes. Each kind pays for its own
   compiled framework; later visits reuse cached imports. The home budget test
   is independent of the canonical-entry test, which gives every kind a fresh
   browser profile and reports the complete published output.
   Measure loaded resources, including API data, rather than summing every
   deferred module or retained historical asset hash in the published output.
-  The 250,000 and 20,000 byte limits are the owner's; a lower first-visit
+  The 300,000 and 20,000 byte limits are the owner's; a lower first-visit
   line needs an architectural change the owner approves, and the first-visit
   analysis below prices those the owner left to revisit.
   `cargo symphony-ui size OUT NAME...` (`probes/size.sh`) builds a page kind or
