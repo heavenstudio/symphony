@@ -149,6 +149,13 @@ fn run_on(test: &str, made: fn() -> tree::Tree, exercise: fn(&Fixture)) {
         let began = Instant::now();
         let tree = made();
         let client = board::client();
+        // The board's command line makes the board; the Symphony, a reader, never does.
+        symphony_board::Store::open(symphony_board::rpc::Client::new(
+            client.addr(),
+            "sf",
+            client.database(),
+        ))
+        .unwrap();
         let done = symphony_board::sys::output(
             Command::new(std::env::current_exe().unwrap())
                 .args(["--exact", test, "--nocapture"])

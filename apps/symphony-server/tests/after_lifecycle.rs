@@ -17,6 +17,9 @@ mod projects_tests;
 #[path = "after_lifecycle/private_tests.rs"]
 mod private_tests;
 
+#[path = "after_lifecycle/board_schema_tests.rs"]
+mod board_schema_tests;
+
 use fixture::{Repo, front, get, repository, until, write};
 use std::fs;
 use std::io::{Read, Write};

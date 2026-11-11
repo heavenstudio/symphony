@@ -135,12 +135,14 @@ fn attach(store: &Store, c: &mut Context) -> Result<(), Stop> {
         root.as_ref()
             .is_some_and(|root| probes::landed(root, &t.slug))
     };
+    let tips = probes::tips(root.as_deref());
     let settings = Watch {
         interval: p.float("interval", 3.0),
         beat: p.float("beat", 20.0),
         polls: p.get("polls").map(|_| p.int("polls", 0)),
         probes: Some(&probes),
         landed: Some(&landed),
+        tips: Some(&tips),
         pull_every: Some(pull_every),
     };
     let (out, err, input, clock) = (&mut *c.out, &mut *c.err, &mut *c.input, c.clock);
