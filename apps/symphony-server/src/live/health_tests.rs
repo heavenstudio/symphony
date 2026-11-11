@@ -17,6 +17,7 @@ use std::net::{Shutdown, TcpListener, TcpStream};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
+use symphony_board::board_health::disk::{Low, THRESHOLD_GB};
 use symphony_board::board_health::{CLEARS_AFTER, RECENT, Recorder, Report};
 use symphony_board::rpc::Client;
 use symphony_board::sweep::trigger::now;
@@ -309,6 +310,76 @@ fn a_failed_update_and_the_boards_health_share_the_notice_and_each_clears_alone(
     // older clears it.
     hub.tell_health(later + 1.0 + RECENT + 1.0);
     assert_eq!(*notices.borrow_and_update(), "");
+}
+
+#[test]
+fn a_low_disk_is_said_on_every_page_beside_the_boards_health_until_it_is_freed() {
+    let tree = Tree::new();
+    let root = repository(&tree);
+    let at = now();
+    let mut hub = hub(&root, &tree.path("health.json"), &Clock::at(at));
+    // The disk the hub reads, as the test sets it, against the default threshold.
+    let free = Arc::new(Mutex::new(30_000_000_000_u64));
+    let read = Arc::clone(&free);
+    hub.low_disk =
+        Box::new(move || Low::of(Path::new("/disk"), *read.lock().unwrap(), THRESHOLD_GB));
+    let mut notices = hub.server_notice.subscribe();
+    const LOW: &str = "The disk has under 20 GB free: a full disk fails every build and can \
+                       corrupt the task board. `just tasks status` says how much.";
+
+    hub.tell_health(at);
+    assert!(!notices.has_changed().unwrap(), "30 GB free: nothing said");
+
+    *free.lock().unwrap() = 12_345_678_901;
+    hub.tell_health(at);
+    assert_eq!(*notices.borrow_and_update(), LOW);
+    *free.lock().unwrap() = 11_000_000_000;
+    hub.tell_health(at);
+    assert!(
+        !notices.has_changed().unwrap(),
+        "still low, a build having written more: the pages are not told again"
+    );
+
+    hub.health.dispatched(at, Err("the board did not answer"));
+    hub.tell_health(at);
+    assert_eq!(
+        *notices.borrow_and_update(),
+        format!("{DISPATCH_FAILING} · {LOW}"),
+        "the board's health and the disk share the notice"
+    );
+
+    *free.lock().unwrap() = 25_000_000_000;
+    hub.tell_health(at);
+    assert_eq!(
+        *notices.borrow_and_update(),
+        DISPATCH_FAILING,
+        "the disk freed: its part clears alone"
+    );
+}
+
+#[test]
+fn the_machines_disk_is_read_where_the_project_is_against_the_setting() {
+    let tree = Tree::new();
+    let root = repository(&tree);
+    let setting = |gb: &str| -> std::collections::BTreeMap<String, String> {
+        [(
+            symphony_board::board_health::disk::VAR.to_string(),
+            gb.to_string(),
+        )]
+        .into_iter()
+        .collect()
+    };
+    // Under a threshold over any disk there is: low, read at the project's folder.
+    let low = super::health::reading(&root, &setting("1000000000000"))().unwrap();
+    assert_eq!(
+        (low.path.as_path(), low.threshold_gb),
+        (root.as_path(), 1e12)
+    );
+    assert!(low.free > 0, "{low:?}");
+    assert_eq!(super::health::reading(&root, &setting("0"))(), None);
+    // The library's own tests read a disk that is never low, whatever the machine's.
+    let hub = Hub::new(&root, &root.join("build/client"));
+    assert_eq!((hub.low_disk)(), None);
 }
 
 #[test]

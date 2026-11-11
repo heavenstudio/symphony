@@ -28,6 +28,5 @@ tokenizers.workspace = true
 tract-onnx.workspace = true
 tract-linalg.workspace = true
 sha2.workspace = true
-
-[dev-dependencies]
-libc = "0.2"
+# The free disk the board warns of (`statvfs`, src/board_health/disk.rs); process-cwd builds it already.
+libc.workspace = true
