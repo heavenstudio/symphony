@@ -1,6 +1,7 @@
 //! What a page's read costs the hub: a document's render holds no lock the board, the feed and the
-//! project list read under; a document, folder or agents read reads no board; the task pages' reads
-//! share one store of the board.
+//! project list read under, and still publishes what it finds before handing out its version; a
+//! document, folder or agents read reads no board; the task pages' reads share one store of the
+//! board.
 
 use super::Hub;
 use crate::front::{Shared, router};
@@ -185,6 +186,46 @@ fn a_document_render_holds_no_lock_the_board_the_feed_and_the_project_list_read_
 }
 
 #[test]
+fn a_document_read_that_finds_an_edit_first_publishes_it_then_hands_out_its_version() {
+    let tree = Tree::new();
+    let root = repository(&tree);
+    tree.write("main/docs/EDITED.md", "# Edited\n\nThe first words.\n");
+    let hub = Hub::new(&root, &root.join("build/client"));
+    hub.refresh_page("", &root).unwrap();
+    let published = |hub: &Hub| hub.pages.read().unwrap()[""].history.len();
+
+    let first = hub.document("", "docs/EDITED.md").unwrap();
+    let before = published(&hub);
+    let again = hub.document("", "docs/EDITED.md").unwrap();
+    assert_eq!(
+        published(&hub),
+        before,
+        "an unchanged document publishes nothing"
+    );
+    assert_eq!(again.version, first.version);
+
+    // The read sees the edit before the watcher does.
+    tree.write("main/docs/EDITED.md", "# Edited\n\nThe later words.\n");
+    let edited = hub.document("", "docs/EDITED.md").unwrap();
+    let pages = hub.pages.read().unwrap();
+    let page = &pages[""];
+    assert_eq!(page.history.len(), before + 1, "the edit is published once");
+    let event = page.history.back().unwrap();
+    assert!(event.json.contains("The later words."), "{}", event.json);
+    assert_eq!(
+        edited.version, event.version,
+        "the version handed out is the one that carries the edit"
+    );
+    assert!(
+        page.documents["docs/EDITED.md"]
+            .sections
+            .iter()
+            .any(|section| section.html.contains("The later words.")),
+        "the page keeps the edited copy"
+    );
+}
+
+#[test]
 fn a_document_or_folder_read_takes_its_tasks_from_the_board_the_hub_holds_and_reads_no_board() {
     let tree = Tree::new();
     let root = repository(&tree);
@@ -365,6 +406,17 @@ fn a_task_pages_reads_share_one_store_of_the_board_and_the_agents_pages_read_no_
         1,
         "a task not found is no failure of the board's"
     );
+
+    // While the board cannot be read, its agents and their work cannot be either.
+    shared
+        .api
+        .get()
+        .unwrap()
+        .board_error("the board went".into());
+    for route in ["/api/agents", "/api/agent-page"] {
+        let (status, body) = ask(route);
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{route}: {body}");
+    }
     shared.stop();
 }
 

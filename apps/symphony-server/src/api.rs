@@ -309,6 +309,9 @@ pub(crate) async fn answer(shared: &Arc<Shared>, request: Request) -> Option<Res
             let offer = path == "/api/task-offer";
             match tokio::task::spawn_blocking(move || {
                 if agents {
+                    // The agents and their work as the hub's board tick last read them: while the
+                    // board cannot be read, neither can they, as with its tasks.
+                    let board = hub.tasks_read().map_err(|e| unavailable(&e, ""))?;
                     let mut view = hub.agent_snapshot().map_err(|e| unavailable(&e, ""))?;
                     if agent_page {
                         view.agents.retain(|a| {
@@ -329,8 +332,6 @@ pub(crate) async fn answer(shared: &Arc<Shared>, request: Request) -> Option<Res
                             .last()
                             .filter(|_| view.agents.len() == 20)
                             .map(|a| a.handle.clone());
-                        // The board as the hub last read it, as the agents beside it were.
-                        let board = hub.tasks_read().map_err(|e| unavailable(&e, ""))?;
                         let tasks = agent_page::tasks(
                             &board.tasks,
                             view.agents.iter().map(|a| a.handle.as_str()),

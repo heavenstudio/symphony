@@ -186,7 +186,8 @@ census logs one line per round, as its scan answers or as the server's stop ends
 `ps` that never answers still shows how long it was pending. The callback clock's
 sequenced board snapshot also supplies the board and agents views. Unchanged raw records reuse their wire snapshot and version hash.
 That snapshot also names the tasks that link a document or a folder's introduction, and the
-work beside each agent on the agents page, so those reads read no board. The task page's reads (`task-page`, `task-offer`,
+work beside each agent on the agents page, so those reads read no board; while the board cannot be
+read, the agents views answer unavailable, as its tasks do. The task page's reads (`task-page`, `task-offer`,
 `task-history`, `task-brief`, `task-thread`) share one store of the board, opened by the
 first and kept until the board fails a read on it, so no read finds the board's server and
 asks `ps` and `lsof` about it again. A document renders without the lock the board, the feed and

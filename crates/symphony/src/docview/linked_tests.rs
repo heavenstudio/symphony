@@ -73,10 +73,12 @@ fn a_link_to_a_document_that_moved_finds_it_by_its_name() {
         task("tools/named", &["docs/old/OTHER"]),
         task("tools/gone", &["docs/old/GONE.md"]),
         task("tools/exists", &["docs/OTHER.md"]),
+        task("tools/nameless", &["#a-heading", "docs/.."]),
     ];
     assert_eq!(
         slugs(&linked(&tree.root, "docs/OTHER.md", &board)),
-        ["tools/moved", "tools/named", "tools/exists"]
+        ["tools/moved", "tools/named", "tools/exists"],
+        "a link with no file name finds no document by name"
     );
     assert!(
         linked(&tree.root, "docs/TOPIC.md", &board).is_empty(),
