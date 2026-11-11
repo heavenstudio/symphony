@@ -320,13 +320,13 @@ async fn judge(
             .into_response();
     }
     let Some(path) = crate::api::decode_path(request.uri().path()) else {
-        return StatusCode::BAD_REQUEST.into_response();
+        return missing(&shared, &request, StatusCode::BAD_REQUEST);
     };
     if path
         .split('/')
         .any(|part| part.eq_ignore_ascii_case(".git"))
     {
-        return StatusCode::NOT_FOUND.into_response();
+        return missing(&shared, &request, StatusCode::NOT_FOUND);
     }
     let (scope, relative) = crate::api::scope_path(&path);
     let root = if scope.is_empty() {
@@ -347,11 +347,22 @@ async fn judge(
             if let Ok(target) = tokio::fs::canonicalize(root.join(project.file(relative))).await
                 && shared.is_metadata(&target)
             {
-                return StatusCode::NOT_FOUND.into_response();
+                return missing(&shared, &request, StatusCode::NOT_FOUND);
             }
         }
     }
     next.run(request).await
+}
+
+/// What a miss at `request`'s path answers in this project ([`crate::pages::missing`]).
+fn missing(shared: &Shared, request: &Request, status: StatusCode) -> Response {
+    crate::pages::missing(
+        &shared.root,
+        &shared.base,
+        request.uri().path(),
+        request.headers(),
+        status,
+    )
 }
 
 /// `GET /api/front`: this server, its app, and the leftovers it sees, for the starters on this machine,
@@ -391,7 +402,9 @@ pub(crate) fn names_loopback(host: &str) -> bool {
         })
 }
 
-/// Saves own their request body; reads need only its metadata. Unknown routes end here.
+/// Saves own their request body; reads need only its metadata. Unknown routes end here, and so
+/// does every miss a read answers with no body (a file nothing serves, say): each is the one page
+/// or API error a miss is ([`crate::pages::missing`]).
 async fn answer(State(shared): State<Arc<Shared>>, request: Request) -> Response {
     if crate::write::handles(&request) {
         return crate::write::answer(&shared, request).await;
@@ -400,10 +413,31 @@ async fn answer(State(shared): State<Arc<Shared>>, request: Request) -> Response
     *metadata.method_mut() = request.method().clone();
     *metadata.uri_mut() = request.uri().clone();
     *metadata.headers_mut() = request.headers().clone();
-    if let Some(response) = crate::api::answer(&shared, metadata).await {
-        return response;
+    let response = match crate::api::answer(&shared, metadata).await {
+        Some(response) => response,
+        None => match crate::write::methods(request.uri().path()) {
+            // A save route asked to read: say which methods it takes.
+            Some(allowed) => {
+                let mut refused = crate::pages::json(
+                    StatusCode::METHOD_NOT_ALLOWED,
+                    &format!("this route takes {allowed}"),
+                );
+                refused
+                    .headers_mut()
+                    .insert(header::ALLOW, header::HeaderValue::from_static(allowed));
+                refused
+            }
+            None => StatusCode::NOT_FOUND.into_response(),
+        },
+    };
+    if matches!(
+        response.status(),
+        StatusCode::NOT_FOUND | StatusCode::BAD_REQUEST
+    ) && !response.headers().contains_key(header::CONTENT_TYPE)
+    {
+        return missing(&shared, &request, response.status());
     }
-    StatusCode::NOT_FOUND.into_response()
+    response
 }
 
 /// A thread named `name`, running `body`.

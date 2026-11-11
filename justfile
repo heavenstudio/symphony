@@ -1,4 +1,9 @@
 set positional-arguments
+# The Symphony's recipes as `symphony init` installs them in a project; the ones below of the same
+# name win, building this workspace's binaries before they run.
+set allow-duplicate-recipes
+
+import 'symphony.just'
 
 # A recipe that builds or tests runs as one operation through tools/record.sh, which records it
 # for the board's Build and Test columns when a recorder answers (docs/MACHINE_WORK.md); its

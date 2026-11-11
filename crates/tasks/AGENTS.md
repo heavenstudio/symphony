@@ -5,9 +5,13 @@ the root guide](../../AGENTS.md#rust).
 
 The `symphony-board` crate (this folder) is the task board ([TASKS](../../docs/TASKS.md)): its
 store over SurrealDB, the server it starts in `sf-tasks/` in the git common
-dir, and the `tasks` binary, which is `just tasks`. `just tasks`, `just
-agent-send` and the board clients of `just symphony-cli` (`taskcli.rs`) go
-through `tools/rs-bin.sh`, which builds with Cargo before every run. A board
+dir, and the `tasks` binary, which is `just tasks`. Here `just tasks` and `just
+agent-send` go through `tools/rs-bin.sh`, which builds with Cargo before every
+run; in a project they are the recipes `symphony init` installs, which run its
+linked build. The board clients of `just symphony-cli` (`taskcli.rs`) run the
+`tasks` build the heartbeat finds: the checkout's `.target/bin/tasks` link, the
+main checkout's, the live build `tools/tasks.sh` recorded, else `tasks` on PATH;
+`SF_TASKS_CLI` names another command. A board
 binary (`tasks`, `agent-send`, `tasks-copy`, `tasks-reclaim`, `tasks-cutover`)
 run from a linked worktree against this repository's live board runs the main
 checkout's launcher instead: main's build, in main's own target folder (the
@@ -752,9 +756,9 @@ board into a server, replacing what it held, in one transaction: `tasks-copy ADD
 and changes nothing. On `surrealkv://` every row of that transaction costs the
 same, as long as no event UPSERTs a record (`src/schema.rs`): the board of
 2026-11-04, 28 MB of dump, copies in 20 s (`tests/server/copy.rs`, a quarter of
-it). `just tasks-cutover` (the `tasks-cutover` binary) moves the
-old SQLite board into it once, one way, reading SQLite through `rusqlite`
-([TASKS](../../../docs/workflow/TASKS.md#the-move-to-surrealdb)). On the in-memory
+it). The `tasks-cutover` binary moves the
+old SQLite board into it once, one way, reading SQLite through `rusqlite`.
+On the in-memory
 engine a transaction that big costs more than linearly (the board at the move:
 39 server CPU-s, against 1.5 on `surrealkv://`).
 
@@ -794,7 +798,7 @@ SurrealKV's own threshold, 4 KiB, sent large values to a value log. It deletes a
 value-log file only once no sstable points into it, so a row rewritten in place
 kept every version: 102 GiB for a 0.5 GiB board (tools/tasks-db-space). Never
 set `SURREAL_SURREALKV_ENABLE_VLOG=false`: a store with values in its log then
-cannot read them. `tasks-reclaim` (`just tasks-reclaim`, the owner's) is
+cannot read them. `tasks-reclaim` (the owner's) is
 `Home::reclaim`. Under the starters' lock it ends the board's server and starts
 an unrecorded one on the store. It exports every namespace's every database with
 `surreal export` and imports them into `reclaim/data` under `Storage`, each

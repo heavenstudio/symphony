@@ -140,6 +140,7 @@ impl Store {
             inbox_pool: Mutex::new(None),
             slots: None,
             alarm: crate::alarm::Thresholds::default(),
+            named_server: false,
         }
     }
 

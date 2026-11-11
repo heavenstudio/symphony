@@ -399,7 +399,7 @@ mod filing {
             "lamp-b-pic",
             "ui-list-v1",
             "needs image explanation",
-            "docs/workflow/REVIEW.md",
+            "the apply-review skill",
         ] {
             assert!(body.contains(words), "{words}: {body}");
         }
@@ -880,7 +880,7 @@ mod command {
         assert!(out.contains("lamp-a-pic"), "{out}");
         assert!(
             out.ends_with(
-                "3 open cards with no task: `just verdict-tasks --file` puts them on the board\n"
+                "3 open cards with no task: `just symphony-cli verdict-tasks --file` puts them on the board\n"
             ),
             "{out}"
         );
@@ -1014,7 +1014,7 @@ mod real {
         assert_eq!(code, 0, "{err}");
         assert!(
             out.ends_with(
-                "3 open cards with no task: `just verdict-tasks --file` puts them on the board\n"
+                "3 open cards with no task: `just symphony-cli verdict-tasks --file` puts them on the board\n"
             ),
             "{out}"
         );
@@ -1396,7 +1396,7 @@ mod solar {
         assert_eq!(code, 0, "{err}");
         assert!(
             out.ends_with(
-                "3 open cards with no task: `just verdict-tasks --file` puts them on the board\n"
+                "3 open cards with no task: `just symphony-cli verdict-tasks --file` puts them on the board\n"
             ),
             "{out}"
         );

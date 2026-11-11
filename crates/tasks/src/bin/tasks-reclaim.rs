@@ -4,7 +4,7 @@
 //!     tasks-reclaim --dir FOLDER
 //!
 //! The board in the git common dir of the working directory, its server down meanwhile
-//! (`symphony_board::server::Home::reclaim`): `just tasks-reclaim`, the owner's to run. `--dir`
+//! (`symphony_board::server::Home::reclaim`): `tasks-reclaim`, the owner's to run. `--dir`
 //! names a board folder elsewhere, a copy of the board's to rehearse on. It says what it did, or
 //! why not (exit 2), in one line.
 

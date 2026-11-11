@@ -2,6 +2,27 @@
 
 use super::{Hub, Json, Request, Response, StatusCode, error, no_store, query};
 
+/// What a listing's `status` selects beside the board's statuses: the owner's sign-off column and
+/// the display stages of work a machine builds or tests.
+const SELECTABLE: [&str; 3] = ["signoff", "build", "test"];
+
+/// A listing's `status`, when it names one: a board status or one of [`SELECTABLE`].
+pub(super) fn status_argument(request: &Request) -> Result<(), String> {
+    match query(request, "status") {
+        Some(wanted)
+            if !SELECTABLE.contains(&wanted.as_str())
+                && !symphony_board::STATUSES.contains(&wanted.as_str()) =>
+        {
+            Err(format!(
+                "no status {wanted:?}: a listing selects one of {} or {}",
+                symphony_board::STATUSES.join(", "),
+                SELECTABLE.join(", ")
+            ))
+        }
+        _ => Ok(()),
+    }
+}
+
 pub(super) fn listing(
     hub: &Hub,
     request: &Request,
@@ -46,6 +67,7 @@ fn project(
         }
     };
     let all = query(request, "all").as_deref() == Some("1");
+    // `status` is one a listing selects ([`status_argument`], checked before the board is read).
     let status = query(request, "status");
     // The board opts into display stages. Existing lifecycle queries (including holder and
     // hierarchy readers) retain their status/count/cursor semantics without that opt-in.

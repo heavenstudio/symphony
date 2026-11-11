@@ -251,7 +251,7 @@ fn unknown_tasks_cycles_and_changes_that_change_nothing_are_refused() {
             f.store
                 .change_depends("sim/dep", &owned(&["sim/finished"]), &[], "nobody-here")
         ),
-        "no session 'nobody-here'; attach first (just tasks-attach)"
+        "no session 'nobody-here'; register first (`just tasks register`)"
     );
     assert_eq!(f.store.get("sim/dep").unwrap().depends, ["sim/old"]);
     assert!(f.said("sim/dep").is_empty());

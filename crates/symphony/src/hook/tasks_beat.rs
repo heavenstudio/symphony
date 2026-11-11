@@ -169,7 +169,7 @@ const LIVE: [&str; 2] = ["sf-cargo", "tasks-main"];
 
 /// The newest executable build recorded under the located repository's common directory.
 /// The caller resolves that directory within the project's checkout boundary.
-fn live_build(common: &Path) -> Option<PathBuf> {
+pub(crate) fn live_build(common: &Path) -> Option<PathBuf> {
     let mut folder = common.to_path_buf();
     folder.extend(LIVE);
     std::fs::read_dir(folder)

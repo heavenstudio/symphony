@@ -535,12 +535,30 @@ fn no_pinned_surreal_is_refused_with_how_to_fetch_it() {
     assert_eq!(
         error.to_string(),
         format!(
-            "SurrealDB {SURREAL_VERSION} is not at {}: it is fetched once per machine \
-             (docs/workflow/TASKS.md#where-it-lives)",
+            "SurrealDB {SURREAL_VERSION} is not at {}, where `SF_SURREAL` names it",
             missing.display()
         )
     );
     assert!(!exists(&s.dir.join("server.json")));
+    // The pinned binary's place says the command that fetches it into that repository.
+    let common = s.dir.join("repo").join(".git");
+    std::fs::create_dir_all(&common).unwrap();
+    let error = Home::in_common(&common, None).ensure().unwrap_err();
+    let pinned = common
+        .join("sf-surreal")
+        .join(SURREAL_VERSION)
+        .join("surreal");
+    assert_eq!(error, ServerError::NoSurreal(pinned.clone()));
+    assert_eq!(
+        error.to_string(),
+        format!(
+            "SurrealDB {SURREAL_VERSION} is not at {}: `tools/surreal.sh` fetches it into this \
+             repository's common dir (`SF_GIT_COMMON_DIR={} bash tools/surreal.sh` in a Symphony \
+             checkout), or `SF_SURREAL` names another",
+            pinned.display(),
+            common.display()
+        )
+    );
 }
 
 #[test]
