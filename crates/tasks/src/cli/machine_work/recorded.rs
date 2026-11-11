@@ -265,7 +265,7 @@ fn held(path: &Path) -> Option<bool> {
 #[derive(Debug)]
 enum Reading {
     /// A record, with its bytes.
-    Record(Record, Vec<u8>),
+    Record(Box<Record>, Vec<u8>),
     /// A file read whole that is no record this build reads: too long, not a file, not one, or of
     /// another version. Its writer renamed it there whole, so no later read makes it one.
     NotOne,
@@ -290,7 +290,7 @@ fn record(path: &Path) -> Reading {
     let stem = path.file_stem().and_then(|stem| stem.to_str());
     match (serde_json::from_slice::<Record>(&bytes), stem) {
         (Ok(found), Some(stem)) if bytes.len() as u64 <= MAX_BYTES && found.valid(stem) => {
-            Reading::Record(found, bytes)
+            Reading::Record(Box::new(found), bytes)
         }
         _ => Reading::NotOne,
     }
@@ -356,15 +356,15 @@ pub fn read(folder: &Path) -> Found {
             continue;
         };
         if first.state == Step::Finished {
-            found.records.push((first, bytes));
+            found.records.push((*first, bytes));
             continue;
         }
         match held(&path.with_extension("lease")) {
-            Some(true) => found.records.push((first, bytes)),
+            Some(true) => found.records.push((*first, bytes)),
             // A recorder that finished between the two reads left its lease with its record done.
             Some(false) => match record(&path) {
                 Reading::Record(again, bytes) if again.state == Step::Finished => {
-                    found.records.push((again, bytes));
+                    found.records.push((*again, bytes));
                 }
                 _ => found.uncertain = true,
             },
@@ -587,7 +587,7 @@ pub fn sweep(folder: &Path, now: f64) -> io::Result<Vec<Record>> {
             continue;
         }
         let mut found = match record(&path) {
-            Reading::Record(found, _) => found,
+            Reading::Record(found, _) => *found,
             // No recorder holds it and no reader reads it, now or later: it goes at once, so the
             // machine it makes uncertain is certain again.
             Reading::NotOne => {
