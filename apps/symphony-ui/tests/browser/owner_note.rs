@@ -43,11 +43,25 @@ fn drawn(slug: &str, who: &str) -> String {
     )
 }
 
-/// The page's drawing of the owner's note on alpha, once it shows, and of the agent's on bravo.
+/// The owner's note as read by [`drawn`]: its list items' words too, which fill only once the card
+/// is near the viewport.
+const WORDS: &str = "First question? Its answer. Next paragraph. ## title [ ] bravo — not a card";
+/// The register group a card answered with a question moves to.
+const REGROUPED: &str = "Waiting on an agent";
+
+/// The page's drawing of the owner's note on alpha, once the card, scrolled into view on each look,
+/// shows the note's words and has moved to its new group, and of the agent's on bravo.
 fn both(page: &mut Chrome) -> (Value, Value) {
     let owner = drawn("alpha", "owner");
     assert!(
-        page.wait_for(&format!("{owner}?.state === 'question'"), SHOWN),
+        page.wait_for(
+            &format!(
+                "(() => {{ document.querySelector('[data-doc-key=\"card:alpha\"]')?.scrollIntoView({{block: 'center'}}); const drawn = {owner}; return drawn?.state === 'question' && drawn.group === {} && drawn.words === {}; }})()",
+                json!(REGROUPED),
+                json!(WORDS)
+            ),
+            SHOWN
+        ),
         "{}",
         page.eval(&owner)
     );
@@ -101,13 +115,7 @@ fn a_notes_line_breaks_and_paragraph_gaps_show_wide_and_at_phone_width_and_after
             let at = format!("width {width}, reload {reload}");
             assert_eq!(
                 (&owner["words"], &owner["tags"], &owner["group"]),
-                (
-                    &json!(
-                        "First question? Its answer. Next paragraph. ## title [ ] bravo — not a card"
-                    ),
-                    &json!(["OL", "P", "UL"]),
-                    &json!("Waiting on an agent")
-                ),
+                (&json!(WORDS), &json!(["OL", "P", "UL"]), &json!(REGROUPED)),
                 "{at}: the owner's note is drawn as typed and the card regrouped; the file:\n{}",
                 file()
             );
