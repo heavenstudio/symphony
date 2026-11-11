@@ -71,17 +71,17 @@ geometry, stream recovery and transfer budgets without a display server.
   action listeners, own-node form reads and owned visibility latch reduce the
   board WASM from 199,247 to 183,713 gzip bytes, and home from 193,570
   to 175,351, including the appearance changes merged from `61c0d93e`.
-  The canonical-entry browser case measures cold transfers of 220,993 bytes
-  on `/` and 249,900 on
-  `/tasks`, including response overhead and fixture API data; cached returns
-  are 1,895 and 2,627 bytes. Both first visits fit, 29,007 and 100 bytes
-  under the cap: `/tasks` has no room left. The same
-  run reports `/agents` at 435,119, `/docs/` at 450,632 and `/queue` at 232,556.
-  Once a page is idle it warms the chat's and the menus' modules, 751,446 bytes
-  outside its first visit (the panel's wasm 455,036, the overlay's 262,119, their
-  scripts and styles); opening the chat then transfers nothing more, where it took
-  another 517,506 bytes before the warm-up. The shell ships without its comments
-  (`package.sh`). Each kind pays
+  The canonical-entry browser case measures cold transfers of 221,020 bytes
+  on `/` and 249,926 to 249,934 on
+  `/tasks` (two runs; the feed's keep-alive pings count), including response
+  overhead and fixture API data; cached returns are 1,895 and 2,627 bytes. Both
+  first visits fit, 28,980 and 66 bytes under the cap: `/tasks` has no room left.
+  The same run reports `/agents` at 435,153, `/docs/` at 450,658 and `/queue` at
+  232,589. Once a page is idle it warms the chat's and the menus' modules, 751,479
+  bytes outside its first visit (the panel's wasm 454,991, the overlay's 262,127,
+  their scripts and styles); opening the chat then transfers nothing more, where it
+  took another 517,506 bytes before the warm-up. The shell ships without its
+  comments (`package.sh`). Each kind pays
   for its own compiled framework; later visits reuse cached imports. The
   original home budget test remains independent of the canonical-entry test,
   which gives every kind a fresh browser profile and reports the complete
