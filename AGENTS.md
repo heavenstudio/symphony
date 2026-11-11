@@ -46,8 +46,11 @@ its arguments, streams, status and inherited limits. A build or test goes throug
 and `verify` recipes, each as one operation: the board's recorder (`tasks run`, the
 prepared `.target/bin/tasks` of this checkout or of the main checkout a worktree
 belongs to) records it for the Build and Test columns (docs/MACHINE_WORK.md), and
-with none that answers, `TASKS_RECORDER=off` or inside a recorded run it is exec'd as
-it is. It uses this folder's `.target/`
+with none that answers within 2 s, `TASKS_RECORDER=off`, inside a recorded run or in a
+tree without `tools/record.sh` it is exec'd as it is. On macOS the recorder becomes
+the build it records and watches it from a process of its own, so descriptors, the
+signal mask, ignored signals and a kill reach the build as they would without it.
+It uses this folder's `.target/`
 unless `CARGO_TARGET_DIR` names another. It supplies no project gate planner, test
 selection, certificate, shared slot pool or dependency seed service. The toolchain
 pin is `rust-toolchain.toml`. The containing project keeps its own source launcher,
@@ -116,7 +119,10 @@ started on.
 
 **Board commands.** Run them as `just tasks … --as HANDLE`: a subagent's tool calls
 count as its heartbeat only after a command of that shape binds it, and one that runs
-the binary by its path reads lost while it works.
+the binary by its path reads lost while it works. A build or test is recorded for the
+task its session holds; an orchestrator running one for a task, or a subagent without
+a session of its own, names it: `TASKS_TASK=SLUG just verify`, with
+`TASKS_SESSION=HANDLE` when it has a handle (docs/MACHINE_WORK.md).
 
 **Verify in a clean checkout.** Run `just verify` in a worktree outside this folder
 (`../symphony-wt/`), on a tip whose client distribution was rebuilt with
