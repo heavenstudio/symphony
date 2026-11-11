@@ -185,6 +185,69 @@ async fn an_unknown_project_id_is_the_list_saying_so_never_another_projects_page
     );
 }
 
+/// A document's picture or link to a file of its checkout outside the entrypoints is written
+/// root-relative (`/look/icon.svg`, `/src/main.rs`): the project of the page that names it, which
+/// holds that folder, answers it, a file missing there with its own miss.
+#[tokio::test]
+async fn a_documents_picture_or_link_to_a_file_of_its_checkout_reaches_its_project() {
+    let machine = Machine::new();
+    machine.tree.write("alpha/look/icon.svg", "<svg/>");
+    machine.tree.write("alpha/src/main.rs", "fn main() {}\n");
+    let from_alpha = ("referer", "http://127.0.0.1:1/alpha/docs/README.md");
+    // The picture, fetched by the page, is answered in place.
+    let picture = machine.get("/look/icon.svg?v=4b77", &[from_alpha]).await;
+    assert_eq!(picture.status(), StatusCode::OK);
+    assert_eq!(picture.headers()[header::CONTENT_TYPE], "image/svg+xml");
+    assert_eq!(text(picture).await, "<svg/>");
+    // A link, followed, opens under the project.
+    for (path, target) in [
+        ("/src/main.rs", "/alpha/src/main.rs"),
+        ("/symphony.toml", "/alpha/symphony.toml"),
+        ("/look/gone.svg", "/alpha/look/gone.svg"),
+    ] {
+        let link = machine.get(path, &[PAGE, from_alpha]).await;
+        assert_eq!(link.status(), StatusCode::TEMPORARY_REDIRECT, "{path}");
+        assert_eq!(location(&link), target);
+    }
+    // A picture missing from a folder the project holds is the project's own miss.
+    let missing = machine.get("/look/gone.svg", &[from_alpha]).await;
+    assert_eq!(missing.status(), StatusCode::NOT_FOUND);
+    let missing = text(missing).await;
+    assert!(missing.contains("Nothing is here"), "{missing}");
+    assert!(!missing.contains("No project is called"), "{missing}");
+    // Beta holds no such folder, and alpha's files are not beta's page's to reach; nor is a name
+    // the checkout holds that the router serves no file for.
+    let from_beta = ("referer", "http://127.0.0.1:1/beta/docs/README.md");
+    let page = unknown(&machine, "/look/icon.svg", &[from_beta]).await;
+    assert!(page.contains("No project is called <q>look</q>"), "{page}");
+    for path in ["/src/", "/src", "/../alpha/look/icon.svg"] {
+        let page = unknown(&machine, path, &[PAGE, from_alpha]).await;
+        assert!(page.contains("No project is called"), "{path}: {page}");
+    }
+}
+
+/// An id spelled with escapes names its project (`/%61lpha/` is `/alpha/`), and the page of a
+/// mistyped one never offers the id it already spells.
+#[tokio::test]
+async fn an_escaped_id_is_its_projects_plain_address() {
+    let machine = Machine::new();
+    for (path, target) in [
+        ("/%61lpha/tasks?x=1", "/alpha/tasks?x=1"),
+        ("/%61lpha", "/alpha/"),
+        ("/b%65ta/docs/A%20b.md", "/beta/docs/A%20b.md"),
+    ] {
+        let response = machine.get(path, &[PAGE]).await;
+        assert_eq!(response.status(), StatusCode::TEMPORARY_REDIRECT, "{path}");
+        assert_eq!(location(&response), target, "{path}");
+    }
+    let near = unknown(&machine, "/%41lpha/", &[PAGE]).await;
+    assert!(near.contains("No project is called <q>Alpha</q>"), "{near}");
+    assert!(
+        near.contains("Did you mean <a href=\"/alpha/\">alpha</a>?"),
+        "{near}"
+    );
+}
+
 #[tokio::test]
 async fn a_project_served_at_the_root_answers_only_the_names_its_folder_holds() {
     let machine = Machine::new();

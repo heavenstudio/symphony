@@ -215,7 +215,8 @@ pub(crate) fn missing(
 
 /// What a page of the branch worktree `scope` answers once no worktree holds it: the project's
 /// page saying so, linking the same page in the main checkout (`route`, decoded, and `query` as
-/// sent).
+/// sent). The link is a path on this server whatever `route` starts with: `//host` would be
+/// another site's.
 pub(crate) fn gone(
     root: &Path,
     base: &str,
@@ -223,7 +224,8 @@ pub(crate) fn gone(
     route: &str,
     query: Option<&str>,
 ) -> Response {
-    let mut here = crate::api::encode_location(&format!("{base}{route}"));
+    let mut here =
+        crate::api::encode_location(&format!("{base}/{}", route.trim_start_matches('/')));
     if let Some(query) = query {
         here.push('?');
         here.push_str(query);

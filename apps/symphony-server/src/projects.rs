@@ -6,10 +6,12 @@
 //! project picker), `/<id>` (to `/<id>/`) and `/<id>/theme.css` (the
 //! project's theme tokens). A path of today, under no project, is the project's whose page asked
 //! for it (a same-origin Referer under `/<id>/`), else the starter's, when that project answers it
-//! (a route of the Symphony's or of its plugins', or one under its entrypoints): a page load is
-//! redirected there, so a bookmark opens under `/<id>/`, and anything else is answered by that
-//! project in place; a project this server refuses answers its refusal on either way in. Any other
-//! path, an unknown project id say, is the project list's page saying so, never another project's.
+//! (a route of the Symphony's or of its plugins', one under its entrypoints, or a file of its
+//! checkout a document names root-relative): a page load is redirected there, so a bookmark opens
+//! under `/<id>/`, and anything else is answered by that project in place; a project this server
+//! refuses answers its refusal on either way in. An id spelled with escapes (`/%61lpha/`) is
+//! redirected to its plain address. Any other path, an unknown project id say, is the project
+//! list's page saying so, never another project's.
 //! Every route but `/api/front`, which loopback's name alone reaches, answers a Host naming this
 //! machine alone.
 //! A project's state is its registered root's under its id: until the server stops, the registry
@@ -325,6 +327,9 @@ async fn dispatch(
         }
         return forward(project, &format!("/{rest}"), request).await;
     }
+    if let Some(plain) = respelled(&served, &path) {
+        return redirect(&plain, request.uri());
+    }
     // A path of today is its project's only when that project answers it: a first segment no
     // project holds and no route of the Symphony's or that project's is a project id mistyped.
     let Some(owner) = referred(request.headers(), &served)
@@ -370,8 +375,10 @@ pub(crate) fn navigation(method: &Method, headers: &HeaderMap) -> bool {
 }
 
 /// Whether `project` answers `path`, a path of today under no project's prefix, behind a branch's
-/// scope or not: a route the Symphony or one of the project's plugins answers, or a route under one
-/// of its entrypoints; under one served at the project's root, only a name its folder holds.
+/// scope or not: a route the Symphony or one of the project's plugins answers, a route under one
+/// of its entrypoints (under one served at the project's root, only a name its folder holds), or
+/// a file of its checkout it serves as media, as a document's picture or link names one
+/// root-relative (`/look/icon.svg`, `/src/main.rs`).
 fn answers(project: &Served, path: &str) -> bool {
     let decoded = crate::api::decode_path(path);
     let (scope, route) = crate::api::scope_path(decoded.as_deref().unwrap_or(path));
@@ -394,6 +401,35 @@ fn answers(project: &Served, path: &str) -> bool {
                 below(&entry.url, route).is_some()
             }
         })
+        || holds(root, &project, route)
+}
+
+/// Whether the checkout at `root` holds what the media route `route` names
+/// ([`crate::media_files::handles`]): its first part is there, where the project's router reads
+/// it ([`symphony::project::Project::file`]), so that router answers it, a file it lacks in that
+/// folder included, with the project's own miss.
+fn holds(root: &std::path::Path, project: &symphony::project::Project, route: &str) -> bool {
+    use std::path::{Component, Path};
+    let first = route.split('/').next().unwrap_or_default();
+    crate::media_files::handles(&format!("/{route}"))
+        && matches!(
+            Path::new(first).components().collect::<Vec<_>>()[..],
+            [Component::Normal(_)]
+        )
+        && std::fs::symlink_metadata(root.join(project.file(first))).is_ok()
+}
+
+/// The plain address of `path` when its first segment spells a project's id with escapes
+/// (`/%61lpha/tasks`), which names that project as `/alpha/tasks` does.
+fn respelled(served: &[Served], path: &str) -> Option<String> {
+    let decoded = crate::api::decode_path(path)?;
+    let inside = |path: &str| path.strip_prefix('/').unwrap_or(path).to_string();
+    let decoded = inside(&decoded);
+    let (first, rest) = decoded.split_once('/').unwrap_or((&decoded, ""));
+    let spelled = inside(path);
+    let spelled = spelled.split('/').next().unwrap_or_default();
+    (first != spelled && served.iter().any(|served| served.entry.id == first))
+        .then(|| crate::api::encode_location(&format!("/{first}/{rest}")))
 }
 
 /// What a path under no project answers when no project answers it: the project list, saying no

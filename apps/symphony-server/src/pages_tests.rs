@@ -263,3 +263,40 @@ async fn a_gone_branch_page_links_the_same_page_in_the_main_checkout() {
 fn gone_page(tree: &Tree, query: Option<&str>) -> Response {
     gone(&tree.root, "/lantern", "x", "/tasks", query)
 }
+
+/// A route that starts with more than one slash (`/@gone//evil.example`) still links a path on
+/// this server: `//evil.example` would be another site, on a server of its own above all.
+#[tokio::test]
+async fn a_gone_branch_page_never_links_off_this_server() {
+    let tree = lantern("");
+    for (base, route, href) in [
+        ("", "//evil.example", "/evil.example"),
+        ("", "///evil.example/x", "/evil.example/x"),
+        ("", "/\\evil.example", "/%5Cevil.example"),
+        ("", "", "/"),
+        ("/lantern", "//evil.example", "/lantern/evil.example"),
+    ] {
+        let page = body(gone(&tree.root, base, "x", route, None)).await;
+        let said = notice_of(&page);
+        assert!(
+            said.contains(&format!(
+                "<a href=\"{href}\">Open this page in the main checkout</a>"
+            )),
+            "{base} {route}: {said}"
+        );
+        assert!(!said.contains("href=\"//"), "{base} {route}: {said}");
+    }
+}
+
+/// On a phone the header is one row that scrolls, the frame's own wrapping rule overridden.
+#[test]
+fn a_phones_header_is_one_row() {
+    let style = &*STYLE;
+    let frame = style
+        .find("@media (max-width:760px) {\n  .app-header")
+        .unwrap();
+    let pages = style
+        .find("@media (max-width:760px) { .app-header { flex-wrap:nowrap; overflow-x:auto;")
+        .expect("the pages' phone header");
+    assert!(frame < pages, "the pages' rule comes after the frame's");
+}

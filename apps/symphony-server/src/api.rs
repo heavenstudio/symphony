@@ -154,6 +154,12 @@ pub(crate) async fn answer(shared: &Arc<Shared>, request: Request) -> Option<Res
     {
         return Some(error(StatusCode::BAD_REQUEST, why));
     }
+    // A status no listing selects is refused before the board is read, slow or down.
+    if path == "/api/task-board"
+        && let Err(why) = task_board::status_argument(&request)
+    {
+        return Some(error(StatusCode::BAD_REQUEST, why));
+    }
     if !scope.is_empty() && shared.api.get().and_then(|hub| hub.tree(scope)).is_none() {
         // A link to a branch's page outlives its worktree once the branch merges: a page says so.
         if !uri_scope.is_empty() && !crate::pages::data(path, request.headers()) {

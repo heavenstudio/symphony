@@ -897,8 +897,20 @@ fn misses(f: &Fixture) {
             404,
             "The worktree of branch <q>unknown</q> is gone",
         ),
+        // A server of its own links the same page by its path alone, never another site.
+        (
+            "/@unknown//evil.example",
+            404,
+            "<a href=\"/evil.example\">Open this page",
+        ),
+        (
+            "/@unknown/%2F%2Fevil.example",
+            404,
+            "<a href=\"/evil.example\">Open this page",
+        ),
     ] {
         let page = f.get(route).status(status);
+        assert!(!page.text().contains("href=\"//"), "{route}");
         assert_eq!(
             page.header("content-type"),
             "text/html; charset=utf-8",
