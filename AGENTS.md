@@ -88,7 +88,8 @@ Never run a shared-service restart as a test: use a private port and scratch boa
 `symphony.toml` registers this checkout as the project `symphony`: its docs and its
 board are served under `/symphony/` by the machine's one server, and its board is this
 repository's own, in its git common dir. Symphony work is filed, staffed and reviewed
-on that board, never on a consuming project's.
+on that board, never on a consuming project's. Every agent working here follows the
+standing rules in [RULES.md](RULES.md).
 
 **Memory lives in the repository.** Nothing goes in an agent's own memory folder
 (`~/.claude/projects/…/memory/`): what must outlast a session is guidance here or in a
