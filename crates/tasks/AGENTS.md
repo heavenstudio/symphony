@@ -189,7 +189,8 @@ A recipient is not told its own writes nor its children's staffing (`attach::dif
 moves, a role move it wrote, the roles a session it registered (`parent`) takes or lets go, and
 the move and readiness that child's claim or release makes. A quiet child is said once a health
 transition, from the observation's stored health; one it hears as stale, lost or unknown is not
-also listed idle.
+also listed idle (`pull::idle_and_busy`, which the dispatch, the legacy monitor and `tasks pull`
+share, each passing the children its look follows).
 `tasks wait` is the dispatch's own pass for one session with no channel (`Pass::Collect`,
 `Store::collect_callbacks`): it plans as a delivering pass, takes the recipient's lease though no
 address is registered, and its `Visit::send` prints what `deliver` would have sent, flushed, before

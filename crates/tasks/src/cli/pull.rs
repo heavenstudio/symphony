@@ -27,7 +27,7 @@
 //! that moved, the rows added and the rows resolved. `tasks pull --as HANDLE` prints the whole
 //! digest ([`Digest::lines`]) on demand.
 
-use crate::health::EXECUTING;
+use crate::health::{EXECUTING, Health};
 use crate::orchestration::{Owners, claimable_work};
 use crate::red::UNSTAFFED_SECONDS;
 use crate::store::unanswered::Pending;
@@ -423,18 +423,36 @@ pub(crate) fn viewed(
     board: &Board,
     holdings: &Holdings,
     view: Option<&crate::cli::agents::View>,
+    told: &BTreeMap<String, Health>,
     landed: Option<&dyn Fn(&Task) -> bool>,
     now: f64,
 ) -> Result<Digest, Error> {
+    let (idle, busy) = idle_and_busy(view, told);
+    digest_on(store, board, holdings, &idle, landed, now, &busy)
+}
+
+/// The agents of `view` a PULL lists idle, and those running a test, which count as present
+/// however quiet the board says they are. Orchestrators and the chat are never idle rows, nor is a
+/// session the recipient is told went quiet (`told`, the sessions its look follows and their
+/// health): the view calls one with no terminal idle once its board health is, and its STALE, LOST
+/// or LIVENESS UNKNOWN line says it. The dispatch, the legacy monitor and `tasks pull` all read
+/// idleness here, so they agree.
+pub(crate) fn idle_and_busy(
+    view: Option<&crate::cli::agents::View>,
+    told: &BTreeMap<String, Health>,
+) -> (Vec<String>, Vec<String>) {
     let (mut idle, mut busy) = (Vec::new(), Vec::new());
     for a in view.map_or(&[][..], |v| v.agents.as_slice()) {
-        if a.state == "idle" && a.kind != "orchestrator" && a.kind != "chat" {
-            idle.push(a.handle.clone());
-        } else if a.state == "running_test" {
+        if a.state == "running_test" {
             busy.push(a.handle.clone());
+        } else if a.state == "idle"
+            && !matches!(a.kind.as_str(), "orchestrator" | "chat")
+            && !told.get(&a.handle).is_some_and(|health| health.quiet())
+        {
+            idle.push(a.handle.clone());
         }
     }
-    digest_on(store, board, holdings, &idle, landed, now, &busy)
+    (idle, busy)
 }
 
 /// The whole digest as `handle` hears it now, read on demand (`tasks pull`): the agents view the
@@ -449,7 +467,20 @@ pub fn heard_now(store: &Store, env: &crate::cli::Env, handle: &str) -> Result<D
     let landed = |task: &Task| {
         (root.as_ref()).is_some_and(|root| crate::cli::probes::landed(root, &task.slug))
     };
-    Ok(viewed(store, &board, &holdings, Some(&view), Some(&landed), now)?.only_for(&board, handle))
+    let kind = (board.sessions.iter())
+        .find(|s| s.row.handle == handle)
+        .map_or("", |s| s.row.kind.as_str());
+    let told = crate::cli::attach::seen(&board, handle, kind).children;
+    let digest = viewed(
+        store,
+        &board,
+        &holdings,
+        Some(&view),
+        &told,
+        Some(&landed),
+        now,
+    )?;
+    Ok(digest.only_for(&board, handle))
 }
 
 /// Build against the pass's retained board and single successful holdings observation.

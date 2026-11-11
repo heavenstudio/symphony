@@ -41,6 +41,12 @@ impl Health {
     pub fn holds(self) -> bool {
         matches!(self, Health::Live | Health::Stale | Health::Unknown)
     }
+
+    /// Stale, lost or awaiting a native sweep: said to whoever is told of the session as STALE,
+    /// LOST or LIVENESS UNKNOWN.
+    pub fn quiet(self) -> bool {
+        matches!(self, Health::Stale | Health::Lost | Health::Unknown)
+    }
 }
 
 /// Live, stale, lost or left. Gone past the lost line holding nothing anyone could claim is left: a

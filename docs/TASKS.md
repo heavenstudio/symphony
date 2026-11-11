@@ -510,8 +510,8 @@ nonzero. `reap` makes the sole automatic recovery attempt described above.
 
 What is pushed is what the recipient cannot predict and must act on, said once: posts and verdicts, NEW,
 STATUS, ROLE, BLOCKED, the PULL above, and STALE, LOST or LIVENESS UNKNOWN once for each transition of a quiet
-child, never once a pass (a child it already hears as stale is not also listed idle). A recipient is never told
-its own writes: not its own moves, not a role move it made (a hand-over, a take-over), and not what its own
+child, never once a pass (a child it already hears as stale is not also listed idle, in a pushed PULL, a wait
+or `tasks pull` alike). A recipient is never told its own writes: not its own moves, not a role move it made (a hand-over, a take-over), and not what its own
 children (the sessions it registered, `--parent`) take on or let go, their reservations, claims and releases
 and the moves and readiness those make; a child's own move, to review say, is still said, and so is one it made
 before a claim or release between two looks (a block, then a release, says the block). What is read is the

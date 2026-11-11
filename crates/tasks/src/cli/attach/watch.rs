@@ -116,7 +116,7 @@ fn look(
         }
         _ => None,
     };
-    let quiet = |h: &Health| matches!(h, Health::Stale | Health::Lost | Health::Unknown);
+    let quiet = |h: &Health| h.quiet();
     let any_quiet = now.children.values().any(quiet);
     // hc is asked at most once a poll, by the agents view and the pane watch together.
     let sample = OnceCell::new();
@@ -148,8 +148,17 @@ fn look(
         let holdings = holdings
             .as_ref()
             .ok_or_else(|| Error::Db("orchestrator PULL has no holdings observation".into()))?;
-        let digest = viewed(store, &board, holdings, view.as_ref(), w.landed, stamp)?
-            .only_for(&board, handle);
+        let told = &now.children;
+        let digest = viewed(
+            store,
+            &board,
+            holdings,
+            view.as_ref(),
+            told,
+            w.landed,
+            stamp,
+        )?
+        .only_for(&board, handle);
         super::pull_updates::emit_new(&digest, &mut memory.pull_entries, emit);
         memory.last_pull = Some(stamp);
         memory.last_statuses = statuses;

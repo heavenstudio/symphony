@@ -75,6 +75,33 @@ fn pull_prints_the_whole_digest_its_actor_hears_every_time_it_asks() {
 }
 
 #[test]
+fn pull_lists_idle_no_child_it_is_told_went_quiet_as_the_dispatch_does() {
+    let mut c = case("quiet-child");
+    let orch = c.register("orchestrator");
+    let child = c.register_with("worker", &["--parent", &orch]);
+    let stranger = c.register("worker");
+    c.ok(&orch, &["create", "sim/kid", "Kid"]);
+    c.ok(&orch, &["role", "sim/kid", "orchestrator"]);
+    c.ok(&child, &["claim", "sim/kid"]);
+    let first = c.ok(&orch, &["wait", "--timeout", "0"]);
+    assert!(first.contains(" idle=0"), "{first}");
+    // Both workers go stale with no terminal, which the agents view calls idle.
+    let later = crate::common::NOW + symphony_board::health::LIVE_SECONDS + 1.0;
+    c.env.vars.insert("TASKS_NOW".into(), later.to_string());
+    let waited = c.ok(&orch, &["wait", "--timeout", "0"]);
+    let pulled = c.ok(&orch, &["pull"]);
+    // The child is said STALE, not listed idle; the stranger, of whom it is not told, is idle.
+    assert!(waited.contains(&format!("STALE {child}")), "{waited}");
+    assert!(waited.contains("PULL idle=1 (was 0)\n"), "{waited}");
+    let header = pulled.lines().next().unwrap();
+    assert!(header.ends_with(" idle=1"), "{pulled}");
+    for said in [&waited, &pulled] {
+        assert!(!said.contains(&format!("idle {child}")), "{said}");
+        assert!(said.contains(&format!("idle {stranger}")), "{said}");
+    }
+}
+
+#[test]
 fn pull_needs_an_actor() {
     let c = case("actor");
     let ran = c.run_as("", &["pull"], "");

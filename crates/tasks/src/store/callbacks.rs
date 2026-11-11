@@ -1111,12 +1111,7 @@ RETURN NONE;");
         let changed = orchestrator && attach::pull_changed(before.as_ref(), &compact(&seen));
         let quiet = (seen.children.values())
             .chain(legacy.children.values())
-            .any(|health| {
-                matches!(
-                    health,
-                    crate::Health::Stale | crate::Health::Lost | crate::Health::Unknown
-                )
-            });
+            .any(|health| health.quiet());
         let env = crate::cli::Env::of_process();
         let view = if scheduled || changed || quiet {
             Some(crate::cli::agents::describe_board(
@@ -1129,28 +1124,13 @@ RETURN NONE;");
         } else {
             None
         };
-        let mut idle = Vec::new();
-        let mut busy = Vec::new();
-        for agent in view.as_ref().map_or(&[][..], |view| view.agents.as_slice()) {
-            if agent.state == "running_test" {
-                busy.push(agent.handle.clone());
-                for look in [&mut seen, &mut legacy] {
-                    if let Some(health) = look.children.get_mut(&agent.handle) {
-                        *health = crate::Health::Live;
-                    }
+        let (idle, busy) = pull::idle_and_busy(view.as_ref(), &seen.children);
+        // One running a test is present however quiet the board says it is.
+        for agent in &busy {
+            for look in [&mut seen, &mut legacy] {
+                if let Some(health) = look.children.get_mut(agent) {
+                    *health = crate::Health::Live;
                 }
-            } else if agent.state == "idle"
-                && !matches!(agent.kind.as_str(), "orchestrator" | "chat")
-                // One it is told went quiet is its STALE or LOST line's to say, not an idle row
-                // too: the view calls a session with no terminal idle once its board health is.
-                && !seen.children.get(&agent.handle).is_some_and(|health| {
-                    matches!(
-                        health,
-                        crate::Health::Stale | crate::Health::Lost | crate::Health::Unknown
-                    )
-                })
-            {
-                idle.push(agent.handle.clone());
             }
         }
         // Compare the same effective child health that observation checkpoints persist.
