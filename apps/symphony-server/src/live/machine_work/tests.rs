@@ -8,6 +8,8 @@ use crate::testing::{
 };
 use symphony_board::cli::machine_work::Freshness;
 
+mod recorder;
+
 fn input(state: &str) -> Vec<u8> {
     serde_json::to_vec(&json!({"version":1,"complete":false,"uncertain":false,"truncated":false,"records":[{
         "evidence":if state == "finished" { "finished" } else { "active" },

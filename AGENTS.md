@@ -1,7 +1,8 @@
 # Symphony
 
 The app's workspace owns its server and Dioxus client under `apps/`, and the review
-library, wire types, task board and working-directory scanner under `crates/`.
+library, wire types, task board, working-directory scanner and headless Chrome driver
+under `crates/`.
 The app's formats and operating contract live in [docs/](docs/README.md).
 A consuming project owns its landing policy and shared-service safeguards.
 
@@ -40,8 +41,17 @@ package (`crates/symphony/src/theme.rs`), served as `/<id>/theme.css` and inline
 its pages. Tests use a temporary machine folder.
 
 Use `just lint-rs`, `just test-rs`, `just symphony-ui-dist` and `just symphony-ui-dev`
-from this folder. `tools/cargo.sh` execs ordinary Cargo in this workspace, preserving
-its arguments, streams, status and inherited limits. It uses this folder's `.target/`
+from this folder. `tools/cargo.sh` runs ordinary Cargo in this workspace, preserving
+its arguments, streams, status and inherited limits. A build or test goes through
+`tools/record.sh`, as do the `lint-rs`, `test-rs`, `client-check`, `client-update`
+and `verify` recipes, each as one operation: the board's recorder (`tasks run`, the
+prepared `.target/bin/tasks` of this checkout or of the main checkout a worktree
+belongs to) records it for the Build and Test columns (docs/MACHINE_WORK.md), and
+with none that answers within 2 s, `TASKS_RECORDER=off`, inside a recorded run or in a
+tree without `tools/record.sh` it is exec'd as it is. On macOS the recorder becomes
+the build it records and watches it from a process of its own, so descriptors, the
+signal mask, ignored signals and a kill reach the build as they would without it.
+It uses this folder's `.target/`
 unless `CARGO_TARGET_DIR` names another. In a linked worktree it makes a missing target
 folder first as a copy-on-write clone of the main checkout's `.target/debug`, less the
 workspace's own units (`tools/seed-target.sh`, one `clonefile` call by `tools/seed-clone.rs`
@@ -57,7 +67,8 @@ slot wrapper and gates, which compile and test its own consumers.
 run and runs `rs-bin/NAME` in the target folder, a hard link renewed only when Cargo
 relinked, so a no-op build costs no new executable's first run. `--build NAME` prints
 that path, `--where NAME` names Cargo's own copy without building or attesting
-freshness, and `--link NAME` builds and points `.target/bin/NAME` at it. A board
+freshness, and `--link NAME` builds and points `.target/bin/NAME` at it; that build
+is never recorded. A board
 binary run from a linked worktree against the live board runs the main checkout's
 launcher instead ([the board guide](crates/tasks/AGENTS.md)). None searches a
 containing project. `just symphony
@@ -120,9 +131,18 @@ design. Executors and reviewers run on Opus: an Agent launch passes `model: "opu
 `symphony.toml` says the same for a board launch. A resumed agent keeps the model it
 started on.
 
+**Pushing main.** An orchestrator pushes this repository's `main` to `origin` after it lands work
+there, without asking each time (the owner, 2026-11-11: "do push it yes", "feel free to continue
+to do so"). It fetches first and merges what `origin/main` gained, never forces, and pushes no
+other branch and no tag. Moving a consuming project's pin and restarting the shared server stay
+separate acts that need their own word.
+
 **Board commands.** Run them as `just tasks … --as HANDLE`: a subagent's tool calls
 count as its heartbeat only after a command of that shape binds it, and one that runs
-the binary by its path reads lost while it works.
+the binary by its path reads lost while it works. A build or test is recorded for the
+task its session holds; an orchestrator running one for a task, or a subagent without
+a session of its own, names it: `TASKS_TASK=SLUG just verify`, with
+`TASKS_SESSION=HANDLE` when it has a handle (docs/MACHINE_WORK.md).
 
 **Evidence, not the suite.** A task's gate is the tests closest to what it changed and
 `just lint-rs`, with `just client-update` for a client change, posted on its thread as evidence
@@ -179,6 +199,23 @@ the folder beside a write (a commit message, a board post, a heredoc) is refused
 say "the memory folder", or put the text in a file with Write. A Codex session runs
 no Claude hook and is not guarded. Its installed command passes on that refusal
 alone: with no link, or a link to a build older than the guard, the call goes through.
+
+**Looking at a page.** An agent sees a page with `just symphony-cli shot URL --out FILE.png`:
+a private headless Chrome (`crates/chrome-devtools`, the driver the client's browser tests
+use, on a profile and process of its own that die with the run) opens URL, waits until
+the page has drawn, runs the steps `--click CSS`, `--type CSS=TEXT`, `--key NAME`,
+`--hover CSS`, `--eval JS` (its JSON on stdout), `--pause MS` and `--shot FILE.png` in
+the order given, then saves the PNG. `--phone`, `--size WxH`, `--full-page` and
+`--scheme dark` set the view, `--wait-for CSS` and `--timeout SECS` bound the waits, and
+`--report` prints the console errors, failed requests and horizontal overflow it saw;
+`--help` says the rest. It only reads the page, so the live board
+(`http://127.0.0.1:8765/symphony/tasks`) is fair to shoot; it never starts, stops or
+reconfigures a server. Pictures kept as a task's evidence go under the project's artifacts
+folder in the task's slug (`artifacts/SLUG/` by default) and are named on its thread.
+The shot leashes Chrome by running its own program again, so a host binary that calls
+`symphony::cli` runs `chrome_devtools::leash_main()` first, as
+`crates/symphony/src/bin/symphony.rs` does; without it a shot fails with "leash exited
+before DevTools readiness".
 
 ## Command ownership
 

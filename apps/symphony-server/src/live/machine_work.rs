@@ -1,8 +1,11 @@
 //! One local native scan per existing board tick; every HTTP/feed consumer reads its cached view.
+//! A scan reads the board's own recorder's operations (`tasks run`, in the common dir's
+//! `sf-tasks/work/`) directly, and a project's own reader beside them when it has one: an
+//! `sf-slots` at its prepared path, or the one `SF_MACHINE_WORK_READER` names.
 
 use super::*;
 use symphony_board::cli::machine_work::{
-    Evidence, Operation, Projection, Sample, Snapshot, native::Inventory,
+    Evidence, Operation, Projection, Sample, Snapshot, native::Inventory, recorded,
 };
 use symphony_board::rows::TaskSessionRow;
 
@@ -42,11 +45,34 @@ fn initial_task(operation: &Operation, records: &[TaskSessionRow]) -> Option<Str
     if open { task.map(str::to_owned) } else { None }
 }
 
+/// One scan's evidence, read once: the recorder's operations, and the project reader's answer when
+/// the project has a reader.
+struct Read {
+    recorded: recorded::Found,
+    slots: Option<Vec<u8>>,
+}
+
+impl Read {
+    /// Both sources as one inventory on `machine_id`; either one malformed refuses the whole read.
+    fn inventory(&self, machine_id: Option<&str>) -> Result<Inventory, String> {
+        let inventory = Inventory::recorded(&self.recorded, machine_id)?;
+        match &self.slots {
+            Some(bytes) => inventory.merge(Inventory::decode(bytes, machine_id)?),
+            None => Ok(inventory),
+        }
+    }
+}
+
 pub(super) struct Sampler {
     projection: Projection,
     reader: Result<PathBuf, String>,
+    /// The reader was named (`SF_MACHINE_WORK_READER`): it must answer, where the prepared path
+    /// may hold none.
+    supplied: bool,
     identity: Option<Result<String, String>>,
     revisions: BTreeMap<String, Vec<u8>>,
+    /// The nonces among `revisions` the board's own recorder wrote.
+    recorded: BTreeSet<String>,
     sequence: u64,
     began: Instant,
     tasks: BTreeMap<String, Option<String>>,
@@ -59,8 +85,10 @@ impl Sampler {
         Self {
             projection: Projection::new(64, HISTORY_LIMIT, 10_000),
             reader: Self::reader(root, supplied),
+            supplied: supplied.is_some(),
             identity: None,
             revisions: BTreeMap::new(),
+            recorded: BTreeSet::new(),
             sequence: 0,
             began: Instant::now(),
             tasks: BTreeMap::new(),
@@ -89,6 +117,15 @@ impl Sampler {
         Ok(reader)
     }
 
+    fn trusted(&self) -> Result<String, String> {
+        self.identity
+            .as_ref()
+            .ok_or("native machine identity unavailable")?
+            .clone()
+    }
+
+    /// A project reader's answer alone, on this machine.
+    #[cfg(test)]
     fn accept(
         &mut self,
         bytes: &[u8],
@@ -96,13 +133,19 @@ impl Sampler {
         now: u64,
         label: &str,
     ) -> Result<(), String> {
-        let identity = self
-            .identity
-            .as_ref()
-            .ok_or("native machine identity unavailable")?
-            .as_ref()
-            .map_err(Clone::clone)?;
-        let mut inventory = Inventory::decode(bytes, Some(identity))?;
+        let inventory = Inventory::decode(bytes, Some(&self.trusted()?))?;
+        self.observe(inventory, records, now, label)
+    }
+
+    fn observe(
+        &mut self,
+        mut inventory: Inventory,
+        records: &[TaskSessionRow],
+        now: u64,
+        label: &str,
+    ) -> Result<(), String> {
+        let identity = &self.trusted()?;
+        self.forget_recorded(&inventory);
         if self.sequence != 0
             && !inventory
                 .revisions()
@@ -148,6 +191,22 @@ impl Sampler {
         Ok(())
     }
 
+    /// The board recorder's records swept from its work folder never come back: their revisions
+    /// go, as their ownership does in the projection, so neither grows with every build.
+    fn forget_recorded(&mut self, inventory: &Inventory) {
+        let read = inventory.revisions();
+        let revisions = &mut self.revisions;
+        self.recorded.retain(|id| {
+            let kept = read.contains_key(id);
+            if !kept {
+                revisions.remove(id);
+            }
+            kept
+        });
+        self.recorded
+            .extend(inventory.recorded_ids().iter().cloned());
+    }
+
     fn unavailable(&mut self, reason: String) {
         if let Some(Ok(identity)) = &self.identity {
             self.projection.disconnect(identity);
@@ -164,28 +223,44 @@ impl Sampler {
         let label = symphony_board::sys::hostname();
         let result = (|| {
             let common = common.ok_or("native common directory unavailable")?;
-            let reader = self.reader.as_ref().map_err(Clone::clone)?;
-            let mut env = symphony::children::board_env();
-            env.cwd = root.to_path_buf();
-            let bytes = symphony_board::cli::probes::native_inventory(&env, reader, common)
-                .map_err(|error| {
-                    format!("native inventory reader {}: {error}", reader.display())
-                })?;
+            let reader = self.reader.as_ref().map_err(Clone::clone)?.clone();
+            let recorded = recorded::read(&recorded::in_common(common));
+            // A named reader must answer; the prepared path answers when a project put one there.
+            let slots = if self.supplied || reader.exists() {
+                let mut env = symphony::children::board_env();
+                env.cwd = root.to_path_buf();
+                let bytes = symphony_board::cli::probes::native_inventory(&env, &reader, common)
+                    .map_err(|error| {
+                        format!("native inventory reader {}: {error}", reader.display())
+                    })?;
+                Some(bytes)
+            } else {
+                None
+            };
+            let read = Read { recorded, slots };
             if self.identity.is_none() {
                 // Unsupported/malformed readers must not initialize even local identity storage.
-                Inventory::decode(&bytes, None)?;
+                read.inventory(None)?;
+                // Nor does a machine where nothing was ever recorded and no reader answers.
+                if read.slots.is_none() && read.recorded.is_empty() {
+                    return Err(format!(
+                        "no build or test recorded yet, and no project reader at {}",
+                        reader.display()
+                    ));
+                }
                 self.identity = Some(symphony::machine::installation_id());
             }
             if self.identity.as_ref().is_some_and(Result::is_err) {
                 // Preserve the first bounded unassigned evidence; absence cannot retire it.
                 if self.unassigned.is_empty() {
-                    self.unassigned = Inventory::decode(&bytes, None)?.unassigned();
+                    self.unassigned = read.inventory(None)?.unassigned();
                 }
                 return Err(
                     "native machine identity is unavailable; work remains unassigned".into(),
                 );
             }
-            self.accept(&bytes, records, self.receipt(), &label)
+            let inventory = read.inventory(Some(&self.trusted()?))?;
+            self.observe(inventory, records, self.receipt(), &label)
         })();
         if let Err(reason) = result {
             self.unavailable(reason);
