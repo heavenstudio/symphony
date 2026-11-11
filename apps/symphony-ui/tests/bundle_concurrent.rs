@@ -20,7 +20,9 @@ use std::io::{BufRead, BufReader, Lines, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStderr, Command, Stdio};
 
-const KINDS: [&str; 6] = ["board", "tasks", "docs", "review", "queue", "panel"];
+const KINDS: [&str; 7] = [
+    "board", "tasks", "docs", "review", "queue", "panel", "overlay",
+];
 
 struct Fixture(PathBuf);
 
@@ -183,7 +185,7 @@ fn executable(path: &Path, script: &str) {
 
 fn release_protocol(base: &Path) {
     // Source capture and atomic publication have unit and real-build coverage. These protocol
-    // stand-ins keep this case on the target lock, six-module assembly and failure release.
+    // stand-ins keep this case on the target lock, seven-module assembly and failure release.
     executable(
         &base.join("tools/rs-bin.sh"),
         "#!/bin/bash\nset -euo pipefail\n[ \"$1 $2\" = '--build symphony' ]\nprintf '%s/publisher\\n' \"$BUNDLE_ROOT\"\n",

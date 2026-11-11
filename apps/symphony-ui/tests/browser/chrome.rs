@@ -107,6 +107,23 @@ pub struct Request {
     /// Bytes on the wire, headers included: the finished total, or what arrived so far.
     pub bytes: f64,
     pub finished: bool,
+    /// A speculative `<link rel=prefetch>` (its `Purpose` or `Sec-Purpose` header says so): a
+    /// later use's, warmed at idle, not the page's own.
+    pub prefetch: bool,
+}
+
+/// Whether request `headers` (a DevTools header object) name a prefetch.
+fn prefetch(headers: &Value) -> bool {
+    headers.as_object().is_some_and(|headers| {
+        headers.iter().any(|(name, value)| {
+            matches!(
+                name.to_ascii_lowercase().as_str(),
+                "purpose" | "sec-purpose"
+            ) && value
+                .as_str()
+                .is_some_and(|value| value.starts_with("prefetch"))
+        })
+    })
 }
 
 pub struct Chrome {
@@ -1299,6 +1316,17 @@ impl Chrome {
         );
     }
 
+    /// Ask to save data, as a browser in data saver mode does, on every page opened from now on:
+    /// the shell then warms no module at idle, and a module's first use alone requests its files.
+    /// A test that holds or fails such a request uses it, so no idle prefetch serves the file
+    /// first.
+    pub fn save_data(&mut self) {
+        self.call(
+            "Page.addScriptToEvaluateOnNewDocument",
+            json!({"source": "Object.defineProperty(Navigator.prototype, 'connection', {configurable: true, get: () => ({saveData: true, effectiveType: '4g'})});"}),
+        );
+    }
+
     /// Go to `url` and wait for its document to be parsed.
     pub fn open(&mut self, url: &str) {
         self.events.clear();
@@ -1425,11 +1453,17 @@ impl Chrome {
                 "Network.requestWillBeSent" => {
                     request.url = params["request"]["url"].as_str().unwrap_or("").to_string();
                     request.kind = params["type"].as_str().unwrap_or("").to_string();
+                    request.prefetch |= prefetch(&params["request"]["headers"]);
+                }
+                "Network.requestWillBeSentExtraInfo" => {
+                    request.prefetch |= prefetch(&params["headers"]);
                 }
                 "Network.requestServedFromCache" => request.from_cache = true,
                 "Network.responseReceived" => {
                     request.status = params["response"]["status"].as_i64().unwrap_or(0);
-                    if params["response"]["fromDiskCache"].as_bool() == Some(true) {
+                    if params["response"]["fromDiskCache"].as_bool() == Some(true)
+                        || params["response"]["fromPrefetchCache"].as_bool() == Some(true)
+                    {
                         request.from_cache = true;
                     }
                 }

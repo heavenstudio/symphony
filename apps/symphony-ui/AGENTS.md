@@ -33,7 +33,7 @@ geometry, stream recovery and transfer budgets without a display server.
   --debug-symbols false`, on the root manifest's `wasm-release` profile
   (opt-level z, fat LTO, one codegen unit, abort on panic) and dx's wasm-opt at
   `-Oz` (`Dioxus.toml`). `KIND` defaults to `all`: independently compile the
-  board, task/detail, document, review-home, queue and deferred panel modules, then
+  board, task/detail, document, review-home, queue, deferred panel and overlay modules, then
   assemble their content-hashed assets with `package.sh`. Naming a kind rebuilds
   it against the other kinds already in that output folder. Dioxus's native
   splitter retained shared exports and increased the measured initial payload;
@@ -71,17 +71,21 @@ geometry, stream recovery and transfer budgets without a display server.
   action listeners, own-node form reads and owned visibility latch reduce the
   board WASM from 199,247 to 183,713 gzip bytes, and home from 193,570
   to 175,351, including the appearance changes merged from `61c0d93e`.
-  The canonical-entry browser case measures cold transfers of 201,176 bytes
-  on `/` and 206,758 on
+  The canonical-entry browser case measures cold transfers of 220,993 bytes
+  on `/` and 249,900 on
   `/tasks`, including response overhead and fixture API data; cached returns
-  are 1,784 and 2,516 bytes. Both first visits fit, 48,824 and 43,242 bytes
-  under the cap. The same
-  run reports `/agents` at 394,646, `/docs/` at 422,473, `/queue` at 208,183
-  and opening the deferred panel at another 343,362 bytes. Each kind pays
+  are 1,895 and 2,627 bytes. Both first visits fit, 29,007 and 100 bytes
+  under the cap: `/tasks` has no room left. The same
+  run reports `/agents` at 435,119, `/docs/` at 450,632 and `/queue` at 232,556.
+  Once a page is idle it warms the chat's and the menus' modules, 751,446 bytes
+  outside its first visit (the panel's wasm 455,036, the overlay's 262,119, their
+  scripts and styles); opening the chat then transfers nothing more, where it took
+  another 517,506 bytes before the warm-up. The shell ships without its comments
+  (`package.sh`). Each kind pays
   for its own compiled framework; later visits reuse cached imports. The
   original home budget test remains independent of the canonical-entry test,
   which gives every kind a fresh browser profile and reports the complete
-  published output (1,717,875 gzip bytes including the board JSON in this run).
+  published output, retained older hashes included.
   Measure loaded resources, including API data, rather than summing every
   deferred module or retained historical asset hash in the published output.
   The 250,000 and 20,000 byte limits are the owner's; a lower first-visit
@@ -213,7 +217,18 @@ geometry, stream recovery and transfer budgets without a display server.
   frame stores raw API snapshots until a deferred component needs their
   typed data; activity and pending controls load on interaction, and new
   activity can load the panel to show a toast. No HTML fragments cross this
-  boundary. `index.html` in the crate is dx's build template (`{app_title}`), and
+  boundary. A click on `+` or the bell draws its sheet at once from the shell
+  (`#panel-loading`: the frame's own `#quick-sheet` or `#activity-panel`, busy, with
+  a status line and no spinner) until the panel mounts or fails. A select's popup and
+  the picture viewer are drawn by the overlay module (`page-overlay`,
+  `components::deferred::OverlayApp`, mounted in `#overlay-root`), never the
+  chat's. The shell requests a module's script, its wasm (a `fetch` preload) and
+  its styles together. Once the first page is ready and the browser idle, it
+  prefetches the persistent modules' script, wasm and styles at the lowest
+  priority, nothing evaluated: the chat's first, the menus' once the chat's wasm
+  (or the chat's own load, when a click came first) is in, so the two never share
+  a slow link. A browser asking to save data, or reporting a 2g link, warms
+  nothing; the browser tests count those prefetches apart from a first visit. `index.html` in the crate is dx's build template (`{app_title}`), and
   `base_path = ""` serves the app at `/`. A style sheet is an
   `asset!("/assets/board.css", AssetOptions::css().with_static_head(true))`:
   dx hashes it and links it from the shell's head, if the code keeps the
@@ -290,5 +305,10 @@ geometry, stream recovery and transfer budgets without a display server.
   their tasks end with the old page. Ask reads request `format=blocks`; the
   `render_blocks: Callback<Vec<Block>, Element>` prop supplies the shared
   document renderer for answers. No rendered HTML is sent on that path.
+  A document's questions and the `+` sheet's chat read again when the page's feed
+  says so (`frame::use_asks_heard`): its `asks` region names a moved thread (by id
+  and document path) or a new chat recipient, or a stream opens again. The page
+  module forwards that region to every module as a `review:asks` event; a read
+  that fails tries again every 3 s until one answers, and none polls.
   The media style is `assets/media.css`; the browser adapter uses web-sys and
   keeps every observer and listener owned by the mounted runtime.

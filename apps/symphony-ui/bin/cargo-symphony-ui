@@ -34,7 +34,7 @@ clippy)
     cd "$here/../.."
     # Every shipped configuration must compile on its own. The union of page features hides
     # unused imports and missing cfg branches, and does not compile the deferred panel at all.
-    for kind in board tasks docs review queue panel; do
+    for kind in board tasks docs review queue panel overlay; do
         "${CARGO:-cargo}" clippy -p symphony-ui --target wasm32-unknown-unknown --lib --bins --locked \
             --no-default-features --features "web,page-$kind" -- -D warnings
     done

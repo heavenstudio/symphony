@@ -53,7 +53,7 @@ location without building or attesting freshness, and `--link NAME` builds and
 refreshes `.target/bin/NAME`. None searches a containing project. `just symphony
 --port 0` runs a server of its own; the server CLI retains shared-server selection.
 
-`just client-update` builds all six real client modules and publishes their bundle
+`just client-update` builds all seven real client modules and publishes their bundle
 under `apps/symphony-server/client/public/`. Commit that generated distribution
 with SDK source changes. Release snapshots use stable paths under /private/tmp,
 copy the locked component source without changing its version or features, and

@@ -29,7 +29,7 @@ if [ -d "$out/public/assets" ]; then
     bash "$here/assets-copy.sh" "$out/public/assets" "$stage/assets"
 fi
 manifest='{}'
-for kind in board tasks docs review queue panel; do
+for kind in board tasks docs review queue panel overlay; do
     module="$out/.modules/$kind"
     bash "$here/assets-copy.sh" "$module/public/assets" "$stage/assets"
     script="$(sed -n 's/.*<script type="module"[^>]*src="\([^"]*\)".*/\1/p' "$module/public/index.html")"
@@ -60,8 +60,11 @@ for kind in board tasks docs review queue panel; do
     manifest="$(jq --arg kind "$kind" --arg script "$script" --arg wasm "$wasm" --argjson styles "$styles" '. + {($kind): {script: $script, wasm: $wasm, styles: $styles}}' <<< "$manifest")"
 done
 # The shell's hash includes the page module manifest: a new module changes Board.build, while
-# returning to any unchanged kind still uses its immutable browser-cache entries.
-jq -nr --arg source "$(cat assets/shell.js)" --argjson modules "$manifest" '$source | sub("__MODULES__"; ($modules | tojson))' > "$stage/shell.js"
+# returning to any unchanged kind still uses its immutable browser-cache entries. Every first visit
+# loads the shell, so it ships without its comment lines and indentation (no string in shell.js
+# spans lines, so none is changed).
+source="$(grep -vE '^[[:space:]]*//' assets/shell.js | sed -E 's/^[[:space:]]+//')"
+jq -nr --arg source "$source" --argjson modules "$manifest" '$source | sub("__MODULES__"; ($modules | tojson))' > "$stage/shell.js"
 # Eager notice styles are part of this shell's build identity too.
 printf '\n// Notice styles: %s\n' "$(shasum -a 256 ../symphony-server/src/notices.css | cut -c1-16)" >> "$stage/shell.js"
 hash="$(shasum -a 256 "$stage/shell.js" | cut -c1-16)"
@@ -78,4 +81,4 @@ if [ -n "${2:-}" ]; then
 else
     "$here/../../tools/rs-bin.sh" symphony publish-client "$stage" "$out/public"
 fi
-echo "symphony-ui: five page-kind modules and a deferred panel, one SPA shell: $out/public" >&2
+echo "symphony-ui: five page-kind modules, a deferred panel and its overlay host, one SPA shell: $out/public" >&2

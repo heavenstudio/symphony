@@ -41,8 +41,15 @@ pub(super) fn QuickPanel(route: Route, mut draft: Signal<Draft>) -> Element {
         current.ask,
         current.ask_scope.clone(),
     );
+    // The page's feed says when this thread moves, the chat recipient changes or a stream opens
+    // again; the open chat reads its thread then, never on a timer. A failed read tries again
+    // until one answers.
+    let heard = crate::frame::use_asks_heard(move |news| {
+        let current = draft.peek();
+        current.open && !current.task && current.ask > 0 && news.concerns(Some(current.ask), None)
+    });
     use_effect(use_reactive!(|open, task, id, scope| {
-        let _ = revision();
+        let _ = (revision(), heard());
         if let Some(task) = running.take() {
             task.cancel();
         }
@@ -60,6 +67,7 @@ pub(super) fn QuickPanel(route: Route, mut draft: Signal<Draft>) -> Element {
                     Ok(got) => {
                         thread.set(Some(got));
                         read_error.set(None);
+                        return;
                     }
                     Err(why) => read_error.set(Some(why)),
                 }

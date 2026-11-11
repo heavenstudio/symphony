@@ -41,7 +41,7 @@ tasks *ARGS:
 agent-send *ARGS:
     @tools/rs-bin.sh agent-send "$@"
 
-# Rebuild the six real modules and refuse drift from the client embedded at this pin.
+# Rebuild the seven real modules and refuse drift from the client embedded at this pin.
 client-check OUT="build/verified-client":
     @just symphony-ui-dist {{quote(OUT)}}
     @bash tools/client-check.sh {{quote(OUT)}}/public
