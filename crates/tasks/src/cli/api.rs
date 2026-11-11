@@ -34,15 +34,16 @@ pub use context::{run, serve};
 /// 9: `assessment_state` and checked `record_waits`, whose `assessment/1` replies attest
 /// the task fence or the original committed occurrence; assessment/2 additionally requires the
 /// versioned producer publication binding and observes its source on every checked attempt;
-/// 10: `landed`'s `from` takes `done`, a task its reviewer approved, which stays done).
-/// The live launcher (`tools/tasks.sh`)
+/// 10: `amend`, a task's new title and further document links in one write, which the Symphony's
+/// verdict roll-up keeps current with; 11: `landed`'s `from` takes `done`, a task its reviewer
+/// approved, which stays done). The live launcher (`tools/tasks.sh`)
 /// serves an earlier main build only while this
 /// matches main's, so no caller reaches a build without what it relies on.
 #[expect(
     dead_code,
     reason = "tools/tasks.sh reads it from the committed source; no Rust code compares builds"
 )]
-pub const VERSION: i64 = 10;
+pub const VERSION: i64 = 11;
 
 /// Why a call has no result.
 enum Fail {
@@ -366,6 +367,12 @@ fn dispatch<F: FnOnce() -> Result<Store, String>>(
             let new: NewTask = a.rest()?;
             super::check_actor(&new.by)?;
             shape::task(&board.get()?.create(&new)?)
+        }
+        "amend" => {
+            args!(slug: need, title: need, links: or(Vec::<String>::new()), by: actor);
+            let (slug, title, by): (String, String, String) = (slug, title, by);
+            let links: Vec<String> = links;
+            shape::task(&board.get()?.amend(&slug, &title, &links, &by)?)
         }
         "mark_red" => {
             args!(slug: need, red: need, by: actor);

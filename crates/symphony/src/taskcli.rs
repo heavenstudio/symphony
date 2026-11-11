@@ -260,6 +260,10 @@ impl Board for CliBoard {
                         .iter()
                         .map(|m| (m["ts"].as_f64().unwrap_or(0.0), text(m, "text").to_string()))
                         .collect(),
+                    links: rows(&t["links"])
+                        .iter()
+                        .filter_map(|link| link.as_str().map(str::to_string))
+                        .collect(),
                 }
             })
             .collect())
@@ -298,6 +302,20 @@ impl Board for CliBoard {
             args.extend(["--link", link]);
         }
         self.run(&args, Some(body)).map(|_| ())
+    }
+
+    fn amend(
+        &self,
+        slug: &str,
+        title: &str,
+        links: &[String],
+        by: &str,
+    ) -> Result<(), VerdictError> {
+        self.call(
+            "amend",
+            &json!({"slug": slug, "title": title, "links": links, "by": by}),
+        )
+        .map(|_| ())
     }
 }
 
