@@ -15,6 +15,7 @@ mod field;
 pub mod machine_work;
 pub mod probes;
 pub mod pull;
+mod recorder;
 mod search;
 mod shape;
 mod status;
@@ -42,10 +43,15 @@ pub struct Env {
 }
 
 impl Env {
-    /// This process's own.
+    /// This process's own: each variable whose name and value are text (a byte that is not ends
+    /// no command here, as `std::env::vars` would).
     pub fn of_process() -> Env {
         Env {
-            vars: std::env::vars().collect(),
+            vars: std::env::vars_os()
+                .filter_map(|(name, value)| {
+                    Some((name.into_string().ok()?, value.into_string().ok()?))
+                })
+                .collect(),
             cwd: std::env::current_dir().unwrap_or_default(),
         }
     }
@@ -102,9 +108,23 @@ pub fn main_detaching(
 /// project's board-only one, which the live board runs), so no build leaves its writes' delivery
 /// in the command.
 pub fn process_main() -> ExitCode {
-    let args: Vec<String> = std::env::args().skip(1).collect();
+    let words: Vec<std::ffi::OsString> = std::env::args_os().skip(1).collect();
     let env = Env::of_process();
     let (mut input, mut out, mut err) = (std::io::stdin(), std::io::stdout(), std::io::stderr());
+    // First, with no other thread running yet: a recorded command's words are another program's,
+    // whatever bytes they hold, and its recorder may fork this process ([`recorder`]).
+    if words.first().is_some_and(|word| word == recorder::COMMAND) {
+        let code = recorder::run(&words[1..], &env, &mut out, &mut err, true);
+        return ExitCode::from(u8::try_from(code).unwrap_or(2));
+    }
+    let Ok(args) = words
+        .into_iter()
+        .map(std::ffi::OsString::into_string)
+        .collect::<Result<Vec<String>, _>>()
+    else {
+        let _ = writeln!(err, "tasks: an argument is not UTF-8 text");
+        return ExitCode::from(2);
+    };
     let code = match std::env::current_exe() {
         Ok(program) => main_detaching(&args, &env, &mut input, &mut out, &mut err, &program),
         Err(_) => main(&args, &env, &mut input, &mut out, &mut err),
@@ -138,6 +158,11 @@ fn run(
     }
     if args.len() == 1 && args[0] == detached::COMMAND {
         return detached::run(env, err);
+    }
+    // Before the board's argument table: what follows `--` is another program's command line.
+    if args.first().is_some_and(|arg| arg == recorder::COMMAND) {
+        let words: Vec<std::ffi::OsString> = args[1..].iter().map(Into::into).collect();
+        return recorder::run(&words, env, out, err, program.is_some());
     }
     let board = || connect(env).map(|store| detaching(store, env, program));
     if args.len() == 1 && args[0] == "api" {
@@ -195,7 +220,7 @@ fn run(
         Ok(()) => return 0,
         Err(commands::Stop::NoSession) => (
             2,
-            "no session: pass --as HANDLE or set TASKS_SESSION (get one with `just tasks-attach` or `just tasks register`)"
+            "no session: pass --as HANDLE or set TASKS_SESSION (get one with `just tasks register`)"
                 .to_string(),
         ),
         Err(commands::Stop::Refused(why)) => (1, why),
@@ -324,7 +349,7 @@ fn boot_clock(env: &Env) -> Option<sys::Boottime> {
 }
 
 /// The board `env` reaches, its server started if it is down, whether or not the board has moved
-/// there: what `tasks-copy --board` and `just tasks-cutover` write into.
+/// there: what `tasks-copy --board` and `tasks-cutover` write into.
 pub fn board_client(env: &Env) -> Result<Client, String> {
     reach_board(env, &env.cwd, true, false).map(|reached| reached.client)
 }
@@ -376,12 +401,18 @@ fn reach_board(env: &Env, cwd: &Path, start: bool, unmoved: bool) -> Result<Reac
     }
     let project = crate::project::find(cwd, machine(env).as_deref())?;
     let common = &project.place.common;
-    if unmoved && let Some(why) = not_here(common) {
+    if unmoved && let Some(why) = not_here(common, &project.guide()) {
         return Err(why);
     }
     let home = Home::in_common(common, env.var("SF_SURREAL").map(Path::new));
     let running = if start {
-        home.ensure().map_err(|e| e.to_string())?
+        home.ensure().map_err(|error| match error {
+            // Where the board's server comes from is the project's board guide's to say.
+            crate::server::ServerError::NoSurreal(_) => {
+                format!("{error} ({}#where-it-lives)", project.guide())
+            }
+            error => error.to_string(),
+        })?
     } else {
         home.recorded()
             .ok_or_else(|| format!("no server of the board in {}", home.dir().display()))?
@@ -393,9 +424,10 @@ fn reach_board(env: &Env, cwd: &Path, start: bool, unmoved: bool) -> Result<Reac
 }
 
 /// Why the board in `common` is not served here: the SQLite board there has not moved yet, or a move
-/// froze it and has not finished (it runs, or was cut short).
-fn not_here(common: &Path) -> Option<String> {
-    // `<board>.moved` is what `just tasks-cutover` writes beside it once its copy into SurrealDB is
+/// froze it and has not finished (it runs, or was cut short). Each names the project's board
+/// `guide`.
+fn not_here(common: &Path, guide: &str) -> Option<String> {
+    // `<board>.moved` is what `tasks-cutover` writes beside it once its copy into SurrealDB is
     // checked ([`crate::cutover`]), and it stays.
     let name = crate::cutover::board_name(common)?;
     let board = common.join(&name);
@@ -403,9 +435,15 @@ fn not_here(common: &Path) -> Option<String> {
         return None;
     }
     Some(if crate::cutover::frozen(&board) {
-        "the task board is frozen by a move to SurrealDB that has not finished: unless one is running, run `just tasks-cutover` again (docs/workflow/TASKS.md#the-move-to-surrealdb)".into()
+        format!(
+            "the task board is frozen by a move to SurrealDB that has not finished: unless one is \
+             running, run `tasks-cutover` again ({guide})"
+        )
     } else {
-        "the task board has not moved to SurrealDB yet: the lander runs `just tasks-cutover` once, right after landing (docs/workflow/TASKS.md#the-move-to-surrealdb)".into()
+        format!(
+            "the task board has not moved to SurrealDB yet: the lander runs `tasks-cutover` once, \
+             right after landing ({guide})"
+        )
     })
 }
 
@@ -414,7 +452,10 @@ fn not_here(common: &Path) -> Option<String> {
 fn open(reached: Reached, clock: &Clock) -> Result<Store, String> {
     let (clock, probe, host) = parts(clock);
     let how = crate::Opening::write().of(reached.project.as_deref());
-    Store::opening(reached.client, clock, probe, &host, &how).map_err(|e| e.to_string())
+    let named = reached.project.is_none();
+    Store::opening(reached.client, clock, probe, &host, &how)
+        .map(|store| naming(store, named))
+        .map_err(|e| e.to_string())
 }
 
 /// The board `reached`, read by `clock`, its tables taken as they are: the heartbeat's one request.
@@ -422,7 +463,21 @@ fn open(reached: Reached, clock: &Clock) -> Result<Store, String> {
 fn open_unchecked(reached: Reached, clock: &Clock) -> Store {
     let (clock, probe, host) = parts(clock);
     let how = crate::Opening::write().of(reached.project.as_deref());
-    Store::unchecked_as(reached.client, clock, probe, &host, &how)
+    let named = reached.project.is_none();
+    naming(
+        Store::unchecked_as(reached.client, clock, probe, &host, &how),
+        named,
+    )
+}
+
+/// `store`, saying its server in the commands it tells when `TASKS_SERVER` `named` it (a board
+/// reached for no project, [`Reached`]).
+fn naming(store: Store, named: bool) -> Store {
+    if named {
+        store.on_named_server()
+    } else {
+        store
+    }
 }
 
 type Probe = Box<dyn Fn(i64) -> bool + Send + Sync>;

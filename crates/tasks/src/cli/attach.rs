@@ -1,4 +1,4 @@
-//! The attach monitor (`just tasks-attach`): a session's ears. It heartbeats and, every few
+//! The attach monitor (`just tasks attach`): a session's ears. It heartbeats and, every few
 //! seconds, prints what reached the session: messages and verdicts, roles taken and dropped on its
 //! tasks, their status changes, new ready work for an orchestrator, and a child session going stale
 //! or lost with work another could take. An orchestrator also hears the PULL digest

@@ -10,6 +10,8 @@ mod common;
 mod fixture_script;
 mod installer;
 mod lifetime;
+mod named_recipes;
+mod recipes;
 #[path = "../common/mod.rs"]
 mod support;
 mod tasks_beat;

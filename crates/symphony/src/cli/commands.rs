@@ -4,9 +4,10 @@
 use std::io::Write;
 
 mod release;
+mod shot;
 
 /// The Symphony's own commands, in the order its usage names them.
-const OWN: [&str; 12] = [
+const OWN: [&str; 13] = [
     "status",
     "reply",
     "docs-audit",
@@ -18,6 +19,7 @@ const OWN: [&str; 12] = [
     "ask",
     "init",
     "hook",
+    "shot",
     "serve",
 ];
 
@@ -29,6 +31,9 @@ pub(super) fn plugin(name: &str, args: &[String], out: &mut dyn Write, err: &mut
     }
     if name == "init" {
         return crate::init::main(args, out, err);
+    }
+    if name == "shot" {
+        return shot::main(args, out, err);
     }
     if let Some(command) = crate::plugins::commands()
         .into_iter()

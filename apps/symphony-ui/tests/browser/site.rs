@@ -1,6 +1,7 @@
 //! A stand-in for the Symphony server: the client's build at `/`, the board fixture at
 //! `/api/board`, and a feed at `/api/feed` this test pushes events into. Served the way the real
-//! server serves them: gzip, the hashed build cached for good, the shell revalidated by its ETag.
+//! server serves them: gzip (the build at the best level, the page and the API at the default),
+//! the hashed build cached for good, the shell revalidated by its ETag.
 //! Every request's path is logged, so a test can say what the page fetched and when. The board
 //! names the client build served (`Board::build`), as the server reads it from the shell. A test
 //! can also play a server in trouble: a board that moved, answers late or names another build, a
@@ -339,10 +340,15 @@ fn send(shared: &Mutex<Shared>, event: &str) {
     });
 }
 
+/// The keep-alive ping, as the stand-in and the server (apps/symphony-server/src/api.rs) write it.
+pub fn ping() -> String {
+    format!("event: {}\ndata:\n\n", symphony_api::PING_EVENT)
+}
+
 /// Ping every open stream each `ping_ms` the board now names, until the site stops or falls
 /// silent.
 fn ping_every_ping_ms(shared: &Mutex<Shared>, stop: &AtomicBool) {
-    let ping = format!("event: {}\ndata:\n\n", symphony_api::PING_EVENT);
+    let ping = ping();
     let mut last = Instant::now();
     while !stop.load(Ordering::SeqCst) {
         std::thread::sleep(Duration::from_millis(50));
@@ -386,7 +392,12 @@ fn add_tree(files: &mut HashMap<String, Body>, root: &Path, prefix: &str) {
         } else {
             "no-cache"
         };
-        let served = body(bytes, content_type, cache);
+        // The server gzips a build file once, at the best level, and the page per request.
+        let served = if relative == "index.html" {
+            body(bytes, content_type, cache)
+        } else {
+            encoded(bytes, content_type, cache, Compression::best())
+        };
         if relative == "index.html" {
             files.insert(prefix.to_string(), served.clone());
         }
@@ -431,10 +442,21 @@ fn compresses(content_type: &str) -> bool {
     !content_type.starts_with("image/png") && content_type != "image/x-icon"
 }
 
+/// A reply the server compresses per request, at the encoder's default level: the page and the API.
 fn body(bytes: Vec<u8>, content_type: &'static str, cache: &'static str) -> Body {
+    encoded(bytes, content_type, cache, Compression::default())
+}
+
+/// `bytes` as sent, gzipped at `level` when the type compresses.
+fn encoded(
+    bytes: Vec<u8>,
+    content_type: &'static str,
+    cache: &'static str,
+    level: Compression,
+) -> Body {
     let etag = format!("\"{:016x}\"", fnv1a(&bytes));
     if compresses(content_type) {
-        let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
+        let mut encoder = GzEncoder::new(Vec::new(), level);
         encoder.write_all(&bytes).unwrap();
         Body {
             bytes: encoder.finish().unwrap(),

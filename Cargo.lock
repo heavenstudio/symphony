@@ -410,6 +410,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "chrome-devtools"
+version = "0.1.0"
+dependencies = [
+ "data-encoding",
+ "libc",
+ "serde_json",
+ "symphony-api",
+ "tungstenite 0.30.0",
+]
+
+[[package]]
 name = "ciborium"
 version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5210,6 +5221,7 @@ checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
 name = "symphony"
 version = "0.1.0"
 dependencies = [
+ "chrome-devtools",
  "comrak",
  "fancy-regex 0.19.2",
  "gix",
@@ -5282,6 +5294,7 @@ name = "symphony-server"
 version = "0.1.0"
 dependencies = [
  "axum",
+ "flate2",
  "futures-util",
  "libc",
  "notify",
@@ -5301,6 +5314,7 @@ dependencies = [
 name = "symphony-ui"
 version = "0.1.0"
 dependencies = [
+ "chrome-devtools",
  "dioxus",
  "dioxus-icons",
  "dioxus-primitives",
@@ -5315,7 +5329,6 @@ dependencies = [
  "serde_json",
  "symphony-api",
  "tracing",
- "tungstenite 0.30.0",
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "web-sys",

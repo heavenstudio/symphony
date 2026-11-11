@@ -39,6 +39,8 @@ use storage::store;
 pub const SURREAL_VERSION: &str = "3.3.0";
 /// The board's folder in the git common dir.
 pub const FOLDER: &str = "sf-tasks";
+/// Where `tools/surreal.sh` keeps the pinned `surreal`, in the git common dir.
+const PINNED: &str = "sf-surreal";
 
 /// In the board's folder: where the server answers, the lock its starters take, its log, its data.
 const ADDRESS: &str = "server.json";
@@ -94,12 +96,21 @@ pub enum ServerError {
 impl fmt::Display for ServerError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            ServerError::NoSurreal(path) => write!(
-                f,
-                "SurrealDB {SURREAL_VERSION} is not at {}: it is fetched once per machine \
-                 (docs/workflow/TASKS.md#where-it-lives)",
-                path.display()
-            ),
+            ServerError::NoSurreal(path) => match pinned_in(path) {
+                Some(common) => write!(
+                    f,
+                    "SurrealDB {SURREAL_VERSION} is not at {}: `tools/surreal.sh` fetches it into \
+                     this repository's common dir (`SF_GIT_COMMON_DIR={} bash tools/surreal.sh` \
+                     in a Symphony checkout), or `SF_SURREAL` names another",
+                    path.display(),
+                    common.display()
+                ),
+                None => write!(
+                    f,
+                    "SurrealDB {SURREAL_VERSION} is not at {}, where `SF_SURREAL` names it",
+                    path.display()
+                ),
+            },
             ServerError::NotUp(why) | ServerError::Io(why) => f.write_str(why),
             ServerError::Reclaim(why) => write!(
                 f,
@@ -107,6 +118,17 @@ impl fmt::Display for ServerError {
             ),
         }
     }
+}
+
+/// The common dir `surreal` is the pinned binary of ([`Home::in_common`]): `<common>/sf-surreal/
+/// <SURREAL_VERSION>/surreal`; none for a binary anywhere else, one `SF_SURREAL` names.
+fn pinned_in(surreal: &Path) -> Option<&Path> {
+    let version = surreal.parent()?;
+    let folder = version.parent()?;
+    (surreal.file_name()? == "surreal"
+        && version.file_name()? == SURREAL_VERSION
+        && folder.file_name()? == PINNED)
+        .then_some(folder.parent()?)
 }
 
 fn io(what: &str, path: &Path) -> impl Fn(std::io::Error) -> ServerError {
@@ -144,12 +166,7 @@ impl Home {
     /// The board of the repository whose common dir is `common`: `sf-tasks/` there, served by the
     /// pinned `surreal` that `tools/surreal.sh` fetches beside it, or by `SF_SURREAL`'s.
     pub fn in_common(common: &Path, sf_surreal: Option<&Path>) -> Home {
-        let pinned = || {
-            common
-                .join("sf-surreal")
-                .join(SURREAL_VERSION)
-                .join("surreal")
-        };
+        let pinned = || common.join(PINNED).join(SURREAL_VERSION).join("surreal");
         Home::new(
             &common.join(FOLDER),
             &sf_surreal.map_or_else(pinned, Path::to_path_buf),
@@ -342,7 +359,7 @@ impl Home {
         if !self.dir.join(DATA).exists() && old.exists() {
             return Err(ServerError::Io(format!(
                 "the board's store is at {}: a reclaim moved it there and stopped; \
-                 `just tasks-reclaim` puts it back",
+                 `tasks-reclaim` puts it back",
                 old.display()
             )));
         }

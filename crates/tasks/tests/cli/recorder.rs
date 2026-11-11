@@ -1,0 +1,929 @@
+//! `tasks run`, the binary itself: the command it wraps keeps its arguments (any bytes), streams,
+//! descriptors, ignored signals, signal mask, session and status, and is the process its caller
+//! started; its record in a work folder of the test's own names the task its session holds on a
+//! board of the test's own (or the one named) while it runs, then how it ended and how long it took.
+//! The recorder finishes after its command does, so what it keeps is waited for.
+
+use crate::{Case, scratch};
+use std::fs;
+use std::io::Read as _;
+use std::net::TcpListener;
+use std::os::unix::process::ExitStatusExt as _;
+use std::path::{Path, PathBuf};
+use std::sync::mpsc;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use symphony_board::cli::machine_work::recorded::{self, Phase, Record, Step};
+use symphony_board::sys::{Child, Command, Stdio, output, wait_output};
+
+const MACHINE: &str = "0123456789abcdef0123456789abcdef";
+const TASK_VAR: &str = "TASKS_TASK";
+
+/// The history of the work folder `work` once it keeps `count` operations.
+pub(crate) fn kept(work: &Path, count: usize) -> Vec<Record> {
+    let deadline = Instant::now() + Duration::from_secs(30);
+    loop {
+        let history = recorded::history(work).unwrap_or_default();
+        if history.len() >= count {
+            assert_eq!(history.len(), count, "{history:?}");
+            return history;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "{count} operations not kept within 30 s: {history:?}"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
+/// A work folder and a machine folder of the test's own, under `name`.
+struct Folders {
+    work: PathBuf,
+    machine: PathBuf,
+    dir: PathBuf,
+}
+
+impl Folders {
+    fn new(name: &str) -> Folders {
+        let dir = scratch(name);
+        let machine = dir.join("machine");
+        fs::create_dir_all(&machine).unwrap();
+        fs::write(machine.join("machine-id"), format!("1\t{MACHINE}\n")).unwrap();
+        Folders {
+            work: dir.join("work"),
+            machine,
+            dir,
+        }
+    }
+
+    /// The operations a reader finds now.
+    fn records(&self) -> Vec<Record> {
+        recorded::read(&self.work)
+            .records
+            .into_iter()
+            .map(|(record, _)| record)
+            .collect()
+    }
+
+    /// The one operation recorded, once it is in `state`.
+    fn once(&self, state: Step) -> Record {
+        let deadline = Instant::now() + Duration::from_secs(30);
+        loop {
+            if let [one] = self.records().as_slice()
+                && one.state == state
+            {
+                return one.clone();
+            }
+            assert!(
+                Instant::now() < deadline,
+                "no operation {state:?} within 30 s: {:?}",
+                self.records()
+            );
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    }
+}
+
+/// The `tasks` binary running `args` for `case`'s board, as `session` when one is given, recording
+/// in `folders`; standard streams the test's to set.
+fn tasks(case: &Case, folders: &Folders, session: Option<&str>, args: &[&str]) -> Command {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_tasks"));
+    command
+        .args(args)
+        .envs(&case.env.vars)
+        .env("TASKS_WORK", &folders.work)
+        .env("SYMPHONY_MACHINE_DIR", &folders.machine)
+        .env_remove("TASKS_SESSION")
+        .env_remove(TASK_VAR)
+        .env_remove(recorded::PARENT_VAR)
+        .current_dir(&folders.dir);
+    if let Some(session) = session {
+        command.env("TASKS_SESSION", session);
+    }
+    command
+}
+
+/// A command that writes its pid to `pid`, then runs until `release` exists.
+fn until_released(release: &Path, pid: &Path) -> Vec<String> {
+    [
+        "sh",
+        "-c",
+        "echo $$ > \"$2\"; while [ ! -e \"$1\" ]; do sleep 0.02; done",
+        "sh",
+        release.to_str().unwrap(),
+        pid.to_str().unwrap(),
+    ]
+    .map(str::to_string)
+    .to_vec()
+}
+
+fn spawn(command: &mut Command) -> Child {
+    command
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap()
+}
+
+fn run_args<'a>(phase: &'a str, label: &'a str, command: &'a [String]) -> Vec<&'a str> {
+    let mut args = vec!["run", "--phase", phase, "--label", label, "--"];
+    args.extend(command.iter().map(String::as_str));
+    args
+}
+
+/// Whether process `pid` is there to signal.
+fn alive(pid: libc::pid_t) -> bool {
+    // SAFETY: signal 0 only asks whether the process exists.
+    unsafe { libc::kill(pid, 0) == 0 }
+}
+
+/// The pid the command wrote to `file`, once it did.
+fn written_pid(file: &Path) -> libc::pid_t {
+    let deadline = Instant::now() + Duration::from_secs(30);
+    loop {
+        if let Ok(pid) = fs::read_to_string(file).unwrap_or_default().trim().parse() {
+            return pid;
+        }
+        assert!(Instant::now() < deadline, "no pid within 30 s");
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
+#[test]
+fn a_recorded_command_keeps_its_arguments_streams_session_and_status() {
+    let case = Case::new();
+    let folders = Folders::new("recorder-streams");
+    let input = folders.dir.join("stdin");
+    fs::write(&input, "caller input\n").unwrap();
+    let script = "printf 'arg=<%s>\\n' \"$@\"; cat; printf 'diagnostic' >&2; \
+                  printf 'session=%s\\nparent=%s\\n' \"$TASKS_SESSION\" \"$TASKS_RUN_PARENT\"; exit 7";
+    let done = wait_output(
+        tasks(
+            &case,
+            &folders,
+            Some("nobody-here"),
+            &[
+                "run",
+                "--phase",
+                "test",
+                "--",
+                "sh",
+                "-c",
+                script,
+                "sh",
+                "one argument",
+                "--",
+                "--exact",
+            ],
+        )
+        .stdin(Stdio::from(fs::File::open(&input).unwrap()))
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap(),
+    )
+    .unwrap();
+    let finished = folders.once(Step::Finished);
+    assert_eq!(done.status.code(), Some(7));
+    assert_eq!(done.stderr, b"diagnostic");
+    assert_eq!(
+        String::from_utf8(done.stdout).unwrap(),
+        format!(
+            "arg=<one argument>\narg=<-->\narg=<--exact>\ncaller input\nsession=nobody-here\nparent={}\n",
+            finished.operation_id
+        )
+    );
+    assert_eq!((finished.exit_code, finished.signal), (Some(7), None));
+    assert_eq!(
+        finished.label,
+        format!("sh -c {script} sh one argument -- --exact")
+    );
+    assert_eq!(finished.phase, Phase::Test);
+    // The session holds nothing on this board: no task, but the session it ran for.
+    assert_eq!(finished.handle.as_deref(), Some("nobody-here"));
+    assert_eq!(finished.task, None);
+    assert_eq!(finished.machine_id.as_deref(), Some(MACHINE));
+    assert_eq!(
+        Path::new(&finished.checkout),
+        folders.dir.canonicalize().unwrap()
+    );
+    // Its recorder writes it finished, then lets its lease go: a step of its own after it.
+    let lease = folders
+        .work
+        .join(recorded::OPERATIONS)
+        .join(format!("{}.lease", finished.operation_id));
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while lease.exists() {
+        assert!(
+            Instant::now() < deadline,
+            "a finished operation lets its lease go"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
+/// Seconds since the epoch, the clock a record is stamped by.
+fn now() -> f64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs_f64()
+}
+
+/// A board server that takes one connection and never answers it: once it took it, it makes the
+/// file `accepted` and tells when it took it, then when the asker gave up and closed it.
+struct Silent {
+    address: String,
+    heard: mpsc::Receiver<(f64, f64)>,
+}
+
+impl Silent {
+    fn new(accepted: &Path) -> Silent {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap().to_string();
+        let (tell, heard) = mpsc::channel();
+        let accepted = accepted.to_path_buf();
+        std::thread::spawn(move || {
+            let (mut asked, _) = listener.accept().unwrap();
+            let taken = now();
+            fs::write(&accepted, "").unwrap();
+            let mut said = [0; 4096];
+            while matches!(asked.read(&mut said), Ok(read) if read > 0) {}
+            let _ = tell.send((taken, now()));
+        });
+        Silent { address, heard }
+    }
+
+    /// When it took the question, then when the asker gave up.
+    fn heard(&self) -> (f64, f64) {
+        self.heard.recv_timeout(Duration::from_secs(60)).unwrap()
+    }
+}
+
+/// A command that runs until `accepted` exists: until the board is being asked its task.
+fn until_asked(accepted: &Path) -> Vec<&str> {
+    vec![
+        "/bin/sh",
+        "-c",
+        "while [ ! -e \"$1\" ]; do :; done",
+        "sh",
+        accepted.to_str().unwrap(),
+    ]
+}
+
+/// `finished`, run while the board took the question of its task at `taken` and its asker gave up
+/// at `closed`, was stamped as it ran, not once the board answered: asked for after `called`,
+/// started before the board was asked, ended after that (its command waited for it) and before
+/// the asker gave up; for its session, and no task.
+fn stamped_while_asked(finished: &Record, called: f64, (taken, closed): (f64, f64)) {
+    let (queued, started, ended) = (
+        finished.queued_at,
+        finished.started_at.unwrap(),
+        finished.ended_at.unwrap(),
+    );
+    assert!(
+        called <= queued && queued <= started && started <= taken,
+        "called at {called}, the board asked at {taken}: {finished:?}"
+    );
+    assert!(
+        taken <= ended && ended < closed,
+        "the board asked at {taken}, given up at {closed}: {finished:?}"
+    );
+    assert_eq!(
+        (finished.handle.as_deref(), finished.task.as_deref()),
+        (Some("asks-a-silent-board"), None)
+    );
+}
+
+#[test]
+fn its_times_are_stamped_as_they_come_while_a_board_that_never_answers_is_asked_its_task() {
+    let mut case = Case::new();
+    let folders = Folders::new("recorder-silent-board");
+    let accepted = folders.dir.join("accepted");
+    let board = Silent::new(&accepted);
+    case.env
+        .vars
+        .insert("TASKS_SERVER".into(), board.address.clone());
+    let mut args = vec!["run", "--phase", "test", "--"];
+    args.extend(until_asked(&accepted));
+    let called = now();
+    let done =
+        output(tasks(&case, &folders, Some("asks-a-silent-board"), &args).stdin(Stdio::null()))
+            .unwrap();
+    assert!(done.status.success(), "{done:?}");
+    stamped_while_asked(&folders.once(Step::Finished), called, board.heard());
+}
+
+#[test]
+fn in_its_callers_process_its_times_are_stamped_as_they_come_while_the_board_is_asked() {
+    let case = Case::new();
+    let folders = Folders::new("recorder-silent-board-in-process");
+    let accepted = folders.dir.join("accepted");
+    let board = Silent::new(&accepted);
+    let mut env = case.env.clone();
+    for (name, value) in [
+        ("TASKS_SERVER", board.address.as_str()),
+        ("TASKS_SESSION", "asks-a-silent-board"),
+        ("TASKS_WORK", folders.work.to_str().unwrap()),
+        ("SYMPHONY_MACHINE_DIR", folders.machine.to_str().unwrap()),
+    ] {
+        env.vars.insert(name.into(), value.into());
+    }
+    env.cwd.clone_from(&folders.dir);
+    let mut args = vec!["run", "--phase", "test", "--"];
+    args.extend(until_asked(&accepted));
+    let called = now();
+    let ran = crate::run(&env, &args, "");
+    assert_eq!(ran.code, 0, "{}{}", ran.out, ran.err);
+    stamped_while_asked(&folders.once(Step::Finished), called, board.heard());
+}
+
+/// Whether this process's child `pid` has ended, while it is not reaped; none once it is.
+fn ended(pid: libc::pid_t) -> Option<bool> {
+    // SAFETY: siginfo_t is plain data, for which all zeroes is a value.
+    let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
+    // SAFETY: reads whether one child of this process ended into `info`, waiting for and reaping
+    // none.
+    let waited = unsafe {
+        libc::waitid(
+            libc::P_PID,
+            libc::id_t::try_from(pid).unwrap(),
+            &raw mut info,
+            libc::WEXITED | libc::WNOWAIT | libc::WNOHANG,
+        )
+    };
+    if waited != 0 {
+        let error = std::io::Error::last_os_error();
+        assert_eq!(error.raw_os_error(), Some(libc::ECHILD), "{error}");
+        return None;
+    }
+    Some(info.si_signo == libc::SIGCHLD)
+}
+
+#[test]
+fn a_command_that_ends_while_the_board_is_asked_is_left_unreaped_until_its_recorder_is_done() {
+    let case = Case::new();
+    let folders = Folders::new("recorder-unreaped-in-process");
+    let accepted = folders.dir.join("accepted");
+    let pid = folders.dir.join("pid");
+    let board = Silent::new(&accepted);
+    let mut env = case.env.clone();
+    for (name, value) in [
+        ("TASKS_SERVER", board.address.as_str()),
+        ("TASKS_SESSION", "asks-a-silent-board"),
+        ("TASKS_WORK", folders.work.to_str().unwrap()),
+        ("SYMPHONY_MACHINE_DIR", folders.machine.to_str().unwrap()),
+    ] {
+        env.vars.insert(name.into(), value.into());
+    }
+    env.cwd.clone_from(&folders.dir);
+    let command = "echo $$ > \"$2\"; while [ ! -e \"$1\" ]; do :; done; exit 7";
+    let args = [
+        "run",
+        "--phase",
+        "test",
+        "--",
+        "/bin/sh",
+        "-c",
+        command,
+        "sh",
+        accepted.to_str().unwrap(),
+        pid.to_str().unwrap(),
+    ]
+    .map(String::from);
+    let (tell, done) = mpsc::channel();
+    std::thread::spawn(move || {
+        let args = args.each_ref().map(String::as_str);
+        let _ = tell.send(crate::run(&env, &args, ""));
+    });
+    let pid = written_pid(&pid);
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while ended(pid) != Some(true) {
+        assert_eq!(ended(pid), Some(false), "reaped before it was seen ended");
+        assert!(Instant::now() < deadline, "not ended within 30 s");
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert!(
+        board.heard.try_recv().is_err(),
+        "the board was no longer asked once it ended"
+    );
+    let ran = done.recv_timeout(Duration::from_secs(60)).unwrap();
+    assert_eq!(ran.code, 7, "{}{}", ran.out, ran.err);
+    assert_eq!(ended(pid), None, "left unreaped");
+    let finished = folders.once(Step::Finished);
+    assert_eq!((finished.exit_code, finished.signal), (Some(7), None));
+}
+
+#[test]
+fn a_command_word_of_any_bytes_reaches_the_command_whole() {
+    use std::os::unix::ffi::OsStrExt as _;
+    let case = Case::new();
+    let folders = Folders::new("recorder-bytes");
+    let odd = std::ffi::OsStr::from_bytes(b"a\xffb");
+    let done = output(
+        tasks(&case, &folders, None, &["run", "--phase", "build", "--"])
+            .args([
+                std::ffi::OsStr::new("printf"),
+                std::ffi::OsStr::new("%s"),
+                odd,
+            ])
+            .stdin(Stdio::null()),
+    )
+    .unwrap();
+    assert!(done.status.success(), "{done:?}");
+    assert_eq!(done.stdout, b"a\xffb");
+    assert_eq!(folders.once(Step::Finished).label, "printf %s a\u{fffd}b");
+}
+
+#[test]
+fn a_command_keeps_the_descriptors_ignored_signals_and_signal_mask_its_caller_handed_it() {
+    use std::os::unix::process::CommandExt as _;
+    let case = Case::new();
+    let folders = Folders::new("recorder-inherited");
+    let passed = folders.dir.join("passed");
+    let script = "echo through >&5; kill -HUP $$; kill -INT $$; kill -USR1 $$; echo alive";
+    let run = |wrapped: bool| {
+        let file = fs::File::create(&passed).unwrap();
+        let mut command = if wrapped {
+            let mut command = std::process::Command::new(env!("CARGO_BIN_EXE_tasks"));
+            command
+                .args(["run", "--phase", "test", "--"])
+                .envs(&case.env.vars)
+                .env("TASKS_WORK", &folders.work)
+                .env("SYMPHONY_MACHINE_DIR", &folders.machine)
+                .env_remove("TASKS_SESSION")
+                .env_remove(TASK_VAR)
+                .env_remove(recorded::PARENT_VAR);
+            command
+        } else {
+            std::process::Command::new("sh")
+        };
+        if wrapped {
+            command.arg("sh");
+        }
+        command.args(["-c", script]).current_dir(&folders.dir);
+        let fd = std::os::fd::AsRawFd::as_raw_fd(&file);
+        // SAFETY: dup2, signal and sigprocmask are async-signal-safe and change only the child.
+        unsafe {
+            command.pre_exec(move || {
+                // A descriptor a jobserver might pass, open across exec.
+                if libc::dup2(fd, 5) == -1 {
+                    return Err(std::io::Error::last_os_error());
+                }
+                libc::signal(libc::SIGHUP, libc::SIG_IGN);
+                libc::signal(libc::SIGINT, libc::SIG_IGN);
+                let mut blocked: libc::sigset_t = std::mem::zeroed();
+                libc::sigemptyset(&raw mut blocked);
+                libc::sigaddset(&raw mut blocked, libc::SIGUSR1);
+                libc::sigprocmask(libc::SIG_BLOCK, &raw const blocked, std::ptr::null_mut());
+                Ok(())
+            });
+        }
+        let done = command.stdin(std::process::Stdio::null()).output().unwrap();
+        drop(file);
+        (done, fs::read_to_string(&passed).unwrap())
+    };
+    // The shell itself keeps them: what the command must find through the recorder too.
+    let (direct, through) = run(false);
+    assert_eq!(
+        (
+            direct.status.code(),
+            direct.stdout.as_slice(),
+            through.as_str()
+        ),
+        (Some(0), &b"alive\n"[..], "through\n"),
+        "{direct:?}"
+    );
+    let (wrapped, through) = run(true);
+    assert_eq!(
+        (
+            wrapped.status.code(),
+            wrapped.stdout.as_slice(),
+            through.as_str()
+        ),
+        (Some(0), &b"alive\n"[..], "through\n"),
+        "{wrapped:?}"
+    );
+    assert_eq!(folders.once(Step::Finished).exit_code, Some(0));
+}
+
+#[test]
+fn a_command_ended_by_a_signal_ends_its_caller_by_the_same_signal() {
+    let case = Case::new();
+    let folders = Folders::new("recorder-signalled");
+    let done = output(
+        tasks(
+            &case,
+            &folders,
+            None,
+            &["run", "--phase", "build", "--", "sh", "-c", "kill -TERM $$"],
+        )
+        .stdin(Stdio::null()),
+    )
+    .unwrap();
+    assert_eq!(done.status.signal(), Some(15), "{done:?}");
+    let finished = folders.once(Step::Finished);
+    assert_eq!((finished.exit_code, finished.signal), (None, Some(15)));
+}
+
+#[test]
+fn a_signal_sent_to_the_process_its_caller_started_reaches_its_command() {
+    let case = Case::new();
+    let folders = Folders::new("recorder-forwards");
+    let trapped = folders.dir.join("trapped");
+    let mut recorder = spawn(&mut tasks(
+        &case,
+        &folders,
+        None,
+        &[
+            "run",
+            "--phase",
+            "test",
+            "--",
+            "sh",
+            "-c",
+            "trap 'exit 42' TERM; : > \"$1\"; while :; do sleep 0.02; done",
+            "sh",
+            trapped.to_str().unwrap(),
+        ],
+    ));
+    folders.once(Step::Running);
+    // Running says its command started, not that it is ready for the signal yet: it says that.
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while !trapped.exists() {
+        assert!(Instant::now() < deadline, "the command never set its trap");
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    let pid = libc::pid_t::try_from(recorder.id()).unwrap();
+    // SAFETY: a signal to the process this test started and has not waited for.
+    assert_eq!(unsafe { libc::kill(pid, libc::SIGTERM) }, 0);
+    let status = recorder.wait().unwrap();
+    assert_eq!(status.code(), Some(42), "{status:?}");
+    assert_eq!(folders.once(Step::Finished).exit_code, Some(42));
+}
+
+/// The process the caller started is the command's: killing it outright leaves no command running
+/// on, and its recorder, in a process of its own, still says how it ended.
+#[cfg(target_os = "macos")]
+#[test]
+fn a_kill_of_the_process_its_caller_started_ends_its_command_and_is_recorded() {
+    let case = Case::new();
+    let folders = Folders::new("recorder-killed");
+    let (release, pid) = (folders.dir.join("release"), folders.dir.join("pid"));
+    let command = until_released(&release, &pid);
+    let mut started = spawn(&mut tasks(
+        &case,
+        &folders,
+        None,
+        &run_args("build", "killed", &command),
+    ));
+    let running = folders.once(Step::Running);
+    let caller = libc::pid_t::try_from(started.id()).unwrap();
+    let command = written_pid(&pid);
+    assert_eq!(
+        command, caller,
+        "the command is the process its caller started"
+    );
+    assert_eq!(running.child_pid, Some(started.id()));
+    assert_ne!(
+        running.pid,
+        started.id(),
+        "its recorder is a process of its own"
+    );
+    started.kill().unwrap();
+    assert_eq!(started.wait().unwrap().signal(), Some(libc::SIGKILL));
+    assert!(!alive(command), "the command ran on");
+    let finished = folders.once(Step::Finished);
+    assert_eq!(
+        (finished.exit_code, finished.signal),
+        (None, Some(libc::SIGKILL))
+    );
+    fs::write(&release, "").unwrap();
+}
+
+#[test]
+fn a_command_that_cannot_start_is_said_and_recorded_as_a_shell_says_it_and_never_ran() {
+    let case = Case::new();
+    let unrunnable = scratch("recorder-unrunnable").join("not executable");
+    fs::write(&unrunnable, "#!/bin/sh\n").unwrap();
+    for (name, command, code) in [
+        ("recorder-missing", "no-such-command-anywhere", 127),
+        ("recorder-refused", unrunnable.to_str().unwrap(), 126),
+    ] {
+        let folders = Folders::new(name);
+        let done = output(
+            tasks(
+                &case,
+                &folders,
+                None,
+                &["run", "--phase", "build", "--", command],
+            )
+            .stdin(Stdio::null()),
+        )
+        .unwrap();
+        assert_eq!(done.status.code(), Some(code), "{done:?}");
+        assert!(done.stdout.is_empty());
+        assert!(
+            String::from_utf8_lossy(&done.stderr).starts_with(&format!("tasks run: {command}: ")),
+            "{done:?}"
+        );
+        let finished = folders.once(Step::Finished);
+        assert_eq!(finished.exit_code, Some(code));
+        assert_eq!(finished.started_at, None, "it never ran");
+        assert!(finished.reason.starts_with("its command did not start"));
+    }
+}
+
+#[test]
+fn the_task_its_session_holds_is_its_work_while_it_runs_and_its_record_keeps_how_long_it_took() {
+    let case = Case::new();
+    let worker = case.register("worker");
+    case.ok(&worker, &["create", "tools/recorded", "Recorded"]);
+    case.ok(&worker, &["claim", "tools/recorded"]);
+    let folders = Folders::new("recorder-claimed");
+    let (release, pid) = (folders.dir.join("release"), folders.dir.join("pid"));
+    let command = until_released(&release, &pid);
+    let mut recorder = spawn(&mut tasks(
+        &case,
+        &folders,
+        Some(&worker),
+        &run_args("test", "verify", &command),
+    ));
+    let running = folders.once(Step::Running);
+    assert_eq!(running.task.as_deref(), Some("tools/recorded"));
+    assert_eq!(running.handle.as_deref(), Some(worker.as_str()));
+    assert_eq!(running.label, "verify");
+    assert_eq!(running.phase, Phase::Test);
+    assert!(running.child_pid.is_some());
+    assert!(running.queued_at <= running.started_at.unwrap());
+    // Its recorder says it still runs, a beat at a time.
+    let deadline = Instant::now() + Duration::from_secs(30);
+    let beaten = loop {
+        let now = folders.once(Step::Running);
+        if now.beat_at > running.beat_at {
+            break now;
+        }
+        assert!(Instant::now() < deadline, "no beat within 30 s");
+        std::thread::sleep(Duration::from_millis(100));
+    };
+    assert_eq!(beaten.started_at, running.started_at);
+    fs::write(&release, "").unwrap();
+    assert!(recorder.wait().unwrap().success());
+    let finished = folders.once(Step::Finished);
+    assert_eq!(finished.operation_id, running.operation_id);
+    assert_eq!(finished.task.as_deref(), Some("tools/recorded"));
+    assert_eq!((finished.exit_code, finished.signal), (Some(0), None));
+    let duration = finished.duration().unwrap();
+    assert!(
+        duration >= beaten.beat_at - running.started_at.unwrap(),
+        "it ran at least until its beat: {finished:?}"
+    );
+    assert_eq!(kept(&folders.work, 1), [finished]);
+}
+
+#[test]
+fn a_run_records_the_task_named_else_the_environments_else_the_one_its_session_holds() {
+    let case = Case::new();
+    let worker = case.register("worker");
+    for slug in ["tools/one", "tools/two"] {
+        case.ok(&worker, &["create", slug, "Held"]);
+        case.ok(&worker, &["claim", slug]);
+    }
+    for (name, session, named, from_env, expected) in [
+        ("recorder-unattributed", None, None, None, (None, None)),
+        (
+            "recorder-ambiguous",
+            Some(worker.as_str()),
+            None,
+            None,
+            (Some(worker.as_str()), None),
+        ),
+        (
+            "recorder-named",
+            Some(worker.as_str()),
+            Some("tools/two"),
+            Some("tools/one"),
+            (Some(worker.as_str()), Some("tools/two")),
+        ),
+        (
+            "recorder-env-task",
+            Some(worker.as_str()),
+            None,
+            Some("tools/one"),
+            (Some(worker.as_str()), Some("tools/one")),
+        ),
+        // An orchestrator, or a subagent with no session of its own.
+        (
+            "recorder-sessionless",
+            None,
+            None,
+            Some("tools/two"),
+            (None, Some("tools/two")),
+        ),
+    ] {
+        let folders = Folders::new(name);
+        let mut args = vec!["run", "--phase", "build"];
+        if let Some(task) = named {
+            args.extend(["--task", task]);
+        }
+        args.extend(["--", "true"]);
+        let mut command = tasks(&case, &folders, session, &args);
+        if let Some(task) = from_env {
+            command.env(TASK_VAR, task);
+        }
+        let done = output(command.stdin(Stdio::null())).unwrap();
+        assert!(done.status.success(), "{name}: {done:?}");
+        let finished = folders.once(Step::Finished);
+        assert_eq!(
+            (finished.handle.as_deref(), finished.task.as_deref()),
+            expected,
+            "{name}"
+        );
+    }
+}
+
+#[test]
+fn a_board_that_cannot_be_reached_or_a_test_board_with_no_work_folder_still_runs_the_command() {
+    let mut case = Case::new();
+    case.env
+        .vars
+        .insert("TASKS_SERVER".into(), "127.0.0.1:1".into());
+    let folders = Folders::new("recorder-unreachable");
+    let done = output(
+        tasks(
+            &case,
+            &folders,
+            Some("worker"),
+            &["run", "--phase", "test", "--", "sh", "-c", "exit 3"],
+        )
+        .stdin(Stdio::null()),
+    )
+    .unwrap();
+    assert_eq!(done.status.code(), Some(3));
+    let finished = folders.once(Step::Finished);
+    assert_eq!(
+        (finished.handle.as_deref(), finished.task.as_deref()),
+        (Some("worker"), None)
+    );
+    let unrecorded = output(
+        tasks(
+            &case,
+            &folders,
+            None,
+            &[
+                "run",
+                "--phase",
+                "test",
+                "--",
+                "sh",
+                "-c",
+                "printf '%s' \"$TASKS_RUN_PARENT\"; exit 4",
+            ],
+        )
+        .env_remove("TASKS_WORK")
+        .stdin(Stdio::null()),
+    )
+    .unwrap();
+    assert_eq!(unrecorded.status.code(), Some(4));
+    assert!(unrecorded.stderr.is_empty(), "{unrecorded:?}");
+    assert!(
+        unrecorded.stdout.is_empty(),
+        "no operation to be the parent of: {unrecorded:?}"
+    );
+    assert_eq!(folders.records().len(), 1, "nothing more was recorded");
+}
+
+#[test]
+fn the_next_run_finishes_work_whose_recorder_died_and_keeps_both_in_the_history() {
+    let case = Case::new();
+    let folders = Folders::new("recorder-lost");
+    let (release, pid) = (folders.dir.join("release"), folders.dir.join("pid"));
+    let command = until_released(&release, &pid);
+    let mut started = spawn(&mut tasks(
+        &case,
+        &folders,
+        None,
+        &run_args("test", "lost", &command),
+    ));
+    let running = folders.once(Step::Running);
+    let recorder = libc::pid_t::try_from(running.pid).unwrap();
+    // SAFETY: the recorder of the operation this test started.
+    assert_eq!(unsafe { libc::kill(recorder, libc::SIGKILL) }, 0);
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while alive(recorder) {
+        assert!(Instant::now() < deadline, "the recorder outlived its kill");
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    // Its command outlives it; a reader cannot say the work ended, nor that it runs.
+    let found = recorded::read(&folders.work);
+    assert!(found.records.is_empty(), "{found:?}");
+    assert!(found.uncertain);
+    let done = output(
+        tasks(
+            &case,
+            &folders,
+            None,
+            &["run", "--phase", "build", "--", "true"],
+        )
+        .stdin(Stdio::null()),
+    )
+    .unwrap();
+    assert!(done.status.success(), "{done:?}");
+    let history = kept(&folders.work, 2);
+    assert_eq!(history[0].operation_id, running.operation_id);
+    assert_eq!((history[0].exit_code, history[0].signal), (None, None));
+    assert_eq!(history[0].state, Step::Finished);
+    assert_eq!(history[1].exit_code, Some(0));
+    assert!(!recorded::read(&folders.work).uncertain);
+    // The command itself ran on, unrecorded, and ends as it would have.
+    fs::write(&release, "").unwrap();
+    assert!(started.wait().unwrap().success());
+}
+
+#[test]
+fn a_recorder_run_by_a_recorded_command_records_it_as_its_parent() {
+    let case = Case::new();
+    let folders = Folders::new("recorder-nested");
+    let tasks_binary = env!("CARGO_BIN_EXE_tasks");
+    let done = output(
+        tasks(
+            &case,
+            &folders,
+            None,
+            &[
+                "run",
+                "--phase",
+                "test",
+                "--label",
+                "outer",
+                "--",
+                tasks_binary,
+                "run",
+                "--phase",
+                "build",
+                "--label",
+                "inner",
+                "--",
+                "true",
+            ],
+        )
+        .stdin(Stdio::null()),
+    )
+    .unwrap();
+    assert!(done.status.success(), "{done:?}");
+    let history = kept(&folders.work, 2);
+    let labelled = |label: &str| {
+        history
+            .iter()
+            .find(|record| record.label == label)
+            .unwrap_or_else(|| panic!("no {label}: {history:?}"))
+    };
+    let (inner, outer) = (labelled("inner"), labelled("outer"));
+    assert_eq!(
+        inner.parent_id.as_deref(),
+        Some(outer.operation_id.as_str())
+    );
+    assert_eq!(outer.parent_id, None);
+    assert_eq!((inner.exit_code, outer.exit_code), (Some(0), Some(0)));
+}
+
+#[test]
+fn a_probe_answers_its_version_and_a_command_line_it_cannot_read_is_refused() {
+    let case = Case::new();
+    let folders = Folders::new("recorder-probe");
+    let probe =
+        output(tasks(&case, &folders, None, &["run", "--probe"]).stdin(Stdio::null())).unwrap();
+    assert!(probe.status.success());
+    assert_eq!(
+        (probe.stdout.as_slice(), probe.stderr.as_slice()),
+        (&b"run 1\n"[..], &b""[..])
+    );
+    let refused = output(
+        tasks(
+            &case,
+            &folders,
+            None,
+            &["run", "--phase", "lint", "--", "true"],
+        )
+        .stdin(Stdio::null()),
+    )
+    .unwrap();
+    assert_eq!(refused.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&refused.stderr).contains("usage: tasks run"));
+    assert!(!folders.work.exists(), "nothing was recorded");
+}
+
+#[test]
+fn a_command_line_of_another_command_that_is_not_text_is_refused_without_a_panic() {
+    use std::os::unix::ffi::OsStrExt as _;
+    let case = Case::new();
+    let folders = Folders::new("recorder-not-text");
+    let done = output(
+        tasks(&case, &folders, None, &["show"])
+            .arg(std::ffi::OsStr::from_bytes(b"\xff"))
+            .stdin(Stdio::null()),
+    )
+    .unwrap();
+    assert_eq!(done.status.code(), Some(2), "{done:?}");
+    assert_eq!(done.stderr, b"tasks: an argument is not UTF-8 text\n");
+}

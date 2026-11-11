@@ -3,7 +3,8 @@
 //! its stylesheets after them (the shell puts each page kind's styles before these, so the package
 //! wins), and its layout variants on the root element, which the client's styles select. The body
 //! takes the project's view ([`symphony_api::PROJECT_ELEMENT`]), under the base the one server
-//! serves it at. With no package the Symphony's defaults stand.
+//! serves it at, and on a page the server draws itself ([`crate::pages`]) that page's notice. With
+//! no package the Symphony's defaults stand.
 
 use std::path::Path;
 
@@ -15,8 +16,15 @@ use symphony::theme::Package;
 /// What marks the theme's elements in the head, where the shell puts page styles before them.
 pub(crate) const THEME_MARK: &str = "data-symphony-theme";
 
-/// `shell` with the project at `root` in it, served at `base` (empty at the server's root).
-pub(crate) fn page(shell: &str, root: &Path, base: &str) -> String {
+/// The opening of the shell's notice region, which a banner goes at the start of.
+pub(crate) const REGION: &str = "<section id=\"shell-notices\" aria-label=\"Server notices\">";
+
+/// What carries the notice styles in the head; a page holding it gets them no second time.
+pub(crate) const NOTICE_STYLE: &str = "shell-notices-style";
+
+/// `shell` with the project at `root` in it, served at `base` (empty at the server's root), and
+/// `banner` (empty for none) in the shell's notice region, styled even before the client loads.
+pub(crate) fn page(shell: &str, root: &Path, base: &str, banner: &str) -> String {
     let project = Project::of(root);
     let package = Package::of(&project);
     let mut page = shell.to_string();
@@ -62,7 +70,35 @@ pub(crate) fn page(shell: &str, root: &Path, base: &str) -> String {
     if !element.is_empty() {
         page.insert_str(body.unwrap_or(0), &element);
     }
+    if !banner.is_empty() {
+        notice(&mut page, banner);
+    }
     page
+}
+
+/// Older installed client shells have no notice region or eager styles yet.
+fn notice(page: &mut String, banner: &str) {
+    if !page.contains(&format!("id=\"{NOTICE_STYLE}\"")) {
+        let style = format!(
+            "<style id=\"{NOTICE_STYLE}\">{}</style>",
+            include_str!("notices.css")
+        );
+        let at = page.find("</head>").unwrap_or(0);
+        page.insert_str(at, &style);
+    }
+    if let Some(at) = page.find(REGION) {
+        page.insert_str(at + REGION.len(), banner);
+    } else {
+        let at = page
+            .find("<div id=\"main\">")
+            .map(|at| at + "<div id=\"main\">".len())
+            .or_else(|| {
+                page.find("<body")
+                    .and_then(|at| page[at..].find('>').map(|end| at + end + 1))
+            })
+            .unwrap_or(0);
+        page.insert_str(at, &format!("{REGION}{banner}</section>"));
+    }
 }
 
 /// The package's tokens inline and its stylesheets after them, each marked [`THEME_MARK`].
