@@ -57,6 +57,7 @@ fn every_snapshot_read_is_a_read_and_binds_its_bounds() {
     let slugs = ["p/a".to_string()];
     for which in [
         Which::All,
+        Which::SlotHoldings,
         Which::Status("ready"),
         Which::Slug("p/a"),
         Which::Starting("p/a"),

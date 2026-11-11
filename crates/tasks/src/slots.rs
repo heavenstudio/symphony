@@ -212,7 +212,8 @@ impl<'a> Ledger<'a> {
     }
 
     /// The ledger of a whole board as one read gave it, which reads no hold: blocked work a hold
-    /// keeps open is not counted.
+    /// keeps open is not counted. Use [`crate::Store::slot_holdings`] for the canonical counted
+    /// feature keys including valid holds and the admission view's presence handling.
     pub fn of_board(board: &'a Board) -> Ledger<'a> {
         let tasks = board.tasks.iter().map(|t| Entry {
             slug: &t.slug,

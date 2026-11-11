@@ -688,6 +688,8 @@ IF $say {
 
 enum Which<'a> {
     All,
+    /// One whole-board observation with the admission ledger's validated hold records.
+    SlotHoldings,
     Status(&'a str),
     Slug(&'a str),
     /// One task, as `Slug`, with what the cap on an orchestrator's open tasks decides a start on.
@@ -743,7 +745,7 @@ struct Snapshot {
     /// The task (`Which::Slug`, `Which::Children`) or session (`Which::Pullable`) the read is about
     /// is there.
     known: bool,
-    /// What the cap decides a start on (`Which::Starting`).
+    /// The admission ledger inputs (`Which::Starting`, `Which::SlotHoldings`).
     #[serde(default)]
     slots: Option<cap::Read>,
 }
