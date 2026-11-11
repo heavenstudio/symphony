@@ -486,6 +486,9 @@ digest (`crates/tasks/src/cli/pull.rs`) once at its first dispatch, even when em
 (one on a subtask still to be executed counts), in-progress with none, review with no reviewer, tasks that landed
 (the branch is on main, or `landed <slug> on main` is on the task's thread) and are still open (a status change on the task after that line voids it, whether a move, a verdict such as `changes`, or a re-claim: the task is new work, not a landing left open), and idle agents, each scoped to the orchestrator's own and unclaimed tasks (an idle agent another orchestrator launched is left out). An executor
 or reviewer that is `running_test` counts as present however quiet the board says it is.
+A task in review whose tip a reviewer asked changes of is rework, counted in progress
+([The pipeline alarm](#the-pipeline-alarm)). While the pipeline alarm stands, the whole board's
+follows the header, whoever the digest is for, and its raising is an entry.
 Counts and the clock do not trigger delivery. A departure alone pushes nothing;
 an entry that stays present is never re-sent, and an ordinary entry that leaves and returns pushes once.
 The first PULL a recipient receives is the whole digest: `PULL HH:MM` with every count, then each list's
@@ -861,6 +864,110 @@ review by id, a level a round trip, and their roles through `role_slug`; it
 reads no table whole (`tests/store/slots/cost.rs`). Each
 orchestrator's PULL header shows `slots=OPEN/CAP`, and the agents API its
 `slots` ([The agents API](#the-agents-api)).
+
+## The pipeline alarm
+
+Work piling up in review is said, not left for someone to notice
+(`crates/tasks/src/alarm.rs`). Review holding more than twice the work
+in progress for 4 hours raises the alarm; it clears once review has held no
+more than twice in progress for an hour, so a short dip does not lower it and
+a short rise does not raise it. Exactly twice is not over; review with nothing
+in progress is.
+
+- **Thresholds.** The project's, beside `orchestrator_slots` in the `[board]`
+  table of `symphony.toml`, read from the main checkout as the cap is:
+  `review_alarm_ratio` (2), `review_alarm_hours` (4) and
+  `review_alarm_clear_hours` (1), whole numbers of at least 1. A key not
+  written takes its default; a value that does not parse, or one below 1, is
+  said on stderr (`⚠ …; the pipeline alarm takes its default thresholds`) and
+  the defaults apply.
+- **What counts.** Work only: a review mirror counts with the task it reviews
+  and an instruction subtask with the task it serves, as for
+  [Slots](#slots), neither on its own, as the tree stood at each moment: a
+  mirror counts on its own until the task it reviews is made, and an
+  instruction subtask from when it leaves its parent (a move's line names the
+  parent it left, `HANDLE put it under PARENT (was PARENT)`), so a task made or
+  moved changes the counts from then on, never the hours before. A task in
+  review whose branch's tip a reviewer asked changes of is rework (below),
+  counted in progress.
+- **From the record.** The board keeps no history of counts. Every change of a
+  task's status writes a line on its thread (a claim, a move, a verdict, a
+  landing, a block by a cancelled dependency and its end), so each reader walks
+  the last day's lines (or twice the raise and clear spans, if longer) back
+  from each task's status now and replays the alarm over the counts. What held
+  when that window opened is read, never assumed: a task's status then, where
+  its oldest line in the window is a claim or a landing, and the record of
+  what its landing waits on then, for one in review some time in the window,
+  come from its newest such lines before the window, read back past any field
+  value whose text only reads like one; and when the window holds neither a
+  raise span over nor a clear span under, so the alarm's state at its start
+  decides, a window twice as long is replayed, until one does or it opens
+  before the board's first task, when the alarm was lowered. Every reader at
+  one moment finds the same alarm, and
+  nothing writes it. The window's lines are read through the message time
+  index and those before it from each task's own thread; no table is read
+  whole.
+- **What it says.** While it stands, every orchestrator's PULL header ends
+  `review_alarm=REVIEW/IN_PROGRESS`, the whole board's whoever the digest is
+  for, and the lines after the header say the counts and since when, then the
+  5 tasks longest in review, longest first, each with when it went in and
+  what its landing waits on:
+
+  ```text
+  PULL 14:05 executing=4 … idle=0 review_alarm=10/4
+    review_alarm: review 10, in progress 4, more than 2× since 09:40
+    review_alarm p1 tools/x — X   (in review since 11-07 21:12; missing certificate, review)
+  ```
+
+  In the hour that clears it, the line says `at most 2× since HH:MM; it clears
+  after 1 h of that`. Its raising is an entry of its own, so the monitor
+  delivers it once, as it delivers any new entry.
+- **What a landing waits on.** The board holds no stamps; the tool that lands
+  a task records what its landing lacks in the board field
+  `fields._board.waits` (`Store::record_waits`; `set_field` is a plugin's): the tip it judged, `: `, then
+  each name, `, ` between them (`0123abc…: certificate, review`), none after
+  the colon when it lacks nothing. The alarm shows the names as written
+  (`missing certificate, review`), `missing nothing` for none, and `its tip is
+  newer than its landing's last look` when the branch has moved past the tip
+  the record judged. A task with no record shows no note. Each record names
+  the assessment it states, kept with when it was written
+  (`fields._board.assessed`): the same assessment retried writes nothing,
+  and a fresh one writes its record again however like the last it reads.
+  Stamp and approval reassessment, refused landing attempts and completed tip
+  verification submit these assessments through a detached, owned delivery.
+  It checks the current branch and task state, evaluates stamps and merge
+  conflicts, and records `changes` only for an effective reviewer veto. A
+  superseded interrupted verification supplies no completed assessment.
+  Local submissions and receipts live under `sf-land/assessments/` in the
+  common directory; the delivery child is stopped and reaped after 30 seconds
+  or checkout removal. A delayed board, an older API or an unconfirmed reply
+  leaves pending evidence; `just land-stamps BRANCH` retries the latest
+  submission, preserving a committed occurrence's identity, time and line.
+  Pending evidence alone does not confirm a board write.
+- **Rework.** The name `changes` in a record says a reviewer asked changes of
+  that tip. While the branch's tip is still the one judged and the branch has
+  not moved past it since the record, the task is rework: PULL counts it in progress (its live executor as executing, and one
+  nobody executes as `in_progress_orphaned`, noted `in review; changes asked
+  of its tip`), not as `review_unreviewed`, and the alarm counts it in progress
+  from the record to the next; a change of status ends nothing, since the
+  record judged a tip, which a move into progress and back keeps. The first
+  commit the branch moved to from the tip judged, after the record, ends it,
+  from the moment that commit was made or the branch moved to it, however late
+  its record comes and whatever follows (more commits, the task taken back
+  into progress): the task waits on review again. The moves come from the
+  repository the reader runs in, as the branch's reference log tells them: the
+  next commit made on the tip judged, or what replaced it, amended or rebased
+  away. Without that log, the first commit after the tip judged on the
+  branch's line of first parents ends it, never one that reaches it through a
+  merge's other parent; a reader that cannot see a task's branch takes each
+  record as judging the tip of its time, and one that cannot place the tip
+  judged takes the tip now as the first after it. The board keeps the first
+  end it learns of each record (`fields._board.fixed`), and nothing later
+  moves it: not another commit, an amend or a rebase, nor what the repository
+  tells after. A new record of changes on a tip the branch came back to, from
+  a fresh assessment, is a request of its own, whatever its text: it waits on
+  the branch's next move from that tip. The record answered, retried, is no
+  new request: PULL and the alarm count the task in review alike.
 
 ## Where the time goes
 

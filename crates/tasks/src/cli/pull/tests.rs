@@ -46,6 +46,7 @@ fn digest(executing: usize, lists: &[(&'static str, &[&str])]) -> Digest {
         unanswered_scanned: true,
         cap: None,
         slots: None,
+        alarm: None,
         volume: BTreeMap::from([("keen".to_string(), 9)]),
         scoped: true,
     }

@@ -336,14 +336,14 @@ fn set_parent_moves_a_task_on_the_record_and_needs_the_parent_to_exist() {
     );
     assert_eq!(
         f.said("a/b/c").last().unwrap(),
-        "owner put it under elsewhere"
+        "owner put it under elsewhere (was a/b)"
     );
     f.advance(LIVE_SECONDS + 1.0);
     let top = f.store.set_parent("a/b/c", None, &orch).unwrap();
     assert_eq!(top.parent, None);
     assert_eq!(
         f.said("a/b/c").last().unwrap(),
-        &format!("{orch} put it under nothing")
+        &format!("{orch} put it under nothing (was elsewhere)")
     );
     assert_eq!(f.health(&orch), Health::Live);
     assert_eq!(
