@@ -34,11 +34,18 @@ pub const DISPOSABLE: [&str; 19] = [
 /// Additional cache paths released when the worktree's task is finished.
 pub const FINISHED_OUTPUT: [&str; 3] = [".godot/*", ".venv/*", ".target/*"];
 
-const REGENERABLE: [&str; 7] = [
+/// Build output, untracked or ignored, that goes with a worktree: its build folders, what a seed
+/// staged or a clear set aside beside one (`.target.seed.PID`, `.target.clear.PID`), the client's
+/// build and the Codex app's imported hooks.
+const REGENERABLE: [&str; 11] = [
     ".target/",
     ".target/*",
+    ".target.seed.*",
+    ".target.clear.*",
     "symphony/.target/",
     "symphony/.target/*",
+    "symphony/.target.seed.*",
+    "symphony/.target.clear.*",
     "symphony/build/",
     "symphony/build/*",
     ".codex/hooks*",
@@ -164,7 +171,11 @@ pub(in crate::sweep) fn clean_regenerable(path: &Path) -> bool {
             "-fdx",
             "--",
             ".target/",
+            ".target.seed.*",
+            ".target.clear.*",
             "symphony/.target/",
+            "symphony/.target.seed.*",
+            "symphony/.target.clear.*",
             "symphony/build/",
             ".codex/hooks*",
         ],

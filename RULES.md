@@ -90,6 +90,24 @@ shows them and their green run. No test-first order, no red run before the code 
 fault or reverted change to watch a test fail, whatever a brief asks; a reviewer may still probe
 the code with a case it suspects the code gets wrong.
 
+### `tests/rerun-the-failure-alone`
+
+A test that failed is run again by itself before anything is concluded from it or changed for it,
+never the whole suite again. The owner, 2026-11-11: "test that fail should be ran themselves to
+see if they pass. No need to run entire test suite each time." One that passes alone but failed in
+the run is reported as load- or order-dependent, with both results.
+
+### `tests/a-red-on-main-has-one-owner`
+
+A test that fails on main, with the task's change taken out, is not the task's to fix or to wait
+for. The owner, 2026-11-11: "tests that are failing in main should be handled by an orchestrator
+as a separate task in order for individual tasks not to be blocked by it and have a single
+dedicated owner to solve it." The agent that finds it proves it on main (the test alone, at main's
+tip), tells its orchestrator on its thread with the command and output, and carries on: its own
+review and landing name the red and do not wait on it. The orchestrator checks the board for a
+task already holding that red, files one at p0 if there is none, and staffs it at once; a second
+finder adds its evidence to that task and files nothing.
+
 ### `a-test-that-passes-either-way-is-not-a-test`
 
 A test, check or meter has to be able to tell. A test that would pass with the change reverted,
@@ -128,6 +146,19 @@ its task (`just tasks say SLUG "…" --to owner`) or as a card question
 only copy; a follow-up reuses it, an answer given in the terminal is recorded there, and silence
 is not an answer.
 
+### `review/auto-approve-what-is-decided`
+
+A card is not put to the owner, or is auto-approved if already posted, when its answer is not a
+real choice. The owner, 2026-11-11: "run some auto triage. Some decisions look like they should
+had been auto approved". An orchestrator marks it `[a]` with a dated
+`agent · auto-approved — <letter>: <basis>` line ([REVIEW](docs/REVIEW.md)) when the owner's own
+words, quoted in the basis, already decide it, or when the card's own evidence leaves one option
+standing (the others measured wrong, or against something the owner said). It stays the
+owner's when it is a matter of taste or look (names, layout, pictures), a product direction with
+live alternatives, money, or an act that cannot be undone (moving live state, deleting, a tag or
+a release): those are recommended, never auto-approved. An auto-approved card stays in the
+register for the owner to spot-check, and any verdict of theirs overrides it.
+
 ### `docs/cards-clear-and-concise`
 
 A card holds what its judgement call needs and nothing more: short paragraphs, plain words, one
@@ -148,6 +179,14 @@ pointer.
 One topic per document, linked to the others, never merged into one file.
 
 ## Tools and the machine
+
+### `commits/no-ai-authorship`
+
+No commit, merge, tag, pull request, file header or licence line names Claude, Claude Code, Codex
+or any other AI agent as author, co-author or generator: no `Co-Authored-By` trailer, no
+"Generated with" line. The owner, 2026-11-11: "no claude code or codex co authorship anywhere".
+The author and owner of this repository is Stefano Benatti, and its licence is MIT (`LICENSE`).
+An agent's handle belongs on the board thread, never in the commit.
 
 ### `tools/no-new-python`
 

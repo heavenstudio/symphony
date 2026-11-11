@@ -132,10 +132,20 @@ refreshes the real distribution before committing client changes. Its default
 root is the checkout's top level even when the command starts in a subfolder; `--root`
 selects another folder. A private server on the main checkout leaves the
 shared app's `artifacts/docs-app.port` record alone. A project's page serves the
-shell with revalidation; content-hashed assets have immutable caching. Gzip
-compression covers snapshots and client files. SSE is never compressed or
-buffered. A changed shell script path emits a `client` region, which the
-existing client uses to reload once per build.
+shell with revalidation by its ETag, as is any client file not named by its
+content. A file named by its content, an `assets/` name whose last `-` part is
+dx's `dxh…` hash or the packager's sixteen hex digits (the shell script, every
+page module, wasm and stylesheet), is cached for a year as immutable, so a
+return visit revalidates the page alone (`src/api/client.rs`). Snapshots and the
+page are gzipped per request. A client file is gzipped once per content, at the
+best level, by the first request that takes gzip; later requests, from any
+project, send those stored bytes. The server keeps the most recently asked-for
+gzips, up to 16 MiB (about eight builds of every page's files), and drops the
+least recently asked-for past that, gzipping it again should it be asked for
+again (`src/api/client/gzipped.rs`). A file gzip cannot shrink goes as it is, as
+do PNG and WOFF2 files. Gzip is the one encoding offered: `br` and `zstd` get
+the file as it is. SSE is never compressed or buffered. A changed shell script path
+emits a `client` region, which the existing client uses to reload once per build.
 
 Only the shared server started with `--home`, holding the server lease, drains
 the chat journal. Private servers leave it untouched, even with `ASKS_DB` set,

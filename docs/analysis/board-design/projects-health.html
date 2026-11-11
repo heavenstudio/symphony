@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Projects with their health</title>
+<link rel="stylesheet" href="board-mock.css">
+<style>
+/* The machine's Projects page as it is, plus one health dot per project (its worst signal) and, only when a board is
+   unwell, one line saying how. Figures: each project's /api/health and agents, 2026-11-11 19:10. */
+.projects { max-width:640px; margin:40px auto; padding:0 16px; }
+.projects h1 { font-size:2rem; margin:0 0 24px; letter-spacing:-.02em; }
+.proj { display:block; padding:14px 0; border-bottom:1px solid var(--border); }
+.proj .name { font-weight:650; text-decoration:underline; display:inline-flex; align-items:center; gap:8px; }
+.proj .name::before { content:""; width:9px; height:9px; border-radius:50%; background:var(--h); }
+.proj .counts { color:var(--muted-foreground); font-size:var(--fs-sm); margin-top:2px; }
+.proj .counts b { color:var(--foreground); font-weight:650; white-space:nowrap; }
+.proj .health { color:var(--h); font-size:var(--fs-sm); margin-top:4px; }
+.ok { --h:var(--like); } .warn { --h:var(--question); } .bad { --h:var(--dislike); }
+</style>
+</head>
+<body>
+<div class="projects">
+  <h1>Projects</h1>
+  <a class="proj ok" href="#"><span class="name">Symphony</span>
+    <div class="counts">0 decision cards waiting on you · 14 in progress · 4 in review</div></a>
+  <a class="proj warn" href="#"><span class="name">Star Foundry</span>
+    <div class="counts">18 decision cards waiting on you · 2 in progress · 1 in review · <b>41 blocked, 9 of them on you</b></div>
+    <div class="health">Board slow (writes 3 s, 48 unanswered this hour) · no orchestrator running</div></a>
+</div>
+</body>
+</html>

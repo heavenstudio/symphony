@@ -22,6 +22,12 @@ struct AskReply {
     recipient: Option<String>,
 }
 
+/// Where focus goes when the sheet opens, the first of these that shows and can take it.
+const QUICK_FIRST: [&str; 2] = [
+    "#quick-sheet [role=tabpanel]:not([hidden]) :is(#quick-title, #quick-text):not(:disabled)",
+    "#quick-sheet [role=tab][aria-selected=true]",
+];
+
 /// Keep the owner's composer mounted while an uncertain task save is checked.
 #[component]
 pub(super) fn QuickPanel(route: Route, mut draft: Signal<Draft>) -> Element {
@@ -41,6 +47,17 @@ pub(super) fn QuickPanel(route: Route, mut draft: Signal<Draft>) -> Element {
         current.ask,
         current.ask_scope.clone(),
     );
+    // Opened from its button, the sheet takes focus at the field the reader types in: the task's
+    // title or the message (the selected tab first if a save holds them disabled).
+    use_effect(use_reactive!(|open| {
+        if open {
+            super::take_focus("quick", &QUICK_FIRST);
+        }
+    }));
+    super::use_escape("#quick-sheet", move || {
+        draft.write().open = false;
+        super::return_focus("#quick-open");
+    });
     use_effect(use_reactive!(|open, task, id, scope| {
         let _ = revision();
         if let Some(task) = running.take() {
@@ -294,13 +311,17 @@ pub(super) fn QuickPanel(route: Route, mut draft: Signal<Draft>) -> Element {
                             as: move |attributes: Vec<Attribute>| {
                                 let base = attributes!(button {
                                     class: "collapse", r#type: "button", aria_label: "Collapse panel",
-                                    onclick: move |_: MouseEvent| draft.write().open = false,
+                                    onclick: move |_: MouseEvent| {
+                                        draft.write().open = false;
+                                        super::return_focus("#quick-open");
+                                    },
                                 });
                                 let merged = merge_attributes(vec![attributes, base]);
                                 rsx! { button { ..merged, "⌄" } }
                             },
                         }
-                        crate::components::tooltip::TooltipContent { "Collapse panel; keep the conversation" }
+                        // The button sits at the window's right edge: its tip opens leftwards, over the sheet.
+                        crate::components::tooltip::TooltipContent { side: dioxus_primitives::ContentSide::Left, "Collapse panel; keep the conversation" }
                     }
                 }
                 crate::components::tabs::TabContent { id: "quick-chat-panel", aria_labelledby: "quick-chat-tab", value: "chat", index: 0usize, {content()} }
