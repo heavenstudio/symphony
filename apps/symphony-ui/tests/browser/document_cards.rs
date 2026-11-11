@@ -1,6 +1,6 @@
 //! A card on a document page, read in the release client: its verdict form fits a phone's card,
-//! its history keeps an agent's paragraphs, and its buttons rank by what the owner does next,
-//! with Escape closing the editor.
+//! its history keeps an agent's paragraphs, its buttons rank by what the owner does next, with
+//! Escape closing the editor, and a link's excerpt opens beside the link's own button.
 use super::components::key;
 use super::{SHOWN, chrome, chrome::Chrome, common, dist, site::Site};
 use serde_json::{Value, json};
@@ -39,18 +39,24 @@ fn threads() -> Value {
     ]}]}]}})
 }
 
+/// The excerpt the card `alpha`'s link opens: the card's own section.
+const OWN_SECTION: &str = "/api/section?path=docs%2FPROBE.md&format=blocks&anchor=lamps";
+
 /// The document `docs/PROBE.md`: a heading, a paragraph, a pending card waiting on the owner with
-/// its history, and an approved card waiting for the owner to confirm it.
+/// its history and a link to its own section, and an approved card waiting for the owner to
+/// confirm it.
 fn probe_site() -> Site {
     let site = Site::start(dist(), &common::fixture("board.json"));
+    let link = json!({"type":"link","href":"/docs/PROBE.md#lamps","target":{"path":DOC,"anchor":"lamps"},"title":"","spans":[text("Lamps")]});
     let (alpha, pending) = card(
         "alpha",
         "pending",
         "decide",
         5,
-        vec![paragraph(vec![text(
-            "Keep all 141 lamps, or merge the near-duplicates down to about 90?",
-        )])],
+        vec![paragraph(vec![
+            text("Keep all 141 lamps, or merge the near-duplicates down to about 90? "),
+            link,
+        ])],
     );
     let (beta, approved) = card(
         "beta",
@@ -74,6 +80,11 @@ fn probe_site() -> Site {
         &json!({"version":7,"change":{"path":DOC,"sections":sections,"threads":threads()}}),
     );
     site.set_json("/api/asks", &json!({"asks":[],"recipient":null}));
+    let own: Vec<Value> = sections.as_array().unwrap()[0..3]
+        .iter()
+        .flat_map(|section| section["blocks"].as_array().unwrap().clone())
+        .collect();
+    site.set_json(OWN_SECTION, &json!({"blocks":own}));
     site
 }
 
@@ -301,5 +312,72 @@ fn document_card_escape_closes_the_editor_and_returns_focus_to_its_opener() {
         ),
         "Escape closes the comment editor and focus returns to + comment: {}",
         page.eval("document.activeElement.outerHTML.slice(0, 200)")
+    );
+}
+
+/// The card `alpha`'s show button and its excerpt: the button's label and state, the gap between
+/// the button and the excerpt, whether the excerpt's own words show, how many elements own the
+/// card's anchor, and whether the excerpt offers excerpts of its own.
+const EXCERPT: &str = r#"(() => {
+    const card = document.querySelector('[data-doc-key="card:alpha"]'), show = card.querySelector('.section-prose .show-link');
+    const box = card.querySelector('.excerpt-box'), button = show.getBoundingClientRect();
+    const words = box && [...box.querySelectorAll('p')].find(p => p.textContent === 'The catalogue holds 141 lamps.');
+    return {
+        label: show.textContent, expanded: show.getAttribute('aria-expanded'),
+        gap: box && Math.round(box.getBoundingClientRect().top - button.bottom),
+        shown: !!words && words.getBoundingClientRect().height > 0 && words.getBoundingClientRect().bottom <= innerHeight,
+        anchors: document.querySelectorAll('[id="alpha"]').length,
+        nested: box ? box.querySelectorAll('.show-link').length : null,
+    };
+})()"#;
+
+#[test]
+fn document_card_link_opens_its_excerpt_beside_its_button_and_closes_it_again() {
+    let site = probe_site();
+    let Some(mut page) = chrome() else { return };
+    viewport(&mut page, 1280, 900);
+    page.open(&site.url(&format!("/{DOC}#alpha")));
+    let show = "[data-doc-key=\"card:alpha\"] .section-prose .show-link";
+    assert!(page.wait_for(
+        &format!("document.querySelector({}) !== null", json!(show)),
+        SHOWN
+    ));
+    page.eval(&format!(
+        "document.querySelector({}).scrollIntoView({{block:'start'}})",
+        json!(show)
+    ));
+    page.eval(&format!("document.querySelector({}).click()", json!(show)));
+    assert!(page.wait_for(
+        "document.querySelector('[data-doc-key=\"card:alpha\"] .excerpt-box h2') !== null",
+        SHOWN
+    ));
+    let open = page.eval(EXCERPT);
+    let seen = ["label", "expanded", "anchors", "nested", "shown"].map(|key| open[key].clone());
+    assert_eq!(
+        json!(seen),
+        json!(["▾ hide", "true", 1, 0, true]),
+        "the open excerpt says how to hide it, shows its section's words, and its copy of the card owns no anchor and no excerpt: {open}"
+    );
+    let gap = open["gap"].as_i64().unwrap();
+    assert!(
+        (0..24).contains(&gap),
+        "the excerpt opens right under its button, not at the card's end: {open}"
+    );
+    // A click on the excerpt's words reads them; it does not open the card's editor.
+    page.eval("[...document.querySelectorAll('[data-doc-key=\"card:alpha\"] .excerpt-box p')].find(p => p.textContent === 'The catalogue holds 141 lamps.').click()");
+    assert_eq!(
+        page.eval("document.querySelector('[data-doc-key=\"card:alpha\"] form.verdict').hidden"),
+        json!(true)
+    );
+    page.eval(&format!("document.querySelector({}).click()", json!(show)));
+    assert!(page.wait_for(
+        "document.querySelector('[data-doc-key=\"card:alpha\"] .excerpt-box') === null",
+        SHOWN
+    ));
+    let closed = page.eval(EXCERPT);
+    assert_eq!(
+        [&closed["label"], &closed["expanded"]],
+        [&json!("▸ show"), &json!("false")],
+        "{closed}"
     );
 }

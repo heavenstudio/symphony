@@ -349,8 +349,6 @@ fn DocSection(
     unfolded: bool,
 ) -> Element {
     let mut editing = use_signal(|| false);
-    let mut excerpt = use_signal(|| None::<(String, Fragment)>);
-    let mut excerpt_error = use_signal(|| None::<String>);
     let mut fragment = docs::fragment(&section);
     let settled = card
         .as_ref()
@@ -377,32 +375,15 @@ fn DocSection(
     let later = card.as_ref().filter(|card| matches!(card.group.as_str(), "decide" | "confirm")).map(|card| {
         rsx! { crate::postpone_live::Controls { path: path.clone(), scope: scope.clone(), slug: card.slug.clone(), postponed, seen: (editing() || target == card.slug).then(|| format!("{target}:{}", editing())) } }
     });
-    let open = use_callback(move |target: LinkTarget| {
-        let anchor = target.anchor.unwrap_or_default();
-        let title = format!("{}#{anchor}", target.path);
-        let url = format!(
-            "{}&format=blocks&anchor={}",
-            api("", "/api/section", target.path.trim_start_matches('/')),
-            encode(&anchor)
-        );
-        spawn(async move {
-            match get::<Fragment>(&url).await {
-                Ok(fragment) => {
-                    excerpt_error.set(None);
-                    excerpt.set(Some((title, fragment)));
-                }
-                Err(why) => excerpt_error.set(Some(why)),
-            }
-        });
-    });
-    use_context_provider(|| Excerpts(is_card.then_some(open)));
+    let excerpt = use_callback(|target: LinkTarget| rsx! { Excerpt { target } });
+    use_context_provider(|| Excerpts(is_card.then_some(excerpt)));
     use_context_provider(|| CardAnchor(if unfolded { slug.clone() } else { None }));
     // The button that opens the editor, where Escape returns focus.
     let opener = format!("opener-{}", encode(&format!("{path}:{}", section.key)));
     let content = rsx! {
             div { class: "section-prose",
                 onclick: move |event: MouseEvent| {
-                    let interactive = event.data().try_as_web_event().and_then(|e| e.target()).and_then(|e| e.dyn_into::<web_sys::Element>().ok()).and_then(|e| e.closest("a, button, input, summary, textarea, img, iframe, .viewer-stage").ok().flatten()).is_some();
+                    let interactive = event.data().try_as_web_event().and_then(|e| e.target()).and_then(|e| e.dyn_into::<web_sys::Element>().ok()).and_then(|e| e.closest("a, button, input, summary, textarea, img, iframe, .viewer-stage, .excerpt-box").ok().flatten()).is_some();
                     if is_card && !interactive { editing.set(true); }
                 },
                 FragmentView { fragment }
@@ -420,14 +401,6 @@ fn DocSection(
             } else {
                 crate::components::button::Button { id: opener.clone(), class: "add", r#type: "button", aria_expanded: editing(), onclick: move |_| editing.toggle(), if editing() { "Close comment" } else { "+ comment" } }
             }
-            if let Some(why) = excerpt_error() { p { role: "alert", "{why}" } }
-            if let Some((title, fragment)) = excerpt() {
-                details { class: "excerpt-box", open: true,
-                    summary { "{title}" }
-                    crate::components::button::Button { r#type: "button", onclick: move |_| excerpt.set(None), "Close excerpt" }
-                    NearViewport { FragmentView { fragment } }
-                }
-            }
             if gone { p { role: "alert", "This block was removed elsewhere. Copy your draft or discard it; saving to its old position is disabled." } }
             Editor { path, scope, section_key: section.key.clone(), slug, state, after_line: section.end, editing, opener: opener.clone(), gone, later }
     };
@@ -435,7 +408,7 @@ fn DocSection(
         section { class: if is_card { "doc-section doc-card" } else { "doc-section" }, id: if unfolded { String::new() } else { format!("L{}", section.start) },
             "data-state": card.as_ref().map(|c| c.state.clone()),
             "data-doc-key": "{section.key}", "data-start": "{section.start}", "data-end": "{section.end}",
-            "data-busy": if editing() || excerpt().is_some() { "true" } else { "false" },
+            "data-busy": if editing() { "true" } else { "false" },
             if settled && !unfolded {
                 details { class: "settled", id: card.as_ref().map(|c| c.slug.clone()).unwrap_or_default(),
                     summary { SpansView { spans: summary } }
@@ -449,6 +422,35 @@ fn DocSection(
 #[component]
 fn FragmentView(fragment: Fragment) -> Element {
     rsx! { BlocksView { blocks: fragment.blocks } }
+}
+
+/// A link's excerpt, drawn beside the button that opened it: the section its anchor names. Its
+/// cards own no anchor and its links open no excerpt, so a card's link to its own section shows
+/// that section once and nothing nests. It holds its section's markup while it is open.
+#[component]
+fn Excerpt(target: LinkTarget) -> Element {
+    let mut read = use_signal(|| None::<Result<Fragment, String>>);
+    let anchor = target.anchor.clone().unwrap_or_default();
+    let title = format!("{}#{anchor}", target.path);
+    use_hook(|| {
+        let url = format!(
+            "{}&format=blocks&anchor={}",
+            api("", "/api/section", target.path.trim_start_matches('/')),
+            encode(&anchor)
+        );
+        spawn(async move { read.set(Some(get::<Fragment>(&url).await)) })
+    });
+    rsx! {
+        div { class: "excerpt-box", role: "region", "aria-label": "Excerpt of {title}", "data-busy": "true",
+            p { class: "excerpt-title", "{title}" }
+            {match read() {
+                None => rsx! { p { role: "status", "Loading the excerpt…" } },
+                Some(Err(why)) => rsx! { p { role: "alert", "{why}" } },
+                Some(Ok(fragment)) if fragment.blocks.is_empty() => rsx! { p { "This section is empty." } },
+                Some(Ok(fragment)) => rsx! { crate::block_view::HistoricalBlocks { blocks: fragment.blocks } },
+            }}
+        }
+    }
 }
 
 #[component]

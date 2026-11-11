@@ -154,6 +154,10 @@ form.comment, form.verdict { border:1px solid var(--border); background:var(--mu
   .show-link { font-size:.75em; padding:0 8px; margin-left:4px; }
   .excerpt-box { position:relative; margin:10px 0; border:1px solid var(--border); border-radius:var(--r-md); padding:4px 14px; max-height:320px; overflow:auto; background:var(--muted); font-size:.95em; cursor:auto; }
   .excerpt-box.full { max-height:none; }
+  /* An excerpt opens inside the line of its link, where a card's paragraphs run inline: its own
+   * paragraphs stay blocks. */
+  .excerpt-box > p { display:block; margin:.6em 0; }
+  .excerpt-box > .excerpt-title { margin:6px 0 0; font-family:var(--font-mono); font-size:var(--fs-xs); color:var(--muted-foreground); }
   .excerpt-box .grow { position:sticky; top:4px; float:right; font-size:.75em; padding:0 8px; }
 
 /* The live section owns the card edge, thread and editor as one surface. */
