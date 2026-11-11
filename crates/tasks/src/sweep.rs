@@ -52,8 +52,14 @@
 //! unknown inputs rescan. Cache hits stat saved entries without walking. Both final status guards
 //! remain fresh; an early unavailable HEAD/removal guard retains the tree before lookup.
 //! Foreground `--task` cleanup visits only its finished worktrees, guarded per tree, and asks for
-//! a detached full pass. Tests: `symphony/crates/tasks/tests/sweep/`.
+//! a detached full pass.
+//!
+//! Of the worktrees that stay, it then removes the build output of finished work: a worktree's
+//! build folders ([`build_output::FOLDERS`]) once every task it is tied to is done or cancelled,
+//! one of them done, its HEAD is merged work (never a branch with no commits ahead of `main`), no
+//! agent bound to it beat within the hour and no process works inside it ([`build_output`]). Tests: `symphony/crates/tasks/tests/sweep/`.
 
+pub mod build_output;
 mod coalesce;
 mod command;
 pub mod git;
@@ -190,6 +196,8 @@ pub struct Sweep {
     pub kept: Vec<(PathBuf, Vec<String>)>,
     /// Merged, but in use.
     pub spared: Vec<(PathBuf, String)>,
+    /// The build folders of finished work, removed from worktrees that stay ([`build_output`]).
+    pub cleared: Vec<(PathBuf, String)>,
     pub branches: Vec<String>,
     pub total: usize,
     pub dry_run: bool,
@@ -220,6 +228,16 @@ impl Sweep {
             self.spared
                 .iter()
                 .map(|(path, why)| format!("kept {}: {why}", path.display())),
+        );
+        let clear = if self.dry_run {
+            "would clear"
+        } else {
+            "cleared"
+        };
+        out.extend(
+            self.cleared
+                .iter()
+                .map(|(path, why)| format!("{clear} build output {} ({why})", path.display())),
         );
         let deleted = if self.dry_run {
             "would delete"
@@ -257,6 +275,18 @@ impl Sweep {
         if !self.spared.is_empty() {
             said += &format!("; kept {} in use", self.spared.len());
         }
+        if !self.cleared.is_empty() {
+            said += &format!(
+                "; {} {} build folder{} of finished work",
+                if self.dry_run {
+                    "would clear"
+                } else {
+                    "cleared"
+                },
+                self.cleared.len(),
+                if self.cleared.len() == 1 { "" } else { "s" }
+            );
+        }
         said
     }
 }
@@ -277,6 +307,8 @@ struct Index<'a> {
     bound: Vec<(PathBuf, &'a str)>,
     /// Every session, whatever its health, by its worktree.
     sessions_at: BTreeMap<PathBuf, Vec<&'a str>>,
+    /// The newest beat or tool call of the sessions at each worktree, whatever their health.
+    beats_at: BTreeMap<PathBuf, f64>,
     /// Every launch, closed or not, by its worktree.
     launched_at: BTreeMap<PathBuf, Vec<&'a TaskSessionRow>>,
     tasks: BTreeMap<&'a str, &'a Task>,
@@ -317,6 +349,7 @@ impl<'a> Index<'a> {
         let mut index = Index {
             bound: Vec::new(),
             sessions_at: BTreeMap::new(),
+            beats_at: BTreeMap::new(),
             launched_at: BTreeMap::new(),
             tasks: facts.tasks.iter().map(|t| (t.slug.as_str(), t)).collect(),
             spelled: BTreeMap::new(),
@@ -327,10 +360,16 @@ impl<'a> Index<'a> {
             }
         }
         for s in &facts.sessions {
+            let beat = s.row.last_seen.max(s.row.last_tool.unwrap_or(f64::MIN));
             for at in places(s, worktrees) {
                 if s.health.holds() {
                     index.bound.push((at.clone(), &s.row.handle));
                 }
+                index
+                    .beats_at
+                    .entry(at.clone())
+                    .and_modify(|newest| *newest = newest.max(beat))
+                    .or_insert(beat);
                 index.sessions_at.entry(at).or_default().push(&s.row.handle);
             }
         }
@@ -339,6 +378,12 @@ impl<'a> Index<'a> {
             index.launched_at.entry(at).or_default().push(launched);
         }
         index
+    }
+
+    /// When an agent at `path` last beat or made a tool call, whatever its health; none when no
+    /// session works there.
+    fn last_beat(&self, path: &Path) -> Option<f64> {
+        self.beats_at.get(path).copied()
     }
 
     /// Whether a live or stale session other than `unbound` is bound to `path`.
@@ -534,6 +579,8 @@ pub fn sweep(root: &Path, here: &Path, store: &Store, o: &Options) -> Result<Swe
         result.removed.push((listed.clone(), why));
         gone.insert(path.clone());
     }
+    result.cleared =
+        build_output::clear(root, &here, &main, store, o, &gone, &mut working, &trees)?;
     if !o.dry_run && o.only.is_none() {
         let _ = git::git(root, &["worktree", "prune"]);
     }
