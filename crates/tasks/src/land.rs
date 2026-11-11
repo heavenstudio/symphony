@@ -696,10 +696,13 @@ impl Landing<'_> {
                     break;
                 }
                 Attempt::Raced(now) => {
-                    self.say(&format!(
-                        "land {slug}: {default} moved to {}; merging and checking again",
-                        short(&now)
-                    ));
+                    // The last try's move is told by the refusal below.
+                    if attempt + 1 < TRIES {
+                        self.say(&format!(
+                            "land {slug}: {default} moved to {}; merging and checking again",
+                            short(&now)
+                        ));
+                    }
                     base = now;
                 }
             }
@@ -1109,9 +1112,11 @@ impl Landing<'_> {
             if !moved {
                 return Pushed::Failed(why, by_hand);
             }
-            self.say(&format!(
-                "land {slug}: {REMOTE}/{default} moved while pushing; fetching again"
-            ));
+            if attempt + 1 < TRIES {
+                self.say(&format!(
+                    "land {slug}: {REMOTE}/{default} moved while pushing; fetching again"
+                ));
+            }
         }
         Pushed::Failed(
             format!("{REMOTE}/{default} kept moving while the land pushed"),

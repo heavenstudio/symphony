@@ -762,7 +762,11 @@ fn main_that_keeps_moving_lands_nothing_after_its_tries() {
         2,
         "{said}"
     );
-    assert_ne!(head(&r.root, "main^2"), head(&r.root, SLUG));
+    assert_eq!(
+        git(&r.root, &["branch", "--list", "--merged", "main", SLUG]),
+        "",
+        "the branch is on no main"
+    );
     assert!(!r.board.said(SLUG).iter().any(|l| l.starts_with("landed ")));
 }
 
@@ -1176,6 +1180,61 @@ fn a_push_that_fails_leaves_the_landing_here_says_so_and_closes_the_task() {
     assert!(line.contains("pushes are closed"), "{line}");
     assert_eq!(head(&bare, "main"), before);
     assert_eq!(head(&r.root, "main^2"), head(&r.root, SLUG));
+    assert_eq!(r.board.store.get(SLUG).unwrap().status, "done");
+    assert_eq!(last(&r, SLUG), line);
+}
+
+#[test]
+fn origin_that_moves_at_every_push_leaves_the_landing_here_after_its_tries() {
+    let r = Repo::new();
+    manifest(&r, "");
+    let bare = remote(&r);
+    // Origin's main moves past what each push expects it at, out of the push's quarantine.
+    let hook = bare.join("hooks/pre-receive");
+    write(
+        &bare,
+        "hooks/pre-receive",
+        "#!/bin/sh\nunset GIT_QUARANTINE_PATH GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES\n\
+         export GIT_AUTHOR_NAME=o GIT_AUTHOR_EMAIL=o@example.com GIT_COMMITTER_NAME=o \
+         GIT_COMMITTER_EMAIL=o@example.com\n\
+         top=$(git rev-parse refs/heads/main)\n\
+         next=$(git commit-tree --no-gpg-sign -p \"$top\" -m 'moved while pushing' \"$top^{tree}\")\n\
+         git update-ref refs/heads/main \"$next\" \"$top\"\n",
+    );
+    use std::os::unix::fs::PermissionsExt;
+    fs::set_permissions(&hook, fs::Permissions::from_mode(0o755)).unwrap();
+    let wt = branch(&r, SLUG, "sim/jump.gd", "extends Node\n");
+    let people = approved(&r, SLUG, &format!("{} is good", head(&wt, "HEAD")));
+    let (said, result) = landed(&r, SLUG, &people.orch);
+    let line = result.unwrap();
+    // The landing's merge, under the two merges of what origin gained.
+    let merge = head(&r.root, "main~2");
+    assert_eq!(head(&r.root, "main~2^2"), head(&r.root, SLUG), "{said}");
+    assert_eq!(
+        line,
+        format!(
+            "landed {SLUG} on main at {}; NOT PUSHED, landed here only: origin/main kept moving \
+             while the land pushed. Push it with: git fetch origin && git merge origin/main (in \
+             the main checkout), then git push origin main",
+            &merge[..12]
+        )
+    );
+    assert_eq!(
+        said.matches("moved while pushing; fetching again").count(),
+        2,
+        "{said}"
+    );
+    assert_eq!(
+        said.matches("; merging and checking it").count(),
+        2,
+        "{said}"
+    );
+    assert_eq!(
+        runs(&r).len(),
+        3,
+        "the landing's check, and one for each merge of origin"
+    );
+    assert_ne!(head(&bare, "main"), head(&r.root, "main"));
     assert_eq!(r.board.store.get(SLUG).unwrap().status, "done");
     assert_eq!(last(&r, SLUG), line);
 }

@@ -2,7 +2,7 @@
 name: task-orchestrator
 description: Keep the development pipeline healthy through the task board: find approved work, file complete briefs, staff executors and independent reviewers, and follow the project's landing contract.
 ---
-<!-- symphony-stamp: 7d90567a1078277a files=SKILL.md -->
+<!-- symphony-stamp: 4862df3d4a5ef38c files=SKILL.md -->
 
 # Orchestrate development from the board
 
@@ -25,8 +25,8 @@ feature by default; use another agent only for disjoint work that demonstrably
 shortens the critical path. Commit slices into the feature branch, or merge
 their worktree commits into it with the project's `just merge-feature FEATURE [SOURCE]`
 where it has one: that refuses the default branch and runs no delivery hooks or stamps,
-and the project's landing (`land` where it has one) remains the completed feature
-delivery command. Run only focused checks needed for that slice;
+and `just land SLUG` (the Symphony's default, or the project's own `land`, which replaces
+it) remains the completed feature delivery command. Run only focused checks needed for that slice;
 no slice-level full build, full suite, reviewer staffing, certificate, stamps or
 landing. Close the slice with its integration commit and focused result using
 tasks done. When the complete feature is ready, the parent goes to review once
@@ -90,8 +90,10 @@ product-specific policy or taste data.
    results, before review; a brief asks for focused checks, never the full suite.
    Follow the project's review tiers and stamps. Reviewers must be independent of
    author, requester and lander. Never let an executor approve its own branch.
-   Do not invent a landing command or waive checks when the project has none
-   configured.
+   Land an approved task with just land SLUG --as HANDLE, never a merge by hand: by
+   default it lands only the tip its reviewer approved, checks the merge, closes the
+   task and pushes the default branch; a project's own land recipe replaces it.
+   Never waive a check it refuses on: its one line names what to fix.
 9. Post only a review-ready tip, review/blocked move, collision, finding, verdict or
    question. Address action with --to @executor, --to @reviewer or a handle. Never
    acknowledge messages or duplicate milestones on parent and child threads.

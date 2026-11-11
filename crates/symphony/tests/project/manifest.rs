@@ -356,7 +356,10 @@ fn an_id_a_pane_a_branch_or_a_generator_that_cannot_work_is_refused() {
 #[test]
 fn the_land_table_names_what_the_default_land_regenerates_and_whether_it_pushes() {
     let plain = parsed("").unwrap();
-    assert!(plain.land.push, "a land pushes unless the project says not to");
+    assert!(
+        plain.land.push,
+        "a land pushes unless the project says not to"
+    );
     assert!(plain.land.generators.is_empty());
     let project = parsed(
         "[land]\npush = false\ngenerators = [\n  { name = \"the client\", outputs = \"client/public/\", \
