@@ -32,15 +32,19 @@
 #quick-sheet[hidden] { display:none; }
 #quick-sheet .tabs { display:flex; gap:8px; padding-bottom:12px; border-bottom:1px solid var(--border); }
 #quick-sheet .collapse { margin-left:auto; font-size:1.2rem; }
-.quick-thread { flex:1; min-height:40px; overflow:auto; overscroll-behavior:contain; overflow-wrap:anywhere; padding:8px 0 16px; }
+.quick-thread { flex:1 1 0; min-height:0; overflow:auto; overscroll-behavior:contain; overflow-wrap:anywhere; padding:8px 0 16px; }
 .quick-message { border-bottom:1px solid var(--border); padding:4px 0 12px; }
 .quick-message .by { color:var(--muted-foreground); font-weight:600; font-size:var(--fs-sm); margin:8px 0; }
 .quick-message > :last-child { margin-bottom:0; }
-#quick-sheet form { display:grid; gap:8px; border-top:1px solid var(--border); padding-top:12px; overflow:auto; max-height:65%; }
+/* The composer keeps its height at the sheet's foot and scrolls only when the window is too short
+ * for it; one track no wider than the sheet, whatever a file's name, with room for a field's focus ring. */
+#quick-sheet form { flex:0 1 auto; min-height:0; display:grid; grid-template-columns:minmax(0,1fr); gap:8px; border-top:1px solid var(--border); margin:0 -4px; padding:12px 4px 4px; overflow:auto; }
 #quick-sheet label { font-size:var(--fs-sm); }
 #quick-sheet input, #quick-sheet textarea { display:block; font:inherit; font-size:16px; width:100%; box-sizing:border-box; }
-#quick-sheet > [data-orientation] { min-height:0; display:flex; flex-direction:column; }
-#quick-sheet [role=tabpanel] { min-height:0; overflow:auto; }
+/* One surface: the tabs fill the sheet, and the panel lays out the thread above the composer, which
+ * stays in view while the thread scrolls. */
+#quick-sheet > [data-orientation] { flex:1; min-height:0; display:flex; flex-direction:column; }
+#quick-sheet [role=tabpanel] { flex:1; min-height:0; min-width:0; display:flex; flex-direction:column; }
 .theme-menu { margin-bottom:8px; }
 .theme-menu p:empty { display:none; }
 #quick-sheet textarea { resize:vertical; min-height:70px; max-height:25vh; }

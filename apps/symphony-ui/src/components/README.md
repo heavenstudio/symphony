@@ -14,7 +14,9 @@ The pinned primitive's `src/js/focus-trap.js` has SHA-256
 
 The Symphony adaptations bind radii and fonts to theme tokens, default buttons to
 Outline, forward only supplied event handlers, and merge plain entry actions
-with component attributes. `SelectField` keeps a field's accessible name,
+with component attributes. A tab panel has no padding, border or fill of its
+own (the demo's themed panel is gone): it is part of its container's surface.
+`SelectField` keeps a field's accessible name,
 current value and callback while the list is closed. Dropdown actions use
 menu/menuitem roles. Closing a popup restores its trigger's focus.
 Select fields focus their popup on every opening, commit the focused option
@@ -59,6 +61,6 @@ Adapted stylesheet SHA-256 values (paths below this folder, except the theme):
 | `label/style.css` | `0906d269af5d9c84c7a63a8caa60fd7b4e9738d12fa6c80bf718b414cbb539bb` |
 | `select/style.css` | `547ad86108f12cf410844c56a93c71bdd45bf41fd3cd0d605750242ce1b26886` |
 | `select/trigger.css` | `830d5b55a9fcb9f5a25724c552b626eb5386178583ffa59ffaa5023c5b52cf2a` |
-| `tabs/style.css` | `d217fbb844a9f0348fdffa98ace3d5155a576c4749669df347e08a1a8f09ad12` |
+| `tabs/style.css` | `1c4313ed4647752c1d301157ffcbb7af3675f3767d5cbfb3e5d86a703beb35e4` |
 | `textarea/style.css` | `c6b25f55e3f05d6b8044d8a537c4d203860642c8547d666a729be9f6a145647f` |
 | `tooltip/style.css` | `15a27ad278601841700b7b0dd6445ab78d960110bd9a185e2c598df9d734ac5a` |

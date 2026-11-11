@@ -112,3 +112,125 @@ fn an_open_select_and_the_appearance_menu_draw_on_an_opaque_bounded_surface_in_b
         key(&mut page, "Escape", "Escape", 27);
     }
 }
+
+fn paragraph(text: &str) -> Value {
+    json!({"type":"paragraph","spans":[{"type":"text","text":text}]})
+}
+
+/// A conversation of forty messages, far taller than the panel.
+fn long_conversation() -> Value {
+    let messages: Vec<_> = (1..=40)
+        .map(|seq| {
+            json!({"seq":seq,"kind":if seq % 2 == 1 { "question" } else { "answer" },
+                "by":if seq % 2 == 1 { "owner" } else { "example" },"text":"","at":1.0,
+                "blocks":[paragraph(&format!("Message {seq}: a reply long enough to wrap over two lines of the panel."))]})
+        })
+        .collect();
+    json!({"ask":{"id":7,"path":"docs/README.md","anchor":"","quote":"","question":"Message 1",
+        "asked":1.0,"updated":1.0,"answers":[],"messages":messages,"status":"answered"},"recipient":"example"})
+}
+
+/// One attached file whose name has no break opportunity, as the draft saves it.
+const LONG_FILE: &str = "/artifacts/uploads/0123456789abcdef.pdf\tquarterly-review-of-every-lamp-and-chandelier-picture-with-notes-final-v3.pdf\tfalse\t1024\t[quarterly-review-of-every-lamp-and-chandelier-picture-with-notes-final-v3.pdf](/artifacts/uploads/0123456789abcdef.pdf)";
+
+/// Where the sheet's controls are: whether Send can be seen and clicked, whether anything in the
+/// sheet scrolls sideways or sticks out of it, and the open tab panel's own surface.
+fn sheet_layout(page: &mut Chrome) -> Value {
+    page.eval(r#"(() => {
+        const sheet = document.querySelector('#quick-sheet'), edge = sheet.getBoundingClientRect();
+        const send = sheet.querySelector('button[type=submit]'), box = send.getBoundingClientRect();
+        const hit = document.elementFromPoint(box.x + box.width / 2, box.y + box.height / 2);
+        const panel = sheet.querySelector('[role=tabpanel]:not([hidden])'), look = getComputedStyle(panel);
+        const thread = sheet.querySelector('.quick-thread');
+        const sideways = [sheet, ...sheet.querySelectorAll('*')]
+            .filter(e => ['auto', 'scroll'].includes(getComputedStyle(e).overflowX) && e.scrollWidth > e.clientWidth + 1)
+            .map(e => e.tagName + '.' + e.className);
+        const outside = [...sheet.querySelectorAll('form *')]
+            .filter(e => { const r = e.getBoundingClientRect(); return r.width > 0 && (r.left < edge.left - 1 || r.right > edge.right + 1); })
+            .map(e => e.tagName + '.' + e.className);
+        return {
+            send: box.top >= edge.top && box.bottom <= Math.min(edge.bottom, innerHeight) && box.left >= edge.left && box.right <= edge.right,
+            clickable: hit === send || send.contains(hit),
+            sideways, outside,
+            panel: {padding: look.paddingTop, border: look.borderTopStyle, background: look.backgroundColor, scrolls: panel.scrollHeight > panel.clientHeight + 1},
+            threadScrolls: thread.scrollHeight > thread.clientHeight,
+        };
+    })()"#)
+}
+
+#[test]
+fn the_chat_panel_is_one_surface_whose_send_stays_in_view_with_a_long_thread_or_file_name() {
+    let site = site();
+    site.set_json("/api/ask", &long_conversation());
+    let Some(mut page) = chrome() else { return };
+    scheme(&mut page, "dark");
+    for (width, height) in [(1280, 800), (390, 844)] {
+        viewport(&mut page, width, height);
+        for (case, draft, files) in [
+            // A reply in the composer, so Send is enabled and takes clicks.
+            (
+                "thread",
+                json!({"ask":7,"priority":"2","text":"A reply"}),
+                "",
+            ),
+            (
+                "file",
+                json!({"task":true,"title":"Long file","priority":"2"}),
+                LONG_FILE,
+            ),
+        ] {
+            page.open(&site.url("/"));
+            page.eval(&format!(
+                "localStorage.setItem('review-quick-draft', {}); localStorage.setItem('review-attach:quick', {})",
+                json!(draft.to_string()),
+                json!(files)
+            ));
+            page.open(&site.url("/"));
+            open_panel(&mut page);
+            let ready = if case == "thread" {
+                "document.querySelectorAll('#quick-sheet .quick-message').length === 40"
+            } else {
+                "document.querySelector('#quick-title') !== null && document.querySelector('#quick-sheet .attach-file .attach-name') !== null"
+            };
+            assert!(
+                page.wait_for(ready, SHOWN),
+                "{case} at {width}: {}",
+                page.eval("document.querySelector('#quick-sheet').innerText")
+            );
+            let layout = sheet_layout(&mut page);
+            let at = format!("{case} at {width}x{height}: {layout}");
+            assert_eq!(
+                layout["send"],
+                json!(true),
+                "Send is inside the sheet and the window, {at}"
+            );
+            assert_eq!(
+                layout["clickable"],
+                json!(true),
+                "nothing covers Send, {at}"
+            );
+            assert_eq!(
+                layout["sideways"],
+                json!([]),
+                "nothing scrolls sideways, {at}"
+            );
+            assert_eq!(
+                layout["outside"],
+                json!([]),
+                "the composer stays inside the sheet, {at}"
+            );
+            assert_eq!(
+                layout["panel"],
+                json!({"padding":"0px","border":"none","background":"rgba(0, 0, 0, 0)","scrolls":false}),
+                "the tab panel is part of the sheet's one surface and never scrolls itself, {at}"
+            );
+            if case == "thread" {
+                assert_eq!(
+                    layout["threadScrolls"],
+                    json!(true),
+                    "the thread scrolls, {at}"
+                );
+            }
+        }
+    }
+}
