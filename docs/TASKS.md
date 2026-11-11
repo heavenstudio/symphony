@@ -68,6 +68,7 @@ per machine into `sf-surreal/` in the git common dir by `bash tools/surreal.sh`
 | `just tasks …` | everything an agent does (`just tasks --help`) |
 | `just tasks search QUERY [--status S] [--limit N] [--json]` | ranked full-text matches in task titles, briefs, slugs and threads; task rows with matching excerpts (default: 20); query capped at 1024 UTF-8 bytes and 32 terms (word/number runs and punctuation/symbols, after lowercasing) |
 | `just tasks stats [--days N] [--json]` | where the pipeline's time goes: lead time, time in each status, bounces, tasks done per day and what sits longest ([Where the time goes](#where-the-time-goes)) |
+| `just tasks status [--json]` | the board's health over the last hour, as its Symphony server recorded it: failed dispatches and sweeps, the slowest request, write latency ([Board health](#board-health)) |
 | `just tasks callback [ADDRESS] --as HANDLE` | register a native channel; addressed events start a turn directly |
 | `just agent-send HANDLE "text" [--as SENDER]` | message an agent directly through its registered channel |
 | `just symphony` → **▦ tasks**, **◉ agents** | the board, each task's page and thread, and who is connected |
@@ -119,6 +120,34 @@ the event in the inbox. As with any external queue, a process crash after the
 native send but before acknowledgement can repeat delivery; messages carry
 stable board ids. No normal agent event remains a stream; the browser's live
 feed remains a stream because it updates the owner's page.
+
+### Board health
+
+A board too slow to answer delivers no callback, and says nothing on the board itself, so the
+Symphony server counts what it sees in memory, for each project it serves, over the last hour
+(`crates/tasks/src/board_health.rs`): its clock's callback dispatch passes, ok and failed, with
+the newest failure's error, kept on one line and cut to its first and last characters when it
+is long (a tick that cannot reach the board at all is a failed pass); the idle
+sweeps, the same way; every request any client in the process sent the board, the slowest with
+the line of code that sent it (its tracked caller), the slow ones (a second or more) and the
+unanswered ones; and the p50 and p90 latency of the requests that may write. Counting adds no
+request. `/api/health` (`/<id>/api/health` on the one server) answers it from that memory,
+without a board read. The machine's one server also writes it to `sf-tasks/health.json` in the
+git common dir (`health.<database>.json` for a scratch database; `TASKS_HEALTH` names another
+file) every ten seconds, and at once when the dispatch or the sweep starts or stops failing; a
+private server keeps it in memory alone. Its clock's thread and its sweep's write it one at a
+time, each from its record to the rename of a file of that write's own, so a reader never meets
+half a record and the last to land holds every pass. `just tasks status` prints that record
+without asking the board, and `--json` prints it as `/api/health` answers it, beside the file
+and the warnings. A warning stands from a failed dispatch pass, or a failed sweep, until its
+passes have been good for a minute, so a board failing every other tick is warned of throughout,
+not on and off; one good pass does not clear it, and the hour still counts the failure. A newest
+pass that failed more than ten minutes ago, with none since, is warned of no more. While one stands,
+every page of the project says so on the server's notice (beside a failed server update, when
+there is one), told when it starts and when it ends, and the project picker says so under the
+project's name; both read the server's memory, not the board (`apps/symphony-server/src/live/health.rs`).
+`tasks status` also warns when the record is more than a minute old, naming the server's pid and
+whether it still runs: no dispatch pass has been recorded since.
 
 The Claude wire envelope is newline-delimited
 `{"type":"user","message":{"role":"user","content":"…"}}`, observed in the

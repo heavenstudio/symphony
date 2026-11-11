@@ -141,6 +141,14 @@ pub(crate) struct Hub {
     signoff_pending: Mutex<Option<Pending>>,
     task_activity: Mutex<Option<(i64, Vec<symphony_api::ActivityItem>)>>,
     worker: Mutex<Option<std::thread::JoinHandle<()>>>,
+    /// The board's health over the last hour: the clock's dispatch passes, the idle sweeps and
+    /// every request this process sent the board ([`symphony_board::board_health`]).
+    pub(crate) health: symphony_board::board_health::Recorder,
+    /// What `server_notice` says, by where it comes from ([`health::Notices`]).
+    notices: Mutex<health::Notices>,
+    /// The time the board's health is recorded and read at, in seconds since the epoch: the wall
+    /// clock's, or a test's.
+    pub(crate) clock: Box<dyn Fn() -> f64 + Send + Sync>,
 }
 
 struct TaskState {
@@ -223,6 +231,9 @@ impl Hub {
             signoff_pending: Mutex::new(None),
             task_activity: Mutex::new(None),
             worker: Mutex::new(None),
+            health: symphony_board::board_health::Recorder::default(),
+            notices: Mutex::new(health::Notices::default()),
+            clock: Box::new(symphony_board::sweep::trigger::now),
         }
     }
 
@@ -1391,6 +1402,7 @@ fn task_changes(changes: &mut Vec<Value>, old: &[symphony_api::Task], new: &[sym
 }
 
 mod board_status;
+mod health;
 mod machine_work;
 mod startup;
 
@@ -1417,6 +1429,9 @@ mod boards_tests;
 
 #[cfg(test)]
 mod status_tests;
+
+#[cfg(test)]
+mod health_tests;
 
 #[cfg(test)]
 mod tests {

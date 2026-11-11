@@ -369,6 +369,11 @@ const COMMANDS: &[Command] = &[
             opt("--json", "json", Takes::Bool),
         ],
     },
+    Command {
+        name: "status",
+        pos: &[],
+        opts: &[AS, opt("--json", "json", Takes::Bool)],
+    },
     plain("inbox", &[]),
     plain("leave", &[]),
     plain("beat", &[]),
@@ -788,7 +793,7 @@ mod tests {
             .unwrap()
     }
 
-    const ALL: &str = "'callback', 'register', 'attach', 'list', 'search', 'stats', 'embed', 'next', 'create', 'priority', 'field', 'claim', 'reserve', 'release', 'show', 'parent', 'depends', 'done', 'role', 'handover', 'move', 'verdict', 'say', 'launch', 'restore', 'cleanup', 'clean', 'close', 'reap', 'staff', 'agents', 'who', 'inbox', 'leave', 'beat', 'export', 'finish', 'sweep'";
+    const ALL: &str = "'callback', 'register', 'attach', 'list', 'search', 'stats', 'embed', 'next', 'create', 'priority', 'field', 'claim', 'reserve', 'release', 'show', 'parent', 'depends', 'done', 'role', 'handover', 'move', 'verdict', 'say', 'launch', 'restore', 'cleanup', 'clean', 'close', 'reap', 'staff', 'agents', 'who', 'status', 'inbox', 'leave', 'beat', 'export', 'finish', 'sweep'";
 
     #[test]
     fn every_command_of_the_usage_is_read_and_has_its_help() {
@@ -819,6 +824,22 @@ mod tests {
                 .count(),
             2
         );
+    }
+
+    #[test]
+    fn status_reads_its_json_flag_and_names_itself_in_the_usage() {
+        let parsed = run(&["status", "--json", "--as", "amber-heron"]);
+        assert_eq!(
+            (parsed.command.as_str(), parsed.flag("json")),
+            ("status", true)
+        );
+        assert!(!run(&["status"]).flag("json"));
+        assert_eq!(usage::HELP.matches(",agents,who,status,inbox,").count(), 2);
+        assert!(usage::USAGE.contains(",agents,who,status,inbox,"));
+        let Outcome::Help(help) = parse_of(&["status", "-h"]) else {
+            panic!("status -h is its help");
+        };
+        assert!(help.starts_with("usage: just tasks status [-h] [--as ACTOR] [--json]\n\n"));
     }
 
     #[test]

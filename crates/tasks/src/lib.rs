@@ -41,6 +41,7 @@ extern crate self as symphony_board;
 )]
 mod store_fixture;
 
+pub mod board_health;
 pub mod cbor;
 pub mod cli;
 mod codex_queue;

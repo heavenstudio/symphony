@@ -11,7 +11,7 @@ use std::fmt;
 use std::io::{Read, Write};
 use std::net::{TcpStream, ToSocketAddrs};
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Mutex, PoisonError};
+use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
 mod descriptor;
@@ -60,6 +60,8 @@ pub struct Client {
     timeout: Duration,
     /// Connections the server left open after its reply, for the next requests.
     kept: Mutex<Vec<Connection>>,
+    /// Where each request is counted: the board's, shared by every client of it in this process.
+    log: Arc<crate::board_health::QueryLog>,
 }
 
 #[derive(Debug)]
@@ -110,7 +112,13 @@ impl Client {
             requests: AtomicUsize::new(0),
             timeout: TIMEOUT,
             kept: Mutex::new(Vec::new()),
+            log: crate::board_health::queries_of(addr, ns, db),
         }
+    }
+
+    /// What every client of this board in this process sent it ([`crate::board_health`]).
+    pub fn queries(&self) -> Arc<crate::board_health::QueryLog> {
+        Arc::clone(&self.log)
     }
 
     /// This client, waiting at most `timeout` for the server to connect and to answer each request
@@ -169,9 +177,17 @@ impl Client {
         )
         .into_bytes();
         request.extend(body);
-        let (status, reply) = self
-            .send(&request, Kind::of(sql))
-            .map_err(DbError::Failed)?;
+        let kind = Kind::of(sql);
+        let began = Instant::now();
+        let sent = self.send(&request, kind);
+        self.log.record(crate::board_health::Query {
+            at: crate::sweep::trigger::now(),
+            ms: began.elapsed().as_secs_f64() * 1000.0,
+            source: std::panic::Location::caller(),
+            write: kind == Kind::Write,
+            failed: sent.is_err(),
+        });
+        let (status, reply) = sent.map_err(DbError::Failed)?;
         let reply = cbor::decode(&reply).map_err(|e| {
             DbError::Failed(format!(
                 "HTTP {status} with a body that is not CBOR ({e}): {}",

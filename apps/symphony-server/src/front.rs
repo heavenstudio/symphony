@@ -1093,7 +1093,7 @@ fn maintenance_worker(
             // The board's nonblocking reap lock admits one sweeper across all servers.
             // Log before waiting on output: a hung child must still leave its actual start time.
             eprintln!("· idle-session sweep started");
-            match crate::live::measured("idle-session sweep", || {
+            let swept = match crate::live::measured("idle-session sweep", || {
                 let mut command = Command::new(shared.root.join("tools/rs-bin.sh"));
                 command.args(["tasks", "reap"]).current_dir(&shared.root);
                 sys::output_while(
@@ -1110,18 +1110,38 @@ fn maintenance_worker(
                     if !done.stderr.is_empty() {
                         eprintln!("{}", String::from_utf8_lossy(&done.stderr).trim());
                     }
+                    Some(Ok(()))
                 }
-                Ok(done) => eprintln!(
-                    "· idle-session sweep failed: {}",
-                    String::from_utf8_lossy(&done.stderr).trim()
-                ),
-                Err(_) if shared.stopping() => eprintln!("· idle-session sweep cancelled"),
-                Err(e) => eprintln!("· idle-session sweep failed: {e}"),
-            }
+                Ok(done) => {
+                    let why = format!(
+                        "{}: {}",
+                        done.status,
+                        String::from_utf8_lossy(&done.stderr).trim()
+                    );
+                    eprintln!("· idle-session sweep failed: {why}");
+                    Some(Err(why))
+                }
+                Err(_) if shared.stopping() => {
+                    eprintln!("· idle-session sweep cancelled");
+                    None
+                }
+                Err(e) => {
+                    eprintln!("· idle-session sweep failed: {e}");
+                    Some(Err(e.to_string()))
+                }
+            };
             eprintln!(
                 "· idle-session sweep ended after {:.3}s",
                 started.elapsed().as_secs_f64()
             );
+            // A cancelled sweep says nothing of the board; the hub is there once the server is. The
+            // record keeps the error on one line, cut when long; the log above keeps it whole.
+            if let (Some(outcome), Some(hub)) = (swept, shared.api.get()) {
+                let now = hub.now();
+                hub.health
+                    .swept(now, outcome.as_ref().copied().map_err(String::as_str));
+                hub.tell_health(now);
+            }
             if shared.wait(Duration::from_millis(250)) {
                 break;
             }

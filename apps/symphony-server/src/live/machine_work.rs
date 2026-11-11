@@ -221,13 +221,21 @@ impl Hub {
         {
             eprintln!("CHAT deferred: {error}");
         }
-        let snapshot = match measured("callbacks", || store.dispatch_callbacks_snapshot()) {
-            Ok(snapshot) => snapshot,
+        self.health.reading(store.client().queries());
+        let dispatched = measured("callbacks", || store.dispatch_callbacks_snapshot());
+        let now = self.now();
+        let snapshot = match dispatched {
+            Ok(snapshot) => {
+                self.health.dispatched(now, Ok(()));
+                snapshot
+            }
             Err(error) => {
                 eprintln!("CALLBACK deferred: {error}");
+                self.health.dispatched(now, Err(&error.to_string()));
                 None
             }
         };
+        self.tell_health(now);
         let snapshot = match snapshot {
             Some(snapshot) => snapshot,
             None => {
