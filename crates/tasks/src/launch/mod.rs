@@ -2,13 +2,14 @@
 //!
 //! [`launch`] registers a handle, makes the worktree under `<repo>-wt/` (an executor on its task's
 //! branch: its slug; an instruction or reviewer on a detached checkout of main) unless
-//! `--worktree` gives one, and starts Codex by default, or Claude when selected, in an hc terminal
-//! of its own (`hc run`), then gives it its first message (`$work SLUG HANDLE`; Claude: `/work`)
-//! once it is ready. The terminal outlives whoever launched it (`--outlive-parent`), is kept
-//! (`--keep`), and shows in the stream tab of its role (`code` for an executor, `review` for a
-//! reviewer, or `--tab`; at most four terminals, then `code-2`) of the project's space in the Herdr
-//! app, found by name and made when missing (the labels `herdr.space` and `herdr.tab`): never one of
-//! the owner's tabs. The launch is confirmed only by hc's receipt of that message (`startup`); one
+//! `--worktree` gives one, and starts the agent, model and effort the caller asks for, or else the
+//! project's `[agents] launch` ([`defaults`]: Codex on its board model when the project names
+//! none), in an hc terminal of its own (`hc run`), then gives it its first message (`$work SLUG
+//! HANDLE`; Claude: `/work`) once it is ready. The terminal outlives whoever launched it
+//! (`--outlive-parent`), is kept (`--keep`), and shows in the stream tab of its role (`code` for an
+//! executor, `review` for a reviewer, or `--tab`; at most four terminals, then `code-2`) of the
+//! project's space in the Herdr app, found by name and made when missing (the labels `herdr.space`
+//! and `herdr.tab`): never one of the owner's tabs. The launch is confirmed only by hc's receipt of that message (`startup`); one
 //! that cannot be confirmed fails, naming the terminal, which is killed and removed. The launch is
 //! recorded on the task: handle, role, conversation id, worktree, branch, terminal, model, start
 //! time. [`restore`] reopens the recorded conversation in its worktree, in a new terminal, the same
@@ -35,6 +36,7 @@
 
 mod cleanup;
 mod close;
+pub mod defaults;
 pub mod hc;
 mod place;
 mod recover;
@@ -50,6 +52,7 @@ mod uuid;
 
 pub use cleanup::{Closure, cleanup, cleanup_as, finish};
 pub use close::close;
+pub use defaults::{Defaults, Resolved};
 use place::{name_place, place, stream};
 pub use uuid::new_uuid;
 
@@ -120,7 +123,7 @@ pub struct Machine {
 impl Machine {
     /// This machine's, for a command run in `env`'s working directory.
     pub fn of(env: &Env) -> Machine {
-        let root = probes::repo_root(&env.cwd).unwrap_or_else(|| env.cwd.clone());
+        let root = root_of(env);
         let wt_base = worktree_base(&root, env);
         Machine {
             root,
@@ -143,6 +146,12 @@ impl Machine {
             .file_name()
             .map_or_else(String::new, |n| n.to_string_lossy().into_owned())
     }
+}
+
+/// The main checkout of the repository `env`'s working directory is in, whichever worktree that is;
+/// the working directory itself outside a repository.
+pub fn root_of(env: &Env) -> PathBuf {
+    probes::repo_root(&env.cwd).unwrap_or_else(|| env.cwd.clone())
 }
 
 /// The caller's `TASKS_DATABASE` and `TASKS_SERVER`, those it has: what a launched agent needs to
@@ -174,6 +183,8 @@ pub struct Ask {
     /// Who launches it: the launched session's parent.
     pub actor: String,
     pub model: String,
+    /// The agent's effort; `None` is Codex's [`defaults::CODEX_EFFORT`] or Claude's own.
+    pub effort: Option<String>,
     pub kind: Option<String>,
     pub role: String,
     pub branch: Option<String>,
@@ -190,6 +201,7 @@ impl Ask {
             slug: slug.into(),
             actor: actor.into(),
             model: model.into(),
+            effort: None,
             kind: None,
             role: "executor".into(),
             branch: None,
@@ -327,10 +339,11 @@ pub fn launch(store: &Store, hc: &dyn Hc, m: &Machine, ask: &Ask) -> Result<Star
     let agent = agent_kind(ask);
     let conversation = (m.new_id)();
     let args = if agent == "codex" {
-        codex_args(&ask.model, &handle, m)
+        codex_args(&ask.model, ask.effort.as_deref(), &handle, m)
     } else {
         claude_args(
             &ask.model,
+            ask.effort.as_deref(),
             &handle,
             &m.mode,
             ["--session-id", &conversation],
@@ -576,25 +589,27 @@ pub(crate) fn gone(pane: &str, running: &HashSet<String>) -> bool {
     !pane.is_empty() && (pane.contains(':') || !running.contains(pane))
 }
 
-fn codex_args(model: &str, handle: &str, m: &Machine) -> Vec<String> {
+fn codex_args(model: &str, effort: Option<&str>, handle: &str, m: &Machine) -> Vec<String> {
+    let model = if model.is_empty() {
+        defaults::CODEX_MODEL
+    } else {
+        model
+    };
+    let effort = effort
+        .filter(|e| !e.is_empty())
+        .unwrap_or(defaults::CODEX_EFFORT);
     let mut args: Vec<String> = [
-        "--no-daemon",
-        "-s",
-        "workspace-write",
-        "-m",
-        if model.is_empty() {
-            "gpt-6.1-sol"
-        } else {
-            model
-        },
-        "-c",
-        "model_reasoning_effort=\"xhigh\"",
-        "-c",
-        "sandbox_workspace_write.network_access=true",
+        "--no-daemon".to_string(),
+        "-s".into(),
+        "workspace-write".into(),
+        "-m".into(),
+        model.into(),
+        "-c".into(),
+        format!("model_reasoning_effort=\"{effort}\""),
+        "-c".into(),
+        "sandbox_workspace_write.network_access=true".into(),
     ]
-    .into_iter()
-    .map(String::from)
-    .collect();
+    .into();
     let set = std::iter::once(("TASKS_SESSION".to_string(), handle.to_string()))
         .chain(m.board_env.iter().cloned());
     for (key, value) in set {
@@ -606,11 +621,20 @@ fn codex_args(model: &str, handle: &str, m: &Machine) -> Vec<String> {
     args
 }
 
-fn claude_args(model: &str, handle: &str, mode: &str, identity: [&str; 2]) -> Vec<String> {
+fn claude_args(
+    model: &str,
+    effort: Option<&str>,
+    handle: &str,
+    mode: &str,
+    identity: [&str; 2],
+) -> Vec<String> {
     let mut args: Vec<String> = identity.iter().map(|s| s.to_string()).collect();
     args.extend(["-n", handle, "--permission-mode", mode].map(String::from));
     if !model.is_empty() {
         args.extend(["--model".to_string(), model.to_string()]);
+    }
+    if let Some(effort) = effort.filter(|e| !e.is_empty()) {
+        args.extend(["--effort".to_string(), effort.to_string()]);
     }
     args
 }
