@@ -2,6 +2,7 @@
 
 mod command;
 mod reds;
+mod wait;
 
 use crate::common::{Fixture, NOW};
 use std::collections::BTreeSet;

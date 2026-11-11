@@ -25,6 +25,7 @@ mod finish;
 mod list;
 mod panes;
 mod stats;
+mod wait;
 
 /// Why a command stopped short.
 pub enum Stop {
@@ -362,6 +363,7 @@ pub fn run(store: &Store, c: &mut Context) -> Result<(), Stop> {
                 c.say(&line);
             }
         }
+        "wait" => wait::run(store, c)?,
         "leave" => {
             let me = c.actor()?;
             store.leave(&me)?;

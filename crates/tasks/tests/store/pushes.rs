@@ -1,12 +1,14 @@
 //! What reaches an orchestrator's socket: what it cannot predict and must act on, said once. A PULL
 //! says what changed since the last one it received; it never hears its own writes, nor the roles
-//! its own children take or let go; a child going quiet is said once per transition.
+//! its own children take or let go; a child going quiet is said once per transition. A session
+//! with no channel reads the same lines by waiting (`Store::collect_callbacks`).
 
 use super::callbacks::Listener;
 use super::common::Fixture;
 use super::quiet_callbacks::listen;
+use symphony_board::cli::Env;
 use symphony_board::health::{LIVE_SECONDS, STALE_SECONDS};
-use symphony_board::{NewSession, NewTask};
+use symphony_board::{Error, NewSession, NewTask};
 
 /// An orchestrator heard on a socket, past its first PULL.
 fn orchestrator(f: &Fixture) -> (String, Listener) {
@@ -181,4 +183,74 @@ fn a_quiet_child_is_said_stale_once_a_transition_not_once_a_pass() {
     f.store.dispatch_callbacks().unwrap();
     assert!(o.drain(&f, &sender, &orch).is_empty());
     assert_eq!(quiet(LIVE_SECONDS + 30.0), [stale.as_str()]);
+}
+
+/// The lines of what a collecting look returned: each text is one delivery's.
+fn read(f: &Fixture, handle: &str) -> Vec<String> {
+    let (said, _) = (f.store)
+        .collect_callbacks(handle, &Env::of_process())
+        .unwrap();
+    said.iter()
+        .flat_map(|text| text.lines().map(str::to_owned))
+        .collect()
+}
+
+#[test]
+fn a_session_with_no_channel_reads_what_a_channel_would_carry_once() {
+    let f = Fixture::empty();
+    let (heard, o) = orchestrator(&f);
+    let reader = f.session("orchestrator");
+    let sender = f.session("worker");
+    // Its first read is the whole digest, as a channel's first PULL is.
+    let first = read(&f, &reader);
+    assert!(first[0].starts_with("PULL "), "{first:?}");
+    assert!(read(&f, &reader).is_empty());
+    // A new task: the reader reads, line for line, what the channel carried.
+    f.task("tools/new");
+    let pushed = o.drain(&f, &sender, &heard);
+    assert!(pushed[0].starts_with("NEW tools/new "), "{pushed:?}");
+    assert_eq!(read(&f, &reader), pushed);
+    // It orchestrates two tasks: its own child staffing one is not said to it, a stranger claiming
+    // the other is, once.
+    let kid = child(&f, &reader);
+    for slug in ["tools/kid", "tools/stranger"] {
+        f.task(slug);
+        f.store.take_role(slug, &reader, "orchestrator").unwrap();
+    }
+    read(&f, &reader);
+    f.store.reserve("tools/kid", &kid, 600.0).unwrap();
+    f.store.claim("tools/kid", &kid).unwrap();
+    assert!(read(&f, &reader).is_empty());
+    f.store.claim("tools/stranger", &sender).unwrap();
+    assert_eq!(
+        read(&f, &reader),
+        [format!(
+            "ROLE tools/stranger {sender} executor, in_progress"
+        )]
+    );
+    assert!(read(&f, &reader).is_empty());
+}
+
+#[test]
+fn a_session_with_a_channel_or_gone_cannot_read_by_waiting() {
+    let f = Fixture::empty();
+    let (heard, _o) = orchestrator(&f);
+    let env = Env::of_process();
+    let refused = |handle: &str| match f.store.collect_callbacks(handle, &env) {
+        Err(Error::Refused(why)) => why,
+        other => panic!("{handle}: {other:?}"),
+    };
+    let why = refused(&heard);
+    assert!(why.contains(" callback --off --as "), "{why}");
+    let gone = f.session("orchestrator");
+    f.store.leave(&gone).unwrap();
+    assert_eq!(
+        refused(&gone),
+        format!("no session {gone} here to wait for")
+    );
+    let never = "quiet-never";
+    assert_eq!(
+        refused(never),
+        format!("no session {never} here to wait for")
+    );
 }

@@ -1,7 +1,7 @@
 //! The existing clock watch, planned and reconciled again under its recipient lease. Only
 //! recognizable generated pane rows are withdrawn; messages and other events are untouched.
 
-use super::{Callback, Error, Event, Queued, Store, event_line, session_task};
+use super::{Callback, Error, Event, Queued, Store, deliver, event_line, session_task};
 use crate::Board;
 use crate::cli::agents::{Answer, Pane};
 use crate::cli::attach::{self, PaneWatch};
@@ -91,7 +91,7 @@ impl Store {
             if plan.unchanged(&callback.pane_watch) {
                 continue;
             }
-            self.with_callback_lease(handle, |deadline, revision| {
+            self.with_callback_lease(handle, false, |deadline, revision| {
                 let saved: Saved = self.retrying(|| self.read(
                     "RETURN { watch: (SELECT VALUE pane_watch FROM ONLY type::record('callback_state', $handle)) ?? {},
                         queued: (SELECT key, text FROM callback_event WHERE handle = $handle AND delivered != true AND message = NONE AND string::starts_with(key, 'pane-')) };",
@@ -120,7 +120,7 @@ impl Store {
                      RETURN NONE;",
                     json!({"handle":handle, "events":events, "after":plan.after, "retired":plan.retired}),
                 ))?;
-                self.deliver_pending(handle, callback, deadline)
+                self.deliver_pending(handle, callback, deadline, &|text| deliver(callback, text))
             })?;
         }
         Ok(())

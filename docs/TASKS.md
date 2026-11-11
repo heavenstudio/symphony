@@ -71,6 +71,7 @@ per machine into `sf-surreal/` in the git common dir by `bash tools/surreal.sh`
 | `just tasks status [--json]` | the board's health over the last hour, as its Symphony server recorded it: failed dispatches and sweeps, the slowest request, write latency ([Board health](#board-health)) |
 | `just tasks callback [ADDRESS] --as HANDLE` | register a native channel; addressed events start a turn directly |
 | `just tasks pull --as HANDLE` | the whole PULL digest as HANDLE hears it now; a callback carries only what changed since the last PULL it received |
+| `just tasks wait --as HANDLE [--timeout S]` | for a session with no channel: exits printing what a callback would have pushed it since its last read, once there is any; run it as a background command and again when it exits |
 | `just agent-send HANDLE "text" [--as SENDER]` | message an agent directly through its registered channel |
 | `just symphony` → **▦ tasks**, **◉ agents** | the board, each task's page and thread, and who is connected |
 
@@ -477,15 +478,6 @@ liveness and low-volume lines it was not told, each row a list gained, and `reso
 that left it. A backlog of 33 that gains one row is that header and one row. What the last acknowledged PULL said
 is kept in the recipient's callback state (`pull_said`, which older dispatchers ignore); after an older
 dispatcher's acknowledgement, which does not record it, the next PULL is the whole digest again.
-
-What is pushed is what the recipient cannot predict and must act on, said once: posts and verdicts, NEW,
-STATUS, ROLE, BLOCKED, the PULL above, and STALE, LOST or LIVENESS UNKNOWN once for each transition of a quiet
-child, never once a pass (a child it already hears as stale is not also listed idle). A recipient is never told
-its own writes: not its own moves, not a role move it made (a hand-over, a take-over), and not what its own
-children (the sessions it registered, `--parent`) take on or let go, their reservations, claims and releases
-and the moves and readiness those make; a child's own move, to review say, is still said. What is read is the
-rest: `just tasks pull --as HANDLE` prints the whole digest as HANDLE hears it now, whatever was pushed, and
-changes nothing; `just tasks show`, `list` and `agents` read the board as it is.
 Unanswered work retains its task/post identity across departures and returns.
 `unanswered` lists an executor on an in-progress, blocked or review task, or a reviewer
 on a task in review, when it is lost or left (or its recorded terminal is closed) and an
@@ -498,6 +490,30 @@ command, or the explicit launch command when no conversation was recorded. The
 orchestrator receives each task/post once, even if it leaves and returns; a new
 unanswered post can push a new line for the same task. Its count appears only when
 nonzero. `reap` makes the sole automatic recovery attempt described above.
+
+What is pushed is what the recipient cannot predict and must act on, said once: posts and verdicts, NEW,
+STATUS, ROLE, BLOCKED, the PULL above, and STALE, LOST or LIVENESS UNKNOWN once for each transition of a quiet
+child, never once a pass (a child it already hears as stale is not also listed idle). A recipient is never told
+its own writes: not its own moves, not a role move it made (a hand-over, a take-over), and not what its own
+children (the sessions it registered, `--parent`) take on or let go, their reservations, claims and releases
+and the moves and readiness those make; a child's own move, to review say, is still said. What is read is the
+rest: `just tasks pull --as HANDLE` prints the whole digest as HANDLE hears it now, whatever was pushed, and
+changes nothing; `just tasks show`, `list` and `agents` read the board as it is.
+
+A push through a channel arrives wrapped in the receiving client's notice and costs a turn. A session that can
+hold a background command reads the same lines instead: `just tasks wait --as HANDLE [--timeout S]` exits
+printing what a channel would have carried since its last read, once there is any, and the session runs it
+again. It is the dispatch's own pass for HANDLE (`crates/tasks/src/cli/commands/wait.rs`,
+`Store::collect_callbacks`), its lines printed rather than delivered and recorded as delivered, so it says
+the same lines by the same diff and account, from the same callback state: the first read is the whole digest
+and any posts waiting, each later one only what changed. It looks when the board's marker moved, every two
+seconds at most, and at least every fifteen, since a child going quiet or a PULL falling due changes with time
+alone; with `--timeout` it gives up after S seconds with `WAIT nothing changed in S s` (`0` looks once). It
+is refused while HANDLE has a channel, which takes those lines (`just tasks callback --off --as HANDLE` gives
+them to `wait`), and nothing else dispatches to a session without one, so between reads nothing is said and
+nothing lost. Waiting is the session's sign of life, as a monitor's is: it beats for HANDLE every twenty seconds
+or so, at a look, so an orchestrator waiting on its board is not called stale for it. A pane waiting on a
+prompt (`BLOCKED`) is watched by the server's clock for registered channels only, so `wait` does not carry it.
 
 A legacy native observer starts from the current board on upgrade rather than replaying its history.
 Its upgrade marker and message cursor are separate callback-state fields that older writers leave intact.

@@ -42,6 +42,10 @@ pub(super) const CALLBACK_LEASE_SECONDS: u64 = 60;
 pub(super) enum Pass {
     Observe,
     Deliver,
+    /// A session with no channel reads what a delivery would send it (`tasks wait`): the pass
+    /// plans as a delivering one does, and what it would send goes to the reader instead
+    /// ([`Visit::send`]), recorded as delivered.
+    Collect,
 }
 
 pub(super) struct Idle {
@@ -520,6 +524,75 @@ RETURN NONE;");
         )).map(|_| ())
     }
 
+    /// One look for `handle`, a session with no channel (`tasks wait`): what a dispatch would queue
+    /// and deliver to it, returned here instead and recorded as delivered, so the next look says
+    /// only what changed since; and the board's marker as the look left it. It is the dispatch's
+    /// own pass ([`Pass::Collect`]), so it says what a channel would carry, by the same diff and
+    /// the same account, from the same state. Refused while a channel is registered, which takes
+    /// those, and for a session not here.
+    pub fn collect_callbacks(
+        &self,
+        handle: &str,
+        env: &crate::cli::Env,
+    ) -> Result<(Vec<String>, u64), Error> {
+        #[derive(Deserialize)]
+        struct Reader {
+            address: Option<String>,
+            session: Option<crate::rows::SessionRow>,
+        }
+        let reader: Reader = self.retrying(|| {
+            self.transact(
+                "LET $reader = (SELECT * OMIT id FROM ONLY type::record('session', $handle));
+             LET $state = (SELECT address FROM ONLY type::record('callback_state', $handle));
+             IF $reader != NONE AND $reader.left_at = NONE AND $state = NONE {
+                CREATE type::record('callback_state', $handle) SET handle = $handle RETURN NONE;
+             };
+             RETURN { address: $state.address, session: $reader };",
+                json!({"handle":handle}),
+            )
+        })?;
+        if let Some(address) = reader.address {
+            return Err(refused(format!(
+                "{handle} has a channel ({address}), which takes what is pushed to it; read it there, or run {} callback --off --as {handle} first",
+                self.callback_command()
+            )));
+        }
+        let Some(session) = reader.session.filter(|s| s.left_at.is_none()) else {
+            return Err(refused(format!("no session {handle} here to wait for")));
+        };
+        let callback = Callback {
+            handle: handle.to_string(),
+            address: String::new(),
+            host: self.host.clone(),
+            chat: false,
+            chat_fallback: false,
+            owner: None,
+            in_process: false,
+            confirmed_until: 0.0,
+            session,
+            chat_resume: false,
+            pane_watch: attach::PaneWatch::default(),
+            terminal: None,
+            registration_revision: 0,
+            registration_nonce: None,
+            live_orchestrator: false,
+        };
+        // Each look reads the messages afresh, as each pass does.
+        *self.inbox_pool.lock().unwrap_or_else(|e| e.into_inner()) = None;
+        let (mut board, mut sequence) = self.callback_board()?;
+        let holdings = (callback.session.kind == "orchestrator")
+            .then(|| self.slot_holdings())
+            .transpose()?;
+        let visit = Visit::new(Pass::Collect, env, self, holdings.as_ref());
+        self.dispatch_one(handle, &callback, &mut board, &mut sequence, &visit, None)?;
+        Ok((visit.collected(), sequence))
+    }
+
+    /// The board's marker: it moves with every committed board write.
+    pub fn board_mark(&self) -> Result<u64, Error> {
+        self.board_marker()
+    }
+
     /// The app calls this after a successful owner save. The event and any undelivered record stay
     /// in the board even when no recipient has registered yet. key is stable across save retries.
     pub fn owner_callback(&self, key: &str, text: &str) -> Result<(), Error> {
@@ -683,16 +756,20 @@ RETURN NONE;");
             .get(handle)
             .filter(|c| c.host == self.host)
         {
-            Some(callback) => self.with_callback_lease(handle, |deadline, _| {
-                self.deliver_pending(handle, callback, deadline)
+            Some(callback) => self.with_callback_lease(handle, false, |deadline, _| {
+                self.deliver_pending(handle, callback, deadline, &|text| deliver(callback, text))
             }),
             None => Ok(true),
         }
     }
 
+    /// `send` under `handle`'s lease, when no other dispatcher holds it: whether it ran. Only a
+    /// registered channel is dispatched to, but for a collecting pass (`collect`), whose reader has
+    /// none.
     fn with_callback_lease(
         &self,
         handle: &str,
+        collect: bool,
         send: impl FnOnce(Instant, u64) -> Result<(), Error>,
     ) -> Result<bool, Error> {
         // The same per-recipient lease serializes board callbacks and direct messages.
@@ -701,12 +778,12 @@ RETURN NONE;");
                 self.transact(
                     "LET $s = (SELECT address, lease, revision FROM ONLY type::record('callback_state', $handle));
                  LET $lease = (SELECT * FROM ONLY type::record('callback_lease', $handle));
-                 IF $s.address = NONE OR type::record('session', $handle).left_at != NONE { RETURN NONE; };
+                 IF ($s.address = NONE AND !$collect) OR type::record('session', $handle).left_at != NONE { RETURN NONE; };
                  IF math::max([$s.lease ?? 0, $lease.until ?? 0]) > $now { RETURN NONE; };
                  LET $revision = math::max([$lease.revision ?? 0, $s.revision ?? 0]) + 1;
                  UPSERT type::record('callback_lease', $handle) SET until = $now + $lease_seconds, revision = $revision RETURN NONE;
                  RETURN $revision;",
-                    json!({"handle":handle, "now":self.now(), "lease_seconds":CALLBACK_LEASE_SECONDS}),
+                    json!({"handle":handle, "now":self.now(), "lease_seconds":CALLBACK_LEASE_SECONDS, "collect":collect}),
                 )
         })?;
         if let Some(revision) = acquired {
@@ -784,9 +861,10 @@ RETURN NONE;");
         // A write's observation keeps the board it read once its write committed: what the write
         // caused is read against the board as the write left it. A delivering pass reads the board
         // again under the lease, so a delayed plan cannot publish a transient from an older board.
-        if lease.is_some() && visit.pass == Pass::Deliver {
+        if lease.is_some() && visit.pass != Pass::Observe {
             (*board, *sequence) = self.callback_board()?;
         }
+        let collect = visit.pass == Pass::Collect;
         let Stored {
             state,
             checked_pull,
@@ -899,7 +977,7 @@ RETURN NONE;");
         // A PULL that falls due with time, or one still queued, which is built again before it is
         // said, waits for the pass that delivers: an observation leaves both as it found them, so
         // that pass still finds them due. What the observation would record as heard is not left.
-        let delivering = visit.pass == Pass::Deliver;
+        let delivering = visit.pass != Pass::Observe;
         let scheduled = orchestrator
             && (initializing
                 || (state.pull_entries.is_none() && state.pull_queued.is_none())
@@ -963,7 +1041,7 @@ RETURN NONE;");
         };
         if due && lease.is_none() {
             return self
-                .with_callback_lease(handle, |deadline, revision| {
+                .with_callback_lease(handle, collect, |deadline, revision| {
                     self.dispatch_one(
                         handle,
                         callback,
@@ -1190,13 +1268,15 @@ RETURN NONE;");
             }
             if let Some((deadline, _)) = lease {
                 return self
-                    .deliver_pending(handle, callback, deadline)
+                    .deliver_pending(handle, callback, deadline, &|text| {
+                        visit.send(callback, text)
+                    })
                     .map(|()| (true, pull_at));
             }
         }
         if lease.is_none() {
             return self
-                .with_callback_lease(handle, |deadline, revision| {
+                .with_callback_lease(handle, collect, |deadline, revision| {
                     self.dispatch_one(
                         handle,
                         callback,
@@ -1277,8 +1357,11 @@ RETURN NONE;");
         if !accounted.current {
             return self.dispatch_one(handle, callback, board, sequence, visit, lease);
         }
-        if visit.pass == Pass::Deliver {
-            self.deliver_pending(handle, callback, lease.expect("writes hold a lease").0)?;
+        if delivering {
+            let deadline = lease.expect("writes hold a lease").0;
+            self.deliver_pending(handle, callback, deadline, &|text| {
+                visit.send(callback, text)
+            })?;
         }
         Ok((true, pull_at))
     }
@@ -1309,11 +1392,13 @@ RETURN NONE;");
         ))
     }
 
+    /// Send what waits for `handle` by `send`, in batches, and record each batch's outcome.
     fn deliver_pending(
         &self,
         handle: &str,
         callback: &Callback,
         deadline: Instant,
+        send: &dyn Fn(&str) -> Result<(), DeliveryError>,
     ) -> Result<(), Error> {
         let pending: Vec<Event> = self.retrying(|| self.transact(
             "UPDATE callback_event SET delivered = true WHERE handle = $handle AND delivered != true AND message != NONE AND record::exists(type::record('delivery', [message, $handle])) RETURN NONE;
@@ -1340,7 +1425,7 @@ RETURN NONE;");
                     })
                     .collect::<Vec<_>>()
                     .join("\n");
-                deliver(callback, &text)
+                send(&text)
             },
             &mut |batch, result| self.record_callback_delivery(handle, callback, batch, result),
         )

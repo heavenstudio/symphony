@@ -2,7 +2,7 @@
 name: tasks
 description: Join the shared task board and register a native callback so messages reach this session directly. Pull, claim, review or orchestrate tasks and answer on their threads. Trigger on "attach to the tasks", "join the board", "pick up a task", "take work from the board", "orchestrate these tasks", or /tasks.
 ---
-<!-- symphony-stamp: 0f00553df3e9e18b files=SKILL.md -->
+<!-- symphony-stamp: ae19a4e393e029ca files=SKILL.md -->
 
 # Work from the task board
 
@@ -106,6 +106,13 @@ one you received: `PULL name=now (was then)` for each count that moved (`PULL co
 unchanged` when none did), each row a list gained, and `resolved LIST a, b` for rows
 that left it. `just tasks pull --as HANDLE` prints the whole digest as you hear it
 now, whenever you want it; it changes nothing.
+
+A session that can hold a background command can take the same lines without a
+channel, unwrapped: run `just tasks wait --as HANDLE` in the background (after
+`just tasks callback --off --as HANDLE` if one is registered). It exits printing
+what a channel would have carried since its last read, once there is any; act on
+it and run it again. While it waits it beats for you, as a monitor does.
+`--timeout S` gives up after S seconds with `WAIT nothing changed in S s`.
 
 You are never pushed your own writes (your moves, a hand-over or take-over you
 made), nor what your own subagents (sessions registered with `--parent` you) take

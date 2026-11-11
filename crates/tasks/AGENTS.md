@@ -184,6 +184,15 @@ moves, a role move it wrote, the roles a session it registered (`parent`) takes 
 the move and readiness that child's claim or release makes. A quiet child is said once a health
 transition, from the observation's stored health; one it hears as stale, lost or unknown is not
 also listed idle.
+`tasks wait` is the dispatch's own pass for one session with no channel (`Pass::Collect`,
+`Store::collect_callbacks`): it plans as a delivering pass, takes the recipient's lease though no
+address is registered, and its `Visit::send` keeps what `deliver` would have sent for the reader,
+recorded as delivered by the same `record_callback_delivery`, which records the PULL's
+acknowledgement and the messages' deliveries. No other dispatcher visits a session without an
+address, so its callback state is that reader's alone between reads; one with an address is
+refused, since its channel takes the lines. The command beats for its session before a look, at
+most every 20 s, as a monitor does, so the look reads the board its beat moved and the next poll
+does not take its own beat for news.
 A finished idle terminal still closes under the original cleanup rules, retiring its
 registration; an executor of a task in review is not finished, and keeps its terminal until it
 has sat idle at its prompt an hour (`reap::IDLE_HOUR`), as every role on open work does.

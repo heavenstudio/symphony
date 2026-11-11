@@ -106,6 +106,13 @@ unchanged` when none did), each row a list gained, and `resolved LIST a, b` for 
 that left it. `just tasks pull --as HANDLE` prints the whole digest as you hear it
 now, whenever you want it; it changes nothing.
 
+A session that can hold a background command can take the same lines without a
+channel, unwrapped: run `just tasks wait --as HANDLE` in the background (after
+`just tasks callback --off --as HANDLE` if one is registered). It exits printing
+what a channel would have carried since its last read, once there is any; act on
+it and run it again. While it waits it beats for you, as a monitor does.
+`--timeout S` gives up after S seconds with `WAIT nothing changed in S s`.
+
 You are never pushed your own writes (your moves, a hand-over or take-over you
 made), nor what your own subagents (sessions registered with `--parent` you) take
 on or let go: their reservations, claims and releases. Their own moves, to review

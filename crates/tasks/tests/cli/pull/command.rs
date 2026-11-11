@@ -6,7 +6,7 @@ use crate::{Case, repository, scratch};
 const FAKE: &str = env!("CARGO_BIN_EXE_fake-hc");
 
 /// A board run from a repository of its own, hc the crate's `fake-hc` with no terminal.
-fn case(name: &str) -> Case {
+pub(super) fn case(name: &str) -> Case {
     let dir = scratch(&format!("pull-{name}"));
     let mut c = Case::new();
     c.env.cwd = repository(&dir.join("repo"));

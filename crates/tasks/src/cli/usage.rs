@@ -7,17 +7,17 @@ mod panes;
 
 /// The usage line of `just tasks` itself.
 pub const USAGE: &str = r#"usage: just tasks [-h] [--as ACTOR]
-                  {callback,register,attach,list,search,stats,embed,next,create,priority,field,claim,reserve,release,show,parent,depends,done,role,handover,move,verdict,say,launch,restore,cleanup,clean,close,reap,staff,agents,who,status,inbox,pull,leave,beat,export,finish,sweep} ...
+                  {callback,register,attach,list,search,stats,embed,next,create,priority,field,claim,reserve,release,show,parent,depends,done,role,handover,move,verdict,say,launch,restore,cleanup,clean,close,reap,staff,agents,who,status,inbox,pull,wait,leave,beat,export,finish,sweep} ...
 "#;
 
 /// `just tasks --help`.
 pub const HELP: &str = r#"usage: just tasks [-h] [--as ACTOR]
-                  {callback,register,attach,list,search,stats,embed,next,create,priority,field,claim,reserve,release,show,parent,depends,done,role,handover,move,verdict,say,launch,restore,cleanup,clean,close,reap,staff,agents,who,status,inbox,pull,leave,beat,export,finish,sweep} ...
+                  {callback,register,attach,list,search,stats,embed,next,create,priority,field,claim,reserve,release,show,parent,depends,done,role,handover,move,verdict,say,launch,restore,cleanup,clean,close,reap,staff,agents,who,status,inbox,pull,wait,leave,beat,export,finish,sweep} ...
 
 The task board from the terminal — `just tasks …` and `just tasks-attach`.
 
 positional arguments:
-  {callback,register,attach,list,search,stats,embed,next,create,priority,field,claim,reserve,release,show,parent,depends,done,role,handover,move,verdict,say,launch,restore,cleanup,clean,close,reap,staff,agents,who,status,inbox,pull,leave,beat,export,finish,sweep}
+  {callback,register,attach,list,search,stats,embed,next,create,priority,field,claim,reserve,release,show,parent,depends,done,role,handover,move,verdict,say,launch,restore,cleanup,clean,close,reap,staff,agents,who,status,inbox,pull,wait,leave,beat,export,finish,sweep}
     callback            register a native channel or --off for inbox fallback
     depends             change what a task waits on
     handover            hand a task's orchestrator role to another session
@@ -30,6 +30,8 @@ positional arguments:
                         slow requests, write latency
     finish              close the panes of a finished task's sessions
     pull                print the whole PULL digest as ACTOR hears it
+    wait                print what a callback would push ACTOR, once there is
+                        any
 
 options:
   -h, --help            show this help message and exit
@@ -529,6 +531,23 @@ changed since the last PULL it received.
 options:
   -h, --help  show this help message and exit
   --as ACTOR
+"#,
+    ),
+    (
+        "wait",
+        r#"usage: just tasks wait [-h] [--as ACTOR] [--timeout TIMEOUT]
+"#,
+        r#"usage: just tasks wait [-h] [--as ACTOR] [--timeout TIMEOUT]
+
+Print what a callback would push ACTOR, a session with no channel, once there
+is any: what changed since its last read, said once. Run it as a background
+command, and again when it exits; it beats for ACTOR while it waits.
+
+options:
+  -h, --help         show this help message and exit
+  --as ACTOR
+  --timeout TIMEOUT  give up after this many seconds, saying nothing changed
+                     (0: look once); default: wait until something does
 "#,
     ),
     (

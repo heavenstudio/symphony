@@ -1,6 +1,6 @@
 //! A dispatch pass's visit to one recipient, and the one machine observation it shares.
 
-use super::Pass;
+use super::{Callback, DeliveryError, Pass, deliver};
 use crate::Store;
 use crate::cli::agents::{Probe, Probes};
 
@@ -19,6 +19,8 @@ pub(in crate::store) struct Visit<'env> {
     /// The dispatching store, which keeps the machine's process listing across visits and passes.
     store: &'env Store,
     sample: std::cell::OnceCell<Probes<'env>>,
+    /// What a collecting pass would have sent, in order ([`Pass::Collect`]).
+    collected: std::cell::RefCell<Vec<String>>,
 }
 
 impl<'env> Visit<'env> {
@@ -34,7 +36,22 @@ impl<'env> Visit<'env> {
             store,
             holdings,
             sample: std::cell::OnceCell::new(),
+            collected: std::cell::RefCell::default(),
         }
+    }
+
+    /// Deliver `text` to `callback`, or, in a collecting pass, keep it for the reader.
+    pub(super) fn send(&self, callback: &Callback, text: &str) -> Result<(), DeliveryError> {
+        if self.pass == Pass::Collect {
+            self.collected.borrow_mut().push(text.to_string());
+            return Ok(());
+        }
+        deliver(callback, text)
+    }
+
+    /// What a collecting pass kept.
+    pub(super) fn collected(self) -> Vec<String> {
+        self.collected.into_inner()
     }
 
     pub(in crate::store) fn probes(&self) -> &Probes<'env> {
