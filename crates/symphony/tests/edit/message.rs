@@ -97,6 +97,39 @@ fn a_note_opening_a_review_callout_is_refused_and_one_in_code_is_kept() {
     );
 }
 
+/// A note's code that is never closed would make the file's readers take every later line for
+/// code, a review comment below the card among them; one opened on the note's first line is not
+/// a fence in the file, which holds that line on the entry's own, so its closing line would open
+/// one. Both are refused, by the message and the verdict alike, and the file is left as it was.
+#[test]
+fn a_note_whose_code_is_left_open_or_opens_on_its_first_line_is_refused() {
+    for (message, refusal) in [
+        (
+            "Look:\n```\nlet x = 1;",
+            "a note's code fence is not closed",
+        ),
+        (
+            "```\ncode\n> [!comment] sneaky",
+            "a note cannot open with a code fence",
+        ),
+        ("```\ncode\n```", "a note cannot open with a code fence"),
+        (
+            "Two blocks:\n```\none\n```\n~~~\ntwo",
+            "a note's code fence is not closed",
+        ),
+    ] {
+        let refused = add_message(TEXT, "two", message, NOW, Who::Owner, None).unwrap_err();
+        assert!(refused.0.starts_with(refusal), "{message:?}: {refused}");
+        let verdict = symphony::edit::set_decision(TEXT, "two", "question", message, NOW, &plain());
+        assert_eq!(verdict.unwrap_err(), refused, "{message:?}");
+    }
+    let closed = owner(TEXT, "two", "Look:\n```\nlet x = 1;\n```");
+    assert!(
+        closed.contains(" — Look:\n    ```\n    let x = 1;\n    ```\n"),
+        "{closed}"
+    );
+}
+
 #[test]
 fn a_dated_looking_line_in_a_message_stays_in_that_message() {
     let out = owner(TEXT, "two", "Like this:\n[2026-09-20 08:00] agent — quoted");

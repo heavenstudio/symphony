@@ -68,9 +68,16 @@ fn written(note: &str) -> Vec<&str> {
 
 /// The note's lines ([`written`]), refused when one outside its code opens a review callout: the
 /// page's comment reader would take it for a comment on the document, and archiving that comment
-/// would cut it out of the card.
+/// would cut it out of the card. Refused too when its code is not closed, or opens on its first
+/// line, which the file holds on the entry's own line: the file's readers would take the rest of
+/// the file, later comments among it, for code.
 fn note_lines(note: &str) -> Result<Vec<&str>, EditError> {
     let lines = written(note);
+    if lines.first().is_some_and(|first| register::is_fence(first)) {
+        return Err(EditError(
+            "a note cannot open with a code fence: its first line is the entry's own, so write a line of words before the code".into(),
+        ));
+    }
     let mut fenced = false;
     for line in &lines {
         if register::is_fence(line) {
@@ -81,6 +88,11 @@ fn note_lines(note: &str) -> Result<Vec<&str>, EditError> {
                 repr(line)
             )));
         }
+    }
+    if fenced {
+        return Err(EditError(
+            "a note's code fence is not closed: end the code with its own ``` (or ~~~) line, or the page would read the rest of the file as code".into(),
+        ));
     }
     Ok(lines)
 }
