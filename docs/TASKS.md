@@ -161,6 +161,16 @@ project's name; both read the server's memory, not the board (`apps/symphony-ser
 `tasks status` also warns when the record is more than a minute old, naming the server's pid and
 whether it still runs: no dispatch pass has been recorded since.
 
+**A disk running full** is warned of in the same two places: `tasks status` when the disk holding
+the record has less free than `SF_LOW_DISK_GB` gigabytes (20 when unset; `0` turns it off, and a
+value that is no number exits 2), and every page of a project while the disk holding its checkout
+has, read by the server each time it tells the pages of its health; the page says under how many
+gigabytes, not how many, so it is told when the disk goes low and when it is freed, not at every
+build's write. A full disk fails every build
+on the machine and can corrupt the board's database; the warning names `just tasks sweep`, which
+clears the build output of finished worktrees (below). `--json` adds `disk`: the folder read, its
+free bytes and the threshold (`crates/tasks/src/board_health/disk.rs`).
+
 The Claude wire envelope is newline-delimited
 `{"type":"user","message":{"role":"user","content":"…"}}`, observed in the
 installed Claude Code 2.1.308 socket example. Its body format is undocumented;
@@ -317,6 +327,28 @@ For a backlog task, ignored test output under `artifacts/` keeps the tree too, e
 landing cleanup would discard it; only done/cancelled tasks (or no task) release all output.
 A board `TASKS_SERVER` names (a test's) starts no sweep unless
 `TASKS_SWEEP=on`; `TASKS_SWEEP=off` starts none anywhere. Code: `crates/tasks/src/sweep.rs`.
+
+**The build output of finished work goes too, the worktree staying.** A worktree the sweep keeps
+(a Claude Code agent's, locked while its orchestrator runs, say) loses its build folders
+(`.target/`, `symphony/.target/`), each gigabytes, once every task tied to it is done or
+cancelled, one of them done; no agent bound to it beat or made a tool call within the hour, and
+nothing touched its git files in that hour; its HEAD is merged work, an ancestor of main that came
+in by a merge or was committed in that worktree; and no process works inside it. A branch with no
+commits ahead of main is not merged work, so a fresh worktree keeps its build. A task in progress,
+in review, blocked or ready keeps it. The sweep decides again on a new read right before it
+removes, and `just tasks sweep --dry-run` says `would clear build output PATH (why)`. Code:
+`crates/tasks/src/sweep/build_output.rs`.
+
+**A linked worktree's first build starts from the main checkout's.** `tools/cargo.sh`, which
+every build here goes through, makes a worktree's missing build folder as a copy-on-write clone
+of the main checkout's `.target/debug` (`tools/seed-target.sh`: clonefile on APFS, a reflink on
+Linux; nothing on a volume that cannot clone), taken under Cargo's own lock on that folder and
+without the workspace's own packages, so the worktree compiles those from its own sources and
+reuses every dependency. A clone takes disk only as a build replaces what it holds: measured,
+0.9 GB a worktree where a build from nothing holds 2.0 GB, and a first test build of the board
+in 2.7 minutes where it took 8.3. `du` counts each clone in full; `df` says what the disk holds.
+`SF_SEED_TARGET=off` turns it off. Worktrees never share one build folder: Cargo names the same
+package of two worktrees the same, so each would run the other's build of it.
 
 **Health** is derived from when the session was last seen. Every command
 counts as a sign of life, and so does every tool call of a subagent (below):
