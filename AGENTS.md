@@ -79,7 +79,8 @@ retired implicit bundles cannot replace it. A foreground preview override remain
 `just client-check` rebuilds into a separate directory and compares every freshly
 built path and byte with that committed distribution. Retained older hashes are
 allowed for open pages. `just verify` runs lint, that real client check and the
-workspace's native/headless browser tests locally. Local acceptance requires a working
+workspace's native/headless browser tests locally: the nightly's full verification, never a
+task's gate ([CHECKS](docs/CHECKS.md#the-nightly)). Local acceptance requires a working
 Chrome executable; the consuming project's game, display and gate binaries are not prerequisites.
 This repository has no hosted GitHub CI requirement.
 
@@ -117,9 +118,11 @@ started on.
 count as its heartbeat only after a command of that shape binds it, and one that runs
 the binary by its path reads lost while it works.
 
-**Verify in a clean checkout.** Run `just verify` in a worktree outside this folder
-(`../symphony-wt/`), on a tip whose client distribution was rebuilt with
-`just client-update` when the check asks for it.
+**Evidence, not the suite.** A task's gate is the tests closest to what it changed and
+`just lint-rs`, with `just client-update` for a client change, posted on its thread as evidence
+a reviewer judges and stamps (RULES.md `workflow/evidence-is-the-gate`; how to pick the tests and
+what each kind of change shows: [CHECKS](docs/CHECKS.md)). No task runs `just verify`: it is the
+nightly's, on main's tip in a clean checkout outside this folder (`../symphony-wt/`).
 
 ## Agent integration
 
