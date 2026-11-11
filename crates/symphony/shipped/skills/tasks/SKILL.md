@@ -15,13 +15,26 @@ their worktree commits into it with the project's `just merge-feature FEATURE [S
 where it has one: that refuses the default branch and runs no delivery hooks or stamps,
 and the project's landing (`land` where it has one) remains the completed feature
 delivery command. Run only focused checks needed for that slice;
-no slice-level full build, full suite, lint/precheck campaign, reviewer staffing,
-certificate, stamps or landing. Close the slice with its integration commit and
-focused result using tasks done. When the complete feature is ready, the parent
-runs the required combined build/tests and review once, then lands. Review
-fixes stay with that parent and do not create independent delivery rounds.
+no slice-level full build, full suite, reviewer staffing, certificate, stamps or
+landing. Close the slice with its integration commit and focused result using
+tasks done. When the complete feature is ready, the parent goes to review once
+with its evidence, then lands. Review fixes stay with that parent and do not
+create independent delivery rounds.
 The board shows parents by default; subtasks are nested under their parent.
 This rule supersedes conflicting per-subtask gate instructions.
+
+## Evidence is the gate
+
+A task's gate, parent or slice, feature or fix, is evidence that what it changed
+works, not the full suite: the tests closest to the change and the project's
+lint, posted with their exact commands and results, plus what the kind of change
+calls for (before and after screenshots of a changed page, a measurement before
+and after). A reviewer reruns those tests, never the suite, judges whether the
+evidence is good enough for the change's risk, and records its approval as the
+task's stamp. Higher risk asks for stronger evidence, never for the whole suite.
+The full verification runs on the project's main line on its own schedule, such
+as a nightly, and a red run there is filed as a task of its own. The project's
+guidance names its focused checks, its stamp and its nightly.
 
 
 Several sessions share one Symphony board from their project checkouts. Read the
@@ -185,9 +198,11 @@ Reviewers must be independent of the author and use the project's required stamp
 `just tasks role SLUG reviewer` on a task in `review`, then read the diff and
 the thread. Finish with `just tasks verdict SLUG approve "why"` (it becomes
 `done`) or `just tasks verdict SLUG changes "what and where"`. Run the targeted
-tests of what changed yourself; do not take the executor's word for them being
-green. Follow the destination project's requirements for review evidence and any
-additional verification. Do not assume a certificate or landing system exists.
+tests of what changed yourself, never the full suite; do not take the executor's
+word for them being green. Judge whether the evidence is good enough for the
+change's risk: an approve is the task's stamp, a changes verdict names the
+evidence missing. Follow the destination project's requirements for review
+evidence and any additional verification. Do not assume a certificate or landing system exists.
 Read any review checklist the project provides for the changed languages or domains.
 
 ## Orchestrate (orchestrator)

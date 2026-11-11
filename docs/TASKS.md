@@ -41,6 +41,12 @@ version in one transaction before any other write. An older build is refused
 before it writes, naming the project and `just symphony`. A Symphony one version
 behind still reads the board, and every write it would send is refused the same
 way. A store opened before a newer build migrated is refused at its next write.
+The Symphony never moves a board forward or makes one, so a branch's command line
+or preview server with a newer schema leaves the live board as it is: a board
+behind its build, or not made yet, it refuses before it reads, naming `just tasks
+list` in the project, the board command that moves or makes it. A branch tries a
+newer schema on a scratch board (`TASKS_DATABASE=NAME`), which its own `just
+tasks --database NAME` moves.
 
 The store takes about what it holds. Every server the board starts keeps each
 value beside its key, where compaction drops the versions a rewrite leaves, and
@@ -755,7 +761,7 @@ A consuming project's optional wait guard refuses a loop waiting on machine-wide
   nothing claimable yet), after which anyone may claim the task: start the agent
   promptly, or register the handle again and re-reserve.
 - Every subtask closes with its executor's `just tasks done SLUG "integration commit and focused result"`, including ordinary implementation slices. Only the top-level parent enters review, gathers stamps and lands. `--instruction` still marks an agent instruction, but is not required for lightweight completion.
-- Source slices start from their parent feature branch, commit there or return commits for integration, and run only their focused checks. A separate agent is justified only by useful parallelism. No independent slice review, full verification or landing.
+- Source slices start from their parent feature branch, commit there or return commits for integration, and run only their focused checks. A separate agent is justified only by useful parallelism. No independent slice review or landing. A parent's gate is evidence too, the tests closest to its change, which its reviewer judges; the full verification is no task's, and runs nightly ([CHECKS](CHECKS.md)).
 - `just tasks show` lists a task's subtasks with each one's status and holder;
   `just tasks list` and the Symphony's **tasks** page show the same tree, at
   any depth.

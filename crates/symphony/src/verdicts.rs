@@ -42,7 +42,9 @@ Take every card to exactly one end state, following the apply-review skill: a bo
 (say where); or a newer card supersedes it (say which). Never edit an owner line.
 `just symphony-cli verdict-tasks` must end listing none of these cards.
 
-Run the project's checks, commit on a branch named after this task, post the tip, and move to review.
+Run the project's check for a document change (Symphony's own:
+`just symphony-cli docs-audit --check`, docs/CHECKS.md), never its full suite; commit on a branch
+named after this task, post the tip and the check's result, and move to review.
 
 Cards:
 ";

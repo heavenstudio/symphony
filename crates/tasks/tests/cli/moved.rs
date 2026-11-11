@@ -10,8 +10,9 @@ use std::path::PathBuf;
 use symphony_board::cli::Env;
 use symphony_board::sys::Command;
 
-const REFUSED: &str = "the task board has not moved to SurrealDB yet: the lander runs `tasks-cutover` once, right after landing";
-const UNFINISHED: &str = "the task board is frozen by a move to SurrealDB that has not finished: unless one is running, run `tasks-cutover` again";
+/// The refusals, naming the default board guide: the project's file names none.
+const REFUSED: &str = "the task board has not moved to SurrealDB yet: the lander runs `tasks-cutover` once, right after landing (TASKS.md)";
+const UNFINISHED: &str = "the task board is frozen by a move to SurrealDB that has not finished: unless one is running, run `tasks-cutover` again (TASKS.md)";
 
 /// A repository of its own holding a SQLite board in its git dir, and an environment that names no
 /// server, so the board is the one in that common dir, whose server cannot start (`SF_SURREAL`
@@ -41,6 +42,35 @@ fn a_command_on_a_board_still_in_sqlite_is_refused_and_starts_no_server() {
     let ran = run(&env, &["list"], "");
     assert_eq!((ran.code, ran.err), (2, format!("✖ {REFUSED}\n")));
     assert!(!dir.join(".git/sf-tasks").exists());
+}
+
+#[test]
+fn the_refusal_names_the_board_guide_the_project_file_names() {
+    let (dir, env) = unmoved("guide");
+    fs::write(
+        dir.join("symphony.toml"),
+        "[project]\nid = \"lamp-works\"\n[board]\nguide = \"handbook/BOARD.md\"\n",
+    )
+    .unwrap();
+    let ran = run(&env, &["list"], "");
+    let named = REFUSED.replace("(TASKS.md)", "(handbook/BOARD.md)");
+    assert_eq!((ran.code, ran.err), (2, format!("✖ {named}\n")));
+    // Moved, the server it needs cannot start, and the guide says where it comes from.
+    fs::write(dir.join(".git/lamp-works-tasks.db.moved"), b"").unwrap();
+    let ran = run(&env, &["list"], "");
+    let missing = dir.join("no-surreal");
+    assert_eq!(
+        (ran.code, ran.err),
+        (
+            2,
+            format!(
+                "✖ SurrealDB {} is not at {}, where `SF_SURREAL` names it \
+                 (handbook/BOARD.md#where-it-lives)\n",
+                symphony_board::server::SURREAL_VERSION,
+                missing.display()
+            )
+        )
+    );
 }
 
 #[test]
