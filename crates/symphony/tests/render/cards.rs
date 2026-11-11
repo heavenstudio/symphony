@@ -1,5 +1,7 @@
 //! RenderTest's card half, MessageTest, AutoApprovedRenderTest and CardAnchorTest.
 
+use symphony_api::{Block, Span};
+
 use super::{bare, page, page_at};
 
 const CANDIDATES: &str = "- [ ] **h** — three takes. Approve and say A, B or C in the note.\n  [2026-09-27 18:00] agent — A ![H lamp A](/a.png) B ![H lamp B](/b.png) C ![H lamp C](/c.png)\n";
@@ -239,51 +241,229 @@ fn legacy_undated_lines_still_render() {
     );
 }
 
+/// The owner's note and an agent's are drawn by one renderer, a document's: markup, pictures and
+/// document links alike.
 #[test]
-fn agent_entries_render_markdown_but_owner_entries_stay_text() {
+fn owner_and_agent_notes_render_markdown_alike() {
     let (tree, render) = bare();
     tree.write("docs/makers/MAKERS.md", "# Makers\n");
-    let html = render.html("- [?] **a** — one.\n  [2026-09-24] owner · question — <b>raw</b>\n  [2026-09-24] agent — See ![scale](/artifacts/x.svg) and [[MAKERS#East]].\n", "docs/DECISIONS.md");
-    assert!(html.contains("&lt;b&gt;raw&lt;/b&gt;"), "{html}");
-    assert!(html.contains("<img src=\"/artifacts/x.svg\" alt=\"scale\""));
-    assert!(html.contains("href=\"/docs/makers/MAKERS.md#east\""));
+    for who in ["owner · question", "agent"] {
+        let html = render.html(
+            &format!("- [?] **a** — one.\n  [2026-09-24] {who} — **Bold**, *soft*, `code`: see ![scale](/artifacts/x.svg) and [[MAKERS#East]].\n"),
+            "docs/DECISIONS.md",
+        );
+        let text = entry_text(&html, 0);
+        assert!(
+            text.starts_with("<strong>Bold</strong>, <em>soft</em>, <code>code</code>"),
+            "{who}: {text}"
+        );
+        assert!(
+            text.contains("<img src=\"/artifacts/x.svg\" alt=\"scale\""),
+            "{who}: {text}"
+        );
+        assert!(
+            text.contains("href=\"/docs/makers/MAKERS.md#east\""),
+            "{who}: {text}"
+        );
+    }
+}
+
+/// Raw HTML in a note is the words typed, the owner's and an agent's alike, on the page and in the
+/// typed thread the client draws: `Vec<String>` and `<b>raw</b>` are not markup. The document and
+/// card links the note names are links all the same, one alone in its paragraph too.
+#[test]
+fn raw_html_in_a_note_stays_as_typed_and_its_links_stay_links() {
+    let (tree, render) = bare();
+    tree.write(
+        "docs/makers/MAKERS.md",
+        "# Makers\n\n- [ ] **elsewhere** — A card.\n",
+    );
+    let typed = "The call returns Result<Task, Error> and Vec<String>; a < b > c. <b>raw</b>";
+    for who in ["owner · question", "agent"] {
+        let card = format!(
+            "- [?] **a** — one.\n  [2026-09-24] {who} — {typed}\n    See [[MAKERS#Makers]] and **elsewhere**.\n\n    [[MAKERS]]\n"
+        );
+        let text = entry_text(&render.html(&card, "docs/DECISIONS.md"), 0).to_string();
+        assert!(
+            text.starts_with("<p>The call returns Result&lt;Task, Error&gt; and Vec&lt;String&gt;; a &lt; b &gt; c. &lt;b&gt;raw&lt;/b&gt;<br />"),
+            "{who}: {text}"
+        );
+        assert!(
+            text.contains("<a href=\"/docs/makers/MAKERS.md#makers\">MAKERS</a>"),
+            "{who}: {text}"
+        );
+        assert!(
+            text.contains(
+                "<strong><a href=\"/docs/makers/MAKERS.md#elsewhere\">elsewhere</a></strong>"
+            ),
+            "{who}: {text}"
+        );
+        let thread = render.typed_history(&card, "docs/DECISIONS.md");
+        let blocks = symphony::blocks::fragment(&thread["a"], "docs/DECISIONS.md");
+        let [Block::Thread { entries }] = blocks.as_slice() else {
+            panic!("{blocks:?}")
+        };
+        let [
+            Block::Paragraph { spans },
+            Block::Paragraph { spans: alone },
+        ] = entries[0].blocks.as_slice()
+        else {
+            panic!("{who}: {:?}", entries[0].blocks)
+        };
+        assert!(
+            matches!(spans.first(), Some(Span::Text { text }) if text == typed),
+            "{who}: {spans:?}"
+        );
+        let wiki = |span: &Span| matches!(span, Span::WikiLink { href, .. } if href == "/docs/makers/MAKERS.md#makers");
+        assert!(spans.iter().any(wiki), "{who}: {spans:?}");
+        assert!(
+            spans.iter().any(|span| matches!(
+                span,
+                Span::Strong { spans } if matches!(
+                    spans.as_slice(),
+                    [Span::Link { href, target: None, .. }] if href == "/docs/makers/MAKERS.md#elsewhere"
+                )
+            )),
+            "{who}: {spans:?}"
+        );
+        assert!(
+            matches!(alone.as_slice(), [Span::WikiLink { href, .. }] if href == "/docs/makers/MAKERS.md"),
+            "{who}: {alone:?}"
+        );
+    }
+}
+
+/// The `n`th entry's drawn words in `html`.
+fn entry_text(html: &str, n: usize) -> &str {
+    html.split("<span class=\"entry-text\">")
+        .nth(n + 1)
+        .and_then(|entry| entry.rsplit_once("</span></li>"))
+        .map(|(text, _)| text)
+        .unwrap_or_else(|| panic!("no entry {n}: {html}"))
+}
+
+/// A single Enter in a note is a line break and a blank line a paragraph gap, in the owner's note
+/// and an agent's, on the page and in the thread the client draws.
+#[test]
+fn a_notes_line_break_and_paragraph_gap_are_drawn_for_owner_and_agent() {
+    let (_tree, render) = bare();
+    for who in ["owner · question", "agent"] {
+        let card = format!(
+            "- [?] **a** — one.\n  [2026-11-11 15:26] {who} — 1. First question?\n    Its answer.\n\n    Next paragraph.\n"
+        );
+        let html = render.html(&card, "docs/DECISIONS.md");
+        assert_eq!(
+            entry_text(&html, 0),
+            "<ol>\n<li>First question?<br />\nIts answer.</li>\n</ol>\n<p>Next paragraph.</p>",
+            "{who}"
+        );
+        let thread = render.typed_history(&card, "docs/DECISIONS.md");
+        let blocks = symphony::blocks::fragment(&thread["a"], "docs/DECISIONS.md");
+        let [Block::Thread { entries }] = blocks.as_slice() else {
+            panic!("{blocks:?}")
+        };
+        let [
+            Block::List {
+                ordered: true,
+                items,
+                ..
+            },
+            Block::Paragraph { spans },
+        ] = entries[0].blocks.as_slice()
+        else {
+            panic!("{who}: {:?}", entries[0].blocks)
+        };
+        let [Block::Paragraph { spans: item }] = items[0].as_slice() else {
+            panic!("{who}: {items:?}")
+        };
+        assert!(item.contains(&Span::LineBreak), "{who}: {item:?}");
+        assert_eq!(spans.len(), 1, "{who}: {spans:?}");
+    }
+}
+
+/// Headings are the register's own structure: a `#` line in a note, or a line underlined into
+/// one, stays the words it is; in fenced code it is code. A `- [ ]` line is a list item, not a card.
+#[test]
+fn a_heading_or_a_card_line_in_a_note_stays_as_typed() {
+    let card = "- [?] **a** — one.\n  [2026-11-11 16:00] owner · question — ## title\n    #tag and words\n    Underlined\n    ---\n    - [ ] **b** — not a card\n\n    ```\n    # a comment\n    ```\n";
+    let html = page_at(card, "docs/DECISIONS.md");
+    let text = entry_text(&html, 0);
+    assert!(!text.contains("<h"), "{text}");
+    assert!(
+        text.starts_with("<p>## title<br />\n#tag and words<br />\nUnderlined<br />\n---</p>"),
+        "{text}"
+    );
+    assert!(
+        text.contains("<ul>\n<li>[ ] <strong>b</strong> — not a card</li>\n</ul>"),
+        "{text}"
+    );
+    assert!(
+        text.contains("<pre><code># a comment\n</code></pre>"),
+        "{text}"
+    );
+    assert_eq!(html.matches("class=\"decision\"").count(), 1, "{html}");
+}
+
+/// What a document's body can show, a note can: a table, fenced code, a card named in bold, a
+/// mockup as a framed page and a picture.
+#[test]
+fn a_note_carries_what_a_document_body_shows() {
+    let (tree, render) = bare();
+    tree.write(
+        "docs/OTHER.md",
+        "# Other\n\n- [ ] **elsewhere** — A card.\n",
+    );
+    let card = "- [?] **a** — one.\n  [2026-11-11 16:00] owner · question — Compare:\n\n    | Key | Value |\n    |---|---|\n    | a | b |\n\n    ```rs\n    let x = 1;\n    ```\n\n    As **elsewhere** says, ![Mock A](/docs/mockups/a.html) or ![shot](/artifacts/a.png).\n";
+    let sections = render.sections(card, "docs/DECISIONS.md");
+    let text = entry_text(&sections[0].html, 0);
+    for want in [
+        "<table>",
+        "<td>a</td>",
+        "<code class=\"language-rs\">let x = 1;\n</code>",
+        "href=\"/docs/OTHER.md#elsewhere\"",
+        "<img src=\"/artifacts/a.png\" alt=\"shot\" />",
+    ] {
+        assert!(text.contains(want), "{want}: {text}");
+    }
+    assert!(
+        !text.contains("a.html\""),
+        "a mockup is held as media: {text}"
+    );
+    assert!(
+        matches!(
+            sections[0].media.as_slice(),
+            [symphony::render::Media::Mockup { src, .. }] if src == "/docs/mockups/a.html"
+        ),
+        "{:?}",
+        sections[0].media
+    );
 }
 
 const PNG_5X7: &[u8] = b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR\0\0\0\x05\0\0\0\x07";
 
-/// The owner attached a picture and a PDF to a verdict note: those lines are drawn as an agent's
-/// Markdown is, every other line stays literal, including a picture of a file that is not an
-/// upload. (Sizes and cache tokens are added when a read prepares the fragment.)
+/// The owner attached a picture and a PDF to a verdict note: each is drawn on its own line, the
+/// picture as a picture and the file as its link, among the note's other lines. (Sizes and cache
+/// tokens are added when a read prepares the fragment.)
 #[test]
-fn an_owner_line_naming_an_upload_is_drawn_and_its_other_words_stay_text() {
+fn an_owner_line_naming_an_upload_is_drawn_on_its_own_line() {
     let (tree, render) = bare();
     let picture = symphony::uploads::store(&tree.root, "shot.png", PNG_5X7).unwrap();
     let document = symphony::uploads::store(&tree.root, "brief.pdf", b"%PDF-1.4").unwrap();
     let card = format!(
-        "- [?] **a** — one.\n  [2026-10-28 10:00] owner · question — <b>see</b>\n    {}\n    {}\n    ![x](/artifacts/raw.png)\n",
+        "- [?] **a** — one.\n  [2026-10-28 10:00] owner · question — see\n    {}\n    {}\n    ![x](/artifacts/raw.png)\n",
         picture.markup(),
         document.markup()
     );
     let html = render.html(&card, "docs/DECISIONS.md");
-    let owner = html
-        .split("<li class=\"entry owner\">")
-        .nth(1)
-        .and_then(|entry| entry.split("</li>").next())
-        .unwrap_or_else(|| panic!("no owner entry: {html}"));
-    let lines: Vec<_> = owner.split("<br>").collect();
-    assert_eq!(lines.len(), 4, "{owner}");
-    assert!(lines[0].ends_with("&lt;b&gt;see&lt;/b&gt;"), "{owner}");
+    let lines: Vec<_> = entry_text(&html, 0).split("<br />\n").collect();
     assert_eq!(
-        lines[1],
-        format!("<img src=\"{}\" alt=\"shot.png\" />", picture.url())
-    );
-    assert_eq!(
-        lines[2],
-        format!("<a href=\"{}\">brief.pdf</a>", document.url())
-    );
-    assert!(
-        lines[3].starts_with("![x](/artifacts/raw.png)"),
-        "a picture that is not an upload stays the owner's text: {owner}"
+        lines,
+        [
+            "see".to_string(),
+            format!("<img src=\"{}\" alt=\"shot.png\" />", picture.url()),
+            format!("<a href=\"{}\">brief.pdf</a>", document.url()),
+            "<img src=\"/artifacts/raw.png\" alt=\"x\" />".to_string(),
+        ]
     );
 }
 

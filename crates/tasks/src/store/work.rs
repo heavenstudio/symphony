@@ -304,6 +304,49 @@ LET $said = $actor + ' changed priority p' + <string>$task.priority + ' → p' +
         })
     }
 
+    /// Retitle a task and link it to more documents, in one write: how the Symphony's verdict roll-up
+    /// keeps its title counting every card it lists and links each card's page. A changed title is
+    /// recorded with its actor and both titles; a link it already has stays one link.
+    pub fn amend(
+        &self,
+        slug: &str,
+        title: &str,
+        links: &[String],
+        handle: &str,
+    ) -> Result<Task, Error> {
+        let title = title.trim();
+        if title.is_empty() {
+            return Err(refused("a task needs a title".into()));
+        }
+        let act = if handle == OWNER { "" } else { ACT };
+        let body = format!(
+            "{act}
+LET $task = (SELECT title FROM ONLY type::record('task', $slug));
+IF $task = NONE {{ THROW $missing }};
+FOR $link IN $links {{
+    UPSERT type::record('link', [$slug, 'doc', $link])
+        CONTENT {{ slug: $slug, kind: 'doc', target: $link }} RETURN NONE;
+}};
+UPDATE type::record('task', $slug) SET title = $title, version += 1 RETURN NONE;
+IF $task.title != $title {{
+    LET $said = $actor + ' retitled it: ' + $task.title + ' → ' + $title;
+    {}
+}};",
+            logged("$slug", "$actor", "'system'", "$said", "NONE")
+        );
+        self.retrying(|| {
+            let vars = acting(
+                handle,
+                (self.clock)(),
+                json!({
+                    "slug": slug, "title": title, "links": links,
+                    "missing": format!("{REFUSED}{}", no_task(slug)),
+                }),
+            );
+            self.written(&body, vars, slug)
+        })
+    }
+
     /// Move a task under `parent`, or to the top with none. A task is never its own ancestor. Under a
     /// cap, a session's change that would raise an orchestrator's open tasks past it, the open work at
     /// and below the task coming under its tree, is refused ([`crate::slots`]); a hold on the task
