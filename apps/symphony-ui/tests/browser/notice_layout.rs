@@ -97,7 +97,10 @@ fn a_stale_notice_leaves_the_task_composer_clear_at_page_end_without_scroll_clam
     }
     let Some(mut chrome) = chrome() else { return };
     chrome.open(&site.url("/task/visual/in-progress"));
-    assert!(chrome.wait_for("document.querySelector('article.task') !== null", SHOWN));
+    assert!(chrome.wait_for(
+        "document.querySelector('article.task') !== null && document.documentElement.dataset.navigation === 'ready'",
+        SHOWN
+    ));
     for width in [320, 390, 1024] {
         chrome.call(
             "Emulation.setDeviceMetricsOverride",
@@ -108,8 +111,22 @@ fn a_stale_notice_leaves_the_task_composer_clear_at_page_end_without_scroll_clam
             "document.querySelector('#task-send [role=combobox]') !== null && document.querySelector('#task-send button[type=submit]') !== null",
             SHOWN
         ));
-        chrome.eval("scrollTo(0,document.documentElement.scrollHeight); new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))");
-        chrome.eval("window.pageEndScroll=scrollY; window.pageEndHeight=document.documentElement.scrollHeight");
+        // Lazy messages and controls release their height reservations before the baseline.
+        assert!(chrome.wait_for(
+            "document.querySelector('#task-thread .entry.owner') !== null && [...document.querySelectorAll('article.task .viewport-slot')].every(slot => slot.style.minHeight === '0px' && !slot.querySelector('.viewport-placeholder, .section-loading'))",
+            SHOWN
+        ));
+        assert!(chrome.wait_for(r#"new Promise(resolve => {
+            scrollTo(0, document.documentElement.scrollHeight);
+            requestAnimationFrame(() => requestAnimationFrame(() => {
+                const atEnd = scrollY === Math.max(0, document.documentElement.scrollHeight - innerHeight);
+                if (atEnd) {
+                    window.pageEndScroll = scrollY;
+                    window.pageEndHeight = document.documentElement.scrollHeight;
+                }
+                resolve(atEnd);
+            }));
+        })"#, SHOWN), "at {width}px, the setup must reach the actual page end before the feed fails");
         assert!(wait_for_feed(&site), "the page never followed the feed");
         site.fail_feeds(usize::MAX);
         site.drop_feeds();
