@@ -8,6 +8,7 @@ use super::text::{event, export_markdown, message_line, roles_text};
 use super::{Clock, Env, probes, shape};
 use crate::health::RESERVE_SECONDS;
 use crate::pyjson::{self, Py};
+use crate::stages;
 use crate::sweep::{self, git::Listed, trigger};
 use crate::sys;
 use crate::{Error, NewSession, NewTask, Session, Store, Task};
@@ -23,6 +24,7 @@ const PULL_SECONDS: f64 = 600.0;
 mod finish;
 mod list;
 mod panes;
+mod stats;
 
 /// Why a command stopped short.
 pub enum Stop {
@@ -219,6 +221,7 @@ pub fn run(store: &Store, c: &mut Context) -> Result<(), Stop> {
         }
         "list" => list::run(store, c)?,
         "search" => super::search::run(store, c)?,
+        "stats" => stats::run(store, c)?,
         "embed" => {
             // Only the cache-only maintenance mode may run without an agent. Explicit actors
             // still pass the normal validation, including the owner restriction.
@@ -475,11 +478,19 @@ fn show(store: &Store, c: &mut Context) -> Result<(), Stop> {
     let task = store.get(&slug)?;
     let thread = store.thread(&slug)?;
     let children = store.children(&slug)?;
+    let lines: Vec<stages::Line> = thread.iter().map(stages::Line::from).collect();
+    let facts = stages::Facts {
+        status: &task.status,
+        created: task.created,
+        updated: task.updated,
+    };
+    let stages = stages::stages(facts, &lines, store.now());
     if c.parsed.flag("json") {
         let json = Py::obj(vec![
             ("task", shape::task(&task)),
             ("thread", shape::messages(&thread)),
             ("children", shape::tasks(&children)),
+            ("stages", shape::stages(&stages)),
         ]);
         c.say(&pyjson::dumps(&json));
         return Ok(());
@@ -506,6 +517,7 @@ fn show(store: &Store, c: &mut Context) -> Result<(), Stop> {
             c.say(&format!("  {label}: {}", items.join(", ")));
         }
     }
+    c.say(&format!("  {}", stages::summary_line(&stages)));
     if !children.is_empty() {
         c.say("  subtasks:");
         for child in &children {

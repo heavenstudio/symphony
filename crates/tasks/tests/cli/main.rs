@@ -34,6 +34,7 @@ mod pull;
 mod scratch_folder;
 mod search;
 mod slots;
+mod stats;
 mod sweep;
 
 use std::collections::BTreeMap;

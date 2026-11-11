@@ -7,6 +7,7 @@ use super::{
 };
 use crate::health::{self, EXECUTING};
 use crate::rows::SessionRow;
+use crate::stages::{EVERY_ROLE, RELEASED};
 use crate::sys::Boottime;
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -474,7 +475,7 @@ RETURN NONE;",
                 "$slug",
                 "$actor",
                 "'system'",
-                "$actor + ' released every role (left)'",
+                &format!("$actor + '{RELEASED}{EVERY_ROLE} (left)'"),
                 "NONE"
             )
         );
