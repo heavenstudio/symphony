@@ -37,11 +37,11 @@ static FOLDER: LazyLock<Regex> = LazyLock::new(|| {
     .expect("the memory folders' pattern")
 });
 
-/// A program that writes the files it is given, or one that runs anything: a whole shell word, maybe
-/// named by its path (`/bin/rm`).
+/// A program that writes the files it is given, unpacks or downloads into a folder, or runs anything:
+/// a whole shell word, maybe named by its path (`/bin/rm`).
 static WRITER: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(
-        r#"(?:^|[\s;&|()<>`'"{}/])(?:tee|rm|rmdir|unlink|shred|mv|cp|ln|install|rsync|ditto|touch|mkdir|truncate|dd|chmod|chown|patch|python[0-9.]*|perl|ruby|node|osascript|sh|bash|zsh|eval|xargs)(?:$|[\s;&|()<>`'"{}])"#,
+        r#"(?:^|[\s;&|()<>`'"{}/])(?:tee|rm|rmdir|unlink|shred|mv|cp|ln|install|rsync|ditto|scp|touch|mkdir|truncate|dd|chmod|chown|patch|tar|unzip|zip|gzip|gunzip|curl|wget|python[0-9.]*|perl|ruby|node|osascript|sh|bash|zsh|eval|xargs)(?:$|[\s;&|()<>`'"{}])"#,
     )
     .expect("the writers' pattern")
 });
