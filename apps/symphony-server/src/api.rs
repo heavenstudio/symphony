@@ -14,6 +14,7 @@ use crate::front::Shared;
 use crate::live::Hub;
 
 mod failure;
+mod validated;
 mod warm;
 
 use failure::{task_failure, unavailable};
@@ -52,7 +53,20 @@ const READS: &[&str] = &[
 
 type Request = axum::http::Request<()>;
 
+/// What the server reads answer for `request`. Every JSON read leaves here with its validator
+/// (`validated`), so a read added later has one too.
 pub(crate) async fn answer(shared: &Arc<Shared>, request: Request) -> Option<Response> {
+    let asked: Vec<_> = request
+        .headers()
+        .get_all(header::IF_NONE_MATCH)
+        .iter()
+        .cloned()
+        .collect();
+    let response = read(shared, request).await?;
+    Some(validated::validated(&asked, response).await)
+}
+
+async fn read(shared: &Arc<Shared>, request: Request) -> Option<Response> {
     let Some(decoded) = decode_path(request.uri().path()) else {
         return Some(error(StatusCode::BAD_REQUEST, "invalid URL path"));
     };
@@ -552,7 +566,16 @@ fn document_response(
         _ => Err("no such route".into()),
     };
     match result {
-        Ok(value) => no_store(Json(value)),
+        Ok(mut value) => {
+            // A document and its sections carry the feed's cursor, which is not their content.
+            let content = matches!(path, "/api/document" | "/api/section")
+                .then(|| validated::without_cursor(&mut value));
+            let mut response = no_store(Json(value));
+            if let Some(tag) = content {
+                response.extensions_mut().insert(validated::Content(tag));
+            }
+            response
+        }
         Err(e) => error(StatusCode::NOT_FOUND, e),
     }
 }
@@ -763,18 +786,20 @@ fn no_store(value: impl IntoResponse) -> Response {
 
 /// GET and HEAD use weak comparison, including a list of validators or the wildcard.
 pub(crate) fn matches_etag(request: &Request, etag: &str) -> bool {
-    request
-        .headers()
-        .get_all(header::IF_NONE_MATCH)
-        .iter()
-        .any(|value| {
-            value.to_str().is_ok_and(|value| {
-                value.split(',').any(|tag| {
-                    let tag = tag.trim();
-                    tag == "*" || tag.strip_prefix("W/").unwrap_or(tag) == etag
-                })
+    names_etag(request.headers().get_all(header::IF_NONE_MATCH), etag)
+}
+
+/// Whether one of the `If-None-Match` values names `etag` (quoted, without `W/`), as
+/// [`matches_etag`] reads them.
+fn names_etag<'a>(values: impl IntoIterator<Item = &'a header::HeaderValue>, etag: &str) -> bool {
+    values.into_iter().any(|value| {
+        value.to_str().is_ok_and(|value| {
+            value.split(',').any(|tag| {
+                let tag = tag.trim();
+                tag == "*" || tag.strip_prefix("W/").unwrap_or(tag) == etag
             })
         })
+    })
 }
 
 fn error(code: StatusCode, why: impl AsRef<str>) -> Response {
