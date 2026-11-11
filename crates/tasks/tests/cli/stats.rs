@@ -54,6 +54,11 @@ fn pipeline() -> Case {
     t(10.0).ok(&rev, &["verdict", "sim/b", "changes", "a test is missing"]);
     t(13.0).ok(&exe, &["move", "sim/b", "review"]);
     t(16.0).ok(&rev, &["verdict", "sim/b", "approve"]);
+    // The task from before the window is done inside it, 22 hours in.
+    t(20.0).ok(&exe, &["claim", "sim/old"]);
+    t(21.0).ok(&exe, &["move", "sim/old", "review"]);
+    t(21.0).ok(&rev, &["role", "sim/old", "reviewer"]);
+    t(22.0).ok(&rev, &["verdict", "sim/old", "approve"]);
     c
 }
 
@@ -64,7 +69,7 @@ fn show_says_where_a_tasks_time_went() {
     let shown = later.ok("", &["show", "sim/b"]);
     assert!(
         shown.contains(
-            "\n  Stages: unclaimed 5.0 h · ready 5.0 h · in_progress 6.0 h (2 visits) · review 5.0 h (2 visits) · 1 bounce\n"
+            "\n  Stages: ready 5.0 h · in_progress 6.0 h (2 visits) · review 5.0 h (2 visits) · 1 bounce; first claimed after 5.0 h\n"
         ),
         "{shown}"
     );
@@ -88,7 +93,7 @@ fn show_says_where_a_tasks_time_went() {
     // Open and never claimed: counted up to the clock's now.
     let shown = later.ok("", &["show", "sim/d"]);
     assert!(
-        shown.contains("\n  Stages: unclaimed 20.0 h · ready 20.0 h\n"),
+        shown.contains("\n  Stages: ready 20.0 h; never claimed in 20.0 h\n"),
         "{shown}"
     );
     let shown: Value = serde_json::from_str(&later.ok("", &["show", "sim/d", "--json"])).unwrap();
@@ -114,24 +119,25 @@ fn day(hours: f64) -> String {
 fn stats_says_where_the_pipelines_time_goes() {
     let c = pipeline();
     let later = at(&c, START, 48.0);
-    // `sim/a` closed 4 hours in and `sim/b` 16, whichever of the window's days those fall on here.
+    // `sim/a` closed 4 hours in, `sim/b` 16 and `sim/old`, made before the window, 22: whichever
+    // of the window's days those fall on here.
     let days: Vec<String> = [-24.0, 0.0, 24.0, 48.0]
         .iter()
         .map(|hours| {
-            let closed = [4.0, 16.0].iter().filter(|h| day(**h) == day(*hours));
+            let closed = [4.0, 16.0, 22.0].iter().filter(|h| day(**h) == day(*hours));
             format!("  {}  {}\n", day(*hours), closed.count())
         })
         .collect();
     let wanted = format!(
-        "Stats: 5 top-level tasks made in the last 3 days
+        "Stats: 5 top-level tasks made in the last 3 days; every figure is theirs but done per day
 Status: backlog 1 · ready 1 · done 2 · blocked 1
 Done 2: lead time median 10.0 h · p75 13.0 h · p90 14.8 h
-  unclaimed    median 3.0 h · p75 4.0 h · p90 4.6 h  (2 tasks)
   ready        median 3.0 h · p75 4.0 h · p90 4.6 h  (2 tasks)
   in_progress  median 4.0 h · p75 5.0 h · p90 5.6 h  (2 tasks)
   review       median 3.0 h · p75 4.0 h · p90 4.6 h  (2 tasks)
+Waiting before the first claim (a part of the statuses above, not added to them): median 3.0 h · p75 4.0 h · p90 4.6 h
 Bounces (review → in_progress × tasks): 0 × 4 · 1 × 1
-Done per day:
+Done per day (every top-level task closed in the last 3 days, whenever it was made):
 {}Longest in their status:
   sim/d                        ready       48.0 h
   sim/e                        backlog     48.0 h
@@ -167,7 +173,7 @@ fn stats_as_json_carries_the_same_figures_in_seconds() {
         }
     };
     spread(&said["lead_seconds"], 10.0, 13.0, 14.8);
-    spread(&said["unclaimed_seconds"], 3.0, 4.0, 4.6);
+    spread(&said["waiting_before_first_claim_seconds"], 3.0, 4.0, 4.6);
     spread(&said["stage_seconds"]["ready"], 3.0, 4.0, 4.6);
     spread(&said["stage_seconds"]["in_progress"], 4.0, 5.0, 5.6);
     spread(&said["stage_seconds"]["review"], 3.0, 4.0, 4.6);
@@ -179,7 +185,8 @@ fn stats_as_json_carries_the_same_figures_in_seconds() {
     let done: u64 = (said["done_per_day"].as_array().unwrap().iter())
         .map(|day| day["done"].as_u64().unwrap())
         .sum();
-    assert_eq!(done, 2);
+    // The two made in the window and the one made before it.
+    assert_eq!(done, 3);
     assert_eq!(said["done_per_day"][0]["day"], day(-24.0));
     assert_eq!(
         said["slowest"],
@@ -204,10 +211,15 @@ fn the_window_read_holds_top_level_tasks_their_executors_and_no_posts() {
     let c = pipeline();
     let records = c.store().stage_records(START).unwrap();
     let slugs: Vec<&str> = records.iter().map(|r| r.slug.as_str()).collect();
-    assert_eq!(slugs, ["sim/a", "sim/b", "sim/c", "sim/d", "sim/e"]);
+    // `sim/old` was made before `START` and done after it.
+    assert_eq!(
+        slugs,
+        ["sim/old", "sim/a", "sim/b", "sim/c", "sim/d", "sim/e"]
+    );
+    assert_eq!(records[0].created, NOW);
     let executing: Vec<bool> = records.iter().map(|r| r.executing).collect();
-    assert_eq!(executing, [true, true, true, false, false]);
-    let said: Vec<(&str, &str)> = (records[1].lines.iter())
+    assert_eq!(executing, [true, true, true, true, false, false]);
+    let said: Vec<(&str, &str)> = (records[2].lines.iter())
         .map(|l| (l.kind.as_str(), l.text.as_str()))
         .collect();
     assert_eq!(said.len(), 7, "{said:?}");
@@ -216,9 +228,9 @@ fn the_window_read_holds_top_level_tasks_their_executors_and_no_posts() {
     // A verdict is cut to the word that names it.
     assert_eq!(said[4], ("verdict", "changes: a test "));
     assert_eq!(said[6], ("verdict", "approve"));
-    assert_eq!(records[1].created, START);
-    assert_eq!(records[1].updated, START + 16.0 * H);
-    assert_eq!(records[1].status, "done");
+    assert_eq!(records[2].created, START);
+    assert_eq!(records[2].updated, START + 16.0 * H);
+    assert_eq!(records[2].status, "done");
 }
 
 #[test]
@@ -227,12 +239,12 @@ fn the_default_window_is_fourteen_days_and_takes_in_the_old_task() {
     let said = at(&c, START, 48.0).ok("", &["stats"]);
     assert!(
         said.starts_with(
-            "Stats: 6 top-level tasks made in the last 14 days\nStatus: backlog 1 · ready 2 · done 2 · blocked 1\n"
+            "Stats: 6 top-level tasks made in the last 14 days; every figure is theirs but done per day\nStatus: backlog 1 · ready 1 · done 3 · blocked 1\n"
         ),
         "{said}"
     );
     assert!(
-        said.contains("Ready with no executor: 2, median 168.0 h there\n"),
+        said.contains("Ready with no executor: 1, median 48.0 h there\n"),
         "{said}"
     );
 }
@@ -245,14 +257,24 @@ fn stats_of_an_empty_board_and_a_window_of_no_days() {
     assert_eq!(
         c.ok("", &["stats", "--days", "1"]),
         format!(
-            "Stats: 0 top-level tasks made in the last 1 days\nDone 0\nDone per day:\n  {before}  0\n  {today}  0\nBlocked: 0\nReady with no executor: 0\n"
+            "Stats: 0 top-level tasks made in the last 1 days; every figure is theirs but done per day\nDone 0\nDone per day (every top-level task closed in the last 1 days, whenever it was made):\n  {before}  0\n  {today}  0\nBlocked: 0\nReady with no executor: 0\n"
         )
     );
     let refused = c.run_as("", &["stats", "--days", "0"], "");
     assert_eq!(refused.code, 1);
     assert_eq!(
         refused.err,
-        "✖ --days is a number of days, 1 or more, not 0\n"
+        "✖ --days is a number of days from 1 to 3650, not 0\n"
+    );
+    let refused = c.run_as("", &["stats", "--days", "3651"], "");
+    assert_eq!(refused.code, 1);
+    assert_eq!(
+        refused.err,
+        "✖ --days is a number of days from 1 to 3650, not 3651\n"
+    );
+    assert!(
+        c.ok("", &["stats", "--days", "3650"])
+            .starts_with("Stats: 0 top-level tasks made in the last 3650 days;")
     );
 }
 
@@ -326,7 +348,7 @@ fn stats_reads_the_board_once_however_many_tasks_it_holds() {
     // Each task: claimed at half an hour, in review at 1.5 and 3 hours, approved at 3.5.
     assert!(
         many.contains(
-            "Done 300: lead time median 3.5 h · p75 3.5 h · p90 3.5 h\n  unclaimed    median 0.5 h · p75 0.5 h · p90 0.5 h  (300 tasks)\n  ready        median 0.5 h · p75 0.5 h · p90 0.5 h  (300 tasks)\n  in_progress  median 2.0 h · p75 2.0 h · p90 2.0 h  (300 tasks)\n  review       median 1.0 h · p75 1.0 h · p90 1.0 h  (300 tasks)\nBounces (review → in_progress × tasks): 1 × 300\n"
+            "Done 300: lead time median 3.5 h · p75 3.5 h · p90 3.5 h\n  ready        median 0.5 h · p75 0.5 h · p90 0.5 h  (300 tasks)\n  in_progress  median 2.0 h · p75 2.0 h · p90 2.0 h  (300 tasks)\n  review       median 1.0 h · p75 1.0 h · p90 1.0 h  (300 tasks)\nWaiting before the first claim (a part of the statuses above, not added to them): median 0.5 h · p75 0.5 h · p90 0.5 h\nBounces (review → in_progress × tasks): 1 × 300\n"
         ),
         "{many}"
     );

@@ -54,13 +54,15 @@ pub struct Summary {
     pub by_status: Vec<(String, usize)>,
     /// Creation to close of the done tasks.
     pub lead: Option<Spread>,
-    /// The done tasks' wait before their first claim.
+    /// The done tasks' wait before their first claim: a part of the statuses' time below, never
+    /// added to it.
     pub unclaimed: Option<Spread>,
     /// Each open status a done task held, over the done tasks that held it.
     pub per_stage: Vec<(String, Spread)>,
     /// How many tasks review sent back how often: bounces, then tasks.
     pub bounces: Vec<(u32, usize)>,
-    /// Tasks done on each day of the window, oldest first.
+    /// Tasks done on each day of the window, oldest first: every close given, whenever its
+    /// task was made.
     pub done_per_day: Vec<(String, usize)>,
     /// The open tasks that held their status longest, longest first.
     pub slowest: Vec<Sitting>,
@@ -100,9 +102,30 @@ fn waiting(ages: Vec<f64>) -> Waiting {
     }
 }
 
-/// The pipeline over `rows`, the tasks made in the last `days` days before `now`; `day` names the
-/// day a time falls on.
-pub fn summarize(rows: &[Row], now: f64, days: i64, day: &dyn Fn(f64) -> String) -> Summary {
+/// The names of the days from `since` to `now`, oldest first. A day is asked for every six hours,
+/// so one an hour short of or over 24 is neither skipped nor named twice.
+fn days_between(since: f64, now: f64, day: &dyn Fn(f64) -> String) -> Vec<String> {
+    let mut names: Vec<String> = Vec::new();
+    let mut at = since;
+    while at < now {
+        names.push(day(at));
+        at += DAY / 4.0;
+    }
+    names.push(day(now));
+    names.dedup();
+    names
+}
+
+/// The pipeline over `rows`, the tasks made in the last `days` days before `now`, and `closes`,
+/// when each task done in those days was closed, whenever it was made; `day` names the day a time
+/// falls on.
+pub fn summarize(
+    rows: &[Row],
+    closes: &[f64],
+    now: f64,
+    days: i64,
+    day: &dyn Fn(f64) -> String,
+) -> Summary {
     let by_status = STATUSES
         .iter()
         .map(|status| {
@@ -132,16 +155,13 @@ pub fn summarize(rows: &[Row], now: f64, days: i64, day: &dyn Fn(f64) -> String)
     for row in rows {
         *bounced.entry(row.stages.bounces).or_default() += 1;
     }
-    let mut done_per_day: Vec<(String, usize)> = Vec::new();
-    for back in (0..=days.max(0)).rev() {
-        #[allow(clippy::cast_precision_loss)]
-        let name = day(now - back as f64 * DAY);
-        if done_per_day.last().is_none_or(|(last, _)| *last != name) {
-            done_per_day.push((name, 0));
-        }
-    }
-    for closed in done.iter().filter_map(|r| r.stages.closed) {
-        let name = day(closed);
+    #[allow(clippy::cast_precision_loss)]
+    let since = now - days.max(0) as f64 * DAY;
+    let mut done_per_day: Vec<(String, usize)> = (days_between(since, now, day).into_iter())
+        .map(|name| (name, 0))
+        .collect();
+    for closed in closes.iter().filter(|closed| **closed >= since) {
+        let name = day(*closed);
         if let Some((_, count)) = done_per_day.iter_mut().find(|(d, _)| *d == name) {
             *count += 1;
         }

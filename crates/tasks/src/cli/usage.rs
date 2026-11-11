@@ -142,13 +142,14 @@ options:
 
 Where the pipeline's time goes, over the top-level tasks made in the window:
 tasks by status; for the done ones, lead time and the time in each status
-(median, p75, p90); how often review sent work back; tasks done per day; the
-ten open tasks longest in their status; blocked and unstaffed ready work.
+(median, p75, p90); how often review sent work back; the ten open tasks
+longest in their status; blocked and unstaffed ready work. Done per day
+counts every top-level task closed in the window, whenever it was made.
 
 options:
   -h, --help  show this help message and exit
   --as ACTOR
-  --days N    how many days back the tasks were made (default: 14)
+  --days N    how many days back, 1 to 3650 (default: 14)
   --json      the same figures, every duration in seconds
 "#,
     ),

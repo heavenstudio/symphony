@@ -422,7 +422,7 @@ fn show_prints_the_task_its_people_its_subtasks_its_body_and_its_thread() {
         "  links: docs/A.md, docs/B.md#H".into(),
         "  depends on: sim/base".into(),
         "  parent: sim/base".into(),
-        "  Stages: unclaimed 0.0 h · ready 0.0 h".into(),
+        "  Stages: ready 0.0 h; never claimed in 0.0 h".into(),
         "  subtasks:".into(),
         format!("    sim/a/do                     in_progress executor {exe}"),
         "    sim/a/two                    ready       -".into(),
@@ -443,7 +443,7 @@ fn show_prints_the_task_its_people_its_subtasks_its_body_and_its_thread() {
         "sim/a/do — Do  [in_progress, p2]".to_string(),
         format!("  executor {exe} (live)"),
         "  parent: sim/a".into(),
-        "  Stages: unclaimed 0.0 h · ready 0.0 h · in_progress 0.0 h".into(),
+        "  Stages: ready 0.0 h · in_progress 0.0 h; first claimed after 0.0 h".into(),
         "  an instruction subtask: close it with `just tasks done sim/a/do \"what came of it\"`"
             .into(),
         String::new(),

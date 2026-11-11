@@ -20,13 +20,15 @@ pub struct StageRecord {
     pub lines: Vec<Line>,
 }
 
-/// The top-level tasks made since `$since`, who executes them, and each one's thread read by its
-/// own range of keys without its posts. A verdict's text is only read for its first word. The
+/// The top-level tasks made since `$since` and those done that were written since (a task closed
+/// since then is one of them: its close wrote it), who executes them, and each one's thread read
+/// by its own range of keys without its posts. A verdict's text is only read for its first word. The
 /// roles are read by their tasks' slugs, through `role_slug`, and kept by role after, as the
 /// board's snapshot reads them: one condition over both would read every role.
 const READ: &str = "
 LET $tasks = (SELECT sid, slug, status, created, updated FROM task
-    WHERE parent = NONE AND created >= $since ORDER BY sid);
+    WHERE parent = NONE AND (created >= $since OR (status = 'done' AND updated >= $since))
+    ORDER BY sid);
 RETURN {
     tasks: $tasks,
     executing: (SELECT slug, role FROM role WHERE slug IN $tasks.slug)
@@ -37,7 +39,8 @@ RETURN {
 };";
 
 impl Store {
-    /// Every top-level task made at or after `since`, in the order they were made, with what
+    /// Every top-level task made at or after `since`, and every done one written at or after it
+    /// (so every one closed since, whenever it was made), in the order they were made, with what
     /// [`crate::stages::stages`] reads of each: one round trip however many there are.
     pub fn stage_records(&self, since: f64) -> Result<Vec<StageRecord>, Error> {
         #[derive(Deserialize)]

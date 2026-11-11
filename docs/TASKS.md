@@ -761,8 +761,10 @@ orchestrator's PULL header shows `slots=OPEN/CAP`, and the agents API its
 The board keeps no table of status changes. Where a task's time went is read
 back from what it already stores: the task's `created`, `updated` and `status`,
 and the `system` and `verdict` lines its changes left on its thread
-(`crates/tasks/src/stages.rs`, which also names the formats the store writes
-them with):
+(`crates/tasks/src/stages.rs`). The store builds its move and claim lines
+with that module's functions and the release, block and unblock lines from its
+constants; the verdict words and the `(was STATUS)` ending are written out on
+both sides.
 
 | line | what it changes |
 |---|---|
@@ -774,7 +776,9 @@ them with):
 | a `changes` verdict | review back to in progress: a bounce |
 | any other verdict (`approve`, a subtask's `done`, a landing) | done |
 
-The lines are replayed in the order of their times. A line naming the status
+The lines are replayed in the order of their message ids, the order they were
+written in: a line's time is its writer's clock, so one dated before the line
+written ahead of it is taken at that line's time. A line naming the status
 the task already holds changes nothing, and nothing after the line that closed
 the task is read. The status a task was made in is the one the first line that
 names a status says it left; with no such line it is the task's own status
@@ -782,18 +786,21 @@ where a task can be made in it, else `ready`. Where the replay ends in another
 status than the task holds (a change the thread does not record), that change
 is dated at the task's `updated`. An open task is counted up to now; a done or
 cancelled one stops at the line that closed it, and the closing status itself
-counts no time.
+counts no time. The statuses' times add up to the time from creation to close
+(or to now).
 
 `just tasks show SLUG` prints it in one line under the task's roles and links:
 
 ```
-  Stages: unclaimed 0.4 h · ready 0.4 h · in_progress 1.3 h (2 visits) · review 0.8 h · 1 bounce
+  Stages: ready 0.4 h · in_progress 1.3 h (2 visits) · review 0.8 h · 1 bounce; first claimed after 0.4 h
 ```
 
-`unclaimed` is the time from the task's creation to its first claim (to its
-close, else to now, when nobody claimed it); each status follows in the order
-the task first held it, with its visits when more than one; a bounce is review
-sending the task back to in progress, by a `changes` verdict or a move.
+Each status is in the order the task first held it, with its visits when more
+than one; a bounce is review sending the task back to in progress, by a
+`changes` verdict or a move. After the `;` comes the wait from the task's
+creation to its first claim (`never claimed in 20.0 h` when nobody claimed it:
+to its close, else to now). That wait is a part of the statuses before it,
+usually the time in `ready`, and is never added to them.
 `just tasks show SLUG --json` carries the same as `stages`, every duration in
 seconds and every time in epoch seconds:
 
@@ -811,29 +818,36 @@ seconds and every time in epoch seconds:
 }
 ```
 
-`just tasks stats [--days N] [--json]` (14 days unless `--days` says; no
-session needed) is the same reading over every top-level task made in the
-window, subtasks left out:
+`just tasks stats [--days N] [--json]` (14 days unless `--days` says, from 1
+to 3650; no session needed) is the same reading over every top-level task
+made in the window, subtasks left out. Every figure is of those tasks but the
+tasks done per day, which its header says:
 
 - how many hold each status;
-- for the done ones, the lead time (creation to close), the wait before the
-  first claim and the time in each open status, each as median, p75 and p90
-  (a value between two tasks is taken proportionally between them); a status
-  is spread over the done tasks that held it, and says how many did;
+- for the done ones, the lead time (creation to close) and the time in each
+  open status, each as median, p75 and p90 (a value between two tasks is
+  taken proportionally between them); a status is spread over the done tasks
+  that held it, and says how many did;
+- on a line of its own, the done ones' wait before their first claim: a part
+  of the statuses above it, not a row to add to them;
 - how many tasks review sent back how often (`0 × 41 · 1 × 6 · 2 × 1`);
-- tasks done on each day of the window, by this machine's time zone;
+- top-level tasks done on each day of the window, whenever they were made (a
+  task made a month ago and closed yesterday counts yesterday), by this
+  machine's time zone, every date of the window named once;
 - the ten open tasks that have held their status longest, with that status
   and how long;
 - how many tasks are blocked and how many are ready with no executor, each
   with the median time they have been there.
 
 `--json` carries the same figures as `by_status`, `lead_seconds`,
-`unclaimed_seconds`, `stage_seconds` (by status; each spread is `tasks`,
-`median`, `p75`, `p90`), `bounces`, `done_per_day`, `slowest`, `blocked` and
+`stage_seconds` (by status; each spread is `tasks`, `median`, `p75`, `p90`),
+`waiting_before_first_claim_seconds` (beside `stage_seconds`, never in it),
+`bounces`, `done_per_day`, `slowest`, `blocked` and
 `ready_unstaffed` (`tasks`, `median_seconds`), every duration in seconds.
 
 `stats` reads the window in one round trip (`Store::stage_records`): the
-tasks made since the window's start, who executes them, and each one's thread
+top-level tasks made since the window's start and the done ones written since
+(a task closed in the window is one of them), who executes them, and each one's thread
 by its own range of keys with the posts left out, never a thread at a time.
 With the read that opens the board that is two requests whatever the board
 holds (`tests/cli/stats.rs` counts them over 300 tasks).

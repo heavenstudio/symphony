@@ -2,8 +2,11 @@
 //! `updated` and `status`, and the lines its status changes left on its thread. Nothing here reads
 //! the board or the clock: [`stages`] is given the lines and the time to count an open task up to.
 //!
-//! The lines that change a status, each written by the store through the names here so the two
-//! cannot drift:
+//! The lines that change a status. The store builds its move and claim lines with [`moved_line`]
+//! and [`claimed_line`] and the others from the constants here, but for the owner's move, whose
+//! line the database joins from [`MOVED`] and [`ARROW`]; the verdict words (`changes`, `approve`,
+//! `done`) and the `(was STATUS)` and `(released)`/`(left)` endings are written out on both sides,
+//! not shared.
 //!
 //! - `HANDLE moved it FROM → TO` ([`moved_line`]): a move, the owner's too.
 //! - `HANDLE claimed it[, handed over from OTHER (HEALTH), …]` ([`claimed_line`]): ready work
@@ -15,9 +18,12 @@
 //! - a `verdict` message: `changes…` sends a task in review back to in progress; any other
 //!   (`approve…`, a subtask's `done: …`, a landing) closes it.
 //!
-//! A thread is replayed in the order of its times, then its ids. A line that names the status the
-//! task already holds changes nothing (a duplicate), and nothing after the line that closed the
-//! task is read. Where the replay ends in another status than the task's own, a change the thread
+//! A thread is replayed in the order of its message ids, the order the lines were written in: a
+//! line's time is its writer's clock, so a line dated before the one written ahead of it is taken
+//! at that one's time. A line that names the status the task already holds changes nothing (a
+//! duplicate), and nothing after the line that closed the task is read. The statuses' times add
+//! up to the time from creation to close (or to now); the wait before the first claim is a part
+//! of them, never a status of its own. Where the replay ends in another status than the task's own, a change the thread
 //! does not record (a line lost, a board copied without its thread) is dated at the task's
 //! `updated`.
 
@@ -25,6 +31,8 @@ use crate::{BEFORE_WORK, STATUSES};
 use std::collections::{BTreeSet, HashSet};
 
 pub mod stats;
+#[cfg(test)]
+mod stats_tests;
 #[cfg(test)]
 mod tests;
 
@@ -108,7 +116,8 @@ pub struct Stage {
 pub struct Stages {
     /// Each status it held, in the order it first held them.
     pub stages: Vec<Stage>,
-    /// From its creation to its first claim; with none, to its close, else to `now`.
+    /// From its creation to its first claim; with none, to its close, else to `now`. A part of
+    /// the statuses' time, not beside it.
     pub unclaimed_seconds: f64,
     pub first_claimed: Option<f64>,
     /// How often review sent it back to in progress.
@@ -312,10 +321,16 @@ impl Replay {
 pub fn stages(facts: Facts, lines: &[Line], now: f64) -> Stages {
     let mut seen = HashSet::new();
     let mut ordered: Vec<&Line> = lines.iter().filter(|l| seen.insert(l.id)).collect();
-    ordered.sort_by(|a, b| a.ts.total_cmp(&b.ts).then(a.id.cmp(&b.id)));
+    ordered.sort_by_key(|line| line.id);
+    // No line is dated before the task, nor before the line written ahead of it.
+    let mut latest = facts.created;
     let events: Vec<(f64, Event)> = ordered
         .into_iter()
-        .filter_map(|line| Some((line.ts.max(facts.created), event(line)?)))
+        .filter_map(|line| {
+            let event = event(line)?;
+            latest = latest.max(line.ts);
+            Some((latest, event))
+        })
         .collect();
     let first = made_in(facts.status, &events);
     let mut replay = Replay {
@@ -391,10 +406,10 @@ pub fn hours(seconds: f64) -> String {
     format!("{:.1} h", seconds / 3600.0)
 }
 
-/// One line of where the time went: the wait before the first claim, each open status held, and
-/// the bounces if any.
+/// One line of where the time went: each open status held and the bounces if any, then, apart
+/// from them since it is a part of their time, the wait before the first claim.
 pub fn summary_line(stages: &Stages) -> String {
-    let mut parts = vec![format!("unclaimed {}", hours(stages.unclaimed_seconds))];
+    let mut parts = Vec::new();
     for stage in &stages.stages {
         if CLOSED.contains(&stage.status.as_str()) {
             continue;
@@ -411,5 +426,11 @@ pub fn summary_line(stages: &Stages) -> String {
         1 => parts.push("1 bounce".into()),
         n => parts.push(format!("{n} bounces")),
     }
-    format!("Stages: {}", parts.join(" · "))
+    let waited = hours(stages.unclaimed_seconds);
+    let claim = if stages.first_claimed.is_some() {
+        format!("first claimed after {waited}")
+    } else {
+        format!("never claimed in {waited}")
+    };
+    format!("Stages: {}; {claim}", parts.join(" · "))
 }

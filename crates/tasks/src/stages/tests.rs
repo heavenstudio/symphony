@@ -1,12 +1,10 @@
 //! The replay of a thread, each case's expected times written out by hand.
 
-use super::stats::{Row, Sitting, Spread, Waiting, spread, summarize};
 use super::*;
 
 /// When every case's task was made.
-const T0: f64 = 1_000_000.0;
-const H: f64 = 3600.0;
-const D: f64 = 86_400.0;
+pub(super) const T0: f64 = 1_000_000.0;
+pub(super) const H: f64 = 3600.0;
 
 fn line(id: i64, kind: &str, hours: f64, text: &str) -> Line {
     Line {
@@ -35,7 +33,7 @@ fn facts(status: &str, updated: f64) -> Facts<'_> {
 }
 
 /// A stage first entered `entered` hours in, held `held` hours over `visits` visits.
-fn stage(status: &str, entered: f64, held: f64, visits: u32) -> Stage {
+pub(super) fn stage(status: &str, entered: f64, held: f64, visits: u32) -> Stage {
     Stage {
         status: status.into(),
         first_entered: T0 + entered * H,
@@ -44,7 +42,7 @@ fn stage(status: &str, entered: f64, held: f64, visits: u32) -> Stage {
     }
 }
 
-fn at(hours: f64) -> f64 {
+pub(super) fn at(hours: f64) -> f64 {
     T0 + hours * H
 }
 
@@ -61,7 +59,7 @@ fn straight_through() -> Vec<Line> {
     ]
 }
 
-fn straight_through_stages() -> Stages {
+pub(super) fn straight_through_stages() -> Stages {
     Stages {
         stages: vec![
             stage("ready", 0.0, 0.5, 1),
@@ -155,7 +153,7 @@ fn review_sending_it_back_twice_is_two_bounces_and_three_visits() {
     );
     assert_eq!(
         summary_line(&found),
-        "Stages: unclaimed 1.0 h · ready 1.0 h · in_progress 4.0 h (3 visits) · review 4.0 h (3 visits) · 2 bounces"
+        "Stages: ready 1.0 h · in_progress 4.0 h (3 visits) · review 4.0 h (3 visits) · 2 bounces; first claimed after 1.0 h"
     );
 }
 
@@ -175,7 +173,7 @@ fn a_changes_verdict_said_twice_is_one_bounce() {
     );
     assert_eq!(
         summary_line(&found),
-        "Stages: unclaimed 1.0 h · ready 1.0 h · in_progress 2.0 h (2 visits) · review 1.0 h · 1 bounce"
+        "Stages: ready 1.0 h · in_progress 2.0 h (2 visits) · review 1.0 h · 1 bounce; first claimed after 1.0 h"
     );
 }
 
@@ -504,195 +502,71 @@ fn the_lines_the_store_writes_are_the_lines_read() {
 fn a_task_with_no_bounce_and_one_visit_each_says_only_its_hours() {
     assert_eq!(
         summary_line(&straight_through_stages()),
-        "Stages: unclaimed 0.5 h · ready 0.5 h · in_progress 1.5 h · review 1.0 h"
+        "Stages: ready 0.5 h · in_progress 1.5 h · review 1.0 h; first claimed after 0.5 h"
     );
     assert_eq!(hours(4680.0), "1.3 h");
 }
 
-// The pipeline over a window.
-
-fn near(found: f64, wanted: f64) {
-    assert!((found - wanted).abs() < 1e-6, "{found} is not {wanted}");
-}
-
-fn spread_is(found: Option<Spread>, n: usize, median: f64, p75: f64, p90: f64) {
-    let found = found.expect("a spread");
-    assert_eq!(found.n, n);
-    near(found.median, median * H);
-    near(found.p75, p75 * H);
-    near(found.p90, p90 * H);
-}
-
-/// A task made `made` hours in, holding `status` since `since` hours in, its stages given as
-/// (status, hours held).
-fn row(slug: &str, status: &str, made: f64, since: f64, held: &[(&str, f64)]) -> Row {
-    Row {
-        slug: slug.into(),
-        status: status.into(),
-        created: at(made),
-        executing: false,
-        stages: Stages {
-            stages: held.iter().map(|(s, h)| stage(s, made, *h, 1)).collect(),
-            unclaimed_seconds: held.first().map_or(0.0, |(_, h)| h * H),
-            first_claimed: None,
-            bounces: 0,
-            current: status.into(),
-            current_since: at(since),
-            closed: CLOSED.contains(&status).then_some(at(since)),
-        },
-    }
-}
-
-fn day(time: f64) -> String {
-    format!("d{}", ((time - T0) / D).floor())
-}
-
-fn window() -> Vec<Row> {
-    let done = |slug: &str, made: f64, took: f64, held: &[(&str, f64)]| {
-        row(slug, "done", made, made + took, held)
-    };
-    let mut b = done(
-        "sim/b",
-        24.0,
-        8.0,
-        &[("ready", 2.0), ("in_progress", 4.0), ("review", 2.0)],
+#[test]
+fn a_task_nobody_claimed_says_how_long_it_has_waited() {
+    let found = stages(facts("ready", 0.0), &[], at(4.0));
+    assert_eq!(
+        summary_line(&found),
+        "Stages: ready 4.0 h; never claimed in 4.0 h"
     );
-    b.stages.bounces = 2;
-    let mut f = row("sim/f", "ready", 20.0, 24.0, &[("ready", 48.0)]);
-    f.executing = true;
-    let mut g = row("sim/g", "in_progress", 60.0, 66.0, &[("in_progress", 6.0)]);
-    (g.stages.bounces, g.executing) = (1, true);
-    vec![
-        done(
-            "sim/a",
-            0.0,
-            4.0,
-            &[("ready", 1.0), ("in_progress", 2.0), ("review", 1.0)],
-        ),
-        b,
-        done("sim/c", 24.0, 12.0, &[("ready", 3.0), ("in_progress", 9.0)]),
-        row("sim/d", "blocked", 40.0, 48.0, &[("blocked", 24.0)]),
-        row("sim/e", "ready", 60.0, 60.0, &[("ready", 12.0)]),
-        f,
-        g,
-        row("sim/h", "cancelled", 10.0, 11.0, &[("ready", 1.0)]),
-        row("sim/i", "ready", 48.0, 48.0, &[("ready", 24.0)]),
-    ]
 }
 
 #[test]
-fn the_window_is_counted_spread_and_ranked() {
-    let found = summarize(&window(), at(72.0), 3, &day);
-    assert_eq!((found.days, found.tasks), (3, 9));
-    let counts: Vec<(&str, usize)> = (found.by_status.iter())
-        .map(|(status, count)| (status.as_str(), *count))
-        .collect();
+fn the_statuses_times_add_up_to_the_lead_time_and_the_wait_is_a_part_of_them() {
+    // Ready half an hour, in progress an hour and a half, in review an hour: three hours.
+    let found = stages(facts("done", 3.0), &straight_through(), at(10.0));
+    let held: f64 = found.stages.iter().map(|stage| stage.seconds).sum();
+    assert_eq!(held, 10_800.0);
+    assert_eq!(found.lead_seconds(T0), Some(10_800.0));
+    // The wait before the claim is the ready half hour, counted once.
+    assert_eq!(found.unclaimed_seconds, 1800.0);
+    assert_eq!(found.stage("ready").map(|s| s.seconds), Some(1800.0));
+}
+
+#[test]
+fn lines_are_replayed_in_the_order_they_were_written_whatever_their_clocks_said() {
+    // The move was written after the claim by a clock ten seconds behind the claimer's.
+    let claim = Line {
+        id: 5,
+        kind: "system".into(),
+        text: "teal claimed it".into(),
+        ts: T0 + 100.0,
+    };
+    let moved = Line {
+        id: 6,
+        kind: "system".into(),
+        text: "teal moved it in_progress → review".into(),
+        ts: T0 + 90.0,
+    };
+    let found = stages(facts("review", 0.0), &[moved, claim], T0 + 400.0);
     assert_eq!(
-        counts,
-        [
-            ("backlog", 0),
-            ("concept", 0),
-            ("design", 0),
-            ("ready", 3),
-            ("in_progress", 1),
-            ("review", 0),
-            ("done", 3),
-            ("blocked", 1),
-            ("cancelled", 1),
+        found.stages,
+        vec![
+            Stage {
+                status: "ready".into(),
+                first_entered: T0,
+                seconds: 100.0,
+                visits: 1
+            },
+            Stage {
+                status: "in_progress".into(),
+                first_entered: T0 + 100.0,
+                seconds: 0.0,
+                visits: 1
+            },
+            Stage {
+                status: "review".into(),
+                first_entered: T0 + 100.0,
+                seconds: 300.0,
+                visits: 1
+            },
         ]
     );
-    // Lead times of 4, 8 and 12 hours; waits of 1, 2 and 3.
-    spread_is(found.lead, 3, 8.0, 10.0, 11.2);
-    spread_is(found.unclaimed, 3, 2.0, 2.5, 2.8);
-    let staged: Vec<&str> = found.per_stage.iter().map(|(s, _)| s.as_str()).collect();
-    assert_eq!(staged, ["ready", "in_progress", "review"]);
-    spread_is(Some(found.per_stage[0].1), 3, 2.0, 2.5, 2.8);
-    // 2, 4 and 9 hours in progress; only two of the three were ever in review, 1 and 2 hours.
-    spread_is(Some(found.per_stage[1].1), 3, 4.0, 6.5, 8.0);
-    spread_is(Some(found.per_stage[2].1), 2, 1.5, 1.75, 1.9);
-    assert_eq!(found.bounces, [(0, 7), (1, 1), (2, 1)]);
-    let per_day: Vec<(&str, usize)> = (found.done_per_day.iter())
-        .map(|(day, done)| (day.as_str(), *done))
-        .collect();
-    assert_eq!(per_day, [("d0", 1), ("d1", 2), ("d2", 0), ("d3", 0)]);
-    let sitting = |slug: &str, status: &str, hours: f64| Sitting {
-        slug: slug.into(),
-        status: status.into(),
-        seconds: hours * H,
-    };
-    assert_eq!(
-        found.slowest,
-        [
-            sitting("sim/f", "ready", 48.0),
-            sitting("sim/d", "blocked", 24.0),
-            sitting("sim/i", "ready", 24.0),
-            sitting("sim/e", "ready", 12.0),
-            sitting("sim/g", "in_progress", 6.0),
-        ]
-    );
-    assert_eq!(
-        found.blocked,
-        Waiting {
-            count: 1,
-            median_seconds: Some(86_400.0)
-        }
-    );
-    // sim/e and sim/i: sim/f is ready too, but held.
-    assert_eq!(
-        found.unstaffed,
-        Waiting {
-            count: 2,
-            median_seconds: Some(64_800.0)
-        }
-    );
-}
-
-#[test]
-fn an_empty_window_has_its_days_and_nothing_else() {
-    let found = summarize(&[], at(30.0), 1, &day);
-    assert_eq!(found.tasks, 0);
-    assert_eq!((found.lead, found.unclaimed), (None, None));
-    assert!(found.per_stage.is_empty() && found.bounces.is_empty() && found.slowest.is_empty());
-    assert_eq!(
-        found.done_per_day,
-        [("d0".to_string(), 0), ("d1".to_string(), 0)]
-    );
-    let none = Waiting {
-        count: 0,
-        median_seconds: None,
-    };
-    assert_eq!((found.blocked, found.unstaffed), (none, none));
-    assert!(found.by_status.iter().all(|(_, count)| *count == 0));
-}
-
-#[test]
-fn only_the_ten_longest_waits_are_named() {
-    let rows: Vec<Row> = (0..12u8)
-        .map(|n| {
-            let since = f64::from(n);
-            row(&format!("sim/t{n:02}"), "review", 0.0, since, &[])
-        })
-        .collect();
-    let found = summarize(&rows, at(20.0), 1, &day);
-    let slugs: Vec<&str> = found.slowest.iter().map(|s| s.slug.as_str()).collect();
-    assert_eq!(
-        slugs,
-        [
-            "sim/t00", "sim/t01", "sim/t02", "sim/t03", "sim/t04", "sim/t05", "sim/t06", "sim/t07",
-            "sim/t08", "sim/t09"
-        ]
-    );
-    near(found.slowest[9].seconds, 11.0 * H);
-}
-
-#[test]
-fn a_spread_falls_between_its_neighbours() {
-    assert_eq!(spread(Vec::new()), None);
-    let one = spread(vec![5.0]).unwrap();
-    assert_eq!((one.n, one.median, one.p75, one.p90), (1, 5.0, 5.0, 5.0));
-    let four = spread(vec![4.0, 1.0, 3.0, 2.0]).unwrap();
-    assert_eq!(four.n, 4);
-    near(four.median, 2.5);
-    near(four.p75, 3.25);
-    near(four.p90, 3.7);
+    assert_eq!(found.first_claimed, Some(T0 + 100.0));
+    assert_eq!(found.current_since, T0 + 100.0);
 }
