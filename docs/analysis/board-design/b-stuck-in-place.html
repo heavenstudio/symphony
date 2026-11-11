@@ -56,7 +56,7 @@ document.getElementById("page").innerHTML = `${M.header()}<main>${M.head()}${M.b
 ${M.strip(M.open, `<b>${M.open.length} open</b>`)}
 <nav class="tabs fade">${["review", "in_progress", "ready", "done", "design", "concept"].map((s) => tab(S[s])).join("")}<a>Backlog<i>${B.counts.backlog}</i></a></nav>
 <div class="cols"><div class="backlog">Backlog ${B.counts.backlog}</div>${["concept", "design", "ready", "in_progress"].map((s) => column(S[s], 10)).join("")}<div class="rail">build · test</div>${["review", "done"].map((s) => column(S[s], 10)).join("")}</div>
-</main>`;
+</main>${M.fab()}`;
 </script>
 </body>
 </html>
