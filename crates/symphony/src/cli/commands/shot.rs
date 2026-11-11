@@ -27,8 +27,9 @@ positional arguments:
 options:
   -h, --help           show this help message and exit
   --out FILE.png       where the final picture goes (its folder is made)
-  --timeout SECS       how long the page's load and each wait may take before the shot fails
-                       naming what it waited for (default 20)
+  --timeout SECS       how long the page's load, each step and the final capture may each take,
+                       every call to the browser within them included, before the shot fails
+                       naming what it waited for (default 20; a pause adds its own length)
   --size WxH           the viewport in CSS pixels (default 1440x900)
   --phone              a mid phone's screen instead, as the browser tests emulate it: 390x844
                        at 3x, mobile
@@ -38,19 +39,22 @@ options:
                        document's scroll width against the viewport's (horizontal overflow)
 
 steps, run in order before the final capture, each as often as needed:
-  --wait-for CSS       wait until an element matches CSS
-  --click CSS          click the middle of the first element CSS matches
-  --type CSS=TEXT      focus that element and type TEXT (CSS ends at the first = outside brackets)
+  --wait-for CSS       wait until an element matches CSS (the page is not scrolled)
+  --click CSS          scroll the first element CSS matches into view and click its middle
+  --type CSS=TEXT      scroll that element into view, focus it and type TEXT (CSS ends at the
+                       first = outside brackets)
   --key NAME           press a key: Tab, Enter, Escape, Space, Backspace, Delete, ArrowDown,
                        ArrowUp, ArrowLeft, ArrowRight, Home, End, PageUp, PageDown or one
                        character, after Shift+, Control+, Alt+ or Meta+ to hold those
-  --hover CSS          move the mouse over the middle of the first element CSS matches
+  --hover CSS          scroll the first element CSS matches into view and move the mouse over
+                       its middle
   --eval JS            evaluate JS in the page (awaiting a promise) and print its value as JSON
   --pause MS           wait MS milliseconds
   --shot FILE.png      capture now, mid-sequence (a menu open, then closed, in one run)
 
 A step on an element waits for it; a click, typing, a key or a hover then waits for the page to
-settle again, as a capture does. Chrome is SF_CHROME, else the first Chrome found on this machine.
+settle again, as a capture does, bringing the page back in front if the step left it hidden (an
+Escape the page does not take). Chrome is SF_CHROME, else the first Chrome found on this machine.
 Exit 0 with every picture saved, 1 when the browser, the page or a step failed, 2 for a command
 line it cannot run.";
 
@@ -437,33 +441,96 @@ fn key(name: &str) -> Result<Key, String> {
     })
 }
 
+/// One wait of the shot: `--timeout` from when it began. The driver holds its end too, so every
+/// call to the browser within it, however stuck, ends by then.
+#[derive(Clone, Copy)]
+struct Wait {
+    until: Instant,
+    timeout: Duration,
+}
+
+impl Wait {
+    /// A wait of `timeout` from now, and `extra` beyond it (a pause's own length).
+    fn begin(chrome: &mut Chrome, timeout: Duration, extra: Duration) -> Wait {
+        let until = Instant::now() + timeout + extra;
+        chrome.set_deadline(Some(until));
+        Wait { until, timeout }
+    }
+
+    fn over(self) -> bool {
+        Instant::now() >= self.until
+    }
+
+    /// Its length, as a failure names it.
+    fn said(self) -> String {
+        seconds_said(self.timeout)
+    }
+}
+
+/// A driver failure as the shot says it: `late()` once the wait has run out, else what failed,
+/// after `after`.
+fn said<T>(
+    result: chrome_devtools::Result<T>,
+    after: &str,
+    late: impl FnOnce() -> String,
+) -> Result<T, String> {
+    result.map_err(|error| {
+        if error.past_deadline() {
+            late()
+        } else {
+            format!("{after}: {error}")
+        }
+    })
+}
+
 fn run(shot: &Shot, binary: &str, out: &mut dyn Write) -> Result<(), String> {
     let program = std::env::current_exe()
         .map_err(|error| format!("this program's own path, to leash Chrome: {error}"))?;
     let mut chrome = Chrome::launch(binary, &Leash::new(program, &[]).quiet())
         .map_err(|error| error.to_string())?;
-    prepare(&mut chrome, shot)?;
+    // The page's load: its view, its navigation and its drawing, within one wait.
+    let wait = Wait::begin(&mut chrome, shot.timeout, Duration::ZERO);
+    prepare(&mut chrome, shot, wait)?;
     chrome
         .navigate(&shot.url, shot.timeout)
-        .map_err(|error| format!("{} did not load: {error}", shot.url))?;
-    settle(&mut chrome, shot.timeout, &shot.url)?;
+        .map_err(|error| not_loaded(&shot.url, wait, error.past_deadline(), &error.to_string()))?;
+    settle(&mut chrome, wait, &shot.url)?;
     for step in &shot.steps {
-        step.run(&mut chrome, shot, out)?;
+        let extra = match step {
+            Step::Pause(length) => *length,
+            _ => Duration::ZERO,
+        };
+        let wait = Wait::begin(&mut chrome, shot.timeout, extra);
+        step.run(&mut chrome, shot, wait, out)?;
     }
-    settle(&mut chrome, shot.timeout, "the final capture")?;
-    capture(&mut chrome, &shot.out, shot.full_page)?;
+    let wait = Wait::begin(&mut chrome, shot.timeout, Duration::ZERO);
+    settle(&mut chrome, wait, "the final capture")?;
+    capture(&mut chrome, &shot.out, shot.full_page, wait)?;
     if shot.report {
-        let requests = chrome.requests().map_err(|error| error.to_string())?;
-        let layout = chrome.eval(LAYOUT).map_err(|error| error.to_string())?;
+        let wait = Wait::begin(&mut chrome, shot.timeout, Duration::ZERO);
+        let late = || format!("the report: no answer within {}", wait.said());
+        let requests = said(chrome.requests(), "the report", late)?;
+        let layout = said(chrome.eval(LAYOUT), "the report", late)?;
         let said = report(chrome.events(), &requests, &layout);
         writeln!(out, "{said}").map_err(|error| format!("printing the report: {error}"))?;
     }
     Ok(())
 }
 
+/// Why the page did not load: the wait ran out (`late`), or Chrome's reason `why` (a refused
+/// connection, an unknown host), the URL named once.
+fn not_loaded(url: &str, wait: Wait, late: bool, why: &str) -> String {
+    if late {
+        return format!("{url} did not load within {}", wait.said());
+    }
+    let why = why.strip_prefix(&format!("{url}: ")).unwrap_or(why);
+    format!("{url} did not load: {why}")
+}
+
 /// The viewport, the colour scheme and, for a report, the console's domains, before the page loads.
-fn prepare(chrome: &mut Chrome, shot: &Shot) -> Result<(), String> {
-    match shot.view {
+fn prepare(chrome: &mut Chrome, shot: &Shot, wait: Wait) -> Result<(), String> {
+    let late = || format!("the browser did not answer within {}", wait.said());
+    let view = match shot.view {
         View::Phone => chrome.phone_screen(),
         View::Size(width, height) => chrome
             .call(
@@ -471,70 +538,86 @@ fn prepare(chrome: &mut Chrome, shot: &Shot) -> Result<(), String> {
                 json!({"width": width, "height": height, "deviceScaleFactor": 1, "mobile": false}),
             )
             .map(drop),
-    }
-    .map_err(|error| error.to_string())?;
+    };
+    said(view, "setting the view", late)?;
     if let Some(scheme) = &shot.scheme {
         let value = match scheme {
             Scheme::Light => "light",
             Scheme::Dark => "dark",
         };
-        chrome
-            .call(
+        said(
+            chrome.call(
                 "Emulation.setEmulatedMedia",
                 json!({"features": [{"name": "prefers-color-scheme", "value": value}]}),
-            )
-            .map_err(|error| error.to_string())?;
+            ),
+            "setting the colour scheme",
+            late,
+        )?;
     }
     if shot.report {
         for domain in ["Runtime.enable", "Log.enable"] {
-            chrome
-                .call(domain, json!({}))
-                .map_err(|error| error.to_string())?;
+            said(chrome.call(domain, json!({})), domain, late)?;
         }
     }
     Ok(())
 }
 
 impl Step {
-    fn run(&self, chrome: &mut Chrome, shot: &Shot, out: &mut dyn Write) -> Result<(), String> {
-        let timeout = shot.timeout;
+    fn run(
+        &self,
+        chrome: &mut Chrome,
+        shot: &Shot,
+        wait: Wait,
+        out: &mut dyn Write,
+    ) -> Result<(), String> {
         match self {
             Step::WaitFor(css) => {
-                locate(chrome, css, timeout, false).map_err(|why| format!("--wait-for {why}"))?;
+                locate(chrome, css, wait, false).map_err(|why| format!("--wait-for {why}"))?;
             }
             Step::Click(css) | Step::Hover(css) => {
                 let clicking = matches!(self, Step::Click(_));
                 let flag = if clicking { "--click" } else { "--hover" };
                 let point =
-                    locate(chrome, css, timeout, true).map_err(|why| format!("{flag} {why}"))?;
-                pointer(chrome, point, clicking)
-                    .map_err(|error| format!("{flag} {css}: {error}"))?;
-                settle(chrome, timeout, &format!("{flag} {css}"))?;
+                    locate(chrome, css, wait, true).map_err(|why| format!("{flag} {why}"))?;
+                let step = format!("{flag} {css}");
+                said(pointer(chrome, point, clicking), &step, || {
+                    format!("{step}: the browser did not answer within {}", wait.said())
+                })?;
+                settle(chrome, wait, &step)?;
             }
             Step::Type(css, text) => {
-                locate(chrome, css, timeout, false).map_err(|why| format!("--type {why}"))?;
-                let focused = chrome
-                    .eval(&format!(
+                locate(chrome, css, wait, false).map_err(|why| format!("--type {why}"))?;
+                let step = format!("--type {css}");
+                let late = || format!("{step}: the browser did not answer within {}", wait.said());
+                let focused = said(
+                    chrome.eval(&format!(
                         "(() => {{ const element = document.querySelector({}); element.scrollIntoView({{block: 'center', inline: 'center'}}); element.focus(); return document.activeElement === element; }})()",
                         json!(css)
-                    ))
-                    .map_err(|error| format!("--type {css}: {error}"))?;
+                    )),
+                    &step,
+                    late,
+                )?;
                 if focused != json!(true) {
-                    return Err(format!("--type {css}: the element cannot take focus"));
+                    return Err(format!("{step}: the element cannot take focus"));
                 }
-                chrome
-                    .call("Input.insertText", json!({"text": text}))
-                    .map_err(|error| format!("--type {css}: {error}"))?;
-                settle(chrome, timeout, &format!("--type {css}"))?;
+                said(
+                    chrome.call("Input.insertText", json!({"text": text})),
+                    &step,
+                    late,
+                )?;
+                settle(chrome, wait, &step)?;
             }
             Step::Key(key) => {
-                press(chrome, key).map_err(|error| format!("--key {}: {error}", key.key))?;
-                settle(chrome, timeout, &format!("--key {}", key.key))?;
+                let step = format!("--key {}", key.key);
+                said(press(chrome, key), &step, || {
+                    format!("{step}: the browser did not answer within {}", wait.said())
+                })?;
+                settle(chrome, wait, &step)?;
             }
             Step::Eval(script) => {
-                let value = chrome
-                    .eval(script)
-                    .map_err(|error| format!("--eval: {error}"))?;
+                let value = said(chrome.eval(script), "--eval", || {
+                    format!("--eval: no answer within {}", wait.said())
+                })?;
                 writeln!(out, "{value}").map_err(|error| format!("--eval: printing: {error}"))?;
             }
             Step::Pause(length) => {
@@ -543,57 +626,58 @@ impl Step {
                     .checked_duration_since(Instant::now())
                     .filter(|left| !left.is_zero())
                 {
-                    chrome
-                        .pump(left.min(PAUSE_SLICE))
-                        .map_err(|error| format!("--pause: {error}"))?;
+                    said(chrome.pump(left.min(PAUSE_SLICE)), "--pause", || {
+                        format!("--pause: the browser did not answer within {}", wait.said())
+                    })?;
                 }
             }
             Step::Shot(path) => {
-                settle(chrome, timeout, &format!("--shot {}", path.display()))?;
-                capture(chrome, path, shot.full_page)?;
+                settle(chrome, wait, &format!("--shot {}", path.display()))?;
+                capture(chrome, path, shot.full_page, wait)?;
             }
         }
         Ok(())
     }
 }
 
-/// The middle of the first element `css` matches, once one does (and, when `drawn`, once it has a
-/// box), scrolled into view; or why not within `timeout`.
-fn locate(
-    chrome: &mut Chrome,
-    css: &str,
-    timeout: Duration,
-    drawn: bool,
-) -> Result<(f64, f64), String> {
-    let deadline = Instant::now() + timeout;
+/// The middle of the first element `css` matches, once one does; for the pointer, once it has a
+/// box, scrolled into view (a wait or typing leaves the page where it is). Or why not within the
+/// wait.
+fn locate(chrome: &mut Chrome, css: &str, wait: Wait, pointer: bool) -> Result<(f64, f64), String> {
     let probe = format!(
         "(() => {{ let element; try {{ element = document.querySelector({}); }} catch (error) {{ return {{invalid: String(error.message)}}; }} \
-         if (!element) return null; element.scrollIntoView({{block: 'center', inline: 'center'}}); \
+         if (!element) return null; {} \
          const box = element.getBoundingClientRect(); return {{x: box.x + box.width / 2, y: box.y + box.height / 2, drawn: box.width > 0 && box.height > 0}}; }})()",
-        json!(css)
+        json!(css),
+        if pointer {
+            "element.scrollIntoView({block: 'center', inline: 'center'});"
+        } else {
+            ""
+        }
     );
+    let mut seen = false;
+    let missing = |seen: bool| {
+        let why = if seen {
+            "is in the page but has no box"
+        } else {
+            "did not appear"
+        };
+        format!("{css} {why} within {}", wait.said())
+    };
     loop {
-        let found = chrome
-            .eval(&probe)
-            .map_err(|error| format!("{css}: {error}"))?;
+        let found = said(chrome.eval(&probe), css, || missing(seen))?;
         if let Some(invalid) = found["invalid"].as_str() {
             return Err(format!("{css}: not a selector: {invalid}"));
         }
         let point = found["x"].as_f64().zip(found["y"].as_f64());
-        if let Some(point) = point.filter(|_| !drawn || found["drawn"] == json!(true)) {
+        if let Some(point) = point.filter(|_| !pointer || found["drawn"] == json!(true)) {
             return Ok(point);
         }
-        if Instant::now() >= deadline {
-            let why = if point.is_some() {
-                "is in the page but has no box"
-            } else {
-                "did not appear"
-            };
-            return Err(format!("{css} {why} within {}", seconds_said(timeout)));
+        seen = point.is_some();
+        if wait.over() {
+            return Err(missing(seen));
         }
-        chrome
-            .pump(POLL)
-            .map_err(|error| format!("{css}: {error}"))?;
+        said(chrome.pump(POLL), css, || missing(seen))?;
     }
 }
 
@@ -635,11 +719,13 @@ fn press(chrome: &mut Chrome, key: &Key) -> chrome_devtools::Result<()> {
 }
 
 /// What the page says of itself: its document's state, a Symphony page's own navigation marker
-/// (`html[data-navigation]`, from the shell), the regions still loading and the shell's notice.
+/// (`html[data-navigation]`, from the shell), the regions still loading, the shell's notice and
+/// whether it is in front.
 const STATE: &str = "(() => ({ready: document.readyState, \
 navigation: document.documentElement ? (document.documentElement.dataset.navigation ?? null) : null, \
 loading: document.querySelectorAll('[data-ready=loading]').length, \
-notice: document.getElementById('module-error')?.textContent ?? null}))()";
+notice: document.getElementById('module-error')?.textContent ?? null, \
+visible: document.visibilityState}))()";
 
 /// Resolves once the page's fonts are in and two frames have been drawn since.
 const PAINTED: &str = "document.fonts.ready.then(() => new Promise(resolve => \
@@ -667,15 +753,17 @@ fn quiet_since<'a>(events: impl Iterator<Item = (Instant, &'a Value)>, start: In
 
 /// Wait until the page has drawn: nothing in [`waiting`], and its traffic unchanged for [`QUIET`]
 /// by when the browser's events were read, so a slow look at a busy machine's page does not count
-/// against it; then for its fonts and two frames. Fails after `timeout` naming what it still
-/// waited for, or at once when the Symphony's shell says the page could not load.
-fn settle(chrome: &mut Chrome, timeout: Duration, after: &str) -> Result<(), String> {
+/// against it; then for its fonts and two frames. A page left behind another tab (an Escape the
+/// page does not take goes to the browser; a link may open a new tab) draws no frames, so it is
+/// brought back in front. Fails when the wait runs out, every call within it included, naming what
+/// it still waited for; or at once when the Symphony's shell says the page could not load.
+fn settle(chrome: &mut Chrome, wait: Wait, after: &str) -> Result<(), String> {
     let start = Instant::now();
-    let deadline = start + timeout;
+    let mut still = vec!["the page to answer".to_string()];
+    let mut failed = Vec::new();
     loop {
-        let state = chrome
-            .eval(STATE)
-            .map_err(|error| format!("{after}: {error}"))?;
+        let late = |still: &[String], failed: &[Value]| not_drawn(after, wait, still, failed);
+        let state = said(chrome.eval(STATE), after, || late(&still, &failed))?;
         if state["navigation"] == "failed" {
             return Err(format!(
                 "{after}: the page could not be loaded: {}",
@@ -685,47 +773,53 @@ fn settle(chrome: &mut Chrome, timeout: Duration, after: &str) -> Result<(), Str
                     .trim()
             ));
         }
-        let requests = chrome
-            .requests()
-            .map_err(|error| format!("{after}: {error}"))?;
-        let missing = waiting(&state, &requests);
-        if missing.is_empty() && quiet_since(chrome.events_read(), start).elapsed() >= QUIET {
-            chrome
-                .eval(PAINTED)
-                .map_err(|error| format!("{after}: {error}"))?;
+        if state["visible"] == "hidden" {
+            said(chrome.call("Page.bringToFront", json!({})), after, || {
+                late(&still, &failed)
+            })?;
+        }
+        let requests = said(chrome.requests(), after, || late(&still, &failed))?;
+        failed = requests.iter().filter_map(failure).collect();
+        still = waiting(&state, &requests);
+        if still.is_empty() && quiet_since(chrome.events_read(), start).elapsed() >= QUIET {
+            let painting = ["the page to paint: its fonts, then two frames".to_string()];
+            said(chrome.eval(PAINTED), after, || late(&painting, &failed))?;
             return Ok(());
         }
-        if Instant::now() >= deadline {
-            let missing = if missing.is_empty() {
-                vec![format!(
-                    "its requests to stay quiet for {} ms",
-                    QUIET.as_millis()
-                )]
-            } else {
-                missing
-            };
-            let failed: Vec<String> = requests
-                .iter()
-                .filter_map(failure)
-                .map(|failure| failure.to_string())
-                .collect();
-            let failed = if failed.is_empty() {
-                String::new()
-            } else {
-                format!("; meanwhile these failed: {}", failed.join(", "))
-            };
-            return Err(format!(
-                "{after}: the page was not drawn within {}: still waiting for {}{failed}",
-                seconds_said(timeout),
-                missing.join("; ")
-            ));
+        if still.is_empty() {
+            still = vec![format!(
+                "its requests to stay quiet for {} ms",
+                QUIET.as_millis()
+            )];
+        }
+        if wait.over() {
+            return Err(late(&still, &failed));
         }
     }
+}
+
+/// A page that was not drawn within its wait: what it still waited for, and the requests that
+/// failed meanwhile.
+fn not_drawn(after: &str, wait: Wait, still: &[String], failed: &[Value]) -> String {
+    let failed = if failed.is_empty() {
+        String::new()
+    } else {
+        let failed: Vec<String> = failed.iter().map(Value::to_string).collect();
+        format!("; meanwhile these failed: {}", failed.join(", "))
+    };
+    format!(
+        "{after}: the page was not drawn within {}: still waiting for {}{failed}",
+        wait.said(),
+        still.join("; ")
+    )
 }
 
 /// What a page still lacks to count as drawn, in words; empty once it has all of it.
 fn waiting(state: &Value, requests: &[Request]) -> Vec<String> {
     let mut missing = Vec::new();
+    if state["visible"] == "hidden" {
+        missing.push("the page to be in front (it is hidden)".to_string());
+    }
     if let Some(ready) = state["ready"].as_str().filter(|ready| *ready != "complete") {
         missing.push(format!("the document to load (it is {ready})"));
     }
@@ -765,12 +859,16 @@ fn seconds_said(length: Duration) -> String {
     format!("{}s", length.as_secs_f64())
 }
 
-/// The page, or with `full_page` all of it, as a PNG at `path`, its folder made.
-fn capture(chrome: &mut Chrome, path: &Path, full_page: bool) -> Result<(), String> {
+/// The page, or with `full_page` all of it, as a PNG at `path`, its folder made, within the wait.
+fn capture(chrome: &mut Chrome, path: &Path, full_page: bool, wait: Wait) -> Result<(), String> {
+    let capturing = format!("capturing {}", path.display());
+    let late = || format!("{capturing}: no picture within {}", wait.said());
     let params = if full_page {
-        let metrics = chrome
-            .call("Page.getLayoutMetrics", json!({}))
-            .map_err(|error| format!("capturing {}: {error}", path.display()))?;
+        let metrics = said(
+            chrome.call("Page.getLayoutMetrics", json!({})),
+            &capturing,
+            late,
+        )?;
         let size = &metrics["cssContentSize"];
         let (Some(width), Some(height)) = (size["width"].as_f64(), size["height"].as_f64()) else {
             return Err(format!(
@@ -782,9 +880,7 @@ fn capture(chrome: &mut Chrome, path: &Path, full_page: bool) -> Result<(), Stri
     } else {
         json!({})
     };
-    let picture = chrome
-        .screenshot(params)
-        .map_err(|error| format!("capturing {}: {error}", path.display()))?;
+    let picture = said(chrome.screenshot(params), &capturing, late)?;
     if let Some(folder) = path
         .parent()
         .filter(|folder| !folder.as_os_str().is_empty())

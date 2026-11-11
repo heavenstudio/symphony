@@ -394,6 +394,49 @@ fn a_full_page_shot_takes_the_whole_document() {
     );
 }
 
+#[test]
+fn an_escape_the_page_does_not_take_leaves_it_drawn_and_in_front_and_a_wait_scrolls_nothing() {
+    let Some(chrome) = chrome::find() else {
+        eprintln!("no Chrome on this machine (SF_CHROME names one): shot not run");
+        return;
+    };
+    // A page with no key handler of its own, so the Escape goes to the browser, which then counts
+    // the page hidden and draws it no frames until it is brought back in front; and an element
+    // below the fold, which waiting for leaves where it is.
+    let site = site();
+    site.set_file(
+        "/escape.html",
+        b"<!doctype html><main style=\"height: 3000px\">drawn</main><p id=\"below\">end</p>"
+            .to_vec(),
+        "text/html",
+    );
+    let scratch = Scratch::new("escape");
+    let out = scratch.join("escape.png");
+    let output = shot(
+        &chrome,
+        &[
+            &site.url("/escape.html"),
+            "--out",
+            out.to_str().unwrap(),
+            "--wait-for",
+            "#below",
+            "--eval",
+            "scrollY",
+            "--key",
+            "Escape",
+            "--eval",
+            "document.visibilityState",
+            "--key",
+            "Escape",
+        ],
+    )
+    .output()
+    .unwrap();
+    assert!(output.status.success(), "{}", said(&output));
+    assert_eq!(printed(&output), [json!(0), json!("visible")]);
+    assert_eq!(Picture::read(&out).width, 1440);
+}
+
 /// A stand-in for Chrome that records its process id and arguments in `SHOT_RECORDS`, one file
 /// per launch named by its id, then becomes the real Chrome (`SHOT_REAL_CHROME`) in place.
 fn recording_chrome(scratch: &Scratch) -> (PathBuf, PathBuf) {
@@ -515,6 +558,12 @@ fn a_selector_that_never_appears_fails_within_the_timeout_naming_it_and_leaves_n
         took >= Duration::from_secs(5),
         "failed {took:?} after asking for its page, before its timeout"
     );
+    // Nor did it run on past them: the page's load and the selector's wait, five seconds each,
+    // every call to the browser within them included, and its browser's stop.
+    assert!(
+        took < Duration::from_secs(40),
+        "failed {took:?} after asking for its page, long after its two five-second waits"
+    );
     assert!(!out.exists(), "a failed shot left a picture");
     let launched = launches(&records);
     assert_eq!(launched.len(), 1, "{launched:?}");
@@ -555,6 +604,11 @@ fn a_page_that_refuses_the_connection_fails_cleanly() {
         stderr.contains("ERR_CONNECTION_REFUSED"),
         "{}",
         said(&output)
+    );
+    assert_eq!(
+        stderr.matches(&refused).count(),
+        1,
+        "the URL named once: {stderr}"
     );
     assert_eq!(stderr.lines().count(), 1, "one line says why: {stderr}");
     assert!(output.stdout.is_empty());

@@ -167,6 +167,10 @@ the order given, then saves the PNG. `--phone`, `--size WxH`, `--full-page` and
 (`http://127.0.0.1:8765/symphony/tasks`) is fair to shoot; it never starts, stops or
 reconfigures a server. Pictures kept as a task's evidence go under the project's artifacts
 folder in the task's slug (`artifacts/SLUG/` by default) and are named on its thread.
+The shot leashes Chrome by running its own program again, so a host binary that calls
+`symphony::cli` runs `chrome_devtools::leash_main()` first, as
+`crates/symphony/src/bin/symphony.rs` does; without it a shot fails with "leash exited
+before DevTools readiness".
 
 ## Command ownership
 

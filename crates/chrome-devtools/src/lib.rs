@@ -34,17 +34,36 @@ const CLEANUP_CPU: Duration = Duration::from_secs(1);
 
 /// What went wrong driving Chrome, in one message that names what was waited for.
 #[derive(Debug)]
-pub struct Error(String);
+pub struct Error {
+    message: String,
+    past_deadline: bool,
+}
 
 impl Error {
     fn new(message: impl Into<String>) -> Self {
-        Self(message.into())
+        Self {
+            message: message.into(),
+            past_deadline: false,
+        }
+    }
+
+    fn deadline(what: &str) -> Self {
+        Self {
+            message: format!("{what}: no reply before the deadline"),
+            past_deadline: true,
+        }
+    }
+
+    /// Whether the wait ended because the deadline [`Chrome::set_deadline`] set had passed, rather
+    /// than because Chrome failed.
+    pub fn past_deadline(&self) -> bool {
+        self.past_deadline
     }
 }
 
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.0)
+        f.write_str(&self.message)
     }
 }
 
@@ -53,11 +72,13 @@ impl std::error::Error for Error {}
 pub type Result<T, E = Error> = std::result::Result<T, E>;
 
 /// Browser work and completed observations share one allowance. Socket timeouts and
-/// scheduler delays spend nothing; an observer reply proves the browser had a turn.
+/// scheduler delays spend nothing; an observer reply proves the browser had a turn. A caller's
+/// deadline, when there is one, ends the wait too, however little the browser has spent.
 struct WaitBudget {
     cpu: process::Budget,
     polls: u128,
     max_polls: u128,
+    deadline: Option<Instant>,
 }
 
 impl WaitBudget {
@@ -68,11 +89,21 @@ impl WaitBudget {
             cpu: process::Budget::new(if cpu.is_zero() { PROTOCOL_CPU } else { cpu }, members),
             polls: 0,
             max_polls: cpu.as_nanos().div_ceil(POLL.as_nanos()).max(1),
+            deadline: None,
         }
     }
 
+    fn until(self, deadline: Option<Instant>) -> Self {
+        Self { deadline, ..self }
+    }
+
+    fn past_deadline(&self) -> bool {
+        self.deadline
+            .is_some_and(|deadline| Instant::now() >= deadline)
+    }
+
     fn exhausted(&mut self, members: &[process::Member]) -> bool {
-        self.cpu.exhausted(members) || self.polls >= self.max_polls
+        self.past_deadline() || self.cpu.exhausted(members) || self.polls >= self.max_polls
     }
 
     fn poll(&mut self, members: &[process::Member]) -> bool {
@@ -263,6 +294,10 @@ fn chrome_args(profile: &Path) -> Vec<String> {
         "--disable-extensions",
         "--disable-background-networking",
         "--disable-background-timer-throttling",
+        // Chrome otherwise runs a page it counts as in the background or covered at background
+        // priority (macOS darwinbg), where a loaded machine starves its renderer for minutes.
+        "--disable-renderer-backgrounding",
+        "--disable-backgrounding-occluded-windows",
         "--disable-component-update",
         "--disable-sync",
         "--disable-features=Translate,OptimizationHints,MediaRouter",
@@ -585,6 +620,8 @@ pub struct Chrome {
     events: Vec<Value>,
     /// When each of `events` was read from the browser.
     arrivals: Vec<Instant>,
+    /// When every call and wait must end by, if the caller set it.
+    deadline: Option<Instant>,
 }
 
 /// A mid phone's screen, as the browser tests emulate one: 390x844 CSS pixels at 3x, mobile.
@@ -613,6 +650,7 @@ impl Chrome {
             observer: None,
             events: Vec::new(),
             arrivals: Vec::new(),
+            deadline: None,
         };
         let targets = chrome.browser_call("Target.getTargets", json!({}))?;
         let blank = targets["targetInfos"]
@@ -641,6 +679,18 @@ impl Chrome {
         chrome.call("Page.enable", json!({}))?;
         chrome.call("Network.enable", json!({}))?;
         Ok(chrome)
+    }
+
+    /// From now on, every call and wait here ends by `deadline` at the latest, whatever its own
+    /// allowance of browser CPU and observation turns, failing with an error that says so
+    /// ([`Error::past_deadline`]); `None` lifts it. The waits are otherwise as they were.
+    pub fn set_deadline(&mut self, deadline: Option<Instant>) {
+        self.deadline = deadline;
+    }
+
+    /// A wait's allowance: `cpu` of browser work and as many observation turns, and the deadline.
+    fn budget(&self, cpu: Duration) -> Result<WaitBudget> {
+        Ok(WaitBudget::new(cpu, &self.owner.members()?).until(self.deadline))
     }
 
     /// The leash's process id, which owns the browser.
@@ -715,8 +765,11 @@ impl Chrome {
 
     /// Evaluate `expression` in the page (awaiting a promise), its value as JSON.
     pub fn eval(&mut self, expression: &str) -> Result<Value> {
-        let mut budget = WaitBudget::new(PROTOCOL_CPU, &self.owner.members()?);
+        let mut budget = self.budget(PROTOCOL_CPU)?;
         self.eval_bounded(expression, &mut budget)?.ok_or_else(|| {
+            if budget.past_deadline() {
+                return Error::deadline(expression);
+            }
             Error::new(format!(
                 "{expression}: no evaluation reply after {} completed observer polls and {:?} CPU",
                 budget.polls,
@@ -763,7 +816,7 @@ impl Chrome {
     /// Wait until `expression` is truthy, bounded by browser CPU and completed polls,
     /// including observer turns while an evaluation's promise is still pending.
     pub fn wait_for(&mut self, expression: &str, cpu: Duration) -> Result<bool> {
-        let mut budget = WaitBudget::new(cpu, &self.owner.members()?);
+        let mut budget = self.budget(cpu)?;
         loop {
             let Some(value) = self.eval_bounded(expression, &mut budget)? else {
                 eprintln!(
@@ -799,7 +852,7 @@ impl Chrome {
         count: usize,
         cpu: Duration,
     ) -> Result<Vec<Value>> {
-        let mut budget = WaitBudget::new(cpu, &self.owner.members()?);
+        let mut budget = self.budget(cpu)?;
         loop {
             self.pump(POLL)?;
             let events: Vec<_> = self
@@ -866,7 +919,7 @@ impl Chrome {
         session: Option<String>,
         allowance: Duration,
     ) -> Result<Value> {
-        let mut budget = WaitBudget::new(allowance, &self.owner.members()?);
+        let mut budget = self.budget(allowance)?;
         let id = self.send(method, params, session)?;
         let mut marker = self.observer_poll()?;
         loop {
@@ -888,6 +941,9 @@ impl Chrome {
                 }
             }
             if budget.exhausted(&self.owner.members()?) {
+                if budget.past_deadline() {
+                    return Err(Error::deadline(method));
+                }
                 return Err(Error::new(format!(
                     "{method}: no reply after {} completed observer polls and {:?} CPU",
                     budget.polls,
@@ -994,7 +1050,7 @@ impl Chrome {
         {
             return Ok(());
         }
-        let mut budget = WaitBudget::new(cpu, &self.owner.members()?);
+        let mut budget = self.budget(cpu)?;
         let mut marker = self.observer_poll()?;
         loop {
             if let Some(value) = self.read(true)? {
@@ -1012,6 +1068,9 @@ impl Chrome {
                 }
             }
             if budget.exhausted(&self.owner.members()?) {
+                if budget.past_deadline() {
+                    return Err(Error::deadline(&format!("waiting for {method}")));
+                }
                 return Err(Error::new(format!(
                     "no {method} after {} completed observer polls and {:?} browser CPU",
                     budget.polls,

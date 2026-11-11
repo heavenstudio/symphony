@@ -362,6 +362,94 @@ fn a_page_is_drawn_once_loaded_navigated_with_no_region_loading_and_only_streams
 }
 
 #[test]
+fn a_hidden_page_is_not_drawn_until_it_is_back_in_front() {
+    let page = |visible: &str| json!({"ready": "complete", "navigation": "ready", "loading": 0, "visible": visible});
+    assert_eq!(
+        waiting(&page("hidden"), &[]),
+        ["the page to be in front (it is hidden)"]
+    );
+    assert!(waiting(&page("visible"), &[]).is_empty());
+}
+
+fn wait(seconds: f64) -> Wait {
+    Wait {
+        until: Instant::now(),
+        timeout: Duration::from_secs_f64(seconds),
+    }
+}
+
+#[test]
+fn a_wait_is_over_at_its_end_and_says_its_length() {
+    let ended = wait(2.5);
+    assert!(ended.over());
+    assert_eq!(ended.said(), "2.5s");
+    let running = Wait {
+        until: Instant::now() + Duration::from_secs(60),
+        ..wait(20.0)
+    };
+    assert!(!running.over());
+    assert_eq!(running.said(), "20s");
+}
+
+#[test]
+fn a_page_that_did_not_load_is_named_once_with_why_or_its_wait() {
+    let url = "http://127.0.0.1:9/tasks";
+    assert_eq!(
+        not_loaded(
+            url,
+            wait(5.0),
+            false,
+            &format!("{url}: net::ERR_CONNECTION_REFUSED")
+        ),
+        "http://127.0.0.1:9/tasks did not load: net::ERR_CONNECTION_REFUSED"
+    );
+    // A reason that does not start with the URL is kept whole.
+    assert_eq!(
+        not_loaded(url, wait(5.0), false, "Page.navigate: the target closed"),
+        "http://127.0.0.1:9/tasks did not load: Page.navigate: the target closed"
+    );
+    // Past the wait, the driver's own words (which call ran out) give way to the wait's length.
+    assert_eq!(
+        not_loaded(
+            url,
+            wait(5.0),
+            true,
+            "Page.navigate: no reply before the deadline"
+        ),
+        "http://127.0.0.1:9/tasks did not load within 5s"
+    );
+}
+
+#[test]
+fn a_page_not_drawn_says_what_it_still_waited_for_and_what_failed_meanwhile() {
+    let still = [
+        "the page's navigation (html[data-navigation=loading])".to_string(),
+        "1 request(s) in flight: http://h/api/board".to_string(),
+    ];
+    assert_eq!(
+        not_drawn("--key Escape", wait(10.0), &still, &[]),
+        "--key Escape: the page was not drawn within 10s: still waiting for the page's navigation \
+         (html[data-navigation=loading]); 1 request(s) in flight: http://h/api/board"
+    );
+    let failed = [
+        json!({"url": "http://h/api/tasks", "status": 503}),
+        json!({"url": "http://h/x.js", "error": "net::ERR_FAILED"}),
+    ];
+    assert_eq!(
+        not_drawn(
+            "http://h/tasks",
+            wait(60.0),
+            &["the page to paint: its fonts, then two frames".to_string()],
+            &failed
+        ),
+        "http://h/tasks: the page was not drawn within 60s: still waiting for the page to paint: \
+         its fonts, then two frames; meanwhile these failed: \
+         {\"url\":\"http://h/api/tasks\",\"status\":503}, \
+         {\"url\":\"http://h/x.js\",\"error\":\"net::ERR_FAILED\"}"
+    );
+}
+
+#[test]
 fn traffic_is_quiet_since_its_last_request_began_finished_or_failed_but_not_before_the_wait() {
     let start = Instant::now();
     let at = |millis| start + Duration::from_millis(millis);

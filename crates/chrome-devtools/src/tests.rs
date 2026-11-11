@@ -55,6 +55,9 @@ fn browser_leash() {
         let args = chrome_args(Path::new("/private/profile"));
         assert!(args.contains(&"--mute-audio".into()));
         assert!(args.contains(&"--user-data-dir=/private/profile".into()));
+        // The page under test runs at foreground priority however Chrome counts its tab.
+        assert!(args.contains(&"--disable-renderer-backgrounding".into()));
+        assert!(args.contains(&"--disable-backgrounding-occluded-windows".into()));
         return;
     };
     std::process::exit(code);
@@ -329,6 +332,7 @@ fn an_unexpected_protocol_reset_fails_with_the_browser_exit_evidence() {
         observer: None,
         events: Vec::new(),
         arrivals: Vec::new(),
+        deadline: None,
     };
     let failure = chrome
         .read(false)
@@ -1091,6 +1095,7 @@ fn browser_waits_keep_events_and_bound_idle_polls_without_charging_observer_dela
         observer: Some("observer".into()),
         events: Vec::new(),
         arrivals: Vec::new(),
+        deadline: None,
     };
     assert!(
         controlled
@@ -1312,6 +1317,7 @@ fn navigation_and_protocol_replies_end_on_completed_observer_turns() {
             observer: observer.then(|| "observer".into()),
             events: Vec::new(),
             arrivals: Vec::new(),
+            deadline: None,
         };
         let started = Instant::now();
         let why = if navigation {
@@ -1577,4 +1583,65 @@ fn a_page_that_cannot_load_fails_navigate_naming_why_but_still_opens() {
     let width = u32::from_be_bytes(picture[16..20].try_into().unwrap());
     let height = u32::from_be_bytes(picture[20..24].try_into().unwrap());
     assert_eq!((width, height), (30, 20));
+}
+
+#[test]
+fn a_deadline_ends_every_wait_soon_after_it_with_an_error_that_says_so() {
+    let Some(binary) = find() else {
+        eprintln!("no Chrome: real browser capability unavailable");
+        return;
+    };
+    let mut chrome = Chrome::launch(&binary, &leash()).unwrap();
+    chrome
+        .navigate("data:text/html,<p>still</p>", PROTOCOL_CPU)
+        .unwrap();
+    // Without a deadline each of these would wait out the protocol's own allowance: a minute of
+    // browser CPU or as many observation turns, at least a minute.
+    const NEVER: &str = "new Promise(() => {})";
+    let silent = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let held = format!("http://{}/", silent.local_addr().unwrap());
+    let waits: [(&str, fn(&mut Chrome, &str) -> crate::Result<()>); 3] = [
+        ("an evaluation", |chrome, _| chrome.eval(NEVER).map(drop)),
+        ("a protocol call", |chrome, _| {
+            chrome
+                .call(
+                    "Runtime.evaluate",
+                    json!({"expression": NEVER, "awaitPromise": true}),
+                )
+                .map(drop)
+        }),
+        ("a navigation", |chrome, held| {
+            chrome.navigate(held, PROTOCOL_CPU)
+        }),
+    ];
+    for (wait, run) in waits {
+        let started = Instant::now();
+        chrome.set_deadline(Some(started + Duration::from_millis(500)));
+        let error = run(&mut chrome, &held).unwrap_err();
+        let took = started.elapsed();
+        assert!(error.past_deadline(), "{wait}: {error}");
+        assert!(
+            error.to_string().contains("no reply before the deadline"),
+            "{wait}: {error}"
+        );
+        assert!(
+            took >= Duration::from_millis(500) && took < Duration::from_secs(30),
+            "{wait} ended {took:?} after its start, its deadline 500 ms"
+        );
+    }
+    // Lifted, the waits are the protocol's own again: the page still answers.
+    chrome.set_deadline(None);
+    chrome
+        .navigate("data:text/html,<p>again</p>", PROTOCOL_CPU)
+        .unwrap();
+    assert_eq!(
+        chrome.eval("document.body.textContent").unwrap(),
+        json!("again")
+    );
+    // A failure of Chrome's own is no deadline.
+    let thrown = chrome
+        .eval("(() => { throw new Error('own') })()")
+        .unwrap_err();
+    assert!(!thrown.past_deadline(), "{thrown}");
+    drop(silent);
 }
