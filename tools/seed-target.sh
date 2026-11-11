@@ -79,14 +79,28 @@ if ! locked "$wait" "$source/.cargo-lock" "${clone[@]}" "$source" "$staged/debug
     say "no clone of $source (its build held the lock past ${wait}s, or the volume refused); building from nothing"
     exit 0
 fi
-# What Cargo would take for the worktree's own packages is the main checkout's build of other sources.
+# The workspace's own units go: Cargo would take them for the worktree's though built from the main
+# checkout's sources, and each clone of one would come to hold disk of its own once the main
+# checkout rebuilt it. A unit is its fingerprint folder `NAME-HASH`, its outputs in deps/ and
+# examples/ named `…-HASH` or `…-HASH.…`, a build script's folder in build/, and a binary's or an
+# example's copy under its own name.
+debug="$staged/debug"
+hex16='[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]'
 for name in "${names[@]}"; do
-    for fingerprint in "$staged/debug/.fingerprint/$name"-*; do
+    for fingerprint in "$debug/.fingerprint/$name"-*; do
         hash="${fingerprint##*/"$name"-}"
-        case "$hash" in
-            [0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f])
-                rm -rf "$fingerprint" ;;
-        esac
+        # shellcheck disable=SC2254 # the pattern is sixteen hex digits
+        case "$hash" in $hex16) ;; *) continue ;; esac
+        for unit in "$fingerprint"/bin-* "$fingerprint"/example-*; do
+            [ -f "$unit" ] || continue
+            case "${unit##*/}" in
+                *.json) ;;
+                bin-*) rm -f "$debug/${unit##*/bin-}" "$debug/${unit##*/bin-}.d" ;;
+                example-*) rm -f "$debug/examples/${unit##*/example-}" "$debug/examples/${unit##*/example-}.d" ;;
+            esac
+        done
+        find "$debug/deps" "$debug/examples" -maxdepth 1 -type f \( -name "*-$hash" -o -name "*-$hash.*" \) -exec rm -f {} + 2>/dev/null
+        rm -rf "$debug/build/$name-$hash" "$fingerprint"
     done
 done
 printf 'cloned from %s at %s\n' "$source" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$staged/SEEDED"
