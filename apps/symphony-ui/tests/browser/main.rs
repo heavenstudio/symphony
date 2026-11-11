@@ -671,6 +671,54 @@ fn task_controls_keep_their_values_and_revealed_rows_after_scrolling() {
 }
 
 #[test]
+fn a_revealed_column_keeps_its_rows_look_ahead_before_it_reaches_the_screen() {
+    let site = site();
+    site.set_json(
+        "/api/task-board",
+        &json!({
+            "tasks": [{"slug": "tools/blocked-example", "title": "Blocked example", "body": "",
+                "status": "blocked", "priority": 1, "parent": null, "created_by": "owner",
+                "created": 0.0, "updated": 0.0, "links": [], "depends": [], "roles": [],
+                "instruction": false}],
+            "statuses": ["blocked"], "counts": [["blocked", 1]], "signoff": [], "next": null
+        }),
+    );
+    let Some(mut chrome) = chrome() else { return };
+    chrome.call(
+        "Emulation.setDeviceMetricsOverride",
+        json!({"width":1280,"height":800,"deviceScaleFactor":1,"mobile":false}),
+    );
+    chrome.call("Page.addScriptToEvaluateOnNewDocument", json!({"source":
+        "const observer = new MutationObserver(() => { if (document.head) { const style = document.createElement('style'); style.textContent = '.offline { margin-top: 20000px }'; document.head.append(style); observer.disconnect(); } }); observer.observe(document, {childList: true, subtree: true});"
+    }));
+    chrome.open(&site.url("/tasks"));
+    assert!(chrome.wait_for("document.documentElement.dataset.navigation === 'ready' && document.querySelector('#column-blocked') !== null", SHOWN));
+    assert!(
+        !site
+            .targets()
+            .iter()
+            .any(|url| url.contains("status=blocked"))
+    );
+    // The offline columns scroll with the page. Stop with the column's slot 300 px below the
+    // screen: its own look-ahead reveals it, and its row's look-ahead, which reaches 300 px
+    // into the screen, must then reveal the card while the column is still off screen.
+    chrome.eval("const column = document.querySelector('#column-blocked'); scrollTo(0, column.getBoundingClientRect().top + scrollY - innerHeight - 300)");
+    assert!(
+        chrome.wait_for(
+            "document.querySelector('[data-slug=\"tools/blocked-example\"]') !== null",
+            SHOWN
+        ),
+        "the row's look-ahead was clipped: {}",
+        chrome.eval("JSON.stringify({innerHeight, column: document.querySelector('#column-blocked').getBoundingClientRect().top, row: document.querySelector('[id=\"row-tools/blocked-example\"]')?.outerHTML})")
+    );
+    assert_eq!(
+        chrome.eval("document.querySelector('#column-blocked').getBoundingClientRect().top >= innerHeight + 299"),
+        json!(true),
+        "the column reached the screen, so the case no longer tests the row's look-ahead"
+    );
+}
+
+#[test]
 fn an_unrevealed_mockup_replaced_by_a_picture_attaches_to_its_new_node() {
     let site = site();
     let mut board: serde_json::Value =
