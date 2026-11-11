@@ -12,7 +12,8 @@ be prioritized to be answered, and be routed to a proper agent that has context 
 
 ## The design
 
-Recommended, in five choices; the card asks the owner for each.
+Five choices, each taken at its default: the owner approved the card on 2026-11-11, before the
+[pictures](#pictures) were added. The [open questions](#open-questions) stay open.
 
 1. **The name: an ask.** Everything the owner says that waits on an agent's answer is an ask: a
    verdict with a note, a rejection, a message on a card, a comment in a document, a chat question,
@@ -295,9 +296,39 @@ or `agent`). The routing uses what is kept and adds no recording.
 
 Taken with `just symphony-cli shot` from a private server on a scratch board seeded with this
 board's open tasks and today's verdict tasks; the *with asks* pictures are the same pages with the
-proposed rows drawn in by the shot's own script. Light scheme.
+proposed rows drawn in by the shot's own script, and their three asks are samples made from today's
+cards. Light scheme; the machine's notice of leftover processes is hidden.
 
-PICTURES
+**Today.** The board searched for "owner verdict": the Done column holds seven identical *Answer 1
+owner verdict waiting on an agent* tasks, each with an executor and a reviewer.
+
+![The board today, seven verdict tasks in Done](owner-asks-board-today.png)
+
+The decision register's *Related tasks*: one *Answer 1 owner verdict* row for each verdict task.
+
+![Related tasks today](owner-asks-related-today.png)
+
+The queue's *Waiting on the agent* group: what waits, with no holder and no age.
+
+![The queue today](owner-asks-queue-today.png)
+
+**With asks.** The queue's group is *Asks waiting on an agent*, each ask with its holder, its age and
+why that agent holds it; a late one is red and says whom it moved from.
+
+![The queue with asks](owner-asks-queue-asks.png)
+
+The tasks board: one line of asks above the columns, which hold no verdict tasks and count none.
+
+![The board with asks](owner-asks-board-asks.png)
+
+The home page: a tile with the open asks and the oldest one's age, beside the task tiles.
+
+![The home page with asks](owner-asks-home-asks.png)
+
+On a phone, the queue and the board.
+
+![The queue with asks on a phone](owner-asks-queue-asks-phone.png)
+![The board with asks on a phone](owner-asks-board-asks-phone.png)
 
 ## Not chosen
 
@@ -312,7 +343,7 @@ PICTURES
 
 ## What building it takes
 
-In this order, each landing on its own, once the card is approved:
+In this order, each landing on its own:
 
 1. The ask record and `just tasks asks` on the board (data others read lands first, RULES.md
    `workflow/shared-data-lands-first`).
@@ -342,4 +373,4 @@ new holder is sent; with asks, the seat is the second step of a route, and both 
 - **Inferred, not tried:** that the queue's scan can close card and comment asks without a read of
   its own (it already computes the groups the close is read from); the ten-minute move's load on the
   board clock.
-- **Not built:** anything. This is a proposal; the card decides it.
+- **Not built:** anything. The card is approved; building it is the work above.
