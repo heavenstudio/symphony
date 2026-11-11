@@ -2,7 +2,7 @@
 name: work
 description: Do one task from the board by its description alone. Registers (or reuses the handle the task is reserved for), claims the task, follows its description exactly, and finishes by the step the description names. An agent's whole prompt is `/work SLUG HANDLE` (Codex `$work SLUG HANDLE`). Trigger on /work SLUG or $work SLUG.
 ---
-<!-- symphony-stamp: f66efa9d8822157e files=SKILL.md -->
+<!-- symphony-stamp: 0b284bb73199581b files=SKILL.md -->
 
 # /work SLUG HANDLE
 
@@ -26,13 +26,26 @@ shortens the critical path. Commit slices into the feature branch, or merge
 their worktree commits into it with `just merge-feature FEATURE [SOURCE]`.
 This command refuses the default branch and runs no delivery hooks or stamps;
 `land` remains the completed feature delivery command. Run only focused checks needed for that slice;
-no slice-level full build, full suite, lint/precheck campaign, reviewer staffing,
-certificate, stamps or landing. Close the slice with its integration commit and
-focused result using tasks done. When the complete feature is ready, the parent
-runs the required combined build/tests and review once, then lands. Review
-fixes stay with that parent and do not create independent delivery rounds.
+no slice-level full build, full suite, reviewer staffing, certificate, stamps or
+landing. Close the slice with its integration commit and focused result using
+tasks done. When the complete feature is ready, the parent goes to review once
+with its evidence, then lands. Review fixes stay with that parent and do not
+create independent delivery rounds.
 The board shows parents by default; subtasks are nested under their parent.
 This rule supersedes conflicting per-subtask gate instructions.
+
+## Evidence is the gate
+
+A task's gate, parent or slice, feature or fix, is evidence that what it changed
+works, not the full suite: the tests closest to the change and the project's
+lint, posted with their exact commands and results, plus what the kind of change
+calls for (before and after screenshots of a changed page, a measurement before
+and after). A reviewer reruns those tests, never the suite, judges whether the
+evidence is good enough for the change's risk, and records its approval as the
+task's stamp. Higher risk asks for stronger evidence, never for the whole suite.
+The full verification runs on the project's main line on its own schedule, such
+as a nightly, and a red run there is filed as a task of its own. The project's
+guidance names its focused checks, its stamp and its nightly.
 
 
 Do the one task named by the prompt. Its board description supplies the scope,
@@ -83,8 +96,9 @@ just tasks restore SLUG; follow project policy for terminals and cleanup.
 ## Implement and validate
 
 Use the destination project's implementation, testing and documentation guidance.
-Add meaningful coverage for changed behavior and edge cases, run its required
-checks, and report the exact commands, outcomes and relevant limitations. Fix
+Add meaningful coverage for changed behavior and edge cases, run the checks
+closest to the change and the project's lint, and report the exact commands,
+outcomes and relevant limitations: that report is the evidence review judges. Fix
 implementation defects before considering any change to an expectation or limit.
 No particular language wrapper, verification binary, certificate scheme or landing
 command is required by this generic skill. Do not assume a recipe exists because
@@ -98,11 +112,13 @@ for tests and follow the project's policy for shared services and live data.
 
 Finish only by the step the description names:
 
-- Branch work: post the complete tip, changed behavior and required validation,
-  then just tasks move SLUG review when the project's review prerequisites hold.
-- Review: independently inspect the named tip and run the project's required
-  checks. Record the verdict using its configured review/stamp mechanism; when
-  the task calls for a board verdict, use just tasks verdict TARGET approve|changes.
+- Branch work: post the complete tip, changed behavior and its evidence, then
+  just tasks move SLUG review when the project's review prerequisites hold.
+- Review: independently inspect the named tip and rerun the focused tests its
+  evidence names, never the full suite. Judge whether the evidence is good enough
+  for the change's risk; changes names what is missing. Record the verdict using
+  its configured review/stamp mechanism; when the task calls for a board verdict,
+  use just tasks verdict TARGET approve|changes.
 - Instruction subtask: just tasks done SLUG "complete result and remaining limits".
 
 Do not review your own work, waive a required approval or perform a landing the
