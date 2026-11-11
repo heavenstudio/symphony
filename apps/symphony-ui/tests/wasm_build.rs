@@ -182,6 +182,11 @@ printf 'body{}' > "$out/public/assets/board-$kind.css"
         )),
         "#!/bin/bash\n",
     );
+    // The shell's minifier: it names its arguments, then passes the script through.
+    executable(
+        &common.join("sf-cargo/dx-home/tools/esbuild-fixture/esbuild"),
+        "#!/bin/bash\nprintf '/*esbuild %s*/\\n' \"$*\"\ncat\n",
+    );
 }
 
 /// `cargo symphony-ui ARGS` as cargo runs it, an external subcommand: `cargo-symphony-ui symphony-ui ARGS`.
@@ -241,15 +246,26 @@ fn cargo_symphony_ui_dist_bundles_into_out_as_named_from_where_it_runs() {
         .next()
         .unwrap();
     let shell = fs::read_to_string(out.join("public").join(shell.trim_start_matches('/'))).unwrap();
-    let manifest = shell
-        .split("const modules = ")
-        .nth(1)
-        .unwrap()
-        .split(";\n")
-        .next()
+    let (manifest, body) = shell
+        .strip_prefix("const modules = ")
+        .expect("the shell starts with its manifest line")
+        .split_once(";\n")
         .unwrap();
     let manifest: serde_json::Value = serde_json::from_str(manifest).unwrap();
     assert_eq!(manifest.as_object().unwrap().len(), KINDS.len());
+    let source = fs::read_to_string(crate_dir().join("assets/shell.js")).unwrap();
+    let minified = format!(
+        "/*esbuild --minify --format=esm --log-level=warning*/\n{}\n",
+        source
+            .lines()
+            .filter(|line| *line != "const modules = __MODULES__;")
+            .collect::<Vec<_>>()
+            .join("\n")
+    );
+    assert!(
+        body.starts_with(&minified),
+        "the rest of the shell is assets/shell.js through the minifier: {body}"
+    );
     for kind in KINDS {
         for key in ["script", "wasm"] {
             let path = manifest[kind][key].as_str().unwrap();
