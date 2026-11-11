@@ -43,15 +43,23 @@ const PROSE: [&str; 20] = [
 
 /// Text of this repository's own development, which names its own justfile's recipes: a source
 /// kit's client build, which no project runs, and the checks a task here proves its work with
-/// (`check-fast` is the recipe filed as the task `tools/check-fast`).
-const OWN: [(&str, &str); 7] = [
+/// (`check-fast` is the recipe filed as the task `tools/check-fast`), and its releases, which the
+/// nightly cuts and no project runs.
+const OWN: [(&str, &str); 14] = [
     ("apps/symphony-server/src/api/client.rs", "symphony-ui-dist"),
     ("apps/symphony-server/src/development.rs", "symphony-ui-dev"),
+    ("crates/symphony/src/nightly.rs", "nightly"),
+    ("crates/symphony/src/nightly.rs", "verify"),
+    ("crates/symphony/src/nightly/board.rs", "nightly"),
+    ("crates/symphony/src/nightly/schedule.rs", "nightly"),
     ("docs/CHECKS.md", "check-fast"),
     ("docs/CHECKS.md", "client-update"),
     ("docs/CHECKS.md", "lint-rs"),
+    ("docs/CHECKS.md", "nightly"),
     ("docs/CHECKS.md", "test-rs"),
     ("docs/CHECKS.md", "verify"),
+    ("docs/RELEASES.md", "nightly"),
+    ("docs/RELEASES.md", "verify"),
 ];
 
 fn workspace() -> PathBuf {

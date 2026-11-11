@@ -7,7 +7,7 @@ mod release;
 mod shot;
 
 /// The Symphony's own commands, in the order its usage names them.
-const OWN: [&str; 13] = [
+const OWN: [&str; 14] = [
     "status",
     "reply",
     "docs-audit",
@@ -20,6 +20,7 @@ const OWN: [&str; 13] = [
     "init",
     "hook",
     "shot",
+    "nightly",
     "serve",
 ];
 
@@ -34,6 +35,9 @@ pub(super) fn plugin(name: &str, args: &[String], out: &mut dyn Write, err: &mut
     }
     if name == "shot" {
         return shot::main(args, out, err);
+    }
+    if name == "nightly" {
+        return crate::nightly::main(args, out, err);
     }
     if let Some(command) = crate::plugins::commands()
         .into_iter()

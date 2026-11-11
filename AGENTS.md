@@ -136,8 +136,9 @@ a session of its own, names it: `TASKS_TASK=SLUG just verify`, with
 `just lint-rs`, with `just client-update` for a client change, posted on its thread as evidence
 a reviewer judges and stamps (RULES.md `workflow/evidence-is-the-gate`; how to pick the tests and
 what each kind of change shows: [CHECKS](docs/CHECKS.md)). No task runs `just verify`, whatever
-its brief asks: it is the nightly's, on main's tip in a clean checkout outside this folder
-(`../symphony-wt/`), which the task `tools/release-nightly` makes.
+its brief asks: it is the nightly's (`just nightly`), on main's tip in a clean checkout outside
+this folder (`../symphony-wt/nightly`), which tags a green tip as a release
+([RELEASES](docs/RELEASES.md)).
 
 ## Agent integration
 
@@ -213,6 +214,13 @@ repository's justfile imports the installed `symphony.just` like any project's, 
 its own recipes of those names win: they execute this workspace's declared binaries
 through ordinary Cargo. The standalone workspace requires no project gate or landing
 executable.
+
+`just nightly` cuts this repository's releases ([RELEASES](docs/RELEASES.md)): main's tip
+verified in full in a clean checkout outside this folder and conciliated with the projects the
+machine serves, each red check filed on this board, a green tip tagged `release-YYYY-MM-DD` and
+that tag alone pushed; `--release COMMIT` releases a commit of main out of cycle, `--status`
+runs nothing. Its schedule is the owner's to install (`--schedule` prints it). It is
+Symphony's own release command, not a recipe `symphony init` installs.
 
 Board roles, verdicts and configured review callbacks belong to Symphony. The
 consumer supplies verification, certificates, approval policy and landing. The

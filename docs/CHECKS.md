@@ -165,15 +165,16 @@ and the browser tests that measure them instead.
 `just verify` is the full verification: lint, the real client check, and every test target of
 the workspace, the headless browser acceptance and the board's `perf` and `child_guard` targets
 ([the board guide](../crates/tasks/AGENTS.md)) among them. It is the nightly's, and no task's.
-The task [[task:tools/release-nightly]] makes the nightly: a run once a night on main's tip in a
-clean checkout outside this folder (`../symphony-wt/`), where a green night tags a release and a
-red one files each failure as a task in the `tests/nightly-red-*` series at p0
-([TASKS](TASKS.md#slots)), naming the commits since the last green night
-(`git log --oneline LAST_GREEN..TIP`).
+`just nightly` runs it on main's tip, as fetched from `origin`, in a clean checkout outside this
+folder (`../symphony-wt/nightly`), then conciliates the projects this machine serves with that
+commit. A green night tags a release; a red one files each red check as a task in the
+`tests/nightly-red-*` series at p0 ([TASKS](TASKS.md#slots)), naming the commits since the last
+green run (`git log --oneline LAST_GREEN..TIP`), and the next green run closes it. How it runs,
+what it records and how it is scheduled: [RELEASES](RELEASES.md#the-nightly).
 
-**Until that task lands, nothing runs `just verify` on main.** A break that no task's focused
-tests reach stays unseen until then: the gap is the price of focused gates without their nightly,
-and closes when the nightly runs.
+**Until the owner installs its schedule, nothing runs `just verify` on main.** A break that no
+task's focused tests reach stays unseen until then: the gap is the price of focused gates without
+their nightly, and closes when the nightly runs each night.
 
 ## Checks with no reviewer
 

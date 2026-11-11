@@ -58,6 +58,16 @@ symphony-cli *ARGS:
 tasks *ARGS:
     @tools/rs-bin.sh tasks "$@"
 
+# Symphony's releases (docs/RELEASES.md): main's tip, fetched, verified in full (`just verify`) in a
+# clean checkout outside this folder and conciliated with the projects this machine serves; each
+# red check filed on the board, a green tip tagged release-YYYY-MM-DD and that tag pushed.
+# `--release COMMIT` releases a commit of main out of cycle, `--status` runs nothing, and
+# `--schedule` prints the entry that runs it each night. Scheduling is the owner's. The board's
+# binary is built and linked first: the run files its reds and records its checks through it.
+nightly *ARGS:
+    @tools/rs-bin.sh --link tasks >/dev/null
+    @tools/rs-bin.sh symphony nightly "$@"
+
 agent-send *ARGS:
     @tools/rs-bin.sh agent-send "$@"
 
