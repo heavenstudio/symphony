@@ -15,14 +15,14 @@ use std::collections::{HashMap, HashSet};
 
 /// A terminal cleanup closed, or for a dry run would close; a recorded pane that is gone, whose
 /// closure cleanup recorded; or a terminal it kept (`kept`) because a call that says whether it is
-/// idle failed.
+/// idle failed, or a dry run naming its live reservation.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Closure {
     pub pane: String,
     /// The board session it belongs to; none for an idle shell, or a kept terminal of no known
     /// session.
     pub handle: Option<String>,
-    /// Why it closes; for a kept terminal, why it stays: the failed call and its error.
+    /// Why it closes; for a kept terminal, the failed call, owner's look or live reservation.
     pub why: String,
     /// The line that brings it back; empty when there is no task to bring it back on, and for a
     /// kept terminal.
@@ -31,7 +31,8 @@ pub struct Closure {
     pub closed: bool,
     /// True for a terminal left as it is because a call that says whether it is idle failed (`why`
     /// names the call and its error), or because the owner may be looking at it: on screen in the
-    /// Herdr app, or the window could not say ([`super::screen`]). Never closed on no information,
+    /// Herdr app, or the window could not say ([`super::screen`]); also for a live reservation in
+    /// a dry run. Never closed on no information,
     /// and never silently. Its handle is the session the board would have closed it for; none when
     /// `hc get` failed, before the terminal's session was looked for.
     pub kept: bool,
@@ -316,6 +317,21 @@ pub fn cleanup_as(
                 continue; // the caller's own, an orchestrator's or a chat's
             }
             let (live, mine) = held(store, &handle)?;
+            if dry_run
+                && let Some(task) = live.iter().find(|task| {
+                    task.roles
+                        .iter()
+                        .any(|role| role.handle == handle && role.role == "reserved")
+                })
+            {
+                result.push(Closure {
+                    handle: Some(handle.clone()),
+                    ..Closure::left(
+                        &address,
+                        format!("it holds a live reservation on {}", task.slug),
+                    )
+                });
+            }
             if !live.is_empty() || (mine.is_empty() && store.sessions_of(&handle)?.is_empty()) {
                 continue; // live work, or no task to record the closure and its restore line on
             }

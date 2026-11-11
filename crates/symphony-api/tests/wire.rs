@@ -5,6 +5,8 @@ use serde_json::Value;
 use symphony_api::{Board, Change, Delta, Front};
 #[path = "wire/fixture.rs"]
 mod fixture;
+#[path = "wire/machine_work.rs"]
+mod machine_work;
 #[path = "wire/reader_tests.rs"]
 mod reader_tests;
 

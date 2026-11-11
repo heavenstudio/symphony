@@ -9,6 +9,9 @@ use std::path::{Path, PathBuf};
 use symphony_board::NewLaunch;
 use symphony_board::sys::{Command, Spawning as _};
 
+#[path = "approval_freshness.rs"]
+mod freshness;
+
 const IN_CHILD: &str = "SF_BLOCKED_PANES_CHILD";
 const EMPTY_PULL: &str = "PULL executing=0 ready_unstaffed=0 in_progress_orphaned=0 review_unreviewed=0 landed_open=0 idle=0";
 const BUSY_PULL: &str = "PULL executing=1 ready_unstaffed=0 in_progress_orphaned=0 review_unreviewed=0 landed_open=0 idle=0";
@@ -153,8 +156,9 @@ fn a_blocked_pane_reaches_the_orchestrator_of_its_work_once_an_episode() {
     assert_eq!(heard(), quiet, "nothing they oversee waits");
 
     panes(Some(json!([pane("t1", "blocked"), pane("t2", "blocked")])));
-    let blocked =
-        format!("BLOCKED {worker} tests/pane t2 — its terminal waits on an approval or a question");
+    let blocked = format!(
+        "BLOCKED {worker} tests/pane t2 — observed waiting on an approval or a question; inspect its terminal before acting"
+    );
     tick(&f);
     tick(&f);
     let blocked = std::slice::from_ref(&blocked);
@@ -193,7 +197,7 @@ fn hc_failing_is_said_once_and_a_known_block_is_not_repeated() {
     assert_eq!(
         o.drain(&f, &worker, &orch),
         [format!(
-            "BLOCKED {worker} tests/pane t2 — its terminal waits on an approval or a question"
+            "BLOCKED {worker} tests/pane t2 — observed waiting on an approval or a question; inspect its terminal before acting"
         )]
     );
 
@@ -204,8 +208,10 @@ fn hc_failing_is_said_once_and_a_known_block_is_not_repeated() {
     let said = o.drain(&f, &worker, &orch);
     assert_eq!(said.len(), 1, "{said:?}");
     assert!(
-        said[0].starts_with("WATCH hc unanswered: hc ls: fake_state: ")
-            && said[0].ends_with(" — blocked terminals go unreported until it answers"),
+        said[0].starts_with("WATCH hc unanswered at observation: hc ls: fake_state: ")
+            && said[0].ends_with(
+                " — blocked terminals may have gone unreported; inspect hc before acting"
+            ),
         "{said:?}"
     );
 
@@ -278,7 +284,7 @@ fn two_clocks_on_one_board_say_an_episode_once() {
     assert_eq!(
         o.drain(&f, &worker, &orch),
         [format!(
-            "BLOCKED {worker} tests/pane t2 — its terminal waits on an approval or a question"
+            "BLOCKED {worker} tests/pane t2 — observed waiting on an approval or a question; inspect its terminal before acting"
         )]
     );
 }
@@ -307,7 +313,7 @@ fn a_tick_asks_hc_once_for_its_watch_its_pull_and_its_agents_view() {
         assert_eq!(asked() - before, 1, "after {wait} s");
     }
     assert!(o.drain(&f, &worker, &orch).contains(&format!(
-        "BLOCKED {worker} tests/pane t2 — its terminal waits on an approval or a question"
+        "BLOCKED {worker} tests/pane t2 — observed waiting on an approval or a question; inspect its terminal before acting"
     )));
 }
 

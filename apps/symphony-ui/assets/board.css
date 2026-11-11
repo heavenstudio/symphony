@@ -73,6 +73,12 @@ label { display:block; } html:root :focus-visible { outline:2px solid var(--ring
 .chip { --c:var(--muted-foreground); display:inline-flex; align-items:center; gap:4px; font-size:var(--fs-xs); border:1px solid var(--border); border-radius:var(--r-pill); padding:0 8px; white-space:nowrap; background:var(--card); color:var(--foreground); line-height:1.6; }
 .chip::before { content:""; width:7px; height:7px; border-radius:50%; background:var(--c); flex:none; }
 .chip.health-live { --c:var(--live); } .chip.health-stale { --c:var(--stale); } .chip.health-lost { --c:var(--lost); } .chip.health-left { --c:var(--muted-foreground); }
+.work-phases .work-phase { white-space:normal; overflow-wrap:anywhere; }
+.machine-work { margin:12px 0 20px; }
+.machine-work h2 { margin:0 0 8px; font-size:var(--fs-md); }
+.machine-work-row { padding:6px 0; overflow-wrap:anywhere; }
+.machine-work-row + .machine-work-row { border-top:1px solid var(--border); }
+.machine-work-row p { margin:4px 0; font-size:var(--fs-sm); }
 .task-body { margin-top:20px; overflow-wrap:anywhere; } .task-body pre, .entry pre { overflow:auto; }
 .task-body table { display:block; max-width:100%; overflow:auto; }
 .entry { --c:var(--muted-foreground); position:relative; padding:5px 10px; border-radius:var(--r-sm); line-height:1.5; overflow-wrap:anywhere; }

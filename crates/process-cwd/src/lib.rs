@@ -1,5 +1,6 @@
 //! Working-directory scans shared by the board's worktree sweep and the cargo cache sweep.
-//! Unreadable scans keep trees; an empty global listing is unreadable. Partial listings remain useful.
+//! Path-only scans keep trees when unreadable or empty. PID-aware scans distinguish readable
+//! presence from completeness, so partial listings remain useful without proving absence.
 //! Their `lsof` starts without a fork and is read through close-on-exec pipes ([`spawn`]), the
 //! helper the board's children share, since this leaf is the one crate both sides link. A caller
 //! that chooses lsof's environment hands the scan its own command ([`process_cwds_with`],
@@ -9,13 +10,15 @@
 use std::path::{Path, PathBuf};
 use std::process::Output;
 use std::sync::mpsc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 mod close_on_fork;
 pub mod exit;
+mod pid;
 pub mod spawn;
 
 pub use close_on_fork::close_on_fork;
+pub use pid::PidCwds;
 pub use spawn::Command;
 
 /// How long lsof may take to list every process's working directory.
@@ -32,6 +35,22 @@ pub fn process_cwds() -> Option<Vec<PathBuf>> {
 pub fn process_cwds_with(mut lsof: Command) -> Option<Vec<PathBuf>> {
     lsof.args(["-Fn", "-d", "cwd"]);
     cwds_of(&mut lsof)
+}
+
+/// [`process_cwds_with`], each working directory with the pid of the process working there, so a
+/// caller can ask when that process started. Readable rows survive a failed or partial listing;
+/// only a complete listing can prove a process absent. None means the command could not finish, or
+/// reading its completed output did not finish before the scan deadline.
+pub fn pid_cwds_with(mut lsof: Command) -> Option<PidCwds> {
+    let deadline = Instant::now() + LSOF_PATIENCE;
+    // Request f explicitly: it is not implicit in every lsof version's field output.
+    // Device/inode disambiguate literal caret names from lsof's control-byte display.
+    lsof.args(["-FpfnDi", "-d", "cwd"]);
+    let done = within(
+        &mut lsof,
+        deadline.saturating_duration_since(Instant::now()),
+    )?;
+    pid::read(done, deadline)
 }
 
 /// Whether any process works in `tree` or a directory below it. The final removal check selects
@@ -154,6 +173,85 @@ mod tests {
         let mut failing = Command::new("sh");
         failing.args(["-c", "printf 'p1\\nn/work/a\\n'; exit 1"]);
         assert_eq!(cwds_of(&mut failing), Some(vec![PathBuf::from("/work/a")]));
+    }
+
+    #[test]
+    fn each_cwd_is_read_with_the_pid_listed_before_it() {
+        assert_eq!(
+            pid_cwds_with(stand_in("printf 'p5\\nfcwd\\nn/args/%s\\n' \"$*\"")),
+            Some(PidCwds {
+                listed: vec![(5, PathBuf::from("/args/-FpfnDi -d cwd"))],
+                complete: true,
+            })
+        );
+        assert_eq!(pid_cwds_with(Command::new("/no/such/lsof")), None);
+        let here = std::env::current_dir().unwrap().canonicalize().unwrap();
+        let mine = i64::from(std::process::id());
+        let seen = pid_cwds_with(Command::new("lsof")).unwrap();
+        assert!(
+            seen.listed
+                .iter()
+                .any(|(pid, cwd)| *pid == mine && cwd.canonicalize().ok().as_ref() == Some(&here)),
+            "here={here:?}, mine={mine}, seen={seen:?}"
+        );
+    }
+
+    #[test]
+    fn pid_listing_retains_positive_rows_and_separates_authoritative_absence() {
+        struct Listing {
+            script: &'static str,
+            has_rows: bool,
+            complete: bool,
+        }
+        for Listing {
+            script,
+            has_rows,
+            complete,
+        } in [
+            Listing {
+                script: "printf 'p5\\nfcwd\\nn/work/a\\n'",
+                has_rows: true,
+                complete: true,
+            },
+            Listing {
+                script: "printf 'p5\\nfcwd\\nn/work/a\\n'; exit 1",
+                has_rows: true,
+                complete: false,
+            },
+            Listing {
+                script: "printf 'p5\\nfcwd\\nn/work/a\\n'; printf 'Permission denied' >&2",
+                has_rows: true,
+                complete: false,
+            },
+            Listing {
+                script: "exit 0",
+                has_rows: false,
+                complete: true,
+            },
+            Listing {
+                script: "exit 1",
+                has_rows: false,
+                complete: false,
+            },
+            Listing {
+                script: "exit 2",
+                has_rows: false,
+                complete: false,
+            },
+            Listing {
+                script: "printf 'Permission denied' >&2",
+                has_rows: false,
+                complete: false,
+            },
+        ] {
+            let scan = pid_cwds_with(stand_in(script)).unwrap();
+            let listed = if has_rows {
+                vec![(5, PathBuf::from("/work/a"))]
+            } else {
+                vec![]
+            };
+            assert_eq!(scan, PidCwds { listed, complete }, "{script}");
+        }
     }
 
     #[test]

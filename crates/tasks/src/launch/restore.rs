@@ -147,16 +147,17 @@ fn restore_one(
                 .filter(|t| !t.is_empty())
                 .unwrap_or(stream(&session.role)),
             agent,
+            resumed_codex: agent == "codex",
             args,
             text: &text,
         },
     );
-    if let Err(problem) = started {
+    let message = started.map_err(|problem| {
         if !terminal.is_empty() {
             let _ = hc.close(&terminal); // the problem is what the caller must hear
         }
-        return Err(problem.into());
-    }
+        Error::from(problem)
+    })?;
     // Reopened and revived only while the restore still holds the session and the record is the
     // one read: else the record says what holds, the terminal this one started goes, and it
     // records nothing.
@@ -171,6 +172,24 @@ fn restore_one(
         return Err(Error::Refused(format!(
             "{why} while it was restored, so the restore records nothing and terminal \
              {terminal}, which it started, is killed"
+        )));
+    }
+    if message == super::startup::Message::Working {
+        let thread = session
+            .claude_session
+            .strip_prefix("codex:")
+            .expect("a resumed Codex turn");
+        let delivery = match hc.queue_codex(thread, &text) {
+            Ok(()) => {
+                "restore message queued for when it is idle; delivery is not yet confirmed".into()
+            }
+            Err(problem) => format!(
+                "restore message queue was not confirmed: {problem}; do not resend without checking the conversation"
+            ),
+        };
+        return Err(Error::Refused(format!(
+            "{} resumed in terminal {terminal} and is still working; kept alive with its record reopened; {delivery}",
+            session.handle
         )));
     }
     let row = store

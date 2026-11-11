@@ -39,7 +39,6 @@ fn TasksProbe(probe: Probe) -> Element {
             counts: probe.listing.counts,
             statuses: probe.listing.statuses,
             refreshed,
-            older: Vec::new(),
             onfilter: move |_| {},
             onload: move |_| {},
         }

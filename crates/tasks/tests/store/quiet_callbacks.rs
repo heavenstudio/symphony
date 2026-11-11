@@ -1117,7 +1117,7 @@ fn a_legacy_upgrade_baselines_once_across_older_seen_writes_and_keeps_retries() 
             f.store.claim(slug, &exe).unwrap();
             f.store.take_role(slug, &rev, "reviewer").unwrap();
             if status == "done" {
-                f.store.move_to(slug, "review", &exe).unwrap();
+                f.historical_review(slug);
                 f.store
                     .verdict(slug, &rev, "approve", "historical verdict")
                     .unwrap();

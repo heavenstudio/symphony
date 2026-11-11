@@ -1,0 +1,583 @@
+//! Native PID/path identity composed with explicit modeled CLI inventories.
+//! A native PID projection never establishes completeness of the machine inventory.
+
+use super::*;
+use std::fmt::Write as _;
+use std::os::unix::fs::{MetadataExt, PermissionsExt, symlink};
+use symphony_board::{Beat, NewTask};
+
+struct Working(symphony_board::sys::Child);
+
+impl Drop for Working {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+
+struct Listing {
+    name: &'static str,
+    output: &'static str,
+    ending: &'static str,
+    health: &'static str,
+}
+
+const LISTINGS: [Listing; 16] = [
+    Listing {
+        name: "ambiguous-caret-cwd",
+        output: "printf 'p%s\\nfcwd\\nn/ambiguous^A\\n' \"$SCAN_PID\"",
+        ending: "exit 0",
+        health: "unknown",
+    },
+    Listing {
+        name: "partial-unrelated",
+        output: "printf 'p%s\\nfcwd\\nn/\\n' \"$PPID\"",
+        ending: "printf 'Permission denied' >&2; exit 1",
+        health: "unknown",
+    },
+    Listing {
+        name: "failed-unrelated",
+        output: "printf 'p%s\\nfcwd\\nn/\\n' \"$PPID\"",
+        ending: "exit 1",
+        health: "unknown",
+    },
+    Listing {
+        name: "diagnostic-unrelated",
+        output: "printf 'p%s\\nfcwd\\nn/\\n' \"$PPID\"",
+        ending: "printf 'Permission denied' >&2",
+        health: "unknown",
+    },
+    Listing {
+        name: "complete-unrelated",
+        output: "printf 'p%s\\nfcwd\\nn/\\n' \"$PPID\"",
+        ending: "exit 0",
+        health: "lost",
+    },
+    Listing {
+        name: "complete-empty",
+        output: "",
+        ending: "exit 0",
+        health: "lost",
+    },
+    Listing {
+        name: "failed-empty",
+        output: "",
+        ending: "exit 1",
+        health: "unknown",
+    },
+    Listing {
+        name: "malformed",
+        output: "printf 'pbad\\nn/omitted\\n'",
+        ending: "exit 0",
+        health: "unknown",
+    },
+    Listing {
+        name: "partial-owned",
+        output: "printf 'p%s\\nfcwd\\nn%s\\n' \"$SCAN_PID\" \"$SCAN_CWD\"",
+        ending: "printf 'Permission denied' >&2; exit 1",
+        health: "live",
+    },
+    Listing {
+        name: "valid-owned",
+        output: "printf 'p%s\\nfcwd\\nn%s\\n' \"$SCAN_PID\" \"$SCAN_CWD\"",
+        ending: "exit 0",
+        health: "live",
+    },
+    Listing {
+        name: "relative-cwd",
+        output: "printf 'p%s\\nfcwd\\nnrelative/path\\n' \"$SCAN_PID\"",
+        ending: "exit 0",
+        health: "unknown",
+    },
+    Listing {
+        name: "unknown-cwd",
+        output: "printf 'p%s\\nfcwd\\nnunknown\\n' \"$SCAN_PID\"",
+        ending: "exit 0",
+        health: "unknown",
+    },
+    Listing {
+        name: "non-cwd-descriptor",
+        output: "printf 'p%s\\nftxt\\nn%s\\n' \"$SCAN_PID\" \"$SCAN_CWD\"",
+        ending: "exit 0",
+        health: "unknown",
+    },
+    Listing {
+        name: "missing-descriptor",
+        output: "printf 'p%s\\nn%s\\n' \"$SCAN_PID\" \"$SCAN_CWD\"",
+        ending: "exit 0",
+        health: "unknown",
+    },
+    Listing {
+        name: "cwd-after-non-cwd",
+        output: "printf 'p%s\\nftxt\\nn%s\\nfcwd\\nn%s\\n' \"$SCAN_PID\" \"$SCAN_CWD\" \"$SCAN_CWD\"",
+        ending: "exit 0",
+        health: "live",
+    },
+    Listing {
+        name: "bad-owned-with-valid-unrelated-neighbor",
+        output: "printf 'p%s\\nftxt\\nn%s\\np%s\\nfcwd\\nn/\\n' \"$SCAN_PID\" \"$SCAN_CWD\" \"$PPID\"",
+        ending: "exit 0",
+        health: "unknown",
+    },
+];
+
+fn read_agent(env: &Env, root: &Path, handle: &str) -> Value {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_tasks"));
+    command
+        .args(["agents", "--json"])
+        .env_clear()
+        .envs(&env.vars)
+        .current_dir(root);
+    if let Some(profile) = std::env::var_os("LLVM_PROFILE_FILE") {
+        command.env("LLVM_PROFILE_FILE", profile);
+    }
+    let done = symphony_board::sys::output(&mut command).unwrap();
+    assert!(done.status.success(), "{done:?}");
+    let value: Value = serde_json::from_slice(&done.stdout).unwrap();
+    value["agents"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|agent| agent["handle"] == handle)
+        .unwrap()
+        .clone()
+}
+
+fn call_in(store: &symphony_board::Store, tree: &Path) {
+    store
+        .agent_beat_in(
+            "listing-agent",
+            &Beat::default(),
+            Some((tree.to_str().unwrap(), "tools/listing")),
+            boot_clock().as_ref(),
+        )
+        .unwrap();
+}
+
+fn expire(env: &mut Env, after: f64) {
+    let lost_after =
+        symphony_board::health::LIVE_SECONDS + symphony_board::health::STALE_SECONDS + 600.0;
+    env.vars
+        .insert("TASKS_NOW".into(), (after + lost_after).to_string());
+}
+
+#[derive(Debug)]
+struct NativeListing<'a> {
+    recorded: &'a Path,
+    working: &'a Path,
+    health: &'static str,
+}
+
+fn native_child(c: &mut crate::Case, handle: &str, recorded: &Path, working: &Path) -> Working {
+    c.env
+        .vars
+        .insert("TASKS_NOW".into(), wall_clock().to_string());
+    let store = c.store();
+    call_in(&store, recorded);
+    let mut cat = Command::new("/bin/cat");
+    cat.current_dir(working)
+        .stdin(symphony_board::sys::Stdio::piped())
+        .stdout(symphony_board::sys::Stdio::null());
+    let owned = Working(cat.spawn().unwrap());
+    let after = wall_clock();
+    c.env.vars.insert("TASKS_NOW".into(), after.to_string());
+    call_in(&c.store(), recorded);
+    expire(&mut c.env, after);
+    let kept = c.store().agent_bindings().unwrap().remove(handle).unwrap();
+    assert_eq!(kept.worktree, recorded.to_str().unwrap());
+    assert!(kept.in_process, "{kept:?}");
+    owned
+}
+
+fn native_scan(env: &Env, pid: u32) -> process_cwd::PidCwds {
+    let pid = pid.to_string();
+    let mut command = symphony_board::sys::command_with("lsof", &env.vars);
+    command.args(["-a", "-p", &pid]);
+    process_cwd::pid_cwds_with(command).unwrap()
+}
+
+/// Scenario input, chosen independently of a native PID projection's complete bit.
+enum ModeledInventory {
+    Complete,
+    Partial,
+}
+
+/// Compose already asserted native rows with the real CLI/parser/kernel-start/health path.
+/// Hex names and fresh same-row D/i below are MODELED fields, not captured native fields.
+fn modeled_agent(
+    c: &crate::Case,
+    root: &Path,
+    handle: &str,
+    rows: &[(i64, PathBuf)],
+    inventory: ModeledInventory,
+) -> Value {
+    let bin = root.join("modeled-bin");
+    fs::create_dir_all(&bin).unwrap();
+    let mut records = String::new();
+    for (pid, path) in rows {
+        let identity = fs::metadata(path).unwrap();
+        assert!(identity.is_dir());
+        writeln!(
+            &mut records,
+            "p{pid}\nfcwd\nD0x{:x}\ni{}",
+            identity.dev(),
+            identity.ino()
+        )
+        .unwrap();
+        records.push('n');
+        for byte in path.as_os_str().as_encoded_bytes() {
+            write!(&mut records, "\\x{byte:02x}").unwrap();
+        }
+        records.push('\n');
+    }
+    let data = bin.join("rows");
+    fs::write(&data, records).unwrap();
+    let ending = match inventory {
+        ModeledInventory::Complete => "exit 0",
+        ModeledInventory::Partial => "printf 'modeled incomplete inventory' >&2; exit 1",
+    };
+    let program = bin.join("lsof");
+    fs::write(
+        &program,
+        format!("#!/bin/sh\n/bin/cat \"$MODELED_ROWS\"\n{ending}\n"),
+    )
+    .unwrap();
+    fs::set_permissions(program, fs::Permissions::from_mode(0o755)).unwrap();
+    let mut env = c.env.clone();
+    env.vars
+        .insert("MODELED_ROWS".into(), data.to_str().unwrap().into());
+    env.vars.insert(
+        "PATH".into(),
+        format!("{}:{}", bin.display(), c.env.vars["PATH"]),
+    );
+    read_agent(&env, root, handle)
+}
+
+fn stopped_native(c: &crate::Case, root: &Path, handle: &str, owned: &mut Working) {
+    owned.0.kill().unwrap();
+    owned.0.wait().unwrap();
+    let stopped = modeled_agent(c, root, handle, &[], ModeledInventory::Complete);
+    assert_eq!(
+        stopped["health"], "lost",
+        "reaped child, modeled complete absence: {stopped}"
+    );
+    assert_eq!(stopped["state"], "gone", "{stopped}");
+}
+
+/// Assert real native identity before composing explicit complete/partial CLI evidence.
+fn native_listing(c: &mut crate::Case, root: &Path, handle: &str, listing: NativeListing<'_>) {
+    let mut owned = native_child(c, handle, listing.recorded, listing.working);
+    let scan = native_scan(&c.env, owned.0.id());
+    if listing.health == "unknown" {
+        assert!(!scan.complete, "ambiguous native name: {scan:?}");
+        assert!(
+            scan.listed.is_empty(),
+            "no guessed caret ownership: {scan:?}"
+        );
+    } else {
+        assert!(scan.complete, "{scan:?}");
+        assert_eq!(
+            scan.listed,
+            vec![(i64::from(owned.0.id()), listing.working.to_path_buf())],
+            "supported native name must decode exactly once"
+        );
+    }
+    let inventory = if listing.health == "unknown" {
+        ModeledInventory::Partial
+    } else {
+        ModeledInventory::Complete
+    };
+    let agent = modeled_agent(c, root, handle, &scan.listed, inventory);
+    assert_eq!(
+        owned.0.try_wait().unwrap(),
+        None,
+        "owned child remains alive"
+    );
+    assert_eq!(agent["health"], listing.health, "{listing:?}: {agent}");
+    let state = if listing.health != "lost" {
+        "running_test"
+    } else {
+        "gone"
+    };
+    assert_eq!(agent["state"], state, "{agent}");
+    if listing.health != "lost" {
+        let phase = if listing.health == "live" {
+            "running"
+        } else {
+            "unknown"
+        };
+        assert_eq!(agent["state_detail"]["phase"], phase, "{agent}");
+    }
+    stopped_native(c, root, handle, &mut owned);
+}
+
+#[test]
+fn partial_listings_cannot_make_a_still_running_owned_child_lost() {
+    let root = crate::scratch("process-listing-completeness");
+    let tree = root.join("wt");
+    fs::create_dir_all(&tree).unwrap();
+    fs::write(tree.join(".git"), "gitdir: /unused/scratch-worktree\n").unwrap();
+    let tree = tree.canonicalize().unwrap();
+    let mut c = crate::Case::new();
+    let native_path = std::env::var("PATH").unwrap();
+    c.env.vars.insert("PATH".into(), native_path);
+    c.env
+        .vars
+        .insert("TASKS_NOW".into(), wall_clock().to_string());
+    c.env.vars.insert("HC_BIN".into(), "/nonexistent/hc".into());
+    let store = c.store();
+    let handle = c.register("worker");
+    store
+        .create(&NewTask::new("tools/listing", "Listing", "owner"))
+        .unwrap();
+    store.claim("tools/listing", &handle).unwrap();
+    assert!(store.bind_agent("listing-agent", &handle, false).unwrap());
+    call_in(&store, &tree);
+    let mut cat = Command::new("/bin/cat");
+    cat.current_dir(&tree)
+        .stdin(symphony_board::sys::Stdio::piped())
+        .stdout(symphony_board::sys::Stdio::null());
+    let mut working = Working(cat.spawn().unwrap());
+    let after = wall_clock();
+    c.env.vars.insert("TASKS_NOW".into(), after.to_string());
+    call_in(&c.store(), &tree);
+    expire(&mut c.env, after);
+    let projection = native_scan(&c.env, working.0.id());
+    assert!(projection.complete, "{projection:?}");
+    assert_eq!(
+        projection.listed,
+        vec![(i64::from(working.0.id()), tree.clone())]
+    );
+    assert_eq!(
+        working.0.try_wait().unwrap(),
+        None,
+        "native owned child is alive"
+    );
+    let live = modeled_agent(
+        &c,
+        &root,
+        &handle,
+        &projection.listed,
+        ModeledInventory::Partial,
+    );
+    assert_eq!(
+        live["health"], "live",
+        "native row in modeled partial inventory: {live}"
+    );
+    assert_eq!(live["state"], "running_test", "{live}");
+    assert_eq!(live["state_detail"]["phase"], "running", "{live}");
+
+    raw_listings(&c, &root, &handle, &tree, &mut working);
+    let stopped = modeled_agent(&c, &root, &handle, &[], ModeledInventory::Complete);
+    assert_eq!(
+        stopped["health"], "lost",
+        "reaped child, modeled complete absence: {stopped}"
+    );
+    assert_eq!(stopped["state"], "gone", "{stopped}");
+    let partial = modeled_agent(&c, &root, &handle, &[], ModeledInventory::Partial);
+    assert_eq!(
+        partial["health"], "unknown",
+        "modeled partial absence: {partial}"
+    );
+    assert_eq!(partial["state"], "running_test", "{partial}");
+    assert_eq!(partial["state_detail"]["phase"], "unknown", "{partial}");
+
+    native_names(&mut c, &root, &handle);
+}
+
+fn raw_listings(c: &crate::Case, root: &Path, handle: &str, tree: &Path, working: &mut Working) {
+    let read = |env: &Env| read_agent(env, root, handle);
+    let bin = root.join("bin");
+    fs::create_dir_all(&bin).unwrap();
+    let lsof = bin.join("lsof");
+    let mut raw_env = c.env.clone();
+    raw_env.vars.insert(
+        "PATH".into(),
+        format!("{}:/usr/bin:/bin:/usr/sbin", bin.display()),
+    );
+    raw_env
+        .vars
+        .insert("SCAN_PID".into(), working.0.id().to_string());
+    raw_env
+        .vars
+        .insert("SCAN_CWD".into(), tree.to_str().unwrap().into());
+    for Listing {
+        name,
+        output,
+        ending,
+        health,
+    } in LISTINGS
+    {
+        fs::write(&lsof, format!("#!/bin/sh\n{output}\n{ending}\n")).unwrap();
+        fs::set_permissions(&lsof, fs::Permissions::from_mode(0o755)).unwrap();
+        let a = read(&raw_env);
+        assert_eq!(a["health"], health, "{name}: {a}");
+        let state = if health == "lost" {
+            "gone"
+        } else {
+            "running_test"
+        };
+        assert_eq!(a["state"], state, "{name}: {a}");
+        if health != "lost" {
+            let phase = if health == "live" {
+                "running"
+            } else {
+                "unknown"
+            };
+            assert_eq!(a["state_detail"]["phase"], phase, "{name}: {a}");
+        }
+        assert_eq!(
+            working.0.try_wait().unwrap(),
+            None,
+            "{name}: owned child still running"
+        );
+    }
+    // A readable cwd whose PID ended between listing and start lookup is excluded as before.
+    working.0.kill().unwrap();
+    working.0.wait().unwrap();
+    fs::write(
+        &lsof,
+        "#!/bin/sh\nprintf 'p%s\\nfcwd\\nn%s\\n' \"$SCAN_PID\" \"$SCAN_CWD\"\n",
+    )
+    .unwrap();
+    let ended = read(&raw_env);
+    assert_eq!(ended["health"], "lost", "ended PID: {ended}");
+    assert_eq!(ended["state"], "gone", "{ended}");
+}
+
+fn native_names(c: &mut crate::Case, root: &Path, handle: &str) {
+    struct Name {
+        actual: &'static str,
+        lookalike: &'static str,
+        health: &'static str,
+    }
+    // Each lookalike really exists. Existence/canonicalization of a display spelling is
+    // insufficient, and a second decoding pass would attribute the literal escapes wrongly.
+    for name in [
+        Name {
+            actual: "ordinary",
+            lookalike: "unrelated",
+            health: "live",
+        },
+        Name {
+            actual: "tab\tname",
+            lookalike: "tab\\tname",
+            health: "live",
+        },
+        Name {
+            actual: "café",
+            lookalike: "caf\\xc3\\xa9",
+            health: "live",
+        },
+        Name {
+            actual: "literal\\t^A",
+            lookalike: "literal\t^A",
+            health: "live",
+        },
+        Name {
+            actual: "literal\\x41",
+            lookalike: "literalA",
+            health: "live",
+        },
+        Name {
+            actual: "control\x01",
+            lookalike: "control^A",
+            health: "unknown",
+        },
+    ] {
+        let actual = root.join(name.actual).join("wt");
+        let other = root.join(name.lookalike).join("wt");
+        for path in [&actual, &other] {
+            fs::create_dir_all(path).unwrap();
+            fs::write(path.join(".git"), "gitdir: /unused/scratch-worktree\n").unwrap();
+        }
+        let actual = actual.canonicalize().unwrap();
+        let other = other.canonicalize().unwrap();
+        assert_ne!(actual, other);
+        native_listing(
+            c,
+            root,
+            handle,
+            NativeListing {
+                recorded: &actual,
+                working: &actual,
+                health: name.health,
+            },
+        );
+        native_listing(
+            c,
+            root,
+            handle,
+            NativeListing {
+                recorded: &other,
+                working: &actual,
+                health: if name.health == "unknown" {
+                    "unknown"
+                } else {
+                    "lost"
+                },
+            },
+        );
+    }
+    canonical_native_name(c, root, handle);
+}
+
+fn canonical_native_name(c: &mut crate::Case, root: &Path, handle: &str) {
+    let actual_parent = root.join("canonical\x01");
+    let actual = actual_parent.join("literal\\x41").join("wt");
+    fs::create_dir_all(&actual).unwrap();
+    fs::write(actual.join(".git"), "gitdir: /unused/scratch-worktree\n").unwrap();
+    let actual = actual.canonicalize().unwrap();
+    let mut owned = native_child(c, handle, &actual, &actual);
+    let unresolved = native_scan(&c.env, owned.0.id());
+    assert!(!unresolved.complete, "{unresolved:?}");
+    assert!(unresolved.listed.is_empty(), "{unresolved:?}");
+    let before = modeled_agent(
+        c,
+        root,
+        handle,
+        &unresolved.listed,
+        ModeledInventory::Partial,
+    );
+    assert_eq!(
+        owned.0.try_wait().unwrap(),
+        None,
+        "owned child remains alive"
+    );
+    assert_eq!(before["health"], "unknown", "{before}");
+    assert_eq!(before["state"], "running_test", "{before}");
+    assert_eq!(before["state_detail"]["phase"], "unknown", "{before}");
+
+    let alias_parent = root.join("canonical^A");
+    symlink(&actual_parent, &alias_parent).unwrap();
+    let alias = alias_parent.join("literal\\x41").join("wt");
+    assert_ne!(alias, actual);
+    assert_eq!(alias.canonicalize().unwrap(), actual);
+    let identity = fs::metadata(&actual).unwrap();
+    let alias_identity = fs::metadata(&alias).unwrap();
+    assert_eq!(alias_identity.dev(), identity.dev());
+    assert_eq!(alias_identity.ino(), identity.ino());
+    let resolved = native_scan(&c.env, owned.0.id());
+    assert!(resolved.complete, "{resolved:?}");
+    assert_eq!(
+        resolved.listed,
+        vec![(i64::from(owned.0.id()), actual)],
+        "publish the verified filesystem path without decoding its literal escape again"
+    );
+    let agent = modeled_agent(
+        c,
+        root,
+        handle,
+        &resolved.listed,
+        ModeledInventory::Complete,
+    );
+    assert_eq!(
+        owned.0.try_wait().unwrap(),
+        None,
+        "same owned child remains alive"
+    );
+    assert_eq!(agent["health"], "live", "{agent}");
+    assert_eq!(agent["state"], "running_test", "{agent}");
+    assert_eq!(agent["state_detail"]["phase"], "running", "{agent}");
+    stopped_native(c, root, handle, &mut owned);
+}

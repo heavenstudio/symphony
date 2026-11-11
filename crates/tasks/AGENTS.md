@@ -81,8 +81,21 @@ UDS registrations pin the listener's kernel peer pid and process start time.
 Sweep and delivery connections check that identity; a dead or replaced listener
 retires the registration, never transfers it to a new process at the same path.
 An address held by another valid registration is refused. In-process bindings
-are recorded outside session by the native hook, and cannot register callbacks
-or take over a handle that holds a native registration;
+are recorded outside session by the native hook, with the checkout the agent's
+last tool call ran in (`worktree`, `branch` and `placed_at` on
+`callback_state:['binding', KEY]`, written by the beat only when they change,
+and `stay_from`, lowered by a call there whose clock went back; on Linux
+`placed_boot` and `last_boot` too, the clock since boot as the hook read it,
+`sys/start.rs`), which the agents view reads as where it works and where it
+looks, once a view and only for a quiet one, for a live process it waits on:
+one working there that started between `placed_at` and its last tool call (a
+start Linux dates since boot: between `placed_boot` and `last_boot` in the same
+boot, never by a wall time), or `unknown` for one there whose start cannot be
+read, falls between `stay_from` and `placed_at`, or is dated since boot with a
+bounding reading missing (`cli/agents/place.rs`; a
+long-lived reader keeps that listing on its store, dated when it ended,
+`store/kept.rs`). They cannot
+register callbacks or take over a handle that holds a native registration;
 unclassified bound keys also fail closed until a full-session hook binds them.
 An unclassified binding asks for a retry after the new tasks binary is linked;
 a known in-process binding uses its board inbox. Reads use cached evidence,
@@ -166,7 +179,11 @@ The monitor and native stream emit that task/post once. Native acknowledgements 
 identities in `callback_state.pull_unanswered`, separate from main's whole-board PULL account;
 withheld or merely queued entries never enter that history. `store/unanswered.rs::unanswered_post`
 defines pending work for the digest, restore selection and sweep: a post since that handle took
-its role, without a later message, status move or verdict by it on the same thread. Acquiring the
+its role, without a later message, status move or verdict by it on that task or a descendant.
+The descendant lookup reads only that recipient's eligible records after the post through
+`message_sender`, then checks actual task parents. Direct `land-approve` approvals journal a
+message through the existing board API. The final recovery reservation rechecks the recipient's
+records and the parent edges used in its answer decision before reserving the attempt. Acquiring the
 role also puts the predecessor's posts before the new holder's work, even at the same clock time.
 Role aliases bind to the holders in the thread prefix at each post; a later departure or
 replacement cannot transfer that request to another recorded conversation.

@@ -33,8 +33,17 @@
 #[cfg(test)]
 extern crate self as symphony_board;
 
+#[cfg(test)]
+#[path = "../tests/store/common.rs"]
+#[expect(
+    dead_code,
+    reason = "library regressions reuse parts of the shared scratch store harness"
+)]
+mod store_fixture;
+
 pub mod cbor;
 pub mod cli;
+mod codex_queue;
 pub mod cutover;
 pub mod embedding;
 pub mod git;
@@ -58,9 +67,9 @@ pub mod sys;
 pub use health::Health;
 pub use schema::{Access, Schema};
 pub use store::{
-    BEFORE_WORK, Beat, Board, Callback, EmbeddingStats, Error, HandOff, KINDS, LANDS_FROM, Landed,
-    Message, Moved, NewLaunch, NewSession, NewTask, Opening, PIPELINE, PULLABLE, Pick, Presence,
-    ROLES, Role, SLOT_READS, STATUSES, SearchHit, Session, Store, Task, VectorHit,
+    BEFORE_WORK, Beat, Binding, Board, Callback, EmbeddingStats, Error, HandOff, KINDS, LANDS_FROM,
+    Landed, Message, Moved, NewLaunch, NewSession, NewTask, Opening, PIPELINE, PULLABLE, Pick,
+    Presence, ROLES, Role, SLOT_READS, STATUSES, SearchHit, Session, Store, Task, VectorHit,
     VectorSearchProfile, can_transition,
 };
 

@@ -263,6 +263,9 @@ fn listed(t: &Map<String, Value>) -> Value {
 fn answer(argv: &[String], state: &mut Map<String, Value>) -> Answer {
     let arg = |n: usize| argv.get(n).map_or("", String::as_str);
     match arg(0) {
+        // An owned fixture may put this binary on PATH as codex. The log is its native queue
+        // receipt; accepting the message deliberately changes no terminal's status or sent text.
+        "queue" => Answer::Kept(String::new()),
         "ls" => {
             let all = argv.iter().any(|a| a == "--all");
             let wanted = flags(argv, "--label");

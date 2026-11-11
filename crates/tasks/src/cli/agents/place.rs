@@ -1,0 +1,279 @@
+//! Where an agent works, as the agents view compares it: a worktree's path resolved as Python's
+//! `os.path.realpath` resolves it ([`resolve`]), and what a quiet in-process agent waits on there.
+//!
+//! An in-process agent (a subagent: no terminal, no monitor, its tool calls its only heartbeat) gone
+//! quiet with no run of its own, in a linked worktree its binding recorded, is waiting on what it
+//! started there when a live process of its own works in that worktree (its nearest checkout is
+//! that one, never one beneath it): `running_test`, `{"recipe": "process", "phase": "running"}`,
+//! and live. A process is its own when it began while the agent was there: not before its binding
+//! recorded that worktree, nor after its last tool call, so a server or shell another started there
+//! keeps nobody alive. Its start is compared on the clock the kernel dates it by: the board's on
+//! macOS, whose stamp is fixed when it began, and on Linux the clock since boot, with the readings of
+//! that clock the agent's calls gave, so setting the wall clock while it waits retimes nothing. When
+//! the board cannot tell (the machine's processes cannot be listed, or one working there may be the
+//! agent's but its start cannot be read, or the board's clock went back while the agent was there
+//! and the process began in the time that leaves in doubt, or a call that bounds the stay read no
+//! clock since boot, or an intervening repository boundary cannot be read): `running_test` with
+//! `"phase": "unknown"`, health `unknown`, so it is not called
+//! lost either. With none working there that can be its it ages as before ([`waited_on`]).
+
+use super::{Answer, Detail, Probes};
+use crate::Store;
+use crate::health::Health;
+use crate::sys::Boottime;
+use std::io;
+use std::path::{Path, PathBuf};
+
+/// How long a long-lived reader keeps the machine's process listing ([`Store::kept_scan`]): a
+/// process that ended reads gone within this, far inside the ten minutes before lost.
+pub const PROCESS_SCAN_SECONDS: f64 = 20.0;
+/// The recipe of a wait the view sees as a process working in an in-process agent's worktree.
+pub const PROCESS: &str = "process";
+/// How far a process's start may fall outside the agent's stay and still be its: the kernel stamps
+/// a start and a hook reads its clocks apart, each to its own grain (Linux's in clock ticks).
+const START_SLACK_SECONDS: f64 = 1.0;
+
+/// A live process the machine lists: where it works and when it started (none when the kernel could
+/// not say: it may be anyone's, the agent's working there included).
+#[derive(Debug, Clone, PartialEq)]
+pub struct Process {
+    pub cwd: PathBuf,
+    pub started: Option<Began>,
+}
+
+/// Readable process evidence, with absence authoritative only when the listing is complete.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ProcessScan {
+    pub listed: Vec<Process>,
+    pub complete: bool,
+}
+
+/// When a listed process started, on the clock the kernel dates it by.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Began {
+    /// By the board's clock, a stamp fixed when it started (macOS): compared with the board's
+    /// clock's times of the agent's calls.
+    At(f64),
+    /// On the clock since boot (Linux), which no setting of the wall clock moves: compared with the
+    /// readings of that clock the agent's calls gave, never with a wall time.
+    AfterBoot(Boottime),
+}
+
+impl<'a> Probes<'a> {
+    /// These probes, the process listing kept by `store` ([`Store::kept_scan`]): a long-lived reader's,
+    /// which views its agents every second or so.
+    pub fn kept_by(self, store: &'a Store) -> Probes<'a> {
+        let processes = self.processes;
+        Probes {
+            processes: Box::new(move || store.kept_scan(&*processes)),
+            ..self
+        }
+    }
+}
+
+/// `path` with its symbolic links resolved, as Python's `os.path.realpath`: what does not exist is kept
+/// as written beneath the part that does. "" stays "".
+pub(super) fn resolve(path: &str) -> String {
+    if path.is_empty() {
+        return String::new();
+    }
+    let given = Path::new(path);
+    let whole = if given.is_absolute() {
+        given.to_path_buf()
+    } else {
+        std::env::current_dir().unwrap_or_default().join(given)
+    };
+    let mut rest = Vec::new();
+    let mut at: &Path = &whole;
+    loop {
+        if let Ok(found) = at.canonicalize() {
+            let mut out: PathBuf = found;
+            out.extend(rest.iter().rev());
+            return out.to_string_lossy().into_owned();
+        }
+        match (at.parent(), at.file_name()) {
+            (Some(parent), Some(name)) => {
+                rest.push(name.to_owned());
+                at = parent;
+            }
+            _ => return whole.to_string_lossy().into_owned(),
+        }
+    }
+}
+
+/// Whether the nearest marker permits attribution to the enclosing worktree.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum Location {
+    Inside,
+    Outside,
+    Unknown,
+}
+
+impl Location {
+    /// Only NotFound proves marker absence. Even an invalid marker object is a boundary;
+    /// unreadable ancestors leave ownership uncertain unless another marker excludes it.
+    fn boundaries(markers: impl IntoIterator<Item = io::Result<()>>) -> Self {
+        let mut location = Self::Inside;
+        for marker in markers {
+            match marker {
+                Ok(()) => return Self::Outside,
+                Err(e) if e.kind() == io::ErrorKind::NotFound => {}
+                Err(_) => location = Self::Unknown,
+            }
+        }
+        location
+    }
+
+    fn with_start(self, whose: Whose) -> Whose {
+        match (self, whose) {
+            (Self::Outside, _) | (_, Whose::Not) => Whose::Not,
+            (Self::Inside, Whose::Its) => Whose::Its,
+            _ => Whose::Maybe,
+        }
+    }
+}
+
+/// A process belongs beneath `tree` only when no intervening marker object exists.
+/// Inspect the object itself: a dangling marker still excludes an enclosing checkout.
+fn works_in(cwd: &Path, tree: &Path) -> Location {
+    if !cwd.starts_with(tree) {
+        return Location::Outside;
+    }
+    Location::boundaries(
+        cwd.ancestors()
+            .take_while(|folder| *folder != tree)
+            .map(|folder| folder.join(".git").symlink_metadata().map(|_| ())),
+    )
+}
+
+/// An in-process agent's stay in the checkout its binding recorded, by the board's clock and by the
+/// clock since boot.
+#[derive(Debug, Clone, Copy)]
+pub(super) struct Stay<'binding> {
+    /// When its binding recorded that checkout (`placed_at`).
+    pub came: f64,
+    /// The earliest time a call of its there read: `came`, unless the clock went back while it was
+    /// there (`stay_from`).
+    pub from: f64,
+    /// Its last tool call.
+    pub last: f64,
+    /// The clock since boot when it came, and at its last call (`placed_boot`, `last_boot`): none
+    /// when that call did not read it.
+    pub came_boot: Option<&'binding Boottime>,
+    pub last_boot: Option<&'binding Boottime>,
+    /// A missing reading in this stay leaves subsequent samples unable to prove an upper bound.
+    pub boot_uncertain: bool,
+}
+
+/// Whether a process working where an agent stayed is the agent's.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum Whose {
+    Its,
+    Maybe,
+    Not,
+}
+
+impl Stay<'_> {
+    /// Whether a process that started `began` is its: when it started in the stay, by the clock it
+    /// was dated on, it is; when that cannot be told (no start, the board's clock went back, a call
+    /// that read no clock since boot), maybe; else not.
+    fn whose(&self, began: Option<&Began>) -> Whose {
+        let slack = START_SLACK_SECONDS;
+        let (its, maybe) = match began {
+            None => return Whose::Maybe,
+            Some(Began::At(at)) => {
+                let from = self.from.min(self.came);
+                let within = (self.came - slack..=self.last + slack).contains(at);
+                (within, (from - slack..self.came - slack).contains(at))
+            }
+            Some(Began::AfterBoot(began)) => {
+                // A different boot proves a process came after the last call only with complete
+                // readings. A gap may span a reboot too. A known later boot still retires the
+                // placement boot: its processes cannot return.
+                let came = self.came_boot.filter(|s| s.boot == began.boot);
+                let last = self.last_boot.filter(|s| s.boot == began.boot);
+                let before = came.is_some_and(|came| began.at < came.at - slack);
+                let retired =
+                    came.is_some() && self.last_boot.is_some_and(|l| l.boot != began.boot);
+                let after = !self.boot_uncertain
+                    && self.last_boot.is_some()
+                    && last.is_none_or(|l| began.at > l.at + slack);
+                if before || retired || after {
+                    return Whose::Not;
+                }
+                let within = last.is_some_and(|l| began.at <= l.at + slack);
+                (came.is_some() && within, true)
+            }
+        };
+        match (its, maybe) {
+            (true, _) => Whose::Its,
+            (false, true) => Whose::Maybe,
+            (false, false) => Whose::Not,
+        }
+    }
+}
+
+/// What the machine's processes (`scan`, listed once a view) say of an in-process agent gone quiet
+/// in `tree` (resolved) after `stay` there: its health and what it waits on. Live on a process
+/// working there that began in its stay, by the clock its start is dated on; unknown when they
+/// cannot be listed completely, or when one working there may be its but cannot be told to be: its start
+/// cannot be read, or it began while the board's clock had gone back (after the earliest time a
+/// call of its there read, before it came), or its start is dated since boot and the call that
+/// would bound it read no clock since boot, or its intervening markers cannot be read. None when
+/// `tree` is no linked worktree (the main checkout, which every agent registered there shares, or
+/// a folder in no repository) or no process
+/// working there can be its in a complete listing. Readable ownership proves Live even in an
+/// incomplete listing.
+pub(super) fn waited_on(
+    tree: &str,
+    stay: &Stay,
+    scan: &dyn Fn() -> Answer<ProcessScan>,
+) -> Option<(Health, Detail)> {
+    let tree = Path::new(tree);
+    if tree.as_os_str().is_empty() || !crate::git::linked(tree) {
+        return None;
+    }
+    let (health, phase) = match scan() {
+        Err(_) => (Health::Unknown, "unknown"),
+        Ok(scan) => {
+            let whose: Vec<Whose> = scan
+                .listed
+                .iter()
+                .map(|p| works_in(&p.cwd, tree).with_start(stay.whose(p.started.as_ref())))
+                .collect();
+            if whose.contains(&Whose::Its) {
+                (Health::Live, "running")
+            } else if !scan.complete || whose.contains(&Whose::Maybe) {
+                (Health::Unknown, "unknown")
+            } else {
+                return None;
+            }
+        }
+    };
+    let detail = Detail {
+        recipe: PROCESS.into(),
+        phase: phase.into(),
+        since: None,
+    };
+    Some((health, detail))
+}
+
+#[cfg(test)]
+mod boundary_tests;
+
+#[cfg(test)]
+mod tests {
+    use super::resolve;
+
+    #[test]
+    fn a_path_resolves_as_python_s_realpath_resolves_it() {
+        let here = std::env::current_dir().unwrap().canonicalize().unwrap();
+        assert_eq!(resolve(""), "");
+        assert_eq!(
+            resolve("not/there"),
+            here.join("not/there").to_string_lossy()
+        );
+        assert_eq!(resolve("/no-such-top/x"), "/no-such-top/x");
+        assert_eq!(resolve("/"), "/");
+    }
+}

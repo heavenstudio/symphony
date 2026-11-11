@@ -7,6 +7,7 @@
 mod cost;
 mod moves;
 mod red_marks;
+mod reservations;
 
 use crate::common::{Fixture, Seed, refused, session, task};
 use symphony_board::rows::{SessionRow, TaskRow};
@@ -34,6 +35,13 @@ const EIGHT: [(&str, &str); 8] = [
     ("work/g", "in_progress"),
     ("work/h", "review"),
 ];
+
+/// What a claim refused at the cap adds for the executor holding the reservation.
+fn reserve_hint(slug: &str) -> String {
+    format!(
+        "; if the task is reserved for you, start work under the reservation now, renew it with `just tasks reserve {slug}` within each hour and retry the claim after each renewal"
+    )
+}
 
 /// What O holding [`EIGHT`] is said as.
 const HOLDS_EIGHT: &str = "olive-orch holds 8 open tasks, the cap of 8 an orchestrator holds: work/a (in_progress), work/b (review), work/c (in_progress), work/d (review), work/e (in_progress), work/f (review), work/g (in_progress), work/h (review); a slot frees when one of them is done or cancelled";
@@ -116,7 +124,10 @@ fn the_ninth_claim_under_one_orchestrator_is_refused_naming_the_eight_and_their_
     let store = capped(&f, 8);
     assert_eq!(
         refused(store.claim("work/next", K)),
-        format!("work/next cannot start: {HOLDS_EIGHT}")
+        format!(
+            "work/next cannot start: {HOLDS_EIGHT}{}",
+            reserve_hint("work/next")
+        )
     );
     let next = store.get("work/next").unwrap();
     assert_eq!(
@@ -124,6 +135,10 @@ fn the_ninth_claim_under_one_orchestrator_is_refused_naming_the_eight_and_their_
         ("ready", vec![])
     );
     assert!(f.said("work/next").is_empty(), "nothing written");
+    assert!(
+        next.holders("reserved").is_empty(),
+        "a cap refusal reserves nothing: {next:?}"
+    );
 }
 
 #[test]
@@ -314,8 +329,9 @@ fn a_task_no_orchestrator_holds_counts_against_the_claimers_parent() {
     assert_eq!(
         refused(store.claim("loose/next", W)),
         format!(
-            "loose/next cannot start: olive-orch (no orchestrator holds it: olive-orch is the parent of wren) {}",
-            HOLDS_EIGHT.trim_start_matches("olive-orch ")
+            "loose/next cannot start: olive-orch (no orchestrator holds it: olive-orch is the parent of wren) {}{}",
+            HOLDS_EIGHT.trim_start_matches("olive-orch "),
+            reserve_hint("loose/next")
         )
     );
     // A worker with no parent counts it against no one.
@@ -380,13 +396,15 @@ fn an_orchestrator_at_the_cap_still_starts_main_and_nightly_red_work_and_names_i
         store.claim("fix/static", "lark").unwrap().status,
         "in_progress"
     );
-    store.move_to("fix/static", "review", "lark").unwrap();
+    // Historical reviewed red children remain excluded from the feature cap.
+    f.historical_review("fix/static");
     assert_eq!(open(&store).len(), 11);
     // A feature at the cap is refused as before, the red work named apart as not counted.
     assert_eq!(
         refused(store.claim("work/next", K)),
         format!(
-            "work/next cannot start: {HOLDS_EIGHT}; not counted, as red work takes no slot: fix/static (review), tests/main-red-abc (in_progress), tests/nightly-red-sim (in_progress)"
+            "work/next cannot start: {HOLDS_EIGHT}; not counted, as red work takes no slot: fix/static (review), tests/main-red-abc (in_progress), tests/nightly-red-sim (in_progress){}",
+            reserve_hint("work/next")
         )
     );
     assert_eq!(store.get("work/next").unwrap().status, "ready");
@@ -419,7 +437,10 @@ fn a_cancelled_red_exempts_no_work_under_it_and_none_started_there_since() {
         .unwrap();
     assert_eq!(
         refused(store.claim("fix/late", W)),
-        "fix/late cannot start: olive-orch holds 9 open tasks, the cap of 8 an orchestrator holds: fix/early (in_progress), work/a (in_progress), work/b (review), work/c (in_progress), work/d (review), work/e (in_progress), work/f (review), work/g (in_progress), work/h (review); a slot frees when one of them is done or cancelled"
+        format!(
+            "fix/late cannot start: olive-orch holds 9 open tasks, the cap of 8 an orchestrator holds: fix/early (in_progress), work/a (in_progress), work/b (review), work/c (in_progress), work/d (review), work/e (in_progress), work/f (review), work/g (in_progress), work/h (review); a slot frees when one of them is done or cancelled{}",
+            reserve_hint("fix/late")
+        )
     );
     assert_eq!(store.get("fix/late").unwrap().status, "ready");
 }
@@ -428,7 +449,10 @@ fn a_cancelled_red_exempts_no_work_under_it_and_none_started_there_since() {
 fn a_filer_marks_no_feature_red_so_the_cap_still_refuses_its_claim() {
     let f = eight_and(&[("work/next", "ready")]);
     let store = capped(&f, 8);
-    let full = format!("work/next cannot start: {HOLDS_EIGHT}");
+    let full = format!(
+        "work/next cannot start: {HOLDS_EIGHT}{}",
+        reserve_hint("work/next")
+    );
     assert_eq!(refused(store.claim("work/next", K)), full);
     // A filer, which any worker may register, marks the feature the cap refused: no red series'.
     let said = refused(store.mark_red("work/next", "main", F));
@@ -446,7 +470,10 @@ fn a_task_only_named_like_a_red_takes_a_slot() {
     let f = eight_and(&[("tests/main-red-old", "ready")]);
     assert_eq!(
         refused(capped(&f, 8).claim("tests/main-red-old", K)),
-        format!("tests/main-red-old cannot start: {HOLDS_EIGHT}")
+        format!(
+            "tests/main-red-old cannot start: {HOLDS_EIGHT}{}",
+            reserve_hint("tests/main-red-old")
+        )
     );
 }
 

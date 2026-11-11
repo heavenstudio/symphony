@@ -4,7 +4,7 @@
 //! that read it marked decided again.
 
 use super::moves::{RED, UNDER, WAIT, beside_a_red};
-use super::{EIGHT, F, K, O, W, capped, red, sessions, with};
+use super::{EIGHT, F, K, O, W, capped, red, reserve_hint, sessions, with};
 use crate::common::{Fixture, refused};
 use std::sync::{Mutex, mpsc};
 use std::thread;
@@ -62,7 +62,10 @@ fn an_owners_cancel_that_read_no_task_is_refused_there_never_closing_a_red_filed
     let said = refused(store.claim("work/more", K));
     assert!(
         said.starts_with("work/more cannot start: olive-orch holds 8 open tasks")
-            && said.ends_with("not counted, as red work takes no slot: fix/under (in_progress)"),
+            && said.ends_with(&format!(
+                "not counted, as red work takes no slot: fix/under (in_progress){}",
+                reserve_hint("work/more")
+            )),
         "{said}"
     );
 }

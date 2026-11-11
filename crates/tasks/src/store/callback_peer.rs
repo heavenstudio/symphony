@@ -240,41 +240,13 @@ fn owner(stream: &UnixStream) -> io::Result<Owner> {
 
 #[cfg(target_os = "macos")]
 fn started(pid: i32) -> io::Result<String> {
-    // Layout of proc_bsdinfo from the SDK's sys/proc_info.h (136 bytes).
-    #[repr(C)]
-    #[derive(Default)]
-    struct BsdInfo {
-        prefix: [u32; 12],
-        comm: [u8; 16],
-        name: [u8; 32],
-        details: [u32; 6],
-        seconds: u64,
-        micros: u64,
-    }
-    #[link(name = "proc")]
-    unsafe extern "C" {
-        fn proc_pidinfo(
-            pid: c_int,
-            flavor: c_int,
-            arg: u64,
-            buffer: *mut c_void,
-            size: c_int,
-        ) -> c_int;
-    }
-    let mut info = BsdInfo::default();
-    let size = c_int::try_from(std::mem::size_of::<BsdInfo>()).expect("proc_bsdinfo fits int");
-    // SAFETY: libproc receives a writable proc_bsdinfo buffer of exactly the requested size.
-    let read = unsafe { proc_pidinfo(pid, 3, 0, (&raw mut info).cast(), size) };
-    if read != size {
-        return Err(io::Error::last_os_error());
-    }
-    if pid <= 0 || info.prefix[3] != u32::try_from(pid).unwrap_or(0) || info.prefix[1] == 5 {
+    let Some((seconds, micros)) = crate::sys::bsd_start(pid)? else {
         return Err(io::Error::new(
             io::ErrorKind::NotFound,
             "socket peer is no longer running",
         ));
-    }
-    Ok(format!("{}.{:06}", info.seconds, info.micros))
+    };
+    Ok(format!("{seconds}.{micros:06}"))
 }
 
 #[cfg(target_os = "linux")]

@@ -11,7 +11,9 @@ Use one agent, a concrete risk assessment and focused regression checks.
 Simple fixes take the quick delivery path; complex or high-risk repairs may
 need specific stamps. Restore broken functionality before unrelated test or
 gate cleanup, recording remaining failures honestly. Do not create separate
-review/gate subtasks. This recovery rule supersedes blanket feature-cycle
+review/gate subtasks. After recovery, another agent performs a bounded root-cause
+and recurrence-prevention postmortem, reusing a relevant analysis task; it does
+not block recovery or start another delivery cycle. This recovery rule supersedes blanket feature-cycle
 instructions below; see RULES.md `workflow/fast-bugfixes`.
 
 ## Parent feature delivery

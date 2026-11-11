@@ -6,6 +6,8 @@ use std::path::PathBuf;
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
+mod in_process;
+
 pub(super) struct Listener {
     pub(super) path: PathBuf,
     stop: mpsc::Sender<()>,

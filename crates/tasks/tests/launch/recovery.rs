@@ -1,6 +1,8 @@
 //! Unanswered-post recovery against private hc terminals.
 
 use super::*;
+use crate::Hooked;
+use std::cell::Cell;
 use symphony_board::launch::restore_unanswered;
 
 #[test]
@@ -255,5 +257,65 @@ fn recovery_leaves_answered_present_and_unrecorded_conversations_alone() {
         if case.ends_with("-open") {
             assert_eq!(digest.count("unanswered"), 0, "{case}");
         }
+    }
+}
+
+#[test]
+fn unanswered_recovery_does_not_restart_a_reviewer_who_answered_on_its_instruction() {
+    for late in [false, true] {
+        let w = World::new();
+        let executor = w.f.session("worker");
+        w.store().claim("sim/jump", &executor).unwrap();
+        w.store().move_to("sim/jump", "review", &executor).unwrap();
+        w.task("instructions/review", Some("sim/jump"));
+        let reviewer = w.review("instructions/review").row;
+        w.store().claim(&reviewer.slug, &reviewer.handle).unwrap();
+        close_terminal(&w, &reviewer);
+        w.store()
+            .say(
+                "sim/jump",
+                "owner",
+                "finish the instruction",
+                Some(&reviewer.handle),
+            )
+            .unwrap();
+        let answered = Cell::new(false);
+        let answer = || {
+            w.store()
+                .say(&reviewer.slug, &reviewer.handle, "review complete", None)
+                .unwrap();
+            answered.set(true);
+        };
+        if !late {
+            answer();
+        }
+        w.f.advance(31.0 * 60.0);
+        let mut hc = Hooked::new(&w);
+        hc.after = Box::new(|args| {
+            if late && args.first() == Some(&"ls") && !answered.get() {
+                answer();
+            }
+        });
+        let mut warnings = Vec::new();
+        assert!(
+            restore_unanswered(w.store(), &hc, &w.machine(), &mut warnings)
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            answered.get(),
+            "late answer reached the inventory/recheck boundary"
+        );
+        assert_eq!(w.calls_of(&["run"]).len(), 1);
+        assert!(
+            w.store().task_sessions(&reviewer.slug).unwrap()[0]
+                .closed
+                .is_some()
+        );
+        assert!(warnings.is_empty());
+        w.f.advance(31.0 * 60.0);
+        let digest =
+            symphony_board::cli::pull::digest(w.store(), &[], None, w.f.now(), &[]).unwrap();
+        assert_eq!(digest.count("unanswered"), 0);
     }
 }
