@@ -33,6 +33,18 @@ pub async fn get<T: DeserializeOwned>(url: &str) -> Result<T, String> {
         .map_err(|e| e.to_string())
 }
 
+/// A read of something the server may not have: `None` when it answers 404, so a page can say
+/// what is missing rather than that the read failed.
+pub async fn get_found<T: DeserializeOwned>(url: &str) -> Result<Option<T>, String> {
+    match send(url, None).await {
+        Ok(value) => serde_wasm_bindgen::from_value(value)
+            .map(Some)
+            .map_err(|e| e.to_string()),
+        Err(Failure::Missing(_)) => Ok(None),
+        Err(failure) => Err(failure.into_text()),
+    }
+}
+
 /// Raw typed API data can stay in the shell until its deferred component needs decoding.
 pub async fn get_json(url: &str) -> Result<JsValue, String> {
     send(url, None).await.map_err(Failure::into_text)
@@ -78,24 +90,19 @@ async fn send(url: &str, payload: Option<JsValue>) -> Result<JsValue, Failure> {
             .await
             .map_err(|e| Failure::uncertain(describe(e)))?
             .unchecked_into();
-        let value = JsFuture::from(
-            response
-                .json()
-                .map_err(|e| Failure::uncertain(describe(e)))?,
-        )
-        .await
-        .map_err(|e| Failure::uncertain(describe(e)))?;
+        let value = match response.json() {
+            Ok(body) => JsFuture::from(body).await,
+            Err(error) => Err(error),
+        };
+        // A refusal is told by its status, whatever its body: a 404 without JSON is still missing.
         if !response.ok() {
-            let text = field(&value, "error")
-                .as_string()
+            let text = value
+                .ok()
+                .and_then(|value| field(&value, "error").as_string())
                 .unwrap_or_else(|| format!("The server answered {}", response.status()));
-            return Err(if response.status() >= 500 {
-                Failure::uncertain(text)
-            } else {
-                Failure::known(text)
-            });
+            return Err(Failure::refused(response.status(), text));
         }
-        Ok(value)
+        value.map_err(|e| Failure::uncertain(describe(e)))
     };
     match select(std::pin::pin!(operation), std::pin::pin!(sleep(15_000))).await {
         Either::Left((result, _)) => result,

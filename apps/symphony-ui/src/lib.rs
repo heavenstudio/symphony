@@ -37,6 +37,7 @@ pub mod state;
 mod task_save;
 pub mod tasks;
 pub mod theme;
+pub mod trouble;
 #[cfg(any(not(target_arch = "wasm32"), feature = "page-review"))]
 pub mod view;
 pub mod viewer;
