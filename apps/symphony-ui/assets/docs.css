@@ -44,6 +44,10 @@
 .doc-section:target, .decision:target { outline:2px solid var(--primary); }
 .doc-section > .section-prose { max-width:var(--measure); }
 .doc-section:has(table, .compare, .pair, .figure-strip, pre, .entry img, a.figure-large, .excerpt-box, .gallery-grid) > .section-prose { max-width:none; }
+/* A callout is as wide as a card (.doc-card), and the prose beside it keeps the measure. */
+.doc-section:where(:has(> .section-prose > .callout)) { box-sizing:border-box; max-width:calc(var(--measure) + 12ch); padding-right:0; }
+.doc-section:where(:has(> .section-prose > .callout)) > .section-prose { max-width:none; }
+.doc-section:where(:has(> .section-prose > .callout)) > .section-prose > :is(p, ul, ol, h2, h3, h4, blockquote) { max-width:var(--measure); }
 .doc-body h1 { font-size:var(--fs-3xl); letter-spacing:-.02em; margin:.3em 0 .4em; }
 .doc-body h2 { font-size:var(--fs-xl); margin:1em 0 .6em; }
 .doc-part-start .section-prose > h2:first-child { margin-top:12px; }
@@ -106,7 +110,8 @@ form.comment, form.verdict { border:1px solid var(--border); background:var(--mu
   /* A badge's text is the page's background: light on the light scheme's deep tones, dark on the
    * dark scheme's pale ones, so it reads in both. */
   .callout-kind { font-size:.68rem; font-weight:700; text-transform:uppercase; letter-spacing:.06em; padding:1px 8px; border-radius:var(--r-pill); color:var(--background); background:var(--c); vertical-align:2px; margin-right:4px; }
-  .callout-comment { --c:var(--decision); } .callout-like { --c:var(--like); } .callout-dislike { --c:var(--dislike); }
+  /* A comment is the owner's voice, in the owner's colour of a card's history. */
+  .callout-comment { --c:var(--primary); } .callout-like { --c:var(--like); } .callout-dislike { --c:var(--dislike); }
   .callout-question { --c:var(--question); } .callout-decision { --c:var(--decision); } .callout-resolved { --c:var(--resolved); }
 
   /* ---- Decision cards: the state as the left edge and a pill; the thread as a timeline. ---- */

@@ -1,6 +1,7 @@
 //! A card on a document page, read in the release client: its verdict form fits a phone's card,
 //! its history keeps an agent's paragraphs, its buttons rank by what the owner does next, with
-//! Escape closing the editor, and a link's excerpt opens beside the link's own button.
+//! Escape closing the editor, a link's excerpt opens beside the link's own button, and callouts
+//! are as wide as cards, a comment's colour its own.
 use super::components::key;
 use super::{SHOWN, chrome, chrome::Chrome, common, dist, site::Site};
 use serde_json::{Value, json};
@@ -67,11 +68,17 @@ fn probe_site() -> Site {
             "Drop the brass finish from the lamp matrix.",
         )])],
     );
+    let callout = |kind: &str, start: usize, title: &str| {
+        json!({"start":start,"end":start + 1,"key":kind,"hash":kind,"part":1,"blocks":[{"type":"callout","kind":kind,
+            "title":[text(title)],"resolved":false,"blocks":[paragraph(vec![text("Worth checking before merging.")])]}]})
+    };
     let sections = json!([
         {"start":1,"end":1,"key":"lamps","hash":"lamps","part":1,"blocks":[{"type":"heading","level":2,"anchor":"lamps","spans":[text("Lamps")]}]},
         {"start":3,"end":3,"key":"intro","hash":"intro","part":1,"blocks":[paragraph(vec![text("The catalogue holds 141 lamps.")])]},
         alpha,
         beta,
+        callout("comment", 11, "141 lamps"),
+        callout("decision", 14, "Drop the brass finish."),
     ]);
     site.set_json("/api/document", &json!({"document":{"version":7,"path":DOC,"title":"Probe","waiting":[],"crumbs":[],
         "headings":[{"level":2,"anchor":"lamps","text":"Lamps"}],"sections":sections,"cards":[pending,approved],"threads":threads(),"tasks":[]},"anchors":{}}));
@@ -380,4 +387,40 @@ fn document_card_link_opens_its_excerpt_beside_its_button_and_closes_it_again() 
         [&json!("▸ show"), &json!("false")],
         "{closed}"
     );
+}
+
+#[test]
+fn document_callouts_are_as_wide_as_cards_and_a_comment_is_not_a_decision() {
+    let site = probe_site();
+    let Some(mut page) = chrome() else { return };
+    // One load: the scheme and the width change the page in place, and opening the same address
+    // again would only move to its fragment.
+    page.open(&site.url(&format!("/{DOC}#L11")));
+    assert!(page.wait_for(
+        "document.querySelectorAll('.callout').length === 2 && document.querySelectorAll('.doc-card').length === 2",
+        SHOWN
+    ));
+    for mode in ["light", "dark"] {
+        scheme(&mut page, mode);
+        for (width, height) in [(1280, 900), (390, 844)] {
+            viewport(&mut page, width, height);
+            let look = page.eval(
+                r#"(() => {
+                const width = e => e.getBoundingClientRect().width, edge = e => getComputedStyle(e).borderLeftColor;
+                const [comment, decision] = [...document.querySelectorAll('.callout')];
+                return {card: width(document.querySelector('.doc-card')), comment: width(comment), decision: width(decision),
+                    commentEdge: edge(comment), decisionEdge: edge(decision)};
+            })()"#,
+            );
+            assert_eq!(
+                [&look["comment"], &look["decision"]],
+                [&look["card"], &look["card"]],
+                "{mode} at {width}px: a callout is as wide as a card: {look}"
+            );
+            assert_ne!(
+                look["commentEdge"], look["decisionEdge"],
+                "{mode}: a comment's colour is not a decision's: {look}"
+            );
+        }
+    }
 }
