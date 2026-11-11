@@ -472,6 +472,127 @@ mod tests {
         fs::remove_dir_all(&dir).unwrap();
     }
 
+    /// A step's record, running.
+    fn running_step() -> Record {
+        Record {
+            version: 1,
+            operation_id: "a".repeat(32),
+            parent_id: Some("b".repeat(32)),
+            phase: recorded::Phase::Build,
+            label: "just lint-rs".into(),
+            state: Step::Running,
+            handle: Some("ember-osprey".into()),
+            task: Some("tools/run-record".into()),
+            checkout: "/repo".into(),
+            branch: Some("main".into()),
+            commit: Some("c".repeat(40)),
+            machine_id: Some("d".repeat(32)),
+            host: "host".into(),
+            pid: 1,
+            child_pid: Some(2),
+            queued_at: NOW - 3.0,
+            started_at: Some(NOW - 2.0),
+            ended_at: None,
+            beat_at: NOW - 1.0,
+            exit_code: None,
+            signal: None,
+            reason: String::new(),
+            run: Some(recorded::Run {
+                pipeline: "verify".into(),
+                step: Some("lint".into()),
+                trigger: "ember-osprey".into(),
+                project: Some("symphony".into()),
+                tree: Some("e".repeat(40)),
+                dirty: Some(false),
+                rerun_of: Some("f".repeat(32)),
+                cpu_s: Some(1.5),
+            }),
+        }
+    }
+
+    #[test]
+    fn a_record_says_its_start_line_while_it_runs_and_its_end_line_once_finished() {
+        let mut record = running_step();
+        let start = line(&record).unwrap();
+        assert!(start.is_start());
+        assert_eq!(
+            (start.ended, start.end, start.cpu_s),
+            (None, None, None),
+            "a start line says no end, nor its CPU yet"
+        );
+        assert_eq!(start.run, record.operation_id);
+        assert_eq!(start.parent, record.parent_id);
+        assert_eq!(
+            (start.pipeline.as_str(), start.step.as_deref()),
+            ("verify", Some("lint"))
+        );
+        assert_eq!(
+            (start.machine.as_deref(), start.project.as_deref()),
+            (Some("d".repeat(32).as_str()), Some("symphony"))
+        );
+        assert_eq!(start.rerun_of.as_deref(), Some("f".repeat(32).as_str()));
+        record.state = Step::Finished;
+        record.ended_at = Some(NOW);
+        record.exit_code = Some(101);
+        let end = line(&record).unwrap();
+        assert_eq!(
+            (end.ended, end.end, end.exit, end.cpu_s),
+            (Some(NOW), Some(End::Red), Some(101), Some(1.5))
+        );
+        assert_eq!(end.day(), "2026-11-11");
+        // A run has no parent, though it ran inside a recorded command.
+        record.run.as_mut().unwrap().step = None;
+        assert_eq!(line(&record).unwrap().parent, None);
+        // One that never started ended incomplete, whatever its exit.
+        record.started_at = None;
+        assert_eq!(line(&record).unwrap().end, Some(End::Incomplete));
+        record.run = None;
+        assert_eq!(line(&record), None, "an operation of the work folder alone");
+    }
+
+    #[test]
+    fn a_tree_is_its_commits_and_a_checkout_is_dirty_with_a_change_or_a_file_git_does_not_ignore() {
+        let dir = scratch("tree");
+        let git = |args: &[&str]| {
+            let done = sys::output(
+                sys::command("git")
+                    .args(["-c", "user.email=t@t", "-c", "user.name=t", "-C"])
+                    .arg(&dir)
+                    .args(args),
+            )
+            .unwrap();
+            assert!(done.status.success(), "{args:?}: {done:?}");
+            String::from_utf8(done.stdout).unwrap().trim().to_string()
+        };
+        git(&["init", "-q", "-b", "main"]);
+        fs::write(dir.join(".gitignore"), "ignored\n").unwrap();
+        git(&["add", "-A"]);
+        git(&["commit", "-q", "-m", "base"]);
+        let commit = git(&["rev-parse", "HEAD"]);
+        let tree = git(&["rev-parse", "HEAD^{tree}"]);
+        assert_eq!(
+            tree_and_dirty(&dir, &commit, false),
+            (Some(tree.clone()), Some(false))
+        );
+        fs::write(dir.join("ignored"), "x").unwrap();
+        assert_eq!(tree_and_dirty(&dir, &commit, false).1, Some(false));
+        fs::write(dir.join("untracked"), "x").unwrap();
+        assert_eq!(
+            tree_and_dirty(&dir, &commit, false),
+            (Some(tree.clone()), Some(true))
+        );
+        // A commit named, not the checkout's: clean, whatever the checkout holds.
+        assert_eq!(
+            tree_and_dirty(&dir, &commit, true),
+            (Some(tree), Some(false))
+        );
+        assert_eq!(tree_and_dirty(&dir, &"0".repeat(40), true), (None, None));
+        let elsewhere = scratch("tree-none");
+        assert_eq!(tree_and_dirty(&elsewhere, &commit, false), (None, None));
+        fs::remove_dir_all(&dir).unwrap();
+        fs::remove_dir_all(&elsewhere).unwrap();
+    }
+
     #[test]
     fn runs_are_kept_in_the_common_dir_or_the_folder_named_and_a_tests_board_keeps_none() {
         let dir = scratch("folder");
