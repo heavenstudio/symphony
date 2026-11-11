@@ -89,11 +89,14 @@ records nothing.
 whole (a file of its own renamed over it): queued when the recorder begins, running
 once COMMAND started, rewritten every 2 s while it runs (its beat), and finished with
 how it ended. Its recorder holds `operations/<id>.lease` locked until it finished.
-The board's schema is unchanged.
+Its times are stamped as they happen: queued when `tasks run` was called, started
+when COMMAND did (on macOS, when the recorder told it to exec), ended when its end
+came, each seen by a thread of the recorder's own while the board is asked which task
+it is for; the record is written once that is known. The board's schema is unchanged.
 
 | Field | Meaning |
 | --- | --- |
-| `version` | `1` |
+| `version` | `1`, and still `1` for a field added later: a reader ignores a field it does not know, and takes a record of another version for one it cannot read |
 | `operation_id` | 32 hex digits, also the file name |
 | `parent_id` | the recorded operation that started this recorder, if any |
 | `phase`, `label` | `build` or `test`; `--label`, else the command line |
@@ -111,7 +114,7 @@ The board's schema is unchanged.
 concept, design, ready or in progress, or reviewing it in review. The board is read
 without starting its server, for at most 1 s, after COMMAND started. A session
 holding none or several, or a board that does not answer, records no task: nothing
-is guessed. An orchestrator running a build or test for a task, or a subagent that
+is guessed, and no time it records waits for that answer. An orchestrator running a build or test for a task, or a subagent that
 shares its orchestrator's process and has no session of its own, names the task
 (`TASKS_TASK=SLUG just verify`) and, when it has one, its handle
 (`TASKS_SESSION=HANDLE just verify`). The task a record names is the recorder's
@@ -128,7 +131,9 @@ before its record says it finished. A history that reaches 2 MiB becomes
 record stays in `operations/` for an hour after it last changed, so the Symphony sees
 it finish, and the next recorder's sweep then removes it, as it removes anything else
 there an hour old that no live recorder holds: a write's own file cut short, a lease
-with no record, a record that is not one. Work
+with no record. A record no live recorder holds that the sweeping build cannot read
+(cut short, malformed, or of another version), which leaves its machine unknown, goes
+at the next sweep, with its lease. Work
 whose recorder died (an unfinished record whose lease nobody holds) reads as
 uncertainty until the next recorder's sweep finishes it without an exit code or
 signal, its end at its last beat, its reason "its recorder ended before saying how
