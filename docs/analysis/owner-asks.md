@@ -2,8 +2,8 @@
 
 What becomes of what the owner says that waits on an agent's answer, as proposed on the owner-asks
 card in [DECISIONS](../DECISIONS.md), and what the proposal rests on. Each fact about the code names
-the file and function it was read in, at main `7ad7376`. "On this board, 2026-11-11" marks this
-repository's own board that day.
+the file and function it was read in, at main `7ad7376` and still so at `58309d8`. "On this
+board, 2026-11-11" marks this repository's own board that day.
 
 The owner, 2026-11-11, in four messages: "answering chat is a task, but kind of not really the same
 type of task. Feels like it should be called something else and not be considered when we look at
@@ -366,7 +366,8 @@ new holder is sent; with asks, the seat is the second step of a route, and both 
 
 ## Verified and inferred
 
-- **Read in code:** each fact above that names a file and function, at main `7ad7376`.
+- **Read in code:** each fact above that names a file and function, at main `7ad7376`; none of
+  those parts changed by main `58309d8`.
 - **Read on this board, 2026-11-11:** the verdict tasks, their threads and stage times
   (`just tasks show`), and the two branch cards' lines on their branches.
 - **Pictures:** pages of the private server, with the proposed rows drawn in; nothing is built.
