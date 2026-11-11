@@ -60,6 +60,12 @@ installed binary serves them without dx, a source checkout or a runtime extracti
 A local preview build wins over the embedded default. Explicit install directories
 and `SF_SYMPHONY_UI_DIST` retain their own missing-file errors and never fall back.
 
+`just client-check` rebuilds into a separate directory and compares every freshly
+built path and byte with that committed distribution. Retained older hashes are
+allowed for open pages. `just verify` runs lint, that real client check and the
+workspace's native/headless browser tests. CI requires a working Chrome executable;
+the consuming project's game, display and gate binaries are not CI prerequisites.
+
 Native board fixtures use the fixture source-root function to find
 `tools/surreal.sh`, or the explicit `SF_SURREAL` executable. Resolution and
 downloads finish before server readiness is measured. `tools/fixture_process.sh`

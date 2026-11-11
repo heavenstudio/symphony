@@ -40,3 +40,12 @@ tasks *ARGS:
 
 agent-send *ARGS:
     @tools/rs-bin.sh agent-send "$@"
+
+# Rebuild the six real modules and refuse drift from the client embedded at this pin.
+client-check OUT="build/verified-client":
+    @just symphony-ui-dist {{quote(OUT)}}
+    @bash tools/client-check.sh {{quote(OUT)}}/public
+
+# The native browser harness runs headless Chrome; no game engine or display is needed.
+verify: lint-rs client-check
+    @SF_SYMPHONY_UI_DIST="$PWD/build/verified-client/public" tools/cargo.sh test --workspace --locked

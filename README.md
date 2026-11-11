@@ -1,0 +1,31 @@
+# Symphony
+
+A local document, review and task workspace with a Rust server, headless-testable browser client,
+and project plugins. The server binary embeds its client; running it needs no client compiler.
+
+Install the Rust toolchain named in `rust-toolchain.toml` and `just`, then run:
+
+```sh
+just symphony --port 0
+```
+
+The server prints its loopback URL. `just symphony-cli --help` and `just tasks --help` expose the
+document and board commands. Workspace commands use ordinary Cargo through `tools/cargo.sh`;
+they require no containing-project gate executable. See [the workspace guide](AGENTS.md) for
+command ownership and [the server guide](apps/symphony-server/README.md) for project configuration.
+
+`just verify` checks formatting, host and wasm clippy, rebuilds all six real client modules,
+compares their paths and bytes with the committed client, then runs the workspace's native tests
+and headless Chrome acceptance. The toolchain includes the wasm target. The client build needs
+Git, Bash, jq, curl and a C/C++ build toolchain; native board fixtures need lsof. Install Chrome
+or name it with `SF_CHROME`. CI requires Chrome explicitly so a missing browser cannot pass as
+unexecuted acceptance. No game engine, display server or window is required.
+
+After changing the browser client, run `just client-update` and commit
+`apps/symphony-server/client/public` with the source. `just client-check` rebuilds into an
+independent output directory and refuses changed current asset names, bytes or shell HTML.
+Older immutable assets may remain for pages that deferred an import across a publication.
+
+Consumers take the libraries from this repository's `main` branch and commit the selected revision
+in their Cargo lockfile. A consuming project's host supplies its plugins and its own verification,
+approval and landing policy. Symphony supplies no standalone landing/stamp backend.
