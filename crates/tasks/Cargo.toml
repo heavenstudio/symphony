@@ -28,6 +28,6 @@ tokenizers.workspace = true
 tract-onnx.workspace = true
 tract-linalg.workspace = true
 sha2.workspace = true
-# `tasks run` forwards the signals its caller sends to the command it records and ends by the one
-# that ended it (src/cli/recorder.rs); the machine id is read without following a link.
-libc = "0.2"
+# `tasks run` becomes the command it records and watches it from a process of its own, where it
+# cannot, runs it as a child (src/cli/recorder.rs); the machine id is read without following a link.
+libc.workspace = true

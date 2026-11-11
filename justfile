@@ -2,14 +2,17 @@ set positional-arguments
 
 # A recipe that builds or tests runs as one operation through tools/record.sh, which records it
 # for the board's Build and Test columns when a recorder answers (docs/MACHINE_WORK.md); its
-# steps run inside it unrecorded. TASKS_SESSION=HANDLE names the session whose task it is.
+# steps run inside it unrecorded. TASKS_SESSION=HANDLE names the session whose task it is, and
+# TASKS_TASK=SLUG the task itself. A tree without tools/record.sh runs the command as it is: no
+# recorder, present or not, fails a recipe.
+record := if path_exists(justfile_directory() / "tools/record.sh") == "true" { "tools/record.sh" } else { "sh -c 'shift 2; exec \"$@\"' unrecorded" }
 
 # Independent workspace commands use ordinary Cargo. The containing project keeps its own gates.
 fmt:
     @tools/cargo.sh fmt --all
 
 lint-rs:
-    @tools/record.sh build "just lint-rs" just --justfile {{quote(justfile())}} _lint-rs
+    @{{record}} build "just lint-rs" just --justfile {{quote(justfile())}} _lint-rs
 
 [private]
 _lint-rs:
@@ -18,7 +21,7 @@ _lint-rs:
     @PATH="$(pwd)/apps/symphony-ui/bin:$PATH" tools/cargo.sh symphony-ui clippy
 
 test-rs *ARGS:
-    @tools/record.sh test "just test-rs $*" tools/cargo.sh test --locked "$@"
+    @{{record}} test "just test-rs $*" tools/cargo.sh test --locked "$@"
 
 symphony-ui-dist OUT="build/symphony-ui" KIND="all" OPT="z":
     #!/usr/bin/env bash
@@ -36,7 +39,7 @@ symphony *ARGS:
 
 # Refresh the actual release assets compiled into the server package.
 client-update:
-    @tools/record.sh build "just client-update" just --justfile {{quote(justfile())}} _client-update
+    @{{record}} build "just client-update" just --justfile {{quote(justfile())}} _client-update
 
 [private]
 _client-update:
@@ -55,7 +58,7 @@ agent-send *ARGS:
 
 # Rebuild the six real modules and refuse drift from the client embedded at this pin.
 client-check OUT="build/verified-client":
-    @tools/record.sh build "just client-check" just --justfile {{quote(justfile())}} _client-check {{quote(OUT)}}
+    @{{record}} build "just client-check" just --justfile {{quote(justfile())}} _client-check {{quote(OUT)}}
 
 [private]
 _client-check OUT:
@@ -64,7 +67,7 @@ _client-check OUT:
 
 # The native browser harness runs headless Chrome; no game engine or display is needed.
 verify:
-    @tools/record.sh test "just verify" just --justfile {{quote(justfile())}} _verify
+    @{{record}} test "just verify" just --justfile {{quote(justfile())}} _verify
 
 [private]
 _verify: lint-rs client-check

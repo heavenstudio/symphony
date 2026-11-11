@@ -1,9 +1,11 @@
 //! `tools/cargo.sh` and `tools/record.sh`, copied into workspaces of the test's own: a build or a
 //! test goes through the recorder this binary is, keeping the arguments, streams, status and
 //! limits Cargo would have had; anything else, a run inside a recorded one, or no recorder that
-//! answers leaves Cargo exec'd as it is. A worktree records with its main checkout's prepared
-//! recorder, never with a containing project's.
+//! answers (a hung one included) leaves Cargo exec'd as it is. A worktree records with its main
+//! checkout's prepared recorder, never with a containing project's. The justfile's recipes record
+//! through the script, and run as they are in a tree without it.
 
+use crate::recorder::kept;
 use crate::{git, scratch};
 use std::fs;
 use std::os::unix::fs::PermissionsExt as _;
@@ -58,6 +60,7 @@ struct Setup {
 impl Setup {
     fn new(name: &str) -> Setup {
         static SHARED: std::sync::OnceLock<(PathBuf, PathBuf)> = std::sync::OnceLock::new();
+        warmed();
         let (root, cargo) = SHARED.get_or_init(|| {
             let shared = scratch("record-script-shared");
             let cargo = shared.join("cargo stand-in");
@@ -87,6 +90,7 @@ impl Setup {
             .env("TASKS_WORK", &self.work)
             .env("SYMPHONY_MACHINE_DIR", self.dir.join("machine"))
             .env_remove("TASKS_SESSION")
+            .env_remove("TASKS_TASK")
             .env_remove("TASKS_SERVER")
             .env_remove(recorded::PARENT_VAR)
             .env_remove("TASKS_RECORDER");
@@ -127,12 +131,23 @@ impl Setup {
         said + "caller input\n"
     }
 
-    fn history(&self) -> Vec<Record> {
-        recorded::history(&self.work).unwrap()
+    /// The history once it keeps `count` operations.
+    fn history(&self, count: usize) -> Vec<Record> {
+        kept(&self.work, count)
     }
 }
 
 const RECORDER: &str = env!("CARGO_BIN_EXE_tasks");
+
+/// The recorder run once, before any script probes it: the first run of a binary just built can wait
+/// seconds on the system's scan of it, longer than a probe waits for its answer.
+fn warmed() {
+    static WARM: std::sync::Once = std::sync::Once::new();
+    WARM.call_once(|| {
+        let probe = output(Command::new(RECORDER).args(["run", "--probe"])).unwrap();
+        assert_eq!(probe.stdout, b"run 1\n", "{probe:?}");
+    });
+}
 
 /// `done` is Cargo's own: its status 7, what it printed, its diagnostic.
 fn cargo_said(setup: &Setup, done: Output, args: &[&str]) {
@@ -146,7 +161,7 @@ fn a_cargo_test_or_build_is_recorded_with_its_arguments_streams_status_and_limit
     let setup = Setup::new("record-script-recorded");
     let args = ["test", "one argument", "--", "--exact"];
     cargo_said(&setup, setup.cargo(&args, Some(RECORDER)), &args);
-    let [test] = setup.history().try_into().unwrap();
+    let [test] = setup.history(1).try_into().unwrap();
     assert_eq!(test.phase, Phase::Test);
     assert_eq!(test.label, "cargo test one argument -- --exact");
     assert_eq!((test.exit_code, test.signal), (Some(7), None));
@@ -158,22 +173,25 @@ fn a_cargo_test_or_build_is_recorded_with_its_arguments_streams_status_and_limit
             .env("SELF_TERM", "yes"),
     );
     assert_eq!(ended.status.signal(), Some(15), "{ended:?}");
-    let history = setup.history();
+    let history = setup.history(2);
     let build = history.last().unwrap();
     assert_eq!(
         (build.phase, build.label.as_str()),
         (Phase::Build, "cargo build")
     );
     assert_eq!((build.exit_code, build.signal), (None, Some(15)));
-    for (args, phase) in [
-        (["clippy", "-q"], Phase::Build),
-        (["symphony-ui", "dist"], Phase::Build),
-        (["nextest", "run"], Phase::Test),
+    for (count, args, phase) in [
+        (3, ["clippy", "-q"], Phase::Build),
+        (4, ["symphony-ui", "dist"], Phase::Build),
+        (5, ["nextest", "run"], Phase::Test),
     ] {
         cargo_said(&setup, setup.cargo(&args, Some(RECORDER)), &args);
-        assert_eq!(setup.history().last().unwrap().phase, phase, "{args:?}");
+        assert_eq!(
+            setup.history(count).last().unwrap().phase,
+            phase,
+            "{args:?}"
+        );
     }
-    assert_eq!(setup.history().len(), 5);
 }
 
 #[test]
@@ -219,6 +237,37 @@ fn what_is_neither_a_build_nor_a_test_or_runs_inside_a_recorded_one_or_finds_no_
 }
 
 #[test]
+fn a_recorder_whose_probe_hangs_leaves_cargo_to_run_as_it_is() {
+    let setup = Setup::new("record-script-hung");
+    let hung = setup.dir.join("hung tasks");
+    let release = setup.dir.join("release");
+    let ended = setup.dir.join("probe ended");
+    executable(
+        &hung,
+        "#!/bin/sh\nwhile [ ! -e \"$RELEASE\" ]; do sleep 0.05; done\n: > \"$ENDED\"\n",
+    );
+    let done = setup.run(
+        setup
+            .command("cargo.sh", &["test"], Some(hung.to_str().unwrap()))
+            .env("RELEASE", &release)
+            .env("ENDED", &ended),
+    );
+    // Cargo ran and ended while the probe still hung.
+    cargo_said(&setup, done, &["test"]);
+    assert!(!ended.exists(), "cargo waited for the probe to end");
+    assert!(!setup.work.exists(), "it was recorded");
+    fs::write(&release, "").unwrap();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    while !ended.exists() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the probe never ended"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+}
+
+#[test]
 fn a_command_line_record_cannot_read_is_refused_and_one_it_can_keeps_its_own_label() {
     let setup = Setup::new("record-script-usage");
     for args in [
@@ -237,7 +286,7 @@ fn a_command_line_record_cannot_read_is_refused_and_one_it_can_keeps_its_own_lab
     ));
     assert_eq!(done.status.code(), Some(4));
     assert_eq!(done.stdout, b"caller input\n");
-    let [verify] = setup.history().try_into().unwrap();
+    let [verify] = setup.history(1).try_into().unwrap();
     assert_eq!(
         (verify.label.as_str(), verify.phase),
         ("just verify", Phase::Test)
@@ -246,6 +295,7 @@ fn a_command_line_record_cannot_read_is_refused_and_one_it_can_keeps_its_own_lab
 
 #[test]
 fn a_worktree_records_with_its_main_checkouts_recorder_and_a_nested_workspace_with_none() {
+    warmed();
     let dir = scratch("record-script-worktree");
     let main = workspace(&dir.join("main"));
     git(&main, &["init", "-q", "-b", "main"]);
@@ -268,6 +318,7 @@ fn a_worktree_records_with_its_main_checkouts_recorder_and_a_nested_workspace_wi
                 .env("CARGO", &cargo)
                 .env("TASKS_WORK", &work)
                 .env_remove("TASKS_SESSION")
+                .env_remove("TASKS_TASK")
                 .env_remove("TASKS_SERVER")
                 .env_remove(recorded::PARENT_VAR)
                 .env_remove("TASKS_RECORDER"),
@@ -276,16 +327,64 @@ fn a_worktree_records_with_its_main_checkouts_recorder_and_a_nested_workspace_wi
         assert!(done.status.success(), "{done:?}");
     };
     run(&worktree);
-    let [recorded] = recorded::history(&work).unwrap().try_into().unwrap();
+    let [recorded] = kept(&work, 1).try_into().unwrap();
     assert_eq!(
         Path::new(&recorded.checkout),
         worktree.canonicalize().unwrap()
     );
     assert_eq!(recorded.branch.as_deref(), Some("worktree"));
     run(&main);
-    assert_eq!(recorded::history(&work).unwrap().len(), 2);
+    kept(&work, 2);
     // A workspace inside another project's repository is not that project's worktree.
     let nested = workspace(&main.join("vendored"));
     run(&nested);
     assert_eq!(recorded::history(&work).unwrap().len(), 2);
+}
+
+#[test]
+fn a_recipe_records_through_the_script_and_runs_as_it_is_in_a_tree_without_it() {
+    let setup = Setup::new("record-script-recipe");
+    let tree = setup.dir.join("tree with spaces");
+    fs::create_dir_all(tree.join("tools")).unwrap();
+    fs::copy(tool("../justfile"), tree.join("justfile")).unwrap();
+    executable(
+        &tree.join("tools/cargo.sh"),
+        "#!/bin/sh\nprintf 'arg=<%s>\\n' \"$@\"\nexit 5\n",
+    );
+    let recipe = |task: Option<&str>| {
+        let mut command = Command::new("just");
+        command
+            .args(["test-rs", "one argument"])
+            .current_dir(&tree)
+            .env("TASKS_WORK", &setup.work)
+            .env("TASKS_RECORDER", RECORDER)
+            .env_remove("TASKS_SESSION")
+            .env_remove("TASKS_TASK")
+            .env_remove("TASKS_SERVER")
+            .env_remove(recorded::PARENT_VAR);
+        if let Some(task) = task {
+            command.env("TASKS_TASK", task);
+        }
+        let done = output(command.stdin(Stdio::null())).unwrap();
+        assert_eq!(done.status.code(), Some(5), "{done:?}");
+        assert_eq!(
+            String::from_utf8(done.stdout).unwrap(),
+            "arg=<test>\narg=<--locked>\narg=<one argument>\n"
+        );
+    };
+    // No tools/record.sh here: the recipe runs as it is.
+    recipe(None);
+    assert!(!setup.work.exists(), "a tree without the script recorded");
+    fs::copy(tool("record.sh"), tree.join("tools/record.sh")).unwrap();
+    recipe(Some("tools/recipe"));
+    let [test] = setup.history(1).try_into().unwrap();
+    assert_eq!(
+        (test.label.as_str(), test.phase, test.task.as_deref()),
+        (
+            "just test-rs one argument",
+            Phase::Test,
+            Some("tools/recipe")
+        )
+    );
+    assert_eq!(test.exit_code, Some(5));
 }

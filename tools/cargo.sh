@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Ordinary Cargo in this workspace; no containing-project planner, pool or source cache. A build or
-# a test goes through tools/record.sh, which records it for the board when a recorder answers and
-# otherwise execs it as it is; anything else is Cargo exec'd directly.
+# a test goes through tools/record.sh (sourced: one shell fewer), which records it for the board when
+# a recorder answers and otherwise execs it as it is; anything else is Cargo exec'd directly.
 set -euo pipefail
 root="$(cd -P "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 if [ ! -f "$root/Cargo.toml" ]; then
@@ -20,7 +20,9 @@ case "${1:-}" in
     # The client's dev server runs until stopped: no build to record.
     symphony-ui) if [ "${2:-}" != dev ]; then phase="build"; fi ;;
 esac
-if [ -n "$phase" ] && [ -x "$root/tools/record.sh" ]; then
-    exec "$root/tools/record.sh" "$phase" "cargo $*" "$cargo" "$@"
+if [ -n "$phase" ] && [ -f "$root/tools/record.sh" ]; then
+    # shellcheck source=tools/record.sh
+    . "$root/tools/record.sh"
+    record "$phase" "cargo $*" "$cargo" "$@"
 fi
 exec "$cargo" "$@"

@@ -108,9 +108,23 @@ pub fn main_detaching(
 /// project's board-only one, which the live board runs), so no build leaves its writes' delivery
 /// in the command.
 pub fn process_main() -> ExitCode {
-    let args: Vec<String> = std::env::args().skip(1).collect();
+    let words: Vec<std::ffi::OsString> = std::env::args_os().skip(1).collect();
     let env = Env::of_process();
     let (mut input, mut out, mut err) = (std::io::stdin(), std::io::stdout(), std::io::stderr());
+    // First, with no other thread running yet: a recorded command's words are another program's,
+    // whatever bytes they hold, and its recorder may fork this process ([`recorder`]).
+    if words.first().is_some_and(|word| word == recorder::COMMAND) {
+        let code = recorder::run(&words[1..], &env, &mut out, &mut err, true);
+        return ExitCode::from(u8::try_from(code).unwrap_or(2));
+    }
+    let Ok(args) = words
+        .into_iter()
+        .map(std::ffi::OsString::into_string)
+        .collect::<Result<Vec<String>, _>>()
+    else {
+        let _ = writeln!(err, "tasks: an argument is not UTF-8 text");
+        return ExitCode::from(2);
+    };
     let code = match std::env::current_exe() {
         Ok(program) => main_detaching(&args, &env, &mut input, &mut out, &mut err, &program),
         Err(_) => main(&args, &env, &mut input, &mut out, &mut err),
@@ -147,7 +161,8 @@ fn run(
     }
     // Before the board's argument table: what follows `--` is another program's command line.
     if args.first().is_some_and(|arg| arg == recorder::COMMAND) {
-        return recorder::run(&args[1..], env, err, program.is_some());
+        let words: Vec<std::ffi::OsString> = args[1..].iter().map(Into::into).collect();
+        return recorder::run(&words, env, out, err, program.is_some());
     }
     let board = || connect(env).map(|store| detaching(store, env, program));
     if args.len() == 1 && args[0] == "api" {
