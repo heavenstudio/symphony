@@ -336,19 +336,30 @@ fn a_stamped_memory_guard_is_brought_current_beside_the_projects_own_guards() {
 }
 
 #[test]
-fn a_memory_guard_the_project_wrote_is_the_one_used() {
+fn a_memory_guard_the_project_wrote_is_the_one_used_and_a_stamped_one_beside_it_goes() {
     let tree = Tree::new();
     let own = "\"$CLAUDE_PROJECT_DIR/.claude/hooks/sf-hook\" memory-guard";
     tree.write(
         SETTINGS,
-        &json!({"hooks": {"PreToolUse": [{"matcher": "Write|Edit|MultiEdit|NotebookEdit|Bash",
-            "hooks": [{"type": "command", "command": own}]}]}})
+        &json!({"hooks": {"PreToolUse": [
+            {"matcher": "Write|Edit", "hooks": [{"type": "command",
+                "command": "/old/symphony hook memory-guard # symphony-stamp: memory-guard-v0"}]},
+            {"matcher": "Write|Edit|MultiEdit|NotebookEdit|Bash",
+                "hooks": [{"type": "command", "command": own}]}
+        ]}})
         .to_string(),
     );
-    init(&tree.root, &kit(vec![])).unwrap();
+    let report = init(&tree.root, &kit(vec![])).unwrap();
+    assert_eq!(outcome(&report, "claude settings"), "updated");
     let after = settings(&tree);
+    // The stamped guard's group goes whole and none is added: the project's own guards the calls.
     assert_eq!(guards(&after, "PreToolUse"), [own]);
+    assert_eq!(after["hooks"]["PreToolUse"][0]["hooks"][0]["command"], own);
     assert_eq!(beats(&after, "PreToolUse"), [HEARTBEAT.command]);
+    assert_eq!(
+        outcome(&init(&tree.root, &kit(vec![])).unwrap(), "claude settings"),
+        "current"
+    );
 }
 
 #[test]

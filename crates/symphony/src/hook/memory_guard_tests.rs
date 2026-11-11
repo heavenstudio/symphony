@@ -178,6 +178,10 @@ fn every_shell_write_shape_into_either_memory_folder_is_refused() {
             "cd @; touch a.md",
             "awk 'BEGIN { system(\"rm @/a.md\") }'",
             "awk '{ print > \"@/a.md\" }' /tmp/in",
+            "\\rm -f @/a.md",
+            "\\cp /tmp/a.md @/",
+            "\\sed -i '' 's/old/new/' @/a.md",
+            "\\find @ -delete",
         ] {
             let command = shape.replace('@', folder);
             assert!(bash(&command), "not refused: {command}");
@@ -198,6 +202,96 @@ fn a_shell_write_from_inside_a_memory_folder_is_refused_and_a_read_there_passes(
     let beside = format!("{CLAUDE}-old");
     let write = json!({"command": "echo hi > MEMORY.md"});
     assert!(!refused_in(&beside, "Bash", &write));
+}
+
+const PROJECT: &str = "/Users/someone/.claude/projects/-Users-someone-repo";
+
+#[test]
+fn a_write_through_a_folder_above_a_memory_folder_is_refused() {
+    for command in [
+        format!("cd {PROJECT} && echo hi > memory/MEMORY.md"),
+        format!("cd {PROJECT}/ && cp /tmp/a.md memory/"),
+        "cd ~/.claude && echo hi >> projects/X/memory/a.md".to_string(),
+        "cd ~/.claude/projects; touch X/memory/a.md".to_string(),
+        "D=~/.claude/projects/X; echo hi > $D/memory/a.md".to_string(),
+        "D=\"$HOME/.claude\"; rm -f \"$D/projects/X/memory/a.md\"".to_string(),
+        "cd ~/.codex && echo hi > memories/a.md".to_string(),
+        "cd ~/.CODEX && mkdir Memories".to_string(),
+    ] {
+        assert!(bash(&command), "not refused: {command}");
+    }
+    for (cwd, command) in [
+        (PROJECT, "echo hi > memory/a.md"),
+        (PROJECT, "cp /tmp/a memory/"),
+        (PROJECT, "\\rm -rf ./memory"),
+        (
+            "/Users/someone/.claude",
+            "echo hi >> projects/X/memory/a.md",
+        ),
+        ("/Users/someone/.claude/projects/", "tee X/memory/a.md"),
+        ("/Users/someone/.codex", "echo hi > memories/a.md"),
+    ] {
+        let write = json!({"command": command});
+        assert!(
+            refused_in(cwd, "Bash", &write),
+            "not refused in {cwd}: {command}"
+        );
+    }
+}
+
+#[test]
+fn a_folder_above_a_memory_folder_without_a_memory_part_or_a_write_passes() {
+    for (cwd, command) in [
+        (PROJECT, "cat memory/MEMORY.md"),
+        (PROJECT, "ls memory | head"),
+        (PROJECT, "echo hi > notes/a.md"),
+        ("/Users/someone/.claude", "echo '{}' > settings.local.json"),
+        ("/repo", "cd ~/.claude/projects/X && ls memory"),
+        (
+            "/repo",
+            "cp ~/.claude/settings.json /repo/memory/settings.json",
+        ),
+        // A worktree under a repository's own `.claude` is no folder above a memory folder.
+        (
+            "/repo/.claude/worktrees/agent-1",
+            "echo hi > docs/memory/a.md",
+        ),
+        ("/repo/.claude/worktrees/agent-1", "rm -rf crates/memory"),
+    ] {
+        let call = json!({"command": command});
+        assert!(
+            !refused_in(cwd, "Bash", &call),
+            "refused in {cwd}: {command}"
+        );
+    }
+}
+
+#[test]
+fn dot_parts_are_folded_before_a_path_is_matched() {
+    for path in [
+        format!("{PROJECT}/./memory/a.md"),
+        format!("{PROJECT}/../-Users-someone-repo/memory/a.md"),
+        "/Users/someone/.claude/./projects/X/memory/a.md".to_string(),
+        "/Users/someone/.claude/skills/../projects/X/memory/a.md".to_string(),
+        format!("{PROJECT}/memory/./sub/../a.md"),
+        "/Users/someone/.codex/./memories/a.md".to_string(),
+    ] {
+        for (tool, input) in writes_to(&path) {
+            assert!(refused(tool, &input), "{tool} {path}");
+        }
+        let command = format!("echo hi > \"{path}\"");
+        assert!(bash(&command), "not refused: {command}");
+    }
+    // `..` that leaves the folder leaves it.
+    for path in [
+        format!("{PROJECT}/memory/../notes.md"),
+        "/Users/someone/.codex/memories/../config.toml".to_string(),
+    ] {
+        for (tool, input) in writes_to(&path) {
+            assert!(!refused(tool, &input), "{tool} {path}");
+        }
+        assert!(!bash(&format!("echo hi > {path}")), "{path}");
+    }
 }
 
 #[test]
@@ -281,5 +375,9 @@ fn the_reason_is_one_line_naming_where_the_guidance_goes() {
         "task on the board",
     ] {
         assert!(REASON.contains(place), "{place}");
+    }
+    // An agent refused over a mention in a message learns to rephrase it.
+    for advice in ["commit message", "board post", "rephrase"] {
+        assert!(REASON.contains(advice), "{advice}");
     }
 }

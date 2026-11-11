@@ -100,8 +100,8 @@ standing rules in [RULES.md](RULES.md).
 **Memory lives in the repository.** Nothing goes in an agent's own memory folder
 (`~/.claude/projects/…/memory/`): what must outlast a session is guidance here or in a
 package's AGENTS.md, a skill, a doc or a board task, and it is committed, so every
-agent sees it. The memory guard refuses any write there (below), and
-`.claude/settings.json` denies Edit there as well.
+agent sees it. In a Claude Code session the memory guard refuses the writes there it
+can read (below), and `.claude/settings.json` denies Edit there as well.
 
 **Models.** The orchestrator may run on the most capable model, for diagnosis and
 design. Executors and reviewers run on Opus: an Agent launch passes `model: "opus"`
@@ -133,12 +133,22 @@ prebuilt `.target/bin/symphony` link; a missing link passes quietly. Project bui
 setup refreshes that link explicitly, alongside its own policy hooks.
 
 `symphony hook memory-guard` (`crates/symphony/src/hook/memory_guard.rs`) runs before a
-Write, Edit, MultiEdit, NotebookEdit or Bash call. It refuses, with exit 2 and one line
-naming where the guidance goes instead, a write into an agent's memory folder
-(`~/.claude/projects/*/memory/`, `~/.codex/memories/`): a write tool's path there, or a
-shell command that names the folder, or runs in it, and writes anything. Reads pass.
-Its installed command passes on that refusal alone: with no link, or a link to a build
-older than the guard, the call goes through.
+Claude Code session's Write, Edit, MultiEdit, NotebookEdit or Bash call. It refuses,
+with exit 2 and one line naming where the guidance goes instead, a write into an
+agent's memory folder (`~/.claude/projects/*/memory/`, `~/.codex/memories/`): a write
+tool's path there, or a shell command that names the folder and writes anything. It
+reads the command as text, with `.` and `NAME/..` parts folded. A command names the
+folder by its path, by running in it, or by a folder above it (`.claude`,
+`.claude/projects/NAME`, `.codex`, in the command or as the folder it runs in) beside a
+`memory` or `memories` part. A write is a redirection into a file (not a descriptor or
+`/dev/null`), `sed -i`, `find -delete` or `-exec`, or a writer, unpacker, downloader,
+interpreter or `xargs` named by its word, path or `\` escape. Reads pass. It misses
+`git clone` or `git -C … init`, `sort -o`, `uniq IN OUT`, `mktemp`, `ed`,
+`awk -i inplace`, `xattr -w` and a write through a link made before. Text that names
+the folder beside a write (a commit message, a board post, a heredoc) is refused:
+say "the memory folder", or put the text in a file with Write. A Codex session runs
+no Claude hook and is not guarded. Its installed command passes on that refusal
+alone: with no link, or a link to a build older than the guard, the call goes through.
 
 ## Command ownership
 
