@@ -96,6 +96,8 @@ struct Fake {
     created: RefCell<Vec<(String, String, Vec<String>)>>,
     /// (slug, by, links added) of each amendment.
     amended: RefCell<Vec<(String, String, Vec<String>)>>,
+    /// How many amendments to come the board refuses.
+    refuse_amends: RefCell<usize>,
 }
 
 impl Fake {
@@ -107,6 +109,7 @@ impl Fake {
             said: RefCell::default(),
             created: RefCell::default(),
             amended: RefCell::default(),
+            refuse_amends: RefCell::default(),
         }
     }
 
@@ -229,6 +232,12 @@ impl Board for Fake {
         links: &[String],
         by: &str,
     ) -> Result<(), VerdictError> {
+        let mut refuse = self.refuse_amends.borrow_mut();
+        if *refuse > 0 {
+            *refuse -= 1;
+            return Err(VerdictError::unreachable("the board refused the amendment"));
+        }
+        drop(refuse);
         self.amended
             .borrow_mut()
             .push((slug.into(), by.into(), links.to_vec()));
@@ -515,6 +524,80 @@ mod filing {
             )]
         );
         assert!(case.untasked().is_empty());
+    }
+
+    const MENUS: &str = "<!-- register:start -->\n- [?] **menu-v2** — A menu.\n  [2026-10-06 11:15] owner · question — which font?\n<!-- register:end -->\n";
+
+    /// The amendment goes before the post: one the board refuses posts nothing, so the card is
+    /// still waiting, and the next filing amends and posts it.
+    #[test]
+    fn a_refused_amendment_posts_nothing_and_the_next_filing_does_both() {
+        let case = Case::new();
+        case.doc("<!-- register:start -->\n- [-] **lamp-a-pic** — Lamp A.\n  [2026-10-06 10:00] owner · rejected — no.\n<!-- register:end -->\n");
+        let slug = case.file("w").unwrap();
+        case.board.set("2026-10-06 11:20");
+        case.tree.write("docs/menus/menus.md", MENUS);
+        *case.board.refuse_amends.borrow_mut() = 1;
+        let refused = verdicts::file(&case.tree.root, &case.board, "w").unwrap_err();
+        assert!(refused.is_unreachable(), "{refused}");
+        assert!(case.board.said.borrow().is_empty());
+        assert_eq!(
+            case.board.get(&slug).title,
+            "Answer 1 owner verdict waiting on an agent"
+        );
+        assert_eq!(case.untasked(), ["menu-v2"]);
+        assert_eq!(case.file("w").as_deref(), Some(slug.as_str()));
+        let task = case.board.get(&slug);
+        assert_eq!(task.title, "Answer 2 owner verdicts waiting on an agent");
+        assert_eq!(task.links, ["docs/lamps/lamps.md", "docs/menus/menus.md"]);
+        assert!(
+            task.thread[0].1.contains("**menu-v2**"),
+            "{:?}",
+            task.thread
+        );
+        assert!(case.untasked().is_empty());
+    }
+
+    /// A roll-up an earlier filing posted to but never amended (a build that posted first, and
+    /// whose amendment failed) is mended by the next card's filing: the title counts every card it
+    /// lists, and the pages of the cards posted before are linked with the new one's.
+    #[test]
+    fn a_later_filing_mends_the_title_and_links_an_earlier_one_left() {
+        let case = Case::new();
+        case.doc("<!-- register:start -->\n- [-] **lamp-a-pic** — Lamp A.\n  [2026-10-06 10:00] owner · rejected — no.\n<!-- register:end -->\n");
+        let slug = case.file("w").unwrap();
+        case.board.set("2026-10-06 11:20");
+        case.tree.write("docs/menus/menus.md", MENUS);
+        let menus = verdicts::untasked(&case.tree.root, &case.board).unwrap();
+        let listing = menus[0].entry();
+        case.board
+            .say(
+                &slug,
+                "w",
+                &format!("More verdicts for this task:\n{listing}"),
+            )
+            .unwrap();
+        assert!(case.untasked().is_empty());
+        case.board.set("2026-10-06 11:40");
+        case.tree.write(
+            "docs/chairs/chairs.md",
+            "<!-- register:start -->\n- [?] **chair-v3** — A chair.\n  [2026-10-06 11:35] owner · question — oak?\n<!-- register:end -->\n",
+        );
+        assert_eq!(case.file("w").as_deref(), Some(slug.as_str()));
+        let task = case.board.get(&slug);
+        assert_eq!(task.title, "Answer 3 owner verdicts waiting on an agent");
+        assert_eq!(
+            task.links,
+            [
+                "docs/lamps/lamps.md",
+                "docs/chairs/chairs.md",
+                "docs/menus/menus.md"
+            ]
+        );
+        assert_eq!(
+            case.board.amended.borrow().last().unwrap().2,
+            ["docs/chairs/chairs.md", "docs/menus/menus.md"]
+        );
     }
 
     /// The owner answers a card the roll-up already lists again: it is posted, and still one card.

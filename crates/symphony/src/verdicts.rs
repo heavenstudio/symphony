@@ -373,10 +373,10 @@ fn title(cards: usize) -> String {
 }
 
 /// Each page `cards` are on, once.
-fn pages(cards: &[OpenCard]) -> Vec<String> {
+fn pages<'a>(cards: impl IntoIterator<Item = &'a String>) -> Vec<String> {
     cards
-        .iter()
-        .map(|c| c.path.clone())
+        .into_iter()
+        .cloned()
         .collect::<BTreeSet<_>>()
         .into_iter()
         .collect()
@@ -411,11 +411,12 @@ pub fn file(root: &Path, board: &dyn Board, by: &str) -> Result<Option<String>, 
         .join("\n");
     let tasks = board.tasks()?;
     if let Some(task) = roll_up(&tasks) {
-        board.say(&task.slug, by, &format!("{MORE}\n{listing}"))?;
-        // Its title counts every card it lists, and it links every page they are on.
+        // Its title counts every card it lists and these, and it links every page they are on: from
+        // all of them, so a filing mends what an earlier one left, and before the post, so a failed
+        // amendment leaves these cards untasked for the next filing to try again.
         let mut all = listed(task);
         all.extend(cards.iter().map(|c| (c.path.clone(), c.slug.clone())));
-        let links: Vec<String> = pages(&cards)
+        let links: Vec<String> = pages(all.iter().map(|(page, _)| page))
             .into_iter()
             .filter(|page| !task.links.contains(page))
             .collect();
@@ -423,6 +424,7 @@ pub fn file(root: &Path, board: &dyn Board, by: &str) -> Result<Option<String>, 
         if title != task.title || !links.is_empty() {
             board.amend(&task.slug, &title, &links, by)?;
         }
+        board.say(&task.slug, by, &format!("{MORE}\n{listing}"))?;
         return Ok(Some(task.slug.clone()));
     }
     let slug = new_slug(board, &tasks);
@@ -431,7 +433,7 @@ pub fn file(root: &Path, board: &dyn Board, by: &str) -> Result<Option<String>, 
         &title(cards.len()),
         by,
         &format!("{BRIEF}{listing}\n"),
-        &pages(&cards),
+        &pages(cards.iter().map(|c| &c.path)),
     )?;
     Ok(Some(slug))
 }
