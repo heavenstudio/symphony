@@ -279,10 +279,18 @@ fn a_server_on_the_live_servers_port_is_the_live_board() {
     f.record(r#"{"addr":"127.0.0.1:4321","pid":1,"version":"3.3.0"}"#);
     let main = f.said("tasks", &f.main, &f.wt, "list");
     let own = f.said("tasks", &f.wt, &f.wt, "list");
+    // The port is the number the binary reads (Rust's `u16`); a spelling it reads as no number is
+    // the live one too, since the binary reaches nothing with it.
     for (server, database, expected) in [
         ("127.0.0.1:4321", "", &main),
         ("localhost:4321", "tasks", &main),
+        ("127.0.0.1:04321", "", &main),
+        ("127.0.0.1:+4321", "", &main),
+        ("127.0.0.1:+004321", "", &main),
+        ("127.0.0.1:4321x", "", &main),
+        ("127.0.0.1:", "", &main),
         ("127.0.0.1:4322", "", &own),
+        ("127.0.0.1:04322", "", &own),
         ("127.0.0.1:4321", "scratch", &own),
     ] {
         let vars = [("TASKS_SERVER", server), ("TASKS_DATABASE", database)];

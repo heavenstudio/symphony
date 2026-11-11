@@ -12,20 +12,24 @@ binary (`tasks`, `agent-send`, `tasks-copy`, `tasks-reclaim`, `tasks-cutover`)
 run from a linked worktree against this repository's live board runs the main
 checkout's launcher instead: main's build, in main's own target folder (the
 caller's `CARGO_TARGET_DIR` is dropped), in the caller's folder and environment,
-so no branch's build of a board binary runs on the live board, and none moves its
-schema. (A branch's `symphony` still opens it as a reader, `taskview::connect`,
-which never migrates a board, `Store::opening`.) The main checkout is the common
-dir less `/.git`, as git finds it; the build is of what it holds, committed or
-not. A run is on the live board unless it names another database (the last
-leading `--database NAME`, else `TASKS_DATABASE`, not `tasks`), or its working
-directory is in another repository or none, or `TASKS_SERVER` names a port other
-than the one `sf-tasks/server.json` in the common dir records (with no record
-there is no live server to name; a record naming no address counts as naming
-that port). A `--database` later in the arguments is read as the live board's,
-so `just agent-send` takes it first to run branch code. A main checkout with no
-launcher refuses the run, naming the scratch option. To run branch code, name a
-scratch board. Agents keep using `just tasks … --as HANDLE`: that outer command
-is what the beat hook recognises and binds.
+so no branch's build of a board binary runs on the live board. A branch's
+`symphony` (`just symphony-cli`, a preview server) is not held to this: it opens
+the board itself (`taskview::connect`, through `Store::opening`), and a reader,
+like a writer, migrates an older board forward (`schema::decide`), so a branch
+with a newer schema moves the live board from there
+(tools/board-read-never-migrates). The main checkout is the common dir less
+`/.git`, as git finds it; the build is of what it holds, committed or not. A run
+is on the live board unless it names another database (the last leading
+`--database NAME`, else `TASKS_DATABASE`, not `tasks`), or its working directory
+is in another repository or none, or `TASKS_SERVER` names a port other than the
+one `sf-tasks/server.json` in the common dir records, compared as the number the
+binary reads (`04321` and `+4321` are 4321). With no record there is no live
+server to name; a record naming no address, or either port spelled as no number,
+counts as that port. A `--database` later in the arguments is read as the live
+board's, so `just agent-send` takes it first to run branch code. A main checkout
+with no launcher refuses the run, naming the scratch option. To run branch code,
+name a scratch board. Agents keep using `just tasks … --as HANDLE`: that outer
+command is what the beat hook recognises and binds.
 A `--justfile PATH`, `-f PATH`, `--working-directory DIR` or `-d DIR` between
 `just` and `tasks` binds the same way.
 

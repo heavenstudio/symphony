@@ -27,13 +27,27 @@ if [[ "$target" != /* ]]; then target="$root/$target"; fi
 binary="$target/debug/$name"
 if [ "$mode" = where ]; then printf '%s\n' "$binary"; exit 0; fi
 
+# The port `$1` names as the binary reads it (Rust's `u16`: an optional `+`, then digits, zeros
+# leading or not), without its leading zeros; failure for any other spelling.
+port_number() {
+    local digits="${1#+}"
+    case "$digits" in
+        '' | *[!0-9]*) return 1 ;;
+    esac
+    digits="${digits#"${digits%%[!0]*}"}"
+    digits="${digits:-0}"
+    [ "${#digits}" -le 5 ] && [ "$digits" -le 65535 ] || return 1
+    printf '%s\n' "$digits"
+}
+
 # Whether this run may reach this repository's live board: the `tasks` database (the last of the
 # leading `--database NAME` options, else TASKS_DATABASE) on the board's own server, which is the one
 # the working directory's repository reaches (TASKS_SERVER unset) when that repository is this one,
-# or a TASKS_SERVER on the port recorded in `$common/sf-tasks/server.json`. A record naming no
-# address counts as naming that port; with no record there is no live server to name.
+# or a TASKS_SERVER on the port recorded in `$common/sf-tasks/server.json`, compared as the number
+# the binary reads. A record naming no address, or a port spelled any other way, counts as that
+# port; with no record there is no live server to name.
 live_board() {
-    local database="${TASKS_DATABASE:-tasks}" record="" addr here
+    local database="${TASKS_DATABASE:-tasks}" record="" addr here named recorded
     while [ "${1:-}" = --database ]; do
         database="${2:-}"
         [ $# -ge 2 ] || break
@@ -47,7 +61,9 @@ live_board() {
             *'"addr":"'*:*) addr="${record#*\"addr\":\"}"; addr="${addr%%\"*}" ;;
             *) return 0 ;;
         esac
-        [ "${TASKS_SERVER##*:}" = "${addr##*:}" ]
+        named="$(port_number "${TASKS_SERVER##*:}")" || return 0
+        recorded="$(port_number "${addr##*:}")" || return 0
+        [ "$named" = "$recorded" ]
         return
     fi
     here="$(pwd -P)"
