@@ -94,17 +94,13 @@ standing rules in [RULES.md](RULES.md).
 **Memory lives in the repository.** Nothing goes in an agent's own memory folder
 (`~/.claude/projects/…/memory/`): what must outlast a session is guidance here or in a
 package's AGENTS.md, a skill, a doc or a board task, and it is committed, so every
-agent sees it. `.claude/settings.json` denies writes there. *The owner, 2026-11-11, on
-two files written there: "this is wrong. We should be using the same model used in
-star-foundry that literally blocks writes to home folder".*
+agent sees it. `.claude/settings.json` denies writes there.
 
 **Models.** The orchestrator may run on the most capable model, for diagnosis and
 design. Executors and reviewers run on Opus: an Agent launch passes `model: "opus"`
 (a subagent otherwise inherits its orchestrator's model), and `[agents] launch` in
 `symphony.toml` says the same for a board launch. A resumed agent keeps the model it
-started on. *The owner, 2026-11-11: "Ideally Opus, not Fable. Fable can be used for
-awhile here in order to help solve a lot of the harder problems, but execution can be
-left to Opus level".*
+started on.
 
 **Board commands.** Run them as `just tasks … --as HANDLE`: a subagent's tool calls
 count as its heartbeat only after a command of that shape binds it, and one that runs
