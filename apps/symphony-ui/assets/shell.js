@@ -16,6 +16,11 @@ let switching = Promise.resolve();
 const styleLoads = new Map();
 const failed = new Set();
 const preloaded = new Set();
+// The page's own reads in flight (its modules' wasm, its data) and when the last one answered:
+// the idle warm-up waits until none has been in flight for half a second.
+let reads = 0, answered = 0;
+const read = window.fetch;
+window.fetch = (...args) => (reads++, read(...args).finally(() => { reads--; answered = Date.now(); }));
 
 // The modules every page kind shares, each loaded once on its first use and kept mounted: the
 // chat and activity panel, and the overlay host that draws a select's popup or the picture
@@ -104,8 +109,9 @@ function styles(spec) {
 }
 
 // A persistent module's script, wasm and styles are requested together; it mounts once all three
-// are in. A failure says so with a retry, and the next use tries again.
-function ensure(kind) {
+// are in. A failure says so with a retry, and the next use tries again. `focus`: a click opened
+// the panel's sheet, which takes the focus.
+function ensure(kind, focus) {
     const shared = PERSISTENT[kind];
     const failure = `${kind}-error`;
     if (!persistent.has(kind)) {
@@ -124,23 +130,49 @@ function ensure(kind) {
             alarm(failure, shared.said, shared.retry, () => ensure(kind));
         }));
     }
-    if (kind === "panel") loadingSheets();
+    if (kind === "panel") loadingSheets(focus);
     return persistent.get(kind);
 }
 
 // Until the panel's module mounts, the sheet or activity list a click opened is drawn here at
-// once, with the page frame's own styles and a busy status line, never a blank gutter. The real
-// panel replaces it; a failed load takes it down beside the retry notice. (A spinner's markup
-// alone would cost the first visit some 400 gzip bytes of the owner's budget.)
-function loadingSheets() {
-    document.getElementById("panel-loading")?.remove();
+// once, with the page frame's own styles and a status line, never a blank gutter. A click's sheet
+// takes the focus (`+` hides at desktop width), and keeps it when redrawn; Escape closes it and
+// gives the focus back to its opener. Its status is filled a frame after the sheet is in the
+// page, so a screen reader announces it. The real panel replaces it, taking the focus into its
+// own sheet; a failed load takes it down beside the retry notice. (A spinner's markup alone
+// would cost every first visit some 400 gzip bytes of the owner's budget.)
+function loadingSheets(focus) {
+    const old = document.getElementById("panel-loading");
+    focus ||= old?.contains(document.activeElement);
+    old?.remove();
     if (!persistent.has("panel") || window.reviewPanelReady) return;
-    const sheet = (open, id, label, inner, what) => open ? `<aside id="${id}" aria-label="${label}" aria-busy="true">${inner}<p role="status">Loading ${what}…</p></aside>` : "";
+    const sheet = (open, id, label, inner, what) => open ? `<aside id="${id}" aria-label="${label}" tabindex="-1">${inner}<p role="status" data-what="${what}"></p></aside>` : "";
     const sheets = sheet(window.reviewActivityOpen === true, "activity-panel", "Recent activity", `<div class="panel-heading"><h2>Recent activity</h2></div>`, "activity")
         + sheet(window.reviewQuickDraft?.open === true, "quick-sheet", "Chat or add a task", "", "conversation");
-    if (sheets) document.body.insertAdjacentHTML("beforeend", `<div id="panel-loading">${sheets}</div>`);
+    if (!sheets) return;
+    document.body.insertAdjacentHTML("beforeend", `<div id="panel-loading">${sheets}</div>`);
+    if (focus) document.querySelector("#panel-loading aside").focus();
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+        for (const status of document.querySelectorAll("#panel-loading [data-what]")) status.textContent = `Loading ${status.dataset.what}…`;
+    }));
 }
-addEventListener("review:panel-ready", () => document.getElementById("panel-loading")?.remove());
+addEventListener("review:panel-ready", () => {
+    const loading = document.getElementById("panel-loading");
+    const id = loading?.contains(document.activeElement) && document.activeElement.id;
+    loading?.remove();
+    if (id) requestAnimationFrame(() => {
+        const sheet = document.querySelector(`#quick-root #${id}`);
+        (sheet?.querySelector("textarea") || sheet?.querySelector("button"))?.focus();
+    });
+});
+addEventListener("keydown", event => {
+    const sheet = event.key === "Escape" && event.target instanceof Element && event.target.closest("#panel-loading aside");
+    if (!sheet) return;
+    const quick = sheet.id === "quick-sheet";
+    if (quick) window.reviewQuickDraft.open = false; else window.reviewActivityOpen = false;
+    dispatchEvent(new Event(quick ? "review:quick" : "review:activity"));
+    requestAnimationFrame(() => document.getElementById(quick ? "quick-open" : "bell")?.focus());
+});
 
 // Selects' popups and the picture viewer are data-only requests to the overlay module's host.
 window.reviewOverlay = request => {
@@ -154,18 +186,19 @@ window.reviewOverlay = request => {
     ensure("overlay").then(() => dispatchEvent(new Event("review:overlay")));
 };
 
-// Once the first page is up and the browser is idle, the persistent modules' files go into the
-// HTTP cache at the lowest priority, nothing evaluated, so a first open waits on no network: the
-// chat's first, then, once its wasm (or its own load, if a click came first) is in, the menus',
-// so no two share a slow link. A browser asking to save data, or a slow link, skips it; the first
-// open then fetches them. A browser without idle callbacks warms them at once; one without
-// prefetch (Safari) ignores it.
+// Once the first page has drawn its data (none of its reads in flight for half a second) and the
+// browser is idle, the persistent modules' files go into the HTTP cache at the lowest priority,
+// nothing evaluated, so a first open waits on no network: the chat's first, then, once its wasm
+// (or its own load, if a click came first) is in, the menus', so no two share a slow link. A
+// browser asking to save data, or a 2g link, skips it; the first open then fetches them. A
+// browser without idle callbacks warms them at once; one without prefetch (Safari) ignores it.
 let warmed = false;
 function warm() {
     const link = navigator.connection, kinds = Object.keys(PERSISTENT);
     if (warmed || link?.saveData || /2g/.test(link?.effectiveType)) return;
     warmed = true;
     (window.requestIdleCallback || setTimeout)(function next() {
+        if (reads || Date.now() - answered < 500) return setTimeout(next, 500);
         const kind = kinds.shift();
         if (!kind) return;
         if (persistent.has(kind)) return persistent.get(kind).then(next);
@@ -324,8 +357,8 @@ document.addEventListener("click", event => {
 addEventListener("popstate", navigate);
 // Opening the "+" sheet or the activity list loads the panel; closing one while it loads takes
 // its loading sheet down.
-addEventListener("review:quick", () => { if (window.reviewQuickDraft?.open) ensure("panel"); else loadingSheets(); });
-addEventListener("review:activity", () => { if (window.reviewActivityOpen) ensure("panel"); else loadingSheets(); });
+addEventListener("review:quick", () => { if (window.reviewQuickDraft?.open) ensure("panel", true); else loadingSheets(); });
+addEventListener("review:activity", () => { if (window.reviewActivityOpen) ensure("panel", true); else loadingSheets(); });
 addEventListener("review:activity-arrived", () => ensure("panel"));
 async function pendingStep(step) {
     await ensure("panel");

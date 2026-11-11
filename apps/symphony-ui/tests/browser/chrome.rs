@@ -265,8 +265,7 @@ fn an_open_stream_counts_its_head_and_every_chunk_read_and_names_its_pings() {
 }
 
 #[test]
-fn a_prefetch_is_named_by_its_purpose_header_and_served_from_the_prefetch_cache_counts_as_cached()
-{
+fn a_prefetch_is_named_by_its_purpose_header_and_served_from_the_prefetch_cache_counts_as_cached() {
     let event = |method: &str, params: Value| json!({"method": method, "params": params});
     let events = [
         event(
@@ -1489,9 +1488,18 @@ impl Chrome {
     /// A test that holds or fails such a request uses it, so no idle prefetch serves the file
     /// first.
     pub fn save_data(&mut self) {
+        self.connection(true, "4g");
+    }
+
+    /// Pages opened from now on read `navigator.connection` as asking to save data or not, on a
+    /// link of the Network Information API's `effective_type` (`4g`, `3g`, `2g`, `slow-2g`).
+    pub fn connection(&mut self, save_data: bool, effective_type: &str) {
         self.call(
             "Page.addScriptToEvaluateOnNewDocument",
-            json!({"source": "Object.defineProperty(Navigator.prototype, 'connection', {configurable: true, get: () => ({saveData: true, effectiveType: '4g'})});"}),
+            json!({"source": format!(
+                "Object.defineProperty(Navigator.prototype, 'connection', {{configurable: true, get: () => ({{saveData: {save_data}, effectiveType: {}}})}});",
+                json!(effective_type)
+            )}),
         );
     }
 

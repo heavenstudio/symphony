@@ -48,21 +48,28 @@ fn chat_reads(browser: &mut Chrome, site: &super::Site, count: usize) -> usize {
 }
 
 /// Click `opener`, then report what the next animation frame (the one painted after the click)
-/// shows of `sheet`.
+/// shows of `sheet`, and the words its status line said in the frames up to the third.
 fn first_frame(browser: &mut Chrome, opener: &str, sheet: &str) -> Value {
     browser.eval(&format!(
         r#"new Promise(done => {{
             document.querySelector({opener}).click();
-            requestAnimationFrame(() => {{
+            const said = [];
+            let first;
+            const look = () => {{
                 const sheet = document.querySelector({sheet});
-                const box = sheet?.getBoundingClientRect();
-                done({{
-                    loading: sheet?.closest('#panel-loading') !== null && sheet !== null,
-                    busy: sheet?.getAttribute('aria-busy') ?? null,
-                    status: sheet?.querySelector('[role=status]')?.textContent ?? null,
-                    drawn: !!box && box.width > 0 && box.height > 0 && getComputedStyle(sheet).visibility === 'visible',
-                }});
-            }});
+                const status = sheet?.querySelector('[role=status]');
+                said.push(status?.textContent ?? null);
+                if (!first) {{
+                    const box = sheet?.getBoundingClientRect();
+                    first = {{
+                        loading: sheet !== null && sheet.closest('#panel-loading') !== null,
+                        busy: status?.closest('[aria-busy=true]') !== null,
+                        drawn: !!box && box.width > 0 && box.height > 0 && getComputedStyle(sheet).visibility === 'visible',
+                    }};
+                }}
+                if (said.length < 3) requestAnimationFrame(look); else done({{...first, said}});
+            }};
+            requestAnimationFrame(look);
         }})"#,
         opener = json!(opener),
         sheet = json!(sheet),
@@ -93,9 +100,11 @@ fn a_click_draws_its_sheet_loading_in_the_next_frame_and_asks_for_the_panel_s_fi
         wait_for_board(&mut browser);
         let panel = module(dist(), "panel");
         site.hold_route(&panel.script, true);
+        // A live region announces what changes in it once it is in the page: the status is
+        // drawn empty with the sheet, outside any busy container, and says its words a frame on.
         assert_eq!(
             first_frame(&mut browser, opener, sheet),
-            json!({"loading": true, "busy": "true", "status": status, "drawn": true}),
+            json!({"loading": true, "busy": false, "drawn": true, "said": ["", status, status]}),
             "{opener} draws its sheet, loading, in the frame after the click"
         );
         let styles = json!(panel.styles);
@@ -315,20 +324,188 @@ fn a_click_before_the_idle_warm_up_holds_the_menus_until_the_chat_is_up() {
     );
 }
 
+const PREFETCHING: &str = "document.querySelector('link[rel=prefetch]') !== null";
+
 #[test]
-fn a_browser_saving_data_warms_nothing() {
+fn a_page_warms_on_a_fast_link_and_never_when_it_saves_data_or_is_on_2g() {
+    let panel = module(dist(), "panel");
+    // The fast link first: how long its warm-up took bounds how long the others wait for none.
+    let mut took = Duration::ZERO;
+    for (save_data, link, warms) in [
+        (false, "4g", true),
+        (true, "4g", false),
+        (false, "2g", false),
+        (false, "slow-2g", false),
+    ] {
+        let site = site();
+        let Some(mut browser) = chrome() else { return };
+        browser.connection(save_data, link);
+        browser.open(&site.url("/"));
+        wait_for_board(&mut browser);
+        let shown = std::time::Instant::now();
+        if warms {
+            assert!(
+                browser.wait_for(PREFETCHING, SHOWN),
+                "a {link} link that keeps its data warms the chat"
+            );
+            took = shown.elapsed();
+            assert_eq!(asked(&mut browser, &site, &panel.wasm, 1), 1);
+        } else {
+            browser.pump((took * 3).max(Duration::from_secs(2)));
+            assert_eq!(
+                browser.eval(PREFETCHING),
+                json!(false),
+                "saveData {save_data} on {link} warms nothing"
+            );
+            assert_eq!(
+                asked(&mut browser, &site, &panel.wasm, 0),
+                0,
+                "saveData {save_data} on {link}: nothing fetched the panel before its use"
+            );
+        }
+    }
+}
+
+#[test]
+fn the_warm_up_waits_for_the_page_s_own_data() {
     let site = site();
     let Some(mut browser) = chrome() else { return };
+    // The board's columns are read last; the page is up and idle without them.
+    site.hold_route("/api/task-board", true);
+    browser.open(&site.url("/tasks"));
+    assert!(browser.wait_for(
+        "document.documentElement.dataset.navigation === 'ready'",
+        SHOWN
+    ));
+    assert_eq!(
+        asked(&mut browser, &site, "/api/task-board", 1),
+        1,
+        "the board's columns are being read"
+    );
+    browser.pump(Duration::from_secs(2));
+    assert_eq!(
+        browser.eval(PREFETCHING),
+        json!(false),
+        "nothing is warmed while the page's own data is on its way"
+    );
+    site.hold_route("/api/task-board", false);
+    assert!(browser.wait_for(
+        "document.querySelector('[data-slug=\"tools/example\"]') !== null",
+        SHOWN
+    ));
+    assert!(
+        browser.wait_for(PREFETCHING, SHOWN),
+        "the warm-up follows the page's data"
+    );
+}
+
+/// A page at desktop width, where an open chat hides `+`, that keeps the data it is given and
+/// whose panel's script is held, so a sheet the keyboard opens stays loading; `opener` focused.
+fn desktop_loading(opener: &str) -> Option<(super::Site, Chrome, super::assets::Module)> {
+    let site = site();
+    let mut browser = chrome()?;
+    browser.call(
+        "Emulation.setDeviceMetricsOverride",
+        json!({"width": 1280, "height": 800, "deviceScaleFactor": 1, "mobile": false}),
+    );
     browser.save_data();
     browser.open(&site.url("/"));
     wait_for_board(&mut browser);
-    assert_eq!(warmed(&mut browser), Vec::<String>::new());
     let panel = module(dist(), "panel");
-    assert_eq!(
-        asked(&mut browser, &site, &panel.wasm, 0),
-        0,
-        "nothing fetched the panel before its use"
-    );
+    site.hold_route(&panel.script, true);
+    browser.eval(&format!(
+        "document.querySelector({}).focus()",
+        json!(opener)
+    ));
+    Some((site, browser, panel))
+}
+
+fn focused(selector: &str) -> String {
+    format!(
+        "document.activeElement?.matches({}) === true",
+        json!(selector)
+    )
+}
+
+#[test]
+fn the_keyboard_opens_a_loading_sheet_into_its_focus_and_the_panel_takes_it_over() {
+    for (opener, sheet, control) in [
+        ("#quick-open", "#quick-sheet", "#quick-text"),
+        (
+            "#bell",
+            "#activity-panel",
+            "[aria-label=\"Close activity\"]",
+        ),
+    ] {
+        let Some((site, mut browser, panel)) = desktop_loading(opener) else {
+            return;
+        };
+        super::components::key(&mut browser, "Enter", "Enter", 13);
+        assert!(
+            browser.wait_for(&focused(&format!("#panel-loading {sheet}")), SHOWN),
+            "{opener}: Enter puts the focus in the loading sheet, not on {}",
+            browser.eval("document.activeElement?.outerHTML.slice(0, 200)")
+        );
+        if opener == "#quick-open" {
+            assert_eq!(
+                browser.eval("getComputedStyle(document.querySelector('#quick-open')).display"),
+                json!("none"),
+                "at this width the open chat hides +, which can keep no focus"
+            );
+        }
+        site.hold_route(&panel.script, false);
+        assert!(
+            browser.wait_for(
+                &format!(
+                    "window.reviewPanelReady === true && document.getElementById('panel-loading') === null && {}",
+                    focused(&format!("#quick-root {sheet} {control}"))
+                ),
+                SHOWN
+            ),
+            "{opener}: the panel's own sheet takes the focus over, not {}",
+            browser.eval("document.activeElement?.outerHTML.slice(0, 200)")
+        );
+    }
+}
+
+#[test]
+fn escape_closes_a_loading_sheet_and_gives_the_focus_back_to_its_opener() {
+    for (opener, closed) in [
+        (
+            "#quick-open",
+            "document.querySelector('#quick-root #quick-sheet')?.hidden !== false",
+        ),
+        (
+            "#bell",
+            "document.getElementById('activity-panel') === null",
+        ),
+    ] {
+        let Some((site, mut browser, panel)) = desktop_loading(opener) else {
+            return;
+        };
+        super::components::key(&mut browser, "Enter", "Enter", 13);
+        assert!(browser.wait_for(&focused("#panel-loading aside"), SHOWN));
+        super::components::key(&mut browser, "Escape", "Escape", 27);
+        assert!(
+            browser.wait_for(
+                &format!(
+                    "document.getElementById('panel-loading') === null && {} && document.querySelector({}).getAttribute('aria-expanded') === 'false'",
+                    focused(opener),
+                    json!(opener)
+                ),
+                SHOWN
+            ),
+            "{opener}: Escape closes the loading sheet and focuses its opener, not {}",
+            browser.eval("document.activeElement?.outerHTML.slice(0, 200)")
+        );
+        site.hold_route(&panel.script, false);
+        assert!(browser.wait_for("window.reviewPanelReady === true", SHOWN));
+        assert_eq!(
+            browser.eval(closed),
+            json!(true),
+            "{opener}: the panel that loads after Escape stays closed"
+        );
+    }
 }
 
 /// The chat's reply for ask 7, its messages saying `texts`.
@@ -420,10 +597,12 @@ fn an_open_chat_reads_its_thread_when_the_feed_says_it_moved_never_on_a_timer() 
     assert_eq!(browser.eval("askPoll.length"), json!(0));
 }
 
-/// Wait for the page's idle warm-up to end, every request it made, its prefetches included,
-/// finished, and no further file linked after that (the menus' follow the chat's wasm): the files
-/// warmed, and the requests.
+/// Wait for the page's idle warm-up to start (once its own reads are over; up to 10 s, for a
+/// build that has none) and to end, every request it made, its prefetches included, finished,
+/// and no further file linked after that (the menus' follow the chat's wasm): the files warmed,
+/// and the requests.
 pub(super) fn settled(browser: &mut Chrome) -> (Vec<String>, Vec<super::chrome::Request>) {
+    browser.wait_for(PREFETCHING, Duration::from_secs(10));
     let started = std::time::Instant::now();
     let mut files = warmed(browser);
     loop {

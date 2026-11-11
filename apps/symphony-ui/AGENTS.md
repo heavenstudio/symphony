@@ -75,13 +75,15 @@ never the whole target, which the nightly runs.
   the feed's keep-alive pings, which arrive every `ping_ms` for as long as the
   page is open and are reported beside the total (the owner's, 2026-11-11).
   Other page kinds are reported separately for review.
-  On the fixture a first visit to `/tasks` takes 239,323 bytes, 10,677 under the
-  cap: the board WASM 213,070, its glue 10,757, the shared style sheet 8,307,
-  the shell 3,413, the HTML 1,143, API replies 2,548 and the feed's head and
-  opening comment 85. `/` takes 216,208; cached returns take 1,981 and
-  2,713. The same run reports `/agents` at 430,345, `/docs/` at 443,422,
-  `/queue` at 227,701, a task page at 430,891, a document at 445,315 and opening
-  the deferred panel at another 517,543 bytes. Each kind pays for its own
+  On the fixture a first visit to `/tasks` takes 240,372 bytes, 9,628 under the
+  cap: the board WASM 213,150, its glue 10,757, the shared style sheet 8,307,
+  the shell 4,382, the HTML 1,143, API replies 2,548 and the feed's head and
+  opening comment 85. `/` takes 217,235; cached returns take 1,981 and
+  2,713. The same run reports `/agents` at 431,354, `/docs/` at 446,782,
+  `/queue` at 228,796, a task page at 431,900 and a document at 448,935. Once a
+  page has its data and is idle, the shell warms the chat's and the menus'
+  modules, 751,630 bytes outside its first visit, and the chat's first open
+  transfers nothing more. Each kind pays for its own
   compiled framework; later visits reuse cached imports. The home budget test
   is independent of the canonical-entry test, which gives every kind a fresh
   browser profile and reports the complete published output.
@@ -223,17 +225,22 @@ never the whole target, which the nightly runs.
   typed data; activity and pending controls load on interaction, and new
   activity can load the panel to show a toast. No HTML fragments cross this
   boundary. A click on `+` or the bell draws its sheet at once from the shell
-  (`#panel-loading`: the frame's own `#quick-sheet` or `#activity-panel`, busy, with
-  a status line and no spinner) until the panel mounts or fails. A select's popup and
-  the picture viewer are drawn by the overlay module (`page-overlay`,
-  `components::deferred::OverlayApp`, mounted in `#overlay-root`), never the
-  chat's. The shell requests a module's script, its wasm (a `fetch` preload) and
-  its styles together. Once the first page is ready and the browser idle, it
-  prefetches the persistent modules' script, wasm and styles at the lowest
-  priority, nothing evaluated: the chat's first, the menus' once the chat's wasm
-  (or the chat's own load, when a click came first) is in, so the two never share
-  a slow link. A browser asking to save data, or reporting a 2g link, warms
-  nothing; the browser tests count those prefetches apart from a first visit. `index.html` in the crate is dx's build template (`{app_title}`), and
+  (`#panel-loading`: the frame's own `#quick-sheet` or `#activity-panel`, with a
+  status line and no spinner) until the panel mounts or fails. The sheet takes the
+  focus (`+` hides at desktop width) and Escape closes it, giving the focus back to
+  its opener; its status is filled a frame after the sheet is in the page, so a
+  screen reader announces it. The panel's own sheet takes the focus over. A
+  select's popup and the picture viewer are drawn by the overlay module
+  (`page-overlay`, `components::deferred::OverlayApp`, mounted in `#overlay-root`),
+  never the chat's. The shell requests a module's script, its wasm (a `fetch`
+  preload) and its styles together. Once the first page has its data (the shell
+  counts the page's `fetch` reads in flight, and waits until none has been for half
+  a second) and the browser is idle, it prefetches the persistent modules' script,
+  wasm and styles at the lowest priority, nothing evaluated: the chat's first, the
+  menus' once the chat's wasm (or the chat's own load, when a click came first) is
+  in, so no two share a slow link. A browser asking to save data, or reporting a
+  2g link, warms nothing; the browser tests count those prefetches apart from a
+  first visit. `index.html` in the crate is dx's build template (`{app_title}`), and
   `base_path = ""` serves the app at `/`. A style sheet is an
   `asset!("/assets/board.css", AssetOptions::css().with_static_head(true))`:
   dx hashes it and links it from the shell's head, if the code keeps the
