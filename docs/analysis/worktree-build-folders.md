@@ -67,6 +67,38 @@ the most disk, and no setting makes it correct.
 **sccache** saves compile time, not disk: each worktree still holds its full build, and the cache
 holds another copy. It is not installed here.
 
+## The seed with sccache
+
+Measured 2026-11-11 17:46 to 17:58, load average 60 to 240, with sccache 0.10.0 run from a scratch
+folder (its released binary, checked against its published SHA-256; nothing installed), one cache
+folder and one server on a private port. Each build is the board's tests again
+(`tools/cargo.sh test --locked -p symphony-board --no-run`) from an empty build folder, the seed
+turned off, so every dependency compiles: the most a worktree can diverge from main's build.
+
+| build | time | crates compiled | Rust compiles from the cache |
+|---|---|---|---|
+| worktree 1, cold cache | 178 s | 187 | 0 of 187 (filling it, 190 MiB) |
+| worktree 2, warm cache, at the same time as the next | 188 s | 187 | 0 of 187 |
+| worktree 1, no sccache | 233 s | 187 | |
+| worktree 1 again, warm cache, a new build folder | 251 s | 187 | 0 of 187 |
+
+Nothing hit. sccache reuses a compile only when its absolute paths match, and every compile names
+its build folder (`-L dependency=…/deps`, each `--extern …rlib`), so a build folder never hits
+another's entries, even in the same worktree. The cache grew by the same 190 MiB with each folder.
+Beyond that, sccache never caches the workspace's own crates, which dev and test builds compile
+incrementally, nor what is linked: proc-macro crates and build scripts (74 calls of this build).
+
+So on top of the seed, sccache would hit only for a build folder rebuilt at its own path, after a
+`cargo clean` or after the sweep cleared it, where the seed already starts it from main's build.
+Its costs: the cache's copy (capped by `SCCACHE_CACHE_SIZE`), a pinned download in the toolchain
+setup, a server process, and `RUSTC_WRAPPER`, which the client bundle already sets to its own
+wrapper and chains a parent under (`apps/symphony-ui/remap-rustc.sh`). The build recorder wraps
+Cargo, not rustc, so it does not meet sccache there; both would change `tools/cargo.sh`.
+
+What the seed leaves to compile is what main has not built: a dependency a `Cargo.lock` change
+brought in, or a profile or flag main does not build with. Building main's checkout after each
+landing that changes `Cargo.lock` would keep that small; that is not built.
+
 ## Costs of the choice
 
 - `du` counts each clone in full: a seeded worktree reads 6.35 GB by `du` and holds 0.88 GB. `df`
@@ -86,7 +118,7 @@ holds another copy. It is not installed here.
 
 Verified by measurement: the times, the private bytes and the freed bytes in the table; the
 shared folder's wrong build (its test binary ran the other worktree's edit); the five seeded
-worktrees' private bytes. Verified by tests: the seed (`crates/tasks/tests/launcher/seed.rs`), the
+worktrees' private bytes; sccache's hits, none of 561 Rust compiles across three build folders. Verified by tests: the seed (`crates/tasks/tests/launcher/seed.rs`), the
 sweep's rule (`crates/tasks/tests/sweep/build_output.rs`) and the warning
 (`crates/tasks/src/board_health/disk.rs`, `crates/tasks/src/cli/status.rs`,
 `apps/symphony-server/src/live/health_tests.rs`). Inferred: five worktrees built from nothing
