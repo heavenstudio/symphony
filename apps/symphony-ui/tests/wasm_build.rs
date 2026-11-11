@@ -173,6 +173,9 @@ printf '<script type="module" src="/assets/%s-%s.js"></script>\n' "$bin" "$kind"
 printf 'export default function init(){return Promise.resolve()} init({module_or_path:"/assets/%s_bg-%s.wasm"}).then(()=>{});\n' "$bin" "$kind" > "$out/public/assets/$bin-$kind.js"
 printf '\0asm\1\0\0\0' > "$out/public/assets/${bin}_bg-$kind.wasm"
 printf 'body{}' > "$out/public/assets/board-$kind.css"
+# Every kind's two shared stylesheets, one sorting before its own and one after.
+printf '.a{}' > "$out/public/assets/a-shared.css"
+printf '.z{}\n' > "$out/public/assets/z-shared.css"
 "#.replace("__CAPTURE__", &capture),
     );
     executable(
@@ -266,6 +269,16 @@ fn cargo_symphony_ui_dist_bundles_into_out_as_named_from_where_it_runs() {
         body.starts_with(&minified),
         "the rest of the shell is assets/shell.js through the minifier: {body}"
     );
+    let shared = manifest["board"]["styles"][0].as_str().unwrap();
+    assert!(
+        shared.starts_with("/assets/shared-") && shared.ends_with(".css"),
+        "{shared}"
+    );
+    assert_eq!(
+        fs::read_to_string(out.join("public").join(shared.trim_start_matches('/'))).unwrap(),
+        ".a{}\n.z{}\n\n",
+        "the shared stylesheets in their order, each ending its line"
+    );
     for kind in KINDS {
         for key in ["script", "wasm"] {
             let path = manifest[kind][key].as_str().unwrap();
@@ -276,6 +289,11 @@ fn cargo_symphony_ui_dist_bundles_into_out_as_named_from_where_it_runs() {
                 "{kind} {key}: {path}"
             );
         }
+        assert_eq!(
+            manifest[kind]["styles"],
+            serde_json::json!([shared, format!("/assets/board-{kind}.css")]),
+            "{kind} loads the shared stylesheet, then its own"
+        );
     }
 }
 

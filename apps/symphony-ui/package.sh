@@ -59,6 +59,19 @@ for kind in board tasks docs review queue panel; do
     fi
     manifest="$(jq --arg kind "$kind" --arg script "$script" --arg wasm "$wasm" --argjson styles "$styles" '. + {($kind): {script: $script, wasm: $wasm, styles: $styles}}' <<< "$manifest")"
 done
+# The stylesheets every kind loads are one shared file, in their order, first in each kind's list:
+# a first visit asks for it once instead of once per file, and every kind still caches the same
+# one. A kind's own stylesheets follow it, the order a visit from another kind already loads them in.
+shared="$(jq -c '[.[].styles] | reduce .[1:][] as $other (.[0]; map(select(. as $style | any($other[]; . == $style))))' <<< "$manifest")"
+if [ "$(jq length <<< "$shared")" -gt 1 ]; then
+    jq -r --arg prefix "$prefix/assets/" '.[] | ltrimstr($prefix)' <<< "$shared" | while IFS= read -r name; do
+        cat "$stage/assets/$name"
+        printf '\n'
+    done > "$stage/shared.css"
+    shared_name="shared-$(shasum -a 256 "$stage/shared.css" | cut -c1-16).css"
+    mv "$stage/shared.css" "$stage/assets/$shared_name"
+    manifest="$(jq --argjson shared "$shared" --arg href "$prefix/assets/$shared_name" 'map_values(.styles |= [$href] + (. - $shared))' <<< "$manifest")"
+fi
 # The shell's hash includes the page module manifest: a new module changes Board.build, while
 # returning to any unchanged kind still uses its immutable browser-cache entries. The manifest
 # keeps its own first line, `const modules = …;`, which readers of a build look for; the rest is
