@@ -155,7 +155,7 @@ fn work_handed_to_the_orchestrator_is_counted_once_whatever_an_older_dispatcher_
             sender,
         } = &outage;
         // Nine of the ten ready tasks are the former's; the PULL waiting counts those.
-        let (mine, whole) = ("PULL executing=0 ready_unstaffed=9 ", "ready_unstaffed=10 ");
+        let (mine, whole) = ("PULL ready_unstaffed=9 (was 2)\n", "ready_unstaffed=10 ");
         let ours = waiting_pull(&outage).expect("a PULL waits");
         assert!(ours.text.starts_with(mine), "{case:?}: {ours:?}");
         match case {
@@ -217,15 +217,21 @@ fn theirs_in_review(outage: &Outage) {
     fixture.historical_review("scratch/theirs/review");
 }
 
+/// The head of the PULL the former orchestrator hears of the successor's task and its child: what
+/// changed since the first PULL it acknowledged, its own task executing all along.
+const CHANGED: &str = "PULL ready_unstaffed=1 (was 0) review_unreviewed=1 (was 0)";
+/// That PULL's head when no PULL it acknowledged was recorded as said.
+const WHOLE: &str = "PULL executing=1 ready_unstaffed=1 in_progress_orphaned=0 review_unreviewed=1 landed_open=0 idle=0";
+
 /// What the former orchestrator hears once the successor's task is its own: the ROLE, and a PULL
-/// that counts the task and its child.
-fn handed_over(outage: &Outage) -> [String; 4] {
+/// (`head`) that counts the task and its child.
+fn handed_over(outage: &Outage, head: &str) -> [String; 4] {
     let Outage {
         former, successor, ..
     } = outage;
     [
         format!("ROLE scratch/theirs {former} orchestrator, ready (from {successor})"),
-        "PULL executing=1 ready_unstaffed=1 in_progress_orphaned=0 review_unreviewed=1 landed_open=0 idle=0".into(),
+        head.into(),
         "ready_unstaffed p2 scratch/theirs — Jump departure".into(),
         "review_unreviewed p2 scratch/theirs/review — Needs review".into(),
     ]
@@ -255,7 +261,7 @@ fn an_older_observation_never_hides_work_withheld_from_the_orchestrator_until_it
     (elsewhere.hand_over("scratch/theirs", successor, former)).unwrap();
     let back = outage.back();
     let told = heard(fixture, sender, &[(&back, former)]).remove(0);
-    assert_eq!(told, handed_over(&outage));
+    assert_eq!(told, handed_over(&outage, CHANGED));
     said_once(&outage, &back);
 }
 
@@ -306,7 +312,13 @@ fn work_the_first_pull_withheld_is_counted_after_a_hand_over_whoever_acknowledge
         (elsewhere.hand_over("scratch/theirs", successor, former)).unwrap();
         let back = outage.back();
         let told = heard(fixture, sender, &[(&back, former)]).remove(0);
-        assert_eq!(told, handed_over(&outage), "{first:?}");
+        // Its first PULL, acknowledged here, says what changed since; one an older dispatcher
+        // acknowledged was not recorded as said, so the whole digest is said again.
+        let head = match first {
+            FirstReceipt::ThisGeneration => CHANGED,
+            FirstReceipt::Older => WHOLE,
+        };
+        assert_eq!(told, handed_over(&outage, head), "{first:?}");
         said_once(&outage, &back);
     }
 }
@@ -329,9 +341,11 @@ fn an_inbox_receipt_of_a_pull_keeps_what_it_withheld_untold() {
     (elsewhere.hand_over("scratch/theirs", successor, former)).unwrap();
     let back = outage.back();
     let told = heard(fixture, sender, &[(&back, former)]).remove(0);
+    // What changed since the PULL the receipt took, which counted nine.
     let pull = pull_lines(&told);
-    let head = "PULL executing=0 ready_unstaffed=10 ";
-    assert!(pull.starts_with(head), "{told:?}");
+    let changed =
+        "PULL ready_unstaffed=10 (was 9)\nready_unstaffed p2 scratch/theirs — Jump departure";
+    assert_eq!(pull, changed, "{told:?}");
     said_once(&outage, &back);
 }
 
@@ -539,4 +553,49 @@ fn work_a_hand_over_brings_is_counted_in_one_pull_however_many_an_older_dispatch
         assert_eq!(told, Vec::<String>::new(), "{before:?}");
         said_once(&outage, &back);
     }
+}
+
+/// A dispatcher that keeps `pull_awaiting` but not `pull_said` (one built before PULLs said only
+/// what changed) delivers what waits for the former orchestrator: it records the PULL's entries as
+/// told and ends what was awaited, and leaves `pull_said` as this generation last recorded it.
+fn unsaid_acknowledges(outage: &Outage) {
+    let pull = waiting_pull(outage).expect("a PULL waits");
+    outage.fixture.store.client().query(
+        "LET $pull = type::record('callback_event', [$handle, $key]);
+         UPDATE type::record('callback_state', $handle) SET pull_unanswered = array::union(pull_unanswered ?? [], $pull.pull_entries.filter(|$entry| $entry[0] = 'unanswered' AND $entry NOT IN ($pull.pull_withheld ?? []))), pull_entries = $pull.pull_entries, pull_withheld = $pull.pull_withheld ?? [], pull_awaiting = NONE, pull_queued = NONE RETURN NONE;
+         UPDATE callback_event SET delivered = true WHERE handle = $handle RETURN NONE;",
+        json!({"handle":outage.former, "key":pull.key}),
+    ).unwrap();
+}
+
+#[test]
+fn a_pull_acknowledged_without_its_baseline_is_followed_by_the_whole_digest() {
+    let outage = Outage::new();
+    let Outage {
+        fixture,
+        elsewhere,
+        former,
+        sender,
+        ..
+    } = &outage;
+    // This generation recorded what the first PULL said; the next, telling scratch/free, is
+    // delivered by a dispatcher that does not record it.
+    outage.cut();
+    let free = NewTask::new("scratch/free", "Jump departure", "owner");
+    elsewhere.create(&free).unwrap();
+    fixture.store.dispatch_callbacks_snapshot().unwrap();
+    unsaid_acknowledges(&outage);
+    let more = NewTask::new("scratch/more", "Jump departure", "owner");
+    elsewhere.create(&more).unwrap();
+    let back = outage.back();
+    let told = heard(fixture, sender, &[(&back, former)]).remove(0);
+    // Measured against the first PULL it would say `ready_unstaffed=3 (was 1)`, though the one
+    // it heard since counted two: it hears the whole digest, which names the row it was told.
+    let pull = pull_lines(&told);
+    let whole = "PULL executing=0 ready_unstaffed=3 in_progress_orphaned=0 review_unreviewed=0 landed_open=0 idle=0
+ready_unstaffed p2 scratch/free — Jump departure
+ready_unstaffed p2 scratch/more — Jump departure
+ready_unstaffed p2 scratch/one — Jump departure";
+    assert_eq!(pull, whole, "{told:?}");
+    said_once(&outage, &back);
 }

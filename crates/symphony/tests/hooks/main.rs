@@ -1,4 +1,5 @@
-//! The shipped heartbeat and project installer, through their real CLI and temporary projects.
+//! The shipped heartbeat, memory guard and project installer, through their real CLI and temporary
+//! projects.
 mod beat_fixture;
 #[path = "../../../tasks/tests/store/common.rs"]
 #[allow(dead_code)]

@@ -8,17 +8,21 @@ of this machine that day.
 The owner, 2026-11-11: "I also want to push for a desktop client app. Would likely help improve the
 experience even more. Specially if it can connect to different servers".
 
+**Decided: A, a thin native shell** (the owner, 2026-11-11). Its windows show each server's own
+pages, and its own few screens are Dioxus. The owner's answers to the open questions are applied
+throughout. The first release is two tasks, [The first slice](#the-first-slice).
+
 ## What the app gives
 
 Ranked by what the owner gains, against a browser tab on the same Mac:
 
 | | What | Today in the browser | First release |
 |---|---|---|---|
-| 1 | **Notifications with no Symphony tab open**, for every server and project, when a card comes to wait on you (see [What notifies](#what-notifies)) | A notice fires only from a project's home page, while its tab is hidden and once notifications are allowed (`apps/symphony-ui/src/live.rs`, the `page-review` branch; `state.rs`, `apply`) | yes, for cards |
+| 1 | **Notifications with no Symphony tab open**, for every server and project, when a card comes to wait on you (see [What notifies](#what-notifies)) | A notice fires only from a project's home page, while its tab is hidden and once notifications are allowed (`apps/symphony-ui/src/live.rs`, the `page-review` branch; `state.rs`, `apply`) | yes: cards, agents' questions on tasks, reviewers' verdicts |
 | 2 | **A count of what waits on you** in the dock and the menu bar, summed over every server and project | Each project's home shows its own count; the project list at a server's `/` shows each project's | yes |
 | 3 | **Stays connected with its window closed**: the menu-bar item keeps following each project's feed | Nothing follows once the tab is closed | yes: 1 and 2 rest on it |
 | 4 | **No address or port to remember**: this Mac's server is found by itself, others are saved by name | A bookmark per server | yes |
-| 5 | **A global shortcut** that brings the app forward at the next card | None | second release |
+| 5 | **A global shortcut** that brings the app forward at the next card | None | skipped for now (the owner) |
 | 6 | **Focus a local agent's pane** | Planned, not built: `tools/go-to-agent-session` (ready) has the server focus the pane on its own machine when the request comes from that machine, in the browser too | when that task lands, in both |
 | 7 | **Open a file in the editor** | None | proposed here, later: done by the server on its own machine, the way 6 plans for panes |
 
@@ -37,16 +41,22 @@ count is the owner's whole queue (`crates/symphony/src/dashboard.rs`, `snapshot`
 - a card where an agent answered your comment or question, waiting for you to approve again or
   comment.
 
-Not in the first release:
+Also in the first release (the owner, 2026-11-11: "Yes. We should also have different users in the
+future, so that asks / notifications could be targetted to specific people."):
 
-- **A question an agent asks you on a task** (`just tasks say SLUG "…" --to owner`). The wire counts
-  none: `Counts` has the cards waiting, the documents they sit in, spot checks, today's answers and
-  the task board's in progress, in review and live agents (`crates/symphony-api/src/lib.rs`,
-  `Counts`, `TaskCounts`). One more count on the wire would let the badge and the notifications
-  include them ([Open questions](#open-questions), 1).
-- **A reviewer's verdict on a task.** It asks nothing of you: once a reviewer approves, nothing is
-  queued for the owner (RULES.md `workflow/reviewers-not-the-owner`). The app does not notify it
-  unless you ask for it ([Open questions](#open-questions), 1).
+- **A question an agent asks you on a task** (`just tasks say SLUG "…" --to owner`). It joins the
+  badge and notifies, until its recipient posts on that task's thread after it, the rule the
+  activity list already uses for "answered" (`crates/symphony/src/taskview.rs`, `answered`), or the
+  task is done or cancelled. The wire counts none today: `Counts` has the cards waiting, the
+  documents they sit in, spot checks, today's answers and the task board's in progress, in review
+  and live agents (`crates/symphony-api/src/lib.rs`, `Counts`, `TaskCounts`), so the server's list
+  and the feed gain the count.
+- **A reviewer's verdict on a task.** It notifies. It asks nothing of you (RULES.md
+  `workflow/reviewers-not-the-owner`), so it does not join the badge. The server's list and the
+  feed carry the newest verdict, and the app notifies when it changes.
+- **Per recipient.** Both are kept per recipient. Today the board knows one, `owner`. Adding people
+  later adds names, not new fields; people themselves need a login, which comes with a hosted
+  server.
 
 ## How it is built
 
@@ -82,19 +92,20 @@ A native Mac app whose windows show the pages each server already serves, one we
   the first slice). The shell defines one that always reports notifications as denied, so the page's
   own notice (`platform::Browser::notify`) stays quiet and never notifies twice.
 - **The app's own screens** (the server list, adding a server, "this server does not answer") are a
-  few small pages. They can be a Dioxus desktop app around the server's web view, which keeps the
-  owner's choice of Dioxus on the desktop. The first slice tries whether Dioxus desktop 0.7.10 can
-  host a second web view in its window; plain wry draws them if not.
+  few small pages, in Dioxus (the owner, 2026-11-11: "Yeah, why not dioxus."): a Dioxus desktop
+  app around the server's web view. The first slice tries whether Dioxus desktop 0.7.10 can host a
+  second web view in its window; plain wry draws them if not.
 - **What the server adds.** One read, `GET /api/projects`: each project's id, name, cards waiting,
-  first waiting card (title and link), and whether it is refused or its board unwell, with the
-  server's installation id and release. It answers the tailnet's names like every route but one.
+  first waiting card (title and link), its agents' questions waiting on each recipient and its
+  newest reviewer verdict ([What notifies](#what-notifies)), and whether it is refused or its board
+  unwell, with the server's installation id and release. It answers the tailnet's names like every route but one.
   `/api/front` answers loopback's name alone (`apps/symphony-server/src/projects.rs`, `front`), and
   the project list at `/` answers the tailnet but is an HTML page (`home`), so another machine has
   no list it can read as data today.
   The live counts come from each project's existing feed (`/<id>/api/feed`), with the feed's own
   loss rules (`crates/symphony-api/src/lib.rs`, the module docs).
 - **Wire.** The follower reads only `/api/projects`, `Board.counts.waiting`, `Board.next`'s first
-  card and the feed's `counts` and `queue` changes. A fixture test in `crates/symphony-api` pins
+  card, the new counts of questions and verdicts, and the feed's `counts` and `queue` changes. A fixture test in `crates/symphony-api` pins
   those few fields, added to and never renamed. Everything else stays free to change with each
   release, as now.
 - **Budget.** Nothing is added to any page kind: the 250 KB first visit is untouched.
@@ -163,9 +174,9 @@ later on a wire that would by then have to stand still.
 
 ### Why A
 
-It gives every item of the first release with the least new code, and keeps the client and the
-wire free to change every release (but for the few fields the app reads), which they do several
-times a day. What B adds, offline reading and a client that never comes from a server, matters for
+**Decided: A** (the owner, 2026-11-11); B and C were not chosen. A gives every item of the first
+release with the least new code, and keeps the client and the wire free to change every release
+(but for the few fields the app reads), which they do several times a day. What B adds, offline reading and a client that never comes from a server, matters for
 a server someone else runs, which does not exist yet, and even there its viewers and mockups would
 run that server's scripts.
 
@@ -178,6 +189,10 @@ run that server's scripts.
 - **Its identity** is the server's installation id (`crates/symphony/src/machine/identity.rs`,
   `installation_id`), which `/api/projects` carries, so the same server reached by loopback and by
   its tailnet name is listed once.
+- **Two servers, one project.** Two boards for now (the owner, 2026-11-11: "For now I think the
+  model should be indeed two separate boards. Albeit we will soon move to a "central board" with
+  "multiple machines connected""). Each server's board is listed and counted apart. Counting a
+  project once across servers comes with the central board.
 - **Adding.** This Mac's server is found by itself, from the machine folder's `server.json` (its
   port). Others are added by pasting a URL: the app reads `/api/projects` and saves the server only
   if it answers as a Symphony.
@@ -236,7 +251,8 @@ run that server's scripts.
 - **Signing.** Apple silicon runs only signed code, and a local build is signed ad hoc by the
   linker. An app built and installed on the Mac that runs it carries no quarantine flag and opens
   without notarisation. That is the first release: `just desktop-install` builds it from a
-  checkout at a release tag and copies it to `~/Applications`. Whether the Mac's notification centre
+  checkout at a release tag and copies it to `~/Applications`. A developer account waits until the
+  app runs on a second machine (the owner, 2026-11-11: "once it does."). Whether the Mac's notification centre
   accepts an ad-hoc signed app is the first thing the first slice tries. Read 2026-11-11: this Mac
   has no code-signing identity. Notarisation needs a Developer ID (the Apple Developer Program,
   $99 a year) and is needed only once the app is downloaded onto another machine.
@@ -252,22 +268,33 @@ run that server's scripts.
   it waits for signing.
 - **Linux and Windows** are not in the first release. tao, wry and the menu-bar crates support
   both; only the badge and notification code is per platform.
-- **A phone app** is not in this card. The owner reads the board from a phone over the tailnet.
-  A's shape carries to iOS (a web view per server plus the same follower), but a notification to a
-  phone needs Apple's push service, a developer account and a relay the server can reach. A
-  home-screen web app (a web manifest) is the cheaper step: full screen with no address bar, but no
-  push over plain HTTP. Either is a card of its own after the desktop app.
+- **A phone app** is not in this card; the owner wants an iPhone app later. The owner reads the
+  board from a phone over the tailnet. Read in code: Dioxus 0.7.10's mobile target is its desktop
+  renderer (the same window and web view crates), so A's shell carries to iOS. Inferred, not tried:
+  iOS suspends an app soon after it leaves the screen, so no follower runs there. A notice to a
+  phone is a push the server sends through Apple's push service, which needs the paid developer
+  account, and so the rule for when to notify belongs in code the server can run too. Under A a
+  Symphony release still reaches the phone with no new phone build. A home-screen web app is the
+  cheaper step: web push works for it on iOS 16.4 and later, but only over HTTPS, which the
+  tailnet can give its names; the server's save check accepts only `http://` today. Either is a
+  card of its own after the desktop app.
 
 ## The first slice
 
 Two tasks, the shared data first (RULES.md `workflow/shared-data-lands-first`):
 
-1. **The server's list.** `GET /api/projects` as above, answering tailnet names, with its wire type
-   in `crates/symphony-api` and a fixture test pinning the fields the app reads.
+1. **The server's list.** `GET /api/projects` as above, answering tailnet names, with the counts of
+   agents' questions and the newest verdict per recipient, its wire type in `crates/symphony-api`,
+   and a fixture test pinning the fields the app reads. Filed as `tools/server-projects-list`.
 2. **The app.** This Mac found by itself, one added tailnet server, a window per server showing its
    pages, the sidebar of servers and projects, the menu-bar item and dock badge with the combined
-   count, a notification when a project's count rises, links out to the system browser, the
-   Notification stub, and `just desktop-install`.
+   count, a notification when a project's count rises or a verdict arrives, links out to the system
+   browser, the Notification stub, and `just desktop-install`. Filed as `tools/desktop-app`.
+
+Not filed, each waiting on what it needs: the iPhone app and its push from the server, a hosted
+server's HTTPS and login, signing and a self-updating app (once the app runs on a second machine),
+notices aimed at named people (once Symphony has users), and counting one project once across
+servers (with the central board).
 
 **Tested without a display.** The crate is a library and a thin binary.
 
@@ -288,16 +315,27 @@ Two tasks, the shared data first (RULES.md `workflow/shared-data-lands-first`):
 
 ## Open questions
 
+None is open. The owner answered all five on 2026-11-11 (15:26), quoted after each, and the body
+above follows the answers. The owner also asked how an iPhone app would shape the choice, answered
+on the card and under [Packaging and delivery](#packaging-and-delivery), then approved A (16:24).
+
 1. Should the badge and notifications also cover questions agents ask you on tasks (`--to owner`),
    or reviewers' verdicts on tasks? Each needs one more count on the wire. Until answered, cards
    only ([What notifies](#what-notifies)).
+   **Answered:** "Yes. We should also have different users in the future, so that asks /
+   notifications could be targetted to specific people."
 2. When two servers serve the same project's board (several machines on one board), should the
    app count it once? Until answered it lists and counts each server's own.
+   **Answered:** "For now I think the model should be indeed two separate boards. Albeit we will
+   soon move to a "central board" with "multiple machines connected"".
 3. Should the shell's own screens be Dioxus, if the first slice shows Dioxus desktop can host the
    server's web view, or plain pages? Until answered, Dioxus if it can.
+   **Answered:** "Yeah, why not dioxus." This settles the shell's own screens, not A, B or C.
 4. Is an Apple developer account (signing, notarisation, a self-updating app) wanted now, or once
    the app runs on a second machine? Until answered, once it does.
+   **Answered:** "once it does."
 5. Should the global shortcut be in the first release? Until answered, the second.
+   **Answered:** "can be skipped for now."
 
 ## Verified and inferred
 

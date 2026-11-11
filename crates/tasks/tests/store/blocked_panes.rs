@@ -356,10 +356,6 @@ fn a_block_waiting_out_an_outage_is_not_said_once_a_hand_over_took_its_task_away
     let back = super::callbacks::Listener::new(&format!("{}-back", f.store.client().database()));
     let address = format!("uds:{}", back.path.display());
     (f.store.callback(&orch, Some(&address), false, false)).unwrap();
-    assert_eq!(
-        back.drain(&f, &worker, &orch),
-        [format!(
-            "ROLE tests/pane {successor} orchestrator, in_progress (from {orch})"
-        )]
-    );
+    // Nor is its own hand-over said to it.
+    assert!(back.drain(&f, &worker, &orch).is_empty());
 }

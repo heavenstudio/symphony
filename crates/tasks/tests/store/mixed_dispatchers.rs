@@ -267,7 +267,8 @@ fn an_older_dispatcher_between_newer_ones_repeats_no_line_and_widens_none() {
         [
             vec![
                 format!("LOST {hand} — its work is claimable: scratch/a"),
-                pull(1, 1),
+                // What changed since its first PULL: one running task fewer, one orphaned.
+                "PULL executing=1 (was 2) in_progress_orphaned=1 (was 0)".to_string(),
                 "in_progress_orphaned p2 scratch/a — Jump departure".to_string(),
             ],
             none(),

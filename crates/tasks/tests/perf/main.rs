@@ -13,8 +13,8 @@
 //!   no statement out of, fails it too: a spelling it does not know is reported, not skipped.
 //!   Deterministic: the plans, never a time. [`sql`] reads the statements out of a request or the
 //!   schema as the server's lexer does; [`findings`] reads what is wrong out of a plan.
-//! - [`timings`]: say, claim, inbox and the api answers, each run as the `tasks` binary an agent
-//!   runs, within a bound stated there.
+//! - [`timings`]: say, claim, inbox, a look of `tasks wait` and the api answers, each run as the
+//!   `tasks` binary an agent runs, within a bound stated there.
 //! - [`words`]: each sender's last word kept by its event where the board is biggest, a rare
 //!   sender's newest word deleted and every message deleted at once, within a bound stated there.
 //!
