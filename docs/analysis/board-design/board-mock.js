@@ -1,5 +1,6 @@
-// Shared drawing for the board mock-ups: one card, one "waits on" line, the counts and the banner.
-// Each page (a-stuck-lane.html, b-stuck-in-place.html, c-who-acts-next.html) lays them out its own way.
+// Shared drawing for the board mock-ups: one card, one "waits on" line, the counts, the banner, and today's
+// header, filters and buttons. Each page (a-stuck-lane.html, b-stuck-in-place.html, c-who-acts-next.html)
+// lays them out its own way.
 (function () {
   const B = window.BOARD;
   const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
@@ -8,7 +9,7 @@
   const STAGES = ["concept", "design", "ready", "in_progress", "review", "done"];
   const NAME = { backlog: "Backlog", concept: "Concept", design: "Design", ready: "Ready", in_progress: "In progress", review: "Review", done: "Done", blocked: "Blocked", cancelled: "Cancelled" };
   const kind = (t) => (t.s === "done" ? "done" : t.w ? t.w.k : "nobody");
-  // Who the line names, in the words the card uses.
+  // Who the line names, in the words the card uses. A stale session is there, marked stale.
   const on = (t) => {
     const w = t.w;
     if (!w) return "Done";
@@ -19,7 +20,6 @@
     if (!w) return "";
     if (w.k === "working") return `${w.why} ${w.who}`;
     if (w.k === "parked") return w.why.replace(/^parked:? ?/, "");
-    if (w.k === "nobody" && w.who) return `${w.who} left · ${w.why.replace(/,? ?and it left|; its orchestrator left| in a session that left/, "")}`;
     return w.why;
   };
   const open = B.tasks.filter((t) => t.s !== "done");
@@ -41,17 +41,23 @@
     { k: "nobody", label: "On nobody", chip: "on nobody" },
     { k: "check", label: "On the nightly", chip: "on the nightly" },
     { k: "task", label: "On other tasks", chip: "on other tasks" },
+    { k: "agent", label: "On an agent", chip: "on an agent" },
     { k: "working", label: "Working", chip: "working" },
     { k: "queued", label: "Queued", chip: "queued" },
     { k: "parked", label: "Parked", chip: "parked" },
   ];
   const count = (list, k) => list.filter((t) => kind(t) === k).length;
   const strip = (list, lead) => `<div class="stuck">${lead}${GROUPS.map((g) => `<a class="chip k-${g.k}" href="#">${g.chip} <i>${count(list, g.k)}</i></a>`).join("")}</div>`;
-  // One cause said once: the board's orchestrators are gone, so ready work cannot start.
-  const unstarted = open.filter((t) => t.s === "ready" && kind(t) === "queued").length;
-  const banner = () => `<div class="banner"><b>No orchestrator is live.</b> ${unstarted} of the ${B.counts.ready} ready tasks wait to start · sable-finch-625 stale, glacial-heron-497 left</div>`;
-  // The app's own compact header (frame.css, data-layout-header=compact), names as they are today.
-  const header = () => `<nav class="hdr"><a>Change board</a><a>⌂ board</a><a>≡ docs</a><a class="on">▦ tasks</a><a>◉ agents</a><a>⬡ hulls</a><span class="end">activity</span></nav>`;
-  const head = (extra = "") => `<div class="head"><h1>Tasks</h1><span class="search">Search tasks</span><span class="sel">Done: 24 h</span>${extra}</div>`;
-  window.Mock = { B, esc, age, OLD, STAGES, NAME, kind, on, why, open, byAge, byPrio, card, waitLine, reviews, GROUPS, count, strip, banner, header, head };
+  // One cause said once, never on the cards it holds back: no orchestrator is live, so ready work with
+  // nothing before it and no live executor (PULL's own rule) waits to start. A stale one is named stale.
+  const unstarted = open.filter((t) => t.s === "ready" && ["queued", "nobody"].includes(kind(t))).length;
+  const banner = () => `<div class="banner warn"><b>No live orchestrator.</b> sable-finch-625 is stale, glacial-heron-497 left · ${unstarted} of the ${B.counts.ready} ready tasks wait to start</div>`;
+  // Today's header, names and rows as the shared server draws them: its design is app/header-names'.
+  const header = () => `<nav class="hdr"><a class="pill">Change board</a><a>⌂ board</a><a>≡ docs</a><a class="on">▦ tasks</a><a>◉ agents</a><a>⬡ hulls</a><span class="sep"></span><span class="sect">tasks</span><span class="end">activity</span></nav>`;
+  // Today's title row and filters, labels and all; `status` keeps the Status filter (A only).
+  const head = (o = {}) => `<div class="title"><h1>Tasks</h1><a class="who">Who is connected</a></div><div class="filters"><label>Search tasks and messages<span class="search"></span></label>${o.status ? `<label>Status<span class="sel">All statuses</span></label>` : ""}<label>Finished tasks<span class="sel">Last 24 hours</span></label></div>`;
+  // Today's buttons: the + that files a task, and the column pager (kept where columns scroll sideways).
+  const fab = () => `<a class="fab">+</a>`;
+  const pager = () => `<nav class="pager"><a>← prev</a><a>next →</a><a class="top">↑ top</a></nav>`;
+  window.Mock = { B, esc, age, OLD, STAGES, NAME, kind, on, why, open, byAge, byPrio, card, waitLine, reviews, GROUPS, count, strip, banner, header, head, fab, pager };
 })();
