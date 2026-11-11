@@ -125,6 +125,12 @@ design. Executors and reviewers run on Opus: an Agent launch passes `model: "opu
 `symphony.toml` says the same for a board launch. A resumed agent keeps the model it
 started on.
 
+**Pushing main.** An orchestrator pushes this repository's `main` to `origin` after it lands work
+there, without asking each time (the owner, 2026-11-11: "do push it yes", "feel free to continue
+to do so"). It fetches first and merges what `origin/main` gained, never forces, and pushes no
+other branch and no tag. Moving a consuming project's pin and restarting the shared server stay
+separate acts that need their own word.
+
 **Board commands.** Run them as `just tasks … --as HANDLE`: a subagent's tool calls
 count as its heartbeat only after a command of that shape binds it, and one that runs
 the binary by its path reads lost while it works. A build or test is recorded for the
