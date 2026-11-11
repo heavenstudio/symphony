@@ -125,13 +125,16 @@ fn the_counts_link_to_where_their_detail_lives() {
     for (href, value, label) in [
         ("/queue#you", "37", "waiting on you"),
         ("/queue#spot", "4", "auto-approved to spot-check"),
-        ("#activity", "6", "answered by agents today"),
         ("/tasks", "12 · 5", "tasks in progress · in review"),
         ("/agents", "14", "agents live"),
     ] {
         let tile = format!(r#"href="{href}"><b>{value}</b><span>{label}</span>"#);
         assert!(html.contains(&tile), "{tile}\nin {html}");
     }
+    // Today's replies have no page: their tile is a button that opens the activity panel.
+    let replies = r#"<button type="button" class="tile card tone-answered" aria-controls="activity-panel"><b>6</b><span>answered by agents today</span>"#;
+    assert!(html.contains(replies), "{replies}\nin {html}");
+    assert!(!html.contains(r##"href="#activity""##), "{html}");
     assert!(html.contains("across 9 documents"), "{html}");
 }
 
@@ -325,10 +328,15 @@ fn the_home_links_the_projects_own_pages_and_its_register() {
         "a plain project adds no page: {links}"
     );
     assert!(links.contains(r#"href="/docs/DECISIONS.md""#), "{links}");
+    assert!(
+        !links.contains("How review works"),
+        "a project without a review guide links to none: {links}"
+    );
     let now = Moment::parse("2026-10-08 10:12").unwrap();
     let project = symphony_api::ProjectView {
         name: "Orbit".into(),
         register: "notes/register.md".into(),
+        guide: "notes/REVIEW.md".into(),
         nav: vec![
             symphony_api::NavItem {
                 label: "⬡ lamps".into(),
@@ -362,8 +370,14 @@ fn the_home_links_the_projects_own_pages_and_its_register() {
         links.contains(r#"<a class="pill" href="/notes/">All docs</a>"#),
         "all docs open the first entrypoint: {links}"
     );
+    let guide = links
+        .find(r#"<a class="pill" href="/notes/REVIEW.md">How review works</a>"#)
+        .expect("the guide pill, by the project's own route");
     assert!(
-        links.find("All docs").unwrap() < lamps && lamps < cues && cues < register,
+        links.find("All docs").unwrap() < lamps
+            && lamps < cues
+            && cues < register
+            && register < guide,
         "{links}"
     );
 }

@@ -24,6 +24,4 @@
     color: var(--primary-color);
 }
 
-.dx-checkbox:focus-visible {
-    box-shadow: 0 0 0 2px var(--focused-border-color);
-}
+/* Focus is the page's one ring (board.css's outline), never a second ring of shadow. */

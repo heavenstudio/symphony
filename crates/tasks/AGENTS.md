@@ -595,9 +595,20 @@ walking the checkout. Unknown, oversized or unstable inputs conservatively resca
 conditional/per-worktree configuration, attributes and unreadable policy decline reuse.
 Fresh unavailable HEAD/removal guards retain a tree before lookup; eligible removal
 holds its removal lease through both fresh final status guards and deletion. Regenerable `.target/`,
-`symphony/.target/`, `symphony/build/` and `.codex/hooks*` go with a merged tree;
+`symphony/.target/` (and a seed's or a clear's staging beside each, `.target.seed.PID`,
+`.target.clear.PID`), `symphony/build/` and `.codex/hooks*` go with a merged tree;
 `artifacts/<handle>/` keeps it. Foreground `--task` visits only that task's
-finished worktrees and asks for a detached full pass.
+finished worktrees and asks for a detached full pass. `sweep/build_output.rs` clears
+those build folders, the worktree staying, from a worktree the sweep keeps once its
+work is finished (its rules in its module doc): every tied task done or cancelled, one
+done; no beat or tool call by an agent bound there, and no touch of its git files,
+within the hour; its HEAD merged work, not a commit of main's first-parent line unless
+its reflog says it was committed there, so a branch with no commits ahead of main
+keeps its build; no process inside. Right before each removal it decides again on a new
+listing and board read and asks `occupied` again; then it takes every Cargo build lock in
+the folder without waiting (one held keeps it), renames the folder aside under them and
+removes that. It never follows a link out of the worktree, and a stale staging whose
+process is gone goes with the folder (`tests/sweep/build_output.rs`).
 `trigger.rs` owns
 the detached sweeps work finishing starts (`done`, `move`,
 `verdict`, `leave`, `reap`, and `inbox` once an hour). Those run the main

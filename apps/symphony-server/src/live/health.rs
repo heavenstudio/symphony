@@ -1,10 +1,15 @@
 //! What the pages and the project picker say of the board's health: while its callback dispatch or
 //! its idle sweep is failing ([`symphony_board::board_health::Recorder::failing`]), every page of
 //! the project says so on the server's notice, beside whatever else that notice says, and the
-//! picker says so under the project's name. None of it reads the board.
+//! picker says so under the project's name. While the disk holding the project has less free than
+//! `SF_LOW_DISK_GB` ([`symphony_board::board_health::disk`]), every page says that too. None of it
+//! reads the board.
 
 use super::Hub;
+use std::collections::BTreeMap;
+use std::path::Path;
 use std::sync::PoisonError;
+use symphony_board::board_health::disk::{self, Low};
 
 /// What the server's notice says, by where it comes from.
 #[derive(Debug, Default)]
@@ -13,17 +18,54 @@ pub(crate) struct Notices {
     update: String,
     /// The board's health ([`notice`]).
     health: String,
+    /// The disk running low ([`Low::notice`]).
+    disk: String,
 }
 
 impl Notices {
     /// The notice the pages show: each part that says something, the update's first.
     fn said(&self) -> String {
-        [self.update.as_str(), self.health.as_str()]
-            .into_iter()
-            .filter(|part| !part.is_empty())
-            .collect::<Vec<_>>()
-            .join(" · ")
+        [
+            self.update.as_str(),
+            self.health.as_str(),
+            self.disk.as_str(),
+        ]
+        .into_iter()
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>()
+        .join(" · ")
     }
+}
+
+/// The disk holding `root`, read at each call against `SF_LOW_DISK_GB` as this process started with
+/// it (a value that is not a number of gigabytes is said once, and the default taken). The
+/// library's own tests read a disk that is never low, so no page they check says the machine's.
+pub(crate) fn low_disk(root: &Path) -> Box<dyn Fn() -> Option<Low> + Send + Sync> {
+    if cfg!(test) {
+        return Box::new(|| None);
+    }
+    reading(
+        root,
+        &std::env::vars()
+            .filter(|(name, _)| name == disk::VAR)
+            .collect(),
+    )
+}
+
+/// The disk holding `root`, read at each call against the threshold `vars` names.
+pub(crate) fn reading(
+    root: &Path,
+    vars: &BTreeMap<String, String>,
+) -> Box<dyn Fn() -> Option<Low> + Send + Sync> {
+    let threshold = disk::threshold(vars).unwrap_or_else(|why| {
+        eprintln!(
+            "· {why}: the pages warn under {} GB free",
+            disk::THRESHOLD_GB
+        );
+        disk::THRESHOLD_GB
+    });
+    let root = root.to_path_buf();
+    Box::new(move || Low::check(&root, threshold))
 }
 
 impl Hub {
@@ -33,12 +75,16 @@ impl Hub {
     }
 
     /// Tell every page, on the server's notice, whether the board's dispatch or sweep is failing
-    /// at `now`, when that changes.
+    /// at `now`, and whether the disk is low, when either changes.
     pub(crate) fn tell_health(&self, now: f64) {
         let health = notice(self.health.failing(now));
+        let disk = (self.low_disk)()
+            .map(|low| low.notice())
+            .unwrap_or_default();
         let mut notices = self.notices.lock().unwrap_or_else(PoisonError::into_inner);
-        if notices.health != health {
+        if notices.health != health || notices.disk != disk {
             notices.health = health;
+            notices.disk = disk;
             self.server_notice.send_replace(notices.said());
         }
     }
