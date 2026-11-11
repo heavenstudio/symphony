@@ -140,7 +140,16 @@ fn crate_directories(root: &Path, app: impl AsRef<Path>) -> Result<BTreeSet<Path
 pub fn source_directories(root: &Path) -> Result<BTreeSet<PathBuf>, String> {
     let sdk = workspace(root);
     let server = sdk.join("apps/symphony-server");
-    let mut directories = crate_directories(root, &server)?;
+    let mut directories = if server.join("Cargo.toml").is_file() {
+        crate_directories(root, &server)?
+    } else if root.join("apps/symphony-host/Cargo.toml").is_file() {
+        crate_directories(root, "apps/symphony-host")?
+    } else {
+        return Err(format!(
+            "{}: no owned server or host manifest",
+            server.display()
+        ));
+    };
     if sdk != root && root.join("apps/symphony-host/Cargo.toml").is_file() {
         directories.extend(crate_directories(root, "apps/symphony-host")?);
     }
@@ -393,7 +402,13 @@ pub fn build(
         return Err("reload cancelled by shutdown".into());
     }
     let source = client_fingerprint(root)?;
-    let client = if installed_client_source(home).as_deref() != Some(&source) {
+    // A consumer's immutable dependency already embeds its matching release. Its lockfile
+    // participates in fingerprint(), but it owns no client sources or client build recipe.
+    let client = if workspace(root)
+        .join("apps/symphony-ui/Cargo.toml")
+        .is_file()
+        && installed_client_source(home).as_deref() != Some(&source)
+    {
         let stage = home.join(format!(".reload-client.{}", std::process::id()));
         // Only this reload worker owns its staging directory, including after a failed attempt.
         fs::create_dir(&stage).map_err(|e| format!("{}: {e}", stage.display()))?;

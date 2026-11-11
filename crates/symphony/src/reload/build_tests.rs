@@ -291,3 +291,20 @@ fn standalone_sources_are_owned_and_missing_sources_never_search_a_hostile_paren
         "{error}"
     );
 }
+
+#[test]
+fn consuming_host_tracks_local_plugin_sources_and_its_lockfile_pin() {
+    let tree = Tree::new();
+    tree.write("apps/symphony-host/Cargo.toml", "[package]\n[dependencies]\nplugin = { path = '../../plugin' }\nserver = { git = 'https://example.test/kit' }\n");
+    tree.write("plugin/Cargo.toml", "[package]\n");
+    let root = tree.root.canonicalize().unwrap();
+    assert_eq!(
+        super::source_directories(&root).unwrap(),
+        [root.join("apps/symphony-host"), root.join("plugin")].into()
+    );
+    tree.write("Cargo.lock", "first immutable dependency pin");
+    let before = super::hash_files(&root, super::common_inputs(&root).unwrap()).unwrap();
+    tree.write("Cargo.lock", "second immutable dependency pin");
+    let after = super::hash_files(&root, super::common_inputs(&root).unwrap()).unwrap();
+    assert_ne!(before, after);
+}

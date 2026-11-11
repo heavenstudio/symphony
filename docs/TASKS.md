@@ -53,13 +53,13 @@ for byte against the old ones. Only then does it swap the stores and remove the
 old one. The exports stay in `sf-tasks/reclaim/exports/`. `--dir FOLDER`
 rehearses on a copy of `sf-tasks/` (`cp -c`, a clone).
 
-The command is the `tasks` binary (`symphony/crates/tasks`), built from this tree's
+The command is the `tasks` binary (`crates/tasks`), built from this tree's
 sources once for every worktree that shares them (`tools/rs-bin.sh`): the
 first command after a change to them builds it, which takes a minute or two.
 The heartbeat hook runs the build its tree last ran (`.target/bin/tasks`) and
 builds nothing. There is no Python board adapter.
 `launch`, `restore`, `cleanup`, `close` and `reap` are its own, hc's terminals and all
-(`symphony/crates/tasks/src/launch/`); the board calls no `herdr`. The server is the pinned SurrealDB, fetched once
+(`crates/tasks/src/launch/`); the board calls no `herdr`. The server is the pinned SurrealDB, fetched once
 per machine into `sf-surreal/` in the git common dir by `bash tools/surreal.sh`
 (the Rust tests fetch it the same way); the board says so when it is missing.
 
@@ -165,19 +165,13 @@ another program in its foreground). A close and a restore of one session each ho
 run, so neither starts while the other runs; one whose hold lapsed and was taken over writes
 nothing more, and a restore that lost it kills the terminal it started. A Codex record
 takes the thread its callback registered whichever is written first; one closed with no thread
-says on its thread that restore cannot resume it. See the [tasks skill](../../.agents/skills/tasks/SKILL.md#launch-restore-clean-up-herdr).
+says on its thread that restore cannot resume it. See the [tasks skill](../crates/symphony/shipped/skills/tasks/SKILL.md#launch-restore-clean-up-herdr).
 
-**Which agent starts where** is a [standing rule](../../RULES.md#workflowclaude-first-agents):
-executors and reviewers are Claude, started as in-process subagents or
-`claude -p`, with a handle registered for them and a subtask made `--for` it. A
-terminal, `just tasks launch SLUG --kind K` (`--role reviewer` for a reviewer),
-holds work that needs one: Codex's adversarial review of a branch a Claude
-executor wrote (`gpt-6.1-sol` or better, `xhigh`), its image generation and 3D
-modelling, or an agent that must be watched or outlive its orchestrator
-([task-orchestrator](../../.agents/skills/task-orchestrator/SKILL.md#which-way-an-agent-starts)).
+A consuming project chooses its agent models, staffing policy and terminal lifecycle.
+The board records those sessions and roles; it imposes no model preference.
 
 **Optional automatic staffing:** `just tasks staff [--dry-run]` makes one pass, highest
-priority first. Enable it in [task_staff.json](../../tools/task_staff.json): `enabled`
+priority first. Enable it in `tools/task_staff.json` in the consuming checkout: `enabled`
 defaults to false, `max_sessions` to 8 and `min_free_memory_gib` to 4. `only` is an
 optional list of task slugs whose subtrees may be staffed; an empty list allows all
 orchestrated work. The config belongs to the checkout running the command (main for
@@ -248,12 +242,12 @@ Each close is one line on the handle's task thread, with its restore line, writt
 before the terminal is closed. `just tasks reap --dry-run` names what the next sweep would close
 and why each terminal stays; a sweep tells its log why it keeps an idle one, once per
 reason. `just clean` runs cleanup and one sweep at once, never closing the caller's.
-Code: `symphony/crates/tasks/src/launch/reap.rs`.
+Code: `crates/tasks/src/launch/reap.rs`.
 
 **Finished worktrees go by themselves** (owner, 2026-10-21: "do any cleanups for worktrees
 that can help decrease needless disk usage. No need to ask, this should happen automatically
 when tasks are complete"). The worktree sweep (`just tasks sweep`, the rules in
-[tools/AGENTS.md](../../tools/AGENTS.md#landing-on-main)) starts, detached, whenever work
+the consuming project's worktree policy) starts, detached, whenever work
 finishes: a task going to done or cancelled (its closed sessions' worktrees then go without
 the 2 h wait), `just tasks leave`, `just tasks reap`, and at most once an hour `just tasks
 inbox`, by a stamp. The command that finished the work never waits on it and says nothing of
@@ -273,7 +267,7 @@ they create is not bound by their agent id. Full sessions register from the work
 For a backlog task, ignored test output under `artifacts/` keeps the tree too, even when explicit
 landing cleanup would discard it; only done/cancelled tasks (or no task) release all output.
 A board `TASKS_SERVER` names (a test's) starts no sweep unless
-`TASKS_SWEEP=on`; `TASKS_SWEEP=off` starts none anywhere. Code: `symphony/crates/tasks/src/sweep.rs`.
+`TASKS_SWEEP=on`; `TASKS_SWEEP=off` starts none anywhere. Code: `crates/tasks/src/sweep.rs`.
 
 **Health** is derived from when the session was last seen. Every command
 counts as a sign of life, and so does every tool call of a subagent (below):
@@ -345,13 +339,13 @@ see only what is committed.
 ## The agents API
 
 The app is the source of truth for who is doing what: `GET /api/agents` of the Symphony and `just tasks agents
-[--json] [--all]` return the same document (`symphony/crates/tasks/src/cli/agents.rs`; these keys are a contract, pinned by
-`symphony/crates/tasks/tests/cli/agents.rs`). The board (sessions, roles, `task_sessions`) is the record; hc's
+[--json] [--all]` return the same document (`crates/tasks/src/cli/agents.rs`; these keys are a contract, pinned by
+`crates/tasks/tests/cli/agents.rs`). The board (sessions, roles, `task_sessions`) is the record; hc's
 live terminals (`hc ls`) and the test-slot locks are probes that say what each agent is doing now, and `probes` names
 either as `unavailable` when it cannot be asked, the rest being built from the board alone. The hc probe keeps the
 key `herdr` and an agent's terminal the key `pane`: names the wire keeps. The Symphony's `/api/agents` also names
 that probe `panes`, with the same answer under both keys, and its client reads `panes`, else `herdr`
-(`symphony/crates/symphony-api/src/agent_probes.rs`), so a client and a server one build apart still agree; the
+(`crates/symphony-api/src/agent_probes.rs`), so a client and a server one build apart still agree; the
 rest of its document is the board's.
 
 ```
@@ -439,7 +433,7 @@ Slot holders and waiters come from `test_slots.runs` (a held slot file whose wri
 place in the pool's FIFO line, `<prefix>-<12-digit sequence>.place`, in the pool's own prefix: `slot-` and `render-`, that its waiter still holds); a slot file whose writer is dead is free and is not locked to find out.
 
 An orchestrator's callback uses it: it does not call an agent stale or lost while `running_test`, and it receives a PULL
-digest (`symphony/crates/tasks/src/cli/pull.rs`) once at its first dispatch, even when empty, then only when an actionable list gains an entry absent from the last delivered PULL after forgetting entries absent from any computed digest: red tasks ([Slots](#slots)) with no live executor 10 minutes after they were filed, in any status short of review, listed first as `red_unstaffed`, counted in the header only when there is one, and in no other list, `dependency_blocked` included, a cancelled dependency of its named in its note; ready tasks with no live executor
+digest (`crates/tasks/src/cli/pull.rs`) once at its first dispatch, even when empty, then only when an actionable list gains an entry absent from the last delivered PULL after forgetting entries absent from any computed digest: red tasks ([Slots](#slots)) with no live executor 10 minutes after they were filed, in any status short of review, listed first as `red_unstaffed`, counted in the header only when there is one, and in no other list, `dependency_blocked` included, a cancelled dependency of its named in its note; ready tasks with no live executor
 (one on a subtask still to be executed counts), in-progress with none, review with no reviewer, tasks that landed
 (the branch is on main, or `landed <slug> on main` is on the task's thread) and are still open (a status change on the task after that line voids it, whether a move, a verdict such as `changes`, or a re-claim: the task is new work, not a landing left open), and idle agents, each scoped to the orchestrator's own and unclaimed tasks (an idle agent another orchestrator launched is left out). An executor
 or reviewer that is `running_test` counts as present however quiet the board says it is.
@@ -527,7 +521,7 @@ in review, but actually waiting for some approval. So it should had been
 blocked instead in regards to the status, since no work was happening." A task
 in review whose branch has every stamp it needs to land but ones nobody is
 producing (the owner's approval, a dependency only that approval collects, a
-hold its orchestrator names: [MERGING](../../docs/workflow/MERGING.md#stamps))
+hold its orchestrator names: the consuming project's stamp policy)
 goes to `blocked`, with a line on its thread naming them. `just land`, `just
 land-approve` and `just land-stamps` make that move when they find it, and move
 the task back to `review` once one arrives: the owner's approval (the
@@ -567,7 +561,7 @@ can hold one task at once, one role each:
 | reviewer | `just tasks role SLUG reviewer` | give the verdict: `approve` (done) or `changes` (back to the executor) |
 | reserved | `just tasks reserve SLUG` | hold it for later, for an hour, so nobody else claims it |
 
-A branch reaches `main` only through `just land` ([MERGING](../../docs/workflow/MERGING.md)). Its
+A branch reaches `main` only through `just land` (the consuming project's landing policy). Its
 reviewer gives one verdict, not two: `just land-approve BRANCH --tip SHA` with
 the full commit it checked, from its own
 session (`TASKS_SESSION`), holding the reviewer role on the branch's task,
@@ -593,7 +587,7 @@ still sits beside you. A task is its orchestrator's when that session holds the
 role on it, or on the nearest task above it that has a holder still there; a
 task with none is **unclaimed**, as are a lost or left orchestrator's tasks
 until another takes them over. Each orchestrator hears its own tasks and the
-unclaimed ones only (`symphony/crates/tasks/src/orchestration.rs`): every
+unclaimed ones only (`crates/tasks/src/orchestration.rs`): every
 orchestrator hears an unclaimed task's NEW lines, PULL digest rows and the
 STATUS of its move to `blocked`, which no digest row shows, and only its owner
 a claimed one's. A post to `@orchestrator`, and a
@@ -656,7 +650,7 @@ A consuming project's optional wait guard refuses a loop waiting on machine-wide
 ## Slots
 
 An orchestrator holds at most a set number of open tasks, its slots, so work is
-pushed to done before new work starts (`symphony/crates/tasks/src/slots.rs`).
+pushed to done before new work starts (`crates/tasks/src/slots.rs`).
 The number is the project's: `orchestrator_slots` in the `[board]` table of
 `symphony.toml`, read from the repository's main checkout, as `on_review` is,
 so a branch cannot raise its own cap. With no key, or no file, nothing is
@@ -710,7 +704,7 @@ capped. A value that does not parse, or one below 1, is said on stderr
 - **Red work takes no slot.** A task filed for a red that stops every
   landing is marked so where it is filed (`create`'s `red`, naming what is
   red, `tasks api` version 7; kept as the board field `fields._board.red`,
-  `symphony/crates/tasks/src/red.rs`). Only a red's filer marks: a session of
+  `crates/tasks/src/red.rs`). Only a red's filer marks: a session of
   kind `filer`, which `tasks api`'s `register` takes and the command line's
   `register` does not, as the project's tools that file reds register. A
   create naming `red` from any other session is refused, and `set_field`
@@ -787,7 +781,7 @@ also closes the task's sessions and starts the worktree sweep, as the CLI does.
 An agent message addressed to `owner` rings the app's 🔔. Creating, claiming,
 other moves and verdicts go through agents, and one task the app files itself: a verdict
 that waits on an agent goes on a `verdicts/…` task, created as the app's
-own `app` session, never as the owner ([REVIEW](../../docs/workflow/REVIEW.md)).
+own `app` session, never as the owner ([document review](REVIEW.md)).
 
 ## Links with the documents
 

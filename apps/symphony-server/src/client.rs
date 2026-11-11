@@ -21,6 +21,14 @@ pub(crate) fn select(
     override_dir: Option<PathBuf>,
 ) -> (PathBuf, bool) {
     if let Some(install) = install {
+        let source = symphony::reload::workspace(root);
+        if !source.join("apps/symphony-server/Cargo.toml").is_file()
+            && root.join("apps/symphony-host/Cargo.toml").is_file()
+        {
+            // An installed consuming host ships the release at its immutable Cargo pin.
+            // A leftover external bundle from before extraction cannot replace those bytes.
+            return (install.join("client/public"), true);
+        }
         return (install.join("client/public"), false);
     }
     if let Some(directory) = override_dir {

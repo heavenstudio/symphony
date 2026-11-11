@@ -100,6 +100,28 @@ fn shipped_shell_references_all_six_real_modules_and_valid_wasm() {
     assert!(super::asset("../Cargo.toml").is_none());
 }
 
+#[test]
+fn installed_consumer_uses_its_pinned_release_even_with_a_stale_external_client() {
+    let tree = Tree::new();
+    tree.write("project/apps/symphony-host/Cargo.toml", "[package]\n");
+    tree.write("install/client/public/index.html", "old unrelated release");
+    let root = tree.path("project");
+    let install = tree.path("install");
+    assert_eq!(
+        super::select(&root, Some(&install), Some(tree.path("override"))),
+        (install.join("client/public"), true)
+    );
+    // A source kit still owns its explicitly installed bundle and its errors.
+    tree.write(
+        "project/symphony/apps/symphony-server/Cargo.toml",
+        "[package]\n",
+    );
+    assert_eq!(
+        super::select(&root, Some(&install), None),
+        (install.join("client/public"), false)
+    );
+}
+
 fn shared(root: &Path, directory: &Path, embedded: bool, installed: bool) -> Arc<Shared> {
     let mut shared = Shared::new(
         1,

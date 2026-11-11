@@ -3,13 +3,13 @@
 The app's workspace owns its server and Dioxus client under `apps/`, and the review
 library, wire types, task board and working-directory scanner under `crates/`.
 The app's formats and operating contract live in [docs/](docs/README.md).
-The containing project's [guide](../AGENTS.md) owns landing and shared-service rules.
+A consuming project owns its landing policy and shared-service safeguards.
 
 ## Rust
 
 `Cargo.toml` and `Cargo.lock` belong to this workspace. Members inherit its package
 settings and dependency versions. The containing project's thin host and board-only
-packages consume these libraries through path dependencies. A project's settings are
+packages consume these libraries through an immutable Git dependency pin. A project's settings are
 its `symphony.toml` (generic defaults in `crates/symphony/src/project.rs`; the
 board itself reads `[board] on_review`, the command a task moving to
 review starts detached from the main checkout, in `crates/tasks/src/on_review.rs`), and its
@@ -45,7 +45,7 @@ its arguments, streams, status and inherited limits. It uses this folder's `.tar
 unless `CARGO_TARGET_DIR` names another. It supplies no project gate planner, test
 selection, certificate, shared slot pool or dependency seed service. The toolchain
 pin is `rust-toolchain.toml`. The containing project keeps its own source launcher,
-slot wrapper and gates, which compile, discover and run both workspaces.
+slot wrapper and gates, which compile and test its own consumers.
 
 `tools/rs-bin.sh NAME` builds a declared workspace binary with Cargo before every
 run. `--build NAME` prints the freshly built path, `--where NAME` names its expected
@@ -73,8 +73,7 @@ closes inherited descriptors and supplies the owned EOF watchdog. These helpers
 do not start the shared board or Symphony server.
 
 Read [the client guide](apps/symphony-ui/AGENTS.md) and
-[the board guide](crates/tasks/AGENTS.md) before editing those packages. The
-containing project's Rust, review and resource policy applies to work there.
+[the board guide](crates/tasks/AGENTS.md) before editing those packages. A consuming project applies its own Rust, review and resource policy.
 Never run a shared-service restart as a test: use a private port and scratch board.
 
 ## Agent integration
