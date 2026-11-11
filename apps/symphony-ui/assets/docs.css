@@ -68,7 +68,8 @@
 .doc-section > .add:hover { color:var(--primary); border-color:var(--primary); }
 .doc-actions { display:flex; justify-content:flex-end; margin-top:8px; }
 .doc-actions button { font-size:.75rem; }
-form.comment, form.verdict { border:1px solid var(--border); background:var(--muted); border-radius:var(--r-md); padding:12px; margin:12px 0 4px; display:grid; gap:8px; cursor:auto; }
+/* One column as wide as the form, never as wide as its widest control: a phone's card holds it. */
+form.comment, form.verdict { border:1px solid var(--border); background:var(--muted); border-radius:var(--r-md); padding:12px; margin:12px 0 4px; display:grid; grid-template-columns:minmax(0,1fr); gap:8px; cursor:auto; }
 .editor form.comment { margin-bottom:0; }
 .editor form.verdict > .row { margin-top:0; }
 .verdict-choices { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,7.1em),1fr)); grid-auto-rows:1fr; gap:8px; max-width:22rem; font-size:var(--fs-sm); }
