@@ -649,7 +649,10 @@ fn the_justfile_bundles_the_client_and_lints_its_browser_code_through_the_cargo_
     let tree = scratch.0.join("workspace with spaces");
     fs::create_dir_all(&tree).unwrap();
     let tree = tree.canonicalize().unwrap();
-    fs::copy(crate_dir().join("../../justfile"), tree.join("justfile")).unwrap();
+    // The justfile and the Symphony's recipes it imports.
+    for name in ["justfile", "symphony.just"] {
+        fs::copy(crate_dir().join("../..").join(name), tree.join(name)).unwrap();
+    }
     executable(
         &tree.join("tools/cargo.sh"),
         r#"#!/bin/bash
