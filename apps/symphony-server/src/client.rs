@@ -29,7 +29,7 @@ pub(crate) fn select(
 ) -> (PathBuf, bool) {
     if let Some(install) = install {
         if consuming_host(root) {
-            // An installed consuming host ships the release at its immutable Cargo pin.
+            // An installed consuming host includes the release at its immutable Cargo pin.
             // A leftover external bundle from before extraction cannot replace those bytes.
             return (install.join("client/public"), true);
         }
