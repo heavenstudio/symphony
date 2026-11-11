@@ -74,7 +74,7 @@ never the whole target, which the nightly runs.
   the feed's keep-alive pings, which arrive every `ping_ms` for as long as the
   page is open and are reported beside the total (the owner's, 2026-11-11).
   Other page kinds are reported separately for review.
-  On the fixture a first visit to `/tasks` takes 240,372 bytes, 9,628 under the
+  On the fixture a first visit to `/tasks` takes 240,372 bytes, 59,628 under the
   cap: the board WASM 213,150, its glue 10,757, the shared style sheet 8,307,
   the shell 4,382, the HTML 1,143, API replies 2,548 and the feed's head and
   opening comment 85. `/` takes 217,235; cached returns take 1,981 and
