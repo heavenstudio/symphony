@@ -4,6 +4,7 @@ use super::*;
 
 mod headers;
 mod native;
+mod recorded;
 
 fn operation(machine: &str, id: &str, kind: Kind, state: State) -> Operation {
     Operation {

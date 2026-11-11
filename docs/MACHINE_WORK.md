@@ -39,12 +39,133 @@ Task attribution requires explicit, unambiguous local session context and is bou
 once for an operation; later role changes do not reassign it.
 
 Each server scans its local repository's native records once per existing board
-tick; HTTP pages and the feed share the cached result. The reader is an already
-compiled `sf-slots` at the project's prepared `.target/bin/sf-slots` path. A direct
-host process may supply an absolute `SF_MACHINE_WORK_READER` instead. The selected
-path is retained; sampling never searches caches or invokes a build or source hash.
-A missing/unsupported reader or invalid response leaves observations unknown.
-Normal tool commands prepare the default link through the existing binary cache.
+tick; HTTP pages and the feed share the cached result. It reads the board recorder's
+work folder (below) directly, and beside it a project's own reader when there is
+one: an already compiled `sf-slots` at the project's prepared `.target/bin/sf-slots`
+path, or the absolute `SF_MACHINE_WORK_READER` a direct host process supplies. Both
+are one inventory of one machine. The project's normal tool commands prepare its
+default link. The selected path is retained; sampling never
+searches caches or invokes a build or source hash. A named reader must answer; the
+prepared path may hold none. An unsupported reader, an invalid response or an
+unreadable record leaves observations unknown. A machine is first claimed (its ID
+made) once something was recorded or a project reader answered.
+
+## Recording builds and tests
+
+A project without a recorder of its own records its builds and tests with the
+board's:
+
+```sh
+tasks run --phase build|test [--label TEXT] [--task SLUG] [--as HANDLE] -- COMMAND [ARGS...]
+```
+
+COMMAND runs with the caller's arguments (any bytes), streams, environment, working
+directory and limits, and its status is the caller's. On macOS `tasks run` becomes
+COMMAND (`execvp`): the process the caller started, waits for and signals is
+COMMAND's, so every descriptor (a jobserver's included), the signal mask and the
+signals the caller ignores reach it as they would without the recorder, and whatever
+ends that process, `SIGKILL` included, ends COMMAND; only `SIGPIPE` starts at its
+default, as a shell's command does. Before it does, it forks its recorder, detached in
+a session of its own with none of the caller's streams open, which watches that
+process through a kqueue (its exec, its exit and its status) and writes the record;
+COMMAND waits at most 1 s to hear that the recorder watches it, and runs unrecorded
+otherwise. Elsewhere `tasks run` runs COMMAND as its child and waits for it: a
+hang-up, interrupt, quit or terminate signal it receives, unless the caller ignores
+it, reaches COMMAND, and it ends by the signal that ended COMMAND; there a `SIGKILL`
+of `tasks run` leaves COMMAND running, and the signal mask is not passed on.
+
+It prints nothing of its own except for a command line it cannot read (status 2,
+with its usage) or a command that cannot start (127 or 126, as a shell says them).
+A record it cannot write leaves COMMAND running unrecorded. `tasks run --probe`
+prints `run 1`: what a wrapper asks first, since an older `tasks` lacks the command.
+
+**Where.** The work folder is `sf-tasks/work/` in the git common dir of the working
+directory, so every worktree of a repository records where its Symphony reads;
+`work.<database>/` for a board database other than the live one. `TASKS_WORK` names
+another folder. A board named by `TASKS_SERVER` without `TASKS_WORK` (a test's board)
+records nothing.
+
+**What.** Each operation is `operations/<id>.json` in the work folder, rewritten
+whole (a file of its own renamed over it): first once the board said which task it is
+for, queued, or running when COMMAND started by then; running once COMMAND started,
+rewritten every 2 s while it runs (its beat), and finished with how it ended. Every
+recorder, of any build, locks `operations/<id>.lease` before it writes its record and
+holds it until it finished: the sweep (below) relies on that across builds.
+Its times are stamped as they happen: queued when `tasks run` was called, started
+when COMMAND did (on macOS, when the recorder told it to exec), ended when its end
+came, each seen by a thread of the recorder's own while the board is asked which task
+it is for; the record is written once that is known. The board's schema is unchanged.
+
+| Field | Meaning |
+| --- | --- |
+| `version` | `1`, and still `1` for a field added later: a reader ignores a field it does not know, and takes a record of another version for one it cannot read |
+| `operation_id` | 32 hex digits, also the file name |
+| `parent_id` | the recorded operation that started this recorder, if any |
+| `phase`, `label` | `build` or `test`; `--label`, else the command line |
+| `state` | `queued`, `running` or `finished` |
+| `handle`, `task` | the session and task it ran for, or null |
+| `checkout`, `branch`, `commit` | the working directory, its branch and `HEAD` |
+| `machine_id`, `host` | the installation ID if one exists (never made here), the host name |
+| `pid`, `child_pid` | the recorder and COMMAND |
+| `queued_at`, `started_at`, `ended_at`, `beat_at` | seconds since the epoch |
+| `exit_code`, `signal` | how COMMAND ended; neither when that is not known |
+| `reason` | why it ended without a status, or never started, else empty |
+
+**For which task.** `--task SLUG`, else `TASKS_TASK`, else the one task the session
+(`--as`, else `TASKS_SESSION`) holds on the board as it begins: executing it in
+concept, design, ready or in progress, or reviewing it in review. The board is read
+without starting its server, for at most 1 s, after COMMAND started. A session
+holding none or several, or a board that does not answer, records no task: nothing
+is guessed, and no time it records waits for that answer. An orchestrator running a
+build or test for a task, or a subagent that shares its orchestrator's process and
+has no session of its own, names the task (`TASKS_TASK=SLUG just verify`) and, when
+it has one, its handle (`TASKS_SESSION=HANDLE just verify`). The task a record names
+is the recorder's binding; the Symphony never rewrites it.
+
+**Nested runs.** COMMAND receives `TASKS_RUN_PARENT`, its operation's ID; a recorder
+it starts records that as its `parent_id`.
+
+**Kept and bounded.** A finished operation is appended to `history.jsonl` in the
+work folder, one record per line in one write that waits for no other recorder,
+before its record says it finished. A history that reaches 2 MiB becomes
+`history.1.jsonl`, replacing the one before, so the two files hold some 3,000 to
+6,000 operations, about 4 MiB; a reader takes each operation once, oldest first. Its
+record stays in `operations/` for an hour after it last changed, so the Symphony sees
+it finish, and the next recorder's sweep then removes it, as it removes anything else
+there an hour old that no live recorder holds: a write's own file cut short, a lease
+with no record. A record no live recorder holds that the sweeping build reads whole
+and cannot take for one (too long, malformed, or of another version), which leaves
+its machine unknown, goes at the next sweep, with its lease; one it could not open or
+read is left for a later sweep. So an older build's sweep removes a newer version's
+record as soon as its recorder lets it go: a finished one's history line stays, and a
+lost one has none. Work whose recorder died (an unfinished record whose lease nobody
+holds) reads as uncertainty until the next recorder's sweep finishes it without an
+exit code or signal, its end at its last beat, its reason "its recorder ended before
+saying how its command did", and keeps it in the history. One sweep or rotation runs
+at a time (`history.lock`); none waits for another.
+
+**As the Symphony reads it.** A queued or running operation counts while its
+recorder holds the lease; a finished one retires it. Each beat changes what the
+operation says (how long after it started its recorder last said it runs), so long
+work stays current while its recorder beats, and goes stale ten seconds after its
+beats stop. `tasks run` waits for no resource: queued lasts only until COMMAND
+starts. A finished operation of the recorder's, once swept from `operations/`, can
+never return, so the Symphony forgets its ID: a long-lived server's bound on the
+operation IDs it remembers per machine is spent on live work and a project reader's,
+never on the recorder's history.
+
+**In this repository.** `tools/cargo.sh` sends a Cargo build (`build`, `check`,
+`clippy`, `doc`, `rustc`, `symphony-ui` but `dev`) or test (`test`, `nextest`,
+`bench`) through `tools/record.sh`, which it sources, and the `lint-rs`, `test-rs`,
+`client-check`, `client-update` and `verify` recipes run through it as one operation
+each; the steps inside a recorded run are not recorded again. A tree without
+`tools/record.sh` runs them as they are. Its recorder is `TASKS_RECORDER` when it
+names one, else this checkout's prepared `.target/bin/tasks`, else that of the main
+checkout a worktree belongs to (`tools/rs-bin.sh --link tasks` prepares it); finding
+it starts no process. With `TASKS_RECORDER=off`, or no recorder that answers the
+probe within 2 s (none built, an older one, or a hung or slow one, as the first run
+of a binary just linked can be), the command is exec'd as it is. The freshness build
+before `just tasks` or `just symphony` is not recorded.
 
 Configuring another machine's ID supplies advice, not telemetry. An unobserved
 machine stays unknown. This feature adds no remote worker, reporting transport,
