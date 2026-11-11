@@ -84,7 +84,9 @@ fn the_dock_holds_the_floating_controls_and_a_focused_or_last_control_sits_above
             SHOWN
         ));
         settle(&mut page);
-        let top = page.eval("Math.floor(document.querySelector('a.go').getBoundingClientRect().top + scrollY)");
+        let top = page.eval(
+            "Math.floor(document.querySelector('a.go').getBoundingClientRect().top + scrollY)",
+        );
         let height = u32::try_from(top.as_u64().unwrap()).unwrap() - 8;
         viewport(&mut page, width, height);
         page.eval("scrollTo(0,0)");
@@ -166,5 +168,62 @@ fn a_documents_contents_pill_sits_in_the_dock_and_in_the_page_on_a_phone() {
         (&opened["position"], &opened["top"]),
         (&folded["position"], &folded["top"]),
         "the contents open where the pill was"
+    );
+}
+
+/// Whether the header, the page and any page notice end where the side surface `panel` starts,
+/// every control of theirs left of it, and a click at the activity button's middle reaches it.
+fn beside(panel: &str) -> String {
+    format!(
+        r#"(() => {{
+        const panel = document.querySelector({panel}).getBoundingClientRect();
+        const left = panel.left + 0.5;
+        const controls = [...document.querySelectorAll('.app-header a, .app-header button, .frame-page a[href], .frame-page button, #shell-notices button')]
+            .filter(control => {{ const box = control.getBoundingClientRect(); return box.width > 0 && box.height > 0 && box.top < innerHeight && box.bottom > 0; }});
+        const bell = document.getElementById('bell').getBoundingClientRect();
+        const notice = document.querySelector('#shell-notices .shell-notice')?.getBoundingClientRect();
+        const dock = document.querySelector('.frame-dock').getBoundingClientRect();
+        return {{
+            fullHeight: panel.top === 0 && Math.abs(panel.bottom - document.documentElement.clientHeight) < 1,
+            header: document.querySelector('.app-header').getBoundingClientRect().right <= left,
+            page: document.querySelector('.frame-page').getBoundingClientRect().right <= left,
+            notice: !notice || notice.right <= left,
+            dock: dock.right <= left,
+            covered: controls.filter(control => control.getBoundingClientRect().right > left).map(control => control.id || control.textContent.trim()),
+            bell: document.getElementById('bell').contains(document.elementFromPoint(bell.left + bell.width / 2, bell.top + bell.height / 2)),
+        }};
+    }})()"#,
+        panel = json!(panel)
+    )
+}
+
+const BESIDE: &str = r#"{"fullHeight":true,"header":true,"page":true,"notice":true,"dock":true,"covered":[],"bell":true}"#;
+
+#[test]
+fn the_open_activity_panel_pushes_the_header_and_the_page_aside() {
+    let site = site();
+    site.set_json("/api/pending", &pending());
+    let Some(mut page) = chrome() else { return };
+    viewport(&mut page, 1280, 800);
+    page.open(&site.url("/"));
+    wait_for_board(&mut page);
+    page.eval("document.getElementById('bell').click()");
+    assert!(page.wait_for(
+        "document.getElementById('activity-panel') !== null && document.getElementById('bell').getAttribute('aria-expanded') === 'true'",
+        SHOWN
+    ));
+    settle(&mut page);
+    assert_eq!(
+        page.eval(&beside("#activity-panel")),
+        serde_json::from_str::<Value>(BESIDE).unwrap(),
+        "the home's tiles and pills stay in view beside the activity panel"
+    );
+    page.eval("document.querySelector('#activity-panel [aria-label=\"Close activity\"]').click()");
+    assert!(page.wait_for("document.getElementById('activity-panel') === null", SHOWN));
+    settle(&mut page);
+    assert_eq!(
+        page.eval("Math.round(document.querySelector('.frame-page').getBoundingClientRect().right) === document.documentElement.clientWidth"),
+        json!(true),
+        "closing it gives the page its width back"
     );
 }

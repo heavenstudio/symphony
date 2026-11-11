@@ -64,9 +64,12 @@ html { scroll-padding-bottom:calc(var(--dock) + 8px); }
 #quick-sheet .row { display:flex; gap:8px; }
 #quick-sheet .row > :first-child { flex:1; min-width:0; }
 #quick-sheet button[type=submit] { background:var(--primary); color:var(--primary-foreground); }
-.frame-page { margin-right:var(--side-panel); }
+/* An open side panel takes the window's right edge: the header and the page end where it starts, so
+ * it pushes them aside rather than covering their right-hand controls. */
+.app-header, .frame-page { margin-right:var(--side-panel); }
 @media (min-width:901px) {
   :root:has(#quick-sheet:not([hidden])) { --side-panel:390px; }
+  :root:has(#activity-panel) { --side-panel:400px; }
   .quick-expanded #quick-open { display:none; }
 }
 @media (max-width:900px) {
