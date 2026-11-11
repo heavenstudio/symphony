@@ -43,6 +43,7 @@ fn digest(executing: usize, lists: &[(&'static str, &[&str])]) -> Digest {
         notes: BTreeMap::new(),
         liveness_unknown: Vec::new(),
         unanswered: Vec::new(),
+        unanswered_scanned: true,
         cap: None,
         slots: None,
         volume: BTreeMap::from([("keen".to_string(), 9)]),
@@ -214,6 +215,52 @@ fn liveness_and_slots_are_said_when_they_change() {
             "  liveness unknown: native presence sweep overdue or failed; work remains held: slate-owl",
         ]
     );
+}
+
+#[test]
+fn a_look_whose_unanswered_scan_failed_says_nothing_of_those_posts_and_the_next_one_does() {
+    // The last PULL counted one unanswered post, t/a's post #3.
+    let mut said = digest(0, &[]).said();
+    said.counts.insert("unanswered".into(), "1".into());
+    let post = ("unanswered".to_string(), "t/a#3".to_string());
+    said.entries.insert(post.clone());
+    // A look whose scan failed knows of none: it neither counts nor resolves them.
+    let mut skipped = digest(0, &[("ready_unstaffed", &["t/b"])]);
+    skipped.unanswered_scanned = false;
+    assert_eq!(
+        skipped.changes_since(&said, &told(&said)),
+        [
+            "PULL ready_unstaffed=1 (was 0)",
+            "  ready_unstaffed p2 t/b — Task t/b"
+        ]
+    );
+    // Once told it, its recipient knows the post as before, and their count as unknown.
+    let after = skipped.said_after(Some(&said));
+    assert_eq!(after.counts["unanswered"], UNKNOWN);
+    assert!(after.entries.contains(&post), "{after:?}");
+    assert_eq!(after.counts["ready_unstaffed"], "1");
+    // Another failed look says nothing more of them.
+    let again = skipped.said_after(Some(&after));
+    assert_eq!(
+        skipped.changes_since(&after, &told(&after)),
+        ["PULL counts unchanged"]
+    );
+    assert_eq!(again, after);
+    // The next look whose scan answers says their count, and resolves the post now answered.
+    let answered = digest(0, &[("ready_unstaffed", &["t/b"])]);
+    assert_eq!(
+        answered.changes_since(&after, &told(&after)),
+        [
+            "PULL unanswered=0 (was unknown)",
+            "  resolved unanswered t/a#3"
+        ]
+    );
+    // With no PULL before, a failed look's count is unknown and it names no post.
+    let first = skipped.said_after(None);
+    assert_eq!(first.counts["unanswered"], UNKNOWN);
+    assert!(!first.entries.iter().any(|(name, _)| name == "unanswered"));
+    // A look whose scan answered leaves what it says.
+    assert_eq!(answered.said_after(Some(&said)), answered.said());
 }
 
 #[test]

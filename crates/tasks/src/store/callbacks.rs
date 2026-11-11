@@ -1098,7 +1098,7 @@ RETURN NONE;");
             pull_text = (lines.iter().map(|l| event_line(l)))
                 .collect::<Vec<_>>()
                 .join("\n");
-            pull_said = Some(digest.said());
+            pull_said = Some(digest.said_after(state.said()));
             account = Some(match legacy_upgrade {
                 true => Account::upgrade(&state, &entries, &heard),
                 false => Account::of(&state, &queued, &entries, &heard),

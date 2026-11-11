@@ -40,6 +40,8 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 pub const SHOWN: usize = 6;
 /// An orchestrator below this many open slots should look for disjoint work or owned blockers.
 const LOW_VOLUME: usize = 4;
+/// A count a PULL could not say, as its recipient's next one is measured against.
+pub const UNKNOWN: &str = "unknown";
 /// One successful canonical observation, retained across scheduling and recipient scoping.
 pub(crate) type Holdings = BTreeMap<String, BTreeSet<String>>;
 /// The categories, in the order they are listed; `idle` holds handles, the others tasks.
@@ -81,6 +83,9 @@ pub struct Digest {
     /// Work retained because its shared native presence signal expired.
     pub liveness_unknown: Vec<String>,
     unanswered: Vec<Pending>,
+    /// Whether the unanswered-post scan answered: a look whose scan failed cannot say which posts
+    /// wait, nor how many ([`Digest::said_after`]).
+    unanswered_scanned: bool,
     /// The cap on an orchestrator's open tasks the board holds starts to ([`crate::slots`]).
     pub cap: Option<usize>,
     /// The open slots the orchestrator the digest is for holds, under a cap ([`Digest::only_for`]).
@@ -147,14 +152,34 @@ impl Digest {
         }
     }
 
+    /// What its recipient knows once it acknowledges this digest's PULL after the one that said
+    /// `before`: what it says, but for unanswered posts when its scan failed, since it says nothing
+    /// of them. Their count is then [`UNKNOWN`], so the next look whose scan answers says it, and
+    /// the posts `before` named stay named, so that look resolves those gone.
+    pub fn said_after(&self, before: Option<&Said>) -> Said {
+        let mut said = self.said();
+        if !self.unanswered_scanned {
+            said.counts.insert("unanswered".into(), UNKNOWN.into());
+            let named = before.into_iter().flat_map(|before| &before.entries);
+            said.entries
+                .extend(named.filter(|(name, _)| name == "unanswered").cloned());
+        }
+        said
+    }
+
     /// The PULL of what changed since the one that said `said`, to a recipient told `told` of the
     /// entries the digest names now: its header names each count that moved, `name=now (was
     /// then)`, or says `counts unchanged`; the liveness line follows when the sessions it names
     /// changed; then each entry it was
     /// not told, as the whole digest lists it (the first [`SHOWN`] of a list), and one `resolved`
-    /// line a list for the entries `said` named that are gone. Nothing else is said again.
+    /// line a list for the entries `said` named that are gone. Nothing else is said again. A look
+    /// whose unanswered-post scan failed says nothing of those posts: neither their count nor any
+    /// of them resolved.
     pub fn changes_since(&self, said: &Said, told: &BTreeSet<(String, String)>) -> Vec<String> {
-        let counts = self.counts();
+        let known = |name: &str| self.unanswered_scanned || name != "unanswered";
+        let counts: Vec<_> = (self.counts().into_iter())
+            .filter(|(name, _, _)| known(name))
+            .collect();
         let mut moved: Vec<String> = (counts.iter())
             .filter(|(name, value, _)| said.counts.get(*name) != Some(value))
             .map(|(name, value, _)| {
@@ -164,7 +189,7 @@ impl Digest {
             .collect();
         moved.extend(
             (said.counts.iter())
-                .filter(|(name, _)| !counts.iter().any(|(now, _, _)| now == name))
+                .filter(|(name, _)| known(name) && !counts.iter().any(|(now, _, _)| now == name))
                 .map(|(name, was)| format!("{name}=none (was {was})")),
         );
         if moved.is_empty() {
@@ -199,7 +224,11 @@ impl Digest {
             };
             out.extend(shown(name, added));
         }
-        for name in CATEGORIES.iter().chain(&["low_volume"]) {
+        for name in CATEGORIES
+            .iter()
+            .chain(&["low_volume"])
+            .filter(|name| known(name))
+        {
             let resolved: Vec<&str> = (said.entries.iter())
                 .filter(|entry| entry.0 == *name && !now.contains(*entry))
                 .map(|(_, named)| named.as_str())
@@ -493,9 +522,12 @@ pub(crate) fn digest_on(
     // A scan the board does not answer leaves this look without unanswered posts and says why on
     // stderr: the other lists, and every other event of the pass, go out all the same. A post
     // already told keeps its identity (`pull_unanswered`), so its return is not told again.
+    // A PULL diffed against an earlier one says nothing of them ([`Digest::said_after`]).
+    let mut unanswered_scanned = true;
     let pending = store.pending_posts(tasks).unwrap_or_else(|error| {
         let reason = error.to_string().replace('\n', " ");
         eprintln!("PULL unanswered scan skipped: {reason}");
+        unanswered_scanned = false;
         Vec::new()
     });
     let unanswered: Vec<_> = pending
@@ -604,6 +636,7 @@ pub(crate) fn digest_on(
         notes,
         liveness_unknown,
         unanswered,
+        unanswered_scanned,
         cap: store.slots(),
         slots: None,
         volume,

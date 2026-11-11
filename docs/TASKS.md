@@ -478,6 +478,9 @@ liveness and low-volume lines it was not told, each row a list gained, and `reso
 that left it. A backlog of 33 that gains one row is that header and one row. What the last acknowledged PULL said
 is kept in the recipient's callback state (`pull_said`, which older dispatchers ignore); after an older
 dispatcher's acknowledgement, which does not record it, the next PULL is the whole digest again.
+A pass whose unanswered-post scan fails says why on stderr and delivers the rest, and its PULL says nothing of
+those posts, neither their count nor any of them resolved; their count is then unknown to the recipient, so the
+next PULL whose scan answers says it (`unanswered=1 (was unknown)`) and resolves the posts answered meanwhile.
 Unanswered work retains its task/post identity across departures and returns.
 `unanswered` lists an executor on an in-progress, blocked or review task, or a reviewer
 on a task in review, when it is lost or left (or its recorded terminal is closed) and an
