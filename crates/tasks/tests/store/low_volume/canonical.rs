@@ -26,7 +26,10 @@ fn a_held_only_count_change_reaches_the_account_without_a_board_marker_or_ready_
     let marker = || {
         f.store
             .client()
-            .query("RETURN counter:board.last;", json!({}))
+            .query(
+                &format!("RETURN {};", symphony_board::schema::BOARD_MARKER),
+                json!({}),
+            )
             .unwrap()
     };
     let before = marker();
@@ -87,14 +90,23 @@ fn an_observation_pass_cannot_hide_a_hold_only_crossing_behind_its_sequence_gate
     assert!(!listener.text().contains("low_volume "));
     // Bookkeeping writes moved the marker without changing the observed Board or count.
     // Establish the equivalent current-marker checkpoint a concurrent observer can leave.
-    f.store.client().write("UPDATE type::record('callback_state', $handle) SET snapshot_sequence = (SELECT VALUE last FROM ONLY counter:board) RETURN NONE;", json!({"handle":orch})).unwrap();
     let marker = || {
         f.store
             .client()
-            .query("RETURN counter:board.last;", json!({}))
+            .query(
+                &format!("RETURN {};", symphony_board::schema::BOARD_MARKER),
+                json!({}),
+            )
             .unwrap()
     };
     let before = marker();
+    let sequence = before[0]
+        .as_u64()
+        .expect("the canonical marker is unsigned");
+    f.store.client().write(
+        "UPDATE type::record('callback_state', $handle) SET snapshot_sequence = $sequence RETURN NONE;",
+        json!({"handle":orch, "sequence":sequence}),
+    ).unwrap();
     assert_eq!(
         f.store
             .client()

@@ -1,12 +1,12 @@
 //! The monitor's loop ([`watch`]): a heartbeat, and at each look the inbox, the PULL digest when
 //! due, the event lines ([`super::diff`]) and the pane watch ([`super::pane_watch`]).
 
-use super::{PaneWatch, Seen, diff, overseen, pane_watch, pull_changed, seen};
+use super::{PaneWatch, Seen, diff_on, overseen, pane_watch, pull_changed, seen};
 use crate::cli::agents::{Probes, View, describe_board};
-use crate::cli::pull::{Digest, Holdings, digest_on};
+use crate::cli::pull::viewed;
 use crate::cli::text::event;
 use crate::health::Health;
-use crate::{Board, Error, Store, Task};
+use crate::{Error, Store, Task};
 use std::cell::OnceCell;
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 
@@ -25,6 +25,9 @@ pub struct Watch<'a> {
     pub probes: Option<&'a Probes<'a>>,
     /// Whether a task's branch is on main.
     pub landed: Option<&'a dyn Fn(&Task) -> bool>,
+    /// The tip of a task's branch, which the pipeline alarm judges a landing's record of what the
+    /// task waits for against; with none, the record is taken as it stands.
+    pub tips: Option<crate::alarm::Tips<'a>>,
     /// Seconds between computing PULL inputs; only new actionable entries emit a digest.
     pub pull_every: Option<f64>,
 }
@@ -116,7 +119,7 @@ fn look(
         }
         _ => None,
     };
-    let quiet = |h: &Health| matches!(h, Health::Stale | Health::Lost | Health::Unknown);
+    let quiet = |h: &Health| h.quiet();
     let any_quiet = now.children.values().any(quiet);
     // hc is asked at most once a poll, by the agents view and the pane watch together.
     let sample = OnceCell::new();
@@ -148,14 +151,26 @@ fn look(
         let holdings = holdings
             .as_ref()
             .ok_or_else(|| Error::Db("orchestrator PULL has no holdings observation".into()))?;
-        let digest = pull_digest(store, &board, holdings, view.as_ref(), w.landed, stamp)?
-            .only_for(&board, handle);
+        let told = &now.children;
+        let digest = viewed(
+            store,
+            crate::cli::pull::Observation {
+                board: &board,
+                holdings,
+            },
+            view.as_ref(),
+            told,
+            w.landed,
+            w.tips,
+            stamp,
+        )?
+        .only_for(&board, handle);
         super::pull_updates::emit_new(&digest, &mut memory.pull_entries, emit);
         memory.last_pull = Some(stamp);
         memory.last_statuses = statuses;
     }
     if let Some(before) = &memory.seen {
-        diff(store, before, &now, handle, emit)?;
+        diff_on(store, &board, before, &now, handle, emit)?;
     }
     memory.seen = Some(now);
     if let Some(probes) = &probes {
@@ -177,23 +192,4 @@ fn verifying(view: &View) -> HashSet<&str> {
         .filter(|a| a.state == "running_test")
         .map(|a| a.handle.as_str())
         .collect()
-}
-
-fn pull_digest(
-    store: &Store,
-    board: &Board,
-    holdings: &Holdings,
-    view: Option<&View>,
-    landed: Option<&dyn Fn(&Task) -> bool>,
-    now: f64,
-) -> Result<Digest, Error> {
-    let (mut idle, mut busy) = (Vec::new(), Vec::new());
-    for a in view.map_or(&[][..], |v| v.agents.as_slice()) {
-        if a.state == "idle" && a.kind != "orchestrator" && a.kind != "chat" {
-            idle.push(a.handle.clone());
-        } else if a.state == "running_test" {
-            busy.push(a.handle.clone());
-        }
-    }
-    digest_on(store, board, holdings, &idle, landed, now, &busy)
 }

@@ -109,10 +109,10 @@ label { display:block; } html:root :focus-visible { outline:2px solid var(--ring
 .agents-now .taskcard:has(.st-review) { border-top-color:var(--question); }
 .filters { margin-bottom:16px; }
 .viewport-slot { position:relative; min-width:0; }
-/* Paint containment must not clip an unrevealed slot's 600 px look-ahead, nor a list item's
-   marker when the slot is the item; inside one, layout containment puts the marker on a line
-   of its own. */
-.viewport-slot:not(li, li > *, :has(>.viewport-sentinel)) { content-visibility:auto; }
+/* Paint containment must not clip the 600 px look-ahead of an unrevealed slot, its own or one
+   nested in it (a column's rows), nor a list item's marker when the slot is the item; inside
+   one, layout containment puts the marker on a line of its own. */
+.viewport-slot:not(li, li > *, :has(.viewport-sentinel)) { content-visibility:auto; }
 /* A list item's paragraphs are lines of the list, tight or loose. */
 li > .viewport-slot > p { margin:0; }
 li > .viewport-slot > p + p { margin-top:1em; }

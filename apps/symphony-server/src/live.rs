@@ -149,10 +149,23 @@ pub(crate) struct Hub {
     /// The time the board's health is recorded and read at, in seconds since the epoch: the wall
     /// clock's, or a test's.
     pub(crate) clock: Box<dyn Fn() -> f64 + Send + Sync>,
+    /// Held by a document's render from its read of the file until its copy is in its page, so the
+    /// copy a page keeps is the last one read. It is never taken with `pages` held, and `pages` is
+    /// taken only to place the copy, so the board, the feed and the project list, which read
+    /// `pages`, never wait on a render.
+    rendering: Mutex<()>,
+    /// The store the page reads of the board share ([`Hub::reader`]), once one has been opened.
+    reader: Mutex<Option<Arc<symphony_board::Store>>>,
+    /// How [`Hub::reader`] opens the board: [`taskview::connect`], or a test's board.
+    pub(crate) connect_reader: Box<Connect>,
 }
 
+/// How a hub opens the board of the checkout at a path.
+pub(crate) type Connect = dyn Fn(&Path) -> Result<symphony_board::Store, String> + Send + Sync;
+
 struct TaskState {
-    last: Option<Tasks>,
+    /// Shared with the reads that take what they need of it, so none copies the whole board.
+    last: Option<Arc<Tasks>>,
     raw: Option<symphony_board::Board>,
     error: Option<String>,
 }
@@ -234,6 +247,9 @@ impl Hub {
             health: symphony_board::board_health::Recorder::default(),
             notices: Mutex::new(health::Notices::default()),
             clock: Box::new(symphony_board::sweep::trigger::now),
+            rendering: Mutex::new(()),
+            reader: Mutex::new(None),
+            connect_reader: Box::new(taskview::connect),
         }
     }
 
@@ -290,6 +306,12 @@ impl Hub {
     }
 
     pub fn task_snapshot(&self) -> Result<Tasks, String> {
+        self.tasks_read().map(|tasks| Tasks::clone(&tasks))
+    }
+
+    /// The board's tasks and sessions as the last board read found them, shared rather than
+    /// copied, or why there are none: the board cannot be read now, or has not been read yet.
+    pub(crate) fn tasks_read(&self) -> Result<Arc<Tasks>, String> {
         let state = self.tasks.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(error) = &state.error {
             return Err(error.clone());
@@ -298,6 +320,46 @@ impl Hub {
             .last
             .clone()
             .ok_or_else(|| "the task board is starting".into())
+    }
+
+    /// The store the page reads of the board share, opened by the first and kept, so the reads of a
+    /// page (a task page asks for its task, its offer and its history) and of every page after it go
+    /// on its connections, never opening the board anew: finding its server, asking `ps` and `lsof`
+    /// that it is that, and reading its schema. Reads wait while one opens it.
+    pub(crate) fn reader(&self) -> Result<Arc<symphony_board::Store>, String> {
+        let mut kept = self.reader.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(store) = &*kept {
+            return Ok(Arc::clone(store));
+        }
+        let store = Arc::new((self.connect_reader)(&self.root)?);
+        *kept = Some(Arc::clone(&store));
+        Ok(store)
+    }
+
+    /// Forget `store` after the board failed a read on it, unless it is already forgotten: the next
+    /// read opens the board anew, where its server is then.
+    pub(crate) fn reader_failed(&self, store: &Arc<symphony_board::Store>) {
+        let mut kept = self.reader.lock().unwrap_or_else(|e| e.into_inner());
+        if kept.as_ref().is_some_and(|kept| Arc::ptr_eq(kept, store)) {
+            *kept = None;
+        }
+    }
+
+    /// The document `rel` of the checkout at `root`, its tasks those of the board as last read that
+    /// link it: a render reads no board.
+    fn render_document(
+        &self,
+        root: &Path,
+        rel: &str,
+        scope: &str,
+    ) -> Result<symphony_api::Document, String> {
+        let board = self.tasks_read().ok();
+        symphony::docview::document(
+            &symphony::render::Render::new(root),
+            rel,
+            scope,
+            board.as_ref().map_or(&[], |board| &board.tasks),
+        )
     }
 
     pub fn tree(&self, id: &str) -> Option<PathBuf> {
@@ -347,10 +409,20 @@ impl Hub {
         } else {
             self.tree(scope).ok_or("this worktree was removed")?
         };
+        let removed = || "this worktree was removed".to_string();
+        if !self
+            .pages
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .contains_key(scope)
+        {
+            return Err(removed());
+        }
+        // A panic under this lock leaves nothing half done: it guards no data.
+        let _rendering = self.rendering.lock().unwrap_or_else(|e| e.into_inner());
+        let mut doc = self.render_document(&root, rel, scope)?;
         let mut pages = self.pages.write().unwrap_or_else(|e| e.into_inner());
-        let page = pages.get_mut(scope).ok_or("this worktree was removed")?;
-        let mut doc =
-            symphony::docview::document(&symphony::render::Render::new(root), rel, scope)?;
+        let page = pages.get_mut(scope).ok_or_else(removed)?;
         // A GET can observe an edit before the watcher. Publish it before handing out its cursor,
         // so existing subscribers also receive that edit.
         if let Some(delta) = document_change(page, rel, &doc) {
@@ -367,8 +439,13 @@ impl Hub {
         } else {
             self.tree(scope).ok_or("this worktree was removed")?
         };
-        let mut folder =
-            symphony::docview::folder(&symphony::render::Render::new(root), rel, scope)?;
+        let board = self.tasks_read().ok();
+        let mut folder = symphony::docview::folder(
+            &symphony::render::Render::new(root),
+            rel,
+            scope,
+            board.as_ref().map_or(&[], |board| &board.tasks),
+        )?;
         let pages = self.pages.read().unwrap_or_else(|e| e.into_inner());
         if let Some(main) = pages.get("") {
             for entry in &mut folder.entries {
@@ -626,9 +703,32 @@ impl Hub {
                 return Err(error);
             }
         };
-        if let Ok(tasks) = self.task_snapshot() {
+        if let Ok(tasks) = self.tasks_read() {
             snapshot.board.counts.tasks = Some(taskview::counts(&tasks));
         }
+        // The page's documents are read again before `pages` is taken, under `rendering` until
+        // their copies are in the page.
+        let rendering = documents_changed.then(|| {
+            // A panic under this lock leaves nothing half done: it guards no data.
+            self.rendering.lock().unwrap_or_else(|e| e.into_inner())
+        });
+        let followed: Vec<String> = if rendering.is_some() {
+            self.pages
+                .read()
+                .unwrap_or_else(|e| e.into_inner())
+                .get(scope)
+                .map(|page| page.documents.keys().cloned().collect())
+                .unwrap_or_default()
+        } else {
+            Vec::new()
+        };
+        let rendered: Vec<_> = followed
+            .into_iter()
+            .map(|rel| {
+                let doc = self.render_document(root, &rel, scope);
+                (rel, doc)
+            })
+            .collect();
         let mut pages = self.pages.write().unwrap_or_else(|e| e.into_inner());
         // Preferences can change while a watched source snapshot is being prepared.
         if scope.is_empty() {
@@ -668,23 +768,19 @@ impl Hub {
             }
             sort_activity(&mut combined);
             let mut changes = board_changes(&page.board, &snapshot.board);
-            let render = symphony::render::Render::new(root);
-            let paths = if documents_changed {
-                page.documents.keys().cloned().collect::<Vec<_>>()
-            } else {
-                Vec::new()
-            };
-            for rel in paths {
-                match symphony::docview::document(&render, &rel, scope) {
+            for (rel, rendered) in rendered {
+                match rendered {
                     Ok(doc) => {
                         if let Some(delta) = document_change(page, &rel, &doc) {
                             changes.push(json!({"region":"document", "data":delta}));
                         }
                         page.documents.insert(rel, doc);
                     }
+                    // A page made again since its documents were listed follows none of them.
                     Err(_) => {
-                        if page.missing.insert(rel.clone()) {
-                            let doc = &page.documents[&rel];
+                        if let Some(doc) = page.documents.get(&rel)
+                            && page.missing.insert(rel.clone())
+                        {
                             changes.push(
                                 json!({"region":"document", "data":symphony_api::DocumentChange {
                                     path:doc.path.clone(), removed:true, ..Default::default()
@@ -786,9 +882,11 @@ impl Hub {
             if state.raw.as_ref() == Some(&snapshot)
                 && let Some(last) = &state.last
             {
-                (last.clone(), snapshot.latest_message)
+                (Arc::clone(last), snapshot.latest_message)
             } else {
-                measured("board snapshot", || taskview::snapshot_board(&snapshot))
+                let (next, latest) =
+                    measured("board snapshot", || taskview::snapshot_board(&snapshot));
+                (Arc::new(next), latest)
             }
         };
         let message_changed = *self
@@ -1432,6 +1530,12 @@ mod status_tests;
 
 #[cfg(test)]
 mod health_tests;
+
+#[cfg(test)]
+mod no_documents_tests;
+
+#[cfg(test)]
+mod read_paths_tests;
 
 #[cfg(test)]
 mod tests {

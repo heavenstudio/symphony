@@ -184,37 +184,89 @@ fn a_launch_cases_folder_is_scratch_of_this_runs_own_and_goes_with_it() {
 
 // -- launch -----------------------------------------------------------------------------
 
+impl Terminals {
+    /// The repository's `symphony.toml`, which the launch reads in its main checkout.
+    fn manifest(&self, text: &str) {
+        fs::write(self.env.cwd.join("symphony.toml"), text).unwrap();
+    }
+
+    /// `launch sim/jump FLAGS` by the orchestrator, in a worktree given so nothing is checked out:
+    /// what it said, and the one session it recorded.
+    fn launch_with(
+        &self,
+        orch: &str,
+        flags: &[&str],
+    ) -> (Ran, symphony_board::rows::TaskSessionRow) {
+        let given = self.dir.join("given");
+        fs::create_dir_all(&given).unwrap();
+        let given = given.display().to_string();
+        let mut args = vec!["launch", "sim/jump", "--worktree", &given];
+        args.extend_from_slice(flags);
+        let ran = self.as_(orch, &args);
+        assert_eq!((ran.code, ran.err.as_str()), (0, ""), "{flags:?}");
+        let [s] = <[_; 1]>::try_from(self.board().task_sessions("sim/jump").unwrap()).unwrap();
+        (ran, s)
+    }
+
+    /// The one `hc run`'s agent, model and effort: Claude's `--model` and `--effort`, Codex's `-m`
+    /// and `model_reasoning_effort`.
+    fn started_agent(&self) -> (String, String, Option<String>) {
+        let program = self.program();
+        let after = |flag: &str| {
+            program
+                .windows(2)
+                .find(|pair| pair[0] == flag)
+                .map(|pair| pair[1].clone())
+        };
+        if program[0] == "codex" {
+            let effort = program
+                .iter()
+                .find_map(|a| a.strip_prefix("model_reasoning_effort="))
+                .map(|e| e.trim_matches('"').to_string());
+            (program[0].clone(), after("-m").unwrap(), effort)
+        } else {
+            (
+                program[0].clone(),
+                after("--model").unwrap(),
+                after("--effort"),
+            )
+        }
+    }
+}
+
 #[test]
 fn a_launch_says_who_it_started_where() {
-    for (name, flags, agent, model) in [
-        ("default", &[][..], "codex", "gpt-6.1-sol"),
+    for (name, flags, agent, model, said) in [
+        (
+            "default",
+            &[][..],
+            "codex",
+            "gpt-6.1-sol",
+            "codex on gpt-6.1-sol (effort xhigh)",
+        ),
         (
             "claude-default",
             &["--kind", "claude"][..],
             "claude",
             "sonnet",
+            "claude on sonnet",
         ),
         (
             "explicit-model",
             &["--model", "sonnet"][..],
             "codex",
             "sonnet",
+            "codex on sonnet (effort xhigh)",
         ),
     ] {
         let p = Terminals::new(&format!("says-{name}"));
         let orch = p.orchestrator();
-        let given = p.dir.join("given");
-        fs::create_dir_all(&given).unwrap();
-        let given_arg = given.display().to_string();
-        let mut args = vec!["launch", "sim/jump", "--worktree", &given_arg];
-        args.extend_from_slice(flags);
-        let ran = p.as_(&orch, &args);
-        assert_eq!((ran.code, ran.err.as_str()), (0, ""));
-        let [s] = <[_; 1]>::try_from(p.board().task_sessions("sim/jump").unwrap()).unwrap();
+        let given_arg = p.dir.join("given").display().to_string();
+        let (ran, s) = p.launch_with(&orch, flags);
         assert_eq!(
             ran.out,
             format!(
-                "launched {} on sim/jump as executor: pane {}, agent session {}, worktree {given_arg}\n",
+                "launched {} on sim/jump as executor: {said}, pane {}, agent session {}, worktree {given_arg}\n",
                 s.handle, s.pane, s.claude_session
             )
         );
@@ -270,6 +322,170 @@ fn a_launch_hands_each_flag_to_the_launcher() {
     assert_eq!(p.board().session(&s.handle).unwrap().row.kind, "reviewer");
     assert_eq!(p.state()["layout"]["spaces"][0]["tabs"][0]["name"], "t");
     assert_eq!(p.sent(), format!("/work sim/jump {} go", s.handle));
+}
+
+#[test]
+fn a_bare_launch_starts_the_projects_agent_model_and_effort_and_flags_win_over_them() {
+    let claude =
+        "[agents]\nlaunch = { default = \"claude\", model = \"opus\", effort = \"high\" }\n";
+    let effortless =
+        "[agents]\npanes = \"hc\"\nlaunch = { default = \"claude\", model = \"opus\" }\n";
+    for (name, manifest, flags, agent, model, effort) in [
+        ("bare", claude, &[][..], "claude", "opus", Some("high")),
+        // This repository's own: Claude on Opus at Claude's own effort.
+        ("ours", effortless, &[][..], "claude", "opus", None),
+        (
+            "model",
+            claude,
+            &["--model", "sonnet"][..],
+            "claude",
+            "sonnet",
+            Some("high"),
+        ),
+        (
+            "reviewer-kind",
+            claude,
+            &["--kind", "reviewer"][..],
+            "claude",
+            "opus",
+            Some("high"),
+        ),
+        // The project's model and effort are its agent's: another agent takes the board's own.
+        (
+            "codex",
+            claude,
+            &["--kind", "codex"][..],
+            "codex",
+            "gpt-6.1-sol",
+            Some("xhigh"),
+        ),
+        (
+            "codex-model",
+            claude,
+            &["--kind", "codex", "--model", "m"][..],
+            "codex",
+            "m",
+            Some("xhigh"),
+        ),
+        (
+            "codex-project",
+            "[agents.launch]\ndefault = \"codex\"\nmodel = \"gpt-x\"\neffort = \"medium\"\n",
+            &[][..],
+            "codex",
+            "gpt-x",
+            Some("medium"),
+        ),
+        (
+            "no-table",
+            "[project]\nname = \"Lamp\"\n",
+            &[][..],
+            "codex",
+            "gpt-6.1-sol",
+            Some("xhigh"),
+        ),
+    ] {
+        let p = Terminals::new(&format!("project-{name}"));
+        p.manifest(manifest);
+        let orch = p.orchestrator();
+        let (ran, s) = p.launch_with(&orch, flags);
+        assert_eq!(
+            p.started_agent(),
+            (
+                agent.to_string(),
+                model.to_string(),
+                effort.map(str::to_string)
+            ),
+            "{name}"
+        );
+        assert_eq!(s.model, model, "{name}");
+        let said = match effort {
+            Some(effort) => format!("{agent} on {model} (effort {effort})"),
+            None => format!("{agent} on {model}"),
+        };
+        assert!(
+            ran.out.contains(&format!(" as executor: {said}, pane ")),
+            "{name}: {}",
+            ran.out
+        );
+        let work = if agent == "codex" { "$work" } else { "/work" };
+        assert_eq!(p.sent(), format!("{work} sim/jump {}", s.handle), "{name}");
+    }
+}
+
+#[test]
+fn a_project_launch_table_it_cannot_read_refuses_the_launch_and_starts_nothing() {
+    let p = Terminals::new("project-broken");
+    p.manifest("[agents.launch]\ndefault = \"gemini\"\n");
+    let orch = p.orchestrator();
+    let ran = p.as_(&orch, &["launch", "sim/jump", "--kind", "claude"]);
+    let path = p.env.cwd.join("symphony.toml");
+    assert_eq!(
+        (ran.code, ran.out.as_str(), ran.err),
+        (
+            1,
+            "",
+            format!(
+                "✖ {}: [agents] launch default \"gemini\" is not one of codex, claude\n",
+                path.display()
+            )
+        )
+    );
+    assert_eq!(p.calls(), Vec::<Vec<String>>::new());
+    assert!(p.board().task_sessions("sim/jump").unwrap().is_empty());
+}
+
+#[test]
+fn launch_help_says_what_a_bare_launch_starts_in_the_project_it_runs_in() {
+    let p = Terminals::new("help");
+    let path = p.env.cwd.join("symphony.toml").display().to_string();
+    let help = |p: &Terminals| {
+        let ran = p.run(&["launch", "--help"]);
+        assert_eq!((ran.code, ran.err.as_str()), (0, ""));
+        assert!(
+            ran.out.contains(
+                "--model MODEL         default the model of the project's [agents] launch for"
+            ),
+            "{}",
+            ran.out
+        );
+        ran.out.lines().last().unwrap().to_string()
+    };
+    assert_eq!(
+        help(&p),
+        format!(
+            "here a bare launch starts codex on gpt-6.1-sol (effort xhigh), the board's own: no \
+             [agents] launch in {path}"
+        )
+    );
+    p.manifest("[agents]\nlaunch = { default = \"claude\", model = \"opus\" }\n");
+    assert_eq!(
+        help(&p),
+        format!("here a bare launch starts claude on opus, from [agents] launch in {path}")
+    );
+    // From a worktree too: the main checkout's file is the one read.
+    let wt = p.dir.join("wt-help");
+    git(
+        &p.env.cwd,
+        &[
+            "worktree",
+            "add",
+            "-q",
+            "--detach",
+            &wt.display().to_string(),
+        ],
+    );
+    let mut there = Terminals {
+        dir: p.dir.clone(),
+        env: p.env.clone(),
+    };
+    there.env.cwd = wt;
+    assert_eq!(
+        help(&there),
+        format!("here a bare launch starts claude on opus, from [agents] launch in {path}")
+    );
+    // Other commands' help says nothing of it.
+    let ran = p.run(&["restore", "--help"]);
+    assert!(!ran.out.contains("bare launch"), "{}", ran.out);
 }
 
 #[test]
@@ -688,23 +904,14 @@ fn idle_manual_staffing_reports_disabled_configuration() {
 #[test]
 fn a_staffing_pass_launches_codex_for_ready_work_into_the_code_tab_and_says_so_on_its_thread() {
     let p = Terminals::new("staff");
-    let orch = p.orchestrator();
-    p.board()
-        .take_role("sim/jump", &orch, "orchestrator")
-        .unwrap();
-    let tools = p.env.cwd.join("tools");
-    fs::create_dir_all(&tools).unwrap();
-    fs::write(
-        tools.join("task_staff.json"),
-        r#"{"enabled": true, "min_free_memory_gib": 0}"#,
-    )
-    .unwrap();
+    let orch = p.staffed();
     let ran = p.binary(crate::common::NOW, &["staff"]);
     assert_eq!((ran.code, ran.err.as_str()), (0, ""), "{}", ran.out);
     let sessions = p.board().task_sessions("sim/jump").unwrap();
     let [s] = <[_; 1]>::try_from(sessions).unwrap_or_else(|s| panic!("{s:?}: {}", ran.out));
     let line = format!(
-        "staff sim/jump: launched {} as executor, pane {}, worktree {}, prompt $work sim/jump {}",
+        "staff sim/jump: launched {} as executor: codex on gpt-6.1-sol (effort xhigh), pane {}, \
+         worktree {}, prompt $work sim/jump {}",
         s.handle, s.pane, s.worktree, s.handle
     );
     assert_eq!(ran.out, format!("{line}\n"));
@@ -728,4 +935,71 @@ fn a_staffing_pass_launches_codex_for_ready_work_into_the_code_tab_and_says_so_o
         thread.iter().any(|m| m.sender == orch && m.text == line),
         "{thread:?}"
     );
+}
+
+impl Terminals {
+    /// An orchestrator holding `sim/jump`, ready, with staffing enabled in the checkout.
+    fn staffed(&self) -> String {
+        let orch = self.orchestrator();
+        self.board()
+            .take_role("sim/jump", &orch, "orchestrator")
+            .unwrap();
+        let tools = self.env.cwd.join("tools");
+        fs::create_dir_all(&tools).unwrap();
+        fs::write(
+            tools.join("task_staff.json"),
+            r#"{"enabled": true, "min_free_memory_gib": 0}"#,
+        )
+        .unwrap();
+        orch
+    }
+}
+
+#[test]
+fn a_staffing_pass_launches_the_projects_agent_and_a_dry_run_names_it() {
+    let p = Terminals::new("staff-project");
+    p.manifest("[agents]\nlaunch = { default = \"claude\", model = \"opus\" }\n");
+    p.staffed();
+    let dry = p.binary(crate::common::NOW, &["staff", "--dry-run"]);
+    assert_eq!(
+        (dry.code, dry.out.as_str(), dry.err.as_str()),
+        (
+            0,
+            "staff sim/jump: would launch claude on opus as executor\n",
+            ""
+        )
+    );
+    let ran = p.binary(crate::common::NOW, &["staff"]);
+    assert_eq!((ran.code, ran.err.as_str()), (0, ""), "{}", ran.out);
+    let [s] = <[_; 1]>::try_from(p.board().task_sessions("sim/jump").unwrap()).unwrap();
+    assert_eq!(
+        ran.out,
+        format!(
+            "staff sim/jump: launched {} as executor: claude on opus, pane {}, worktree {}, \
+             prompt /work sim/jump {}\n",
+            s.handle, s.pane, s.worktree, s.handle
+        )
+    );
+    assert_eq!(s.model, "opus");
+    assert_eq!(
+        p.started_agent(),
+        ("claude".to_string(), "opus".to_string(), None)
+    );
+    assert_eq!(p.sent(), format!("/work sim/jump {}", s.handle));
+}
+
+#[test]
+fn a_staffing_pass_refuses_a_project_launch_table_it_cannot_read() {
+    let p = Terminals::new("staff-broken");
+    p.manifest("[agents.launch]\nmodel = 4\n");
+    p.staffed();
+    let ran = p.binary(crate::common::NOW, &["staff", "--dry-run"]);
+    assert_eq!((ran.code, ran.out.as_str()), (1, ""));
+    assert!(
+        ran.err.contains("symphony.toml: [agents] launch: "),
+        "{}",
+        ran.err
+    );
+    assert_eq!(p.calls(), Vec::<Vec<String>>::new());
+    assert!(p.board().task_sessions("sim/jump").unwrap().is_empty());
 }

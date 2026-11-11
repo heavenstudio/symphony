@@ -9,10 +9,12 @@ mod common;
 #[allow(dead_code)]
 mod board;
 
+mod board_table;
 mod entrypoints;
 mod fields;
 mod folders;
 mod manifest;
+mod no_documents;
 mod offers;
 mod seams;
 

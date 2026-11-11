@@ -2,13 +2,14 @@
 //!
 //! [`launch`] registers a handle, makes the worktree under `<repo>-wt/` (an executor on its task's
 //! branch: its slug; an instruction or reviewer on a detached checkout of main) unless
-//! `--worktree` gives one, and starts Codex by default, or Claude when selected, in an hc terminal
-//! of its own (`hc run`), then gives it its first message (`$work SLUG HANDLE`; Claude: `/work`)
-//! once it is ready. The terminal outlives whoever launched it (`--outlive-parent`), is kept
-//! (`--keep`), and shows in the stream tab of its role (`code` for an executor, `review` for a
-//! reviewer, or `--tab`; at most four terminals, then `code-2`) of the project's space in the Herdr
-//! app, found by name and made when missing (the labels `herdr.space` and `herdr.tab`): never one of
-//! the owner's tabs. The launch is confirmed only by hc's receipt of that message (`startup`); one
+//! `--worktree` gives one, and starts the agent, model and effort the caller asks for, or else the
+//! project's `[agents] launch` ([`defaults`]: Codex on its board model when the project names
+//! none), in an hc terminal of its own (`hc run`), then gives it its first message (`$work SLUG
+//! HANDLE`; Claude: `/work`) once it is ready. The terminal outlives whoever launched it
+//! (`--outlive-parent`), is kept (`--keep`), and shows in the stream tab of its role (`code` for an
+//! executor, `review` for a reviewer, or `--tab`; at most four terminals, then `code-2`) of the
+//! project's space in the Herdr app, found by name and made when missing (the labels `herdr.space`
+//! and `herdr.tab`): never one of the owner's tabs. The launch is confirmed only by hc's receipt of that message (`startup`); one
 //! that cannot be confirmed fails, naming the terminal, which is killed and removed. The launch is
 //! recorded on the task: handle, role, conversation id, worktree, branch, terminal, model, start
 //! time. [`restore`] reopens the recorded conversation in its worktree, in a new terminal, the same
@@ -33,12 +34,15 @@
 //! Every hc call goes through [`hc::Hc`], whose binaries are `$HC_BIN` (default `hc`) and
 //! `$HERDR_APP_BIN` (default `herdr-app`); the tests (`tests/launch/`) point both at `fake-hc`.
 
+mod checkout;
 mod cleanup;
 mod close;
+pub mod defaults;
 pub mod hc;
 mod place;
 mod recover;
 mod restore;
+mod rollback;
 pub use recover::restore_unanswered;
 pub use restore::restore;
 pub mod procs;
@@ -50,6 +54,7 @@ mod uuid;
 
 pub use cleanup::{Closure, cleanup, cleanup_as, finish};
 pub use close::close;
+pub use defaults::{Defaults, Resolved};
 use place::{name_place, place, stream};
 pub use uuid::new_uuid;
 
@@ -120,7 +125,7 @@ pub struct Machine {
 impl Machine {
     /// This machine's, for a command run in `env`'s working directory.
     pub fn of(env: &Env) -> Machine {
-        let root = probes::repo_root(&env.cwd).unwrap_or_else(|| env.cwd.clone());
+        let root = root_of(env);
         let wt_base = worktree_base(&root, env);
         Machine {
             root,
@@ -143,6 +148,12 @@ impl Machine {
             .file_name()
             .map_or_else(String::new, |n| n.to_string_lossy().into_owned())
     }
+}
+
+/// The main checkout of the repository `env`'s working directory is in, whichever worktree that is;
+/// the working directory itself outside a repository.
+pub fn root_of(env: &Env) -> PathBuf {
+    probes::repo_root(&env.cwd).unwrap_or_else(|| env.cwd.clone())
 }
 
 /// The caller's `TASKS_DATABASE` and `TASKS_SERVER`, those it has: what a launched agent needs to
@@ -174,6 +185,8 @@ pub struct Ask {
     /// Who launches it: the launched session's parent.
     pub actor: String,
     pub model: String,
+    /// The agent's effort; `None` is Codex's [`defaults::CODEX_EFFORT`] or Claude's own.
+    pub effort: Option<String>,
     pub kind: Option<String>,
     pub role: String,
     pub branch: Option<String>,
@@ -190,6 +203,7 @@ impl Ask {
             slug: slug.into(),
             actor: actor.into(),
             model: model.into(),
+            effort: None,
             kind: None,
             role: "executor".into(),
             branch: None,
@@ -307,83 +321,72 @@ pub fn launch(store: &Store, hc: &dyn Hc, m: &Machine, ask: &Ask) -> Result<Star
         ..NewSession::default()
     })?;
     let handle = session.row.handle;
-    if let Err(problem) = take_up(
-        store,
-        m,
-        ask,
-        &task,
-        &handle,
-        made_worktree.then_some(&path),
-        detach,
-        &use_branch,
-    ) {
-        if matches!(problem, Error::Refused(_)) {
-            store.leave(&handle)?;
-        }
-        return Err(problem);
-    }
     let mut terminal = String::new();
-    let tab = ask.tab.clone().filter(|t| !t.is_empty());
-    let agent = agent_kind(ask);
-    let conversation = (m.new_id)();
-    let args = if agent == "codex" {
-        codex_args(&ask.model, &handle, m)
-    } else {
-        claude_args(
-            &ask.model,
+    let mut checkout_made = false;
+    let started = (|| {
+        take_up(store, ask, &task, &handle)?;
+        if made_worktree {
+            let base = checkout::base(store, m, ask, &task)?;
+            checkout::make(m, &path, &use_branch, detach, &base, &mut checkout_made)?;
+        }
+        let tab = ask.tab.clone().filter(|t| !t.is_empty());
+        let agent = agent_kind(ask);
+        let conversation = (m.new_id)();
+        let args = if agent == "codex" {
+            codex_args(&ask.model, ask.effort.as_deref(), &handle, m)
+        } else {
+            claude_args(
+                &ask.model,
+                ask.effort.as_deref(),
+                &handle,
+                &m.mode,
+                ["--session-id", &conversation],
+            )
+        };
+        start_confirmed(
+            hc,
+            m,
+            &mut terminal,
+            &Start {
+                cwd: &where_,
+                handle: &handle,
+                stream: tab.as_deref().unwrap_or(stream(role)),
+                agent,
+                resumed_codex: false,
+                args,
+                text: &prompt_text(slug, &handle, &ask.prompt, agent),
+            },
+        )?;
+        let claude_session = if agent == "codex" {
+            // The thread is known once the agent registers its callback (`just tasks callback`).
+            "codex:".to_string()
+        } else {
+            conversation
+        };
+        let row = store.record_launch(&NewLaunch {
+            slug: slug.into(),
+            handle: handle.clone(),
+            role: role.into(),
+            claude_session,
+            worktree: where_,
+            branch: use_branch,
+            pane: terminal.clone(),
+            model: ask.model.clone(),
+            ..NewLaunch::default()
+        })?;
+        Ok(Started { row })
+    })();
+    started.map_err(|problem| {
+        rollback::failed(
+            store,
+            hc,
+            m,
             &handle,
-            &m.mode,
-            ["--session-id", &conversation],
+            &terminal,
+            checkout_made.then_some(path.as_path()),
+            problem,
         )
-    };
-    let started = start_confirmed(
-        hc,
-        m,
-        &mut terminal,
-        &Start {
-            cwd: &where_,
-            handle: &handle,
-            stream: tab.as_deref().unwrap_or(stream(role)),
-            agent,
-            resumed_codex: false,
-            args,
-            text: &prompt_text(slug, &handle, &ask.prompt, agent),
-        },
-    );
-    if let Err(problem) = started {
-        if !terminal.is_empty() {
-            let _ = hc.close(&terminal);
-        }
-        store.leave(&handle)?;
-        if made_worktree && path.exists() {
-            let _ = sys::output(
-                sys::command("git")
-                    .arg("-C")
-                    .arg(&m.root)
-                    .args(["worktree", "remove", "--force"])
-                    .arg(&path),
-            );
-        }
-        return Err(problem.into());
-    }
-    let claude_session = if agent == "codex" {
-        // The thread is known once the agent registers its callback (`just tasks callback`).
-        "codex:".to_string()
-    } else {
-        conversation
-    };
-    let row = store.record_launch(&NewLaunch {
-        slug: slug.into(),
-        handle,
-        role: role.into(),
-        claude_session,
-        worktree: where_,
-        branch: use_branch,
-        pane: terminal,
-        model: ask.model.clone(),
-        ..NewLaunch::default()
-    })?;
-    Ok(Started { row })
+    })
 }
 
 /// A checkout with unfinished work held by a present executor cannot host another agent.
@@ -441,22 +444,8 @@ fn agent_kind(ask: &Ask) -> &'static str {
 }
 
 /// The new session takes its part on the task (an executor reserves it; a review subtask's reviewer
-/// reserves the subtask and judges its parent; any other reviewer takes the reviewer role), and its
-/// worktree is made when the launch makes one.
-#[expect(
-    clippy::too_many_arguments,
-    reason = "one step of `launch`, named by what it reads"
-)]
-fn take_up(
-    store: &Store,
-    m: &Machine,
-    ask: &Ask,
-    task: &crate::Task,
-    handle: &str,
-    made: Option<&PathBuf>,
-    detach: bool,
-    use_branch: &str,
-) -> Result<(), Error> {
+/// reserves the subtask and judges its parent; any other reviewer takes the reviewer role).
+fn take_up(store: &Store, ask: &Ask, task: &crate::Task, handle: &str) -> Result<(), Error> {
     let slug = ask.slug.as_str();
     if ask.role == "executor" {
         store.reserve(slug, handle, RESERVE_SECONDS)?;
@@ -470,41 +459,6 @@ fn take_up(
         }
     } else {
         store.take_role(slug, handle, "reviewer")?;
-    }
-    let Some(path) = made else {
-        return Ok(());
-    };
-    let mut base = "main".to_string();
-    if ask.role == "executor" && !ask.detached && task.parent.is_some() {
-        let mut feature = task.clone();
-        let mut seen = HashSet::new();
-        while let Some(parent) = feature.parent.as_deref() {
-            if !seen.insert(feature.slug.clone()) {
-                return Err(Error::Refused("cyclic feature ancestry".into()));
-            }
-            feature = store.get(parent)?;
-        }
-        base = crate::on_review::branch_of(&feature.slug).to_string();
-        if !branch_exists(&m.root, &base) {
-            return Err(Error::Refused(format!(
-                "create parent feature branch {base} before launching a slice; slices do not start independently from main"
-            )));
-        }
-    }
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)
-            .map_err(|e| LaunchError(format!("cannot make {}: {e}", parent.display())))?;
-    }
-    let path = path.to_string_lossy();
-    if detach {
-        git(&m.root, &["worktree", "add", "--detach", &path, &base])?;
-    } else if branch_exists(&m.root, use_branch) {
-        git(&m.root, &["worktree", "add", &path, use_branch])?;
-    } else {
-        git(
-            &m.root,
-            &["worktree", "add", "-b", use_branch, &path, &base],
-        )?;
     }
     Ok(())
 }
@@ -576,25 +530,27 @@ pub(crate) fn gone(pane: &str, running: &HashSet<String>) -> bool {
     !pane.is_empty() && (pane.contains(':') || !running.contains(pane))
 }
 
-fn codex_args(model: &str, handle: &str, m: &Machine) -> Vec<String> {
+fn codex_args(model: &str, effort: Option<&str>, handle: &str, m: &Machine) -> Vec<String> {
+    let model = if model.is_empty() {
+        defaults::CODEX_MODEL
+    } else {
+        model
+    };
+    let effort = effort
+        .filter(|e| !e.is_empty())
+        .unwrap_or(defaults::CODEX_EFFORT);
     let mut args: Vec<String> = [
-        "--no-daemon",
-        "-s",
-        "workspace-write",
-        "-m",
-        if model.is_empty() {
-            "gpt-6.1-sol"
-        } else {
-            model
-        },
-        "-c",
-        "model_reasoning_effort=\"xhigh\"",
-        "-c",
-        "sandbox_workspace_write.network_access=true",
+        "--no-daemon".to_string(),
+        "-s".into(),
+        "workspace-write".into(),
+        "-m".into(),
+        model.into(),
+        "-c".into(),
+        format!("model_reasoning_effort=\"{effort}\""),
+        "-c".into(),
+        "sandbox_workspace_write.network_access=true".into(),
     ]
-    .into_iter()
-    .map(String::from)
-    .collect();
+    .into();
     let set = std::iter::once(("TASKS_SESSION".to_string(), handle.to_string()))
         .chain(m.board_env.iter().cloned());
     for (key, value) in set {
@@ -606,11 +562,20 @@ fn codex_args(model: &str, handle: &str, m: &Machine) -> Vec<String> {
     args
 }
 
-fn claude_args(model: &str, handle: &str, mode: &str, identity: [&str; 2]) -> Vec<String> {
+fn claude_args(
+    model: &str,
+    effort: Option<&str>,
+    handle: &str,
+    mode: &str,
+    identity: [&str; 2],
+) -> Vec<String> {
     let mut args: Vec<String> = identity.iter().map(|s| s.to_string()).collect();
     args.extend(["-n", handle, "--permission-mode", mode].map(String::from));
     if !model.is_empty() {
         args.extend(["--model".to_string(), model.to_string()]);
+    }
+    if let Some(effort) = effort.filter(|e| !e.is_empty()) {
+        args.extend(["--effort".to_string(), effort.to_string()]);
     }
     args
 }

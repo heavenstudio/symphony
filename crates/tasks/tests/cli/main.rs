@@ -24,6 +24,7 @@ mod machine_work;
 #[path = "../../../../tools/test-support/harness_scratch.rs"]
 mod harness_scratch;
 mod launch;
+mod launch_rollback;
 mod monitor;
 mod moved;
 mod output;
@@ -38,6 +39,7 @@ mod search;
 mod slots;
 mod stats;
 mod sweep;
+mod write_load;
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};

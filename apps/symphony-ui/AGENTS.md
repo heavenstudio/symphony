@@ -25,6 +25,9 @@ explicitly names a built distribution. Install Chrome or name its executable
 with `SF_CHROME`; CI requires it. The harness owns each browser's temporary
 profile, process group and shutdown, and checks keyboard interaction, page
 geometry, stream recovery and transfer budgets without a display server.
+A client change runs the browser tests of the pages and controls it touched, by
+filter after `--` ([CHECKS](../../docs/CHECKS.md#the-browser-target-by-page)),
+never the whole target, which the nightly runs.
 
 - **Build.** `just symphony-ui-dist [OUT] [KIND]` (`build/symphony-ui`, the page in its
   `public/`): cargo's subcommand `symphony-ui dist OUT` (`bin/cargo-symphony-ui`,
@@ -158,8 +161,9 @@ geometry, stream recovery and transfer budgets without a display server.
   revelation or teardown, and reattaches after props replace its node. Markers include the
   page kind so the persistent panel cannot select a page's sentinel. No `mounted` feature
   is needed. Plain Dioxus action listeners and own-node form reads avoid retaining rich
-  browser event converters the entry controls do not use. A slot uses `content-visibility: auto` only after its
-  sentinel is gone: paint containment would clip the look-ahead. A slot that is
+  browser event converters the entry controls do not use. A slot uses
+  `content-visibility: auto` only once no sentinel is left in it, its own or a nested
+  slot's (a column's rows): paint containment would clip the look-ahead. A slot that is
   or sits in a list item never does: paint containment would clip the item's
   marker, and layout containment would put it on a line of its own
   (`tests/browser/look_parity/list_and_queue_spacing.rs`). Mounted rows

@@ -513,6 +513,28 @@ impl Project {
         format!("path must be a markdown file under {}", under.join(" or "))
     }
 
+    /// The first entrypoint's folder when the checkout at `root` holds none of the entrypoints'
+    /// folders: a project with no documents yet, whose board and agents are served all the same.
+    pub fn missing_documents(&self, root: &Path) -> Option<&str> {
+        (!self
+            .entrypoints
+            .iter()
+            .any(|entry| root.join(&entry.folder).is_dir()))
+        .then(|| self.entrypoints[0].folder.as_str())
+    }
+
+    /// What a document page of the checkout at `root` says while it holds none of the entrypoints'
+    /// folders ([`Project::missing_documents`]): that the project has no documents, and how to add
+    /// them.
+    pub fn no_documents(&self, root: &Path) -> Option<String> {
+        self.missing_documents(root).map(|folder| {
+            format!(
+                "This project has no documents yet: create a {folder}/ folder with a Markdown file \
+                 in it, or name the folder that holds them in {FILE}'s [[entrypoints]]."
+            )
+        })
+    }
+
     /// Whether the project-relative `file` is read as a document: Markdown an entrypoint shows,
     /// outside its history folders.
     pub fn is_document_path(&self, file: &str) -> bool {
