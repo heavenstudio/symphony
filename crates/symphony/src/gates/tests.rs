@@ -101,7 +101,7 @@ fn review_rounds_are_the_approve_and_changes_verdicts_on_the_thread_in_order() {
             },
         ]
     );
-    assert!(review_rounds(&[]).is_empty());
+    assert_eq!(review_rounds(&[]), Vec::<Round>::new());
 }
 
 #[test]
@@ -144,7 +144,7 @@ fn the_review_gate_is_met_by_the_last_rounds_approval_with_the_rounds_before_it_
         "Changes asked in round 1: the verify keeps running"
     );
     assert_eq!(gate.at, Some(20.0));
-    assert!(gate.past.is_empty());
+    assert_eq!(gate.past, Vec::<GatePast>::new());
     // A bare `changes` says only its round.
     let bare = [line(4, "verdict", "lucid-heron", "changes", 20.0)];
     let gate = review("tools/x", "in_progress", &[], &review_rounds(&bare));
@@ -339,7 +339,11 @@ fn a_check_with_no_run_at_the_tip_or_no_tip_is_unknown_and_a_run_ended_without_a
 fn runs_are_the_historys_and_the_operations_still_in_the_folder_each_once() {
     let tree = Tree::new();
     let folder = tree.path("work");
-    assert!(runs(&folder).is_empty(), "a folder not made yet holds none");
+    assert_eq!(
+        runs(&folder),
+        Vec::<Record>::new(),
+        "a folder not made yet holds none"
+    );
     let label = "just verify";
     let kept = run(1, label, "tools/x", OLD, Step::Finished, Some(1));
     recorded::keep(&folder, &kept).unwrap();
@@ -393,14 +397,17 @@ fn a_task_posted_the_cards_of_its_linked_documents_that_its_texts_name_whole() {
         linked.iter().map(|c| c.slug.as_str()).collect::<Vec<_>>(),
         ["x", "y"]
     );
-    assert!(linked_cards(&[], &pending).is_empty());
+    assert_eq!(linked_cards(&[], &pending), Vec::<&PendingItem>::new());
     let posted = |texts: &[&str]| {
         posted_cards(&linked, texts.iter().copied())
             .iter()
             .map(|c| c.slug.clone())
             .collect::<Vec<_>>()
     };
-    assert!(posted(&["x-2 and xy are other cards", "z is not linked"]).is_empty());
+    assert_eq!(
+        posted(&["x-2 and xy are other cards", "z is not linked"]),
+        Vec::<String>::new()
+    );
     assert_eq!(
         posted(&["see y.", "card x waits"]),
         ["x", "y"],
@@ -467,7 +474,7 @@ fn a_projects_gate_takes_the_place_of_the_symphonys_of_its_name_and_the_rest_fol
         "the project's review in the Symphony's place, a name given twice kept once"
     );
     assert_eq!(gates[4].detail, "the project's");
-    assert!(merged(Vec::new(), Vec::new()).is_empty());
+    assert_eq!(merged(Vec::new(), Vec::new()), Vec::<Gate>::new());
 }
 
 #[test]

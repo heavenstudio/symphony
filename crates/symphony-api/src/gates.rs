@@ -203,7 +203,7 @@ mod tests {
                 .collect::<Vec<_>>(),
             ["certificate", "check", "hold"]
         );
-        assert!(ranked(Vec::new()).is_empty());
+        assert_eq!(ranked(Vec::new()), Vec::<Gate>::new());
     }
 
     #[test]
@@ -239,6 +239,6 @@ mod tests {
         let answer: TaskGates =
             serde_json::from_str(r#"{"slug":"tools/x","branch":"tools/x"}"#).unwrap();
         assert_eq!(answer.tip, None);
-        assert!(answer.gates.is_empty());
+        assert_eq!(answer.gates, Vec::<Gate>::new());
     }
 }

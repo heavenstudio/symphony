@@ -393,13 +393,33 @@ impl Slot {
     }
 }
 
+/// Whose answer a slot holds: an answerer of a plugin, for a task of a project.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+struct Key {
+    root: PathBuf,
+    plugin: String,
+    answerer: String,
+    slug: String,
+}
+
+impl Key {
+    fn new(root: &Path, plugin: &str, answerer: &str, slug: &str) -> Key {
+        Key {
+            root: root.to_path_buf(),
+            plugin: plugin.to_string(),
+            answerer: answerer.to_string(),
+            slug: slug.to_string(),
+        }
+    }
+}
+
 /// The plugins' answers, kept by the task's branch tip and what each answerer says it reads besides
 /// ([`Gates::kept_while`]): one answer an answerer and task, the newest asked, so an answer that
 /// starts a landing binary runs once a tip. A read waits for an answer at most `wait` from when
 /// it was asked, then says it is unknown while the answer goes on, to be kept for the next read;
 /// no second call starts while one runs. An error is kept for `retry`, then asked again.
 pub struct Kept {
-    slots: Mutex<HashMap<(PathBuf, String, String, String), Arc<Slot>>>,
+    slots: Mutex<HashMap<Key, Arc<Slot>>>,
     wait: Duration,
     retry: Duration,
 }
@@ -430,12 +450,7 @@ impl Kept {
         asked: &Asked,
     ) -> Answer {
         let kept_while = answerer.kept_while(root, &asked.task());
-        let key = (
-            root.to_path_buf(),
-            plugin.to_string(),
-            answerer.name().to_string(),
-            asked.slug.clone(),
-        );
+        let key = Key::new(root, plugin, answerer.name(), &asked.slug);
         let slot = {
             let mut slots = self.slots.lock().unwrap_or_else(PoisonError::into_inner);
             let current = slots
@@ -503,15 +518,9 @@ impl Kept {
         branch: &str,
         tip: Option<&str>,
     ) -> Option<Answer> {
-        let key = (
-            root.to_path_buf(),
-            plugin.to_string(),
-            answerer.to_string(),
-            slug.to_string(),
-        );
         let slots = self.slots.lock().unwrap_or_else(PoisonError::into_inner);
         let slot = slots
-            .get(&key)
+            .get(&Key::new(root, plugin, answerer, slug))
             .filter(|slot| slot.branch == branch && slot.tip.as_deref() == tip)?;
         let done = slot.done.lock().unwrap_or_else(PoisonError::into_inner);
         done.as_ref().map(|(answer, _)| answer.clone())
