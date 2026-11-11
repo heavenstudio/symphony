@@ -16,9 +16,12 @@ pub struct Inventory {
     pub(super) operations: Vec<Operation>,
     pub(super) finished: Vec<Operation>,
     pub(super) revisions: BTreeMap<String, Vec<u8>>,
-    /// Nonces whose recorder bound their task when it began them ([`super::recorded`]): no
-    /// receiver attribution rewrites it.
-    pub(super) bound: BTreeSet<String>,
+    /// Nonces the board's own recorder wrote ([`super::recorded`]). Their recorder bound their
+    /// task when it began them: no receiver attribution rewrites it. Once finished and swept from
+    /// the work folder, one never comes back, so a receiver may forget it ([`Projection`]).
+    ///
+    /// [`Projection`]: super::Projection
+    pub(super) recorded: BTreeSet<String>,
 }
 
 #[derive(Deserialize)]
@@ -106,7 +109,7 @@ impl Inventory {
             operations: Vec::new(),
             finished: Vec::new(),
             revisions: BTreeMap::new(),
-            bound: BTreeSet::new(),
+            recorded: BTreeSet::new(),
         };
         let mut nonces = BTreeSet::new();
         for row in input.records {
@@ -181,6 +184,11 @@ impl Inventory {
         &self.revisions
     }
 
+    /// The nonces of this read the board's own recorder wrote.
+    pub fn recorded_ids(&self) -> &BTreeSet<String> {
+        &self.recorded
+    }
+
     /// One inventory of two sources read for the same machine: every row of each, uncertain when
     /// either is. A nonce both name is refused, as one source repeating it is.
     pub fn merge(mut self, other: Inventory) -> Result<Self, String> {
@@ -198,20 +206,20 @@ impl Inventory {
         self.uncertain |= other.uncertain;
         self.operations.extend(other.operations);
         self.finished.extend(other.finished);
-        self.bound.extend(other.bound);
+        self.recorded.extend(other.recorded);
         Ok(self)
     }
 
     /// A trusted adapter may bind explicit task context once, before the operation's first sample.
     /// Apply the same retained binding to completion; current display roles never rewrite it. An
-    /// operation its recorder bound already keeps the task it recorded, none included.
+    /// operation the board's recorder wrote keeps the task it recorded, none included.
     pub fn attribute(&mut self, mut task: impl FnMut(&Operation) -> Option<String>) {
-        let bound = &self.bound;
+        let recorded = &self.recorded;
         for operation in self.operations.iter_mut().chain(&mut self.finished) {
             if operation
                 .operation_id
                 .as_ref()
-                .is_some_and(|id| bound.contains(id))
+                .is_some_and(|id| recorded.contains(id))
             {
                 continue;
             }

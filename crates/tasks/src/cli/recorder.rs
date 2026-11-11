@@ -374,17 +374,21 @@ impl Recording {
         Beating { stop, thread }
     }
 
-    /// It ended so (`exit_code` or `signal`, neither when that is not known): its record written
-    /// finished and kept in the history, then its lease let go.
+    /// It ended so (`exit_code` or `signal`, neither when that is not known): kept in the history,
+    /// then its record written finished, then its lease let go. A recorder ended between the two
+    /// leaves it unfinished for a sweep to keep again: the history reads each operation once.
     fn finish(self, exit_code: Option<i32>, signal: Option<i32>, reason: &str) {
-        let finished = self.update(|record, now| {
-            record.state = Step::Finished;
-            record.ended_at = Some(now);
-            record.exit_code = exit_code;
-            record.signal = signal;
-            reason.clone_into(&mut record.reason);
-        });
-        let _ = recorded::keep(&self.folder, &finished);
+        let mut record = self.held();
+        let now = crate::store::now();
+        record.state = Step::Finished;
+        record.ended_at = Some(now);
+        record.beat_at = now;
+        record.exit_code = exit_code;
+        record.signal = signal;
+        reason.clone_into(&mut record.reason);
+        let _ = recorded::keep(&self.folder, &record);
+        let _ = recorded::write(&self.path, &record);
+        drop(record);
         drop(self.lease);
         let _ = fs::remove_file(self.path.with_extension("lease"));
     }

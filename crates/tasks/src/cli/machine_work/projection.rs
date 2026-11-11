@@ -53,16 +53,20 @@ struct Ownership {
     checkout: String,
     parent_id: Option<String>,
     terminal: bool,
+    /// Written by the board's own recorder, whose finished records leave its work folder for
+    /// good: once terminal and no longer read, the nonce is forgotten ([`Projection::retire`]).
+    recorded: bool,
 }
 
 impl Ownership {
-    fn of(operation: &Operation) -> Self {
+    fn of(operation: &Operation, recorded: bool) -> Self {
         Self {
             handle: operation.handle.clone(),
             task: operation.task.clone(),
             checkout: operation.checkout.clone(),
             parent_id: operation.parent_id.clone(),
             terminal: false,
+            recorded,
         }
     }
 
@@ -84,8 +88,10 @@ pub struct Projection {
 
 impl Projection {
     /// `max_operations` bounds both live rows and lifetime nonce ownership per machine.
-    /// History is never evicted, including on publisher restart. At its bound, unseen nonces
-    /// latch the machine unknown for this projection's lifetime, retaining last-known work.
+    /// History is never evicted, including on publisher restart, but for the board recorder's
+    /// finished nonces, forgotten once their records are gone ([`Self::retire`]). At its bound,
+    /// unseen nonces latch the machine unknown for this projection's lifetime, retaining
+    /// last-known work.
     pub fn new(max_machines: usize, max_operations: usize, ttl_ms: u64) -> Self {
         Self {
             machines: BTreeMap::new(),
@@ -99,7 +105,18 @@ impl Projection {
     /// Duplicate/older samples never renew a receipt. Partial inventories retain missing work;
     /// only a new complete inventory establishes completion.
     pub fn observe(&mut self, sample: Sample, receipt_ms: u64) -> Result<(), Rejected> {
-        self.observe_batch(sample, Vec::new(), receipt_ms, None)
+        self.observe_batch(sample, Vec::new(), receipt_ms, None, &BTreeSet::new())
+    }
+
+    /// Forget each finished nonce the board's recorder wrote that `inventory` no longer reads: its
+    /// record left the work folder for good, so it can neither return nor be reused, and its
+    /// ownership need not count against the lifetime bound.
+    fn retire(&mut self, machine_id: &str, inventory: &super::native::Inventory) {
+        if let Some(old) = self.machines.get_mut(machine_id) {
+            let read = inventory.revisions();
+            old.owners
+                .retain(|id, owner| !(owner.recorded && owner.terminal && !read.contains_key(id)));
+        }
     }
 
     /// Trusted-local raw evidence is always partial. Live rows and decoded completions share
@@ -113,6 +130,7 @@ impl Projection {
         if inventory.machine_id.as_deref() != Some(sample.machine_id.as_str()) {
             return Err(Rejected::Identity);
         }
+        self.retire(&sample.machine_id, &inventory);
         sample.complete = false;
         sample.operations = inventory.operations;
         self.observe_batch(
@@ -120,6 +138,7 @@ impl Projection {
             inventory.finished,
             receipt_ms,
             Some(inventory.uncertain),
+            &inventory.recorded,
         )
     }
 
@@ -129,6 +148,7 @@ impl Projection {
         finished: Vec<Operation>,
         receipt_ms: u64,
         native_uncertainty: Option<bool>,
+        recorded: &BTreeSet<String>,
     ) -> Result<(), Rejected> {
         let old = self.machines.get(&sample.machine_id);
         if !identity(&sample.machine_id)
@@ -221,14 +241,14 @@ impl Projection {
             .map(|old| old.owners)
             .unwrap_or_default();
         for operation in &all.operations {
+            let id = operation
+                .operation_id
+                .clone()
+                .expect("normalized operation id");
+            let written = recorded.contains(&id);
             let owner = owners
-                .entry(
-                    operation
-                        .operation_id
-                        .clone()
-                        .expect("normalized operation id"),
-                )
-                .or_insert_with(|| Ownership::of(operation));
+                .entry(id)
+                .or_insert_with(|| Ownership::of(operation, written));
             owner.terminal |=
                 terminal.contains(operation.operation_id.as_ref().expect("normalized id"));
         }

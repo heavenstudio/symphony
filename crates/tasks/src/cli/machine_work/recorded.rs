@@ -2,25 +2,26 @@
 //! wraps, in the work folder ([`folder`]): `operations/ID.json`, one operation each, rewritten whole
 //! (a file of its own renamed over it) when it is queued, starts, beats and finishes, beside
 //! `operations/ID.lease`, which its recorder holds locked for as long as it runs; and
-//! `history.jsonl`, every finished operation, one a line, newest last, the newest [`KEEP`],
-//! rewritten whole under `history.lock`. The Symphony reads the operations as native evidence
-//! ([`read`], [`Inventory::recorded`]) beside a project's own reader; none of it is on the board.
+//! `history.jsonl`, every finished operation, one a line, oldest first, each appended in one
+//! write, until it reaches [`ROTATE_BYTES`] and becomes `history.1.jsonl` in place of the one
+//! before. The Symphony reads the operations as native evidence ([`read`],
+//! [`Inventory::recorded`]) beside a project's own reader; none of it is on the board.
 //!
-//! An unfinished operation whose lease nobody holds lost its recorder: a reader counts it as
-//! uncertainty, never as work or as done, until the next recorder finishes it without an exit
-//! ([`sweep`]) into the history. Finished operations stay [`RETAIN`] seconds for a reader to see
-//! them finish, then go.
+//! An operation is kept in the history before its record says it finished. An unfinished
+//! operation whose lease nobody holds lost its recorder: a reader counts it as uncertainty, never
+//! as work or as done, until the next recorder's [`sweep`] keeps it and finishes it without an
+//! exit. Finished operations stay [`RETAIN`] seconds for a reader to see them finish, then go.
 
 use super::native::{Inventory, MAX_ROWS};
 use super::{Kind, Operation, State};
 use crate::cli::Env;
 use crate::sys::FileLock;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeSet;
 use std::fs::{self, File, OpenOptions, TryLockError};
 use std::io::{self, Read as _, Write as _};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::{Duration, Instant};
 
 /// The work folder's name in `sf-tasks/` of the git common dir.
 pub const FOLDER: &str = "work";
@@ -28,12 +29,15 @@ pub const FOLDER: &str = "work";
 pub const FOLDER_VAR: &str = "TASKS_WORK";
 /// The operations' folder in the work folder.
 pub const OPERATIONS: &str = "operations";
-/// Every finished operation, newest last.
+/// Finished operations, oldest first, one a line.
 pub const HISTORY: &str = "history.jsonl";
-/// Held while the history or the operations of lost recorders change.
-const LOCK: &str = "history.lock";
-/// How many finished operations the history keeps.
-pub const KEEP: usize = 4000;
+/// The history before the current one, replaced at each rotation.
+pub const ROTATED: &str = "history.1.jsonl";
+/// The size at which the history rotates: the two files hold between this and twice this, some
+/// 3,000 to 6,000 operations.
+pub const ROTATE_BYTES: u64 = 2 * 1024 * 1024;
+/// Held by the one sweep or rotation at a time; nothing waits for it.
+pub const LOCK: &str = "history.lock";
 /// How long a finished operation stays in the operations' folder, in seconds.
 pub const RETAIN: f64 = 3600.0;
 /// Names, in a recorded command's environment, the operation its recorder runs it as: a recorder
@@ -43,8 +47,6 @@ pub const PARENT_VAR: &str = "TASKS_RUN_PARENT";
 const MAX_BYTES: u64 = 65_536;
 /// The longest text field kept.
 pub const MAX_TEXT: usize = 4096;
-/// How long a change to the history waits for its lock.
-const LOCK_WAIT: Duration = Duration::from_secs(2);
 
 /// Which column work goes to while it runs.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -364,7 +366,7 @@ impl Inventory {
             operations: Vec::new(),
             finished: Vec::new(),
             revisions: Default::default(),
-            bound: Default::default(),
+            recorded: Default::default(),
         };
         for (record, bytes) in &found.records {
             let id = record.operation_id.clone();
@@ -375,7 +377,7 @@ impl Inventory {
             {
                 return Err("native inventory repeats an operation nonce".into());
             }
-            inventory.bound.insert(id);
+            inventory.recorded.insert(id);
             let operation = record.operation(machine_id);
             if record.state == Step::Finished {
                 inventory.finished.push(operation);
@@ -419,8 +421,9 @@ fn replace(path: &Path, bytes: &[u8]) -> io::Result<()> {
     written
 }
 
-/// The work folder's lock, waited for at most [`LOCK_WAIT`].
-fn locked(folder: &Path) -> io::Result<FileLock> {
+/// The work folder's lock when nobody else holds it: one sweep or rotation at a time, and none
+/// waits for another.
+fn try_locked(folder: &Path) -> io::Result<Option<FileLock>> {
     fs::create_dir_all(folder)?;
     let file = OpenOptions::new()
         .read(true)
@@ -428,71 +431,66 @@ fn locked(folder: &Path) -> io::Result<FileLock> {
         .create(true)
         .truncate(false)
         .open(folder.join(LOCK))?;
-    let began = Instant::now();
-    loop {
-        match file.try_lock() {
-            Ok(()) => return Ok(FileLock(file)),
-            Err(TryLockError::WouldBlock) if began.elapsed() < LOCK_WAIT => {
-                std::thread::sleep(Duration::from_millis(20));
+    match file.try_lock() {
+        Ok(()) => Ok(Some(FileLock(file))),
+        Err(TryLockError::WouldBlock) => Ok(None),
+        Err(TryLockError::Error(error)) => Err(error),
+    }
+}
+
+/// Every operation the history of `folder` keeps, oldest first, each once: [`ROTATED`], then
+/// [`HISTORY`]. A line that is not a record (one a write was cut short in) is passed over.
+pub fn history(folder: &Path) -> io::Result<Vec<Record>> {
+    let mut seen = BTreeSet::new();
+    let mut kept = Vec::new();
+    for name in [ROTATED, HISTORY] {
+        let bytes = match fs::read(folder.join(name)) {
+            Ok(bytes) => bytes,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
+            Err(error) => return Err(error),
+        };
+        for line in bytes.split(|byte| *byte == b'\n') {
+            if let Ok(record) = serde_json::from_slice::<Record>(line)
+                && seen.insert(record.operation_id.clone())
+            {
+                kept.push(record);
             }
-            Err(TryLockError::WouldBlock) => {
-                return Err(io::Error::new(
-                    io::ErrorKind::WouldBlock,
-                    "the work folder's lock stays held",
-                ));
-            }
-            Err(TryLockError::Error(error)) => return Err(error),
         }
     }
+    Ok(kept)
 }
 
-/// Every operation the history of `folder` keeps, oldest first; a line that is not one is passed
-/// over.
-pub fn history(folder: &Path) -> io::Result<Vec<Record>> {
-    let text = match fs::read_to_string(folder.join(HISTORY)) {
-        Ok(text) => text,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
-        Err(error) => return Err(error),
-    };
-    Ok(text
-        .lines()
-        .filter_map(|line| serde_json::from_str(line).ok())
-        .collect())
-}
-
-/// The history with each of `finished` it does not hold yet added, the newest [`KEEP`] kept,
-/// written whole under the lock held; unwritten when it held them all.
-fn append(folder: &Path, finished: &[Record], _held: &FileLock) -> io::Result<()> {
-    if finished.is_empty() {
-        return Ok(());
-    }
-    let mut kept = history(folder)?;
-    let known: std::collections::BTreeSet<&str> = kept
-        .iter()
-        .map(|record| record.operation_id.as_str())
-        .collect();
-    let new: Vec<Record> = finished
-        .iter()
-        .filter(|record| !known.contains(record.operation_id.as_str()))
-        .cloned()
-        .collect();
-    if new.is_empty() {
-        return Ok(());
-    }
-    kept.extend(new);
-    let skip = kept.len().saturating_sub(KEEP);
-    let mut text = String::new();
-    for record in &kept[skip..] {
-        text.push_str(&serde_json::to_string(record).map_err(io::Error::other)?);
-        text.push('\n');
-    }
-    replace(&folder.join(HISTORY), text.as_bytes())
-}
-
-/// Keep `finished` in the history of `folder`.
+/// Keep `finished` in the history of `folder`: one line appended in one write, which waits for
+/// no other recorder; a history that reached [`ROTATE_BYTES`] then becomes [`ROTATED`], unless
+/// another recorder is rotating or sweeping now.
 pub fn keep(folder: &Path, finished: &Record) -> io::Result<()> {
-    let held = locked(folder)?;
-    append(folder, std::slice::from_ref(finished), &held)
+    fs::create_dir_all(folder)?;
+    let mut line = serde_json::to_vec(finished).map_err(io::Error::other)?;
+    line.push(b'\n');
+    let mut file = OpenOptions::new()
+        .append(true)
+        .create(true)
+        .open(folder.join(HISTORY))?;
+    file.write_all(&line)?;
+    if file.metadata()?.len() >= ROTATE_BYTES {
+        rotate(folder, &file)?;
+    }
+    Ok(())
+}
+
+/// The history `appended` was appended to, renamed over the rotated one, unless the lock is held or
+/// another recorder rotated it first.
+fn rotate(folder: &Path, appended: &File) -> io::Result<()> {
+    use std::os::unix::fs::MetadataExt as _;
+    let Some(_held) = try_locked(folder)? else {
+        return Ok(());
+    };
+    let path = folder.join(HISTORY);
+    let (now, ours) = (fs::metadata(&path)?, appended.metadata()?);
+    if (now.dev(), now.ino()) == (ours.dev(), ours.ino()) {
+        fs::rename(&path, folder.join(ROTATED))?;
+    }
+    Ok(())
 }
 
 /// When `path` last changed, in seconds since the epoch.
@@ -506,37 +504,50 @@ fn changed(path: &Path) -> Option<f64> {
     )
 }
 
-/// Tidy the operations of `folder` at `now`, under its lock: each unfinished one whose recorder is
-/// gone is finished without an exit, as its recorder last said it ran; each finished one the
-/// history lacks (its recorder ended before keeping it) is kept there too; each finished more than
-/// [`RETAIN`] ago goes, with its lease, as does anything else there older than that which no live
-/// recorder holds. What this sweep finished.
+/// The visible files in `folder` and the hidden ones a write of its own left there.
+fn entries(folder: &Path) -> io::Result<(Vec<PathBuf>, Vec<PathBuf>)> {
+    let (mut visible, mut hidden) = (Vec::new(), Vec::new());
+    for entry in fs::read_dir(folder)? {
+        let entry = entry?;
+        if !entry.file_type()?.is_file() {
+            continue;
+        }
+        let path = entry.path();
+        if entry.file_name().to_string_lossy().starts_with('.') {
+            hidden.push(path);
+        } else {
+            visible.push(path);
+        }
+    }
+    visible.sort();
+    Ok((visible, hidden))
+}
+
+/// Tidy the work folder `folder` at `now`, under its lock, or not at all while another recorder
+/// tidies it: each unfinished operation whose recorder is gone is kept in the history, then
+/// finished without an exit, as its recorder last said it ran. A finished operation changed more
+/// than [`RETAIN`] ago goes, as does anything else there older than that which no live recorder
+/// holds: a write's own file left by a writer that ended, a lease with no record, a record that is
+/// not one. What this sweep finished.
 pub fn sweep(folder: &Path, now: f64) -> io::Result<Vec<Record>> {
     let operations = folder.join(OPERATIONS);
     if !operations.is_dir() {
         return Ok(Vec::new());
     }
-    let held_lock = locked(folder)?;
+    let Some(_held) = try_locked(folder)? else {
+        return Ok(Vec::new());
+    };
     let old = |path: &Path| changed(path).is_some_and(|at| now - at > RETAIN);
-    let mut lost = Vec::new();
-    let mut finished = Vec::new();
-    let mut entries: Vec<PathBuf> = fs::read_dir(&operations)?
-        .filter_map(|entry| Some(entry.ok()?.path()))
-        .collect();
-    entries.sort();
-    for path in entries {
-        let name = path
-            .file_name()
-            .and_then(|name| name.to_str())
-            .unwrap_or_default()
-            .to_string();
-        let lease = path.with_extension("lease");
-        if name.starts_with('.') {
-            if old(&path) {
-                let _ = fs::remove_file(&path);
+    for place in [folder, operations.as_path()] {
+        for partial in entries(place)?.1 {
+            if old(&partial) {
+                let _ = fs::remove_file(&partial);
             }
-            continue;
         }
+    }
+    let mut lost = Vec::new();
+    for path in entries(&operations)?.0 {
+        let lease = path.with_extension("lease");
         match path.extension().and_then(|extension| extension.to_str()) {
             Some("json") => {}
             Some("lease") => {
@@ -548,39 +559,40 @@ pub fn sweep(folder: &Path, now: f64) -> io::Result<Vec<Record>> {
             }
             _ => continue,
         }
-        let Some((first, _)) = record(&path) else {
-            if old(&path) && held(&lease) == Some(false) {
-                let _ = fs::remove_file(&path);
-                let _ = fs::remove_file(&lease);
-            }
-            continue;
-        };
-        if first.state != Step::Finished && held(&lease) != Some(false) {
+        // A live recorder's, or one that cannot be asked.
+        if held(&lease) != Some(false) {
             continue;
         }
-        // A recorder writes its record finished before it lets its lease go: read it again.
-        let Some((mut found, _)) = record(&path) else {
-            continue;
-        };
-        if found.state == Step::Finished {
-            if found.ended_at.is_some_and(|ended| now - ended > RETAIN) {
+        if !lease.exists() {
+            // Its recorder finished it and let its lease go.
+            if old(&path) {
                 let _ = fs::remove_file(&path);
-                let _ = fs::remove_file(&lease);
-            } else {
-                finished.push(found);
             }
             continue;
         }
-        found.state = Step::Finished;
-        found.ended_at = Some(found.beat_at);
-        found.exit_code = None;
-        found.signal = None;
-        found.reason = "its recorder ended before saying how its command did".into();
-        write(&path, &found)?;
-        let _ = fs::remove_file(&lease);
-        lost.push(found.clone());
-        finished.push(found);
+        match record(&path) {
+            None => {
+                if old(&path) {
+                    let _ = fs::remove_file(&path);
+                    let _ = fs::remove_file(&lease);
+                }
+            }
+            // It ended between saying so and letting its lease go.
+            Some((found, _)) if found.state == Step::Finished => {
+                let _ = fs::remove_file(&lease);
+            }
+            Some((mut found, _)) => {
+                found.state = Step::Finished;
+                found.ended_at = Some(found.beat_at);
+                found.exit_code = None;
+                found.signal = None;
+                found.reason = "its recorder ended before saying how its command did".into();
+                keep(folder, &found)?;
+                write(&path, &found)?;
+                let _ = fs::remove_file(&lease);
+                lost.push(found);
+            }
+        }
     }
-    append(folder, &finished, &held_lock)?;
     Ok(lost)
 }

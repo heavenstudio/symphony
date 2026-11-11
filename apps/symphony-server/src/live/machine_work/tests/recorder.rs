@@ -134,15 +134,16 @@ fn running(folder: &Path, id: &str, task: &str) -> std::fs::File {
     lease
 }
 
-/// `id`'s running record as its recorder writes it when it beats at `beat_at`.
-fn beat(folder: &Path, id: &str, task: &str, beat_at: f64) {
-    let record = Record {
+/// `id`'s record in `state` for `task`, as its recorder writes it when it beats at `beat_at`.
+fn made(id: &str, task: &str, state: Step, beat_at: f64) -> Record {
+    let finished = state == Step::Finished;
+    Record {
         version: 1,
         operation_id: id.into(),
         parent_id: None,
         phase: Phase::Build,
         label: "cargo build".into(),
-        state: Step::Running,
+        state,
         handle: Some("worker".into()),
         task: Some(task.into()),
         checkout: "/private/checkout".into(),
@@ -154,12 +155,17 @@ fn beat(folder: &Path, id: &str, task: &str, beat_at: f64) {
         child_pid: Some(2),
         queued_at: 1000.0,
         started_at: Some(1000.0),
-        ended_at: None,
+        ended_at: finished.then_some(beat_at),
         beat_at,
-        exit_code: None,
+        exit_code: finished.then_some(0),
         signal: None,
         reason: String::new(),
-    };
+    }
+}
+
+/// `id`'s running record as its recorder writes it when it beats at `beat_at`.
+fn beat(folder: &Path, id: &str, task: &str, beat_at: f64) {
+    let record = made(id, task, Step::Running, beat_at);
     let path = folder.join(work::OPERATIONS).join(format!("{id}.json"));
     work::write(&path, &record).unwrap();
 }
@@ -259,4 +265,49 @@ fn a_recorders_beat_keeps_long_work_fresh_where_an_unchanged_reread_lets_it_go_s
         view.operations[0].reason,
         "running; its recorder said so 2 s after it started"
     );
+}
+
+#[test]
+fn five_thousand_finished_recorded_operations_leave_a_running_one_placed_in_build() {
+    let tree = Tree::new();
+    let root = repository(&tree);
+    let common = root.join(".git");
+    let mut sampler = Sampler::new(&root, None);
+    sampler.identity = Some(Ok("machine-a".into()));
+    // Each read holds the ten newest finished operations; a sweep took the older ones.
+    let mut window = std::collections::VecDeque::new();
+    for n in 0..5_000_u32 {
+        window.push_back(made(
+            &format!("{n:032x}"),
+            "tools/done",
+            Step::Finished,
+            1001.0,
+        ));
+        if window.len() > 10 {
+            window.pop_front();
+        }
+        let read = work::Found {
+            records: window
+                .iter()
+                .map(|record| (record.clone(), serde_json::to_vec(record).unwrap()))
+                .collect(),
+            uncertain: false,
+        };
+        let inventory = Inventory::recorded(&read, Some("machine-a")).unwrap();
+        let now = sampler.receipt();
+        sampler.observe(inventory, &[], now, "host").unwrap();
+    }
+    assert!(sampler.reason.is_empty(), "{}", sampler.reason);
+    assert!(sampler.revisions.len() <= 10, "{}", sampler.revisions.len());
+    let folder = work::in_common(&common);
+    let _held = running(&folder, &"d".repeat(32), "tools/recorded");
+    let task: symphony_api::Task = serde_json::from_value(json!({
+        "slug": "tools/recorded", "title": "recorded", "body": "", "status": "in_progress",
+        "priority": 1, "parent": null, "created_by": "orchestrator", "created": 0.0,
+        "updated": 0.0, "links": [], "depends": [], "roles": [], "instruction": false,
+    }))
+    .unwrap();
+    assert_eq!(stage(&mut sampler, &root, &common, &task), "build");
+    let view = sampler.snapshot(sampler.receipt()).machines.remove(0);
+    assert_eq!(view.freshness, Freshness::Incomplete, "{view:?}");
 }

@@ -71,6 +71,8 @@ pub(super) struct Sampler {
     supplied: bool,
     identity: Option<Result<String, String>>,
     revisions: BTreeMap<String, Vec<u8>>,
+    /// The nonces among `revisions` the board's own recorder wrote.
+    recorded: BTreeSet<String>,
     sequence: u64,
     began: Instant,
     tasks: BTreeMap<String, Option<String>>,
@@ -86,6 +88,7 @@ impl Sampler {
             supplied: supplied.is_some(),
             identity: None,
             revisions: BTreeMap::new(),
+            recorded: BTreeSet::new(),
             sequence: 0,
             began: Instant::now(),
             tasks: BTreeMap::new(),
@@ -142,6 +145,7 @@ impl Sampler {
         label: &str,
     ) -> Result<(), String> {
         let identity = &self.trusted()?;
+        self.forget_recorded(&inventory);
         if self.sequence != 0
             && !inventory
                 .revisions()
@@ -185,6 +189,22 @@ impl Sampler {
         self.tasks = bindings;
         self.reason.clear();
         Ok(())
+    }
+
+    /// The board recorder's records swept from its work folder never come back: their revisions
+    /// go, as their ownership does in the projection, so neither grows with every build.
+    fn forget_recorded(&mut self, inventory: &Inventory) {
+        let read = inventory.revisions();
+        let revisions = &mut self.revisions;
+        self.recorded.retain(|id| {
+            let kept = read.contains_key(id);
+            if !kept {
+                revisions.remove(id);
+            }
+            kept
+        });
+        self.recorded
+            .extend(inventory.recorded_ids().iter().cloned());
     }
 
     fn unavailable(&mut self, reason: String) {

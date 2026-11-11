@@ -4,7 +4,7 @@
 use super::*;
 use crate::cli::machine_work::native::Inventory;
 use crate::cli::machine_work::recorded::{
-    self, Found, HISTORY, KEEP, OPERATIONS, Phase, RETAIN, Record, Step,
+    self, Found, HISTORY, OPERATIONS, Phase, RETAIN, ROTATE_BYTES, ROTATED, Record, Step,
 };
 use std::fs::{self, File, OpenOptions};
 use std::path::{Path, PathBuf};
@@ -201,6 +201,92 @@ fn recorded_operations_keep_the_task_their_recorder_bound_and_their_phase_and_la
     fs::remove_dir_all(&dir).unwrap();
 }
 
+/// One read finding `records`, certain of them.
+fn found(records: &[Record]) -> Found {
+    Found {
+        records: records
+            .iter()
+            .map(|record| (record.clone(), serde_json::to_vec(record).unwrap()))
+            .collect(),
+        uncertain: false,
+    }
+}
+
+#[test]
+fn finished_recorded_nonces_gone_from_the_folder_free_their_ownership_and_a_readers_never_do() {
+    // Room for three nonces a machine's lifetime; ten recorded operations run, finish and go.
+    let mut receiver = Projection::new(1, 3, 100);
+    let sequence = std::cell::Cell::new(0);
+    let observe = |receiver: &mut Projection, read: Found| {
+        sequence.set(sequence.get() + 1);
+        let inventory = Inventory::recorded(&read, Some("m")).unwrap();
+        let at = sequence.get();
+        receiver.observe_native(sample("m", at, vec![]), inventory, at)
+    };
+    for n in 0..10 {
+        let id = format!("{n:032x}");
+        observe(&mut receiver, found(&[record(&id, Step::Running)])).unwrap();
+        observe(&mut receiver, found(&[record(&id, Step::Finished)])).unwrap();
+        observe(&mut receiver, found(&[])).unwrap();
+    }
+    observe(&mut receiver, found(&[record(ONE, Step::Finished)])).unwrap();
+    let running = record(TWO, Step::Running);
+    observe(
+        &mut receiver,
+        found(&[record(ONE, Step::Finished), running.clone()]),
+    )
+    .unwrap();
+    let machine = receiver.snapshot(sequence.get()).machines.remove(0);
+    assert!(
+        matches!(machine.freshness, Freshness::Fresh | Freshness::Incomplete),
+        "{machine:?}"
+    );
+    let ids = machine
+        .operations
+        .iter()
+        .map(|operation| operation.operation_id.clone())
+        .collect::<Vec<_>>();
+    assert_eq!(ids, [Some(running.operation_id)]);
+    // Still read, a finished one keeps its nonce: it cannot come back running.
+    assert_eq!(
+        observe(&mut receiver, found(&[record(ONE, Step::Running)])),
+        Err(Rejected::ConflictingOperation)
+    );
+
+    // A project reader's finished nonces stay owned: its records may come back.
+    let mut reader = Projection::new(1, 3, 100);
+    let slots = |id: &str, state: &str| {
+        let finished = state == "finished";
+        let bytes = serde_json::to_vec(&serde_json::json!({"version":1,"complete":false,
+            "uncertain":false,"truncated":false,"records":[{
+            "evidence":if finished { "finished" } else { "active" },"operation_id":id,
+            "parent_id":null,"timing_run_id":null,"handle":"worker","checkout":"/same/path",
+            "recipe":"cargo build","kind":"build","state":state,"resource":"","reason":"",
+            "phase_since_epoch_ms":1,"owner_pid":9,"child_pid":null,
+            "exit_code":if finished { Some(0) } else { None }}]}))
+        .unwrap();
+        Inventory::decode(&bytes, Some("m")).unwrap()
+    };
+    let mut sequence = 0;
+    let mut refused = None;
+    for n in 0..4 {
+        let id = format!("{n:032x}");
+        for state in ["running", "finished"] {
+            sequence += 1;
+            if let Err(error) =
+                reader.observe_native(sample("m", sequence, vec![]), slots(&id, state), sequence)
+            {
+                refused.get_or_insert((n, error));
+            }
+        }
+    }
+    assert_eq!(refused, Some((3, Rejected::Limit)));
+    assert_eq!(
+        reader.snapshot(sequence).machines[0].freshness,
+        Freshness::Conflict
+    );
+}
+
 #[test]
 fn a_beat_is_a_new_publication_and_a_reread_of_the_same_bytes_is_not() {
     let dir = folder("beat");
@@ -264,15 +350,33 @@ fn a_recorded_and_a_project_inventory_merge_into_one_and_never_share_a_nonce() {
     fs::remove_dir_all(&dir).unwrap();
 }
 
+/// Seconds since the epoch, now.
+fn now() -> f64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs_f64()
+}
+
+/// `file` last changed `seconds` ago.
+fn aged(file: &Path, seconds: u64) {
+    let at = std::time::SystemTime::now() - std::time::Duration::from_secs(seconds);
+    OpenOptions::new()
+        .append(true)
+        .open(file)
+        .unwrap()
+        .set_modified(at)
+        .unwrap();
+}
+
 #[test]
 fn a_sweep_finishes_lost_work_without_an_exit_keeps_it_once_and_drops_what_is_an_hour_done() {
     let dir = folder("sweep");
     let _held = running(&dir, &record(ONE, Step::Running));
     gone(running(&dir, &record(TWO, Step::Running)));
-    let mut old = record(THREE, Step::Finished);
-    old.ended_at = Some(1004.0 - RETAIN - 1.0);
-    recorded::write(&path(&dir, THREE), &old).unwrap();
-    let now = 1003.0 + 1.0;
+    recorded::write(&path(&dir, THREE), &record(THREE, Step::Finished)).unwrap();
+    aged(&path(&dir, THREE), RETAIN as u64 + 1);
+    let now = now();
     let lost = recorded::sweep(&dir, now).unwrap();
     assert_eq!(lost.len(), 1);
     let kept = &lost[0];
@@ -301,7 +405,7 @@ fn a_sweep_finishes_lost_work_without_an_exit_keeps_it_once_and_drops_what_is_an
     assert!(recorded::sweep(&dir, now).unwrap().is_empty());
     assert_eq!(recorded::history(&dir).unwrap().len(), 1);
     // Past the hour, it goes too, but stays kept.
-    recorded::sweep(&dir, 1003.0 + RETAIN + 1.0).unwrap();
+    recorded::sweep(&dir, now + RETAIN + 1.0).unwrap();
     assert_eq!(ids(&recorded::read(&dir)), [(ONE, Step::Running)]);
     assert_eq!(recorded::history(&dir).unwrap().len(), 1);
     fs::remove_dir_all(&dir).unwrap();
@@ -312,9 +416,16 @@ fn a_sweep_clears_what_no_live_recorder_holds_once_it_is_an_hour_old() {
     let dir = folder("tidy");
     let operations = dir.join(OPERATIONS);
     let partial = operations.join(format!(".{ONE}.json.1.0"));
+    // A history write of an older recorder's own, cut short in the work folder itself.
+    let history_partial = dir.join(format!(".{HISTORY}.1.0"));
     let orphan = path(&dir, TWO).with_extension("lease");
     let unreadable = path(&dir, THREE);
-    for (file, text) in [(&partial, "{"), (&orphan, ""), (&unreadable, "{")] {
+    for (file, text) in [
+        (&partial, "{"),
+        (&history_partial, "{"),
+        (&orphan, ""),
+        (&unreadable, "{"),
+    ] {
         fs::write(file, text).unwrap();
     }
     // A live recorder's lease before its first record, and beside one that cannot be read.
@@ -326,16 +437,13 @@ fn a_sweep_clears_what_no_live_recorder_holds_once_it_is_an_hour_old() {
     };
     let held = [lease(&four), lease(&five)];
     fs::write(path(&dir, &five), "{").unwrap();
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_secs_f64();
+    let now = now();
     recorded::sweep(&dir, now).unwrap();
-    for file in [&partial, &orphan, &unreadable] {
+    for file in [&partial, &history_partial, &orphan, &unreadable] {
         assert!(file.exists(), "{} went within the hour", file.display());
     }
     recorded::sweep(&dir, now + RETAIN + 60.0).unwrap();
-    for file in [&partial, &orphan, &unreadable] {
+    for file in [&partial, &history_partial, &orphan, &unreadable] {
         assert!(!file.exists(), "{} stayed", file.display());
     }
     for kept in [
@@ -357,35 +465,117 @@ fn a_sweep_clears_what_no_live_recorder_holds_once_it_is_an_hour_old() {
 }
 
 #[test]
-fn a_sweep_keeps_a_finished_operation_its_recorder_ended_before_keeping() {
-    let dir = folder("unkept");
-    recorded::write(&path(&dir, ONE), &record(ONE, Step::Finished)).unwrap();
-    assert!(recorded::sweep(&dir, 1100.0).unwrap().is_empty());
-    let history = recorded::history(&dir).unwrap();
-    assert_eq!(history, [record(ONE, Step::Finished)]);
-    recorded::keep(&dir, &record(ONE, Step::Finished)).unwrap();
-    assert_eq!(recorded::history(&dir).unwrap().len(), 1);
+fn a_sweep_lets_go_the_lease_of_an_operation_its_recorder_finished_without_keeping_it_twice() {
+    let dir = folder("finished-lease");
+    let done = record(ONE, Step::Finished);
+    recorded::keep(&dir, &done).unwrap();
+    // Its recorder ended between saying it finished and letting its lease go.
+    gone(running(&dir, &done));
+    assert!(recorded::sweep(&dir, now()).unwrap().is_empty());
+    assert!(!path(&dir, ONE).with_extension("lease").exists());
+    assert_eq!(ids(&recorded::read(&dir)), [(ONE, Step::Finished)]);
+    assert_eq!(recorded::history(&dir).unwrap(), [done]);
     fs::remove_dir_all(&dir).unwrap();
 }
 
 #[test]
-fn the_history_keeps_the_newest_and_passes_over_a_line_that_is_not_a_record() {
-    let dir = folder("history");
-    let mut text = String::from("not a record\n");
-    for n in 0..KEEP {
-        let mut old = record(&format!("{n:032x}"), Step::Finished);
-        old.label = format!("run {n}");
-        text.push_str(&serde_json::to_string(&old).unwrap());
-        text.push('\n');
+fn a_sweep_another_recorder_is_making_is_left_to_it() {
+    let dir = folder("busy");
+    gone(running(&dir, &record(ONE, Step::Running)));
+    let lock = File::create(dir.join(recorded::LOCK)).unwrap();
+    lock.lock().unwrap();
+    assert!(recorded::sweep(&dir, now()).unwrap().is_empty());
+    assert!(recorded::read(&dir).uncertain, "still lost, not finished");
+    lock.unlock().unwrap();
+    assert_eq!(recorded::sweep(&dir, now()).unwrap().len(), 1);
+    // A folder no recorder made yet has nothing to sweep and is not made by one.
+    let never = dir.join("never");
+    assert!(recorded::sweep(&never, now()).unwrap().is_empty());
+    assert!(!never.exists());
+    fs::remove_dir_all(&dir).unwrap();
+}
+
+/// A finished record of `n`, its label long enough that a few hundred fill a history.
+fn padded(n: usize) -> Record {
+    let mut done = record(&format!("{n:032x}"), Step::Finished);
+    done.label = format!("run {n} {}", "x".repeat(4000));
+    done
+}
+
+/// Records kept from `from` until the current history reaches its bound, the last one rotating it.
+fn fill(dir: &Path, from: usize) -> usize {
+    let mut n = from;
+    while fs::metadata(dir.join(HISTORY)).map_or(0, |meta| meta.len()) < ROTATE_BYTES {
+        recorded::keep(dir, &padded(n)).unwrap();
+        n += 1;
+        if !dir.join(HISTORY).exists() {
+            break;
+        }
     }
-    fs::write(dir.join(HISTORY), text).unwrap();
-    let newest = record(&"f".repeat(32), Step::Finished);
-    recorded::keep(&dir, &newest).unwrap();
+    n
+}
+
+#[test]
+fn the_history_appends_each_operation_and_passes_over_a_line_that_is_not_a_record() {
+    let dir = folder("history");
+    fs::write(dir.join(HISTORY), "not a record\n{\"version\":1,\n").unwrap();
+    let first = record(ONE, Step::Finished);
+    let mut second = record(TWO, Step::Finished);
+    second.exit_code = Some(101);
+    recorded::keep(&dir, &first).unwrap();
+    recorded::keep(&dir, &second).unwrap();
     let history = recorded::history(&dir).unwrap();
-    assert_eq!(history.len(), KEEP);
-    assert_eq!(history[0].label, "run 1");
-    assert_eq!(history.last(), Some(&newest));
-    assert_eq!(history.last().unwrap().duration(), Some(30.0));
+    assert_eq!(history, [first.clone(), second]);
+    assert_eq!(history[0].duration(), Some(30.0));
+    // One operation kept twice reads once, as first kept.
+    let mut again = first.clone();
+    again.label = "again".into();
+    recorded::keep(&dir, &again).unwrap();
+    assert_eq!(recorded::history(&dir).unwrap()[0], first);
+    assert_eq!(recorded::history(&dir).unwrap().len(), 2);
+    // A history not made yet holds nothing.
+    assert!(recorded::history(&dir.join("never")).unwrap().is_empty());
+    fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn the_history_rotates_at_its_bound_keeping_the_one_before_and_dropping_older() {
+    let dir = folder("rotation");
+    let first = fill(&dir, 0);
+    assert!(!dir.join(HISTORY).exists(), "the full history rotated");
+    let rotated = fs::metadata(dir.join(ROTATED)).unwrap().len();
+    assert!(rotated >= ROTATE_BYTES, "{rotated}");
+    assert!(rotated < ROTATE_BYTES + 8192, "{rotated}");
+    // The next one starts a history of its own; both read, oldest first.
+    recorded::keep(&dir, &padded(first)).unwrap();
+    let history = recorded::history(&dir).unwrap();
+    assert_eq!(history.len(), first + 1);
+    assert_eq!(history[0], padded(0));
+    assert_eq!(history.last(), Some(&padded(first)));
+    // A second rotation replaces the first generation: the two files stay bounded.
+    let second = fill(&dir, first + 1);
+    let history = recorded::history(&dir).unwrap();
+    assert_eq!(history.len(), second - first);
+    assert_eq!(history[0], padded(first));
+    assert_eq!(history.last(), Some(&padded(second - 1)));
+    fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn the_history_waits_to_rotate_while_another_recorder_sweeps() {
+    let dir = folder("rotation-held");
+    let lock = File::create(dir.join(recorded::LOCK)).unwrap();
+    lock.lock().unwrap();
+    let mut n = 0;
+    while fs::metadata(dir.join(HISTORY)).map_or(0, |meta| meta.len()) < ROTATE_BYTES {
+        recorded::keep(&dir, &padded(n)).unwrap();
+        n += 1;
+    }
+    assert!(!dir.join(ROTATED).exists(), "rotated under another's lock");
+    lock.unlock().unwrap();
+    recorded::keep(&dir, &padded(n)).unwrap();
+    assert!(!dir.join(HISTORY).exists());
+    assert_eq!(recorded::history(&dir).unwrap().len(), n + 1);
     fs::remove_dir_all(&dir).unwrap();
 }
 
