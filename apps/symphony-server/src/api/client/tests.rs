@@ -2,7 +2,7 @@
 //! revalidated, each build file gzipped once however often it is asked for, and Accept-Encoding
 //! read as the router's compression layer reads it.
 
-use super::gzipped::{runs, takes_gzip};
+use super::gzipped::{Store, runs, takes_gzip};
 use super::*;
 use crate::front::router;
 use crate::gate::Gate;
@@ -311,6 +311,100 @@ async fn requests_arriving_together_wait_for_one_compression() {
     }
     assert_eq!(gunzip(&one.body), source);
     assert_eq!(runs(&hash), 1);
+}
+
+/// A store keyed by the file's name would send the old gzip here, under the new ETag.
+#[tokio::test]
+async fn a_file_rewritten_under_its_name_is_gzipped_anew() {
+    let before = module("rewritten_before", 100_000);
+    let after = module("rewritten_after", 100_000);
+    let name = "assets/review-fedcba9876543210.js";
+    let (tree, app) = serving(&[
+        ("index.html", b"<html><body>shell</body></html>"),
+        (name, &before),
+    ]);
+    let path = format!("/{name}");
+    let gzip = [("Accept-Encoding", "gzip")];
+
+    let first = send(&app, Method::GET, &path, &gzip).await;
+    assert_eq!(first.header("content-encoding"), Some("gzip"));
+    assert_eq!(gunzip(&first.body), before);
+    std::fs::write(tree.path(&format!("install/client/public/{name}")), &after).unwrap();
+    let second = send(&app, Method::GET, &path, &gzip).await;
+
+    let etag = format!("\"{}\"", sha256(&after));
+    assert_eq!(second.header("etag"), Some(etag.as_str()));
+    assert_ne!(second.header("etag"), first.header("etag"));
+    assert_eq!(second.header("content-encoding"), Some("gzip"));
+    assert_eq!(gunzip(&second.body), after);
+    assert_eq!(runs(&sha256(&before)), 1);
+    assert_eq!(
+        runs(&sha256(&after)),
+        1,
+        "the new content takes one more compression"
+    );
+}
+
+/// Three contents whose gzips the store can hold two of, each with its key and the length its
+/// gzip counts.
+async fn three_over_a_cap_of_two() -> ([(String, Bytes); 3], usize) {
+    let contents = ["dropped_a", "dropped_b", "dropped_c"].map(|name| {
+        let bytes = Bytes::from(module(name, 50_000));
+        (sha256(&bytes), bytes)
+    });
+    let measure = Store::new(usize::MAX);
+    let mut total = 0;
+    for (hash, bytes) in &contents {
+        total += measure.gzipped(hash, bytes).await.unwrap().len() + hash.len();
+    }
+    (contents, total - 1)
+}
+
+#[tokio::test]
+async fn past_its_cap_the_store_drops_the_gzip_asked_for_least_recently() {
+    let ([(a, a_bytes), (b, b_bytes), (c, c_bytes)], cap) = three_over_a_cap_of_two().await;
+    let store = Store::new(cap);
+    let a_zipped = store.gzipped(&a, &a_bytes).await.unwrap();
+    store.gzipped(&b, &b_bytes).await.unwrap();
+    // Asked for again, `a` is now more recent than `b`, though it was made first.
+    assert_eq!(store.gzipped(&a, &a_bytes).await.unwrap(), a_zipped);
+    store.gzipped(&c, &c_bytes).await.unwrap();
+    assert!(
+        store.kept() <= cap,
+        "{} kept over a cap of {cap}",
+        store.kept()
+    );
+
+    assert_eq!(store.gzipped(&a, &a_bytes).await.unwrap(), a_zipped);
+    assert_eq!(store.runs(&a), 1, "the most recently asked for stays");
+    let b_again = store.gzipped(&b, &b_bytes).await.unwrap();
+    assert_eq!(gunzip(&b_again), b_bytes);
+    assert_eq!(
+        store.runs(&b),
+        2,
+        "a content dropped past the cap is compressed again"
+    );
+    // Making `b` again dropped `c`, now the least recently asked for.
+    store.gzipped(&c, &c_bytes).await.unwrap();
+    assert_eq!(store.runs(&c), 2);
+    assert!(
+        store.kept() <= cap,
+        "{} kept over a cap of {cap}",
+        store.kept()
+    );
+}
+
+#[tokio::test]
+async fn a_gzip_larger_than_the_whole_cap_is_sent_and_not_kept() {
+    let source = Bytes::from(module("over_the_cap", 50_000));
+    let hash = sha256(&source);
+    let store = Store::new(100);
+    for runs in 1..=2 {
+        let zipped = store.gzipped(&hash, &source).await.unwrap();
+        assert_eq!(gunzip(&zipped), source);
+        assert_eq!(store.kept(), 0);
+        assert_eq!(store.runs(&hash), runs);
+    }
 }
 
 #[tokio::test]
