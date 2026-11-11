@@ -26,6 +26,7 @@ mod common;
 mod components;
 #[path = "../../../../tools/test-support/script_std.rs"]
 mod fixture_script;
+mod layout_shift;
 mod look_parity;
 mod notice_layout;
 mod owner_controls;
