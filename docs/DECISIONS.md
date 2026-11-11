@@ -49,6 +49,29 @@ their dated history work is in [REVIEW](REVIEW.md).
   [2026-11-11 19:33] owner · approved
   [2026-11-11 19:39] agent · question — Your approval came before these pictures, so it takes the five defaults but not how asks look. With asks, the queue, the tasks board and the home page, then the queue and the board on a phone: ![The queue with asks](analysis/owner-asks-queue-asks.png) ![The board with asks](analysis/owner-asks-board-asks.png) ![The home page with asks](analysis/owner-asks-home-asks.png) ![The queue with asks on a phone](analysis/owner-asks-queue-asks-phone.png) ![The board with asks on a phone](analysis/owner-asks-board-asks-phone.png) Is this how asks should look? Approve to keep it, or comment with what to change. The same pages today are at [[analysis/owner-asks#Pictures]].
 
+### Build tools
+
+- [ ] **relax-not-adopted** — Could Relax, Makepad's live Rust compiler, make Symphony's builds faster? Tried on this workspace against cargo: not yet, so nothing is adopted and cargo stays the build and the gate. Of the six cases tried, three ran and matched cargo. `docs-audit`, the server and the `chrome-devtools` tests stop on gaps in its standard library and its ARM vector instructions, and 7 of the 32 `symphony-schema` tests fail under it that pass under cargo. Where it runs, an edit reaches its result sooner; with nothing changed it is slower, and that is every `just tasks` command. Approve to close, or comment. [[analysis/relax-build-trial#The result]]
+  [2026-11-11 20:12] agent — Posted for the board task `tools/relax-build-trial`. Medians of three runs each, at load 150 to 275 on 16 cores:
+
+    | | cargo | Relax |
+    |---|---|---|
+    | `symphony-args` tests, after an edit | 3.1 s | 0.8 s |
+    | `symphony-api` tests, clean checkout | 37 s, 22 CPU-s | 28 s, 39 CPU-s |
+    | `symphony-api` tests, after an edit | 18 s, 9 CPU-s | 10 s, 20 CPU-s |
+    | `symphony-api` tests, nothing changed | 3.0 s | 5.6 s |
+    | `tasks list`, after an edit in `crates/tasks` | 75 s, 27 CPU-s | 12 s, 14 CPU-s |
+    | `tasks list`, nothing changed | 5 s, 0.3 CPU-s | 11 s, 12 CPU-s |
+    | 18 short `symphony-api` tests, run alone | 0.03 to 0.10 s | 3.7 to 5.0 s |
+    | peak memory, `tasks list` | 720 MB | 1.05 GB |
+    | disk, per worktree | 4.7 GB | 2.5 GB, and 1.2 GB once per machine |
+
+    **Adopted:** nothing: no recipe, pin or doc change. The trial's Relax build stayed in a scratch folder.
+
+    **Why not.** The crates agents edit most (`symphony`, the board's library, the server) do not run under it. Its false failures would send agents after bugs that are not theirs. The board launcher's usual case, nothing changed, gets slower and takes 1 GB per command. And on `symphony-api` it spends twice cargo's CPU on a machine whose limit is CPU. Short test processes never leave its slowest tier, which is where LLVM wins for us.
+
+    **What would change it:** a published `relax` binary to pin, the missing standard library pieces and ARM vector instructions, and test runs that do not start on its slowest tier. [[analysis/relax-build-trial#What would have to change]]
+
 ## Auto-approved: spot-check
 
 ### Names
