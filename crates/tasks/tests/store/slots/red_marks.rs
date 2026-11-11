@@ -88,7 +88,7 @@ fn a_red_whose_mark_its_filer_lifts_counts_with_the_work_under_it_never_refused_
     assert!(!lifted.red() && lifted.status == "review", "{lifted:?}");
     let said = refused(store.claim("work/next", K));
     assert!(
-        said.starts_with("work/next cannot start: olive-orch holds 10 open tasks")
+        said.starts_with("work/next cannot start: olive-orch holds 9 open tasks")
             && said.contains("fix/under (in_progress)")
             && said.contains("tests/main-red-race (review)")
             && !said.contains("not counted"),

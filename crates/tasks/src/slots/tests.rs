@@ -1,10 +1,12 @@
 use super::*;
 
+mod features;
 mod red;
 
 fn entry<'a>(slug: &'a str, parent: Option<&'a str>, status: &'a str) -> Entry<'a> {
     Entry {
         slug,
+        branch: None,
         parent,
         status,
         instruction: false,
@@ -62,7 +64,7 @@ fn a_mirror_counts_with_the_task_it_reviews_when_the_board_holds_it() {
 }
 
 #[test]
-fn each_open_task_holds_a_slot_of_its_own_and_only_a_mirror_or_an_instruction_shares_one() {
+fn every_subtask_and_mirror_shares_the_parent_features_slot_and_owner() {
     let ledger = Ledger::new(
         [
             led("a", None, "in_progress", "o"),
@@ -80,14 +82,14 @@ fn each_open_task_holds_a_slot_of_its_own_and_only_a_mirror_or_an_instruction_sh
     );
     for (slug, owners, key) in [
         ("a", vec!["o"], "a"),
-        ("a/b", vec!["o"], "a/b"),
-        ("a/b/c", vec!["o"], "a/b/c"),
+        ("a/b", vec!["o"], "a"),
+        ("a/b/c", vec!["o"], "a"),
         ("a/build", vec!["o"], "a"),
         ("a/build/again", vec!["o"], "a"),
-        ("a/b/fix", vec!["o"], "a/b"),
-        ("a/d", vec!["p"], "a/d"),
-        ("a/d/e", vec!["p"], "a/d/e"),
-        ("review/a/d/e", vec!["p"], "a/d/e"),
+        ("a/b/fix", vec!["o"], "a"),
+        ("a/d", vec!["o"], "a"),
+        ("a/d/e", vec!["o"], "a"),
+        ("review/a/d/e", vec!["o"], "a"),
     ] {
         let place = ledger.place(slug);
         assert_eq!(
@@ -97,11 +99,11 @@ fn each_open_task_holds_a_slot_of_its_own_and_only_a_mirror_or_an_instruction_sh
         );
     }
     assert_eq!(ledger.work("orphan"), "orphan", "its parent is not read");
-    assert_eq!(keys(&ledger, "o"), ["a", "a/b", "a/b/c"]);
-    assert_eq!(keys(&ledger, "p"), ["a/d", "a/d/e"]);
+    assert_eq!(keys(&ledger, "o"), ["a"]);
+    assert!(keys(&ledger, "p").is_empty());
     assert_eq!(
         named(&ledger.held("o")),
-        "a (in_progress) with a/build (in_progress) with a/build/again (in_progress), a/b (in_progress) with a/b/fix (in_progress), a/b/c (in_progress)"
+        "a (in_progress) with a/b (in_progress) with a/b/c (in_progress) with a/b/fix (in_progress) with a/build (in_progress) with a/build/again (in_progress) with a/d (in_progress) with a/d/e (review) with review/a/d/e (review)"
     );
 }
 
@@ -121,7 +123,7 @@ fn a_task_nobody_orchestrates_counts_against_its_executors_parents() {
         (vec!["o"], "loose", true)
     );
     let place = ledger.place("loose/sub");
-    assert_eq!((place.owners, place.key), (vec!["p"], "loose/sub"));
+    assert_eq!((place.owners, place.key), (vec!["o"], "loose"));
     assert!(
         ledger.place("idle").owners.is_empty(),
         "no executor, no one to count against"
@@ -129,7 +131,7 @@ fn a_task_nobody_orchestrates_counts_against_its_executors_parents() {
     let place = ledger.place_by("idle", &["w3", "nobody"]);
     assert_eq!(place.owners, vec!["p"]);
     assert_eq!(keys(&ledger, "o"), ["loose"]);
-    assert_eq!(keys(&ledger, "p"), ["loose/sub"]);
+    assert!(keys(&ledger, "p").is_empty());
 }
 
 /// `slug`, blocked under a hold that keeps its slot, of `by`'s.
@@ -220,11 +222,14 @@ fn a_change_of_parent_moves_the_open_work_below_to_the_new_tree() {
     assert_eq!(
         started(&before, &detached, 1),
         Ok(vec!["o"]),
-        "a slot freed"
+        "the owner's slot membership changes"
     );
     let back = detached.reparented("a/part", Some("a"));
-    assert_eq!(started(&detached, &back, 2).unwrap_err().owner, "o");
-    assert_eq!(started(&detached, &back, 3), Ok(vec!["o"]));
+    assert_eq!(
+        started(&detached, &back, 2),
+        Ok(vec!["o"]),
+        "joins the existing feature slot"
+    );
     let under = before.reparented("loose", Some("other"));
     assert_eq!(
         under.place("loose/one").owners,
@@ -261,9 +266,9 @@ fn a_start_is_refused_only_when_it_raises_an_owner_past_the_cap() {
         "an instruction joins s1's slot, and the write still holds o's counter"
     );
     assert_eq!(
-        started(&before, &start("s1/sub"), 3).map_err(|f| f.owner),
-        Err("o"),
-        "a subtask that is work of its own takes a slot of its own"
+        started(&before, &start("s1/sub"), 3),
+        Ok(vec!["o"]),
+        "a regular subtask joins the feature slot too"
     );
     assert_eq!(
         started(&before, &start("next"), 2).unwrap_err().held.len(),
@@ -338,11 +343,11 @@ fn taking_the_role_moves_the_slots_of_the_work_below_to_the_taker() {
     assert_eq!(started(&before, &taken("b"), 1).unwrap_err().owner, "o");
     assert_eq!(started(&before, &taken("a"), 1), Ok(vec![]), "its own");
     assert_eq!(
-        started(&before, &taken("c"), 2).unwrap_err().owner,
+        started(&before, &taken("c"), 1).unwrap_err().owner,
         "o",
-        "c is not open, the two below it are"
+        "c is not open, its children together hold one slot"
     );
-    assert_eq!(started(&before, &taken("c"), 3), Ok(vec!["o"]));
+    assert_eq!(started(&before, &taken("c"), 2), Ok(vec!["o"]));
 }
 
 #[test]

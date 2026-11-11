@@ -131,7 +131,7 @@ fn a_hold_ends_with_a_change_of_parent_and_frees_the_slot() {
     let f = eight_and(&[("work/next", "ready")]);
     let store = capped(&f, 8);
     store.hold_blocked("work/h", O).unwrap();
-    store.set_parent("work/h", Some("work/a"), O).unwrap();
+    store.set_parent("work/h", None, O).unwrap();
     assert_eq!(store.claim("work/next", K).unwrap().status, "in_progress");
     assert_eq!(
         refused(store.move_to("work/h", "in_progress", O)),
@@ -185,7 +185,7 @@ fn a_dependency_change_that_would_start_blocked_work_past_the_cap_is_refused() {
 }
 
 #[test]
-fn a_change_of_parent_that_would_bring_open_work_under_a_full_orchestrator_is_refused() {
+fn reparenting_open_work_into_an_existing_feature_consumes_no_extra_slot() {
     let mut seed = sessions();
     for (slug, status) in &EIGHT[..7] {
         seed = with(seed, slug, status, None, Some(O));
@@ -195,19 +195,15 @@ fn a_change_of_parent_that_would_bring_open_work_under_a_full_orchestrator_is_re
     seed = with(seed, "loose", "review", None, None);
     let f = Fixture::new(seed.role("work/a/part", K, "executor"));
     let store = capped(&f, 8);
-    // The way round the cap a review found: take open work from under the orchestrator's tree,
-    // start new work in the slot that frees, and put it back.
+    // A child leaving its feature does not free the feature's slot. Rejoining an already counted
+    // feature, including after another feature starts, does not consume another slot.
     store.set_parent("work/a/part", None, K).unwrap();
     assert_eq!(store.claim("work/next", K).unwrap().status, "in_progress");
+    store.set_parent("work/a/part", Some("work/a"), K).unwrap();
+    store.set_parent("loose", Some("work/b"), K).unwrap();
     assert_eq!(
-        refused(store.set_parent("work/a/part", Some("work/a"), K)),
-        format!("work/a/part cannot go under work/a: {}", holds_next())
-    );
-    assert_eq!(store.get("work/a/part").unwrap().parent, None);
-    assert_eq!(
-        refused(store.set_parent("loose", Some("work/b"), K)),
-        format!("loose cannot go under work/b: {}", holds_next()),
-        "open work nobody orchestrated comes under O"
+        store.get("work/a/part").unwrap().parent.as_deref(),
+        Some("work/a")
     );
     // A change that leaves every count as it was is not refused, nor is the owner's.
     store.set_parent("work/next", Some("work/a"), O).unwrap();
@@ -259,7 +255,7 @@ fn open_work_handed_back_and_forth_between_orchestrators_is_refused_at_the_cap()
 }
 
 #[test]
-fn open_work_moved_under_one_task_still_holds_a_slot_each_and_an_instruction_shares_its_tasks() {
+fn open_work_moved_under_one_feature_shares_its_slot_regardless_of_instruction_flag() {
     let seed = super::eight_and_seed(&[("work/next", "ready")]);
     let id = seed.dump.tasks.len() as i64 + 1;
     let seed = seed.task_row(TaskRow {
@@ -269,25 +265,30 @@ fn open_work_moved_under_one_task_still_holds_a_slot_each_and_an_instruction_sha
         ..task("work/a/build", "ready")
     });
     let f = Fixture::new(seed);
-    // The way round the cap a review found: gather the open work under one task.
+    // One parent delivery owns all its implementation slices.
     for (slug, _) in &EIGHT[1..] {
         f.store.set_parent(slug, Some("work/a"), O).unwrap();
     }
-    let store = capped(&f, 8);
+    let store = capped(&f, 1);
+    let shared = HOLDS_EIGHT
+        .replace(
+            "holds 8 open tasks, the cap of 8",
+            "holds 1 open tasks, the cap of 1",
+        )
+        .replace("), work/", ") with work/");
     assert_eq!(
         refused(store.claim("work/next", K)),
         format!(
-            "work/next cannot start: {HOLDS_EIGHT}{}",
+            "work/next cannot start: {shared}{}",
             reserve_hint("work/next")
         )
     );
-    // An instruction for work/a is no work of its own.
     assert_eq!(
         store.claim("work/a/build", K).unwrap().status,
         "in_progress"
     );
     assert_eq!(refused(store.claim("work/next", K)), {
-        let shared = HOLDS_EIGHT.replace(
+        let shared = shared.replace(
             "work/a (in_progress)",
             "work/a (in_progress) with work/a/build (in_progress)",
         );

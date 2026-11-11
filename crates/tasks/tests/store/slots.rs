@@ -5,6 +5,9 @@
 //! before it changed, [`red_marks`]'; what the cap costs, [`cost`]'s.
 
 mod cost;
+mod features;
+mod holdings;
+mod migration;
 mod moves;
 mod red_marks;
 mod reservations;
@@ -287,19 +290,19 @@ fn a_move_into_in_progress_from_blocked_or_ready_is_refused_at_the_cap() {
 fn taking_orchestrator_on_open_work_is_refused_at_the_cap_and_on_its_own_or_unstarted_work_is_not()
 {
     let mut seed = sessions();
-    for (slug, status) in &EIGHT[..7] {
+    for (slug, status) in &EIGHT {
         seed = with(seed, slug, status, None, Some(O));
     }
-    // Work of its own below one of O's: O's eighth open task.
+    // A regular child shares work/a's slot, including when O takes its local role.
     seed = with(seed, "work/a/part", "in_progress", Some("work/a"), None);
     seed = with(seed, "loose", "in_progress", None, None);
     seed = with(seed, "later", "ready", None, None);
     seed = with(seed, "later/one", "review", Some("later"), None);
     let f = Fixture::new(seed);
     let store = capped(&f, 8);
-    let holds = HOLDS_EIGHT.replace(", work/h (review)", "").replace(
-        "work/a (in_progress), ",
-        "work/a (in_progress), work/a/part (in_progress), ",
+    let holds = HOLDS_EIGHT.replace(
+        "work/a (in_progress)",
+        "work/a (in_progress) with work/a/part (in_progress)",
     );
     assert_eq!(
         refused(store.take_role("loose", O, "orchestrator")),
@@ -403,7 +406,7 @@ fn an_orchestrator_at_the_cap_still_starts_main_and_nightly_red_work_and_names_i
     assert_eq!(
         refused(store.claim("work/next", K)),
         format!(
-            "work/next cannot start: {HOLDS_EIGHT}; not counted, as red work takes no slot: fix/static (review), tests/main-red-abc (in_progress), tests/nightly-red-sim (in_progress){}",
+            "work/next cannot start: {HOLDS_EIGHT}; not counted, as red work takes no slot: tests/main-red-abc (in_progress) with fix/static (review), tests/nightly-red-sim (in_progress){}",
             reserve_hint("work/next")
         )
     );
@@ -411,7 +414,7 @@ fn an_orchestrator_at_the_cap_still_starts_main_and_nightly_red_work_and_names_i
 }
 
 #[test]
-fn a_cancelled_red_exempts_no_work_under_it_and_none_started_there_since() {
+fn a_cancelled_reds_children_share_one_counted_feature_without_exempting_other_work() {
     let f = Fixture::new(eight_and_seed(&[]));
     let store = capped(&f, 8);
     red(&store, "tests/main-red-old", "main");
@@ -427,22 +430,27 @@ fn a_cancelled_red_exempts_no_work_under_it_and_none_started_there_since() {
     // Started under the open red at the cap: red work, taking no slot.
     store.claim("fix/early", W).unwrap();
     store.move_to("tests/main-red-old", "cancelled", O).unwrap();
-    // Once the red is cancelled the work still open under it counts, and new work there takes a
-    // slot as any does, which O, now past the cap, lacks.
+    // Once the red is cancelled its active children hold one counted feature slot. More work in
+    // that same feature can join it, while an unrelated feature is still capped.
     store
         .create(&NewTask {
             parent: Some("tests/main-red-old".into()),
             ..NewTask::new("fix/late", "Late", "owner")
         })
         .unwrap();
-    assert_eq!(
-        refused(store.claim("fix/late", W)),
-        format!(
-            "fix/late cannot start: olive-orch holds 9 open tasks, the cap of 8 an orchestrator holds: fix/early (in_progress), work/a (in_progress), work/b (review), work/c (in_progress), work/d (review), work/e (in_progress), work/f (review), work/g (in_progress), work/h (review); a slot frees when one of them is done or cancelled{}",
-            reserve_hint("fix/late")
-        )
+    assert_eq!(store.claim("fix/late", W).unwrap().status, "in_progress");
+    store
+        .create(&NewTask::new("unrelated", "Unrelated", "owner"))
+        .unwrap();
+    store.take_role("unrelated", O, "orchestrator").unwrap();
+    let said = refused(store.claim("unrelated", K));
+    assert!(said.contains("holds 9 open tasks"), "{said}");
+    assert!(
+        said.contains("fix/early (in_progress) with fix/late (in_progress)"),
+        "{said}"
     );
-    assert_eq!(store.get("fix/late").unwrap().status, "ready");
+    assert!(!said.contains("not counted"), "{said}");
+    assert!(said.ends_with(&reserve_hint("unrelated")), "{said}");
 }
 
 #[test]

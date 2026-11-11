@@ -28,11 +28,15 @@
 //! transaction that reads the open tasks and the holds, so a start that wrote after that read is
 //! caught by the write, and one that wrote before it is in what was read.
 
+use super::branches::{self, OF_TASKS, ON_BRANCHES, Recorded};
 use super::{Change, Error, Failure, Opens, Store, View, Which, refused};
-use crate::slots::{self, Entry, Ledger, OPEN};
+use crate::slots::{self, OPEN};
 use serde::Deserialize;
 use serde_json::{Value, json};
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
+
+mod ledger;
+use ledger::Observation;
 
 /// Rounds of reads by id above the open tasks: deeper than any tree the board holds.
 const DEPTH: usize = 32;
@@ -57,7 +61,7 @@ pub const HOLDS: &str =
 pub const HELD_TASKS: &str = "SELECT slug, parent, status, instruction, fields._board.red AS red, updated FROM $slot_holds.map(|$h| type::record('task', $h[0]))";
 
 /// Every statement the cap sends, which `tests/store/slots/cost.rs` has the server plan.
-pub const STATEMENTS: [&str; 7] = [
+pub const STATEMENTS: [&str; 9] = [
     OPEN_TASKS,
     BY_ID,
     ROLES_OF,
@@ -65,25 +69,27 @@ pub const STATEMENTS: [&str; 7] = [
     HOLDS,
     HELD_TASKS,
     RED_COUNTERS,
+    OF_TASKS,
+    ON_BRANCHES,
 ];
 
-/// What `Which::Starting` sets before its `RETURN`: the open tasks, the holds and the tasks they
-/// hold, and all of those with the task read.
-pub(super) fn lets() -> String {
+/// The shared slot inputs before a snapshot's `RETURN`. `wanted` names the task being changed
+/// (`[$slug]`) or every task in a whole-board holdings observation (`$slugs`).
+pub(super) fn lets(wanted: &str) -> String {
     format!(
         "LET $slot_open = ({OPEN_TASKS}); LET $slot_holds = ({HOLDS}); LET $slot_held = ({HELD_TASKS});
-         LET $slot_wanted = array::union(array::union($slot_open.slug, $slot_held.slug), [$slug]);"
+         LET $slot_wanted = array::union(array::union($slot_open.slug, $slot_held.slug), {wanted});"
     )
 }
 
-/// The field of `Which::Starting`'s read the cap decides on.
+/// The shared snapshot field for admission and read-only holdings.
 pub(super) fn field() -> String {
     format!(
         "slots: {{ open: $slot_open, holds: $slot_holds, held: $slot_held, roles: ({ROLES_OF}), counted: ({COUNTERS}), reds: ({RED_COUNTERS}) }},"
     )
 }
 
-/// The variables [`lets`] and [`field`] read beside `$slug`.
+/// The variables [`lets`] and [`field`] read beside the wanted tasks.
 pub(super) fn vars() -> Value {
     json!({"slot_statuses": OPEN})
 }
@@ -215,6 +221,12 @@ pub(super) struct Read {
 }
 
 impl Read {
+    fn of(view: &View) -> Result<&Self, Failure> {
+        view.snap.slots.as_ref().ok_or_else(|| {
+            Failure::Stop(Error::Db("slot accounting read no admission ledger".into()))
+        })
+    }
+
     /// The tasks a hold keeps open: blocked, at the stamp the hold was made at.
     fn kept(&self) -> impl Iterator<Item = Row> + '_ {
         let stamps: HashMap<&str, Option<f64>> = (self.holds.iter())
@@ -235,9 +247,33 @@ impl Read {
 struct Level {
     tasks: Vec<Row>,
     roles: Vec<RoleRead>,
+    branches: Vec<Recorded>,
 }
 
 impl Store {
+    /// Counted parent-feature keys by owner, from one read-only whole-board observation.
+    /// Uses the admission ledger's hold-stamp and presence rules, including Unknown owners;
+    /// red work is excluded. No cap need be configured. Owners without a counted slot are absent.
+    /// This reads one snapshot (tasks, roles, branches, holds and session health), with no
+    /// per-parent follow-up reads. A failed observation returns an error, never empty holdings.
+    pub fn slot_holdings(&self) -> Result<BTreeMap<String, BTreeSet<String>>, Error> {
+        self.retrying(|| {
+            let view = self.view(&Which::SlotHoldings)?;
+            let observation = Observation::new(&view, Read::of(&view)?);
+            Ok(observation
+                .ledger(&view)
+                .holdings()
+                .into_iter()
+                .map(|(owner, slots)| {
+                    (
+                        owner.to_string(),
+                        slots.into_keys().map(String::from).collect(),
+                    )
+                })
+                .collect())
+        })
+    }
+
     /// A rule's read of `which` ([`Store::ruling`]) and what `decide` makes of it, with the counters
     /// its write holds: a start's under this store's cap, and a red's close's whether this store
     /// caps starts or not, a close of an open red read without the cap's board read and decided
@@ -293,79 +329,11 @@ impl Store {
         opens: &Opens,
         cap: Option<usize>,
     ) -> Result<Vec<Value>, Failure> {
-        let Some(read) = &view.snap.slots else {
-            return Err(Failure::Stop(super::Error::Db(
-                "a start read nothing for the cap".into(),
-            )));
-        };
-        let mut rows: HashMap<String, Row> = HashMap::new();
-        for row in read.open.iter().cloned().chain(read.kept()) {
-            rows.insert(row.slug.clone(), row);
-        }
-        for task in &view.snap.tasks {
-            let row = &task.row;
-            rows.entry(row.slug.clone()).or_insert_with(|| Row {
-                slug: row.slug.clone(),
-                parent: row.parent.clone(),
-                status: row.status.clone(),
-                instruction: Some(row.instruction),
-                red: (crate::red::marked(&row.fields)).then_some(Value::Bool(true)),
-                updated: None,
-                held: false,
-            });
-        }
+        let read = Read::of(view)?;
         let parent = opens.parent.as_ref().map(Option::as_deref);
-        let mut roles = read.roles.clone();
-        let mut looked: BTreeSet<String> = rows.keys().cloned().collect();
-        for _ in 0..DEPTH {
-            let above = (rows.values()).map(|r| (r.slug.as_str(), r.parent.as_deref()));
-            let wanted: Vec<String> = (slots::wanted(above).into_iter())
-                .chain(parent.flatten())
-                .filter(|s| !looked.contains(*s))
-                .map(String::from)
-                .collect();
-            if wanted.is_empty() {
-                break;
-            }
-            looked.extend(wanted.iter().cloned());
-            let level: Level = self.transact(
-                &format!("RETURN {{ tasks: ({BY_ID}), roles: ({ROLES_OF}) }};"),
-                json!({"slot_wanted": wanted}),
-            )?;
-            for row in level.tasks {
-                rows.insert(row.slug.clone(), row);
-            }
-            roles.extend(level.roles);
-        }
-        let mut orchestrators: HashMap<&str, Vec<&str>> = HashMap::new();
-        let mut executors: HashMap<&str, Vec<&str>> = HashMap::new();
-        for role in &roles {
-            let (slug, handle) = (role.slug.as_str(), role.handle.as_str());
-            match role.role.as_str() {
-                "orchestrator" if view.health(handle).holds() => {
-                    orchestrators.entry(slug).or_default().push(handle);
-                }
-                "executor" => executors.entry(slug).or_default().push(handle),
-                _ => {}
-            }
-        }
-        for held in orchestrators.values_mut().chain(executors.values_mut()) {
-            held.sort_unstable();
-            held.dedup();
-        }
-        let tasks = rows.values().map(|row| Entry {
-            slug: &row.slug,
-            parent: row.parent.as_deref(),
-            status: &row.status,
-            instruction: row.instruction.unwrap_or(false),
-            held: row.held,
-            orchestrators: orchestrators.remove(row.slug.as_str()).unwrap_or_default(),
-            executors: executors.remove(row.slug.as_str()).unwrap_or_default(),
-            red: row.red.as_ref().is_some_and(|what| !what.is_null()),
-        });
-        let parents = (view.snap.sessions.iter())
-            .filter_map(|row| Some((row.handle.as_str(), row.parent.as_deref()?)));
-        let before = Ledger::new(tasks, parents);
+        let mut observation = Observation::new(view, read);
+        observation.read_above(self, parent.flatten())?;
+        let before = observation.ledger(view);
         let by: Vec<&str> = opens.by.iter().map(String::as_str).collect();
         let mut after = before.changed(
             slug,

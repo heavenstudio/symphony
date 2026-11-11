@@ -10,6 +10,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 fn task(slug: &str, parent: Option<&str>, roles: &[(&str, &str)]) -> Task {
     Task {
+        branch: None,
         id: 0,
         slug: slug.into(),
         title: String::new(),

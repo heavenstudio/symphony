@@ -12,7 +12,7 @@ impl Store {
         const SCOPED: &str = " WHERE slug IN $slugs";
         const KNOWN: &str = "record::exists(type::record('task', $slug))";
         let (pick, scope, known, mut vars) = match which {
-            Which::All => (
+            Which::All | Which::SlotHoldings => (
                 "SELECT * OMIT id FROM task ORDER BY priority, sid",
                 "",
                 "true",
@@ -69,11 +69,16 @@ impl Store {
             ),
             _ => ("[]", "[]"),
         };
-        let (slot_lets, slots) = if matches!(which, Which::Starting(_)) {
+        let (slot_lets, slots) = if matches!(which, Which::Starting(_) | Which::SlotHoldings) {
             if let (Some(vars), Value::Object(more)) = (vars.as_object_mut(), cap::vars()) {
                 vars.extend(more);
             }
-            (cap::lets(), cap::field())
+            let wanted = if matches!(which, Which::SlotHoldings) {
+                "$slugs"
+            } else {
+                "[$slug]"
+            };
+            (cap::lets(wanted), cap::field())
         } else {
             (String::new(), String::new())
         };
@@ -82,10 +87,12 @@ impl Store {
         let read = format!(
             "LET $tasks = ({pick});
              LET $slugs = $tasks.slug;
+             LET $slot_wanted = $slugs;
              {HELD}
              {slot_lets}
              RETURN {{
                  tasks: $tasks,
+                 branches: ({}),
                  links: (SELECT slug, kind, target FROM link{scope} ORDER BY target),
                  roles: (SELECT slug, handle, role, since, expires FROM role{scope} ORDER BY since, handle),
                  sessions: (SELECT * OMIT id FROM session ORDER BY connected, handle),
@@ -98,7 +105,7 @@ impl Store {
                  known: {known},
                  mine: {mine},
                  {slots}
-             }};"
+             }};", super::branches::OF_TASKS
         );
         (read, vars)
     }

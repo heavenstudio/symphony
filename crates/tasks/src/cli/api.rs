@@ -21,13 +21,14 @@ use std::io::{BufRead, Read, Write};
 /// landing's changes verdict sends work in review back; 7: `create`'s `red`, the mark of a task
 /// filed for a red, which takes no slot, `mark_red` for a red filed before it and `unmark_red` for
 /// one left open as ordinary work, each from a session of kind `filer` alone, which `register`
-/// takes). The live launcher (`tools/tasks.sh`) serves an earlier main build only while this
+/// takes; 8: `tasks_for_branch`, the shared slug/recorded-branch pairing). The live launcher
+/// (`tools/tasks.sh`) serves an earlier main build only while this
 /// matches main's, so no caller reaches a build without what it relies on.
 #[expect(
     dead_code,
     reason = "tools/tasks.sh reads it from the committed source; no Rust code compares builds"
 )]
-pub const VERSION: i64 = 7;
+pub const VERSION: i64 = 8;
 
 /// Why a call has no result.
 enum Fail {
@@ -388,6 +389,11 @@ fn dispatch<F: FnOnce() -> Result<Store, String>>(
             args!(status: take);
             let status: Option<String> = status;
             shape::tasks(&board.get()?.tasks(status.as_deref())?)
+        }
+        "tasks_for_branch" => {
+            args!(branch: need);
+            let branch: String = branch;
+            shape::tasks(&board.get()?.tasks_for_branch(&branch)?)
         }
         "linked_to" => {
             args!(doc: need);

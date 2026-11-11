@@ -98,7 +98,12 @@ fn the_caps_reads_are_planned_on_an_index_and_a_capped_claim_adds_a_round_trip_a
             );
         }
     }
-    for (statement, index) in [(SLOT_READS[0], "task_status"), (SLOT_READS[2], "role_slug")] {
+    for (statement, index) in [
+        (SLOT_READS[0], "task_status"),
+        (SLOT_READS[2], "role_slug"),
+        (SLOT_READS[7], "task_session_slug"),
+        (SLOT_READS[8], "task_session_branch"),
+    ] {
         let plan = format!(
             "{:?}",
             client.query(&format!("EXPLAIN {statement};"), vars.clone())
@@ -117,5 +122,20 @@ fn the_caps_reads_are_planned_on_an_index_and_a_capped_claim_adds_a_round_trip_a
     assert!(
         held <= plain + DEEPEST,
         "{held} round trips capped, {plain} uncapped: one more for each of {DEEPEST} levels at most"
+    );
+    let observation = f.other();
+    let before = observation.client().requests();
+    let began = std::time::Instant::now();
+    let holdings = observation.slot_holdings().unwrap();
+    eprintln!(
+        "perf: one whole-board holdings observation took {:?}",
+        began.elapsed()
+    );
+    assert_eq!(observation.client().requests() - before, 1);
+    assert_eq!(holdings.len(), 1, "finished history holds no slots");
+    assert_eq!(holdings[O].len(), 9);
+    assert!(
+        holdings[O].contains("deep"),
+        "nested work uses its feature key"
     );
 }

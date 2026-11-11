@@ -9,7 +9,9 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 impl<'a> Ledger<'a> {
     /// The open reds that make `slug` red work ([`Ledger::red`]), nearest first.
     pub(super) fn exempting(&self, slug: &'a str) -> impl Iterator<Item = &'a str> + '_ {
-        let chain = self.chain(self.work(slug)).into_iter();
+        // Exemption follows the actual repair subtree, not the shared feature key: a red child
+        // must never exempt its ordinary parent or siblings.
+        let chain = self.chain(self.reviewed(slug)).into_iter();
         chain.filter(|at| self.tasks[at].red && crate::red::open(self.tasks[at].status))
     }
 
