@@ -19,24 +19,27 @@ Read 2026-11-11 on Star Foundry's board, through the shared server's own pages a
   41 blocked), 41 in backlog. **2 are being worked** by an agent that is there.
 - **41 blocked**, a median of 10 days in blocked, the oldest 44 days: 18 were moved there from
   review, 18 from in progress, 5 from ready. Read from each thread by hand, 9 wait on the owner (the
-  oldest 44 days), 7 on the nightly, 6 on other unfinished work, 12 are parked on purpose (a cost
-  exemption that stays, a recurrence, a quiet machine) and 7 on nobody: 3 whose orchestrator or
-  agent left, 4 whose blocker has finished with nobody resuming them.
+  oldest 44 days), 7 on the nightly, 6 on other unfinished work, 1 on its orchestrator's call (that
+  orchestrator stale, so still there), 12 are parked on purpose (a cost exemption that stays, a
+  recurrence, a quiet machine) and 6 on nobody: 2 whose agent or orchestrator left, 4 whose blocker
+  has finished with nobody resuming them.
 - **None of that is on a card.** The move to blocked is a line with no reason (`X moved it review →
   blocked`); the reason is in a post near it, often several hundred words long. The Blocked column
   sits in a lower row, below the first screen on a wide screen.
 - **Roles that left stay.** The 41 blocked cards draw 117 role chips, 110 of them for sessions that
   left or were lost; 24 blocked tasks show a reviewer no longer there, one card 8 reviewers, all gone.
-  Of the 31 ready tasks none has an executor, and the orchestrators they name have left: Star
-  Foundry has no orchestrator live (one stale, one left), so nobody will start the 25 of them that
-  wait on nothing else. Nothing on the page says so.
+  Of the 31 ready tasks none has a live executor (one holds a lost one), and 8 wait on unfinished
+  work (2 of them on a blocked subtask). Star Foundry has no live orchestrator (sable-finch-625
+  stale, glacial-heron-497 left), so nobody will start the other 23. Nothing on the page says so.
 - **Ages.** Ready tasks have waited a median of 6.5 days. Nothing on the page shows an age.
-- **Review rounds.** Of the 73 subtasks under the blocked, in-progress and review tasks, 24 are
-  review rounds (`review`, `adversarial`, `rereview`, …); one task has 6. Over 14 days, 233 of 328
+- **Review rounds.** Of the 73 subtasks under the blocked, in-progress and review tasks, 20 to 24
+  are review rounds (`review`, `adversarial`, `rereview`, …, 24 with the visual critiques); one task
+  has 6. Over 14 days, 233 of 328
   subtasks were review rounds (tools/stage-times' measurement).
 - **The first screen.** Wide (1440), it shows Concept, Design, Ready, In progress and an empty Build
-  column; Review and Done are off to the right, the lower row below. On a phone it is the header (three
-  rows), the filters and the scroll hint; the first card starts at the bottom edge.
+  column; Review and Done are off to the right, the lower row below. On a phone the header (three
+  rows), the filters and the scroll hint come first; the first card starts mid-screen, at about 457
+  of 844 px, with the next column cut at the right edge.
 - **Health.** Star Foundry's board answered writes in 3.0 s at p90 over the last hour, with 95 slow
   requests and 48 unanswered; Symphony's in 7 ms with none. The Projects page shows neither: it
   warns only while callbacks or the sweep fail.
@@ -52,27 +55,38 @@ words, and for how long, the age in its current stage (red from a week).
 | line | when | colour |
 |---|---|---|
 | Working · executor amber-heron | someone there holds the role the stage needs | `--like` |
-| On you · your choice on its HUD card | a card of the owner's the task names, a block naming the owner | `--primary` |
-| On the nightly · lands on a green nightly | a block naming a check, or land's hold on a stamp | `--question` |
-| On tools/unsafe-removal · its dependency, blocked | an open dependency, or a block naming a task | `--decision` |
-| On nobody · its pilot is done; nobody resumed it | the role the stage needs held by one who left, a block naming one who left, a block whose task finished, a block with no reason | `--dislike` |
+| On you · your choice on its HUD card | a card of the owner's the task names, a block naming the owner, an owner gate the project holds | `--primary` |
+| On the nightly · lands on a green nightly | what its landing lacks (the landing's own record), a project's check gate missing or held, a block naming a check | `--question` |
+| On tools/unsafe-removal · its dependency, blocked | an open dependency (a subtask too), or a block naming a task | `--decision` |
+| On sable-finch-625 (stale) · its orchestrator's call | a block naming a session that is there | `--auto` |
+| On nobody · its pilot is done; nobody resumed it | the role the stage needs held by one who left or was lost, or by no one in progress or review; a block naming one who left, a block whose task finished, a block with no reason | `--dislike` |
 | Queued · not claimed yet | concept, design or ready work with no holder and nothing open before it: it waits to be staffed | muted |
 | Parked · until the machine is quiet | a block naming no one on purpose (`--on parked`): a recurrence, an exemption that stays | muted |
 
 Queued and parked work is drawn quieter than stuck work, its age never red: it waits by design.
 
-- **One cause is said once.** When no orchestrator is live on the board while queued work waits,
-  a banner above the board says so (`No orchestrator is live. 25 of the 31 ready tasks wait to start ·
-  sable-finch-625 stale, glacial-heron-497 left`), rather than 25 cards each saying it.
+- **A stale session is there, marked stale.** The board's own rule (docs/TASKS.md: a stale
+  session's "work is still held, nobody may take it"), applied the same way on the card line, the
+  banner and the Projects page. A stale holder reads `Working · executor amber-heron (stale)`, a
+  block naming one reads `On amber-heron (stale)`, and neither is ever "on nobody". Only lost and
+  left sessions are gone.
+- **One cause is said once.** When no orchestrator is live, a banner above the board says so and
+  names who is stale or gone, with the ready work nobody will start: `No live orchestrator.
+  sable-finch-625 is stale, glacial-heron-497 left · 23 of the 31 ready tasks wait to start`, counted
+  by PULL's rule (ready, no live executor, nothing open before it). It is amber while an
+  orchestrator is stale and red when none is there. The cards it holds back read `Queued · not
+  claimed yet`, not the cause 23 times.
 - **Only present roles are drawn.** A role held by a session that left or was lost is not drawn on the
   card; when it is the role the stage needs, the line says so (`On nobody · executor amber-heron left
   2 h ago`). The task page keeps every role.
 - **A block names what it waits on.** Moving work to blocked records who can lift it and why, in a
-  few words: `just tasks move SLUG blocked --on owner|check:NAME|task:SLUG|HANDLE|parked --why "…"`. The
-  board's own blocks fill it themselves (a cancelled dependency names the task; land's hold names the
-  stamp, or the owner). A block written without one reads `On nobody · no reason recorded`, so an
-  orchestrator sees which to triage. A block naming a task that has since finished reads `On nobody ·
-  its dependency is done`.
+  few words: `just tasks move SLUG blocked --on owner|check:NAME|task:SLUG|HANDLE|parked --why "…"`.
+  A cancelled dependency's block names the task itself. What a landing lacks is not recorded again:
+  the landing tool already keeps it in `fields._board.waits` (`TIP: certificate, review`), and the
+  line reads it there, as it reads a project's own gates where the project answers them
+  (tools/task-gates-seam). A block written without a record reads `On nobody · no reason recorded`,
+  so an orchestrator sees which to triage. A block naming a task that has since finished reads `On
+  nobody · its dependency is done`.
 - **Review rounds are one mark** on the task (`3 reviews`), as tools/review-as-stamps' third slice
   has it; review subtasks are never cards.
 - **Documents and roles leave the card**; the slug stays, under the title, with the priority in
@@ -83,28 +97,33 @@ The rule for each line is the one the PULL digest already applies for orchestrat
 reviewer, dependency blocked), so the board and PULL never disagree.
 
 The strip that counts these kinds keeps one order everywhere: what needs someone first (on you, on
-nobody, a check, other tasks), then work going on, then work that waits by design (queued, parked).
+nobody, a check, other tasks, an agent), then work going on, then work that waits by design (queued,
+parked).
 
 ## The options
 
 All three draw the same cards, the same line and the same banner; they differ in where the waiting
 work goes. The pictures are HTML mock-ups (this folder) on the board's own tokens, filled with Star
-Foundry's board as read 2026-11-11, at 1440 wide and at a phone's 390, dark. The header is the app's
-compact one with today's names: its names and phone layout are app/header-names' cards.
+Foundry's board as read 2026-11-11, at 1440 wide and at a phone's 390, dark. All four pictures,
+today's included, carry today's header (three rows on a phone), filters and buttons, so they differ
+only in the board: the header's names and rows are app/header-names' cards, not this choice.
 
 ### A: a Blocked lane
 
-Today's board with the Blocked column lifted into a lane above the columns, in five groups by what
-lifts the block (blocked on you, on nobody, on the nightly, on other tasks; parked), oldest first,
-three a group and `+N more`. Its counts are of blocked tasks only (on nobody 7); B's strip and C's
-groups count all open work (on nobody 8, one of them in progress).
+Today's board with the Blocked column lifted into a lane above the columns, in six groups by what
+lifts the block (blocked on you, on nobody, on the nightly, on other tasks, on an agent; parked),
+oldest first, three a group and `+N more`. Its counts are of blocked tasks only (on nobody 6); B's
+strip and C's groups count all open work (on nobody 11: the 6 blocked, 3 in design, 1 ready and 1 in
+progress).
 
 ![A, wide](board-design/board-a-wide.png)
 ![A, on a phone](board-design/board-a-phone.png)
 
-- **Removes:** the Blocked column, role and document chips, the scroll hint.
+- **Removes:** the Blocked column, role and document chips, the scroll hint (a fade at the columns'
+  right edge says they go on).
 - **Keeps:** columns 288 px wide that scroll sideways, so Review and Done stay off the first screen
-  wide; Backlog and Cancelled in the lower row; the Status filter.
+  wide; Backlog and Cancelled in the lower row; the Status filter, search and the finished window
+  with their labels; Who is connected; the + button; the prev, next and top pager.
 - **Cost:** the least: the client groups what the line already says.
 
 ### B: stuck in place
@@ -119,34 +138,38 @@ On a phone, tabs show one stage at a time (`Review 1 +18`).
 ![B, on a phone](board-design/board-b-phone.png)
 
 - **Removes:** the lower row (Blocked goes into the stages; Backlog becomes a narrow rail; Cancelled a
-  count under Done), sideways scrolling wide, the Status filter (the strip and tabs replace it), role
-  and document chips, the scroll hint.
-- **Keeps:** the pipeline: where each task is.
+  count under Done), sideways scrolling wide, the Status filter (the strip and tabs replace it), the
+  prev, next and top pager (nothing scrolls sideways; a phone has tabs), role and document chips,
+  the scroll hint.
+- **Keeps:** the pipeline: where each task is; search and the finished window with their labels; Who
+  is connected; the + button.
 - **Cost:** the stage a blocked task came from, kept by the stages replay (`crates/tasks/src/stages.rs`)
   and put on the wire; tabs on a phone.
 
 ### C: who acts next
 
 No columns. The open work is one list grouped by who has to act next (you, nobody, a check, other
-tasks, then working, queued and parked), oldest first; each row has its stage, its reason and its
-age. The stages are a bar of their counts on top that filters the list.
+tasks, an agent, then working, queued and parked), oldest first; each row has its title and slug, its
+stage, its reason and its age. The stages are a bar of their counts on top that filters the list.
 
 ![C, wide](board-design/board-c-wide.png)
 ![C, on a phone](board-design/board-c-phone.png)
 
-- **Removes:** columns and sideways scrolling, the lower row, the Status filter, the scroll hint.
+- **Removes:** columns and sideways scrolling, the lower row, the Status filter (the bar filters by
+  stage), the prev, next and top pager, role and document chips, the scroll hint.
+- **Keeps:** search and the finished window with their labels; Who is connected; the + button.
 - **Loses:** the pipeline as a picture: where work piles up is the bar of counts, not columns.
 - **Cost:** a new page layout and a grouped read; the list pages by group.
 
 ### Recommended: C
 
-The owner's question of the board is who has to act and how long it has waited, and C is the only
-layout whose first screen answers it, wide and on a phone: the first group is the owner's, oldest
-first, with the age at the right. Every stuck task reads the same way whatever its stage, so 41
-blocked tasks are five short groups rather than 41 cards spread over columns. The pipeline is not
-lost: the bar on top keeps each stage's share and filters to it, and each row carries its stage. It
-is also the plainest to build on a phone: one list, no tabs, no sideways scroll. The fresh reviewer,
-shown the three without a recommendation, picked C for the same reason.
+The owner's question of the board is who has to act and how long it has waited. C answers it for
+all 86 open tasks in one order: who acts first, oldest first, the age at the right, the same wide
+and on a phone, with no sideways scroll. A answers it for the 41 blocked tasks only, above columns
+that still scroll sideways; B spreads the blocked work over Ready, In progress and Review, and its
+by-who order is a strip filter the owner has to tap. The pipeline is not lost in C: the bar on top
+keeps each stage's share and filters to it, and each row carries its stage. Both fresh reviewers
+picked C.
 
 B is the choice if the pipeline as columns matters more than who acts: it fits a wide screen and
 shows the bottleneck as a column's count, at the cost of phone tabs. A is the cheapest and keeps the
@@ -158,8 +181,8 @@ The machine's Projects page lists each project with its counts. While a board's 
 idle sweep is failing it already says so under the project's name (`⚠ The task board is unwell: …`,
 `apps/symphony-server/src/projects.rs`, `list_row`, from `live/health.rs`). It says nothing of a board
 that answers slowly or of one nobody orchestrates: at 19:10 on 2026-11-11 Star Foundry's writes took
-3.0 s at p90, 48 requests went unanswered that hour, and no orchestrator was live, while its row read
-like Symphony's.
+3.0 s at p90, 48 requests went unanswered that hour, and its one orchestrator was stale, while its row
+read like Symphony's.
 
 It gains a dot per project, its worst signal (green, amber, red) and, only when the dot is not green,
 one short line saying why, from the health the server already keeps in memory (`/api/health`,
@@ -167,8 +190,9 @@ one short line saying why, from the health the server already keeps in memory (`
 
 - **red:** what the row says today, callbacks or the sweep failing, in the same words;
 - **amber:** writes at p90 of a second or more, or requests unanswered in the last hour (`Board slow
-  (writes 3 s, 48 unanswered this hour)`); no orchestrator live while work is queued (`no
-  orchestrator running`).
+  (writes 3 s, 48 unanswered this hour)`); no live orchestrator while work is queued, by the board's
+  one rule for a stale session: `orchestrator stale` while one is stale, `no orchestrator` when none
+  is there.
 
 The counts say what they count, `18 decision cards waiting on you` (as today, the owner's cards),
 and gain the blocked tasks, `41 blocked, 9 of them on you`, from the line above, in bold.
@@ -183,28 +207,33 @@ is refused, or its board unwell"), so both read one function.
 
 Filed on the board in `design`, each waiting on its card, each brief complete:
 
-1. **tools/task-waits-on** (every option): the block record (`move … blocked --on --why`, kept in the
-   task's `fields._board`, which older readers keep and ignore, so no schema change), the line's
-   derivation on the server shared with PULL, and a `waits_on` on the wire (`kind`, `who`, `why`,
-   `since`), with `from` for a blocked task and the board's live orchestrators for the banner. The
-   age is tools/stage-times' `in_status_since`.
-2. **app/board-at-a-glance**: the card, the banner and the chosen layout in `apps/symphony-ui`
+1. **tools/task-waits-on** (every option), after tools/task-gates-seam and
+   tools/project-gates-everywhere: the block record (`move … blocked --on --why`, kept in the task's
+   `fields._board`, which older readers keep and ignore, so no schema change), the line's derivation
+   on the server shared with PULL, reading what a landing lacks from the landing's own
+   `fields._board.waits` and a project's gates where they answer, and a `waits_on` on the wire
+   (`kind`, `who`, `why`, `since`), with `from` for a blocked task and the board's orchestrators with
+   their health for the banner. The age is tools/stage-times' `in_status_since`.
+2. **app/board-at-a-glance**, after tools/task-waits-on, app/build-test-columns and
+   app/skeleton-loading: the card, the banner and the chosen layout in `apps/symphony-ui`
    (`tasks.rs`, `board_live.rs`, `board.css`).
 3. **app/projects-health**: the dot and line on the Projects page.
 
 Built on, not repeated: tools/stage-times (the age), tools/review-as-stamps (review rounds as marks),
-app/build-test-columns (the Build and Test columns, drawn as its rail here), app/header-names (the
-header), app/skeleton-loading (placeholders while columns load), tools/server-projects-list (health on
-`/api/projects`).
+tools/task-gates-seam and tools/project-gates-everywhere (a project's gates), app/build-test-columns
+(the Build and Test columns, drawn as its rail here), app/header-names (the header), app/skeleton-loading
+(placeholders while columns load), tools/server-projects-list (health on `/api/projects`).
 
 ## The data
 
 `board-design/sf-board.js` is the board the pictures draw: Star Foundry's open top-level tasks and
 the last day's done ones, read 2026-11-11 19:10 from the shared server's `/api/task-board` and each
 task's `/api/task-thread`, read only. The age is from each task's last status line; who a task waits
-on is from its roles and dependencies, and for a blocked task from the posts beside its move to
-blocked, shortened by hand to a few words (a block whose post says it is parked, stopped on purpose
-or waiting on a recurrence reads parked; unclaimed concept, design and ready work reads queued). The
+on is from its roles and their health (a lost or left holder of the needed role reads on nobody), its
+dependencies (subtasks too, their status read from `/api/task-page`), and for a blocked task from the
+posts beside its move to blocked, shortened by hand to a few words (a block whose post says it is
+parked, stopped on purpose or waiting on a recurrence reads parked; one naming a session that is
+there reads on that session; unclaimed concept, design and ready work reads queued). The
 pictures are the `.html` pages here, shot with `symphony shot` at `--phone` and at 1440 wide, and
 reduced to 256 colours; "Projects today" is the shared server's own page at 19:09.
 
