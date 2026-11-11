@@ -8,6 +8,9 @@ use serde::Deserialize;
 pub(crate) enum Failure {
     Known(String),
     Uncertain(String),
+    /// The server has no such thing (a 404): a known refusal, which a page shows as missing
+    /// rather than as a failed read.
+    Missing(String),
 }
 
 impl Failure {
@@ -19,9 +22,19 @@ impl Failure {
         Self::Uncertain(text.into())
     }
 
+    /// A refusal by the server's status: a 404 is missing, a server error leaves the outcome
+    /// unknown, and any other refusal is known.
+    pub(crate) fn refused(status: u16, text: impl Into<String>) -> Self {
+        match status {
+            404 => Self::Missing(text.into()),
+            500.. => Self::Uncertain(text.into()),
+            _ => Self::Known(text.into()),
+        }
+    }
+
     pub(crate) fn into_text(self) -> String {
         match self {
-            Self::Known(text) | Self::Uncertain(text) => text,
+            Self::Known(text) | Self::Uncertain(text) | Self::Missing(text) => text,
         }
     }
 }
@@ -90,5 +103,26 @@ mod tests {
         assert!(matches!(&failure, Failure::Known(why) if why == "invalid priority"));
         assert_eq!(failure.into_text(), "invalid priority");
         assert_eq!(Failure::uncertain("timed out").into_text(), "timed out");
+    }
+
+    #[test]
+    fn a_refusal_is_missing_on_404_uncertain_on_a_server_error_and_known_otherwise() {
+        assert_eq!(
+            Failure::refused(404, "no task 'nope'"),
+            Failure::Missing("no task 'nope'".into())
+        );
+        assert_eq!(
+            Failure::refused(500, "snapshot unavailable"),
+            Failure::uncertain("snapshot unavailable")
+        );
+        assert_eq!(Failure::refused(503, "busy"), Failure::uncertain("busy"));
+        for status in [400, 403, 409, 499] {
+            assert_eq!(
+                Failure::refused(status, "refused"),
+                Failure::known("refused"),
+                "{status}"
+            );
+        }
+        assert_eq!(Failure::refused(404, "gone").into_text(), "gone");
     }
 }

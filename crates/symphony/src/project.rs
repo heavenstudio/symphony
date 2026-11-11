@@ -40,6 +40,9 @@ pub const TRANSPORTS: [&str; 3] = ["claude-uds", "codex-queue", "inbox"];
 pub const PANES: [&str; 2] = ["hc", "none"];
 /// The id of a project whose folder's name has no letter or digit to make one of.
 pub const DEFAULT_ID: &str = "project";
+/// Where a project keeps its review guide, in an entrypoint's folder, in the order they are tried:
+/// the Symphony's own `docs/REVIEW.md`, and a consuming project's `docs/workflow/REVIEW.md`.
+pub const GUIDES: [&str; 2] = ["REVIEW.md", "workflow/REVIEW.md"];
 /// The prefix naming a path in the repository's common git folder.
 const COMMON_DIR: &str = ".git/";
 
@@ -255,7 +258,8 @@ impl Project {
 
     /// The project as the client's header and home read it: its theme package's name, its register
     /// (by its route when an entrypoint holds it, as every link names a document), its plugins'
-    /// navigation and its entrypoints' URLs, at the server's root (the server sets the base).
+    /// navigation and its entrypoints' URLs, at the server's root (the server sets the base). Its
+    /// review guide is a file only the project's folder can show: [`Project::view_at`] reads it.
     pub fn view(&self) -> symphony_api::ProjectView {
         symphony_api::ProjectView {
             name: crate::theme::Package::of(self).name,
@@ -263,9 +267,28 @@ impl Project {
             register: self
                 .route(&self.register)
                 .unwrap_or_else(|| self.register.clone()),
+            guide: String::new(),
             nav: crate::plugins::Plugins::for_project(self).nav(),
             entrypoints: self.entrypoints.iter().map(|e| e.url.clone()).collect(),
         }
+    }
+
+    /// [`Project::view`] of the project at `root`, with its review guide's route.
+    pub fn view_at(&self, root: &Path) -> symphony_api::ProjectView {
+        symphony_api::ProjectView {
+            guide: self.guide(root).unwrap_or_default(),
+            ..self.view()
+        }
+    }
+
+    /// The route of the project's review guide: [`GUIDES`] in its entrypoints' folders, the first
+    /// a document of the project at `root`; none when it has none, so no link leads nowhere.
+    pub fn guide(&self, root: &Path) -> Option<String> {
+        self.entrypoints
+            .iter()
+            .flat_map(|entry| GUIDES.map(|name| join(&entry.folder, name)))
+            .find(|file| self.is_document_path(file) && root.join(file).is_file())
+            .and_then(|file| self.route(&file))
     }
 
     /// The element carrying `view` in the page the server serves: JSON in a script element no

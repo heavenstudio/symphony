@@ -15,6 +15,7 @@
 #[allow(dead_code)]
 mod common;
 
+mod build_output;
 mod cached;
 mod clean_cache;
 mod clean_races;
