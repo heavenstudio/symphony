@@ -89,7 +89,8 @@ impl Store {
     }
 
     /// Move the orchestrator role on `slug` from `from`, who holds it, to `to`, in one write: the
-    /// thread names the new orchestrator, and both hear one ROLE event. The open work it hands on,
+    /// thread names the new orchestrator, and `to` hears one ROLE event (`from` made the move, and is
+    /// not told its own write). The open work it hands on,
     /// the task's and the work below it nobody else orchestrates, takes `to`'s slots: refused, as
     /// [`Store::take_role`] is, when that raises `to`'s open tasks past the cap. The owner's is not.
     pub fn hand_over(&self, slug: &str, from: &str, to: &str) -> Result<Task, Error> {

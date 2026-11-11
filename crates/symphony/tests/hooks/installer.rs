@@ -40,7 +40,8 @@ fn installed_commands_forward_whole_events_and_skip_missing_builds_without_a_loo
             std::os::unix::fs::symlink(BIN, tree.path(".target/bin/symphony")).unwrap();
         }
         for event in ["PreToolUse", "PostToolUse"] {
-            let commands = hook_commands(&settings, event);
+            let mut commands = hook_commands(&settings, event);
+            commands.retain(|(_, command)| command.contains("tasks-beat"));
             assert_eq!(commands.len(), 1);
             let mut shell = Command::new("sh");
             shell
@@ -107,7 +108,9 @@ fn real_init_preserves_unstamped_hooks_and_updates_stamped_paths_and_quoting() {
                 let settings: serde_json::Value =
                     serde_json::from_str(&tree.read(".claude/settings.json")).unwrap();
                 for event in ["PreToolUse", "PostToolUse"] {
-                    let groups = settings["hooks"][event].as_array().unwrap();
+                    let mut groups = settings["hooks"][event].as_array().unwrap().clone();
+                    // The memory guard's group sits beside the heartbeat's before a tool call.
+                    groups.retain(|group| !group.to_string().contains("memory-guard"));
                     assert_eq!(groups.len(), 1, "{event}: {groups:?}");
                     if stamped {
                         assert_eq!(
@@ -135,4 +138,81 @@ fn real_init_preserves_unstamped_hooks_and_updates_stamped_paths_and_quoting() {
             }
         }
     }
+}
+
+#[test]
+fn the_installed_guard_passes_on_its_own_refusal_alone() {
+    let tree = Tree::new();
+    let done = Command::new(BIN)
+        .args(["init", "--root"])
+        .arg(&tree.root)
+        .output()
+        .unwrap();
+    assert!(done.status.success(), "{done:?}");
+    let settings: serde_json::Value =
+        serde_json::from_str(&tree.read(".claude/settings.json")).unwrap();
+    let mut guard = hook_commands(&settings, "PreToolUse");
+    guard.retain(|(_, command)| command.contains("memory-guard"));
+    assert_eq!(guard.len(), 1, "{guard:?}");
+    let (matcher, guard) = &guard[0];
+    assert_eq!(matcher, "Write|Edit|MultiEdit|NotebookEdit|Bash");
+
+    let memory = "/Users/someone/.claude/projects/-Users-someone-repo/memory";
+    let bash = |command: String| {
+        json!({"tool_name": "Bash", "tool_input": {"command": command}, "cwd": tree.root})
+            .to_string()
+    };
+    let write = bash(format!("echo rule >> {memory}/MEMORY.md"));
+    let read = bash(format!("cat {memory}/MEMORY.md"));
+    let piped = || Stdio::piped();
+    let installed = |raw: &str| {
+        let mut shell = Command::new("sh");
+        shell
+            .args(["-c", guard])
+            .current_dir(&tree.root)
+            .env_clear()
+            .env("PATH", "/usr/bin:/bin")
+            .env("CLAUDE_PROJECT_DIR", &tree.root)
+            .stdin(piped())
+            .stdout(piped())
+            .stderr(piped());
+        retain_coverage_env(&mut shell);
+        let done = spawn(shell, raw);
+        (done.code, done.stdout, done.stderr)
+    };
+    let quiet = (0, String::new(), String::new());
+    let link = tree.path(".target/bin/symphony");
+    let link_to = |binary: &std::path::Path| {
+        std::fs::create_dir_all(link.parent().unwrap()).unwrap();
+        let _ = std::fs::remove_file(&link);
+        std::os::unix::fs::symlink(binary, &link).unwrap();
+    };
+
+    // No binary linked: the call goes through, quietly.
+    assert_eq!(installed(&write), quiet);
+    // A binary built before the guard refuses the hook's name with its usage, exit 2 as well: the
+    // call still goes through.
+    let older = tree.path("older-symphony");
+    crate::fixture_script::write(
+        &older,
+        "#!/bin/sh\necho 'usage: symphony hook tasks-beat' >&2\nexit 2\n",
+        false,
+    );
+    link_to(&older);
+    assert_eq!(installed(&write), quiet);
+    // The guard's own refusal is passed on whole: its exit and its one line.
+    link_to(std::path::Path::new(BIN));
+    let mut direct = Command::new(BIN);
+    direct
+        .args(["hook", "memory-guard"])
+        .stdin(piped())
+        .stdout(piped())
+        .stderr(piped());
+    retain_coverage_env(&mut direct);
+    let direct = spawn(direct, &write);
+    assert_eq!(direct.code, 2, "{direct:?}");
+    assert!(direct.stderr.starts_with("Blocked: "), "{direct:?}");
+    assert_eq!(direct.stderr.lines().count(), 1, "{direct:?}");
+    assert_eq!(installed(&write), (2, String::new(), direct.stderr));
+    assert_eq!(installed(&read), quiet);
 }

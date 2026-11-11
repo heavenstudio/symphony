@@ -167,6 +167,57 @@ for good. A record naming an entry the PULL this generation left awaiting (`pull
 not is an older one's own PULL acknowledged, which told every entry, withheld ones too.
 Posts, verdicts and AGENT lines stay: they were said to whoever held the role then, and a new
 holder hears no backlog.
+What a PULL says is a separate question from whether one is sent. The first is the whole digest;
+each later one this generation queues says what changed since the last one acknowledged
+(`Digest::changes_since`): a baseline `pull_said` (`cli::pull::Said`: the counts, every entry
+named, the sessions of unknown liveness), carried on the queued event and recorded by both
+acknowledgement sites, in a field older binaries ignore, so no schema change. Rows added are the
+entries heard and not told, the trigger's own test (`pull_account::told`), not those absent from
+`pull_said`, so a row that left and came back is said once more, as it is pushed once more. An
+older dispatcher's acknowledgement ends `pull_queued` but leaves `pull_awaiting`, and
+`State::said` reads that as no baseline: the next PULL is the whole digest. One that keeps
+`pull_awaiting` but not `pull_said` (built before PULLs said only what changed, as the shared
+server may still be) ends both and records the PULL's entries; `pull_account::baseline` reads an
+entry the recipient hears, recorded as told and not withheld, that `pull_said` does not name as
+such a PULL, and the next PULL is the whole digest. What that cannot see, exactly: once every row
+such a PULL told has left the recipient's digest before this generation's next PULL, that PULL is
+measured against the baseline before it, so its header can say a count that moved before it
+again, with the older `(was N)`, its liveness line can repeat or miss a change that PULL said, and
+those rows are not said `resolved`. Rows added are exact, from `pull_entries`, which both record:
+none is lost or said twice. The next PULL this generation's acknowledgement records is exact
+again, and `tasks pull` says the whole digest meanwhile. `tasks pull` prints
+the whole digest the recipient hears now (`pull::heard_now`) and writes nothing.
+A channel registered anew starts from the whole digest: `callback_in` clears the PULL account
+(`pull_entries`, `pull_said`, `pull_withheld`, `pull_awaiting`, `pull_queued`) and takes back a
+waiting PULL when the address goes to or comes from none, or the listener's `owner` differs from
+the one recorded; `pull_unanswered` stays, so a told post stays told. The same listener at a new
+socket keeps the account, which is how a channel that waited out an outage hears what waited
+(`hand_over_outage`, `pending_pull`).
+A recipient is not told its own writes nor its children's staffing (`attach::diff_on`): its own
+moves, a role move it wrote, the roles a session it registered (`parent`) takes or lets go, and
+the move and readiness that child's claim or release makes. A quiet child is said once a health
+transition, from the observation's stored health; one it hears as stale, lost or unknown is not
+also listed idle (`pull::idle_and_busy`, which the dispatch, the legacy monitor and `tasks pull`
+share, each passing the children its look follows).
+`tasks wait` is the dispatch's own pass for one session with no channel (`Pass::Collect`,
+`Store::collect_callbacks`): it plans as a delivering pass, takes the recipient's lease though no
+address is registered, and its `Visit::send` prints what `deliver` would have sent, flushed, before
+it is recorded as delivered by the same `record_callback_delivery` (a print that fails is a retry, as
+a socket that refuses is, so a line is repeated and never lost), which records the PULL's
+acknowledgement and the messages' deliveries. No other dispatcher visits a session without an
+address, so its callback state is that reader's alone between reads; one with an address is
+refused, since its channel takes the lines. A look also runs that session's pane watch
+(`Store::watch_pane`, hc from the command's environment) and holds the chat seat when
+`Store::chat_recipient` names it: with no channel able to, the live orchestrator first by handle
+on `callback_state:chat`'s `waiting` list, which a session joins at its first look and leaves at
+any `callback` registration. While nobody holds the seat, `Store::unheard_owner_events` gives
+every orchestrator's `pull` and `inbox` what the owner said, and an inbox acknowledgement takes
+it. The command beats for its session before a look, at
+most every 20 s, as a monitor does, so the look reads the board its beat moved and the next poll
+does not take its own beat for news. A look writes only to set its session up (its state row, the
+waiting list) or to record what it printed: at a board that stood still it is nine reads and no
+write (`pushes::a_waiting_session_looking_at_a_board_that_stood_still_writes_nothing`), and the
+perf suite times one at scale (`timings`, `wait`); docs/TASKS.md says the cost per idle minute.
 A finished idle terminal still closes under the original cleanup rules, retiring its
 registration; an executor of a task in review is not finished, and keeps its terminal until it
 has sat idle at its prompt an hour (`reap::IDLE_HOUR`), as every role on open work does.

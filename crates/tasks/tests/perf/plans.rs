@@ -197,6 +197,11 @@ fn every_query_a_write_a_recipient_or_a_tick_sends_is_planned_on_an_index() {
         (vec!["inbox", "--as", &orchestrator], String::new()),
         (vec!["inbox", "--as", &recipient], String::new()),
         (vec!["dispatch"], String::new()),
+        // The dispatch's pass for a session with no channel, read on its own output.
+        (
+            vec!["wait", "--timeout", "0", "--as", &writer],
+            String::new(),
+        ),
     ];
     let calls = [
         api("get", json!({"slug": thread})),

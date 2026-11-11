@@ -21,19 +21,27 @@
 //! filed, whatever its status short of review, is `red_unstaffed`, named first and nowhere else, a
 //! cancelled dependency of its in its note, and counted in the header only then, as
 //! `dependency_blocked` is. The monitor delivers it only for newly actionable entries.
+//!
+//! A recipient told a digest before hears the next one as what changed since the last one it
+//! received ([`Digest::changes_since`], against what that one said, [`Said`]): the header's counts
+//! that moved, the rows added and the rows resolved. `tasks pull --as HANDLE` prints the whole
+//! digest ([`Digest::lines`]) on demand.
 
-use crate::health::EXECUTING;
+use crate::health::{EXECUTING, Health};
 use crate::orchestration::{Owners, claimable_work};
 use crate::red::UNSTAFFED_SECONDS;
 use crate::store::unanswered::Pending;
 use crate::sys::local_minute;
 use crate::{Board, Error, Session, Store, Task};
+use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 /// How many of a category are listed.
 pub const SHOWN: usize = 6;
 /// An orchestrator below this many open slots should look for disjoint work or owned blockers.
 const LOW_VOLUME: usize = 4;
+/// A count a PULL could not say, as its recipient's next one is measured against.
+pub const UNKNOWN: &str = "unknown";
 /// One successful canonical observation, retained across scheduling and recipient scoping.
 pub(crate) type Holdings = BTreeMap<String, BTreeSet<String>>;
 /// The categories, in the order they are listed; `idle` holds handles, the others tasks.
@@ -47,6 +55,17 @@ pub const CATEGORIES: [&str; 8] = [
     "landed_open",
     "idle",
 ];
+
+/// What one PULL said, as its recipient's next one is measured against: every count of its header
+/// (those the header leaves out at zero too), the entries it named, shown or only counted, and the
+/// sessions whose liveness it could not tell.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Said {
+    pub counts: BTreeMap<String, String>,
+    pub entries: BTreeSet<(String, String)>,
+    pub liveness_unknown: Vec<String>,
+}
 
 /// One look at the board.
 #[derive(Debug, Clone)]
@@ -64,6 +83,9 @@ pub struct Digest {
     /// Work retained because its shared native presence signal expired.
     pub liveness_unknown: Vec<String>,
     unanswered: Vec<Pending>,
+    /// Whether the unanswered-post scan answered: a look whose scan failed cannot say which posts
+    /// wait, nor how many ([`Digest::said_after`]).
+    unanswered_scanned: bool,
     /// The cap on an orchestrator's open tasks the board holds starts to ([`crate::slots`]).
     pub cap: Option<usize>,
     /// The open slots the orchestrator the digest is for holds, under a cap ([`Digest::only_for`]).
@@ -117,6 +139,155 @@ impl Digest {
         }
         lines.extend(self.unanswered_lines(seen));
         lines
+    }
+
+    /// What this digest says, for the next one to be measured against ([`Digest::changes_since`]).
+    pub fn said(&self) -> Said {
+        Said {
+            counts: (self.counts().into_iter())
+                .map(|(name, value, _)| (name.to_string(), value))
+                .collect(),
+            entries: self.entries(),
+            liveness_unknown: self.liveness_unknown.clone(),
+        }
+    }
+
+    /// What its recipient knows once it acknowledges this digest's PULL after the one that said
+    /// `before`: what it says, but for unanswered posts when its scan failed, since it says nothing
+    /// of them. Their count is then [`UNKNOWN`], so the next look whose scan answers says it, and
+    /// the posts `before` named stay named, so that look resolves those gone.
+    pub fn said_after(&self, before: Option<&Said>) -> Said {
+        let mut said = self.said();
+        if !self.unanswered_scanned {
+            said.counts.insert("unanswered".into(), UNKNOWN.into());
+            let named = before.into_iter().flat_map(|before| &before.entries);
+            said.entries
+                .extend(named.filter(|(name, _)| name == "unanswered").cloned());
+        }
+        said
+    }
+
+    /// The PULL of what changed since the one that said `said`, to a recipient told `told` of the
+    /// entries the digest names now: its header names each count that moved, `name=now (was
+    /// then)`, or says `counts unchanged`; the liveness line follows when the sessions it names
+    /// changed; then each entry it was
+    /// not told, as the whole digest lists it (the first [`SHOWN`] of a list), and one `resolved`
+    /// line a list for the entries `said` named that are gone. Nothing else is said again. A look
+    /// whose unanswered-post scan failed says nothing of those posts: neither their count nor any
+    /// of them resolved.
+    pub fn changes_since(&self, said: &Said, told: &BTreeSet<(String, String)>) -> Vec<String> {
+        let known = |name: &str| self.unanswered_scanned || name != "unanswered";
+        let counts: Vec<_> = (self.counts().into_iter())
+            .filter(|(name, _, _)| known(name))
+            .collect();
+        let mut moved: Vec<String> = (counts.iter())
+            .filter(|(name, value, _)| said.counts.get(*name) != Some(value))
+            .map(|(name, value, _)| {
+                let was = said.counts.get(*name).map_or("none", String::as_str);
+                format!("{name}={value} (was {was})")
+            })
+            .collect();
+        moved.extend(
+            (said.counts.iter())
+                .filter(|(name, _)| known(name) && !counts.iter().any(|(now, _, _)| now == name))
+                .map(|(name, was)| format!("{name}=none (was {was})")),
+        );
+        if moved.is_empty() {
+            moved.push("counts unchanged".into());
+        }
+        let mut out = vec![format!("PULL {}", moved.join(" "))];
+        if self.liveness_unknown != said.liveness_unknown {
+            out.push(match self.liveness_line() {
+                Some(line) => line,
+                None => "  liveness unknown: resolved".into(),
+            });
+        }
+        let untold = |entry: (&str, &str)| !told.contains(&(entry.0.into(), entry.1.into()));
+        out.extend(
+            self.low_volume_lines()
+                .into_iter()
+                .filter(|(handle, _)| untold(("low_volume", handle)))
+                .map(|(_, line)| line),
+        );
+        let now = self.entries();
+        for name in CATEGORIES {
+            let added: Vec<String> = match name {
+                "idle" => (self.idle.iter())
+                    .filter(|handle| untold((name, handle)))
+                    .map(|handle| format!("  idle {handle}"))
+                    .collect(),
+                "unanswered" => self.unanswered_lines(told),
+                _ => (self.items(name).iter())
+                    .filter(|task| untold((name, &task.slug)))
+                    .map(|task| self.task_line(name, task))
+                    .collect(),
+            };
+            out.extend(shown(name, added));
+        }
+        for name in CATEGORIES
+            .iter()
+            .chain(&["low_volume"])
+            .filter(|name| known(name))
+        {
+            let resolved: Vec<&str> = (said.entries.iter())
+                .filter(|entry| entry.0 == *name && !now.contains(*entry))
+                .map(|(_, named)| named.as_str())
+                .collect();
+            if !resolved.is_empty() {
+                out.push(format!("  resolved {name} {}", resolved.join(", ")));
+            }
+        }
+        out
+    }
+
+    /// The header's counts in order, each with whether the whole digest's header shows it: it keeps
+    /// the usual digest compact, and cancellation blockers, unanswered posts and unstaffed reds get
+    /// a count only when present.
+    fn counts(&self) -> Vec<(&'static str, String, bool)> {
+        let mut counts: Vec<(&'static str, String, bool)> = ["executing"]
+            .iter()
+            .chain(CATEGORIES.iter())
+            .map(|name| {
+                let compact =
+                    matches!(*name, "dependency_blocked" | "unanswered" | "red_unstaffed");
+                let count = self.count(name);
+                (*name, count.to_string(), !compact || count > 0)
+            })
+            .collect();
+        if let (Some(held), Some(cap)) = (self.slots, self.cap) {
+            counts.push(("slots", format!("{held}/{cap}"), true));
+        }
+        counts
+    }
+
+    fn liveness_line(&self) -> Option<String> {
+        (!self.liveness_unknown.is_empty()).then(|| {
+            format!(
+                "  liveness unknown: native presence sweep overdue or failed; work remains held: {}",
+                self.liveness_unknown.join(", ")
+            )
+        })
+    }
+
+    /// The scoped digest's low-volume condition, a line for each handle it names.
+    fn low_volume_lines(&self) -> Vec<(String, String)> {
+        let cap = (self.cap).map_or_else(|| "none".into(), |cap| cap.to_string());
+        (self.volume.iter())
+            .filter(|(_, count)| self.scoped && **count < LOW_VOLUME)
+            .map(|(handle, count)| {
+                (handle.clone(), format!("  low_volume {handle} open={count} threshold={LOW_VOLUME} cap={cap} — pick disjoint ready work or resolve owned blockers using actual resources and ownership"))
+            })
+            .collect()
+    }
+
+    fn task_line(&self, name: &str, task: &Task) -> String {
+        let note = (self.notes.get(&task.slug))
+            .map(|n| format!("   ({n})"))
+            .unwrap_or_default();
+        format!(
+            "  {name} p{} {} — {}{note}",
+            task.priority, task.slug, task.title
+        )
     }
 
     fn unanswered_lines(&self, seen: &BTreeSet<(String, String)>) -> Vec<String> {
@@ -192,65 +363,42 @@ impl Digest {
     }
 
     pub fn lines(&self) -> Vec<String> {
-        let mut counts: Vec<String> = ["executing"]
-            .iter()
-            .chain(CATEGORIES.iter())
-            // Keep the usual digest compact; cancellation blockers, unanswered posts and unstaffed
-            // reds get a count when present.
-            .filter(|name| {
-                !matches!(
-                    **name,
-                    "dependency_blocked" | "unanswered" | "red_unstaffed"
-                ) || self.count(name) > 0
-            })
-            .map(|name| format!("{name}={}", self.count(name)))
+        let counts: Vec<String> = (self.counts().into_iter())
+            .filter(|(_, _, shown)| *shown)
+            .map(|(name, value, _)| format!("{name}={value}"))
             .collect();
-        if let (Some(held), Some(cap)) = (self.slots, self.cap) {
-            counts.push(format!("slots={held}/{cap}"));
-        }
         let mut out = vec![format!(
             "PULL {} {}",
             &local_minute(self.now)[11..],
             counts.join(" ")
         )];
-        if !self.liveness_unknown.is_empty() {
-            out.push(format!("  liveness unknown: native presence sweep overdue or failed; work remains held: {}", self.liveness_unknown.join(", ")));
-        }
-        for (handle, count) in self
-            .volume
-            .iter()
-            .filter(|(_, count)| self.scoped && **count < LOW_VOLUME)
-        {
-            let cap = self
-                .cap
-                .map_or_else(|| "none".into(), |cap| cap.to_string());
-            out.push(format!("  low_volume {handle} open={count} threshold={LOW_VOLUME} cap={cap} — pick disjoint ready work or resolve owned blockers using actual resources and ownership"));
-        }
+        out.extend(self.liveness_line());
+        out.extend(self.low_volume_lines().into_iter().map(|(_, line)| line));
         for name in CATEGORIES {
             let listed: Vec<String> = if name == "idle" {
                 self.idle.iter().map(|h| format!("  idle {h}")).collect()
             } else if name == "unanswered" {
                 self.unanswered_lines(&BTreeSet::new())
             } else {
-                self.items(name)
-                    .iter()
-                    .map(|t| {
-                        let note = self
-                            .notes
-                            .get(&t.slug)
-                            .map(|n| format!("   ({n})"))
-                            .unwrap_or_default();
-                        format!("  {name} p{} {} — {}{note}", t.priority, t.slug, t.title)
-                    })
+                (self.items(name).iter())
+                    .map(|t| self.task_line(name, t))
                     .collect()
             };
-            out.extend(listed.iter().take(SHOWN).cloned());
-            if listed.len() > SHOWN {
-                out.push(format!("  {name} … and {} more", listed.len() - SHOWN));
-            }
+            out.extend(shown(name, listed));
         }
         out
     }
+}
+
+/// The first [`SHOWN`] lines of list `name`, and how many more it holds; every unanswered post, each
+/// with the command that answers it, since a post a PULL tells is never told again.
+fn shown(name: &str, mut listed: Vec<String>) -> Vec<String> {
+    if listed.len() > SHOWN && name != "unanswered" {
+        let more = listed.len() - SHOWN;
+        listed.truncate(SHOWN);
+        listed.push(format!("  {name} … and {more} more"));
+    }
+    listed
 }
 
 /// Look at the board. `idle`: handles the agents API reports idle; `landed(task)`: whether the task's
@@ -267,6 +415,72 @@ pub fn digest(
     let board = store.board()?;
     let holdings = store.slot_holdings()?;
     digest_on(store, &board, &holdings, idle, landed, now, verifying)
+}
+
+/// The digest of `board` with the idle and verifying agents `view` reports (none without one).
+pub(crate) fn viewed(
+    store: &Store,
+    board: &Board,
+    holdings: &Holdings,
+    view: Option<&crate::cli::agents::View>,
+    told: &BTreeMap<String, Health>,
+    landed: Option<&dyn Fn(&Task) -> bool>,
+    now: f64,
+) -> Result<Digest, Error> {
+    let (idle, busy) = idle_and_busy(view, told);
+    digest_on(store, board, holdings, &idle, landed, now, &busy)
+}
+
+/// The agents of `view` a PULL lists idle, and those running a test, which count as present
+/// however quiet the board says they are. Orchestrators and the chat are never idle rows, nor is a
+/// session the recipient is told went quiet (`told`, the sessions its look follows and their
+/// health): the view calls one with no terminal idle once its board health is, and its STALE, LOST
+/// or LIVENESS UNKNOWN line says it. The dispatch, the legacy monitor and `tasks pull` all read
+/// idleness here, so they agree.
+pub(crate) fn idle_and_busy(
+    view: Option<&crate::cli::agents::View>,
+    told: &BTreeMap<String, Health>,
+) -> (Vec<String>, Vec<String>) {
+    let (mut idle, mut busy) = (Vec::new(), Vec::new());
+    for a in view.map_or(&[][..], |v| v.agents.as_slice()) {
+        if a.state == "running_test" {
+            busy.push(a.handle.clone());
+        } else if a.state == "idle"
+            && !matches!(a.kind.as_str(), "orchestrator" | "chat")
+            && !told.get(&a.handle).is_some_and(|health| health.quiet())
+        {
+            idle.push(a.handle.clone());
+        }
+    }
+    (idle, busy)
+}
+
+/// The whole digest as `handle` hears it now, read on demand (`tasks pull`): the agents view the
+/// machine's probes make, and the branches on main in the checkout `env` runs in.
+pub fn heard_now(store: &Store, env: &crate::cli::Env, handle: &str) -> Result<Digest, Error> {
+    let board = store.board()?;
+    let holdings = store.slot_holdings()?;
+    let probes = crate::cli::probes::machine(env);
+    let now = store.now();
+    let view = crate::cli::agents::describe_board(store, &probes, now, false, &board)?;
+    let root = crate::cli::probes::repo_root(&env.cwd);
+    let landed = |task: &Task| {
+        (root.as_ref()).is_some_and(|root| crate::cli::probes::landed(root, &task.slug))
+    };
+    let kind = (board.sessions.iter())
+        .find(|s| s.row.handle == handle)
+        .map_or("", |s| s.row.kind.as_str());
+    let told = crate::cli::attach::seen(&board, handle, kind).children;
+    let digest = viewed(
+        store,
+        &board,
+        &holdings,
+        Some(&view),
+        &told,
+        Some(&landed),
+        now,
+    )?;
+    Ok(digest.only_for(&board, handle))
 }
 
 /// Build against the pass's retained board and single successful holdings observation.
@@ -340,9 +554,12 @@ pub(crate) fn digest_on(
     // A scan the board does not answer leaves this look without unanswered posts and says why on
     // stderr: the other lists, and every other event of the pass, go out all the same. A post
     // already told keeps its identity (`pull_unanswered`), so its return is not told again.
+    // A PULL diffed against an earlier one says nothing of them ([`Digest::said_after`]).
+    let mut unanswered_scanned = true;
     let pending = store.pending_posts(tasks).unwrap_or_else(|error| {
         let reason = error.to_string().replace('\n', " ");
         eprintln!("PULL unanswered scan skipped: {reason}");
+        unanswered_scanned = false;
         Vec::new()
     });
     let unanswered: Vec<_> = pending
@@ -451,6 +668,7 @@ pub(crate) fn digest_on(
         notes,
         liveness_unknown,
         unanswered,
+        unanswered_scanned,
         cap: store.slots(),
         slots: None,
         volume,
@@ -461,3 +679,6 @@ pub(crate) fn digest_on(
 fn pending_key(pending: &Pending) -> String {
     format!("{}#{}", pending.slug, pending.post.id)
 }
+
+#[cfg(test)]
+mod tests;

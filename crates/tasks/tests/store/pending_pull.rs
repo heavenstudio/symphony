@@ -7,12 +7,13 @@
 //! a PULL is acknowledged, whichever generation records it (`pull_acknowledgements`).
 
 use super::callbacks::Listener;
-use super::hand_over_outage::{Outage, pull};
+use super::hand_over_outage::{FREE, Outage};
 use super::mixed_dispatchers::{older_fields, older_record};
 use super::orchestrators::heard;
 use serde::Deserialize;
 use serde_json::json;
 use symphony_board::NewTask;
+use symphony_board::cli::pull::Said;
 
 /// The PULL waiting for the former orchestrator.
 #[derive(Debug, Deserialize)]
@@ -32,7 +33,17 @@ pub(super) fn waiting_pull(outage: &Outage) -> Option<Waiting> {
     waiting.pop()
 }
 
-/// The former orchestrator's digest now, as its PULL says it.
+/// What the last PULL `handle` acknowledged said, as its callback state records it.
+pub(super) fn said(fixture: &super::common::Fixture, handle: &str) -> Said {
+    let said = fixture.store.client().query(
+        "RETURN (SELECT VALUE pull_said FROM ONLY type::record('callback_state', $handle));",
+        json!({"handle":handle}),
+    );
+    serde_json::from_value(said.unwrap().remove(0)).expect("a PULL it acknowledged said this")
+}
+
+/// The former orchestrator's digest now, as its PULL says it: what changed since the PULL it
+/// heard before the outage, which told it every entry it named that is still there.
 fn digest_now(outage: &Outage) -> String {
     let Outage {
         fixture, former, ..
@@ -40,16 +51,20 @@ fn digest_now(outage: &Outage) -> String {
     let board = fixture.store.board().unwrap();
     let digest = symphony_board::cli::pull::digest(&fixture.store, &[], None, fixture.now(), &[]);
     let digest = digest.unwrap().only_for(&board, former);
-    // The initial callback already acknowledged this condition before this outage.
-    let seen = std::collections::BTreeSet::from([("low_volume".into(), former.clone())]);
-    let lines = (digest.event_lines_since(&seen).into_iter())
+    let said = said(fixture, former);
+    let told = &said.entries & &digest.entries();
+    let lines = (digest.changes_since(&said, &told).into_iter())
         .map(|line| line.split_whitespace().collect::<Vec<_>>().join(" "));
     lines.collect::<Vec<_>>().join("\n")
 }
 
 /// The lines of the PULL among those `told`.
 pub(super) fn pull_lines(told: &[String]) -> String {
-    let digest = |line: &&String| line.starts_with("PULL ") || line.starts_with("ready_unstaffed ");
+    let digest = |line: &&String| {
+        ["PULL ", "ready_unstaffed ", "resolved "]
+            .iter()
+            .any(|start| line.starts_with(start))
+    };
     let lines: Vec<&str> = told.iter().filter(digest).map(String::as_str).collect();
     lines.join("\n")
 }
@@ -103,7 +118,7 @@ fn a_pull_reading_the_same_at_delivery_records_the_work_withheld_from_it_meanwhi
     let free_row = "ready_unstaffed p2 scratch/free — Jump departure";
     let told = back.drain(fixture, sender, former);
     let free_new = "NEW scratch/free ready — Jump departure";
-    assert_eq!(told, [free_new, &pull(1), free_row]);
+    assert_eq!(told, [free_new, FREE, free_row]);
     let recorded = older_fields(fixture, former);
     let entries = recorded["pull_entries"].as_array().unwrap();
     let new = json!(["ready_unstaffed", "scratch/theirs/new"]);
@@ -117,8 +132,8 @@ fn a_pull_reading_the_same_at_delivery_records_the_work_withheld_from_it_meanwhi
     let theirs = [
         moved.as_str(),
         "NEW scratch/theirs/new ready — Jump departure",
-        "PULL executing=1 ready_unstaffed=3 in_progress_orphaned=0 review_unreviewed=0 landed_open=0 idle=0",
-        free_row,
+        // What changed since the PULL of scratch/free: that row is not said again.
+        "PULL ready_unstaffed=3 (was 1)",
         "ready_unstaffed p2 scratch/theirs — Jump departure",
         "ready_unstaffed p2 scratch/theirs/new — Jump departure",
     ];

@@ -1,5 +1,6 @@
-//! The timings: say, claim, inbox and the `tasks api` answers land asks for, each the `tasks`
-//! binary run as an agent runs it on the generated board, three times, its median within a bound.
+//! The timings: say, claim, inbox, a look of `tasks wait` and the `tasks api` answers land asks
+//! for, each the `tasks` binary run as an agent runs it on the generated board, three times, its
+//! median within a bound.
 //! A say dispatches in the write (`TASKS_DISPATCH=inline`), so its time is the write's and the
 //! delivery to its recipients', 100 of them on this board.
 //!
@@ -74,6 +75,12 @@ fn say_claim_inbox_and_the_api_answer_within_their_bounds_on_a_board_at_scale() 
     for _ in 0..3 {
         timed.push(command("inbox", &["inbox", "--as", &orchestrator], INBOX));
     }
+    // One look each: the first says the whole digest, the others what changed since.
+    let waiter = generated::waiter();
+    for _ in 0..3 {
+        let look = ["wait", "--timeout", "0", "--as", &waiter];
+        timed.push(command("wait", &look, WAIT));
+    }
     for _ in 0..3 {
         timed.extend([
             api("get", json!({"slug": thread}), API),
@@ -131,3 +138,7 @@ const SAY: Duration = Duration::from_secs(60);
 const CLAIM: Duration = Duration::from_secs(60);
 const INBOX: Duration = Duration::from_secs(2);
 const API: Duration = Duration::from_secs(1);
+/// One look of `tasks wait` by an orchestrator without a channel, its process's start included.
+/// Measured on 2026-11-11 at load 35 to 80: 18.4 s for the first, which says the whole digest,
+/// then 0.80 s and 0.92 s; the bound is five times that median.
+const WAIT: Duration = Duration::from_secs(5);

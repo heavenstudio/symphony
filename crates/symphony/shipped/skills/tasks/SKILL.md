@@ -66,8 +66,9 @@ BLOCKED amber-heron tools/example t2a — observed waiting on an approval or a q
                                             once per observed episode)
 WATCH hc unanswered at observation: … — blocked terminals may have gone unreported; inspect hc before acting
                                             (once until hc answers)
-PULL executing=3 ready_unstaffed=2 in_progress_orphaned=1 …     (orchestrators: only for a new actionable entry,
-                                            with the tasks behind each count)
+PULL ready_unstaffed=3 (was 2)             (orchestrators: only for a new actionable entry, and only
+                                            what changed since the last PULL: counts that moved,
+                                            rows added, `resolved LIST a, b`)
 CALLBACK …                                  (delivery failure; retained in inbox)
 ```
 
@@ -88,8 +89,8 @@ promise neither current approval nor delivery timing. Inspect the terminal befor
 acting. Answer the prompt in that terminal, or stop the session; the board only
 reports it.
 
-A recipient gets its first current PULL once, even when every actionable list
-is empty. After that, a PULL is delivered only when a list gains an entry absent from
+A recipient gets its first current PULL once, the whole digest, even when every
+actionable list is empty. After that, a PULL is delivered only when a list gains an entry absent from
 the last delivered PULL after forgetting entries absent from any computed digest:
 a task newly ready and unstaffed, orphaned, unreviewed or landed-open, or an
 agent newly idle. A departure alone pushes nothing; an entry that returns
@@ -99,7 +100,30 @@ the digest is when it does, keeping its retry budget when entries only depart; o
 a new action replaces it with one of its own, and one left with nothing new is taken back.
 When an older dispatcher sent a PULL of its own meanwhile, work a hand-over makes
 yours may be counted in one PULL more, once per hand-over, never left out; nothing
-repeats on its own.
+repeats on its own. Each PULL after the first says only what changed since the last
+one you received: `PULL name=now (was then)` for each count that moved (`PULL counts
+unchanged` when none did), each row a list gained, and `resolved LIST a, b` for rows
+that left it. `just tasks pull --as HANDLE` prints the whole digest as you hear it
+now, whenever you want it; it changes nothing. A channel you register anew (after
+`--off` or a wait, or from another process) starts again from the whole digest;
+posts you were told stay told.
+
+A session that can hold a background command can take the same lines without a
+channel, unwrapped: run `just tasks wait --as HANDLE` in the background (after
+`just tasks callback --off --as HANDLE` if one is registered). It exits printing
+what a channel would have carried since its last read, once there is any; act on
+it and run it again. While it waits it beats for you, as a monitor does.
+`--timeout S` gives up after S seconds with `WAIT nothing changed in S s`. It
+carries the BLOCKED lines of the panes you oversee, and, while no channel holds
+the chat seat, a waiting orchestrator holds it and reads the owner's verdicts
+and asks there too. With nobody in the seat, `just tasks pull` ends with what
+the owner said that nobody received, and `just tasks inbox` takes it.
+
+You are never pushed your own writes (your moves, a hand-over or take-over you
+made), nor what your own subagents (sessions registered with `--parent` you) take
+on or let go: their reservations, claims and releases. Their own moves, to review
+say, still are. A quiet child's `STALE`, `LOST` or `LIVENESS UNKNOWN` is said once
+for each transition, not once a pass.
 
 Deliveries contain event lines alone, with no header or reply instructions.
 Reply to an `AGENT` sender with `just agent-send SENDER "text" --as HANDLE`;
@@ -176,10 +200,11 @@ Pull work from the board, don't only wait for events: [task-orchestrator](../tas
    A task has one orchestrator: the role on a task another orchestrator
    still holds is refused, naming it. To give one of yours away, run
    `just tasks handover SLUG HANDLE` (one write; the thread names the new
-   orchestrator, and both of you hear one `ROLE`); never take it beside the
-   holder and release later. Taking the role over a lost or left holder moves
-   it. You hear your own tasks and the unclaimed ones only; `just tasks list
-   --doubled` lists tasks still holding two, to settle with `handover`.
+   orchestrator, who hears one `ROLE`; you made the move and are not told it);
+   never take it beside the holder and release later. Taking the role over a
+   lost or left holder moves it. You hear your own tasks and the unclaimed ones
+   only; `just tasks list --doubled` lists tasks still holding two, to settle
+   with `handover`.
    **Every instruction to an agent is a subtask** (`--parent SLUG --for
    <handle> [--instruction]`) whose body is the instruction verbatim, never a
    file (a hook refuses a brief written to a file or a scratchpad);
