@@ -362,6 +362,11 @@ pub fn run(store: &Store, c: &mut Context) -> Result<(), Stop> {
             for line in super::pull::heard_now(store, c.env, &me)?.lines() {
                 c.say(&line);
             }
+            // What the owner said that nobody received, while nobody holds the chat seat; it
+            // stays until an orchestrator's inbox or the seat's holder takes it.
+            for (_, text) in store.unheard_owner_events(&me)? {
+                c.say(&text);
+            }
         }
         "wait" => wait::run(store, c)?,
         "leave" => {

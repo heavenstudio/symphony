@@ -102,7 +102,15 @@ a native callback, choosing the lexicographically smallest handle among plain
 orchestrators. A normal `just tasks callback --as HANDLE` is enough for that
 last fallback; `--chat --if-free` opts into the higher-priority fallback without
 displacing the seat. Sweep-confirmed native presence counts as live. A recipient
-suspended after delivery failures waits for the sweep to restore it.
+suspended after delivery failures waits for the sweep to restore it. While no
+channel holds the seat, an orchestrator reading by `just tasks wait` holds it:
+a session is waiting from its first `wait` until it registers a channel (or
+turns one off) or leaves, and of the live waiting orchestrators the smallest
+handle receives chat at its next read; one that stops waiting holds it while it
+stays live, so what the owner says waits for that read. While nobody holds the
+seat, every orchestrator's `just tasks pull` ends with what the owner said that
+nobody received, and its `just tasks inbox` takes it, after which nobody reads
+it again: an owner's word never goes to no one unseen.
 The app names the recipient, and says when nobody receives chat. Saves queue
 asks, follow-ups, card messages, verdict notes and callouts directly; an outbox
 beside the asks preserves them across a board outage. No file watcher discovers
@@ -518,8 +526,10 @@ alone; with `--timeout` it gives up after S seconds with `WAIT nothing changed i
 is refused while HANDLE has a channel, which takes those lines (`just tasks callback --off --as HANDLE` gives
 them to `wait`), and nothing else dispatches to a session without one, so between reads nothing is said and
 nothing lost. Waiting is the session's sign of life, as a monitor's is: it beats for HANDLE every twenty seconds
-or so, at a look, so an orchestrator waiting on its board is not called stale for it. A pane waiting on a
-prompt (`BLOCKED`) is watched by the server's clock for registered channels only, so `wait` does not carry it.
+or so, at a look, so an orchestrator waiting on its board is not called stale for it. Each look also watches
+the panes HANDLE oversees, one hc sample a look, as the server's clock does for a channel, so a pane waiting on
+a prompt is said as `BLOCKED` by the second look that sees it; and while HANDLE holds the chat seat (see the
+callback section above) the owner's chat events come with the rest.
 
 A legacy native observer starts from the current board on upgrade rather than replaying its history.
 Its upgrade marker and message cursor are separate callback-state fields that older writers leave intact.

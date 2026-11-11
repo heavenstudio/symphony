@@ -18,6 +18,23 @@ pub(super) fn case(name: &str) -> Case {
 }
 
 #[test]
+fn pull_and_inbox_show_every_orchestrator_what_the_owner_said_to_nobody() {
+    use super::wait::OWNER;
+    let c = case("owner");
+    let (orch, other) = (c.register("orchestrator"), c.register("orchestrator"));
+    // No channel and nobody waiting: nobody holds the chat seat.
+    c.store().owner_callback("asks-1", OWNER).unwrap();
+    for handle in [&orch, &other] {
+        let whole = c.ok(handle, &["pull"]);
+        assert!(whole.ends_with(&format!("\n{OWNER}\n")), "{whole}");
+    }
+    // An orchestrator's inbox takes it; read, it is shown to nobody after.
+    assert!(c.ok(&orch, &["inbox"]).contains(OWNER));
+    assert!(!c.ok(&other, &["pull"]).contains(OWNER));
+    assert!(!c.ok(&other, &["inbox"]).contains(OWNER));
+}
+
+#[test]
 fn pull_prints_the_whole_digest_its_actor_hears_every_time_it_asks() {
     let c = case("whole");
     let orch = c.register("orchestrator");

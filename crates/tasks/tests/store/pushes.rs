@@ -297,6 +297,68 @@ fn a_childs_release_does_not_hide_the_move_it_made_before_it() {
     assert!(read(&f, &reader).is_empty());
 }
 
+const VERDICT: &str = "OWNER accepted card 7 in docs/DECISIONS.md — ship it";
+
+#[test]
+fn a_waiting_orchestrator_holds_the_vacant_chat_seat() {
+    let f = Fixture::empty();
+    let reader = f.session("orchestrator");
+    read(&f, &reader);
+    assert_eq!(f.store.chat_recipient().unwrap(), Some(reader.clone()));
+    f.store.owner_callback("asks-1", VERDICT).unwrap();
+    assert_eq!(read(&f, &reader), [VERDICT]);
+    assert!(read(&f, &reader).is_empty(), "said once");
+    // Once received, no orchestrator reads it again on demand.
+    let other = f.session("orchestrator");
+    assert!(f.store.unheard_owner_events(&other).unwrap().is_empty());
+}
+
+#[test]
+fn a_channel_holds_the_chat_seat_before_a_waiting_orchestrator() {
+    let f = Fixture::empty();
+    let reader = f.session("orchestrator");
+    read(&f, &reader);
+    let (heard, o) = orchestrator(&f);
+    assert_eq!(f.store.chat_recipient().unwrap(), Some(heard.clone()));
+    f.store.owner_callback("asks-1", VERDICT).unwrap();
+    assert_eq!(o.drain(&f, &reader, &heard), [VERDICT]);
+    assert!(read(&f, &reader).is_empty());
+}
+
+#[test]
+fn registering_a_channel_takes_a_waiter_off_the_waiting_list() {
+    let f = Fixture::empty();
+    let reader = f.session("orchestrator");
+    read(&f, &reader);
+    let _channel = listen(&f, &reader);
+    f.store.callback(&reader, None, false, false).unwrap();
+    // Neither a channel nor waiting: nobody holds the seat until it waits again.
+    assert_eq!(f.store.chat_recipient().unwrap(), None);
+    read(&f, &reader);
+    assert_eq!(f.store.chat_recipient().unwrap(), Some(reader));
+}
+
+#[test]
+fn what_the_owner_says_to_nobody_is_read_by_every_orchestrator_until_one_takes_it() {
+    let f = Fixture::empty();
+    let (first, second) = (f.session("orchestrator"), f.session("orchestrator"));
+    let worker = f.session("worker");
+    f.store.owner_callback("asks-1", VERDICT).unwrap();
+    assert_eq!(f.store.chat_recipient().unwrap(), None);
+    let unheard = vec![("chat-asks-1".to_string(), VERDICT.to_string())];
+    for handle in [&first, &second] {
+        assert_eq!(f.store.unheard_owner_events(handle).unwrap(), unheard);
+    }
+    assert!(f.store.unheard_owner_events(&worker).unwrap().is_empty());
+    // An orchestrator's inbox takes it: it is received, and read on demand by nobody after.
+    let inbox = f.store.callback_inbox(&first).unwrap();
+    assert_eq!(inbox, unheard);
+    let keys: Vec<String> = inbox.into_iter().map(|(key, _)| key).collect();
+    f.store.ack_callbacks(&first, &keys).unwrap();
+    assert!(f.store.unheard_owner_events(&second).unwrap().is_empty());
+    assert!(f.store.callback_inbox(&second).unwrap().is_empty());
+}
+
 #[test]
 fn a_session_with_a_channel_or_gone_cannot_read_by_waiting() {
     let f = Fixture::empty();

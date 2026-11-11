@@ -191,7 +191,13 @@ it is recorded as delivered by the same `record_callback_delivery` (a print that
 a socket that refuses is, so a line is repeated and never lost), which records the PULL's
 acknowledgement and the messages' deliveries. No other dispatcher visits a session without an
 address, so its callback state is that reader's alone between reads; one with an address is
-refused, since its channel takes the lines. The command beats for its session before a look, at
+refused, since its channel takes the lines. A look also runs that session's pane watch
+(`Store::watch_pane`, hc from the command's environment) and holds the chat seat when
+`Store::chat_recipient` names it: with no channel able to, the live orchestrator first by handle
+on `callback_state:chat`'s `waiting` list, which a session joins at its first look and leaves at
+any `callback` registration. While nobody holds the seat, `Store::unheard_owner_events` gives
+every orchestrator's `pull` and `inbox` what the owner said, and an inbox acknowledgement takes
+it. The command beats for its session before a look, at
 most every 20 s, as a monitor does, so the look reads the board its beat moved and the next poll
 does not take its own beat for news.
 A finished idle terminal still closes under the original cleanup rules, retiring its

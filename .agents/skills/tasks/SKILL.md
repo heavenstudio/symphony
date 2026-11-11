@@ -2,7 +2,7 @@
 name: tasks
 description: Join the shared task board and register a native callback so messages reach this session directly. Pull, claim, review or orchestrate tasks and answer on their threads. Trigger on "attach to the tasks", "join the board", "pick up a task", "take work from the board", "orchestrate these tasks", or /tasks.
 ---
-<!-- symphony-stamp: 5e8f979e6e8fc880 files=SKILL.md -->
+<!-- symphony-stamp: 8b11a26c3aab9752 files=SKILL.md -->
 
 # Work from the task board
 
@@ -112,7 +112,11 @@ channel, unwrapped: run `just tasks wait --as HANDLE` in the background (after
 `just tasks callback --off --as HANDLE` if one is registered). It exits printing
 what a channel would have carried since its last read, once there is any; act on
 it and run it again. While it waits it beats for you, as a monitor does.
-`--timeout S` gives up after S seconds with `WAIT nothing changed in S s`.
+`--timeout S` gives up after S seconds with `WAIT nothing changed in S s`. It
+carries the BLOCKED lines of the panes you oversee, and, while no channel holds
+the chat seat, a waiting orchestrator holds it and reads the owner's verdicts
+and asks there too. With nobody in the seat, `just tasks pull` ends with what
+the owner said that nobody received, and `just tasks inbox` takes it.
 
 You are never pushed your own writes (your moves, a hand-over or take-over you
 made), nor what your own subagents (sessions registered with `--parent` you) take

@@ -178,6 +178,47 @@ fn wait_is_refused_while_a_channel_takes_the_pushes() {
     assert!(ran.err.contains("callback --off"), "{}", ran.err);
 }
 
+/// What the app publishes when the owner decides a card.
+pub(super) const OWNER: &str = "OWNER accepted card 7 in docs/DECISIONS.md — ship it";
+
+#[test]
+fn wait_says_what_the_owner_says_while_no_channel_holds_the_seat() {
+    let c = case("wait-owner");
+    let orch = orchestrator(&c);
+    c.store().owner_callback("asks-1", OWNER).unwrap();
+    assert_eq!(
+        c.ok(&orch, &["wait", "--timeout", "0"]),
+        format!("{OWNER}\n")
+    );
+    assert_eq!(c.ok(&orch, &["wait", "--timeout", "0"]), nothing(0));
+}
+
+#[test]
+fn wait_says_a_pane_blocked_on_the_work_it_orchestrates() {
+    let c = case("wait-blocked");
+    let orch = orchestrator(&c);
+    let worker = c.register("worker");
+    c.ok(&orch, &["create", "sim/pane", "Pane"]);
+    c.ok(&orch, &["role", "sim/pane", "orchestrator"]);
+    c.ok(&worker, &["claim", "sim/pane"]);
+    let launch = symphony_board::NewLaunch {
+        pane: "t2".into(),
+        ..symphony_board::NewLaunch::new("sim/pane", &worker, "executor")
+    };
+    c.store().record_launch(&launch).unwrap();
+    let terminal = json!({"address": "t2", "agent": "codex", "status": "blocked", "cwd": "/wt", "state": "live"});
+    let state = &c.env.vars["FAKE_HC_STATE"];
+    std::fs::write(state, json!({"terminals": [terminal]}).to_string()).unwrap();
+    // Two looks that see it waiting say it, once.
+    let said: String = (0..3)
+        .map(|_| c.ok(&orch, &["wait", "--timeout", "0"]))
+        .collect();
+    let blocked = format!(
+        "BLOCKED {worker} sim/pane t2 — observed waiting on an approval or a question; inspect its terminal before acting\n"
+    );
+    assert_eq!(said.matches(&blocked).count(), 1, "{said}");
+}
+
 #[test]
 fn wait_refuses_a_timeout_that_is_no_number_of_seconds() {
     let c = case("wait-bad-timeout");

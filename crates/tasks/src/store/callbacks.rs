@@ -238,7 +238,7 @@ RETURN $key;"),
             }
         }
         let body = format!("{ACT}
-UPSERT callback_state:chat SET revision = (revision ?? 0) + 1 RETURN NONE;
+UPSERT callback_state:chat SET revision = (revision ?? 0) + 1, waiting = array::complement(waiting ?? [], [$actor]) RETURN NONE;
 LET $agent = type::record('session', $actor).agent;
 LET $binding = IF $agent = NONE {{ NONE }} ELSE {{ type::record('callback_state', ['binding', $agent]).in_process }};
 IF $address != NONE AND $agent != NONE AND $binding = NONE {{ THROW string::concat('refused: binding provenance is not recorded yet; retry just tasks callback --as ', $actor, ' so the current hook can classify the session'); }};
@@ -280,8 +280,76 @@ RETURN NONE;");
         self.dispatch_or_hand_off()
     }
 
+    /// Who receives the owner's chat events: a registered channel's session, as [`recipient`]
+    /// chooses one; while none can, the waiting orchestrator ([`Store::waiting_orchestrator`]).
     pub fn chat_recipient(&self) -> Result<Option<String>, Error> {
-        Ok(recipient(&self.cached_callbacks()?).map(str::to_owned))
+        match recipient(&self.cached_callbacks()?) {
+            Some(handle) => Ok(Some(handle.to_owned())),
+            None => self.waiting_orchestrator(),
+        }
+    }
+
+    /// The orchestrator that holds the vacant chat seat by waiting (`tasks wait`): of the sessions
+    /// that read by waiting and registered no channel since, the live orchestrators', the first by
+    /// handle. A waiter that stops waiting holds it while it stays live, so what the owner says
+    /// waits for its next read rather than for nobody.
+    fn waiting_orchestrator(&self) -> Result<Option<String>, Error> {
+        let waiting: Vec<crate::rows::SessionRow> = self.retrying(|| self.read(
+            "LET $waiting = (SELECT VALUE waiting FROM ONLY callback_state:chat) ?? [];
+             RETURN SELECT * OMIT id FROM $waiting.map(|$h| type::record('session', $h))
+                WHERE kind = 'orchestrator' AND left_at = NONE AND type::record('callback_state', handle).address = NONE;",
+            json!({}),
+        ))?;
+        let live = |s: &&crate::rows::SessionRow| {
+            crate::health::health(s, self.now(), &self.host, &*self.pid_alive, false)
+                == crate::Health::Live
+        };
+        Ok((waiting.iter().filter(live))
+            .map(|s| s.handle.clone())
+            .min())
+    }
+
+    /// Whether `handle` reads the owner's chat events: it holds the seat, or nobody does and it is
+    /// an orchestrator, which then reads them on demand (`tasks inbox`, `tasks pull`).
+    fn reads_chat(&self, handle: &str) -> Result<bool, Error> {
+        Ok(match self.chat_recipient()? {
+            Some(recipient) => recipient == handle,
+            None => self.session_kind(handle)?.as_deref() == Some("orchestrator"),
+        })
+    }
+
+    fn session_kind(&self, handle: &str) -> Result<Option<String>, Error> {
+        self.retrying(|| {
+            self.read(
+                "RETURN (SELECT VALUE kind FROM ONLY type::record('session', $handle));",
+                json!({"handle":handle}),
+            )
+        })
+    }
+
+    /// The owner's chat events no session received: what an orchestrator reads on demand while
+    /// nobody holds the seat ([`Store::reads_chat`]), each keyed as its callback is (`chat-N`).
+    pub fn unheard_owner_events(&self, handle: &str) -> Result<Vec<(String, String)>, Error> {
+        if self.chat_recipient()?.is_some()
+            || self.session_kind(handle)?.as_deref() != Some("orchestrator")
+        {
+            return Ok(Vec::new());
+        }
+        #[derive(Deserialize)]
+        struct Chat {
+            key: String,
+            text: String,
+        }
+        let chat: Vec<Chat> = self.retrying(|| {
+            self.read(
+                "RETURN SELECT key, text FROM chat_event WHERE delivered = false ORDER BY key NUMERIC;",
+                json!({}),
+            )
+        })?;
+        Ok(chat
+            .into_iter()
+            .map(|c| (format!("chat-{}", c.key), c.text))
+            .collect())
     }
 
     pub fn callbacks(&self) -> Result<BTreeMap<String, Callback>, Error> {
@@ -493,25 +561,32 @@ RETURN NONE;");
         )).map(|_| ())
     }
 
-    /// Failed or pending non-message events also remain readable through the ordinary inbox.
+    /// Failed or pending non-message events also remain readable through the ordinary inbox, and,
+    /// while nobody holds the chat seat, an orchestrator's lists the owner's chat events nobody
+    /// received ([`Store::unheard_owner_events`]).
     pub fn callback_inbox(&self, handle: &str) -> Result<Vec<(String, String)>, Error> {
-        let chat = self.chat_recipient()?.as_deref() == Some(handle);
+        let chat = self.reads_chat(handle)?;
         let events: Vec<Event> = self.retrying(|| self.transact(
             "RETURN SELECT * OMIT id FROM callback_event WHERE handle = $handle AND delivered != true AND message = NONE
                 AND (!string::starts_with(key, 'chat-') OR ($chat AND type::record('chat_event', string::slice(key, 5)).delivered != true)) ORDER BY sequence, key NUMERIC;",
             json!({"handle":handle, "chat":chat}),
         ))?;
-        Ok(events
-            .into_iter()
+        let mut events: Vec<(String, String)> = (events.into_iter())
             .map(|event| (event.key, event.text))
-            .collect())
+            .collect();
+        for (key, text) in self.unheard_owner_events(handle)? {
+            if !events.iter().any(|(queued, _)| *queued == key) {
+                events.push((key, text));
+            }
+        }
+        Ok(events)
     }
 
     pub fn ack_callbacks(&self, handle: &str, keys: &[String]) -> Result<(), Error> {
-        let recipient = self.chat_recipient()?;
+        let chat = self.reads_chat(handle)?;
         let chats: Vec<&str> = keys
             .iter()
-            .filter(|_| recipient.as_deref() == Some(handle))
+            .filter(|_| chat)
             .filter_map(|key| key.strip_prefix("chat-"))
             .collect();
         self.retrying(|| self.transact::<Value>(
@@ -538,22 +613,48 @@ RETURN NONE;");
         print: &mut dyn FnMut(&str) -> std::io::Result<()>,
     ) -> Result<(usize, u64), Error> {
         #[derive(Deserialize)]
-        struct Reader {
+        struct State {
             address: Option<String>,
-            session: Option<crate::rows::SessionRow>,
+            #[serde(default)]
+            pane_watch: Option<attach::PaneWatch>,
         }
-        let reader: Reader = self.retrying(|| {
-            self.transact(
-                "LET $reader = (SELECT * OMIT id FROM ONLY type::record('session', $handle));
-             LET $state = (SELECT address FROM ONLY type::record('callback_state', $handle));
-             IF $reader != NONE AND $reader.left_at = NONE AND $state = NONE {
-                CREATE type::record('callback_state', $handle) SET handle = $handle RETURN NONE;
-             };
-             RETURN { address: $state.address, session: $reader };",
+        #[derive(Deserialize)]
+        struct Reader {
+            state: Option<State>,
+            session: Option<crate::rows::SessionRow>,
+            waiting: bool,
+        }
+        // A read, once the reader has its state row and is on the chat seat's waiting list.
+        let read = || {
+            self.read::<Reader>(
+                "RETURN {
+                    session: (SELECT * OMIT id FROM ONLY type::record('session', $handle)),
+                    state: (SELECT address, pane_watch FROM ONLY type::record('callback_state', $handle)),
+                    waiting: $handle IN ((SELECT VALUE waiting FROM ONLY callback_state:chat) ?? []),
+                };",
                 json!({"handle":handle}),
             )
-        })?;
-        if let Some(address) = reader.address {
+        };
+        let mut reader = self.retrying(read)?;
+        let here = reader.session.as_ref().is_some_and(|s| s.left_at.is_none());
+        let unaddressed = reader.state.as_ref().is_none_or(|s| s.address.is_none());
+        if here && unaddressed && (reader.state.is_none() || !reader.waiting) {
+            self.retrying(|| self.transact::<Value>(
+                "IF type::record('session', $handle).left_at = NONE AND type::record('callback_state', $handle).address = NONE {
+                    IF !record::exists(type::record('callback_state', $handle)) {
+                        CREATE type::record('callback_state', $handle) SET handle = $handle RETURN NONE;
+                    };
+                    UPSERT callback_state:chat SET waiting = array::union(waiting ?? [], [$handle]) RETURN NONE;
+                 }; RETURN NONE;",
+                json!({"handle":handle}),
+            ))?;
+            reader = self.retrying(read)?;
+        }
+        let state = reader.state.unwrap_or(State {
+            address: None,
+            pane_watch: None,
+        });
+        if let Some(address) = state.address {
             return Err(refused(format!(
                 "{handle} has a channel ({address}), which takes what is pushed to it; read it there, or run {} callback --off --as {handle} first",
                 self.callback_command()
@@ -566,14 +667,16 @@ RETURN NONE;");
             handle: handle.to_string(),
             address: String::new(),
             host: self.host.clone(),
-            chat: false,
+            // The owner's chat events, while it holds the seat: no channel does, and it is the
+            // waiting orchestrator ([`Store::chat_recipient`]).
+            chat: self.chat_recipient()?.as_deref() == Some(handle),
             chat_fallback: false,
             owner: None,
             in_process: false,
             confirmed_until: 0.0,
             session,
             chat_resume: false,
-            pane_watch: attach::PaneWatch::default(),
+            pane_watch: state.pane_watch.unwrap_or_default(),
             terminal: None,
             registration_revision: 0,
             registration_nonce: None,
@@ -586,6 +689,14 @@ RETURN NONE;");
             .then(|| self.slot_holdings())
             .transpose()?;
         let visit = Visit::collecting(env, self, holdings.as_ref(), print);
+        // The terminals it oversees, as the server's clock watches a channel's: one sample a look.
+        let open = match attach::overseen(&board, handle).is_empty() {
+            true => Vec::new(),
+            false => self.open_task_sessions()?,
+        };
+        let sample = std::cell::OnceCell::new();
+        let panes = || (sample.get_or_init(|| crate::cli::probes::hc_terminals(env))).clone();
+        self.watch_pane(&board, &callback, &open, &panes, &visit)?;
         self.dispatch_one(handle, &callback, &mut board, &mut sequence, &visit, None)?;
         Ok((visit.printed(), sequence))
     }
