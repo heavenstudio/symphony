@@ -91,6 +91,17 @@ cannot keep installing after `--stop` returns.
 | `/api/pending` | Pending cards in document navigation order, then branch cards |
 | `/api/feed?since=…` | Server-Sent Events after the snapshot's version |
 
+Every JSON read, these and the document reads and a plugin's JSON alike, is answered
+`no-store` with a weak `ETag`: the first 16 hex digits of the SHA-256 of the JSON it sends,
+before compression. A request whose `If-None-Match` names it is answered `304` with no body,
+keeping the tag and `no-store` (`src/api/validated.rs`, applied where every read leaves
+`api::answer`). A document, its outline and its sections' bodies carry the feed's cursor
+(`version`), which moves with every change on the board, so their tag is of the JSON with the
+cursor left out: it moves only with the document. A page whose kept copy is still current takes
+the cursor from `/api/board`. The browser keeps no copy of its own: the client's cache keeps
+the body and sends the tag back (docs/analysis/client-cache.md). An error carries no tag, and the
+feed's stream is never read whole.
+
 The read routes also work under `/@<branch with / replaced by ~>/`. Done and
 cancelled columns show work updated in the last day; `days=7` selects the last week,
 `older=1` and search reach older work. `parent=…`, `roots=1`, and
