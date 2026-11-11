@@ -18,6 +18,7 @@ use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant, SystemTime};
 use symphony_board::{launch::reap::REAP_SECONDS, sys::Command};
 use tokio::sync::watch;
+use tower_http::compression::predicate::{DefaultPredicate, Predicate};
 
 mod connections;
 mod embeddings;
@@ -245,7 +246,10 @@ pub fn router(shared: Arc<Shared>) -> Router {
     Router::new()
         .route(symphony_api::FRONT_PATH, get(front))
         .fallback(answer)
-        .layer(tower_http::compression::CompressionLayer::new())
+        .layer(
+            tower_http::compression::CompressionLayer::new()
+                .compress_when(DefaultPredicate::new().and(crate::api::compressed_per_request)),
+        )
         .layer(middleware::from_fn(head))
         .layer(middleware::from_fn_with_state(shared.clone(), judge))
         .with_state(shared)

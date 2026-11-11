@@ -71,17 +71,19 @@ geometry, stream recovery and transfer budgets without a display server.
   action listeners, own-node form reads and owned visibility latch reduce the
   board WASM from 199,247 to 183,713 gzip bytes, and home from 193,570
   to 175,351, including the appearance changes merged from `61c0d93e`.
-  The canonical-entry browser case measures cold transfers of 201,176 bytes
-  on `/` and 206,758 on
-  `/tasks`, including response overhead and fixture API data; cached returns
-  are 1,784 and 2,516 bytes. Both first visits fit, 48,824 and 43,242 bytes
-  under the cap. The same
-  run reports `/agents` at 394,646, `/docs/` at 422,473, `/queue` at 208,183
-  and opening the deferred panel at another 343,362 bytes. Each kind pays
-  for its own compiled framework; later visits reuse cached imports. The
-  original home budget test remains independent of the canonical-entry test,
-  which gives every kind a fresh browser profile and reports the complete
-  published output (1,717,875 gzip bytes including the board JSON in this run).
+  The stand-in sends the build as the server does, gzipped at the best level,
+  and the page and API data at the default. Over the client committed at
+  `e2141ff`, the canonical-entry browser case measures cold transfers of
+  220,190 bytes on `/` and 249,258 on `/tasks`, including response overhead
+  and fixture API data; cached returns are 1,896 and 2,655 bytes. Both first
+  visits fit, `/tasks` by 742 bytes and `/` by 29,810. The same run reports
+  `/agents` at 433,194, a task page at 433,740, `/docs/` at 445,961, a
+  document at 447,491, `/queue` at 231,756 and opening the deferred panel at
+  another 515,170 bytes. Each kind pays for its own compiled framework; later
+  visits reuse cached imports. The original home budget test remains
+  independent of the canonical-entry test, which gives every kind a fresh
+  browser profile and reports the complete published output, retained
+  hashes included.
   Measure loaded resources, including API data, rather than summing every
   deferred module or retained historical asset hash in the published output.
   The 250,000 and 20,000 byte limits are the owner's; a lower first-visit
