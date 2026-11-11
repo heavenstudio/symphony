@@ -172,7 +172,7 @@ fn a_left_or_unknown_session_cannot_act() {
     );
     assert_eq!(
         refused(f.store.claim("sim/jump", "nobody")),
-        "no session 'nobody'; attach first (just tasks-attach)"
+        "no session 'nobody'; register first (`just tasks register`)"
     );
 }
 

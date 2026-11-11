@@ -686,6 +686,7 @@ fn exercise_task_controls(address: std::net::SocketAddr) {
             assert_eq!(response.status, 403, "{route}: {response:?}");
             f.assert_unchanged(&baseline, "task control Host/Origin refusal");
         }
+        // A task the board lacks is not found, as a read of it is.
         let response = f.request(
             "POST",
             route,
@@ -693,7 +694,7 @@ fn exercise_task_controls(address: std::net::SocketAddr) {
             Some(&origin),
             &json!({"slug":"fixture/missing", "priority":0}),
         );
-        assert_eq!(response.status, 400, "{route}: {response:?}");
+        assert_eq!(response.status, 404, "{route}: {response:?}");
         assert!(
             response.json()["error"]
                 .as_str()
@@ -701,6 +702,29 @@ fn exercise_task_controls(address: std::net::SocketAddr) {
                 .contains("no task")
         );
         f.assert_unchanged(&baseline, "missing task");
+    }
+    // A task write naming no task is refused as such, never as a board that cannot be reached.
+    for route in [
+        "/api/task-message",
+        "/api/task-priority",
+        "/api/task-field",
+        "/api/task-cancel",
+        symphony_api::TASK_ACTION_ROUTE,
+    ] {
+        for body in [
+            json!({}),
+            json!({"priority": 2}),
+            json!({"slug": " ", "text": "hi"}),
+        ] {
+            let response = f.request("POST", route, Some(&host), Some(&origin), &body);
+            assert_eq!(response.status, 400, "{route} {body}: {response:?}");
+            assert_eq!(
+                response.json(),
+                json!({"error": "slug is required"}),
+                "{route} {body}"
+            );
+            f.assert_unchanged(&baseline, "a task write naming no task");
+        }
     }
     for status in [
         "backlog",

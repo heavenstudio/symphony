@@ -578,6 +578,7 @@ fn contracts(f: &Fixture) {
     assert_eq!(shell.header("cache-control"), "no-cache");
     for route in [
         "/tasks",
+        "/task",
         "/agents",
         "/queue",
         "/shelf/",
@@ -618,6 +619,7 @@ fn contracts(f: &Fixture) {
         .status(404);
     f.get("/@work~http/api/document?path=%40other%2Fdocs%2FTOPIC.md")
         .status(400);
+    misses(f);
     client_decodes_document_reads(f);
     for route in [
         "/",
@@ -871,6 +873,125 @@ fn contracts(f: &Fixture) {
 /// the `document` wrapper reaches the owner as "missing field `document`". Decode what the real
 /// router answers, for the gallery document, a plain document and a branch scope, with the
 /// client's own types.
+/// Every miss is one answer: a page in the app's look off the API, saying what is missing and
+/// where to go, and a JSON error under it, 400 for an argument missing or malformed and 404 for a
+/// thing; a save route read says it takes POST.
+fn misses(f: &Fixture) {
+    for (route, status, said) in [
+        ("/nonexistent", 404, "<code>/nonexistent</code>"),
+        ("/docs/%ZZ", 400, "This address cannot be read"),
+        (
+            "/artifacts/uploads/nope.png",
+            404,
+            "<code>/artifacts/uploads/nope.png</code>",
+        ),
+        ("/room/shelf/items/missing.item", 404, "Nothing is here"),
+        ("/.git/config", 404, "<code>/.git/config</code>"),
+        (
+            "/@unknown/tasks?x=1",
+            404,
+            "<a href=\"/tasks?x=1\">Open this page in the main checkout</a>",
+        ),
+        (
+            "/@unknown/docs/TOPIC.md",
+            404,
+            "The worktree of branch <q>unknown</q> is gone",
+        ),
+        // A server of its own links the same page by its path alone, never another site.
+        (
+            "/@unknown//evil.example",
+            404,
+            "<a href=\"/evil.example\">Open this page",
+        ),
+        (
+            "/@unknown/%2F%2Fevil.example",
+            404,
+            "<a href=\"/evil.example\">Open this page",
+        ),
+    ] {
+        let page = f.get(route).status(status);
+        assert!(!page.text().contains("href=\"//"), "{route}");
+        assert_eq!(
+            page.header("content-type"),
+            "text/html; charset=utf-8",
+            "{route}"
+        );
+        assert_eq!(page.header("cache-control"), "no-store", "{route}");
+        let text = page.text();
+        assert!(
+            text.contains("<header class=\"app-header\""),
+            "{route}: {text}"
+        );
+        assert!(text.contains(said), "{route}: {text}");
+        assert!(
+            text.contains("<a href=\"/docs/\">☰ docs</a>"),
+            "{route}: {text}"
+        );
+        // The same miss read as a page's subresource or by HEAD is the same answer.
+        let head = f.request("HEAD", route, &[], &[]).status(status);
+        assert!(head.body.is_empty(), "{route}");
+        assert_eq!(head.header("content-type"), "text/html; charset=utf-8");
+    }
+    for (route, status, error) in [
+        ("/api/nope", 404, "no such API route: /api/nope"),
+        ("/@work~http/api/nope", 404, "no such API route: /api/nope"),
+        (
+            "/@unknown/api/document?path=docs/TOPIC.md",
+            404,
+            "no worktree for this branch",
+        ),
+        ("/api/folder", 400, "path is required"),
+        (
+            "/api/document?path=docs/%00.md",
+            400,
+            "path is not valid: it holds a control character",
+        ),
+        (
+            "/api/document?path=docs/%FF.md",
+            400,
+            "path is not valid: its percent-encoding is not UTF-8",
+        ),
+        ("/api/folder?path=", 404, "not found: the path is empty"),
+        (
+            "/api/task-page?slug=%FF",
+            400,
+            "slug is not valid: its percent-encoding is not UTF-8",
+        ),
+        ("/api/task-page?slug=", 400, "slug is required"),
+        ("/api/task-thread", 400, "slug is required"),
+    ] {
+        let refused = f.get(route).status(status);
+        assert_eq!(
+            refused.header("content-type"),
+            "application/json",
+            "{route}"
+        );
+        assert_eq!(refused.json(), json!({"error": error}), "{route}");
+    }
+    let unknown = f.get("/api/task-board?status=nope").status(400);
+    let said = unknown.json()["error"].as_str().unwrap().to_string();
+    assert!(
+        said.starts_with("no status \"nope\": a listing selects one of backlog, concept,")
+            && said.ends_with("or signoff, build, test"),
+        "{said}"
+    );
+    f.get("/api/task-board?status=review").status(200);
+    for (method, route, allowed) in [
+        ("GET", "/api/task-cancel", "POST"),
+        ("GET", "/@work~http/api/decision", "POST"),
+        ("GET", "/api/upload", "POST"),
+        ("PUT", "/api/ask", "GET, HEAD, POST"),
+    ] {
+        let refused = f.request(method, route, &[], &[]).status(405);
+        assert_eq!(refused.header("allow"), allowed, "{route}");
+        assert_eq!(
+            refused.json(),
+            json!({"error": format!("this route takes {allowed}")}),
+            "{route}"
+        );
+    }
+}
+
 fn client_decodes_document_reads(f: &Fixture) {
     for scope in ["", SCOPE] {
         for path in ["docs/SHELF.md", "docs/TOPIC.md"] {

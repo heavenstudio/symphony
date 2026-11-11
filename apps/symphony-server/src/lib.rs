@@ -23,6 +23,7 @@ mod live;
 pub mod log;
 mod media_files;
 pub mod orphans;
+mod pages;
 pub mod probe;
 mod projects;
 mod reload;

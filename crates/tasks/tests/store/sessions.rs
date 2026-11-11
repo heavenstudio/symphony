@@ -242,7 +242,7 @@ fn touch_of_an_unknown_or_left_session_is_refused() {
     let f = Fixture::empty();
     assert_eq!(
         refused(f.store.touch("ghost-owl")),
-        "no session 'ghost-owl'; attach first (just tasks-attach)"
+        "no session 'ghost-owl'; register first (`just tasks register`)"
     );
     let h = f.session("worker");
     f.store.leave(&h).unwrap();
@@ -351,7 +351,7 @@ fn leave_releases_every_role_on_the_record_and_ends_the_session() {
     );
     assert_eq!(
         refused(f.store.leave("ghost-owl")),
-        "no session 'ghost-owl'; attach first (just tasks-attach)"
+        "no session 'ghost-owl'; register first (`just tasks register`)"
     );
 }
 

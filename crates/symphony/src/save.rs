@@ -34,6 +34,15 @@ pub const ROUTES: [&str; 13] = [
     symphony_api::TASK_ACTION_ROUTE,
 ];
 
+/// The routes that write to one task, named by the payload's `slug`.
+const TASK_ROUTES: [&str; 5] = [
+    "/api/task-message",
+    "/api/task-priority",
+    "/api/task-field",
+    "/api/task-cancel",
+    symphony_api::TASK_ACTION_ROUTE,
+];
+
 fn string<'a>(payload: &'a Value, key: &str) -> &'a str {
     payload[key].as_str().unwrap_or("")
 }
@@ -199,6 +208,11 @@ impl Saves {
         if !payload.is_object() {
             return Err("bad JSON: body must be a JSON object".to_string().into());
         }
+        // A task write names its task before it reaches the board, which reads an empty slug as no
+        // valid record id at all.
+        if TASK_ROUTES.contains(&route) && string(payload, "slug").trim().is_empty() {
+            return Err("slug is required".to_string().into());
+        }
         let request = json!([scope, route, payload]).to_string();
         let mut unpublished = self.unpublished.lock().unwrap_or_else(|e| e.into_inner());
         if let Some((text, value)) = unpublished.get(&request).cloned() {
@@ -272,13 +286,9 @@ impl Saves {
                 self.document(scope, route, payload)
             }
             "/api/task-message" => {
-                let slug = string(payload, "slug");
-                if slug.trim().is_empty() {
-                    return Err("slug is required".to_string().into());
-                }
                 let to = string(payload, "to");
                 self.store()?.say(
-                    slug,
+                    string(payload, "slug"),
                     "owner",
                     string(payload, "text"),
                     (!to.is_empty()).then_some(to),
@@ -366,7 +376,7 @@ impl Saves {
                 let id = value["id"].as_i64();
                 let db = asks::default_path(&self.root, std::env::var("ASKS_DB").ok().as_deref());
                 let db = format!("'{}'", db.to_string_lossy().replace('\'', "'\\''"));
-                let reply = id.map_or_else(|| format!("Reply in the document/card at {}#{} using the chat-doc skill.", string(payload, "path"), string(payload, "slug")), |id| format!("Read: tools/rs-bin.sh symphony ask --db {db} show {id}. Answer: tools/rs-bin.sh symphony ask --db {db} answer {id} TEXT --by HANDLE."));
+                let reply = id.map_or_else(|| format!("Reply in the document/card at {}#{} using the chat-doc skill.", string(payload, "path"), string(payload, "slug")), |id| format!("Read: just symphony-ask --db {db} show {id}. Answer: just symphony-ask --db {db} answer {id} TEXT --by HANDLE."));
                 let text = format!(
                     "OWNER {route} scope={scope} {}\n{reply}{}",
                     payload,

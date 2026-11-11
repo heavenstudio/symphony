@@ -6,7 +6,7 @@
 //! ([`rpc`]); the board read in one round trip; and the copy of a whole board into it ([`Store::copy`],
 //! the `tasks-copy` binary), which the one-way move of the SQLite board makes ([`cutover`]). The
 //! board's own server keeps its data in the git common dir ([`git`]) and is started by whatever needs
-//! it ([`server`]), on a loopback port reserved for it ([`port`]). It takes that board once `just tasks-cutover` has moved the SQLite one into it.
+//! it ([`server`]), on a loopback port reserved for it ([`port`]). It takes that board once `tasks-cutover` has moved the SQLite one into it.
 //!
 //! A rule reads what it decides on, decides here (a session's health needs this machine's process
 //! table), and writes in one transaction that first checks the task's `version` is still the one it

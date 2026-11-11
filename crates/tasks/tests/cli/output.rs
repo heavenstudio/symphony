@@ -674,12 +674,39 @@ fn no_session_is_exit_2_saying_how_to_get_one() {
             (
                 2,
                 "",
-                "✖ no session: pass --as HANDLE or set TASKS_SESSION (get one with `just tasks-attach` \
-                 or `just tasks register`)\n"
+                "✖ no session: pass --as HANDLE or set TASKS_SESSION (get one with \
+                 `just tasks register`)\n"
             ),
             "{args:?}"
         );
     }
+}
+
+#[test]
+fn a_message_to_an_agent_with_no_channel_names_the_commands_that_reach_this_board() {
+    let c = Case::new();
+    let (sender, receiver) = (c.register("worker"), c.register("worker"));
+    let args: Vec<String> = [receiver.as_str(), "hi", "--as", sender.as_str()]
+        .map(String::from)
+        .to_vec();
+    let (mut out, mut err) = (Vec::new(), Vec::new());
+    let code = symphony_board::cli::agent_send::main(&args, &c.env, &mut out, &mut err);
+    let err = String::from_utf8(err).unwrap();
+    // The board is a server TASKS_SERVER names, on a database of its own: the commands say both.
+    let board = format!(
+        "TASKS_SERVER={} just tasks --database {}",
+        c.env.vars["TASKS_SERVER"], c.env.vars["TASKS_DATABASE"]
+    );
+    assert_eq!((code, out.is_empty()), (1, true), "{err}");
+    assert!(
+        err.contains(&format!(
+            "has no native channel; have it run {board} callback --as {receiver}, or send on a \
+             task with {board} say SLUG TEXT --to {receiver} (it can read {board} inbox --as \
+             {receiver})"
+        )),
+        "{err}"
+    );
+    assert!(!err.contains("rs-bin"), "{err}");
 }
 
 #[test]

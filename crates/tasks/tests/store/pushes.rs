@@ -502,7 +502,13 @@ fn a_session_with_a_channel_or_gone_cannot_read_by_waiting() {
         other => panic!("{handle}: {other:?}"),
     };
     let why = refused(&heard);
-    assert!(why.contains(" callback --off --as "), "{why}");
+    assert!(
+        why.ends_with(&format!(
+            "; read it there, or run just tasks --database {} callback --off --as {heard} first",
+            f.other_client().database()
+        )),
+        "{why}"
+    );
     let gone = f.session("orchestrator");
     f.store.leave(&gone).unwrap();
     assert_eq!(
