@@ -7,7 +7,7 @@
 //! own: it is the one in use and this never writes over it. Where the project has none, the
 //! Symphony's is used. The project's own skills and guards sit beside the shipped ones and are never
 //! touched. It writes no permission rule but the allow rules, and each allow rule names a recipe
-//! `symphony.just` holds.
+//! `symphony.just` holds: its board and reply recipes, never the server ones ([`ALLOW`]).
 //!
 //! A project with no justfile gets one importing the recipes; a justfile of the project's is never
 //! written. The project's `.gitignore` gets a line for each folder the Symphony fills that it does
@@ -89,13 +89,13 @@ const MEMORY_GUARD: Hook = Hook {
 
 const HOOKS: [Hook; 2] = [HEARTBEAT, MEMORY_GUARD];
 
-/// What Claude allows without a prompt: the recipes of `symphony.just`, each one, and nothing else.
-const ALLOW: [&str; 8] = [
+/// What Claude allows without a prompt: the board and reply recipes of `symphony.just`. Its server
+/// recipes, `symphony` (which starts, replaces or stops the machine's shared server) and
+/// `symphony-cli` (which reaches `serve`, `init` and `publish-client`), ask first.
+const ALLOW: [&str; 6] = [
     "Bash(just tasks:*)",
     "Bash(TASKS_SESSION=* just tasks *)",
     "Bash(just agent-send:*)",
-    "Bash(just symphony:*)",
-    "Bash(just symphony-cli:*)",
     "Bash(just symphony-status:*)",
     "Bash(just symphony-reply:*)",
     "Bash(just symphony-ask:*)",

@@ -6,9 +6,7 @@
       "Bash(just symphony-status:*)",
       "Bash(just symphony-reply:*)",
       "Bash(just symphony-ask:*)",
-      "Bash(just agent-send:*)",
-      "Bash(just symphony:*)",
-      "Bash(just symphony-cli:*)"
+      "Bash(just agent-send:*)"
     ],
     "deny": [
       "Edit(~/.claude/projects/**/memory/**)"

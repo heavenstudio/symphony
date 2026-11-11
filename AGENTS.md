@@ -135,9 +135,11 @@ linked worktree, else NAME on PATH (`crates/symphony/src/builds.rs`, which the
 Symphony's board clients share). Stamped copies are kept current; an unstamped
 project copy wins. Project-specific skills and taste data stay in the project.
 Retirement removes managed files and links, retaining project data. It writes no
-permission rule but the allow rules, one for each installed recipe, as the Codex rules
-have. Init ends by printing what is
-left (`Next:`): the project file, its document folders, the justfile's import, the
+permission rule but the allow rules, which, like the Codex rules, allow the board and
+reply recipes (`tasks`, `agent-send`, `symphony-status`, `symphony-reply`,
+`symphony-ask`) and not the two server recipes: `just symphony` starts, replaces or
+stops the machine's shared server, and `just symphony-cli` reaches `serve`, `init`
+and `publish-client`, so an agent is asked first. Init ends by printing what is left (`Next:`): the project file, its document folders, the justfile's import, the
 links to the project's builds, the board's SurrealDB and the machine's registration,
 and warns on stderr while the heartbeat's links are missing. Every `just NAME` in
 the shipped skills, the docs and the binaries' strings is an installed recipe or the

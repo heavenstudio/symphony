@@ -1,7 +1,7 @@
 //! Every `just NAME` the Symphony tells a project to run is a recipe `symphony init` installs
 //! (`shipped/symphony.just`), or the consumer's landing, named as the project's own: in the shipped
 //! skills and rules, the docs, and the strings its binaries print. The allow rules init writes and
-//! the Codex rules it ships name those recipes too.
+//! the Codex rules it ships allow those recipes but the two server ones.
 
 use regex::Regex;
 use std::collections::BTreeSet;
@@ -347,8 +347,14 @@ fn every_just_command_the_symphony_names_is_an_installed_recipe_or_the_consumers
 }
 
 #[test]
-fn the_allow_rules_and_the_codex_rules_allow_exactly_the_installed_recipes() {
+fn the_allow_rules_and_the_codex_rules_allow_installed_recipes_but_the_servers() {
     let installed = installed();
+    // An agent is asked before `just symphony`, which starts, replaces or stops the machine's
+    // shared server, and before `just symphony-cli`, which reaches `serve`, `init` and
+    // `publish-client`: both stay installed, and no rule allows them.
+    let asked: BTreeSet<String> = ["symphony", "symphony-cli"].map(String::from).into();
+    assert!(asked.is_subset(&installed), "{installed:?}");
+    let allowed_here: BTreeSet<String> = installed.difference(&asked).cloned().collect();
     let tree = super::support::Tree::new();
     let done = std::process::Command::new(super::common::BIN)
         .args(["init", "--root"])
@@ -371,7 +377,7 @@ fn the_allow_rules_and_the_codex_rules_allow_exactly_the_installed_recipes() {
                 .to_string()
         })
         .collect();
-    assert_eq!(allowed, installed);
+    assert_eq!(allowed, allowed_here);
 
     let prefix = Regex::new(r#"prefix_rule\(pattern=\["just", "([a-z][a-z0-9_-]*)"\]"#).unwrap();
     let codex = include_str!("../../shipped/codex.rules");
@@ -379,7 +385,7 @@ fn the_allow_rules_and_the_codex_rules_allow_exactly_the_installed_recipes() {
         .captures_iter(codex)
         .map(|found| found[1].to_string())
         .collect();
-    assert_eq!(codex, installed);
+    assert_eq!(codex, allowed_here);
 }
 
 #[test]
