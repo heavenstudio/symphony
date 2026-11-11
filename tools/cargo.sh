@@ -8,6 +8,8 @@ if [ ! -f "$root/Cargo.toml" ]; then
 fi
 cd "$root"
 export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$root/.target}"
+# A linked worktree's new build folder starts as clones of the main checkout's (tools/seed-target.sh).
+"$root/tools/seed-target.sh" "$CARGO_TARGET_DIR" || true
 export CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-2}"
 export RUST_TEST_THREADS="${RUST_TEST_THREADS:-6}"
 exec "${CARGO:-cargo}" "$@"
