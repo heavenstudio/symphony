@@ -35,53 +35,69 @@ fn symphony_crate(fixture: &Fixture, answer: u32) {
     );
 }
 
-/// A project that builds on the fixture's Symphony from its remote, registered in the fixture's
-/// machine folder: its checkout.
-fn consumer(fixture: &Fixture) -> PathBuf {
-    let root = fixture.root.join("consumer");
-    let write = |file: &str, text: &str| {
+/// A git checkout at `ID` in the fixture's folder holding `files`, committed: its folder.
+fn project(fixture: &Fixture, id: &str, files: &[(&str, &str)]) -> PathBuf {
+    let root = fixture.root.join(id);
+    for (file, text) in files {
         let path = root.join(file);
         fs::create_dir_all(path.parent().unwrap()).unwrap();
         fs::write(path, text).unwrap();
-    };
-    write("rust-toolchain.toml", &toolchain());
-    write(
-        "symphony.toml",
-        "[project]\nid = \"consumer\"\n\n[plugins]\ncrates = [\"consumer-plugin\"]\n",
-    );
-    write(
-        "Cargo.toml",
-        "[workspace]\nmembers = [\"host\"]\nresolver = \"2\"\n",
-    );
-    write(
-        "host/Cargo.toml",
-        &format!(
-            "[package]\nname = \"consumer-host\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n\
-             [dependencies]\nfixture-core = {{ git = \"file://{}\", branch = \"main\" }}\n",
-            fixture.origin.display()
-        ),
-    );
-    write(
-        "host/src/lib.rs",
-        "#[cfg(test)]\nmod tests {\n    #[test]\n    fn the_symphony_answers() {\n        \
-         assert_eq!(fixture_core::answer(), 42);\n    }\n}\n",
-    );
+    }
     git(&root, &["init", "-q", "-b", "main"]);
     git(&root, &["add", "-A"]);
-    git(&root, &["commit", "-q", "-m", "the consumer"]);
-    let machine = fixture.root.join("machine");
-    let registry = Registry {
-        projects: vec![Entry {
-            id: "consumer".into(),
-            name: "Consumer".into(),
-            root: root.clone(),
-            manifest: Some(root.join("symphony.toml")),
-            plugins: vec!["consumer-plugin".into()],
-            pin: 1,
-            schema: 16,
-        }],
+    git(&root, &["commit", "-q", "-m", id]);
+    root
+}
+
+/// The machine folder's registry: `projects`, each naming a plugin.
+fn register(fixture: &Fixture, projects: &[(&str, &Path)]) {
+    let entry = |(id, root): &(&str, &Path)| Entry {
+        id: (*id).into(),
+        name: (*id).into(),
+        root: root.to_path_buf(),
+        manifest: None,
+        plugins: vec![format!("{id}-plugin")],
+        pin: 1,
+        schema: 16,
     };
-    registry.write(&machine).unwrap();
+    Registry {
+        projects: projects.iter().map(entry).collect(),
+    }
+    .write(&fixture.root.join("machine"))
+    .unwrap();
+}
+
+/// A project that builds on the fixture's Symphony from its remote, registered in the fixture's
+/// machine folder: its checkout.
+fn consumer(fixture: &Fixture) -> PathBuf {
+    let manifest = format!(
+        "[package]\nname = \"consumer-host\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n\
+         [dependencies]\nfixture-core = {{ git = \"file://{}\", branch = \"main\" }}\n",
+        fixture.origin.display()
+    );
+    let toolchain = toolchain();
+    let root = project(
+        fixture,
+        "consumer",
+        &[
+            ("rust-toolchain.toml", toolchain.as_str()),
+            (
+                "symphony.toml",
+                "[project]\nid = \"consumer\"\n\n[plugins]\ncrates = [\"consumer-plugin\"]\n",
+            ),
+            (
+                "Cargo.toml",
+                "[workspace]\nmembers = [\"host\"]\nresolver = \"2\"\n",
+            ),
+            ("host/Cargo.toml", manifest.as_str()),
+            (
+                "host/src/lib.rs",
+                "#[cfg(test)]\nmod tests {\n    #[test]\n    fn the_symphony_answers() {\n        \
+                 assert_eq!(fixture_core::answer(), 42);\n    }\n}\n",
+            ),
+        ],
+    );
+    register(fixture, &[("consumer", &root)]);
     root
 }
 
@@ -181,30 +197,7 @@ fn a_project_the_machine_serves_is_built_and_tested_against_the_candidate() {
 fn a_registered_project_that_cannot_be_conciliated_is_named_and_the_rest_goes_on() {
     let fixture = Fixture::new();
     let gone = fixture.root.join("gone");
-    Registry {
-        projects: vec![
-            Entry {
-                id: "gone".into(),
-                name: "Gone".into(),
-                root: gone.clone(),
-                manifest: None,
-                plugins: vec!["p".into()],
-                pin: 1,
-                schema: 16,
-            },
-            Entry {
-                id: "itself".into(),
-                name: "Itself".into(),
-                root: fixture.main.clone(),
-                manifest: None,
-                plugins: vec!["p".into()],
-                pin: 1,
-                schema: 16,
-            },
-        ],
-    }
-    .write(&fixture.root.join("machine"))
-    .unwrap();
+    register(&fixture, &[("gone", &gone), ("itself", &fixture.main)]);
     let out = fixture.night(NOW, 0);
     assert!(
         out.contains(&format!(
@@ -219,5 +212,67 @@ fn a_registered_project_that_cannot_be_conciliated_is_named_and_the_rest_goes_on
     );
     let run = fixture.runs().last().unwrap().clone();
     assert_eq!(run["skipped"].as_array().unwrap().len(), 1, "{run}");
+    assert_eq!(fixture.remote_tags(), ["release-2026-11-12"]);
+}
+
+#[test]
+fn a_project_that_takes_nothing_from_the_symphony_is_passed_over_and_one_unread_is_red() {
+    let fixture = Fixture::new();
+    symphony_crate(&fixture, 42);
+    fixture.commit("the Symphony's crate");
+    git(&fixture.main, &["push", "-q", "origin", "main"]);
+    let toolchain = toolchain();
+    let alone = project(
+        &fixture,
+        "alone",
+        &[
+            ("rust-toolchain.toml", toolchain.as_str()),
+            (
+                "Cargo.toml",
+                "[workspace]\nmembers = [\"app\"]\nresolver = \"2\"\n",
+            ),
+            (
+                "app/Cargo.toml",
+                "[package]\nname = \"alone-app\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+            ),
+            ("app/src/lib.rs", ""),
+        ],
+    );
+    let unbuilt = project(
+        &fixture,
+        "unbuilt",
+        &[("README.md", "no Cargo workspace\n")],
+    );
+    register(&fixture, &[("alone", &alone), ("unbuilt", &unbuilt)]);
+    let home = fixture.root.join("cargo-home");
+    let cargo_home = home.to_string_lossy().into_owned();
+    let extra = [("CARGO_HOME", cargo_home.as_str())];
+
+    let (code, out, err) = fixture.nightly_with(NOW, &["--check", CHECK], &extra);
+    assert_eq!(code, 1, "{out}{err}");
+    assert!(
+        out.contains(
+            "nightly: left out: alone: none of its packages takes one of the Symphony's from git"
+        ),
+        "{out}"
+    );
+    assert!(
+        out.contains("nightly: conciliate-unbuilt red (did not run: cargo metadata failed in "),
+        "a project it cannot read is red, never passed over: {out}"
+    );
+    assert!(fixture.remote_tags().is_empty());
+    assert_eq!(
+        fixture.reds().keys().collect::<Vec<_>>(),
+        ["tests/nightly-red-conciliate-unbuilt"]
+    );
+
+    // A registry that does not read conciliates nothing, and says so; the night goes on.
+    fs::write(fixture.root.join("machine/projects.json"), "not json\n").unwrap();
+    let (code, out, err) = fixture.nightly_with(NOW + 60.0, &["--check", CHECK], &extra);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(
+        out.contains("nightly: left out: no project conciliated: "),
+        "{out}"
+    );
     assert_eq!(fixture.remote_tags(), ["release-2026-11-12"]);
 }

@@ -315,6 +315,20 @@ fn a_command_line_it_cannot_read_is_refused_and_runs_nothing() {
         assert_eq!(code, 2, "{args:?}: {err}");
         assert!(err.contains(said), "{args:?}: {err}");
     }
+    // The last `--now` given is the one read.
+    for now in ["soon", "inf", "NaN"] {
+        let (code, _, err) = fixture.nightly_at(NOW, &["--now", now]);
+        assert_eq!(code, 2, "--now {now}: {err}");
+        assert!(err.contains("is not a time"), "--now {now}: {err}");
+    }
+    let elsewhere = fixture.root.join("not-a-checkout");
+    fs::create_dir_all(&elsewhere).unwrap();
+    let (code, _, err) = fixture.nightly_at(
+        NOW,
+        &["--check", CHECK, "--root", &elsewhere.to_string_lossy()],
+    );
+    assert_eq!(code, 1, "{err}");
+    assert!(err.contains("not a git repository"), "{err}");
     let (code, _, err) = fixture.nightly_at(
         NOW,
         &[

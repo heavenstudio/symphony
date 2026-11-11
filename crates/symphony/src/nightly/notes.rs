@@ -168,6 +168,22 @@ mod tests {
         }
     }
 
+    /// The files a release reads its schema and pin from say them as the reading expects: a rename
+    /// or a move here would leave every release's message saying "unknown".
+    #[test]
+    fn this_repositorys_schema_and_pin_read_as_the_values_they_are() {
+        let workspace = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let read = |file: &str| std::fs::read_to_string(workspace.join(file)).unwrap();
+        assert_eq!(
+            constant(&read(SCHEMA_FILE), "VERSION"),
+            Some(symphony_board::schema::VERSION)
+        );
+        assert_eq!(
+            constant(&read(PIN_FILE), "PIN"),
+            Some(i64::from(crate::machine::PIN))
+        );
+    }
+
     #[test]
     fn each_fact_says_whether_it_changed_since_the_release_before() {
         assert_eq!(fact("Pin", Some(1), None), "Pin 1.");

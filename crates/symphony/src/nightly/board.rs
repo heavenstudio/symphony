@@ -358,6 +358,7 @@ mod tests {
         }
 
         fn leave(&self, handle: &str) -> Result<(), String> {
+            self.refused("leave")?;
             for session in self.sessions.borrow_mut().iter_mut() {
                 if session.0 == handle {
                     session.1 = false;
@@ -560,6 +561,43 @@ mod tests {
             Some("cannot register on the board: register refused")
         );
         assert!(unregistered.tasks.borrow().is_empty());
+    }
+
+    #[test]
+    fn a_board_that_cannot_say_a_status_or_end_the_session_is_said_and_writes_nothing() {
+        let blind = Fake {
+            refuse: vec!["status", "leave"],
+            ..Fake::default()
+        };
+        let done = report(&blind, &night(&[]), &[ran("verify", 1), ran("lint", 0)]);
+        assert!(done.filed.is_empty() && done.updated.is_empty() && done.closed.is_empty());
+        assert_eq!(
+            done.error.as_deref(),
+            Some(
+                "status refused; status refused; \
+                 cannot leave the board session filer-1: leave refused"
+            )
+        );
+        assert!(blind.tasks.borrow().is_empty());
+    }
+
+    #[test]
+    fn a_key_whose_every_generation_is_closed_is_said_never_filed_past_them() {
+        let spent: Vec<String> = (1..=GENERATIONS)
+            .map(|n| match n {
+                1 => format!("{SERIES}verify"),
+                n => format!("{SERIES}verify-{n}"),
+            })
+            .collect();
+        let tasks: Vec<(&str, &str)> = spent.iter().map(|s| (s.as_str(), "done")).collect();
+        let board = Fake::with(&tasks);
+        let done = report(&board, &night(&[]), &[ran("verify", 1)]);
+        assert_eq!(
+            done.error.as_deref(),
+            Some("tests/nightly-red-verify: 1000 generations, all closed")
+        );
+        assert!(done.filed.is_empty());
+        assert_eq!(board.tasks.borrow().len(), spent.len());
     }
 
     #[test]
