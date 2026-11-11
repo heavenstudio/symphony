@@ -3,7 +3,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use symphony_api::{Document, DocumentChange, Section};
+use symphony_api::{Block, Document, DocumentChange, Section, ThreadAuthor};
 
 #[derive(Clone, PartialEq)]
 pub struct DocumentState {
@@ -147,7 +147,7 @@ impl DocumentState {
 pub fn held(
     engaged: &BTreeSet<String>,
     drafts: &BTreeSet<String>,
-    released: &BTreeMap<String, String>,
+    released: &BTreeMap<String, usize>,
     loading: impl IntoIterator<Item = String>,
     latest: &Document,
 ) -> BTreeSet<String> {
@@ -166,14 +166,42 @@ pub fn held(
     held
 }
 
-/// The cards the owner just saved in, by the hash each showed then: the owner's answer shows at once,
-/// whatever holds the card. A release ends once the card shows changed, or is gone.
-pub fn settle(released: &mut BTreeMap<String, String>, shown: &Document) {
-    released.retain(|key, hash| {
-        shown
-            .sections
-            .iter()
-            .any(|s| &s.key == key && &s.hash == hash)
+/// How many lines of the owner's the card `key` (`card:SLUG`) shows in `document`'s thread.
+pub fn owner_lines(document: &Document, key: &str) -> usize {
+    let Some(thread) = key
+        .strip_prefix("card:")
+        .and_then(|slug| document.threads.get(slug))
+    else {
+        return 0;
+    };
+    thread
+        .blocks
+        .iter()
+        .map(|block| match block {
+            Block::Thread { entries } => entries
+                .iter()
+                .filter(|entry| entry.who == ThreadAuthor::Owner)
+                .count(),
+            _ => 0,
+        })
+        .sum()
+}
+
+/// The owner's save in the card `key` went through: the card is released until it shows one line of
+/// the owner's more than `before`, the lines its latest copy had when the save was sent, and more
+/// than a release of it still waiting asks for.
+pub fn release(released: &mut BTreeMap<String, usize>, key: String, before: usize) {
+    let lines = released.get(&key).map_or(before, |&had| before.max(had)) + 1;
+    released.insert(key, lines);
+}
+
+/// The cards the owner just saved in, by how many lines of the owner's each must show: the owner's
+/// answer shows at once, whatever holds the card. A release ends once the feed has brought the
+/// save's own change and the card shows it, or once the card is gone; a reply an agent wrote before
+/// it, shown on the way, ends nothing.
+pub fn settle(released: &mut BTreeMap<String, usize>, shown: &Document) {
+    released.retain(|key, lines| {
+        shown.sections.iter().any(|s| &s.key == key) && owner_lines(shown, key) < *lines
     });
 }
 
@@ -311,6 +339,29 @@ mod tests {
         keys.iter().map(|k| k.to_string()).collect()
     }
 
+    /// `doc` with the card `slug`'s thread: the owner's lines and the agents', in turn.
+    fn thread(mut doc: Document, slug: &str, owner: usize, agent: usize) -> Document {
+        let entry = |who| symphony_api::ThreadEntry {
+            who,
+            timestamp: None,
+            verdict: None,
+            blocks: Vec::new(),
+        };
+        let entries = std::iter::repeat_n(ThreadAuthor::Owner, owner)
+            .chain(std::iter::repeat_n(ThreadAuthor::Agent, agent))
+            .map(entry)
+            .collect();
+        doc.threads.insert(
+            slug.into(),
+            symphony_api::Fragment {
+                blocks: vec![Block::Thread { entries }],
+                html: String::new(),
+                media: Vec::new(),
+            },
+        );
+        doc
+    }
+
     /// Alpha is answered and moves from the first group to the second, its excerpt open.
     const BEFORE: [(&str, &str); 3] = [("needs", "n1"), ("card:alpha", "a1"), ("card:bravo", "b1")];
     const AFTER: [(&str, &str); 4] = [
@@ -322,8 +373,9 @@ mod tests {
 
     #[test]
     fn an_engaged_card_keeps_its_markup_and_the_page_its_order_until_its_own_save_releases_it() {
-        let mut state = DocumentState::new(document(&BEFORE));
-        state.latest = document(&AFTER);
+        let mut state = DocumentState::new(thread(document(&BEFORE), "alpha", 0, 1));
+        let before = owner_lines(&state.latest, "card:alpha");
+        state.latest = thread(document(&AFTER), "alpha", 1, 1);
         let engaged = keys(&["card:alpha"]);
         let none = BTreeSet::new();
         let mut released = BTreeMap::new();
@@ -341,7 +393,7 @@ mod tests {
             "another reader's open excerpt holds the card and the order"
         );
 
-        released.insert("card:alpha".to_string(), "a1".to_string());
+        release(&mut released, "card:alpha".into(), before);
         let held = super::held(&engaged, &none, &released, [], &state.latest);
         assert!(held.is_empty(), "{held:?}");
         state.refresh(&held);
@@ -353,22 +405,94 @@ mod tests {
         );
         assert!(
             released.is_empty(),
-            "the release ends once the card shows changed"
+            "the release ends once the card shows the owner's line"
+        );
+    }
+
+    /// An agent's reply lands while the owner reads an excerpt beside the card, held there; the owner
+    /// saves an answer. The release shows the reply at once, but the answer is still to come: the
+    /// release lasts until the feed brings the save's own change, then holds the card again.
+    #[test]
+    fn a_reply_shown_before_the_owners_own_change_arrives_keeps_the_release() {
+        let mut state = DocumentState::new(thread(document(&BEFORE), "alpha", 1, 0));
+        let engaged = keys(&["card:alpha"]);
+        let none = BTreeSet::new();
+        let mut released = BTreeMap::new();
+        let tick = |state: &mut DocumentState, released: &mut BTreeMap<String, usize>| {
+            let held = super::held(&engaged, &none, released, [], &state.latest);
+            state.refresh(&held);
+            settle(released, &state.shown);
+        };
+        state.latest = thread(document(&[("card:alpha", "a2")]), "alpha", 1, 1);
+        tick(&mut state, &mut released);
+        assert_eq!(
+            shown(&state),
+            [("card:alpha", "a1")],
+            "the excerpt holds the reply"
+        );
+
+        let before = owner_lines(&state.latest, "card:alpha");
+        release(&mut released, "card:alpha".into(), before);
+        tick(&mut state, &mut released);
+        assert_eq!(shown(&state), [("card:alpha", "a2")]);
+        assert_eq!(
+            released.get("card:alpha"),
+            Some(&2),
+            "the reply is not the owner's answer: the release waits for it"
+        );
+
+        state.latest = thread(document(&[("card:alpha", "a3")]), "alpha", 2, 1);
+        tick(&mut state, &mut released);
+        assert_eq!(
+            shown(&state),
+            [("card:alpha", "a3")],
+            "the owner's answer shows"
+        );
+        assert!(released.is_empty());
+
+        state.latest = thread(document(&[("card:alpha", "a4")]), "alpha", 2, 2);
+        tick(&mut state, &mut released);
+        assert_eq!(
+            shown(&state),
+            [("card:alpha", "a3")],
+            "the excerpt holds the card again"
         );
     }
 
     #[test]
-    fn a_release_lasts_until_its_card_shows_changed_or_is_gone() {
-        let mut released = BTreeMap::from([("card:alpha".to_string(), "a1".to_string())]);
+    fn a_release_lasts_until_its_card_shows_the_owners_line_or_is_gone() {
+        let mut released = BTreeMap::new();
+        release(&mut released, "card:alpha".into(), 0);
         settle(&mut released, &document(&BEFORE));
         assert_eq!(released.len(), 1, "the feed has not brought the answer yet");
+        settle(&mut released, &thread(document(&BEFORE), "bravo", 1, 0));
+        assert_eq!(released.len(), 1, "another card's line is not this one's");
         settle(&mut released, &document(&[("needs", "n1")]));
+        assert!(released.is_empty(), "the card is gone");
+    }
+
+    /// The owner saves twice before the first save's change arrives: the release waits for both.
+    #[test]
+    fn a_second_save_before_the_first_shows_waits_for_both() {
+        let mut released = BTreeMap::new();
+        release(&mut released, "card:alpha".into(), 1);
+        release(&mut released, "card:alpha".into(), 1);
+        assert_eq!(released.get("card:alpha"), Some(&3));
+        settle(&mut released, &thread(document(&BEFORE), "alpha", 2, 0));
+        assert_eq!(released.len(), 1, "the first answer alone shows");
+        release(&mut released, "card:alpha".into(), 3);
+        assert_eq!(
+            released.get("card:alpha"),
+            Some(&4),
+            "a save after the first two arrived waits for its own"
+        );
+        settle(&mut released, &thread(document(&BEFORE), "alpha", 4, 0));
         assert!(released.is_empty());
     }
 
     #[test]
     fn a_card_still_loading_its_body_stays_held_though_released() {
-        let released = BTreeMap::from([("card:alpha".to_string(), "a1".to_string())]);
+        let released = BTreeMap::from([("card:alpha".to_string(), 1)]);
         let held = super::held(
             &keys(&["card:alpha"]),
             &BTreeSet::new(),

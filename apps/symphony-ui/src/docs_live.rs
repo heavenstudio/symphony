@@ -56,7 +56,9 @@ struct DocumentRequests {
     epoch: Rc<Cell<u64>>,
     trouble: Signal<Option<String>>,
     /// The cards the owner just saved in ([`docs::settle`]).
-    released: Rc<RefCell<BTreeMap<String, String>>>,
+    released: Rc<RefCell<BTreeMap<String, usize>>>,
+    /// The page's document, whose latest copy a save reads its card's lines from ([`docs::release`]).
+    state: Signal<Option<DocumentState>>,
 }
 
 fn keys_query(keys: &BTreeSet<String>) -> String {
@@ -151,6 +153,7 @@ pub fn DocumentPage(path: String, scope: String, #[props(default)] embedded: boo
         epoch: Rc::new(Cell::new(0)),
         trouble,
         released: Rc::default(),
+        state,
     });
     use_context_provider(|| requests.clone());
     let p = path.clone();
@@ -430,7 +433,7 @@ fn DocSection(
                 }
             }
             if gone { p { role: "alert", "This block was removed elsewhere. Copy your draft or discard it; saving to its old position is disabled." } }
-            Editor { path, scope, section_key: section.key.clone(), section_hash: section.hash.clone(), slug, state, after_line: section.end, editing, gone, later }
+            Editor { path, scope, section_key: section.key.clone(), slug, state, after_line: section.end, editing, gone, later }
     };
     rsx! {
         section { class: if is_card { "doc-section doc-card" } else { "doc-section" }, id: if unfolded { String::new() } else { format!("L{}", section.start) },
@@ -457,8 +460,6 @@ fn Editor(
     path: String,
     scope: String,
     section_key: String,
-    /// The shown section's hash: a card's own save releases it until the card shows changed.
-    section_hash: String,
     slug: Option<String>,
     state: String,
     after_line: usize,
@@ -466,7 +467,11 @@ fn Editor(
     gone: bool,
     later: Option<Element>,
 ) -> Element {
-    let released = use_context::<DocumentRequests>().released;
+    let DocumentRequests {
+        released,
+        state: page,
+        ..
+    } = use_context::<DocumentRequests>();
     let key = format!("review-draft:{path}:{section_key}");
     let tap_key = format!("review-tap:{path}:{section_key}");
     let platform = platform::current();
@@ -523,10 +528,16 @@ fn Editor(
         let slug = card.clone();
         let key = save_key.clone();
         let tap_key = tap_key.clone();
-        // The owner's own answer shows on its card at once, whatever else holds the card open.
-        let release = slug
-            .is_some()
-            .then(|| (section_key.clone(), section_hash.clone()));
+        // The owner's own answer shows on its card at once, whatever else holds the card open: the
+        // card's lines of the owner's before it are read as the save is sent, since the feed may
+        // bring its change before the answer to the post.
+        let release = slug.is_some().then(|| {
+            let before = page
+                .peek()
+                .as_ref()
+                .map_or(0, |page| docs::owner_lines(&page.latest, &section_key));
+            (section_key.clone(), before)
+        });
         let released = released.clone();
         spawn(async move {
             let platform = platform::current();
@@ -566,8 +577,8 @@ fn Editor(
             };
             match post(&docs::scoped(&scope, route), &fields).await {
                 Ok(_) => {
-                    if let Some((section, hash)) = release {
-                        released.borrow_mut().insert(section, hash);
+                    if let Some((section, before)) = release {
+                        docs::release(&mut released.borrow_mut(), section, before);
                     }
                     text.set(String::new());
                     attach.clear();
