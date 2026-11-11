@@ -232,6 +232,34 @@ fn a_session_with_no_channel_reads_what_a_channel_would_carry_once() {
 }
 
 #[test]
+fn a_childs_release_does_not_hide_the_move_it_made_before_it() {
+    let f = Fixture::empty();
+    let reader = f.session("orchestrator");
+    let kid = child(&f, &reader);
+    f.task("tools/kid");
+    f.store
+        .take_role("tools/kid", &reader, "orchestrator")
+        .unwrap();
+    read(&f, &reader);
+    f.store.claim("tools/kid", &kid).unwrap();
+    assert!(read(&f, &reader).is_empty(), "its child's claim");
+    // Between two looks its child blocks the work, then lets it go: the release made no move of
+    // its own, so the block is said.
+    f.store.move_to("tools/kid", "blocked", &kid).unwrap();
+    f.store.release("tools/kid", &kid, None).unwrap();
+    assert_eq!(
+        read(&f, &reader),
+        ["STATUS tools/kid in_progress → blocked"]
+    );
+    // A claim and a release that each make the move themselves still say nothing.
+    f.store.move_to("tools/kid", "ready", &reader).unwrap();
+    read(&f, &reader);
+    f.store.claim("tools/kid", &kid).unwrap();
+    f.store.release("tools/kid", &kid, None).unwrap();
+    assert!(read(&f, &reader).is_empty());
+}
+
+#[test]
 fn a_session_with_a_channel_or_gone_cannot_read_by_waiting() {
     let f = Fixture::empty();
     let (heard, _o) = orchestrator(&f);

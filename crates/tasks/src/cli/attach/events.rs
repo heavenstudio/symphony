@@ -87,24 +87,31 @@ pub fn diff_on(
         emit(&format!("ROLE {slug} {who} {roles}, {status}"));
         announced.insert(slug);
     }
-    // A child's claim or release: its own staffing, whose move and readiness are not said.
-    let staffing = |m: &Message| {
-        m.kind == "system"
-            && children.contains(m.sender.as_str())
-            && (m.text.contains(" claimed it") || m.text.contains(" released "))
+    // A child's claim or release: its own staffing, whose move and readiness are not said. Only
+    // the move the claim or release made is its own: a claim starts ready work, a release of the
+    // last executor makes work in progress ready again. A move between the looks that ends
+    // anywhere else (a block the child made before it let the work go) is said.
+    let staffing = |m: &Message, old: Option<&String>, status: &str| {
+        let made = match old.map(String::as_str) {
+            Some("ready") => status == "in_progress" && m.text.contains(" claimed it"),
+            Some("in_progress") => status == "ready" && m.text.contains(" released "),
+            _ => false,
+        };
+        made && m.kind == "system" && children.contains(m.sender.as_str())
     };
     for (slug, status) in &now.statuses {
+        let old = before.statuses.get(slug);
         // Its own move, a child's staffing, and a verdict it hears anyway are not said.
         let decided = |m: &Message| {
             m.sender == handle
-                || staffing(m)
+                || staffing(m, old, status)
                 || (m.kind == "verdict"
                     && (now.verdict_tasks.contains(slug)
                         || (m.sender == "owner"
                             && (now.roles.iter()).any(|(s, who, _)| s == slug && who == handle))))
         };
         // Work nobody orchestrates is said only as it blocks; its digest rows say the rest.
-        if let Some(old) = before.statuses.get(slug)
+        if let Some(old) = old
             && old != status
             && now.hears_move(slug, status)
             && !announced.contains(slug.as_str())
@@ -114,9 +121,10 @@ pub fn diff_on(
         }
     }
     for (slug, title) in &now.ready {
+        let old = before.statuses.get(slug);
         if !before.ready.contains_key(slug)
             && !latest_status_action(&messages, slug)
-                .is_some_and(|m| m.sender == handle || staffing(m))
+                .is_some_and(|m| m.sender == handle || staffing(m, old, "ready"))
             && !announced.contains(slug.as_str())
         {
             emit(&format!("NEW {slug} ready — {title}"));
