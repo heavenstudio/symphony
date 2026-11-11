@@ -426,6 +426,44 @@ fn inventory_refuses_escape_duplicates_links_nonregular_entries_and_incomplete_f
 }
 
 #[test]
+fn inventory_leaves_out_the_agents_integration_links_and_worktrees_but_not_a_lookalike() {
+    let tree = Tree::new();
+    let fixture = Fixture::new(&tree, "source");
+    let skill = fixture.root.join(".agents/skills/work/SKILL.md");
+    fs::create_dir_all(skill.parent().unwrap()).unwrap();
+    fs::write(&skill, "work").unwrap();
+    fs::create_dir_all(fixture.root.join(".claude/skills")).unwrap();
+    std::os::unix::fs::symlink(
+        "../../.agents/skills/work",
+        fixture.root.join(".claude/skills/work"),
+    )
+    .unwrap();
+    fs::create_dir_all(fixture.root.join(".claude/worktrees/agent-1")).unwrap();
+    fs::create_dir_all(fixture.root.join(".codex/rules")).unwrap();
+    fs::write(fixture.root.join(".codex/rules/symphony.rules"), "rule").unwrap();
+    fs::write(fixture.root.join(".claude-notes"), "kept").unwrap();
+    fs::write(
+        &fixture.files,
+        "Cargo.lock\0.agents/skills/work/SKILL.md\0.claude/skills/work\0\
+         .claude/worktrees/agent-1/\0.codex/rules/symphony.rules\0.claude-notes\0",
+    )
+    .unwrap();
+    let files = inventory(&fixture.root, &fixture.files, "source").unwrap();
+    let names: Vec<&Path> = files.keys().map(PathBuf::as_path).collect();
+    assert_eq!(
+        names,
+        [
+            Path::new("source/.claude-notes"),
+            Path::new("source/Cargo.lock")
+        ]
+    );
+    // A link anywhere else is still refused.
+    std::os::unix::fs::symlink("Cargo.lock", fixture.root.join("docs-link")).unwrap();
+    fs::write(&fixture.files, "docs-link\0").unwrap();
+    assert!(inventory(&fixture.root, &fixture.files, "source").is_err());
+}
+
+#[test]
 fn an_existing_snapshot_is_verified_in_full_and_never_repaired_by_following_links() {
     let tree = Tree::new();
     let fixture = Fixture::new(&tree, "source");
