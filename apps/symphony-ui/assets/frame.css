@@ -35,7 +35,7 @@ html { scroll-padding-bottom:calc(var(--dock) + 8px); }
 .frame-pending { position:fixed; bottom:var(--dock-lift); right:calc(var(--side-panel) + 64px); z-index:5; display:flex; gap:6px; align-items:center; height:40px; margin:0; }
 .frame-pending a { padding:6px; font-size:var(--fs-sm); text-decoration:none; }
 #quick-open { position:fixed; right:calc(var(--side-panel) + 16px); bottom:var(--dock-lift); z-index:6; width:40px; height:40px; min-height:0; border-radius:50%; padding:0; background:var(--primary); color:var(--primary-foreground); border:0; font-size:1.375rem; box-shadow:var(--shadow-1); }
-#quick-sheet { position:fixed; right:0; top:62px; bottom:0; width:390px; z-index:8; display:flex; flex-direction:column; box-sizing:border-box; padding:16px; background:var(--card); border-left:1px solid var(--border); box-shadow:var(--shadow-1); }
+#quick-sheet { position:fixed; right:0; top:0; bottom:0; width:390px; z-index:8; display:flex; flex-direction:column; box-sizing:border-box; padding:16px; background:var(--card); border-left:1px solid var(--border); box-shadow:var(--shadow-1); }
 #quick-sheet[hidden] { display:none; }
 #quick-sheet .tabs { display:flex; gap:8px; padding-bottom:12px; border-bottom:1px solid var(--border); }
 #quick-sheet .collapse { margin-left:auto; font-size:1.2rem; }
@@ -64,12 +64,14 @@ html { scroll-padding-bottom:calc(var(--dock) + 8px); }
 #quick-sheet .row { display:flex; gap:8px; }
 #quick-sheet .row > :first-child { flex:1; min-width:0; }
 #quick-sheet button[type=submit] { background:var(--primary); color:var(--primary-foreground); }
-/* An open side panel takes the window's right edge: the header and the page end where it starts, so
- * it pushes them aside rather than covering their right-hand controls. */
+/* An open side panel takes the window's right edge from its top to its foot: the server's notices,
+ * the header and the page end where it starts, so it pushes them aside rather than covering their
+ * right-hand controls. The notices stay centred in the width left to them. */
 .app-header, .frame-page { margin-right:var(--side-panel); }
 @media (min-width:901px) {
   :root:has(#quick-sheet:not([hidden])) { --side-panel:390px; }
   :root:has(#activity-panel) { --side-panel:400px; }
+  :root:has(#quick-sheet:not([hidden]), #activity-panel) #shell-notices { margin-left:max(0px, calc((100% - var(--side-panel) - 1440px) / 2)); margin-right:var(--side-panel); }
   .quick-expanded #quick-open { display:none; }
 }
 @media (max-width:900px) {

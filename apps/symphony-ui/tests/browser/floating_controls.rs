@@ -1,7 +1,8 @@
-//! The page's floating controls never cover the page (app/floating-controls): the pending bar, the
-//! chat button and a document's contents pill sit in the dock along the window's foot, which the
-//! page scrolls clear of.
-use super::components::site;
+//! The page's floating controls and side panels never cover the page (app/floating-controls): the
+//! pending bar, the chat button and a document's contents pill sit in the dock along the window's
+//! foot, which the page scrolls clear of; an open side panel pushes the header and the page aside;
+//! the chat sheet is one surface from the top of the window, beside the header's controls.
+use super::components::{open_panel, site};
 use super::{SHOWN, chrome, chrome::Chrome, wait_for_board};
 use serde_json::{Value, json};
 
@@ -225,5 +226,43 @@ fn the_open_activity_panel_pushes_the_header_and_the_page_aside() {
         page.eval("Math.round(document.querySelector('.frame-page').getBoundingClientRect().right) === document.documentElement.clientWidth"),
         json!(true),
         "closing it gives the page its width back"
+    );
+}
+
+#[test]
+fn the_chat_sheet_runs_from_the_top_of_the_window_beside_the_header_under_a_notice() {
+    let site = site();
+    let Some(mut page) = chrome() else { return };
+    viewport(&mut page, 1280, 800);
+    page.open(&site.url("/"));
+    wait_for_board(&mut page);
+    // A server notice above the header, as the server's own warnings draw one.
+    page.eval("document.getElementById('shell-notices').innerHTML = '<div class=\"shell-notice\" role=\"status\"><p><strong>1 Symphony process from test runs is running with no parent</strong>: nothing ends it on its own.</p><code>ps -axo pid,ppid,command</code><p>lists it; stop it by pid.</p></div>'");
+    open_panel(&mut page);
+    settle(&mut page);
+    assert_eq!(
+        page.eval("document.querySelector('.app-header').getBoundingClientRect().top > 62"),
+        json!(true),
+        "the notice puts the header lower than the sheet's old top"
+    );
+    assert_eq!(
+        page.eval(&beside("#quick-sheet")),
+        serde_json::from_str::<Value>(BESIDE).unwrap(),
+        "the sheet is one surface from the window's top, and no header control is under it"
+    );
+    // A real click on the activity button reaches it, and opens the activity panel.
+    let bell = page.eval("(() => {const box=document.getElementById('bell').getBoundingClientRect();return {x:box.left+box.width/2,y:box.top+box.height/2};})()");
+    for kind in ["mousePressed", "mouseReleased"] {
+        page.call(
+            "Input.dispatchMouseEvent",
+            json!({"type":kind,"x":bell["x"],"y":bell["y"],"button":"left","clickCount":1}),
+        );
+    }
+    assert!(
+        page.wait_for(
+            "document.getElementById('activity-panel') !== null && document.getElementById('bell').getAttribute('aria-expanded') === 'true'",
+            SHOWN
+        ),
+        "the click on the activity button opens the activity panel"
     );
 }
