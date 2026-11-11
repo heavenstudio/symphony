@@ -190,7 +190,10 @@ geometry, stream recovery and transfer budgets without a display server.
   never overwrites a newer document change; a reconnect invalidates outstanding
   reads. Drafts and verdict retry ids are saved locally. Busy sections retain
   their markup while their source positions advance; the queued markup applies
-  when the form or excerpt is free.
+  when the form or excerpt is free. The owner's own saved answer on a card
+  releases that card (`docs::held`, `docs::settle`): its mark, line and the
+  register's regroup show at once, an open excerpt beside it or not. A closed
+  draft holds its card only once the card is gone, never the register's order.
   Content is `symphony_api::Block` and `Span`, drawn by
   `block_view::BlocksView { blocks }` and `SpansView { spans }`. Server reads
   prepare media and scoped URLs before `symphony::blocks::parse`; HTML fields
