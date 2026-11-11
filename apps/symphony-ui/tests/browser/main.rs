@@ -37,6 +37,7 @@ mod projects;
 mod restored;
 mod run_records;
 mod server_notices;
+mod shot;
 mod site;
 
 use std::time::Duration;
