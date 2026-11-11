@@ -29,6 +29,139 @@ fn remember<T: Serialize>(key: &str, value: &T) {
     }
 }
 
+/// The activity panel's first control, where focus goes when it opens.
+const ACTIVITY_FIRST: &str = "#activity-panel :is(a[href], button)";
+
+/// The first element `selector` finds that is drawn (has a box), as an element focus can take.
+fn shown(selector: &str) -> Option<web_sys::HtmlElement> {
+    let document = web_sys::window()?.document()?;
+    let found = document.query_selector_all(selector).ok()?;
+    (0..found.length())
+        .filter_map(|at| found.item(at))
+        .filter_map(|node| node.dyn_into::<web_sys::HtmlElement>().ok())
+        .find(|element| {
+            let rect = element.get_bounding_client_rect();
+            rect.width() > 0.0 || rect.height() > 0.0
+        })
+}
+
+/// Focuses the first of `selectors` to show, trying for a second while the panel draws.
+async fn focus_first(selectors: Vec<String>) {
+    for _ in 0..50 {
+        for selector in &selectors {
+            if let Some(element) = shown(selector)
+                && element.focus().is_ok()
+            {
+                let active: Option<JsValue> = web_sys::window()
+                    .and_then(|window| window.document())
+                    .and_then(|document| document.active_element())
+                    .map(Into::into);
+                let wanted: &JsValue = element.as_ref();
+                if active.as_ref() == Some(wanted) {
+                    return;
+                }
+            }
+        }
+        sleep(20).await;
+    }
+}
+
+/// Moves focus into the panel `which` when the page asked for it on opening the panel
+/// (`frame::focus_on_open`); a panel shown again on a new page leaves focus where it is.
+fn take_focus(which: &str, selectors: &[&str]) {
+    if snapshot("reviewPanelFocus").as_string().as_deref() != Some(which) {
+        return;
+    }
+    if let Some(window) = web_sys::window() {
+        let _ = js_sys::Reflect::set(&window, &"reviewPanelFocus".into(), &JsValue::NULL);
+    }
+    spawn(focus_first(
+        selectors.iter().map(|s| (*s).to_string()).collect(),
+    ));
+}
+
+/// Returns focus to the control that opened a panel, or to `fallback` (its header or page
+/// button), once that shows again: the chat's button is hidden while the sheet is open.
+fn return_focus(fallback: &str) {
+    let opener = snapshot("reviewPanelOpener");
+    if let Some(window) = web_sys::window() {
+        let _ = js_sys::Reflect::set(&window, &"reviewPanelOpener".into(), &JsValue::NULL);
+    }
+    let mut selectors = Vec::new();
+    if let Some(element) = opener.dyn_ref::<web_sys::Element>()
+        && element.is_connected()
+        && element
+            .closest("#quick-sheet, #activity-panel")
+            .ok()
+            .flatten()
+            .is_none()
+    {
+        // The opener, found again by a mark only it carries.
+        let _ = element.set_attribute("data-panel-opener", "");
+        selectors.push("[data-panel-opener]".to_string());
+    }
+    selectors.push(fallback.to_string());
+    spawn(async move {
+        focus_first(selectors).await;
+        if let Some(document) = web_sys::window().and_then(|window| window.document())
+            && let Ok(Some(mark)) = document.query_selector("[data-panel-opener]")
+        {
+            let _ = mark.remove_attribute("data-panel-opener");
+        }
+    });
+}
+
+/// Escape closes the panel `within` while focus is in it, unless a control there takes that
+/// Escape itself (an open list, menu or tooltip); `close` then returns focus where it belongs.
+fn use_escape(within: &'static str, close: impl FnMut() + 'static) {
+    use futures_util::StreamExt;
+    let mut close = close;
+    let listener = use_hook(move || {
+        let (send, mut recv) = futures_channel::mpsc::unbounded::<()>();
+        spawn(async move {
+            while recv.next().await.is_some() {
+                close();
+            }
+        });
+        let handler = Closure::<dyn FnMut(web_sys::Event)>::new(move |event: web_sys::Event| {
+            let Some(key) = event.dyn_ref::<web_sys::KeyboardEvent>() else {
+                return;
+            };
+            if key.key() != "Escape" || event.default_prevented() {
+                return;
+            }
+            let Some(target) = event
+                .target()
+                .and_then(|target| target.dyn_into::<web_sys::Element>().ok())
+            else {
+                return;
+            };
+            let inside = target.closest(within).ok().flatten().is_some();
+            let taken = target
+                .closest("[role=listbox], [role=menu], [aria-expanded=true]")
+                .ok()
+                .flatten()
+                .is_some();
+            if inside && !taken {
+                let _ = send.unbounded_send(());
+            }
+        });
+        if let Some(window) = web_sys::window() {
+            let _ = window
+                .add_event_listener_with_callback("keydown", handler.as_ref().unchecked_ref());
+        }
+        std::rc::Rc::new(handler)
+    });
+    use_drop(move || {
+        if let Some(window) = web_sys::window() {
+            let _ = window.remove_event_listener_with_callback(
+                "keydown",
+                listener.as_ref().as_ref().unchecked_ref(),
+            );
+        }
+    });
+}
+
 #[component]
 fn FrameExtras(route: Route, mut draft: Signal<Draft>) -> Element {
     let revision = use_revision(&["review:frame"]);
@@ -67,6 +200,13 @@ fn FrameExtras(route: Route, mut draft: Signal<Draft>) -> Element {
             );
             publish("review:activity");
         }
+        if panel() {
+            take_focus("activity", &[ACTIVITY_FIRST]);
+        }
+    });
+    use_escape("#activity-panel", move || {
+        panel.set(false);
+        return_focus("#bell");
     });
     use_effect(move || {
         let _ = revision();
@@ -126,7 +266,7 @@ fn ActivityPanel(
     trouble: Signal<Option<String>>,
 ) -> Element {
     rsx! { aside { id: "activity-panel", "aria-label": "Recent activity",
-        div { class: "panel-heading", h2 { "Recent activity" } crate::components::button::Button { r#type: "button", "aria-label": "Close activity", onclick: move |_| panel.set(false), "×" } }
+        div { class: "panel-heading", h2 { "Recent activity" } crate::components::button::Button { r#type: "button", "aria-label": "Close activity", onclick: move |_| { panel.set(false); return_focus("#bell"); }, "×" } }
         if let Some(why) = trouble() { p { role: "status", "Activity could not be refreshed: {why}" } }
         if activity.read().is_empty() { p { class: "muted", "No recent activity." } }
         ul { for item in activity() {

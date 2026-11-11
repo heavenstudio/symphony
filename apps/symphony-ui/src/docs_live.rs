@@ -25,10 +25,10 @@ use crate::{
     block_view::{BlocksView, CardAnchor, Excerpts, SpansView},
     doc_components::DocumentWithTasks,
     docs::{self, DocumentState},
-    live::{Feed, Heard, mark, sleep},
+    live::{Feed, Heard, mark, pause, sleep},
     navigation::scroll_anchor,
     platform,
-    request::{encode, field, get, post},
+    request::{encode, field, get, get_found, post},
     viewport::NearViewport,
 };
 
@@ -93,6 +93,9 @@ pub fn DocumentPage(path: String, scope: String, #[props(default)] embedded: boo
     let state = use_signal(|| None::<DocumentState>);
     let stale = use_signal(|| true);
     let trouble = use_signal(|| None::<String>);
+    // The server has no document at this path (it answered 404), and the reader's Retry presses.
+    let missing = use_signal(|| false);
+    let mut retry = use_signal(|| 0_u64);
     let folder_notice = try_consume_context::<FolderNotice>();
     use_effect(move || {
         if embedded && let Some(mut notice) = folder_notice {
@@ -145,9 +148,13 @@ pub fn DocumentPage(path: String, scope: String, #[props(default)] embedded: boo
         spawn(document_live(
             p.clone(),
             s.clone(),
-            state,
-            stale,
-            trouble,
+            DocumentRead {
+                state,
+                stale,
+                trouble,
+                missing,
+                retry,
+            },
             live_requests.clone(),
         ));
         spawn(load_sections(p, s, state, live_requests));
@@ -170,11 +177,15 @@ pub fn DocumentPage(path: String, scope: String, #[props(default)] embedded: boo
                 if !embedded {
                     crate::asks::Asks { key: "{scope}/{path}", path: path.clone(), scope: docs::scoped(&scope, ""), render_blocks }
                 }
+            } else if missing() && !embedded {
+                crate::trouble::Trouble { title: "Document not found", text: "There is no document at {path}: it may have been moved, renamed or removed.", back: Some((docs::scoped(&scope, &crate::project::current().documents_href()), "All documents".to_string())), retry: move |_| retry += 1 }
+            } else if let Some(why) = trouble().filter(|_| !embedded) {
+                crate::trouble::Trouble { title: "The document could not be loaded", text: crate::trouble::failed(&why), retry: move |_| retry += 1 }
             } else if trouble().is_none() || (embedded && folder_notice.is_none()) {
                 p { role: "status", {trouble().unwrap_or_else(|| "Loading document…".into())} }
             }
             if !embedded {
-                crate::live::PageNotices { reconnecting: stale(), reconnect: "Reconnecting: this document may be out of date", error: trouble().unwrap_or_default(), document_removed: state.read().as_ref().is_some_and(|state| state.removed) }
+                crate::live::PageNotices { reconnecting: stale() && !missing(), reconnect: "Reconnecting: this document may be out of date", error: trouble().unwrap_or_default(), document_removed: state.read().as_ref().is_some_and(|state| state.removed) }
             }
         }
     }
@@ -650,6 +661,8 @@ pub fn FolderPage(path: String, scope: String) -> Element {
     std::hint::black_box(&STYLE);
     let mut folder = use_signal(|| None::<Folder>);
     let mut error = use_signal(|| None::<String>);
+    let mut missing = use_signal(|| false);
+    let mut retry = use_signal(|| 0_u64);
     let mut stale = use_signal(|| false);
     let mut notice_error = use_signal(String::new);
     let mut removed = use_signal(|| false);
@@ -674,14 +687,21 @@ pub fn FolderPage(path: String, scope: String) -> Element {
     use_hook(move || {
         spawn(async move {
             loop {
-                match get::<Folder>(&format!("{}&view=outline", api(&s, "/api/folder", &p))).await {
-                    Ok(value) => {
+                match get_found::<Folder>(&format!("{}&view=outline", api(&s, "/api/folder", &p)))
+                    .await
+                {
+                    Ok(Some(value)) => {
                         folder.set(Some(value));
+                        missing.set(false);
+                        error.set(None);
+                    }
+                    Ok(None) => {
+                        missing.set(true);
                         error.set(None);
                     }
                     Err(why) => error.set(Some(why)),
                 }
-                sleep(5_000).await;
+                pause(5_000, retry).await;
             }
         });
     });
@@ -711,7 +731,11 @@ pub fn FolderPage(path: String, scope: String) -> Element {
                         }
                     }
                 }
-            } else if error().is_none() { p { role: "status", "Loading folder…" } }
+            } else if missing() {
+                crate::trouble::Trouble { title: "Folder not found", text: "There is no folder at {path}: it may have been moved, renamed or removed.", back: Some((docs::scoped(&scope, &crate::project::current().documents_href()), "All documents".to_string())), retry: move |_| retry += 1 }
+            } else if let Some(why) = error() {
+                crate::trouble::Trouble { title: "The folder could not be loaded", text: crate::trouble::failed(&why), retry: move |_| retry += 1 }
+            } else { p { role: "status", "Loading folder…" } }
             crate::live::PageNotices { reconnecting: stale(), reconnect: "Reconnecting: this document may be out of date", error: error().unwrap_or(notice_error()), document_removed: removed() }
         }
     }
@@ -750,14 +774,30 @@ fn busy() -> BTreeSet<String> {
     keys
 }
 
+/// What a document page's read keeps: the document, whether its feed is behind, why the last read
+/// failed, whether the server has no such document, and the reader's Retry presses.
+#[derive(Clone, Copy)]
+struct DocumentRead {
+    state: Signal<Option<DocumentState>>,
+    stale: Signal<bool>,
+    trouble: Signal<Option<String>>,
+    missing: Signal<bool>,
+    retry: Signal<u64>,
+}
+
 async fn document_live(
     path: String,
     scope: String,
-    mut state: Signal<Option<DocumentState>>,
-    mut stale: Signal<bool>,
-    mut trouble: Signal<Option<String>>,
+    read: DocumentRead,
     mut requests: DocumentRequests,
 ) {
+    let DocumentRead {
+        mut state,
+        mut stale,
+        mut trouble,
+        mut missing,
+        retry,
+    } = read;
     let mut backoff = crate::state::Backoff::default();
     // Flush deferred fragments when a form, excerpt or focused field becomes free, including
     // when the feed has nothing further to say. No page fetch is needed to do it.
@@ -786,13 +826,18 @@ async fn document_live(
     });
     loop {
         let mut held_ms = 0.0;
-        match get::<DocumentOutline>(&format!(
+        match get_found::<DocumentOutline>(&format!(
             "{}&view=outline",
             api(&scope, "/api/document", &path)
         ))
         .await
         {
-            Ok(outline) => {
+            Ok(None) => {
+                missing.set(true);
+                trouble.set(None);
+            }
+            Ok(Some(outline)) => {
+                missing.set(false);
                 requests.epoch.set(requests.epoch.get().wrapping_add(1));
                 requests.cursor.set(outline.document.version);
                 requests.anchors.set(outline.anchors);
@@ -809,7 +854,7 @@ async fn document_live(
             Err(why) => trouble.set(Some(why)),
         }
         stale.set(true);
-        sleep(backoff.after(held_ms)).await;
+        pause(backoff.after(held_ms), retry).await;
     }
 }
 

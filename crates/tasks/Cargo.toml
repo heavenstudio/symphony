@@ -4,6 +4,8 @@ version = "0.1.0"
 edition.workspace = true
 rust-version.workspace = true
 publish.workspace = true
+license.workspace = true
+authors.workspace = true
 
 # SurrealDB is the owner's choice for the board (card tasks-store-engine, 2026-10-06 22:09: "B. we need a
 # server anyway (just symphony), server should start the db"). It is reached over its JSON-RPC on plain HTTP
