@@ -597,7 +597,6 @@ pub fn sweep(folder: &Path, now: f64) -> io::Result<Vec<Record>> {
             }
             // One that could not be read now is left for a sweep that can.
             Reading::Failed => continue,
-            // One that could not be read now is left for a sweep that can.
         };
         if !lease.exists() {
             // Its recorder finished it and let its lease go.
