@@ -67,6 +67,7 @@ per machine into `sf-surreal/` in the git common dir by `bash tools/surreal.sh`
 |---|---|
 | `just tasks …` | everything an agent does (`just tasks --help`) |
 | `just tasks search QUERY [--status S] [--limit N] [--json]` | ranked full-text matches in task titles, briefs, slugs and threads; task rows with matching excerpts (default: 20); query capped at 1024 UTF-8 bytes and 32 terms (word/number runs and punctuation/symbols, after lowercasing) |
+| `just tasks stats [--days N] [--json]` | where the pipeline's time goes: lead time, time in each status, bounces, tasks done per day and what sits longest ([Where the time goes](#where-the-time-goes)) |
 | `just tasks callback [ADDRESS] --as HANDLE` | register a native channel; addressed events start a turn directly |
 | `just agent-send HANDLE "text" [--as SENDER]` | message an agent directly through its registered channel |
 | `just symphony` → **▦ tasks**, **◉ agents** | the board, each task's page and thread, and who is connected |
@@ -754,6 +755,88 @@ review by id, a level a round trip, and their roles through `role_slug`; it
 reads no table whole (`tests/store/slots/cost.rs`). Each
 orchestrator's PULL header shows `slots=OPEN/CAP`, and the agents API its
 `slots` ([The agents API](#the-agents-api)).
+
+## Where the time goes
+
+The board keeps no table of status changes. Where a task's time went is read
+back from what it already stores: the task's `created`, `updated` and `status`,
+and the `system` and `verdict` lines its changes left on its thread
+(`crates/tasks/src/stages.rs`, which also names the formats the store writes
+them with):
+
+| line | what it changes |
+|---|---|
+| `HANDLE moved it FROM → TO` | the move it names, the owner's too |
+| `HANDLE claimed it[, handed over from …]` | ready work is in progress; a claim of work in another status changes none |
+| `HANDLE released executor (released)`, `HANDLE released every role (left)` | work in progress whose last executor let go is ready again |
+| `blocked: cancelled dependencies: … (was STATUS)` | blocked |
+| `unblocked: no cancelled dependency left; back to STATUS` | the status it names |
+| a `changes` verdict | review back to in progress: a bounce |
+| any other verdict (`approve`, a subtask's `done`, a landing) | done |
+
+The lines are replayed in the order of their times. A line naming the status
+the task already holds changes nothing, and nothing after the line that closed
+the task is read. The status a task was made in is the one the first line that
+names a status says it left; with no such line it is the task's own status
+where a task can be made in it, else `ready`. Where the replay ends in another
+status than the task holds (a change the thread does not record), that change
+is dated at the task's `updated`. An open task is counted up to now; a done or
+cancelled one stops at the line that closed it, and the closing status itself
+counts no time.
+
+`just tasks show SLUG` prints it in one line under the task's roles and links:
+
+```
+  Stages: unclaimed 0.4 h · ready 0.4 h · in_progress 1.3 h (2 visits) · review 0.8 h · 1 bounce
+```
+
+`unclaimed` is the time from the task's creation to its first claim (to its
+close, else to now, when nobody claimed it); each status follows in the order
+the task first held it, with its visits when more than one; a bounce is review
+sending the task back to in progress, by a `changes` verdict or a move.
+`just tasks show SLUG --json` carries the same as `stages`, every duration in
+seconds and every time in epoch seconds:
+
+```json
+"stages": {
+  "statuses": {
+    "ready": {"first_entered": 1800000000.0, "seconds": 1440.0, "visits": 1},
+    "in_progress": {"first_entered": 1800001440.0, "seconds": 4680.0, "visits": 2}
+  },
+  "unclaimed_seconds": 1440.0,
+  "first_claimed": 1800001440.0,
+  "bounces": 1,
+  "current": {"status": "in_progress", "since": 1800006000.0},
+  "closed": null
+}
+```
+
+`just tasks stats [--days N] [--json]` (14 days unless `--days` says; no
+session needed) is the same reading over every top-level task made in the
+window, subtasks left out:
+
+- how many hold each status;
+- for the done ones, the lead time (creation to close), the wait before the
+  first claim and the time in each open status, each as median, p75 and p90
+  (a value between two tasks is taken proportionally between them); a status
+  is spread over the done tasks that held it, and says how many did;
+- how many tasks review sent back how often (`0 × 41 · 1 × 6 · 2 × 1`);
+- tasks done on each day of the window, by this machine's time zone;
+- the ten open tasks that have held their status longest, with that status
+  and how long;
+- how many tasks are blocked and how many are ready with no executor, each
+  with the median time they have been there.
+
+`--json` carries the same figures as `by_status`, `lead_seconds`,
+`unclaimed_seconds`, `stage_seconds` (by status; each spread is `tasks`,
+`median`, `p75`, `p90`), `bounces`, `done_per_day`, `slowest`, `blocked` and
+`ready_unstaffed` (`tasks`, `median_seconds`), every duration in seconds.
+
+`stats` reads the window in one round trip (`Store::stage_records`): the
+tasks made since the window's start, who executes them, and each one's thread
+by its own range of keys with the posts left out, never a thread at a time.
+With the read that opens the board that is two requests whatever the board
+holds (`tests/cli/stats.rs` counts them over 300 tasks).
 
 ## Talking on a task
 

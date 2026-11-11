@@ -5,6 +5,7 @@ use super::cap::GUARD;
 use super::work::{BLOCK_LINE, OWNER, no_task};
 use super::{ACT, Error, Failure, Opens, STATUSES, Store, Task, Which, acting, logged, refused};
 use crate::slots::OPEN;
+use crate::stages::UNBLOCK_LINE;
 use serde::Deserialize;
 use serde_json::json;
 use std::collections::{BTreeSet, HashMap, HashSet};
@@ -231,7 +232,7 @@ impl Store {
                     "add": add, "drop": remove, "said": said,
                     "status": back.map(|(to, _)| to),
                     "back": back.map(|(to, why)| {
-                        format!("unblocked: no cancelled dependency left; back to {to}{why}")
+                        format!("{UNBLOCK_LINE}{to}{why}")
                     }),
                     "slots": slots,
                 }),

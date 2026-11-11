@@ -60,6 +60,7 @@ pub mod rpc;
 pub mod schema;
 pub mod server;
 pub mod slots;
+pub mod stages;
 mod store;
 pub mod sweep;
 pub mod sys;
@@ -69,8 +70,8 @@ pub use schema::{Access, Schema};
 pub use store::{
     BEFORE_WORK, Beat, Binding, Board, Callback, EmbeddingStats, Error, HandOff, KINDS, LANDS_FROM,
     Landed, Message, Moved, NewLaunch, NewSession, NewTask, Opening, PIPELINE, PULLABLE, Pick,
-    Presence, ROLES, Role, SLOT_READS, STATUSES, SearchHit, Session, Store, Task, VectorHit,
-    VectorSearchProfile, can_transition,
+    Presence, ROLES, Role, SLOT_READS, STATUSES, SearchHit, Session, StageRecord, Store, Task,
+    VectorHit, VectorSearchProfile, can_transition,
 };
 
 /// The board schema this build reads and writes: the one server serves no project whose

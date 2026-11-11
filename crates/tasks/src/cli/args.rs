@@ -176,6 +176,15 @@ const COMMANDS: &[Command] = &[
         ],
     },
     Command {
+        name: "stats",
+        pos: &[],
+        opts: &[
+            AS,
+            opt("--days", "days", Takes::Value(Ty::Int)),
+            opt("--json", "json", Takes::Bool),
+        ],
+    },
+    Command {
         name: "embed",
         pos: &[],
         opts: &[
@@ -779,7 +788,7 @@ mod tests {
             .unwrap()
     }
 
-    const ALL: &str = "'callback', 'register', 'attach', 'list', 'search', 'embed', 'next', 'create', 'priority', 'field', 'claim', 'reserve', 'release', 'show', 'parent', 'depends', 'done', 'role', 'handover', 'move', 'verdict', 'say', 'launch', 'restore', 'cleanup', 'clean', 'close', 'reap', 'staff', 'agents', 'who', 'inbox', 'leave', 'beat', 'export', 'finish', 'sweep'";
+    const ALL: &str = "'callback', 'register', 'attach', 'list', 'search', 'stats', 'embed', 'next', 'create', 'priority', 'field', 'claim', 'reserve', 'release', 'show', 'parent', 'depends', 'done', 'role', 'handover', 'move', 'verdict', 'say', 'launch', 'restore', 'cleanup', 'clean', 'close', 'reap', 'staff', 'agents', 'who', 'inbox', 'leave', 'beat', 'export', 'finish', 'sweep'";
 
     #[test]
     fn every_command_of_the_usage_is_read_and_has_its_help() {

@@ -7,17 +7,17 @@ mod panes;
 
 /// The usage line of `just tasks` itself.
 pub const USAGE: &str = r#"usage: just tasks [-h] [--as ACTOR]
-                  {callback,register,attach,list,search,embed,next,create,priority,field,claim,reserve,release,show,parent,depends,done,role,handover,move,verdict,say,launch,restore,cleanup,clean,close,reap,staff,agents,who,inbox,leave,beat,export,finish,sweep} ...
+                  {callback,register,attach,list,search,stats,embed,next,create,priority,field,claim,reserve,release,show,parent,depends,done,role,handover,move,verdict,say,launch,restore,cleanup,clean,close,reap,staff,agents,who,inbox,leave,beat,export,finish,sweep} ...
 "#;
 
 /// `just tasks --help`.
 pub const HELP: &str = r#"usage: just tasks [-h] [--as ACTOR]
-                  {callback,register,attach,list,search,embed,next,create,priority,field,claim,reserve,release,show,parent,depends,done,role,handover,move,verdict,say,launch,restore,cleanup,clean,close,reap,staff,agents,who,inbox,leave,beat,export,finish,sweep} ...
+                  {callback,register,attach,list,search,stats,embed,next,create,priority,field,claim,reserve,release,show,parent,depends,done,role,handover,move,verdict,say,launch,restore,cleanup,clean,close,reap,staff,agents,who,inbox,leave,beat,export,finish,sweep} ...
 
 The task board from the terminal — `just tasks …` and `just tasks-attach`.
 
 positional arguments:
-  {callback,register,attach,list,search,embed,next,create,priority,field,claim,reserve,release,show,parent,depends,done,role,handover,move,verdict,say,launch,restore,cleanup,clean,close,reap,staff,agents,who,inbox,leave,beat,export,finish,sweep}
+  {callback,register,attach,list,search,stats,embed,next,create,priority,field,claim,reserve,release,show,parent,depends,done,role,handover,move,verdict,say,launch,restore,cleanup,clean,close,reap,staff,agents,who,inbox,leave,beat,export,finish,sweep}
     callback            register a native channel or --off for inbox fallback
     depends             change what a task waits on
     handover            hand a task's orchestrator role to another session
@@ -133,6 +133,23 @@ options:
   --mode {keyword,vector,hybrid,exact}
                         keyword is the default; vector uses local embeddings, hybrid fuses
                         both rankings, exact checks vector recall; the shared server catches up
+"#,
+    ),
+    (
+        "stats",
+        "usage: just tasks stats [-h] [--as ACTOR] [--days N] [--json]\n",
+        r#"usage: just tasks stats [-h] [--as ACTOR] [--days N] [--json]
+
+Where the pipeline's time goes, over the top-level tasks made in the window:
+tasks by status; for the done ones, lead time and the time in each status
+(median, p75, p90); how often review sent work back; tasks done per day; the
+ten open tasks longest in their status; blocked and unstaffed ready work.
+
+options:
+  -h, --help  show this help message and exit
+  --as ACTOR
+  --days N    how many days back the tasks were made (default: 14)
+  --json      the same figures, every duration in seconds
 "#,
     ),
     (

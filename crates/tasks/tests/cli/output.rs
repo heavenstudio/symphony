@@ -68,6 +68,30 @@ fn each_command_says_what_it_did_in_one_line() {
     says(&exe, &["leave"], "left\n");
 }
 
+/// `show --json`'s `stages` for a task made and claimed at `NOW`, shown at `NOW`.
+const STAGES: &str = r#"{
+  "statuses": {
+   "ready": {
+    "first_entered": 1800000000.0,
+    "seconds": 0.0,
+    "visits": 1
+   },
+   "in_progress": {
+    "first_entered": 1800000000.0,
+    "seconds": 0.0,
+    "visits": 1
+   }
+  },
+  "unclaimed_seconds": 0.0,
+  "first_claimed": 1800000000.0,
+  "bounces": 0,
+  "current": {
+   "status": "in_progress",
+   "since": 1800000000.0
+  },
+  "closed": null
+ }"#;
+
 #[test]
 fn list_is_a_tree_of_aligned_rows() {
     let c = Case::new();
@@ -287,6 +311,7 @@ fn json_is_the_records_as_python_lays_them_out() {
             ("task", py::task(&board.get("sim/a").unwrap(), 1)),
             ("thread", py::list(thread, 1)),
             ("children", py::list(children, 1)),
+            ("stages", STAGES.into()),
         ],
         0,
     );
@@ -397,6 +422,7 @@ fn show_prints_the_task_its_people_its_subtasks_its_body_and_its_thread() {
         "  links: docs/A.md, docs/B.md#H".into(),
         "  depends on: sim/base".into(),
         "  parent: sim/base".into(),
+        "  Stages: unclaimed 0.0 h · ready 0.0 h".into(),
         "  subtasks:".into(),
         format!("    sim/a/do                     in_progress executor {exe}"),
         "    sim/a/two                    ready       -".into(),
@@ -417,6 +443,7 @@ fn show_prints_the_task_its_people_its_subtasks_its_body_and_its_thread() {
         "sim/a/do — Do  [in_progress, p2]".to_string(),
         format!("  executor {exe} (live)"),
         "  parent: sim/a".into(),
+        "  Stages: unclaimed 0.0 h · ready 0.0 h · in_progress 0.0 h".into(),
         "  an instruction subtask: close it with `just tasks done sim/a/do \"what came of it\"`"
             .into(),
         String::new(),
