@@ -138,9 +138,17 @@ fn a_blocked_pane_reaches_the_orchestrator_of_its_work_once_an_episode() {
     let (o, p, x) = (listen(&f, &orch), listen(&f, &parent), listen(&f, &other));
     let w = listen(&f, &worker);
     // The work is orch's: only its digest counts it.
-    assert_eq!(o.text(), BUSY_PULL);
-    for listener in [&p, &x] {
-        assert_eq!(listener.text(), EMPTY_PULL);
+    assert_eq!(
+        o.text(),
+        format!(
+            "{BUSY_PULL}\nlow_volume {orch} open=1 threshold=4 cap=none — pick disjoint ready work or resolve owned blockers using actual resources and ownership"
+        )
+    );
+    for (listener, handle) in [(&p, &parent), (&x, &other)] {
+        assert_eq!(
+            listener.text(),
+            super::quiet_callbacks::with_volume(handle, 0, EMPTY_PULL)
+        );
     }
     tick(&f);
     let quiet: [&[String]; 4] = [&[], &[], &[], &[]];
@@ -192,7 +200,10 @@ fn hc_failing_is_said_once_and_a_known_block_is_not_repeated() {
     launch(&f, "tests/pane", &worker, "t2");
     panes(Some(json!([pane("t2", "blocked")])));
     let o = listen(&f, &orch);
-    assert_eq!(o.text(), BUSY_PULL);
+    assert_eq!(
+        o.text(),
+        super::quiet_callbacks::with_volume(&orch, 1, BUSY_PULL)
+    );
     tick(&f);
     assert_eq!(
         o.drain(&f, &worker, &orch),
@@ -242,7 +253,10 @@ fn with_no_session_launched_into_a_pane_there_is_nothing_to_watch() {
         .unwrap();
     f.store.claim("tests/pane", &worker).unwrap();
     let o = listen(&f, &orch);
-    assert_eq!(o.text(), BUSY_PULL);
+    assert_eq!(
+        o.text(),
+        super::quiet_callbacks::with_volume(&orch, 1, BUSY_PULL)
+    );
     // hc cannot answer, but no session it oversees was launched into a terminal: no WATCH.
     panes(None);
     tick(&f);
@@ -263,7 +277,10 @@ fn waiting_worker(f: &Fixture) -> (String, String, super::callbacks::Listener) {
     launch(f, "tests/pane", &worker, "t2");
     panes(Some(json!([pane("t2", "blocked")])));
     let o = listen(f, &orch);
-    assert_eq!(o.text(), BUSY_PULL);
+    assert_eq!(
+        o.text(),
+        super::quiet_callbacks::with_volume(&orch, 1, BUSY_PULL)
+    );
     (orch, worker, o)
 }
 

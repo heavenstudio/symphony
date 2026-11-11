@@ -4,7 +4,7 @@
 
 use super::common::Fixture;
 use super::orchestrators::{go_quiet_but, heard};
-use super::quiet_callbacks::listen;
+use super::quiet_callbacks::{listen, with_volume};
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 use symphony_board::health::{EXECUTING, FINISHED};
@@ -214,7 +214,10 @@ fn an_older_dispatcher_between_newer_ones_repeats_no_line_and_widens_none() {
     };
     assert_eq!(
         heard(&fixture, &worker, &ears),
-        [vec![pull(2, 0)]],
+        [with_volume(&orchestrator, 1, &pull(2, 0))
+            .lines()
+            .map(str::to_owned)
+            .collect::<Vec<_>>()],
         "the other's ready and unreviewed work is its own"
     );
     // The newer dispatcher looks first as kid and hand go quiet: the orchestrator hears of

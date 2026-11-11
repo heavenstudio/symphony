@@ -1,5 +1,5 @@
 //! The monitor's look at the board each poll: what it follows, and that it makes one request of the
-//! board however many tasks its session orchestrates. Then the watch: what it prints over its
+//! board plus one canonical holdings read however many tasks it orchestrates. Then the watch over its
 //! waits, and that a poll asks hc and the test slots once, or not at all with nobody quiet. The
 //! loop itself runs through the command line in `monitor.rs`.
 
@@ -55,8 +55,11 @@ fn it_follows_every_task_below_the_ones_it_orchestrates() {
 fn the_requests_it_makes_do_not_grow_with_the_tasks_it_orchestrates() {
     let (small, orch) = orchestrate(2);
     let (large, big) = orchestrate(12);
-    assert_eq!(requests(&large, &big), requests(&small, &orch));
-    assert_eq!(requests(&small, &orch), 1);
+    assert_eq!(
+        (requests(&small, &orch), requests(&large, &big)),
+        (2, 2),
+        "one Board plus one shared canonical holdings read, never one per task"
+    );
 }
 
 #[test]

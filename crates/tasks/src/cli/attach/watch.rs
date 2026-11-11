@@ -2,11 +2,11 @@
 //! due, the event lines ([`super::diff`]) and the pane watch ([`super::pane_watch`]).
 
 use super::{PaneWatch, Seen, diff, overseen, pane_watch, pull_changed, seen};
-use crate::cli::agents::{Probes, View, describe};
-use crate::cli::pull::{Digest, digest};
+use crate::cli::agents::{Probes, View, describe_board};
+use crate::cli::pull::{Digest, Holdings, digest_on};
 use crate::cli::text::event;
 use crate::health::Health;
-use crate::{Error, Store, Task};
+use crate::{Board, Error, Store, Task};
 use std::cell::OnceCell;
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 
@@ -96,6 +96,12 @@ fn look(
     }
     let board = store.board()?;
     let mut now = seen(&board, handle, kind);
+    let holdings = (kind == "orchestrator" && w.pull_every.is_some())
+        .then(|| store.slot_holdings())
+        .transpose()?;
+    if let Some(holdings) = &holdings {
+        now = now.with_holdings(holdings, handle);
+    }
     let pull = match w.pull_every {
         Some(every) if kind == "orchestrator" => {
             let statuses: BTreeMap<String, String> = board
@@ -124,7 +130,7 @@ fn look(
     // One view of the agents a poll, however many children are quiet, shared with the digest.
     let view = match &probes {
         Some(probes) if any_quiet || pull.is_some() => {
-            Some(describe(store, probes, store.now(), false)?)
+            Some(describe_board(store, probes, store.now(), false, &board)?)
         }
         _ => None,
     };
@@ -139,7 +145,11 @@ fn look(
         }
     }
     if let Some((stamp, statuses)) = pull {
-        let digest = pull_digest(store, view.as_ref(), w.landed, stamp)?.only_for(&board, handle);
+        let holdings = holdings
+            .as_ref()
+            .ok_or_else(|| Error::Db("orchestrator PULL has no holdings observation".into()))?;
+        let digest = pull_digest(store, &board, holdings, view.as_ref(), w.landed, stamp)?
+            .only_for(&board, handle);
         super::pull_updates::emit_new(&digest, &mut memory.pull_entries, emit);
         memory.last_pull = Some(stamp);
         memory.last_statuses = statuses;
@@ -171,6 +181,8 @@ fn verifying(view: &View) -> HashSet<&str> {
 
 fn pull_digest(
     store: &Store,
+    board: &Board,
+    holdings: &Holdings,
     view: Option<&View>,
     landed: Option<&dyn Fn(&Task) -> bool>,
     now: f64,
@@ -183,5 +195,5 @@ fn pull_digest(
             busy.push(a.handle.clone());
         }
     }
-    digest(store, &idle, landed, now, &busy)
+    digest_on(store, board, holdings, &idle, landed, now, &busy)
 }

@@ -49,22 +49,10 @@ pub(super) fn listen(f: &Fixture, handle: &str) -> Listener {
     listener
 }
 
-fn listen_orchestrator(f: &Fixture, handle: &str, initial_pull: &str) -> Listener {
-    let listener = listen(f, handle);
-    assert_eq!(listener.text(), initial_pull);
-    listener
-}
-
-fn callback_state(f: &Fixture, handle: &str) -> serde_json::Value {
-    f.store
-        .client()
-        .query(
-            "RETURN SELECT * OMIT id FROM ONLY type::record('callback_state', $handle);",
-            json!({"handle":handle}),
-        )
-        .unwrap()
-        .remove(0)
-}
+#[path = "pull_expectations.rs"]
+mod expectations;
+pub(super) use expectations::with_volume;
+use expectations::{callback_state, listen_orchestrator};
 
 #[path = "quiet_pull.rs"]
 mod pull_updates;
@@ -182,8 +170,8 @@ fn an_armed_idle_gate_delivers_a_reservation_lapse_without_a_marker_change() {
     f.store.dispatch_callbacks().unwrap();
     assert_eq!(
         f.store.client().requests() - requests,
-        3,
-        "the idle gate is armed"
+        4,
+        "the idle gate is armed; one canonical holdings read still detects hold-only changes"
     );
     let marker = || {
         f.store
@@ -260,9 +248,12 @@ fn an_undelivered_first_empty_pull_keeps_its_key_until_it_is_received() {
     f.store.dispatch_callbacks().unwrap();
     let pending = f.store.callback_inbox(&orch).unwrap();
     assert_eq!(pending.len(), 1);
-    assert_eq!(pending[0].1, EMPTY_PULL);
+    assert_eq!(pending[0].1, with_volume(&orch, 0, EMPTY_PULL));
     assert!(callback_state(&f, &orch).get("pull_entries").is_none());
-    assert_eq!(callback_state(&f, &orch)["pull_queued"], json!([]));
+    assert_eq!(
+        callback_state(&f, &orch)["pull_queued"],
+        json!([["low_volume", orch]])
+    );
     for _ in 0..4 {
         f.advance(601.0);
         f.store.touch(&orch).unwrap();
@@ -278,8 +269,11 @@ fn an_undelivered_first_empty_pull_keeps_its_key_until_it_is_received() {
             false,
         )
         .unwrap();
-    assert_eq!(recovered.text(), EMPTY_PULL);
-    assert_eq!(callback_state(&f, &orch)["pull_entries"], json!([]));
+    assert_eq!(recovered.text(), with_volume(&orch, 0, EMPTY_PULL));
+    assert_eq!(
+        callback_state(&f, &orch)["pull_entries"],
+        json!([["low_volume", orch]])
+    );
     assert!(recovered.drain(&f, &sender, &orch).is_empty());
     f.advance(601.0);
     f.store.dispatch_callbacks().unwrap();
@@ -879,7 +873,7 @@ fn a_pending_digest_keeps_its_retry_budget_until_a_new_action_replaces_it() {
             .unwrap()
             .remove(0)
     };
-    assert_eq!(state()["pull_entries"], json!([]));
+    assert_eq!(state()["pull_entries"], json!([["low_volume", orch]]));
     let pending = f.store.callback_inbox(&orch).unwrap();
     assert_eq!(
         pending
@@ -953,6 +947,7 @@ fn a_pending_digest_keeps_its_retry_budget_until_a_new_action_replaces_it() {
     assert_eq!(
         state()["pull_entries"],
         json!([
+            ["low_volume", orch],
             ["ready_unstaffed", "tools/later"],
             ["ready_unstaffed", "tools/pending"]
         ])
@@ -976,7 +971,7 @@ fn a_pending_digest_keeps_its_retry_budget_until_a_new_action_replaces_it() {
     f.store.ack_callbacks(&orch, &keys).unwrap();
     assert_eq!(
         state()["pull_entries"],
-        json!([["ready_unstaffed", "tools/manual"]])
+        json!([["low_volume", orch], ["ready_unstaffed", "tools/manual"]])
     );
     f.store.move_to("tools/manual", "backlog", &sender).unwrap();
     f.store.move_to("tools/later", "ready", &sender).unwrap();
@@ -1158,15 +1153,16 @@ fn a_legacy_upgrade_baselines_once_across_older_seen_writes_and_keeps_retries() 
             json!({"handle":orch,"seen":legacy}),
         ).unwrap();
         f.store.dispatch_callbacks().unwrap();
-        let expected = if pending {
+        let mut expected = if pending {
             vec![format!("AGENT from {exe} to {orch} — still pending")]
         } else {
             Vec::new()
         };
+        expected.extend(with_volume(&orch, 1, "PULL executing=1 ready_unstaffed=1 in_progress_orphaned=0 review_unreviewed=0 landed_open=0 idle=0\nready_unstaffed p2 tools/old-gap — Jump departure").lines().map(str::to_owned));
         assert_eq!(
             o.drain(&f, &exe, &orch),
             expected,
-            "no historical ROLE, VERDICT or PULL"
+            "only the pending message and first warning; no historical ROLE or VERDICT"
         );
         assert_eq!(callback_state(&f, &orch)["delivery_version"], 1);
         for round in 0..4 {

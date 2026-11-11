@@ -172,6 +172,14 @@ holder hears no backlog.
 A finished idle terminal still closes under the original cleanup rules, retiring its
 registration; an executor of a task in review is not finished, and keeps its terminal until it
 has sat idle at its prompt an hour (`reap::IDLE_HOUR`), as every role on open work does.
+An orchestrator below four canonical open slots receives a recipient-scoped `low_volume`
+PULL condition, advising disjoint ready work or resolution of owned blockers. The existing
+slot cap still governs starts. Each attach or callback pass shares one successful
+`slot_holdings` observation across scheduling, recipient scoping and idle checks. A changed
+canonical count invalidates an otherwise unchanged observation; a failed read reports the
+error and preserves pending delivery. The condition uses the ordinary durable acknowledgement
+account, so a count change within the low band does not repeat an acknowledged warning.
+
 PULL's `unanswered` category lists a missing executor on `in_progress`, `blocked` or `review`,
 or a missing reviewer on `review`, after an addressed post has waited thirty minutes. Each line
 names the post and its restore command (or an explicit launch when no conversation was recorded).

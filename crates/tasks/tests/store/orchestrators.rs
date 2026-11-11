@@ -3,7 +3,7 @@
 
 use super::callbacks::Listener;
 use super::common::{Fixture, Seed, refused, session};
-use super::quiet_callbacks::listen;
+use super::quiet_callbacks::{listen, with_volume};
 use std::collections::BTreeSet;
 use symphony_board::health::{LIVE_SECONDS, STALE_SECONDS};
 use symphony_board::{Health, NewSession, NewTask};
@@ -211,7 +211,10 @@ fn a_hand_over_sends_one_role_event_to_each_side() {
     let (la, lb) = (listen(&f, &a), listen(&f, &b));
     assert_eq!(
         (la.text(), lb.text()),
-        (BUSY_PULL.into(), EMPTY_PULL.into())
+        (
+            with_volume(&a, 1, BUSY_PULL),
+            with_volume(&b, 0, EMPTY_PULL)
+        )
     );
     f.store.hand_over("scratch/one", &a, &b).unwrap();
     let role = format!("ROLE scratch/one {b} orchestrator, in_progress (from {a})");
@@ -255,7 +258,10 @@ fn each_orchestrator_hears_its_own_tasks_and_the_unclaimed_ones_only() {
         f.store.claim(slug, worker).unwrap();
     }
     let (la, lb) = (listen(&f, &a), listen(&f, &b));
-    assert_eq!((la.text(), lb.text()), (BUSY_PULL.into(), BUSY_PULL.into()));
+    assert_eq!(
+        (la.text(), lb.text()),
+        (with_volume(&a, 1, BUSY_PULL), with_volume(&b, 1, BUSY_PULL))
+    );
     let ears = [(&la, a.as_str()), (&lb, b.as_str())];
     let none = Vec::<String>::new;
 
@@ -507,6 +513,7 @@ fn each_digest_lists_its_own_and_the_unclaimed_tasks() {
     assert_eq!(
         entries(&a),
         BTreeSet::from([
+            entry("low_volume", &a),
             entry("ready_unstaffed", "scratch/a"),
             entry("ready_unstaffed", "scratch/free"),
             entry("idle", &idle_orphan),
@@ -516,6 +523,7 @@ fn each_digest_lists_its_own_and_the_unclaimed_tasks() {
     assert_eq!(
         entries(&b),
         BTreeSet::from([
+            entry("low_volume", &b),
             entry("ready_unstaffed", "scratch/b"),
             entry("ready_unstaffed", "scratch/free"),
             entry("idle", &idle_b),
@@ -523,5 +531,5 @@ fn each_digest_lists_its_own_and_the_unclaimed_tasks() {
             entry("idle", &idle_free),
         ])
     );
-    assert_eq!(digest.entries().len(), 6, "the whole board, unscoped");
+    assert_eq!(digest.entries().len(), 8, "the whole board, unscoped");
 }

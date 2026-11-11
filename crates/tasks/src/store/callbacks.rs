@@ -48,6 +48,7 @@ pub(super) struct Idle {
     marker: u64,
     health: Vec<crate::Health>,
     pull_at: f64,
+    holdings: Option<pull::Holdings>,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -611,6 +612,11 @@ RETURN NONE;");
         // The pool is plain data, whole or none, so a panic elsewhere leaves nothing half-made in it.
         *self.inbox_pool.lock().unwrap_or_else(|e| e.into_inner()) = None;
         let (mut board, mut sequence) = self.callback_board()?;
+        let holdings = callbacks
+            .values()
+            .any(|callback| callback.host == self.host && callback.session.kind == "orchestrator")
+            .then(|| self.slot_holdings())
+            .transpose()?;
         let health: Vec<_> = board
             .sessions
             .iter()
@@ -629,6 +635,7 @@ RETURN NONE;");
             .as_ref()
             .is_some_and(|idle| {
                 idle.marker == sequence
+                    && idle.holdings == holdings
                     && idle.health == health
                     && self.now() < idle.pull_at
                     && board.sessions.iter().all(|session| {
@@ -649,7 +656,7 @@ RETURN NONE;");
         let mut pull_at = f64::INFINITY;
         for (handle, callback) in callbacks.iter().filter(|(_, c)| c.host == self.host) {
             let env = crate::cli::Env::of_process();
-            let visit = Visit::new(pass, &env, self);
+            let visit = Visit::new(pass, &env, self, holdings.as_ref());
             let (handled, due) =
                 self.dispatch_one(handle, callback, &mut board, &mut sequence, &visit, None)?;
             observed &= handled;
@@ -660,6 +667,7 @@ RETURN NONE;");
                 marker: sequence,
                 health,
                 pull_at,
+                holdings,
             });
         Ok((board, observed))
     }
@@ -798,7 +806,16 @@ RETURN NONE;");
         // after it), so what the write caused was heard there: a write's observation leaves that
         // recipient. Reading the board again instead would cost each of many writers at once the
         // whole board for each recipient another had observed meanwhile.
-        if visit.pass == Pass::Observe && !unsequenced && state.snapshot_sequence >= *sequence {
+        let count_changed = callback.session.kind == "orchestrator"
+            && visit.holdings.is_some_and(|holdings| {
+                state.heard().and_then(|before| before.open_slots())
+                    != Some(holdings.get(handle).map_or(0, BTreeSet::len))
+            });
+        if visit.pass == Pass::Observe
+            && !unsequenced
+            && state.snapshot_sequence >= *sequence
+            && !count_changed
+        {
             return Ok((true, f64::INFINITY));
         }
         // Planning can meet an observation newer than its shared snapshot. Recheck the marker
@@ -817,6 +834,14 @@ RETURN NONE;");
         let orchestrator = session.row.kind == "orchestrator";
         // What the recipient hears, and the whole board's look older dispatchers keep.
         let mut seen = attach::seen(board, handle, &session.row.kind);
+        if orchestrator {
+            seen = seen.with_holdings(
+                visit.holdings.ok_or_else(|| {
+                    Error::Db("orchestrator PULL has no holdings observation".into())
+                })?,
+                handle,
+            );
+        }
         let mut legacy = attach::legacy_seen(board, handle, &session.row.kind);
         let active: BTreeSet<&str> = board
             .tasks
@@ -959,7 +984,18 @@ RETURN NONE;");
                 root.as_ref()
                     .is_some_and(|root| crate::cli::probes::landed(root, &task.slug))
             };
-            let digest = pull::digest(self, &idle, Some(&landed), self.now(), &busy)?;
+            let holdings = visit
+                .holdings
+                .ok_or_else(|| Error::Db("orchestrator PULL has no holdings observation".into()))?;
+            let digest = pull::digest_on(
+                self,
+                board,
+                holdings,
+                &idle,
+                Some(&landed),
+                self.now(),
+                &busy,
+            )?;
             let entries = digest.entries();
             let digest = digest.only_for(board, handle);
             let heard = digest.entries();

@@ -123,18 +123,35 @@ impl Account {
         }
     }
 
-    /// The account of a legacy observer's upgrade: every entry it hears counts as told, and it is
-    /// said no PULL.
+    /// Legacy entries count as told on upgrade. A recipient condition unknown to that dispatcher
+    /// still needs its first acknowledgement.
     pub(super) fn upgrade(state: &State, entries: &Entries, heard: &Entries) -> Self {
         let unheard = entries - heard;
+        let untold: Entries = heard
+            .iter()
+            .filter(|entry| entry.0 == "low_volume")
+            .cloned()
+            .collect();
+        let first_condition = !untold.is_empty();
         Account {
-            plan: PullPlan::Unchanged,
-            queued: state.pull_queued.clone(),
-            recorded: Some(entries.clone()),
-            untold: Entries::new(),
+            plan: if first_condition {
+                PullPlan::Queued
+            } else {
+                PullPlan::Unchanged
+            },
+            queued: if first_condition {
+                Some(entries.clone())
+            } else {
+                state.pull_queued.clone()
+            },
+            recorded: Some(entries - &untold),
+            untold,
             withheld: unheard.clone(),
+            awaiting: first_condition.then(|| Awaiting {
+                entries: entries.clone(),
+                withheld: unheard.clone(),
+            }),
             unheard,
-            awaiting: None,
         }
     }
 
@@ -169,6 +186,131 @@ mod tests {
     fn entries(slugs: &[&str]) -> Entries {
         let entry = |slug: &&str| ("ready_unstaffed".to_string(), slug.to_string());
         slugs.iter().map(entry).collect()
+    }
+
+    #[test]
+    fn coherent_volume_crossings_clear_old_receipts_and_acknowledge_new_warnings_once() {
+        let low = Entries::from([("low_volume".into(), "keen".into())]);
+        let peer = Entries::from([("low_volume".into(), "peer".into())]);
+        // The paired digest snapshot cases establish these global/scoped sets for old3/new4
+        // and old4/new3. The account must use the same observation for pruning and delivery.
+        for (retained_low, fresh_low) in [(true, false), (false, true)] {
+            let told = if retained_low {
+                &peer | &low
+            } else {
+                peer.clone()
+            };
+            let state = State {
+                pull_entries: Some(told),
+                pull_withheld: peer.clone(),
+                ..State::default()
+            };
+            let heard = if fresh_low {
+                low.clone()
+            } else {
+                Entries::new()
+            };
+            let all = &peer | &heard;
+            let account = Account::of(&state, &[], &all, &heard);
+            assert_eq!(account.untold, heard);
+            assert_eq!(account.recorded, Some(peer.clone()));
+            let acknowledged = if fresh_low {
+                assert_eq!(account.plan, PullPlan::Queued);
+                let awaiting = account.awaiting.clone().expect("the new condition waits");
+                assert_eq!(awaiting.entries, all);
+                assert_eq!(awaiting.withheld, peer);
+                let pending = Queued {
+                    key: "pull-coherent".into(),
+                    pull_entries: Some(awaiting.entries.clone()),
+                    pull_withheld: Some(awaiting.withheld.clone()),
+                    ..Queued::default()
+                };
+                let persisted = State {
+                    pull_entries: account.recorded,
+                    pull_queued: account.queued,
+                    pull_withheld: account.withheld,
+                    pull_awaiting: Some(awaiting.clone()),
+                    ..State::default()
+                };
+                assert_eq!(
+                    Account::of(&persisted, &[pending], &all, &heard).plan,
+                    PullPlan::Kept("pull-coherent".into())
+                );
+                State {
+                    pull_entries: Some(awaiting.entries),
+                    pull_withheld: awaiting.withheld.clone(),
+                    pull_awaiting: Some(Awaiting {
+                        entries: all.clone(),
+                        withheld: awaiting.withheld,
+                    }),
+                    ..State::default()
+                }
+            } else {
+                assert_eq!(account.plan, PullPlan::Unchanged);
+                State {
+                    pull_entries: account.recorded,
+                    pull_withheld: account.withheld,
+                    ..State::default()
+                }
+            };
+            assert_eq!(acknowledged.acknowledged(), Some(heard.clone()));
+            assert_eq!(
+                Account::of(&acknowledged, &[], &all, &heard).plan,
+                PullPlan::Unchanged
+            );
+            // A later real return queues once after a clear; a real clear forgets the old receipt.
+            let later = if fresh_low {
+                Entries::new()
+            } else {
+                low.clone()
+            };
+            let changed = Account::of(&acknowledged, &[], &(&peer | &later), &later);
+            assert_eq!(
+                changed.plan,
+                if fresh_low {
+                    PullPlan::Unchanged
+                } else {
+                    PullPlan::Queued
+                }
+            );
+            assert_eq!(changed.recorded, Some(peer.clone()));
+        }
+    }
+
+    #[test]
+    fn an_upgrade_does_not_acknowledge_a_warning_the_legacy_observer_could_not_say() {
+        let mut all = entries(&["t/ready", "t/elsewhere"]);
+        let low = Entries::from([("low_volume".into(), "keen".into())]);
+        all.extend(low.clone());
+        let heard = &entries(&["t/ready"]) | &low;
+        let account = Account::upgrade(&State::default(), &all, &heard);
+        assert_eq!(account.plan, PullPlan::Queued);
+        assert_eq!(account.untold, low);
+        assert_eq!(account.recorded, Some(entries(&["t/ready", "t/elsewhere"])));
+        assert_eq!(
+            account.awaiting,
+            Some(Awaiting {
+                entries: all.clone(),
+                withheld: entries(&["t/elsewhere"])
+            })
+        );
+        let state = State {
+            pull_entries: account.recorded.clone(),
+            pull_queued: account.queued.clone(),
+            pull_awaiting: account.awaiting.clone(),
+            pull_withheld: account.withheld.clone(),
+            ..State::default()
+        };
+        let pending = Queued {
+            key: "pull-1".into(),
+            pull_entries: Some(all.clone()),
+            pull_withheld: Some(account.withheld),
+            ..Queued::default()
+        };
+        assert_eq!(
+            Account::of(&state, &[pending], &all, &heard).plan,
+            PullPlan::Kept("pull-1".into())
+        );
     }
 
     /// A PULL waiting, as `pull_plan` reads it: the entries it records, and those it withholds

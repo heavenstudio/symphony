@@ -29,6 +29,7 @@ mod health;
 mod held_stream;
 mod keyed;
 mod launches;
+mod low_volume;
 mod messages;
 mod mixed_dispatchers;
 mod move_from;
