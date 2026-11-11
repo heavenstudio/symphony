@@ -15,6 +15,7 @@ mod field;
 pub mod machine_work;
 pub mod probes;
 pub mod pull;
+mod recorder;
 mod search;
 mod shape;
 mod status;
@@ -42,10 +43,15 @@ pub struct Env {
 }
 
 impl Env {
-    /// This process's own.
+    /// This process's own: each variable whose name and value are text (a byte that is not ends
+    /// no command here, as `std::env::vars` would).
     pub fn of_process() -> Env {
         Env {
-            vars: std::env::vars().collect(),
+            vars: std::env::vars_os()
+                .filter_map(|(name, value)| {
+                    Some((name.into_string().ok()?, value.into_string().ok()?))
+                })
+                .collect(),
             cwd: std::env::current_dir().unwrap_or_default(),
         }
     }
@@ -138,6 +144,10 @@ fn run(
     }
     if args.len() == 1 && args[0] == detached::COMMAND {
         return detached::run(env, err);
+    }
+    // Before the board's argument table: what follows `--` is another program's command line.
+    if args.first().is_some_and(|arg| arg == recorder::COMMAND) {
+        return recorder::run(&args[1..], env, err, program.is_some());
     }
     let board = || connect(env).map(|store| detaching(store, env, program));
     if args.len() == 1 && args[0] == "api" {

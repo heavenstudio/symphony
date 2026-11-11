@@ -427,7 +427,7 @@ fn normalize(sample: &Sample) -> Result<Vec<Operation>, Rejected> {
     Ok(found.into_values().cloned().collect())
 }
 
-pub(super) fn identity(text: &str) -> bool {
+pub(crate) fn identity(text: &str) -> bool {
     !text.trim().is_empty() && text.len() <= 256 && !text.chars().any(char::is_control)
 }
 

@@ -29,6 +29,9 @@ positional arguments:
     status              the board's health: failed dispatches and sweeps,
                         slow requests, write latency
     finish              close the panes of a finished task's sessions
+    run                 run a build or test command, recorded for the board's
+                        Build and Test columns (tasks run --phase build|test
+                        -- COMMAND)
 
 options:
   -h, --help            show this help message and exit

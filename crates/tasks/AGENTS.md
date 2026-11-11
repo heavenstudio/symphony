@@ -487,9 +487,11 @@ terminal it acts on; the caller's own is read from the `Env`, never handed to
 hc), git, the detached dispatcher, sweep and review command, the sweep's cwd
 scans (`process_cwd::process_cwds_with` and `occupied_with`, handed
 `sys::command("lsof")`), and Codex delivery.
-A call that must keep a name sets it on the command after, saying why; none
-does today: a launched agent's `TASKS_SESSION` is a word of the command line
-`hc run` starts, not hc's. Clippy holds it: the crate's own `clippy.toml`, the
+A call that must keep a name sets it on the command after, saying why: `tasks
+run` gives the command it wraps its caller's session back, since that command
+is the caller's own and its board commands and hc calls need it. A launched
+agent's `TASKS_SESSION` is a word of the command line `hc run` starts, not
+hc's. Clippy holds it: the crate's own `clippy.toml`, the
 workspace's settings whole and then `disallowed-methods`, refuses std's and
 `process_cwd`'s `Command::new` and `env_clear`, and `process_cwd::process_cwds`
 and `occupied`, by the path they resolve to, however they are spelled, imported

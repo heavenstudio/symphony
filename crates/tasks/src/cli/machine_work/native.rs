@@ -1,18 +1,24 @@
-//! Strict decoding of the bounded sf-slots inventory bridge, with trusted local identity attached.
-//! Terminal metadata stays private; only the projection's atomic native entry may consume it.
+//! Strict decoding of the bounded sf-slots inventory bridge, with trusted local identity attached,
+//! and the board's own recorder's operations ([`super::recorded`]) beside it: one inventory of
+//! both ([`Inventory::merge`]). Terminal metadata stays private; only the projection's atomic
+//! native entry may consume it.
 
 use super::{Kind, Operation, State};
 use serde::{Deserialize, Serialize};
+use std::collections::{BTreeMap, BTreeSet};
 
 pub const MAX_BYTES: usize = 4 * 1024 * 1024 + 65_536;
-const MAX_ROWS: usize = 4096;
+pub(super) const MAX_ROWS: usize = 4096;
 
 pub struct Inventory {
     pub(super) machine_id: Option<String>,
     pub(super) uncertain: bool,
     pub(super) operations: Vec<Operation>,
     pub(super) finished: Vec<Operation>,
-    revisions: std::collections::BTreeMap<String, Vec<u8>>,
+    pub(super) revisions: BTreeMap<String, Vec<u8>>,
+    /// Nonces whose recorder bound their task when it began them ([`super::recorded`]): no
+    /// receiver attribution rewrites it.
+    pub(super) bound: BTreeSet<String>,
 }
 
 #[derive(Deserialize)]
@@ -99,9 +105,10 @@ impl Inventory {
             uncertain: input.uncertain,
             operations: Vec::new(),
             finished: Vec::new(),
-            revisions: Default::default(),
+            revisions: BTreeMap::new(),
+            bound: BTreeSet::new(),
         };
-        let mut nonces = std::collections::BTreeSet::new();
+        let mut nonces = BTreeSet::new();
         for row in input.records {
             // The reader emits one validated pathname per nonce, never conflicting versions.
             if !nonces.insert(row.operation_id.clone()) {
@@ -170,14 +177,44 @@ impl Inventory {
 
     /// Canonical publication bytes, independent of JSON field order. Keys are native nonces;
     /// bytes only detect a new publication, never machine/operation identity or producer-clock age.
-    pub fn revisions(&self) -> &std::collections::BTreeMap<String, Vec<u8>> {
+    pub fn revisions(&self) -> &BTreeMap<String, Vec<u8>> {
         &self.revisions
     }
 
+    /// One inventory of two sources read for the same machine: every row of each, uncertain when
+    /// either is. A nonce both name is refused, as one source repeating it is.
+    pub fn merge(mut self, other: Inventory) -> Result<Self, String> {
+        if self.machine_id != other.machine_id {
+            return Err("native inventories of different machines cannot merge".into());
+        }
+        for (id, bytes) in other.revisions {
+            if self.revisions.insert(id, bytes).is_some() {
+                return Err("native inventory repeats an operation nonce".into());
+            }
+        }
+        if self.revisions.len() > MAX_ROWS {
+            return Err("native inventory exceeds its bound".into());
+        }
+        self.uncertain |= other.uncertain;
+        self.operations.extend(other.operations);
+        self.finished.extend(other.finished);
+        self.bound.extend(other.bound);
+        Ok(self)
+    }
+
     /// A trusted adapter may bind explicit task context once, before the operation's first sample.
-    /// Apply the same retained binding to completion; current display roles never rewrite it.
+    /// Apply the same retained binding to completion; current display roles never rewrite it. An
+    /// operation its recorder bound already keeps the task it recorded, none included.
     pub fn attribute(&mut self, mut task: impl FnMut(&Operation) -> Option<String>) {
+        let bound = &self.bound;
         for operation in self.operations.iter_mut().chain(&mut self.finished) {
+            if operation
+                .operation_id
+                .as_ref()
+                .is_some_and(|id| bound.contains(id))
+            {
+                continue;
+            }
             operation.task = task(operation);
         }
     }
