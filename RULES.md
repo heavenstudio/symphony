@@ -167,6 +167,14 @@ One topic per document, linked to the others, never merged into one file.
 
 ## Tools and the machine
 
+### `commits/no-ai-authorship`
+
+No commit, merge, tag, pull request, file header or licence line names Claude, Claude Code, Codex
+or any other AI agent as author, co-author or generator: no `Co-Authored-By` trailer, no
+"Generated with" line. The owner, 2026-11-11: "no claude code or codex co authorship anywhere".
+The author and owner of this repository is Stefano Benatti, and its licence is MIT (`LICENSE`).
+An agent's handle belongs on the board thread, never in the commit.
+
 ### `tools/no-new-python`
 
 No Python is written or run here: not in the project's code, and not in an agent's own scratch
