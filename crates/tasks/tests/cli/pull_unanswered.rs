@@ -326,3 +326,69 @@ fn descendant_answers_keep_sender_sequence_ancestry_and_role_handoff_fences() {
         assert_eq!(c.digest().count("unanswered"), 0);
     }
 }
+
+/// A launch record no reader decodes: the unanswered scan reads every launch record and fails,
+/// while the board and the digest's other reads answer.
+const UNREADABLE_LAUNCH: &str = "DEFINE FIELD OVERWRITE started ON task_session TYPE any;
+UPSERT task_session:['unreadable', 'nobody'] CONTENT { slug: 'unreadable', handle: 'nobody',
+    role: 'executor', claude_session: '', worktree: '', branch: '', pane: '', model: '',
+    started: 'unreadable', closed: 1.0, closed_why: '', restore: '' } RETURN NONE;";
+const READABLE_LAUNCHES: &str = "DELETE task_session:['unreadable', 'nobody'] RETURN NONE;
+DEFINE FIELD OVERWRITE started ON task_session TYPE float;";
+
+#[test]
+fn a_failed_scan_leaves_every_other_list_and_the_post_returns_with_the_scan() {
+    let mut c = Case::new();
+    c.task("sim/a", "in_progress");
+    c.task("sim/b", "ready");
+    c.task("sim/c", "review");
+    c.landed.insert("sim/c".into());
+    let post =
+        c.f.store
+            .say("sim/a", "owner", "continue", Some("@executor"))
+            .unwrap();
+    c.f.advance(31.0 * 60.0);
+    let whole = c.digest();
+    assert_eq!(slugs(&whole, "unanswered"), ["sim/a"]);
+    let others = |d: &Digest| -> BTreeSet<(String, String)> {
+        (d.entries().into_iter())
+            .filter(|entry| entry.0 != "unanswered")
+            .collect()
+    };
+    assert!(
+        ["ready_unstaffed", "review_unreviewed", "landed_open"]
+            .iter()
+            .all(|name| whole.count(name) > 0),
+        "{:?}",
+        whole.lines()
+    );
+
+    use crate::common::RawWrite as _;
+    let write = |sql: &str| {
+        (c.f.store.client())
+            .write(sql, serde_json::json!({}))
+            .unwrap();
+    };
+    write(UNREADABLE_LAUNCH);
+    assert!(c.f.store.all_task_sessions().is_err());
+    let skipped = c.digest();
+    assert_eq!(skipped.count("unanswered"), 0);
+    assert_eq!(skipped.entries(), others(&whole));
+    assert_eq!(skipped.executing, whole.executing);
+    assert_eq!(
+        skipped.lines(),
+        (whole.lines().into_iter())
+            .map(|line| line.replace(" unanswered=1", ""))
+            .filter(|line| !line.starts_with("  unanswered "))
+            .collect::<Vec<_>>()
+    );
+
+    write(READABLE_LAUNCHES);
+    let back = c.digest();
+    assert_eq!(back.entries(), whole.entries());
+    assert!(
+        (back.lines().iter()).any(|line| line.contains(&format!("post #{} —", post.id))),
+        "{:?}",
+        back.lines()
+    );
+}
