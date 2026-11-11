@@ -154,14 +154,14 @@ fn an_entry_select_loads_its_popup_on_use_and_keeps_keyboard_selection_and_escap
             );
         }
     }
-    assert!(page.wait_for("[...document.querySelectorAll('body > button')].some(button=>button.textContent==='Retry loading conversation')", SHOWN));
+    assert!(page.wait_for("document.querySelector('#shell-notices #panel-error[role=alert] > button')?.textContent === 'Retry loading conversation'", SHOWN));
     assert_eq!(
         page.eval(
             "document.querySelector('[role=listbox]') === null && window.reviewPanelReady !== true"
         ),
         json!(true)
     );
-    page.eval("[...document.querySelectorAll('body > button')].find(button=>button.textContent==='Retry loading conversation').click()");
+    page.eval("document.querySelector('#shell-notices #panel-error[role=alert] > button').click()");
     let retried = page.wait_for_protocol_events("Fetch.requestPaused", held.len() + 1, SHOWN);
     assert!(
         retried.len() > held.len(),
