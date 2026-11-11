@@ -55,7 +55,11 @@ refreshes `.target/bin/NAME`. None searches a containing project. `just symphony
 
 `just client-update` builds all six real client modules and publishes their bundle
 under `apps/symphony-server/client/public/`. Commit that generated distribution
-with client changes. The server package embeds those bytes at build time, so an
+with SDK source changes. Release snapshots use stable paths under /private/tmp,
+copy the locked component source without changing its version or features, and
+retain the caller's compiler flags, wrappers and resource settings. Snapshot
+configuration patches and lock accounting affect only those private copies.
+The server package embeds those bytes at build time, so an
 installed binary serves them without dx, a source checkout or a runtime extraction.
 A source kit's local preview build wins over the embedded default. Explicit source-kit
 install directories and `SF_SYMPHONY_UI_DIST` retain their own missing-file errors.

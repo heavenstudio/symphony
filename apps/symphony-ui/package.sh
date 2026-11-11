@@ -22,13 +22,16 @@ stage="$(mktemp -d "$out/.public-stage.$$.XXXXXXXX")"
 trap 'rm -rf "$stage"' EXIT
 mkdir -p "$stage/assets"
 # Open pages may still import a previous build's deferred modules after the swap.
+if [ -n "${3:-}" ] && [ -d "$3/assets" ]; then
+    bash "$here/assets-copy.sh" "$3/assets" "$stage/assets"
+fi
 if [ -d "$out/public/assets" ]; then
-    cp -R "$out/public/assets/." "$stage/assets/"
+    bash "$here/assets-copy.sh" "$out/public/assets" "$stage/assets"
 fi
 manifest='{}'
 for kind in board tasks docs review queue panel; do
     module="$out/.modules/$kind"
-    cp "$module/public/assets/"* "$stage/assets/"
+    bash "$here/assets-copy.sh" "$module/public/assets" "$stage/assets"
     script="$(sed -n 's/.*<script type="module"[^>]*src="\([^"]*\)".*/\1/p' "$module/public/index.html")"
     original="$(basename "$script")"
     # dx starts the generated module itself. Expose that one promise to the shell, and make the
@@ -70,5 +73,9 @@ cat > "$stage/index.html" <<HTML
 <title>Symphony</title><link rel="icon" href="data:,"><style id="shell-notices-style">$(cat ../symphony-server/src/notices.css)</style></head><body><div id="main"><section id="shell-notices" aria-label="Server notices"></section></div>
 <script type="module" src="$prefix/assets/$shell"></script></body></html>
 HTML
-"$here/../../tools/rs-bin.sh" symphony publish-client "$stage" "$out/public"
+if [ -n "${2:-}" ]; then
+    "$2" publish-client "$stage" "$out/public"
+else
+    "$here/../../tools/rs-bin.sh" symphony publish-client "$stage" "$out/public"
+fi
 echo "symphony-ui: five page-kind modules and a deferred panel, one SPA shell: $out/public" >&2

@@ -27,6 +27,18 @@ case "${3:-z}" in
 esac
 here="$(cd "$(dirname "$0")" && pwd)"
 root="$(cd "$here/../.." && pwd)"
+committed="$root/apps/symphony-server/client/public"
+owned_git() {
+    env -u GIT_DIR -u GIT_WORK_TREE -u GIT_COMMON_DIR -u GIT_INDEX_FILE git "$@"
+}
+if [ ! -f "$root/.git" ] && [ ! -d "$root/.git" ]; then
+    printf 'symphony-ui: release build requires its own repository: %s\n' "$root" >&2
+    exit 2
+fi
+if ! top="$(owned_git -C "$root" rev-parse --show-toplevel)" || [ "$(cd -P "$top" && pwd -P)" != "$(cd -P "$root" && pwd -P)" ]; then
+    printf 'symphony-ui: release repository does not belong to %s\n' "$root" >&2
+    exit 2
+fi
 target="${CARGO_TARGET_DIR:?bundle.sh runs under the workspace Cargo entrypoint, which names the build folder}"
 common="${SF_GIT_COMMON_DIR:-$(git -C "$here" rev-parse --path-format=absolute --git-common-dir)}"
 dx="$common/sf-cargo/dx-0.7.10/bin/dx"
@@ -45,6 +57,49 @@ if [ ! -x "$dx" ] || [ ! -x "$DX_HOME/tools/wasm-bindgen-$bindgen_version/wasm-b
 fi
 
 bash "$here/wasm-fresh.sh"
+
+# Manganis scopes CSS and serializes asset metadata using canonical source paths.
+# Build from the same verified paths on every host; the public lock and inputs stay intact.
+inputs="$(mktemp -d "${TMPDIR:-/tmp}/symphony-release-inputs.XXXXXXXX")"
+trap 'rm -rf "$inputs"' EXIT
+"$root/tools/cargo.sh" metadata --format-version 1 --locked \
+    --filter-platform wasm32-unknown-unknown > "$inputs/metadata.json"
+owned_git -C "$root" ls-files --cached --others --exclude-standard -z > "$inputs/source"
+components="$(jq -er '.packages[] | select(.name == "dioxus-primitives") | .manifest_path' "$inputs/metadata.json")"
+components="$(cd "$(dirname "$components")/.." && pwd -P)"
+component_pin="$(jq -er '.packages[] | select(.name == "dioxus-primitives") | .source' "$inputs/metadata.json")"
+if [ "$(owned_git -C "$components" rev-parse HEAD)" != "${component_pin##*#}" ]; then
+    printf 'symphony-ui: component checkout does not match its locked commit\n' >&2
+    exit 2
+fi
+owned_git -C "$components" ls-files --cached -z > "$inputs/components"
+snapshot_args=("$root" "$inputs/metadata.json" "$inputs/source" "$inputs/components")
+publisher="$("$root/tools/rs-bin.sh" --build symphony)"
+lock_folder="$("$publisher" release-inputs "${snapshot_args[@]}" --key)"
+snapshot="$(
+    # The parent retains fd 9 for the target while this subshell takes the input lock.
+    exec 9>&-
+    check_lock "$lock_folder" symphony-ui "release inputs"
+    "$publisher" release-inputs "${snapshot_args[@]}" "$lock_folder"
+)"
+export SF_GIT_COMMON_DIR="$common"
+root="$snapshot"
+here="$root/apps/symphony-ui"
+# Rust diagnostics in dependencies must not encode a developer's registry or checkout path.
+cargo_home="${CARGO_HOME:-$HOME/.cargo}"
+cargo_home="$(cd "$cargo_home" && pwd -P)"
+export SYMPHONY_RELEASE_CARGO_HOME="$cargo_home"
+export SYMPHONY_RELEASE_SOURCE="$root"
+export SYMPHONY_PARENT_RUSTC_WRAPPER="${RUSTC_WRAPPER:-}"
+export RUSTC_WRAPPER="$here/remap-rustc.sh"
+# A wrapper is not Cargo's dependency fingerprint. Keep its dependency products separate
+# from builds that did not remap paths; all output stays under the caller's held target.
+wrapper_hash="$(shasum -a 256 "$RUSTC_WRAPPER" | cut -c1-16)"
+target="$target/symphony-client-$wrapper_hash"
+export CARGO_TARGET_DIR="$target"
+bash "$here/wasm-fresh.sh" release-snapshot
+rm -rf "$inputs"
+trap - EXIT
 
 # dx copies its own output folder whole, and keeps every hashed file an earlier build left there.
 # Leave the published client alone throughout compilation; package.sh replaces it only when ready.
@@ -65,4 +120,4 @@ for kind in "${kinds[@]}"; do
     "$dx" bundle --web --bin symphony-ui --release --locked --no-default-features --features "$features" \
         --debug-symbols false --out-dir "$module" >&2
 done
-exec bash "$here/package.sh" "$out"
+exec bash "$here/package.sh" "$out" "$publisher" "$committed"

@@ -20,6 +20,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends jq lsof pkg-config clang cmake
+          sudo install -d -m 1777 /private/tmp
           google-chrome --version
       - name: Pinned Rust and browser target
         run: rustup show

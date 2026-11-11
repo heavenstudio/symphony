@@ -19,6 +19,11 @@ here="$(cd "$(dirname "$0")" && pwd)"
 root="$(cd "$here/../.." && pwd)"
 target="${CARGO_TARGET_DIR:?wasm-fresh.sh runs under the workspace Cargo entrypoint, which names the build folder}"
 cargo="${CARGO:-cargo}"
+case "${1:-}" in
+    '') release_snapshot=false ;;
+    release-snapshot) release_snapshot=true ;;
+    *) printf 'wasm-fresh: unknown mode %s\n' "$1" >&2; exit 2 ;;
+esac
 
 # The tree: the workspace's path and its manifest's inode and birth time, or its ctime where the file
 # system records no birth time (GNU stat's %W reads 0 then), as the wrapper keys it; neither moves when
@@ -32,14 +37,21 @@ else
 fi
 key="$root $inode $born"
 record="$target/sf-tree-wasm32-unknown-unknown"
+if $release_snapshot; then record="$target/symphony-release-tree"; fi
 recorded="$(cat "$record" 2>/dev/null || true)"
 if [ "$recorded" != "$key" ]; then
     # A record may still hold the key from before birth times, the manifest's inode and ctime: one that
     # names the manifest as it is now names this tree, so its builds stay and the record is rewritten.
     if [ "$recorded" != "$root $inode $changed" ]; then
-        for profile in dev wasm-release; do
-            (cd "$root" && "$cargo" clean --workspace --target wasm32-unknown-unknown --profile "$profile" --quiet --locked)
-        done
+        if $release_snapshot; then
+            # Private path-patched components carry asset metadata too. A different snapshot
+            # must not inherit any wasm release product from another canonical source path.
+            (cd "$root" && "$cargo" clean --target wasm32-unknown-unknown --profile wasm-release --quiet --locked)
+        else
+            for profile in dev wasm-release; do
+                (cd "$root" && "$cargo" clean --workspace --target wasm32-unknown-unknown --profile "$profile" --quiet --locked)
+            done
+        fi
     fi
     mkdir -p "$target"
     printf '%s' "$key" > "$record"

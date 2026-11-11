@@ -1,12 +1,10 @@
-//! The client's wasm32 builds go to the build folder the cargo wrapper names (`sf-slots cargo`: the
-//! tree's own, which starts from a seed another tree made, its wasm32 builds among it). Cargo names a
-//! workspace crate's artifacts by its path inside the workspace, the same in every worktree, and judges
-//! them fresh by mtime, so in a folder holding another tree's wasm32 build, a tree whose sources are older
-//! would package, or lint, that build. The host's guard (`cargo clean --workspace`) never reaches the wasm32
-//! folders, so the client keeps a guard of its own, its record inside the folder.
+//! The client freshness guards use the caller-provided target folder. Ordinary builds preserve
+//! dependency products while clearing another workspace image; canonical release snapshots also
+//! clear private wasm release dependencies whose asset metadata names a different source path.
+//! Records stay within the held target, and repeated calls retain the current image.
 //!
-//! These run the real scripts with real cargo, on a build folder of their own, with stand-ins for dx
-//! and wasm-bindgen (the bundling itself is the browser tests').
+//! These cases use real Cargo and the owned native publisher with protocol stand-ins for dx
+//! and wasm-bindgen. Real six-module compilation and browser acceptance are separate checks.
 
 use std::fs;
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
@@ -119,20 +117,37 @@ fn left_in(target: &Path, profile: &str) -> Vec<String> {
 /// Stand-ins for dx, which writes the arguments it was given to `said`, and for wasm-bindgen, where
 /// bundle.sh looks for them under `common`.
 fn stand_in_tools(common: &Path, said: &Path) {
-    // Publication is the real native command. Share only its source-keyed binary cache, not
-    // the fake compiler, target, client output or any board database. Dropping Scratch removes
-    // the symlink itself, never the cache it points at.
+    // Publication and snapshot capture use the actual declared native member. Clone only its
+    // native Cargo products into this private fixture; every adapter still runs Cargo itself.
+    static NATIVE: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+    let native = NATIVE.get_or_init(|| {
+        let root = crate_dir().join("../..").canonicalize().unwrap();
+        let target = std::env::var_os("CARGO_TARGET_DIR")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| root.join(".target"));
+        let done = Command::new(root.join("tools/rs-bin.sh"))
+            .args(["--build", "symphony"])
+            .env("CARGO_TARGET_DIR", &target)
+            .output()
+            .unwrap();
+        succeeded(&done, "owned native publication member");
+        target
+    });
     fs::create_dir_all(common.join("sf-cargo")).unwrap();
     git(common, &["init", "--bare", "-q"]);
-    let shared = git(
-        &crate_dir(),
-        &["rev-parse", "--path-format=absolute", "--git-common-dir"],
-    );
-    std::os::unix::fs::symlink(
-        Path::new(shared.trim()).join("sf-cargo/bin"),
-        common.join("sf-cargo/bin"),
-    )
-    .unwrap();
+    let target = common.join("sf-cargo/target");
+    fs::create_dir_all(&target).unwrap();
+    let copied = Command::new("cp")
+        .arg(if cfg!(target_os = "macos") {
+            "-cR"
+        } else {
+            "-R"
+        })
+        .arg(native.join("debug"))
+        .arg(target.join("debug"))
+        .output()
+        .unwrap();
+    succeeded(&copied, "private native dependency copy");
     let capture = format!("'{}'", said.to_string_lossy().replace('\'', "'\\''"));
     executable(
         &common.join("sf-cargo/dx-0.7.10/bin/dx"),
@@ -184,42 +199,7 @@ fn succeeded(done: &std::process::Output, what: &str) {
     );
 }
 
-#[test]
-fn a_bundle_after_another_trees_wasm32_builds_cleans_this_workspaces_crates_from_both_profiles() {
-    let scratch = Scratch::new("wasm-build-bundle");
-    let common = scratch.0.join("common");
-    let target = another_trees_build(&common);
-    let ran = scratch.0.join("dx-ran");
-    stand_in_tools(&common, &ran);
-    let done = Command::new("bash")
-        .arg(crate_dir().join("bundle.sh"))
-        .arg(scratch.0.join("out"))
-        .env("SF_GIT_COMMON_DIR", &common)
-        .env("CARGO_TARGET_DIR", &target)
-        .output()
-        .expect("run bundle.sh");
-    assert!(
-        done.status.success(),
-        "bundle.sh failed: {}",
-        String::from_utf8_lossy(&done.stderr)
-    );
-    assert!(ran.exists(), "bundle.sh never ran dx");
-    for profile in ["debug", "wasm-release"] {
-        assert_eq!(
-            left_in(&target, profile),
-            [A_DEPENDENCY],
-            "another tree's {WASM32} {profile} build of this workspace's crates is still there"
-        );
-    }
-    let record = fs::read_to_string(record_in(&target)).unwrap();
-    assert!(
-        record.starts_with(&format!(
-            "{} ",
-            crate_dir().join("../..").canonicalize().unwrap().display()
-        )),
-        "the record names {record:?}, not this tree"
-    );
-}
+include!("wasm_build/release_tests.rs");
 
 #[test]
 fn cargo_symphony_ui_dist_bundles_into_out_as_named_from_where_it_runs() {

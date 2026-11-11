@@ -21,10 +21,18 @@ Git, Bash, jq, curl and a C/C++ build toolchain; native board fixtures need lsof
 or name it with `SF_CHROME`. CI requires Chrome explicitly so a missing browser cannot pass as
 unexecuted acceptance. No game engine, display server or window is required.
 
-After changing the browser client, run `just client-update` and commit
+After changing SDK source inputs, run `just client-update` and commit
 `apps/symphony-server/client/public` with the source. `just client-check` rebuilds into an
 independent output directory and refuses changed current asset names, bytes or shell HTML.
 Older immutable assets may remain for pages that deferred an import across a publication.
+
+Release builds copy verified inputs and the already locked component source into a private,
+content-addressed snapshot under `/private/tmp`. Compiler path remapping makes the result independent
+of the original checkout and Cargo home, while preserving existing flags, wrappers and resource
+settings. Linux build hosts need that parent directory (`sudo install -d -m 1777 /private/tmp`);
+CI creates it. Private snapshot patches retain the existing dependency versions and features;
+the source workspace's manifests and lockfile stay intact. Old immutable assets are retained,
+and a same-name byte collision refuses publication.
 
 Consumers take the libraries from this repository's `main` branch and commit the selected revision
 in their Cargo lockfile. A consuming project's host supplies its plugins and its own verification,

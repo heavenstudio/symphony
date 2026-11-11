@@ -3,13 +3,16 @@
 
 use std::io::Write;
 
+mod release;
+
 /// The Symphony's own commands, in the order its usage names them.
-const OWN: [&str; 11] = [
+const OWN: [&str; 12] = [
     "status",
     "reply",
     "docs-audit",
     "blocks",
     "publish-client",
+    "release-inputs",
     "triage",
     "verdict-tasks",
     "ask",
@@ -21,6 +24,9 @@ const OWN: [&str; 11] = [
 /// `name`, a command the Symphony does not have, run by the first plugin that adds it with `args`;
 /// a name no plugin adds is refused. Its exit code.
 pub(super) fn plugin(name: &str, args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i32 {
+    if name == "release-inputs" {
+        return release::main(args, out, err);
+    }
     if name == "init" {
         return crate::init::main(args, out, err);
     }
