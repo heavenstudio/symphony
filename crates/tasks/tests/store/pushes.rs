@@ -1,0 +1,184 @@
+//! What reaches an orchestrator's socket: what it cannot predict and must act on, said once. A PULL
+//! says what changed since the last one it received; it never hears its own writes, nor the roles
+//! its own children take or let go; a child going quiet is said once per transition.
+
+use super::callbacks::Listener;
+use super::common::Fixture;
+use super::quiet_callbacks::listen;
+use symphony_board::health::{LIVE_SECONDS, STALE_SECONDS};
+use symphony_board::{NewSession, NewTask};
+
+/// An orchestrator heard on a socket, past its first PULL.
+fn orchestrator(f: &Fixture) -> (String, Listener) {
+    let orch = f.session("orchestrator");
+    let listener = listen(f, &orch);
+    let first = listener.text();
+    assert!(first.starts_with("PULL "), "{first}");
+    (orch, listener)
+}
+
+/// A session `parent` registered.
+fn child(f: &Fixture, parent: &str) -> String {
+    f.session_with(NewSession {
+        parent: Some(parent.to_owned()),
+        ..NewSession::new("worker")
+    })
+}
+
+#[test]
+fn a_backlog_left_unstaffed_is_not_said_again_when_it_gains_a_row() {
+    let f = Fixture::empty();
+    let sender = f.session("worker");
+    for n in 0..33 {
+        f.task(&format!("tools/backlog-{n:02}"));
+    }
+    let (orch, o) = orchestrator(&f);
+    f.task("tools/new");
+    assert_eq!(
+        o.drain(&f, &sender, &orch),
+        [
+            "NEW tools/new ready — Jump departure",
+            "PULL ready_unstaffed=34 (was 33)",
+            "ready_unstaffed p2 tools/new — Jump departure",
+        ]
+    );
+    // An unchanged board sends nothing, at any age.
+    for age in [601.0, 86_400.0] {
+        f.advance(age);
+        for handle in [&orch, &sender] {
+            f.store.touch(handle).unwrap();
+        }
+        f.store.dispatch_callbacks().unwrap();
+        assert!(o.drain(&f, &sender, &orch).is_empty());
+    }
+}
+
+#[test]
+fn what_its_own_children_take_on_and_let_go_is_not_pushed_but_their_moves_are() {
+    let f = Fixture::empty();
+    let (orch, o) = orchestrator(&f);
+    let kid = child(&f, &orch);
+    let stranger = f.session("worker");
+    for slug in ["tools/kid", "tools/stranger"] {
+        f.task(slug);
+        f.store.take_role(slug, &orch, "orchestrator").unwrap();
+    }
+    o.drain(&f, &stranger, &orch);
+    // Its child reserves and claims the work it was launched for: no ROLE, no STATUS.
+    f.store.reserve("tools/kid", &kid, 600.0).unwrap();
+    f.store.claim("tools/kid", &kid).unwrap();
+    assert!(o.drain(&f, &stranger, &orch).is_empty());
+    // A session it did not register claiming its work is news.
+    f.store.claim("tools/stranger", &stranger).unwrap();
+    assert_eq!(
+        o.drain(&f, &stranger, &orch),
+        ["ROLE tools/stranger ".to_owned() + &stranger + " executor, in_progress"]
+    );
+    // Its child lets the work go: no ROLE, STATUS or NEW names the release; the PULL says the row
+    // is back, with what moved since the last PULL it received, which listed both tasks ready.
+    f.store.release("tools/kid", &kid, None).unwrap();
+    assert_eq!(
+        o.drain(&f, &stranger, &orch),
+        [
+            "PULL executing=1 (was 0) ready_unstaffed=1 (was 2)",
+            "ready_unstaffed p2 tools/kid — Jump departure",
+            "resolved ready_unstaffed tools/stranger",
+        ]
+    );
+    // A move the child makes on its own is still said: work in review needs a reviewer.
+    f.store.claim("tools/kid", &kid).unwrap();
+    o.drain(&f, &stranger, &orch);
+    f.store.move_to("tools/kid", "review", &kid).unwrap();
+    let told = o.drain(&f, &stranger, &orch);
+    assert_eq!(told[0], "STATUS tools/kid in_progress → review", "{told:?}");
+}
+
+#[test]
+fn its_own_move_is_never_echoed_to_it() {
+    let f = Fixture::empty();
+    let (orch, o) = orchestrator(&f);
+    let other = f.session("orchestrator");
+    for slug in ["tools/mine", "tools/theirs"] {
+        f.task(slug);
+        f.store.take_role(slug, &orch, "orchestrator").unwrap();
+    }
+    o.drain(&f, &other, &orch);
+    f.store.move_to("tools/mine", "blocked", &orch).unwrap();
+    assert!(o.drain(&f, &other, &orch).is_empty());
+    f.store
+        .take_role("tools/theirs", &other, "reviewer")
+        .unwrap();
+    o.drain(&f, &other, &orch);
+    f.store.move_to("tools/theirs", "blocked", &other).unwrap();
+    assert_eq!(
+        o.drain(&f, &other, &orch),
+        ["STATUS tools/theirs ready → blocked"]
+    );
+}
+
+#[test]
+fn a_move_of_the_orchestrator_role_is_said_to_the_other_side_only() {
+    let f = Fixture::empty();
+    let (orch, o) = orchestrator(&f);
+    let (other, p) = orchestrator(&f);
+    let worker = f.session("worker");
+    f.task("tools/moved");
+    f.store
+        .take_role("tools/moved", &orch, "orchestrator")
+        .unwrap();
+    o.drain(&f, &worker, &orch);
+    p.drain(&f, &worker, &other);
+    // It hands the task on: the one it reached hears it, and it does not.
+    f.store.hand_over("tools/moved", &orch, &other).unwrap();
+    let handed = format!("ROLE tools/moved {other} orchestrator, ready (from {orch})");
+    assert_eq!(o.drain(&f, &worker, &orch), Vec::<String>::new());
+    assert_eq!(p.drain(&f, &worker, &other), [handed]);
+    // The holder goes quiet and it takes the task over: its own take-over is not said to it either.
+    f.advance(LIVE_SECONDS + STALE_SECONDS + 5.0);
+    for handle in [&orch, &worker] {
+        f.store.touch(handle).unwrap();
+    }
+    f.store.dispatch_callbacks().unwrap();
+    o.drain(&f, &worker, &orch);
+    f.store
+        .take_role("tools/moved", &orch, "orchestrator")
+        .unwrap();
+    let thread = f.store.thread("tools/moved").unwrap();
+    let took = format!("{orch} took orchestrator over from {other} (");
+    assert!(
+        thread.iter().any(|m| m.text.starts_with(&took)),
+        "{thread:?}"
+    );
+    assert_eq!(o.drain(&f, &worker, &orch), Vec::<String>::new());
+}
+
+#[test]
+fn a_quiet_child_is_said_stale_once_a_transition_not_once_a_pass() {
+    let f = Fixture::empty();
+    let (orch, o) = orchestrator(&f);
+    let kid = child(&f, &orch);
+    let sender = f.session("worker");
+    f.task_with(NewTask::new("tools/held", "Held", "owner"));
+    f.store.claim("tools/held", &kid).unwrap();
+    o.drain(&f, &sender, &orch);
+    let stale = format!("STALE {kid} — no sign of it for 90 s");
+    let quiet = |seconds: f64| {
+        let mut told = Vec::new();
+        for _ in 0..3 {
+            f.advance(seconds / 3.0);
+            for handle in [&orch, &sender] {
+                f.store.touch(handle).unwrap();
+            }
+            f.store.dispatch_callbacks().unwrap();
+            told.extend(o.drain(&f, &sender, &orch));
+        }
+        told
+    };
+    // Three passes see it quiet: one STALE.
+    assert_eq!(quiet(LIVE_SECONDS + 30.0), [stale.as_str()]);
+    // It shows a sign and goes quiet again: that is a new transition, said once more.
+    f.store.touch(&kid).unwrap();
+    f.store.dispatch_callbacks().unwrap();
+    assert!(o.drain(&f, &sender, &orch).is_empty());
+    assert_eq!(quiet(LIVE_SECONDS + 30.0), [stale.as_str()]);
+}

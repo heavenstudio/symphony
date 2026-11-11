@@ -356,6 +356,12 @@ pub fn run(store: &Store, c: &mut Context) -> Result<(), Stop> {
             )?;
             trigger::hourly(c.env, &c.env.cwd);
         }
+        "pull" => {
+            let me = c.actor()?;
+            for line in super::pull::heard_now(store, c.env, &me)?.lines() {
+                c.say(&line);
+            }
+        }
         "leave" => {
             let me = c.actor()?;
             store.leave(&me)?;

@@ -105,7 +105,7 @@ impl Store {
                 let events: Vec<Event> = plan.lines.iter().enumerate().map(|(i, text)| Event {
                     key: format!("pane-{revision}-{i}"), handle: handle.into(), text: text.clone(),
                     slug: session_task(&board, handle), message: None, attempts: 0, sequence: 0,
-                    pull_entries: None, pull_withheld: None,
+                    pull_entries: None, pull_withheld: None, pull_said: None,
                 }).collect();
                 self.retrying(|| self.transact::<Value>(
                     "DELETE callback_event WHERE handle = $handle AND delivered != true AND message = NONE AND key IN $retired RETURN NONE;

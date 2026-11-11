@@ -169,6 +169,21 @@ for good. A record naming an entry the PULL this generation left awaiting (`pull
 not is an older one's own PULL acknowledged, which told every entry, withheld ones too.
 Posts, verdicts and AGENT lines stay: they were said to whoever held the role then, and a new
 holder hears no backlog.
+What a PULL says is a separate question from whether one is sent. The first is the whole digest;
+each later one this generation queues says what changed since the last one acknowledged
+(`Digest::changes_since`): a baseline `pull_said` (`cli::pull::Said`: the counts, every entry
+named, the sessions of unknown liveness), carried on the queued event and recorded by both
+acknowledgement sites, in a field older binaries ignore, so no schema change. Rows added are the
+entries heard and not told, the trigger's own test (`pull_account::told`), not those absent from
+`pull_said`, so a row that left and came back is said once more, as it is pushed once more. An
+older dispatcher's acknowledgement ends `pull_queued` but leaves `pull_awaiting`, and
+`State::said` reads that as no baseline: the next PULL is the whole digest. `tasks pull` prints
+the whole digest the recipient hears now (`pull::heard_now`) and writes nothing.
+A recipient is not told its own writes nor its children's staffing (`attach::diff_on`): its own
+moves, a role move it wrote, the roles a session it registered (`parent`) takes or lets go, and
+the move and readiness that child's claim or release makes. A quiet child is said once a health
+transition, from the observation's stored health; one it hears as stale, lost or unknown is not
+also listed idle.
 A finished idle terminal still closes under the original cleanup rules, retiring its
 registration; an executor of a task in review is not finished, and keeps its terminal until it
 has sat idle at its prompt an hour (`reap::IDLE_HOUR`), as every role on open work does.

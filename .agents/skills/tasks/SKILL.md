@@ -2,7 +2,7 @@
 name: tasks
 description: Join the shared task board and register a native callback so messages reach this session directly. Pull, claim, review or orchestrate tasks and answer on their threads. Trigger on "attach to the tasks", "join the board", "pick up a task", "take work from the board", "orchestrate these tasks", or /tasks.
 ---
-<!-- symphony-stamp: 85e626e08fae215a files=SKILL.md -->
+<!-- symphony-stamp: 0f00553df3e9e18b files=SKILL.md -->
 
 # Work from the task board
 
@@ -67,8 +67,9 @@ BLOCKED amber-heron tools/example t2a — observed waiting on an approval or a q
                                             once per observed episode)
 WATCH hc unanswered at observation: … — blocked terminals may have gone unreported; inspect hc before acting
                                             (once until hc answers)
-PULL executing=3 ready_unstaffed=2 in_progress_orphaned=1 …     (orchestrators: only for a new actionable entry,
-                                            with the tasks behind each count)
+PULL ready_unstaffed=3 (was 2)             (orchestrators: only for a new actionable entry, and only
+                                            what changed since the last PULL: counts that moved,
+                                            rows added, `resolved LIST a, b`)
 CALLBACK …                                  (delivery failure; retained in inbox)
 ```
 
@@ -89,8 +90,8 @@ promise neither current approval nor delivery timing. Inspect the terminal befor
 acting. Answer the prompt in that terminal, or stop the session; the board only
 reports it.
 
-A recipient gets its first current PULL once, even when every actionable list
-is empty. After that, a PULL is delivered only when a list gains an entry absent from
+A recipient gets its first current PULL once, the whole digest, even when every
+actionable list is empty. After that, a PULL is delivered only when a list gains an entry absent from
 the last delivered PULL after forgetting entries absent from any computed digest:
 a task newly ready and unstaffed, orphaned, unreviewed or landed-open, or an
 agent newly idle. A departure alone pushes nothing; an entry that returns
@@ -100,7 +101,17 @@ the digest is when it does, keeping its retry budget when entries only depart; o
 a new action replaces it with one of its own, and one left with nothing new is taken back.
 When an older dispatcher sent a PULL of its own meanwhile, work a hand-over makes
 yours may be counted in one PULL more, once per hand-over, never left out; nothing
-repeats on its own.
+repeats on its own. Each PULL after the first says only what changed since the last
+one you received: `PULL name=now (was then)` for each count that moved (`PULL counts
+unchanged` when none did), each row a list gained, and `resolved LIST a, b` for rows
+that left it. `just tasks pull --as HANDLE` prints the whole digest as you hear it
+now, whenever you want it; it changes nothing.
+
+You are never pushed your own writes (your moves, a hand-over or take-over you
+made), nor what your own subagents (sessions registered with `--parent` you) take
+on or let go: their reservations, claims and releases. Their own moves, to review
+say, still are. A quiet child's `STALE`, `LOST` or `LIVENESS UNKNOWN` is said once
+for each transition, not once a pass.
 
 Deliveries contain event lines alone, with no header or reply instructions.
 Reply to an `AGENT` sender with `just agent-send SENDER "text" --as HANDLE`;

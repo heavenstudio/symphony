@@ -14,6 +14,7 @@
 
 use super::callback_state::{Awaiting, Entry, State};
 use super::queued_lines::Queued;
+use crate::cli::pull::Said;
 use std::collections::BTreeSet;
 
 type Entries = BTreeSet<Entry>;
@@ -91,16 +92,23 @@ pub(super) struct Account {
     pub(super) awaiting: Option<Awaiting>,
 }
 
+/// What the recipient in `state` was told of the whole digest's `entries`: none before its first
+/// PULL. Ordinary entries are forgotten when they leave the digest, so one that comes back is new
+/// (the recipient may have made it leave, by staffing the work, and not know it is back), while
+/// acknowledged unanswered posts retain their identity across departures and returns.
+pub(super) fn told(state: &State, entries: &Entries) -> Option<Entries> {
+    state.acknowledged().map(|told| {
+        told.into_iter()
+            .filter(|entry| entry.0 == "unanswered" || entries.contains(entry))
+            .collect()
+    })
+}
+
 impl Account {
     /// The account of the recipient in `state`, with `queued` waiting for it, that hears `heard`
-    /// of the whole digest's `entries`. Ordinary entries are forgotten when they leave;
-    /// acknowledged unanswered posts retain their identity across departures and returns.
+    /// of the whole digest's `entries`, told of them as [`told`] says.
     pub(super) fn of(state: &State, queued: &[Queued], entries: &Entries, heard: &Entries) -> Self {
-        let acknowledged = state.acknowledged().map(|told| {
-            told.into_iter()
-                .filter(|entry| entry.0 == "unanswered" || entries.contains(entry))
-                .collect()
-        });
+        let acknowledged = told(state, entries);
         let none = Entries::new();
         let told = acknowledged.as_ref().unwrap_or(&none);
         let unheard = entries - heard;
@@ -155,14 +163,22 @@ impl Account {
         }
     }
 
-    /// Whether writing this account, with `text` the PULL of the digest now, changes nothing.
-    pub(super) fn changes_nothing(&self, state: &State, queued: &[Queued], text: &str) -> bool {
+    /// Whether writing this account, with `text` the PULL of the digest now, which says `said`,
+    /// changes nothing.
+    pub(super) fn changes_nothing(
+        &self,
+        state: &State,
+        queued: &[Queued],
+        text: &str,
+        said: Option<&Said>,
+    ) -> bool {
         let none = Entries::new();
         let recorded = self.recorded.as_ref().unwrap_or(&none);
         let kept = |key: &str, line: &Queued| {
             let awaiting = self.awaiting.as_ref();
             line.key == key
                 && line.text == text
+                && line.pull_said.as_ref() == said
                 && line.pull_entries.as_ref() == awaiting.map(|a| &a.entries)
                 && line.pull_withheld.as_ref() == awaiting.map(|a| &a.withheld)
         };

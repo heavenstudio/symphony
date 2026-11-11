@@ -70,6 +70,7 @@ per machine into `sf-surreal/` in the git common dir by `bash tools/surreal.sh`
 | `just tasks stats [--days N] [--json]` | where the pipeline's time goes: lead time, time in each status, bounces, tasks done per day and what sits longest ([Where the time goes](#where-the-time-goes)) |
 | `just tasks status [--json]` | the board's health over the last hour, as its Symphony server recorded it: failed dispatches and sweeps, the slowest request, write latency ([Board health](#board-health)) |
 | `just tasks callback [ADDRESS] --as HANDLE` | register a native channel; addressed events start a turn directly |
+| `just tasks pull --as HANDLE` | the whole PULL digest as HANDLE hears it now; a callback carries only what changed since the last PULL it received |
 | `just agent-send HANDLE "text" [--as SENDER]` | message an agent directly through its registered channel |
 | `just symphony` → **▦ tasks**, **◉ agents** | the board, each task's page and thread, and who is connected |
 
@@ -469,6 +470,22 @@ digest (`crates/tasks/src/cli/pull.rs`) once at its first dispatch, even when em
 or reviewer that is `running_test` counts as present however quiet the board says it is.
 Counts and the clock do not trigger delivery. A departure alone pushes nothing;
 an entry that stays present is never re-sent, and an ordinary entry that leaves and returns pushes once.
+The first PULL a recipient receives is the whole digest: `PULL HH:MM` with every count, then each list's
+first six rows and how many more it holds. Each later one says only what changed since the last PULL it
+acknowledged: the counts that moved (`PULL ready_unstaffed=34 (was 33)`, or `PULL counts unchanged`), the
+liveness and low-volume lines it was not told, each row a list gained, and `resolved LIST a, b` for the rows
+that left it. A backlog of 33 that gains one row is that header and one row. What the last acknowledged PULL said
+is kept in the recipient's callback state (`pull_said`, which older dispatchers ignore); after an older
+dispatcher's acknowledgement, which does not record it, the next PULL is the whole digest again.
+
+What is pushed is what the recipient cannot predict and must act on, said once: posts and verdicts, NEW,
+STATUS, ROLE, BLOCKED, the PULL above, and STALE, LOST or LIVENESS UNKNOWN once for each transition of a quiet
+child, never once a pass (a child it already hears as stale is not also listed idle). A recipient is never told
+its own writes: not its own moves, not a role move it made (a hand-over, a take-over), and not what its own
+children (the sessions it registered, `--parent`) take on or let go, their reservations, claims and releases
+and the moves and readiness those make; a child's own move, to review say, is still said. What is read is the
+rest: `just tasks pull --as HANDLE` prints the whole digest as HANDLE hears it now, whatever was pushed, and
+changes nothing; `just tasks show`, `list` and `agents` read the board as it is.
 Unanswered work retains its task/post identity across departures and returns.
 `unanswered` lists an executor on an in-progress, blocked or review task, or a reviewer
 on a task in review, when it is lost or left (or its recorded terminal is closed) and an
@@ -606,14 +623,14 @@ holds while it is live, stale or of unknown liveness is refused, naming the
 holder and the command that moves it: `just tasks handover SLUG HANDLE`, run by
 the holder, drops its role and gives the role to HANDLE in one write. The
 thread says `A handed orchestrator over to B; address B or @orchestrator`,
-and each of the two hears one `ROLE SLUG B orchestrator, STATUS (from A)`,
-whatever other role B holds there. HANDLE must still be there (live, stale or
+and B hears one `ROLE SLUG B orchestrator, STATUS (from A)`, whatever other
+role B holds there; A made the move and is not told it. HANDLE must still be there (live, stale or
 of unknown liveness); a hand-over to a session gone quiet, or leaving as it is
 written, is refused, naming its health; under a cap, so is one that would raise
 HANDLE's open tasks past it ([Slots](#slots)). Taking the role over a holder that is
 lost or left drops that one in the same write, and the thread says `B took
-orchestrator over from A (lost)`; so does taking it again where a left holder
-still sits beside you. A task is its orchestrator's when that session holds the
+orchestrator over from A (lost)`, which A hears and B, who made it, does not; so
+does taking it again where a left holder still sits beside you. A task is its orchestrator's when that session holds the
 role on it, or on the nearest task above it that has a holder still there; a
 task with none is **unclaimed**, as are a lost or left orchestrator's tasks
 until another takes them over. Each orchestrator hears its own tasks and the

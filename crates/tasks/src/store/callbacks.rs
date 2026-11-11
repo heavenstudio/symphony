@@ -66,6 +66,9 @@ struct Event {
     pull_entries: Option<BTreeSet<(String, String)>>,
     #[serde(default)]
     pull_withheld: Option<BTreeSet<(String, String)>>,
+    /// What a PULL says, which its acknowledgement records as the next one's baseline.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pull_said: Option<pull::Said>,
 }
 
 /// A recipient's callback state as a dispatch reads it, with when its PULL was last checked and
@@ -508,8 +511,8 @@ RETURN NONE;");
             .filter_map(|key| key.strip_prefix("chat-"))
             .collect();
         self.retrying(|| self.transact::<Value>(
-            &format!("{ACT}\nLET $pull = (SELECT pull_entries, pull_withheld, sequence FROM callback_event WHERE handle = $actor AND key IN $keys AND pull_entries != NONE ORDER BY sequence DESC LIMIT 1)[0];
-                IF $pull != NONE {{ UPDATE type::record('callback_state', $actor) SET pull_unanswered = array::union(pull_unanswered ?? [], $pull.pull_entries.filter(|$entry| $entry[0] = 'unanswered' AND $entry NOT IN ($pull.pull_withheld ?? []))), pull_entries = $pull.pull_entries, pull_withheld = $pull.pull_withheld ?? [], pull_awaiting = NONE, pull_queued = NONE RETURN NONE; }};
+            &format!("{ACT}\nLET $pull = (SELECT pull_entries, pull_withheld, pull_said, sequence FROM callback_event WHERE handle = $actor AND key IN $keys AND pull_entries != NONE ORDER BY sequence DESC LIMIT 1)[0];
+                IF $pull != NONE {{ UPDATE type::record('callback_state', $actor) SET pull_unanswered = array::union(pull_unanswered ?? [], $pull.pull_entries.filter(|$entry| $entry[0] = 'unanswered' AND $entry NOT IN ($pull.pull_withheld ?? []))), pull_entries = $pull.pull_entries, pull_withheld = $pull.pull_withheld ?? [], pull_said = $pull.pull_said, pull_awaiting = NONE, pull_queued = NONE RETURN NONE; }};
                 FOR $key IN $keys {{ UPDATE type::record('callback_event', [$actor, $key]) SET delivered = true RETURN NONE; }};
                 FOR $key IN $chats {{ UPDATE type::record('chat_event', $key) SET delivered = true, text = '' RETURN NONE; }};
                 UPDATE callback_event SET text = '' WHERE handle = $actor AND delivered = true AND string::starts_with(key, 'chat-') RETURN NONE; RETURN NONE;"),
@@ -791,7 +794,7 @@ RETURN NONE;");
         } = self.retrying(|| {
             self.read(
                 "RETURN { state: (SELECT * OMIT id FROM ONLY type::record('callback_state', $handle)), checked_pull: type::record('callback_lease', $handle).pull ?? 0,
-                    queued: (SELECT key, text, sequence, pull_entries, pull_withheld FROM callback_event WHERE handle = $handle AND delivered != true
+                    queued: (SELECT key, text, sequence, pull_entries, pull_withheld, pull_said FROM callback_event WHERE handle = $handle AND delivered != true
                         AND (string::starts_with(key, 'pull-') OR string::starts_with(key, 'event-') OR (string::starts_with(key, 'pane-') AND string::starts_with(text, 'BLOCKED ')))) };",
                 json!({"handle":handle}),
             )
@@ -936,6 +939,14 @@ RETURN NONE;");
                 }
             } else if agent.state == "idle"
                 && !matches!(agent.kind.as_str(), "orchestrator" | "chat")
+                // One it is told went quiet is its STALE or LOST line's to say, not an idle row
+                // too: the view calls a session with no terminal idle once its board health is.
+                && !seen.children.get(&agent.handle).is_some_and(|health| {
+                    matches!(
+                        health,
+                        crate::Health::Stale | crate::Health::Lost | crate::Health::Unknown
+                    )
+                })
             {
                 idle.push(agent.handle.clone());
             }
@@ -970,7 +981,7 @@ RETURN NONE;");
             && !legacy_upgrade
             && before != &compact(&seen)
         {
-            attach::diff(self, before, &seen, handle, &mut |line| {
+            attach::diff_on(self, board, before, &seen, handle, &mut |line| {
                 lines.push(event_line(line))
             })?;
         }
@@ -978,6 +989,7 @@ RETURN NONE;");
         // the recipient was told of them is in the PULLs it acknowledged ([`Account`]).
         let mut account: Option<Account> = None;
         let (mut pull_text, mut pull_current) = (String::new(), BTreeSet::new());
+        let mut pull_said: Option<pull::Said> = None;
         if due {
             let root = crate::cli::probes::repo_root(&env.cwd);
             let landed = |task: &crate::Task| {
@@ -999,12 +1011,16 @@ RETURN NONE;");
             let entries = digest.entries();
             let digest = digest.only_for(board, handle);
             let heard = digest.entries();
-            let said: Vec<String> = digest
-                .event_lines_since(&state.acknowledged().unwrap_or_default())
-                .iter()
-                .map(|l| event_line(l))
-                .collect();
-            pull_text = said.join("\n");
+            // Once it acknowledged a PULL this generation queued, it hears what changed since.
+            let told = super::pull_account::told(&state, &entries);
+            let lines = match (state.said(), &told) {
+                (Some(said), Some(told)) if !legacy_upgrade => digest.changes_since(said, told),
+                _ => digest.event_lines_since(&state.acknowledged().unwrap_or_default()),
+            };
+            pull_text = (lines.iter().map(|l| event_line(l)))
+                .collect::<Vec<_>>()
+                .join("\n");
+            pull_said = Some(digest.said());
             account = Some(match legacy_upgrade {
                 true => Account::upgrade(&state, &entries, &heard),
                 false => Account::of(&state, &queued, &entries, &heard),
@@ -1031,6 +1047,7 @@ RETURN NONE;");
                 sequence: 0,
                 pull_entries: None,
                 pull_withheld: None,
+                pull_said: None,
             })
             .collect();
         if let Some(Account {
@@ -1049,6 +1066,7 @@ RETURN NONE;");
                 sequence: 0,
                 pull_entries: Some(awaiting.entries.clone()),
                 pull_withheld: Some(awaiting.withheld.clone()),
+                pull_said: pull_said.clone(),
             });
         }
         let legacy = compact(&legacy);
@@ -1089,6 +1107,7 @@ RETURN NONE;");
                 sequence: 0,
                 pull_entries: None,
                 pull_withheld: None,
+                pull_said: None,
             });
         }
         if callback.chat {
@@ -1115,6 +1134,7 @@ RETURN NONE;");
                     sequence: 0,
                     pull_entries: None,
                     pull_withheld: None,
+                    pull_said: None,
                 });
             }
         }
@@ -1134,7 +1154,8 @@ RETURN NONE;");
             && state.registration_revision == state.observed_registration
             && state.statuses == statuses
             && state.unknown_children == unknown_children
-            && (account.as_ref()).is_none_or(|a| a.changes_nothing(&state, &queued, &pull_text))
+            && (account.as_ref())
+                .is_none_or(|a| a.changes_nothing(&state, &queued, &pull_text, pull_said.as_ref()))
             && rescoped.is_empty();
         let current = unchanged && state.inbox_cursor == Some(board.latest_message);
         // A write's observation leaves a recipient whose look moved by the newest message alone, and
@@ -1204,7 +1225,7 @@ RETURN NONE;");
              IF $pull_kept != NONE {
                 DELETE callback_event WHERE handle = $handle AND delivered != true AND string::starts_with(key, 'pull-') AND key != $pull_kept RETURN NONE;
                 UPDATE type::record('callback_event', [$handle, $pull_kept]) SET text = $pull_text, pull_entries = $pull_awaiting.entries,
-                    pull_withheld = $pull_awaiting.withheld WHERE delivered != true RETURN NONE;
+                    pull_withheld = $pull_awaiting.withheld, pull_said = $pull_said WHERE delivered != true RETURN NONE;
              };
              IF $replace_pull { DELETE callback_event WHERE handle = $handle AND delivered != true AND string::starts_with(key, 'pull-') RETURN NONE; };
              FOR $key IN $rescoped.dropped { DELETE type::record('callback_event', [$handle, $key]) WHERE delivered != true RETURN NONE; };
@@ -1247,7 +1268,7 @@ RETURN NONE;");
                 "pull_account":account.as_ref().map(|a| json!({"recorded":a.recorded, "unheard":a.unheard, "untold":a.untold, "withheld":a.withheld})),
                 "message_cursor":board.latest_message, "inbox_cursor":board.latest_message,
                 "computed":due, "pull_current":pull_current, "rescoped":rescoped,
-                "pull_kept":pull_kept, "pull_text":pull_text, "replace_pull":pull_replaced}),
+                "pull_kept":pull_kept, "pull_text":pull_text, "pull_said":pull_said, "replace_pull":pull_replaced}),
         ))?;
         if *sequence == accounted.marker.before {
             *sequence = accounted.marker.after;
@@ -1354,7 +1375,7 @@ RETURN NONE;");
                     capacity_limited = $capacity OR (capacity_limited ?? false) RETURN NONE;
              };
              IF $success {
-                IF $pull != NONE { UPDATE type::record('callback_state', $handle) SET pull_unanswered = array::union(pull_unanswered ?? [], $pull.pull_entries.filter(|$entry| $entry[0] = 'unanswered' AND $entry NOT IN ($pull.pull_withheld ?? []))), pull_entries = $pull.pull_entries, pull_withheld = $pull.pull_withheld ?? [], pull_awaiting = NONE, pull_queued = NONE RETURN NONE; };
+                IF $pull != NONE { UPDATE type::record('callback_state', $handle) SET pull_unanswered = array::union(pull_unanswered ?? [], $pull.pull_entries.filter(|$entry| $entry[0] = 'unanswered' AND $entry NOT IN ($pull.pull_withheld ?? []))), pull_entries = $pull.pull_entries, pull_withheld = $pull.pull_withheld ?? [], pull_said = $pull.pull_said, pull_awaiting = NONE, pull_queued = NONE RETURN NONE; };
                 FOR $message IN $messages { UPSERT type::record('delivery', [$message, $handle]) SET message = $message, handle = $handle, acked = $now RETURN NONE; };
                 FOR $key IN $chat { UPDATE type::record('chat_event', $key) SET delivered = true, text = '' RETURN NONE; };
                 UPDATE callback_event SET text = '' WHERE handle = $handle AND delivered = true AND string::starts_with(key, 'chat-') RETURN NONE;
