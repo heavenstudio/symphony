@@ -31,6 +31,7 @@ mod notice_layout;
 mod owner_controls;
 mod owner_save;
 mod phone;
+mod polish;
 mod projects;
 mod restored;
 mod server_notices;
