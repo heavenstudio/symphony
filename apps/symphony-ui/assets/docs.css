@@ -72,7 +72,13 @@
 form.comment, form.verdict { border:1px solid var(--border); background:var(--muted); border-radius:var(--r-md); padding:12px; margin:12px 0 4px; display:grid; grid-template-columns:minmax(0,1fr); gap:8px; cursor:auto; }
 .editor form.comment { margin-bottom:0; }
 .editor form.verdict > .row { margin-top:0; }
-.verdict-choices { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,7.1em),1fr)); grid-auto-rows:1fr; gap:8px; max-width:22rem; font-size:var(--fs-sm); }
+/* Approve, Reject, Question and Later are equal tracks, on one row wherever four fit. */
+.verdict-choices { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,7.1em),1fr)); grid-auto-rows:1fr; gap:8px; max-width:28rem; font-size:var(--fs-sm); }
+.verdict-choices > .postpone-controls > .dx-button { flex:1; }
+/* Reset and Discard draft are quiet, and Discard draft sits at the end of its row. */
+.editor form .row > .discard { margin-left:auto; }
+.editor form :is(.reset, .discard).dx-button { color:var(--muted-foreground); }
+.editor form .discard.dx-button:not(:disabled):hover { color:var(--dislike); }
 .editor form textarea { width:100%; box-sizing:border-box; min-height:76px; resize:vertical; }
 .editor [role=alert] { color:var(--dislike); }
 .editor [role=status] { color:var(--like); }
@@ -127,7 +133,9 @@ form.comment, form.verdict { border:1px solid var(--border); background:var(--mu
   form.verdict button[class*="v-"] { color:var(--c); border-color:color-mix(in srgb, var(--c) 40%, var(--border)); font-weight:600; }
   form.verdict button[class*="v-"]:hover { background:color-mix(in srgb, var(--c) 10%, var(--card)); }
   form.verdict button[class*="v-"].primary { background:var(--c); border-color:var(--c); color:var(--card); }
-  .v-approved { --c:var(--like); } .v-rejected { --c:var(--dislike); } .v-question { --c:var(--question); } .v-dismissed { --c:var(--resolved); } .v-pending { --c:var(--muted-foreground); }
+  /* The card's own verdict is marked, never promoted. */
+  form.verdict button[class*="v-"][aria-current="true"]:not(.primary) { background:color-mix(in srgb, var(--c) 14%, var(--card)); }
+  .v-approved { --c:var(--like); } .v-rejected { --c:var(--dislike); } .v-question { --c:var(--question); } .v-dismissed { --c:var(--resolved); }
   details.settled { margin:6px 0; border:1px solid var(--border); border-radius:var(--r-md); background:var(--card); padding:6px 12px; }
   details.settled > summary { cursor:pointer; color:var(--muted-foreground); font-size:var(--fs-sm); list-style-position:inside; }
   details.settled[open] > summary { color:var(--foreground); } details.settled > .decision { margin:8px 0 4px; box-shadow:none; }

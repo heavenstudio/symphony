@@ -23,6 +23,7 @@ use wasm_bindgen::{JsCast, JsValue};
 
 use crate::{
     block_view::{BlocksView, CardAnchor, Excerpts, SpansView},
+    components::button::{Button, ButtonVariant},
     doc_components::DocumentWithTasks,
     docs::{self, DocumentState},
     live::{Feed, Heard, mark, pause, sleep},
@@ -396,6 +397,8 @@ fn DocSection(
     });
     use_context_provider(|| Excerpts(is_card.then_some(open)));
     use_context_provider(|| CardAnchor(if unfolded { slug.clone() } else { None }));
+    // The button that opens the editor, where Escape returns focus.
+    let opener = format!("opener-{}", encode(&format!("{path}:{}", section.key)));
     let content = rsx! {
             div { class: "section-prose",
                 onclick: move |event: MouseEvent| {
@@ -412,10 +415,10 @@ fn DocSection(
             if is_card {
                 div { class: "doc-actions",
                     if postponed { small { class: "postponed", "postponed" } }
-                    crate::components::button::Button { r#type: "button", aria_expanded: editing(), onclick: move |_| editing.toggle(), if editing() { "Close" } else { "Verdict / message" } }
+                    crate::components::button::Button { id: opener.clone(), r#type: "button", aria_expanded: editing(), onclick: move |_| editing.toggle(), if editing() { "Close" } else { "Verdict / message" } }
                 }
             } else {
-                crate::components::button::Button { class: "add", r#type: "button", onclick: move |_| editing.toggle(), if editing() { "Close comment" } else { "+ comment" } }
+                crate::components::button::Button { id: opener.clone(), class: "add", r#type: "button", aria_expanded: editing(), onclick: move |_| editing.toggle(), if editing() { "Close comment" } else { "+ comment" } }
             }
             if let Some(why) = excerpt_error() { p { role: "alert", "{why}" } }
             if let Some((title, fragment)) = excerpt() {
@@ -426,7 +429,7 @@ fn DocSection(
                 }
             }
             if gone { p { role: "alert", "This block was removed elsewhere. Copy your draft or discard it; saving to its old position is disabled." } }
-            Editor { path, scope, section_key: section.key.clone(), slug, state, after_line: section.end, editing, gone, later }
+            Editor { path, scope, section_key: section.key.clone(), slug, state, after_line: section.end, editing, opener: opener.clone(), gone, later }
     };
     rsx! {
         section { class: if is_card { "doc-section doc-card" } else { "doc-section" }, id: if unfolded { String::new() } else { format!("L{}", section.start) },
@@ -457,6 +460,8 @@ fn Editor(
     state: String,
     after_line: usize,
     mut editing: Signal<bool>,
+    // The id of the button that opens this editor, where Escape returns focus.
+    opener: String,
     gone: bool,
     later: Option<Element>,
 ) -> Element {
@@ -472,13 +477,8 @@ fn Editor(
     let field_id = format!("draft-{}", encode(&key));
     let focus_id = field_id.clone();
     use_effect(move || {
-        if editing()
-            && let Some(element) = web_sys::window()
-                .and_then(|w| w.document())
-                .and_then(|d| d.get_element_by_id(&focus_id))
-                .and_then(|e| e.dyn_into::<web_sys::HtmlElement>().ok())
-        {
-            let _ = element.focus();
+        if editing() {
+            focus(&focus_id);
         }
     });
     let draft_key = key.clone();
@@ -579,6 +579,15 @@ fn Editor(
             }
             form { class: if message { "verdict" } else { "comment" }, hidden: !editing(), "data-attach": attach.zone(),
                 onsubmit: move |event| { event.prevent_default(); save.call(if message { "message".into() } else { "comment".into() }); },
+                // Escape closes the editor, its draft kept, and returns focus to the button that
+                // opened it. An open list in the form takes its own Escape and stops it there.
+                onkeydown: move |event: KeyboardEvent| {
+                    if event.key() == Key::Escape {
+                        event.prevent_default();
+                        editing.set(false);
+                        focus(&opener);
+                    }
+                },
                 crate::components::textarea::Textarea { id: field_id, value: "{text}", disabled: pending(), "aria-label": "Message or verdict note",
                     placeholder: "Write a message, or add a note to your verdict…",
                     oninput: move |event: FormEvent| { let value = event.value(); platform::current().save(&draft_key, &value); text.set(value); },
@@ -590,9 +599,11 @@ fn Editor(
                 }
                 crate::attach::AttachControls { attach, disabled: pending() }
                 if message {
+                    // Approve is what the owner most often does, so it alone is filled; the card's
+                    // own verdict is marked as current, never promoted.
                     div { class: "verdict-choices",
                         for (value, label) in [("approved", "✓ Approve"), ("rejected", "✗ Reject"), ("question", "? Question")] {
-                            crate::components::button::Button { r#type: "button", class: if value == state { format!("v-{value} primary") } else { format!("v-{value}") }, disabled: pending(), onclick: move |_| save.call(value.into()), "{label}" }
+                            Button { r#type: "button", class: if value == "approved" { "v-approved primary".to_string() } else { format!("v-{value}") }, "aria-current": (value == state).then_some("true"), disabled: pending(), onclick: move |_| save.call(value.into()), "{label}" }
                         }
                         {later}
                     }
@@ -603,18 +614,31 @@ fn Editor(
                             options: ["comment", "question", "decision"].map(|value| (value.to_string(), value.to_string())).to_vec(),
                         }
                     }
-                    crate::components::button::Button { r#type: "submit", class: if message { "" } else { "primary" }, disabled: pending(), if pending() { "Saving…" } else if message { "Send message" } else { "Save comment" } }
+                    Button { r#type: "submit", class: if message { "" } else { "primary" }, disabled: pending(), if pending() { "Saving…" } else if message { "Send message" } else { "Save comment" } }
                     if message {
-                        for (value, label) in [("dismissed", "⊘ Dismiss"), ("pending", "Reset")] {
-                            crate::components::button::Button { r#type: "button", class: if value == state { format!("v-{value} primary") } else { format!("v-{value}") }, disabled: pending(), onclick: move |_| save.call(value.into()), "{label}" }
+                        Button { r#type: "button", class: "v-dismissed", "aria-current": (state == "dismissed").then_some("true"), disabled: pending(), onclick: move |_| save.call("dismissed".into()), "⊘ Dismiss" }
+                        // A pending card has no verdict to take back.
+                        if state != "pending" {
+                            Button { r#type: "button", variant: ButtonVariant::Ghost, class: "reset", title: "Take back the verdict: the card waits for yours again", disabled: pending(), onclick: move |_| save.call("pending".into()), "↺ Reset to pending" }
                         }
                     }
-                    crate::components::button::Button { r#type: "button", disabled: pending(), onclick: move |_| { text.set(String::new()); attach.clear(); platform::current().save(&key, ""); editing.set(false); }, "Discard draft" }
+                    Button { r#type: "button", variant: ButtonVariant::Ghost, class: "discard", title: "Clear what you wrote and close", disabled: pending(), onclick: move |_| { text.set(String::new()); attach.clear(); platform::current().save(&key, ""); editing.set(false); }, "Discard draft" }
                 }
             }
             if let Some(why) = error() { p { role: "alert", "{why}" } }
             if let Some(message) = saved() { p { role: "status", "{message}" } }
         }
+    }
+}
+
+/// Moves focus to the element the id `id` names, if the page has it.
+fn focus(id: &str) {
+    if let Some(element) = web_sys::window()
+        .and_then(|w| w.document())
+        .and_then(|d| d.get_element_by_id(id))
+        .and_then(|e| e.dyn_into::<web_sys::HtmlElement>().ok())
+    {
+        let _ = element.focus();
     }
 }
 
