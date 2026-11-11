@@ -1,11 +1,12 @@
 //! `symphony init`: the agents' integration files a project needs, installed and kept current.
 //!
 //! The Symphony provides the generic skills, the allow rules (Claude's in `.claude/settings.json`,
-//! Codex's in `.codex/rules/symphony.rules`) and the heartbeat hook. Each file it writes carries a
-//! stamp, which is how a later run knows the file is its own to bring up to date. A file of the same
-//! name without the stamp is the project's own: it is the one in use and this never writes over it.
-//! Where the project has none, the Symphony's is used. The project's own skills and guards sit
-//! beside the shipped ones and are never touched.
+//! Codex's in `.codex/rules/symphony.rules`), the heartbeat hook and the memory guard. Each file it
+//! writes carries a stamp, which is how a later run knows the file is its own to bring up to date. A
+//! file of the same name without the stamp is the project's own: it is the one in use and this never
+//! writes over it. Where the project has none, the Symphony's is used. The project's own skills and
+//! guards sit beside the shipped ones and are never touched. It writes no permission rule but the
+//! allow rules.
 
 use std::io;
 use std::path::{Path, PathBuf};
@@ -22,14 +23,40 @@ const CODEX_RULES: &str = ".codex/rules/symphony.rules";
 /// The mark on a skill's `SKILL.md` and on the Codex rules file.
 const MARK: &str = "symphony-stamp:";
 
-/// The heartbeat hook's command. It runs the binary the project's `.target/bin/symphony` names and
-/// builds nothing; with none linked it passes quietly.
-const HOOK_COMMAND: &str = "\"$CLAUDE_PROJECT_DIR/.target/bin/symphony\" hook tasks-beat 2>/dev/null || true # symphony-stamp: heartbeat-v1";
-/// The ownership stamp, independent of a managed command's executable path or quoting.
-const HOOK_STAMP: &str = "# symphony-stamp: heartbeat-";
-const HOOK_TIMEOUT: u64 = 10;
-/// The hook's events and the tool matcher of each.
-const HOOK_EVENTS: [(&str, &str); 2] = [("PreToolUse", "Bash"), ("PostToolUse", "")];
+/// A hook the Symphony installs in `.claude/settings.json`. Each runs the binary the project's
+/// `.target/bin/symphony` names and builds nothing.
+struct Hook {
+    /// What names the hook in a command: one that names it without the stamp is the project's own.
+    name: &'static str,
+    command: &'static str,
+    /// The ownership stamp, independent of a managed command's executable path or quoting.
+    stamp: &'static str,
+    timeout: u64,
+    /// The events it runs on and the tool matcher of each.
+    events: &'static [(&'static str, &'static str)],
+}
+
+/// The heartbeat: with no binary linked it passes quietly, and it never refuses a call.
+const HEARTBEAT: Hook = Hook {
+    name: "tasks-beat",
+    command: "\"$CLAUDE_PROJECT_DIR/.target/bin/symphony\" hook tasks-beat 2>/dev/null || true # symphony-stamp: heartbeat-v1",
+    stamp: "# symphony-stamp: heartbeat-",
+    timeout: 10,
+    events: &[("PreToolUse", "Bash"), ("PostToolUse", "")],
+};
+
+/// The memory guard (`crate::hook`). Its command passes on the guard's refusal, its one line and exit
+/// 2, and nothing else: with no binary linked, or one built before the guard (whose `hook` refuses
+/// the name with its usage, exit 2 too), the call goes through.
+const MEMORY_GUARD: Hook = Hook {
+    name: "memory-guard",
+    command: "r=$(\"$CLAUDE_PROJECT_DIR/.target/bin/symphony\" hook memory-guard 2>&1 >/dev/null) || case $r in Blocked:*) printf '%s\\n' \"$r\" >&2; exit 2;; esac # symphony-stamp: memory-guard-v1",
+    stamp: "# symphony-stamp: memory-guard-",
+    timeout: 10,
+    events: &[("PreToolUse", "Write|Edit|MultiEdit|NotebookEdit|Bash")],
+};
+
+const HOOKS: [Hook; 2] = [HEARTBEAT, MEMORY_GUARD];
 
 /// What an agent on the board runs, which Claude allows without a prompt.
 const ALLOW: [&str; 5] = [
@@ -346,14 +373,14 @@ fn is_mark_line(line: &str) -> bool {
         .is_some_and(|rest| rest.starts_with(MARK))
 }
 
-/// A command the project wrote for the heartbeat: it names the beat and is not the Symphony's.
-fn own_beat(command: &str) -> bool {
-    command.contains("tasks-beat") && !managed_beat(command)
+/// A command the project wrote for `hook`: it names the hook and is not the Symphony's.
+fn own(hook: &Hook, command: &str) -> bool {
+    command.contains(hook.name) && !managed(hook, command)
 }
 
-fn managed_beat(command: &str) -> bool {
+fn managed(hook: &Hook, command: &str) -> bool {
     command.lines().any(|line| {
-        line.rsplit_once(HOOK_STAMP).is_some_and(|(_, version)| {
+        line.rsplit_once(hook.stamp).is_some_and(|(_, version)| {
             let version = version.trim();
             !version.is_empty()
                 && version
@@ -363,9 +390,14 @@ fn managed_beat(command: &str) -> bool {
     })
 }
 
-/// `hooks.EVENT` carries the heartbeat: the Symphony's command brought up to date, or the project's
-/// own left alone, else a group added. Whether it changed anything.
-fn ensure_beat(hooks: &mut Map<String, Value>, event: &str, matcher: &str) -> io::Result<bool> {
+/// `hooks.EVENT` carries `hook`: the Symphony's command brought up to date, or the project's own left
+/// alone, else a group added. Whether it changed anything.
+fn ensure_hook(
+    hooks: &mut Map<String, Value>,
+    hook: &Hook,
+    event: &str,
+    matcher: &str,
+) -> io::Result<bool> {
     let invalid = || {
         io::Error::new(
             io::ErrorKind::InvalidData,
@@ -390,11 +422,15 @@ fn ensure_beat(hooks: &mut Map<String, Value>, event: &str, matcher: &str) -> io
             return Err(invalid());
         }
     }
-    let managed = |hook: &Value| hook["command"].as_str().is_some_and(managed_beat);
+    let ours = |entry: &Value| {
+        entry["command"]
+            .as_str()
+            .is_some_and(|command| managed(hook, command))
+    };
     let project_owns = groups.iter().any(|group| {
         group["hooks"].as_array().is_some_and(|list| {
             list.iter()
-                .any(|hook| own_beat(hook["command"].as_str().unwrap_or("")))
+                .any(|entry| own(hook, entry["command"].as_str().unwrap_or("")))
         })
     });
     let found: Vec<_> = groups
@@ -404,30 +440,30 @@ fn ensure_beat(hooks: &mut Map<String, Value>, event: &str, matcher: &str) -> io
                 .as_array()
                 .into_iter()
                 .flatten()
-                .filter(|hook| managed(hook))
-                .map(move |hook| (group, hook))
+                .filter(|entry| ours(entry))
+                .map(move |entry| (group, entry))
         })
         .collect();
     let current = !project_owns
         && found.len() == 1
         && found[0].0["matcher"] == matcher
-        && found[0].1["command"] == HOOK_COMMAND
-        && found[0].1["timeout"] == HOOK_TIMEOUT
+        && found[0].1["command"] == hook.command
+        && found[0].1["timeout"] == hook.timeout
         && found[0].1["type"] == "command";
     if current || (project_owns && found.is_empty()) {
         return Ok(false);
     }
-    // Only managed heartbeat entries move. A guard sharing their old matcher keeps its group.
+    // Only this hook's managed entries move. A guard sharing their old matcher keeps its group.
     groups.retain_mut(|group| {
         let list = group["hooks"].as_array_mut().expect("validated hook group");
         let before = list.len();
-        list.retain(|hook| !managed(hook));
+        list.retain(|entry| !ours(entry));
         before == list.len() || !list.is_empty()
     });
     if !project_owns {
         groups.push(json!({
             "matcher": matcher,
-            "hooks": [{"type":"command", "command":HOOK_COMMAND, "timeout":HOOK_TIMEOUT}]
+            "hooks": [{"type":"command", "command":hook.command, "timeout":hook.timeout}]
         }));
     }
     Ok(true)
@@ -473,8 +509,10 @@ fn install_settings(root: &Path, report: &mut Report) -> io::Result<()> {
         .or_insert_with(|| json!({}))
         .as_object_mut()
         .ok_or_else(not_object)?;
-    for (event, matcher) in HOOK_EVENTS {
-        changed |= ensure_beat(hooks, event, matcher)?;
+    for hook in &HOOKS {
+        for (event, matcher) in hook.events {
+            changed |= ensure_hook(hooks, hook, event, matcher)?;
+        }
     }
 
     let outcome = match (changed, have.is_some()) {

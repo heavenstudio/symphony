@@ -217,15 +217,24 @@ fn settings(tree: &Tree) -> Value {
     serde_json::from_str(&tree.read(".claude/settings.json")).unwrap()
 }
 
-fn beats(settings: &Value, event: &str) -> Vec<String> {
+/// The commands of `event` that name `hook`.
+fn naming(settings: &Value, event: &str, hook: &str) -> Vec<String> {
     settings["hooks"][event]
         .as_array()
-        .unwrap()
-        .iter()
+        .into_iter()
+        .flatten()
         .flat_map(|group| group["hooks"].as_array().unwrap())
         .filter_map(|hook| hook["command"].as_str().map(str::to_string))
-        .filter(|command| command.contains("tasks-beat"))
+        .filter(|command| command.contains(hook))
         .collect()
+}
+
+fn beats(settings: &Value, event: &str) -> Vec<String> {
+    naming(settings, event, "tasks-beat")
+}
+
+fn guards(settings: &Value, event: &str) -> Vec<String> {
+    naming(settings, event, "memory-guard")
 }
 
 #[test]
@@ -260,8 +269,8 @@ fn settings_keep_the_projects_rules_and_hooks_and_add_the_missing() {
     assert!(allow.contains(&"Bash(just symphony-ask:*)"));
     let pre = after["hooks"]["PreToolUse"].as_array().unwrap();
     assert_eq!(pre[0]["hooks"][0]["command"], "guard");
-    assert_eq!(beats(&after, "PreToolUse"), [HOOK_COMMAND]);
-    assert_eq!(beats(&after, "PostToolUse"), [HOOK_COMMAND]);
+    assert_eq!(beats(&after, "PreToolUse"), [HEARTBEAT.command]);
+    assert_eq!(beats(&after, "PostToolUse"), [HEARTBEAT.command]);
 }
 
 #[test]
@@ -277,11 +286,80 @@ fn the_symphonys_hook_command_is_brought_current_not_duplicated() {
     let report = init(&tree.root, &kit(vec![])).unwrap();
     assert_eq!(outcome(&report, "claude settings"), "updated");
     let after = settings(&tree);
-    for event in ["PreToolUse", "PostToolUse"] {
-        assert_eq!(beats(&after, event), [HOOK_COMMAND], "{event}");
+    for (event, groups) in [("PreToolUse", 2), ("PostToolUse", 1)] {
+        assert_eq!(beats(&after, event), [HEARTBEAT.command], "{event}");
         assert_eq!(after["hooks"][event][0]["hooks"][0]["timeout"], 10);
-        assert_eq!(after["hooks"][event].as_array().unwrap().len(), 1);
+        // The heartbeat's one group, and the memory guard's before a tool call.
+        assert_eq!(after["hooks"][event].as_array().unwrap().len(), groups);
     }
+}
+
+#[test]
+fn the_memory_guard_runs_before_every_write_tool_and_shell_command() {
+    let tree = Tree::new();
+    init(&tree.root, &kit(vec![])).unwrap();
+    let after = settings(&tree);
+    let pre = after["hooks"]["PreToolUse"].as_array().unwrap();
+    assert_eq!(
+        pre[1],
+        json!({"matcher": "Write|Edit|MultiEdit|NotebookEdit|Bash", "hooks": [
+            {"type": "command", "command": MEMORY_GUARD.command, "timeout": 10}
+        ]})
+    );
+    assert_eq!(guards(&after, "PostToolUse"), Vec::<String>::new());
+}
+
+#[test]
+fn a_stamped_memory_guard_is_brought_current_beside_the_projects_own_guards() {
+    let tree = Tree::new();
+    let theirs = json!({"type": "command", "command": "our-brief-guard"});
+    tree.write(
+        SETTINGS,
+        &json!({"hooks": {"PreToolUse": [{"matcher": "Write|Edit", "hooks": [
+            {"type": "command", "command": "/old/symphony hook memory-guard # symphony-stamp: memory-guard-v0"},
+            theirs.clone(),
+        ]}]}})
+        .to_string(),
+    );
+    let report = init(&tree.root, &kit(vec![])).unwrap();
+    assert_eq!(outcome(&report, "claude settings"), "updated");
+    let after = settings(&tree);
+    assert_eq!(guards(&after, "PreToolUse"), [MEMORY_GUARD.command]);
+    assert_eq!(
+        after["hooks"]["PreToolUse"][0],
+        json!({"matcher": "Write|Edit", "hooks": [theirs]})
+    );
+    assert_eq!(
+        outcome(&init(&tree.root, &kit(vec![])).unwrap(), "claude settings"),
+        "current"
+    );
+}
+
+#[test]
+fn a_memory_guard_the_project_wrote_is_the_one_used_and_a_stamped_one_beside_it_goes() {
+    let tree = Tree::new();
+    let own = "\"$CLAUDE_PROJECT_DIR/.claude/hooks/sf-hook\" memory-guard";
+    tree.write(
+        SETTINGS,
+        &json!({"hooks": {"PreToolUse": [
+            {"matcher": "Write|Edit", "hooks": [{"type": "command",
+                "command": "/old/symphony hook memory-guard # symphony-stamp: memory-guard-v0"}]},
+            {"matcher": "Write|Edit|MultiEdit|NotebookEdit|Bash",
+                "hooks": [{"type": "command", "command": own}]}
+        ]}})
+        .to_string(),
+    );
+    let report = init(&tree.root, &kit(vec![])).unwrap();
+    assert_eq!(outcome(&report, "claude settings"), "updated");
+    let after = settings(&tree);
+    // The stamped guard's group goes whole and none is added: the project's own guards the calls.
+    assert_eq!(guards(&after, "PreToolUse"), [own]);
+    assert_eq!(after["hooks"]["PreToolUse"][0]["hooks"][0]["command"], own);
+    assert_eq!(beats(&after, "PreToolUse"), [HEARTBEAT.command]);
+    assert_eq!(
+        outcome(&init(&tree.root, &kit(vec![])).unwrap(), "claude settings"),
+        "current"
+    );
 }
 
 #[test]
@@ -292,7 +370,7 @@ fn a_heartbeat_hook_the_project_wrote_is_the_one_used() {
     init(&tree.root, &kit(vec![])).unwrap();
     let after = settings(&tree);
     assert_eq!(beats(&after, "PostToolUse"), ["sf-hook tasks-beat"]);
-    assert_eq!(beats(&after, "PreToolUse"), [HOOK_COMMAND]);
+    assert_eq!(beats(&after, "PreToolUse"), [HEARTBEAT.command]);
 }
 
 #[test]
@@ -480,7 +558,7 @@ fn a_stale_managed_matcher_is_repaired_without_changing_its_adjacent_guard() {
         json!({"matcher":"Read", "hooks":[{"type":"command","command":"our-read-guard"}]})
     );
     assert_eq!(after["hooks"]["PreToolUse"][1]["matcher"], "Bash");
-    assert_eq!(beats(&after, "PreToolUse"), [HOOK_COMMAND]);
+    assert_eq!(beats(&after, "PreToolUse"), [HEARTBEAT.command]);
     assert_eq!(
         outcome(&init(&tree.root, &kit(vec![])).unwrap(), "claude settings"),
         "current"
