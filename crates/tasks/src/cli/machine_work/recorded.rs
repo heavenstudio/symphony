@@ -43,6 +43,12 @@ pub const RETAIN: f64 = 3600.0;
 /// Names, in a recorded command's environment, the operation its recorder runs it as: a recorder
 /// that command starts records that operation as its parent.
 pub const PARENT_VAR: &str = "TASKS_RUN_PARENT";
+/// Names, in the environment of a command recorded as a run or a step, its pipeline: a recorder
+/// that command starts with `--step` records a step of that pipeline. Removed from the environment
+/// of any other recorded command.
+pub const PIPELINE_VAR: &str = "SYMPHONY_RUN_PIPELINE";
+/// What started a run when it was no session: `nightly`, `land`, `on_review`, set by what starts it.
+pub const TRIGGER_VAR: &str = "SYMPHONY_RUN_TRIGGER";
 /// The longest record file read.
 const MAX_BYTES: u64 = 65_536;
 /// The longest text field kept.
@@ -108,6 +114,50 @@ pub struct Record {
     /// The signal that ended its command, if one did.
     pub signal: Option<i32>,
     pub reason: String,
+    /// What makes it a run, or a step of one, which the day files keep a line of
+    /// ([`crate::runs`]); left out of an operation of the work folder alone.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run: Option<Run>,
+}
+
+/// An operation's part as a run or a step: what its line in the day files says beside the record.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Run {
+    /// Its run's pipeline (`--pipeline`, or for a step, that of the run it ran inside).
+    pub pipeline: String,
+    /// A step's name (`--step`); none for a run.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub step: Option<String>,
+    /// [`TRIGGER_VAR`], else its session's handle, else `owner`.
+    pub trigger: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project: Option<String>,
+    /// The tree of the commit it checked.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tree: Option<String>,
+    /// Whether the checkout differed from that commit when it began.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dirty: Option<bool>,
+    /// The earlier run it repeats on the same tree.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rerun_of: Option<String>,
+    /// The CPU seconds of its command and the children it reaped, once it finished.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cpu_s: Option<f64>,
+}
+
+impl Run {
+    /// Whether it reads as a recorder writes one.
+    fn valid(&self) -> bool {
+        symphony_api::run_name(&self.pipeline)
+            && self.step.as_deref().is_none_or(symphony_api::run_name)
+            && super::projection::identity(&self.trigger)
+            && [&self.project, &self.tree]
+                .iter()
+                .all(|text| text.as_ref().is_none_or(|text| text.len() <= MAX_TEXT))
+            && self.rerun_of.as_deref().is_none_or(nonce)
+            && self.cpu_s.is_none_or(|cpu| cpu.is_finite() && cpu >= 0.0)
+    }
 }
 
 /// 32 hex digits: an operation's id.
@@ -176,6 +226,7 @@ impl Record {
             && times.iter().flatten().all(|time| time.is_finite())
             && self.pid != 0
             && self.child_pid != Some(0)
+            && self.run.as_ref().is_none_or(Run::valid)
             && steps
     }
 
@@ -551,8 +602,9 @@ fn entries(folder: &Path) -> io::Result<(Vec<PathBuf>, Vec<PathBuf>)> {
 /// once, with its lease; one that could not be read is left as it is for a later sweep. A finished
 /// operation changed more than [`RETAIN`] ago goes, as does anything else
 /// there older than that which no live recorder holds: a write's own file left by a writer that
-/// ended, a lease with no record. What this sweep finished.
-pub fn sweep(folder: &Path, now: f64) -> io::Result<Vec<Record>> {
+/// ended, a lease with no record. A lost run or step also gets its end line in the day files of
+/// `runs`, when given, as it is kept. What this sweep finished.
+pub fn sweep(folder: &Path, runs: Option<&Path>, now: f64) -> io::Result<Vec<Record>> {
     let operations = folder.join(OPERATIONS);
     if !operations.is_dir() {
         return Ok(Vec::new());
@@ -617,6 +669,9 @@ pub fn sweep(folder: &Path, now: f64) -> io::Result<Vec<Record>> {
                 found.signal = None;
                 found.reason = "its recorder ended before saying how its command did".into();
                 keep(folder, &found)?;
+                if let (Some(runs), Some(line)) = (runs, crate::runs::line(&found)) {
+                    let _ = crate::runs::append(runs, &line, now);
+                }
                 write(&path, &found)?;
                 let _ = fs::remove_file(&lease);
                 lost.push(found);

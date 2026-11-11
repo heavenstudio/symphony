@@ -33,9 +33,21 @@
 //! of a command that cannot start (127, or 126, as a shell says them). `tasks run --probe` answers
 //! [`PROBE`]: what a wrapper asks before it hands a build to a `tasks` that may be older than this
 //! command.
+//!
+//! An operation is also a run, or a step of one, which the day files keep a line of
+//! ([`crate::runs`], docs/RUNS.md): a step when `--step` names it and it runs inside a run or a step
+//! ([`recorded::PIPELINE_VAR`] names that one's pipeline); a run when `--pipeline` names one and it
+//! runs inside no recorded command; neither otherwise.
+//! Its line says what started it ([`recorded::TRIGGER_VAR`], else its session, else the owner), the
+//! commit and tree it checked and whether its checkout was clean, the earlier run it repeats on that
+//! tree, and once it ended, how and the CPU it took: the command's and every child's it reaped.
+//! As its child, that is what the reap reads; on macOS, where it becomes its command, the kernel's
+//! count of that process and of every process under it, read every [`SAMPLE`] and once more as it
+//! ends, the most read. Its caller's reap can come before that last reading: then it is short of
+//! what ran after the reading before.
 
 use super::Env;
-use super::machine_work::recorded::{self, Phase, Record, Step};
+use super::machine_work::recorded::{self, Phase, Record, Run, Step};
 use crate::sys::{self, FileLock};
 use std::ffi::OsString;
 use std::fs::{self, OpenOptions};
@@ -59,9 +71,14 @@ const READY: Duration = Duration::from_secs(1);
 /// Names the task a run is for in place of the one its session holds: what an orchestrator, or a
 /// subagent with no session of its own, sets for the builds and tests it runs for a task.
 pub const TASK_VAR: &str = "TASKS_TASK";
-/// What `tasks run --probe` answers, a line: this command line, at its first version.
-pub const PROBE: &str = "run 1";
-const USAGE: &str = "usage: tasks run --phase build|test [--label TEXT] [--task SLUG] [--as HANDLE] -- COMMAND [ARGS...]\n       tasks run --probe\n";
+/// What `tasks run --probe` answers: each version of this command line it takes, a line each,
+/// oldest first. A wrapper that reads only the first line takes it at its first; the second adds
+/// `--pipeline`, `--step`, `--commit` and `--branch`.
+pub const PROBE: &str = "run 1\nrun 2";
+/// How often, on macOS, the CPU of the command it watches is read while it runs.
+#[cfg(target_os = "macos")]
+const SAMPLE: Duration = Duration::from_millis(250);
+const USAGE: &str = "usage: tasks run --phase build|test [--label TEXT] [--task SLUG] [--as HANDLE]\n                 [--pipeline NAME] [--step NAME] [--commit SHA] [--branch NAME] -- COMMAND [ARGS...]\n       tasks run --probe\n";
 
 /// A command line read.
 #[derive(Debug, PartialEq)]
@@ -70,6 +87,14 @@ struct Asked {
     label: Option<String>,
     task: Option<String>,
     handle: Option<String>,
+    /// The pipeline it is a run of, at top level.
+    pipeline: Option<String>,
+    /// Its name as a step of the run it runs inside.
+    step: Option<String>,
+    /// The commit it checks, when not its checkout's: a review callback's tip.
+    commit: Option<String>,
+    /// That commit's branch.
+    branch: Option<String>,
     command: Vec<OsString>,
 }
 
@@ -95,6 +120,7 @@ fn parse(args: &[OsString]) -> Result<Option<Asked>, String> {
         return Ok(None);
     }
     let (mut phase, mut label, mut task, mut handle) = (None, None, None, None);
+    let (mut pipeline, mut step, mut commit, mut branch) = (None, None, None, None);
     let mut command = Vec::new();
     let mut at = 0;
     while let Some(arg) = args.get(at) {
@@ -119,6 +145,27 @@ fn parse(args: &[OsString]) -> Result<Option<Asked>, String> {
             "--label" => label = Some(value?),
             "--task" => task = Some(value?),
             "--as" => handle = Some(value?),
+            "--pipeline" | "--step" => {
+                let value = value?;
+                if !symphony_api::run_name(&value) {
+                    return Err(format!(
+                        "{name} is 1 to 64 letters, digits, '-', '_' or '.', not {value:?}"
+                    ));
+                }
+                *if name == "--pipeline" {
+                    &mut pipeline
+                } else {
+                    &mut step
+                } = Some(value);
+            }
+            "--commit" => {
+                let value = value?;
+                if !sha(&value) {
+                    return Err(format!("--commit is a full commit id, not {value:?}"));
+                }
+                commit = Some(value);
+            }
+            "--branch" => branch = Some(value?),
             other => return Err(format!("unknown option {other:?}")),
         }
         at += 2;
@@ -132,8 +179,54 @@ fn parse(args: &[OsString]) -> Result<Option<Asked>, String> {
         label,
         task,
         handle,
+        pipeline,
+        step,
+        commit,
+        branch,
         command,
     }))
+}
+
+/// A full commit id: 40 hex digits (SHA-1) or 64 (SHA-256).
+fn sha(text: &str) -> bool {
+    matches!(text.len(), 40 | 64) && text.bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
+/// What line an operation writes in the day files: a step of the run it runs inside, else a run
+/// of the pipeline it names, else none.
+#[derive(Clone, Debug, PartialEq)]
+struct Role {
+    pipeline: String,
+    step: Option<String>,
+}
+
+/// `asked`'s role in `env`: inside a recorded command ([`recorded::PARENT_VAR`]), a step when it
+/// names one and that command is a run or a step (whose recorder named its pipeline in
+/// [`recorded::PIPELINE_VAR`]), else none; at top level, a run when it names a pipeline.
+fn role(asked: &Asked, env: &Env) -> Option<Role> {
+    if !env.var(recorded::PARENT_VAR).is_some_and(recorded::nonce) {
+        return asked.pipeline.clone().map(|pipeline| Role {
+            pipeline,
+            step: None,
+        });
+    }
+    let pipeline = env
+        .var(recorded::PIPELINE_VAR)
+        .filter(|pipeline| symphony_api::run_name(pipeline))?;
+    Some(Role {
+        pipeline: pipeline.to_owned(),
+        step: Some(asked.step.clone()?),
+    })
+}
+
+/// What started a run in `env` for the session `handle`: [`recorded::TRIGGER_VAR`] when it names
+/// something, else the session, else the owner.
+fn trigger(env: &Env, handle: Option<&str>) -> String {
+    env.var(recorded::TRIGGER_VAR)
+        .filter(|named| super::machine_work::identity(named))
+        .or(handle)
+        .unwrap_or("owner")
+        .to_owned()
 }
 
 /// `tasks run ARGS` in `env`, the probe's answer on `out` and what it must say on `err`. `process`
@@ -218,6 +311,10 @@ fn child(asked: &Asked, env: &Env, err: &mut dyn Write, process: bool) -> i32 {
     }
     if let Some(id) = &id {
         command.env(recorded::PARENT_VAR, id);
+        match role(asked, env) {
+            Some(role) => command.env(recorded::PIPELINE_VAR, role.pipeline),
+            None => command.env_remove(recorded::PIPELINE_VAR),
+        };
     }
     let begin = |started: Option<Start>| {
         let recording =
@@ -226,7 +323,7 @@ fn child(asked: &Asked, env: &Env, err: &mut dyn Write, process: bool) -> i32 {
         Some(recording)
     };
     let forwarding = process.then(signals::Forwarding::install);
-    let mut child = match command.spawn() {
+    let child = match command.spawn() {
         Ok(child) => child,
         Err(error) => {
             drop(forwarding);
@@ -241,7 +338,7 @@ fn child(asked: &Asked, env: &Env, err: &mut dyn Write, process: bool) -> i32 {
                     Some(code),
                     None,
                     &format!("its command did not start: {error}"),
-                    crate::store::now(),
+                    (crate::store::now(), None),
                 );
             }
             return code;
@@ -275,15 +372,16 @@ fn child(asked: &Asked, env: &Env, err: &mut dyn Write, process: bool) -> i32 {
     };
     let _ = waiter.join();
     drop(forwarding);
-    let ended = child.wait();
+    let ended = reaped(started.0);
+    drop(child);
     // An end its waiter could not see is the one the reap read, as it came.
     let at = if seen.is_ok() {
         at
     } else {
         crate::store::now()
     };
-    let status = match ended {
-        Ok(status) => status,
+    let (status, cpu_s) = match ended {
+        Ok(ended) => ended,
         Err(error) => {
             let _ = writeln!(
                 err,
@@ -292,13 +390,13 @@ fn child(asked: &Asked, env: &Env, err: &mut dyn Write, process: bool) -> i32 {
             );
             if let Some(recording) = recording {
                 let reason = format!("its end could not be read: {error}");
-                recording.finish(None, None, &reason, at);
+                recording.finish(None, None, &reason, (at, None));
             }
             return 1;
         }
     };
     if let Some(recording) = recording {
-        recording.finish(status.code(), status.signal(), "", at);
+        recording.finish(status.code(), status.signal(), "", (at, Some(cpu_s)));
     }
     match (status.code(), status.signal()) {
         (Some(code), _) => code,
@@ -335,6 +433,36 @@ fn ended_unreaped(pid: u32) -> io::Result<()> {
             return Err(error);
         }
     }
+}
+
+/// This process's child `pid` reaped: how it ended, and the CPU seconds it took with every child it
+/// reaped, which the reap reads.
+fn reaped(pid: u32) -> io::Result<(std::process::ExitStatus, f64)> {
+    let pid = libc::pid_t::try_from(pid).map_err(io::Error::other)?;
+    loop {
+        let mut status = 0;
+        // SAFETY: rusage is plain data, for which all zeroes is a value.
+        let mut usage: libc::rusage = unsafe { std::mem::zeroed() };
+        // SAFETY: reaps this process's child `pid`, writing its status and its usage.
+        let waited = unsafe { libc::wait4(pid, &raw mut status, 0, &raw mut usage) };
+        if waited == pid {
+            let cpu = seconds(usage.ru_utime) + seconds(usage.ru_stime);
+            return Ok((std::process::ExitStatus::from_raw(status), cpu));
+        }
+        let error = io::Error::last_os_error();
+        if error.kind() != io::ErrorKind::Interrupted {
+            return Err(error);
+        }
+    }
+}
+
+/// A `timeval` in seconds.
+#[expect(
+    clippy::cast_precision_loss,
+    reason = "CPU seconds, far inside what an f64 holds exactly"
+)]
+fn seconds(time: libc::timeval) -> f64 {
+    time.tv_sec as f64 + time.tv_usec as f64 / 1e6
 }
 
 /// The one task `handle` holds on the board `env` reaches, read without starting its server.
@@ -395,10 +523,29 @@ fn machine_id(env: &Env) -> Option<String> {
 /// A command's start: its pid, and when.
 type Start = (u32, f64);
 
+/// The project `env`'s working directory is in, by its id.
+fn project(env: &Env) -> Option<String> {
+    let machine = crate::project::machine_folder(
+        |name| env.var(name).map(OsString::from),
+        cfg!(target_os = "macos"),
+    )
+    .ok();
+    let found = crate::project::find(&env.cwd, machine.as_deref()).ok()?;
+    Some(recorded::bounded(&found.id))
+}
+
+/// CPU seconds, kept to the millisecond; none for what no clock says.
+fn cpu_seconds(seconds: f64) -> Option<f64> {
+    (seconds.is_finite() && seconds >= 0.0).then(|| (seconds * 1000.0).round() / 1000.0)
+}
+
 /// One operation being recorded: its record, written whole at each change, and its lease, held
 /// locked until it finishes.
 struct Recording {
     folder: PathBuf,
+    /// The day files of its project's runs, where its line goes when it is a run or a step, and
+    /// those of the operations a sweep finishes.
+    runs: Option<PathBuf>,
     path: PathBuf,
     lease: FileLock,
     record: Mutex<Record>,
@@ -407,7 +554,8 @@ struct Recording {
 impl Recording {
     /// Its lease taken and its record written in `folder`, as the operation `id` of `asked` in
     /// `env`, asked for at `queued_at`: running since `started` when its command started, else
-    /// queued. The task it is for is asked of the board first; the times were stamped before.
+    /// queued. The task it is for is asked of the board first, and a run's tree of git; the times
+    /// were stamped before. A run or a step that started appends its start line.
     fn begin(
         folder: PathBuf,
         id: String,
@@ -417,6 +565,34 @@ impl Recording {
         started: Option<Start>,
     ) -> io::Result<Recording> {
         let (handle, task) = attributed(asked, env);
+        let branch = asked.branch.clone().or_else(|| {
+            crate::git::checkout(&env.cwd)
+                .map(|(_, branch)| branch)
+                .filter(|branch| !branch.is_empty())
+        });
+        let commit = asked.commit.clone().or_else(|| commit(&env.cwd));
+        let runs = crate::runs::folder(env);
+        let run = role(asked, env).map(|Role { pipeline, step }| {
+            let (tree, dirty) = commit.as_deref().map_or((None, None), |commit| {
+                crate::runs::tree_and_dirty(&env.cwd, commit, asked.commit.is_some())
+            });
+            let rerun_of = match (&runs, &tree, dirty) {
+                (Some(runs), Some(tree), Some(false)) => {
+                    crate::runs::rerun_of(runs, &pipeline, step.as_deref(), tree, queued_at)
+                }
+                _ => None,
+            };
+            Run {
+                pipeline,
+                step,
+                trigger: trigger(env, handle.as_deref()),
+                project: project(env),
+                tree,
+                dirty,
+                rerun_of,
+                cpu_s: None,
+            }
+        });
         let now = crate::store::now();
         let operations = folder.join(recorded::OPERATIONS);
         fs::create_dir_all(&operations)?;
@@ -428,9 +604,6 @@ impl Recording {
             .open(path.with_extension("lease"))?;
         file.lock()?;
         let lease = FileLock(file);
-        let branch = crate::git::checkout(&env.cwd)
-            .map(|(_, branch)| branch)
-            .filter(|branch| !branch.is_empty());
         let record = Record {
             version: 1,
             operation_id: id,
@@ -449,7 +622,7 @@ impl Recording {
             task,
             checkout: recorded::bounded(&env.cwd.to_string_lossy()),
             branch: branch.map(|branch| recorded::bounded(&branch)),
-            commit: commit(&env.cwd),
+            commit,
             machine_id: machine_id(env),
             host: recorded::bounded(&sys::hostname()),
             pid: std::process::id(),
@@ -461,23 +634,37 @@ impl Recording {
             exit_code: None,
             signal: None,
             reason: String::new(),
+            run,
         };
         if let Err(error) = recorded::write(&path, &record) {
             drop(lease);
             let _ = fs::remove_file(path.with_extension("lease"));
             return Err(error);
         }
-        Ok(Recording {
+        let recording = Recording {
             folder,
+            runs,
             path,
             lease,
             record: Mutex::new(record),
-        })
+        };
+        if started.is_some() {
+            recording.line(&recording.held());
+        }
+        Ok(recording)
     }
 
-    /// The operations in its folder whose recorders are gone, finished.
+    /// The operations in its folder whose recorders are gone, finished, and the end line of each
+    /// that was a run or a step appended.
     fn sweep(&self) {
-        let _ = recorded::sweep(&self.folder, crate::store::now());
+        let _ = recorded::sweep(&self.folder, self.runs.as_deref(), crate::store::now());
+    }
+
+    /// The line `record` says appended to the day files, when it is a run's or a step's.
+    fn line(&self, record: &Record) {
+        if let (Some(runs), Some(line)) = (&self.runs, crate::runs::line(record)) {
+            let _ = crate::runs::append(runs, &line, crate::store::now());
+        }
     }
 
     fn held(&self) -> std::sync::MutexGuard<'_, Record> {
@@ -493,7 +680,7 @@ impl Recording {
         let _ = recorded::write(&self.path, &record);
     }
 
-    /// Its command started: `(pid, at)`.
+    /// Its command started: `(pid, at)`. A run or a step appends its start line.
     #[cfg_attr(
         not(target_os = "macos"),
         expect(
@@ -502,11 +689,13 @@ impl Recording {
         )
     )]
     fn started(&self, (pid, at): Start) {
-        self.update(|record, _| {
-            record.state = Step::Running;
-            record.started_at = Some(at);
-            record.child_pid = Some(pid);
-        });
+        let mut record = self.held();
+        record.state = Step::Running;
+        record.started_at = Some(at);
+        record.child_pid = Some(pid);
+        record.beat_at = crate::store::now();
+        let _ = recorded::write(&self.path, &record);
+        self.line(&record);
     }
 
     /// It still runs.
@@ -514,11 +703,19 @@ impl Recording {
         self.update(|_, _| {});
     }
 
-    /// It ended at `at` so (`exit_code` or `signal`, neither when that is not known): kept in the
-    /// history, then its record written finished, then its lease let go. A recorder ended between
-    /// the two leaves it unfinished for a sweep to keep again: the history reads each operation
-    /// once.
-    fn finish(self, exit_code: Option<i32>, signal: Option<i32>, reason: &str, at: f64) {
+    /// It ended at `at` so (`exit_code` or `signal`, neither when that is not known), its command
+    /// and the children it reaped having taken `cpu_s` seconds of CPU: kept in the history, its end
+    /// line appended when it is a run or a step, then its record written finished, then its lease
+    /// let go. A recorder ended between the first and the third leaves it unfinished for a sweep to
+    /// keep again, and to end its line again: the history reads each operation once, and a reader
+    /// of the day files the first end line of each run.
+    fn finish(
+        self,
+        exit_code: Option<i32>,
+        signal: Option<i32>,
+        reason: &str,
+        (at, cpu_s): (f64, Option<f64>),
+    ) {
         let mut record = self.held();
         record.state = Step::Finished;
         record.ended_at = Some(at);
@@ -526,7 +723,11 @@ impl Recording {
         record.exit_code = exit_code;
         record.signal = signal;
         reason.clone_into(&mut record.reason);
+        if let Some(run) = &mut record.run {
+            run.cpu_s = cpu_s.and_then(cpu_seconds);
+        }
         let _ = recorded::keep(&self.folder, &record);
+        self.line(&record);
         let _ = recorded::write(&self.path, &record);
         drop(record);
         drop(self.lease);
@@ -537,7 +738,7 @@ impl Recording {
 /// The `tasks` process become its command, watched by a recorder it forks first.
 #[cfg(target_os = "macos")]
 mod supervised {
-    use super::{Asked, BEAT, READY, Recording, unstarted};
+    use super::{Asked, BEAT, READY, Recording, SAMPLE, role, unstarted};
     use crate::cli::Env;
     use crate::cli::machine_work::recorded;
     use std::ffi::CString;
@@ -547,8 +748,9 @@ mod supervised {
     use std::sync::mpsc::{self, RecvTimeoutError};
     use std::time::{Duration, Instant};
 
-    /// What the recorder's watch saw of its command, and when it saw it.
-    type Heard = io::Result<(Seen, f64)>;
+    /// What the recorder's watch saw of its command, when it saw it, and the most CPU seconds it
+    /// read the command's processes had taken by then.
+    type Heard = io::Result<(Seen, f64, Option<f64>)>;
 
     /// Become `asked`'s command, recorded by a recorder that watches this process, in `env`; what
     /// returns is the code of a command that could not start, said on `err`.
@@ -570,6 +772,12 @@ mod supervised {
         {
             // SAFETY: this process runs one thread: nothing reads its environment beside this.
             unsafe { std::env::set_var(recorded::PARENT_VAR, &id) };
+            match role(asked, env) {
+                // SAFETY: as above.
+                Some(role) => unsafe { std::env::set_var(recorded::PIPELINE_VAR, role.pipeline) },
+                // SAFETY: as above.
+                None => unsafe { std::env::remove_var(recorded::PIPELINE_VAR) },
+            }
         }
         // SAFETY: the default a shell starts its command with, which Rust's runtime replaced.
         unsafe { libc::signal(libc::SIGPIPE, libc::SIG_DFL) };
@@ -687,7 +895,7 @@ mod supervised {
             // Read on a thread of its own, so what it sees is stamped as it comes while the board
             // is asked which task this is for.
             let (tell, heard) = mpsc::channel();
-            std::thread::spawn(move || watching(&watch, &tell));
+            std::thread::spawn(move || watching(&watch, &tell, target));
             if let Ok(recording) =
                 Recording::begin(folder, id.to_owned(), asked, env, queued_at, None)
             {
@@ -699,14 +907,21 @@ mod supervised {
         unsafe { libc::_exit(0) }
     }
 
-    /// What `watch` sees, sent on `tell` with the time it saw it, until its process ends, the watch
-    /// fails, or nothing listens.
-    fn watching(watch: &Watch, tell: &mpsc::Sender<Heard>) {
+    /// What `watch` sees of `target`, sent on `tell` with the time it saw it and the most CPU it
+    /// read `target`'s processes had taken, until its process ends, the watch fails, or nothing
+    /// listens. That is read every [`SAMPLE`] and as soon as each event comes, its exit's first: a
+    /// process that ended is read until its parent reaps it.
+    fn watching(watch: &Watch, tell: &mpsc::Sender<Heard>, target: libc::pid_t) {
+        let tick = cpu::tick_ns();
+        let mut most = None;
         loop {
-            match watch.next(BEAT) {
+            let next = watch.next(SAMPLE);
+            most = most.max(cpu::tree(target));
+            match next {
                 Ok(Some(seen)) => {
                     let exited = seen.exit.is_some();
-                    if tell.send(Ok((seen, crate::store::now()))).is_err() || exited {
+                    let cpu = most.map(|ticks| cpu::seconds(ticks, tick));
+                    if tell.send(Ok((seen, crate::store::now(), cpu))).is_err() || exited {
                         return;
                     }
                 }
@@ -754,7 +969,7 @@ mod supervised {
         let mut started = false;
         loop {
             match heard.recv_timeout(BEAT) {
-                Ok(Ok((seen, at))) => {
+                Ok(Ok((seen, at, cpu))) => {
                     if seen.exec && !started {
                         started = true;
                         recording.started(start);
@@ -766,7 +981,7 @@ mod supervised {
                         } else {
                             "its command did not start"
                         };
-                        recording.finish(code, signal, reason, at);
+                        recording.finish(code, signal, reason, (at, cpu.filter(|_| started)));
                         return;
                     }
                 }
@@ -777,12 +992,12 @@ mod supervised {
                 }
                 Ok(Err(error)) => {
                     let reason = format!("its recorder lost sight of its command: {error}");
-                    recording.finish(None, None, &reason, crate::store::now());
+                    recording.finish(None, None, &reason, (crate::store::now(), None));
                     return;
                 }
                 Err(RecvTimeoutError::Disconnected) => {
                     let reason = "its recorder lost sight of its command";
-                    recording.finish(None, None, reason, crate::store::now());
+                    recording.finish(None, None, reason, (crate::store::now(), None));
                     return;
                 }
             }
@@ -876,6 +1091,91 @@ mod supervised {
                         .then(|| libc::c_int::try_from(event.data).unwrap_or_default()),
                 })),
             }
+        }
+    }
+
+    /// The CPU a process and the processes under it took, as one that is not their parent reads it
+    /// (`proc_pid_rusage`): each one's own and that of the children it reaped, in the kernel's
+    /// ticks. A process reads until its parent reaps it; then its time is its parent's.
+    pub(super) mod cpu {
+        /// The most processes one reading visits.
+        const MOST: usize = 4096;
+        /// The most children of one process read.
+        const CHILDREN: usize = 512;
+
+        /// Nanoseconds a tick is: what the machine's timebase says.
+        #[expect(
+            deprecated,
+            reason = "libc's mach_timebase_info, which points at the mach2 crate this workspace does not take"
+        )]
+        pub(in super::super) fn tick_ns() -> f64 {
+            let mut base = libc::mach_timebase_info { numer: 0, denom: 0 };
+            // SAFETY: writes the timebase into `base`.
+            let read = unsafe { libc::mach_timebase_info(&raw mut base) };
+            if read == 0 && base.numer != 0 && base.denom != 0 {
+                f64::from(base.numer) / f64::from(base.denom)
+            } else {
+                1.0
+            }
+        }
+
+        /// `ticks` in seconds, `tick` nanoseconds each.
+        #[expect(
+            clippy::cast_precision_loss,
+            reason = "CPU ticks, far inside what an f64 holds exactly"
+        )]
+        pub(in super::super) fn seconds(ticks: u64, tick: f64) -> f64 {
+            ticks as f64 * tick / 1e9
+        }
+
+        /// The CPU `pid` took, with that of the children it reaped; none once it is gone.
+        fn usage(pid: libc::pid_t) -> Option<u64> {
+            // SAFETY: plain data, for which all zeroes is a value.
+            let mut info: libc::rusage_info_v2 = unsafe { std::mem::zeroed() };
+            // SAFETY: writes one rusage_info_v2, the size of the flavor asked for, into `info`.
+            let read =
+                unsafe { libc::proc_pid_rusage(pid, libc::RUSAGE_INFO_V2, (&raw mut info).cast()) };
+            (read == 0).then(|| {
+                [
+                    info.ri_user_time,
+                    info.ri_system_time,
+                    info.ri_child_user_time,
+                    info.ri_child_system_time,
+                ]
+                .into_iter()
+                .fold(0, u64::saturating_add)
+            })
+        }
+
+        /// The processes whose parent `pid` is now.
+        fn children(pid: libc::pid_t) -> Vec<libc::pid_t> {
+            let mut pids: Vec<libc::pid_t> = vec![0; CHILDREN];
+            let room = libc::c_int::try_from(std::mem::size_of_val(pids.as_slice()))
+                .unwrap_or(libc::c_int::MAX);
+            // SAFETY: writes at most `room` bytes of pids into `pids`, which holds that many.
+            let found = unsafe { libc::proc_listchildpids(pid, pids.as_mut_ptr().cast(), room) };
+            pids.truncate(usize::try_from(found).unwrap_or(0));
+            pids.retain(|child| *child > 0);
+            pids
+        }
+
+        /// The CPU `root` and every process under it have taken so far, none once `root` is gone.
+        /// Each is read before its children are listed, so a child its parent reaps meanwhile is
+        /// counted once, in the one or the other, or missed until the next reading: never twice.
+        pub(in super::super) fn tree(root: libc::pid_t) -> Option<u64> {
+            let mut total = usage(root)?;
+            let mut next = children(root);
+            let mut visited = 1;
+            while let Some(pid) = next.pop()
+                && visited < MOST
+            {
+                visited += 1;
+                if let Some(taken) = usage(pid) {
+                    total = total.saturating_add(taken);
+                    next.extend(children(pid));
+                }
+            }
+            Some(total)
         }
     }
 }
@@ -991,11 +1291,198 @@ mod tests {
                 label: Some("verify".into()),
                 task: Some("a/b".into()),
                 handle: Some("h".into()),
+                pipeline: None,
+                step: None,
+                commit: None,
+                branch: None,
                 command: args(&["cargo", "--", "--exact"]),
             }
         );
         assert_eq!(parse(&args(&["--probe"])), Ok(None));
         assert!(super::super::usage::HELP.contains("\n    run "));
+    }
+
+    #[test]
+    fn a_command_line_names_its_pipeline_step_commit_and_branch() {
+        let tip = "0123456789abcdef0123456789abcdef01234567";
+        let read = parse(&args(&[
+            "--pipeline",
+            "review-callback",
+            "--step",
+            "client-check",
+            "--commit",
+            tip,
+            "--branch",
+            "tools/run-record",
+            "--phase",
+            "test",
+            "--",
+            "true",
+        ]))
+        .unwrap()
+        .unwrap();
+        assert_eq!(read.pipeline.as_deref(), Some("review-callback"));
+        assert_eq!(read.step.as_deref(), Some("client-check"));
+        assert_eq!(read.commit.as_deref(), Some(tip));
+        assert_eq!(read.branch.as_deref(), Some("tools/run-record"));
+        let sha256 = "a".repeat(64);
+        let read = parse(&args(&[
+            "--phase", "test", "--commit", &sha256, "--", "true",
+        ]));
+        assert_eq!(read.unwrap().unwrap().commit, Some(sha256));
+        for (words, said) in [
+            (vec!["--pipeline", "a b"], "--pipeline is 1 to 64"),
+            (vec!["--step", ""], "--step is 1 to 64"),
+            (vec!["--step", &"s".repeat(65)], "--step is 1 to 64"),
+            (vec!["--pipeline", "a/b"], "--pipeline is 1 to 64"),
+            (vec!["--commit", "HEAD"], "full commit id"),
+            (vec!["--commit", &tip[..39]], "full commit id"),
+            (vec!["--commit", &"g".repeat(40)], "full commit id"),
+            (vec!["--branch"], "needs a value"),
+        ] {
+            let mut words = [vec!["--phase", "test"], words.clone()].concat();
+            words.extend(["--", "true"]);
+            let refused = parse(&args(&words)).unwrap_err();
+            assert!(refused.contains(said), "{words:?}: {refused}");
+        }
+    }
+
+    fn env(vars: &[(&str, &str)]) -> Env {
+        Env {
+            vars: vars
+                .iter()
+                .map(|(name, value)| ((*name).to_string(), (*value).to_string()))
+                .collect(),
+            cwd: std::env::temp_dir(),
+        }
+    }
+
+    #[test]
+    fn a_step_inside_a_run_is_its_pipelines_and_a_pipeline_named_at_top_level_a_run() {
+        let parent = "0123456789abcdef0123456789abcdef";
+        let inside = [
+            (recorded::PARENT_VAR, parent),
+            (recorded::PIPELINE_VAR, "verify"),
+        ];
+        let asked = |words: &[&str]| {
+            let mut words = words.to_vec();
+            words.extend(["--phase", "build", "--", "true"]);
+            parse(&args(&words)).unwrap().unwrap()
+        };
+        let lint = asked(&["--pipeline", "lint", "--step", "lint"]);
+        let run = |pipeline: &str| {
+            Some(Role {
+                pipeline: pipeline.into(),
+                step: None,
+            })
+        };
+        assert_eq!(
+            role(&lint, &env(&inside)),
+            Some(Role {
+                pipeline: "verify".into(),
+                step: Some("lint".into()),
+            })
+        );
+        assert_eq!(role(&lint, &env(&[])), run("lint"), "at top level, a run");
+        // At top level: no recorded command it runs inside, whatever a pipeline says.
+        for outside in [
+            vec![(recorded::PIPELINE_VAR, "verify")],
+            vec![
+                (recorded::PARENT_VAR, "not-an-id"),
+                (recorded::PIPELINE_VAR, "verify"),
+            ],
+        ] {
+            assert_eq!(role(&lint, &env(&outside)), run("lint"), "{outside:?}");
+        }
+        // Inside a recorded command that is no run, or whose pipeline does not read: neither.
+        for inside_another in [
+            vec![(recorded::PARENT_VAR, parent)],
+            vec![
+                (recorded::PARENT_VAR, parent),
+                (recorded::PIPELINE_VAR, "two words"),
+            ],
+        ] {
+            assert_eq!(
+                role(&lint, &env(&inside_another)),
+                None,
+                "{inside_another:?}"
+            );
+        }
+        let step_only = asked(&["--step", "tests"]);
+        assert_eq!(role(&step_only, &env(&[])), None);
+        assert_eq!(
+            role(&step_only, &env(&inside)).and_then(|role| role.step),
+            Some("tests".into())
+        );
+        // A run named inside a run is no step of it, nor a run of its own.
+        assert_eq!(role(&asked(&["--pipeline", "lint"]), &env(&inside)), None);
+        assert_eq!(role(&asked(&[]), &env(&inside)), None);
+    }
+
+    #[test]
+    fn a_trigger_is_the_one_named_else_the_session_else_the_owner() {
+        assert_eq!(trigger(&env(&[]), None), "owner");
+        assert_eq!(trigger(&env(&[]), Some("ember-osprey")), "ember-osprey");
+        let named = env(&[(recorded::TRIGGER_VAR, "on_review")]);
+        assert_eq!(trigger(&named, Some("ember-osprey")), "on_review");
+        let unreadable = env(&[(recorded::TRIGGER_VAR, "two\nlines")]);
+        assert_eq!(trigger(&unreadable, None), "owner");
+    }
+
+    #[test]
+    fn cpu_seconds_keep_milliseconds_and_no_count_a_clock_cannot_say() {
+        assert_eq!(cpu_seconds(1.234_56), Some(1.235));
+        assert_eq!(cpu_seconds(0.0), Some(0.0));
+        assert_eq!(cpu_seconds(-0.5), None);
+        assert_eq!(cpu_seconds(f64::NAN), None);
+        assert_eq!(cpu_seconds(f64::INFINITY), None);
+    }
+
+    /// A loop of the shell's that takes some CPU.
+    const BURN: &str = "i=0; while [ $i -lt 100000 ]; do i=$((i+1)); done";
+
+    /// A shell that burns CPU in a child it reaps, then becomes `then`.
+    fn burning(then: &str) -> sys::Child {
+        sys::command("/bin/sh")
+            .args(["-c", &format!("({BURN}) & wait; {then}")])
+            .spawn()
+            .unwrap()
+    }
+
+    #[test]
+    fn the_reap_reads_the_cpu_of_the_command_and_the_children_it_reaped() {
+        let child = burning("exit 3");
+        let (status, cpu) = reaped(child.id()).unwrap();
+        assert_eq!(status.code(), Some(3));
+        assert!(cpu > 0.05, "{cpu}");
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn a_watcher_reads_the_cpu_of_a_process_and_of_those_under_it() {
+        let mut shell = burning("exec sleep 30");
+        let pid = libc::pid_t::try_from(shell.id()).unwrap();
+        let tick = supervised::cpu::tick_ns();
+        assert!(tick > 0.0);
+        let began = std::time::Instant::now();
+        let mut most = 0.0;
+        // The shell's child burns, then is reaped: its time is the shell's, read the same.
+        while began.elapsed() < Duration::from_secs(20) {
+            let read = supervised::cpu::tree(pid).unwrap();
+            most = supervised::cpu::seconds(read, tick);
+            if most > 0.05 {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        assert!(most > 0.05, "{most}");
+        shell.kill().unwrap();
+        let _ = shell.wait();
+        assert_eq!(
+            supervised::cpu::tree(pid),
+            None,
+            "a process gone reads none"
+        );
     }
 
     #[test]

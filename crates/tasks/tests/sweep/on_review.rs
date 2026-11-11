@@ -321,6 +321,119 @@ fn a_move_elsewhere_than_review_starts_none_and_a_broken_manifest_is_logged() {
     assert!(!record.exists());
 }
 
+/// The day files in `runs` once they hold an end line: the one run they keep, folded.
+fn ended_run(runs: &Path) -> symphony_api::RunLine {
+    let began = Instant::now();
+    loop {
+        let lines: Vec<symphony_api::RunLine> = fs::read_dir(runs)
+            .into_iter()
+            .flatten()
+            .flat_map(|entry| {
+                let text = fs::read_to_string(entry.unwrap().path()).unwrap_or_default();
+                text.lines()
+                    .map(|line| serde_json::from_str(line).unwrap())
+                    .collect::<Vec<_>>()
+            })
+            .collect();
+        if lines.iter().any(|line| line.end.is_some()) {
+            let [run] = symphony_api::fold(lines).try_into().unwrap();
+            return run;
+        }
+        assert!(
+            began.elapsed() < Duration::from_secs(60),
+            "no run ended within a minute: {lines:?}"
+        );
+        std::thread::sleep(Duration::from_millis(25));
+    }
+}
+
+#[test]
+fn the_review_command_is_recorded_as_a_run_of_its_own_that_keeps_its_exit() {
+    let r = executing("sim/jump", "amber-heron");
+    let tip = branch(&r, "sim/jump");
+    let record = r.dir.join("record");
+    // A review command that fails, once it has said what it ran with.
+    write(
+        &r.root,
+        "tools/on-review.sh",
+        &format!(
+            "#!/bin/sh\nprintf '%s|%s|%s\\n' \"${{SYMPHONY_RUN_TRIGGER-unset}}\" \
+             \"${{SYMPHONY_RUN_PIPELINE-unset}}\" \"$*\" > '{record}.part'\n\
+             mv '{record}.part' '{record}'\nexit 3\n",
+            record = record.display()
+        ),
+    );
+    fs::set_permissions(
+        r.root.join("tools/on-review.sh"),
+        fs::Permissions::from_mode(0o755),
+    )
+    .unwrap();
+    manifest(&r, &["tools/on-review.sh"]);
+    let (work, runs) = (r.dir.join("work"), r.dir.join("runs"));
+    let out = run(
+        &r,
+        "amber-heron",
+        &r.root,
+        &["move", "sim/jump", "review"],
+        |vars| {
+            vars.insert("TASKS_BIN".into(), env!("CARGO_BIN_EXE_tasks").into());
+            vars.insert("TASKS_WORK".into(), work.to_string_lossy().into());
+            vars.insert("SYMPHONY_RUNS".into(), runs.to_string_lossy().into());
+            // The mover's own recorded command, whose run the review's is not.
+            vars.insert("TASKS_RUN_PARENT".into(), "f".repeat(32));
+            vars.insert("SYMPHONY_RUN_PIPELINE".into(), "verify".into());
+        },
+    );
+    // What the move says it started is the review command itself.
+    assert!(
+        out.ends_with(&format!(
+            "→ the tip's verify started detached: tools/on-review.sh sim/jump sim/jump {tip}\n"
+        )),
+        "{out}"
+    );
+    assert_eq!(
+        written(&record),
+        format!("on_review|review-callback|sim/jump sim/jump {tip}\n")
+    );
+    let line = ended_run(&runs);
+    assert_eq!(
+        (
+            line.pipeline.as_str(),
+            line.step.as_deref(),
+            line.parent.as_deref()
+        ),
+        ("review-callback", None, None)
+    );
+    assert_eq!(
+        (line.end, line.exit, line.signal),
+        (Some(symphony_api::End::Red), Some(3), None)
+    );
+    assert_eq!(line.trigger, "on_review");
+    assert_eq!(
+        (line.task.as_deref(), line.handle.as_deref()),
+        (Some("sim/jump"), None)
+    );
+    assert_eq!(
+        (line.commit.as_deref(), line.branch.as_deref()),
+        (Some(tip.as_str()), Some("sim/jump"))
+    );
+    let tree = git(&r.root, &["rev-parse", &format!("{tip}^{{tree}}")]);
+    assert_eq!(
+        (line.tree.as_deref(), line.dirty),
+        (Some(tree.as_str()), Some(false))
+    );
+    assert_eq!(
+        line.label,
+        format!("tools/on-review.sh sim/jump sim/jump {tip}")
+    );
+    // Its output still goes to the log.
+    let text = written(&log(&r));
+    assert!(
+        text.contains(&format!("] sim/jump is in review: sim/jump at {tip}; ")),
+        "{text}"
+    );
+}
+
 #[test]
 fn the_trigger_names_what_it_started_and_refuses_from_a_worktree_too() {
     let r = executing("sim/jump", "amber-heron");
@@ -335,7 +448,7 @@ fn the_trigger_names_what_it_started_and_refuses_from_a_worktree_too() {
         cwd: r.dir.join("sim-jump"),
     };
     assert_eq!(
-        symphony_board::on_review::trigger(&env, &env.cwd, "sim/jump"),
+        symphony_board::on_review::trigger(&env, &env.cwd, "sim/jump", None),
         Started::Command(vec![
             "tools/on-review.sh".into(),
             "sim/jump".into(),
@@ -345,7 +458,7 @@ fn the_trigger_names_what_it_started_and_refuses_from_a_worktree_too() {
     );
     written(&record);
     assert_eq!(
-        symphony_board::on_review::trigger(&env, &env.cwd, "sim/gone"),
+        symphony_board::on_review::trigger(&env, &env.cwd, "sim/gone", None),
         Started::Refused(format!(
             "no branch sim/gone in {}",
             r.root.canonicalize().unwrap().display()
@@ -354,7 +467,7 @@ fn the_trigger_names_what_it_started_and_refuses_from_a_worktree_too() {
     let mut off = env.clone();
     off.vars.insert("TASKS_ON_REVIEW".into(), "off".into());
     assert_eq!(
-        symphony_board::on_review::trigger(&off, &off.cwd, "sim/jump"),
+        symphony_board::on_review::trigger(&off, &off.cwd, "sim/jump", None),
         Started::None
     );
 }

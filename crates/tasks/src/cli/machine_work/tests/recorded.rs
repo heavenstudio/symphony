@@ -51,6 +51,7 @@ fn record(id: &str, state: Step) -> Record {
         exit_code: (state == Step::Finished).then_some(0),
         signal: None,
         reason: String::new(),
+        run: None,
     }
 }
 
@@ -388,7 +389,7 @@ fn a_sweep_finishes_lost_work_without_an_exit_keeps_it_once_and_drops_what_is_an
     recorded::write(&path(&dir, THREE), &record(THREE, Step::Finished)).unwrap();
     aged(&path(&dir, THREE), RETAIN as u64 + 1);
     let now = now();
-    let lost = recorded::sweep(&dir, now).unwrap();
+    let lost = recorded::sweep(&dir, None, now).unwrap();
     assert_eq!(lost.len(), 1);
     let kept = &lost[0];
     assert_eq!(kept.operation_id, TWO);
@@ -413,10 +414,10 @@ fn a_sweep_finishes_lost_work_without_an_exit_keeps_it_once_and_drops_what_is_an
         [TWO]
     );
     // Again: nothing more to finish, and nothing kept twice.
-    assert!(recorded::sweep(&dir, now).unwrap().is_empty());
+    assert!(recorded::sweep(&dir, None, now).unwrap().is_empty());
     assert_eq!(recorded::history(&dir).unwrap().len(), 1);
     // Past the hour, it goes too, but stays kept.
-    recorded::sweep(&dir, now + RETAIN + 1.0).unwrap();
+    recorded::sweep(&dir, None, now + RETAIN + 1.0).unwrap();
     assert_eq!(ids(&recorded::read(&dir)), [(ONE, Step::Running)]);
     assert_eq!(recorded::history(&dir).unwrap().len(), 1);
     fs::remove_dir_all(&dir).unwrap();
@@ -457,14 +458,14 @@ fn a_sweep_clears_a_record_no_live_recorder_holds_and_no_reader_reads_at_once_an
     let held = [lease(&four), lease(&five)];
     fs::write(path(&dir, &five), "{").unwrap();
     let now = now();
-    recorded::sweep(&dir, now).unwrap();
+    recorded::sweep(&dir, None, now).unwrap();
     for file in &unread {
         assert!(!file.exists(), "{} stayed unread", file.display());
     }
     for file in [&partial, &history_partial, &orphan] {
         assert!(file.exists(), "{} went within the hour", file.display());
     }
-    recorded::sweep(&dir, now + RETAIN + 60.0).unwrap();
+    recorded::sweep(&dir, None, now + RETAIN + 60.0).unwrap();
     for file in [&partial, &history_partial, &orphan] {
         assert!(!file.exists(), "{} stayed", file.display());
     }
@@ -506,14 +507,14 @@ fn a_sweep_leaves_a_record_it_could_not_read_to_a_sweep_that_can() {
         }
     };
     mode(0o000);
-    assert!(recorded::sweep(&dir, now()).unwrap().is_empty());
+    assert!(recorded::sweep(&dir, None, now()).unwrap().is_empty());
     for file in [&records[0], &records[0].with_extension("lease"), &malformed] {
         assert!(file.exists(), "{} went unread", file.display());
     }
     assert!(recorded::history(&dir).unwrap().is_empty());
     assert!(recorded::read(&dir).uncertain);
     mode(0o644);
-    let finished = recorded::sweep(&dir, now()).unwrap();
+    let finished = recorded::sweep(&dir, None, now()).unwrap();
     assert_eq!(
         finished
             .iter()
@@ -536,7 +537,7 @@ fn a_sweep_lets_go_the_lease_of_an_operation_its_recorder_finished_without_keepi
     recorded::keep(&dir, &done).unwrap();
     // Its recorder ended between saying it finished and letting its lease go.
     gone(running(&dir, &done));
-    assert!(recorded::sweep(&dir, now()).unwrap().is_empty());
+    assert!(recorded::sweep(&dir, None, now()).unwrap().is_empty());
     assert!(!path(&dir, ONE).with_extension("lease").exists());
     assert_eq!(ids(&recorded::read(&dir)), [(ONE, Step::Finished)]);
     assert_eq!(recorded::history(&dir).unwrap(), [done]);
@@ -549,13 +550,13 @@ fn a_sweep_another_recorder_is_making_is_left_to_it() {
     gone(running(&dir, &record(ONE, Step::Running)));
     let lock = File::create(dir.join(recorded::LOCK)).unwrap();
     lock.lock().unwrap();
-    assert!(recorded::sweep(&dir, now()).unwrap().is_empty());
+    assert!(recorded::sweep(&dir, None, now()).unwrap().is_empty());
     assert!(recorded::read(&dir).uncertain, "still lost, not finished");
     lock.unlock().unwrap();
-    assert_eq!(recorded::sweep(&dir, now()).unwrap().len(), 1);
+    assert_eq!(recorded::sweep(&dir, None, now()).unwrap().len(), 1);
     // A folder no recorder made yet has nothing to sweep and is not made by one.
     let never = dir.join("never");
-    assert!(recorded::sweep(&never, now()).unwrap().is_empty());
+    assert!(recorded::sweep(&never, None, now()).unwrap().is_empty());
     assert!(!never.exists());
     fs::remove_dir_all(&dir).unwrap();
 }
