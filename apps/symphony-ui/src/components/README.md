@@ -14,7 +14,10 @@ The pinned primitive's `src/js/focus-trap.js` has SHA-256
 
 The Symphony adaptations bind radii and fonts to theme tokens, default buttons to
 Outline, forward only supplied event handlers, and merge plain entry actions
-with component attributes. A tab panel has no padding, border or fill of its
+with component attributes. A button, the menu trigger among them, is 2.25rem
+tall at the theme's radius with a pointer, as a plain button is (`board.css`),
+and its focus is the page's one outline: no control draws a second ring of
+shadow. A tab panel has no padding, border or fill of its
 own (the demo's themed panel is gone): it is part of its container's surface.
 `SelectField` keeps a field's accessible name,
 current value and callback while the list is closed. Dropdown actions use
@@ -53,10 +56,10 @@ Adapted stylesheet SHA-256 values (paths below this folder, except the theme):
 | File | SHA-256 |
 |---|---|
 | `../../assets/dx-components-theme.css` | `42611fd439c811a3f96155baf5f45b4fa7fd638e2f69aca6281470d9c88e6336` |
-| `button/style.css` | `895aa12659309fe9b5f6c3fb202910b9b7de01dae281abf935b153aa792b0fe8` |
-| `checkbox/style.css` | `f239c4ba7ced18961b774e873088009cb7414fca6ae754fff5bee4250bb8c1f2` |
+| `button/style.css` | `0867d1935318fbcd2f1b9c1ab7832206956edc0d64e676b85200ed1c5f7285d0` |
+| `checkbox/style.css` | `9bb30dc350cb75830e0b627d9bb004d35ad502a53c463202d1c37ec096bd92a9` |
 | `dialog/style.css` | `5d4b5b0329a97653b634fab6b9e6d5e67fd0fe2c40042dcc28a7f27f4478c9d3` |
-| `dropdown_menu/style.css` | `bfe25a8085a82ab96bb3562a7572d24f6ffa2a5cb2baf65543010bd98293d17c` |
+| `dropdown_menu/style.css` | `28047ec30bc2319eb9050cc89496fe941e70e6d8b6398b297bbf417e08745d43` |
 | `input/style.css` | `953a21b193c707f671048aa790c4fdcd62751e24cadee6fc927fc9c620e90d7d` |
 | `label/style.css` | `0906d269af5d9c84c7a63a8caa60fd7b4e9738d12fa6c80bf718b414cbb539bb` |
 | `select/style.css` | `547ad86108f12cf410844c56a93c71bdd45bf41fd3cd0d605750242ce1b26886` |

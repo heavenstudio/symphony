@@ -294,7 +294,7 @@ pub fn AgentsView(
     let tasks = Rc::new(tasks);
     let work: SharedWork = std::mem::take(&mut agents.machine_work).into();
     rsx! {
-        h1 { "Agents" } p { class: "lead", "Who is connected, and what they are working on." }
+        div { class: "page-head", div { h1 { "Agents" } p { class: "lead", "Who is connected, and what they are working on." } } }
         p { class: "muted", "{agents.probes.panes} · {agents.probes.slots}" }
         h2 { "Happening now" }
         div { class: "agents-now", for task in tasks.iter().filter(|t| t.has_status(symphony_api::TaskStatus::InProgress) || t.has_status(symphony_api::TaskStatus::Review)) { Near { key: "{task.slug}", id: "now-{task.slug}", height: 120, TaskRow { task: task.clone(), work: work.clone() } } } }

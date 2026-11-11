@@ -581,3 +581,67 @@ fn the_chat_and_activity_panels_take_focus_on_open_and_escape_returns_it_to_thei
         escape_returns_to(&mut page, activity_closed, opener);
     }
 }
+
+#[test]
+fn buttons_share_one_shape_and_one_focus_ring_and_pages_one_heading() {
+    let site = site();
+    let Some(mut page) = chrome() else { return };
+    viewport(&mut page, 1280, 900);
+    let mut headings = Vec::new();
+    for route in [
+        "/",
+        "/tasks",
+        "/queue",
+        "/agents",
+        "/task/visual/in-progress",
+        "/docs/",
+    ] {
+        page.open(&site.url(route));
+        assert!(
+            page.wait_for("document.querySelector('h1') !== null", SHOWN),
+            "{route}"
+        );
+        headings.push(page.eval(&format!("[{}, getComputedStyle(document.querySelector('h1')).fontSize, document.querySelectorAll('h1').length]", json!(route))));
+    }
+    assert!(
+        headings
+            .iter()
+            .all(|h| h[1] == json!("32px") && h[2] == json!(1)),
+        "every page has one h1, of one size: {headings:?}"
+    );
+
+    page.open(&site.url("/tasks"));
+    assert!(page.wait_for(
+        "document.querySelector('[aria-controls=task-groups]') !== null",
+        SHOWN
+    ));
+    open_panel(&mut page);
+    let looks = page.eval("(() => {const look=e=>{const s=getComputedStyle(e),box=e.getBoundingClientRect();return {radius:s.borderRadius,height:box.height,cursor:s.cursor,weight:s.fontWeight};};\
+        return {component:look(document.querySelector('[aria-controls=task-groups]')),plain:look(document.querySelector('#quick-sheet button.collapse')),\
+        menu:look(document.querySelector('.theme-menu button[aria-haspopup=menu]'))};})()");
+    assert_eq!(looks["component"]["cursor"], json!("pointer"), "{looks}");
+    assert_eq!(
+        looks["plain"], looks["component"],
+        "a plain button is a component button's shape and size: {looks}"
+    );
+    assert_eq!(
+        looks["menu"], looks["component"],
+        "so is the menu's trigger: {looks}"
+    );
+    for control in [
+        "[aria-controls=task-groups]",
+        ".theme-menu button[aria-haspopup=menu]",
+        "#quick-sheet button.collapse",
+    ] {
+        let rings = page.eval(&format!(
+            "(() => {{const e=document.querySelector({}),before=getComputedStyle(e).boxShadow;e.focus();const s=getComputedStyle(e);\
+             return {{visible:e.matches(':focus-visible'),outline:s.outlineStyle,shadow:s.boxShadow===before}};}})()",
+            json!(control)
+        ));
+        assert_eq!(
+            rings,
+            json!({"visible":true,"outline":"solid","shadow":true}),
+            "{control}: one focus ring, the page's outline, and no second ring of shadow"
+        );
+    }
+}

@@ -7,7 +7,7 @@
 .app-header .crumbs { display:block; margin:0 0 0 8px; padding-left:12px; border-left:1px solid var(--border); min-width:0; font-size:var(--fs-sm); overflow-wrap:anywhere; color:var(--muted-foreground); }
 .app-header .crumbs a { color:var(--muted-foreground); text-decoration:none; }
 .app-header .crumbs span { font-weight:600; color:var(--foreground); }
-:where(.app-frame) button { font:inherit; font-size:var(--fs-sm); color:var(--foreground); background:var(--card); padding:4px 12px; border:1px solid var(--border); border-radius:var(--r-pill); cursor:pointer; }
+:where(.app-frame) button { font:inherit; font-size:var(--fs-sm); font-weight:500; color:var(--foreground); background:var(--card); box-sizing:border-box; min-height:2.25rem; padding:0 1rem; border:1px solid var(--border); border-radius:var(--radius); cursor:pointer; }
 :where(.app-frame) button:hover { border-color:var(--muted-foreground); }
 :where(.app-frame) button.primary { background:var(--primary); border-color:var(--primary); color:var(--primary-foreground); font-weight:600; }
 :where(.app-frame) button:disabled { opacity:.45; cursor:default; }
