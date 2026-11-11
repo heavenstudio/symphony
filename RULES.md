@@ -146,6 +146,19 @@ its task (`just tasks say SLUG "…" --to owner`) or as a card question
 only copy; a follow-up reuses it, an answer given in the terminal is recorded there, and silence
 is not an answer.
 
+### `review/auto-approve-what-is-decided`
+
+A card is not put to the owner, or is auto-approved if already posted, when its answer is not a
+real choice. The owner, 2026-11-11: "run some auto triage. Some decisions look like they should
+had been auto approved". An orchestrator marks it `[a]` with a dated
+`agent · auto-approved — <letter>: <basis>` line ([REVIEW](docs/REVIEW.md)) when the owner's own
+words, quoted in the basis, already decide it, or when the card's own evidence leaves one option
+standing (the others measured wrong, or against something the owner said). It stays the
+owner's when it is a matter of taste or look (names, layout, pictures), a product direction with
+live alternatives, money, or an act that cannot be undone (moving live state, deleting, a tag or
+a release): those are recommended, never auto-approved. An auto-approved card stays in the
+register for the owner to spot-check, and any verdict of theirs overrides it.
+
 ### `docs/cards-clear-and-concise`
 
 A card holds what its judgement call needs and nothing more: short paragraphs, plain words, one
