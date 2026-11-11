@@ -13,12 +13,13 @@ run from a linked worktree against this repository's live board runs the main
 checkout's launcher instead: main's build, in main's own target folder (the
 caller's `CARGO_TARGET_DIR` is dropped), in the caller's folder and environment,
 so no branch's build of a board binary runs on the live board. A branch's
-`symphony` (`just symphony-cli`, a preview server) is not held to this: it opens
-the board itself (`taskview::connect`, through `Store::opening`), and a reader,
-like a writer, migrates an older board forward (`schema::decide`), so a branch
-with a newer schema moves the live board from there
-(tools/board-read-never-migrates). The main checkout is the common dir less
-`/.git`, as git finds it; the build is of what it holds, committed or not. A run
+`symphony` (`just symphony-cli`, a preview server) runs its own build: it opens
+the board itself, only through `taskview::connect_in` and only to read (its
+`connect_tests.rs` holds the symphony and server sources to that), and a reader
+never moves a board forward or makes one (`schema::decide`), so a branch with
+a newer schema cannot move the live board from there. The main checkout is the
+common dir less `/.git`, as git finds it; the build is of what it holds,
+committed or not. A run
 is on the live board unless it names another database (the last leading
 `--database NAME`, else `TASKS_DATABASE`, not `tasks`), or its working directory
 is in another repository or none, or `TASKS_SERVER` names a port other than the
@@ -51,8 +52,13 @@ steps and the new version in one transaction, before any other write, which
 one of several openers commits while the others find it done. An older writer
 is refused before any write, naming the project and `just symphony`. A reader
 (the Symphony's `taskview::connect_in`) one version behind reads; more than
-one behind, it is refused before it reads. Every write transaction starts with
-the schema guard, which refuses a write to a board at another version in the
+one behind, it is refused before it reads. A reader never moves a board
+forward or makes one: a board behind it, or not made yet, it refuses after
+that one read, defining and writing nothing, naming `just tasks list` in the
+project (the project's board command, which moves or makes it) and a scratch
+board for a newer schema. A scratch board is moved by its own `just tasks
+--database NAME`, which runs the branch's build. Every write transaction
+starts with the schema guard, which refuses a write to a board at another version in the
 same transaction, so a reader's writes and those of a store opened before a
 newer build migrated are refused there, the same way.
 `TASKS_DB` is the old SQLite cutover input, not a scratch selector. A branch's
@@ -721,11 +727,14 @@ again; a request whose text proves it a read (`rpc::Kind::of`: only `SELECT`,
 and every `::` a call in a namespace that only computes, its word right against
 the `::`: `fn ::bump()` is a write) goes once more on a new connection, never a
 third time. A store opens a board at its build's schema version on one such
-read of the version (`Store::with`), defining and writing nothing, so a page's
-open over a slow board goes once more as its read does; a board not made yet,
-or at another version, is defined: its namespace and database first when the
-server lacks either, then its tables and version in one transaction
-(`tests/store/open_read.rs`). Each sending waits the client's wait for its whole answer, however
+read of the version, defining and writing nothing, so a page's open over a slow
+board goes once more as its read does. Only a writer (`Store::open`,
+`Store::with`) defines a board, and only one not made yet or behind its build:
+its namespace and database first when the server lacks either, then its tables
+and version in one transaction (`tests/store/open_read.rs`); a board newer than
+its build it refuses before any write. A reader (the Symphony's
+`taskview::connect_in`) refuses a board not made yet or behind its build after
+that one read, defining and writing nothing (`tests/store/schema.rs`). Each sending waits the client's wait for its whole answer, however
 it trickles in, so a read waits at most twice that. A late answer on a working
 connection says the server is slow (`rpc::slow`), which the Symphony's read routes answer with 504, not the 503 of
 a board that cannot be reached. Each request a `Client` sends is counted, with no request of its
