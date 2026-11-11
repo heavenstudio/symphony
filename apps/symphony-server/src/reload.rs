@@ -563,7 +563,7 @@ fn replaced(shared: &Shared, result: Result<u32, String>) -> bool {
             );
             eprintln!("· Symphony reload: {message}");
             if let Some(hub) = shared.api.get() {
-                hub.server_notice.send_replace(message);
+                hub.tell_update(message);
             }
             false
         }

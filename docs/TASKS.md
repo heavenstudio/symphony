@@ -136,9 +136,12 @@ file) every ten seconds, and at once when the dispatch or the sweep starts or st
 private server keeps it in memory alone. `just tasks status` prints that record without asking
 the board, and `--json` prints it as `/api/health` answers it, beside the file and the warnings.
 A warning stands while the newest dispatch pass, or the newest sweep, failed within the last ten
-minutes: the next good one clears it, while the hour still counts the failure. `tasks status`
-also warns when the record is more than a minute old, naming the server's pid and whether it
-still runs: no dispatch pass has been recorded since.
+minutes: the next good one clears it, while the hour still counts the failure. While one stands,
+every page of the project says so on the server's notice (beside a failed server update, when
+there is one), told when it starts and when it ends, and the project picker says so under the
+project's name; both read the server's memory, not the board (`apps/symphony-server/src/live/health.rs`).
+`tasks status` also warns when the record is more than a minute old, naming the server's pid and
+whether it still runs: no dispatch pass has been recorded since.
 
 The Claude wire envelope is newline-delimited
 `{"type":"user","message":{"role":"user","content":"…"}}`, observed in the

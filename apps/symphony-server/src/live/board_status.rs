@@ -17,10 +17,12 @@ impl Hub {
         match connect(&self.root) {
             Ok(store) => Some(store),
             Err(error) => {
+                let now = symphony_board::sweep::trigger::now();
                 self.health.dispatched(
-                    symphony_board::sweep::trigger::now(),
+                    now,
                     Err(&format!("no pass, the board could not be reached: {error}")),
                 );
+                self.tell_health(now);
                 self.board_error(error);
                 None
             }

@@ -1,6 +1,7 @@
-//! The board's health as the hub records it: a board tick whose dispatch fails warns of it, a good
-//! pass clears it, a tick that cannot reach the board is a failed pass, the one server's record says
-//! the same, and `/api/health` answers it from the hub's memory, with no board read.
+//! The board's health as the hub records it: a board tick whose dispatch fails warns of it, on the
+//! pages' server notice too, a good pass clears it, a tick that cannot reach the board is a failed
+//! pass, the one server's record says the same, and `/api/health` answers it from the hub's memory,
+//! with no board read.
 
 use super::Hub;
 use crate::front::Shared;
@@ -103,6 +104,8 @@ fn a_failed_dispatch_pass_warns_until_a_good_pass_and_the_record_says_the_same()
     );
     assert!(ok.queries.count > 0, "the tick's requests are counted");
     assert_eq!(Report::read(&file).unwrap().unwrap().dispatch.ok, 1);
+    assert_eq!(*hub.server_notice.borrow(), "", "a well board: no notice");
+    assert_eq!(hub.health_notice(now()), "");
 
     relay.cut();
     assert!(
@@ -133,6 +136,9 @@ fn a_failed_dispatch_pass_warns_until_a_good_pass_and_the_record_says_the_same()
         (1, 1),
         "the dispatch started failing: the record says so at once"
     );
+    // Every page of the project hears it on the server's notice, and the picker says it too.
+    assert_eq!(*hub.server_notice.borrow(), DISPATCH_FAILING);
+    assert_eq!(hub.health_notice(now()), DISPATCH_FAILING);
 
     relay.mend();
     hub.board_read(&store).unwrap();
@@ -152,6 +158,80 @@ fn a_failed_dispatch_pass_warns_until_a_good_pass_and_the_record_says_the_same()
         (2, Vec::new()),
         "the dispatch stopped failing: the record says so at once"
     );
+    assert_eq!(*hub.server_notice.borrow(), "", "the good pass clears it");
+    assert_eq!(hub.health_notice(now()), "");
+}
+
+const DISPATCH_FAILING: &str = "The task board is unwell: its callback dispatch is failing, so no \
+                                agent hears from it. `just tasks status` says why.";
+
+#[test]
+fn the_notice_names_what_is_failing_and_nothing_while_the_board_is_well() {
+    assert_eq!(super::health::notice([false, false]), "");
+    assert_eq!(super::health::notice([true, false]), DISPATCH_FAILING);
+    assert_eq!(
+        super::health::notice([false, true]),
+        "The task board is unwell: its idle sweep is failing. `just tasks status` says why."
+    );
+    assert_eq!(
+        super::health::notice([true, true]),
+        "The task board is unwell: its callback dispatch and its idle sweep are failing, so no \
+         agent hears from it. `just tasks status` says why."
+    );
+}
+
+#[test]
+fn a_failed_update_and_the_boards_health_share_the_notice_and_each_clears_alone() {
+    let tree = Tree::new();
+    let root = repository(&tree);
+    let hub = hub(&root, &tree.path("health.json"));
+    let mut notices = hub.server_notice.subscribe();
+    let at = now();
+
+    // A tick that tells no change sends nothing.
+    hub.tell_health(at);
+    assert!(
+        !notices.has_changed().unwrap(),
+        "a well board tells nothing"
+    );
+
+    hub.health.dispatched(at, Err("the board did not answer"));
+    hub.tell_health(at);
+    assert_eq!(*notices.borrow_and_update(), DISPATCH_FAILING);
+    hub.health
+        .dispatched(at + 1.0, Err("the board did not answer"));
+    hub.tell_health(at + 1.0);
+    assert!(
+        !notices.has_changed().unwrap(),
+        "still failing: the pages are not told again"
+    );
+
+    hub.tell_update("Symphony server update failed.".into());
+    assert_eq!(
+        *notices.borrow_and_update(),
+        format!("Symphony server update failed. · {DISPATCH_FAILING}")
+    );
+
+    hub.health.dispatched(at + 2.0, Ok(()));
+    hub.tell_health(at + 2.0);
+    assert_eq!(
+        *notices.borrow_and_update(),
+        "Symphony server update failed.",
+        "the board's health clears, the update's failure stays"
+    );
+
+    hub.health.swept(at + 3.0, Err("exit status: 3"));
+    hub.tell_health(at + 3.0);
+    hub.tell_update(String::new());
+    assert_eq!(
+        *notices.borrow_and_update(),
+        super::health::notice([false, true]),
+        "the update's failure clears, the board's health stays"
+    );
+
+    // A failed sweep is said for ten minutes, then the tick that sees it older clears it.
+    hub.tell_health(at + 3.0 + 601.0);
+    assert_eq!(*notices.borrow_and_update(), "");
 }
 
 #[test]
@@ -172,6 +252,7 @@ fn a_tick_that_cannot_reach_the_board_is_a_failed_pass() {
         )
     );
     assert_eq!(report.warnings.len(), 1);
+    assert_eq!(*hub.server_notice.borrow(), DISPATCH_FAILING);
 }
 
 #[tokio::test]

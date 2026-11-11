@@ -1136,10 +1136,10 @@ fn maintenance_worker(
             );
             // A cancelled sweep says nothing of the board; the hub is there once the server is.
             if let (Some(outcome), Some(hub)) = (swept, shared.api.get()) {
-                hub.health.swept(
-                    symphony_board::sweep::trigger::now(),
-                    outcome.as_ref().copied().map_err(String::as_str),
-                );
+                let now = symphony_board::sweep::trigger::now();
+                hub.health
+                    .swept(now, outcome.as_ref().copied().map_err(String::as_str));
+                hub.tell_health(now);
             }
             if shared.wait(Duration::from_millis(250)) {
                 break;

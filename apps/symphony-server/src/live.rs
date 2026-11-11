@@ -144,6 +144,8 @@ pub(crate) struct Hub {
     /// The board's health over the last hour: the clock's dispatch passes, the idle sweeps and
     /// every request this process sent the board ([`symphony_board::board_health`]).
     pub(crate) health: symphony_board::board_health::Recorder,
+    /// What `server_notice` says, by where it comes from ([`health::Notices`]).
+    notices: Mutex<health::Notices>,
 }
 
 struct TaskState {
@@ -227,6 +229,7 @@ impl Hub {
             task_activity: Mutex::new(None),
             worker: Mutex::new(None),
             health: symphony_board::board_health::Recorder::default(),
+            notices: Mutex::new(health::Notices::default()),
         }
     }
 
@@ -1395,6 +1398,7 @@ fn task_changes(changes: &mut Vec<Value>, old: &[symphony_api::Task], new: &[sym
 }
 
 mod board_status;
+mod health;
 mod machine_work;
 mod startup;
 

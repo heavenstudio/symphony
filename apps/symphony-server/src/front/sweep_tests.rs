@@ -341,6 +341,7 @@ fn each_sweep_is_recorded_in_the_boards_health_failed_with_its_error_or_ok() {
         &fixture.root.join("client"),
     ));
     assert!(fixture.shared.api.set(hub.clone()).is_ok());
+    let notices = hub.server_notice.subscribe();
     fixture.start(maintenance_worker(
         fixture.shared.clone(),
         Duration::ZERO,
@@ -368,6 +369,44 @@ fn each_sweep_is_recorded_in_the_boards_health_failed_with_its_error_or_ok() {
         report.warnings.is_empty(),
         "the good sweep after it cleared the warning: {:?}",
         report.warnings
+    );
+    // The pages are told only when the notice changes, and its first change from empty says
+    // something: a changed notice that is empty again was told the failure and then its end.
+    while !(notices.has_changed().unwrap() && notices.borrow().is_empty()) {
+        assert!(
+            began.elapsed() < Duration::from_secs(15),
+            "the pages were not told the failed sweep and then the good one: {:?}",
+            *notices.borrow()
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
+#[test]
+fn a_failing_sweep_is_said_on_every_page_of_the_project() {
+    let mut fixture = SweepFixture::new("echo 'the board did not answer' >&2; exit 3");
+    let hub = Arc::new(crate::live::Hub::new(
+        &fixture.root,
+        &fixture.root.join("client"),
+    ));
+    assert!(fixture.shared.api.set(hub.clone()).is_ok());
+    fixture.start(maintenance_worker(
+        fixture.shared.clone(),
+        Duration::ZERO,
+        Duration::from_secs(3),
+        Stamp::now,
+    ));
+    let began = Instant::now();
+    while hub.server_notice.borrow().is_empty() {
+        assert!(
+            began.elapsed() < Duration::from_secs(15),
+            "no failed sweep was said"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert_eq!(
+        *hub.server_notice.borrow(),
+        "The task board is unwell: its idle sweep is failing. `just tasks status` says why."
     );
 }
 

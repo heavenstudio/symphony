@@ -259,6 +259,38 @@ async fn the_list_names_every_project_and_why_one_is_not_served() {
 }
 
 #[tokio::test]
+async fn the_list_warns_under_a_project_whose_board_is_unwell_until_it_is_well() {
+    let machine = Machine::new();
+    let starter = &machine.projects.starter;
+    let hub = Arc::new(crate::live::Hub::new(
+        &starter.root,
+        &starter.root.join("build/client"),
+    ));
+    assert!(starter.api.set(hub.clone()).is_ok());
+    let warning = "<span class=\"health\" role=\"status\">⚠ The task board is unwell: its \
+                   callback dispatch is failing, so no agent hears from it. `just tasks status` \
+                   says why.</span>";
+
+    let at = symphony_board::sweep::trigger::now();
+    hub.health.dispatched(at, Err("the board did not answer"));
+    let list = text(machine.get("/", &[]).await).await;
+    let alpha = list
+        .split("<li>")
+        .find(|row| row.contains("href=\"/alpha/\""))
+        .unwrap();
+    assert!(alpha.contains(warning), "{list}");
+    assert_eq!(
+        list.matches("class=\"health\"").count(),
+        1,
+        "beta is well: {list}"
+    );
+
+    hub.health.dispatched(at + 1.0, Ok(()));
+    let list = text(machine.get("/", &[]).await).await;
+    assert!(!list.contains("class=\"health\""), "{list}");
+}
+
+#[tokio::test]
 async fn theme_tokens_are_served_per_project_and_revalidated_by_etag() {
     let machine = Machine::new();
     let first = machine.get("/beta/theme.css", &[]).await;
