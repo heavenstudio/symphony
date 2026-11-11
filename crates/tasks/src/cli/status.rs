@@ -2,7 +2,8 @@
 //! ([`crate::board_health`]), read from its record in `sf-tasks/` and never from the board, so a
 //! board too slow to answer, or a server that stopped, is still said. Its warnings are the record's
 //! read at this run's time, and that the server stopped recording when it did, and the free disk
-//! where the record is kept, read now, when it is under `SF_LOW_DISK_GB` ([`board_health::disk`]).
+//! where the record is kept, read now, when it is under `SF_LOW_DISK_GB` ([`board_health::disk`];
+//! a setting that is not a number is said, and the default taken).
 //! `--json` prints the record as `/api/health` answers it, beside the file, the disk and those
 //! warnings.
 
@@ -13,17 +14,26 @@ use std::io::Write;
 
 pub(super) fn run(parsed: &Parsed, env: &Env, out: &mut dyn Write, err: &mut dyn Write) -> i32 {
     let read = Clock::of(env).and_then(|clock| {
-        let threshold = disk::threshold(&env.vars)?;
         let file = board_health::file(env)?;
-        Ok((clock.now(), threshold, Report::read(&file)?, file))
+        Ok((clock.now(), Report::read(&file)?, file))
     });
-    let (now, threshold, report, file) = match read {
+    let (now, report, file) = match read {
         Ok(read) => read,
         Err(why) => {
             let _ = writeln!(err, "✖ {why}");
             return 2;
         }
     };
+    // A threshold it cannot read is the default's, said, as the server's pages take it: the
+    // board's health is still said.
+    let threshold = disk::threshold(&env.vars).unwrap_or_else(|why| {
+        let _ = writeln!(
+            err,
+            "· {why}: it warns under {} GB free",
+            disk::THRESHOLD_GB
+        );
+        disk::THRESHOLD_GB
+    });
     let mut warnings = match &report {
         Some(report) => report.read_warnings(now, sys::pid_alive),
         None => vec![format!(
@@ -276,13 +286,24 @@ mod tests {
             (Some(0.0), Some(1))
         );
 
+        // A setting that is not a number is the default's, said; the health is still said.
+        for args in [&["status"][..], &["status", "--json"]] {
+            let (code, out, err) = run(args, &at("lots"), &dir);
+            assert_eq!(
+                (code, err.as_str()),
+                (
+                    0,
+                    "· SF_LOW_DISK_GB=\"lots\" is not a number of gigabytes: it warns under 20 GB free\n"
+                ),
+                "{args:?}"
+            );
+            assert!(out.contains("callback dispatch failing"), "{out}");
+        }
+        let (_, out, _) = run(&["status", "--json"], &at("lots"), &dir);
+        let json: serde_json::Value = serde_json::from_str(&out).unwrap();
         assert_eq!(
-            run(&["status"], &at("lots"), &dir),
-            (
-                2,
-                String::new(),
-                "✖ SF_LOW_DISK_GB=\"lots\" is not a number of gigabytes\n".into()
-            )
+            json["disk"]["threshold_gb"].as_f64(),
+            Some(disk::THRESHOLD_GB)
         );
         fs::remove_dir_all(&dir).unwrap();
     }

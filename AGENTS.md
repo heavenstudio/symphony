@@ -44,7 +44,8 @@ from this folder. `tools/cargo.sh` execs ordinary Cargo in this workspace, prese
 its arguments, streams, status and inherited limits. It uses this folder's `.target/`
 unless `CARGO_TARGET_DIR` names another. In a linked worktree it makes a missing target
 folder first as a copy-on-write clone of the main checkout's `.target/debug`, less the
-workspace's own units (`tools/seed-target.sh`; `SF_SEED_TARGET=off`), so worktrees
+workspace's own units (`tools/seed-target.sh`, one `clonefile` call by `tools/seed-clone.rs`
+on macOS; `SF_SEED_TARGET=off`), so worktrees
 share compiled dependencies on disk; never one target folder, where Cargo names two
 worktrees' packages alike and each runs the other's build. The board's sweep clears a
 finished worktree's build output ([TASKS](docs/TASKS.md)). It supplies no project gate

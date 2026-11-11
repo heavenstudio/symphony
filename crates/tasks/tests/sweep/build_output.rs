@@ -1,11 +1,14 @@
 //! The build output of finished work (tools/one-build-folder-for-worktrees): a worktree the
 //! worktree sweep keeps loses its build folders once every task it is tied to is done, its HEAD is
 //! merged work and no agent there beat within the hour; never a branch with no commits ahead of
-//! main, a task in progress, an agent that beat within the hour, or a process working inside it.
+//! main, a task in progress, an agent that beat within the hour, or a process working inside it,
+//! as read again right before the clear; never a folder a Cargo holds the lock of, and never one
+//! reached through a link.
 
 use crate::common::{NOW, Seed};
-use crate::{Repo, git, started, text, write};
+use crate::{Repo, dead_pid, git, started, text, write};
 use std::cell::Cell;
+use std::fs::{self, File};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use symphony_board::sweep::Sweep;
@@ -54,6 +57,34 @@ fn assert_untouched(r: &Repo, wt: &Path, folders: &[PathBuf], done: &Sweep) {
     for folder in folders {
         assert!(folder.join("debug/deps/libwork.rlib").is_file(), "{said}");
     }
+}
+
+/// The folders a sweep cleared.
+fn cleared(done: &Sweep) -> Vec<PathBuf> {
+    done.cleared
+        .iter()
+        .map(|(folder, _)| folder.clone())
+        .collect()
+}
+
+/// A worktree whose work landed, its task done, kept whole and built: it and its build folders.
+fn finished(r: &Repo) -> (PathBuf, [PathBuf; 2]) {
+    let wt = landed(r, "landed", "sim/landed");
+    held(r, &wt);
+    let folders = built(&wt);
+    (wt, folders)
+}
+
+/// The sweep at [`LATER`], every worktree idle and nobody inside, calling `pause` with each stage
+/// it reaches and the path that stage names, canonical.
+fn sweep_pausing(r: &Repo, pause: impl Fn(&str, &Path) + 'static) -> Sweep {
+    r.sweep_with(|o| {
+        o.now = Box::new(|| LATER);
+        o.pause = Box::new(move |stage, what| {
+            let what = Path::new(what);
+            pause(stage, &what.canonicalize().unwrap_or_else(|_| what.into()));
+        });
+    })
 }
 
 #[test]
@@ -276,4 +307,177 @@ fn a_process_working_inside_keeps_it_and_so_does_not_knowing() {
         });
         assert_untouched(&r, &wt, &folders, &done);
     }
+}
+
+#[test]
+fn a_process_found_inside_right_before_the_clear_keeps_it() {
+    // The scan it was judged by found nobody there; asked again right before the clear, `lsof`
+    // finds a process inside, or cannot tell.
+    let r = Repo::with(Seed::default().task("sim/landed", "done"));
+    let (wt, folders) = finished(&r);
+    for occupied in [Some(true), None] {
+        let done = r.sweep_with(|o| {
+            o.now = Box::new(|| LATER);
+            o.occupied = Box::new(move |_| occupied);
+        });
+        assert_untouched(&r, &wt, &folders, &done);
+    }
+}
+
+#[test]
+fn a_task_claimed_right_before_the_clear_keeps_it() {
+    // Judged finished, then the agent bound there claims its next task: the board, read again right
+    // before the clear, keeps it.
+    let r = Repo::with(
+        Seed::default()
+            .task("sim/landed", "done")
+            .task("sim/next", "ready"),
+    );
+    let (wt, folders) = finished(&r);
+    let handle = r.bind(&wt);
+    let board = r.board.other();
+    let reached = Rc::new(Cell::new(false));
+    let seen = Rc::clone(&reached);
+    let watched = wt.clone();
+    let done = sweep_pausing(&r, move |stage, what| {
+        if stage == "judged" && what == watched {
+            seen.set(true);
+            board.claim("sim/next", &handle).unwrap();
+        }
+    });
+    assert!(
+        reached.get(),
+        "the sweep judged it finished: {}",
+        text(&done)
+    );
+    assert_untouched(&r, &wt, &folders, &done);
+}
+
+#[test]
+fn a_build_holding_a_lock_in_a_folder_keeps_that_folder_until_it_lets_go() {
+    let r = Repo::with(Seed::default().task("sim/landed", "done"));
+    let (wt, folders) = finished(&r);
+    // Each lock Cargo holds while it builds: in a profile's folder, and in a target's.
+    for lock in [
+        "debug/.cargo-lock",
+        "debug/.cargo-build-lock",
+        "release/.cargo-artifact-lock",
+        "wasm32-unknown-unknown/debug/.cargo-lock",
+    ] {
+        built(&wt);
+        write(&wt, &format!(".target/{lock}"), "");
+        let building = File::open(folders[0].join(lock)).unwrap();
+        building.lock().unwrap();
+        let done = sweep_at(&r, LATER, false);
+        assert_eq!(
+            cleared(&done),
+            [folders[1].clone()],
+            "{lock}: {}",
+            text(&done)
+        );
+        assert!(
+            folders[0].join("debug/deps/libwork.rlib").is_file(),
+            "{lock}"
+        );
+        building.unlock().unwrap();
+    }
+
+    // Let go, it goes: renamed aside while the sweep holds every lock in it, so no Cargo takes one.
+    let lock = folders[0].join("debug/.cargo-lock");
+    let held_then = Rc::new(Cell::new(None));
+    let seen = Rc::clone(&held_then);
+    let watched = folders[0].clone();
+    let done = sweep_pausing(&r, move |stage, what| {
+        if stage == "locked" && what == watched {
+            seen.set(Some(File::open(&lock).unwrap().try_lock().is_err()));
+        }
+    });
+    assert_eq!(held_then.get(), Some(true), "{}", text(&done));
+    assert_eq!(cleared(&done), [folders[0].clone()], "{}", text(&done));
+    assert!(!folders[0].exists());
+    let beside: Vec<String> = fs::read_dir(&wt)
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .filter(|name| name.starts_with(".target"))
+        .collect();
+    assert!(beside.is_empty(), "nothing is left aside: {beside:?}");
+}
+
+#[test]
+fn a_link_never_leads_the_clear_out_of_the_worktree() {
+    let r = Repo::with(
+        Seed::default()
+            .task("sim/landed", "done")
+            .task("sim/linked", "done"),
+    );
+    // Another checkout's build folders, which a link in each worktree leads to.
+    let other = r.dir.join("other");
+    let theirs = built(&other);
+
+    // One whose `symphony` is a link to it, and one whose `.target` is.
+    let through_symphony = landed(&r, "landed", "sim/landed");
+    held(&r, &through_symphony);
+    write(
+        &through_symphony,
+        ".target/debug/deps/libwork.rlib",
+        "compiled\n",
+    );
+    std::os::unix::fs::symlink(&other, through_symphony.join("symphony")).unwrap();
+    let through_target = landed(&r, "linked", "sim/linked");
+    held(&r, &through_target);
+    write(
+        &through_target,
+        "symphony/.target/debug/deps/libwork.rlib",
+        "compiled\n",
+    );
+    std::os::unix::fs::symlink(&theirs[0], through_target.join(".target")).unwrap();
+
+    let done = sweep_at(&r, LATER, false);
+    let mut gone = cleared(&done);
+    gone.sort();
+    let mut own = vec![
+        through_symphony.join(".target"),
+        through_target.join("symphony/.target"),
+    ];
+    own.sort();
+    assert_eq!(gone, own, "{}", text(&done));
+    assert!(own.iter().all(|folder| !folder.exists()));
+    for folder in &theirs {
+        assert!(
+            folder.join("debug/deps/libwork.rlib").is_file(),
+            "{}",
+            text(&done)
+        );
+    }
+    assert!(fs::symlink_metadata(through_symphony.join("symphony")).is_ok_and(|m| m.is_symlink()));
+    assert!(fs::symlink_metadata(through_target.join(".target")).is_ok_and(|m| m.is_symlink()));
+}
+
+#[test]
+fn what_a_seed_or_a_clear_left_goes_with_finished_work_once_its_process_is_gone() {
+    let r = Repo::with(Seed::default().task("sim/landed", "done"));
+    let (wt, folders) = finished(&r);
+    let (dead, live) = (dead_pid(), std::process::id());
+    let aside = |name: String| {
+        write(
+            &wt,
+            &format!("{name}/debug/deps/libwork.rlib"),
+            "compiled\n",
+        );
+        wt.join(name)
+    };
+    let left = [
+        aside(format!(".target.seed.{dead}")),
+        aside(format!("symphony/.target.clear.{dead}")),
+    ];
+    let running = aside(format!(".target.seed.{live}"));
+
+    let done = sweep_at(&r, LATER, false);
+    let mut gone = cleared(&done);
+    gone.sort();
+    let mut expected: Vec<PathBuf> = folders.iter().chain(&left).cloned().collect();
+    expected.sort();
+    assert_eq!(gone, expected, "{}", text(&done));
+    assert!(expected.iter().all(|folder| !folder.exists()));
+    assert!(running.join("debug/deps/libwork.rlib").is_file());
 }

@@ -1,6 +1,7 @@
 //! `tools/seed-target.sh`, run by `tools/cargo.sh` before Cargo: a linked worktree's new build
 //! folder starts as clones of the main checkout's compiled dependencies, never of the workspace's
-//! own units, and nothing is made anywhere else. A repository of its own under the temp folder,
+//! own units, and nothing is made anywhere else; a seed ended by a signal leaves nothing, and what
+//! one killed outright left goes on a later run. A repository of its own under the temp folder,
 //! its main checkout's build a few files named as Cargo names them, over a stand-in Cargo whose
 //! `metadata` names the workspace's packages.
 
@@ -12,6 +13,18 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::OnceLock;
 use std::time::{Duration, Instant, SystemTime};
+
+/// The environment a fixture's run starts without: no target folder, no seed setting, no git
+/// repository of its own and no compiler of the caller's choosing.
+const UNSET: [&str; 7] = [
+    "CARGO_TARGET_DIR",
+    "SF_SEED_TARGET",
+    "SF_SEED_WAIT",
+    "GIT_DIR",
+    "GIT_WORK_TREE",
+    "GIT_COMMON_DIR",
+    "RUSTC",
+];
 
 /// The stand-in Cargo: `metadata` names the workspace's two packages as Cargo spells them, one by a
 /// name of its own and one by its folder's; anything else says what it ran, and into which folder.
@@ -102,9 +115,37 @@ fn files(dir: &Path) -> BTreeSet<String> {
     found
 }
 
-/// A repository whose main checkout (`main/`) holds `tools/cargo.sh` and `tools/seed-target.sh` and
-/// has built ([`DEPENDENCIES`] and [`WORKSPACE_UNITS`]), and a linked worktree of it (`wt/`) that
-/// has not.
+/// The workspace's own folder.
+fn workspace() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .canonicalize()
+        .unwrap()
+}
+
+/// The pid of a process that has exited and been reaped.
+fn dead_pid() -> u32 {
+    let mut done = Command::new("true").spawn().unwrap();
+    done.wait().unwrap();
+    done.id()
+}
+
+/// Every process's command line.
+fn processes() -> Vec<String> {
+    let listed = Command::new("ps")
+        .args(["-axww", "-o", "command="])
+        .output()
+        .unwrap();
+    assert!(listed.status.success());
+    String::from_utf8_lossy(&listed.stdout)
+        .lines()
+        .map(str::to_string)
+        .collect()
+}
+
+/// A repository whose main checkout (`main/`) holds `tools/cargo.sh`, `tools/seed-target.sh` and
+/// `tools/seed-clone.rs` and has built ([`DEPENDENCIES`] and [`WORKSPACE_UNITS`]), and a linked
+/// worktree of it (`wt/`) that has not.
 struct Seeding {
     base: PathBuf,
     main: PathBuf,
@@ -115,12 +156,9 @@ impl Seeding {
     fn new(name: &str) -> Seeding {
         let base = scratch(name);
         let main = base.join("main");
-        let tools = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../tools")
-            .canonicalize()
-            .unwrap();
+        let tools = workspace().join("tools");
         fs::create_dir_all(main.join("tools")).unwrap();
-        for tool in ["cargo.sh", "seed-target.sh"] {
+        for tool in ["cargo.sh", "seed-target.sh", "seed-clone.rs"] {
             std::os::unix::fs::symlink(tools.join(tool), main.join("tools").join(tool)).unwrap();
         }
         fs::write(main.join("Cargo.toml"), "[workspace]\n").unwrap();
@@ -144,18 +182,11 @@ impl Seeding {
         Seeding { base, main, wt }
     }
 
-    /// `checkout/tools/cargo.sh build --locked` run there, with `vars` on an environment that names
-    /// no target folder, no seed setting and no git repository of its own.
+    /// `checkout/tools/cargo.sh build --locked` run there, with `vars` on an environment without
+    /// [`UNSET`].
     fn cargo(&self, checkout: &Path, vars: &[(&str, &str)]) -> Ran {
         let mut command = Command::new(checkout.join("tools/cargo.sh"));
-        for name in [
-            "CARGO_TARGET_DIR",
-            "SF_SEED_TARGET",
-            "SF_SEED_WAIT",
-            "GIT_DIR",
-            "GIT_WORK_TREE",
-            "GIT_COMMON_DIR",
-        ] {
+        for name in UNSET {
             command.env_remove(name);
         }
         let done = command
@@ -191,13 +222,18 @@ impl Seeding {
         self.no_staging_left();
     }
 
-    /// That no clone being made is left beside the worktree's build folder.
-    fn no_staging_left(&self) {
-        let left: Vec<String> = fs::read_dir(&self.wt)
+    /// What is beside the worktree's build folder, by name: `.target.…`.
+    fn beside(&self) -> BTreeSet<String> {
+        fs::read_dir(&self.wt)
             .unwrap()
             .map(|e| e.unwrap().file_name().to_string_lossy().to_string())
-            .filter(|name| name.starts_with(".target.seed."))
-            .collect();
+            .filter(|name| name.starts_with(".target."))
+            .collect()
+    }
+
+    /// That no clone being made is left beside the worktree's build folder.
+    fn no_staging_left(&self) {
+        let left = self.beside();
         assert!(left.is_empty(), "{left:?}");
     }
 }
@@ -233,10 +269,14 @@ fn a_worktrees_first_build_starts_from_clones_of_the_main_checkouts_dependencies
             "{file} keeps the time it was built"
         );
     }
+    // The lock is held for one call that clones the folder whole, not one a file.
+    let seeded = fs::read_to_string(target.join("SEEDED")).unwrap();
     assert!(
-        fs::read_to_string(target.join("SEEDED"))
-            .unwrap()
-            .starts_with(&format!("cloned from {} at ", source.display()))
+        seeded.starts_with(&format!(
+            "cloned from {} by one clonefile call at ",
+            source.display()
+        )),
+        "{seeded}"
     );
     let everything: BTreeSet<String> = DEPENDENCIES
         .iter()
@@ -331,4 +371,155 @@ fn a_build_holding_the_main_checkouts_lock_past_the_wait_leaves_the_worktree_to_
     assert!(ran.err.contains("starts as a clone of"), "{}", ran.err);
     assert_eq!(ran.ok(), Seeding::built(&target));
     assert!(target.join("SEEDED").is_file());
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn without_a_compiler_for_the_helper_the_seed_clones_each_file() {
+    let f = Seeding::new("by-cp");
+    let (source, target) = (f.main.join(".target/debug"), f.wt.join(".target"));
+    let nowhere = f.base.join("no-rustc");
+    let ran = f.cargo(&f.wt, &[("RUSTC", nowhere.to_str().unwrap())]);
+    assert!(ran.err.contains("starts as a clone of"), "{}", ran.err);
+    assert_eq!(ran.ok(), Seeding::built(&target));
+    let seeded = fs::read_to_string(target.join("SEEDED")).unwrap();
+    assert!(
+        seeded.starts_with(&format!(
+            "cloned from {} by /bin/cp -c -R -p at ",
+            source.display()
+        )),
+        "{seeded}"
+    );
+    let mut expected: BTreeSet<String> =
+        DEPENDENCIES.iter().map(|f| format!("debug/{f}")).collect();
+    expected.insert("SEEDED".to_string());
+    assert_eq!(files(&target), expected);
+    f.no_staging_left();
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn a_seed_ended_by_a_signal_ends_its_clone_and_leaves_nothing() {
+    use std::os::unix::process::ExitStatusExt;
+    let f = Seeding::new("signalled");
+    let (source, target) = (f.main.join(".target/debug"), f.wt.join(".target"));
+    let lock_file = source.join(".cargo-lock");
+    // A build holds the main checkout's lock, so the clone waits for it under the lock tool, a job
+    // of the seed's.
+    let lock = File::open(&lock_file).unwrap();
+    lock.lock().unwrap();
+    let waiting = |command: &String| {
+        command.starts_with("lockf ") && command.contains(lock_file.to_str().unwrap())
+    };
+    let ours = format!("{}/", f.base.display());
+    for signal in [libc::SIGTERM, libc::SIGINT, libc::SIGHUP] {
+        let said = f.base.join(format!("said-{signal}"));
+        let mut command = Command::new(f.wt.join("tools/seed-target.sh"));
+        for name in UNSET {
+            command.env_remove(name);
+        }
+        let mut seed = command
+            .arg(&target)
+            .current_dir(&f.wt)
+            .env("CARGO", standin())
+            .env("SF_SEED_WAIT", "600")
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(File::create(&said).unwrap())
+            .spawn()
+            .unwrap();
+        let start = Instant::now();
+        while !processes().iter().any(waiting) {
+            assert!(
+                seed.try_wait().unwrap().is_none(),
+                "the seed ended before its clone waited: {}",
+                fs::read_to_string(&said).unwrap()
+            );
+            assert!(
+                start.elapsed() < Duration::from_secs(300),
+                "the clone never waited on the lock"
+            );
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        assert!(
+            f.beside().contains(&format!(".target.seed.{}", seed.id())),
+            "{:?}",
+            f.beside()
+        );
+
+        let pid = libc::pid_t::try_from(seed.id()).unwrap();
+        // SAFETY: kill only sends a signal, to the seed this test started and has not reaped.
+        assert_eq!(unsafe { libc::kill(pid, signal) }, 0);
+        let ended = seed.wait().unwrap();
+        assert_eq!(ended.signal(), Some(signal), "the run ends by its signal");
+        f.no_staging_left();
+        assert!(!target.exists());
+        let left: Vec<String> = processes()
+            .into_iter()
+            .filter(|command| command.contains(&ours))
+            .collect();
+        assert!(left.is_empty(), "the clone ended with the seed: {left:?}");
+        assert_eq!(fs::read_to_string(&said).unwrap(), "");
+    }
+    lock.unlock().unwrap();
+}
+
+#[test]
+fn what_a_seed_or_a_clear_left_goes_on_a_later_run_once_its_process_is_gone() {
+    let f = Seeding::new("stale");
+    let (dead, live) = (dead_pid(), std::process::id());
+    let left = |name: String| {
+        let deps = f.wt.join(&name).join("debug/deps");
+        fs::create_dir_all(&deps).unwrap();
+        fs::write(deps.join("libwork.rlib"), "compiled\n").unwrap();
+        name
+    };
+    left(format!(".target.seed.{dead}"));
+    left(format!(".target.clear.{dead}"));
+    // A seed or a clear still running, a name with no process in it, and a link named as one.
+    let mut kept: BTreeSet<String> = [
+        left(format!(".target.seed.{live}")),
+        left(format!(".target.clear.{live}")),
+        left(".target.seed.12ab".to_string()),
+        left(".target.backup".to_string()),
+    ]
+    .into();
+    let outside = f.base.join("outside");
+    fs::create_dir(&outside).unwrap();
+    fs::write(outside.join("keep"), "keep\n").unwrap();
+    let link = format!(".target.seed.{}", dead_pid());
+    std::os::unix::fs::symlink(&outside, f.wt.join(&link)).unwrap();
+    kept.insert(link);
+
+    // The worktree's build folder is made already, so nothing is seeded, and the run still clears.
+    let target = f.wt.join(".target");
+    fs::create_dir(&target).unwrap();
+    Seeding::quietly(f.cargo(&f.wt, &[]), &target);
+    assert_eq!(f.beside(), kept);
+    assert_eq!(fs::read_to_string(outside.join("keep")).unwrap(), "keep\n");
+    assert!(files(&target).is_empty());
+}
+
+#[test]
+fn git_ignores_a_clone_being_staged_and_a_build_folder_being_removed() {
+    let names = [
+        ".target.seed.123/",
+        ".target.seed.123/debug/deps/libwork.rlib",
+        ".target.clear.456/",
+    ];
+    let checked = Command::new("git")
+        .args(["check-ignore", "--no-index"])
+        .args(names)
+        .current_dir(workspace())
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_WORK_TREE")
+        .output()
+        .unwrap();
+    assert_eq!(
+        String::from_utf8(checked.stdout)
+            .unwrap()
+            .lines()
+            .collect::<Vec<_>>(),
+        names
+    );
 }

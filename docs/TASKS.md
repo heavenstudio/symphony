@@ -177,11 +177,11 @@ whether it still runs: no dispatch pass has been recorded since.
 
 **A disk running full** is warned of in the same two places: `tasks status` when the disk holding
 the record has less free than `SF_LOW_DISK_GB` gigabytes (20 when unset; `0` turns it off, and a
-value that is no number exits 2), and every page of a project while the disk holding its checkout
-has, read by the server each time it tells the pages of its health; the page says under how many
-gigabytes, not how many, so it is told when the disk goes low and when it is freed, not at every
-build's write. A full disk fails every build
-on the machine and can corrupt the board's database; the warning names `just tasks sweep`, which
+value that is no number is said and 20 taken), and every page of a project while the disk
+holding its checkout has, read by the server each time it tells the pages of its health; the page
+says under how many gigabytes, not how many, so it is told when the disk goes low and when it is
+freed, not at every build's write. A full disk fails every build on the machine and can corrupt
+the board's database; the warning names `just tasks sweep`, which
 clears the build output of finished worktrees (below). `--json` adds `disk`: the folder read, its
 free bytes and the threshold (`crates/tasks/src/board_health/disk.rs`).
 
@@ -349,20 +349,27 @@ cancelled, one of them done; no agent bound to it beat or made a tool call withi
 nothing touched its git files in that hour; its HEAD is merged work, an ancestor of main that came
 in by a merge or was committed in that worktree; and no process works inside it. A branch with no
 commits ahead of main is not merged work, so a fresh worktree keeps its build. A task in progress,
-in review, blocked or ready keeps it. The sweep decides again on a new read right before it
-removes, and `just tasks sweep --dry-run` says `would clear build output PATH (why)`. Code:
-`crates/tasks/src/sweep/build_output.rs`.
+in review, blocked or ready keeps it. Right before it removes, the sweep reads the worktree
+listing and the board again and decides again, and asks again whether a process works inside;
+then it takes each Cargo build lock in the folder without waiting (a build holding one keeps the
+folder), renames the folder aside under them and removes it. A folder reached through a link
+(`symphony` or `.target` linking elsewhere) is never touched. `just tasks sweep --dry-run` says
+`would clear build output PATH (why)`. Code: `crates/tasks/src/sweep/build_output.rs`.
 
 **A linked worktree's first build starts from the main checkout's.** `tools/cargo.sh`, which
 every build here goes through, makes a worktree's missing build folder as a copy-on-write clone
 of the main checkout's `.target/debug` (`tools/seed-target.sh`: clonefile on APFS, a reflink on
 Linux; nothing on a volume that cannot clone), taken under Cargo's own lock on that folder and
 without the workspace's own packages, so the worktree compiles those from its own sources and
-reuses every dependency. A clone takes disk only as a build replaces what it holds: measured,
-0.9 GB a worktree where a build from nothing holds 2.0 GB, and a first test build of the board
-in 2.7 minutes where it took 8.3. `du` counts each clone in full; `df` says what the disk holds.
+reuses every dependency. While the clone holds that lock, a build in the main checkout and every
+board command (each builds the main checkout's launcher) waits: on macOS for one clonefile call
+of the whole folder (`tools/seed-clone.rs`, compiled by rustc on the spot), else for `cp -c`
+cloning each file. A clone takes disk only as a build replaces what it holds; `du` counts each
+clone in full, `df` says what the disk holds. It is staged as `.target.seed.PID`, which a signal
+removes with the clone and a later seed or sweep removes once its process is gone.
 `SF_SEED_TARGET=off` turns it off. Worktrees never share one build folder: Cargo names the same
-package of two worktrees the same, so each would run the other's build of it.
+package of two worktrees the same, so each would run the other's build of it. What it costs and
+saves, measured: [the analysis](analysis/worktree-build-folders.md).
 
 **Health** is derived from when the session was last seen. Every command
 counts as a sign of life, and so does every tool call of a subagent (below):

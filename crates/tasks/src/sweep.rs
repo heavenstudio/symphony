@@ -32,7 +32,8 @@
 //! * no process has its working directory inside it (`lsof`; when that cannot be read or lists
 //!   nothing, nothing is removed);
 //! * nothing in it is left behind: no tracked change, no untracked file, and no ignored file beyond
-//!   caches and root verify logs. Regenerable `.target/`, `symphony/.target/`, `symphony/build/`
+//!   caches and root verify logs. Regenerable `.target/`, `symphony/.target/` (and beside each a
+//!   seed's staging, `.target.seed.PID`, or a clear's, `.target.clear.PID`), `symphony/build/`
 //!   and `.codex/hooks*` go with it; artifacts under a handle still keep it.
 //!
 //! Right before removing, it refreshes board sessions and launches, the worktree listing and lock,
@@ -153,8 +154,8 @@ type Pause = Box<dyn Fn(&str, &str)>;
 /// path; "checked", after status; "unlock", before claiming a dead lock; "lock-claimed", after
 /// its atomic rename; "unlocked", after releasing it and before the final guard) or branch deletion
 /// ("delete", the branch), and before a build folder is cleared ("judged", the worktree, before
-/// the rule is read again; "clear", the folder): what happens there is what the re-checks guard
-/// against.
+/// the rule is read again; "clear", the folder, before its locks are taken; "locked", the folder,
+/// under them): what happens there is what the re-checks guard against.
 pub struct Options {
     pub dry_run: bool,
     /// The window of recent activity, in hours.
@@ -199,6 +200,9 @@ pub struct Sweep {
     pub spared: Vec<(PathBuf, String)>,
     /// The build folders of finished work, removed from worktrees that stay ([`build_output`]).
     pub cleared: Vec<(PathBuf, String)>,
+    /// Why that pass removed nothing, when the board could not be read for it; the rest of the
+    /// sweep went on.
+    pub uncleared: Option<String>,
     pub branches: Vec<String>,
     pub total: usize,
     pub dry_run: bool,
@@ -287,6 +291,9 @@ impl Sweep {
                 self.cleared.len(),
                 if self.cleared.len() == 1 { "" } else { "s" }
             );
+        }
+        if let Some(why) = &self.uncleared {
+            said += &format!("; cleared no build output: {why}");
         }
         said
     }
@@ -580,8 +587,12 @@ pub fn sweep(root: &Path, here: &Path, store: &Store, o: &Options) -> Result<Swe
         result.removed.push((listed.clone(), why));
         gone.insert(path.clone());
     }
-    result.cleared =
-        build_output::clear(root, &here, &main, store, o, &gone, &mut working, &trees)?;
+    // A board that cannot be read for it costs that pass alone, never the removals said above, the
+    // prune or the branches.
+    match build_output::clear(root, &here, &main, store, o, &gone, &mut working, &trees) {
+        Ok(cleared) => result.cleared = cleared,
+        Err(why) => result.uncleared = Some(why),
+    }
     if !o.dry_run && o.only.is_none() {
         let _ = git::git(root, &["worktree", "prune"]);
     }
@@ -886,6 +897,20 @@ mod tests {
         assert_eq!(
             done.summary(),
             "worktree sweep: would remove 0 of 3 worktrees, would delete 1 merged worktree-agent-* branch; kept 1 merged for files that did not land; kept 1 in use"
+        );
+    }
+
+    #[test]
+    fn the_summary_says_why_no_build_output_was_cleared() {
+        let done = Sweep {
+            total: 2,
+            removed: vec![(PathBuf::from("/wt/a"), "merged".into())],
+            uncleared: Some("the board did not answer".into()),
+            ..Sweep::default()
+        };
+        assert_eq!(
+            done.summary(),
+            "worktree sweep: removed 1 of 2 worktrees, deleted 0 merged worktree-agent-* branches; cleared no build output: the board did not answer"
         );
     }
 

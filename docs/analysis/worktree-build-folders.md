@@ -15,12 +15,20 @@ Each worktree keeps a build folder of its own, and:
   of the main checkout's `.target/debug` (`tools/seed-target.sh`: `clonefile` on APFS, a reflink on
   Linux, nothing on a volume that cannot clone). The clone is taken under Cargo's own lock on that
   folder, waiting at most two minutes for a build there to end, and leaves out the workspace's own
-  packages, so the worktree compiles those from its own sources and reuses every dependency.
+  packages, so the worktree compiles those from its own sources and reuses every dependency. On
+  macOS the clone is one `clonefile` call of the whole folder (`tools/seed-clone.rs`, compiled by
+  rustc before the lock is taken), else `cp -c`. It is staged beside the build folder as
+  `.target.seed.PID`, which git ignores; a signal ends the clone and removes it, and a later seed
+  or sweep removes one whose process is gone.
 - **The board's sweep clears the build output of finished work.** A worktree the sweep keeps loses
   `.target/` and `symphony/.target/` once every task tied to it is done or cancelled, one of them
   done, its HEAD is merged work, and no agent beat there or touched its git files within the hour
   (`crates/tasks/src/sweep/build_output.rs`). A branch with no commits ahead of main is not merged
-  work, and a task in progress, in review, blocked or ready keeps it.
+  work, and a task in progress, in review, blocked or ready keeps it. Right before it clears, it
+  reads the worktree listing and the board again and asks again whether a process works inside;
+  then, holding each Cargo build lock in the folder (taken without waiting: a build holding one
+  keeps the folder), it renames the folder aside and removes it. It never follows a link: a folder
+  whose path below the worktree passes through one, or whose real path leaves the worktree, stays.
 - **The board warns when the disk runs low**: under `SF_LOW_DISK_GB` gigabytes free (20), in
   `just tasks status` and on every page of the project.
 
@@ -40,7 +48,8 @@ when the folder was deleted, the only figure the machine's other writers cannot 
 | `du` per worktree | 2.91 GB | 6.35 GB | |
 | private bytes per worktree | 2.02 GB | 0.88 GB, the same in all five | |
 | freed when deleted | 2.44 GB | 1.26 to 1.35 GB | |
-| making the folder | | 17 s alone, 56 s on a first try under load | |
+| making the folder (by `cp -c`) | | 17 s alone, 56 s on a first try under load | |
+| main's lock held for the clone | | 6.76 s by `cp -c`, 0.62 s by one `clonefile` call (load 100) | |
 
 **Five seeded worktrees**, two built at once and then three at once: 0.88 GB private each,
 4.4 GB together, against 2.02 GB each, 10.1 GB, built from nothing (inferred from the two
@@ -50,6 +59,11 @@ private to neither.
 
 **This worktree**, the one the change was made in, seeded and then building the board's lib and
 test targets and the server's lib tests: `du` 6.20 GB, 1.16 GB private.
+
+**The clone's hold** on main's lock was measured on main's own `.target/debug` (12,160 files:
+5,946 in `deps/`, 6,004 in `.fingerprint/`, 1,027 in `build/`) cloned into a scratch folder:
+`cp -c -R -p`, which clones file by file, took 6.76 s, and one `clonefile` call of the folder
+0.62 s. Compiling the helper takes about a second, before the lock is taken.
 
 **Before**: 15 build folders under `.claude/worktrees/` and `../symphony-wt/` held 118 GB by `du`,
 7.9 GB on average, of which the dependencies were 3.6 to 6.3 GB each.
@@ -109,6 +123,20 @@ landing that changes `Cargo.lock` would keep that small; that is not built.
   dependency, as a lock bump does; until the sweep clears the worktree.
 - A seed waits while main's build holds its lock, at most two minutes (`SF_SEED_WAIT`), and then
   the worktree builds from nothing.
+- The seed holds main's build lock (`.target/debug/.cargo-lock`, exclusive) for its clone, and
+  everything that builds in the main checkout waits on it: main's own builds, and every board
+  command from every worktree, since `just tasks` builds the main checkout's launcher there first
+  (`tools/rs-bin.sh`, under that lock). Seeds started together queue on it, one clone after
+  another. By `cp -c` a clone held it 7 s at load 100, and a whole seed, mostly that clone, took
+  up to 56 s under heavier load: at 56 s a hold, a third seed started at the same moment waits
+  112 of its 120 s, and the fourth onward builds from nothing. By one `clonefile` call the hold is under a second, so the queue is a few seconds
+  however many start. The workspace's own units are removed from the staged clone after the lock
+  is released. Where rustc cannot compile the helper, or the call fails, the seed holds the lock
+  for `cp -c` as before.
+- A seed killed outright (`kill -9`), which no trap sees, leaves its staging, git-ignored, until
+  the next seed in that worktree or the sweep of its finished work removes it.
+- The sweep's clear skips a folder while a Cargo holds a lock in it, so a worktree building again
+  keeps its build until the next sweep after that build ends.
 - Only builds through `tools/cargo.sh` seed (every `just` recipe and the launcher); a bare `cargo`
   in a new worktree builds from nothing.
 - A worktree tied to no task (a `just verify` checkout under `../symphony-wt/`) is not cleared by
@@ -118,9 +146,13 @@ landing that changes `Cargo.lock` would keep that small; that is not built.
 
 Verified by measurement: the times, the private bytes and the freed bytes in the table; the
 shared folder's wrong build (its test binary ran the other worktree's edit); the five seeded
-worktrees' private bytes; sccache's hits, none of 561 Rust compiles across three build folders. Verified by tests: the seed (`crates/tasks/tests/launcher/seed.rs`), the
-sweep's rule (`crates/tasks/tests/sweep/build_output.rs`) and the warning
+worktrees' private bytes; sccache's hits, none of 561 Rust compiles across three build folders;
+the clone's hold by `cp -c` and by `clonefile`. Verified by tests: the seed, its clone by
+`clonefile` and by `cp -c`, a seed ended by TERM, INT or HUP leaving nothing, and a stale staging
+removed (`crates/tasks/tests/launcher/seed.rs`); the sweep's rule, its re-reads of the board and
+of the processes right before the clear, a build's lock keeping its folder, a link never followed
+and a stale staging cleared (`crates/tasks/tests/sweep/build_output.rs`); and the warning
 (`crates/tasks/src/board_health/disk.rs`, `crates/tasks/src/cli/status.rs`,
 `apps/symphony-server/src/live/health_tests.rs`). Inferred: five worktrees built from nothing
-(from two), and that a seeded worktree's own bytes grow toward a fresh one's as main rebuilds what
-it cloned.
+(from two), that a seeded worktree's own bytes grow toward a fresh one's as main rebuilds what
+it cloned, and the seeds' queue on main's lock (from the measured holds).
