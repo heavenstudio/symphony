@@ -11,9 +11,9 @@
         "proof": "Serde runtime wire types; serde_json and the std-only reporting reader are test dependencies. The reporting reader is ../repository-read in this owning Symphony workspace. The crate reads [workspace.lints], a lint table and no input. Standard targets, no custom build or external source paths; both workspace manifests, lockfiles, toolchain/configuration and feature-unification inputs remain audited."
       },
       "crates/symphony-api/src/lib.rs": {
-        "sha256": "861d4a782c2e60813edfa57578a08c2f554daa946d7d6a4313f88988f51dd1a4",
+        "sha256": "28cd301ab3dc8ec76f9794f62edfa12ba79534e92c707b8647d3baef48744add",
         "reads": [],
-        "proof": "Wire data types, serde implementations and value methods. Includes only the agent_probes, agents, blocks, machine_work, media, project and task_queries modules; no filesystem, environment or process reads. Serde receives values from callers and performs no repository I/O. The front's plugins, pin, schema and projects fields are plain serde values. The queue_category helper splits its supplied path string only; it performs no path resolution or I/O. The task offer and its TASK_ACTION_ROUTE constant are a struct and a string literal only. Card::href formats its own fields, and the Change reader visits the supplied serde map, in memory. TaskListing and TaskPage default missing machine evidence to the separately inventoried MachineWork value; agents wire records are in the separately inventoried agents module. The task-domain types and queries re-export the separately inventoried task_queries module."
+        "proof": "Wire data types, serde implementations and value methods. Includes only the agent_probes, agents, blocks, machine_work, media, project, task_queries and task_stage modules; no filesystem, environment or process reads. Serde receives values from callers and performs no repository I/O. The front's plugins, pin, schema and projects fields are plain serde values. The queue_category helper splits its supplied path string only; it performs no path resolution or I/O. The task offer and its TASK_ACTION_ROUTE constant are a struct and a string literal only. Card::href formats its own fields, and the Change reader visits the supplied serde map, in memory. TaskPage defaults missing machine evidence to the separately inventoried MachineWork value; agents wire records are in the separately inventoried agents module. TaskListing moved to the separately inventoried task_stage module and is re-exported with TaskStage; the task-domain types and queries re-export the separately inventoried task_queries module."
       },
       "crates/symphony-api/src/agents.rs": {
         "sha256": "40c5f1e837419d634a516361ba07c42470274d88d14b7d9ffac28875aaea8886",
@@ -73,6 +73,16 @@
         "sha256": "a29b519ee6b68466e77db9fc8b71a318bfa5cbd9437e640ee78e7aa7d74e6082",
         "reads": [],
         "proof": "Tests create and remove uniquely owned temporary folders, payloads, links and derived audit reports. Subject reads always use the inventoried fixture helper and unchanged Reader; raw filesystem reads inspect only these derived reports. The isolated current native test executable is a derived build output; its private mode/default variables and audit root/report are set only on each owned child Command. Active, missing-root, relative-root and inactive-report cases use synthetic scratch roots, never repository inputs or process-global environment mutation. No external executable, source lookup, provider or parent-project fixture is used."
+      },
+      "crates/symphony-api/src/task_stage.rs": {
+        "sha256": "7c760642f207c19ac3f29d059df99853ebc4c56a47acc25a5bb319f62f930a3c",
+        "reads": [],
+        "proof": "TaskListing is a serde wire record with caller-supplied task/machine values, counters and cursors; serde defaults construct empty values only. TaskStage contains borrowed lifecycle text and fixed Build/Test variants; PIPELINE and as_str use string literals. MachineWork::task_stage and conflicts inspect only the caller's connection flag, task lifecycle/slug, machine freshness, operation identity/kind/state and value equality. Ranking and conflict checks neither read clocks nor resolve checkout strings; no filesystem, environment, process reads or includes. The cfg(test) tests module is inventoried separately."
+      },
+      "crates/symphony-api/src/task_stage/tests.rs": {
+        "sha256": "664ee0c69622fba90764d2a691c0732fa0920ad29e7da6e334840d7064ebd238",
+        "reads": [],
+        "proof": "Fixtures are literal serde_json values decoded into caller-owned Task, WorkOperation and MachineWork records. Tests mutate and compare these in-memory values, reverse operation vectors and call the separately inventoried pure task-stage/status methods. No fixture files, clocks, environment, process state, source includes or other I/O are read."
       }
     }
   },

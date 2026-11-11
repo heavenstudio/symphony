@@ -4,6 +4,35 @@ use super::*;
 use serde_json::json;
 
 #[test]
+fn board_context_keeps_uncertainty_compact_and_routes_inventory_to_agents() {
+    for connected in [true, false] {
+        let html = dioxus_ssr::render_element(board_context(&MachineWork::default(), connected));
+        assert!(html.contains("<details"), "{html}");
+        assert!(html.contains("capacity unknown"), "{html}");
+        assert!(html.contains("/agents#machine-context"), "{html}");
+        assert!(!html.contains("machine-work card"), "{html}");
+        assert_eq!(html.contains("Disconnected"), !connected, "{html}");
+    }
+    let mut partial = machine(
+        "alpha",
+        vec![operation("alpha", "build", "build", "running")],
+    );
+    partial.freshness = WorkFreshness::Incomplete;
+    let work = MachineWork {
+        freshness: WorkFreshness::Incomplete,
+        machines: vec![partial],
+        unassigned: vec![operation("", "legacy", "test", "queued")],
+        ..MachineWork::default()
+    };
+    let html = dioxus_ssr::render_element(board_context(&work, true));
+    assert!(
+        html.contains("Observation status · partial inventory"),
+        "{html}"
+    );
+    assert!(!html.contains("Builds: 0 running"), "{html}");
+}
+
+#[test]
 fn advisory_targets_are_machine_specific_and_never_turn_unknown_observations_into_free_capacity() {
     let mut work = MachineWork {
         machines: vec![machine(

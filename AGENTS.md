@@ -69,8 +69,9 @@ retired implicit bundles cannot replace it. A foreground preview override remain
 `just client-check` rebuilds into a separate directory and compares every freshly
 built path and byte with that committed distribution. Retained older hashes are
 allowed for open pages. `just verify` runs lint, that real client check and the
-workspace's native/headless browser tests. CI requires a working Chrome executable;
-the consuming project's game, display and gate binaries are not CI prerequisites.
+workspace's native/headless browser tests locally. Local acceptance requires a working
+Chrome executable; the consuming project's game, display and gate binaries are not prerequisites.
+This repository has no hosted GitHub CI requirement.
 
 Native board fixtures use the fixture source-root function to find
 `tools/surreal.sh`, or the explicit `SF_SURREAL` executable. Resolution and

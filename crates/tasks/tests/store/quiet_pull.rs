@@ -17,14 +17,17 @@ fn the_first_pull_is_delivered_once_even_when_its_lists_are_empty() {
         } else {
             EMPTY_PULL
         };
-        assert_eq!(o.text(), expected);
+        assert_eq!(o.text(), with_volume(&orch, 0, expected));
         assert_eq!(callback_state(&f, &orch)["delivery_version"], 1);
         assert_eq!(
             callback_state(&f, &orch)["pull_entries"],
             if existing_gap {
-                json!([["ready_unstaffed", "quiet-test/initial-ready"]])
+                json!([
+                    ["low_volume", orch],
+                    ["ready_unstaffed", "quiet-test/initial-ready"]
+                ])
             } else {
-                json!([])
+                json!([["low_volume", orch]])
             }
         );
         for age in [0.0, 601.0, 86_400.0] {

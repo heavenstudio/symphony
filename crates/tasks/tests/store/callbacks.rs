@@ -821,7 +821,10 @@ fn finished_history_is_not_retained_and_new_ready_work_still_arrives() {
     use super::common::{Seed, session};
     let mut orch = session("orchestrator");
     orch.kind = "orchestrator".into();
+    // Keep health and the canonical count stable while the periodic check falls due.
+    orch.busy_until = Some(super::common::NOW + 1200.0);
     let mut seed = Seed::default()
+        .session("sender")
         .session_row(orch)
         .task("tools/root", "in_progress")
         .role("tools/root", "orchestrator", "orchestrator");
@@ -841,6 +844,13 @@ fn finished_history_is_not_retained_and_new_ready_work_still_arrives() {
             false,
         )
         .unwrap();
+    let pull = "PULL executing=0 ready_unstaffed=0 in_progress_orphaned=1 review_unreviewed=0 landed_open=0 idle=0\nin_progress_orphaned p2 tools/root — Task tools/root";
+    assert_eq!(
+        listener.text(),
+        super::quiet_callbacks::with_volume("orchestrator", 1, pull)
+    );
+    assert_eq!(f.health("orchestrator"), symphony_board::Health::Live);
+    assert_eq!(f.store.slot_holdings().unwrap()["orchestrator"].len(), 1);
     let saved = state(&f, "orchestrator");
     assert_eq!(saved["statuses"], json!({"tools/root":"in_progress"}));
     assert_eq!(
@@ -854,6 +864,8 @@ fn finished_history_is_not_retained_and_new_ready_work_still_arrives() {
         "finished history must not grow the row"
     );
     f.advance(601.0);
+    assert_eq!(f.health("orchestrator"), symphony_board::Health::Live);
+    assert_eq!(f.store.slot_holdings().unwrap()["orchestrator"].len(), 1);
     f.store.dispatch_callbacks().unwrap();
     assert_eq!(
         state(&f, "orchestrator"),
@@ -871,6 +883,7 @@ fn finished_history_is_not_retained_and_new_ready_work_still_arrives() {
         json!(f.now()),
         "the small scheduling checkpoint must still advance"
     );
+    assert!(listener.drain(&f, "sender", "orchestrator").is_empty());
     f.store
         .client()
         .query(

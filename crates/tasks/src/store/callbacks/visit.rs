@@ -10,10 +10,11 @@ fn sampled<'a, T: Clone + 'a>(probe: Probe<'a, T>) -> Probe<'a, T> {
 }
 
 /// A pass's visit to one recipient: what the pass does there, and one machine observation shared by
-/// planning and the leased read. Only machine inputs are retained: the agents view is rebuilt
-/// against the refreshed board.
+/// planning and the leased read. The canonical holdings are shared across recipients too;
+/// the agents view is rebuilt against the refreshed board.
 pub(in crate::store) struct Visit<'env> {
     pub(in crate::store) pass: Pass,
+    pub(in crate::store) holdings: Option<&'env crate::cli::pull::Holdings>,
     env: &'env crate::cli::Env,
     /// The dispatching store, which keeps the machine's process listing across visits and passes.
     store: &'env Store,
@@ -25,11 +26,13 @@ impl<'env> Visit<'env> {
         pass: Pass,
         env: &'env crate::cli::Env,
         store: &'env Store,
+        holdings: Option<&'env crate::cli::pull::Holdings>,
     ) -> Self {
         Visit {
             pass,
             env,
             store,
+            holdings,
             sample: std::cell::OnceCell::new(),
         }
     }

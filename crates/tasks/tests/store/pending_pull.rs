@@ -40,7 +40,9 @@ fn digest_now(outage: &Outage) -> String {
     let board = fixture.store.board().unwrap();
     let digest = symphony_board::cli::pull::digest(&fixture.store, &[], None, fixture.now(), &[]);
     let digest = digest.unwrap().only_for(&board, former);
-    let lines = (digest.event_lines().into_iter())
+    // The initial callback already acknowledged this condition before this outage.
+    let seen = std::collections::BTreeSet::from([("low_volume".into(), former.clone())]);
+    let lines = (digest.event_lines_since(&seen).into_iter())
         .map(|line| line.split_whitespace().collect::<Vec<_>>().join(" "));
     lines.collect::<Vec<_>>().join("\n")
 }

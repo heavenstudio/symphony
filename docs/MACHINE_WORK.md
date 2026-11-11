@@ -12,6 +12,12 @@ always partial: even an empty one has **unknown occupancy**, never free capacity
 An expired phase is labelled stale. A broken browser feed marks retained evidence
 disconnected. Producer phase timestamps are display information, never freshness.
 
+The task pipeline places in-progress work in **Build** or **Test** when connected,
+current evidence identifies its queued or running operation. Positive evidence in a
+partial inventory can place a task while occupancy stays unknown. Running work wins
+over queued work, then Test over Build. Expired, conflicting or disconnected evidence
+keeps the task in its lifecycle column with the last observed phase chip.
+
 Open **Advisory targets** to find a machine's installation ID. Configure optional
 targets in the project's `symphony.toml`, using that ID as the table key:
 

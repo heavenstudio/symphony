@@ -12,6 +12,8 @@ use symphony_board::health::{LIVE_SECONDS, RESERVE_SECONDS, STALE_SECONDS};
 use symphony_board::sys::local_minute;
 use symphony_board::{NewTask, Task};
 
+#[path = "pull_low_volume.rs"]
+mod low_volume;
 #[path = "pull_unanswered.rs"]
 mod unanswered;
 

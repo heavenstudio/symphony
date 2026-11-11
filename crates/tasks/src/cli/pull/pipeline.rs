@@ -8,6 +8,11 @@ use crate::{Error, Store, Task};
 use std::cell::RefCell;
 use std::collections::HashMap;
 
+pub(crate) struct Observation<'a> {
+    pub(crate) board: &'a crate::Board,
+    pub(crate) holdings: &'a super::Holdings,
+}
+
 /// The existing digest entry without repository observations; tip-aware callers opt in explicitly.
 pub fn digest(
     store: &Store,

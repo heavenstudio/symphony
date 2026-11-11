@@ -39,6 +39,24 @@ pub struct Seen {
 /// Whom a look's lines go to. A dispatch says a line to a recipient only where its look hears the
 /// line's subject, and judges a line queued for it by the same test again at delivery.
 impl Seen {
+    /// Older staffing records have no canonical count; they need a fresh observation once.
+    pub(crate) fn open_slots(&self) -> Option<usize> {
+        serde_json::from_str::<(String, usize)>(&self.staffing)
+            .ok()
+            .map(|(_, count)| count)
+    }
+
+    /// Use the same successful canonical observation as this pass's PULL account.
+    pub(crate) fn with_holdings(
+        mut self,
+        holdings: &crate::cli::pull::Holdings,
+        handle: &str,
+    ) -> Self {
+        let count = holdings.get(handle).map_or(0, BTreeSet::len);
+        self.staffing =
+            serde_json::to_string(&(self.staffing, count)).expect("strings and counts serialize");
+        self
+    }
     /// Whether a STATUS move of `slug` to `status` is said: a task it follows, but one nobody
     /// orchestrates only as it blocks.
     pub fn hears_move(&self, slug: &str, status: &str) -> bool {
@@ -56,9 +74,14 @@ impl Seen {
     }
 }
 
-/// The session's view of the board, in one read however many tasks it orchestrates.
+/// One board view, plus a canonical holdings observation for an orchestrator.
 pub fn observe(store: &Store, handle: &str, kind: &str) -> Result<Seen, Error> {
-    Ok(seen(&store.board()?, handle, kind))
+    let observed = seen(&store.board()?, handle, kind);
+    Ok(if kind == "orchestrator" {
+        observed.with_holdings(&store.slot_holdings()?, handle)
+    } else {
+        observed
+    })
 }
 
 /// What the session hears of the board.

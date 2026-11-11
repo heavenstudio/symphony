@@ -3,6 +3,66 @@
 use super::*;
 
 #[test]
+fn held_count_changes_warn_before_the_periodic_pull_and_failed_reads_report_unknown() {
+    let m = Monitor::new("held-volume");
+    let orch = m.register("orchestrator");
+    let worker = m.register("worker");
+    for n in 0..4 {
+        let slug = format!("sim/held-{n}");
+        m.ok(&orch, &["create", &slug, "Held"]);
+        m.ok(&orch, &["role", &slug, "orchestrator"]);
+        m.ok(&worker, &["claim", &slug]);
+        let store = m.board();
+        store.move_to(&slug, "review", &worker).unwrap();
+        store.hold_blocked(&slug, &worker).unwrap();
+    }
+    m.watch(&orch, Watch::polls(4), &|m, n| match n {
+        0 => { m.board().client().query("UPDATE type::record('counter', ['hold', 'sim/held-3']) SET ts += 1 RETURN NONE;", json!({})).unwrap(); }
+        1 => { m.board().client().query("CREATE type::record('counter', ['slots', 7]) SET last = 0 RETURN NONE;", json!({})).unwrap(); }
+        2 => { m.board().client().query("DELETE type::record('counter', ['slots', 7]) RETURN NONE;", json!({})).unwrap(); }
+        _ => {}
+    });
+    assert_eq!(
+        m.starting(&["  low_volume "]),
+        [format!(
+            "  low_volume {orch} open=3 threshold=4 cap=none — pick disjoint ready work or resolve owned blockers using actual resources and ownership"
+        )]
+    );
+    assert_eq!(m.starting(&["WATCH scan failed:"]).len(), 1);
+    assert_eq!(
+        m.pulls().len(),
+        1,
+        "no initial warning at four, no false zero on error, no duplicate after recovery: {:?}",
+        m.lines()
+    );
+}
+
+#[test]
+fn a_volume_only_crossing_is_said_once_before_the_periodic_pull() {
+    let m = Monitor::new("volume-crossing");
+    let orch = m.register("orchestrator");
+    let worker = m.register("worker");
+    for n in 0..4 {
+        let slug = format!("sim/work-{n}");
+        m.ok(&orch, &["create", &slug, "Work"]);
+        m.ok(&orch, &["role", &slug, "orchestrator"]);
+        m.ok(&worker, &["claim", &slug]);
+    }
+    m.watch(&orch, Watch::polls(4), &|m, n| {
+        if n == 0 {
+            m.ok(&worker, &["move", "sim/work-3", "cancelled"]);
+        }
+    });
+    let low = m.starting(&["  low_volume "]);
+    assert_eq!(
+        low,
+        [format!(
+            "  low_volume {orch} open=3 threshold=4 cap=none — pick disjoint ready work or resolve owned blockers using actual resources and ownership"
+        )]
+    );
+}
+
+#[test]
 fn an_orchestrator_gets_a_digest_when_it_attaches() {
     let m = Monitor::new("digest");
     let orch = m.register("orchestrator");
@@ -172,7 +232,18 @@ fn an_unlaunched_child_verifying_in_a_trial_merge_is_neither_lost_nor_orphaning_
     m.watch(&orch, w, &idle);
     assert!(m.now.get() - began > LIVE_SECONDS + STALE_SECONDS + 30.0);
     let pulls = m.pulls();
-    assert!(pulls.is_empty(), "{:?}", m.lines());
+    assert_eq!(
+        pulls,
+        [
+            "PULL executing=1 ready_unstaffed=0 in_progress_orphaned=0 review_unreviewed=0 landed_open=0 idle=0"
+        ]
+    );
+    assert_eq!(
+        m.starting(&["  low_volume "]),
+        [format!(
+            "  low_volume {orch} open=1 threshold=4 cap=none — pick disjoint ready work or resolve owned blockers using actual resources and ownership"
+        )]
+    );
     assert_eq!(
         m.starting(&["LOST ", "STALE "]),
         Vec::<String>::new(),

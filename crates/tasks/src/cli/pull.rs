@@ -39,16 +39,16 @@
 //! executes as orphaned ([`REWORK_NOTE`]).
 
 mod pipeline;
-pub use pipeline::digest;
 
 use crate::alarm::{Alarm, Thresholds, Tips};
 use crate::health::EXECUTING;
 use crate::orchestration::{Owners, claimable_work};
 use crate::red::UNSTAFFED_SECONDS;
-use crate::slots::Ledger;
 use crate::store::unanswered::Pending;
 use crate::sys::local_minute;
 use crate::{Board, Error, Session, Store, Task};
+pub(crate) use pipeline::Observation;
+pub use pipeline::digest;
 use pipeline::{Fixes, Judged, review_alarm, waiting};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
@@ -61,6 +61,10 @@ pub const ALARM_SHOWN: usize = 5;
 /// The note on a task in review whose tip a reviewer asked changes of, counted as in progress
 /// ([`crate::alarm::CHANGES`]), when nobody executes it.
 pub const REWORK_NOTE: &str = "in review; changes asked of its tip";
+/// An orchestrator below this many open slots should look for disjoint work or owned blockers.
+const LOW_VOLUME: usize = 4;
+/// One successful canonical observation, retained across scheduling and recipient scoping.
+pub(crate) type Holdings = BTreeMap<String, BTreeSet<String>>;
 /// The categories, in the order they are listed; `idle` holds handles, the others tasks.
 pub const CATEGORIES: [&str; 8] = [
     "red_unstaffed",
@@ -95,6 +99,9 @@ pub struct Digest {
     pub slots: Option<usize>,
     /// The pipeline alarm, while it stands: the whole board's, whoever the digest is for.
     pub alarm: Option<ReviewAlarm>,
+    /// Canonical counts for active orchestrators; only the recipient remains after scoping.
+    volume: BTreeMap<String, usize>,
+    scoped: bool,
 }
 
 /// The pipeline alarm as the digest says it ([`crate::alarm`]).
@@ -157,7 +164,7 @@ impl Digest {
     /// Actionable identities, independent of clocks, counts or titles.
     pub fn entries(&self) -> BTreeSet<(String, String)> {
         let alarm = (self.alarm.iter()).map(|_| (ALARM.to_string(), "review".to_string()));
-        CATEGORIES
+        let mut entries: BTreeSet<_> = CATEGORIES
             .iter()
             .flat_map(|name| {
                 let entries: Vec<String> = if *name == "idle" {
@@ -172,7 +179,13 @@ impl Digest {
                     .map(move |entry| (name.to_string(), entry))
             })
             .chain(alarm)
-            .collect()
+            .collect();
+        for (handle, count) in &self.volume {
+            if *count < LOW_VOLUME {
+                entries.insert(("low_volume".into(), handle.clone()));
+            }
+        }
+        entries
     }
     /// Stable event content, independent of when the board was observed.
     pub fn event_lines(&self) -> Vec<String> {
@@ -184,6 +197,13 @@ impl Digest {
         let mut lines = self.lines();
         lines[0] = format!("PULL {}", lines[0].splitn(3, ' ').nth(2).unwrap_or(""));
         lines.retain(|line| !line.starts_with("  unanswered "));
+        if self
+            .volume
+            .keys()
+            .any(|handle| seen.contains(&("low_volume".into(), handle.clone())))
+        {
+            lines.retain(|line| !line.starts_with("  low_volume "));
+        }
         lines.extend(self.unanswered_lines(seen));
         lines
     }
@@ -250,9 +270,13 @@ impl Digest {
         let heard = |held: &Vec<&Task>| held.iter().any(|t| owners.reaches(&t.slug, handle));
         self.liveness_unknown
             .retain(|quiet| work.get(quiet.as_str()).is_some_and(heard));
+        // The condition and global entries were captured together. The caller's ownership
+        // snapshot may be older; it scopes ordinary rows but must not replace this observation.
         if self.cap.is_some() {
-            self.slots = Some(Ledger::of_board(board).held(handle).len());
+            self.slots = self.volume.get(handle).copied();
         }
+        self.volume.retain(|recipient, _| recipient == handle);
+        self.scoped = true;
         self
     }
 
@@ -297,6 +321,16 @@ impl Digest {
         }
         if !self.liveness_unknown.is_empty() {
             out.push(format!("  liveness unknown: native presence sweep overdue or failed; work remains held: {}", self.liveness_unknown.join(", ")));
+        }
+        for (handle, count) in self
+            .volume
+            .iter()
+            .filter(|(_, count)| self.scoped && **count < LOW_VOLUME)
+        {
+            let cap = self
+                .cap
+                .map_or_else(|| "none".into(), |cap| cap.to_string());
+            out.push(format!("  low_volume {handle} open={count} threshold={LOW_VOLUME} cap={cap} — pick disjoint ready work or resolve owned blockers using actual resources and ownership"));
         }
         for name in CATEGORIES {
             let listed: Vec<String> = if name == "idle" {
@@ -344,13 +378,44 @@ pub fn digest_with_tips(
     now: f64,
     verifying: &[String],
 ) -> Result<Digest, Error> {
+    let board = store.board()?;
+    let holdings = store.slot_holdings()?;
+    let observed = Observation {
+        board: &board,
+        holdings: &holdings,
+    };
+    digest_on(store, observed, idle, landed, tips, now, verifying)
+}
+
+/// Build against the pass's retained board and single successful holdings observation.
+pub(crate) fn digest_on(
+    store: &Store,
+    observed: Observation<'_>,
+    idle: &[String],
+    landed: Option<&dyn Fn(&Task) -> bool>,
+    tips: Option<Tips<'_>>,
+    now: f64,
+    verifying: &[String],
+) -> Result<Digest, Error> {
+    let Observation { board, holdings } = observed;
     let busy: HashSet<&str> = verifying.iter().map(String::as_str).collect();
     let posted = store.landings_posted()?;
-    let tasks = store.tasks(None)?;
+    let tasks = &board.tasks;
     // What ended each record of changes, read once for the work's classification now and the alarm.
     let fixes = Fixes::new(store, tips, now);
-    let waits = waiting(&tasks, &fixes, now);
+    let waits = waiting(tasks, &fixes, now);
     let reworking = |t: &Task| waits.get(t.slug.as_str()).is_some_and(Judged::reworking);
+    let volume = board
+        .sessions
+        .iter()
+        .filter(|session| session.row.kind == "orchestrator" && session.row.left_at.is_none())
+        .map(|session| {
+            (
+                session.row.handle.clone(),
+                holdings.get(&session.row.handle).map_or(0, BTreeSet::len),
+            )
+        })
+        .collect();
     let liveness_unknown = tasks
         .iter()
         .flat_map(|t| {
@@ -365,7 +430,7 @@ pub fn digest_with_tips(
         .collect();
     let by_slug: HashMap<&str, &Task> = tasks.iter().map(|t| (t.slug.as_str(), t)).collect();
     let mut kids: HashMap<&str, Vec<&Task>> = HashMap::new();
-    for t in &tasks {
+    for t in tasks {
         if let Some(parent) = t.parent.as_deref().filter(|p| by_slug.contains_key(p)) {
             kids.entry(parent).or_default().push(t);
         }
@@ -396,16 +461,16 @@ pub fn digest_with_tips(
     let mut notes = BTreeMap::new();
     let mut executing = 0;
     let unanswered: Vec<_> = store
-        .pending_posts(&tasks)?
+        .pending_posts(tasks)?
         .into_iter()
         .filter(|p| p.overdue(now) && !busy.contains(p.handle.as_str()))
         .collect();
-    for t in &tasks {
+    for t in tasks {
         if unanswered.iter().any(|p| p.slug == t.slug) {
             found.entry("unanswered").or_default().push(t.clone());
         }
     }
-    for t in &tasks {
+    for t in tasks {
         let cancelled: Vec<&str> = t
             .depends
             .iter()
@@ -512,7 +577,9 @@ pub fn digest_with_tips(
         unanswered,
         cap: store.slots(),
         slots: None,
-        alarm: review_alarm(store, &tasks, &waits, &fixes, &store.alarm(), now)?,
+        alarm: review_alarm(store, tasks, &waits, &fixes, &store.alarm(), now)?,
+        volume,
+        scoped: false,
     })
 }
 
