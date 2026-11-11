@@ -54,6 +54,7 @@ impl MachineWork {
     /// pagination cannot change placement. Current positive evidence in a partial inventory
     /// can place a task, without claiming complete machine occupancy. Expired, conflicting or
     /// disconnected observations remain phase chips in the task's underlying lifecycle stage.
+    /// A task's work is what names it or a task under it ([`WorkOperation::is_for`]).
     pub fn task_stage<'a>(&self, task: &'a Task, connected: bool) -> TaskStage<'a> {
         if !connected || !task.has_status(TaskStatus::InProgress) {
             return TaskStage::Lifecycle(&task.status);
@@ -69,7 +70,7 @@ impl MachineWork {
             }
             for operation in &machine.operations {
                 if operation.machine_id.as_deref() != Some(&machine.machine_id)
-                    || operation.task.as_deref() != Some(&task.slug)
+                    || !operation.is_for(&task.slug)
                     || operation.operation_id.as_deref().is_none_or(str::is_empty)
                     || !matches!(operation.kind, WorkKind::Build | WorkKind::Test)
                     || self.conflicts(operation)

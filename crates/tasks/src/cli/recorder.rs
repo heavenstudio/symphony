@@ -337,7 +337,9 @@ fn ended_unreaped(pid: u32) -> io::Result<()> {
     }
 }
 
-/// The one task `handle` holds on the board `env` reaches, read without starting its server.
+/// The one task `handle` holds on the board `env` reaches, read without starting its server: of
+/// several, the one all the others are under (a feature's executor holds its `/work` instruction
+/// too).
 fn held_task(env: &Env, handle: &str) -> Option<String> {
     let reached = super::reach(env, &env.cwd, false).ok()?;
     let reached = super::Reached {
@@ -345,10 +347,7 @@ fn held_task(env: &Env, handle: &str) -> Option<String> {
         ..reached
     };
     let store = super::open_unchecked(reached, &super::Clock::Machine);
-    match store.claimable(handle).ok()?.as_slice() {
-        [one] => Some(one.clone()),
-        _ => None,
-    }
+    store.held_task(handle).ok()?
 }
 
 /// The commit checked out at the checkout `cwd` is in, read from its `.git` files with no `git`

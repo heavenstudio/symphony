@@ -158,6 +158,14 @@ fn resource_badges_use_explicit_ownership_and_exclude_setup_commands_and_reserva
     assert_eq!(phases(&work, &Scope::Agent("worker-a")).len(), 2);
     assert!(phases(&work, &Scope::Task("sim/other")).is_empty());
     assert!(phases(&work, &Scope::Agent("other-worker")).is_empty());
+    // The card of a task the run's task is under carries its chip too, once the server says so.
+    assert!(phases(&work, &Scope::Task("sim")).is_empty());
+    let mut placed = work.clone();
+    placed.place_under(|slug| (slug == "sim/a").then_some("sim"));
+    let parent = phases(&placed, &Scope::Task("sim"));
+    assert_eq!(parent.len(), 1);
+    assert_eq!(phase_label(&parent[0]), "Build queued · alpha");
+    assert_eq!(phases(&placed, &Scope::Task("sim/a")).len(), 1);
 }
 
 #[test]

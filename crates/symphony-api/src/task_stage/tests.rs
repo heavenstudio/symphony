@@ -161,3 +161,116 @@ fn a_partial_inventorys_running_test_places_work_in_progress_and_never_review() 
         "in_progress"
     );
 }
+
+fn named(slug: &str, status: &str) -> Task {
+    Task {
+        slug: slug.into(),
+        ..task(status)
+    }
+}
+
+/// A run recorded for a subtask is its parents' work too: the board draws the parent's card, so
+/// the parent moves, as the subtask does where it is drawn; the recorder's binding stays the
+/// subtask, and a task beside it or above its parents does not move.
+#[test]
+fn a_subtasks_run_places_every_task_it_is_under_and_no_other() {
+    let parents = |slug: &str| match slug {
+        "feature/slice" => Some("feature"),
+        "feature/slice/work" => Some("feature/slice"),
+        _ => None,
+    };
+    let mut current = work(&[WorkOperation {
+        task: Some("feature/slice/work".into()),
+        ..operation("test", "running", "t")
+    }]);
+    assert_eq!(
+        current
+            .task_stage(&named("feature", "in_progress"), true)
+            .as_str(),
+        "in_progress",
+        "an operation read without the board's tree names only its own task"
+    );
+    current.place_under(parents);
+    let placed = &current.machines[0].operations[0];
+    assert_eq!(placed.task.as_deref(), Some("feature/slice/work"));
+    assert_eq!(placed.under, ["feature/slice", "feature"]);
+    for slug in ["feature", "feature/slice", "feature/slice/work"] {
+        assert_eq!(
+            current.task_stage(&named(slug, "in_progress"), true),
+            TaskStage::Test,
+            "{slug}"
+        );
+    }
+    for slug in ["feature/other", "feature/slice/work/deeper", "other"] {
+        assert_eq!(
+            current
+                .task_stage(&named(slug, "in_progress"), true)
+                .as_str(),
+            "in_progress",
+            "{slug}"
+        );
+    }
+    // A parent in review keeps its card there, the run a chip on it.
+    assert_eq!(
+        current
+            .task_stage(&named("feature", "review"), true)
+            .as_str(),
+        "review"
+    );
+}
+
+/// What an operation read under no task says.
+const UNDER_NOTHING: [&str; 0] = [];
+
+#[test]
+fn placing_under_reads_the_tree_again_and_stops_where_a_chain_would_repeat() {
+    let mut current = work(&[
+        WorkOperation {
+            task: Some("a".into()),
+            ..operation("build", "running", "looped")
+        },
+        WorkOperation {
+            task: None,
+            ..operation("build", "running", "unattributed")
+        },
+    ]);
+    current.unassigned = vec![WorkOperation {
+        task: Some("top".into()),
+        ..operation("test", "queued", "loose")
+    }];
+    current.place_under(|slug| match slug {
+        "a" | "c" => Some("b"),
+        "b" => Some("c"),
+        _ => None,
+    });
+    assert_eq!(current.machines[0].operations[0].under, ["b", "c"]);
+    assert_eq!(current.machines[0].operations[1].under, UNDER_NOTHING);
+    assert_eq!(current.unassigned[0].under, UNDER_NOTHING);
+    // A task moved under another reads its new parents; a task back at the top reads none.
+    current.place_under(|slug| (slug == "a").then_some("other"));
+    assert_eq!(current.machines[0].operations[0].under, ["other"]);
+    current.place_under(|_| None);
+    assert_eq!(current.machines[0].operations[0].under, UNDER_NOTHING);
+    // A task that is its own parent is under nothing.
+    current.place_under(|slug| (slug == "a").then_some("a"));
+    assert_eq!(current.machines[0].operations[0].under, UNDER_NOTHING);
+}
+
+#[test]
+fn the_wire_leaves_out_an_empty_under_and_an_older_record_reads_as_under_nothing() {
+    let older = operation("build", "queued", "b");
+    assert_eq!(older.under, UNDER_NOTHING);
+    let wire = serde_json::to_value(&older).unwrap();
+    assert!(wire.get("under").is_none(), "{wire}");
+    let placed = WorkOperation {
+        under: vec!["parent".into()],
+        ..older
+    };
+    let wire = serde_json::to_value(&placed).unwrap();
+    assert_eq!(wire["under"], json!(["parent"]));
+    assert_eq!(
+        serde_json::from_value::<WorkOperation>(wire).unwrap(),
+        placed
+    );
+    assert!(placed.is_for("feature") && placed.is_for("parent") && !placed.is_for("other"));
+}

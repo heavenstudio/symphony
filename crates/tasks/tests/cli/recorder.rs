@@ -742,6 +742,51 @@ fn a_run_records_the_task_named_else_the_environments_else_the_one_its_session_h
     }
 }
 
+/// An executor staffed by `/work` holds its feature and the instruction under it: its run is the
+/// feature's. A session holding two tasks side by side under one still records none.
+#[test]
+fn a_session_holding_a_task_and_work_under_it_records_that_task() {
+    let case = Case::new();
+    let worker = case.register("worker");
+    let other = case.register("worker");
+    case.ok(&worker, &["create", "tools/feature", "Feature"]);
+    case.ok(&worker, &["create", "tools/apart", "Apart"]);
+    for (slug, parent) in [
+        ("tools/feature/work", "tools/feature"),
+        ("tools/feature/slice", "tools/feature"),
+        ("tools/apart/one", "tools/apart"),
+        ("tools/apart/two", "tools/apart"),
+    ] {
+        case.ok(&worker, &["create", slug, "Under", "--parent", parent]);
+    }
+    for slug in ["tools/feature/work", "tools/feature", "tools/feature/slice"] {
+        case.ok(&worker, &["claim", slug]);
+    }
+    for slug in ["tools/apart/one", "tools/apart/two"] {
+        case.ok(&other, &["claim", slug]);
+    }
+    for (name, session, expected) in [
+        ("recorder-tree", worker.as_str(), Some("tools/feature")),
+        ("recorder-trees-apart", other.as_str(), None),
+    ] {
+        let folders = Folders::new(name);
+        let mut command = tasks(
+            &case,
+            &folders,
+            Some(session),
+            &["run", "--phase", "test", "--", "true"],
+        );
+        let done = output(command.stdin(Stdio::null())).unwrap();
+        assert!(done.status.success(), "{name}: {done:?}");
+        let finished = folders.once(Step::Finished);
+        assert_eq!(
+            (finished.handle.as_deref(), finished.task.as_deref()),
+            (Some(session), expected),
+            "{name}"
+        );
+    }
+}
+
 #[test]
 fn a_board_that_cannot_be_reached_or_a_test_board_with_no_work_folder_still_runs_the_command() {
     let mut case = Case::new();

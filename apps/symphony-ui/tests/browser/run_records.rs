@@ -1,6 +1,7 @@
 //! A test run `tools/cargo.sh` sends through the board's recorder (`tasks run`), read by the real
-//! server from its checkout's work folder: the board's Build and Test columns follow it, and until
-//! anything was recorded they are one rail (docs/MACHINE_WORK.md).
+//! server from its checkout's work folder: the board's Build and Test columns follow it, a slice's
+//! run on its parent's card, and until anything was recorded they are one rail
+//! (docs/MACHINE_WORK.md).
 use super::{
     SHOWN, binaries, chrome, chrome::Chrome, owner_controls::ScratchBoard, restored::Native,
 };
@@ -11,6 +12,11 @@ use std::process::{Child, Command, Stdio};
 const DATABASE: &str = "browser_owner_controls";
 const WORKING: &str = "fixture/recorded-run";
 const REVIEWED: &str = "fixture/reviewed-run";
+/// The `/work` instruction its executor holds beside the task it serves.
+const WORK: &str = "fixture/recorded-run/work";
+/// A task in progress whose slice, held by another session, is what runs.
+const SLICED: &str = "fixture/sliced-run";
+const SLICE: &str = "fixture/sliced-run/slice";
 
 /// A `tools/cargo.sh test` run in the server's checkout as `handle`, recorded on the scratch board
 /// at `board` into the work folder the server reads. Its Cargo is a stand-in that waits for its
@@ -148,9 +154,11 @@ fn a_recorded_test_run_moves_its_task_to_test_and_back_and_a_reviewers_stays_in_
     scroll_to(&mut chrome, "build-test", 150);
     screenshot(&mut chrome, "after-none-phone");
     chrome.call("Emulation.setDeviceMetricsOverride", desktop());
-    // The executor's tests and the reviewer's, each recorded for the task its session holds.
+    // The executor's tests (recorded for the task above the `/work` it holds too), the
+    // reviewer's, and a slice's (recorded for the slice, drawn on its parent's card).
     let mut working = Run::start(&fixture, "working", &fixture.executor);
     let mut reviewing = Run::start(&fixture, "reviewing", &fixture.reviewer);
+    let mut slicing = Run::start(&fixture, "slicing", &fixture.slicer);
     assert!(
         chrome.wait_for(
             "document.querySelector('.pipeline > [data-status=test]') !== null",
@@ -184,22 +192,33 @@ fn a_recorded_test_run_moves_its_task_to_test_and_back_and_a_reviewers_stays_in_
         &format!("document.querySelector('{chip}')?.textContent.includes('Test running')"),
         SHOWN
     ));
+    let sliced = format!(".column[data-status=test] .taskcard[data-slug=\"{SLICED}\"] .work-phase");
+    assert!(
+        chrome.wait_for(
+            &format!("document.querySelector('{sliced}')?.textContent.includes('Test running')"),
+            SHOWN
+        ),
+        "the slice's run never placed its parent: {} {}",
+        column(&mut chrome, SLICED),
+        chrome.eval("document.querySelector('.pipeline')?.innerText")
+    );
     // A reviewer's run is a chip on its card; the card stays where the verdict is awaited.
     let reviewed = format!(".column[data-status=review] .taskcard[data-slug=\"{REVIEWED}\"]");
     assert!(chrome.wait_for(&format!("document.querySelector('{reviewed} .work-phase')?.textContent.includes('Test running')"), SHOWN), "{}", chrome.eval("document.querySelector('.pipeline')?.innerText"));
     // The stage totals are the server's, read again once the machine's work changed.
     let counts = "[...document.querySelectorAll('.pipeline > .column')].map(c=>c.dataset.status+'='+c.querySelector('.count')?.textContent).join(' ')";
     assert!(
-        chrome.wait_for("document.querySelector('.column[data-status=test] .count').textContent==='1' && document.querySelector('.column[data-status=in_progress] .count').textContent==='0'", SHOWN),
+        chrome.wait_for("document.querySelector('.column[data-status=test] .count').textContent==='2' && document.querySelector('.column[data-status=in_progress] .count').textContent==='0'", SHOWN),
         "{}",
         chrome.eval(counts)
     );
     screenshot(&mut chrome, "after-going");
     working.end();
     reviewing.end();
+    slicing.end();
     // The runs ended: the cards are back where their lifecycle puts them, and the columns stay,
     // since this checkout's machine now reports its runs.
-    assert!(chrome.wait_for(&format!("document.querySelector('.column[data-status=in_progress] .taskcard[data-slug=\"{WORKING}\"]') !== null && document.querySelector('{chip}') === null && document.querySelector('{reviewed} .work-phase') === null"), SHOWN), "{}", chrome.eval("document.querySelector('.pipeline')?.innerText"));
+    assert!(chrome.wait_for(&format!("document.querySelector('.column[data-status=in_progress] .taskcard[data-slug=\"{WORKING}\"]') !== null && document.querySelector('.column[data-status=in_progress] .taskcard[data-slug=\"{SLICED}\"]') !== null && document.querySelector('.taskcard[data-slug=\"{SLICED}\"] .work-phase') === null && document.querySelector('{chip}') === null && document.querySelector('{reviewed} .work-phase') === null"), SHOWN), "{}", chrome.eval("document.querySelector('.pipeline')?.innerText"));
     assert_eq!(
         columns(&mut chrome),
         json!([
@@ -226,6 +245,7 @@ struct Fixture {
     board: ScratchBoard,
     executor: String,
     reviewer: String,
+    slicer: String,
     machine: Folder,
 }
 
@@ -248,14 +268,28 @@ impl Fixture {
                 .unwrap()
                 .to_string()
         };
-        let (executor, author, reviewer) = (handle("worker"), handle("worker"), handle("reviewer"));
-        for (slug, title, by) in [
-            (WORKING, "A task whose tests run", &executor),
-            (REVIEWED, "A task its reviewer tests", &author),
+        let (executor, author, reviewer, slicer) = (
+            handle("worker"),
+            handle("worker"),
+            handle("reviewer"),
+            handle("worker"),
+        );
+        for (slug, title, by, parent) in [
+            (WORKING, "A task whose tests run", &executor, None),
+            (
+                WORK,
+                "Do the task whose tests run",
+                &executor,
+                Some(WORKING),
+            ),
+            (REVIEWED, "A task its reviewer tests", &author, None),
+            (SLICED, "A task a slice of which is tested", &author, None),
+            (SLICE, "A slice whose tests run", &slicer, Some(SLICED)),
         ] {
             call(
                 "create",
-                json!({"slug":slug,"title":title,"by":by,"priority":2}),
+                json!({"slug":slug,"title":title,"by":by,"priority":2,"parent":parent,
+                    "instruction":slug == WORK}),
             );
             call("claim", json!({"slug":slug,"handle":by}));
         }
@@ -272,6 +306,9 @@ impl Fixture {
             "in_progress"
         );
         assert_eq!(call("get", json!({"slug":REVIEWED}))["status"], "review");
+        for slug in [WORK, SLICED, SLICE] {
+            assert_eq!(call("get", json!({"slug":slug}))["status"], "in_progress");
+        }
         let machine = Folder(std::env::temp_dir().join(format!(
             "sf-run-columns-machine-{}-{}",
             std::process::id(),
@@ -302,6 +339,7 @@ impl Fixture {
             board,
             executor,
             reviewer,
+            slicer,
             machine,
         }
     }

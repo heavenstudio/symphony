@@ -644,7 +644,9 @@ Between `in_progress` and `review` the board draws **Build** and **Test**: an
 in-progress task whose build or test run is going sits there until it ends, then
 returns to its column. They are display stages, never statuses: no command moves a
 task there, and a task in any other status (a task in review whose reviewer runs
-its tests) keeps its column and shows the run as a chip. Runs come from the board's
+its tests) keeps its column and shows the run as a chip. A run for a subtask (a
+slice, or the `/work` instruction its executor holds) moves the card of the task it
+is under. Runs come from the board's
 recorder (`tasks run`, which this repository's `tools/cargo.sh` and recipes use) or
 the project's own reader; until a machine reports either, the two stages are one
 narrow rail that says so once

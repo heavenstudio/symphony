@@ -228,6 +228,15 @@ pub(super) fn above<'t>(tree: &'t Tree, slug: &str) -> impl Iterator<Item = &'t 
     })
 }
 
+/// The one of `slugs` every other one is under in `tree`, if there is one.
+fn top_in<'s>(tree: &Tree, slugs: &'s [String]) -> Option<&'s String> {
+    slugs.iter().find(|top| {
+        slugs
+            .iter()
+            .all(|slug| slug == *top || above(tree, slug).any(|up| up == top.as_str()))
+    })
+}
+
 /// `slug`'s parent, its parent, and so on up to the root, nearest first.
 fn ancestors_in(tree: &Tree, slug: &str) -> Result<Vec<String>, Error> {
     let mut found: Vec<String> = Vec::new();
@@ -360,6 +369,23 @@ LET $said = $actor + ' changed priority p' + <string>$task.priority + ' → p' +
         let tree: Vec<(String, Option<String>)> =
             self.retrying(|| self.transact(&read, json!({})))?;
         ancestors_in(&tree.into_iter().collect(), slug)
+    }
+
+    /// The task `handle` works on, as a recorder takes it, in one read of the board: the one task
+    /// it holds ([`Store::claimable`]), or of several the one all the others are under (a
+    /// feature's executor holds its `/work` instruction too); none for none, or several apart.
+    pub fn held_task(&self, handle: &str) -> Result<Option<String>, Error> {
+        #[derive(Deserialize)]
+        struct Held {
+            held: Vec<String>,
+            tree: Vec<(String, Option<String>)>,
+        }
+        let read = format!("RETURN {{ held: {}, tree: ({TREE}) }};", super::CLAIMABLE);
+        let vars = json!({"handle": handle, "executing": crate::health::EXECUTING});
+        let Held { mut held, tree } = self.retrying(|| self.transact(&read, vars.clone()))?;
+        held.sort();
+        held.dedup();
+        Ok(top_in(&tree.into_iter().collect(), &held).cloned())
     }
 
     /// The tasks right under `slug`, in the order they were made.
@@ -761,5 +787,42 @@ mod tests {
             .filter(|(a, b)| can_transition(a, b))
             .collect();
         assert_eq!(allowed.len(), 33, "{allowed:?}");
+    }
+
+    /// What a recorder takes a session holding several tasks to work on.
+    #[test]
+    fn the_top_of_held_tasks_is_the_one_every_other_is_under() {
+        let tree: Tree = [
+            ("feature", None),
+            ("feature/work", Some("feature")),
+            ("feature/slice", Some("feature")),
+            ("feature/slice/work", Some("feature/slice")),
+            ("other", None),
+        ]
+        .into_iter()
+        .map(|(slug, parent)| (slug.to_owned(), parent.map(str::to_owned)))
+        .collect();
+        let top = |held: &[&str]| {
+            let held: Vec<String> = held.iter().map(|slug| (*slug).to_owned()).collect();
+            top_in(&tree, &held).cloned()
+        };
+        assert_eq!(
+            top(&["feature", "feature/work"]).as_deref(),
+            Some("feature")
+        );
+        assert_eq!(
+            top(&["feature/work", "feature"]).as_deref(),
+            Some("feature")
+        );
+        assert_eq!(
+            top(&["feature/slice/work", "feature", "feature/slice"]).as_deref(),
+            Some("feature")
+        );
+        assert_eq!(top(&["feature"]).as_deref(), Some("feature"));
+        // Siblings, unrelated tasks, or a task the board does not hold are no one tree.
+        assert_eq!(top(&["feature/work", "feature/slice"]), None);
+        assert_eq!(top(&["feature", "other"]), None);
+        assert_eq!(top(&["feature", "gone/work"]), None);
+        assert_eq!(top(&[]), None);
     }
 }

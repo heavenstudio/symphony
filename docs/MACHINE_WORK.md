@@ -16,8 +16,10 @@ The task pipeline places in-progress work in **Build** or **Test** when connecte
 current evidence identifies its queued or running operation. Positive evidence in a
 partial inventory can place a task while occupancy stays unknown. Running work wins
 over queued work, then Test over Build. Expired, conflicting or disconnected evidence
-keeps the task in its lifecycle column with the last observed phase chip. Only
-in-progress work moves: a reviewer's run on a task in review is a chip on its card in
+keeps the task in its lifecycle column with the last observed phase chip. A run for a
+subtask is its parents' work too: the Symphony reads from the board which tasks its
+task is under (`under` on the operation; `task` stays the recorder's), so the card
+drawn for the feature moves and carries the chip. Only in-progress work moves: a reviewer's run on a task in review is a chip on its card in
 **review**, which stays where the verdict is awaited. Until any machine reports this
 project's work (nothing recorded, no project reader), Build and Test are drawn as one
 narrow rail that says so once, in place of two empty columns.
@@ -117,10 +119,12 @@ it is for; the record is written once that is known. The board's schema is uncha
 
 **For which task.** `--task SLUG`, else `TASKS_TASK`, else the one task the session
 (`--as`, else `TASKS_SESSION`) holds on the board as it begins: executing it in
-concept, design, ready or in progress, or reviewing it in review. The board is read
-without starting its server, for at most 1 s, after COMMAND started. A session
-holding none or several, or a board that does not answer, records no task: nothing
-is guessed, and no time it records waits for that answer. An orchestrator running a
+concept, design, ready or in progress, or reviewing it in review; of several, the one
+all the others are under (a feature's executor holds its `/work` instruction too).
+The board is read once, without starting its server, for at most 1 s, after COMMAND
+started. A session holding none, or several with no one task above the rest, or a
+board that does not answer, records no task: nothing is guessed, and no time it
+records waits for that answer. An orchestrator running a
 build or test for a task, or a subagent that shares its orchestrator's process and
 has no session of its own, names the task (`TASKS_TASK=SLUG just verify`) and, when
 it has one, its handle (`TASKS_SESSION=HANDLE just verify`). The task a record names
