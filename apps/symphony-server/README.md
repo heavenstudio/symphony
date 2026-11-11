@@ -185,6 +185,13 @@ starter's environment but `HOME`, `PATH`, `USER`, `LANG` and `SF_SYMPHONY_TEST_P
 census logs one line per round, as its scan answers or as the server's stop ends it, so a
 `ps` that never answers still shows how long it was pending. The callback clock's
 sequenced board snapshot also supplies the board and agents views. Unchanged raw records reuse their wire snapshot and version hash.
+That snapshot also names the tasks that link a document or a folder's introduction, and the
+work beside each agent on the agents page, so those reads read no board. The task page's reads (`task-page`, `task-offer`,
+`task-history`, `task-brief`, `task-thread`) share one store of the board, opened by the
+first and kept until the board fails a read on it, so no read finds the board's server and
+asks `ps` and `lsof` about it again. A document renders without the lock the board, the feed and
+the project list read under, which it takes only to place its copy in its page; renders take
+turns, each from its read of the file to that placement, so the copy kept is the last read.
 
 A cold server publishes its document hub and URL, then activates the first board
 read in the hub's owned worker. Data reads activate and await that first result; an unavailable board
