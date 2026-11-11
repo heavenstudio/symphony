@@ -86,7 +86,10 @@ fn a_database_not_made_yet_is_defined_and_brought_to_the_version_once() {
 /// Why a request in `client`'s database fails, which the test expects it to.
 fn fails(client: &Client) -> String {
     client
-        .query("RETURN (SELECT VALUE version FROM ONLY meta:schema);", json!({}))
+        .query(
+            "RETURN (SELECT VALUE version FROM ONLY meta:schema);",
+            json!({}),
+        )
         .err()
         .map(|why| format!("{why:?}"))
         .expect("the request fails")

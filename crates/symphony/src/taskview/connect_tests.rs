@@ -27,7 +27,10 @@ const READS: [&str; 2] = ["Store::open_as(", "Store::opening("];
 /// Whether `path` is a test's source, which opens boards as it likes: a `tests.rs` or `*_tests.rs`,
 /// or anything in a `tests` or `testing` folder or a `testing.rs`.
 fn is_test(path: &Path) -> bool {
-    let name = path.file_name().and_then(|name| name.to_str()).unwrap_or("");
+    let name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("");
     name == "tests.rs"
         || name == "testing.rs"
         || name.ends_with("_tests.rs")
@@ -108,13 +111,25 @@ fn the_symphony_opens_a_board_only_through_its_reader() {
 #[test]
 fn every_spelling_of_an_opening_is_found_and_a_name_ending_in_one_is_not() {
     for (text, word) in [
-        ("let s = symphony_board::Store::open(client);", "Store::open("),
+        (
+            "let s = symphony_board::Store::open(client);",
+            "Store::open(",
+        ),
         ("Store::with(client, clock, probe, host)", "Store::with("),
-        ("&symphony_board::Opening::write().of(None)", "Opening::write"),
+        (
+            "&symphony_board::Opening::write().of(None)",
+            "Opening::write",
+        ),
         ("Opening { access: Access::Write, ..how }", "Access::Write"),
         ("symphony_board::cli::connect(&env)", "cli::connect("),
-        ("Store::unchecked_as(c, clock, probe, host, how)", "Store::unchecked"),
-        ("symphony_board::cli::main(&args, &env, i, o, e)", "symphony_board::cli::main"),
+        (
+            "Store::unchecked_as(c, clock, probe, host, how)",
+            "Store::unchecked",
+        ),
+        (
+            "symphony_board::cli::main(&args, &env, i, o, e)",
+            "symphony_board::cli::main",
+        ),
     ] {
         assert_eq!(opens(text), [(1, word)], "{text}");
     }

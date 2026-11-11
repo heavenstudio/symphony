@@ -265,7 +265,14 @@ fn a_hub_never_moves_a_board_behind_its_build_forward_and_reads_it_once_its_comm
     let worktree = tree.path("gamma-feature");
     git(
         &gamma.root,
-        &["worktree", "add", "-q", "-b", "feature", worktree.to_str().unwrap()],
+        &[
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            "feature",
+            worktree.to_str().unwrap(),
+        ],
     );
     let opened = symphony::taskview::connect_in(&worktree, env(&worktree));
     assert_eq!(opened.err(), Some(why));

@@ -38,8 +38,14 @@ fn a_reader_never_migrates_an_older_board_but_refuses_it_naming_the_board_comman
     let Opened::Refused(unnamed) = decide(Some(10), 11, Access::Read, None) else {
         panic!("an older board is refused to a reader");
     };
-    assert!(unnamed.starts_with("this board is at schema 10, behind"), "{unnamed}");
-    assert!(unnamed.contains("`just tasks list` in its project"), "{unnamed}");
+    assert!(
+        unnamed.starts_with("this board is at schema 10, behind"),
+        "{unnamed}"
+    );
+    assert!(
+        unnamed.contains("`just tasks list` in its project"),
+        "{unnamed}"
+    );
 }
 
 #[test]
