@@ -1,8 +1,32 @@
 # Updating a project's Symphony
 
-The evidence and the proposed steps behind the update-command card in
-[DECISIONS](../DECISIONS.md). Each fact about the code names the file and function it was read
-in. "Read 2026-11-11" marks the state of this machine that day.
+How a consuming project takes a newer Symphony, as decided on the update-command card in
+[DECISIONS](../DECISIONS.md), and the evidence it rests on. Each fact about the code names the file
+and function it was read in. "Read 2026-11-11" marks the state of this machine that day.
+
+## Releases
+
+The owner, 2026-11-11: "B. There will be other projects using it. New releases can be pushed for
+urgent bugfixes, but generally should be generated based on nightly builds that would do a full
+verification cycle and conciliation."
+
+- Projects follow Symphony's release tags, never main.
+- A nightly on main's tip, in its own worktree, runs the full verification and the conciliation.
+  When both are green it tags that commit as the next release and pushes the tag. Each red becomes
+  a task on Symphony's board, and no release is cut that night.
+- An urgent fix is released out of cycle: the same checks on the fix's commit, at once, then a
+  tag, without waiting for the night.
+- A tag is dated and sorts in release order: `release-2026-11-12`, and `release-2026-11-12.2` for
+  a second release that day. Its message names the board schema and pin, and says when either
+  changed since the last release.
+- A project's `Cargo.toml` names the tag (`tag = "release-…"` in place of `branch = "main"`), and
+  its `Cargo.lock` binds the tag's commit.
+
+**Full verification** is `just verify` in a clean checkout, plus the nightly-tier targets the fast
+plan leaves out: the board's `perf` target and `tests/child_guard` (`crates/tasks/AGENTS.md`).
+**Conciliation**, as read here until the owner says otherwise: build and test each project the
+machine serves with its Symphony moved to the candidate, in a scratch copy, never its checkout;
+and list what changed since the last release.
 
 ## What happens today
 
@@ -27,9 +51,7 @@ in. "Read 2026-11-11" marks the state of this machine that day.
 - **Behind.** Nothing says so. A server reports its pin and board schema, not its commit
   (`symphony-api`, `Front`). The pin is 1 and moves only with the wire contract or the plugin
   seams (`machine.rs`, `PIN`). The board schema went from 9 to 14 between 2026-11-02 and
-  2026-11-10 (`crates/tasks/src/schema.rs`, `VERSION`). Symphony has no tags. Main moved 9 to 23
-  times a day (first-parent commits) from 2026-11-04 to 2026-11-11. The board has no `status`
-  command (`tasks --help`).
+  2026-11-10 (`crates/tasks/src/schema.rs`, `VERSION`). Symphony has no tags yet.
 
 ## The command, step by step
 
@@ -39,24 +61,24 @@ Steps marked *project* stay the project's (AGENTS.md, command ownership); the re
 
 On a branch:
 
-1. **Find.** Read the Symphony source and commit from the project's `Cargo.lock`: its
-   `source = "git+URL?branch=main#SHA"` line names both. Ask that URL for its newest commit with
-   `git ls-remote`. Stop when they match. A Symphony fix reaches a project only once it is pushed.
-2. **Branch** (*project*: where). Make `symphony-update/SHORT` in a new worktree from the default
+1. **Find.** Read the Symphony source and tag from the project's `Cargo.toml` and `Cargo.lock`,
+   and list that source's release tags with `git ls-remote --tags`. Stop when the project is on
+   the newest. `--to TAG` names another release.
+2. **Branch** (*project*: where). Make `symphony-update/TAG` in a new worktree from the default
    branch, in the folder `[agents] worktrees` names.
-3. **Move the pin.** `cargo update -p symphony --precise SHA`. Refuse when any line of another
-   package moved, and show it.
-4. **Build** (*project*: how). Build the project's `symphony` binary at the new commit with the
+3. **Move the pin.** Set the tag in the Symphony lines of `Cargo.toml` and run
+   `cargo update -p symphony`. Refuse when any line of another package moved, and show it.
+4. **Build** (*project*: how). Build the project's `symphony` binary at the new release with the
    project's own build command (Star Foundry's slot wrapper), or plain `cargo build --locked`
    when it names none.
 5. **Init.** Run that new binary's `init`: stamped skills, Codex rules and hook brought up to
    date; the project's own copies left as they are and listed.
-6. **Commit** the lock and the init changes together. The message names the old and new
-   commits, Symphony's merges between them, and whether the board schema or pin moved.
+6. **Commit** the manifest, the lock and the init changes together. The message names the old
+   and new tags, the release's notes, and whether the board schema or pin moved.
 7. **Check** (*project*). Run `[verdicts] check` (Star Foundry: `just verify`), the command that
    already checks a generated branch (`project.rs`, `Verdicts`).
-8. **Land** (*project*). Hand the branch to `[verdicts] land` (Star Foundry: `just land`), or
-   stop and print that command. The project's gates and approval decide.
+8. **Land** (*project*). Stop and print `[verdicts] land` with the branch (Star Foundry:
+   `just land`); `--land` runs it. The project's gates and approval decide.
 
 On main, after landing:
 
@@ -80,17 +102,15 @@ Everything comes from the one pin, so one command covers it:
 
 ## Knowing a project is behind
 
-Main moves too often for "a newer commit exists" to mean anything. Under A:
+- **Behind:** a newer release tag exists than the one the project names.
+- **Must update:** a newer release changes the board schema or the pin, which the shared server
+  and the other projects on the machine follow.
+- One line says so on the project's page, in `just tasks status`, and when `just symphony`
+  starts. `just symphony-update --check` prints it and changes nothing.
 
-- **Must update:** main's board schema or pin is ahead of the project's. The page says so in
-  one line, and `just symphony` prints it on start.
-- **Should update:** the pinned commit is over a week old. Same places, quieter.
-- Otherwise nothing is shown; `just symphony-update --check` prints how far behind, changing
-  nothing.
-
-The look reaches the network, so it runs at most once a day and keeps its answer in the machine
-folder. The hard cases already refuse and name the project that must update (`Lack::said`, the
-schema `Refusal`). Under B, behind simply means a newer tag exists.
+Listing the tags reaches the network, so the look runs at most once a day and keeps its answer in
+the machine folder; a page never waits on it. The hard cases already refuse and name the project
+that must update (`Lack::said`, the schema `Refusal`).
 
 ## When the board schema changes
 
@@ -103,13 +123,15 @@ What the code does:
 
 What follows:
 
-- When Symphony's main raises the schema, Symphony's own board moves the next time its
-  `just tasks` runs. The shared server, an older build, still reads that board but cannot write
-  to it until the hosting project updates and restarts.
+- Symphony's own `just tasks` runs this checkout's build (`justfile`, `tasks`), so Symphony's
+  board moves as soon as main raises the schema, before any release carries it. Until a release
+  with that schema is out and the hosting project takes it, the shared server reads Symphony's
+  board but cannot write to it.
 - A project's board moves at its first `just tasks` after the update lands, so its restart
   should follow the landing at once: until then the server cannot write to that board.
-- A newer server moves every registered project's board it reads. A project still pinned older
-  then has its own `just tasks` refused until it updates too. A schema change is machine-wide.
+- A newer server moves every registered project's board it reads. A project still on an older
+  release then has its own `just tasks` refused until it updates too. A schema change is
+  machine-wide.
 
 What the command does when an update carries one:
 
@@ -119,13 +141,13 @@ What the command does when an update carries one:
 
 ## Rollback
 
-- `just symphony-update --to OLD`, with the commit the update's message names, runs the same
-  steps toward the old commit. Reverting the update's commit through the project's landing does
-  the same. Then restart from main.
+- `just symphony-update --to TAG`, with the previous release the update's message names, runs
+  the same steps toward it. Reverting the update's commit through the project's landing does the
+  same. Then restart from main.
 - Across a schema change there is no way back down: the older build is refused writes on the
-  moved board. Fix forward on Symphony's main, or restore the dump with `tasks-copy`, losing the
-  board's writes since the update. The command refuses `--to` a commit with an older schema than
-  the board's unless told to restore.
+  moved board. Take a newer release with the fix, or restore the dump with `tasks-copy`, losing
+  the board's writes since the update. The command refuses `--to` a release with an older schema
+  than the board's unless told to restore.
 
 ## Installing the recipe
 
@@ -140,25 +162,33 @@ What the command does when an update carries one:
 
 ## Never unattended
 
-- Land, push or merge anything.
+- Take a commit that is not a release tag.
+- Land, push or merge anything; the nightly pushes only its new tag.
+- Tag a commit a check found red, or move or delete a tag.
 - Move any dependency other than Symphony's.
 - Write over a project's own files, its `justfile` included.
 - Restart the shared server from a worktree, or across a schema change, without a yes.
 - Move a board's schema back.
 
+## Not chosen
+
+- Following main: each run would take main's newest commit. Not chosen; see the card.
+- A written checklist with no command. Not chosen; see the card.
+
 ## Open questions
 
-1. Should the command run the project's land command itself, or stop at a ready branch?
-2. Is a week the right age for "should update"?
+1. What does the nightly's conciliation cover? The reading under [Releases](#releases) is a
+   proposal.
+2. Should the command run the project's land command by default? Until answered it stops at a
+   ready branch, and `--land` runs it.
 3. Star Foundry's skills and hook are its own copies. Should it take the stamped ones, so
    updates reach them, or keep its own, which the update then never touches?
 4. When a restart would move another registered project's board, should it refuse until that
-   project updates, or ask?
+   project updates? Until answered it asks.
 
 ## Verified and inferred
 
 - **Read in code:** each fact above that names a file and function.
 - **Measured:** commit counts and the schema's history from this repository's `git log`; Star
   Foundry's lock, skills and hook read in place; `import?` precedence tried in a scratch folder.
-- **Not tried:** whether `cargo update -p symphony --precise` alone keeps every other lock line
-  in place; a newer server moving another project's board, read in code and not exercised.
+- **Not tried:** a newer server moving another project's board, read in code and not exercised.
