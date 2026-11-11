@@ -375,15 +375,19 @@ fn ready_again_is_the_other_actors_action_even_when_i_created_the_task() {
     let o = listen_orchestrator(&f, &orch, EMPTY_PULL);
     f.task_with(NewTask::new("tools/mine", "Mine", &orch));
     let initial = o.drain(&f, &other, &orch);
-    let header = "PULL executing=0 ready_unstaffed=1 in_progress_orphaned=0 review_unreviewed=0 landed_open=0 idle=0";
     let entry = "ready_unstaffed p2 tools/mine — Mine";
-    assert_eq!(initial, [header, entry]);
+    assert_eq!(initial, ["PULL ready_unstaffed=1 (was 0)", entry]);
     f.store.move_to("tools/mine", "backlog", &other).unwrap();
     assert!(o.drain(&f, &other, &orch).is_empty());
     f.store.move_to("tools/mine", "ready", &other).unwrap();
     assert_eq!(
         o.drain(&f, &other, &orch),
-        ["NEW tools/mine ready — Mine", header, entry]
+        // Its count is as the last PULL said it: only the row it gained back.
+        [
+            "NEW tools/mine ready — Mine",
+            "PULL counts unchanged",
+            entry
+        ]
     );
 }
 
@@ -475,11 +479,15 @@ fn an_unreviewed_task_returning_is_new_even_when_its_status_never_changes() {
     f.store.claim("tools/review-gap", &exe).unwrap();
     assert!(o.drain(&f, &exe, &orch).is_empty());
     f.store.move_to("tools/review-gap", "review", &exe).unwrap();
-    let expected = [
-        "PULL executing=0 ready_unstaffed=0 in_progress_orphaned=0 review_unreviewed=1 landed_open=0 idle=0",
-        "review_unreviewed p2 tools/review-gap — Jump departure",
-    ];
-    assert_eq!(o.drain(&f, &exe, &orch), expected);
+    let row = "review_unreviewed p2 tools/review-gap — Jump departure";
+    assert_eq!(
+        o.drain(&f, &exe, &orch),
+        [
+            "PULL ready_unstaffed=0 (was 1) review_unreviewed=1 (was 0)",
+            row,
+            "resolved ready_unstaffed tools/review-gap",
+        ]
+    );
     f.store
         .take_role("tools/review-gap", &rev, "reviewer")
         .unwrap();
@@ -491,7 +499,8 @@ fn an_unreviewed_task_returning_is_new_even_when_its_status_never_changes() {
         .release("tools/review-gap", &rev, Some("reviewer"))
         .unwrap();
     assert_eq!(f.store.get("tools/review-gap").unwrap().status, "review");
-    assert_eq!(o.drain(&f, &exe, &orch), expected);
+    // The counts are as the last PULL said them: only the row it gained back.
+    assert_eq!(o.drain(&f, &exe, &orch), ["PULL counts unchanged", row]);
     f.store.dispatch_callbacks().unwrap();
     assert!(
         o.drain(&f, &exe, &orch).is_empty(),
@@ -671,7 +680,7 @@ fn due_ticks_probe_once_and_idle_cursor_changes_do_not_probe() {
     assert_eq!(
         o.text(),
         format!(
-            "ROLE tools/probes {worker} none, ready\nPULL executing=0 ready_unstaffed=1 in_progress_orphaned=0 review_unreviewed=0 landed_open=0 idle=0\nready_unstaffed p2 tools/probes — Jump departure"
+            "ROLE tools/probes {worker} none, ready\nPULL ready_unstaffed=1 (was 0) in_progress_orphaned=0 (was 1)\nready_unstaffed p2 tools/probes — Jump departure\nresolved in_progress_orphaned tools/probes"
         )
     );
     dispatch();
@@ -795,7 +804,7 @@ fn changed_digest_is_plain_and_delivered_once_even_after_any_age() {
     f.task_with(NewTask::new("tools/new", "Jump\ndeparture", "owner"));
     assert_eq!(
         o.text(),
-        "NEW tools/new ready — Jump departure\nPULL executing=0 ready_unstaffed=1 in_progress_orphaned=0 review_unreviewed=0 landed_open=0 idle=0\nready_unstaffed p2 tools/new — Jump departure"
+        "NEW tools/new ready — Jump departure\nPULL ready_unstaffed=1 (was 0)\nready_unstaffed p2 tools/new — Jump departure"
     );
     for age in [601.0, 86_400.0] {
         f.advance(age);
@@ -814,7 +823,7 @@ fn changed_digest_is_plain_and_delivered_once_even_after_any_age() {
     f.store.move_to("tools/new", "ready", &sender).unwrap();
     assert_eq!(
         o.text(),
-        "NEW tools/new ready — Jump departure\nPULL executing=0 ready_unstaffed=1 in_progress_orphaned=0 review_unreviewed=0 landed_open=0 idle=0\nready_unstaffed p2 tools/new — Jump departure",
+        "NEW tools/new ready — Jump departure\nPULL counts unchanged\nready_unstaffed p2 tools/new — Jump departure",
         "an entry absent from a computed digest becomes actionable again"
     );
     f.store.dispatch_callbacks().unwrap();
@@ -833,12 +842,12 @@ fn changed_digest_is_plain_and_delivered_once_even_after_any_age() {
     f.task("tools/other");
     assert_eq!(
         o.text(),
-        "NEW tools/other ready — Jump departure\nPULL executing=0 ready_unstaffed=1 in_progress_orphaned=0 review_unreviewed=0 landed_open=0 idle=0\nready_unstaffed p2 tools/other — Jump departure"
+        "NEW tools/other ready — Jump departure\nPULL counts unchanged\nready_unstaffed p2 tools/other — Jump departure\nresolved ready_unstaffed tools/new"
     );
     f.store.move_to("tools/new", "ready", &sender).unwrap();
     assert_eq!(
         o.text(),
-        "NEW tools/new ready — Jump departure\nPULL executing=0 ready_unstaffed=2 in_progress_orphaned=0 review_unreviewed=0 landed_open=0 idle=0\nready_unstaffed p2 tools/new — Jump departure\nready_unstaffed p2 tools/other — Jump departure",
+        "NEW tools/new ready — Jump departure\nPULL ready_unstaffed=2 (was 1)\nready_unstaffed p2 tools/new — Jump departure",
         "a return is actionable when the last delivered digest lacked it"
     );
     f.store.send_agent(&sender, &orch, "two\nlines").unwrap();
@@ -937,13 +946,16 @@ fn a_pending_digest_keeps_its_retry_budget_until_a_new_action_replaces_it() {
         )
         .unwrap();
     let lines = o.drain(&f, &sender, &orch);
-    assert_eq!(lines, [
-        "NEW tools/pending ready — Jump departure".to_string(),
-        "NEW tools/later ready — Jump departure".to_string(),
-        "PULL executing=0 ready_unstaffed=2 in_progress_orphaned=0 review_unreviewed=0 landed_open=0 idle=0".to_string(),
-        "ready_unstaffed p2 tools/later — Jump departure".to_string(),
-        "ready_unstaffed p2 tools/pending — Jump departure".to_string(),
-    ]);
+    assert_eq!(
+        lines,
+        [
+            "NEW tools/pending ready — Jump departure".to_string(),
+            "NEW tools/later ready — Jump departure".to_string(),
+            "PULL ready_unstaffed=2 (was 0)".to_string(),
+            "ready_unstaffed p2 tools/later — Jump departure".to_string(),
+            "ready_unstaffed p2 tools/pending — Jump departure".to_string(),
+        ]
+    );
     assert_eq!(
         state()["pull_entries"],
         json!([
@@ -977,7 +989,8 @@ fn a_pending_digest_keeps_its_retry_budget_until_a_new_action_replaces_it() {
     f.store.move_to("tools/later", "ready", &sender).unwrap();
     let retained = f.store.callback_inbox(&orch).unwrap();
     assert_eq!(retained.into_iter().filter(|(_,text)| text.starts_with("PULL ")).map(|(_,text)| text).collect::<Vec<_>>(), [
-        "PULL executing=0 ready_unstaffed=1 in_progress_orphaned=0 review_unreviewed=0 landed_open=0 idle=0\nready_unstaffed p2 tools/later — Jump departure".to_string()
+        // What changed since the PULL the receipt took, which said tools/manual.
+        "PULL counts unchanged\nready_unstaffed p2 tools/later — Jump departure\nresolved ready_unstaffed tools/manual".to_string()
     ], "a manual inbox receipt also establishes the last delivered lists");
 }
 
@@ -1221,16 +1234,17 @@ fn a_legacy_upgrade_baselines_once_across_older_seen_writes_and_keeps_retries() 
         old_seen_write(&f, &orch);
         f.task("tools/future-gap");
         let lines = o.drain(&f, &exe, &orch);
-        assert_eq!(lines.len(), 4);
+        assert_eq!(lines.len(), 3, "{lines:?}");
+        let pulls: Vec<&String> = (lines.iter())
+            .filter(|line| line.starts_with("PULL "))
+            .collect();
+        // What changed since the PULL it received: one count and one row, not tools/old-gap again.
         assert_eq!(
-            lines
-                .iter()
-                .filter(|line| line.starts_with("PULL "))
-                .count(),
-            1
+            pulls,
+            ["PULL executing=0 (was 1) ready_unstaffed=2 (was 1)"]
         );
         assert!(lines.contains(&"NEW tools/future-gap ready — Jump departure".into()));
-        assert!(lines.contains(&"ready_unstaffed p2 tools/old-gap — Jump departure".into()));
+        assert!(!lines.contains(&"ready_unstaffed p2 tools/old-gap — Jump departure".into()));
         assert!(lines.contains(&"ready_unstaffed p2 tools/future-gap — Jump departure".into()));
         old_seen_write(&f, &orch);
         f.store.dispatch_callbacks().unwrap();

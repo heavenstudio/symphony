@@ -1,7 +1,9 @@
 //! The existing clock watch, planned and reconciled again under its recipient lease. Only
 //! recognizable generated pane rows are withdrawn; messages and other events are untouched.
 
-use super::{Callback, Error, Event, Queued, Store, event_line, session_task};
+use super::{
+    Callback, DeliveryError, Error, Event, Queued, Store, Visit, deliver, event_line, session_task,
+};
 use crate::Board;
 use crate::cli::agents::{Answer, Pane};
 use crate::cli::attach::{self, PaneWatch};
@@ -82,47 +84,79 @@ impl Store {
                 .clone()
         };
         for callback in recipients {
-            let handle = callback.handle.as_str();
-            let queued: Vec<Queued> = self.retrying(|| self.read(
-                "RETURN SELECT key, text FROM callback_event WHERE handle = $handle AND delivered != true AND message = NONE AND string::starts_with(key, 'pane-');",
-                json!({"handle":handle}),
-            ))?;
-            let plan = look(board, handle, &open, &panes, &callback.pane_watch, &queued);
-            if plan.unchanged(&callback.pane_watch) {
-                continue;
-            }
-            self.with_callback_lease(handle, |deadline, revision| {
-                let saved: Saved = self.retrying(|| self.read(
-                    "RETURN { watch: (SELECT VALUE pane_watch FROM ONLY type::record('callback_state', $handle)) ?? {},
-                        queued: (SELECT key, text FROM callback_event WHERE handle = $handle AND delivered != true AND message = NONE AND string::starts_with(key, 'pane-')) };",
-                    json!({"handle":handle}),
-                ))?;
-                // A role or launch can move while the first look waits for its lease.
-                let (board, _) = self.callback_board()?;
-                let open = self.open_task_sessions()?;
-                let plan = look(&board, handle, &open, &panes, &saved.watch, &saved.queued);
-                if plan.unchanged(&saved.watch) { return Ok(()); }
-                let events: Vec<Event> = plan.lines.iter().enumerate().map(|(i, text)| Event {
-                    key: format!("pane-{revision}-{i}"), handle: handle.into(), text: text.clone(),
-                    slug: session_task(&board, handle), message: None, attempts: 0, sequence: 0,
-                    pull_entries: None, pull_withheld: None,
-                }).collect();
-                self.retrying(|| self.transact::<Value>(
-                    "DELETE callback_event WHERE handle = $handle AND delivered != true AND message = NONE AND key IN $retired RETURN NONE;
-                     FOR $event IN $events {
-                        IF !record::exists(type::record('callback_event', [$handle, $event.key])) {
-                            LET $counted = (UPSERT ONLY type::record('counter', ['callback-event', $handle]) SET last = (last ?? 0) + 1);
-                            CREATE type::record('callback_event', [$handle, $event.key]) CONTENT $event RETURN NONE;
-                            UPDATE type::record('callback_event', [$handle, $event.key]) SET sequence = $counted.last RETURN NONE;
-                        };
-                     };
-                     UPDATE type::record('callback_state', $handle) SET pane_watch = $after RETURN NONE;
-                     RETURN NONE;",
-                    json!({"handle":handle, "events":events, "after":plan.after, "retired":plan.retired}),
-                ))?;
-                self.deliver_pending(handle, callback, deadline)
+            self.watch_one(board, callback, &open, &panes, false, &|text| {
+                deliver(callback, text)
             })?;
         }
+        Ok(())
+    }
+
+    /// The watch for a session with no channel, at its waiting look (`tasks wait`): the panes it
+    /// oversees, sampled by `panes`, and what they say printed by `visit` with the rest of the look.
+    pub(super) fn watch_pane(
+        &self,
+        board: &Board,
+        callback: &Callback,
+        open: &[TaskSessionRow],
+        panes: &dyn Fn() -> Answer<Vec<Pane>>,
+        visit: &Visit,
+    ) -> Result<(), Error> {
+        self.watch_one(board, callback, open, panes, true, &|text| {
+            visit.send(callback, text)
+        })
+    }
+
+    /// One recipient's watch: what its panes say since its saved watermark, queued and sent by
+    /// `send` under its lease, which a collecting look (`collect`) takes with no channel registered.
+    fn watch_one(
+        &self,
+        board: &Board,
+        callback: &Callback,
+        open: &[TaskSessionRow],
+        panes: &dyn Fn() -> Answer<Vec<Pane>>,
+        collect: bool,
+        send: &dyn Fn(&str) -> Result<(), DeliveryError>,
+    ) -> Result<(), Error> {
+        let handle = callback.handle.as_str();
+        let queued: Vec<Queued> = self.retrying(|| self.read(
+            "RETURN SELECT key, text FROM callback_event WHERE handle = $handle AND delivered != true AND message = NONE AND string::starts_with(key, 'pane-');",
+            json!({"handle":handle}),
+        ))?;
+        let plan = look(board, handle, open, panes, &callback.pane_watch, &queued);
+        if plan.unchanged(&callback.pane_watch) {
+            return Ok(());
+        }
+        self.with_callback_lease(handle, collect, |deadline, revision| {
+            let saved: Saved = self.retrying(|| self.read(
+                "RETURN { watch: (SELECT VALUE pane_watch FROM ONLY type::record('callback_state', $handle)) ?? {},
+                    queued: (SELECT key, text FROM callback_event WHERE handle = $handle AND delivered != true AND message = NONE AND string::starts_with(key, 'pane-')) };",
+                json!({"handle":handle}),
+            ))?;
+            // A role or launch can move while the first look waits for its lease.
+            let (board, _) = self.callback_board()?;
+            let open = self.open_task_sessions()?;
+            let plan = look(&board, handle, &open, panes, &saved.watch, &saved.queued);
+            if plan.unchanged(&saved.watch) { return Ok(()); }
+            let events: Vec<Event> = plan.lines.iter().enumerate().map(|(i, text)| Event {
+                key: format!("pane-{revision}-{i}"), handle: handle.into(), text: text.clone(),
+                slug: session_task(&board, handle), message: None, attempts: 0, sequence: 0,
+                pull_entries: None, pull_withheld: None, pull_said: None,
+            }).collect();
+            self.retrying(|| self.transact::<Value>(
+                "DELETE callback_event WHERE handle = $handle AND delivered != true AND message = NONE AND key IN $retired RETURN NONE;
+                 FOR $event IN $events {
+                    IF !record::exists(type::record('callback_event', [$handle, $event.key])) {
+                        LET $counted = (UPSERT ONLY type::record('counter', ['callback-event', $handle]) SET last = (last ?? 0) + 1);
+                        CREATE type::record('callback_event', [$handle, $event.key]) CONTENT $event RETURN NONE;
+                        UPDATE type::record('callback_event', [$handle, $event.key]) SET sequence = $counted.last RETURN NONE;
+                    };
+                 };
+                 UPDATE type::record('callback_state', $handle) SET pane_watch = $after RETURN NONE;
+                 RETURN NONE;",
+                json!({"handle":handle, "events":events, "after":plan.after, "retired":plan.retired}),
+            ))?;
+            self.deliver_pending(handle, callback, deadline, send)
+        })?;
         Ok(())
     }
 }
