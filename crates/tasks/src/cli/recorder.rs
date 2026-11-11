@@ -20,7 +20,11 @@
 //! session (`--as`, else `TASKS_SESSION`) holds on the board when it begins (it executes it, or
 //! reviews it in review), read without starting the board's server and waiting at most [`WAIT`];
 //! none when it holds none or several, or the board cannot say. A command a recorder runs names its
-//! operation in [`recorded::PARENT_VAR`], so a recorder it starts records it as its parent.
+//! operation in [`recorded::PARENT_VAR`], so a recorder it starts records it as its parent. That
+//! read holds up no time it records: the operation is queued when `tasks run` was called, started
+//! when its command did (on macOS, when its recorder told it to exec) and ended when its end came,
+//! each seen as it happens, by a thread of its own while the board is asked; the record is written
+//! once the board answered or the wait ran out.
 //!
 //! Nothing it records reaches the command's streams: a record it cannot write leaves the command
 //! running as it would unrecorded. It says something only of a command line it cannot read (2) and
@@ -37,8 +41,7 @@ use std::io::{self, Write};
 use std::os::unix::process::ExitStatusExt as _;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, RecvTimeoutError};
-use std::sync::{Arc, Mutex, PoisonError};
-use std::thread::JoinHandle;
+use std::sync::{Mutex, PoisonError};
 use std::time::Duration;
 
 /// The command's name.
@@ -191,6 +194,7 @@ fn unstarted(error: &io::Error) -> i32 {
 /// (`process` false), in the `env` it was handed; as the `tasks` binary, in its own environment,
 /// passing on the signals it gets, then ending as its command did.
 fn child(asked: &Asked, env: &Env, err: &mut dyn Write, process: bool) -> i32 {
+    let queued_at = crate::store::now();
     let folder = recorded::folder(env);
     let id = folder.as_ref().and_then(|_| recorded::new_id().ok());
     let mut command = if process {
@@ -213,8 +217,9 @@ fn child(asked: &Asked, env: &Env, err: &mut dyn Write, process: bool) -> i32 {
     if let Some(id) = &id {
         command.env(recorded::PARENT_VAR, id);
     }
-    let begin = |started: Option<u32>| {
-        let recording = Recording::begin(folder.clone()?, id.clone()?, asked, env, started).ok()?;
+    let begin = |started: Option<Start>| {
+        let recording =
+            Recording::begin(folder.clone()?, id.clone()?, asked, env, queued_at, started).ok()?;
         recording.sweep();
         Some(recording)
     };
@@ -234,21 +239,39 @@ fn child(asked: &Asked, env: &Env, err: &mut dyn Write, process: bool) -> i32 {
                     Some(code),
                     None,
                     &format!("its command did not start: {error}"),
+                    crate::store::now(),
                 );
             }
             return code;
         }
     };
+    let started = (child.id(), crate::store::now());
     if let Some(forwarding) = &forwarding {
-        forwarding.child(child.id());
+        forwarding.child(started.0);
     }
-    let recording = begin(Some(child.id()));
-    let beating = recording.as_ref().map(Recording::beating);
-    let ended = child.wait();
+    // Waited for on a thread of its own, its end stamped as it comes while the board is asked.
+    let (end, ends) = mpsc::channel();
+    let waiter = std::thread::spawn(move || {
+        let status = child.wait();
+        let _ = end.send((status, crate::store::now()));
+    });
+    let recording = begin(Some(started));
+    let (ended, at) = loop {
+        match ends.recv_timeout(BEAT) {
+            Ok(end) => break end,
+            Err(RecvTimeoutError::Timeout) => {
+                if let Some(recording) = &recording {
+                    recording.beat();
+                }
+            }
+            Err(RecvTimeoutError::Disconnected) => {
+                let lost = io::Error::other("its waiter ended without it");
+                break (Err(lost), crate::store::now());
+            }
+        }
+    };
+    let _ = waiter.join();
     drop(forwarding);
-    if let Some(beating) = beating {
-        beating.stop();
-    }
     let status = match ended {
         Ok(status) => status,
         Err(error) => {
@@ -258,13 +281,14 @@ fn child(asked: &Asked, env: &Env, err: &mut dyn Write, process: bool) -> i32 {
                 asked.command[0].to_string_lossy()
             );
             if let Some(recording) = recording {
-                recording.finish(None, None, &format!("its end could not be read: {error}"));
+                let reason = format!("its end could not be read: {error}");
+                recording.finish(None, None, &reason, at);
             }
             return 1;
         }
     };
     if let Some(recording) = recording {
-        recording.finish(status.code(), status.signal(), "");
+        recording.finish(status.code(), status.signal(), "", at);
     }
     match (status.code(), status.signal()) {
         (Some(code), _) => code,
@@ -333,24 +357,29 @@ fn machine_id(env: &Env) -> Option<String> {
     crate::project::machine_id(&folder).ok()
 }
 
+/// A command's start: its pid, and when.
+type Start = (u32, f64);
+
 /// One operation being recorded: its record, written whole at each change, and its lease, held
 /// locked until it finishes.
 struct Recording {
     folder: PathBuf,
     path: PathBuf,
     lease: FileLock,
-    record: Arc<Mutex<Record>>,
+    record: Mutex<Record>,
 }
 
 impl Recording {
     /// Its lease taken and its record written in `folder`, as the operation `id` of `asked` in
-    /// `env`: running as `started` when its command started, else queued.
+    /// `env`, asked for at `queued_at`: running since `started` when its command started, else
+    /// queued. The task it is for is asked of the board first; the times were stamped before.
     fn begin(
         folder: PathBuf,
         id: String,
         asked: &Asked,
         env: &Env,
-        started: Option<u32>,
+        queued_at: f64,
+        started: Option<Start>,
     ) -> io::Result<Recording> {
         let (handle, task) = attributed(asked, env);
         let now = crate::store::now();
@@ -389,9 +418,9 @@ impl Recording {
             machine_id: machine_id(env),
             host: recorded::bounded(&sys::hostname()),
             pid: std::process::id(),
-            child_pid: started,
-            queued_at: now,
-            started_at: started.map(|_| now),
+            child_pid: started.map(|(pid, _)| pid),
+            queued_at,
+            started_at: started.map(|(_, at)| at),
             ended_at: None,
             beat_at: now,
             exit_code: None,
@@ -407,7 +436,7 @@ impl Recording {
             folder,
             path,
             lease,
-            record: Arc::new(Mutex::new(record)),
+            record: Mutex::new(record),
         })
     }
 
@@ -429,7 +458,7 @@ impl Recording {
         let _ = recorded::write(&self.path, &record);
     }
 
-    /// Its command started as `pid`.
+    /// Its command started: `(pid, at)`.
     #[cfg_attr(
         not(target_os = "macos"),
         expect(
@@ -437,49 +466,28 @@ impl Recording {
             reason = "a recorder that watches its command says when it started"
         )
     )]
-    fn started(&self, pid: u32) {
-        self.update(|record, now| {
+    fn started(&self, (pid, at): Start) {
+        self.update(|record, _| {
             record.state = Step::Running;
-            record.started_at = Some(now);
+            record.started_at = Some(at);
             record.child_pid = Some(pid);
         });
     }
 
     /// It still runs.
-    #[cfg_attr(
-        not(target_os = "macos"),
-        expect(
-            dead_code,
-            reason = "a recorder that watches its command beats between its events"
-        )
-    )]
     fn beat(&self) {
         self.update(|_, _| {});
     }
 
-    /// Say it still runs every [`BEAT`] until stopped.
-    fn beating(&self) -> Beating {
-        let (stop, stopped) = mpsc::channel::<()>();
-        let (path, record) = (self.path.clone(), Arc::clone(&self.record));
-        let thread = std::thread::spawn(move || {
-            while let Err(RecvTimeoutError::Timeout) = stopped.recv_timeout(BEAT) {
-                let mut record = record.lock().unwrap_or_else(PoisonError::into_inner);
-                record.beat_at = crate::store::now();
-                let _ = recorded::write(&path, &record);
-            }
-        });
-        Beating { stop, thread }
-    }
-
-    /// It ended so (`exit_code` or `signal`, neither when that is not known): kept in the history,
-    /// then its record written finished, then its lease let go. A recorder ended between the two
-    /// leaves it unfinished for a sweep to keep again: the history reads each operation once.
-    fn finish(self, exit_code: Option<i32>, signal: Option<i32>, reason: &str) {
+    /// It ended at `at` so (`exit_code` or `signal`, neither when that is not known): kept in the
+    /// history, then its record written finished, then its lease let go. A recorder ended between
+    /// the two leaves it unfinished for a sweep to keep again: the history reads each operation
+    /// once.
+    fn finish(self, exit_code: Option<i32>, signal: Option<i32>, reason: &str, at: f64) {
         let mut record = self.held();
-        let now = crate::store::now();
         record.state = Step::Finished;
-        record.ended_at = Some(now);
-        record.beat_at = now;
+        record.ended_at = Some(at);
+        record.beat_at = crate::store::now();
         record.exit_code = exit_code;
         record.signal = signal;
         reason.clone_into(&mut record.reason);
@@ -488,19 +496,6 @@ impl Recording {
         drop(record);
         drop(self.lease);
         let _ = fs::remove_file(self.path.with_extension("lease"));
-    }
-}
-
-/// A recording's beat, until it is stopped.
-struct Beating {
-    stop: mpsc::Sender<()>,
-    thread: JoinHandle<()>,
-}
-
-impl Beating {
-    fn stop(self) {
-        drop(self.stop);
-        let _ = self.thread.join();
     }
 }
 
@@ -514,11 +509,16 @@ mod supervised {
     use std::io::{self, Write};
     use std::os::fd::{AsRawFd as _, FromRawFd as _, OwnedFd};
     use std::os::unix::ffi::OsStrExt as _;
+    use std::sync::mpsc::{self, RecvTimeoutError};
     use std::time::{Duration, Instant};
+
+    /// What the recorder's watch saw of its command, and when it saw it.
+    type Heard = io::Result<(Seen, f64)>;
 
     /// Become `asked`'s command, recorded by a recorder that watches this process, in `env`; what
     /// returns is the code of a command that could not start, said on `err`.
     pub(super) fn exec(asked: &Asked, env: &Env, err: &mut dyn Write) -> i32 {
+        let queued_at = crate::store::now();
         let Ok(words) = asked
             .command
             .iter()
@@ -531,7 +531,7 @@ mod supervised {
         let mut argv: Vec<*const libc::c_char> = words.iter().map(|word| word.as_ptr()).collect();
         argv.push(std::ptr::null());
         if let Ok(id) = recorded::new_id()
-            && watched(asked, env, &id)
+            && watched(asked, env, &id, queued_at)
         {
             // SAFETY: this process runs one thread: nothing reads its environment beside this.
             unsafe { std::env::set_var(recorded::PARENT_VAR, &id) };
@@ -551,9 +551,9 @@ mod supervised {
         unstarted(&error)
     }
 
-    /// Whether a recorder forked now watches this process, as the operation `id`: told within
-    /// [`READY`] on a pipe of their own.
-    fn watched(asked: &Asked, env: &Env, id: &str) -> bool {
+    /// Whether a recorder forked now watches this process, as the operation `id` asked for at
+    /// `queued_at`: told within [`READY`] on a pipe of their own.
+    fn watched(asked: &Asked, env: &Env, id: &str, queued_at: f64) -> bool {
         let Ok((told, tell)) = pipe() else {
             return false;
         };
@@ -567,7 +567,7 @@ mod supervised {
                 // SAFETY: as above: the grandchild records, and its parent ends at once, so the
                 // command has no child of the recorder's to wait for.
                 if unsafe { libc::fork() } == 0 {
-                    record(target, &tell, asked, env, id);
+                    record(target, &tell, asked, env, (id, queued_at));
                 }
                 // SAFETY: ends the child between without the runtime's exit, which is the caller's.
                 unsafe { libc::_exit(0) }
@@ -629,11 +629,18 @@ mod supervised {
     }
 
     /// The recorder: it watches `target` and says so on `tell` when it has a work folder to record
-    /// it in; then, out of the caller's session and streams, it records the operation `id` until
-    /// `target` ends, and ends.
-    fn record(target: libc::pid_t, tell: &OwnedFd, asked: &Asked, env: &Env, id: &str) -> ! {
+    /// it in; then, out of the caller's session and streams, it records the operation `id` asked
+    /// for at `queued_at` until `target` ends, and ends. Told, the command execs: that is its start.
+    fn record(
+        target: libc::pid_t,
+        tell: &OwnedFd,
+        asked: &Asked,
+        env: &Env,
+        (id, queued_at): (&str, f64),
+    ) -> ! {
         let watch = Watch::new(target);
         let folder = watch.as_ref().ok().and_then(|_| recorded::folder(env));
+        let start = (target.unsigned_abs(), crate::store::now());
         let told = folder.is_some()
             // SAFETY: writes one byte from it; a command gone on without it hears nothing.
             && unsafe { libc::write(tell.as_raw_fd(), b"1".as_ptr().cast(), 1) } == 1;
@@ -641,14 +648,41 @@ mod supervised {
         // SAFETY: a session of its own: no signal for the caller's group or terminal reaches it.
         unsafe { libc::setsid() };
         detach(watch.as_ref().map_or(-1, |watch| watch.0.as_raw_fd()));
-        if let (true, Ok(watch), Some(folder)) = (told, watch, folder)
-            && let Ok(recording) = Recording::begin(folder, id.to_owned(), asked, env, None)
-        {
-            recording.sweep();
-            follow(&watch, recording, target);
+        if let (true, Ok(watch), Some(folder)) = (told, watch, folder) {
+            // Read on a thread of its own, so what it sees is stamped as it comes while the board
+            // is asked which task this is for.
+            let (tell, heard) = mpsc::channel();
+            std::thread::spawn(move || watching(&watch, &tell));
+            if let Ok(recording) =
+                Recording::begin(folder, id.to_owned(), asked, env, queued_at, None)
+            {
+                recording.sweep();
+                follow(&heard, recording, start);
+            }
         }
         // SAFETY: ends the recorder without the runtime's exit, which is the caller's.
         unsafe { libc::_exit(0) }
+    }
+
+    /// What `watch` sees, sent on `tell` with the time it saw it, until its process ends, the watch
+    /// fails, or nothing listens.
+    fn watching(watch: &Watch, tell: &mpsc::Sender<Heard>) {
+        loop {
+            match watch.next(BEAT) {
+                Ok(Some(seen)) => {
+                    let exited = seen.exit.is_some();
+                    if tell.send(Ok((seen, crate::store::now()))).is_err() || exited {
+                        return;
+                    }
+                }
+                Ok(None) => {}
+                Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
+                Err(error) => {
+                    let _ = tell.send(Err(error));
+                    return;
+                }
+            }
+        }
     }
 
     /// No stream of the caller's held open: `/dev/null` in, out and err, and every other
@@ -679,16 +713,16 @@ mod supervised {
         }
     }
 
-    /// Record `target` as `watch` sees it: started at its exec, said again every [`BEAT`] while
-    /// it runs, finished at its exit with its status.
-    fn follow(watch: &Watch, recording: Recording, target: libc::pid_t) {
+    /// Record its command as its watch was `heard`: started at `start` once it exec'd, said again
+    /// every [`BEAT`] while it runs, finished with its status when its exit was seen.
+    fn follow(heard: &mpsc::Receiver<Heard>, recording: Recording, start: super::Start) {
         let mut started = false;
         loop {
-            match watch.next(BEAT) {
-                Ok(Some(seen)) => {
+            match heard.recv_timeout(BEAT) {
+                Ok(Ok((seen, at))) => {
                     if seen.exec && !started {
                         started = true;
-                        recording.started(target.unsigned_abs());
+                        recording.started(start);
                     }
                     if let Some(status) = seen.exit {
                         let (code, signal) = ended(status);
@@ -697,19 +731,23 @@ mod supervised {
                         } else {
                             "its command did not start"
                         };
-                        recording.finish(code, signal, reason);
+                        recording.finish(code, signal, reason, at);
                         return;
                     }
                 }
-                Ok(None) => {
+                Err(RecvTimeoutError::Timeout) => {
                     if started {
                         recording.beat();
                     }
                 }
-                Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
-                Err(error) => {
+                Ok(Err(error)) => {
                     let reason = format!("its recorder lost sight of its command: {error}");
-                    recording.finish(None, None, &reason);
+                    recording.finish(None, None, &reason, crate::store::now());
+                    return;
+                }
+                Err(RecvTimeoutError::Disconnected) => {
+                    let reason = "its recorder lost sight of its command";
+                    recording.finish(None, None, reason, crate::store::now());
                     return;
                 }
             }

@@ -6,9 +6,12 @@
 
 use crate::{Case, scratch};
 use std::fs;
+use std::io::Read as _;
+use std::net::TcpListener;
 use std::os::unix::process::ExitStatusExt as _;
 use std::path::{Path, PathBuf};
-use std::time::{Duration, Instant};
+use std::sync::mpsc;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use symphony_board::cli::machine_work::recorded::{self, Phase, Record, Step};
 use symphony_board::sys::{Child, Command, Stdio, output, wait_output};
 
@@ -204,14 +207,135 @@ fn a_recorded_command_keeps_its_arguments_streams_session_and_status() {
         Path::new(&finished.checkout),
         folders.dir.canonicalize().unwrap()
     );
-    assert!(
-        !folders
-            .work
-            .join(recorded::OPERATIONS)
-            .join(format!("{}.lease", finished.operation_id))
-            .exists(),
-        "a finished operation lets its lease go"
+    // Its recorder writes it finished, then lets its lease go: a step of its own after it.
+    let lease = folders
+        .work
+        .join(recorded::OPERATIONS)
+        .join(format!("{}.lease", finished.operation_id));
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while lease.exists() {
+        assert!(
+            Instant::now() < deadline,
+            "a finished operation lets its lease go"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
+/// Seconds since the epoch, the clock a record is stamped by.
+fn now() -> f64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs_f64()
+}
+
+/// A board server that takes one connection and never answers it: once it took it, it makes the
+/// file `accepted` and tells when it took it, then when the asker gave up and closed it.
+struct Silent {
+    address: String,
+    heard: mpsc::Receiver<(f64, f64)>,
+}
+
+impl Silent {
+    fn new(accepted: &Path) -> Silent {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap().to_string();
+        let (tell, heard) = mpsc::channel();
+        let accepted = accepted.to_path_buf();
+        std::thread::spawn(move || {
+            let (mut asked, _) = listener.accept().unwrap();
+            let taken = now();
+            fs::write(&accepted, "").unwrap();
+            let mut said = [0; 4096];
+            while matches!(asked.read(&mut said), Ok(read) if read > 0) {}
+            let _ = tell.send((taken, now()));
+        });
+        Silent { address, heard }
+    }
+
+    /// When it took the question, then when the asker gave up.
+    fn heard(&self) -> (f64, f64) {
+        self.heard.recv_timeout(Duration::from_secs(60)).unwrap()
+    }
+}
+
+/// A command that runs until `accepted` exists: until the board is being asked its task.
+fn until_asked(accepted: &Path) -> Vec<&str> {
+    vec![
+        "/bin/sh",
+        "-c",
+        "while [ ! -e \"$1\" ]; do :; done",
+        "sh",
+        accepted.to_str().unwrap(),
+    ]
+}
+
+/// `finished`, run while the board took the question of its task at `taken` and its asker gave up
+/// at `closed`, was stamped as it ran, not once the board answered: asked for after `called`,
+/// started before the board was asked, ended after that (its command waited for it) and before
+/// the asker gave up; for its session, and no task.
+fn stamped_while_asked(finished: &Record, called: f64, (taken, closed): (f64, f64)) {
+    let (queued, started, ended) = (
+        finished.queued_at,
+        finished.started_at.unwrap(),
+        finished.ended_at.unwrap(),
     );
+    assert!(
+        called <= queued && queued <= started && started <= taken,
+        "called at {called}, the board asked at {taken}: {finished:?}"
+    );
+    assert!(
+        taken <= ended && ended < closed,
+        "the board asked at {taken}, given up at {closed}: {finished:?}"
+    );
+    assert_eq!(
+        (finished.handle.as_deref(), finished.task.as_deref()),
+        (Some("asks-a-silent-board"), None)
+    );
+}
+
+#[test]
+fn its_times_are_stamped_as_they_come_while_a_board_that_never_answers_is_asked_its_task() {
+    let mut case = Case::new();
+    let folders = Folders::new("recorder-silent-board");
+    let accepted = folders.dir.join("accepted");
+    let board = Silent::new(&accepted);
+    case.env
+        .vars
+        .insert("TASKS_SERVER".into(), board.address.clone());
+    let mut args = vec!["run", "--phase", "test", "--"];
+    args.extend(until_asked(&accepted));
+    let called = now();
+    let done =
+        output(tasks(&case, &folders, Some("asks-a-silent-board"), &args).stdin(Stdio::null()))
+            .unwrap();
+    assert!(done.status.success(), "{done:?}");
+    stamped_while_asked(&folders.once(Step::Finished), called, board.heard());
+}
+
+#[test]
+fn in_its_callers_process_its_times_are_stamped_as_they_come_while_the_board_is_asked() {
+    let case = Case::new();
+    let folders = Folders::new("recorder-silent-board-in-process");
+    let accepted = folders.dir.join("accepted");
+    let board = Silent::new(&accepted);
+    let mut env = case.env.clone();
+    for (name, value) in [
+        ("TASKS_SERVER", board.address.as_str()),
+        ("TASKS_SESSION", "asks-a-silent-board"),
+        ("TASKS_WORK", folders.work.to_str().unwrap()),
+        ("SYMPHONY_MACHINE_DIR", folders.machine.to_str().unwrap()),
+    ] {
+        env.vars.insert(name.into(), value.into());
+    }
+    env.cwd.clone_from(&folders.dir);
+    let mut args = vec!["run", "--phase", "test", "--"];
+    args.extend(until_asked(&accepted));
+    let called = now();
+    let ran = crate::run(&env, &args, "");
+    assert_eq!(ran.code, 0, "{}{}", ran.out, ran.err);
+    stamped_while_asked(&folders.once(Step::Finished), called, board.heard());
 }
 
 #[test]
@@ -330,6 +454,7 @@ fn a_command_ended_by_a_signal_ends_its_caller_by_the_same_signal() {
 fn a_signal_sent_to_the_process_its_caller_started_reaches_its_command() {
     let case = Case::new();
     let folders = Folders::new("recorder-forwards");
+    let trapped = folders.dir.join("trapped");
     let mut recorder = spawn(&mut tasks(
         &case,
         &folders,
@@ -341,10 +466,18 @@ fn a_signal_sent_to_the_process_its_caller_started_reaches_its_command() {
             "--",
             "sh",
             "-c",
-            "trap 'exit 42' TERM; while :; do sleep 0.02; done",
+            "trap 'exit 42' TERM; : > \"$1\"; while :; do sleep 0.02; done",
+            "sh",
+            trapped.to_str().unwrap(),
         ],
     ));
     folders.once(Step::Running);
+    // Running says its command started, not that it is ready for the signal yet: it says that.
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while !trapped.exists() {
+        assert!(Instant::now() < deadline, "the command never set its trap");
+        std::thread::sleep(Duration::from_millis(20));
+    }
     let pid = libc::pid_t::try_from(recorder.id()).unwrap();
     // SAFETY: a signal to the process this test started and has not waited for.
     assert_eq!(unsafe { libc::kill(pid, libc::SIGTERM) }, 0);
