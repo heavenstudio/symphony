@@ -1,4 +1,5 @@
-//! Sweep rules tested in isolated repositories and a private SurrealDB server.
+//! Sweep rules, and the land that ends with a sweep, tested in isolated repositories and a
+//! private SurrealDB server.
 //!
 //! Every test builds its own repository outside this one: nothing here reads or touches the
 //! worktrees of the checkout it runs in. The sweep is called as a function where the command line
@@ -19,6 +20,7 @@ mod clean_cache;
 mod clean_races;
 mod cli;
 mod finished;
+mod land;
 mod on_review;
 mod policy_cache;
 mod rules;

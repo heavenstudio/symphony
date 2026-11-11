@@ -8,8 +8,7 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 /// The consumer's recipes, which the text names as the project's where it has them.
-const CONSUMERS: [&str; 6] = [
-    "land",
+const CONSUMERS: [&str; 5] = [
     "land-approve",
     "land-request",
     "land-stamps",
@@ -44,10 +43,11 @@ const PROSE: [&str; 20] = [
 /// Text of this repository's own development, which names its own justfile's recipes: a source
 /// kit's client build, which no project runs, and the checks a task here proves its work with
 /// (`check-fast` is the recipe filed as the task `tools/check-fast`).
-const OWN: [(&str, &str); 7] = [
+const OWN: [(&str, &str); 8] = [
     ("apps/symphony-server/src/api/client.rs", "symphony-ui-dist"),
     ("apps/symphony-server/src/development.rs", "symphony-ui-dev"),
     ("docs/CHECKS.md", "check-fast"),
+    ("docs/CHECKS.md", "client-check"),
     ("docs/CHECKS.md", "client-update"),
     ("docs/CHECKS.md", "lint-rs"),
     ("docs/CHECKS.md", "test-rs"),
@@ -355,9 +355,12 @@ fn every_just_command_the_symphony_names_is_an_installed_recipe_or_the_consumers
 fn the_allow_rules_and_the_codex_rules_allow_installed_recipes_but_the_servers() {
     let installed = installed();
     // An agent is asked before `just symphony`, which starts, replaces or stops the machine's
-    // shared server, and before `just symphony-cli`, which reaches `serve`, `init` and
-    // `publish-client`: both stay installed, and no rule allows them.
-    let asked: BTreeSet<String> = ["symphony", "symphony-cli"].map(String::from).into();
+    // shared server, before `just symphony-cli`, which reaches `serve`, `init` and
+    // `publish-client`, and before `just land`, which moves and pushes the default branch: they
+    // stay installed, and no rule allows them.
+    let asked: BTreeSet<String> = ["symphony", "symphony-cli", "land"]
+        .map(String::from)
+        .into();
     assert!(asked.is_subset(&installed), "{installed:?}");
     let allowed_here: BTreeSet<String> = installed.difference(&asked).cloned().collect();
     let tree = super::support::Tree::new();

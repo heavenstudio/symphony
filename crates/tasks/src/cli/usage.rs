@@ -19,17 +19,17 @@ pub fn shown(text: &str, env: &Env) -> String {
 
 /// The usage line of `just tasks` itself.
 pub const USAGE: &str = r#"usage: just tasks [-h] [--as ACTOR]
-                  {callback,register,attach,list,search,stats,embed,next,create,priority,field,claim,reserve,release,show,parent,depends,done,role,handover,move,verdict,say,launch,restore,cleanup,clean,close,reap,staff,agents,who,status,inbox,pull,wait,leave,beat,export,finish,sweep} ...
+                  {callback,register,attach,list,search,stats,embed,next,create,priority,field,claim,reserve,release,show,parent,depends,done,role,handover,move,verdict,say,launch,restore,cleanup,clean,close,reap,staff,agents,who,status,inbox,pull,wait,leave,beat,export,finish,sweep,land} ...
 "#;
 
 /// `just tasks --help`.
 pub const HELP: &str = r#"usage: just tasks [-h] [--as ACTOR]
-                  {callback,register,attach,list,search,stats,embed,next,create,priority,field,claim,reserve,release,show,parent,depends,done,role,handover,move,verdict,say,launch,restore,cleanup,clean,close,reap,staff,agents,who,status,inbox,pull,wait,leave,beat,export,finish,sweep} ...
+                  {callback,register,attach,list,search,stats,embed,next,create,priority,field,claim,reserve,release,show,parent,depends,done,role,handover,move,verdict,say,launch,restore,cleanup,clean,close,reap,staff,agents,who,status,inbox,pull,wait,leave,beat,export,finish,sweep,land} ...
 
 The task board from the terminal — `just tasks …`.
 
 positional arguments:
-  {callback,register,attach,list,search,stats,embed,next,create,priority,field,claim,reserve,release,show,parent,depends,done,role,handover,move,verdict,say,launch,restore,cleanup,clean,close,reap,staff,agents,who,status,inbox,pull,wait,leave,beat,export,finish,sweep}
+  {callback,register,attach,list,search,stats,embed,next,create,priority,field,claim,reserve,release,show,parent,depends,done,role,handover,move,verdict,say,launch,restore,cleanup,clean,close,reap,staff,agents,who,status,inbox,pull,wait,leave,beat,export,finish,sweep,land}
     callback            register a native channel or --off for inbox fallback
     depends             change what a task waits on
     handover            hand a task's orchestrator role to another session
@@ -41,7 +41,9 @@ positional arguments:
     status              the board's health: failed dispatches and sweeps,
                         slow requests, write latency
     finish              close the panes of a finished task's sessions
-    pull                print the whole PULL digest as ACTOR hears it
+    land                land a task's approved branch on the default branch
+                        and push it (`just land SLUG`)
+    pull              print the whole PULL digest as ACTOR hears it
     wait                print what a callback would push ACTOR, once there is
                         any
     run                 run a build or test command, recorded for the board's
@@ -636,6 +638,27 @@ options:
   --background BACKGROUND
                         why work finishing started it: said first, and the
                         board's server is never started for it
+"#,
+    ),
+    (
+        "land",
+        r#"usage: just tasks land [-h] [--as ACTOR] slug
+"#,
+        r#"usage: just tasks land [-h] [--as ACTOR] slug
+
+Land the task's branch, named as its slug, on the default branch: its
+reviewer's approve must be its last verdict and cover the branch's tip; the
+branch is merged (--no-ff) and checked ([verdicts] check, after [land]
+generators) in a worktree of its own; main moves there, is pushed to origin
+(unless [land] push = false), and the task closes with its `landed` line. A
+project's own `land` recipe replaces this one.
+
+positional arguments:
+  slug
+
+options:
+  -h, --help  show this help message and exit
+  --as ACTOR
 "#,
     ),
 ];

@@ -391,7 +391,7 @@ fn landed_closes_only_from_what_the_call_names_and_answers_what_it_found() {
     );
     assert_eq!(
         answer(&c.env, call(Some(json!(["review", "ready"])))),
-        json!({"refused": "a landing closes a task in review, blocked or in_progress, not ready"})
+        json!({"refused": "a landing closes a task in review, blocked, in_progress or done, not ready"})
     );
     let landed = &answer(&c.env, call(Some(json!(["review", "in_progress"]))))["ok"];
     assert_eq!(

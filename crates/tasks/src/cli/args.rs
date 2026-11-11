@@ -400,6 +400,7 @@ const COMMANDS: &[Command] = &[
             opt("--background", "background", STR),
         ],
     },
+    plain("land", SLUG),
 ];
 
 /// A command line read: the command and each dest given (a flag's as "", `append`'s each value).
@@ -799,7 +800,7 @@ mod tests {
             .unwrap()
     }
 
-    const ALL: &str = "'callback', 'register', 'attach', 'list', 'search', 'stats', 'embed', 'next', 'create', 'priority', 'field', 'claim', 'reserve', 'release', 'show', 'parent', 'depends', 'done', 'role', 'handover', 'move', 'verdict', 'say', 'launch', 'restore', 'cleanup', 'clean', 'close', 'reap', 'staff', 'agents', 'who', 'status', 'inbox', 'pull', 'wait', 'leave', 'beat', 'export', 'finish', 'sweep'";
+    const ALL: &str = "'callback', 'register', 'attach', 'list', 'search', 'stats', 'embed', 'next', 'create', 'priority', 'field', 'claim', 'reserve', 'release', 'show', 'parent', 'depends', 'done', 'role', 'handover', 'move', 'verdict', 'say', 'launch', 'restore', 'cleanup', 'clean', 'close', 'reap', 'staff', 'agents', 'who', 'status', 'inbox', 'pull', 'wait', 'leave', 'beat', 'export', 'finish', 'sweep', 'land'";
 
     #[test]
     fn every_command_of_the_usage_is_read_and_has_its_help() {

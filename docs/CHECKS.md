@@ -181,5 +181,12 @@ and closes when the nightly runs.
 outputs a generator makes from them) must pass before it lands with no reviewer
 (`crates/symphony/src/project.rs`, `Verdicts`). It is `just symphony-cli docs-audit --check`:
 such a branch changes documents and what is generated from them, and the docs audit is the check
-closest to them. This project names no generator, so nothing runs it yet; a generator added
-later adds its outputs' own tests to it.
+closest to them. This project names no verdict generator, so no generated branch runs it yet; a
+generator added later adds its outputs' own tests to it.
+
+`just land` runs the same check on every merge it lands, reviewed or not, in a worktree of its
+own before main moves ([the default landing](TASKS.md#the-default-landing)), after its
+`[land] generators`. This project's one regenerates the client distribution: `just
+client-check` builds the client fresh and compares it with the committed one, and only when they
+differ does `just client-update` rebuild it, committed after the merge. A branch that committed
+its own distribution with its client change therefore lands with no second commit.

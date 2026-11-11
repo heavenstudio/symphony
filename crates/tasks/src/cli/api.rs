@@ -33,7 +33,8 @@ pub use context::{run, serve};
 /// takes; 8: `tasks_for_branch`, the shared slug/recorded-branch pairing;
 /// 9: `assessment_state` and checked `record_waits`, whose `assessment/1` replies attest
 /// the task fence or the original committed occurrence; assessment/2 additionally requires the
-/// versioned producer publication binding and observes its source on every checked attempt).
+/// versioned producer publication binding and observes its source on every checked attempt;
+/// 10: `landed`'s `from` takes `done`, a task its reviewer approved, which stays done).
 /// The live launcher (`tools/tasks.sh`)
 /// serves an earlier main build only while this
 /// matches main's, so no caller reaches a build without what it relies on.
@@ -41,7 +42,7 @@ pub use context::{run, serve};
     dead_code,
     reason = "tools/tasks.sh reads it from the committed source; no Rust code compares builds"
 )]
-pub const VERSION: i64 = 9;
+pub const VERSION: i64 = 10;
 
 /// Why a call has no result.
 enum Fail {

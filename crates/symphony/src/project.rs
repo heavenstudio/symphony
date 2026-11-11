@@ -61,6 +61,7 @@ pub struct Project {
     pub theme: Theme,
     pub agents: Agents,
     pub verdicts: Verdicts,
+    pub land: Land,
     pub board: Board,
 }
 
@@ -96,6 +97,50 @@ pub struct Verdicts {
 }
 
 pub use crate::landing::Generator;
+
+/// What the Symphony's default `just land` does besides merging and checking
+/// (`symphony_board::land`, which reads the same table from the default branch).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Land {
+    /// Run on the merge before its check; what they change inside their outputs is committed.
+    pub generators: Vec<Generator>,
+    /// Whether a landing pushes the default branch to `origin`.
+    pub push: bool,
+}
+
+impl Default for Land {
+    fn default() -> Land {
+        Land {
+            generators: Vec::new(),
+            push: true,
+        }
+    }
+}
+
+/// `generators` of the table `table` checked: each writes inside the project, a folder's outputs
+/// keeping their slash, and has a command.
+fn checked_generators(table: &str, generators: &mut [Generator]) -> Result<(), String> {
+    for generator in generators {
+        // Outputs are prefixes of changed names: a folder keeps its slash, so `content/`
+        // never matches `content-x/`.
+        let slash = if generator.outputs.ends_with('/') {
+            "/"
+        } else {
+            ""
+        };
+        generator.outputs = inside(
+            &format!("{table} generators outputs"),
+            generator.outputs.clone(),
+        )? + slash;
+        if generator.command.is_empty() {
+            return Err(format!(
+                "{table} generator {} has no command",
+                generator.name
+            ));
+        }
+    }
+    Ok(())
+}
 
 impl Project {
     /// The plain project at `root`: every default, its name and id from the folder's name.
@@ -297,23 +342,9 @@ impl Project {
             },
         };
         let mut v = file.verdicts;
-        for generator in &mut v.generators {
-            // Outputs are prefixes of changed names: a folder keeps its slash, so `content/`
-            // never matches `content-x/`.
-            let slash = if generator.outputs.ends_with('/') {
-                "/"
-            } else {
-                ""
-            };
-            generator.outputs =
-                inside("[verdicts] generators outputs", generator.outputs.clone())? + slash;
-            if generator.command.is_empty() {
-                return Err(format!(
-                    "[verdicts] generator {} has no command",
-                    generator.name
-                ));
-            }
-        }
+        checked_generators("[verdicts]", &mut v.generators)?;
+        let mut land = file.land;
+        checked_generators("[land]", &mut land.generators)?;
         if !v.generators.is_empty() && v.land.is_empty() {
             return Err(
                 "[verdicts] generators need a land command: a generated branch never moves the \
@@ -342,6 +373,10 @@ impl Project {
             theme,
             agents,
             verdicts,
+            land: Land {
+                generators: land.generators,
+                push: land.push,
+            },
             board,
         };
         let reserved = project.reserved();

@@ -1,9 +1,11 @@
 # Task board
 
-The standalone workspace provides the generic board and document commands.
-Verification, certificates and the landing/stamp recipes in the workflow examples
-are supplied by a consuming project; no project gate executable or standalone
-landing backend is bundled here. See the workspace [command ownership](../AGENTS.md#command-ownership).
+The standalone workspace provides the generic board and document commands, and
+the default landing, `just land SLUG` ([the default landing](#the-default-landing)),
+which `symphony init` installs in every project. Verification, certificates and the
+landing/stamp recipes in the workflow examples are supplied by a consuming project,
+whose own `land` recipe replaces the default everywhere for it; no project gate
+executable or stamp backend is bundled here. See the workspace [command ownership](../AGENTS.md#command-ownership).
 
 How several agent sessions share work, and how they, and the owner, talk
 about it. Sessions may run in any worktree of this repository; the board is the
@@ -685,7 +687,9 @@ can hold one task at once, one role each:
 | reviewer | `just tasks role SLUG reviewer` | give the verdict: `approve` (done) or `changes` (back to the executor) |
 | reserved | `just tasks reserve SLUG` | hold it for later, for an hour, so nobody else claims it |
 
-A branch reaches `main` only through `just land` (the consuming project's landing policy). Its
+A branch reaches `main` only through `just land`: the Symphony's default
+([below](#the-default-landing)), or the consuming project's own, whose recipe replaces it.
+Under a consuming project's landing policy its
 reviewer gives one verdict, not two: `just land-approve BRANCH --tip SHA` with
 the full commit it checked, from its own
 session (`TASKS_SESSION`), holding the reviewer role on the branch's task,
@@ -694,6 +698,48 @@ tier 3 change). The landing then finishes the task in review for it: no board
 `approve` is needed. A branch with no task gets `review/BRANCH` from
 `just land-request BRANCH`, and the session that ran that (or the task's
 executor) is the one that lands it.
+
+### The default landing
+
+`just land SLUG --as HANDLE` (`tasks land`, `crates/tasks/src/land.rs`) lands the
+task's branch, named as its slug, on the default branch. The owner, on the card
+reports-small-choices in [DECISIONS](DECISIONS.md): "convention over configuration",
+and "lower level replaces higher level": a project's own `land` recipe replaces it.
+One land of a repository runs at a time (`land.lock` in `sf-tasks/`); a second
+waits its turn and says whose. The settings are read from the default branch as the
+main checkout has it committed, never from the branch landing, so a branch cannot
+change its own check.
+
+- **Approved.** The task's last verdict is its reviewer's `approve`, which left it
+  done, and the approval covers the branch's tip: the commit the verdict names, else,
+  when it names none of the branch's, every commit of the branch made before the
+  verdict. The board records no tip, so the landing's line on the thread then says it
+  judged by time. A commit after the approved one refuses, naming it.
+- **Merged and checked.** In a worktree of its own (`land` in the project's `[agents]
+  worktrees`, else `sf-tasks/land/worktree`), never the main checkout: one `--no-ff`
+  merge commit, "Merge branch 'SLUG'"; then the project's `[land] generators`, whose
+  changes, inside their outputs alone, are one commit after it ("Regenerate NAMES after
+  SLUG"); then `[verdicts] check`, its output in `sf-tasks/land/SLUG.log`. This
+  repository's generator rebuilds the client distribution when it is stale
+  ([CHECKS](CHECKS.md#checks-with-no-reviewer)).
+- **Moved.** The main checkout, on the default branch with no staged or tracked edit,
+  fast-forwards to what passed, so the default branch's new tree is the tree checked.
+  When the default branch moved meanwhile, the merge and the check run again on its
+  new tip; a red then is said on the thread to `@orchestrator`.
+- **Pushed.** Unless `[land] push = false` or the repository has no `origin`, the
+  default branch alone is pushed, no other branch and no tag, never forced: what
+  `origin` gained since is fetched first, merged and checked the same way. A push that
+  fails leaves the landing done here and says so in its line, with the command to
+  retry; a merge with `origin` that conflicts is said to `@orchestrator` too.
+- **Closed and swept.** `landed` writes the line `landed SLUG on main at SHA`, with what
+  was regenerated and whether it pushed, and closes a task in review, blocked or in
+  progress; an approved one stays done. The sweep then removes the task's finished
+  worktrees.
+
+Each refusal is one line, on the land's stderr and on the task's thread, and leaves
+the default branch where it was: no approval standing, a commit after it, a main
+checkout with edits or another branch checked out, a conflict (never resolved), a
+generator that fails or writes outside its outputs, and a red check.
 
 **A task has one orchestrator.** Taking the role on a task another session
 holds while it is live, stale or of unknown liveness is refused, naming the

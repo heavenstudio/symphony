@@ -198,3 +198,148 @@ fn a_fresh_project_runs_the_board_through_the_recipes_init_installed() {
     );
     assert!(shown.contains("The first lamp"), "{shown}");
 }
+
+/// A fresh project's first commit on `main`, committed under an identity of the repository's own:
+/// the land's merge commits under it too.
+fn committed(project: &Project) {
+    let root = &project.root;
+    project.ok(
+        root,
+        "git",
+        &["symbolic-ref", "HEAD", "refs/heads/main"],
+        None,
+    );
+    for (key, value) in [
+        ("user.name", "lamps"),
+        ("user.email", "lamps@example.invalid"),
+        ("commit.gpgsign", "false"),
+    ] {
+        project.ok(root, "git", &["config", key, value], None);
+    }
+    project.ok(root, "git", &["add", "-A"], None);
+    project.ok(root, "git", &["commit", "-q", "-m", "recipes"], None);
+}
+
+#[test]
+fn a_fresh_projects_just_land_lands_an_approved_branch() {
+    let project = Project::new();
+    let root = project.root.clone();
+    assert!(project.init(&["--root", "."]).status.success());
+    std::fs::create_dir_all(root.join(".target/bin")).unwrap();
+    std::os::unix::fs::symlink(
+        crate::support::tasks_binary(),
+        root.join(".target/bin/tasks"),
+    )
+    .unwrap();
+    committed(&project);
+    project.ok(
+        &root,
+        "git",
+        &["worktree", "add", "-q", "-b", "lamps/first", "../first"],
+        None,
+    );
+    let tree = project.dir.path().join("first");
+    std::fs::write(tree.join("lamp.txt"), "lit\n").unwrap();
+    project.ok(&tree, "git", &["add", "lamp.txt"], None);
+    project.ok(
+        &tree,
+        "git",
+        &["commit", "-q", "-m", "the first lamp"],
+        None,
+    );
+
+    let board = Fixture::empty();
+    let store = &board.store;
+    let (orch, exe, rev) = (
+        board.session("orchestrator"),
+        board.session("worker"),
+        board.session("reviewer"),
+    );
+    board.task("lamps/first");
+    store
+        .take_role("lamps/first", &orch, "orchestrator")
+        .unwrap();
+    store.claim("lamps/first", &exe).unwrap();
+    store.move_to("lamps/first", "review", &exe).unwrap();
+    store.take_role("lamps/first", &rev, "reviewer").unwrap();
+
+    // Not approved yet: refused, main where it was.
+    let before = project.ok(&root, "git", &["rev-parse", "main"], None);
+    let refused = project.run(
+        &root,
+        "just",
+        &["land", "lamps/first", "--as", &orch],
+        Some(&board),
+    );
+    assert!(!refused.status.success(), "{refused:?}");
+    assert!(
+        String::from_utf8_lossy(&refused.stderr)
+            .contains("lamps/first is review, with no approving verdict standing"),
+        "{refused:?}"
+    );
+    assert_eq!(
+        project.ok(&root, "git", &["rev-parse", "main"], None),
+        before
+    );
+
+    store
+        .verdict("lamps/first", &rev, "approve", "good")
+        .unwrap();
+    let out = project.ok(
+        &tree,
+        "just",
+        &["land", "lamps/first", "--as", &orch],
+        Some(&board),
+    );
+    let merge = project.ok(&root, "git", &["rev-parse", "main"], None);
+    assert!(
+        out.ends_with(&format!(
+            "landed lamps/first on main at {}; not pushed: no origin remote\n",
+            &merge[..12]
+        )),
+        "{out}"
+    );
+    assert_eq!(
+        project.ok(&root, "git", &["log", "-1", "--format=%s", "main"], None),
+        "Merge branch 'lamps/first'\n"
+    );
+    assert!(root.join("lamp.txt").is_file());
+    assert_eq!(store.get("lamps/first").unwrap().status, "done");
+}
+
+#[test]
+fn a_land_of_the_projects_own_replaces_the_symphonys_wherever_the_import_stands() {
+    let project = Project::new();
+    let root = project.root.clone();
+    assert!(project.init(&["--root", "."]).status.success());
+    // The Symphony's land runs the project's `tasks`, which is not linked yet.
+    let theirs = project.run(&root, "just", &["land", "lamps/first"], None);
+    assert_eq!(theirs.status.code(), Some(127), "{theirs:?}");
+    assert!(
+        String::from_utf8_lossy(&theirs.stderr).starts_with("no tasks binary"),
+        "{theirs:?}"
+    );
+
+    let installed = std::fs::read_to_string(root.join("justfile")).unwrap();
+    let own = "land *ARGS:\n    @echo our land {{ ARGS }}\n";
+    for justfile in [format!("{installed}\n{own}"), format!("{own}\n{installed}")] {
+        std::fs::write(root.join("justfile"), &justfile).unwrap();
+        assert_eq!(
+            project.ok(&root, "just", &["land", "lamps/first"], None),
+            "our land lamps/first\n",
+            "{justfile}"
+        );
+        // The rest of the Symphony's recipes stay.
+        let tasks = project.run(&root, "just", &["tasks", "list"], None);
+        assert_eq!(tasks.status.code(), Some(127), "{tasks:?}");
+        let again = project.init(&[]);
+        assert!(
+            String::from_utf8_lossy(&again.stdout).contains("justfile: kept (the project's own)\n"),
+            "{again:?}"
+        );
+        assert_eq!(
+            std::fs::read_to_string(root.join("justfile")).unwrap(),
+            justfile
+        );
+    }
+}

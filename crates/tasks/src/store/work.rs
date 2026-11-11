@@ -54,8 +54,8 @@ pub const BEFORE_WORK: [&str; 4] = ["backlog", "concept", "design", "ready"];
 /// What `next` offers and `claim` accepts, with in_progress.
 pub const PULLABLE: [&str; 3] = ["concept", "design", "ready"];
 pub const ROLES: [&str; 4] = ["orchestrator", "executor", "reviewer", "reserved"];
-/// What a landing closes a task from ([`Store::landed`]).
-pub const LANDS_FROM: [&str; 3] = ["review", "blocked", "in_progress"];
+/// What a landing closes a task from ([`Store::landed`]): done is a task its reviewer approved.
+pub const LANDS_FROM: [&str; 4] = ["review", "blocked", "in_progress", "done"];
 
 /// A task a landing closed: as the write left it, and the status the write found it in.
 #[derive(Debug, Clone, PartialEq)]
@@ -543,7 +543,9 @@ LET $said = $actor + '{MOVED}' + $task.status + '{ARROW}' + $status;
     ///
     /// `from` is which of [`LANDS_FROM`] this landing closes, checked against the status the write
     /// reads, and the answer names the one it found. A task closed from in progress has the verdict
-    /// addressed to its executor, saying it was taken back, in the same write.
+    /// addressed to its executor, saying it was taken back, in the same write. One done (its
+    /// reviewer's `approve`, which the Symphony's default `just land` lands) stays done, the line
+    /// written.
     ///
     /// Taken by a session holding a role on the task, or one that asked to land its branch
     /// (`requested`: `land-request` keeps that record, off the board), so the approval recorded with
@@ -558,7 +560,7 @@ LET $said = $actor + '{MOVED}' + $task.status + '{ARROW}' + $status;
     ) -> Result<Landed, Error> {
         if let Some(status) = from.iter().find(|s| !LANDS_FROM.contains(s)) {
             return Err(refused(format!(
-                "a landing closes a task in review, blocked or in_progress, not {status}"
+                "a landing closes a task in review, blocked, in_progress or done, not {status}"
             )));
         }
         let found = RefCell::new(String::new());
@@ -577,7 +579,7 @@ LET $said = $actor + '{MOVED}' + $task.status + '{ARROW}' + $status;
             let taken_back = task.status == "in_progress";
             found.replace(task.status.clone());
             Ok(Change {
-                status: Some("done".into()),
+                status: (task.status != "done").then(|| "done".into()),
                 say: Some(Say {
                     kind: "verdict",
                     text: if taken_back {

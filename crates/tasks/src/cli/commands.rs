@@ -332,6 +332,18 @@ pub fn run(store: &Store, c: &mut Context) -> Result<(), Stop> {
             }
         }
         "finish" => panes::finish(store, c)?,
+        "land" => {
+            let actor = c.actor()?;
+            let slug = c.arg("slug");
+            let line =
+                crate::land::land(store, c.env, &slug, &actor, &mut *c.out).map_err(|stop| {
+                    match stop {
+                        crate::land::Stop::Refused(why) => Stop::Refused(why),
+                        crate::land::Stop::Board(error) => Stop::from(error),
+                    }
+                })?;
+            c.say(&line);
+        }
         "show" => show(store, c)?,
         "who" => who(store, c)?,
         "inbox" => {

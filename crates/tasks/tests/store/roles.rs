@@ -496,6 +496,57 @@ fn landing_finishes_work_held_blocked_or_taken_back_in_progress_but_never_work_n
     }
 }
 
+/// The default `just land` lands a task its reviewer approved: done stays done, the landing's line
+/// is written as its verdict, and only a landing that names done closes it from there.
+#[test]
+fn landing_an_approved_task_writes_its_line_and_leaves_it_done() {
+    let (f, _, _, rev) = in_review();
+    f.store
+        .verdict("sim/jump", &rev, "approve", "good")
+        .unwrap();
+    let asked = f.session("orchestrator");
+    assert_eq!(
+        refused(
+            f.store
+                .landed("sim/jump", &asked, "x", true, &["review", "blocked"])
+        ),
+        "sim/jump is done, which this landing does not close"
+    );
+    let landed = f
+        .store
+        .landed(
+            "sim/jump",
+            &asked,
+            "landed sim/jump on main at 3e0c66192471",
+            true,
+            &LANDS_FROM,
+        )
+        .unwrap();
+    assert_eq!(
+        (landed.task.status.as_str(), landed.from.as_str()),
+        ("done", "done")
+    );
+    let thread = f.store.thread("sim/jump").unwrap();
+    let texts: Vec<(&str, &str)> = thread
+        .iter()
+        .rev()
+        .take(2)
+        .map(|m| (m.kind.as_str(), m.text.as_str()))
+        .collect();
+    assert_eq!(
+        texts,
+        [
+            ("verdict", "landed sim/jump on main at 3e0c66192471"),
+            ("verdict", "approve: good")
+        ]
+    );
+    // No move: the stages keep the approval as the task's close.
+    assert!(
+        !thread.iter().any(|m| m.text.contains("done → done")),
+        "{thread:?}"
+    );
+}
+
 /// Land names what this landing closes, and the board checks it against the status its write reads:
 /// a task that moved after land's read is closed only if it moved to one land named.
 #[test]
@@ -507,7 +558,7 @@ fn landing_closes_only_from_the_statuses_named_and_never_names_one_it_cannot_clo
             f.store
                 .landed("sim/jump", &asked, "x", true, &["review", "ready"])
         ),
-        "a landing closes a task in review, blocked or in_progress, not ready"
+        "a landing closes a task in review, blocked, in_progress or done, not ready"
     );
     f.store.move_to("sim/jump", "in_progress", &exe).unwrap();
     for from in [&["review", "blocked"][..], &[][..]] {

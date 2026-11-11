@@ -7,12 +7,17 @@
 //! own: it is the one in use and this never writes over it. Where the project has none, the
 //! Symphony's is used. The project's own skills and guards sit beside the shipped ones and are never
 //! touched. It writes no permission rule but the allow rules, and each allow rule names a recipe
-//! `symphony.just` holds: its board and reply recipes, never the server ones ([`ALLOW`]).
+//! `symphony.just` holds: its board and reply recipes, never the server ones or `land` ([`ALLOW`]).
 //!
-//! A project with no justfile gets one importing the recipes; a justfile of the project's is never
-//! written. The project's `.gitignore` gets a line for each folder the Symphony fills that it does
-//! not ignore yet: the build links' `.target/` and the artifacts folder. The run ends with what is
-//! left for the owner to do ([`steps`]), and warns when the heartbeat has no build to run.
+//! The recipes include the default `land` (`tasks land`), and `symphony.just` sets
+//! `allow-duplicate-recipes`, so a recipe of the project's own of the same name replaces the
+//! Symphony's with no setting the project adds. A project with no justfile gets one whose one
+//! stamped line imports the recipes; a justfile of the project's is never written, but for the one
+//! init wrote setting `allow-duplicate-recipes` itself, which is brought current. Retiring the
+//! recipes removes the stamped copy and that stamped line. The project's `.gitignore` gets a line
+//! for each folder the Symphony fills that it does not ignore yet: the build links' `.target/` and
+//! the artifacts folder. The run ends with what is left for the owner to do ([`steps`]), and warns
+//! when the heartbeat has no build to run.
 
 use std::ffi::OsStr;
 use std::io;
@@ -34,8 +39,23 @@ const IGNORE: &str = ".gitignore";
 /// The folder of the build links (`builds::LINKS`), which the project's git ignores.
 const TARGET: &str = ".target";
 
-/// The justfile a project without one gets: the recipes, which a recipe written here overrides.
+/// What marks a justfile's import of the recipes as the Symphony's.
+const RECIPES_STAMP: &str = "# symphony-stamp: recipes";
+
+/// The justfile a project without one gets: the import of the recipes, which a recipe written here
+/// replaces (`land` among them) with no setting of its own: `symphony.just` sets
+/// `allow-duplicate-recipes`, and under it just 1.58 takes the importing file's recipe wherever the
+/// import stands. The stamped line is the Symphony's, taken out with the recipes.
 const JUSTFILE: &str = "\
+# The project's commands. The Symphony's are in symphony.just, which `symphony init` keeps current;
+# a recipe of the same name here is the project's own and replaces the Symphony's, `land` included.
+# The stamped line is the Symphony's: init takes it out if it stops shipping the recipes.
+import 'symphony.just' # symphony-stamp: recipes
+";
+
+/// A justfile init wrote that sets `allow-duplicate-recipes` itself, which `symphony.just` now
+/// sets (`just` refuses a setting made twice): init brings it to [`JUSTFILE`].
+const JUSTFILE_SETTING_ITSELF: &str = "\
 # The project's commands. The Symphony's are in symphony.just, which `symphony init` keeps current;
 # a recipe of the same name here is the project's own and wins.
 set allow-duplicate-recipes
@@ -91,7 +111,8 @@ const HOOKS: [Hook; 2] = [HEARTBEAT, MEMORY_GUARD];
 
 /// What Claude allows without a prompt: the board and reply recipes of `symphony.just`. Its server
 /// recipes, `symphony` (which starts, replaces or stops the machine's shared server) and
-/// `symphony-cli` (which reaches `serve`, `init` and `publish-client`), ask first.
+/// `symphony-cli` (which reaches `serve`, `init` and `publish-client`), and `land` (which moves and
+/// pushes the default branch), ask first.
 const ALLOW: [&str; 6] = [
     "Bash(just tasks:*)",
     "Bash(TASKS_SESSION=* just tasks *)",
@@ -111,8 +132,9 @@ pub struct Skill {
 pub struct Shipped {
     pub skills: Vec<Skill>,
     pub codex_rules: String,
-    /// `symphony.just`: the recipes the skills, docs and messages name.
-    pub recipes: String,
+    /// `symphony.just`: the recipes the skills, docs and messages name, the default `land` among
+    /// them; none retires the stamped copy and the justfile's stamped import of it.
+    pub recipes: Option<String>,
 }
 
 macro_rules! skill {
@@ -141,7 +163,7 @@ impl Shipped {
                 skill!("work"),
             ],
             codex_rules: include_str!("../shipped/codex.rules").to_string(),
-            recipes: include_str!("../shipped/symphony.just").to_string(),
+            recipes: Some(include_str!("../shipped/symphony.just").to_string()),
         }
     }
 }
@@ -450,15 +472,80 @@ fn imports(text: &str) -> bool {
     })
 }
 
-/// A justfile importing the recipes where the project has none; the project's own is left as it is.
+/// Whether a justfile's `text` sets `allow-duplicate-recipes` itself, which `symphony.just` sets.
+fn sets_duplicates(text: &str) -> bool {
+    text.lines().any(|line| {
+        let line = line.split('#').next().unwrap_or_default().trim();
+        line.strip_prefix("set")
+            .filter(|rest| rest.starts_with(char::is_whitespace))
+            .and_then(|rest| rest.trim_start().strip_prefix("allow-duplicate-recipes"))
+            .is_some_and(|rest| rest.is_empty() || rest.trim_start().starts_with(":="))
+    })
+}
+
+/// A justfile importing the recipes where the project has none; the project's own is left as it
+/// is, but for one init wrote setting what `symphony.just` now sets, which is brought current.
 fn install_justfile(root: &Path, report: &mut Report) -> io::Result<()> {
-    let outcome = if justfile(root)?.is_some() {
-        Outcome::Own
-    } else {
-        put(&root.join("justfile"), JUSTFILE)?;
-        Outcome::Installed
+    let outcome = match justfile(root)? {
+        Some(path)
+            if !is_link(&path)
+                && read_optional(&path)?.as_deref() == Some(JUSTFILE_SETTING_ITSELF) =>
+        {
+            put(&path, JUSTFILE)?;
+            Outcome::Updated
+        }
+        Some(_) => Outcome::Own,
+        None => {
+            put(&root.join("justfile"), JUSTFILE)?;
+            Outcome::Installed
+        }
     };
     report.push(("justfile".to_string(), outcome));
+    Ok(())
+}
+
+/// The recipes the Symphony no longer ships: a stamped `symphony.just` goes, and then the
+/// justfile's stamped import of it, the whole file when it is still the one init wrote. A copy of
+/// the recipes the project made its own stays, imported as it is.
+fn retire_recipes(root: &Path, report: &mut Report) -> io::Result<()> {
+    let path = root.join(RECIPES);
+    if is_link(&path) {
+        report.push((RECIPES.to_string(), Outcome::Own));
+        return Ok(());
+    }
+    match read_optional(&path)? {
+        Some(text) if !text.lines().next().is_some_and(is_mark_line) => {
+            report.push((RECIPES.to_string(), Outcome::Own));
+            return Ok(());
+        }
+        Some(_) => {
+            remove_file(&path)?;
+            report.push((RECIPES.to_string(), Outcome::Removed));
+        }
+        None => {}
+    }
+    let Some(justfile) = justfile(root)? else {
+        return Ok(());
+    };
+    if is_link(&justfile) {
+        return Ok(());
+    }
+    let Some(text) = read_optional(&justfile)? else {
+        return Ok(());
+    };
+    if text == JUSTFILE {
+        remove_file(&justfile)?;
+        report.push(("justfile".to_string(), Outcome::Removed));
+        return Ok(());
+    }
+    let kept: String = text
+        .split_inclusive('\n')
+        .filter(|line| !line.trim_end().ends_with(RECIPES_STAMP))
+        .collect();
+    if kept != text {
+        put(&justfile, &kept)?;
+        report.push(("justfile".to_string(), Outcome::Updated));
+    }
     Ok(())
 }
 
@@ -678,8 +765,13 @@ pub fn init(root: &Path, shipped: &Shipped) -> io::Result<Report> {
         &mut report,
     )?;
     install_settings(root, &mut report)?;
-    install_stamped(root, RECIPES, RECIPES, &shipped.recipes, &mut report)?;
-    install_justfile(root, &mut report)?;
+    match &shipped.recipes {
+        Some(recipes) => {
+            install_stamped(root, RECIPES, RECIPES, recipes, &mut report)?;
+            install_justfile(root, &mut report)?;
+        }
+        None => retire_recipes(root, &mut report)?,
+    }
     let artifacts = crate::project::Project::load(root)
         .map_or_else(|_| "artifacts".to_string(), |project| project.artifacts);
     install_ignores(root, &artifacts, &mut report)?;
@@ -752,14 +844,20 @@ pub fn steps(root: &Path, machine: &Machine) -> Vec<String> {
             }
         }
     }
-    if let Ok(Some(justfile)) = justfile(root)
-        && !std::fs::read_to_string(&justfile).is_ok_and(|text| imports(&text))
-    {
-        steps.push(format!(
-            "import the recipes in {}: add `import '{RECIPES}'`, with `set allow-duplicate-recipes` \
-             so a recipe of its own of the same name wins",
-            justfile.file_name().unwrap_or_default().to_string_lossy()
-        ));
+    if let Ok(Some(justfile)) = justfile(root) {
+        let text = std::fs::read_to_string(&justfile).unwrap_or_default();
+        let name = justfile.file_name().unwrap_or_default().to_string_lossy();
+        if !imports(&text) {
+            steps.push(format!(
+                "import the recipes in {name}: add `import '{RECIPES}'`; a recipe of its own of the \
+                 same name (`land`, say) replaces the Symphony's"
+            ));
+        } else if sets_duplicates(&text) {
+            steps.push(format!(
+                "take `set allow-duplicate-recipes` out of {name}: {RECIPES} sets it, and `just` \
+                 refuses a setting made twice"
+            ));
+        }
     }
     let unlinked = unlinked_heartbeat(root);
     if !unlinked.is_empty() {

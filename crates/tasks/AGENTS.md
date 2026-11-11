@@ -617,6 +617,18 @@ prefix) and that branch's tip appended, its output appended to
 `sf-tasks/on-review.log`; a slug naming no branch starts nothing and the log
 says so. A board `TASKS_SERVER` names starts none unless `TASKS_ON_REVIEW=on`,
 and `off` starts none anywhere (`tests/sweep/on_review.rs`).
+`land.rs` is `tasks land`, the Symphony's default `just land SLUG` (its steps in its
+module doc and [TASKS](../../docs/TASKS.md#the-default-landing)): it reads its
+settings (`[project] default_branch`, `[agents] worktrees`, `[verdicts] check`,
+`[land] generators` and `push`) from the default branch as the main checkout has
+it committed, merges and checks in a worktree of its own locked with the reason
+`symphony land` (so the sweep keeps it), moves the main checkout only by a
+fast-forward to what passed, closes the task through `landed` (`LANDS_FROM`: an
+approved task stays done) and runs the sweep for it. Its children are
+`sys::command_with` of the caller's `Env`, with none of git's repository
+variables and with `TASKS_SESSION` and `TASKS_TASK` naming the land, so what the
+check builds is recorded for the task. Its tests (`tests/sweep/land.rs`) land in
+scratch repositories on a board of their own and push to a scratch bare remote.
 `slots.rs` owns the cap on an orchestrator's open tasks: `[board]
 orchestrator_slots`, read from the main checkout's `symphony.toml` from the
 `.git` files alone (no `git` process: every command reads it) when the CLI or
