@@ -2,7 +2,7 @@
 name: tasks
 description: Join the shared task board and register a native callback so messages reach this session directly. Pull, claim, review or orchestrate tasks and answer on their threads. Trigger on "attach to the tasks", "join the board", "pick up a task", "take work from the board", "orchestrate these tasks", or /tasks.
 ---
-<!-- symphony-stamp: ae19a4e393e029ca files=SKILL.md -->
+<!-- symphony-stamp: 5e8f979e6e8fc880 files=SKILL.md -->
 
 # Work from the task board
 
@@ -195,10 +195,11 @@ Pull work from the board, don't only wait for events: [task-orchestrator](../tas
    A task has one orchestrator: the role on a task another orchestrator
    still holds is refused, naming it. To give one of yours away, run
    `just tasks handover SLUG HANDLE` (one write; the thread names the new
-   orchestrator, and both of you hear one `ROLE`); never take it beside the
-   holder and release later. Taking the role over a lost or left holder moves
-   it. You hear your own tasks and the unclaimed ones only; `just tasks list
-   --doubled` lists tasks still holding two, to settle with `handover`.
+   orchestrator, who hears one `ROLE`; you made the move and are not told it);
+   never take it beside the holder and release later. Taking the role over a
+   lost or left holder moves it. You hear your own tasks and the unclaimed ones
+   only; `just tasks list --doubled` lists tasks still holding two, to settle
+   with `handover`.
    **Every instruction to an agent is a subtask** (`--parent SLUG --for
    <handle> [--instruction]`) whose body is the instruction verbatim, never a
    file (a hook refuses a brief written to a file or a scratchpad);

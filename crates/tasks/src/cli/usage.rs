@@ -385,7 +385,8 @@ options:
         r#"usage: just tasks handover [-h] [--as ACTOR] slug to
 
 Move the orchestrator role on a task you orchestrate to another session, in one
-step: the thread names the new orchestrator and both of you hear one ROLE event.
+step: the thread names the new orchestrator, who hears one ROLE event; you made
+the move and are not told it.
 
 positional arguments:
   slug

@@ -849,6 +849,17 @@ mod tests {
     }
 
     #[test]
+    fn handover_help_says_only_the_new_orchestrator_hears_it() {
+        let Outcome::Help(help) = parse_of(&["handover", "-h"]) else {
+            panic!("handover -h is its help");
+        };
+        assert!(
+            help.contains("the thread names the new orchestrator, who hears one ROLE event; you made\nthe move and are not told it.\n"),
+            "{help}"
+        );
+    }
+
+    #[test]
     fn wait_reads_its_timeout_in_seconds() {
         let parsed = run(&["wait", "--timeout", "2.5", "--as", "amber-heron"]);
         assert_eq!(
