@@ -76,6 +76,8 @@ impl OneServer {
                 ("symphony.toml", file),
                 ("docs/DECISIONS.md", REGISTER),
                 ("docs/SHELF.md", "# Shelf\n\n[[shelf:all]]\n"),
+                // The Symphony's own place for the review guide; the home links it by its route.
+                ("docs/REVIEW.md", "# Review\n\nHow a card is reviewed.\n"),
             ] {
                 std::fs::create_dir_all(root.join(rel).parent().unwrap()).unwrap();
                 std::fs::write(root.join(rel), text).unwrap();
@@ -384,4 +386,53 @@ fn each_project_fits_the_first_visit_budget_in_its_own_theme_and_the_shared_look
     let shared =
         |look: &Value| ["background", "color", "font", "size"].map(|part| look[part].clone());
     assert_eq!(shared(&looks[0]), shared(&looks[1]));
+}
+
+/// Where each link of `selector` on the page leads, as `[href, status]`: an in-page anchor is
+/// 200 when its element is on the page; a document or folder route is what its read answers,
+/// since the server sends any route its page; any other route is what the server answers for it.
+fn landings(browser: &mut Chrome, base: &str, selector: &str) -> Vec<(String, u64)> {
+    let found = browser.eval(&format!(
+        r#"(async () => {{
+            const base = {base}, seen = [];
+            for (const link of document.querySelectorAll({selector})) {{
+                const href = link.getAttribute('href');
+                if (seen.some(([h]) => h === href)) continue;
+                if (href.startsWith('#')) {{ seen.push([href, document.getElementById(href.slice(1)) ? 200 : 404]); continue; }}
+                const path = href.split('#')[0];
+                const route = path.slice(1).replace(/\/$/, '');
+                const probe = link.dataset.native ? path
+                    : path.endsWith('.md') ? `${{base}}/api/document?view=outline&path=${{encodeURIComponent(route)}}`
+                    : path.length > 1 && path.endsWith('/') ? `${{base}}/api/folder?view=outline&path=${{encodeURIComponent(route)}}`
+                    : base + path;
+                seen.push([href, (await fetch(probe)).status]);
+            }}
+            return seen;
+        }})()"#,
+        base = json!(base),
+        selector = json!(selector),
+    ));
+    serde_json::from_value(found).unwrap()
+}
+
+#[test]
+fn every_header_and_home_link_lands_in_a_project_whose_guide_is_docs_review() {
+    let board = ScratchBoard::start();
+    let server = OneServer::start(board.address());
+    let Some(mut browser) = chrome() else { return };
+    browser.open(&server.url("/alpha/"));
+    assert!(
+        browser.wait_for("document.querySelector('.hero-title') !== null", SHOWN),
+        "{}",
+        observed_page(&mut browser)
+    );
+    let links = landings(&mut browser, "/alpha", "header a[href], .dash a[href]");
+    assert!(
+        links
+            .iter()
+            .any(|(href, _)| href == "/docs/REVIEW.md"),
+        "the home links the project's own review guide: {links:?}"
+    );
+    let lost: Vec<_> = links.iter().filter(|(_, status)| *status != 200).collect();
+    assert!(lost.is_empty(), "links that lead nowhere: {lost:?} of {links:?}");
 }

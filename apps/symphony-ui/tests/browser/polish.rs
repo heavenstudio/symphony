@@ -234,3 +234,34 @@ fn the_chat_panel_is_one_surface_whose_send_stays_in_view_with_a_long_thread_or_
         }
     }
 }
+
+#[test]
+fn the_count_of_todays_replies_opens_the_activity_panel_where_they_are_listed() {
+    let site = site();
+    let Some(mut page) = chrome() else { return };
+    page.open(&site.url("/"));
+    assert!(page.wait_for(
+        "document.querySelector('.tile.tone-answered') !== null",
+        SHOWN
+    ));
+    let tile = page.eval("(() => {const tile=document.querySelector('.tile.tone-answered'),link=document.querySelector('.tile.tone-you');\
+        return {tag:tile.tagName,href:tile.getAttribute('href'),height:tile.offsetHeight===link.offsetHeight,cursor:getComputedStyle(tile).cursor};})()");
+    assert_eq!(
+        tile,
+        json!({"tag":"BUTTON","href":null,"height":true,"cursor":"pointer"}),
+        "a button in the row of links, of their size"
+    );
+    page.eval("document.querySelector('.tile.tone-answered').click()");
+    assert!(
+        page.wait_for(
+            "document.getElementById('activity-panel') !== null && document.getElementById('bell').getAttribute('aria-expanded') === 'true'",
+            SHOWN
+        ),
+        "the tile opens the activity panel"
+    );
+    assert_eq!(
+        page.eval("location.pathname + location.hash"),
+        json!("/"),
+        "and leads nowhere else"
+    );
+}

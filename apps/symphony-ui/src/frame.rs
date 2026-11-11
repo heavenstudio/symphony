@@ -125,6 +125,13 @@ fn quick_open() {
     publish("review:activity");
 }
 
+/// Opens the activity panel, as the header's activity button does while it is closed: the home's
+/// count of today's replies leads there.
+pub fn open_activity() {
+    remember("reviewActivityOpen", &JsValue::TRUE);
+    publish("review:activity");
+}
+
 fn seen_ids() -> JsValue {
     platform::current()
         .load("docs-review-seen")

@@ -212,10 +212,13 @@ a.nextcard:hover { background:var(--background); border-color:var(--border); }
 .nexttext small { color:var(--muted-foreground); font-size:.78em; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .next a.more, .dash a.subtle { margin-top:auto; padding:10px 8px 2px; font-size:.88em; text-decoration:none; font-weight:600; }
 .tiles { display:grid; grid-template-columns:repeat(5, minmax(0, 1fr)); gap:14px; margin:18px 0; }
-a.tile:hover { transform:translateY(-2px); }
-a.tile b { font-size:2.1em; line-height:1.1; font-weight:700; letter-spacing:-.02em; font-variant-numeric:tabular-nums; color:var(--tone); }
-a.tile span { font-weight:600; font-size:.9em; }
-a.tile small { color:var(--muted-foreground); font-size:.78em; }
+/* A tile is a link, or a button for the one whose detail is a panel (the activity): the same face. */
+button.tile { font:inherit; text-align:left; cursor:pointer; }
+button.tile:hover { border-color:var(--border); border-top-color:var(--tone, var(--border)); }
+.tile:hover { transform:translateY(-2px); }
+.tile b { font-size:2.1em; line-height:1.1; font-weight:700; letter-spacing:-.02em; font-variant-numeric:tabular-nums; color:var(--tone); }
+.tile span { font-weight:600; font-size:.9em; }
+.tile small { color:var(--muted-foreground); font-size:.78em; }
 .tone-you { --tone:var(--primary); } .tone-auto { --tone:var(--auto); } .tone-answered { --tone:var(--like); }
 .tone-tasks { --tone:var(--decision); } .tone-agents { --tone:var(--live); }
 .dash-grid { display:grid; grid-template-columns:minmax(0, 1.1fr) minmax(0, 1fr) minmax(0, 1fr); gap:18px; align-items:start; }
@@ -248,8 +251,8 @@ a.bar:hover { background:var(--background); }
   .card { padding:var(--sp-3) var(--sp-4); }
   .dash-top, .dash-grid { grid-template-columns:minmax(0, 1fr); }
   .tiles { grid-template-columns:repeat(2, minmax(0, 1fr)); gap:10px; }
-  a.tile { padding:12px 14px; } a.tile b { font-size:1.7em; }
-  a.tile:last-child:nth-child(odd) { grid-column:1 / -1; }
+  .tile { padding:12px 14px; } .tile b { font-size:1.7em; }
+  .tile:last-child:nth-child(odd) { grid-column:1 / -1; }
   .hero { padding:18px; } .hero-title { font-size:1.35em !important; }
   a.go { width:100%; justify-content:center; box-sizing:border-box; }
 }

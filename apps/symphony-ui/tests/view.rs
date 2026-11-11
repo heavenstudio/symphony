@@ -125,13 +125,16 @@ fn the_counts_link_to_where_their_detail_lives() {
     for (href, value, label) in [
         ("/queue#you", "37", "waiting on you"),
         ("/queue#spot", "4", "auto-approved to spot-check"),
-        ("#activity", "6", "answered by agents today"),
         ("/tasks", "12 · 5", "tasks in progress · in review"),
         ("/agents", "14", "agents live"),
     ] {
         let tile = format!(r#"href="{href}"><b>{value}</b><span>{label}</span>"#);
         assert!(html.contains(&tile), "{tile}\nin {html}");
     }
+    // Today's replies have no page: their tile is a button that opens the activity panel.
+    let replies = r#"<button type="button" class="tile card tone-answered" aria-controls="activity-panel"><b>6</b><span>answered by agents today</span>"#;
+    assert!(html.contains(replies), "{replies}\nin {html}");
+    assert!(!html.contains(r##"href="#activity""##), "{html}");
     assert!(html.contains("across 9 documents"), "{html}");
 }
 

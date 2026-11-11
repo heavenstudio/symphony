@@ -187,7 +187,7 @@ fn Tiles(counts: Counts) -> Element {
         div { class: "tiles",
             Tile { href: "/queue#you", value: counts.waiting.to_string(), label: "waiting on you", tone: "you", hint: waiting_hint }
             Tile { href: "/queue#spot", value: counts.spot_check.to_string(), label: "auto-approved to spot-check", tone: "auto", hint: "your verdict overrides" }
-            Tile { href: "#activity", value: counts.answered_today.to_string(), label: "answered by agents today", tone: "answered", hint: "replies to you" }
+            ActivityTile { value: counts.answered_today.to_string() }
             Tile { href: "/tasks", value: tasks, label: "tasks in progress · in review", tone: "tasks", hint: "on the task board" }
             Tile { href: "/agents", value: live, label: "agents live", tone: "agents", hint: "working now" }
         }
@@ -207,6 +207,23 @@ fn Tile(
             b { "{value}" }
             span { "{label}" }
             small { "{hint}" }
+        }
+    }
+}
+
+/// The agents' replies of today are listed in the activity panel, no page of their own: the tile
+/// opens that panel, as the header's activity button does.
+#[component]
+fn ActivityTile(value: String) -> Element {
+    #[cfg(target_arch = "wasm32")]
+    let open = crate::entry_events::click(crate::frame::open_activity);
+    #[cfg(not(target_arch = "wasm32"))]
+    let open: Vec<Attribute> = Vec::new();
+    rsx! {
+        button { r#type: "button", class: "tile card tone-answered", "aria-controls": "activity-panel", ..open,
+            b { "{value}" }
+            span { "answered by agents today" }
+            small { "replies to you" }
         }
     }
 }
