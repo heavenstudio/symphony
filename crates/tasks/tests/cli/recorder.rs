@@ -338,6 +338,82 @@ fn in_its_callers_process_its_times_are_stamped_as_they_come_while_the_board_is_
     stamped_while_asked(&folders.once(Step::Finished), called, board.heard());
 }
 
+/// Whether this process's child `pid` has ended, while it is not reaped; none once it is.
+fn ended(pid: libc::pid_t) -> Option<bool> {
+    // SAFETY: siginfo_t is plain data, for which all zeroes is a value.
+    let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
+    // SAFETY: reads whether one child of this process ended into `info`, waiting for and reaping
+    // none.
+    let waited = unsafe {
+        libc::waitid(
+            libc::P_PID,
+            libc::id_t::try_from(pid).unwrap(),
+            &raw mut info,
+            libc::WEXITED | libc::WNOWAIT | libc::WNOHANG,
+        )
+    };
+    if waited != 0 {
+        let error = std::io::Error::last_os_error();
+        assert_eq!(error.raw_os_error(), Some(libc::ECHILD), "{error}");
+        return None;
+    }
+    Some(info.si_signo == libc::SIGCHLD)
+}
+
+#[test]
+fn a_command_that_ends_while_the_board_is_asked_is_left_unreaped_until_its_recorder_is_done() {
+    let case = Case::new();
+    let folders = Folders::new("recorder-unreaped-in-process");
+    let accepted = folders.dir.join("accepted");
+    let pid = folders.dir.join("pid");
+    let board = Silent::new(&accepted);
+    let mut env = case.env.clone();
+    for (name, value) in [
+        ("TASKS_SERVER", board.address.as_str()),
+        ("TASKS_SESSION", "asks-a-silent-board"),
+        ("TASKS_WORK", folders.work.to_str().unwrap()),
+        ("SYMPHONY_MACHINE_DIR", folders.machine.to_str().unwrap()),
+    ] {
+        env.vars.insert(name.into(), value.into());
+    }
+    env.cwd.clone_from(&folders.dir);
+    let command = "echo $$ > \"$2\"; while [ ! -e \"$1\" ]; do :; done; exit 7";
+    let args = [
+        "run",
+        "--phase",
+        "test",
+        "--",
+        "/bin/sh",
+        "-c",
+        command,
+        "sh",
+        accepted.to_str().unwrap(),
+        pid.to_str().unwrap(),
+    ]
+    .map(String::from);
+    let (tell, done) = mpsc::channel();
+    std::thread::spawn(move || {
+        let args = args.each_ref().map(String::as_str);
+        let _ = tell.send(crate::run(&env, &args, ""));
+    });
+    let pid = written_pid(&pid);
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while ended(pid) != Some(true) {
+        assert_eq!(ended(pid), Some(false), "reaped before it was seen ended");
+        assert!(Instant::now() < deadline, "not ended within 30 s");
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert!(
+        board.heard.try_recv().is_err(),
+        "the board was no longer asked once it ended"
+    );
+    let ran = done.recv_timeout(Duration::from_secs(60)).unwrap();
+    assert_eq!(ran.code, 7, "{}{}", ran.out, ran.err);
+    assert_eq!(ended(pid), None, "left unreaped");
+    let finished = folders.once(Step::Finished);
+    assert_eq!((finished.exit_code, finished.signal), (Some(7), None));
+}
+
 #[test]
 fn a_command_word_of_any_bytes_reaches_the_command_whole() {
     use std::os::unix::ffi::OsStrExt as _;

@@ -86,9 +86,11 @@ another folder. A board named by `TASKS_SERVER` without `TASKS_WORK` (a test's b
 records nothing.
 
 **What.** Each operation is `operations/<id>.json` in the work folder, rewritten
-whole (a file of its own renamed over it): queued when the recorder begins, running
-once COMMAND started, rewritten every 2 s while it runs (its beat), and finished with
-how it ended. Its recorder holds `operations/<id>.lease` locked until it finished.
+whole (a file of its own renamed over it): first once the board said which task it is
+for, queued, or running when COMMAND started by then; running once COMMAND started,
+rewritten every 2 s while it runs (its beat), and finished with how it ended. Every
+recorder, of any build, locks `operations/<id>.lease` before it writes its record and
+holds it until it finished: the sweep (below) relies on that across builds.
 Its times are stamped as they happen: queued when `tasks run` was called, started
 when COMMAND did (on macOS, when the recorder told it to exec), ended when its end
 came, each seen by a thread of the recorder's own while the board is asked which task
@@ -114,11 +116,11 @@ it is for; the record is written once that is known. The board's schema is uncha
 concept, design, ready or in progress, or reviewing it in review. The board is read
 without starting its server, for at most 1 s, after COMMAND started. A session
 holding none or several, or a board that does not answer, records no task: nothing
-is guessed, and no time it records waits for that answer. An orchestrator running a build or test for a task, or a subagent that
-shares its orchestrator's process and has no session of its own, names the task
-(`TASKS_TASK=SLUG just verify`) and, when it has one, its handle
-(`TASKS_SESSION=HANDLE just verify`). The task a record names is the recorder's
-binding; the Symphony never rewrites it.
+is guessed, and no time it records waits for that answer. An orchestrator running a
+build or test for a task, or a subagent that shares its orchestrator's process and
+has no session of its own, names the task (`TASKS_TASK=SLUG just verify`) and, when
+it has one, its handle (`TASKS_SESSION=HANDLE just verify`). The task a record names
+is the recorder's binding; the Symphony never rewrites it.
 
 **Nested runs.** COMMAND receives `TASKS_RUN_PARENT`, its operation's ID; a recorder
 it starts records that as its `parent_id`.
@@ -131,14 +133,16 @@ before its record says it finished. A history that reaches 2 MiB becomes
 record stays in `operations/` for an hour after it last changed, so the Symphony sees
 it finish, and the next recorder's sweep then removes it, as it removes anything else
 there an hour old that no live recorder holds: a write's own file cut short, a lease
-with no record. A record no live recorder holds that the sweeping build cannot read
-(cut short, malformed, or of another version), which leaves its machine unknown, goes
-at the next sweep, with its lease. Work
-whose recorder died (an unfinished record whose lease nobody holds) reads as
-uncertainty until the next recorder's sweep finishes it without an exit code or
-signal, its end at its last beat, its reason "its recorder ended before saying how
-its command did", and keeps it in the history. One sweep or rotation runs at a time
-(`history.lock`); none waits for another.
+with no record. A record no live recorder holds that the sweeping build reads whole
+and cannot take for one (too long, malformed, or of another version), which leaves
+its machine unknown, goes at the next sweep, with its lease; one it could not open or
+read is left for a later sweep. So an older build's sweep removes a newer version's
+record as soon as its recorder lets it go: a finished one's history line stays, and a
+lost one has none. Work whose recorder died (an unfinished record whose lease nobody
+holds) reads as uncertainty until the next recorder's sweep finishes it without an
+exit code or signal, its end at its last beat, its reason "its recorder ended before
+saying how its command did", and keeps it in the history. One sweep or rotation runs
+at a time (`history.lock`); none waits for another.
 
 **As the Symphony reads it.** A queued or running operation counts while its
 recorder holds the lease; a finished one retires it. Each beat changes what the

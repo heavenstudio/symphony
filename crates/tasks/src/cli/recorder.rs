@@ -14,7 +14,9 @@
 //! [`READY`] to hear the recorder watches it, and runs unrecorded otherwise. Elsewhere, and in a
 //! caller's process ([`super::main`]), it runs COMMAND as its child and waits for it: as the
 //! `tasks` binary it passes the hang-up, interrupt, quit and terminate signals its caller left at
-//! their default to the command, and ends by the signal that ended it.
+//! their default to the command, and ends by the signal that ended it. The command's end is seen
+//! without reaping it; it is reaped once no signal is passed on, so none reaches another process
+//! that took its pid.
 //!
 //! The task is explicit or none: `--task`, else `TASKS_TASK` ([`TASK_VAR`]), else the one task the
 //! session (`--as`, else `TASKS_SESSION`) holds on the board when it begins (it executes it, or
@@ -249,14 +251,16 @@ fn child(asked: &Asked, env: &Env, err: &mut dyn Write, process: bool) -> i32 {
     if let Some(forwarding) = &forwarding {
         forwarding.child(started.0);
     }
-    // Waited for on a thread of its own, its end stamped as it comes while the board is asked.
+    // Its end is seen by a thread of its own and stamped as it comes, while the board is asked,
+    // and left unreaped: its pid stays its own while its signals are passed to it. It is reaped
+    // here, once they no longer are.
     let (end, ends) = mpsc::channel();
     let waiter = std::thread::spawn(move || {
-        let status = child.wait();
-        let _ = end.send((status, crate::store::now()));
+        let seen = ended_unreaped(started.0);
+        let _ = end.send((seen, crate::store::now()));
     });
     let recording = begin(Some(started));
-    let (ended, at) = loop {
+    let (seen, at) = loop {
         match ends.recv_timeout(BEAT) {
             Ok(end) => break end,
             Err(RecvTimeoutError::Timeout) => {
@@ -265,13 +269,19 @@ fn child(asked: &Asked, env: &Env, err: &mut dyn Write, process: bool) -> i32 {
                 }
             }
             Err(RecvTimeoutError::Disconnected) => {
-                let lost = io::Error::other("its waiter ended without it");
-                break (Err(lost), crate::store::now());
+                break (Err(io::Error::other("its waiter ended")), 0.0);
             }
         }
     };
     let _ = waiter.join();
     drop(forwarding);
+    let ended = child.wait();
+    // An end its waiter could not see is the one the reap read, as it came.
+    let at = if seen.is_ok() {
+        at
+    } else {
+        crate::store::now()
+    };
     let status = match ended {
         Ok(status) => status,
         Err(error) => {
@@ -299,6 +309,31 @@ fn child(asked: &Asked, env: &Env, err: &mut dyn Write, process: bool) -> i32 {
             128 + signal
         }
         (None, None) => 1,
+    }
+}
+
+/// Once this process's child `pid` has ended, left unreaped (`WNOWAIT`): until it is waited for,
+/// its pid names it and no other process.
+fn ended_unreaped(pid: u32) -> io::Result<()> {
+    loop {
+        // SAFETY: siginfo_t is plain data, for which all zeroes is a value.
+        let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
+        // SAFETY: waits for one child of this process to end, writing into `info`, reaping none.
+        let waited = unsafe {
+            libc::waitid(
+                libc::P_PID,
+                libc::id_t::from(pid),
+                &raw mut info,
+                libc::WEXITED | libc::WNOWAIT,
+            )
+        };
+        if waited == 0 {
+            return Ok(());
+        }
+        let error = io::Error::last_os_error();
+        if error.kind() != io::ErrorKind::Interrupted {
+            return Err(error);
+        }
     }
 }
 

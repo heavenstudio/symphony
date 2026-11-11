@@ -487,6 +487,49 @@ fn a_sweep_clears_a_record_no_live_recorder_holds_and_no_reader_reads_at_once_an
 }
 
 #[test]
+fn a_sweep_leaves_a_record_it_could_not_read_to_a_sweep_that_can() {
+    use std::os::unix::fs::PermissionsExt as _;
+    // SAFETY: geteuid cannot fail.
+    if unsafe { libc::geteuid() } == 0 {
+        // Every file opens for root: none is unreadable.
+        return;
+    }
+    let dir = folder("unreadable-now");
+    // A lost recorder's record, and one that is no record, neither held by a recorder.
+    gone(running(&dir, &record(ONE, Step::Running)));
+    let malformed = path(&dir, TWO);
+    fs::write(&malformed, "{").unwrap();
+    let records = [path(&dir, ONE), malformed.clone()];
+    let mode = |mode| {
+        for file in &records {
+            fs::set_permissions(file, fs::Permissions::from_mode(mode)).unwrap();
+        }
+    };
+    mode(0o000);
+    assert!(recorded::sweep(&dir, now()).unwrap().is_empty());
+    for file in [&records[0], &records[0].with_extension("lease"), &malformed] {
+        assert!(file.exists(), "{} went unread", file.display());
+    }
+    assert!(recorded::history(&dir).unwrap().is_empty());
+    assert!(recorded::read(&dir).uncertain);
+    mode(0o644);
+    let finished = recorded::sweep(&dir, now()).unwrap();
+    assert_eq!(
+        finished
+            .iter()
+            .map(|done| done.operation_id.as_str())
+            .collect::<Vec<_>>(),
+        [ONE]
+    );
+    assert!(!malformed.exists(), "no record stayed once read");
+    let found = recorded::read(&dir);
+    assert_eq!(ids(&found), [(ONE, Step::Finished)]);
+    assert!(!found.uncertain);
+    assert_eq!(recorded::history(&dir).unwrap().len(), 1);
+    fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
 fn a_sweep_lets_go_the_lease_of_an_operation_its_recorder_finished_without_keeping_it_twice() {
     let dir = folder("finished-lease");
     let done = record(ONE, Step::Finished);

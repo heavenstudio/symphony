@@ -261,20 +261,39 @@ fn held(path: &Path) -> Option<bool> {
     }
 }
 
-/// The record at `path` and its bytes; none for one that is not there, too long or not a record.
-fn record(path: &Path) -> Option<(Record, Vec<u8>)> {
-    let file = File::open(path).ok()?;
-    if !file.metadata().ok()?.is_file() {
-        return None;
+/// What one read of a record file found.
+#[derive(Debug)]
+enum Reading {
+    /// A record, with its bytes.
+    Record(Record, Vec<u8>),
+    /// A file read whole that is no record this build reads: too long, not a file, not one, or of
+    /// another version. Its writer renamed it there whole, so no later read makes it one.
+    NotOne,
+    /// Nothing read: the file was not there, or opening or reading it failed, as it may not later.
+    Failed,
+}
+
+/// The record at `path`, read once.
+fn record(path: &Path) -> Reading {
+    let Ok(file) = File::open(path) else {
+        return Reading::Failed;
+    };
+    match file.metadata() {
+        Ok(metadata) if metadata.is_file() => {}
+        Ok(_) => return Reading::NotOne,
+        Err(_) => return Reading::Failed,
     }
     let mut bytes = Vec::new();
-    file.take(MAX_BYTES + 1).read_to_end(&mut bytes).ok()?;
-    if bytes.len() as u64 > MAX_BYTES {
-        return None;
+    if file.take(MAX_BYTES + 1).read_to_end(&mut bytes).is_err() {
+        return Reading::Failed;
     }
-    let found: Record = serde_json::from_slice(&bytes).ok()?;
-    let stem = path.file_stem()?.to_str()?;
-    found.valid(stem).then_some((found, bytes))
+    let stem = path.file_stem().and_then(|stem| stem.to_str());
+    match (serde_json::from_slice::<Record>(&bytes), stem) {
+        (Ok(found), Some(stem)) if bytes.len() as u64 <= MAX_BYTES && found.valid(stem) => {
+            Reading::Record(found, bytes)
+        }
+        _ => Reading::NotOne,
+    }
 }
 
 /// The record files in `operations`, by name; none for a folder that is not there.
@@ -332,7 +351,7 @@ pub fn read(folder: &Path) -> Found {
             found.uncertain = true;
             break;
         }
-        let Some((first, bytes)) = record(&path) else {
+        let Reading::Record(first, bytes) = record(&path) else {
             found.uncertain = true;
             continue;
         };
@@ -344,7 +363,7 @@ pub fn read(folder: &Path) -> Found {
             Some(true) => found.records.push((first, bytes)),
             // A recorder that finished between the two reads left its lease with its record done.
             Some(false) => match record(&path) {
-                Some((again, bytes)) if again.state == Step::Finished => {
+                Reading::Record(again, bytes) if again.state == Step::Finished => {
                     found.records.push((again, bytes));
                 }
                 _ => found.uncertain = true,
@@ -528,8 +547,9 @@ fn entries(folder: &Path) -> io::Result<(Vec<PathBuf>, Vec<PathBuf>)> {
 /// Tidy the work folder `folder` at `now`, under its lock, or not at all while another recorder
 /// tidies it: each unfinished operation whose recorder is gone is kept in the history, then
 /// finished without an exit, as its recorder last said it ran. A record no live recorder holds that
-/// is not one this build reads (unreadable, malformed, or of another version) goes at once, with
-/// its lease. A finished operation changed more than [`RETAIN`] ago goes, as does anything else
+/// read whole is not one this build reads (too long, malformed, or of another version) goes at
+/// once, with its lease; one that could not be read is left as it is for a later sweep. A finished
+/// operation changed more than [`RETAIN`] ago goes, as does anything else
 /// there older than that which no live recorder holds: a write's own file left by a writer that
 /// ended, a lease with no record. What this sweep finished.
 pub fn sweep(folder: &Path, now: f64) -> io::Result<Vec<Record>> {
@@ -566,12 +586,18 @@ pub fn sweep(folder: &Path, now: f64) -> io::Result<Vec<Record>> {
         if held(&lease) != Some(false) {
             continue;
         }
-        let Some((mut found, _)) = record(&path) else {
-            // No recorder holds it and no reader can read it, now or later: it goes at once, so
-            // the machine it makes uncertain is certain again.
-            let _ = fs::remove_file(&path);
-            let _ = fs::remove_file(&lease);
-            continue;
+        let mut found = match record(&path) {
+            Reading::Record(found, _) => found,
+            // No recorder holds it and no reader reads it, now or later: it goes at once, so the
+            // machine it makes uncertain is certain again.
+            Reading::NotOne => {
+                let _ = fs::remove_file(&path);
+                let _ = fs::remove_file(&lease);
+                continue;
+            }
+            // One that could not be read now is left for a sweep that can.
+            Reading::Failed => continue,
+            // One that could not be read now is left for a sweep that can.
         };
         if !lease.exists() {
             // Its recorder finished it and let its lease go.
