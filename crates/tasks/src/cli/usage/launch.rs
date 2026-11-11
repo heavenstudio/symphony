@@ -1,4 +1,8 @@
-//! `launch`'s usage and help, the longest of any command, kept beside [`super::COMMANDS`].
+//! `launch`'s usage and help, the longest of any command, kept beside [`super::COMMANDS`]. Its help
+//! ends with what a bare launch starts where it runs ([`shown`]).
+
+use crate::cli::Env;
+use crate::launch::{Defaults, root_of};
 
 pub const USAGE: &str = r#"usage: just tasks launch [-h] [--as ACTOR] [--model MODEL]
                          [--kind {codex,claude,worker,reviewer}]
@@ -21,9 +25,13 @@ positional arguments:
 options:
   -h, --help            show this help message and exit
   --as ACTOR
-  --model MODEL        default gpt-6.1-sol (sonnet for --kind claude)
+  --model MODEL         default the model of the project's [agents] launch for
+                        its agent, else gpt-6.1-sol for codex, sonnet for
+                        claude
   --kind {codex,claude,worker,reviewer}
-                        agent kind, default codex; worker/reviewer retain Claude compatibility
+                        agent kind, default the project's [agents] launch
+                        default, else codex; worker/reviewer retain Claude
+                        compatibility
   --role {executor,reviewer}
   --branch BRANCH
   --detached
@@ -33,3 +41,9 @@ options:
                         code for an executor, review for a reviewer
   --prompt PROMPT       text sent after /work SLUG HANDLE
 "#;
+
+/// [`HELP`] as `launch --help` prints it in `env`: then what a bare launch starts there, from the
+/// main checkout's `symphony.toml`.
+pub fn shown(env: &Env) -> String {
+    format!("{HELP}\n{}", Defaults::said_at(&root_of(env)))
+}

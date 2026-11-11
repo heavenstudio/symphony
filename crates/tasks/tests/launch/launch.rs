@@ -299,6 +299,42 @@ fn claude_starts_with_a_session_id_chosen_up_front_the_model_and_its_first_messa
 }
 
 #[test]
+fn an_asked_effort_goes_to_claudes_effort_flag_and_codexs_reasoning_effort() {
+    for (kind, effort, expected) in [
+        (
+            "claude",
+            Some("max"),
+            &["--model", "sonnet", "--effort", "max"][..],
+        ),
+        ("claude", Some(""), &["--model", "sonnet"][..]),
+        (
+            "codex",
+            Some("high"),
+            &["model_reasoning_effort=\"high\""][..],
+        ),
+        ("codex", None, &["model_reasoning_effort=\"xhigh\""][..]),
+    ] {
+        let w = World::new();
+        w.try_launch(&Ask {
+            kind: Some(kind.into()),
+            effort: effort.map(str::to_string),
+            ..w.ask("sim/jump")
+        })
+        .unwrap();
+        let run = the_run(&w);
+        let program = started(&run);
+        assert!(
+            program.windows(expected.len()).any(|part| part == expected),
+            "{kind} {effort:?}: {program:?}"
+        );
+        if kind == "claude" && expected.len() == 2 {
+            assert!(!program.iter().any(|a| a == "--effort"), "{program:?}");
+            assert_eq!(program.last().map(String::as_str), Some("sonnet"));
+        }
+    }
+}
+
+#[test]
 fn codex_is_the_default_without_its_daemon_and_its_thread_is_recorded_once_it_registers() {
     for (model, expected) in [("", "gpt-6.1-sol"), ("chosen-model", "chosen-model")] {
         let w = World::new();

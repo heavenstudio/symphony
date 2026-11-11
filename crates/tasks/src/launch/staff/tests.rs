@@ -195,6 +195,7 @@ fn a_failed_staff_review_dispatch_cancels_its_instruction_on_the_store() {
         &f.store,
         &NoHc,
         &machine,
+        &Defaults::default().resolve(None, None),
         &task,
         "amber-heron",
         Some(&ReviewTarget {

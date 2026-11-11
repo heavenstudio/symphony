@@ -48,9 +48,13 @@ pin is `rust-toolchain.toml`. The containing project keeps its own source launch
 slot wrapper and gates, which compile and test its own consumers.
 
 `tools/rs-bin.sh NAME` builds a declared workspace binary with Cargo before every
-run. `--build NAME` prints the freshly built path, `--where NAME` names its expected
-location without building or attesting freshness, and `--link NAME` builds and
-refreshes `.target/bin/NAME`. None searches a containing project. `just symphony
+run and runs `rs-bin/NAME` in the target folder, a hard link renewed only when Cargo
+relinked, so a no-op build costs no new executable's first run. `--build NAME` prints
+that path, `--where NAME` names Cargo's own copy without building or attesting
+freshness, and `--link NAME` builds and points `.target/bin/NAME` at it. A board
+binary run from a linked worktree against the live board runs the main checkout's
+launcher instead ([the board guide](crates/tasks/AGENTS.md)). None searches a
+containing project. `just symphony
 --port 0` runs a server of its own; the server CLI retains shared-server selection.
 
 `just client-update` builds all seven real client modules and publishes their bundle

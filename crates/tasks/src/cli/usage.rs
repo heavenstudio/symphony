@@ -5,6 +5,18 @@
 mod launch;
 mod panes;
 
+use super::Env;
+
+/// A command's help `text` as `--help` prints it in `env`: launch's then says what a bare launch
+/// starts there ([`launch::shown`]).
+pub fn shown(text: &str, env: &Env) -> String {
+    if text == launch::HELP {
+        launch::shown(env)
+    } else {
+        text.to_string()
+    }
+}
+
 /// The usage line of `just tasks` itself.
 pub const USAGE: &str = r#"usage: just tasks [-h] [--as ACTOR]
                   {callback,register,attach,list,search,stats,embed,next,create,priority,field,claim,reserve,release,show,parent,depends,done,role,handover,move,verdict,say,launch,restore,cleanup,clean,close,reap,staff,agents,who,status,inbox,leave,beat,export,finish,sweep} ...

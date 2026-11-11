@@ -1448,6 +1448,9 @@ mod status_tests;
 mod health_tests;
 
 #[cfg(test)]
+mod no_documents_tests;
+
+#[cfg(test)]
 mod tests {
     use super::{Hub, Sweep, relevant, scope_affected};
     use crate::testing::{

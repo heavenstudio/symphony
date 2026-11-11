@@ -162,8 +162,9 @@ geometry, stream recovery and transfer budgets without a display server.
   revelation or teardown, and reattaches after props replace its node. Markers include the
   page kind so the persistent panel cannot select a page's sentinel. No `mounted` feature
   is needed. Plain Dioxus action listeners and own-node form reads avoid retaining rich
-  browser event converters the entry controls do not use. A slot uses `content-visibility: auto` only after its
-  sentinel is gone: paint containment would clip the look-ahead. A slot that is
+  browser event converters the entry controls do not use. A slot uses
+  `content-visibility: auto` only once no sentinel is left in it, its own or a nested
+  slot's (a column's rows): paint containment would clip the look-ahead. A slot that is
   or sits in a list item never does: paint containment would clip the item's
   marker, and layout containment would put it on a line of its own
   (`tests/browser/look_parity/list_and_queue_spacing.rs`). Mounted rows
