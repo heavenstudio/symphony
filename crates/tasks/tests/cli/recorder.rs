@@ -223,27 +223,34 @@ fn a_signal_sent_to_the_recorder_reaches_its_command_whose_status_it_ends_with()
 #[test]
 fn a_command_that_cannot_start_is_said_and_recorded_as_a_shell_says_it_and_never_ran() {
     let case = Case::new();
-    let folders = Folders::new("recorder-missing");
-    let done = output(
-        tasks(
-            &case,
-            &folders,
-            None,
-            &["run", "--phase", "build", "--", "no-such-command-anywhere"],
+    let unrunnable = scratch("recorder-unrunnable").join("not executable");
+    fs::write(&unrunnable, "#!/bin/sh\n").unwrap();
+    for (name, command, code) in [
+        ("recorder-missing", "no-such-command-anywhere", 127),
+        ("recorder-refused", unrunnable.to_str().unwrap(), 126),
+    ] {
+        let folders = Folders::new(name);
+        let done = output(
+            tasks(
+                &case,
+                &folders,
+                None,
+                &["run", "--phase", "build", "--", command],
+            )
+            .stdin(Stdio::null()),
         )
-        .stdin(Stdio::null()),
-    )
-    .unwrap();
-    assert_eq!(done.status.code(), Some(127));
-    assert!(done.stdout.is_empty());
-    assert!(
-        String::from_utf8_lossy(&done.stderr).starts_with("tasks run: no-such-command-anywhere: "),
-        "{done:?}"
-    );
-    let finished = folders.once(Step::Finished);
-    assert_eq!(finished.exit_code, Some(127));
-    assert_eq!(finished.started_at, None, "it never ran");
-    assert!(finished.reason.starts_with("its command did not start"));
+        .unwrap();
+        assert_eq!(done.status.code(), Some(code), "{done:?}");
+        assert!(done.stdout.is_empty());
+        assert!(
+            String::from_utf8_lossy(&done.stderr).starts_with(&format!("tasks run: {command}: ")),
+            "{done:?}"
+        );
+        let finished = folders.once(Step::Finished);
+        assert_eq!(finished.exit_code, Some(code));
+        assert_eq!(finished.started_at, None, "it never ran");
+        assert!(finished.reason.starts_with("its command did not start"));
+    }
 }
 
 #[test]

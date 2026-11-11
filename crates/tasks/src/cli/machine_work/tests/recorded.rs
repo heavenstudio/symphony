@@ -308,6 +308,55 @@ fn a_sweep_finishes_lost_work_without_an_exit_keeps_it_once_and_drops_what_is_an
 }
 
 #[test]
+fn a_sweep_clears_what_no_live_recorder_holds_once_it_is_an_hour_old() {
+    let dir = folder("tidy");
+    let operations = dir.join(OPERATIONS);
+    let partial = operations.join(format!(".{ONE}.json.1.0"));
+    let orphan = path(&dir, TWO).with_extension("lease");
+    let unreadable = path(&dir, THREE);
+    for (file, text) in [(&partial, "{"), (&orphan, ""), (&unreadable, "{")] {
+        fs::write(file, text).unwrap();
+    }
+    // A live recorder's lease before its first record, and beside one that cannot be read.
+    let (four, five) = ("4".repeat(32), "5".repeat(32));
+    let lease = |id: &str| {
+        let file = File::create(path(&dir, id).with_extension("lease")).unwrap();
+        file.lock().unwrap();
+        file
+    };
+    let held = [lease(&four), lease(&five)];
+    fs::write(path(&dir, &five), "{").unwrap();
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs_f64();
+    recorded::sweep(&dir, now).unwrap();
+    for file in [&partial, &orphan, &unreadable] {
+        assert!(file.exists(), "{} went within the hour", file.display());
+    }
+    recorded::sweep(&dir, now + RETAIN + 60.0).unwrap();
+    for file in [&partial, &orphan, &unreadable] {
+        assert!(!file.exists(), "{} stayed", file.display());
+    }
+    for kept in [
+        path(&dir, &four).with_extension("lease"),
+        path(&dir, &five).with_extension("lease"),
+        path(&dir, &five),
+    ] {
+        assert!(
+            kept.exists(),
+            "{} went with its recorder alive",
+            kept.display()
+        );
+    }
+    assert!(recorded::history(&dir).unwrap().is_empty());
+    for file in held {
+        gone(file);
+    }
+    fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
 fn a_sweep_keeps_a_finished_operation_its_recorder_ended_before_keeping() {
     let dir = folder("unkept");
     recorded::write(&path(&dir, ONE), &record(ONE, Step::Finished)).unwrap();
