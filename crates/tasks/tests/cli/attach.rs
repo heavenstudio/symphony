@@ -93,6 +93,7 @@ fn watched(f: &Fixture, me: &str, polls: i64, mut meanwhile: impl FnMut(usize)) 
         polls: Some(polls),
         probes: None,
         landed: None,
+        tips: None,
         pull_every: None,
     };
     let (mut lines, mut steps) = (Vec::new(), 0);
@@ -224,6 +225,7 @@ fn probed(f: &Fixture, me: &str, polls: i64, beat: f64, probes: &Probes) {
         polls: Some(polls),
         probes: Some(probes),
         landed: None,
+        tips: None,
         pull_every: None,
     };
     watch(&f.store, me, &settings, &mut |_| {}, &mut |s| f.advance(s)).unwrap();
