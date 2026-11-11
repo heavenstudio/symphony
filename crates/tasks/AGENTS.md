@@ -5,36 +5,30 @@ the root guide](../../AGENTS.md#rust).
 
 The `symphony-board` crate (this folder) is the task board ([TASKS](../../docs/TASKS.md)): its
 store over SurrealDB, the server it starts in `sf-tasks/` in the git common
-dir, and the `tasks` binary, which is `just tasks` and `just tasks-attach`.
-These recipes and `just worktree-sweep` go through `tools/tasks.sh`: live board
-commands always run committed main's build, preserving the calling worktree's
-working directory. `sf-cargo/tasks-main/TREE` in the common dir records the
-binary for main's tree id. A warm call checks that executable and runs it with
-no export, build or source hashing. On a miss, an ancestor main build serves
-immediately when its committed schema, supported RPC server and `tasks api`
-versions match (`cli/api.rs`'s `VERSION`, raised when a caller relies on a change).
-One background builder exports committed Rust sources and atomically publishes
-the new pointer after success. It owns a separate process group, so maintenance
-callers ending their groups leave the refresh running. A changed or unreadable
-contract, or no earlier executable, waits for a build. Failures keep the earlier
-build and are reported on later commands; background output is in
-`sf-cargo/tasks-main/build.log`, foreground output goes to caller stderr.
-Uncommitted main changes stay off the live board. The launcher reports the main
-commit and build
-on stderr. Agents keep using `just tasks … --as HANDLE`: that outer command is
-what the beat hook recognises and binds, before the recipe selects the binary
-internally. A `--justfile PATH`, `-f PATH`, `--working-directory DIR` or `-d
-DIR` between `just` and `tasks` binds the same way, so a worktree's `just
---justfile MAIN/justfile tasks … --as HANDLE` does.
-To run branch code, explicitly select a non-live database with `TASKS_DATABASE`
-or a leading `--database NAME`; a leading option overrides the environment.
-With the live `tasks` database, `TASKS_SERVER` selects branch code only when its
-validated TCP port differs from the canonical local listener in
-`sf-tasks/server.json`, in the launcher's own common dir and in that of the
-repository the caller's folder is in. The exact live address runs main.
-Different spellings on that port, invalid ports and missing or malformed
-records refuse the override; explicitly name a scratch database to use branch
-code there.
+dir, and the `tasks` binary, which is `just tasks`. The standalone recipes use
+`tools/rs-bin.sh`, which builds with Cargo before each run. A board binary
+(`tasks`, `agent-send`, `tasks-copy`, `tasks-reclaim`, `tasks-cutover`) run
+from a linked worktree against this repository's live board uses the main
+checkout's launcher: its build and target folder, preserving the caller's
+working directory and environment while dropping `CARGO_TARGET_DIR`.
+The main checkout is the common directory less `/.git`, as Git finds it;
+its current source is built, including uncommitted changes.
+
+The live database is `tasks`; the last leading `--database NAME` overrides
+`TASKS_DATABASE`. A different database, a working directory in another
+repository or none, or a `TASKS_SERVER` port different from the common dir's
+`sf-tasks/server.json` selects the caller's build. Ports are the numbers
+Rust's u16 reads: leading zeros and a plus do not select a private server.
+A malformed address/port counts conservatively as the live port; with no
+server record there is no live server to name. Missing main launchers refuse
+before branch board code builds or runs, naming the scratch option.
+
+A branch's generic Symphony CLI or preview server opens the board directly
+through `Store::opening`; an accepted reader also migrates an older board.
+It does not use this board-binary routing guard. Select an explicit private
+database/server for branch Symphony execution. The guard performs no database
+read, process scan, restart or rollback. Agents keep
+`just tasks … --as HANDLE` so the heartbeat can bind the outer command.
 
 A run's board is its project's (`src/project.rs`): the nearest `symphony.toml`
 from its working directory up, never past the top of the checkout it is in (the
@@ -336,13 +330,12 @@ newline-delimited SDK user envelope; it never reads or sends an authentication
 token and never claims to be the receiving session's child. Native inbound
 controls still apply. `tasks --database NAME ...` is the explicit
 `TASKS_DATABASE` override for scratch runs; it disables repository sweeps.
-`tools/rs-bin.sh` builds each binary once per hash of its sources into
-`sf-cargo/bin/` in the git common dir, for every worktree whose sources are the
-same, and links `.target/bin/NAME` to the build the tree last ran. After a live
-`just tasks` command, the launcher points the calling checkout's tasks link at
-main's build too; the heartbeat hook runs that link, building nothing. Scratch
-commands first look up `rs-bin.sh --where tasks`, then use `--build` only if
-the executable is missing; neither changes that live link. The native `tasks api`
+`tools/rs-bin.sh` builds the declared binary through ordinary Cargo on every
+run. `--where` names its expected debug path without building; `--build`
+builds and prints that path; `--link` points `.target/bin/NAME` at it.
+These selectors do not choose a safe board for a later direct execution:
+a binary run by its path needs an explicit private board. The heartbeat
+runs its linked binary without building. The native `tasks api`
 JSON interface (`src/cli/api.rs`) takes a call on stdin; `tasks api --lines` takes
 one JSON call per line on stdin and answers each on its own line (a line that
 is a list of calls gets a list of answers), the methods being the store's, plus

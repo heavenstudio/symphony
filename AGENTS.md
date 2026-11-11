@@ -50,7 +50,11 @@ slot wrapper and gates, which compile and test its own consumers.
 `tools/rs-bin.sh NAME` builds a declared workspace binary with Cargo before every
 run. `--build NAME` prints the freshly built path, `--where NAME` names its expected
 location without building or attesting freshness, and `--link NAME` builds and
-refreshes `.target/bin/NAME`. None searches a containing project. `just symphony
+refreshes `.target/bin/NAME`. A board binary run from a linked worktree against this repository's
+live board uses the main checkout's launcher and target folder; explicit scratch boards keep the
+worktree build ([board guide](crates/tasks/AGENTS.md)). A branch's generic Symphony CLI and a binary
+run by its path do not use that routing guard: select a private scratch database/server for them.
+None searches a containing project. `just symphony
 --port 0` runs a server of its own; the server CLI retains shared-server selection.
 
 `just client-update` builds all six real client modules and publishes their bundle
