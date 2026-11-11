@@ -132,7 +132,7 @@ mod tests {
         assert_eq!(workspace(&layout.package), layout.own);
         fs::remove_file(&script).unwrap();
         fs::write(&script, "unreadable to an ordinary uid").unwrap();
-        fs::set_permissions(&script, fs::Permissions::from_mode(0)).unwrap();
+        fs::set_permissions(&script, fs::Permissions::from_mode(0o0)).unwrap();
         assert!(script.is_file(), "metadata is not a read-permission check");
         assert_eq!(workspace(&layout.package), layout.own);
         // Privileged test users may still read mode000 files; neither outcome is a root seal.
@@ -145,7 +145,7 @@ mod tests {
     fn uncertain_directory_access_is_never_replaced_by_an_ancestor() {
         let layout = Layout::new();
         let tools = layout.own.join("tools");
-        fs::set_permissions(&tools, fs::Permissions::from_mode(0)).unwrap();
+        fs::set_permissions(&tools, fs::Permissions::from_mode(0o0)).unwrap();
         let visible =
             layout.script("surreal.sh").is_file() && layout.script("fixture_process.sh").is_file();
         let result = catch_unwind(|| workspace(&layout.package));

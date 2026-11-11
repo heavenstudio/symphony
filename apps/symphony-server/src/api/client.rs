@@ -33,7 +33,7 @@ pub(super) async fn static_response(shared: &Shared, path: &str, request: &Reque
     } else {
         match directory_asset(shared, relative).await {
             Ok(asset) => asset,
-            Err(response) => return response,
+            Err(response) => return *response,
         }
     };
     if relative == "index.html" {
@@ -98,10 +98,13 @@ fn client_unbuilt(shared: &Shared) -> Response {
     )
 }
 
-async fn directory_asset(shared: &Shared, relative: &str) -> Result<(Vec<u8>, String), Response> {
+async fn directory_asset(
+    shared: &Shared,
+    relative: &str,
+) -> Result<(Vec<u8>, String), Box<Response>> {
     let root = match tokio::fs::canonicalize(&shared.ui_dist).await {
         Ok(root) => root,
-        Err(_) => return Err(client_unbuilt(shared)),
+        Err(_) => return Err(Box::new(client_unbuilt(shared))),
     };
     let file = match tokio::fs::canonicalize(root.join(relative)).await {
         // The shipped client lives inside the common directory, deliberately. Only this static
@@ -114,13 +117,18 @@ async fn directory_asset(shared: &Shared, relative: &str) -> Result<(Vec<u8>, St
             file
         }
         Err(e) if relative == "index.html" && e.kind() == std::io::ErrorKind::NotFound => {
-            return Err(client_unbuilt(shared));
+            return Err(Box::new(client_unbuilt(shared)));
         }
-        _ => return Err(error(StatusCode::NOT_FOUND, "no such app file")),
+        _ => return Err(Box::new(error(StatusCode::NOT_FOUND, "no such app file"))),
     };
     let bytes = match tokio::fs::read(&file).await {
         Ok(bytes) => bytes,
-        Err(e) => return Err(error(StatusCode::INTERNAL_SERVER_ERROR, e.to_string())),
+        Err(e) => {
+            return Err(Box::new(error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                e.to_string(),
+            )));
+        }
     };
     let extension = file
         .extension()

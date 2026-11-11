@@ -7,6 +7,10 @@ pub use shared::*;
 
 #[cfg(test)]
 #[path = "script_tests.rs"]
+#[expect(
+    clippy::duplicate_mod,
+    reason = "adapter tests bind the shared source to both locked and standard spawn policies"
+)]
 mod tests;
 
 /// A machine copy's first run starts under the lock every std spawn here takes, so the child never

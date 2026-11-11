@@ -24,9 +24,18 @@ impl Scratch {
                 NEXT.fetch_add(1, Ordering::Relaxed)
             ));
             match fs::create_dir(&path) {
-                Ok(()) => return Self(path.canonicalize().unwrap()),
-                Err(error) if error.kind() == ErrorKind::AlreadyExists => {}
-                Err(error) => panic!("{}: {error}", path.display()),
+                Ok(()) => {
+                    return Self(
+                        path.canonicalize()
+                            .expect("the owned scratch directory exists"),
+                    );
+                }
+                Err(error) => assert_eq!(
+                    error.kind(),
+                    ErrorKind::AlreadyExists,
+                    "{}: {error}",
+                    path.display()
+                ),
             }
         }
     }
@@ -43,14 +52,14 @@ impl Drop for Scratch {
 }
 
 fn payload(folder: &Path, text: &str) {
-    fs::create_dir_all(folder).unwrap();
-    fs::write(folder.join("payload.json"), text).unwrap();
+    fs::create_dir_all(folder).expect("the owned fixture folder is created");
+    fs::write(folder.join("payload.json"), text).expect("the fixture payload is written");
 }
 
 fn report_line(operation: &str, path: &Path) -> String {
     let mut encoded = String::new();
     for byte in path.as_os_str().as_bytes() {
-        write!(encoded, "{byte:02x}").unwrap();
+        write!(encoded, "{byte:02x}").expect("formatting into a String succeeds");
     }
     format!("{operation}\t{encoded}\n")
 }

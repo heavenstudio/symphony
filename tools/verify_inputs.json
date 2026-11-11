@@ -70,7 +70,7 @@
         "proof": "The only I/O is Reader::read_to_string on the explicit fixtures folder joined with name, without canonicalizing or replacing the audited read. wire.rs supplies its compiling crate's absolute fixtures folder; reader_tests supplies owned scratch folders. The same reporting file boundary runs in preselection across the declared API fixture directory; no raw filesystem bypass."
       },
       "crates/symphony-api/tests/wire/reader_tests.rs": {
-        "sha256": "4415fac9a6458c3139ed92ce942575d96155d82f0c562b2afb5b76910a45bb2d",
+        "sha256": "a29b519ee6b68466e77db9fc8b71a318bfa5cbd9437e640ee78e7aa7d74e6082",
         "reads": [],
         "proof": "Tests create and remove uniquely owned temporary folders, payloads, links and derived audit reports. Subject reads always use the inventoried fixture helper and unchanged Reader; raw filesystem reads inspect only these derived reports. The isolated current native test executable is a derived build output; its private mode/default variables and audit root/report are set only on each owned child Command. Active, missing-root, relative-root and inactive-report cases use synthetic scratch roots, never repository inputs or process-global environment mutation. No external executable, source lookup, provider or parent-project fixture is used."
       }

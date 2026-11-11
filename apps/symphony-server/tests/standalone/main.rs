@@ -270,7 +270,7 @@ fn execute_server_recipe(
 fn copy_native_dependencies(source: &Path, target: &Path) {
     let donor = source.join(".target");
     if donor.join("debug").is_dir() {
-        fs::create_dir_all(&target).unwrap();
+        fs::create_dir_all(target).unwrap();
         let mut copy = Command::new("cp");
         copy.arg(if cfg!(target_os = "macos") {
             "-cR"

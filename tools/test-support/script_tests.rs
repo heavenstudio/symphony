@@ -223,7 +223,7 @@ fn own_interpreter_files_win_and_missing_or_wrong_type_files_never_use_a_parent(
         );
         fs::remove_file(&file).unwrap();
         fs::write(&file, "mode zero remains a metadata-visible file").unwrap();
-        fs::set_permissions(&file, fs::Permissions::from_mode(0)).unwrap();
+        fs::set_permissions(&file, fs::Permissions::from_mode(0o0)).unwrap();
         assert!(wrapper_for(&manifest, body).is_file());
         if let Err(error) = fs::read(&file) {
             assert_eq!(error.kind(), ErrorKind::PermissionDenied);
@@ -394,7 +394,7 @@ fn concurrent_handouts_prime_once_per_device_inode_before_return_and_reprime_a_r
     let name = copy.file_name().unwrap().to_str().unwrap().to_owned();
     assert_eq!(
         entries(&root),
-        [name.clone()],
+        std::slice::from_ref(&name),
         "primer scratch must already be gone"
     );
     let inode = fs::metadata(copy).unwrap().ino();

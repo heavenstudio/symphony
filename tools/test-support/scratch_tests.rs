@@ -200,7 +200,7 @@ fn unreadable_scratch_preserves_entries_and_recovery_uses_the_same_harness() {
     let live = root.join(format!("{}-0", std::process::id()));
     fs::create_dir(&live).unwrap();
     fs::write(live.join("held"), "live owner").unwrap();
-    fs::set_permissions(&root, fs::Permissions::from_mode(0)).unwrap();
+    fs::set_permissions(&root, fs::Permissions::from_mode(0o0)).unwrap();
     reap_dead(&root);
     let created = create(&root, &AtomicUsize::new(4));
     fs::set_permissions(&root, fs::Permissions::from_mode(0o700)).unwrap();
