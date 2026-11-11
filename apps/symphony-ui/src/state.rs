@@ -114,6 +114,94 @@ impl Backoff {
     }
 }
 
+/// A handful of entries in key order, such as the task board's one per status or per outstanding
+/// read. A sorted vector answers what the board asks of a map with a fraction of the code each
+/// `BTreeMap` instantiation compiles into the page's wasm.
+#[derive(Clone, Debug, PartialEq)]
+pub struct FewMap<K, V>(Vec<(K, V)>);
+
+impl<K, V> Default for FewMap<K, V> {
+    fn default() -> Self {
+        Self(Vec::new())
+    }
+}
+
+impl<K: Ord, V> FewMap<K, V> {
+    fn find<Q: Ord + ?Sized>(&self, key: &Q) -> Result<usize, usize>
+    where
+        K: std::borrow::Borrow<Q>,
+    {
+        self.0.binary_search_by(|(at, _)| at.borrow().cmp(key))
+    }
+
+    pub fn get<Q: Ord + ?Sized>(&self, key: &Q) -> Option<&V>
+    where
+        K: std::borrow::Borrow<Q>,
+    {
+        self.find(key).ok().map(|at| &self.0[at].1)
+    }
+
+    pub fn get_mut<Q: Ord + ?Sized>(&mut self, key: &Q) -> Option<&mut V>
+    where
+        K: std::borrow::Borrow<Q>,
+    {
+        self.find(key).ok().map(|at| &mut self.0[at].1)
+    }
+
+    pub fn contains_key<Q: Ord + ?Sized>(&self, key: &Q) -> bool
+    where
+        K: std::borrow::Borrow<Q>,
+    {
+        self.find(key).is_ok()
+    }
+
+    /// Set `key` to `value`, returning the value it replaced.
+    pub fn insert(&mut self, key: K, value: V) -> Option<V> {
+        match self.find(&key) {
+            Ok(at) => Some(std::mem::replace(&mut self.0[at].1, value)),
+            Err(at) => {
+                self.0.insert(at, (key, value));
+                None
+            }
+        }
+    }
+
+    pub fn remove<Q: Ord + ?Sized>(&mut self, key: &Q) -> Option<V>
+    where
+        K: std::borrow::Borrow<Q>,
+    {
+        self.find(key).ok().map(|at| self.0.remove(at).1)
+    }
+
+    /// The value at `key`, inserting the default first when there is none.
+    pub fn or_default(&mut self, key: K) -> &mut V
+    where
+        V: Default,
+    {
+        let at = match self.find(&key) {
+            Ok(at) => at,
+            Err(at) => {
+                self.0.insert(at, (key, V::default()));
+                at
+            }
+        };
+        &mut self.0[at].1
+    }
+
+    /// The smallest key.
+    pub fn first_key(&self) -> Option<&K> {
+        self.0.first().map(|(key, _)| key)
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    pub fn clear(&mut self) {
+        self.0.clear();
+    }
+}
+
 /// Whether a client whose own build is `own` loads the page again for the board naming `served`:
 /// only for another build, and once per build (`tried` is the one it last loaded again for), so a
 /// shell the client cannot match never loads it in a loop. A client that cannot name its own

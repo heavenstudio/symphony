@@ -41,11 +41,16 @@ its pages. Tests use a temporary machine folder.
 
 Use `just lint-rs`, `just test-rs`, `just symphony-ui-dist` and `just symphony-ui-dev`
 from this folder. `tools/cargo.sh` runs ordinary Cargo in this workspace, preserving
-its arguments, streams, status and inherited limits. A build or test it runs as its
-child, recorded in `sf-runs/` of the git common dir for the board's Build and Test
-columns ([docs/MACHINE_WORK.md](docs/MACHINE_WORK.md#run-records)); a signal sent to
-the wrapper's pid alone does not reach Cargo, one sent to its process group does.
-Other commands it execs. It uses this folder's `.target/`
+its arguments, streams, status and inherited limits. A build or test goes through
+`tools/record.sh`, as do the `lint-rs`, `test-rs`, `client-check`, `client-update`
+and `verify` recipes, each as one operation: the board's recorder (`tasks run`, the
+prepared `.target/bin/tasks` of this checkout or of the main checkout a worktree
+belongs to) records it for the Build and Test columns (docs/MACHINE_WORK.md), and
+with none that answers within 2 s, `TASKS_RECORDER=off`, inside a recorded run or in a
+tree without `tools/record.sh` it is exec'd as it is. On macOS the recorder becomes
+the build it records and watches it from a process of its own, so descriptors, the
+signal mask, ignored signals and a kill reach the build as they would without it.
+It uses this folder's `.target/`
 unless `CARGO_TARGET_DIR` names another. It supplies no project gate planner, test
 selection, certificate, shared slot pool or dependency seed service. The toolchain
 pin is `rust-toolchain.toml`. The containing project keeps its own source launcher,
@@ -55,7 +60,8 @@ slot wrapper and gates, which compile and test its own consumers.
 run and runs `rs-bin/NAME` in the target folder, a hard link renewed only when Cargo
 relinked, so a no-op build costs no new executable's first run. `--build NAME` prints
 that path, `--where NAME` names Cargo's own copy without building or attesting
-freshness, and `--link NAME` builds and points `.target/bin/NAME` at it. A board
+freshness, and `--link NAME` builds and points `.target/bin/NAME` at it; that build
+is never recorded. A board
 binary run from a linked worktree against the live board runs the main checkout's
 launcher instead ([the board guide](crates/tasks/AGENTS.md)). None searches a
 containing project. `just symphony
@@ -120,7 +126,10 @@ started on.
 
 **Board commands.** Run them as `just tasks … --as HANDLE`: a subagent's tool calls
 count as its heartbeat only after a command of that shape binds it, and one that runs
-the binary by its path reads lost while it works.
+the binary by its path reads lost while it works. A build or test is recorded for the
+task its session holds; an orchestrator running one for a task, or a subagent without
+a session of its own, names it: `TASKS_TASK=SLUG just verify`, with
+`TASKS_SESSION=HANDLE` when it has a handle (docs/MACHINE_WORK.md).
 
 **Evidence, not the suite.** A task's gate is the tests closest to what it changed and
 `just lint-rs`, with `just client-update` for a client change, posted on its thread as evidence
@@ -132,10 +141,26 @@ its brief asks: it is the nightly's, on main's tip in a clean checkout outside t
 ## Agent integration
 
 `symphony init --root ROOT` installs the seven generic skills, their Claude links,
-Claude allow rules, heartbeat and memory-guard commands, and Codex rules. Stamped
-copies are kept current; an unstamped project copy wins. Project-specific skills and
-taste data stay in the project. Retirement removes managed files and links, retaining
-project data. It writes no permission rule but the allow rules.
+Claude allow rules, heartbeat and memory-guard commands, Codex rules and the recipes
+the skills name (`crates/symphony/shipped/symphony.just`: `tasks`, `agent-send`,
+`symphony`, `symphony-cli`, `symphony-status`, `symphony-reply`, `symphony-ask`). A
+project's justfile imports `symphony.just` under `set allow-duplicate-recipes`, so a
+recipe of its own of the same name wins; init writes that justfile only where there is
+none, and adds `/.target/` and the artifacts folder to `.gitignore`. Each recipe runs
+the project's build linked at `.target/bin/NAME`, else the main checkout's link from a
+linked worktree, else NAME on PATH (`crates/symphony/src/builds.rs`, which the
+Symphony's board clients share). Stamped copies are kept current; an unstamped
+project copy wins. Project-specific skills and taste data stay in the project.
+Retirement removes managed files and links, retaining project data. It writes no
+permission rule but the allow rules, which, like the Codex rules, allow the board and
+reply recipes (`tasks`, `agent-send`, `symphony-status`, `symphony-reply`,
+`symphony-ask`) and not the two server recipes: `just symphony` starts, replaces or
+stops the machine's shared server, and `just symphony-cli` reaches `serve`, `init`
+and `publish-client`, so an agent is asked first. Init ends by printing what is left (`Next:`): the project file, its document folders, the justfile's import, the
+links to the project's builds, the board's SurrealDB and the machine's registration,
+and warns on stderr while the heartbeat's links are missing. Every `just NAME` in
+the shipped skills, the docs and the binaries' strings is an installed recipe or the
+consumer's landing (`crates/symphony/tests/hooks/named_recipes.rs`).
 
 `symphony hook tasks-beat` reads the tool event from stdin and finds its board through
 the board's project lookup. Keys and live-build records belong to that repository's
@@ -165,9 +190,11 @@ alone: with no link, or a link to a build older than the guard, the call goes th
 ## Command ownership
 
 `just symphony` runs the server, `just symphony-cli ARGS` the document CLI, and
-`just tasks ARGS` and `just agent-send ARGS` the board entrypoints. These execute
-this workspace's declared binaries through ordinary Cargo. The standalone
-workspace requires no project gate or landing executable.
+`just tasks ARGS` and `just agent-send ARGS` the board entrypoints. This
+repository's justfile imports the installed `symphony.just` like any project's, and
+its own recipes of those names win: they execute this workspace's declared binaries
+through ordinary Cargo. The standalone workspace requires no project gate or landing
+executable.
 
 Board roles, verdicts and configured review callbacks belong to Symphony. The
 consumer supplies verification, certificates, approval policy and landing. The

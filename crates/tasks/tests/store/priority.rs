@@ -77,7 +77,7 @@ fn invalid_priorities_missing_tasks_and_invalid_actors_leave_the_board_unchanged
         (
             "sim/jump",
             "ghost-owl",
-            "no session 'ghost-owl'; attach first (just tasks-attach)",
+            "no session 'ghost-owl'; register first (`just tasks register`)",
         ),
         (
             "sim/jump",

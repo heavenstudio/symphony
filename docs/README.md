@@ -6,7 +6,8 @@
 - [TASKS](TASKS.md) — the board, sessions, roles and agent communication.
 - [CHECKS](CHECKS.md) — what a task in this repository proves before review, and the nightly's
   full verification.
-- [MACHINE_WORK](MACHINE_WORK.md) — observed build/test phases and advisory machine targets.
+- [MACHINE_WORK](MACHINE_WORK.md) — observed build/test phases, the board's build and test
+  recorder (`tasks run`), and advisory machine targets.
 
 Agents working in this repository follow the standing rules in [RULES](../RULES.md).
 

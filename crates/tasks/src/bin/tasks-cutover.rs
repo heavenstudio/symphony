@@ -1,4 +1,4 @@
-//! The task board's move from SQLite to SurrealDB, run once (`just tasks-cutover`, [`symphony_board::cutover`]):
+//! The task board's move from SQLite to SurrealDB, run once (`tasks-cutover`, [`symphony_board::cutover`]):
 //!
 //!     tasks-cutover
 //!

@@ -21,6 +21,7 @@ use crate::{
     frame::FrameRefresh,
     live::{Feed, Heard, PageNotices, sleep},
     request,
+    state::FewMap,
     task_live::url,
 };
 
@@ -37,9 +38,9 @@ struct BoardData {
     days: u8,
     ready: bool,
     error: String,
-    cursors: std::collections::BTreeMap<String, String>,
+    cursors: FewMap<String, String>,
     pending_more: Vec<String>,
-    requests: std::collections::BTreeMap<String, u64>,
+    requests: FewMap<String, u64>,
     count_request: u64,
     generation: u64,
     journal: Rc<RefCell<Journal>>,
@@ -49,7 +50,7 @@ struct BoardData {
 struct Journal {
     version: u64,
     events: Vec<(u64, JsValue)>,
-    readers: std::collections::BTreeMap<u64, usize>,
+    readers: FewMap<u64, usize>,
 }
 
 /// Keep exactly the events outstanding snapshots need, including when a request is cancelled.
@@ -61,7 +62,7 @@ struct ReadCursor {
 impl ReadCursor {
     fn new(journal: Rc<RefCell<Journal>>) -> Self {
         let since = journal.borrow().version;
-        *journal.borrow_mut().readers.entry(since).or_default() += 1;
+        *journal.borrow_mut().readers.or_default(since) += 1;
         Self { journal, since }
     }
 }
@@ -75,7 +76,7 @@ impl Drop for ReadCursor {
                 journal.readers.remove(&self.since);
             }
         }
-        if let Some(since) = journal.readers.keys().next().copied() {
+        if let Some(since) = journal.readers.first_key().copied() {
             journal.events.retain(|(version, _)| *version > since);
         } else {
             journal.events.clear();
@@ -186,7 +187,7 @@ async fn column(status: String, more: bool, query: String, days: u8, mut data: S
             return;
         }
         let generation = d.generation;
-        let version = d.requests.entry(status.clone()).or_default();
+        let version = d.requests.or_default(status.clone());
         *version += 1;
         (generation, *version)
     };

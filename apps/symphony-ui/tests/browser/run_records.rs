@@ -1,30 +1,49 @@
-//! A run `tools/cargo.sh` records, read by the real server from a scratch board's checkout: the
-//! board's Build and Test columns follow it (docs/MACHINE_WORK.md, "Run records").
-use super::{SHOWN, chrome, chrome::Chrome, owner_controls::ScratchBoard, restored::Native};
+//! A test run `tools/cargo.sh` sends through the board's recorder (`tasks run`), read by the real
+//! server from its checkout's work folder: the board's Build and Test columns follow it, and until
+//! anything was recorded they are one rail (docs/MACHINE_WORK.md).
+use super::{
+    SHOWN, binaries, chrome, chrome::Chrome, owner_controls::ScratchBoard, restored::Native,
+};
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 
+const DATABASE: &str = "browser_owner_controls";
 const WORKING: &str = "fixture/recorded-run";
 const REVIEWED: &str = "fixture/reviewed-run";
 
-/// A `tools/cargo.sh test` run in the server's checkout, its Cargo a stand-in that waits for
-/// `release`. Dropping it releases it and reaps the wrapper, so a failed assertion leaves no run.
+/// A `tools/cargo.sh test` run in the server's checkout as `handle`, recorded on the scratch board
+/// at `board` into the work folder the server reads. Its Cargo is a stand-in that waits for its
+/// release; dropping the run releases it and reaps it, so a failed assertion leaves no run.
 struct Run {
     child: Child,
     release: PathBuf,
 }
 
 impl Run {
-    fn start(root: &Path, name: &str, handle: &str) -> Self {
+    fn start(fixture: &Fixture, name: &str, handle: &str) -> Self {
+        let root = fixture.site.root();
         let release = root.join(format!("artifacts/release-{name}"));
-        let child = Command::new(root.join("tools/cargo.sh"))
+        let mut command = Command::new(root.join("tools/cargo.sh"));
+        // The suite itself runs inside a recorded `just test-rs`: this run is not one of its steps.
+        for name in [
+            "TASKS_RUN_PARENT",
+            "TASKS_TASK",
+            "GIT_DIR",
+            "GIT_COMMON_DIR",
+        ] {
+            command.env_remove(name);
+        }
+        let child = command
             .args(["test", "--locked", "-p", name])
             .env("CARGO", root.join("artifacts/cargo"))
             .env("RELEASE", &release)
             .env("TASKS_SESSION", handle)
-            .env_remove("SYMPHONY_RUN")
-            .env_remove("SYMPHONY_RUN_LAUNCHER")
+            .env("TASKS_RECORDER", binaries::tasks())
+            .env("TASKS_WORK", root.join(".git/sf-tasks/work"))
+            .env("TASKS_SERVER", fixture.board.address())
+            .env("TASKS_DATABASE", DATABASE)
+            .env("SYMPHONY_MACHINE_DIR", &fixture.machine.0)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
@@ -74,18 +93,21 @@ fn columns(chrome: &mut Chrome) -> Value {
     chrome.eval("[...document.querySelectorAll('.pipeline > .column')].map(e=>e.dataset.status)")
 }
 
+fn desktop() -> Value {
+    json!({"width":1600,"height":900,"deviceScaleFactor":1,"mobile":false})
+}
+
+fn phone() -> Value {
+    json!({"width":390,"height":844,"deviceScaleFactor":1,"mobile":true})
+}
+
 #[test]
 fn a_recorded_test_run_moves_its_task_to_test_and_back_and_a_reviewers_stays_in_review() {
     let Some(mut chrome) = chrome() else { return };
-    let fixture =
-        Fixture::start(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tools/cargo.sh"));
-    let (site, root) = (&fixture.site, fixture.site.root());
-    let (executor, reviewer) = (&fixture.executor, &fixture.reviewer);
-    let desktop = json!({"width":1600,"height":900,"deviceScaleFactor":1,"mobile":false});
-    let phone = json!({"width":390,"height":844,"deviceScaleFactor":1,"mobile":true});
-    chrome.call("Emulation.setDeviceMetricsOverride", desktop.clone());
-    chrome.open(&site.url("/tasks"));
-    // No run was ever recorded here: no machine reports, and Build and Test are one rail.
+    let fixture = Fixture::start();
+    chrome.call("Emulation.setDeviceMetricsOverride", desktop());
+    chrome.open(&fixture.site.url("/tasks"));
+    // Nothing was recorded here and no project reader answers: Build and Test are one rail.
     assert!(chrome.wait_for(&format!("document.querySelector('.column[data-status=in_progress] .taskcard[data-slug=\"{WORKING}\"]') !== null && document.querySelector('main')?.dataset.feed==='live'"), SHOWN), "{}", chrome.eval("document.body.innerText"));
     assert_eq!(
         columns(&mut chrome),
@@ -109,7 +131,7 @@ fn a_recorded_test_run_moves_its_task_to_test_and_back_and_a_reviewers_stays_in_
     );
     scroll_to(&mut chrome, "ready", 0);
     screenshot(&mut chrome, "after-none");
-    chrome.call("Emulation.setDeviceMetricsOverride", phone);
+    chrome.call("Emulation.setDeviceMetricsOverride", phone());
     assert!(chrome.wait_for(
         "document.querySelector('.board-scroll').getBoundingClientRect().width < 400",
         SHOWN
@@ -125,10 +147,10 @@ fn a_recorded_test_run_moves_its_task_to_test_and_back_and_a_reviewers_stays_in_
     );
     scroll_to(&mut chrome, "build-test", 150);
     screenshot(&mut chrome, "after-none-phone");
-    chrome.call("Emulation.setDeviceMetricsOverride", desktop);
-    // The executor's tests and the reviewer's, each recorded as it starts.
-    let mut working = Run::start(root, "working", executor);
-    let mut reviewing = Run::start(root, "reviewing", reviewer);
+    chrome.call("Emulation.setDeviceMetricsOverride", desktop());
+    // The executor's tests and the reviewer's, each recorded for the task its session holds.
+    let mut working = Run::start(&fixture, "working", &fixture.executor);
+    let mut reviewing = Run::start(&fixture, "reviewing", &fixture.reviewer);
     assert!(
         chrome.wait_for(
             "document.querySelector('.pipeline > [data-status=test]') !== null",
@@ -162,7 +184,7 @@ fn a_recorded_test_run_moves_its_task_to_test_and_back_and_a_reviewers_stays_in_
         &format!("document.querySelector('{chip}')?.textContent.includes('Test running')"),
         SHOWN
     ));
-    // A reviewer's run is a chip on its card; the card stays where the review is.
+    // A reviewer's run is a chip on its card; the card stays where the verdict is awaited.
     let reviewed = format!(".column[data-status=review] .taskcard[data-slug=\"{REVIEWED}\"]");
     assert!(chrome.wait_for(&format!("document.querySelector('{reviewed} .work-phase')?.textContent.includes('Test running')"), SHOWN), "{}", chrome.eval("document.querySelector('.pipeline')?.innerText"));
     // The stage totals are the server's, read again once the machine's work changed.
@@ -176,7 +198,7 @@ fn a_recorded_test_run_moves_its_task_to_test_and_back_and_a_reviewers_stays_in_
     working.end();
     reviewing.end();
     // The runs ended: the cards are back where their lifecycle puts them, and the columns stay,
-    // since this checkout now has a machine that reports its runs.
+    // since this checkout's machine now reports its runs.
     assert!(chrome.wait_for(&format!("document.querySelector('.column[data-status=in_progress] .taskcard[data-slug=\"{WORKING}\"]') !== null && document.querySelector('{chip}') === null && document.querySelector('{reviewed} .work-phase') === null"), SHOWN), "{}", chrome.eval("document.querySelector('.pipeline')?.innerText"));
     assert_eq!(
         columns(&mut chrome),
@@ -196,15 +218,15 @@ fn a_recorded_test_run_moves_its_task_to_test_and_back_and_a_reviewers_stays_in_
 }
 
 /// A scratch board holding an executor's task in progress and an author's in review with its
-/// reviewer, and the real server over a checkout whose `tools/cargo.sh` is `wrapper` and whose
-/// Cargo is a stand-in, its machine folder of its own.
+/// reviewer, and the real server over a checkout with this workspace's `tools/cargo.sh` and
+/// `tools/record.sh`, a stand-in Cargo and a machine folder of its own.
 struct Fixture {
     // Dropped in this order: the server before its board, the machine folder after both.
     site: Native,
-    _board: ScratchBoard,
+    board: ScratchBoard,
     executor: String,
     reviewer: String,
-    _machine: Folder,
+    machine: Folder,
 }
 
 /// A folder of the test's own, removed when dropped.
@@ -217,11 +239,9 @@ impl Drop for Folder {
 }
 
 impl Fixture {
-    fn start(wrapper: &Path) -> Self {
+    fn start() -> Self {
         let board = ScratchBoard::start();
-        let call = |method: &str, args: Value| {
-            board.call_in_database("browser_owner_controls", method, args)
-        };
+        let call = |method: &str, args: Value| board.call_in_database(DATABASE, method, args);
         let handle = |kind: &str| {
             call("register", json!({"kind":kind}))["handle"]
                 .as_str()
@@ -252,16 +272,15 @@ impl Fixture {
             "in_progress"
         );
         assert_eq!(call("get", json!({"slug":REVIEWED}))["status"], "review");
-        let machine = std::env::temp_dir().join(format!(
+        let machine = Folder(std::env::temp_dir().join(format!(
             "sf-run-columns-machine-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
                 .as_nanos()
-        ));
-        std::fs::create_dir_all(&machine).unwrap();
-        let machine = Folder(machine);
+        )));
+        std::fs::create_dir_all(&machine.0).unwrap();
         let site = Native::start_with(
             Some(board.address()),
             &[("SYMPHONY_MACHINE_DIR", &machine.0)],
@@ -269,7 +288,10 @@ impl Fixture {
         let root = site.root();
         std::fs::write(root.join("Cargo.toml"), "[workspace]\nmembers = []\n").unwrap();
         std::fs::create_dir_all(root.join("tools")).unwrap();
-        std::fs::copy(wrapper, root.join("tools/cargo.sh")).unwrap();
+        let tools = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tools");
+        for name in ["cargo.sh", "record.sh"] {
+            std::fs::copy(tools.join(name), root.join("tools").join(name)).unwrap();
+        }
         super::fixture_script::write(
             &root.join("artifacts/cargo"),
             "#!/bin/sh\nwhile [ ! -e \"$RELEASE\" ]; do sleep 0.1; done\nexit 0\n",
@@ -277,53 +299,10 @@ impl Fixture {
         );
         Self {
             site,
-            _board: board,
+            board,
             executor,
             reviewer,
-            _machine: machine,
+            machine,
         }
     }
-}
-
-// TEMPORARY: main's page for the before screenshots; removed before commit.
-#[test]
-#[ignore = "evidence driver"]
-fn before_screenshots_on_main() {
-    let Some(mut chrome) = chrome() else { return };
-    let wrapper = std::env::var_os("SF_MAIN_CARGO_SH").expect("main's cargo.sh");
-    let fixture = Fixture::start(Path::new(&wrapper));
-    let (site, root) = (&fixture.site, fixture.site.root());
-    let desktop = json!({"width":1600,"height":900,"deviceScaleFactor":1,"mobile":false});
-    let phone = json!({"width":390,"height":844,"deviceScaleFactor":1,"mobile":true});
-    chrome.call("Emulation.setDeviceMetricsOverride", desktop.clone());
-    chrome.open(&site.url("/tasks"));
-    assert!(chrome.wait_for(&format!("document.querySelector('.column[data-status=in_progress] .taskcard[data-slug=\"{WORKING}\"]') !== null && document.querySelector('main')?.dataset.feed==='live'"), SHOWN));
-    eprintln!("before columns: {}", columns(&mut chrome));
-    scroll_to(&mut chrome, "ready", 0);
-    screenshot(&mut chrome, "before-none");
-    chrome.call("Emulation.setDeviceMetricsOverride", phone);
-    assert!(chrome.wait_for(
-        "document.querySelector('.board-scroll').getBoundingClientRect().width < 400",
-        SHOWN
-    ));
-    scroll_to(&mut chrome, "build", 150);
-    screenshot(&mut chrome, "before-none-phone");
-    chrome.call("Emulation.setDeviceMetricsOverride", desktop);
-    let _working = Run::start(root, "working", &fixture.executor);
-    let _reviewing = Run::start(root, "reviewing", &fixture.reviewer);
-    std::thread::sleep(std::time::Duration::from_secs(5));
-    eprintln!(
-        "before, run going: {} {}",
-        column(&mut chrome, WORKING),
-        columns(&mut chrome)
-    );
-    eprintln!(
-        "records: {:?}",
-        std::fs::read_dir(root.join(".git"))
-            .unwrap()
-            .map(|e| e.unwrap().file_name())
-            .collect::<Vec<_>>()
-    );
-    scroll_to(&mut chrome, "in_progress", 0);
-    screenshot(&mut chrome, "before-going");
 }

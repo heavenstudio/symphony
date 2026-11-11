@@ -1,4 +1,4 @@
-//! The board's move from SQLite to SurrealDB (`just tasks-cutover`, [`cutover`]), forward only.
+//! The board's move from SQLite to SurrealDB (`tasks-cutover`, [`cutover`]), forward only.
 //!
 //! The board is live under dozens of sessions when it moves, so the move must lose nothing, leave the
 //! old board refusing writes and kept as it was, and, whenever it fails, leave exactly one board taking
@@ -426,9 +426,8 @@ fn a_run_that_fails_on_a_board_a_move_before_it_froze_leaves_it_frozen_and_says_
     old.freeze_as_a_killed_move_left_it();
     let refused = cutover::cutover(&old.path, &old.unreachable()).unwrap_err();
     assert!(
-        refused.ends_with(
-            "; the board stays frozen, as this run found it: run just tasks-cutover again"
-        ),
+        refused
+            .ends_with("; the board stays frozen, as this run found it: run tasks-cutover again"),
         "{refused}"
     );
     assert!(old.frozen());
@@ -437,9 +436,8 @@ fn a_run_that_fails_on_a_board_a_move_before_it_froze_leaves_it_frozen_and_says_
     let refused = cutover::cutover_writing(&old.path, &old.env(), &full).unwrap_err();
     assert!(refused.contains("No space left on device"), "{refused}");
     assert!(
-        refused.ends_with(
-            "; the board stays frozen, as this run found it: run just tasks-cutover again"
-        ),
+        refused
+            .ends_with("; the board stays frozen, as this run found it: run tasks-cutover again"),
         "{refused}"
     );
     assert!(old.frozen());
@@ -913,7 +911,7 @@ fn anything_else_is_its_usage() {
         let (code, out, err) = run_main(args, &env);
         assert_eq!(
             (code, out.as_str(), err.as_str()),
-            (2, "", "usage: just tasks-cutover\n"),
+            (2, "", "usage: tasks-cutover\n"),
             "{args:?}"
         );
     }
@@ -937,9 +935,8 @@ fn a_board_held_exclusively_as_the_run_starts_is_still_found_frozen() {
     let refused = cutover::cutover(&old.path, &old.unreachable()).unwrap_err();
     release.join().unwrap();
     assert!(
-        refused.ends_with(
-            "; the board stays frozen, as this run found it: run just tasks-cutover again"
-        ),
+        refused
+            .ends_with("; the board stays frozen, as this run found it: run tasks-cutover again"),
         "{refused}"
     );
     assert!(old.frozen());

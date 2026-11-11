@@ -1,33 +1,16 @@
 //! A private installation identity in the existing machine folder, atomically published once.
 //! It is neither hostname nor authentication. Existing unreadable/corrupt identities never rotate.
+//! The board's recorder reads the same file ([`symphony_board::project::machine_id`]), never
+//! making it.
 
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Write};
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
-
-const FILE: &str = "machine-id";
+use symphony_board::project::{MACHINE_ID as FILE, machine_id as read};
 
 pub fn installation_id() -> Result<String, String> {
     in_folder(&super::dir()?).map_err(|error| format!("machine identity unknown: {error}"))
-}
-
-fn read(path: &Path) -> io::Result<String> {
-    let file = OpenOptions::new()
-        .read(true)
-        .custom_flags(libc::O_NONBLOCK | libc::O_NOFOLLOW)
-        .open(path)?;
-    if !file.metadata()?.is_file() {
-        return Err(io::Error::other("identity is not a regular file"));
-    }
-    let mut text = String::new();
-    file.take(128).read_to_string(&mut text)?;
-    let id = text
-        .strip_prefix("1\t")
-        .and_then(|text| text.strip_suffix('\n'))
-        .filter(|id| id.len() == 32 && id.bytes().all(|byte| byte.is_ascii_hexdigit()));
-    id.map(str::to_owned)
-        .ok_or_else(|| io::Error::other("identity has invalid version or contents"))
 }
 
 struct Pending(PathBuf);
@@ -39,7 +22,7 @@ impl Drop for Pending {
 
 fn in_folder(folder: &Path) -> io::Result<String> {
     let path = folder.join(FILE);
-    match read(&path) {
+    match read(folder) {
         Ok(id) => return Ok(id),
         Err(error) if error.kind() == io::ErrorKind::NotFound => {}
         Err(error) => return Err(error),
@@ -62,7 +45,7 @@ fn in_folder(folder: &Path) -> io::Result<String> {
         Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
         Err(error) => return Err(error),
     }
-    read(&path)
+    read(folder)
 }
 
 #[cfg(test)]

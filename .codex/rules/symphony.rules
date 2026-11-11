@@ -1,9 +1,13 @@
-# symphony-stamp: 2e606cf2be59fba8
-# The board commands an agent runs, allowed so a session on the board is never stopped at a prompt.
+# symphony-stamp: 5d81df16f14aa165
+# The board and reply commands an agent runs, allowed so a session on the board is never stopped at a
+# prompt: recipes of symphony.just, which `symphony init` installs beside them. Its server recipes,
+# `just symphony` (starts, replaces or stops the machine's shared server) and `just symphony-cli`
+# (reaches serve, init and publish-client), ask first.
 # A command with an env prefix (`TASKS_SESSION=x just tasks ...`) matches no rule: an agent's handle is
 # already in its environment, so it runs every command as plain words.
 
 prefix_rule(pattern=["just", "tasks"], decision="allow")
+prefix_rule(pattern=["just", "agent-send"], decision="allow")
 prefix_rule(pattern=["just", "symphony-status"], decision="allow")
 prefix_rule(pattern=["just", "symphony-reply"], decision="allow")
 prefix_rule(pattern=["just", "symphony-ask"], decision="allow")

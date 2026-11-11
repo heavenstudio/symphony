@@ -8,6 +8,8 @@ use crate::testing::{
 };
 use symphony_board::cli::machine_work::Freshness;
 
+mod recorder;
+
 fn input(state: &str) -> Vec<u8> {
     serde_json::to_vec(&json!({"version":1,"complete":false,"uncertain":false,"truncated":false,"records":[{
         "evidence":if state == "finished" { "finished" } else { "active" },
@@ -31,22 +33,6 @@ fn record(task: &str) -> TaskSessionRow {
     )
     .unwrap()
 }
-
-fn no_bindings() -> BTreeMap<String, symphony_board::Binding> {
-    BTreeMap::new()
-}
-
-/// A tick's context with an empty board.
-fn none() -> Context<'static> {
-    Context {
-        records: &[],
-        tasks: &[],
-        bindings: &no_bindings,
-    }
-}
-
-#[path = "runs_tests.rs"]
-mod run_records;
 
 #[test]
 fn record_uncertainty_keeps_future_verified_phases_visible_without_renewing_old_publications() {
@@ -238,7 +224,7 @@ fn one_native_probe_feeds_cached_agents_task_pages_and_listings_then_preserves_f
         .machine_work
         .lock()
         .unwrap()
-        .scan(&root, Some(&common), &none());
+        .scan(&root, Some(&common), &[]);
     let work: symphony_api::MachineWork =
         serde_json::from_value(serde_json::to_value(evidence.snapshot).unwrap()).unwrap();
     assert_eq!(work.machines.len(), 1);
@@ -276,7 +262,7 @@ fn one_native_probe_feeds_cached_agents_task_pages_and_listings_then_preserves_f
         .machine_work
         .lock()
         .unwrap()
-        .scan(&root, Some(&common), &none())
+        .scan(&root, Some(&common), &[])
         .snapshot;
     assert_eq!(failed.machines[0].operations.len(), 1);
     assert_eq!(failed.machines[0].freshness, Freshness::Unknown);
@@ -300,7 +286,7 @@ fn unavailable_reader_or_identity_never_claims_a_machine_or_retires_unassigned_e
         true,
     );
     let mut sampler = Sampler::new(&root, None);
-    let evidence = sampler.scan(&root, Some(&tree.path("missing-common")), &none());
+    let evidence = sampler.scan(&root, Some(&tree.path("missing-common")), &[]);
     assert!(sampler.identity.is_none());
     assert_eq!(evidence.snapshot.freshness, Freshness::Unknown);
     assert!(evidence.snapshot.machines.is_empty());
@@ -308,27 +294,27 @@ fn unavailable_reader_or_identity_never_claims_a_machine_or_retires_unassigned_e
         !root.join("launcher-called").exists(),
         "a missing prepared reader invoked a source launcher"
     );
-    // No prepared reader: the run records were read, and a project that never recorded a run
-    // has no publisher to name.
-    assert!(sampler.records.is_some());
-    assert_eq!(sampler.reason, "");
-    sampler.scan(&root, None, &none());
-    assert_eq!(sampler.reason, "run records: no git common directory");
-    assert!(sampler.identity.is_none());
+    assert!(
+        sampler
+            .reason
+            .contains(&root.join(".target/bin/sf-slots").display().to_string()),
+        "{}",
+        sampler.reason
+    );
     let reader = root.join(".target/bin/sf-slots");
     std::fs::create_dir_all(reader.parent().unwrap()).unwrap();
     crate::fixture_script::write(&reader, "#!/bin/sh\n/bin/cat \"$3/native.json\"\n", true);
     let common = root.join(".git");
     sampler.identity = Some(Err("corrupt installation identity".into()));
     std::fs::write(common.join("native.json"), input("running")).unwrap();
-    let first = sampler.scan(&root, Some(&common), &none()).snapshot;
+    let first = sampler.scan(&root, Some(&common), &[]).snapshot;
     assert!(first.machines.is_empty());
     assert_eq!(first.unassigned.len(), 1);
     assert_eq!(first.unassigned[0].machine_id, None);
     assert_eq!(first.unassigned[0].task, None);
     for bytes in [input("finished"), b"{".to_vec()] {
         std::fs::write(common.join("native.json"), bytes).unwrap();
-        let retained = sampler.scan(&root, Some(&common), &none()).snapshot;
+        let retained = sampler.scan(&root, Some(&common), &[]).snapshot;
         assert_eq!(retained.freshness, Freshness::Unknown);
         assert!(retained.machines.is_empty());
         assert_eq!(
@@ -356,7 +342,7 @@ fn explicit_or_prepared_reader_paths_are_retained_without_a_launcher_or_cache_se
     crate::fixture_script::write(&explicit, script, true);
     std::fs::write(common.join("native.json"), "{").unwrap();
     let mut sampler = Sampler::new(&root, Some(&explicit));
-    sampler.scan(&root, Some(&common), &none());
+    sampler.scan(&root, Some(&common), &[]);
     assert!(
         sampler.identity.is_none(),
         "malformed output initialized identity"
@@ -364,10 +350,7 @@ fn explicit_or_prepared_reader_paths_are_retained_without_a_launcher_or_cache_se
     sampler.identity = Some(Ok("machine-a".into()));
     std::fs::write(common.join("native.json"), input("running")).unwrap();
     assert_eq!(
-        sampler
-            .scan(&root, Some(&common), &none())
-            .snapshot
-            .machines[0]
+        sampler.scan(&root, Some(&common), &[]).snapshot.machines[0]
             .operations
             .len(),
         1
@@ -395,7 +378,7 @@ fn explicit_or_prepared_reader_paths_are_retained_without_a_launcher_or_cache_se
             );
         }
         let view = sampler
-            .scan(&root, Some(&common), &none())
+            .scan(&root, Some(&common), &[])
             .snapshot
             .machines
             .remove(0);
@@ -408,7 +391,7 @@ fn explicit_or_prepared_reader_paths_are_retained_without_a_launcher_or_cache_se
     crate::fixture_script::write(&explicit, script, true);
     std::fs::write(common.join("native.json"), input("running")).unwrap();
     let view = sampler
-        .scan(&root, Some(&common), &none())
+        .scan(&root, Some(&common), &[])
         .snapshot
         .machines
         .remove(0);

@@ -112,6 +112,29 @@ fn file_id(path: &Path) -> Option<String> {
         .map(str::to_string)
 }
 
+/// The board's guide of a project whose file names none, project-relative.
+pub const GUIDE: &str = "TASKS.md";
+
+impl Project {
+    /// The project's board guide, project-relative, which says where its board lives and how it
+    /// moves: its file's `[board] guide`, else [`GUIDE`]. A file that does not read names none.
+    pub fn guide(&self) -> String {
+        self.place
+            .file
+            .as_deref()
+            .and_then(|path| std::fs::read_to_string(path).ok())
+            .and_then(|text| text.parse::<toml::Table>().ok())
+            .and_then(|file| {
+                file.get("board")?
+                    .get("guide")?
+                    .as_str()
+                    .filter(|guide| !guide.is_empty())
+                    .map(str::to_string)
+            })
+            .unwrap_or_else(|| GUIDE.to_string())
+    }
+}
+
 /// The main checkout of the repository whose common dir is `common`: the folder holding it, when it
 /// is a `.git` folder.
 fn main_checkout(common: &Path) -> Option<&Path> {
@@ -190,4 +213,31 @@ pub fn machine_folder(
             .or_else(|| home.map(|home| home.join(".local/share/symphony")))
     };
     found.ok_or_else(|| "the machine folder needs HOME, an absolute folder".into())
+}
+
+/// The installation's identity file in the machine folder, which the Symphony makes once
+/// (`symphony::machine::installation_id`).
+pub const MACHINE_ID: &str = "machine-id";
+
+/// The installation identity the machine folder `folder` holds, read and never made: `1\t`, 32 hex
+/// digits and a newline, in a regular file reached without following a link. Anything else is an
+/// error, never replaced here.
+pub fn machine_id(folder: &Path) -> std::io::Result<String> {
+    use std::io::Read as _;
+    use std::os::unix::fs::OpenOptionsExt as _;
+    let file = std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NONBLOCK | libc::O_NOFOLLOW)
+        .open(folder.join(MACHINE_ID))?;
+    if !file.metadata()?.is_file() {
+        return Err(std::io::Error::other("identity is not a regular file"));
+    }
+    let mut text = String::new();
+    file.take(128).read_to_string(&mut text)?;
+    let id = text
+        .strip_prefix("1\t")
+        .and_then(|text| text.strip_suffix('\n'))
+        .filter(|id| id.len() == 32 && id.bytes().all(|byte| byte.is_ascii_hexdigit()));
+    id.map(str::to_owned)
+        .ok_or_else(|| std::io::Error::other("identity has invalid version or contents"))
 }
