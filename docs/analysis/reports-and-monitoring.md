@@ -240,39 +240,45 @@ Today the page shows the brief, roles and thread. It gains two sections at the t
 
 ### Gates
 
-Every stamp or check the task needs to land, each one **met** (by whom, when, at which commit),
-**missing**, **waived** (by whom, why), **waiting on nobody** (the owner's, a hold), or
-**unknown** (the project's tool could not answer).
+Every stamp or check the task needs to land. Each one is in one of these states:
+- **met**: by whom, when, at which commit;
+- **missing**;
+- **waived**: by whom, and why;
+- **held**: waiting on the owner, or a hold;
+- **unknown**: the project's tool could not answer.
 
 What Symphony shows without a plugin:
 
 - **Review**: the board's reviewer verdict on each round, by whom and when.
 - **Check**: the project's `[verdicts] check` (Symphony's: `just verify`) on the branch's tip,
-  from the run files: green, red, or not run at this tip.
-- **Review callback**: the `[board] on_review` run for the tip, from the run files.
+  from the run records: green, red, or not run at this tip.
 - **Owner card**: a card the task posted that waits on the owner (the rule of the sign-off lane,
   [TASKS](../TASKS.md#tasks-and-roles)).
+- **Review callback**: the `[board] on_review` run for the tip, once its exit is recorded. Today
+  it runs detached and its exit is not kept (`crates/tasks/src/on_review.rs`).
 
 A project's gates come from its plugin. Star Foundry's are its stamps: certificate, nightly,
-dependency, review, adversarial, owner and holds. A plugin's gate of the same name as Symphony's
-takes its place (Star Foundry's review stamp is the approval its landing counts).
+dependency, review, adversarial, owner and holds. A plugin's gate with the same name as Symphony's
+takes its place. Star Foundry's review stamp, for example, is the approval its landing counts.
 
-How a project's gates reach the page:
+**Decided: A, a typed gates seam** (the owner, 2026-11-11, after the pictures below).
+- A plugin trait answers a task's gates as data: name, state, by, when, commit, why, detail, link
+  and past states. That is a new wire type, which the client draws with one component, the same
+  for every project.
+- Symphony can then count the gates: how long tasks waited on each one, and which is missing most.
+- Star Foundry maps its `stamps` answer to the seam. It also adds when each stamp was collected and
+  each edit made, which the answer lacks today.
 
-- **A, a typed gates seam.** A plugin trait answers a task's gates as data (name, state, by, when,
-  commit, why, detail), a new wire type the client draws with one component, the same for every
-  project. Symphony can then count them: how long tasks waited on each gate, which gate is missing
-  most. Cost: one trait, one wire type, one component. Star Foundry maps its `stamps` answer to
-  it, and adds when each stamp was collected and each edit made, which the answer lacks today.
-- **B, a block panel.** A plugin returns generic blocks for a task, drawn as a document's are.
-  Cost: the least Symphony work; each project lays its panel out its own way, and Symphony can
-  neither count gates nor chart what they cost.
+Not chosen: **B, a block panel**, generic blocks a plugin lays out for a task. Each project would
+lay its panel out its own way, and Symphony could neither count gates nor chart what they cost.
 
-**Recommended: A**: "what is it waiting on" is the question asked of a task, and only a typed
-answer can feed the defect report.
+The gates are fetched only when the section nears the screen, and kept by the branch's tip,
+because Star Foundry's answer starts its landing binary (`tools/symphony/src/lib.rs`, `land_call`).
 
-The gates are fetched only when the section nears the screen and kept by the branch's tip: Star
-Foundry's answer starts its landing binary (`tools/symphony/src/lib.rs`, `land_call`).
+The work is on the board:
+- `tools/task-gates-seam`: the seam, its wire type and Symphony's own gates;
+- `tools/task-gates-panel`: the component;
+- `tools/star-foundry-gates-adapter`: Star Foundry's adapter, as a note to copy to its board.
 
 ### Timeline
 
@@ -281,29 +287,21 @@ blocked), claims and releases, review rounds and their verdicts, builds and test
 (unclaimed, blocked on a dependency, waiting on a gate). Tokens per round join it once
 `tools/board-token-usage` records them.
 
-No new recording: the replay keeps each segment (status, from, to) beside its totals, a change in
-`stages.rs` alone; the run files give the task's runs; the thread gives who claimed and who gave
-each verdict. A phone gets a vertical list with a bar per step; a wide screen gets lanes over time
-(stages on one, runs on another, verdicts as marks).
+It needs no new recording:
+- the replay keeps each segment (status, from, to) beside its totals, a change in `stages.rs`
+  alone;
+- the run records give the task's runs;
+- the thread gives who claimed and who gave each verdict;
+- the gates' past states give the gate rows.
 
-```
-tools/x · in review 3.1 h
-Gates
-  ✓ review       swift-merlin · 12:41
-  ✗ certificate  verify red at 4f1c
-  ~ dependency   waived: "no new crate" · silver-sparrow
-Timeline                              6.2 h
-  ready          ▇▇ 0.4 h
-  in progress    ▇▇▇▇▇ 1.3 h   calm-gecko
-    verify       ▇▇▇ 24 min   green
-  review         ▇▇ 0.8 h     changes · swift-merlin
-  in progress    ▇ 0.3 h
-    verify       ▇▇ 21 min    red, then 26 min green
-  review         ▇▇▇▇ 3.1 h   now
-```
+On a phone it is a vertical list with a bar per step. On a wide screen it is lanes over time: the
+stage, the executor, the reviewer, builds and tests, and one row per gate. The pictures below are
+the look to build to.
 
-This design is the page half of `tools/stage-times`, and the stage durations and step diagram of
-`tools/review-as-stamps`' second slice; that slice's diff and tokens stay with it.
+It is filed as `tools/task-timeline`, after the gates seam and the run recorder
+(`tools/build-test-recorded-generic`). It replaces the page half of `tools/stage-times`, and the
+stage durations and step diagram of `tools/review-as-stamps`' second slice. That slice's diff and
+tokens stay with it.
 
 ### Pictures
 
@@ -317,14 +315,17 @@ The pictures are SVG written by hand. They use the client's tokens
 (`apps/symphony-ui/assets/board.css`) and the task head as `task_detail.rs` draws it, and they
 follow the reader's light or dark setting.
 
-**Gates, A: a typed seam.** Symphony draws the plugin's answer. What the task waits on comes first,
+The A pictures and the timeline pictures are the look the filed tasks build to; the B pictures
+show what was not chosen.
+
+**Gates, A: a typed seam (chosen).** Symphony draws the plugin's answer. What the task waits on comes first,
 then the waived and met gates, each with its detail, who and when.
 
 ![Gates on a phone, option A](reports-gates-a-phone.svg)
 
 ![Gates on a wide screen, option A](reports-gates-a-wide.svg)
 
-**Gates, B: a block panel.** The plugin lays out a paragraph, a table and two more paragraphs, in
+**Gates, B: a block panel (not chosen).** The plugin lays out a paragraph, a table and two more paragraphs, in
 its own words. Star Foundry's stamps answer has `stamp`, `collected` and `detail` and no times, so
 the table has none. On a phone it scrolls sideways.
 
@@ -554,8 +555,11 @@ Once approved, as board tasks, the shared data first:
    cargo's test output read, logs and their bounds.
 2. The chart block in `symphony-api` and its component.
 3. The Runs page and its API, with the machine view.
-4. The replay's segments in `stages.rs`, and the task page's timeline.
-5. The gates seam, its wire type and Symphony's own gates; Star Foundry's adapter is its task.
+4. The replay's segments in `stages.rs`, and the task page's timeline: filed as
+   `tools/task-timeline`.
+5. The gates seam, its wire type and Symphony's own gates, and the component: filed as
+   `tools/task-gates-seam` and `tools/task-gates-panel`. Star Foundry's adapter is a note to copy
+   to its board, `tools/star-foundry-gates-adapter`.
 6. The hourly roll-up and the health history: filed as `tools/reports-rollup`,
    `tools/board-health-history`, `tools/agent-activity-history` and `tools/red-landing-origin`.
 7. The Reports page (filed as `tools/reports-page`), and the report-section seam.
