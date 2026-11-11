@@ -106,6 +106,11 @@ fn a_stale_notice_leaves_the_task_composer_clear_at_page_end_without_scroll_clam
             "Emulation.setDeviceMetricsOverride",
             json!({"width":width,"height":900,"deviceScaleFactor":1,"mobile":false}),
         );
+        chrome.eval("document.getElementById('thread-region-visual/in-progress').scrollIntoView({block:'center'})");
+        assert!(chrome.wait_for(
+            "document.querySelector('#task-thread .entry.owner') !== null",
+            SHOWN
+        ));
         chrome.eval("scrollTo(0,document.documentElement.scrollHeight)");
         assert!(chrome.wait_for(
             "document.querySelector('#task-send [role=combobox]') !== null && document.querySelector('#task-send button[type=submit]') !== null",
@@ -115,7 +120,7 @@ fn a_stale_notice_leaves_the_task_composer_clear_at_page_end_without_scroll_clam
         assert!(chrome.wait_for(
             "document.querySelector('#task-thread .entry.owner') !== null && [...document.querySelectorAll('article.task .viewport-slot')].every(slot => slot.style.minHeight === '0px' && !slot.querySelector('.viewport-placeholder, .section-loading'))",
             SHOWN
-        ));
+        ), "lazy task regions must settle before the page-end baseline: {}", chrome.eval("[...document.querySelectorAll('article.task .viewport-slot')].map(slot=>({id:slot.id,minHeight:slot.style.minHeight,placeholder:!!slot.querySelector('.viewport-placeholder,.section-loading')}))"));
         assert!(chrome.wait_for(r#"new Promise(resolve => {
             scrollTo(0, document.documentElement.scrollHeight);
             requestAnimationFrame(() => requestAnimationFrame(() => {

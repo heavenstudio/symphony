@@ -18,17 +18,13 @@ layout, plus native `loading=lazy`. Once revealed, keep content mounted to
 preserve forms and reading position. Closed panels and collapsed card bodies
 load only when opened.
 
-For a real browser run, use `tools/browser.sh`, which owns a silent headless
-Chromium session per worktree and can reach loopback servers only. For example,
-`tools/browser.sh open http://127.0.0.1:PORT/tasks`, then
-`tools/browser.sh snapshot -i`, `tools/browser.sh screenshot artifacts/tasks.png`
-or `tools/browser.sh set device "iPhone 15"`; finish with
-`tools/browser.sh close`. The first use installs its Chromium in the shared
-browser cache, with agent-browser 0.39.0 and Playwright 1.58.2 pinned privately
-there. Relative EventSource, fetch and WebSocket URLs work on loopback pages.
-It reuses only its own recorded daemon and enforces a fixed HTTP(S) loopback
-allowlist. Recording and network route overrides remain refused. Generated
-in-memory blob pages are allowed; file URLs and external hosts are blocked.
+The native browser target owns headless Chrome sessions and private loopback
+fixtures. Run `tools/cargo.sh test -p symphony-ui --test browser --locked` from
+this workspace. It builds the real release client unless `SF_SYMPHONY_UI_DIST`
+explicitly names a built distribution. Install Chrome or name its executable
+with `SF_CHROME`; CI requires it. The harness owns each browser's temporary
+profile, process group and shutdown, and checks keyboard interaction, page
+geometry, stream recovery and transfer budgets without a display server.
 
 - **Build.** `just symphony-ui-dist [OUT] [KIND]` (`build/symphony-ui`, the page in its
   `public/`): cargo's subcommand `symphony-ui dist OUT` (`bin/cargo-symphony-ui`,

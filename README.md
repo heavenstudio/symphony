@@ -9,8 +9,8 @@ Install the Rust toolchain named in `rust-toolchain.toml` and `just`, then run:
 just symphony --port 0
 ```
 
-The server prints its loopback URL. `just symphony-cli --help` and `just tasks --help` expose the
-document and board commands. Workspace commands use ordinary Cargo through `tools/cargo.sh`;
+The server prints its loopback URL. `just symphony-cli` prints the document CLI usage, and
+`just tasks --help` lists the board commands. Workspace commands use ordinary Cargo through `tools/cargo.sh`;
 they require no containing-project gate executable. See [the workspace guide](AGENTS.md) for
 command ownership and [the server guide](apps/symphony-server/README.md) for project configuration.
 
