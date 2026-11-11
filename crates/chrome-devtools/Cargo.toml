@@ -4,6 +4,8 @@ version = "0.1.0"
 edition.workspace = true
 rust-version.workspace = true
 publish.workspace = true
+license.workspace = true
+authors.workspace = true
 
 # Headless Chrome on a private profile, driven over its DevTools protocol, leashed to the process
 # that launched it. The client's browser tests (apps/symphony-ui/tests/browser) and `symphony shot`

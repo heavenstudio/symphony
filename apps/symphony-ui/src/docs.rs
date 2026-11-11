@@ -172,9 +172,46 @@ pub fn scoped(scope: &str, route: &str) -> String {
     }
 }
 
+/// A route's breadcrumbs, and whether they sit under the tasks page. A document or folder sits
+/// under its folders, each crumb but the page's own a link to its folder; a task's slug is one
+/// name under the tasks page, which its other crumb links to, since the parts of a slug are not
+/// tasks of their own.
+pub fn crumbs(path: &str) -> (Vec<&str>, bool) {
+    let path = path.trim_end_matches('/');
+    if let Some(slug) = path.strip_prefix("task/") {
+        (vec!["tasks", slug], true)
+    } else if path.is_empty() {
+        (vec!["board"], false)
+    } else {
+        (path.split('/').collect(), false)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_task_sits_under_the_tasks_page_and_a_document_under_its_folders() {
+        assert_eq!(
+            crumbs("task/product/polish-sweep/client-source"),
+            (vec!["tasks", "product/polish-sweep/client-source"], true),
+            "no crumb names a part of the slug as a task of its own"
+        );
+        assert_eq!(crumbs("task/solo/"), (vec!["tasks", "solo"], true));
+        assert_eq!(
+            crumbs("docs/workflow/REVIEW.md"),
+            (vec!["docs", "workflow", "REVIEW.md"], false)
+        );
+        assert_eq!(crumbs("docs/lamps/"), (vec!["docs", "lamps"], false));
+        assert_eq!(crumbs(""), (vec!["board"], false));
+        assert_eq!(crumbs("tasks"), (vec!["tasks"], false));
+        assert_eq!(
+            crumbs("taskforce/notes.md"),
+            (vec!["taskforce", "notes.md"], false),
+            "only the task route's own prefix makes a slug"
+        );
+    }
 
     #[test]
     fn document_comparison_metadata_updates_and_clears_on_the_feed() {
