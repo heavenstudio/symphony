@@ -5,22 +5,6 @@ are at the top, and the page regroups itself every time one is answered. How car
 their dated history work is in [REVIEW](REVIEW.md).
 
 <!-- register:start -->
-## Needs your decision
-
-### Task page, in pictures
-
-- [ ] **reports-task-page-pictures** — A task's page opens on its gates: every stamp or check it needs to land, each met, missing or waived, with who, when and why. Below them, a timeline of what the task went through. The pictures show one task, on a phone and on a wide screen. How do a project's own gates reach the page? A: a typed seam, so Symphony draws every project's gates the same way and can count them. B: a panel of generic blocks the plugin lays out. The timeline is the same under A and B. Recommended: A. Approve and say A or B in the note, or comment. *Replaces:* reports-task-gates-timeline. [[analysis/reports-and-monitoring#Pictures]]
-  [2026-11-11 14:12] agent — The gates on a phone, under A and under B: ![Gates on a phone, option A](analysis/reports-gates-a-phone.svg) ![Gates on a phone, option B](analysis/reports-gates-b-phone.svg)
-  [2026-11-11 14:12] agent — The task is made up in Star Foundry's shape: its four stamps, two review rounds, a build and tests. Its times are invented. The pictures follow the app's colours, type and chips, in light and dark.
-
-    **A** is one component for every project. What the task waits on comes first, with who and when, and a gate can link to its run or verdict. Symphony can count these gates across tasks, for example which one waits longest.
-
-    **B** is the plugin's own layout. Star Foundry's stamps answer has no times, so its table has none. On a phone, a table wider than the screen scrolls sideways.
-
-    Wide: ![Gates on a wide screen, A](analysis/reports-gates-a-wide.svg) ![Gates on a wide screen, B](analysis/reports-gates-b-wide.svg)
-
-    **The timeline** is the same under A and B. On a phone it is a list with a bar per step; on a wide screen, lanes over time. ![Timeline on a phone](analysis/reports-timeline-phone.svg) ![Timeline on a wide screen](analysis/reports-timeline-wide.svg)
-
 ## Answered: approve again or comment
 
 ### Reports and monitoring
@@ -53,6 +37,23 @@ their dated history work is in [REVIEW](REVIEW.md).
     - **Running now.** Sending only finished runs would hide what runs elsewhere, so the start line is sent too.
 
     **B on several machines** needs the board itself reachable from every machine. It is a database without a login, listening on this machine alone, so it would need a login it does not have. An offline machine would still need an outbox and its log files. **So A, with the send, stays the recommendation.** [[analysis/reports-and-monitoring#Several machines, one board]]
+
+## Waiting on an agent
+
+### Task page, in pictures
+
+- [x] **reports-task-page-pictures** — A task's page opens on its gates: every stamp or check it needs to land, each met, missing or waived, with who, when and why. Below them, a timeline of what the task went through. The pictures show one task, on a phone and on a wide screen. How do a project's own gates reach the page? A: a typed seam, so Symphony draws every project's gates the same way and can count them. B: a panel of generic blocks the plugin lays out. The timeline is the same under A and B. Recommended: A. Approve and say A or B in the note, or comment. *Replaces:* reports-task-gates-timeline. [[analysis/reports-and-monitoring#Pictures]]
+  [2026-11-11 14:12] agent — The gates on a phone, under A and under B: ![Gates on a phone, option A](analysis/reports-gates-a-phone.svg) ![Gates on a phone, option B](analysis/reports-gates-b-phone.svg)
+  [2026-11-11 14:12] agent — The task is made up in Star Foundry's shape: its four stamps, two review rounds, a build and tests. Its times are invented. The pictures follow the app's colours, type and chips, in light and dark.
+
+    **A** is one component for every project. What the task waits on comes first, with who and when, and a gate can link to its run or verdict. Symphony can count these gates across tasks, for example which one waits longest.
+
+    **B** is the plugin's own layout. Star Foundry's stamps answer has no times, so its table has none. On a phone, a table wider than the screen scrolls sideways.
+
+    Wide: ![Gates on a wide screen, A](analysis/reports-gates-a-wide.svg) ![Gates on a wide screen, B](analysis/reports-gates-b-wide.svg)
+
+    **The timeline** is the same under A and B. On a phone it is a list with a bar per step; on a wide screen, lanes over time. ![Timeline on a phone](analysis/reports-timeline-phone.svg) ![Timeline on a wide screen](analysis/reports-timeline-wide.svg)
+  [2026-11-11 14:28] owner · approved — A
 
 ## Rejected and replaced
 
