@@ -1,0 +1,18 @@
+# Symphony as a Symphony project: what it would otherwise take from the generic defaults
+# (crates/symphony/src/project.rs). It names no plugins and no [[entrypoints]]: any host serves it,
+# and the convention serves docs/ at /docs/.
+
+[project]
+name = "Symphony"
+id = "symphony"
+
+[agents]
+panes = "hc"
+worktrees = "../symphony-wt"
+
+[verdicts]
+check = ["just", "verify"]
+
+[board]
+orchestrator_slots = 8
+guide = "docs/TASKS.md"

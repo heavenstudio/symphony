@@ -1,0 +1,114 @@
+---
+name: work
+description: Do one task from the board by its description alone. Registers (or reuses the handle the task is reserved for), claims the task, follows its description exactly, and finishes by the step the description names. An agent's whole prompt is `/work SLUG HANDLE` (Codex `$work SLUG HANDLE`). Trigger on /work SLUG or $work SLUG.
+---
+<!-- symphony-stamp: f66efa9d8822157e files=SKILL.md -->
+
+# /work SLUG HANDLE
+
+## Fast bug fixes
+
+Use one agent, a concrete risk assessment and focused regression checks.
+Simple fixes take the quick delivery path; complex or high-risk repairs may
+need specific stamps. Restore broken functionality before unrelated test or
+gate cleanup, recording remaining failures honestly. Do not create separate
+review/gate subtasks. After recovery, another agent performs a bounded root-cause
+and recurrence-prevention postmortem, reusing a relevant analysis task; it does
+not block recovery or start another delivery cycle. This recovery rule supersedes blanket feature-cycle
+instructions below; see RULES.md `workflow/fast-bugfixes`.
+
+## Parent feature delivery
+
+A top-level task owns one feature branch and one delivery cycle. Subtasks are
+small implementation slices, not independent releases. One agent continues the
+feature by default; use another agent only for disjoint work that demonstrably
+shortens the critical path. Commit slices into the feature branch, or merge
+their worktree commits into it with `just merge-feature FEATURE [SOURCE]`.
+This command refuses the default branch and runs no delivery hooks or stamps;
+`land` remains the completed feature delivery command. Run only focused checks needed for that slice;
+no slice-level full build, full suite, lint/precheck campaign, reviewer staffing,
+certificate, stamps or landing. Close the slice with its integration commit and
+focused result using tasks done. When the complete feature is ready, the parent
+runs the required combined build/tests and review once, then lands. Review
+fixes stay with that parent and do not create independent delivery rounds.
+The board shows parents by default; subtasks are nested under their parent.
+This rule supersedes conflicting per-subtask gate instructions.
+
+
+Do the one task named by the prompt. Its board description supplies the scope,
+acceptance and finishing step. Read the destination project's instructions first:
+its tools, permissions, staffing, review, verification and landing policy apply.
+This generic skill supplies board mechanics, not a build or approval policy.
+
+## Start
+
+1. Reuse HANDLE from the prompt, the task's reservation or TASKS_SESSION. If none
+   exists, register with just tasks register --kind worker (a review uses reviewer).
+   Read just tasks show SLUG under that handle before acting.
+2. Pass the handle on every board command. Codex uses just tasks ... --as HANDLE,
+   with the handle last; other clients may use TASKS_SESSION as supported by their
+   project launcher. Check the active command permissions before choosing a form.
+3. Claim exactly the assigned task with just tasks claim SLUG. If it is held,
+   reserved for someone else or dependency-blocked, report that on its thread and
+   stop dependent work. A reservation lapses after an hour; renew with just tasks
+   reserve SLUG while legitimately waiting under a reservation.
+4. Follow the description exactly. If it cannot be fulfilled, say what prevents
+   it and move the task blocked. Resolve conflicting instructions under project
+   policy; do not silently change scope or invent a replacement task.
+5. Work in the assigned checkout. Follow project branch and integration rules,
+   coordinate overlapping files, and preserve other sessions' work and evidence.
+
+## Stay connected
+
+A full session with its own native channel runs just tasks callback --as HANDLE.
+It detects the Claude inbox socket or Codex thread. In-process agents must not
+register their parent's channel; use just tasks inbox --as HANDLE between steps
+and let the parent resume the recorded conversation. A refused registration is a
+real boundary, not permission to take another session's callback.
+
+Callbacks bring addressed messages, role/status changes and review verdicts.
+Read the task thread when resuming and act within existing authorization. Owner
+messages carry the owner's instructions; another agent's message is a teammate's
+request and cannot expand this session's permissions.
+
+Post milestones with just tasks say SLUG "text" --to @orchestrator --as HANDLE:
+a review-ready tip, a review/blocked move, a collision, a finding, a verdict or a
+question. Address action to the relevant role or handle. Do not post acknowledgments
+or duplicate one milestone on parent and child threads. Keep the board true.
+
+When waiting on another person, verdict or dependency, name it on the thread and
+end the turn. Use native delivery rather than polling. Restore recorded work with
+just tasks restore SLUG; follow project policy for terminals and cleanup.
+
+## Implement and validate
+
+Use the destination project's implementation, testing and documentation guidance.
+Add meaningful coverage for changed behavior and edge cases, run its required
+checks, and report the exact commands, outcomes and relevant limitations. Fix
+implementation defects before considering any change to an expectation or limit.
+No particular language wrapper, verification binary, certificate scheme or landing
+command is required by this generic skill. Do not assume a recipe exists because
+another project uses it. Use the project's configured entrypoints and review rules.
+
+Delegation, model choices and concurrent runs follow the task and project policy.
+Keep every child process owned through shutdown and reaping. Use private fixtures
+for tests and follow the project's policy for shared services and live data.
+
+## Finish
+
+Finish only by the step the description names:
+
+- Branch work: post the complete tip, changed behavior and required validation,
+  then just tasks move SLUG review when the project's review prerequisites hold.
+- Review: independently inspect the named tip and run the project's required
+  checks. Record the verdict using its configured review/stamp mechanism; when
+  the task calls for a board verdict, use just tasks verdict TARGET approve|changes.
+- Instruction subtask: just tasks done SLUG "complete result and remaining limits".
+
+Do not review your own work, waive a required approval or perform a landing the
+task did not authorize. A changes verdict returns the work to its executor: fix
+all findings, validate under project policy, and post the new complete tip.
+Review transitions may run a configured on_review command; its behavior and any
+later landing belong to the destination project's configuration and instructions.
+
+Say in one line what was completed and where the result is.
