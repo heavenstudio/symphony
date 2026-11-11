@@ -53,10 +53,12 @@ for byte against the old ones. Only then does it swap the stores and remove the
 old one. The exports stay in `sf-tasks/reclaim/exports/`. `--dir FOLDER`
 rehearses on a copy of `sf-tasks/` (`cp -c`, a clone).
 
-The command is the `tasks` binary (`crates/tasks`), built from this tree's
-sources once for every worktree that shares them (`tools/rs-bin.sh`): the
-first command after a change to them builds it, which takes a minute or two.
-The heartbeat hook runs the build its tree last ran (`.target/bin/tasks`) and
+The command is the `tasks` binary (`crates/tasks`), which `tools/rs-bin.sh`
+builds before every run: the first command after a change to its sources takes
+a minute or two, later ones only Cargo's check that nothing changed. On the
+live board it is the main checkout's build, from whichever worktree it runs; a
+branch's own build runs only on a scratch board (`--database NAME`). The
+heartbeat hook runs the build its tree last linked (`.target/bin/tasks`) and
 builds nothing. There is no Python board adapter.
 `launch`, `restore`, `cleanup`, `close` and `reap` are its own, hc's terminals and all
 (`crates/tasks/src/launch/`); the board calls no `herdr`. The server is the pinned SurrealDB, fetched once
