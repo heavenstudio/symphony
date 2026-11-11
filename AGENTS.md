@@ -94,7 +94,8 @@ standing rules in [RULES.md](RULES.md).
 **Memory lives in the repository.** Nothing goes in an agent's own memory folder
 (`~/.claude/projects/…/memory/`): what must outlast a session is guidance here or in a
 package's AGENTS.md, a skill, a doc or a board task, and it is committed, so every
-agent sees it. `.claude/settings.json` denies writes there.
+agent sees it. The memory guard refuses any write there (below), and
+`.claude/settings.json` denies Edit there as well.
 
 **Models.** The orchestrator may run on the most capable model, for diagnosis and
 design. Executors and reviewers run on Opus: an Agent launch passes `model: "opus"`
@@ -113,9 +114,10 @@ the binary by its path reads lost while it works.
 ## Agent integration
 
 `symphony init --root ROOT` installs the seven generic skills, their Claude links,
-Claude allow rules and heartbeat commands, and Codex rules. Stamped copies are kept
-current; an unstamped project copy wins. Project-specific skills and taste data stay
-in the project. Retirement removes managed files and links, retaining project data.
+Claude allow rules, heartbeat and memory-guard commands, and Codex rules. Stamped
+copies are kept current; an unstamped project copy wins. Project-specific skills and
+taste data stay in the project. Retirement removes managed files and links, retaining
+project data. It writes no permission rule but the allow rules.
 
 `symphony hook tasks-beat` reads the tool event from stdin and finds its board through
 the board's project lookup. Keys and live-build records belong to that repository's
@@ -123,6 +125,14 @@ common directory; scratch overrides remain explicit. It starts no server, builds
 hashes no sources, prints nothing and never refuses a tool call. Settings run the
 prebuilt `.target/bin/symphony` link; a missing link passes quietly. Project build
 setup refreshes that link explicitly, alongside its own policy hooks.
+
+`symphony hook memory-guard` (`crates/symphony/src/hook/memory_guard.rs`) runs before a
+Write, Edit, MultiEdit, NotebookEdit or Bash call. It refuses, with exit 2 and one line
+naming where the guidance goes instead, a write into an agent's memory folder
+(`~/.claude/projects/*/memory/`, `~/.codex/memories/`): a write tool's path there, or a
+shell command that names the folder, or runs in it, and writes anything. Reads pass.
+Its installed command passes on that refusal alone: with no link, or a link to a build
+older than the guard, the call goes through.
 
 ## Command ownership
 

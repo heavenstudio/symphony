@@ -135,9 +135,9 @@ more is Rust.
 
 Nothing goes in an agent's own memory folder (`~/.claude/projects/…/memory/`): what must outlast
 a session is a rule here, guidance in an AGENTS.md, a skill, a doc or a board task, committed
-where every agent sees it. `.claude/settings.json` denies Write and Edit there; a hook that would
-refuse every other write there is filed as the task `tools/memory-guard-hook` and does not exist
-yet.
+where every agent sees it. The memory guard (`symphony hook memory-guard`, which `symphony init`
+installs) refuses a write there by any write tool or shell command, Codex's `~/.codex/memories/`
+included, and `.claude/settings.json` denies Edit there as well.
 
 ### `tools/parallel-by-default`
 
