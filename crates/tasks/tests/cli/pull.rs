@@ -1,12 +1,15 @@
-//! PULL digest: actionable board work without a corresponding event; red tasks are [`reds`]'.
+//! PULL digest: actionable board work without a corresponding event; red tasks are [`reds`]', the
+//! pipeline alarm [`alarm`]'s.
 
+mod alarm;
 mod command;
 mod reds;
 mod wait;
 
 use crate::common::{Fixture, NOW};
-use std::collections::BTreeSet;
-use symphony_board::cli::pull::{Digest, digest};
+use std::collections::{BTreeMap, BTreeSet};
+use symphony_board::alarm::{Tip, Written};
+use symphony_board::cli::pull::{Digest, digest, digest_with_tips};
 use symphony_board::health::{LIVE_SECONDS, RESERVE_SECONDS, STALE_SECONDS};
 use symphony_board::sys::local_minute;
 use symphony_board::{NewTask, Task};
@@ -19,6 +22,9 @@ mod unanswered;
 struct Case {
     f: Fixture,
     landed: BTreeSet<String>,
+    /// Each task's branch's commits, oldest first, as the repository would answer of them
+    /// ([`alarm::branch`]); one not here has no branch.
+    tips: BTreeMap<String, Vec<Tip>>,
     idle: Vec<String>,
 }
 
@@ -27,6 +33,7 @@ impl Case {
         Case {
             f: Fixture::empty(),
             landed: BTreeSet::new(),
+            tips: BTreeMap::new(),
             idle: Vec::new(),
         }
     }
@@ -37,10 +44,13 @@ impl Case {
 
     fn verifying(&self, verifying: &[String]) -> Digest {
         let landed = |t: &Task| self.landed.contains(&t.slug);
-        digest(
+        let tips =
+            |t: &Task, after: Option<Written<'_>>| alarm::branch(self.tips.get(&t.slug)?, after);
+        digest_with_tips(
             &self.f.store,
             &self.idle,
             Some(&landed),
+            Some(&tips),
             self.f.now(),
             verifying,
         )

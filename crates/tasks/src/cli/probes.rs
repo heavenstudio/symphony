@@ -396,6 +396,121 @@ pub fn branch_of(cwd: &str) -> Answer<String> {
     })
 }
 
+/// The tip of the branch task `slug` names in the repository at `root`, and when it was committed;
+/// none when there is no such branch. With `after` (a commit a landing's record judged, and when
+/// the record was written), the commit the branch first moved to from that one after then, when
+/// the executor answered the changes the record asked for, and when it moved, as the branch's
+/// reflog tells ([`moved_from`]): the next commit made on it, or what replaced it, amended or
+/// rebased away; for a record of a tip the branch came back to, the move after it came back. None
+/// while the branch has not moved from it since. Where the reflog does not name it, the first
+/// commit after it on the branch's line of first parents, when it was made; else the tip stands in
+/// (also for a commit that reads as no commit id, never passed to git). The pipeline alarm judges
+/// a landing's record of what a task waits for against it (`cli::pull`), and the board keeps the
+/// first answer of each record (`Store::record_fixed`).
+pub fn tip(
+    root: &Path,
+    slug: &str,
+    after: Option<crate::alarm::Written<'_>>,
+) -> Option<crate::alarm::Tip> {
+    let reference = format!("refs/heads/{}", crate::on_review::branch_of(slug));
+    let now = commit(
+        root,
+        &["log", "-1", "--format=%H %ct", &reference, "--"],
+        None,
+    )?;
+    let Some(crate::alarm::Written {
+        tip: judged,
+        at: written,
+        ..
+    }) = after
+    else {
+        return Some(now);
+    };
+    if judged.is_empty() || !judged.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return Some(now);
+    }
+    if let Some(moved) = moved_from(root, &reference, judged, written) {
+        return Some(moved);
+    }
+    if judged == now.commit {
+        return None;
+    }
+    let range = format!("{judged}..{reference}");
+    let line = [
+        "log",
+        "--first-parent",
+        "--ancestry-path",
+        "--reverse",
+        "--format=%H %ct %P",
+        &range,
+        "--",
+    ];
+    // Only a commit whose first parent is the one judged follows it on the branch's own line: the
+    // ancestry path also reaches it through a merge's other parent, past a line that never held it.
+    Some(commit(root, &line, Some(judged)).unwrap_or(now))
+}
+
+/// The commit `reference`'s reflog says it first moved to from `judged` after a record written at
+/// `written` judged it, and when it moved: from the newest entry naming `judged` by then (else the
+/// oldest naming it), the next that names another. What replaced a commit amended or rebased away,
+/// which later moves never change; none when the reflog names no move from it, or not `judged`.
+fn moved_from(
+    root: &Path,
+    reference: &str,
+    judged: &str,
+    written: f64,
+) -> Option<crate::alarm::Tip> {
+    let moves = [
+        "log",
+        "--walk-reflogs",
+        "--date=unix",
+        "--format=%H %gd",
+        reference,
+        "--",
+    ];
+    let done = git(root, &moves).filter(|done| done.status.success())?;
+    let text = String::from_utf8_lossy(&done.stdout);
+    let newest_first: Vec<(&str, f64)> = (text.lines())
+        .filter_map(|line| {
+            let (commit, selector) = line.split_once(' ')?;
+            let at = selector.rsplit_once("@{")?.1.strip_suffix('}')?;
+            Some((commit, at.parse().ok()?))
+        })
+        .collect();
+    let named = |(commit, _): &(&str, f64)| *commit == judged;
+    let by_then = (newest_first.iter()).position(|entry| named(entry) && entry.1 <= written);
+    let became = by_then.or_else(|| newest_first.iter().rposition(named))?;
+    let mut newer = newest_first[..became].iter().rev();
+    let (commit, at) = newer.find(|entry| !named(entry))?;
+    Some(crate::alarm::Tip {
+        commit: commit.to_string(),
+        at: *at,
+    })
+}
+
+/// The reader of the tips of the branches in the repository at `root`, none without one ([`tip`]).
+pub fn tips(
+    root: Option<&Path>,
+) -> impl Fn(&crate::Task, Option<crate::alarm::Written<'_>>) -> Option<crate::alarm::Tip> {
+    move |task, after| tip(root?, &task.slug, after)
+}
+
+/// The first commit git's `args` list, as `%H %ct`; with `parent`, as `%H %ct %P`, and none unless
+/// `parent` is its first parent.
+fn commit(root: &Path, args: &[&str], parent: Option<&str>) -> Option<crate::alarm::Tip> {
+    let done = git(root, args).filter(|done| done.status.success())?;
+    let text = String::from_utf8_lossy(&done.stdout);
+    let mut fields = text.lines().next()?.split_whitespace();
+    let (commit, at) = (fields.next()?, fields.next()?);
+    if parent.is_some_and(|parent| fields.next() != Some(parent)) {
+        return None;
+    }
+    Some(crate::alarm::Tip {
+        commit: commit.to_string(),
+        at: at.parse().ok()?,
+    })
+}
+
 /// Whether the branch named for task `slug` has commits of its own and is already on main in the
 /// repository at `root`: work that landed under a task still open. A branch cut and not yet used is not
 /// one: none of its reflog's entries is a commit.
