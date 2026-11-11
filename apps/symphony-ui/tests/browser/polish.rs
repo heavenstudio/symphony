@@ -339,3 +339,123 @@ fn native_controls_follow_the_scheme_and_the_theme_file_is_picked_from_a_drawn_b
         );
     }
 }
+
+/// The page's trouble block, once it shows: its title, sentence, retry and way back.
+fn trouble(page: &mut Chrome) -> Value {
+    assert!(
+        page.wait_for(
+            "document.querySelector('.trouble :is(h1, h2)') !== null",
+            SHOWN
+        ),
+        "no trouble block: {}",
+        page.eval("document.body.innerText")
+    );
+    page.eval("(() => {const block=document.querySelector('.trouble');return {title:block.querySelector('h1, h2').textContent,\
+        level:block.querySelector('h1, h2').tagName,text:block.querySelector('p').textContent,\
+        retry:block.querySelector('button')?.textContent ?? null,back:block.querySelector('a')?.getAttribute('href') ?? null,\
+        headings:document.querySelectorAll('h1').length};})()")
+}
+
+/// Clicks the trouble block's Retry and waits for `shown`.
+fn retry(page: &mut Chrome, shown: &str) {
+    page.eval("document.querySelector('.trouble button').click()");
+    assert!(
+        page.wait_for(shown, SHOWN),
+        "Retry did not bring the page back: {}",
+        page.eval("document.body.innerText")
+    );
+}
+
+#[test]
+fn a_missing_document_says_so_and_a_failed_read_says_it_failed_with_a_retry() {
+    let bare = bare_site();
+    let Some(mut page) = chrome() else { return };
+    page.open(&bare.url("/docs/MISSING.md"));
+    let missing = trouble(&mut page);
+    assert_eq!(missing["title"], json!("Document not found"), "{missing}");
+    assert!(
+        missing["text"]
+            .as_str()
+            .unwrap()
+            .contains("docs/MISSING.md"),
+        "it names the document: {missing}"
+    );
+    assert_eq!(missing["back"], json!("/docs/"), "{missing}");
+    assert_eq!(
+        (&missing["level"], &missing["headings"]),
+        (&json!("H1"), &json!(1)),
+        "the block is the page: {missing}"
+    );
+    assert_eq!(
+        page.eval(
+            "document.querySelector('.document-page').innerText.includes('Loading document')"
+        ),
+        json!(false)
+    );
+
+    let site = site();
+    for (route, read, title, shown) in [
+        (
+            "/task/visual/in-progress",
+            "/api/task-page",
+            "The task could not be loaded",
+            "document.querySelector('article.task') !== null",
+        ),
+        (
+            "/agents",
+            "/api/agent-page",
+            "The agents could not be loaded",
+            "document.querySelector('.trouble') === null && document.querySelector('main h1')?.textContent === 'Agents'",
+        ),
+        (
+            "/",
+            symphony_api::BOARD_PATH,
+            "The board could not be loaded",
+            "document.querySelector('.hero-title') !== null",
+        ),
+    ] {
+        site.fail_route(read, true);
+        page.open(&site.url(route));
+        let failed = trouble(&mut page);
+        assert_eq!(failed["title"], json!(title), "{route}: {failed}");
+        assert!(
+            failed["text"]
+                .as_str()
+                .unwrap()
+                .contains("Check the connection"),
+            "{route}: a failed read is not a missing one: {failed}"
+        );
+        assert_eq!(failed["retry"], json!("Retry"), "{route}: {failed}");
+        site.fail_route(read, false);
+        retry(&mut page, shown);
+    }
+}
+
+#[test]
+fn the_task_groups_say_when_they_could_not_be_loaded_and_retry() {
+    let site = site();
+    let Some(mut page) = chrome() else { return };
+    page.open(&site.url("/tasks"));
+    assert!(page.wait_for(
+        "document.querySelector('.pipeline .column') !== null",
+        SHOWN
+    ));
+    site.fail_route("/api/task-board", true);
+    page.eval("document.querySelector('[aria-controls=task-groups]').click()");
+    let failed = trouble(&mut page);
+    assert_eq!(
+        failed["title"],
+        json!("The task groups could not be loaded"),
+        "{failed}"
+    );
+    assert_eq!(
+        (&failed["level"], &failed["headings"]),
+        (&json!("H2"), &json!(1)),
+        "a part of the tasks page, under its one h1: {failed}"
+    );
+    site.fail_route("/api/task-board", false);
+    retry(
+        &mut page,
+        "document.querySelector('#task-groups .trouble') === null && document.querySelector('#task-groups ul li') !== null",
+    );
+}

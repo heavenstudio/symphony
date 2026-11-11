@@ -117,7 +117,7 @@ pub fn TaskBoard(
                     }
                 }
         }
-        crate::components::button::Button { aria_expanded: subtree(), actions: crate::entry_events::click(move || subtree.set(!subtree())), "Subtasks" }
+        crate::components::button::Button { aria_expanded: subtree(), "aria-controls": "task-groups", actions: crate::entry_events::click(move || subtree.set(!subtree())), "Subtasks" }
         if subtree() {
             TreePanel { known: Rc::new(tasks) }
         }
@@ -134,9 +134,13 @@ fn TreePanel(known: Rc<Vec<Task>>) -> Element {
         load_tree(None, false, roots, total, cursor, trouble);
     });
     rsx! {
-        p { role: "status", "{trouble}" }
-        ul { for task in roots() { TreeNode { key: "{task.slug}", task, known: known.clone() } } }
-        if roots.read().len() < total() { crate::components::button::Button { actions: crate::entry_events::click(move || load_tree(None,true,roots,total,cursor,trouble)), "Load more task groups" } }
+        div { id: "task-groups",
+            if !trouble.read().is_empty() {
+                crate::trouble::Trouble { title: "The task groups could not be loaded", text: crate::trouble::failed(&trouble()), part: true, retry: move |_| load_tree(None, false, roots, total, cursor, trouble) }
+            }
+            ul { for task in roots() { TreeNode { key: "{task.slug}", task, known: known.clone() } } }
+            if roots.read().len() < total() { crate::components::button::Button { actions: crate::entry_events::click(move || load_tree(None,true,roots,total,cursor,trouble)), "Load more task groups" } }
+        }
     }
 }
 
@@ -169,6 +173,7 @@ fn load_tree(
         .await
         {
             Ok(list) => {
+                trouble.set(String::new());
                 cursor.set(list.next);
                 total.set(list.counts.iter().map(|(_, n)| n).sum());
                 if !more {
@@ -214,7 +219,7 @@ fn TreeNode(task: Task, known: Rc<Vec<Task>>) -> Element {
         a { href: "/task/{shown.slug}", "{shown.title}" } " " span { class: "pill", "{shown.status.replace('_', \" \")}" }
         crate::components::button::Button { aria_expanded: open(), actions: crate::entry_events::click(move || { if !open() { load_tree(Some(slug.clone()),false,children,total,cursor,trouble); } open.set(!open()); }), "Subtasks" }
         if open() {
-            p { role: "status", "{trouble}" }
+            if !trouble.read().is_empty() { p { role: "status", "Its subtasks could not be loaded: {trouble}" } }
             ul { for child in children() { TreeNode { key: "{child.slug}", task: child, known: known.clone() } } }
             if children.read().len() < total() { crate::components::button::Button { actions: crate::entry_events::click(move || load_tree(Some(more_slug.clone()),true,children,total,cursor,trouble)), "Load more subtasks" } }
         }

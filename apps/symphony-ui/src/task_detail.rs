@@ -15,16 +15,21 @@ pub(crate) fn LiveTaskPage(
         agents.machine_work = crate::machine_work::connection(agents.machine_work, connected);
         agents
     });
-    // The page's error is drawn in its notice stack (`live::BoardPage`), out of the page's flow.
+    // The page's error is drawn in its notice stack (`live::BoardPage`), out of the page's flow;
+    // a page with nothing yet to show says in its body what is missing or failed.
     rsx! {
         if let Some(slug) = route().strip_prefix("/task/") {
             if let Some(page) = data.read().detail.clone().filter(|p| p.task.slug == slug) {
                 TaskDetail { key: "{page.task.slug}", work: crate::machine_work::connection(page.machine_work.clone(), connected), tasks: page.children.clone(), page, entries: data.read().entries.clone(), older: data.read().before.is_some(), loaded: data.read().thread_loaded, offer: data.read().approval.clone(), onhistory: move |older| { spawn(task_live::history(older,route,data)); }, onchildren: move |more| { spawn(task_live::children(more,route,data)); }, onoffer: move |_| { spawn(task_live::offer(route,data)); } }
             } else if data.read().missing.as_deref() == Some(slug) {
                 crate::trouble::Trouble { title: "No task {slug}", text: "The board has no task by this name: it may have been removed, or the link names it wrongly.", back: Some(("/tasks".to_string(), "All tasks".to_string())), retry: move |_| { spawn(task_live::refresh(route, data)); } }
+            } else if !data.read().error.is_empty() {
+                crate::trouble::Trouble { title: "The task could not be loaded", text: crate::trouble::failed(&data.read().error), retry: move |_| { spawn(task_live::refresh(route, data)); } }
             } else { p { "Loading task…" } }
         } else if let Some(agents) = agents {
             AgentsView { agents, tasks: data.read().tasks.clone().unwrap_or_default(), total: data.read().agent_total, more: data.read().has_more_agents(false), lost_more: data.read().has_more_agents(true), onmore: move |lost| { spawn(task_live::more_agents(lost,route,data)); } }
+        } else if !data.read().error.is_empty() {
+            crate::trouble::Trouble { title: "The agents could not be loaded", text: crate::trouble::failed(&data.read().error), retry: move |_| { spawn(task_live::load(route, data)); } }
         } else { p { "Loading agents…" } }
     }
 }

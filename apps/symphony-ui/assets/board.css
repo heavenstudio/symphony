@@ -174,6 +174,7 @@ form input, form textarea, .filters input { font:inherit; font-size:var(--fs-sm)
 .page-head .lead { max-width:80ch; }
 /* What a page shows in place of what it could not: its title, a sentence, a retry and the way back. */
 .trouble { max-width:42rem; margin:var(--sp-6) auto; padding:var(--sp-5); overflow-wrap:anywhere; }
+.trouble h2 { font-size:var(--fs-lg); margin:0 0 var(--sp-2); }
 .trouble h1 { font-size:var(--fs-2xl); letter-spacing:-.02em; line-height:1.15; margin:0 0 var(--sp-2); }
 .trouble p { color:var(--muted-foreground); margin:0 0 var(--sp-4); }
 .trouble p.trouble-actions { display:flex; flex-wrap:wrap; align-items:center; gap:var(--sp-2); margin:0; }

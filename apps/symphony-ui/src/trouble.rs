@@ -15,10 +15,13 @@ pub fn Trouble(
     /// Reads again; a page that retries on its own still offers it.
     #[props(default)]
     retry: Option<EventHandler<()>>,
+    /// A part of a page, under the page's own heading, rather than the whole page.
+    #[props(default)]
+    part: bool,
 ) -> Element {
     rsx! {
         section { class: "trouble card", role: "status",
-            h1 { "{title}" }
+            if part { h2 { "{title}" } } else { h1 { "{title}" } }
             p { "{text}" }
             p { class: "trouble-actions",
                 // A plain action: the entry modules that draw this block keep no mouse-event decoder.
@@ -30,6 +33,17 @@ pub fn Trouble(
                 }
             }
         }
+    }
+}
+
+/// The sentence for a read that did not finish, from the reason the transport gave: the page is
+/// not missing, so the reader is sent to the connection, not away.
+pub fn failed(why: &str) -> String {
+    let why = why.trim().trim_end_matches('.');
+    if why.is_empty() {
+        "The read did not finish. Check the connection and try again.".into()
+    } else {
+        format!("The read did not finish: {why}. Check the connection and try again.")
     }
 }
 
@@ -65,5 +79,22 @@ mod tests {
         );
         let bare = render(rsx! { Trouble { title: "Gone", text: "Nothing here." } });
         assert!(!bare.contains("Retry") && !bare.contains("<a "), "{bare}");
+        let part = render(rsx! { Trouble { title: "Groups", text: "Failed.", part: true } });
+        assert!(
+            part.contains("<h2>Groups</h2>") && !part.contains("<h1>"),
+            "a part of a page keeps the page's one h1: {part}"
+        );
+    }
+
+    #[test]
+    fn a_failed_read_says_why_and_sends_the_reader_to_the_connection() {
+        assert_eq!(
+            failed("Board snapshot unavailable."),
+            "The read did not finish: Board snapshot unavailable. Check the connection and try again."
+        );
+        assert_eq!(
+            failed("  "),
+            "The read did not finish. Check the connection and try again."
+        );
     }
 }
