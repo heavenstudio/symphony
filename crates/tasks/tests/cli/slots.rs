@@ -222,9 +222,10 @@ fn pipeline_alarm_thresholds_that_cannot_be_read_are_said_and_the_cap_beside_the
     assert_eq!(
         ran.err,
         format!(
-            "⚠ {}: [board] review_alarm_hours is 0; it is at least 1; the pipeline alarm takes its default thresholds\n✖ work/2 cannot start: {}\n",
+            "⚠ {}: [board] review_alarm_hours is 0; it is at least 1; the pipeline alarm takes its default thresholds\n✖ work/2 cannot start: {}{}\n",
             file.display(),
-            holds_two(&orch)
+            holds_two(&orch),
+            RESERVE_HINT
         )
     );
 }
