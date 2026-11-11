@@ -1064,9 +1064,10 @@ fn typed_anchors(value: &serde_json::Value) -> Vec<String> {
 use client::static_response;
 mod client;
 
-/// The project at `root` as the client reads it: its plugins' navigation and its entrypoints.
+/// The project at `root` as the client reads it: its plugins' navigation, its entrypoints and its
+/// review guide.
 pub(crate) fn project_view(root: &Path) -> symphony_api::ProjectView {
-    symphony::project::Project::of(root).view()
+    symphony::project::Project::of(root).view_at(root)
 }
 
 /// Whether `path` is a page the client draws: its own, one of the project's navigation pages, or

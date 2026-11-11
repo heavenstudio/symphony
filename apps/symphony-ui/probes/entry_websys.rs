@@ -115,7 +115,9 @@ mod page {
                     .map(|item| (item.href.clone(), item.title.clone())),
             );
             pills.push((format!("/{}", project.register), "Decision register".into()));
-            pills.push(("/docs/workflow/REVIEW.md".into(), "How review works".into()));
+            if !project.guide.is_empty() {
+                pills.push((format!("/{}", project.guide), "How review works".into()));
+            }
             for (href, text) in &pills {
                 self.link(&links, "pill", href, text);
             }

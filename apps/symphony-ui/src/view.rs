@@ -35,7 +35,10 @@ pub fn BoardView(board: Board, now: Moment, #[props(default)] project: ProjectVi
                         a { key: "{item.href}", class: "pill", href: "{item.href}", "{item.title}" }
                     }
                     a { class: "pill", href: "/{register}", "Decision register" }
-                    a { class: "pill", href: "/docs/workflow/REVIEW.md", "How review works" }
+                    // The guide's route is the project's: a project without one has no link.
+                    if !project.guide.is_empty() {
+                        a { class: "pill", href: "/{project.guide}", "How review works" }
+                    }
                 }
             }
             div { class: "dash-top",

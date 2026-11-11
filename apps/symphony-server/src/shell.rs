@@ -56,7 +56,7 @@ pub(crate) fn page(shell: &str, root: &Path, base: &str, banner: &str) -> String
     // The project's name and navigation ride in the page's body, so the first paint asks for
     // nothing; a shell without a body is served as it is, the client then drawing no nav.
     let element = body.map_or_else(String::new, |_| {
-        let mut view = project.view();
+        let mut view = project.view_at(root);
         view.base = base.into();
         Project::element(&view)
     });
