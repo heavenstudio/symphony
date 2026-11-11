@@ -5,10 +5,13 @@
 //! Before any project the server answers `/api/front` (itself, with the ids it serves), `/` (the
 //! project picker), `/<id>` (to `/<id>/`) and `/<id>/theme.css` (the
 //! project's theme tokens). A path of today, under no project, is the project's whose page asked
-//! for it (a same-origin Referer under `/<id>/`), else the starter's: a page load is redirected
-//! there, so a bookmark opens under `/<id>/`, and anything else is answered by that project in
-//! place; a project this server refuses answers its refusal on either way in. Every route but
-//! `/api/front`, which loopback's name alone reaches, answers a Host naming this machine alone.
+//! for it (a same-origin Referer under `/<id>/`), else the starter's, when that project answers it
+//! (a route of the Symphony's or of its plugins', or one under its entrypoints): a page load is
+//! redirected there, so a bookmark opens under `/<id>/`, and anything else is answered by that
+//! project in place; a project this server refuses answers its refusal on either way in. Any other
+//! path, an unknown project id say, is the project list's page saying so, never another project's.
+//! Every route but `/api/front`, which loopback's name alone reaches, answers a Host naming this
+//! machine alone.
 //! A project's state is its registered root's under its id: until the server stops, the registry
 //! is read again whenever its file changes, and a changed root or id is served from new state.
 
@@ -22,6 +25,7 @@ use axum::Router;
 use axum::extract::{ConnectInfo, Request, State};
 use axum::http::{HeaderMap, HeaderValue, Method, StatusCode, Uri, header};
 use axum::response::{IntoResponse, Json, Response};
+use symphony::entrypoint::below;
 use symphony::machine::{Entry, PROJECTS, Registry};
 use tower::ServiceExt;
 
@@ -311,16 +315,26 @@ async fn dispatch(
             return theme(project, request.headers());
         }
         if let Some(why) = &project.refused {
-            return refusal(&project.entry, why);
+            return refusal(
+                &served,
+                project,
+                why,
+                &format!("/{rest}"),
+                request.headers(),
+            );
         }
         return forward(project, &format!("/{rest}"), request).await;
     }
-    let Some(owner) = referred(request.headers(), &served).or_else(|| projects.started(&served))
+    // A path of today is its project's only when that project answers it: a first segment no
+    // project holds and no route of the Symphony's or that project's is a project id mistyped.
+    let Some(owner) = referred(request.headers(), &served)
+        .or_else(|| projects.started(&served))
+        .filter(|owner| answers(owner, &path))
     else {
-        return StatusCode::NOT_FOUND.into_response();
+        return unknown(&served, &path);
     };
     if let Some(why) = &owner.refused {
-        return refusal(&owner.entry, why);
+        return refusal(&served, owner, why, &path, request.headers());
     }
     if navigation(request.method(), request.headers()) {
         return redirect(&format!("/{}{path}", owner.entry.id), request.uri());
@@ -353,6 +367,69 @@ pub(crate) fn navigation(method: &Method, headers: &HeaderMap) -> bool {
             || read(header::ACCEPT.as_str()).is_some_and(|accept| accept.contains("text/html")),
             |mode| mode == "navigate",
         )
+}
+
+/// Whether `project` answers `path`, a path of today under no project's prefix, behind a branch's
+/// scope or not: a route the Symphony or one of the project's plugins answers, or a route under one
+/// of its entrypoints; under one served at the project's root, only a name its folder holds.
+fn answers(project: &Served, path: &str) -> bool {
+    let decoded = crate::api::decode_path(path);
+    let (scope, route) = crate::api::scope_path(decoded.as_deref().unwrap_or(path));
+    let route = route.trim_start_matches('/');
+    if route.is_empty() {
+        // A branch's own board, `/@tree/`.
+        return !scope.is_empty();
+    }
+    let root = &project.entry.root;
+    let project = symphony::project::Project::of(root);
+    project
+        .reserved()
+        .iter()
+        .any(|reserved| below(reserved, route).is_some())
+        || project.entrypoints.iter().any(|entry| {
+            if entry.url.is_empty() {
+                let first = route.split('/').next().unwrap_or_default();
+                project.reachable(root, entry, first).is_some()
+            } else {
+                below(&entry.url, route).is_some()
+            }
+        })
+}
+
+/// What a path under no project answers when no project answers it: the project list, saying no
+/// project is called by its first segment, and naming one whose id differs from it in case alone.
+fn unknown(served: &[Served], path: &str) -> Response {
+    use symphony::markup::escape;
+    let decoded = crate::api::decode_path(path).unwrap_or_else(|| path.to_string());
+    let (first, rest) = decoded
+        .trim_start_matches('/')
+        .split_once('/')
+        .unwrap_or((decoded.trim_start_matches('/'), ""));
+    let mut said = format!(
+        "<p><strong>No project is called <q>{}</q> here</strong>: this Symphony serves the \
+         projects below.</p>",
+        escape(first)
+    );
+    if let Some(near) = served
+        .iter()
+        .find(|served| served.entry.id.eq_ignore_ascii_case(first))
+    {
+        let href = crate::api::encode_location(&format!("/{}/{rest}", near.entry.id));
+        said.push_str(&format!(
+            "<p>Did you mean <a href=\"{}\">{}</a>?</p>",
+            escape(&href),
+            escape(&near.entry.id)
+        ));
+    }
+    crate::pages::html(
+        StatusCode::NOT_FOUND,
+        crate::pages::machine(
+            "Not found · Symphony",
+            "not found",
+            &crate::pages::notice("status", &said),
+            &list(served),
+        ),
+    )
 }
 
 /// The project whose page a same-origin request came from.
@@ -408,9 +485,17 @@ fn front(projects: &Projects, served: &[Served], headers: &HeaderMap) -> Respons
     Json(status).into_response()
 }
 
-/// `/`: always the project picker with each registered project's counts, and whether its board
-/// is unwell, from the hub's memory: the picker reads no board.
+/// `/`: always the project picker, in the app's look ([`crate::pages`]).
 fn home(served: &[Served]) -> Response {
+    crate::pages::html(
+        StatusCode::OK,
+        crate::pages::machine("Symphony", "projects", "", &list(served)),
+    )
+}
+
+/// The project list: each registered project's counts, and whether its board is unwell, from the
+/// hub's memory: the list reads no board.
+fn list(served: &[Served]) -> String {
     // Each project is warmed as the registry is read, so its counts are the hub's at hand; one
     // still warming shows none yet.
     let rows: Vec<String> = served
@@ -427,29 +512,11 @@ fn home(served: &[Served]) -> Response {
             list_row(project, counts.as_ref(), &health)
         })
         .collect();
-    let page = format!(
-        "<!DOCTYPE html>\n<html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" \
-         content=\"width=device-width, initial-scale=1\"><title>Symphony</title><link rel=\"icon\" \
-         href=\"data:,\"><style>{LIST_STYLE}</style></head><body><main><h1>Projects</h1><ul \
-         class=\"projects\">{}</ul></main></body></html>\n",
+    format!(
+        "<h1>Projects</h1><ul class=\"projects\">{}</ul>",
         rows.concat()
-    );
-    (
-        [
-            (header::CONTENT_TYPE, "text/html; charset=utf-8"),
-            (header::CACHE_CONTROL, "no-store"),
-        ],
-        page,
     )
-        .into_response()
 }
-
-const LIST_STYLE: &str = "body{font:16px/1.5 system-ui,sans-serif;margin:0;background:#fff;color:#111}\
-main{max-width:40rem;margin:2rem auto;padding:0 16px}ul{list-style:none;padding:0}\
-li{border-bottom:1px solid #ddd;padding:.75rem 0}a{font-weight:600;color:inherit}\
-.counts,.refused,.health{display:block;color:#555;font-size:.9rem}.health{color:#8a4b00}\
-@media (prefers-color-scheme:dark){body{background:#111;color:#eee}li{border-color:#333}\
-.counts,.refused{color:#aaa}.health{color:#f0b35a}}";
 
 /// One project in the list: its name and link, then its counts or why it is not served, and
 /// `health`, what its hub says of its board while that is unwell.
@@ -520,14 +587,40 @@ fn theme(project: &Served, headers: &HeaderMap) -> Response {
     response
 }
 
-/// A registered project this server does not serve: why, and what fixes it.
-fn refusal(entry: &Entry, why: &str) -> Response {
-    (
+/// A registered project this server does not serve, asked for `path` (the project's route, or a
+/// path of today): why, and what fixes it, as an API error under `/api/`, else as the project
+/// list's page, the refusal its notice.
+fn refusal(
+    served: &[Served],
+    project: &Served,
+    why: &str,
+    path: &str,
+    headers: &HeaderMap,
+) -> Response {
+    use symphony::markup::escape;
+    let id = &project.entry.id;
+    let decoded = crate::api::decode_path(path);
+    let (_, route) = crate::api::scope_path(decoded.as_deref().unwrap_or(path));
+    if crate::pages::data(route, headers) {
+        return crate::pages::json(
+            StatusCode::SERVICE_UNAVAILABLE,
+            &format!("The Symphony does not serve {id} now: {why}"),
+        );
+    }
+    let said = format!(
+        "<p><strong>The Symphony does not serve {} now</strong>: {}</p>",
+        escape(id),
+        escape(why)
+    );
+    crate::pages::html(
         StatusCode::SERVICE_UNAVAILABLE,
-        [(header::CACHE_CONTROL, "no-store")],
-        format!("The Symphony does not serve {} now: {why}\n", entry.id),
+        crate::pages::machine(
+            "Not served · Symphony",
+            "not served",
+            &crate::pages::notice("alert", &said),
+            &list(served),
+        ),
     )
-        .into_response()
 }
 
 #[cfg(test)]

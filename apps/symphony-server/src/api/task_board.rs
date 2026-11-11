@@ -2,6 +2,10 @@
 
 use super::{Hub, Json, Request, Response, StatusCode, error, no_store, query};
 
+/// What a listing's `status` selects beside the board's statuses: the owner's sign-off column and
+/// the display stages of work a machine builds or tests.
+const SELECTABLE: [&str; 3] = ["signoff", "build", "test"];
+
 pub(super) fn listing(
     hub: &Hub,
     request: &Request,
@@ -47,6 +51,19 @@ fn project(
     };
     let all = query(request, "all").as_deref() == Some("1");
     let status = query(request, "status");
+    if let Some(wanted) = status.as_deref()
+        && !SELECTABLE.contains(&wanted)
+        && !symphony_board::STATUSES.contains(&wanted)
+    {
+        return error(
+            StatusCode::BAD_REQUEST,
+            format!(
+                "no status {wanted:?}: a listing selects one of {} or {}",
+                symphony_board::STATUSES.join(", "),
+                SELECTABLE.join(", ")
+            ),
+        );
+    }
     // The board opts into display stages. Existing lifecycle queries (including holder and
     // hierarchy readers) retain their status/count/cursor semantics without that opt-in.
     let activity = query(request, "activity").as_deref() == Some("1");

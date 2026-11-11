@@ -31,8 +31,8 @@ pub struct Board {
 }
 
 impl Board {
-    /// The guide of a project that names none.
-    pub const GUIDE: &str = "TASKS.md";
+    /// The guide of a project that names none, as the board's own messages name it.
+    pub const GUIDE: &str = symphony_board::project::GUIDE;
 
     /// The document task messages render as part of.
     pub fn guide(&self) -> &str {
