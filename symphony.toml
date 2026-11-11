@@ -9,6 +9,7 @@ id = "symphony"
 [agents]
 panes = "hc"
 worktrees = "../symphony-wt"
+launch = { default = "claude", model = "opus" }
 
 [verdicts]
 check = ["just", "verify"]
