@@ -27,7 +27,8 @@ impl Opening {
         }
     }
 
-    /// This build's schema, to read: a board one version ahead is read, never written.
+    /// This build's schema, to read: a board one version ahead is read, never written, and one
+    /// behind, or not made yet, is refused, never moved forward or made.
     pub fn read() -> Opening {
         Opening {
             access: Access::Read,
@@ -81,8 +82,9 @@ impl Store {
 
     /// As `with`, by the schema rule for `how` ([`schema::decide`]): a board at the opening's
     /// version is taken as it is, after one read and no write; an older board, or none, is
-    /// migrated forward once; a newer one is refused before anything is written, but to a reader
-    /// one version behind, which reads it.
+    /// migrated forward once by a writer and refused to a reader, before anything is written; a
+    /// newer one is refused before anything is written, but to a reader one version behind, which
+    /// reads it.
     pub fn opening(
         client: Client,
         clock: Clock,
@@ -137,6 +139,8 @@ impl Store {
             hand_off: None,
             inbox_pool: Mutex::new(None),
             slots: None,
+            alarm: crate::alarm::Thresholds::default(),
+            named_server: false,
         }
     }
 

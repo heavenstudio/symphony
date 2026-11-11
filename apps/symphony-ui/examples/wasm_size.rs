@@ -1,6 +1,7 @@
 //! Attribute an optimized, named WASM build without installing a profiler.
 //!
 //!     cargo run -p symphony-ui --example wasm_size -- NAMED.wasm
+//!     cargo run -p symphony-ui --example wasm_size -- --functions [GROUP] NAMED.wasm
 //!     cargo run -p symphony-ui --example wasm_size -- --sections MODULE.wasm
 //!     cargo run -p symphony-ui --example wasm_size -- --strip-dwarf LINKED.wasm OUT.wasm
 //!
@@ -8,7 +9,9 @@
 //! std, the app...). Names/debug sections are excluded. Marginal gzip bytes replace a group's
 //! function bodies with traps in memory for compression only; these diagnostic copies are never
 //! executed or written. Shares are not additive and exclude the group's strings in the data
-//! section. `--sections` prints each section's raw and gzip bytes, each compressed on its own.
+//! section. `--functions` lists each function of a group (or every function), largest first, by
+//! its raw code bytes and name. `--sections` prints each section's raw and gzip bytes, each
+//! compressed on its own.
 //! `--strip-dwarf` writes the module without its `.debug_*` sections, the step before the named
 //! copies' wasm-bindgen and wasm-opt (probes/size.sh).
 
@@ -27,6 +30,7 @@ struct Module {
     sections: Vec<Section>,
     bodies: Vec<Vec<u8>>,
     groups: Vec<String>,
+    names: Vec<String>,
 }
 
 struct Reader<'a>(&'a [u8]);
@@ -317,17 +321,24 @@ impl Module {
         if bodies.is_empty() || names.is_empty() {
             return Err("attribution needs code and a function-name section".into());
         }
-        let groups = (imports..imports + bodies.len())
-            .map(|index| {
-                names
-                    .get(&index)
-                    .map_or_else(|| "unnamed".into(), |name| group(name))
+        let names: Vec<String> = (imports..imports + bodies.len())
+            .map(|index| names.get(&index).cloned().unwrap_or_default())
+            .collect();
+        let groups = names
+            .iter()
+            .map(|name| {
+                if name.is_empty() {
+                    "unnamed".into()
+                } else {
+                    group(name)
+                }
             })
             .collect();
         Ok(Self {
             sections,
             bodies,
             groups,
+            names,
         })
     }
 
@@ -410,7 +421,26 @@ fn report(bytes: &[u8], out: &mut impl Write) -> Result<(), String> {
     Ok(())
 }
 
-const USAGE: &str = "usage: wasm_size NAMED.wasm | wasm_size --sections MODULE.wasm | wasm_size --strip-dwarf LINKED.wasm OUT.wasm";
+/// Every function of `group` (all of them when empty), largest first: its raw code bytes and name.
+fn function_report(bytes: &[u8], group: &str, out: &mut impl Write) -> Result<(), String> {
+    let module = Module::read(bytes)?;
+    let mut functions: Vec<_> = module
+        .bodies
+        .iter()
+        .zip(&module.groups)
+        .zip(&module.names)
+        .filter(|((_, found), _)| group.is_empty() || found.as_str() == group)
+        .map(|((body, found), name)| (body.len(), found, name))
+        .collect();
+    functions.sort_by(|a, b| b.cmp(a));
+    writeln!(out, "  raw code group name").map_err(|e| e.to_string())?;
+    for (size, found, name) in functions {
+        writeln!(out, "{size:>10} {found} {name}").map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+const USAGE: &str = "usage: wasm_size NAMED.wasm | wasm_size --functions [GROUP] NAMED.wasm | wasm_size --sections MODULE.wasm | wasm_size --strip-dwarf LINKED.wasm OUT.wasm";
 
 fn main() -> Result<(), String> {
     let args: Vec<std::ffi::OsString> = std::env::args_os().skip(1).collect();
@@ -421,6 +451,14 @@ fn main() -> Result<(), String> {
         [flag, path] if flag == "--sections" => {
             section_report(&read(path)?, &mut std::io::stdout().lock())
         }
+        [flag, path] if flag == "--functions" => {
+            function_report(&read(path)?, "", &mut std::io::stdout().lock())
+        }
+        [flag, group, path] if flag == "--functions" => function_report(
+            &read(path)?,
+            &group.to_string_lossy(),
+            &mut std::io::stdout().lock(),
+        ),
         [flag, from, to] if flag == "--strip-dwarf" => {
             std::fs::write(to, without_dwarf(&read(from)?)?)
                 .map_err(|e| format!("{}: {e}", std::path::Path::new(to).display()))
@@ -491,6 +529,26 @@ mod tests {
                 format!("{saved:>11} the app's own modules (symphony_ui)"),
             ]
         );
+    }
+
+    #[test]
+    fn the_function_listing_names_each_body_of_the_group_asked_for() {
+        let name = "_RNvNtCs123_11symphony_ui5frame5Frame";
+        let listing = |group: &str| {
+            let mut output = Vec::new();
+            function_report(&fixture(), group, &mut output).unwrap();
+            String::from_utf8(output).unwrap()
+        };
+        let every = listing("");
+        assert_eq!(
+            every.lines().collect::<Vec<_>>(),
+            [
+                "  raw code group name".to_string(),
+                format!("{:>10} symphony_ui::frame {name}", 4),
+            ]
+        );
+        assert_eq!(listing("symphony_ui::frame"), every);
+        assert_eq!(listing("dioxus_core").lines().count(), 1);
     }
 
     #[test]

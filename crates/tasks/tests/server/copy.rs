@@ -123,7 +123,7 @@ fn quarter_board() -> Dump {
     }
 }
 
-/// The rows whose writes advance `counter:board`: every table's but the barred keys'.
+/// The rows whose writes advance the combined marker: every table's but the barred keys'.
 fn event_rows(dump: &Dump) -> usize {
     dump.tasks.len()
         + dump.task_links.len()
@@ -157,7 +157,10 @@ fn a_quarter_of_the_live_board_copies_whole_on_its_engine() {
     store.copy(&dump).unwrap();
     assert_eq!(store.dump().unwrap(), dump);
     assert_eq!(
-        one(&store, "RETURN counter:board.last;"),
+        one(
+            &store,
+            &format!("RETURN {};", symphony_board::schema::BOARD_MARKER)
+        ),
         json!(event_rows(&dump)),
         "each row's write advances the board's marker once"
     );
@@ -185,7 +188,10 @@ fn a_refused_copy_of_a_quarter_board_leaves_the_board_and_its_index_as_they_were
             json!({"vector": vec![1.0_f32; symphony_board::embedding::DIMENSIONS]}),
         )
         .unwrap();
-    let marker = one(&store, "RETURN counter:board.last;");
+    let marker = one(
+        &store,
+        &format!("RETURN {};", symphony_board::schema::BOARD_MARKER),
+    );
     let mut bad = quarter_board();
     bad.messages.last_mut().unwrap().kind = "shout".into();
     match store.copy(&bad) {
@@ -197,7 +203,13 @@ fn a_refused_copy_of_a_quarter_board_leaves_the_board_and_its_index_as_they_were
         one(&store, "RETURN count(SELECT id FROM task_chunk);"),
         json!(1)
     );
-    assert_eq!(one(&store, "RETURN counter:board.last;"), marker);
+    assert_eq!(
+        one(
+            &store,
+            &format!("RETURN {};", symphony_board::schema::BOARD_MARKER)
+        ),
+        marker
+    );
     assert!(
         tables(&store).iter().all(|t| !t.starts_with("copy_")),
         "{:?}",

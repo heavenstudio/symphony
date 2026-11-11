@@ -104,12 +104,17 @@ pub struct Request {
     pub kind: String,
     pub from_cache: bool,
     pub status: i64,
-    /// Bytes on the wire, headers included: the finished total, or what arrived so far.
+    /// Bytes on the wire, headers included: the finished total, or what arrived so far. An open
+    /// event stream counts its response head and the body the page has read: Chrome reports a
+    /// stream's transfer size one chunk late, so its last message would wait for the next one.
     pub bytes: f64,
     pub finished: bool,
     /// A speculative `<link rel=prefetch>` (its `Purpose` or `Sec-Purpose` header says so): a
     /// later use's, warmed at idle, not the page's own.
     pub prefetch: bool,
+    /// The keep-alive pings an event stream delivered, each named by Chrome's
+    /// `Network.eventSourceMessageReceived`; their bytes are in `bytes`.
+    pub pings: usize,
 }
 
 /// Whether request `headers` (a DevTools header object) name a prefetch.
@@ -124,6 +129,169 @@ fn prefetch(headers: &Value) -> bool {
                 .is_some_and(|value| value.starts_with("prefetch"))
         })
     })
+}
+
+/// The requests `events` describe, by Chrome's request id, in the order they were sent.
+pub fn requests_from(events: &[Value]) -> Vec<Request> {
+    let mut requests: HashMap<String, Request> = HashMap::new();
+    let mut order = Vec::new();
+    for event in events {
+        let params = &event["params"];
+        let Some(id) = params["requestId"].as_str() else {
+            continue;
+        };
+        if !requests.contains_key(id) {
+            order.push(id.to_string());
+        }
+        let request = requests.entry(id.to_string()).or_default();
+        let stream = request.kind == "EventSource";
+        match event["method"].as_str().unwrap_or("") {
+            "Network.requestWillBeSent" => {
+                request.url = params["request"]["url"].as_str().unwrap_or("").to_string();
+                request.kind = params["type"].as_str().unwrap_or("").to_string();
+                request.prefetch |= prefetch(&params["request"]["headers"]);
+            }
+            "Network.requestWillBeSentExtraInfo" => {
+                request.prefetch |= prefetch(&params["headers"]);
+            }
+            "Network.requestServedFromCache" => request.from_cache = true,
+            "Network.responseReceived" => {
+                request.status = params["response"]["status"].as_i64().unwrap_or(0);
+                if params["response"]["fromDiskCache"].as_bool() == Some(true)
+                    || params["response"]["fromPrefetchCache"].as_bool() == Some(true)
+                {
+                    request.from_cache = true;
+                }
+                // The head, the only bytes a stream has received when its response arrives.
+                if stream && !request.finished {
+                    request.bytes = params["response"]["encodedDataLength"]
+                        .as_f64()
+                        .unwrap_or(0.0);
+                }
+            }
+            // CORS hides the response from Runtime/fetch and responseReceived. The wire
+            // status still proves an opaque-origin request was refused before any write.
+            "Network.responseReceivedExtraInfo" if request.status == 0 => {
+                request.status = params["statusCode"].as_i64().unwrap_or(request.status);
+            }
+            // A stream's `dataLength` is reported in the task that hands the chunk to the page,
+            // just before the messages it completes; its `encodedDataLength` is the previous
+            // chunk's. The stand-in and the server send streams uncompressed.
+            "Network.dataReceived" if !request.finished => {
+                let length = if stream {
+                    "dataLength"
+                } else {
+                    "encodedDataLength"
+                };
+                request.bytes += params[length].as_f64().unwrap_or(0.0);
+            }
+            "Network.eventSourceMessageReceived"
+                if params["eventName"] == symphony_api::PING_EVENT =>
+            {
+                request.pings += 1;
+            }
+            "Network.loadingFinished" => {
+                request.bytes = params["encodedDataLength"]
+                    .as_f64()
+                    .unwrap_or(request.bytes);
+                request.finished = true;
+            }
+            _ => {}
+        }
+    }
+    order
+        .into_iter()
+        .filter_map(|id| requests.remove(&id))
+        .filter(|request| !request.url.is_empty())
+        .collect()
+}
+
+#[test]
+fn an_open_stream_counts_its_head_and_every_chunk_read_and_names_its_pings() {
+    // As Chrome reported a stand-in feed: the head, `: open`, two pings and a delta. Each
+    // chunk's encodedDataLength is the previous chunk's, so it never names the last one.
+    let event = |method: &str, params: Value| json!({"method": method, "params": params});
+    let chunk = |data: u32, encoded: u32| {
+        event(
+            "Network.dataReceived",
+            json!({"requestId": "feed", "dataLength": data, "encodedDataLength": encoded}),
+        )
+    };
+    let message = |name: &str| {
+        event(
+            "Network.eventSourceMessageReceived",
+            json!({"requestId": "feed", "eventName": name, "data": ""}),
+        )
+    };
+    let events = [
+        event(
+            "Network.requestWillBeSent",
+            json!({"requestId": "feed", "type": "EventSource", "request": {"url": "http://h/api/feed"}}),
+        ),
+        event(
+            "Network.requestWillBeSent",
+            json!({"requestId": "glue", "type": "Script", "request": {"url": "http://h/a.js"}}),
+        ),
+        event(
+            "Network.responseReceived",
+            json!({"requestId": "feed", "response": {"status": 200, "encodedDataLength": 77}}),
+        ),
+        chunk(8, 0),
+        event(
+            "Network.dataReceived",
+            json!({"requestId": "glue", "dataLength": 900, "encodedDataLength": 300}),
+        ),
+        event(
+            "Network.loadingFinished",
+            json!({"requestId": "glue", "encodedDataLength": 512}),
+        ),
+        chunk(19, 8),
+        message(symphony_api::PING_EVENT),
+        chunk(19, 19),
+        message(symphony_api::PING_EVENT),
+        chunk(45, 19),
+        message(symphony_api::FEED_EVENT),
+    ];
+    let requests = requests_from(&events);
+    let [feed, glue] = requests.as_slice() else {
+        panic!("two requests: {requests:#?}")
+    };
+    assert_eq!(
+        (feed.kind.as_str(), feed.status, feed.bytes, feed.pings),
+        ("EventSource", 200, 77.0 + 8.0 + 19.0 + 19.0 + 45.0, 2)
+    );
+    assert!(!feed.finished);
+    assert_eq!((glue.bytes, glue.pings, glue.finished), (512.0, 0, true));
+}
+
+#[test]
+fn a_prefetch_is_named_by_its_purpose_header_and_served_from_the_prefetch_cache_counts_as_cached()
+{
+    let event = |method: &str, params: Value| json!({"method": method, "params": params});
+    let events = [
+        event(
+            "Network.requestWillBeSent",
+            json!({"requestId": "warm", "type": "Other", "request": {"url": "http://h/p.wasm", "headers": {}}}),
+        ),
+        event(
+            "Network.requestWillBeSentExtraInfo",
+            json!({"requestId": "warm", "headers": {"Sec-Purpose": "prefetch"}}),
+        ),
+        event(
+            "Network.requestWillBeSent",
+            json!({"requestId": "use", "type": "Fetch", "request": {"url": "http://h/p.wasm", "headers": {"Purpose": "other"}}}),
+        ),
+        event(
+            "Network.responseReceived",
+            json!({"requestId": "use", "response": {"status": 200, "fromPrefetchCache": true}}),
+        ),
+    ];
+    let requests = requests_from(&events);
+    let [warm, used] = requests.as_slice() else {
+        panic!("two requests: {requests:#?}")
+    };
+    assert!(warm.prefetch && !warm.from_cache);
+    assert!(!used.prefetch && used.from_cache);
 }
 
 pub struct Chrome {
@@ -1438,57 +1606,7 @@ impl Chrome {
     /// The requests seen since the last `open`, by Chrome's request id.
     pub fn requests(&mut self) -> Vec<Request> {
         self.pump(Duration::from_millis(50));
-        let mut requests: HashMap<String, Request> = HashMap::new();
-        let mut order = Vec::new();
-        for event in &self.events {
-            let params = &event["params"];
-            let Some(id) = params["requestId"].as_str() else {
-                continue;
-            };
-            if !requests.contains_key(id) {
-                order.push(id.to_string());
-            }
-            let request = requests.entry(id.to_string()).or_default();
-            match event["method"].as_str().unwrap_or("") {
-                "Network.requestWillBeSent" => {
-                    request.url = params["request"]["url"].as_str().unwrap_or("").to_string();
-                    request.kind = params["type"].as_str().unwrap_or("").to_string();
-                    request.prefetch |= prefetch(&params["request"]["headers"]);
-                }
-                "Network.requestWillBeSentExtraInfo" => {
-                    request.prefetch |= prefetch(&params["headers"]);
-                }
-                "Network.requestServedFromCache" => request.from_cache = true,
-                "Network.responseReceived" => {
-                    request.status = params["response"]["status"].as_i64().unwrap_or(0);
-                    if params["response"]["fromDiskCache"].as_bool() == Some(true)
-                        || params["response"]["fromPrefetchCache"].as_bool() == Some(true)
-                    {
-                        request.from_cache = true;
-                    }
-                }
-                // CORS hides the response from Runtime/fetch and responseReceived. The wire
-                // status still proves an opaque-origin request was refused before any write.
-                "Network.responseReceivedExtraInfo" if request.status == 0 => {
-                    request.status = params["statusCode"].as_i64().unwrap_or(request.status);
-                }
-                "Network.dataReceived" if !request.finished => {
-                    request.bytes += params["encodedDataLength"].as_f64().unwrap_or(0.0);
-                }
-                "Network.loadingFinished" => {
-                    request.bytes = params["encodedDataLength"]
-                        .as_f64()
-                        .unwrap_or(request.bytes);
-                    request.finished = true;
-                }
-                _ => {}
-            }
-        }
-        order
-            .into_iter()
-            .filter_map(|id| requests.remove(&id))
-            .filter(|request| !request.url.is_empty())
-            .collect()
+        requests_from(&self.events)
     }
 
     pub fn browser_call(&mut self, method: &str, params: Value) -> Value {

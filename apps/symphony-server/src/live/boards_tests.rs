@@ -1,10 +1,11 @@
 //! Each project's hub on its own board: two fixture projects, each its own SurrealDB server in its
 //! repository's common dir in a temporary folder, started by its first caller. A hub reconnects
 //! when its board's server restarts, and reads on when a newer build migrates its board, while
-//! every write the Symphony would send there is refused naming the project.
+//! every write the Symphony would send there is refused naming the project. A board behind the
+//! hub's build it never moves forward: it says why it reads nothing until the board's command has.
 
 use super::Hub;
-use crate::testing::{Tree, board::surreal, repository_at};
+use crate::testing::{Tree, board::surreal, git, repository_at};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -22,13 +23,18 @@ struct Project {
 impl Project {
     /// The project `id` in `tree`, its board holding the task `<id>/one`, its hub reading it.
     fn new(tree: &Tree, id: &str) -> Project {
+        Project::made_by(tree, id, writer)
+    }
+
+    /// As `new`, its board made by `make`, which opens it to write.
+    fn made_by(tree: &Tree, id: &str, make: impl FnOnce(&Path) -> Store) -> Project {
         let root = repository_at(tree, id);
         std::fs::write(
             root.join("symphony.toml"),
             format!("[project]\nid = \"{id}\"\n"),
         )
         .unwrap();
-        writer(&root)
+        make(&root)
             .create(&NewTask::new(&format!("{id}/one"), "Made first", "owner"))
             .unwrap();
         let reach = env(&root);
@@ -47,6 +53,35 @@ impl Project {
 
     fn home(&self) -> Home {
         Home::in_common(&self.root.join(".git"), Some(&surreal()))
+    }
+
+    /// The schema version the project's board records.
+    fn version(&self) -> Option<i64> {
+        Client::new(&self.home().recorded().unwrap().addr, "sf", "tasks")
+            .query(
+                "RETURN (SELECT VALUE version FROM ONLY meta:schema);",
+                serde_json::json!({}),
+            )
+            .unwrap()
+            .last()
+            .and_then(serde_json::Value::as_i64)
+    }
+
+    /// Wait for the hub to say why it reads no board in words that start with `start` (not that it
+    /// has read none yet, or that its board's server is starting), for at most 30 s: those words.
+    fn refused(&self, start: &str) -> String {
+        let deadline = Instant::now() + Duration::from_secs(30);
+        loop {
+            match self.read() {
+                Err(why) if why.starts_with(start) => return why,
+                read => assert!(
+                    Instant::now() < deadline,
+                    "{}: {read:?}",
+                    self.root.display()
+                ),
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
     }
 
     /// The slugs of the tasks the hub last read, or why it reads no board.
@@ -102,6 +137,22 @@ fn pinned(root: &Path, now: &str) -> Env {
 /// The board of `root`'s project, opened to write as its command line opens it.
 fn writer(root: &Path) -> Store {
     symphony_board::cli::connect(&env(root)).unwrap()
+}
+
+/// The board of `root`'s project, opened to write by a build one schema version behind this one:
+/// the project's board command while this build's schema has not landed.
+fn older_writer(root: &Path) -> Store {
+    let reached = symphony_board::cli::board(&env(root)).unwrap();
+    Store::opening(
+        reached.client,
+        Box::new(|| 1_000_000.0),
+        Box::new(|_| false),
+        "this-host",
+        &Opening::write()
+            .at(Schema::this_build().before())
+            .of(reached.project.as_deref()),
+    )
+    .unwrap()
 }
 
 #[test]
@@ -187,4 +238,51 @@ fn a_hub_reads_on_when_a_newer_build_migrates_its_board_and_its_writes_there_are
         .err()
         .unwrap();
     assert_eq!(why, "TASKS_NOW=soon is not a time in seconds");
+}
+
+#[test]
+fn a_hub_never_moves_a_board_behind_its_build_forward_and_reads_it_once_its_command_has() {
+    let tree = Tree::new();
+    let gamma = Project::made_by(&tree, "gamma", older_writer);
+    let (before, this) = (
+        Schema::this_build().before().version(),
+        Schema::this_build().version(),
+    );
+    let why = gamma.refused("the gamma board");
+    assert_eq!(
+        why,
+        format!(
+            "the gamma board is at schema {before}, behind this build's {this}, and a reader \
+             never moves a board forward: nothing was read or written; `just tasks list` in gamma \
+             moves it once the project's board command is at schema {this}, and a newer schema \
+             is tried on a scratch board (`TASKS_DATABASE=NAME`)"
+        )
+    );
+    // What the Symphony's write routes open is refused the same way, before anything is written,
+    // and so is what its command line opens in a linked worktree, which reaches the same board.
+    let opened = symphony::taskview::connect_in(&gamma.root, env(&gamma.root));
+    assert_eq!(opened.err().as_ref(), Some(&why));
+    let worktree = tree.path("gamma-feature");
+    git(
+        &gamma.root,
+        &[
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            "feature",
+            worktree.to_str().unwrap(),
+        ],
+    );
+    let opened = symphony::taskview::connect_in(&worktree, env(&worktree));
+    assert_eq!(opened.err(), Some(why));
+    assert_eq!(gamma.version(), Some(before));
+    // The project's board command of the older build reads and writes it still.
+    older_writer(&gamma.root)
+        .say("gamma/one", "owner", "after the Symphony", None)
+        .unwrap();
+    // Once the board command of this build has moved it forward, the hub reads it.
+    writer(&gamma.root);
+    gamma.reads(&["gamma/one"]);
+    assert_eq!(gamma.version(), Some(this));
 }

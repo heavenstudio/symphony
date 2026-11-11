@@ -66,7 +66,7 @@ fn an_entrypoint_naming_its_plugins_renderer_shows_and_lists_that_plugins_files(
     );
     assert!(entry.shows("a.one") && !entry.page("a.one"), "{entry:?}");
     let render = Render::new(&tree.root);
-    let entries: Vec<String> = docview::folder(&render, "", "")
+    let entries: Vec<String> = docview::folder(&render, "", "", &[])
         .unwrap()
         .entries
         .iter()

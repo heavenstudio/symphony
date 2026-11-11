@@ -409,7 +409,7 @@ fn branch_documents_mark_source_changes_in_place_and_clear_when_main_catches_up(
                 ),
             )
             .unwrap();
-            let cards = docview::document(&render, "docs/CARDS.md", "design~policy").unwrap();
+            let cards = docview::document(&render, "docs/CARDS.md", "design~policy", &[]).unwrap();
             let kept = cards
                 .sections
                 .iter()
@@ -429,7 +429,7 @@ fn branch_documents_mark_source_changes_in_place_and_clear_when_main_catches_up(
                         && s.comparison.as_ref().unwrap().kind == Difference::Removed)
             );
             std::fs::write(wt.join("docs/TAIL.md"), "# Tail\n\nRetained.\n").unwrap();
-            let tail = docview::document(&render, "docs/TAIL.md", "design~policy").unwrap();
+            let tail = docview::document(&render, "docs/TAIL.md", "design~policy", &[]).unwrap();
             assert_eq!(
                 tail.sections
                     .last()
@@ -441,13 +441,13 @@ fn branch_documents_mark_source_changes_in_place_and_clear_when_main_catches_up(
                 Difference::Removed
             );
             std::fs::write(wt.join("docs/TAIL.md"), "").unwrap();
-            let empty = docview::document(&render, "docs/TAIL.md", "design~policy").unwrap();
+            let empty = docview::document(&render, "docs/TAIL.md", "design~policy", &[]).unwrap();
             assert_eq!(empty.sections.len(), 3);
             assert!(empty.sections.iter().all(
                 |s| s.start == 0 && s.comparison.as_ref().unwrap().kind == Difference::Removed
             ));
             assert!(docview::outline(empty).anchors.values().all(Vec::is_empty));
-            let doc = docview::document(&render, rel, "design~policy").unwrap();
+            let doc = docview::document(&render, rel, "design~policy", &[]).unwrap();
             assert_eq!(doc.comparison.as_ref().unwrap().task, "design/policy");
             let changed = doc
                 .sections
@@ -514,11 +514,12 @@ fn branch_documents_mark_source_changes_in_place_and_clear_when_main_catches_up(
                     .before
                     .is_empty()
             );
-            let identical = docview::document(&render, "docs/OTHER.md", "design~policy").unwrap();
+            let identical =
+                docview::document(&render, "docs/OTHER.md", "design~policy", &[]).unwrap();
             assert_eq!(identical.comparison, None);
             assert!(identical.sections.iter().all(|s| s.comparison.is_none()));
             std::fs::write(wt.join("docs/NEW.md"), "# New\n\nA new document.\n").unwrap();
-            let added = docview::document(&render, "docs/NEW.md", "design~policy").unwrap();
+            let added = docview::document(&render, "docs/NEW.md", "design~policy", &[]).unwrap();
             assert!(!added.sections.is_empty());
             assert!(
                 added
@@ -528,7 +529,7 @@ fn branch_documents_mark_source_changes_in_place_and_clear_when_main_catches_up(
             );
             tree.write(rel, after);
             commit(&tree.root, "main catches up", 3);
-            let updated = docview::document(&render, rel, "design~policy").unwrap();
+            let updated = docview::document(&render, rel, "design~policy", &[]).unwrap();
             assert_eq!(updated.comparison, None);
             assert!(updated.sections.iter().all(|s| s.comparison.is_none()));
             let delta = delta_roundtrip(&doc, &updated);
@@ -805,7 +806,8 @@ fn prose_rewrites_follow_the_base_rule_past_main_and_branch_insertions() {
                         ),
                     );
                     commit(&tree.root, "main edits and inserts", 3);
-                    let doc = docview::document(&Render::new(&wt), rel, "design~policy").unwrap();
+                    let doc =
+                        docview::document(&Render::new(&wt), rel, "design~policy", &[]).unwrap();
                     let rule = doc
                         .sections
                         .iter()
@@ -882,7 +884,7 @@ fn branch_comparisons_exclude_main_only_edits_verdicts_and_additions_after_fork(
             );
             commit(&tree.root, "main moves", 3);
             let render = Render::new(&wt);
-            let doc = docview::document(&render, rel, "design~policy").unwrap();
+            let doc = docview::document(&render, rel, "design~policy", &[]).unwrap();
             assert!(doc.comparison.is_some());
             for section in doc
                 .sections
@@ -924,7 +926,7 @@ fn branch_comparisons_exclude_main_only_edits_verdicts_and_additions_after_fork(
             assert!(doc.sections.iter().any(|s| s.html.contains("Delete this.")
                 && s.comparison.as_ref().unwrap().kind == Difference::Removed));
             let untouched =
-                docview::document(&render, "docs/UNTOUCHED.md", "design~policy").unwrap();
+                docview::document(&render, "docs/UNTOUCHED.md", "design~policy", &[]).unwrap();
             assert_eq!(untouched.comparison, None);
             assert!(untouched.sections.iter().all(|s| s.comparison.is_none()));
         },
@@ -1670,7 +1672,7 @@ fn scoped_reads_without_cards_preserve_links_sections_and_thumbnail_fallback() {
             png[..24].copy_from_slice(b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR\0\0\x04\0\0\0\x02\0");
             std::fs::write(tree.path("docs/guide/picture.png"), png).unwrap();
             let render = Render::new(&tree.root);
-            let doc = docview::document(&render, rel, "tools~plain").unwrap();
+            let doc = docview::document(&render, rel, "tools~plain", &[]).unwrap();
             assert_eq!(doc.path, "@tools~plain/docs/guide/PLAIN.md");
             assert_eq!(doc.title, "Plain guide");
             assert!(doc.cards.is_empty());
@@ -1717,7 +1719,7 @@ fn scoped_reads_without_cards_preserve_links_sections_and_thumbnail_fallback() {
                 )
                 .is_none()
             );
-            let folder = docview::folder(&render, "docs/guide", "tools~plain").unwrap();
+            let folder = docview::folder(&render, "docs/guide", "tools~plain", &[]).unwrap();
             assert_eq!(folder.docs, 2);
             assert!(
                 folder
@@ -1732,7 +1734,7 @@ fn scoped_reads_without_cards_preserve_links_sections_and_thumbnail_fallback() {
                 "docs/guide/picture.png",
             ] {
                 assert!(
-                    docview::document(&render, invalid, "").is_err(),
+                    docview::document(&render, invalid, "", &[]).is_err(),
                     "{invalid}"
                 );
             }
@@ -1828,7 +1830,7 @@ fn keyed_document_deltas_send_only_changed_fragments_within_four_kib_gzip() {
             );
             tree.write(rel, &text);
             let render = Render::new(&tree.root);
-            let before = docview::document(&render, rel, "").unwrap();
+            let before = docview::document(&render, rel, "", &[]).unwrap();
             assert_eq!(before.cards.len(), 160);
             assert!(before.sections.len() >= 160);
             assert_eq!(docview::changes(&before, &before), None);
@@ -1842,7 +1844,7 @@ fn keyed_document_deltas_send_only_changed_fragments_within_four_kib_gzip() {
             )
             .unwrap();
             tree.write(rel, &replied);
-            let after = docview::document(&render, rel, "").unwrap();
+            let after = docview::document(&render, rel, "", &[]).unwrap();
             let delta = delta_roundtrip(&before, &after);
             assert_eq!(
                 delta.threads.keys().map(String::as_str).collect::<Vec<_>>(),
@@ -1861,7 +1863,7 @@ fn keyed_document_deltas_send_only_changed_fragments_within_four_kib_gzip() {
             )
             .unwrap();
             tree.write(rel, &answered);
-            let decided = docview::document(&render, rel, "").unwrap();
+            let decided = docview::document(&render, rel, "", &[]).unwrap();
             let delta = delta_roundtrip(&after, &decided);
             assert_eq!(delta.cards.len(), 1);
             assert_eq!(delta.cards[0].key, "proposal-5");
@@ -1870,7 +1872,7 @@ fn keyed_document_deltas_send_only_changed_fragments_within_four_kib_gzip() {
             assert!(delta.sections.iter().all(|s| s.key == "card:proposal-5"));
             let replacement = format!("# Long\n\n{}{}", card("replacement"), card("proposal-5"));
             tree.write(rel, &replacement);
-            let removed = docview::document(&render, rel, "").unwrap();
+            let removed = docview::document(&render, rel, "", &[]).unwrap();
             // Large deletions carry keys/tombstones, not the deleted cards' bodies or threads.
             let delta = delta_roundtrip(&decided, &removed);
             assert_eq!(delta.deleted.len(), 159);
@@ -1927,9 +1929,9 @@ fn prose_delta_distinguishes_content_positions_order_and_metadata() {
                 "# Plain\n\nIntro.\n\n## First\n\nOne.\n\n## Second\n\nTwo.\n",
             );
             let render = Render::new(&tree.root);
-            let before = docview::document(&render, rel, "branch").unwrap();
+            let before = docview::document(&render, rel, "branch", &[]).unwrap();
             tree.write(rel, "# Renamed\n\nIntro.\n\n## Second\n\nTwo.\n\n## First\n\nOne changed.\nExtra line.\n");
-            let after = docview::document(&render, rel, "branch").unwrap();
+            let after = docview::document(&render, rel, "branch", &[]).unwrap();
             let delta = delta_roundtrip(&before, &after);
             assert_eq!(delta.path, "@branch/docs/PLAIN.md");
             assert_eq!(delta.title.as_deref(), Some("Renamed"));

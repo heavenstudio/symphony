@@ -15,6 +15,12 @@ use symphony::theme::Package;
 /// What marks the theme's elements in the head, where the shell puts page styles before them.
 pub(crate) const THEME_MARK: &str = "data-symphony-theme";
 
+/// The opening of the shell's notice region, which a banner goes at the start of.
+pub(crate) const REGION: &str = "<section id=\"shell-notices\" aria-label=\"Server notices\">";
+
+/// What carries the notice styles in the head; a page holding it gets them no second time.
+pub(crate) const NOTICE_STYLE: &str = "shell-notices-style";
+
 /// `shell` with the project at `root` in it, served at `base` (empty at the server's root), and
 /// `banner` in the shell's notice region, styled even before the client loads.
 pub(crate) fn page(shell: &str, root: &Path, base: &str, banner: &str) -> String {
@@ -71,10 +77,9 @@ pub(crate) fn page(shell: &str, root: &Path, base: &str, banner: &str) -> String
 
 /// Older installed client shells have no notice region or eager styles yet.
 fn notice(page: &mut String, banner: &str) {
-    const REGION: &str = "<section id=\"shell-notices\" aria-label=\"Server notices\">";
-    if !page.contains("id=\"shell-notices-style\"") {
+    if !page.contains(&format!("id=\"{NOTICE_STYLE}\"")) {
         let style = format!(
-            "<style id=\"shell-notices-style\">{}</style>",
+            "<style id=\"{NOTICE_STYLE}\">{}</style>",
             include_str!("notices.css")
         );
         let at = page.find("</head>").unwrap_or(0);

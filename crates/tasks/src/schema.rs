@@ -9,8 +9,10 @@
 //! SQLite's row ids are kept as `sid`; `counter:message` and `counter:task` hold the last id given out,
 //! `counter:tree` counts the moves of a task under another, and `counter:['agent', key]` the binds of
 //! one agent (`Store::bind_agent`): each a record the writes that must not pass each other write.
-//! Mutation events advance `counter:board` in the transaction that changes board inputs,
-//! callback registration/observations or owner chat. Readers compare that marker without writing it.
+//! Mutation events advance `counter:board_structure` in the transaction that changes board inputs,
+//! callback registration/observations or owner chat. Session mutations advance per-handle revisions
+//! instead, so independent tool-call beats never write the structural counter. Readers compare the
+//! combined BOARD_MARKER; guard-only writes on a revision row do not invalidate cached inputs.
 //! An event UPDATEs the marker, or CREATEs it on a board's first write, and never UPSERTs it: an
 //! UPSERT of a record that exists tries a create and rolls it back to a savepoint, and SurrealKV's
 //! rollback walks every key the transaction has written, so the copy's one transaction, an event a
@@ -59,18 +61,24 @@
 //!
 //! The rule for writers of different versions on one board ([`decide`]): a build opens a board for
 //! writing only at its own version. A board at an older version, or none, is migrated forward once
-//! by the first newer build to open it: the analyzer, then the version's steps and its record in one
-//! transaction that first checks the version it read is still the board's, before any other write.
-//! An older build refuses a newer board before any mutation, naming the project and `just
-//! symphony`; a reader one version behind reads it. Every write transaction starts with the
-//! [`guard`], so a store opened before a newer build migrated stops at its next write.
+//! by the first newer build to open it for writing: the analyzer, then the version's steps and its
+//! record in one transaction that first checks the version it read is still the board's, before any
+//! other write. An older build refuses a newer board before any mutation, naming the project and
+//! `just symphony`; a reader one version behind reads it. A reader never moves a board forward or
+//! makes one: a board behind it, or none, it refuses before it reads, naming `just tasks`. Every
+//! write transaction starts with the [`guard`], so a store opened before a newer build migrated
+//! stops at its next write.
 
 /// Bumped when `DEFINE` gains a table, field, index or event: a board at an older version runs
 /// `DEFINE` once, and its `IF NOT EXISTS` adds what is new but leaves every definition already there
 /// as it was. Changing one (a field's type, an assertion, an index) also needs `DEFINE … OVERWRITE`
-/// for it. The steps are additive, so a reader one version behind still reads what a newer build
-/// writes.
-pub const VERSION: i64 = 14;
+/// for it. Protocol changes can require a wider version step and retirement of old read tokens:
+/// an already-open store does not repeat its opening check.
+pub const VERSION: i64 = 16;
+
+/// Structural mutations plus all committed session changes, including deletions and re-creations.
+/// The separate structural record keeps the retired legacy scalar outside this identity.
+pub const BOARD_MARKER: &str = "((SELECT VALUE last FROM ONLY counter:board_structure) ?? 0) + ((SELECT VALUE math::sum(last) FROM session_revision GROUP ALL)[0] ?? 0)";
 
 /// A board schema: its version, and the steps that bring a board of any older version to it.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -116,10 +124,12 @@ impl Schema {
 /// What a store opens a board for.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Access {
-    /// Reads and writes, at the store's own version only.
+    /// Reads and writes, at the store's own version only: an older board, or one not made yet, is
+    /// migrated forward to it.
     Write,
-    /// Reads, of a board at the store's own version or one ahead. Its writes still meet the
-    /// [`guard`], so one version behind it writes nothing.
+    /// Reads, of a board at the store's own version or one ahead, and never moves or makes one: a
+    /// board behind it, or not made yet, is refused. Its writes still meet the [`guard`], so one
+    /// version behind it writes nothing.
     Read,
 }
 
@@ -130,39 +140,49 @@ pub(crate) enum Opened {
     Current,
     /// The board is one version ahead and the store only reads it.
     Ahead,
-    /// The board is older, or none: this build migrates it forward.
+    /// The board is older, or none, and the store writes: this build migrates it forward.
     Migrate,
     /// Refused, in these words, before anything is read or written.
     Refused(String),
 }
 
 /// The schema rule for a build of version `own` opening, for `access`, a board at `found` of the
-/// project `project` (none: a board no project names, such as a scratch one).
+/// project `project` (none: a board no project names, such as a scratch one). Only a writer moves
+/// a board forward or makes one: a reader is the Symphony, whose build may be a branch's, and it
+/// would move the live board past the build its project's board command runs, which then refuses it.
 pub(crate) fn decide(
     found: Option<i64>,
     own: i64,
     access: Access,
     project: Option<&str>,
 ) -> Opened {
-    match found {
-        None => Opened::Migrate,
-        Some(found) if found == own => Opened::Current,
-        Some(found) if found < own => Opened::Migrate,
-        Some(found) if found == own + 1 && access == Access::Read => Opened::Ahead,
-        Some(found) => Opened::Refused(match access {
-            Access::Write => {
-                let refusal = Refusal::of(project, own);
-                format!("{}{found}{}", refusal.before, refusal.after)
-            }
-            Access::Read => {
-                let named = Named::of(project);
-                format!(
-                    "{} is at schema {found}, more than one ahead of this build's {own}: nothing \
-                     was read; `just symphony` in {} brings its Symphony to the board's schema",
-                    named.board, named.project
-                )
-            }
-        }),
+    let named = Named::of(project);
+    match (access, found) {
+        (_, Some(found)) if found == own => Opened::Current,
+        (Access::Write, None) => Opened::Migrate,
+        (Access::Write, Some(found)) if found < own => Opened::Migrate,
+        (Access::Write, Some(found)) => {
+            let refusal = Refusal::of(project, own);
+            Opened::Refused(format!("{}{found}{}", refusal.before, refusal.after))
+        }
+        (Access::Read, Some(found)) if found == own + 1 => Opened::Ahead,
+        (Access::Read, Some(found)) if found > own => Opened::Refused(format!(
+            "{} is at schema {found}, more than one ahead of this build's {own}: nothing was \
+             read; `just symphony` in {} brings its Symphony to the board's schema",
+            named.board, named.project
+        )),
+        (Access::Read, Some(found)) => Opened::Refused(format!(
+            "{} is at schema {found}, behind this build's {own}, and a reader never moves a board \
+             forward: nothing was read or written; `just tasks list` in {} moves it once the \
+             project's board command is at schema {own}, and a newer schema is tried on a \
+             scratch board (`TASKS_DATABASE=NAME`)",
+            named.board, named.project
+        )),
+        (Access::Read, None) => Opened::Refused(format!(
+            "{} is not made yet, and a reader never makes a board: nothing was read or written; \
+             `just tasks list` in {} makes it",
+            named.board, named.project
+        )),
     }
 }
 
@@ -313,6 +333,10 @@ DEFINE FIELD IF NOT EXISTS busy_call ON session TYPE option<string>;
 DEFINE FIELD IF NOT EXISTS last_tool ON session TYPE option<float>;
 DEFINE INDEX IF NOT EXISTS session_agent ON session FIELDS agent;
 
+DEFINE TABLE IF NOT EXISTS session_revision SCHEMAFULL;
+DEFINE FIELD IF NOT EXISTS last ON session_revision TYPE int;
+DEFINE FIELD IF NOT EXISTS writes ON session_revision TYPE option<int>;
+
 DEFINE TABLE IF NOT EXISTS role SCHEMAFULL;
 DEFINE FIELD IF NOT EXISTS slug ON role TYPE string;
 DEFINE FIELD IF NOT EXISTS handle ON role TYPE string;
@@ -391,18 +415,22 @@ DEFINE TABLE IF NOT EXISTS callback_event SCHEMALESS;
 DEFINE INDEX IF NOT EXISTS callback_event_handle ON callback_event FIELDS handle, delivered;
 DEFINE TABLE IF NOT EXISTS chat_event SCHEMALESS;
 
-DEFINE EVENT OVERWRITE board_changed ON task WHEN $before != $after THEN { IF record::exists(counter:board) { UPDATE counter:board SET last = (last ?? 0) + 1 RETURN NONE; } ELSE { CREATE counter:board SET last = 1 RETURN NONE; }; };
-DEFINE EVENT OVERWRITE board_changed ON session WHEN $before != $after THEN { IF record::exists(counter:board) { UPDATE counter:board SET last = (last ?? 0) + 1 RETURN NONE; } ELSE { CREATE counter:board SET last = 1 RETURN NONE; }; };
-DEFINE EVENT OVERWRITE board_changed ON role WHEN $before != $after THEN { IF record::exists(counter:board) { UPDATE counter:board SET last = (last ?? 0) + 1 RETURN NONE; } ELSE { CREATE counter:board SET last = 1 RETURN NONE; }; };
-DEFINE EVENT OVERWRITE board_changed ON link WHEN $before != $after THEN { IF record::exists(counter:board) { UPDATE counter:board SET last = (last ?? 0) + 1 RETURN NONE; } ELSE { CREATE counter:board SET last = 1 RETURN NONE; }; };
-DEFINE EVENT OVERWRITE board_changed ON message WHEN $before != $after THEN { IF record::exists(counter:board) { UPDATE counter:board SET last = (last ?? 0) + 1 RETURN NONE; } ELSE { CREATE counter:board SET last = 1 RETURN NONE; }; };
-DEFINE EVENT OVERWRITE board_changed ON delivery WHEN $before != $after THEN { IF record::exists(counter:board) { UPDATE counter:board SET last = (last ?? 0) + 1 RETURN NONE; } ELSE { CREATE counter:board SET last = 1 RETURN NONE; }; };
-DEFINE EVENT OVERWRITE board_changed ON task_session WHEN $before != $after THEN { IF record::exists(counter:board) { UPDATE counter:board SET last = (last ?? 0) + 1 RETURN NONE; } ELSE { CREATE counter:board SET last = 1 RETURN NONE; }; };
+DEFINE EVENT OVERWRITE board_changed ON task WHEN $before != $after THEN { IF record::exists(counter:board_structure) { UPDATE counter:board_structure SET last = (last ?? 0) + 1 RETURN NONE; } ELSE { CREATE counter:board_structure SET last = 1 RETURN NONE; }; };
+DEFINE EVENT OVERWRITE board_changed ON session WHEN $before != $after THEN {
+    LET $revision = type::record('session_revision', record::id($after.id ?? $before.id));
+    IF record::exists($revision) { UPDATE $revision SET last += 1 RETURN NONE; }
+    ELSE { CREATE $revision SET last = 1 RETURN NONE; };
+};
+DEFINE EVENT OVERWRITE board_changed ON role WHEN $before != $after THEN { IF record::exists(counter:board_structure) { UPDATE counter:board_structure SET last = (last ?? 0) + 1 RETURN NONE; } ELSE { CREATE counter:board_structure SET last = 1 RETURN NONE; }; };
+DEFINE EVENT OVERWRITE board_changed ON link WHEN $before != $after THEN { IF record::exists(counter:board_structure) { UPDATE counter:board_structure SET last = (last ?? 0) + 1 RETURN NONE; } ELSE { CREATE counter:board_structure SET last = 1 RETURN NONE; }; };
+DEFINE EVENT OVERWRITE board_changed ON message WHEN $before != $after THEN { IF record::exists(counter:board_structure) { UPDATE counter:board_structure SET last = (last ?? 0) + 1 RETURN NONE; } ELSE { CREATE counter:board_structure SET last = 1 RETURN NONE; }; };
+DEFINE EVENT OVERWRITE board_changed ON delivery WHEN $before != $after THEN { IF record::exists(counter:board_structure) { UPDATE counter:board_structure SET last = (last ?? 0) + 1 RETURN NONE; } ELSE { CREATE counter:board_structure SET last = 1 RETURN NONE; }; };
+DEFINE EVENT OVERWRITE board_changed ON task_session WHEN $before != $after THEN { IF record::exists(counter:board_structure) { UPDATE counter:board_structure SET last = (last ?? 0) + 1 RETURN NONE; } ELSE { CREATE counter:board_structure SET last = 1 RETURN NONE; }; };
 DEFINE EVENT OVERWRITE board_changed ON callback_state
     WHEN [$before.address, $before.owner, $before.host, $before.chat, $before.chat_fallback, $before.chat_resume, $before.confirmed_until, $before.in_process, $before.seen, $before.pull, $before.registration_revision]
       != [$after.address, $after.owner, $after.host, $after.chat, $after.chat_fallback, $after.chat_resume, $after.confirmed_until, $after.in_process, $after.seen, $after.pull, $after.registration_revision]
-    THEN { IF record::exists(counter:board) { UPDATE counter:board SET last = (last ?? 0) + 1 RETURN NONE; } ELSE { CREATE counter:board SET last = 1 RETURN NONE; }; };
-DEFINE EVENT OVERWRITE board_changed ON chat_event WHEN $before != $after THEN { IF record::exists(counter:board) { UPDATE counter:board SET last = (last ?? 0) + 1 RETURN NONE; } ELSE { CREATE counter:board SET last = 1 RETURN NONE; }; };
+    THEN { IF record::exists(counter:board_structure) { UPDATE counter:board_structure SET last = (last ?? 0) + 1 RETURN NONE; } ELSE { CREATE counter:board_structure SET last = 1 RETURN NONE; }; };
+DEFINE EVENT OVERWRITE board_changed ON chat_event WHEN $before != $after THEN { IF record::exists(counter:board_structure) { UPDATE counter:board_structure SET last = (last ?? 0) + 1 RETURN NONE; } ELSE { CREATE counter:board_structure SET last = 1 RETURN NONE; }; };
 
 DEFINE EVENT OVERWRITE said ON message
     WHEN $event != 'UPDATE' OR [$before.sender, $before.sid, $before.slug, $before.kind IN ['msg', 'verdict']]
@@ -437,6 +465,21 @@ IF (SELECT VALUE id FROM said LIMIT 1) = [] {
         LET $newest = $spoke.last[0];
         CREATE type::record('said', [$spoke.sender]) SET sid = $newest[0], slug = $newest[1] RETURN NONE;
     };
+};
+
+// Transfer the structural count once. Session revisions remain independent and are not reset.
+// A retired legacy token without its successor is corruption, never an empty board.
+IF !record::exists(counter:board_structure) {
+    LET $legacy_marker = (SELECT VALUE last FROM ONLY counter:board) ?? 0;
+    IF $legacy_marker < 0 { THROW 'refused: structural marker missing after legacy marker retirement'; };
+    CREATE counter:board_structure SET last = $legacy_marker RETURN NONE;
+};
+// Old cached readers decode this scalar as u64 before consulting their cache. A finite signed
+// retirement makes them fail closed; current events never write this record again.
+IF record::exists(counter:board) {
+    UPDATE counter:board SET last = -9223372036854775807 - 1 RETURN NONE;
+} ELSE {
+    CREATE counter:board SET last = -9223372036854775807 - 1 RETURN NONE;
 };
 ";
 

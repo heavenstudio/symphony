@@ -131,7 +131,7 @@ fn a_reservation_needs_a_session_that_may_act_and_a_task() {
     let f = two_and_a_task("ready");
     assert_eq!(
         refused(f.store.reserve("sim/jump", "nobody", 3600.0)),
-        "no session 'nobody'; attach first (just tasks-attach)"
+        "no session 'nobody'; register first (`just tasks register`)"
     );
     assert_eq!(
         refused(f.store.reserve("sim/none", "amber-heron", 3600.0)),

@@ -1,5 +1,6 @@
 //! The project file's `[board]` table: the board's export, what a finished worktree may hold, the
-//! guide task messages render as part of, and what the board starts when a task moves to review.
+//! guide task messages render as part of, what the board starts when a task moves to review, the cap
+//! on an orchestrator's open tasks and when the pipeline alarm raises.
 
 use serde::Deserialize;
 use std::collections::BTreeMap;
@@ -27,12 +28,19 @@ pub struct Board {
     /// The open tasks (in progress or in review) an orchestrator may hold before the board refuses
     /// it new work, which the board reads itself (`symphony_board::slots`); `None` caps nothing.
     pub orchestrator_slots: Option<u32>,
+    /// The pipeline alarm, which the board reads itself (`symphony_board::alarm`): review holding
+    /// more than this many times the work in progress raises it; `None` is the board's default.
+    pub review_alarm_ratio: Option<u32>,
+    /// The hours review must hold more than the ratio for the alarm to raise.
+    pub review_alarm_hours: Option<u32>,
+    /// The hours review must hold no more than the ratio for the alarm to clear.
+    pub review_alarm_clear_hours: Option<u32>,
     pub machine_wip: BTreeMap<String, WipGuidance>,
 }
 
 impl Board {
-    /// The guide of a project that names none.
-    pub const GUIDE: &str = "TASKS.md";
+    /// The guide of a project that names none, as the board's own messages name it.
+    pub const GUIDE: &str = symphony_board::project::GUIDE;
 
     /// The document task messages render as part of.
     pub fn guide(&self) -> &str {
@@ -48,6 +56,15 @@ impl Board {
                 "[board] orchestrator_slots is 0; an orchestrator needs at least one slot".into(),
             );
         }
+        for (key, value) in [
+            ("review_alarm_ratio", file.review_alarm_ratio),
+            ("review_alarm_hours", file.review_alarm_hours),
+            ("review_alarm_clear_hours", file.review_alarm_clear_hours),
+        ] {
+            if value == Some(0) {
+                return Err(format!("[board] {key} is 0; it is at least 1"));
+            }
+        }
         if file.machine_wip.len() > 64
             || file.machine_wip.keys().any(|id| {
                 id.trim().is_empty() || id.len() > 256 || id.chars().any(char::is_control)
@@ -61,6 +78,9 @@ impl Board {
             guide: inside("[board] guide", file.guide)?,
             on_review: file.on_review,
             orchestrator_slots: file.orchestrator_slots,
+            review_alarm_ratio: file.review_alarm_ratio,
+            review_alarm_hours: file.review_alarm_hours,
+            review_alarm_clear_hours: file.review_alarm_clear_hours,
             machine_wip: file.machine_wip,
         })
     }
@@ -75,6 +95,9 @@ pub(super) struct FileBoard {
     guide: Option<String>,
     on_review: Vec<String>,
     orchestrator_slots: Option<u32>,
+    review_alarm_ratio: Option<u32>,
+    review_alarm_hours: Option<u32>,
+    review_alarm_clear_hours: Option<u32>,
     machine_wip: BTreeMap<String, WipGuidance>,
     #[serde(flatten)]
     pub(super) unknown: super::file::Unknown,

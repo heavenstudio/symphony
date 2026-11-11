@@ -59,12 +59,36 @@ for kind in board tasks docs review queue panel overlay; do
     fi
     manifest="$(jq --arg kind "$kind" --arg script "$script" --arg wasm "$wasm" --argjson styles "$styles" '. + {($kind): {script: $script, wasm: $wasm, styles: $styles}}' <<< "$manifest")"
 done
+# The stylesheets every kind loads are one shared file, in their order, first in each kind's list:
+# a first visit asks for it once instead of once per file, and every kind still caches the same
+# one. A kind's own stylesheets follow it, the order a visit from another kind already loads them in.
+shared="$(jq -c '[.[].styles] | reduce .[1:][] as $other (.[0]; map(select(. as $style | any($other[]; . == $style))))' <<< "$manifest")"
+if [ "$(jq length <<< "$shared")" -gt 1 ]; then
+    jq -r --arg prefix "$prefix/assets/" '.[] | ltrimstr($prefix)' <<< "$shared" | while IFS= read -r name; do
+        cat "$stage/assets/$name"
+        printf '\n'
+    done > "$stage/shared.css"
+    shared_name="shared-$(shasum -a 256 "$stage/shared.css" | cut -c1-16).css"
+    mv "$stage/shared.css" "$stage/assets/$shared_name"
+    manifest="$(jq --argjson shared "$shared" --arg href "$prefix/assets/$shared_name" 'map_values(.styles |= [$href] + (. - $shared))' <<< "$manifest")"
+fi
 # The shell's hash includes the page module manifest: a new module changes Board.build, while
-# returning to any unchanged kind still uses its immutable browser-cache entries. Every first visit
-# loads the shell, so it ships without its comment lines and indentation (no string in shell.js
-# spans lines, so none is changed).
-source="$(grep -vE '^[[:space:]]*//' assets/shell.js | sed -E 's/^[[:space:]]+//')"
-jq -nr --arg source "$source" --argjson modules "$manifest" '$source | sub("__MODULES__"; ($modules | tojson))' > "$stage/shell.js"
+# returning to any unchanged kind still uses its immutable browser-cache entries. The manifest
+# keeps its own first line, `const modules = …;`, which readers of a build look for; the rest is
+# minified by the esbuild dx fetched to minify each module's glue (every first visit loads it).
+esbuild="$(find "${DX_HOME:?package.sh runs from bundle.sh, which names DX_HOME}/tools" -path '*/esbuild-*/esbuild')"
+if [ -z "$esbuild" ] || [ "$(printf '%s\n' "$esbuild" | wc -l | tr -d ' ')" != 1 ] || [ ! -x "$esbuild" ]; then
+    echo "symphony-ui: expected one esbuild under $DX_HOME/tools, found: ${esbuild:-none}" >&2
+    exit 2
+fi
+if [ "$(grep -cx 'const modules = __MODULES__;' assets/shell.js)" != 1 ]; then
+    echo "symphony-ui: assets/shell.js needs its manifest line, const modules = __MODULES__;" >&2
+    exit 2
+fi
+{
+    printf 'const modules = %s;\n' "$(jq -c . <<< "$manifest")"
+    grep -vx 'const modules = __MODULES__;' assets/shell.js | "$esbuild" --minify --format=esm --log-level=warning
+} > "$stage/shell.js"
 # Eager notice styles are part of this shell's build identity too.
 printf '\n// Notice styles: %s\n' "$(shasum -a 256 ../symphony-server/src/notices.css | cut -c1-16)" >> "$stage/shell.js"
 hash="$(shasum -a 256 "$stage/shell.js" | cut -c1-16)"

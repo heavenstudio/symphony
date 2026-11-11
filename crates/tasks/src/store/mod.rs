@@ -30,6 +30,7 @@ mod depends;
 mod dispatcher;
 mod embeddings;
 mod fields;
+mod history;
 mod kept;
 mod launches;
 mod messages;
@@ -40,11 +41,18 @@ mod queued_lines;
 mod reading;
 pub(crate) mod search;
 mod sessions;
+mod settings;
+mod snapshot;
 mod stage_lines;
 mod transaction;
 pub(crate) mod unanswered;
+mod waits;
 mod work;
+mod write;
 
+use write::{ACT, WRITE};
+
+pub(crate) use crate::stages::{BLOCK_LINE, UNBLOCK_LINE};
 pub use callbacks::{Callback, Presence};
 /// Every statement the cap on an orchestrator's open tasks sends: the plan test's to plan.
 pub use cap::STATEMENTS as SLOT_READS;
@@ -57,6 +65,7 @@ use reading::{HELD, NATIVE_PRESENCE, native_bounds, native_health};
 pub use search::SearchHit;
 pub use sessions::{Beat, Binding, KINDS, NewSession, Pick};
 pub use stage_lines::StageRecord;
+pub use waits::{AssessmentReceipt, AssessmentState};
 pub use work::{
     BEFORE_WORK, LANDS_FROM, Landed, NewTask, PIPELINE, PULLABLE, ROLES, STATUSES, can_transition,
 };
@@ -190,24 +199,45 @@ pub struct Store {
     /// The open tasks an orchestrator may hold before a start is refused ([`crate::slots`]); none
     /// caps nothing.
     slots: Option<usize>,
+    /// When the pipeline alarm the PULL digest says raises and clears ([`crate::alarm`]).
+    alarm: crate::alarm::Thresholds,
     /// The schema version this store writes, which every write's [`schema::GUARD`] checks.
     schema: i64,
     /// What a write on a board at another version is refused with, naming the board's project.
     refusal: schema::Refusal,
+    /// Whether `TASKS_SERVER` named the board's server, so the command that reaches the board again
+    /// names it too ([`Store::board_command`]).
+    named_server: bool,
+}
+
+/// The command that reaches the board on `database` again: `just tasks`, naming the database when
+/// it is not the project's own, and `server` when `TASKS_SERVER` named it.
+pub fn board_command(server: Option<&str>, database: &str) -> String {
+    let mut command = String::new();
+    if let Some(server) = server {
+        command.push_str(&format!("TASKS_SERVER={server} "));
+    }
+    command.push_str("just tasks");
+    if database != crate::DATABASE {
+        command.push_str(&format!(" --database {database}"));
+    }
+    command
 }
 
 impl Store {
-    /// This store, its starts held to `slots` open tasks an orchestrator: a claim, a move into
-    /// in_progress and taking the orchestrator role on open work are refused past it
-    /// ([`crate::slots`]). None caps nothing, as a store opens.
-    pub fn capping(mut self, slots: Option<usize>) -> Store {
-        self.slots = slots;
+    /// This store, reached on a server `TASKS_SERVER` named: the commands it tells a session to run
+    /// name that server ([`board_command`]).
+    pub fn on_named_server(mut self) -> Store {
+        self.named_server = true;
         self
     }
 
-    /// The cap this store holds starts to, if any ([`Store::capping`]).
-    pub fn slots(&self) -> Option<usize> {
-        self.slots
+    /// The command that reaches this store's board again ([`board_command`]).
+    pub fn board_command(&self) -> String {
+        board_command(
+            self.named_server.then(|| self.client.addr()),
+            self.client.database(),
+        )
     }
 
     pub fn client(&self) -> &Client {
@@ -661,28 +691,6 @@ const CLAIMABLE: &str = "(SELECT VALUE slug FROM role WHERE handle = $handle
     AND ((role = 'executor' AND type::record('task', slug).status IN $executing)
       OR (role = 'reviewer' AND type::record('task', slug).status = 'review')))";
 
-/// A rule's write: stale unless the actor may still act, the task is the version read and every
-/// session taken to be gone is as it was read; then the actor is seen, the roles and status change,
-/// the task's version moves on, and what happened goes on the record.
-const WRITE: &str = "
-LET $me = (SELECT left_at FROM ONLY type::record('session', $actor));
-IF $me = NONE OR $me.left_at != NONE { THROW 'stale' };
-IF (SELECT VALUE version FROM ONLY type::record('task', $slug)) != $version { THROW 'stale' };
-FOR $s IN $seen {
-    IF (SELECT VALUE last_seen FROM ONLY type::record('session', $s.handle)) != $s.last_seen { THROW 'stale' };
-};
-UPDATE type::record('session', $actor) SET last_seen = math::max([last_seen, $now]) RETURN NONE;
-FOR $r IN $drop { DELETE type::record('role', [$slug, $r.handle, $r.role]); };
-FOR $r IN $add { IF type::record('session', $r.handle).left_at != NONE { THROW 'stale' }; UPSERT type::record('role', [$slug, $r.handle, $r.role]) CONTENT $r RETURN NONE; };
-UPDATE type::record('task', $slug) SET version += 1, status = $status ?? status, updated = $updated ?? updated RETURN NONE;
-IF $say {
-    LET $counted = (UPSERT ONLY counter:message SET last += 1, ts = IF ts != NONE AND ts > $now AND ts <= $now + 60 { ts } ELSE { $now });
-    LET $sid = $counted.last;
-    LET $ts = $counted.ts;
-    CREATE type::record('message', [$slug, $sid]) SET sid = $sid, slug = $slug, sender = $actor, recipient = $say.recipient,
-        kind = $say.kind, text = $say.text, ts = $ts RETURN NONE;
-};";
-
 enum Which<'a> {
     All,
     /// One whole-board observation with the admission ledger's validated hold records.
@@ -1011,7 +1019,7 @@ fn refused(message: String) -> Error {
 
 fn unknown_actor(handle: &str) -> String {
     format!(
-        "no session {}; attach first (just tasks-attach)",
+        "no session {}; register first (`just tasks register`)",
         repr(handle)
     )
 }
@@ -1019,14 +1027,6 @@ fn unknown_actor(handle: &str) -> String {
 fn left_actor(handle: &str) -> String {
     format!("session {handle} has left; attach again")
 }
-
-/// The actor may act, as the write runs: it exists and has not left, or the write is refused; and
-/// acting is being seen. Its variables are `acting`'s.
-const ACT: &str = "
-LET $me = (SELECT left_at FROM ONLY type::record('session', $actor));
-IF $me = NONE { THROW $unknown_actor };
-IF $me.left_at != NONE { THROW $left_actor };
-UPDATE type::record('session', $actor) SET last_seen = math::max([last_seen, $now]) RETURN NONE;";
 
 /// `ACT`'s variables, and `more`'s.
 fn acting(actor: &str, now: f64, more: Value) -> Value {

@@ -25,6 +25,9 @@ explicitly names a built distribution. Install Chrome or name its executable
 with `SF_CHROME`; CI requires it. The harness owns each browser's temporary
 profile, process group and shutdown, and checks keyboard interaction, page
 geometry, stream recovery and transfer budgets without a display server.
+A client change runs the browser tests of the pages and controls it touched, by
+filter after `--` ([CHECKS](../../docs/CHECKS.md#the-browser-target-by-page)),
+never the whole target, which the nightly runs.
 
 - **Build.** `just symphony-ui-dist [OUT] [KIND]` (`build/symphony-ui`, the page in its
   `public/`): cargo's subcommand `symphony-ui dist OUT` (`bin/cargo-symphony-ui`,
@@ -64,28 +67,24 @@ geometry, stream recovery and transfer budgets without a display server.
   a 20 KB return-visit budget (`tests/browser/`, restored after the port;
   the owner's, never loosened by an agent; the first-visit cap is the owner's
   of 2026-10-29: "lets increase the cap to 250KB for now and revisit options
-  later"). Measure client plus API data; list document-content images
-  separately. Other page kinds are reported separately for review.
-  The reference home at `4aea7e4f` has 146,779 gzip bytes of static assets
-  before its HTML/API data (the recorded 149.5 KB total). The retained plain
-  action listeners, own-node form reads and owned visibility latch reduce the
-  board WASM from 199,247 to 183,713 gzip bytes, and home from 193,570
-  to 175,351, including the appearance changes merged from `61c0d93e`.
-  The canonical-entry browser case measures cold transfers of 221,020 bytes
-  on `/` and 249,926 to 249,934 on
-  `/tasks` (two runs; the feed's keep-alive pings count), including response
-  overhead and fixture API data; cached returns are 1,895 and 2,627 bytes. Both
-  first visits fit, 28,980 and 66 bytes under the cap: `/tasks` has no room left.
-  The same run reports `/agents` at 435,153, `/docs/` at 450,658 and `/queue` at
-  232,589. Once a page is idle it warms the chat's and the menus' modules, 751,479
-  bytes outside its first visit (the panel's wasm 454,991, the overlay's 262,127,
-  their scripts and styles); opening the chat then transfers nothing more, where it
-  took another 517,506 bytes before the warm-up. The shell ships without its
-  comments (`package.sh`). Each kind pays
-  for its own compiled framework; later visits reuse cached imports. The
-  original home budget test remains independent of the canonical-entry test,
-  which gives every kind a fresh browser profile and reports the complete
-  published output, retained older hashes included.
+  later"). A visit counts each response the page loaded at what Chrome's
+  network events say it took on the wire, gzip body and response head: the
+  HTML, the shell, the module's glue and WASM, the style sheets, API replies
+  (refusals too) and the live feed's head and content messages, as the page
+  reads them. It leaves out document-content images, browser-cache hits and
+  the feed's keep-alive pings, which arrive every `ping_ms` for as long as the
+  page is open and are reported beside the total (the owner's, 2026-11-11).
+  Other page kinds are reported separately for review.
+  On the fixture a first visit to `/tasks` takes 239,323 bytes, 10,677 under the
+  cap: the board WASM 213,070, its glue 10,757, the shared style sheet 8,307,
+  the shell 3,413, the HTML 1,143, API replies 2,548 and the feed's head and
+  opening comment 85. `/` takes 216,208; cached returns take 1,981 and
+  2,713. The same run reports `/agents` at 430,345, `/docs/` at 443,422,
+  `/queue` at 227,701, a task page at 430,891, a document at 445,315 and opening
+  the deferred panel at another 517,543 bytes. Each kind pays for its own
+  compiled framework; later visits reuse cached imports. The home budget test
+  is independent of the canonical-entry test, which gives every kind a fresh
+  browser profile and reports the complete published output.
   Measure loaded resources, including API data, rather than summing every
   deferred module or retained historical asset hash in the published output.
   The 250,000 and 20,000 byte limits are the owner's; a lower first-visit
@@ -93,12 +92,15 @@ geometry, stream recovery and transfer budgets without a display server.
   analysis below prices those the owner left to revisit.
   `cargo symphony-ui size OUT NAME...` (`probes/size.sh`) builds a page kind or
   a size probe as the release does and names a copy for
-  `examples/wasm_size.rs`, which says where its bytes go
+  `examples/wasm_size.rs`, which says where its bytes go and, with
+  `--functions GROUP`, which of a group's functions hold them
   ([the first-visit analysis](../../../docs/engineering/analysis/review-ui-first-visit.md)).
   Measured prices: healing a lost feed 1.4 KB, then the pings,
   unreadable events, the build check and the backoff 0.9 KB, the `mounted` feature
   (`onmounted`) 26 KB, `router` with the `document` it needs 55 KB, serde_json's
-  parser 11 KB. So the app has `minimal` and `asset` only, the browser parses
+  parser 11 KB, three `BTreeMap`s of the board's own 5.7 KB (each key and value
+  type compiles its own tree code; a handful of keyed values go in
+  `state::FewMap`). So the app has `minimal` and `asset` only, the browser parses
   JSON and serde-wasm-bindgen reads it, and a slice that needs more pays for it
   here first.
 - **Components.** `#[component] fn Hero(card: Option<Card>, now: Moment) ->
@@ -203,9 +205,11 @@ geometry, stream recovery and transfer budgets without a display server.
   markup stays visible as an Unknown node with a server warning. `symphony blocks`
   prints a real-document census and checks that the data survives serialization.
 - **The page.** `package.sh` writes the shell, whose single history adapter is
-  `assets/shell.js`. Its `html[data-navigation]` is `loading` until the shell's
-  navigation finishes, then `ready`, or `failed` if the page cannot load. It preserves
-  a scroll made after the new page mounts instead of applying its late top reset.
+  `assets/shell.js`: the page kinds' manifest on its first line (`const modules =
+  …;`), then that script minified by the esbuild dx fetched. Its
+  `html[data-navigation]` is `loading` until the shell's navigation finishes,
+  then `ready`, or `failed` if the page cannot load. It preserves a scroll made
+  after the new page mounts instead of applying its late top reset.
   Compilation leaves `OUT/public` serving its last build;
   packaging assembles beside it and `symphony publish-client` atomically exchanges the
   complete directories (macOS/Linux). Failed builds leave the published client
@@ -233,7 +237,10 @@ geometry, stream recovery and transfer budgets without a display server.
   `base_path = ""` serves the app at `/`. A style sheet is an
   `asset!("/assets/board.css", AssetOptions::css().with_static_head(true))`:
   dx hashes it and links it from the shell's head, if the code keeps the
-  constant (`std::hint::black_box(&STYLE)`).
+  constant (`std::hint::black_box(&STYLE)`). The style sheets every kind loads
+  are one `shared-<hash>.css`, first in each kind's list of the manifest, and the
+  kind's own follow it: a first visit asks for them once, and every kind caches
+  the same file.
 - **Routes**, when a slice pays for them: `#[derive(Routable, Clone,
   PartialEq)] enum Route { #[route("/")] Front {} }` and `rsx! {
   Router::<Route> {} }`, one component per variant, named as it is.

@@ -35,10 +35,13 @@ fn a_checkout_without_the_docs_folder_has_no_documents_and_its_pages_say_how_to_
     assert!(snapshot.queue.waiting.is_empty() && snapshot.queue.agent.is_empty());
 
     let render = Render::new(&tree.root);
-    assert_eq!(docview::folder(&render, "docs/", "").unwrap_err(), SAID);
-    assert_eq!(docview::folder(&render, "docs", "").unwrap_err(), SAID);
     assert_eq!(
-        docview::document(&render, "docs/README.md", "").unwrap_err(),
+        docview::folder(&render, "docs/", "", &[]).unwrap_err(),
+        SAID
+    );
+    assert_eq!(docview::folder(&render, "docs", "", &[]).unwrap_err(), SAID);
+    assert_eq!(
+        docview::document(&render, "docs/README.md", "", &[]).unwrap_err(),
         SAID
     );
     // A route no entrypoint serves is not found, documents or none.
@@ -65,10 +68,10 @@ fn once_the_folder_is_there_its_documents_are_read_and_a_missing_one_is_not_foun
 
     let render = Render::new(&tree.root);
     assert_eq!(
-        docview::document(&render, "docs/GONE.md", "").unwrap_err(),
+        docview::document(&render, "docs/GONE.md", "", &[]).unwrap_err(),
         "not found: docs/GONE.md"
     );
-    assert_eq!(docview::folder(&render, "docs/", "").unwrap().docs, 1);
+    assert_eq!(docview::folder(&render, "docs/", "", &[]).unwrap().docs, 1);
 }
 
 #[test]

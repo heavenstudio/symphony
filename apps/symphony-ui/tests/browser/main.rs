@@ -5,8 +5,10 @@
 //! loosened. They are absolute; the measurement they were set against is in
 //! docs/engineering/analysis/python-zero.md ("Today's app, measured for mobile").
 //! - a first visit loads at most 250 KB gzipped, everything the board needs (shell, JS glue,
-//!   wasm, CSS, API data), independently for `/` and `/tasks`. Deferred page kinds and the
-//!   whole build are reported separately; a visit pays for the resources it actually loads;
+//!   wasm, CSS, API data, the feed's head and messages), independently for `/` and `/tasks`.
+//!   The feed's keep-alive pings, which keep arriving while the page is open, are reported
+//!   beside the total. Deferred page kinds and the whole build are reported separately; a
+//!   visit pays for the resources it actually loads;
 //! - a return visit loads at most 20 KB (the build is cached by its hashed names);
 //! - on an emulated mid phone over a tailnet link (CPU slowed 4x, 10 Mbit/s, 40 ms round trip)
 //!   the board is interactive within 2 s of wall time, not charged at the machine's load: most
@@ -151,7 +153,9 @@ fn entry_pages_fit_the_first_visit_budget_and_deferred_kinds_are_reported() {
         );
         let bytes = needed_bytes(&requests);
         eprintln!(
-            "{path} first visit: {bytes} bytes, {} more warmed at idle so far\n{requests:#?}",
+            "{path} first visit: {bytes} bytes; the feed's keep-alive pings beside it: {} bytes; \
+             warmed at idle so far: {} bytes\n{requests:#?}",
+            ping_bytes(&requests),
             prefetched_bytes(&requests)
         );
         chrome.open("about:blank");
@@ -160,8 +164,12 @@ fn entry_pages_fit_the_first_visit_budget_and_deferred_kinds_are_reported() {
             &format!("document.querySelector({}) !== null", json!(ready)),
             SHOWN
         ));
-        let again = needed_bytes(&completed_requests(&mut chrome));
-        eprintln!("{path} return visit: {again} bytes");
+        let returned = completed_requests(&mut chrome);
+        let again = needed_bytes(&returned);
+        eprintln!(
+            "{path} return visit: {again} bytes; keep-alive pings beside it: {} bytes",
+            ping_bytes(&returned)
+        );
         if budgeted {
             entries.push((path, bytes, again));
         }
@@ -196,7 +204,8 @@ fn entry_pages_fit_the_first_visit_budget_and_deferred_kinds_are_reported() {
 }
 
 /// Include styles and API replies still in flight when the view first appeared. A live feed
-/// intentionally never completes; its received bytes still count in `needed_bytes`.
+/// intentionally never completes; its head and messages still count in `needed_bytes`, all but
+/// its keep-alive pings.
 fn completed_requests(chrome: &mut Chrome) -> Vec<chrome::Request> {
     let started = std::time::Instant::now();
     loop {
@@ -229,7 +238,9 @@ fn a_first_visit_and_a_return_visit_fit_their_budgets() {
     let again = chrome.requests();
     let again_bytes = needed_bytes(&again);
     eprintln!(
-        "first visit: {first_bytes} bytes; return visit: {again_bytes} bytes\n{first:#?}\n{again:#?}"
+        "first visit: {first_bytes} bytes; return visit: {again_bytes} bytes; keep-alive pings beside them: {} and {} bytes\n{first:#?}\n{again:#?}",
+        ping_bytes(&first),
+        ping_bytes(&again)
     );
     assert!(
         first_bytes <= FIRST_VISIT_BYTES,
@@ -242,14 +253,29 @@ fn a_first_visit_and_a_return_visit_fit_their_budgets() {
 }
 
 /// What the board needed over the wire: every request but pictures, which are the cards'
-/// content, not the app, and idle prefetches, which are a later click's, reported apart
-/// (`prefetched_bytes`).
+/// content, not the app; idle prefetches, which are a later click's, reported apart
+/// ([`prefetched_bytes`]); and the feed's keep-alive pings, which arrive every `ping_ms` for as
+/// long as the page is open (the owner's, 2026-11-11). The feed's head and its content messages
+/// count; the pings are reported beside the total ([`ping_bytes`]).
 fn needed_bytes(requests: &[chrome::Request]) -> f64 {
+    loaded(requests)
+        .map(|request| request.bytes - pings_of(request))
+        .sum()
+}
+
+/// The keep-alive pings' bytes, left out of [`needed_bytes`].
+fn ping_bytes(requests: &[chrome::Request]) -> f64 {
+    loaded(requests).map(pings_of).sum()
+}
+
+fn loaded(requests: &[chrome::Request]) -> impl Iterator<Item = &chrome::Request> {
     requests
         .iter()
         .filter(|request| request.kind != "Image" && !request.from_cache && !request.prefetch)
-        .map(|request| request.bytes)
-        .sum()
+}
+
+fn pings_of(request: &chrome::Request) -> f64 {
+    (request.pings * site::ping().len()) as f64
 }
 
 /// What the page warmed at idle for a later click: never its first paint's.
@@ -853,7 +879,7 @@ fn queued_visibility_callbacks_are_drained_when_a_page_unmounts() {
 }
 
 #[test]
-fn the_transfer_budget_counts_api_failures_and_open_streams_but_excludes_images_cache_and_prefetch()
+fn the_transfer_budget_counts_api_failures_and_open_streams_but_not_images_cache_prefetch_or_pings()
 {
     let requests = [
         chrome::Request {
@@ -886,7 +912,8 @@ fn the_transfer_budget_counts_api_failures_and_open_streams_but_excludes_images_
         },
         chrome::Request {
             kind: "EventSource".into(),
-            bytes: 42.0,
+            bytes: 42.0 + 2.0 * 19.0,
+            pings: 2,
             ..Default::default()
         },
         chrome::Request {
@@ -903,7 +930,9 @@ fn the_transfer_budget_counts_api_failures_and_open_streams_but_excludes_images_
             ..Default::default()
         },
     ];
+    assert_eq!(site::ping().len(), 19);
     assert_eq!(needed_bytes(&requests), 222.0);
+    assert_eq!(ping_bytes(&requests), 38.0);
     assert_eq!(
         prefetched_bytes(&requests),
         9_000.0,

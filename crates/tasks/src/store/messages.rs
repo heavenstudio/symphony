@@ -195,9 +195,7 @@ impl Store {
             ""
         } else if sender == BOARD {
             // A machine event is no tool call or heartbeat from the waiting session.
-            "LET $me = (SELECT left_at FROM ONLY type::record('session', $actor));
-IF $me = NONE { THROW $unknown_actor };
-IF $me.left_at != NONE { THROW $left_actor };"
+            super::write::AUTHORIZE
         } else {
             ACT
         };

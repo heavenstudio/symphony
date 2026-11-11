@@ -2,7 +2,7 @@
 name: task-orchestrator
 description: Keep the development pipeline healthy through the task board: find approved work, file complete briefs, staff executors and independent reviewers, and follow the project's landing contract.
 ---
-<!-- symphony-stamp: 7e848405868ff1da files=SKILL.md -->
+<!-- symphony-stamp: 7d90567a1078277a files=SKILL.md -->
 
 # Orchestrate development from the board
 
@@ -15,7 +15,7 @@ gate cleanup, recording remaining failures honestly. Do not create separate
 review/gate subtasks. After recovery, another agent performs a bounded root-cause
 and recurrence-prevention postmortem, reusing a relevant analysis task; it does
 not block recovery or start another delivery cycle. This recovery rule supersedes blanket feature-cycle
-instructions below; see RULES.md `workflow/fast-bugfixes`.
+instructions below.
 
 ## Parent feature delivery
 
@@ -23,16 +23,30 @@ A top-level task owns one feature branch and one delivery cycle. Subtasks are
 small implementation slices, not independent releases. One agent continues the
 feature by default; use another agent only for disjoint work that demonstrably
 shortens the critical path. Commit slices into the feature branch, or merge
-their worktree commits into it with `just merge-feature FEATURE [SOURCE]`.
-This command refuses the default branch and runs no delivery hooks or stamps;
-`land` remains the completed feature delivery command. Run only focused checks needed for that slice;
-no slice-level full build, full suite, lint/precheck campaign, reviewer staffing,
-certificate, stamps or landing. Close the slice with its integration commit and
-focused result using tasks done. When the complete feature is ready, the parent
-runs the required combined build/tests and review once, then lands. Review
-fixes stay with that parent and do not create independent delivery rounds.
+their worktree commits into it with the project's `just merge-feature FEATURE [SOURCE]`
+where it has one: that refuses the default branch and runs no delivery hooks or stamps,
+and the project's landing (`land` where it has one) remains the completed feature
+delivery command. Run only focused checks needed for that slice;
+no slice-level full build, full suite, reviewer staffing, certificate, stamps or
+landing. Close the slice with its integration commit and focused result using
+tasks done. When the complete feature is ready, the parent goes to review once
+with its evidence, then lands. Review fixes stay with that parent and do not
+create independent delivery rounds.
 The board shows parents by default; subtasks are nested under their parent.
 This rule supersedes conflicting per-subtask gate instructions.
+
+## Evidence is the gate
+
+A task's gate, parent or slice, feature or fix, is evidence that what it changed
+works, not the full suite: the tests closest to the change and the project's
+lint, posted with their exact commands and results, plus what the kind of change
+calls for (before and after screenshots of a changed page, a measurement before
+and after). A reviewer reruns those tests, never the suite, judges whether the
+evidence is good enough for the change's risk, and records its approval as the
+task's stamp. Higher risk asks for stronger evidence, never for the whole suite.
+The full verification runs on the project's main line on its own schedule, such
+as a nightly, and a red run there is filed as a task of its own. The project's
+guidance names its focused checks, its stamp and its nightly.
 
 
 Load the tasks skill and the project's AGENTS.md first. Follow its staffing limits,
@@ -72,10 +86,12 @@ product-specific policy or taste data.
    not bind their parent's callback; they read their board inbox between steps.
    When a headless run ends, read its task thread before resuming its recorded
    conversation. A post to an ended session remains in its inbox.
-8. Executors post ready tips and targeted checks before review. Follow the project's
-   review tiers and stamps. Reviewers must be independent of author, requester and
-   lander. Never let an executor approve its own branch. Do not invent a landing
-   command or waive checks when the project has none configured.
+8. Executors post ready tips and their evidence, the targeted checks and their
+   results, before review; a brief asks for focused checks, never the full suite.
+   Follow the project's review tiers and stamps. Reviewers must be independent of
+   author, requester and lander. Never let an executor approve its own branch.
+   Do not invent a landing command or waive checks when the project has none
+   configured.
 9. Post only a review-ready tip, review/blocked move, collision, finding, verdict or
    question. Address action with --to @executor, --to @reviewer or a handle. Never
    acknowledge messages or duplicate milestones on parent and child threads.
