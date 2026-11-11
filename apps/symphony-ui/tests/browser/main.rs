@@ -596,13 +596,23 @@ fn task_controls_keep_their_values_and_revealed_rows_after_scrolling() {
             .iter()
             .any(|url| url.contains("status=ready"))
     );
-    chrome.eval("window.scrollTo(0, 20000)");
+    // The pipeline's columns live in the board's own bounded scroller, which clips them from
+    // the page: the pushed column is reached by scrolling that scroller, never the window.
+    chrome.eval("document.querySelector('.board-scroll').scrollTo(0, 20000)");
+    assert!(
+        chrome.wait_for(
+            "document.querySelector('[data-slug=\"tools/example\"]') !== null",
+            SHOWN
+        ),
+        "the scrolled-to row never appeared: {:?}; {:?}",
+        site.targets(),
+        chrome.eval("(b => ({scrollTop: b.scrollTop, scrollHeight: b.scrollHeight, clientHeight: b.clientHeight}))(document.querySelector('.board-scroll'))")
+    );
+    chrome.eval("document.querySelector('.board-scroll').scrollTo(0, 0)");
     assert!(chrome.wait_for(
-        "document.querySelector('[data-slug=\"tools/example\"]') !== null",
+        "document.querySelector('.board-scroll').scrollTop === 0",
         SHOWN
     ));
-    chrome.eval("window.scrollTo(0, 0)");
-    assert!(chrome.wait_for("window.scrollY === 0", SHOWN));
     assert_eq!(
         chrome.eval("document.querySelectorAll('[data-slug=\"tools/example\"]').length"),
         json!(1)
@@ -648,7 +658,7 @@ fn task_controls_keep_their_values_and_revealed_rows_after_scrolling() {
     assert!(!site.targets().iter().any(|url| url.contains("q=wrong")));
     // A new filter replaces rows, so its new visibility latches must be approached again.
     // The earlier assertion checked that scrolling alone preserves the revealed row.
-    chrome.eval("window.scrollTo(0, 20000)");
+    chrome.eval("document.querySelector('.board-scroll').scrollTo(0, 20000)");
     assert!(
         chrome.wait_for(
             "document.querySelector('[data-slug=\"tools/example\"]') !== null",
