@@ -16,9 +16,10 @@
 //! here (a session seen, leaving) checks and refuses inside its one transaction instead. They only
 //! meet where both write the same record, so writes that must not pass each other write one: the
 //! task's `version`, the message counter, an agent's own counter for its binding.
-//! Transactional mutation events also advance the shared `counter:board` for changes to board
-//! inputs. Those writes can conflict across otherwise unrelated tasks; every such path retries
-//! the whole transaction. Callback readers use that marker to reuse unchanged board inputs.
+//! Transactional mutation events also advance the structural `counter:board_structure` for changes to board
+//! inputs, except session mutations, which advance their own per-handle revisions. Authorization
+//! and liveness guards fence the sessions they depend on. Callback readers combine both markers
+//! to reuse unchanged board inputs without making independent heartbeats write one counter.
 
 // The library's tests start their own fixtures and stand-ins; clippy checks the library without
 // them too, where only `sys::command` and `sys::command_with` make a child (clippy.toml).
@@ -32,6 +33,8 @@
 
 #[cfg(test)]
 extern crate self as symphony_board;
+
+pub mod alarm;
 
 #[cfg(test)]
 #[path = "../tests/store/common.rs"]
@@ -66,13 +69,16 @@ mod store;
 pub mod sweep;
 pub mod sys;
 
+#[path = "cli/api/assessment/publication.rs"]
+pub mod assessment_publication;
 pub use health::Health;
 pub use schema::{Access, Schema};
 pub use store::{
-    BEFORE_WORK, Beat, Binding, Board, Callback, EmbeddingStats, Error, HandOff, KINDS, LANDS_FROM,
-    Landed, Message, Moved, NewLaunch, NewSession, NewTask, Opening, PIPELINE, PULLABLE, Pick,
-    Presence, ROLES, Role, SLOT_READS, STATUSES, SearchHit, Session, StageRecord, Store, Task,
-    VectorHit, VectorSearchProfile, can_transition,
+    AssessmentReceipt, AssessmentState, BEFORE_WORK, Beat, Binding, Board, Callback,
+    EmbeddingStats, Error, HandOff, KINDS, LANDS_FROM, Landed, Message, Moved, NewLaunch,
+    NewSession, NewTask, Opening, PIPELINE, PULLABLE, Pick, Presence, ROLES, Role, SLOT_READS,
+    STATUSES, SearchHit, Session, StageRecord, Store, Task, VectorHit, VectorSearchProfile,
+    can_transition,
 };
 
 /// The board schema this build reads and writes: the one server serves no project whose

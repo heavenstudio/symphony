@@ -141,10 +141,10 @@ fn run(
     }
     let board = || connect(env).map(|store| detaching(store, env, program));
     if args.len() == 1 && args[0] == "api" {
-        return api::run(input, out, board);
+        return api::run_in(input, out, board, Some(env));
     }
     if args.len() == 2 && args[0] == "api" && args[1] == "--lines" {
-        return api::serve(&mut std::io::BufReader::new(input), out, board);
+        return api::serve_in(&mut std::io::BufReader::new(input), out, board, Some(env));
     }
     let parsed = match args::parse(args) {
         args::Outcome::Run(parsed) => parsed,
@@ -216,15 +216,25 @@ pub fn connect(env: &Env) -> Result<Store, String> {
 }
 
 /// `store`, its starts held to the cap on each orchestrator's open tasks that the main checkout of
-/// `env`'s repository configures ([`crate::slots::of_env`]). A cap that cannot be read is said on
-/// stderr and caps nothing: a broken project file must not stop the board, nor the landing that
-/// mends it.
+/// `env`'s repository configures ([`crate::slots::of_env`]), and its pipeline alarm raised at the
+/// thresholds it configures beside it ([`crate::alarm::of_env`]). A cap that cannot be read is said
+/// on stderr and caps nothing, and thresholds that cannot be read are said and the defaults apply: a
+/// broken project file must not stop the board, nor the landing that mends it.
 pub fn capped(store: Store, env: &Env) -> Store {
     capped_saying(store, env, &mut |problem| eprintln!("tasks: {problem}"))
 }
 
-/// As [`capped`], what is wrong with the cap said by `say`.
+/// As [`capped`], what is wrong with the cap or the thresholds said by `say`.
 fn capped_saying(store: Store, env: &Env, say: &mut dyn FnMut(&str)) -> Store {
+    let store = match crate::alarm::of_env(env) {
+        Ok(thresholds) => store.alarming(thresholds),
+        Err(problem) => {
+            say(&format!(
+                "{problem}; the pipeline alarm takes its default thresholds"
+            ));
+            store
+        }
+    };
     match crate::slots::of_env(env) {
         Ok(slots) => store.capping(slots),
         Err(problem) => {

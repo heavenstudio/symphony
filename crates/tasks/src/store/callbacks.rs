@@ -11,9 +11,10 @@ use super::callback_state::{State, stored_seen};
 use super::launches::{HOLDS, held};
 use super::pull_account::{Account, PullPlan};
 use super::queued_lines::{Hearing, Queued, Rescoped};
+use super::write::FENCE_RECIPIENT;
 use super::{ACT, Error, Store, acting, logged, refused};
 use crate::cli::agents::{Answer, Pane};
-use crate::cli::{attach, pull};
+use crate::cli::{attach, probes, pull};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
@@ -160,6 +161,7 @@ impl Store {
 LET $recipient = (SELECT left_at FROM ONLY type::record('session', $handle));
 IF $recipient = NONE {{ THROW string::concat('refused: no session ', $handle); }};
 IF $recipient.left_at != NONE {{ THROW string::concat('refused: session ', $handle, ' has left'); }};
+{FENCE_RECIPIENT}
 IF $actor = $handle {{ RETURN ''; }};
 LET $channel = (SELECT address, owner FROM ONLY type::record('callback_state', $handle));
 LET $address = $channel.address ?? '';
@@ -922,46 +924,6 @@ RETURN NONE;");
         Ok(acquired.is_some())
     }
 
-    /// The mutation marker and snapshot are read in the same transaction. Cached inputs are
-    /// reinterpreted through View on every tick so health, reservations and presence still age.
-    fn callback_board(&self) -> Result<(super::Board, u64), Error> {
-        let marker = self.board_marker()?;
-        let mut cached = self
-            .callback_snapshot
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
-        if let Some(snapshot) = cached.as_ref()
-            && snapshot.callback_sequence == marker
-        {
-            return Ok((
-                Self::board_view(super::View::new(self, snapshot.clone())),
-                marker,
-            ));
-        }
-        let (read, vars) = Self::reading(&super::Which::All);
-        let body = format!(
-            "LET $callback_sequence = (SELECT VALUE last FROM ONLY counter:board) ?? 0;\n{read}"
-        );
-        let snapshot: super::Snapshot = self.retrying(|| self.transact(&body, vars.clone()))?;
-        let sequence = snapshot.callback_sequence;
-        *cached = Some(snapshot.clone());
-        Ok((Self::board_view(super::View::new(self, snapshot)), sequence))
-    }
-
-    fn board_marker(&self) -> Result<u64, Error> {
-        self.retrying(|| {
-            self.read(
-                "RETURN (SELECT VALUE last FROM ONLY counter:board) ?? 0;",
-                json!({}),
-            )
-        })
-    }
-
-    /// Read cached board inputs, refreshing only when a committed board mutation moved the marker.
-    pub fn clock_board(&self) -> Result<super::Board, Error> {
-        self.callback_board().map(|(board, _)| board)
-    }
-
     fn dispatch_one(
         &self,
         handle: &str,
@@ -1162,20 +1124,20 @@ RETURN NONE;");
         let (mut pull_text, mut pull_current) = (String::new(), BTreeSet::new());
         let mut pull_said: Option<pull::Said> = None;
         if due {
-            let root = crate::cli::probes::repo_root(&env.cwd);
-            let landed = |task: &crate::Task| {
-                root.as_ref()
-                    .is_some_and(|root| crate::cli::probes::landed(root, &task.slug))
-            };
+            let root = probes::repo_root(&env.cwd);
+            let root = root.as_deref();
+            let landed = |task: &crate::Task| root.is_some_and(|r| probes::landed(r, &task.slug));
+            let tips = probes::tips(root);
             let holdings = visit
                 .holdings
                 .ok_or_else(|| Error::Db("orchestrator PULL has no holdings observation".into()))?;
+            let observed = pull::Observation { board, holdings };
             let digest = pull::digest_on(
                 self,
-                board,
-                holdings,
+                observed,
                 &idle,
                 Some(&landed),
+                Some(&tips),
                 self.now(),
                 &busy,
             )?;
@@ -1396,49 +1358,49 @@ RETURN NONE;");
             .map(|line| line.key.as_str())
             .collect();
         let accounted = self.retrying(|| self.transact::<Accounted>(
-            "LET $marker = (SELECT VALUE last FROM ONLY counter:board) ?? 0;
+            &format!("LET $marker = {board_marker};
              LET $current = array::len($waiting.filter(|$key| record::exists(type::record('callback_event', [$handle, $key]))
                 AND type::record('callback_event', [$handle, $key]).delivered != true)) = array::len($waiting);
-             IF $current {
-             IF $pull_kept != NONE {
+             IF $current {{
+             IF $pull_kept != NONE {{
                 DELETE callback_event WHERE handle = $handle AND delivered != true AND string::starts_with(key, 'pull-') AND key != $pull_kept RETURN NONE;
                 UPDATE type::record('callback_event', [$handle, $pull_kept]) SET text = $pull_text, pull_entries = $pull_awaiting.entries,
                     pull_withheld = $pull_awaiting.withheld, pull_said = $pull_said WHERE delivered != true RETURN NONE;
-             };
-             IF $replace_pull { DELETE callback_event WHERE handle = $handle AND delivered != true AND string::starts_with(key, 'pull-') RETURN NONE; };
-             FOR $key IN $rescoped.dropped { DELETE type::record('callback_event', [$handle, $key]) WHERE delivered != true RETURN NONE; };
-             FOR $line IN $rescoped.rewritten { UPDATE type::record('callback_event', [$handle, $line[0]]) SET text = $line[1] WHERE delivered != true RETURN NONE; };
-             FOR $new IN $events.filter(|$event| string::starts_with($event.key, 'event-') AND string::starts_with($event.text, 'NEW ')) {
+             }};
+             IF $replace_pull {{ DELETE callback_event WHERE handle = $handle AND delivered != true AND string::starts_with(key, 'pull-') RETURN NONE; }};
+             FOR $key IN $rescoped.dropped {{ DELETE type::record('callback_event', [$handle, $key]) WHERE delivered != true RETURN NONE; }};
+             FOR $line IN $rescoped.rewritten {{ UPDATE type::record('callback_event', [$handle, $line[0]]) SET text = $line[1] WHERE delivered != true RETURN NONE; }};
+             FOR $new IN $events.filter(|$event| string::starts_with($event.key, 'event-') AND string::starts_with($event.text, 'NEW ')) {{
                 LET $prefix = string::concat('NEW ', string::split($new.text, ' ')[1], ' ready — ');
                 DELETE callback_event WHERE handle = $handle AND delivered != true AND string::starts_with(key, 'event-') AND string::starts_with(text, $prefix) RETURN NONE;
-             };
-             FOR $event IN $events {
-                IF !record::exists(type::record('callback_event', [$handle, $event.key])) {
+             }};
+             FOR $event IN $events {{
+                IF !record::exists(type::record('callback_event', [$handle, $event.key])) {{
                     LET $counted = (UPSERT ONLY type::record('counter', ['callback-event', $handle]) SET last = (last ?? 0) + 1);
                     CREATE type::record('callback_event', [$handle, $event.key]) CONTENT $event RETURN NONE;
                     UPDATE type::record('callback_event', [$handle, $event.key]) SET sequence = $counted.last RETURN NONE;
-                };
-             };
-             IF $computed { UPDATE type::record('callback_lease', $handle) SET pull = $pull WHERE revision = $revision RETURN NONE; };
+                }};
+             }};
+             IF $computed {{ UPDATE type::record('callback_lease', $handle) SET pull = $pull WHERE revision = $revision RETURN NONE; }};
              LET $before = (SELECT seen, narrowing, unknown_children, statuses, pull_queued, inbox_cursor, message_cursor, delivery_version, registration_revision, observed_registration FROM ONLY type::record('callback_state', $handle));
              IF $before.seen != $seen OR $before.narrowing != $narrowing OR $before.unknown_children != $unknown_children OR $before.statuses != $statuses
                 OR $before.pull_queued != $pull_queued OR $before.inbox_cursor != $inbox_cursor
                 OR ($before.message_cursor ?? 0) < $message_cursor OR $before.delivery_version = NONE
-                OR ($before.registration_revision ?? 0) != ($before.observed_registration ?? 0) OR $computed {
+                OR ($before.registration_revision ?? 0) != ($before.observed_registration ?? 0) OR $computed {{
              UPDATE type::record('callback_state', $handle) SET seen = $seen, narrowing = $narrowing, unknown_children = $unknown_children, snapshot_sequence = $snapshot_sequence, statuses = $statuses, revision = $revision, pull = $pull, pull_queued = $pull_queued,
                 observed_registration = registration_revision ?? 0,
-                pull_entries = IF $legacy_upgrade { $pull_account.recorded ?? pull_entries ?? [] }
-                    ELSE IF $computed AND pull_entries != NONE {
+                pull_entries = IF $legacy_upgrade {{ $pull_account.recorded ?? pull_entries ?? [] }}
+                    ELSE IF $computed AND pull_entries != NONE {{
                         array::union(pull_entries.filter(|$entry| $entry IN $pull_current AND $entry NOT IN $pull_account.untold), $pull_account.unheard)
-                    } ELSE { pull_entries },
-                pull_withheld = IF $computed { $pull_account.withheld } ELSE { pull_withheld },
-                pull_awaiting = IF $computed { $pull_awaiting } ELSE { pull_awaiting },
+                    }} ELSE {{ pull_entries }},
+                pull_withheld = IF $computed {{ $pull_account.withheld }} ELSE {{ pull_withheld }},
+                pull_awaiting = IF $computed {{ $pull_awaiting }} ELSE {{ pull_awaiting }},
                 message_cursor = math::max([message_cursor ?? 0, $message_cursor]),
                 inbox_cursor = $inbox_cursor,
                 delivery_version = delivery_version ?? 1 RETURN NONE;
-             };
-             };
-             RETURN { current: $current, marker: { before: $marker, after: (SELECT VALUE last FROM ONLY counter:board) ?? 0 } };",
+             }};
+             }};
+             RETURN {{ current: $current, marker: {{ before: $marker, after: {board_marker} }} }};", board_marker = crate::schema::BOARD_MARKER),
             json!({"handle":handle, "waiting":waiting, "events":events, "seen":stored_seen, "narrowing":narrowing, "unknown_children":unknown_children, "snapshot_sequence":sequence, "statuses":statuses, "revision":revision,
                 "pull":if due {self.now()} else {state.pull}, "legacy_upgrade":legacy_upgrade,
                 "pull_queued":account.as_ref().map_or(&state.pull_queued, |a| &a.queued),
@@ -1552,17 +1514,17 @@ RETURN NONE;");
             .rev()
             .find(|event| event.pull_entries.is_some());
         let moved = self.retrying(|| self.transact::<Moved>(
-            "LET $marker = (SELECT VALUE last FROM ONLY counter:board) ?? 0;
-             FOR $key IN $keys {
+            &format!("LET $marker = {board_marker};
+             FOR $key IN $keys {{
                 UPDATE type::record('callback_event', [$handle, $key]) SET attempts += 1, delivered = $success, retry_at = $now + 5,
                     capacity_limited = $capacity OR (capacity_limited ?? false) RETURN NONE;
-             };
-             IF $success {
-                IF $pull != NONE { UPDATE type::record('callback_state', $handle) SET pull_unanswered = array::union(pull_unanswered ?? [], $pull.pull_entries.filter(|$entry| $entry[0] = 'unanswered' AND $entry NOT IN ($pull.pull_withheld ?? []))), pull_entries = $pull.pull_entries, pull_withheld = $pull.pull_withheld ?? [], pull_said = $pull.pull_said, pull_awaiting = NONE, pull_queued = NONE RETURN NONE; };
-                FOR $message IN $messages { UPSERT type::record('delivery', [$message, $handle]) SET message = $message, handle = $handle, acked = $now RETURN NONE; };
-                FOR $key IN $chat { UPDATE type::record('chat_event', $key) SET delivered = true, text = '' RETURN NONE; };
+             }};
+             IF $success {{
+                IF $pull != NONE {{ UPDATE type::record('callback_state', $handle) SET pull_unanswered = array::union(pull_unanswered ?? [], $pull.pull_entries.filter(|$entry| $entry[0] = 'unanswered' AND $entry NOT IN ($pull.pull_withheld ?? []))), pull_entries = $pull.pull_entries, pull_withheld = $pull.pull_withheld ?? [], pull_said = $pull.pull_said, pull_awaiting = NONE, pull_queued = NONE RETURN NONE; }};
+                FOR $message IN $messages {{ UPSERT type::record('delivery', [$message, $handle]) SET message = $message, handle = $handle, acked = $now RETURN NONE; }};
+                FOR $key IN $chat {{ UPDATE type::record('chat_event', $key) SET delivered = true, text = '' RETURN NONE; }};
                 UPDATE callback_event SET text = '' WHERE handle = $handle AND delivered = true AND string::starts_with(key, 'chat-') RETURN NONE;
-             }; RETURN { before: $marker, after: (SELECT VALUE last FROM ONLY counter:board) ?? 0 };",
+             }}; RETURN {{ before: $marker, after: {board_marker} }};", board_marker = crate::schema::BOARD_MARKER),
             json!({"handle":handle, "keys":keys, "messages":messages, "chat":chat_keys, "success":success, "now":self.now(),
                 "capacity":capacity, "pull":pull}),
         ))?;
