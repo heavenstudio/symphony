@@ -337,8 +337,15 @@ pub(crate) fn digest_on(
     let mut found: BTreeMap<&'static str, Vec<Task>> = BTreeMap::new();
     let mut notes = BTreeMap::new();
     let mut executing = 0;
-    let unanswered: Vec<_> = store
-        .pending_posts(tasks)?
+    // A scan the board does not answer leaves this look without unanswered posts and says why on
+    // stderr: the other lists, and every other event of the pass, go out all the same. A post
+    // already told keeps its identity (`pull_unanswered`), so its return is not told again.
+    let pending = store.pending_posts(tasks).unwrap_or_else(|error| {
+        let reason = error.to_string().replace('\n', " ");
+        eprintln!("PULL unanswered scan skipped: {reason}");
+        Vec::new()
+    });
+    let unanswered: Vec<_> = pending
         .into_iter()
         .filter(|p| p.overdue(now) && !busy.contains(p.handle.as_str()))
         .collect();
