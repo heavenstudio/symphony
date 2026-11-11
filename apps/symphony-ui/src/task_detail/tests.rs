@@ -292,6 +292,74 @@ fn each_role_chip_on_a_task_carries_its_holders_control() {
     assert!(!phone.contains(r#"data-go="focus""#), "{phone}");
 }
 
+#[test]
+fn an_agent_counts_the_open_tasks_it_follows_in_words_and_following_none_offers_nothing() {
+    let held = |slug: &str, role: &str, status: &str| symphony_api::HeldTask {
+        slug: slug.into(),
+        role: role.into(),
+        status: status.into(),
+    };
+    let row = |tasks: Vec<symphony_api::HeldTask>| {
+        let mut agent = agent("orchestrator", None);
+        agent.tasks = tasks;
+        dioxus_ssr::render_element(
+            rsx! { AgentRow { agent, tasks: Rc::new(Vec::new()), work: SharedWork::default() } },
+        )
+    };
+    let none = row(vec![
+        held("a/done", "orchestrator", "done"),
+        held("a/worked", "worker", "in_progress"),
+    ]);
+    assert!(!none.contains("Following"), "{none}");
+    let one = row(vec![held("a/one", "orchestrator", "ready")]);
+    assert!(one.contains(">Following 1 open task</summary>"), "{one}");
+    let two = row(vec![
+        held("a/one", "orchestrator", "ready"),
+        held("a/two", "orchestrator", "review"),
+        held("a/old", "orchestrator", "cancelled"),
+    ]);
+    assert!(two.contains(">Following 2 open tasks</summary>"), "{two}");
+}
+
+#[test]
+fn a_thread_is_one_list_whose_items_are_its_messages() {
+    let mut dom = VirtualDom::new(threaded);
+    dom.rebuild_in_place();
+    let html = dioxus_ssr::render(&dom);
+    assert_eq!(html.matches("class=\"history\"").count(), 1, "{html}");
+    let list = html
+        .split_once("<ul class=\"history\">")
+        .and_then(|(_, rest)| rest.split_once("</ul>"))
+        .map(|(list, _)| list)
+        .expect("the thread's list");
+    assert_eq!(list.matches("<li ").count(), 2, "{list}");
+    assert!(
+        list.contains("class=\"entry owner\"") && list.contains("class=\"entry agent\""),
+        "{list}"
+    );
+}
+
+/// A task page whose thread holds the owner's message and an agent's reply.
+fn threaded() -> Element {
+    let entry = |id: i64, sender: &str| -> symphony_api::TaskEntry {
+        serde_json::from_value(serde_json::json!({
+            "message":{"id":id,"slug":"fixture/task","sender":sender,"recipient":null,"kind":"message","text":"Said","ts":1.0},
+            "stamp":"2026-11-11","blocks":[],
+        }))
+        .unwrap()
+    };
+    let page: TaskPage = serde_json::from_value(serde_json::json!({
+        "task":{"slug":"fixture/task","title":"Fixture","body":"","status":"review","priority":1,
+            "parent":null,"created_by":"fixture","created":1.0,"updated":1.0,
+            "links":[],"depends":[],"roles":[],"instruction":false},
+        "blocks":[],"children":[],"children_count":0,
+    }))
+    .unwrap();
+    rsx! {
+        TaskDetail { page, tasks: Vec::new(), entries: vec![entry(1, "owner"), entry(2, "cobalt-otter")], older: false, loaded: true, offer: None, onhistory: |_| {}, onchildren: |_| {}, onoffer: |_| {} }
+    }
+}
+
 fn paragraph(text: &str) -> symphony_api::Block {
     symphony_api::Block::Paragraph {
         spans: vec![symphony_api::Span::Text { text: text.into() }],

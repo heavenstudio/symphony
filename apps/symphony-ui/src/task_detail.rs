@@ -15,14 +15,31 @@ pub(crate) fn LiveTaskPage(
         agents.machine_work = crate::machine_work::connection(agents.machine_work, connected);
         agents
     });
-    // The page's error is drawn in its notice stack (`live::BoardPage`), out of the page's flow.
+    // A link to a part of the agents page (`/agents#machine-context`) names an element that
+    // mounts only once the agents arrive: locate it then, once per route.
+    let mut located = use_signal(String::new);
+    use_effect(move || {
+        let path = route();
+        if !path.starts_with("/task/") && data.read().agents.is_some() && *located.peek() != path {
+            located.set(path);
+            crate::navigation::scroll_anchor();
+        }
+    });
+    // The page's error is drawn in its notice stack (`live::BoardPage`), out of the page's flow;
+    // a page with nothing yet to show says in its body what is missing or failed.
     rsx! {
         if let Some(slug) = route().strip_prefix("/task/") {
             if let Some(page) = data.read().detail.clone().filter(|p| p.task.slug == slug) {
                 TaskDetail { key: "{page.task.slug}", work: crate::machine_work::connection(page.machine_work.clone(), connected), tasks: page.children.clone(), page, entries: data.read().entries.clone(), older: data.read().before.is_some(), loaded: data.read().thread_loaded, offer: data.read().approval.clone(), onhistory: move |older| { spawn(task_live::history(older,route,data)); }, onchildren: move |more| { spawn(task_live::children(more,route,data)); }, onoffer: move |_| { spawn(task_live::offer(route,data)); } }
+            } else if data.read().missing.as_deref() == Some(slug) {
+                crate::trouble::Trouble { title: "No task {slug}", text: "The board has no task by this name: it may have been removed, or the link names it wrongly.", back: Some(("/tasks".to_string(), "All tasks".to_string())), retry: move |_| { spawn(task_live::refresh(route, data)); } }
+            } else if !data.read().error.is_empty() {
+                crate::trouble::Trouble { title: "The task could not be loaded", text: crate::trouble::failed(&data.read().error), retry: move |_| { spawn(task_live::refresh(route, data)); } }
             } else { p { "Loading task…" } }
         } else if let Some(agents) = agents {
             AgentsView { agents, local: data.read().local, tasks: data.read().tasks.clone().unwrap_or_default(), total: data.read().agent_total, more: data.read().has_more_agents(false), lost_more: data.read().has_more_agents(true), onmore: move |lost| { spawn(task_live::more_agents(lost,route,data)); } }
+        } else if !data.read().error.is_empty() {
+            crate::trouble::Trouble { title: "The agents could not be loaded", text: crate::trouble::failed(&data.read().error), retry: move |_| { spawn(task_live::load(route, data)); } }
         } else { p { "Loading agents…" } }
     }
 }
@@ -71,7 +88,8 @@ pub fn TaskDetail(
             div { id: "task-thread",
                 if older { crate::components::button::Button { onclick: move |_| onhistory.call(true), "Load earlier messages" } }
                 if !loaded { crate::components::button::Button { onclick: move |_| onhistory.call(false), "Load messages" } }
-                for entry in entries { Near { key: "{entry.message.id}", id: "message-{entry.message.id}", height: 100, TaskMessage { entry } } }
+                // One timeline: every message is an item of the one list its line runs down.
+                ul { class: "history", for entry in entries { Near { key: "{entry.message.id}", list_item: true, id: "message-{entry.message.id}", height: 100, TaskMessage { entry } } } }
             }
         }
         Near { id: "composer-{task.slug}", height: 200,
@@ -266,7 +284,7 @@ fn TaskMessage(entry: symphony_api::TaskEntry) -> Element {
     } else {
         "agent"
     };
-    rsx! { ul { class: "history", li { class: "entry {who}",
+    rsx! { div { class: "entry {who}",
         time { "{entry.stamp}" } " " span { class: "from", "{message.sender}" if let Some(to) = &message.recipient { " → {to}" } }
         if message.kind == "verdict" { b { "verdict " } }
         // An owner message is literal text, unless it names an upload: the server then sends
@@ -276,7 +294,7 @@ fn TaskMessage(entry: symphony_api::TaskEntry) -> Element {
         } else {
             div { class: "entry-text literal", "{message.text}" }
         }
-    } } }
+    } }
 }
 
 #[component]
@@ -394,8 +412,8 @@ pub fn AgentsView(
     let tasks = Rc::new(tasks);
     let work: SharedWork = std::mem::take(&mut agents.machine_work).into();
     rsx! {
-        h1 { "Agents" } p { class: "lead", "Who is connected, and what they are working on." }
-        p { class: "muted", "{agents.probes.panes} · {agents.probes.slots}" }
+        div { class: "page-head", div { h1 { "Agents" } p { class: "lead", "Who is connected, and what they are working on." } } }
+        p { class: "muted", "Terminal panes: {agents.probes.panes} · Test slots: {agents.probes.slots}" }
         h2 { "Happening now" }
         div { class: "agents-now", for task in tasks.iter().filter(|t| t.has_status(symphony_api::TaskStatus::InProgress) || t.has_status(symphony_api::TaskStatus::Review)) { Near { key: "{task.slug}", id: "now-{task.slug}", height: 120, TaskRow { task: task.clone(), work: work.clone() } } } }
         {crate::machine_work::machines_view(&work, true)}
@@ -486,14 +504,21 @@ fn AgentRow(
         ul { for (task, role) in held.iter().filter(|(t, r)| t.status != "done" && t.status != "cancelled" && r.role != "orchestrator") {
             li { a { href: "/task/{task.slug}", "{task.title}" } " · {role.role} · {task.status.replace('_', \" \")}" }
         } }
-        details { summary { onclick: move |_| { if !following() { load_following(handle.clone(),false,following_rows,following_total,following_cursor,following_trouble); } following.set(!following()); }, "Following {following_count} open tasks" }
+        // An agent following nothing offers nothing to open.
+        if following_count > 0 { details { summary { onclick: move |_| { if !following() { load_following(handle.clone(),false,following_rows,following_total,following_cursor,following_trouble); } following.set(!following()); }, "{following_label(following_count)}" }
             if following() { p { role: "status", "{following_trouble}" } ul { for task in &followed {
                 Near { key: "{task.slug}", list_item: true, id: "following-{agent.handle}-{task.slug}", height: 40, a { href: "/task/{task.slug}", "{task.title}" } " · {task.status.replace('_', \" \")}" }
             } } if followed.len() < following_count { crate::components::button::Button { onclick: move |_| load_following(more_handle.clone(),true,following_rows,following_total,following_cursor,following_trouble), "Load more followed tasks" } } }
-        }
+        } }
         if !finished.is_empty() { p { class: "muted", "Finished: " for (task, _) in finished.iter().take(5) { a { href: "/task/{task.slug}", "{task.title}" } " · " } if finished.len() > 5 { "and {finished.len() - 5} more" } } }
         if let Some(said) = agent.last_message { p { a { href: "/task/{said.slug}", "Latest message" } ": {said.text}" } }
     } }
+}
+
+/// The disclosure of the open tasks an agent orchestrates, counted in words.
+fn following_label(count: usize) -> String {
+    let noun = crate::words::plural(u32::try_from(count).unwrap_or(u32::MAX), "task");
+    format!("Following {count} open {noun}")
 }
 
 fn load_following(
