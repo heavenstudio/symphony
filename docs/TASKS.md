@@ -541,6 +541,14 @@ or so, at a look, so an orchestrator waiting on its board is not called stale fo
 the panes HANDLE oversees, one hc sample a look, as the server's clock does for a channel, so a pane waiting on
 a prompt is said as `BLOCKED` by the second look that sees it; and while HANDLE holds the chat seat (see the
 callback section above) the owner's chat events come with the rest.
+What waiting costs, measured on 2026-11-11: once HANDLE has its callback state and is on the chat seat's waiting
+list (its first look puts it there), a look at a board that stood still is nine reads and no write; a poll between
+looks is one read of the board's marker; a beat is one write. While the board stands still that is about 30
+marker reads, four looks and two beats a minute: some 66 reads and 2 writes. Every write to the board moves the
+marker, a session's heartbeat too, so on a board where other sessions beat a look comes at nearly every poll, up to
+30 a minute (about 300 reads). A look took 7 ms on a small board and 0.8 to 0.9 s as a command of its own on
+the 2.2k-task board of the perf suite (its process's start and connection included, a debug build at load 35 to
+80), and the first look there, which says the whole digest, 18 s.
 
 A legacy native observer starts from the current board on upgrade rather than replaying its history.
 Its upgrade marker and message cursor are separate callback-state fields that older writers leave intact.

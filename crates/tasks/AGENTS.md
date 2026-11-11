@@ -216,7 +216,10 @@ any `callback` registration. While nobody holds the seat, `Store::unheard_owner_
 every orchestrator's `pull` and `inbox` what the owner said, and an inbox acknowledgement takes
 it. The command beats for its session before a look, at
 most every 20 s, as a monitor does, so the look reads the board its beat moved and the next poll
-does not take its own beat for news.
+does not take its own beat for news. A look writes only to set its session up (its state row, the
+waiting list) or to record what it printed: at a board that stood still it is nine reads and no
+write (`pushes::a_waiting_session_looking_at_a_board_that_stood_still_writes_nothing`), and the
+perf suite times one at scale (`timings`, `wait`); docs/TASKS.md says the cost per idle minute.
 A finished idle terminal still closes under the original cleanup rules, retiring its
 registration; an executor of a task in review is not finished, and keeps its terminal until it
 has sat idle at its prompt an hour (`reap::IDLE_HOUR`), as every role on open work does.

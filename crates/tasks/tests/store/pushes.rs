@@ -233,6 +233,57 @@ fn read(f: &Fixture, handle: &str) -> Vec<String> {
     said
 }
 
+/// The requests and, of them, the writes `f`'s board was sent while `act` ran.
+fn sent(f: &Fixture, act: impl FnOnce()) -> (u64, u64) {
+    let log = f.store.client().queries();
+    let counts = || {
+        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH);
+        let (queries, writes) = log.report(now.unwrap().as_secs_f64());
+        (queries.count, writes.count)
+    };
+    let before = counts();
+    act();
+    let after = counts();
+    (after.0 - before.0, after.1 - before.1)
+}
+
+#[test]
+fn a_waiting_session_looking_at_a_board_that_stood_still_writes_nothing() {
+    let f = Fixture::empty();
+    let reader = f.session("orchestrator");
+    for slug in ["tools/one", "tools/two"] {
+        f.task(slug);
+    }
+    // The first look makes its state row and puts it on the waiting list, and reads the digest.
+    let (_, first) = sent(&f, || assert!(!read(&f, &reader).is_empty()));
+    assert!(first > 0, "{first}");
+    // After it, a look while the board stands still only reads, the one after its beat too; and
+    // `wait`'s other requests are one read of the board's marker a poll and one write a beat.
+    let looks = 4;
+    let began = std::time::Instant::now();
+    let (requests, writes) = sent(&f, || {
+        for _ in 0..looks {
+            assert!(read(&f, &reader).is_empty());
+        }
+    });
+    let took = began.elapsed() / looks as u32;
+    eprintln!("a look at a board that stood still: {requests} requests, {took:?} each");
+    assert_eq!(writes, 0, "{requests} requests");
+    assert!(requests <= looks * LOOK_REQUESTS, "{requests} requests");
+    let poll = sent(&f, || {
+        f.store.board_mark().unwrap();
+    });
+    assert_eq!(poll, (1, 0));
+    assert_eq!(sent(&f, || f.store.touch(&reader).unwrap()), (1, 1));
+    let (requests, writes) = sent(&f, || assert!(read(&f, &reader).is_empty()));
+    assert_eq!(writes, 0, "{requests} requests");
+    assert!(requests <= LOOK_REQUESTS, "{requests} requests");
+}
+
+/// The most requests one look of `tasks wait` sends while the board stands still, all reads:
+/// nine, measured on 2026-11-11.
+const LOOK_REQUESTS: u64 = 9;
+
 #[test]
 fn a_session_with_no_channel_reads_what_a_channel_would_carry_once() {
     let f = Fixture::empty();
