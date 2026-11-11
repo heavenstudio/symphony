@@ -576,9 +576,11 @@ fn Editor(
                 "/api/comment"
             };
             match post(&docs::scoped(&scope, route), &fields).await {
-                Ok(_) => {
+                Ok(reply) => {
                     if let Some((section, before)) = release {
-                        docs::release(&mut released.borrow_mut(), section, before);
+                        // A retried tap the server had written already: no new line comes.
+                        let repeat = field(&reply, "repeat").as_bool() == Some(true);
+                        docs::release(&mut released.borrow_mut(), section, before, repeat);
                     }
                     text.set(String::new());
                     attach.clear();

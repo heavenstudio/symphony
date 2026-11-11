@@ -189,8 +189,14 @@ pub fn owner_lines(document: &Document, key: &str) -> usize {
 
 /// The owner's save in the card `key` went through: the card is released until it shows one line of
 /// the owner's more than `before`, the lines its latest copy had when the save was sent, and more
-/// than a release of it still waiting asks for.
-pub fn release(released: &mut BTreeMap<String, usize>, key: String, before: usize) {
+/// than a release of it still waiting asks for. A save the server answered as a `repeat` of one it
+/// had written (a retried tap whose first reply was lost) writes no line, and `before` may already
+/// count the one it did write, so it releases nothing: a release that waited for a line that never
+/// comes would keep the card from holding its place for good.
+pub fn release(released: &mut BTreeMap<String, usize>, key: String, before: usize, repeat: bool) {
+    if repeat {
+        return;
+    }
     let lines = released.get(&key).map_or(before, |&had| before.max(had)) + 1;
     released.insert(key, lines);
 }
@@ -393,7 +399,7 @@ mod tests {
             "another reader's open excerpt holds the card and the order"
         );
 
-        release(&mut released, "card:alpha".into(), before);
+        release(&mut released, "card:alpha".into(), before, false);
         let held = super::held(&engaged, &none, &released, [], &state.latest);
         assert!(held.is_empty(), "{held:?}");
         state.refresh(&held);
@@ -432,7 +438,7 @@ mod tests {
         );
 
         let before = owner_lines(&state.latest, "card:alpha");
-        release(&mut released, "card:alpha".into(), before);
+        release(&mut released, "card:alpha".into(), before, false);
         tick(&mut state, &mut released);
         assert_eq!(shown(&state), [("card:alpha", "a2")]);
         assert_eq!(
@@ -462,7 +468,7 @@ mod tests {
     #[test]
     fn a_release_lasts_until_its_card_shows_the_owners_line_or_is_gone() {
         let mut released = BTreeMap::new();
-        release(&mut released, "card:alpha".into(), 0);
+        release(&mut released, "card:alpha".into(), 0, false);
         settle(&mut released, &document(&BEFORE));
         assert_eq!(released.len(), 1, "the feed has not brought the answer yet");
         settle(&mut released, &thread(document(&BEFORE), "bravo", 1, 0));
@@ -475,12 +481,12 @@ mod tests {
     #[test]
     fn a_second_save_before_the_first_shows_waits_for_both() {
         let mut released = BTreeMap::new();
-        release(&mut released, "card:alpha".into(), 1);
-        release(&mut released, "card:alpha".into(), 1);
+        release(&mut released, "card:alpha".into(), 1, false);
+        release(&mut released, "card:alpha".into(), 1, false);
         assert_eq!(released.get("card:alpha"), Some(&3));
         settle(&mut released, &thread(document(&BEFORE), "alpha", 2, 0));
         assert_eq!(released.len(), 1, "the first answer alone shows");
-        release(&mut released, "card:alpha".into(), 3);
+        release(&mut released, "card:alpha".into(), 3, false);
         assert_eq!(
             released.get("card:alpha"),
             Some(&4),
@@ -488,6 +494,32 @@ mod tests {
         );
         settle(&mut released, &thread(document(&BEFORE), "alpha", 4, 0));
         assert!(released.is_empty());
+    }
+
+    /// A retried tap whose first post landed but whose reply was lost: the server answers it as a
+    /// repeat and writes no line. It releases nothing, and leaves a release still waiting as it was;
+    /// the card shown with the first post's line ends nothing it did not start.
+    #[test]
+    fn a_tap_the_server_answers_as_a_repeat_releases_nothing() {
+        let mut released = BTreeMap::new();
+        release(&mut released, "card:alpha".into(), 2, true);
+        assert!(released.is_empty(), "{released:?}");
+        let held = super::held(
+            &keys(&["card:alpha"]),
+            &BTreeSet::new(),
+            &released,
+            [],
+            &thread(document(&BEFORE), "alpha", 2, 0),
+        );
+        assert_eq!(held, keys(&["card:alpha"]), "an open form still holds it");
+
+        release(&mut released, "card:bravo".into(), 0, false);
+        release(&mut released, "card:bravo".into(), 1, true);
+        assert_eq!(
+            released,
+            BTreeMap::from([("card:bravo".to_string(), 1)]),
+            "a repeat leaves another save's release as it was"
+        );
     }
 
     #[test]
