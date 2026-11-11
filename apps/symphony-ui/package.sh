@@ -74,8 +74,9 @@ if [ "$(jq length <<< "$shared")" -gt 1 ]; then
 fi
 # The shell's hash includes the page module manifest: a new module changes Board.build, while
 # returning to any unchanged kind still uses its immutable browser-cache entries. The manifest
-# keeps its own first line, `const modules = …;`, which readers of a build look for; the rest is
-# minified by the esbuild dx fetched to minify each module's glue (every first visit loads it).
+# keeps its own first line, `const modules = …;`, which readers of a build look for; the rest,
+# the client cache's store (`assets/cache.js`, which every page kind shares) and then the shell,
+# is minified by the esbuild dx fetched to minify each module's glue (every first visit loads it).
 esbuild="$(find "${DX_HOME:?package.sh runs from bundle.sh, which names DX_HOME}/tools" -path '*/esbuild-*/esbuild')"
 if [ -z "$esbuild" ] || [ "$(printf '%s\n' "$esbuild" | wc -l | tr -d ' ')" != 1 ] || [ ! -x "$esbuild" ]; then
     echo "symphony-ui: expected one esbuild under $DX_HOME/tools, found: ${esbuild:-none}" >&2
@@ -87,7 +88,10 @@ if [ "$(grep -cx 'const modules = __MODULES__;' assets/shell.js)" != 1 ]; then
 fi
 {
     printf 'const modules = %s;\n' "$(jq -c . <<< "$manifest")"
-    grep -vx 'const modules = __MODULES__;' assets/shell.js | "$esbuild" --minify --format=esm --log-level=warning
+    {
+        cat assets/cache.js
+        grep -vx 'const modules = __MODULES__;' assets/shell.js
+    } | "$esbuild" --minify --format=esm --log-level=warning
 } > "$stage/shell.js"
 # Eager notice styles are part of this shell's build identity too.
 printf '\n// Notice styles: %s\n' "$(shasum -a 256 ../symphony-server/src/notices.css | cut -c1-16)" >> "$stage/shell.js"
