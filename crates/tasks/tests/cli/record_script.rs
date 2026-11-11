@@ -4,6 +4,10 @@
 //! answers (a hung one included) leaves Cargo exec'd as it is. A worktree records with its main
 //! checkout's prepared recorder, never with a containing project's. The justfile's recipes record
 //! through the script, and run as they are in a tree without it.
+//!
+//! What must not be recorded is told by a recorder that logs each run of its own ([`logging`]): a
+//! command is recorded only by a recorder run before it, so a log read once the command ended says
+//! all there is, where a work folder is written by a recorder that may still be on its way.
 
 use crate::recorder::kept;
 use crate::{git, scratch};
@@ -47,14 +51,16 @@ fn workspace(root: &Path) -> PathBuf {
     root.canonicalize().unwrap()
 }
 
-/// A scratch folder with a work folder of its own, and the workspace whose name has spaces and
-/// the Cargo stand-in the tests share, which none changes: the first run of a file just made
-/// executable can wait seconds on the system's scan of it, so each is made once.
+/// A scratch folder with a work folder and a recorder log of its own, and the workspace whose name
+/// has spaces and the Cargo stand-in the tests share, which none changes: the first run of a file
+/// just made executable can wait seconds on the system's scan of it, so each is made once.
+#[derive(Clone)]
 struct Setup {
     dir: PathBuf,
     root: PathBuf,
     cargo: PathBuf,
     work: PathBuf,
+    log: PathBuf,
 }
 
 impl Setup {
@@ -70,10 +76,28 @@ impl Setup {
         let dir = scratch(name);
         Setup {
             work: dir.join("work"),
+            log: dir.join("recorder log"),
             dir,
             root: root.clone(),
             cargo: cargo.clone(),
         }
+    }
+
+    /// The same, in a workspace of its own whose prepared recorder (`.target/bin/tasks`) is
+    /// [`logging`].
+    fn prepared(&self) -> Setup {
+        let root = workspace(&self.dir.join("prepared"));
+        fs::create_dir_all(root.join(".target/bin")).unwrap();
+        std::os::unix::fs::symlink(logging(), root.join(".target/bin/tasks")).unwrap();
+        Setup {
+            root,
+            ..self.clone()
+        }
+    }
+
+    /// The runs of [`logging`] for this setup so far, a line each.
+    fn logged(&self) -> String {
+        fs::read_to_string(&self.log).unwrap_or_default()
     }
 
     /// `script ARGS` in the workspace, recording with `recorder` (TASKS_RECORDER unset for none)
@@ -88,6 +112,7 @@ impl Setup {
             .env("RUST_TEST_THREADS", "3")
             .env("CARGO_TARGET_DIR", "relative-target")
             .env("TASKS_WORK", &self.work)
+            .env(LOG_VAR, &self.log)
             .env("SYMPHONY_MACHINE_DIR", self.dir.join("machine"))
             .env_remove("TASKS_SESSION")
             .env_remove("TASKS_TASK")
@@ -138,6 +163,8 @@ impl Setup {
 }
 
 const RECORDER: &str = env!("CARGO_BIN_EXE_tasks");
+/// The file [`logging`] logs its runs in.
+const LOG_VAR: &str = "RECORDER_LOG";
 
 /// The recorder run once, before any script probes it: the first run of a binary just built can wait
 /// seconds on the system's scan of it, longer than a probe waits for its answer.
@@ -147,6 +174,30 @@ fn warmed() {
         let probe = output(Command::new(RECORDER).args(["run", "--probe"])).unwrap();
         assert_eq!(probe.stdout, b"run 1\n", "{probe:?}");
     });
+}
+
+/// The tests' recorder, named `tasks`, that writes each of its runs, its arguments on a line, to
+/// the file [`LOG_VAR`] names, when one is named, then is [`RECORDER`]: made once, and run once.
+fn logging() -> &'static Path {
+    static LOGGING: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+    LOGGING.get_or_init(|| {
+        warmed();
+        let path = scratch("record-script-logging").join("bin/tasks");
+        executable(
+            &path,
+            &format!(
+                "#!/bin/sh\nif [ -n \"${{{LOG_VAR}:-}}\" ]; then printf '%s\\n' \"$*\" >> \"${LOG_VAR}\"; fi\nexec '{RECORDER}' \"$@\"\n"
+            ),
+        );
+        let probe = output(
+            Command::new(&path)
+                .args(["run", "--probe"])
+                .env_remove(LOG_VAR),
+        )
+        .unwrap();
+        assert_eq!(probe.stdout, b"run 1\n", "{probe:?}");
+        path
+    })
 }
 
 /// `done` is Cargo's own: its status 7, what it printed, its diagnostic.
@@ -198,35 +249,63 @@ fn a_cargo_test_or_build_is_recorded_with_its_arguments_streams_status_and_limit
 fn what_is_neither_a_build_nor_a_test_or_runs_inside_a_recorded_one_or_finds_no_recorder_is_cargo_as_it_is()
  {
     let setup = Setup::new("record-script-plain");
+    let logging = logging();
+    // Neither a build nor a test: the recorder named is not even asked.
+    for args in [
+        vec!["fmt", "--check"],
+        vec!["symphony-ui", "dev", "0"],
+        vec!["metadata"],
+    ] {
+        cargo_said(&setup, setup.cargo(&args, logging.to_str()), &args);
+        assert_eq!(setup.logged(), "", "{args:?} ran its recorder");
+    }
+    // No recorder named, none prepared here, and the workspace is in no repository: a `tasks` on
+    // the path is not its recorder.
+    let path = format!(
+        "{}:{}",
+        logging.parent().unwrap().display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+    let unprepared = setup.run(setup.command("cargo.sh", &["test"], None).env("PATH", path));
+    cargo_said(&setup, unprepared, &["test"]);
+    assert_eq!(setup.logged(), "", "a recorder on the path ran");
+    // A workspace whose prepared recorder is the logging one: TASKS_RECORDER=off, a recorder named
+    // that is missing or older than the command, or a run inside a recorded one, leaves it unrun.
+    let prepared = setup.prepared();
     let missing = setup.dir.join("no recorder here");
     let older = setup.dir.join("older tasks");
     executable(
         &older,
         "#!/bin/sh\nprintf 'usage: unknown command run\\n' >&2\nexit 2\n",
     );
-    for (args, recorder) in [
-        (vec!["fmt", "--check"], Some(RECORDER)),
-        (vec!["symphony-ui", "dev", "0"], Some(RECORDER)),
-        (vec!["metadata"], Some(RECORDER)),
-        (vec!["test"], Some("off")),
-        (vec!["test"], Some(missing.to_str().unwrap())),
-        (vec!["test"], Some(older.to_str().unwrap())),
-        // No recorder named, none prepared here, and the workspace is in no repository.
-        (vec!["test"], None),
-    ] {
-        cargo_said(&setup, setup.cargo(&args, recorder), &args);
-        assert!(
-            !setup.work.exists(),
-            "{args:?} with {recorder:?} was recorded"
+    for recorder in ["off", missing.to_str().unwrap(), older.to_str().unwrap()] {
+        cargo_said(
+            &prepared,
+            prepared.cargo(&["test"], Some(recorder)),
+            &["test"],
         );
+        assert_eq!(prepared.logged(), "", "{recorder} left its recorder to run");
     }
-    let inside = setup.run(
-        setup
-            .command("cargo.sh", &["test"], Some(RECORDER))
+    let inside = prepared.run(
+        prepared
+            .command("cargo.sh", &["test"], None)
             .env(recorded::PARENT_VAR, "f".repeat(32)),
     );
-    cargo_said(&setup, inside, &["test"]);
-    assert!(!setup.work.exists(), "a step was recorded again");
+    cargo_said(&prepared, inside, &["test"]);
+    assert_eq!(prepared.logged(), "", "a step was recorded again");
+    assert!(!setup.work.exists(), "something was recorded");
+    // The same workspace's test, run as it is, is recorded by that recorder.
+    cargo_said(&prepared, prepared.cargo(&["test"], None), &["test"]);
+    let logged = prepared.logged();
+    let runs: Vec<&str> = logged.lines().collect();
+    assert_eq!(runs.len(), 2, "{logged}");
+    assert_eq!(runs[0], "run --probe");
+    assert!(
+        runs[1].starts_with("run --phase test --label cargo test -- "),
+        "{logged}"
+    );
+    let [test] = prepared.history(1).try_into().unwrap();
+    assert_eq!(Path::new(&test.checkout), prepared.root);
     let interrupted = output(
         setup
             .command("cargo.sh", &["test"], Some("off"))
@@ -244,7 +323,9 @@ fn a_recorder_whose_probe_hangs_leaves_cargo_to_run_as_it_is() {
     let ended = setup.dir.join("probe ended");
     executable(
         &hung,
-        "#!/bin/sh\nwhile [ ! -e \"$RELEASE\" ]; do sleep 0.05; done\n: > \"$ENDED\"\n",
+        &format!(
+            "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"${LOG_VAR}\"\nwhile [ ! -e \"$RELEASE\" ]; do sleep 0.05; done\n: > \"$ENDED\"\n"
+        ),
     );
     let done = setup.run(
         setup
@@ -255,7 +336,6 @@ fn a_recorder_whose_probe_hangs_leaves_cargo_to_run_as_it_is() {
     // Cargo ran and ended while the probe still hung.
     cargo_said(&setup, done, &["test"]);
     assert!(!ended.exists(), "cargo waited for the probe to end");
-    assert!(!setup.work.exists(), "it was recorded");
     fs::write(&release, "").unwrap();
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
     while !ended.exists() {
@@ -265,6 +345,8 @@ fn a_recorder_whose_probe_hangs_leaves_cargo_to_run_as_it_is() {
         );
         std::thread::sleep(std::time::Duration::from_millis(20));
     }
+    // It was asked, and never asked to record: its one run was the probe.
+    assert_eq!(setup.logged(), "run --probe\n");
 }
 
 #[test]
@@ -295,7 +377,7 @@ fn a_command_line_record_cannot_read_is_refused_and_one_it_can_keeps_its_own_lab
 
 #[test]
 fn a_worktree_records_with_its_main_checkouts_recorder_and_a_nested_workspace_with_none() {
-    warmed();
+    let logging = logging();
     let dir = scratch("record-script-worktree");
     let main = workspace(&dir.join("main"));
     git(&main, &["init", "-q", "-b", "main"]);
@@ -307,16 +389,18 @@ fn a_worktree_records_with_its_main_checkouts_recorder_and_a_nested_workspace_wi
         &["worktree", "add", "-q", worktree.to_str().unwrap()],
     );
     fs::create_dir_all(main.join(".target/bin")).unwrap();
-    std::os::unix::fs::symlink(RECORDER, main.join(".target/bin/tasks")).unwrap();
+    std::os::unix::fs::symlink(logging, main.join(".target/bin/tasks")).unwrap();
     let cargo = dir.join("cargo stand-in");
     executable(&cargo, "#!/bin/sh\nexit 0\n");
     let work = dir.join("work");
+    let log = dir.join("recorder log");
     let run = |root: &Path| {
         let done = output(
             Command::new(root.join("tools/cargo.sh"))
                 .arg("build")
                 .env("CARGO", &cargo)
                 .env("TASKS_WORK", &work)
+                .env(LOG_VAR, &log)
                 .env_remove("TASKS_SESSION")
                 .env_remove("TASKS_TASK")
                 .env_remove("TASKS_SERVER")
@@ -335,9 +419,23 @@ fn a_worktree_records_with_its_main_checkouts_recorder_and_a_nested_workspace_wi
     assert_eq!(recorded.branch.as_deref(), Some("worktree"));
     run(&main);
     kept(&work, 2);
-    // A workspace inside another project's repository is not that project's worktree.
+    // Each was probed, then recorded.
+    let recorded_runs = |log: &str| {
+        log.lines()
+            .filter(|run| run.starts_with("run --phase build --label cargo build -- "))
+            .count()
+    };
+    let before = fs::read_to_string(&log).unwrap();
+    assert_eq!(
+        (before.lines().count(), recorded_runs(&before)),
+        (4, 2),
+        "{before}"
+    );
+    // A workspace inside another project's repository is not that project's worktree: the
+    // project's recorder is not run for it.
     let nested = workspace(&main.join("vendored"));
     run(&nested);
+    assert_eq!(fs::read_to_string(&log).unwrap(), before);
     assert_eq!(recorded::history(&work).unwrap().len(), 2);
 }
 
@@ -357,7 +455,8 @@ fn a_recipe_records_through_the_script_and_runs_as_it_is_in_a_tree_without_it() 
             .args(["test-rs", "one argument"])
             .current_dir(&tree)
             .env("TASKS_WORK", &setup.work)
-            .env("TASKS_RECORDER", RECORDER)
+            .env("TASKS_RECORDER", logging())
+            .env(LOG_VAR, &setup.log)
             .env_remove("TASKS_SESSION")
             .env_remove("TASKS_TASK")
             .env_remove("TASKS_SERVER")
@@ -372,11 +471,19 @@ fn a_recipe_records_through_the_script_and_runs_as_it_is_in_a_tree_without_it() 
             "arg=<test>\narg=<--locked>\narg=<one argument>\n"
         );
     };
-    // No tools/record.sh here: the recipe runs as it is.
+    // No tools/record.sh here: the recipe runs as it is, its recorder never asked.
     recipe(None);
-    assert!(!setup.work.exists(), "a tree without the script recorded");
+    assert_eq!(setup.logged(), "", "a tree without the script recorded");
     fs::copy(tool("record.sh"), tree.join("tools/record.sh")).unwrap();
     recipe(Some("tools/recipe"));
+    let logged = setup.logged();
+    let runs: Vec<&str> = logged.lines().collect();
+    assert_eq!(runs.len(), 2, "{logged}");
+    assert_eq!(runs[0], "run --probe");
+    assert!(
+        runs[1].starts_with("run --phase test --label just test-rs one argument -- "),
+        "{logged}"
+    );
     let [test] = setup.history(1).try_into().unwrap();
     assert_eq!(
         (test.label.as_str(), test.phase, test.task.as_deref()),
