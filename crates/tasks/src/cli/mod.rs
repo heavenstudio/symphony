@@ -376,12 +376,18 @@ fn reach_board(env: &Env, cwd: &Path, start: bool, unmoved: bool) -> Result<Reac
     }
     let project = crate::project::find(cwd, machine(env).as_deref())?;
     let common = &project.place.common;
-    if unmoved && let Some(why) = not_here(common) {
+    if unmoved && let Some(why) = not_here(common, &project.guide()) {
         return Err(why);
     }
     let home = Home::in_common(common, env.var("SF_SURREAL").map(Path::new));
     let running = if start {
-        home.ensure().map_err(|e| e.to_string())?
+        home.ensure().map_err(|error| match error {
+            // Where the board's server comes from is the project's board guide's to say.
+            crate::server::ServerError::NoSurreal(_) => {
+                format!("{error} ({}#where-it-lives)", project.guide())
+            }
+            error => error.to_string(),
+        })?
     } else {
         home.recorded()
             .ok_or_else(|| format!("no server of the board in {}", home.dir().display()))?
@@ -393,9 +399,10 @@ fn reach_board(env: &Env, cwd: &Path, start: bool, unmoved: bool) -> Result<Reac
 }
 
 /// Why the board in `common` is not served here: the SQLite board there has not moved yet, or a move
-/// froze it and has not finished (it runs, or was cut short).
-fn not_here(common: &Path) -> Option<String> {
-    // `<board>.moved` is what `just tasks-cutover` writes beside it once its copy into SurrealDB is
+/// froze it and has not finished (it runs, or was cut short). Each names the project's board
+/// `guide`.
+fn not_here(common: &Path, guide: &str) -> Option<String> {
+    // `<board>.moved` is what `tasks-cutover` writes beside it once its copy into SurrealDB is
     // checked ([`crate::cutover`]), and it stays.
     let name = crate::cutover::board_name(common)?;
     let board = common.join(&name);
@@ -403,9 +410,15 @@ fn not_here(common: &Path) -> Option<String> {
         return None;
     }
     Some(if crate::cutover::frozen(&board) {
-        "the task board is frozen by a move to SurrealDB that has not finished: unless one is running, run `just tasks-cutover` again (docs/workflow/TASKS.md#the-move-to-surrealdb)".into()
+        format!(
+            "the task board is frozen by a move to SurrealDB that has not finished: unless one is \
+             running, run `tasks-cutover` again ({guide})"
+        )
     } else {
-        "the task board has not moved to SurrealDB yet: the lander runs `just tasks-cutover` once, right after landing (docs/workflow/TASKS.md#the-move-to-surrealdb)".into()
+        format!(
+            "the task board has not moved to SurrealDB yet: the lander runs `tasks-cutover` once, \
+             right after landing ({guide})"
+        )
     })
 }
 
