@@ -1658,7 +1658,8 @@ fn a_deadline_ends_every_wait_soon_after_it_with_an_error_that_says_so() {
     const NEVER: &str = "new Promise(() => {})";
     let silent = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let held = format!("http://{}/", silent.local_addr().unwrap());
-    let waits: [(&str, fn(&mut Chrome, &str) -> crate::Result<()>); 3] = [
+    type Wait = fn(&mut Chrome, &str) -> crate::Result<()>;
+    let waits: [(&str, Wait); 3] = [
         ("an evaluation", |chrome, _| chrome.eval(NEVER).map(drop)),
         ("a protocol call", |chrome, _| {
             chrome
