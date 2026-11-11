@@ -21,7 +21,27 @@
 //! filed, whatever its status short of review, is `red_unstaffed`, named first and nowhere else, a
 //! cancelled dependency of its in its note, and counted in the header only then, as
 //! `dependency_blocked` is. The monitor delivers it only for newly actionable entries.
+//!
+//! While the pipeline alarm stands ([`crate::alarm`]: review holding more than twice the work in
+//! progress for 4 hours, by default), the header ends `review_alarm=REVIEW/IN_PROGRESS`, and the
+//! lines after it say since when and name the [`ALARM_SHOWN`] tasks longest in review, each with
+//! what its landing waits on where the landing tool records it ([`crate::alarm::Waits`]), every
+//! orchestrator hearing the whole board's; its raising is an entry of its own, so it is delivered:
+//!
+//! ```text
+//! PULL 14:05 executing=4 ready_unstaffed=2 in_progress_orphaned=0 review_unreviewed=0 landed_open=0 idle=0 review_alarm=10/4
+//!   review_alarm: review 10, in progress 4, more than 2× since 09:40
+//!   review_alarm p1 tools/x — X   (in review since 11-07 21:12; missing certificate, review)
+//! ```
+//!
+//! A task in review whose record says a reviewer asked changes of the branch's tip now is rework:
+//! the digest and the alarm count it in progress, its live executor as executing, and one nobody
+//! executes as orphaned ([`REWORK_NOTE`]).
 
+mod pipeline;
+pub use pipeline::digest;
+
+use crate::alarm::{Alarm, Thresholds, Tips};
 use crate::health::EXECUTING;
 use crate::orchestration::{Owners, claimable_work};
 use crate::red::UNSTAFFED_SECONDS;
@@ -29,10 +49,18 @@ use crate::slots::Ledger;
 use crate::store::unanswered::Pending;
 use crate::sys::local_minute;
 use crate::{Board, Error, Session, Store, Task};
+use pipeline::{Fixes, Judged, review_alarm, waiting};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 /// How many of a category are listed.
 pub const SHOWN: usize = 6;
+/// The pipeline alarm's name: its header count, its lines and its entry.
+pub const ALARM: &str = "review_alarm";
+/// How many of the tasks longest in review the alarm names.
+pub const ALARM_SHOWN: usize = 5;
+/// The note on a task in review whose tip a reviewer asked changes of, counted as in progress
+/// ([`crate::alarm::CHANGES`]), when nobody executes it.
+pub const REWORK_NOTE: &str = "in review; changes asked of its tip";
 /// The categories, in the order they are listed; `idle` holds handles, the others tasks.
 pub const CATEGORIES: [&str; 8] = [
     "red_unstaffed",
@@ -65,11 +93,70 @@ pub struct Digest {
     pub cap: Option<usize>,
     /// The open slots the orchestrator the digest is for holds, under a cap ([`Digest::only_for`]).
     pub slots: Option<usize>,
+    /// The pipeline alarm, while it stands: the whole board's, whoever the digest is for.
+    pub alarm: Option<ReviewAlarm>,
+}
+
+/// The pipeline alarm as the digest says it ([`crate::alarm`]).
+#[derive(Debug, Clone)]
+pub struct ReviewAlarm {
+    pub alarm: Alarm,
+    pub thresholds: Thresholds,
+    /// The work longest in review, longest first.
+    pub longest: Vec<InReview>,
+}
+
+/// A task the alarm names among the longest in review.
+#[derive(Debug, Clone)]
+pub struct InReview {
+    pub task: Task,
+    /// When it went in.
+    pub since: f64,
+    /// What its landing waits on, where that is recorded ([`crate::alarm::Waits`]).
+    pub note: Option<String>,
+}
+
+impl ReviewAlarm {
+    /// The line after the header: the counts and since when review has held more than the ratio
+    /// allows, or, in the hour that clears it, no more.
+    fn line(&self, now: f64) -> String {
+        let Alarm {
+            counts,
+            over,
+            since,
+            ..
+        } = self.alarm;
+        let ratio = self.thresholds.ratio;
+        let said = if over {
+            format!("more than {ratio}× since {}", when(since, now))
+        } else {
+            format!(
+                "at most {ratio}× since {}; it clears after {} h of that",
+                when(since, now),
+                self.thresholds.clear_hours
+            )
+        };
+        format!(
+            "  {ALARM}: review {}, in progress {}, {said}",
+            counts.review, counts.in_progress
+        )
+    }
+}
+
+/// A time on a digest line: its minute, and its day too when it is not `now`'s.
+fn when(at: f64, now: f64) -> String {
+    let (at, now) = (local_minute(at), local_minute(now));
+    if at[..10] == now[..10] {
+        at[11..].to_string()
+    } else {
+        at[5..].to_string()
+    }
 }
 
 impl Digest {
     /// Actionable identities, independent of clocks, counts or titles.
     pub fn entries(&self) -> BTreeSet<(String, String)> {
+        let alarm = (self.alarm.iter()).map(|_| (ALARM.to_string(), "review".to_string()));
         CATEGORIES
             .iter()
             .flat_map(|name| {
@@ -84,6 +171,7 @@ impl Digest {
                     .into_iter()
                     .map(move |entry| (name.to_string(), entry))
             })
+            .chain(alarm)
             .collect()
     }
     /// Stable event content, independent of when the board was observed.
@@ -185,11 +273,28 @@ impl Digest {
         if let (Some(held), Some(cap)) = (self.slots, self.cap) {
             counts.push(format!("slots={held}/{cap}"));
         }
+        if let Some(raised) = &self.alarm {
+            let now = raised.alarm.counts;
+            counts.push(format!("{ALARM}={}/{}", now.review, now.in_progress));
+        }
         let mut out = vec![format!(
             "PULL {} {}",
             &local_minute(self.now)[11..],
             counts.join(" ")
         )];
+        if let Some(raised) = &self.alarm {
+            out.push(raised.line(self.now));
+            for InReview { task, since, note } in &raised.longest {
+                let note = note.as_ref().map(|n| format!("; {n}")).unwrap_or_default();
+                out.push(format!(
+                    "  {ALARM} p{} {} — {}   (in review since {}{note})",
+                    task.priority,
+                    task.slug,
+                    task.title,
+                    when(*since, self.now)
+                ));
+            }
+        }
         if !self.liveness_unknown.is_empty() {
             out.push(format!("  liveness unknown: native presence sweep overdue or failed; work remains held: {}", self.liveness_unknown.join(", ")));
         }
@@ -222,18 +327,30 @@ impl Digest {
 
 /// Look at the board. `idle`: handles the agents API reports idle; `landed(task)`: whether the task's
 /// branch is already on main (a git question the caller answers; None skips it, and a `landed <slug>
-/// on main` line on the task's own thread says it too); `verifying`: handles the agents API reports
+/// on main` line on the task's own thread says it too); `tips(task, record)`: its branch's tip now,
+/// or the first commit it moved to from the commit a record judged after the record was written
+/// ([`Tips`], another; None takes what a task's landing waits on as judged on its tip,
+/// [`crate::alarm::Waits`]); `verifying`: handles the agents API reports
 /// running a test, who are present however quiet the board says they are.
-pub fn digest(
+///
+/// A task in review whose tip stands judged to need changes ([`crate::alarm::CHANGES`]) that its
+/// branch has not answered since the record (moved past that tip, though it came back) is work in
+/// progress: listed and counted as one, its executor at work, here and in the alarm alike.
+pub fn digest_with_tips(
     store: &Store,
     idle: &[String],
     landed: Option<&dyn Fn(&Task) -> bool>,
+    tips: Option<Tips<'_>>,
     now: f64,
     verifying: &[String],
 ) -> Result<Digest, Error> {
     let busy: HashSet<&str> = verifying.iter().map(String::as_str).collect();
     let posted = store.landings_posted()?;
     let tasks = store.tasks(None)?;
+    // What ended each record of changes, read once for the work's classification now and the alarm.
+    let fixes = Fixes::new(store, tips, now);
+    let waits = waiting(&tasks, &fixes, now);
+    let reworking = |t: &Task| waits.get(t.slug.as_str()).is_some_and(Judged::reworking);
     let liveness_unknown = tasks
         .iter()
         .flat_map(|t| {
@@ -333,7 +450,12 @@ pub fn digest(
             notes.insert(t.slug.clone(), blocked.clone());
             continue;
         }
-        match t.status.as_str() {
+        let status = if reworking(t) {
+            "in_progress"
+        } else {
+            t.status.as_str()
+        };
+        match status {
             "ready" if !red => {
                 let free = t
                     .depends
@@ -353,6 +475,9 @@ pub fn digest(
                         .entry("in_progress_orphaned")
                         .or_default()
                         .push(t.clone());
+                    if reworking(t) {
+                        notes.insert(t.slug.clone(), REWORK_NOTE.into());
+                    }
                 }
             }
             "review"
@@ -387,6 +512,7 @@ pub fn digest(
         unanswered,
         cap: store.slots(),
         slots: None,
+        alarm: review_alarm(store, &tasks, &waits, &fixes, &store.alarm(), now)?,
     })
 }
 

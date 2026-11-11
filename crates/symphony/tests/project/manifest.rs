@@ -16,11 +16,11 @@ fn folder(tree: &Tree, name: &str) -> std::path::PathBuf {
     root
 }
 
-fn parsed(text: &str) -> Result<Project, String> {
+pub(super) fn parsed(text: &str) -> Result<Project, String> {
     Project::parse(Path::new("/projects/Night Shift"), text)
 }
 
-fn refused(text: &str) -> String {
+pub(super) fn refused(text: &str) -> String {
     parsed(text).expect_err(text)
 }
 
@@ -58,44 +58,6 @@ fn no_file_and_an_empty_file_are_the_plain_project_of_every_default() {
             .unwrap(),
         parsed("").unwrap()
     );
-}
-
-#[test]
-fn the_board_table_names_its_guide_and_what_a_review_starts() {
-    let project = parsed(
-        "[board]\nguide = \"docs/TASKS.md\"\non_review = [\"tools/rs-bin.sh\", \"sf-land\", \"review\"]\n",
-    )
-    .unwrap();
-    assert_eq!(project.board.guide(), "docs/TASKS.md");
-    assert_eq!(
-        project.board.on_review,
-        ["tools/rs-bin.sh", "sf-land", "review"]
-    );
-    let plain = parsed("").unwrap();
-    assert_eq!(plain.board.guide(), symphony::project::Board::GUIDE);
-    assert!(plain.board.on_review.is_empty());
-}
-
-#[test]
-fn the_board_table_names_the_open_tasks_an_orchestrator_may_hold_and_none_caps_nothing() {
-    assert_eq!(
-        parsed("[board]\norchestrator_slots = 8\n")
-            .unwrap()
-            .board
-            .orchestrator_slots,
-        Some(8)
-    );
-    assert_eq!(parsed("").unwrap().board.orchestrator_slots, None);
-    assert!(
-        refused("[board]\norchestrator_slots = 0\n")
-            .contains("orchestrator_slots is 0; an orchestrator needs at least one slot")
-    );
-    for text in [
-        "[board]\norchestrator_slots = -1\n",
-        "[board]\norchestrator_slots = \"8\"\n",
-    ] {
-        assert!(refused(text).contains("orchestrator_slots"), "{text}");
-    }
 }
 
 #[test]

@@ -10,6 +10,9 @@ use serde_json::json;
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fmt::Write as _;
 
+/// What starts the line a task leaving such a block writes, the status it goes back to after it.
+pub(crate) const UNBLOCK_LINE: &str = "unblocked: no cancelled dependency left; back to ";
+
 /// Every task's status, every dependency, the count of changes to them, and the task's own version,
 /// thread and executor, as `change_depends` decides on them.
 const READ: &str = "RETURN {
@@ -231,7 +234,7 @@ impl Store {
                     "add": add, "drop": remove, "said": said,
                     "status": back.map(|(to, _)| to),
                     "back": back.map(|(to, why)| {
-                        format!("unblocked: no cancelled dependency left; back to {to}{why}")
+                        format!("{UNBLOCK_LINE}{to}{why}")
                     }),
                     "slots": slots,
                 }),

@@ -6,6 +6,7 @@ use super::{
     ACT, Change, Error, Failure, Opens, REFUSED, Say, Store, Task, Which, acting, left_actor,
     logged, refused, repr, unknown_actor,
 };
+use crate::alarm::{NOTHING, UNDER, WAS};
 use crate::health::Health;
 use crate::slots::OPEN;
 use serde::Deserialize;
@@ -241,7 +242,7 @@ fn ancestors_in(tree: &Tree, slug: &str) -> Result<Vec<String>, Error> {
 }
 
 /// What starts the line a cancelled prerequisite's block puts on its dependent's thread.
-pub(super) const BLOCK_LINE: &str = "blocked: cancelled dependencies: ";
+pub(crate) const BLOCK_LINE: &str = "blocked: cancelled dependencies: ";
 
 /// Cancellation does not satisfy a prerequisite. Block its unfinished dependents, or the task
 /// being created/moved if one of its prerequisites was cancelled earlier, in the same transaction.
@@ -320,7 +321,6 @@ LET $said = $actor + ' changed priority p' + <string>$task.priority + ' → p' +
             "{act}{MOVE_UNDER}\n{}",
             logged("$slug", "$actor", "'system'", "$said", "NONE")
         );
-        let said = format!("{by} put it under {}", parent.unwrap_or("nothing"));
         self.retrying(|| {
             let read: Read = self.transact(TREE_READ, json!({"actor": by}))?;
             if by != OWNER {
@@ -332,9 +332,9 @@ LET $said = $actor + ' changed priority p' + <string>$task.priority + ' → p' +
                 }
             }
             let tree: Tree = read.tree.into_iter().collect();
-            if !tree.contains_key(slug) {
-                return Err(Failure::Stop(no_task(slug)));
-            }
+            let Some(was) = tree.get(slug) else { return Err(Failure::Stop(no_task(slug))) };
+            let (to, was) = (parent.unwrap_or(NOTHING), was.as_deref().unwrap_or(NOTHING));
+            let said = format!("{by}{UNDER}{to}{WAS}{was})"); // the alarm reads both (alarm::moved)
             if let Some(parent) = parent {
                 let above = ancestors_in(&tree, parent).map_err(Failure::Stop)?;
                 if parent == slug || above.iter().any(|a| a == slug) {

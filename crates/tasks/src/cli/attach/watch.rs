@@ -3,7 +3,7 @@
 
 use super::{PaneWatch, Seen, diff, overseen, pane_watch, pull_changed, seen};
 use crate::cli::agents::{Probes, View, describe};
-use crate::cli::pull::{Digest, digest};
+use crate::cli::pull::{Digest, digest_with_tips};
 use crate::cli::text::event;
 use crate::health::Health;
 use crate::{Error, Store, Task};
@@ -25,6 +25,9 @@ pub struct Watch<'a> {
     pub probes: Option<&'a Probes<'a>>,
     /// Whether a task's branch is on main.
     pub landed: Option<&'a dyn Fn(&Task) -> bool>,
+    /// The tip of a task's branch, which the pipeline alarm judges a landing's record of what the
+    /// task waits for against; with none, the record is taken as it stands.
+    pub tips: Option<crate::alarm::Tips<'a>>,
     /// Seconds between computing PULL inputs; only new actionable entries emit a digest.
     pub pull_every: Option<f64>,
 }
@@ -139,7 +142,8 @@ fn look(
         }
     }
     if let Some((stamp, statuses)) = pull {
-        let digest = pull_digest(store, view.as_ref(), w.landed, stamp)?.only_for(&board, handle);
+        let digest =
+            pull_digest(store, view.as_ref(), w.landed, w.tips, stamp)?.only_for(&board, handle);
         super::pull_updates::emit_new(&digest, &mut memory.pull_entries, emit);
         memory.last_pull = Some(stamp);
         memory.last_statuses = statuses;
@@ -173,6 +177,7 @@ fn pull_digest(
     store: &Store,
     view: Option<&View>,
     landed: Option<&dyn Fn(&Task) -> bool>,
+    tips: Option<crate::alarm::Tips<'_>>,
     now: f64,
 ) -> Result<Digest, Error> {
     let (mut idle, mut busy) = (Vec::new(), Vec::new());
@@ -183,5 +188,5 @@ fn pull_digest(
             busy.push(a.handle.clone());
         }
     }
-    digest(store, &idle, landed, now, &busy)
+    digest_with_tips(store, &idle, landed, tips, now, &busy)
 }

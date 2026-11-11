@@ -13,7 +13,7 @@ use super::pull_account::{Account, PullPlan};
 use super::queued_lines::{Hearing, Queued, Rescoped};
 use super::{ACT, Error, Store, acting, logged, refused};
 use crate::cli::agents::{Answer, Pane};
-use crate::cli::{attach, pull};
+use crate::cli::{attach, probes, pull};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
@@ -954,12 +954,12 @@ RETURN NONE;");
         let mut account: Option<Account> = None;
         let (mut pull_text, mut pull_current) = (String::new(), BTreeSet::new());
         if due {
-            let root = crate::cli::probes::repo_root(&env.cwd);
-            let landed = |task: &crate::Task| {
-                root.as_ref()
-                    .is_some_and(|root| crate::cli::probes::landed(root, &task.slug))
-            };
-            let digest = pull::digest(self, &idle, Some(&landed), self.now(), &busy)?;
+            let root = probes::repo_root(&env.cwd);
+            let root = root.as_deref();
+            let landed = |task: &crate::Task| root.is_some_and(|r| probes::landed(r, &task.slug));
+            let tips = probes::tips(root);
+            let digest =
+                pull::digest_with_tips(self, &idle, Some(&landed), Some(&tips), self.now(), &busy)?;
             let entries = digest.entries();
             let digest = digest.only_for(board, handle);
             let heard = digest.entries();

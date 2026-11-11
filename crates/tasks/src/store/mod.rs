@@ -31,6 +31,7 @@ mod depends;
 mod dispatcher;
 mod embeddings;
 mod fields;
+mod history;
 mod kept;
 mod launches;
 mod messages;
@@ -41,8 +42,10 @@ mod queued_lines;
 mod reading;
 pub(crate) mod search;
 mod sessions;
+mod settings;
 mod transaction;
 pub(crate) mod unanswered;
+mod waits;
 mod work;
 
 pub use callbacks::{Callback, Presence};
@@ -50,12 +53,15 @@ pub use callbacks::{Callback, Presence};
 pub use cap::STATEMENTS as SLOT_READS;
 pub use copy::Moved;
 pub(crate) use copy::WRITTEN_SINCE;
+pub(crate) use depends::UNBLOCK_LINE;
 pub use embeddings::{EmbeddingStats, VectorHit, VectorSearchProfile};
 pub use launches::NewLaunch;
 pub use opening::Opening;
 use reading::{HELD, NATIVE_PRESENCE, native_bounds, native_health};
 pub use search::SearchHit;
 pub use sessions::{Beat, Binding, KINDS, NewSession, Pick};
+pub use waits::{AssessmentReceipt, AssessmentState};
+pub(crate) use work::BLOCK_LINE;
 pub use work::{
     BEFORE_WORK, LANDS_FROM, Landed, NewTask, PIPELINE, PULLABLE, ROLES, STATUSES, can_transition,
 };
@@ -189,6 +195,8 @@ pub struct Store {
     /// The open tasks an orchestrator may hold before a start is refused ([`crate::slots`]); none
     /// caps nothing.
     slots: Option<usize>,
+    /// When the pipeline alarm the PULL digest says raises and clears ([`crate::alarm`]).
+    alarm: crate::alarm::Thresholds,
     /// The schema version this store writes, which every write's [`schema::GUARD`] checks.
     schema: i64,
     /// What a write on a board at another version is refused with, naming the board's project.
@@ -196,19 +204,6 @@ pub struct Store {
 }
 
 impl Store {
-    /// This store, its starts held to `slots` open tasks an orchestrator: a claim, a move into
-    /// in_progress and taking the orchestrator role on open work are refused past it
-    /// ([`crate::slots`]). None caps nothing, as a store opens.
-    pub fn capping(mut self, slots: Option<usize>) -> Store {
-        self.slots = slots;
-        self
-    }
-
-    /// The cap this store holds starts to, if any ([`Store::capping`]).
-    pub fn slots(&self) -> Option<usize> {
-        self.slots
-    }
-
     pub fn client(&self) -> &Client {
         &self.client
     }
