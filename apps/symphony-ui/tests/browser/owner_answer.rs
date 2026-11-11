@@ -28,9 +28,14 @@ fn within(slug: &str, selector: &str) -> Value {
     json!(format!("[data-doc-key=\"card:{slug}\"] {selector}"))
 }
 
-/// Open `url` and wait for the card `slug` and a live feed; marks the visit so a reload shows.
+/// Open `url` in a wide window and wait for the card `slug` and a live feed; marks the visit so a
+/// reload shows.
 fn opened(page: &mut Chrome, url: &str, slug: &str) {
     page.open(url);
+    page.call(
+        "Emulation.setDeviceMetricsOverride",
+        json!({"width": 1280, "height": 900, "deviceScaleFactor": 1, "mobile": false}),
+    );
     assert!(
         page.wait_for(
             &format!(
@@ -70,10 +75,13 @@ fn answer(page: &mut Chrome, slug: &str, button: &str, note: &str) {
 }
 
 /// Wait until `page` shows `expected` of the card `slug`; what it shows instead when it never does.
+/// Each look scrolls the card to the middle of the window first, wherever a regroup moved it: its
+/// thread renders only once it is near the screen, as the owner reading it has it.
 fn shows(page: &mut Chrome, slug: &str, expected: &Value) -> Result<(), Value> {
     // serde_json writes an object's keys sorted: so is the page's, for the two to compare.
     let wanted = format!(
-        "(s => JSON.stringify(s, Object.keys(s).sort()))({}) === {}",
+        "(() => {{ document.querySelector({})?.scrollIntoView({{block: 'center'}}); const s = {}; return JSON.stringify(s, Object.keys(s).sort()) === {}; }})()",
+        json!(format!("[data-doc-key=\"card:{slug}\"]")),
         card(slug),
         json!(expected.to_string())
     );
@@ -159,9 +167,10 @@ fn an_owner_verdict_given_beside_an_open_excerpt_shows_and_regroups() {
             "document.querySelector({}).click()",
             within("alpha", ".show-link")
         ));
+        // The excerpt fills once its box is on screen: the owner reads it there.
         assert!(owner.wait_for(
             &format!(
-                "document.querySelector({})?.textContent.includes('Is it red?') === true",
+                "(() => {{ const b = document.querySelector({}); b?.scrollIntoView({{block: 'center'}}); return b?.textContent.includes('Is it red?') === true; }})()",
                 within("alpha", ".excerpt-box")
             ),
             SHOWN
