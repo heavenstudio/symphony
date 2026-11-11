@@ -503,9 +503,11 @@ toolchain's clippy over a probe crate that reads the same file. `port.rs` starts
 
 `staff` makes one staffing pass (`src/launch/staff.rs`), also called before `reap`.
 Its sole config is `tools/task_staff.json` in the calling checkout, disabled by
-default; its pass lock is in the common `sf-tasks/`. Launch defaults to Codex;
-`--kind claude` selects Claude. The legacy `claude_session` storage column keeps
-Claude ids as before and Codex ids prefixed with `codex:`; restore dispatches on
+default; its pass lock is in the common `sf-tasks/`. A launch, the CLI's and staffing's, starts
+the agent, model and effort `[agents] launch` in the main checkout's `symphony.toml` names
+(`src/launch/defaults.rs`), else Codex on `gpt-6.1-sol` at `xhigh`; `--kind` and `--model` win,
+and the project's model and effort go with its agent only. The legacy `claude_session` storage
+column keeps Claude ids as before and Codex ids prefixed with `codex:`; restore dispatches on
 that prefix, and the agents API strips it from the conversation id.
 
 `tasks sweep` is the worktree sweep (`src/sweep.rs`, its rules in its module

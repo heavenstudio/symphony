@@ -1,0 +1,79 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="390" height="618" viewBox="0 0 390 618" role="img" aria-labelledby="title desc">
+<title id="title">Option B, a plugin's block panel, on a phone</title>
+<desc id="desc">The task page head at phone width, then the plugin's panel: its table of stamps is wider than the screen and scrolls sideways, cutting off the detail column; below it, what is missing and the edits.</desc>
+<style>
+:root{--background:#fbfaf7;--foreground:#1d1c1a;--muted-foreground:#6b6862;--border:#e4e0d8;--primary:#2f5d9e;--question:#946a00;--decision:#4a3f9e;--live:#2e7d4f;--card:#ffffff;--muted:rgba(127,127,127,.07)}
+@media (prefers-color-scheme:dark){:root{--background:#161513;--foreground:#e8e4dc;--muted-foreground:#a19c93;--border:#2c2a26;--primary:#7fa7e0;--question:#e0b84c;--decision:#a89ce8;--live:#6fc48f;--card:#1d1c19;--muted:rgba(255,255,255,.04)}}
+text{font-family:-apple-system,"Segoe UI",Helvetica,Arial,sans-serif;font-size:14px;fill:var(--foreground)}
+.page{fill:var(--background)}
+.card{fill:var(--card);stroke:var(--border)}
+.m{fill:var(--muted-foreground)}
+.a{fill:var(--primary)}
+.b{font-weight:600}
+.th{font-weight:650}
+.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+.code,.head{fill:var(--muted)}
+.pill rect{fill:var(--c);fill-opacity:.1;stroke:var(--c);stroke-opacity:.35}
+.pill text{fill:var(--c);font-size:12px;font-weight:600;text-anchor:middle}
+.chip rect{fill:var(--card);stroke:var(--border)}
+.chip circle{fill:var(--c)}
+.chip text{font-size:12px}
+.rule{stroke:var(--border)}
+.table{fill:var(--card);stroke:var(--border)}
+.edge{fill:none;stroke:var(--border)}
+.ctl{fill:var(--card);stroke:var(--border)}
+.chev{fill:none;stroke:var(--muted-foreground);stroke-width:1.5}
+.thumb{fill:var(--muted-foreground);fill-opacity:.45}
+.fade0{stop-color:var(--card);stop-opacity:0}
+.fade1{stop-color:var(--card);stop-opacity:1}
+</style>
+<defs>
+<clipPath id="scroll"><rect x="33" y="347" width="324" height="168" rx="9"/></clipPath>
+<linearGradient id="fade" x1="0" x2="1" y1="0" y2="0"><stop class="fade0" offset="0"/><stop class="fade1" offset="1"/></linearGradient>
+</defs>
+<rect class="page" width="390" height="618"/>
+
+<g class="pill" style="--c:var(--decision)"><rect x="16.5" y="10.5" width="164" height="21" rx="10.5"/><text x="98.5" y="25.5">Option B · block panel</text></g>
+
+<!-- The task head at phone width -->
+<rect class="card" x="16.5" y="40.5" width="357" height="253" rx="14"/>
+<rect class="code" x="32" y="54" width="204" height="18" rx="4"/>
+<text class="m mono" x="38" y="67" style="font-size:11px">tools/verify-stops-when-moved</text>
+<text x="32" y="104" style="font-size:28px;font-weight:700;letter-spacing:-.28px">Verify stops when</text>
+<text x="32" y="138" style="font-size:28px;font-weight:700;letter-spacing:-.28px">its branch moves</text>
+<g class="pill" style="--c:var(--question)"><rect x="32.5" y="150.5" width="60" height="19" rx="9.5"/><text x="62.5" y="164">review</text></g>
+<g class="pill" style="--c:var(--muted-foreground)"><rect x="98.5" y="150.5" width="32" height="19" rx="9.5"/><text x="114.5" y="164">p1</text></g>
+<text x="140" y="165">by owner</text>
+<text x="32" y="195">Priority</text>
+<rect class="ctl" x="90.5" y="177.5" width="58" height="26" rx="6"/><text x="102" y="195">p1</text><path class="chev" d="M130 188l4 4 4-4"/>
+<rect class="ctl" x="158.5" y="178.5" width="104" height="24" rx="12"/><text x="210.5" y="195" style="text-anchor:middle">Cancel task</text>
+<text x="32" y="228">after <tspan class="a">tools/slot-pool-by-tree</tspan></text>
+<g class="chip" style="--c:var(--live)"><rect x="32.5" y="238.5" width="134" height="19" rx="9.5"/><circle cx="44" cy="248" r="3.5"/><text x="52" y="252">executor quiet-wren</text></g>
+<g class="chip" style="--c:var(--live)"><rect x="172.5" y="238.5" width="148" height="19" rx="9.5"/><circle cx="184" cy="248" r="3.5"/><text x="192" y="252">reviewer lucid-heron</text></g>
+<g class="chip" style="--c:var(--live)"><rect x="32.5" y="263.5" width="136" height="19" rx="9.5"/><circle cx="44" cy="273" r="3.5"/><text x="52" y="277">Test running · studio</text></g>
+
+<!-- The plugin's panel: the table is wider than the phone and scrolls sideways -->
+<rect class="card" x="16.5" y="306.5" width="357" height="295" rx="14"/>
+<text class="b" x="32" y="333">Landing stamps</text>
+<rect class="table" x="32.5" y="346.5" width="325" height="170" rx="10"/>
+<g clip-path="url(#scroll)">
+<rect class="head" x="33" y="347" width="324" height="33"/>
+<line class="rule" x1="33" y1="380.5" x2="357" y2="380.5"/>
+<line class="rule" x1="33" y1="414.5" x2="357" y2="414.5"/>
+<line class="rule" x1="33" y1="448.5" x2="357" y2="448.5"/>
+<line class="rule" x1="33" y1="482.5" x2="357" y2="482.5"/>
+<line class="rule" x1="140.5" y1="347" x2="140.5" y2="516"/>
+<line class="rule" x1="236.5" y1="347" x2="236.5" y2="516"/>
+<text class="th" x="44" y="368">Stamp</text><text class="th" x="152" y="368">Collected</text><text class="th" x="248" y="368">Detail</text>
+<text x="44" y="402">certificate</text><text x="152" y="402">no</text><text x="248" y="402">merge tree 4be91c2: verify running</text>
+<text x="44" y="436">nightly</text><text x="152" y="436">yes</text><text x="248" y="436">2026-11-10 green</text>
+<text x="44" y="470">dependency</text><text x="152" y="470">edited</text><text x="248" y="470">see edits</text>
+<text x="44" y="504">review</text><text x="152" y="504">yes</text><text x="248" y="504">lucid-heron</text>
+<rect x="321" y="347" width="36" height="169" fill="url(#fade)"/>
+<rect class="thumb" x="36" y="510" width="150" height="3" rx="1.5"/>
+</g>
+<rect class="edge" x="32.5" y="346.5" width="325" height="170" rx="10"/>
+<text x="32" y="542">Missing: certificate.</text>
+<text x="32" y="566">Edits: dependency, by cobalt-otter:</text>
+<text x="32" y="586">shares no code with tools/slot-pool-by-tree.</text>
+</svg>

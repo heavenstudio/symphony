@@ -2,7 +2,7 @@
 //! runs this first, so an idle agent can take work before the idle sweep closes its pane.
 
 use super::hc::{self, Binary, Hc, text_of};
-use super::{Ask, Machine, launch, prompt_text};
+use super::{Ask, Defaults, Machine, Resolved, launch, prompt_text};
 use crate::cli::{Env, agents, probes};
 use crate::health::{EXECUTING, FINISHED};
 use crate::sys::FileLock;
@@ -306,6 +306,10 @@ fn pass_inner(
     };
     let hc = Binary::of(env);
     let machine = Machine::of(env);
+    // What a launch here starts: the project's `[agents] launch`, else the board's own.
+    let launching = Defaults::configured(&machine.root)
+        .map_err(refused)?
+        .resolve(None, None);
     let mut candidates = store.board()?.tasks;
     candidates.retain(|t| matches!(t.status.as_str(), "ready" | "review"));
     candidates.sort_by(|a, b| {
@@ -431,13 +435,26 @@ fn pass_inner(
                 )
             } else {
                 projected += 1;
-                format!("staff {}: would launch codex as {role}", task.slug)
+                format!(
+                    "staff {}: would launch {} as {role}",
+                    task.slug,
+                    launching.said()
+                )
             }
         } else {
             if let Some(a) = idle {
                 used.insert(a.handle.clone());
             }
-            let outcome = dispatch(store, &hc, &machine, task, actor, review.as_ref(), idle);
+            let outcome = dispatch(
+                store,
+                &hc,
+                &machine,
+                &launching,
+                task,
+                actor,
+                review.as_ref(),
+                idle,
+            );
             match outcome {
                 Ok(line) => {
                     dispatched = true;
@@ -465,10 +482,15 @@ fn pass_inner(
 }
 
 /// Keep task-specific failures (target, child creation, checkout, launch and reuse) inside this job.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "one dispatch of the pass, named by what it reads"
+)]
 fn dispatch(
     store: &Store,
     hc: &dyn Hc,
     machine: &Machine,
+    launching: &Resolved,
     task: &Task,
     actor: &str,
     review: Option<&ReviewTarget>,
@@ -487,7 +509,9 @@ fn dispatch(
         if let Some(agent) = idle {
             return reuse(store, hc, machine, agent, task, &job, role);
         }
-        let mut ask = Ask::new(&job.slug, actor, "gpt-6.1-sol");
+        let mut ask = Ask::new(&job.slug, actor, &launching.model);
+        ask.kind = Some(launching.agent.into());
+        ask.effort.clone_from(&launching.effort);
         ask.role = role.into();
         if role == "executor"
             && !task.instruction
@@ -497,11 +521,12 @@ fn dispatch(
         }
         launch(store, hc, machine, &ask).map(|s| {
             format!(
-                "launched {} as {role}, pane {}, worktree {}, prompt {}",
+                "launched {} as {role}: {}, pane {}, worktree {}, prompt {}",
                 s.row.handle,
+                launching.said(),
                 s.row.pane,
                 s.row.worktree,
-                prompt_text(&job.slug, &s.row.handle, "", "codex"),
+                prompt_text(&job.slug, &s.row.handle, "", launching.agent),
             )
         })
     })();

@@ -149,7 +149,7 @@ fn run(
     let parsed = match args::parse(args) {
         args::Outcome::Run(parsed) => parsed,
         args::Outcome::Help(text) => {
-            let _ = write!(out, "{text}");
+            let _ = write!(out, "{}", usage::shown(text, env));
             return 0;
         }
         args::Outcome::Usage(text) => {

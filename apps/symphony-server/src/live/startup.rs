@@ -70,6 +70,13 @@ impl Hub {
         } else {
             eprintln!("→ chat journal: left untouched by this private server");
         }
+        // Said once, at the hub's one start: the documents come in when the folder does.
+        if let Some(folder) = symphony::project::Project::of(root).missing_documents(root) {
+            eprintln!(
+                "→ documents: no {folder}/ directory under {}; the board and agents are served without documents",
+                root.display()
+            );
+        }
         let starting = hub.arm_initial_board();
         let hub = Arc::new(hub);
         // Install watches before the first read, so an edit during that read is queued too.

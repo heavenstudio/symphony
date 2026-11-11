@@ -1,0 +1,80 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="538" viewBox="0 0 1000 538" role="img" aria-labelledby="title desc">
+<title id="title">Option A, typed gates, on a wide screen</title>
+<desc id="desc">A task page head with a Gates section drawn by Symphony: certificate missing, dependency waived, nightly met, review met, each with its detail, who and when.</desc>
+<style>
+:root{--background:#fbfaf7;--foreground:#1d1c1a;--muted-foreground:#6b6862;--border:#e4e0d8;--primary:#2f5d9e;--like:#2e7d4f;--dislike:#b3392b;--question:#946a00;--decision:#4a3f9e;--resolved:#5f6b73;--live:#2e7d4f;--card:#ffffff;--muted:rgba(127,127,127,.07)}
+@media (prefers-color-scheme:dark){:root{--background:#161513;--foreground:#e8e4dc;--muted-foreground:#a19c93;--border:#2c2a26;--primary:#7fa7e0;--like:#6fc48f;--dislike:#e57a6a;--question:#e0b84c;--decision:#a89ce8;--resolved:#8f9aa3;--live:#6fc48f;--card:#1d1c19;--muted:rgba(255,255,255,.04)}}
+text{font-family:-apple-system,"Segoe UI",Helvetica,Arial,sans-serif;font-size:14px;fill:var(--foreground)}
+.page{fill:var(--background)}
+.card{fill:var(--card);stroke:var(--border)}
+.m{fill:var(--muted-foreground)}
+.a{fill:var(--primary)}
+.b{font-weight:600}
+.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+.code{fill:var(--muted)}
+.pill rect{fill:var(--c);fill-opacity:.1;stroke:var(--c);stroke-opacity:.35}
+.pill text{fill:var(--c);font-size:12px;font-weight:600;text-anchor:middle}
+.chip rect{fill:var(--card);stroke:var(--border)}
+.chip circle,.dot{fill:var(--c)}
+.chip text{font-size:12px}
+.rule{stroke:var(--border)}
+.eyebrow{font-size:11.5px;font-weight:600;letter-spacing:1px;fill:var(--muted-foreground)}
+.ctl{fill:var(--card);stroke:var(--border)}
+.chev{fill:none;stroke:var(--muted-foreground);stroke-width:1.5}
+.end{text-anchor:end}
+</style>
+<rect class="page" width="1000" height="538"/>
+
+<g class="pill" style="--c:var(--decision)"><rect x="20.5" y="12.5" width="164" height="21" rx="10.5"/><text x="102.5" y="27.5">Option A · typed gates</text></g>
+<text class="m" x="196" y="28" style="font-size:13px">The plugin answers data; Symphony draws it the same way for every project.</text>
+
+<!-- The task head, as task_detail.rs draws it -->
+<rect class="card" x="20.5" y="46.5" width="959" height="215" rx="14"/>
+<rect class="code" x="44" y="62" width="204" height="18" rx="4"/>
+<text class="m mono" x="50" y="75" style="font-size:11px">tools/verify-stops-when-moved</text>
+<text x="44" y="118" style="font-size:28px;font-weight:700;letter-spacing:-.28px">Verify stops when its branch moves</text>
+<g class="pill" style="--c:var(--question)"><rect x="44.5" y="139.5" width="60" height="19" rx="9.5"/><text x="74.5" y="153">review</text></g>
+<g class="pill" style="--c:var(--muted-foreground)"><rect x="110.5" y="139.5" width="32" height="19" rx="9.5"/><text x="126.5" y="153">p1</text></g>
+<text x="152" y="154">by owner</text>
+<text x="232" y="154">Priority</text>
+<rect class="ctl" x="290.5" y="136.5" width="58" height="26" rx="6"/><text x="302" y="154">p1</text><path class="chev" d="M330 147l4 4 4-4"/>
+<rect class="ctl" x="358.5" y="137.5" width="104" height="24" rx="12"/><text x="410.5" y="154" style="text-anchor:middle">Cancel task</text>
+<text x="44" y="186">after <tspan class="a">tools/slot-pool-by-tree</tspan></text>
+<g class="chip" style="--c:var(--live)"><rect x="44.5" y="198.5" width="134" height="19" rx="9.5"/><circle cx="56" cy="208" r="3.5"/><text x="64" y="212">executor quiet-wren</text></g>
+<g class="chip" style="--c:var(--live)"><rect x="184.5" y="198.5" width="148" height="19" rx="9.5"/><circle cx="196" cy="208" r="3.5"/><text x="204" y="212">reviewer lucid-heron</text></g>
+<g class="chip" style="--c:var(--live)"><rect x="44.5" y="223.5" width="136" height="19" rx="9.5"/><circle cx="56" cy="233" r="3.5"/><text x="64" y="237">Test running · studio</text></g>
+
+<!-- Gates: one component, every project -->
+<rect class="card" x="20.5" y="278.5" width="959" height="239" rx="14"/>
+<text class="eyebrow" x="44" y="307">GATES</text>
+<g class="pill" style="--c:var(--question)"><rect x="96.5" y="294.5" width="150" height="19" rx="9.5"/><text x="171.5" y="308">waits on certificate</text></g>
+<text class="m end" x="956" y="308" style="font-size:13px">2 met · 1 waived · 1 missing</text>
+
+<line class="rule" x1="44" y1="322.5" x2="956" y2="322.5"/>
+<circle class="dot" style="--c:var(--question)" cx="52" cy="345" r="4.5"/>
+<text class="b" x="66" y="350">certificate</text>
+<g class="pill" style="--c:var(--question)"><rect x="170.5" y="335.5" width="66" height="19" rx="9.5"/><text x="203.5" y="349">missing</text></g>
+<text x="256" y="350">Verify on the merge tree <tspan class="a">4be91c2</tspan> running, 18 min so far</text>
+<text class="m end" x="956" y="350" style="font-size:13px">since main moved at 14:50</text>
+
+<line class="rule" x1="44" y1="368.5" x2="956" y2="368.5"/>
+<circle class="dot" style="--c:var(--resolved)" cx="52" cy="391" r="4.5"/>
+<text class="b" x="66" y="396">dependency</text>
+<g class="pill" style="--c:var(--resolved)"><rect x="170.5" y="381.5" width="66" height="19" rx="9.5"/><text x="203.5" y="395">waived</text></g>
+<text x="256" y="396"><tspan class="a">tools/slot-pool-by-tree</tspan> shares no code with this branch</text>
+<text class="m end" x="956" y="396" style="font-size:13px">cobalt-otter · 14:12</text>
+
+<line class="rule" x1="44" y1="414.5" x2="956" y2="414.5"/>
+<circle class="dot" style="--c:var(--like)" cx="52" cy="437" r="4.5"/>
+<text class="b" x="66" y="442">nightly</text>
+<g class="pill" style="--c:var(--like)"><rect x="170.5" y="427.5" width="66" height="19" rx="9.5"/><text x="203.5" y="441">met</text></g>
+<text x="256" y="442">Night of 11-10 green on main <tspan class="a">a71f0d3</tspan></text>
+<text class="m end" x="956" y="442" style="font-size:13px">nightly · 02:14</text>
+
+<line class="rule" x1="44" y1="460.5" x2="956" y2="460.5"/>
+<circle class="dot" style="--c:var(--like)" cx="52" cy="483" r="4.5"/>
+<text class="b" x="66" y="488">review</text>
+<g class="pill" style="--c:var(--like)"><rect x="170.5" y="473.5" width="66" height="19" rx="9.5"/><text x="203.5" y="487">met</text></g>
+<text x="256" y="488">Approved in <tspan class="a">round 2 of 2</tspan></text>
+<text class="m end" x="956" y="488" style="font-size:13px">lucid-heron · 14:05</text>
+</svg>

@@ -33,9 +33,10 @@ pub fn target(root: &Path, rel: &str, document: bool) -> Result<PathBuf, String>
     }
     let project = crate::project::Project::of(root);
     let (entry, inside) = project.serving(rel).ok_or_else(not_found)?;
+    // In a checkout with none of the entrypoints' folders, a page says how to add documents.
     let path = project
         .reachable(root, entry, inside)
-        .ok_or_else(not_found)?;
+        .ok_or_else(|| project.no_documents(root).unwrap_or_else(not_found))?;
     if document && (!path.is_file() || !entry.page(inside)) {
         return Err(not_found());
     }

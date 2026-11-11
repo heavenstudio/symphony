@@ -240,39 +240,45 @@ Today the page shows the brief, roles and thread. It gains two sections at the t
 
 ### Gates
 
-Every stamp or check the task needs to land, each one **met** (by whom, when, at which commit),
-**missing**, **waived** (by whom, why), **waiting on nobody** (the owner's, a hold), or
-**unknown** (the project's tool could not answer).
+Every stamp or check the task needs to land. Each one is in one of these states:
+- **met**: by whom, when, at which commit;
+- **missing**;
+- **waived**: by whom, and why;
+- **held**: waiting on the owner, or a hold;
+- **unknown**: the project's tool could not answer.
 
 What Symphony shows without a plugin:
 
 - **Review**: the board's reviewer verdict on each round, by whom and when.
 - **Check**: the project's `[verdicts] check` (Symphony's: `just verify`) on the branch's tip,
-  from the run files: green, red, or not run at this tip.
-- **Review callback**: the `[board] on_review` run for the tip, from the run files.
+  from the run records: green, red, or not run at this tip.
 - **Owner card**: a card the task posted that waits on the owner (the rule of the sign-off lane,
   [TASKS](../TASKS.md#tasks-and-roles)).
+- **Review callback**: the `[board] on_review` run for the tip, once its exit is recorded. Today
+  it runs detached and its exit is not kept (`crates/tasks/src/on_review.rs`).
 
 A project's gates come from its plugin. Star Foundry's are its stamps: certificate, nightly,
-dependency, review, adversarial, owner and holds. A plugin's gate of the same name as Symphony's
-takes its place (Star Foundry's review stamp is the approval its landing counts).
+dependency, review, adversarial, owner and holds. A plugin's gate with the same name as Symphony's
+takes its place. Star Foundry's review stamp, for example, is the approval its landing counts.
 
-How a project's gates reach the page:
+**Decided: A, a typed gates seam** (the owner, 2026-11-11, after the pictures below).
+- A plugin trait answers a task's gates as data: name, state, by, when, commit, why, detail, link
+  and past states. That is a new wire type, which the client draws with one component, the same
+  for every project.
+- Symphony can then count the gates: how long tasks waited on each one, and which is missing most.
+- Star Foundry maps its `stamps` answer to the seam. It also adds when each stamp was collected and
+  each edit made, which the answer lacks today.
 
-- **A, a typed gates seam.** A plugin trait answers a task's gates as data (name, state, by, when,
-  commit, why, detail), a new wire type the client draws with one component, the same for every
-  project. Symphony can then count them: how long tasks waited on each gate, which gate is missing
-  most. Cost: one trait, one wire type, one component. Star Foundry maps its `stamps` answer to
-  it, and adds when each stamp was collected and each edit made, which the answer lacks today.
-- **B, a block panel.** A plugin returns generic blocks for a task, drawn as a document's are.
-  Cost: the least Symphony work; each project lays its panel out its own way, and Symphony can
-  neither count gates nor chart what they cost.
+Not chosen: **B, a block panel**, generic blocks a plugin lays out for a task. Each project would
+lay its panel out its own way, and Symphony could neither count gates nor chart what they cost.
 
-**Recommended: A**: "what is it waiting on" is the question asked of a task, and only a typed
-answer can feed the defect report.
+The gates are fetched only when the section nears the screen, and kept by the branch's tip,
+because Star Foundry's answer starts its landing binary (`tools/symphony/src/lib.rs`, `land_call`).
 
-The gates are fetched only when the section nears the screen and kept by the branch's tip: Star
-Foundry's answer starts its landing binary (`tools/symphony/src/lib.rs`, `land_call`).
+The work is on the board:
+- `tools/task-gates-seam`: the seam, its wire type and Symphony's own gates;
+- `tools/task-gates-panel`: the component;
+- `tools/star-foundry-gates-adapter`: Star Foundry's adapter, as a note to copy to its board.
 
 ### Timeline
 
@@ -281,29 +287,61 @@ blocked), claims and releases, review rounds and their verdicts, builds and test
 (unclaimed, blocked on a dependency, waiting on a gate). Tokens per round join it once
 `tools/board-token-usage` records them.
 
-No new recording: the replay keeps each segment (status, from, to) beside its totals, a change in
-`stages.rs` alone; the run files give the task's runs; the thread gives who claimed and who gave
-each verdict. A phone gets a vertical list with a bar per step; a wide screen gets lanes over time
-(stages on one, runs on another, verdicts as marks).
+It needs no new recording:
+- the replay keeps each segment (status, from, to) beside its totals, a change in `stages.rs`
+  alone;
+- the run records give the task's runs;
+- the thread gives who claimed and who gave each verdict;
+- the gates' past states give the gate rows.
 
-```
-tools/x · in review 3.1 h
-Gates
-  ✓ review       swift-merlin · 12:41
-  ✗ certificate  verify red at 4f1c
-  ~ dependency   waived: "no new crate" · silver-sparrow
-Timeline                              6.2 h
-  ready          ▇▇ 0.4 h
-  in progress    ▇▇▇▇▇ 1.3 h   calm-gecko
-    verify       ▇▇▇ 24 min   green
-  review         ▇▇ 0.8 h     changes · swift-merlin
-  in progress    ▇ 0.3 h
-    verify       ▇▇ 21 min    red, then 26 min green
-  review         ▇▇▇▇ 3.1 h   now
-```
+On a phone it is a vertical list with a bar per step. On a wide screen it is lanes over time: the
+stage, the executor, the reviewer, builds and tests, and one row per gate. The pictures below are
+the look to build to.
 
-This design is the page half of `tools/stage-times`, and the stage durations and step diagram of
-`tools/review-as-stamps`' second slice; that slice's diff and tokens stay with it.
+It is filed as `tools/task-timeline`, after the gates seam and the run recorder
+(`tools/build-test-recorded-generic`). It replaces the page half of `tools/stage-times`, and the
+stage durations and step diagram of `tools/review-as-stamps`' second slice. That slice's diff and
+tokens stay with it.
+
+### Pictures
+
+**The task shown is made up** in Star Foundry's shape: `tools/verify-stops-when-moved`, in review.
+- It needs four stamps: certificate, nightly, dependency and review.
+- It went through two review rounds, a build and three test runs. A fourth test run is going now,
+  because main moved after its certificate.
+- Its times are invented.
+
+The pictures are SVG written by hand. They use the client's tokens
+(`apps/symphony-ui/assets/board.css`) and the task head as `task_detail.rs` draws it, and they
+follow the reader's light or dark setting.
+
+The A pictures and the timeline pictures are the look the filed tasks build to; the B pictures
+show what was not chosen.
+
+**Gates, A: a typed seam (chosen).** Symphony draws the plugin's answer. What the task waits on comes first,
+then the waived and met gates, each with its detail, who and when.
+
+![Gates on a phone, option A](reports-gates-a-phone.svg)
+
+![Gates on a wide screen, option A](reports-gates-a-wide.svg)
+
+**Gates, B: a block panel (not chosen).** The plugin lays out a paragraph, a table and two more paragraphs, in
+its own words. Star Foundry's stamps answer has `stamp`, `collected` and `detail` and no times, so
+the table has none. On a phone it scrolls sideways.
+
+![Gates on a phone, option B](reports-gates-b-phone.svg)
+
+![Gates on a wide screen, option B](reports-gates-b-wide.svg)
+
+**Timeline.** It is the same under A and B.
+- On a phone: one row per step, with a bar as long as the step took and its queue or wait drawn
+  lighter.
+- On a wide screen: lanes over the same hours, for the stage, the executor, the reviewer, builds
+  and tests, and each gate's state.
+
+![Timeline on a phone](reports-timeline-phone.svg)
+
+![Timeline on a wide screen](reports-timeline-wide.svg)
 
 ## Pipeline and defects
 
@@ -357,16 +395,22 @@ unanswered requests, the slowest caller, write p50 and p90. No board request. Ke
 
 ### How the figures are computed
 
-- **A, an hourly roll-up into files.** Each hour, and once after midnight for the day that ended,
-  the server reads each project's window once (the stats read, 0.3 to 2.5 s on Star Foundry's
-  board) and writes the day's figures to a file; the page reads files. Cost: a figure is up to an
-  hour old; one board read an hour per project; nothing written to the board.
-- **B, computed on each view.** Cost: the stats read on every open, up to 2.5 s on Star Foundry's
-  board and longer as it grows, on its read path; no history for what the board does not keep.
-- **C, a nightly report document.** A scheduled command writes a dated Markdown report. Cost: no
-  live figure, and a commit a day.
+**Decided: A, an hourly roll-up into files** (the owner, 2026-11-11). Each hour, and once after
+midnight for the day that ended, the shared server reads each project's window once and writes the
+day's figures to a file in that project's git common dir. The stats read takes 0.3 to 2.5 s on Star
+Foundry's board. The page reads the files. A figure is up to an hour old. The cost is one board read
+an hour per project, and nothing is written to the board. Board health and agent activity are
+appended to their own day files from what the server holds in memory.
 
-**Recommended: A.**
+Not chosen:
+
+- **B, computed on each view.** The stats read would run on every open: up to 2.5 s on Star
+  Foundry's board, longer as it grows, and on the board's read path. There would be no history for
+  what the board does not keep.
+- **C, a nightly report document.** No live figure, and a commit a day.
+
+The work is on the board: `tools/reports-rollup`, `tools/reports-page`,
+`tools/board-health-history`, `tools/agent-activity-history` and `tools/red-landing-origin`.
 
 ## Core page or plugin blocks
 
@@ -392,12 +436,90 @@ The chart block is a wire change, so it reaches main in a task of its own first 
   (`projects.json`; read 2026-11-11: `symphony` and `star-foundry`), and each project's run files
   are in its own common dir, so a machine view (beside the project picker) sums them: running
   now, machine minutes per project per day.
-- **One project, several machines.** Not possible yet. The board listens on 127.0.0.1 alone
-  ([TASKS](../TASKS.md#limits)), and machine work has no transport ([MACHINE_WORK](../MACHINE_WORK.md)),
-  although its `Sample` type is shaped for authenticated publishers
-  (`machine_work/projection.rs`). Every run line carries the machine id now, so lines from
-  several machines can be merged later, by pushing finished lines to the hosting server over the
-  tailnet or by carrying them in a git ref; the choice waits for a second machine.
+- **One project, several machines.** Not possible yet, and below is how it would work.
+
+### Several machines, one board
+
+The owner asked how A works once separate machines share a single board.
+
+**As written, A shows only one machine's runs.** The run files live in the git common dir of the
+clone where the run happened. A clone on another machine has its own common dir. Today it also
+has its own board:
+- the board is started `--unauthenticated` and bound to loopback (`crates/tasks/src/server.rs`,
+  `START`; `crates/tasks/src/port.rs` binds `Ipv4Addr::LOCALHOST`);
+- `TASKS_SERVER` can name another board's address (`crates/tasks/src/cli/mod.rs`, `reach_board`),
+  but nothing listens beyond loopback;
+- machine work has no transport either: MACHINE_WORK says it "adds no remote worker, reporting
+  transport, board persistence or scheduler". Its `Sample` type is shaped for authenticated
+  publishers (`machine_work/projection.rs`).
+
+So one board across machines is itself unbuilt, and runs must travel the way the board's other
+traffic will.
+
+**The recommended form: local first, then sent to the hosting server.**
+
+1. **Local first.** The recorder appends each line to the local day file before anything else, as
+   on one machine. That file is the outbox: nothing is lost while the network is down.
+2. **Sent.** It POSTs the run's start line and end line to the Symphony server that hosts the
+   board.
+   - A clone names that server in the machine folder's registry entry for the project
+     (`projects.json`, `crates/symphony/src/machine/registry.rs`), since the address differs per
+     machine and does not belong in the committed `symphony.toml`.
+   - The coordinator's starting point sent finished runs only. That would hide what runs elsewhere
+     from "running now", so the start line goes too.
+3. **Stored by machine.** The server appends the lines to its own run files, keyed by the sending
+   machine's id (`crates/symphony/src/machine/identity.rs`, the `machine-id` file). It files a line
+   under the day it received it, so the newest files stay the ones to read. It answers with the
+   run ids it stored.
+4. **Re-sent until acknowledged.** A per-day mark of the last acknowledged line says what to send
+   again. Lines are re-sent at the start and end of the next run, and by that machine's own server
+   tick if it runs one. Run ids make a repeat harmless: the server keeps the window's ids and stores
+   a line once.
+
+**Who may send.**
+- The server's gate already admits only loopback and tailnet addresses that `tailscale whois`
+  names as a node of this tailnet, and it checks the Host
+  (`apps/symphony-server/src/gate.rs`, `allows`, `allows_host`). Writes also pass `write.rs`'s Host
+  check; a recorder is no browser, so no Origin is involved.
+- The machine id is "neither hostname nor authentication" (identity.rs). Any peer could claim any
+  id. So the server records the whois node with each line, binds a machine id to the first node it
+  arrived from, and refuses that id from another node until the owner clears it.
+- This trusts the tailnet as the phone already does; no new secret is needed.
+
+**When the server is unreachable.** Runs wait in the outbox and arrive late. A late line is
+marked with its delay, and each machine's last contact shows on the page. A start line that never
+gets its end within the run's own timeout reads "lost contact", never "running".
+
+**Clocks.**
+- Durations are measured on the machine with its monotonic clock, so a wrong wall clock cannot
+  make them wrong.
+- Ordering, freshness and retention use the server's receipt time, as MACHINE_WORK already rules
+  for samples: "Producer phase timestamps are display information, never freshness."
+- Each POST carries the sender's wall time, so the server measures that machine's offset. Start
+  times are shown corrected by it, with the offset named when it is over 30 s. The raw value stays
+  in the line.
+
+**Logs.**
+- Logs stay on their machine.
+- A red run's log travels with its end line, cut to its head and tail (a few hundred KB at most),
+  which is what is read first.
+- A green run's log is fetched on demand through that machine's own server when it runs one,
+  behind the same gate. Otherwise the page names the machine that holds it.
+- Test results per suite are in the line itself, so trends never need a log.
+
+**Against B, runs as board tables.**
+- Every machine would need to reach the board's database. It has no login and listens on loopback,
+  so it would need authentication, or a proxy through the server, which is the same HTTP endpoint
+  with more load on the write path.
+- An offline machine would still need a local outbox and log files.
+- And B still costs its schema change.
+
+**Considered and set aside: lines carried in a git ref.** Each machine would push its lines to
+`refs/…/runs/<machine>`. That needs a shared remote, and pushes contend with each other. Lines would
+arrive minutes late, and logs would grow history.
+
+**Recommendation: A, with the send.** It changes nothing on one machine. It adds one endpoint on
+the server and a send in the recorder.
 
 ## Per view or rolled up
 
@@ -433,10 +555,14 @@ Once approved, as board tasks, the shared data first:
    cargo's test output read, logs and their bounds.
 2. The chart block in `symphony-api` and its component.
 3. The Runs page and its API, with the machine view.
-4. The replay's segments in `stages.rs`, and the task page's timeline.
-5. The gates seam, its wire type and Symphony's own gates; Star Foundry's adapter is its task.
-6. The hourly roll-up and the health history.
-7. The Reports page, and the report-section seam.
+4. The replay's segments in `stages.rs`, and the task page's timeline: filed as
+   `tools/task-timeline`.
+5. The gates seam, its wire type and Symphony's own gates, and the component: filed as
+   `tools/task-gates-seam` and `tools/task-gates-panel`. Star Foundry's adapter is a note to copy
+   to its board, `tools/star-foundry-gates-adapter`.
+6. The hourly roll-up and the health history: filed as `tools/reports-rollup`,
+   `tools/board-health-history`, `tools/agent-activity-history` and `tools/red-landing-origin`.
+7. The Reports page (filed as `tools/reports-page`), and the report-section seam.
 
 ## Open questions
 
@@ -445,8 +571,8 @@ Once approved, as board tasks, the shared data first:
    (a new tool), or show suites only?
 3. A cost in money needs a price per model from the owner, and on a subscription per-token money
    is not what is paid. Show tokens only?
-4. Should the project's landing and nightly record, when they file a red, which landing it came
-   from, so escapes can be traced to tasks?
+4. Settled by the approval: a red names the commits it came between (`tools/red-landing-origin`).
+   Star Foundry's landing and nightly passing them is Star Foundry's change, on its own board.
 5. Symphony has no land command: its merges to main are made by hand. Count each merge commit on
    main as a landing run?
 6. Queue wait where no pool queues work: show none, or count the time Cargo waits on its build lock?
@@ -462,5 +588,8 @@ Once approved, as board tasks, the shared data first:
   machine other agents were loading.
 - **Tried:** a test binary of this workspace refusing `--format json` on the pinned toolchain; the
   usage fields of a Claude Code transcript and a Codex session log.
-- **Inferred, not tried:** run-line sizes for Symphony's own runs; that Cargo's build-lock wait can
+- **Drawn, not built:** the six pictures under [Pictures](#pictures), each rendered in headless
+  Chrome in light and dark to check it; their task and times are made up.
+- **Inferred, not tried:** the multi-machine send under
+  [Several machines, one board](#several-machines-one-board); run-line sizes for Symphony's own runs; that Cargo's build-lock wait can
   be read from its stderr; log sizes; the cost of the hourly read on a board larger than today's.

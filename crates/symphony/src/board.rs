@@ -48,15 +48,6 @@ pub(crate) fn document_files(root: &Path, project: &Project) -> Vec<PathBuf> {
     found
 }
 
-/// The first entrypoint's folder when the checkout at `root` holds no entrypoint's folder at all.
-fn missing_documents<'a>(root: &Path, project: &'a Project) -> Option<&'a str> {
-    (!project
-        .entrypoints
-        .iter()
-        .any(|entry| root.join(&entry.folder).is_dir()))
-    .then(|| project.entrypoints[0].folder.as_str())
-}
-
 /// `path` relative to `root`, with forward slashes.
 pub(crate) fn relative(path: &Path, root: &Path) -> String {
     path.strip_prefix(root)
@@ -65,17 +56,25 @@ pub(crate) fn relative(path: &Path, root: &Path) -> String {
         .replace('\\', "/")
 }
 
-/// Every document of the project at `root`, named by its route (`docs/…`) and sorted by it.
+/// Every document of the project at `root`, named by its route (`docs/…`) and sorted by it; a
+/// checkout that holds none of its entrypoints' folders is refused, naming the first.
 pub fn scan(root: &Path) -> Result<Vec<Doc>, ReviewError> {
-    static PARSED: LazyLock<Mutex<BTreeMap<PathBuf, (FileStamp, Doc)>>> =
-        LazyLock::new(|| Mutex::new(BTreeMap::new()));
-    let project = Project::of(root);
-    if let Some(folder) = missing_documents(root, &project) {
+    if let Some(folder) = Project::of(root).missing_documents(root) {
         return Err(ReviewError(format!(
             "no {folder}/ directory under {}",
             root.display()
         )));
     }
+    documents(root)
+}
+
+/// Every document of the project at `root`, as [`scan`] reads them, and none in a checkout that
+/// holds none of its entrypoints' folders: the server's read, which serves a project's board and
+/// agents before it has documents.
+pub fn documents(root: &Path) -> Result<Vec<Doc>, ReviewError> {
+    static PARSED: LazyLock<Mutex<BTreeMap<PathBuf, (FileStamp, Doc)>>> =
+        LazyLock::new(|| Mutex::new(BTreeMap::new()));
+    let project = Project::of(root);
     let mut docs = Vec::new();
     // A document is named by its route, its file read where the project keeps it.
     let named = |path: &Path| {
@@ -367,7 +366,7 @@ pub fn tidy_with(
     err: &mut dyn Write,
 ) -> i32 {
     let project = Project::of(root);
-    if let Some(folder) = missing_documents(root, &project) {
+    if let Some(folder) = project.missing_documents(root) {
         let _ = writeln!(
             err,
             "✖ no {folder}/ directory under {}",

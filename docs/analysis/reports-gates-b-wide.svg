@@ -1,0 +1,65 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="572" viewBox="0 0 1000 572" role="img" aria-labelledby="title desc">
+<title id="title">Option B, a plugin's block panel, on a wide screen</title>
+<desc id="desc">The same task page head with a panel the plugin lays out from generic blocks: a heading, a table of stamps with collected and detail columns, and two paragraphs naming what is missing and the edits. It carries no times.</desc>
+<style>
+:root{--background:#fbfaf7;--foreground:#1d1c1a;--muted-foreground:#6b6862;--border:#e4e0d8;--primary:#2f5d9e;--question:#946a00;--decision:#4a3f9e;--live:#2e7d4f;--card:#ffffff;--muted:rgba(127,127,127,.07)}
+@media (prefers-color-scheme:dark){:root{--background:#161513;--foreground:#e8e4dc;--muted-foreground:#a19c93;--border:#2c2a26;--primary:#7fa7e0;--question:#e0b84c;--decision:#a89ce8;--live:#6fc48f;--card:#1d1c19;--muted:rgba(255,255,255,.04)}}
+text{font-family:-apple-system,"Segoe UI",Helvetica,Arial,sans-serif;font-size:14px;fill:var(--foreground)}
+.page{fill:var(--background)}
+.card{fill:var(--card);stroke:var(--border)}
+.m{fill:var(--muted-foreground)}
+.a{fill:var(--primary)}
+.b{font-weight:600}
+.th{font-weight:650}
+.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+.code,.head{fill:var(--muted)}
+.pill rect{fill:var(--c);fill-opacity:.1;stroke:var(--c);stroke-opacity:.35}
+.pill text{fill:var(--c);font-size:12px;font-weight:600;text-anchor:middle}
+.chip rect{fill:var(--card);stroke:var(--border)}
+.chip circle{fill:var(--c)}
+.chip text{font-size:12px}
+.rule{stroke:var(--border)}
+.table{fill:var(--card);stroke:var(--border)}
+.ctl{fill:var(--card);stroke:var(--border)}
+.chev{fill:none;stroke:var(--muted-foreground);stroke-width:1.5}
+</style>
+<rect class="page" width="1000" height="572"/>
+
+<g class="pill" style="--c:var(--decision)"><rect x="20.5" y="12.5" width="164" height="21" rx="10.5"/><text x="102.5" y="27.5">Option B · block panel</text></g>
+<text class="m" x="196" y="28" style="font-size:13px">The plugin lays out generic blocks; Symphony draws them as it draws a document.</text>
+
+<!-- The task head, as task_detail.rs draws it -->
+<rect class="card" x="20.5" y="46.5" width="959" height="215" rx="14"/>
+<rect class="code" x="44" y="62" width="204" height="18" rx="4"/>
+<text class="m mono" x="50" y="75" style="font-size:11px">tools/verify-stops-when-moved</text>
+<text x="44" y="118" style="font-size:28px;font-weight:700;letter-spacing:-.28px">Verify stops when its branch moves</text>
+<g class="pill" style="--c:var(--question)"><rect x="44.5" y="139.5" width="60" height="19" rx="9.5"/><text x="74.5" y="153">review</text></g>
+<g class="pill" style="--c:var(--muted-foreground)"><rect x="110.5" y="139.5" width="32" height="19" rx="9.5"/><text x="126.5" y="153">p1</text></g>
+<text x="152" y="154">by owner</text>
+<text x="232" y="154">Priority</text>
+<rect class="ctl" x="290.5" y="136.5" width="58" height="26" rx="6"/><text x="302" y="154">p1</text><path class="chev" d="M330 147l4 4 4-4"/>
+<rect class="ctl" x="358.5" y="137.5" width="104" height="24" rx="12"/><text x="410.5" y="154" style="text-anchor:middle">Cancel task</text>
+<text x="44" y="186">after <tspan class="a">tools/slot-pool-by-tree</tspan></text>
+<g class="chip" style="--c:var(--live)"><rect x="44.5" y="198.5" width="134" height="19" rx="9.5"/><circle cx="56" cy="208" r="3.5"/><text x="64" y="212">executor quiet-wren</text></g>
+<g class="chip" style="--c:var(--live)"><rect x="184.5" y="198.5" width="148" height="19" rx="9.5"/><circle cx="196" cy="208" r="3.5"/><text x="204" y="212">reviewer lucid-heron</text></g>
+<g class="chip" style="--c:var(--live)"><rect x="44.5" y="223.5" width="136" height="19" rx="9.5"/><circle cx="56" cy="233" r="3.5"/><text x="64" y="237">Test running · studio</text></g>
+
+<!-- The plugin's panel: a paragraph, a table and two paragraphs, in Star Foundry's own words -->
+<rect class="card" x="20.5" y="278.5" width="959" height="273" rx="14"/>
+<text class="b" x="44" y="307">Landing stamps</text>
+<rect class="table" x="44.5" y="320.5" width="468" height="170" rx="10"/>
+<path class="head" d="M45 354V331a10 10 0 0 1 10-10h447a10 10 0 0 1 10 10v23z"/>
+<line class="rule" x1="45" y1="354.5" x2="512" y2="354.5"/>
+<line class="rule" x1="45" y1="388.5" x2="512" y2="388.5"/>
+<line class="rule" x1="45" y1="422.5" x2="512" y2="422.5"/>
+<line class="rule" x1="45" y1="456.5" x2="512" y2="456.5"/>
+<line class="rule" x1="164.5" y1="321" x2="164.5" y2="490"/>
+<line class="rule" x1="270.5" y1="321" x2="270.5" y2="490"/>
+<text class="th" x="56" y="342">Stamp</text><text class="th" x="176" y="342">Collected</text><text class="th" x="282" y="342">Detail</text>
+<text x="56" y="376">certificate</text><text x="176" y="376">no</text><text x="282" y="376">merge tree 4be91c2: verify running</text>
+<text x="56" y="410">nightly</text><text x="176" y="410">yes</text><text x="282" y="410">2026-11-10 green</text>
+<text x="56" y="444">dependency</text><text x="176" y="444">edited</text><text x="282" y="444">see edits</text>
+<text x="56" y="478">review</text><text x="176" y="478">yes</text><text x="282" y="478">lucid-heron</text>
+<text x="44" y="516">Missing: certificate.</text>
+<text x="44" y="540">Edits: dependency, by cobalt-otter: shares no code with tools/slot-pool-by-tree.</text>
+</svg>

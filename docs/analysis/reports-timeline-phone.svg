@@ -1,0 +1,117 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="390" height="752" viewBox="0 0 390 752" role="img" aria-labelledby="title desc">
+<title id="title">A task's timeline on a phone</title>
+<desc id="desc">A vertical list, one row per step with its start time, a bar as long as it took and its duration: ready, in progress with a build and a test, review round 1 with changes, in progress again with a test, review round 2 approved, then waiting to land with a certificate verify, the dependency waived, main moving and a second certificate verify running now.</desc>
+<style>
+:root{--background:#fbfaf7;--foreground:#1d1c1a;--muted-foreground:#6b6862;--border:#e4e0d8;--primary:#2f5d9e;--like:#2e7d4f;--dislike:#b3392b;--question:#946a00;--decision:#4a3f9e;--resolved:#5f6b73;--auto:#1f7a8c;--card:#ffffff}
+@media (prefers-color-scheme:dark){:root{--background:#161513;--foreground:#e8e4dc;--muted-foreground:#a19c93;--border:#2c2a26;--primary:#7fa7e0;--like:#6fc48f;--dislike:#e57a6a;--question:#e0b84c;--decision:#a89ce8;--resolved:#8f9aa3;--auto:#5cc4d6;--card:#1d1c19}}
+text{font-family:-apple-system,"Segoe UI",Helvetica,Arial,sans-serif;font-size:14px;fill:var(--foreground)}
+.page{fill:var(--background)}
+.card{fill:var(--card);stroke:var(--border)}
+.m{fill:var(--muted-foreground)}
+.s{font-size:13px}
+.xs{font-size:12px}
+.t{font-size:12px;fill:var(--muted-foreground);font-variant-numeric:tabular-nums}
+.d{font-size:13px;font-weight:600;text-anchor:end;font-variant-numeric:tabular-nums}
+.v{font-size:12px;font-weight:600;fill:var(--c)}
+.dot,.bar{fill:var(--c)}
+.wait{fill:var(--c);fill-opacity:.28}
+.track{stroke:var(--border);stroke-width:2}
+.mark{fill:var(--card);stroke:var(--c);stroke-width:2}
+.pill rect{fill:var(--c);fill-opacity:.1;stroke:var(--c);stroke-opacity:.35}
+.pill text{fill:var(--c);font-size:12px;font-weight:600;text-anchor:middle}
+.sbg{fill:var(--primary);fill-opacity:.2}
+.sfg{fill:var(--primary);fill-opacity:.85}
+</style>
+<defs>
+<pattern id="running" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect class="sbg" width="6" height="6"/><rect class="sfg" width="3" height="6"/></pattern>
+</defs>
+<rect class="page" width="390" height="752"/>
+
+<g class="pill" style="--c:var(--decision)"><rect x="16.5" y="10.5" width="184" height="21" rx="10.5"/><text x="108.5" y="25.5">Timeline · a bar per step</text></g>
+<text x="16" y="66" style="font-size:22px;font-weight:700;letter-spacing:-.22px">Timeline</text>
+<text class="m s" x="16" y="88">6 h 18 m so far · 2 review rounds · 1 bounce</text>
+<text class="m s" x="16" y="106">Machine 1 h 33 m, queued 26 m</text>
+
+<rect class="card" x="16.5" y="118.5" width="357" height="590" rx="14"/>
+<line class="track" x1="80" y1="143" x2="80" y2="684"/>
+
+<!-- ready -->
+<text class="t" x="32" y="148">09:02</text>
+<circle class="dot" style="--c:var(--auto)" cx="80" cy="143" r="4.5"/>
+<text x="92" y="148">Ready, unclaimed</text><text class="d" x="358" y="148">41 m</text>
+<rect class="bar" style="--c:var(--auto)" x="92" y="156" width="82" height="7" rx="3.5"/>
+
+<!-- in progress -->
+<text class="t" x="32" y="194">09:43</text>
+<circle class="dot" style="--c:var(--primary)" cx="80" cy="189" r="4.5"/>
+<text x="92" y="194">In progress · quiet-wren</text><text class="d" x="358" y="194">1 h 52 m</text>
+<rect class="bar" style="--c:var(--primary)" x="92" y="202" width="224" height="7" rx="3.5"/>
+
+<text class="t" x="32" y="240">10:28</text>
+<circle class="dot" style="--c:var(--like)" cx="96" cy="235" r="3"/>
+<text class="s" x="106" y="240">Build · queued 3 m</text><text class="d" x="358" y="240">4 m</text>
+<rect class="wait" style="--c:var(--primary)" x="106" y="248" width="6" height="7" rx="2"/><rect class="bar" style="--c:var(--like)" x="112" y="248" width="8" height="7" rx="2"/>
+
+<text class="t" x="32" y="286">10:52</text>
+<circle class="dot" style="--c:var(--like)" cx="96" cy="281" r="3"/>
+<text class="s" x="106" y="286">Test, just verify · queued 6 m</text><text class="d" x="358" y="286">24 m</text>
+<rect class="wait" style="--c:var(--primary)" x="106" y="294" width="12" height="7" rx="2"/><rect class="bar" style="--c:var(--like)" x="118" y="294" width="48" height="7" rx="2"/>
+<text class="v" style="--c:var(--like)" x="174" y="301">green</text>
+
+<!-- review, round 1 -->
+<text class="t" x="32" y="332">11:35</text>
+<circle class="dot" style="--c:var(--question)" cx="80" cy="327" r="4.5"/>
+<text x="92" y="332">Review, round 1 · lucid-heron</text><text class="d" x="358" y="332">52 m</text>
+<rect class="wait" style="--c:var(--question)" x="92" y="340" width="36" height="7" rx="2"/><rect class="bar" style="--c:var(--question)" x="128" y="340" width="68" height="7" rx="2"/>
+<text class="v" style="--c:var(--dislike)" x="204" y="347">changes</text>
+
+<!-- in progress again -->
+<text class="t" x="32" y="378">12:27</text>
+<circle class="dot" style="--c:var(--primary)" cx="80" cy="373" r="4.5"/>
+<text x="92" y="378">In progress again</text><text class="d" x="358" y="378">1 h 10 m</text>
+<rect class="bar" style="--c:var(--primary)" x="92" y="386" width="140" height="7" rx="3.5"/>
+
+<text class="t" x="32" y="424">13:00</text>
+<circle class="dot" style="--c:var(--like)" cx="96" cy="419" r="3"/>
+<text class="s" x="106" y="424">Test, just verify · queued 2 m</text><text class="d" x="358" y="424">23 m</text>
+<rect class="wait" style="--c:var(--primary)" x="106" y="432" width="4" height="7" rx="2"/><rect class="bar" style="--c:var(--like)" x="110" y="432" width="46" height="7" rx="2"/>
+<text class="v" style="--c:var(--like)" x="164" y="439">green</text>
+
+<!-- review, round 2 -->
+<text class="t" x="32" y="470">13:37</text>
+<circle class="dot" style="--c:var(--question)" cx="80" cy="465" r="4.5"/>
+<text x="92" y="470">Review, round 2 · lucid-heron</text><text class="d" x="358" y="470">28 m</text>
+<rect class="wait" style="--c:var(--question)" x="92" y="478" width="8" height="7" rx="2"/><rect class="bar" style="--c:var(--question)" x="100" y="478" width="48" height="7" rx="2"/>
+<text class="v" style="--c:var(--like)" x="156" y="485">approved</text>
+
+<!-- waiting to land -->
+<text class="t" x="32" y="516">14:05</text>
+<circle class="dot" style="--c:var(--question)" cx="80" cy="511" r="4.5"/>
+<text x="92" y="516">Approved, waiting to land</text><text class="d" x="358" y="516">1 h 15 m</text>
+<rect class="wait" style="--c:var(--question)" x="92" y="524" width="150" height="7" rx="3.5"/>
+<text class="v" style="--c:var(--muted-foreground)" x="250" y="531">now</text>
+
+<text class="t" x="32" y="562">14:05</text>
+<circle class="dot" style="--c:var(--like)" cx="96" cy="557" r="3"/>
+<text class="s" x="106" y="562">Certificate verify · e19d3a0</text><text class="d" x="358" y="562">24 m</text>
+<rect class="wait" style="--c:var(--primary)" x="106" y="570" width="10" height="7" rx="2"/><rect class="bar" style="--c:var(--like)" x="116" y="570" width="48" height="7" rx="2"/>
+<text class="v" style="--c:var(--like)" x="172" y="577">green</text>
+
+<text class="t" x="32" y="609">14:12</text>
+<path class="mark" style="--c:var(--resolved)" d="M96 599.5l4.5 4.5-4.5 4.5-4.5-4.5z"/>
+<text class="s" x="106" y="609">Dependency waived · cobalt-otter</text>
+
+<text class="t" x="32" y="639">14:50</text>
+<path class="mark" style="--c:var(--question)" d="M96 629.5l4.5 4.5-4.5 4.5-4.5-4.5z"/>
+<text class="s" x="106" y="639">Main moved: certificate again</text>
+
+<text class="t" x="32" y="668">14:52</text>
+<circle class="dot" style="--c:var(--primary)" cx="96" cy="663" r="3"/>
+<text class="s" x="106" y="668">Certificate verify · 4be91c2</text><text class="d" x="358" y="668">18 m</text>
+<rect class="wait" style="--c:var(--primary)" x="106" y="676" width="20" height="7" rx="2"/><rect x="126" y="676" width="36" height="7" rx="2" fill="url(#running)"/>
+<text class="v" style="--c:var(--primary)" x="170" y="683">running</text>
+
+<rect class="bar" style="--c:var(--primary)" x="16" y="725" width="14" height="7" rx="2"/><text class="m xs" x="36" y="732">worked or ran</text>
+<rect class="wait" style="--c:var(--primary)" x="124" y="725" width="14" height="7" rx="2"/><text class="m xs" x="144" y="732">queued or waiting</text>
+<rect x="258" y="725" width="14" height="7" rx="2" fill="url(#running)"/><text class="m xs" x="278" y="732">running now</text>
+</svg>

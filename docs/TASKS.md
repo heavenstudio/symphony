@@ -161,11 +161,17 @@ For isolated runs use `tasks --database NAME ...` and
 `symphony-server --scratch NAME --port N --root ROOT`; the latter keeps
 its asks in `artifacts/callbacks-NAME/asks.db`.
 
-**Agent sessions behind a task** (`task_sessions`): `just tasks launch SLUG` starts a
-Codex agent (`--no-daemon`; default model `gpt-6.1-sol`, effort `xhigh`, workspace-write
-with network access) in an hc terminal of its own, `hc run --bg --no-parent --outlive-parent
---keep`: no child of the caller's terminal, which the app would show under it rather than in
-a tab. `--kind claude --model sonnet` selects Claude. The
+**Agent sessions behind a task** (`task_sessions`): `just tasks launch SLUG` starts the
+agent the project's `[agents] launch` in its main checkout's `symphony.toml` names (`default`,
+`codex` or `claude`, with its `model` and `effort`), else a Codex agent (`--no-daemon`; model
+`gpt-6.1-sol`, effort `xhigh`, workspace-write with network access), in an hc terminal of its
+own, `hc run --bg --no-parent --outlive-parent --keep`: no child of the caller's terminal,
+which the app would show under it rather than in a tab. `--kind` and `--model` win over the
+project's; its model and effort go with its agent, so `--kind` naming the other agent takes the
+board's model for that one (Codex `gpt-6.1-sol` at `xhigh`, Claude `sonnet` at its own effort).
+A table that does not parse, or names another agent, refuses the launch. The `launched` line
+names the agent, model and effort it started, and `launch --help` ends with what a bare launch
+starts where it runs (`crates/tasks/src/launch/defaults.rs`). The
 terminal shows in its stream tab (`code` for an executor, `review` for a reviewer, or
 `--tab` such as `3d` or `infra`) of the project's space in the Herdr app, found by name and
 made when missing (the labels `herdr.space` and `herdr.tab`); the owner's tabs and other
@@ -231,7 +237,8 @@ Use these explicit markers for owner decisions.
 Before launching, the pass prompts an idle worker/reviewer holding no unfinished
 work in a suitable open terminal: an executor already on the task's own branch, or an
 instruction worker/reviewer in a detached checkout. A checkout with a live or stale
-executor is never reused. Otherwise it launches Codex in a separate worktree: the
+executor is never reused. Otherwise it launches what a bare `just tasks launch` would (the
+project's `[agents] launch`, else Codex) in a separate worktree: the
 task's own branch, or detached main for an instruction or review. Live agent terminals
 and live board agent sessions without a terminal count toward the cap;
 reuse adds no session. Memory below the floor defers work. Every proposal, dispatch,
