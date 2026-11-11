@@ -31,5 +31,6 @@ tract-onnx.workspace = true
 tract-linalg.workspace = true
 sha2.workspace = true
 # `tasks run` becomes the command it records and watches it from a process of its own, where it
-# cannot, runs it as a child (src/cli/recorder.rs); the machine id is read without following a link.
+# cannot, runs it as a child (src/cli/recorder.rs); the machine id is read without following a link;
+# the free disk the board warns of is read by `statvfs` (src/board_health/disk.rs).
 libc.workspace = true

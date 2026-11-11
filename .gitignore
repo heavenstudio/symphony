@@ -1,4 +1,7 @@
 /.target/
+# A clone being staged (tools/seed-target.sh) and a build folder being removed (the worktree sweep).
+/.target.seed.*
+/.target.clear.*
 /build/
 /.dioxus/
 /.venv/
