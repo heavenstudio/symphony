@@ -249,13 +249,15 @@ switching back to main enables verdict commits without restarting the server.
 three-way merge, recording the unchanged `sf-land/verdicts/<commit>` record
 before updating main. Verdicts that change generated content take a private
 branch with their outputs through landing. A separate worker handles these
-branches so ordinary verdicts can proceed. Each generated branch runs `just verify`
-then `just land BRANCH` in its private checkout as the same app actor, regardless
+branches so ordinary verdicts can proceed. Each generated branch runs the project's
+`[verdicts] check` (this repository's: `just symphony-cli docs-audit --check`,
+[CHECKS](../../docs/CHECKS.md#checks-with-no-reviewer)), then its `[verdicts] land`
+command with the branch, in its private checkout as the same app actor, regardless
 of the legacy migration key. Land handles a moving main through its ordinary
 candidate verification and reuse. A bounded land retry keeps the immutable edit,
 branch, checkout and verifier records in a locked publication journal. The next
 save supplies another publication pass that calls land again without regenerating
-or running another whole verify; a restarted worker resumes the same journal.
+or running the check again; a restarted worker resumes the same journal.
 Graceful shutdown drains both workers and preserves retryable publications.
 Every save has an atomic draft journal before publication can temporarily
 release its page. An unverified terminal failure retains that immutable draft

@@ -753,7 +753,7 @@ A consuming project's optional wait guard refuses a loop waiting on machine-wide
   nothing claimable yet), after which anyone may claim the task: start the agent
   promptly, or register the handle again and re-reserve.
 - Every subtask closes with its executor's `just tasks done SLUG "integration commit and focused result"`, including ordinary implementation slices. Only the top-level parent enters review, gathers stamps and lands. `--instruction` still marks an agent instruction, but is not required for lightweight completion.
-- Source slices start from their parent feature branch, commit there or return commits for integration, and run only their focused checks. A separate agent is justified only by useful parallelism. No independent slice review, full verification or landing.
+- Source slices start from their parent feature branch, commit there or return commits for integration, and run only their focused checks. A separate agent is justified only by useful parallelism. No independent slice review or landing. A parent's gate is evidence too, the tests closest to its change, which its reviewer judges; the full verification is no task's, and runs nightly ([CHECKS](CHECKS.md)).
 - `just tasks show` lists a task's subtasks with each one's status and holder;
   `just tasks list` and the Symphony's **tasks** page show the same tree, at
   any depth.

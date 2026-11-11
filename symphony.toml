@@ -11,8 +11,10 @@ panes = "hc"
 worktrees = "../symphony-wt"
 launch = { default = "claude", model = "opus" }
 
+# What a generated branch passes before it lands with no reviewer: the check closest to the
+# documents it changes. `just verify` is the nightly's (docs/CHECKS.md).
 [verdicts]
-check = ["just", "verify"]
+check = ["just", "symphony-cli", "docs-audit", "--check"]
 
 [board]
 orchestrator_slots = 8

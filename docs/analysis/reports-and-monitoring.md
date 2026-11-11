@@ -272,8 +272,10 @@ Every stamp or check the task needs to land. Each one is in one of these states:
 What Symphony shows without a plugin:
 
 - **Review**: the board's reviewer verdict on each round, by whom and when.
-- **Check**: the project's `[verdicts] check` (Symphony's: `just verify`) on the branch's tip,
-  from the run records: green, red, or not run at this tip.
+- **Check**: the project's `[verdicts] check` (Symphony's: `just symphony-cli docs-audit --check`,
+  which only a generated branch runs; a task's own gate is the evidence it posts,
+  [CHECKS](../CHECKS.md)) on the branch's tip, from the run records: green, red, or not run at
+  this tip.
 - **Owner card**: a card the task posted that waits on the owner (the rule of the sign-off lane,
   [TASKS](../TASKS.md#tasks-and-roles)).
 - **Review callback**: the `[board] on_review` run for the tip, once its exit is recorded. Today
