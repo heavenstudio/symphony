@@ -6,10 +6,10 @@
 //! bundle's stderr, or the end of that stream once bundle.sh and every child holding it have
 //! exited. The one fake DX that blocks does so after printing its line, until the test writes to
 //! its stdin, so a bundle that goes wrong ends its stream and the wait fails with its log. A
-//! bundle that never ends is bounded by the test runner's own budget (sf-rust-tests).
+//! bundle that never ends is bounded by the native test runner's own budget.
 //!
 //! No freshly written file is executed: macOS assesses each new executable on its first run in
-//! one machine-wide queue, seconds apiece under load. The stand-ins link to the project's
+//! one machine-wide queue, seconds apiece under load. The stand-ins link to the workspace's
 //! prepared fixture script, which reads each one's body as data.
 
 #[path = "../../../tools/test-support/script_std.rs"]
@@ -36,8 +36,11 @@ impl Fixture {
             "apps/symphony-ui/bundle.sh",
             "apps/symphony-ui/wasm-fresh.sh",
             "apps/symphony-ui/package.sh",
+            "apps/symphony-ui/assets-copy.sh",
+            "apps/symphony-ui/remap-rustc.sh",
             "apps/symphony-ui/Dioxus.toml",
             "apps/symphony-ui/assets/shell.js",
+            "apps/symphony-server/src/notices.css",
             "tools/check_lock.sh",
             "Cargo.toml",
         ] {
@@ -56,12 +59,7 @@ impl Fixture {
             &base.join("common/sf-cargo/dx-home/tools/wasm-bindgen-fixture/wasm-bindgen"),
             "#!/bin/bash\nexit 0\n",
         );
-        // The native atomic publisher has its own coverage. Here it receives the real package.sh
-        // assembly and moves it as-is; the outputs are distinct so publication cannot race.
-        executable(
-            &base.join("tools/rs-bin.sh"),
-            "#!/bin/bash\nset -euo pipefail\n[ \"$1 $2\" = 'symphony publish-client' ]\nmv \"$3\" \"$4\"\n",
-        );
+        release_protocol(&base);
         executable(
             &base.join("common/sf-cargo/dx-0.7.10/bin/dx"),
             r#"#!/bin/bash
@@ -91,12 +89,15 @@ mkdir -p "$out"
 cp -R "$work/public" "$out/"
 "#,
         );
+        owned_git(&base, &["init", "-q"]);
+        owned_git(&base, &["commit", "-qm", "fixture", "--allow-empty"]);
         Self(base)
     }
 
     fn start(&self, id: &str, first_exit: i32) -> Bundle {
         let home = self.0.join(format!("home-{id}"));
         fs::create_dir(&home).unwrap();
+        fs::create_dir(home.join(".cargo")).unwrap();
         let mut child = Command::new("bash")
             .arg(self.0.join("apps/symphony-ui/bundle.sh"))
             .arg(self.0.join(id))
@@ -106,6 +107,7 @@ cp -R "$work/public" "$out/"
             .env("CARGO_TARGET_DIR", self.0.join("target"))
             .env("CARGO", self.0.join("cargo"))
             .env("BUNDLE_ID", id)
+            .env("BUNDLE_ROOT", &self.0)
             .env("FIRST_EXIT", first_exit.to_string())
             .env_remove("SF_TOOL_TEST_WAIT_HELPER")
             .stdin(Stdio::piped())
@@ -177,6 +179,72 @@ impl Drop for Fixture {
 fn executable(path: &Path, script: &str) {
     fs::create_dir_all(path.parent().unwrap()).unwrap();
     fixture_script::write(path, script, false);
+}
+
+fn release_protocol(base: &Path) {
+    // Source capture and atomic publication have unit and real-build coverage. These protocol
+    // stand-ins keep this case on the target lock, six-module assembly and failure release.
+    executable(
+        &base.join("tools/rs-bin.sh"),
+        "#!/bin/bash\nset -euo pipefail\n[ \"$1 $2\" = '--build symphony' ]\nprintf '%s/publisher\\n' \"$BUNDLE_ROOT\"\n",
+    );
+    executable(
+        &base.join("publisher"),
+        r#"#!/bin/bash
+set -euo pipefail
+case "$1" in
+release-inputs)
+    if [ "$6" = --key ]; then
+        mkdir -p "$BUNDLE_ROOT/inputs-lock"
+        printf '%s/inputs-lock\n' "$BUNDLE_ROOT"
+    else
+        printf '%s\n' "$BUNDLE_ROOT"
+    fi ;;
+publish-client) mv "$2" "$3" ;;
+*) exit 97 ;;
+esac
+"#,
+    );
+    executable(
+        &base.join("tools/cargo.sh"),
+        r#"#!/bin/bash
+set -euo pipefail
+[ "$1" = metadata ]
+pin="$(git -C "$BUNDLE_ROOT" rev-parse HEAD)"
+jq -nc --arg path "$BUNDLE_ROOT/primitives/Cargo.toml" --arg source "git+fixture#$pin" \
+'{packages:[{name:"dioxus-primitives",manifest_path:$path,source:$source}]}'
+"#,
+    );
+    fs::create_dir(base.join("primitives")).unwrap();
+}
+
+fn owned_git(root: &Path, args: &[&str]) {
+    let mut command = Command::new("git");
+    command
+        .args([
+            "-c",
+            "user.name=t",
+            "-c",
+            "user.email=t@t",
+            "-c",
+            "core.hooksPath=/dev/null",
+        ])
+        .args(args)
+        .current_dir(root);
+    for key in [
+        "GIT_DIR",
+        "GIT_WORK_TREE",
+        "GIT_INDEX_FILE",
+        "GIT_COMMON_DIR",
+    ] {
+        command.env_remove(key);
+    }
+    let done = command.output().unwrap();
+    assert!(
+        done.status.success(),
+        "{}",
+        String::from_utf8_lossy(&done.stderr)
+    );
 }
 
 struct Bundle {
