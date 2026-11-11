@@ -48,9 +48,13 @@ pin is `rust-toolchain.toml`. The containing project keeps its own source launch
 slot wrapper and gates, which compile and test its own consumers.
 
 `tools/rs-bin.sh NAME` builds a declared workspace binary with Cargo before every
-run. `--build NAME` prints the freshly built path, `--where NAME` names its expected
-location without building or attesting freshness, and `--link NAME` builds and
-refreshes `.target/bin/NAME`. None searches a containing project. `just symphony
+run and runs `rs-bin/NAME` in the target folder, a hard link renewed only when Cargo
+relinked, so a no-op build costs no new executable's first run. `--build NAME` prints
+that path, `--where NAME` names Cargo's own copy without building or attesting
+freshness, and `--link NAME` builds and points `.target/bin/NAME` at it. A board
+binary run from a linked worktree against the live board runs the main checkout's
+launcher instead ([the board guide](crates/tasks/AGENTS.md)). None searches a
+containing project. `just symphony
 --port 0` runs a server of its own; the server CLI retains shared-server selection.
 
 `just client-update` builds all six real client modules and publishes their bundle
@@ -100,7 +104,8 @@ standing rules in [RULES.md](RULES.md).
 **Memory lives in the repository.** Nothing goes in an agent's own memory folder
 (`~/.claude/projects/…/memory/`): what must outlast a session is guidance here or in a
 package's AGENTS.md, a skill, a doc or a board task, and it is committed, so every
-agent sees it. `.claude/settings.json` denies writes there.
+agent sees it. In a Claude Code session the memory guard refuses the writes there it
+can read (below), and `.claude/settings.json` denies Edit there as well.
 
 **Models.** The orchestrator may run on the most capable model, for diagnosis and
 design. Executors and reviewers run on Opus: an Agent launch passes `model: "opus"`
@@ -119,9 +124,10 @@ the binary by its path reads lost while it works.
 ## Agent integration
 
 `symphony init --root ROOT` installs the seven generic skills, their Claude links,
-Claude allow rules and heartbeat commands, and Codex rules. Stamped copies are kept
-current; an unstamped project copy wins. Project-specific skills and taste data stay
-in the project. Retirement removes managed files and links, retaining project data.
+Claude allow rules, heartbeat and memory-guard commands, and Codex rules. Stamped
+copies are kept current; an unstamped project copy wins. Project-specific skills and
+taste data stay in the project. Retirement removes managed files and links, retaining
+project data. It writes no permission rule but the allow rules.
 
 `symphony hook tasks-beat` reads the tool event from stdin and finds its board through
 the board's project lookup. Keys and live-build records belong to that repository's
@@ -129,6 +135,24 @@ common directory; scratch overrides remain explicit. It starts no server, builds
 hashes no sources, prints nothing and never refuses a tool call. Settings run the
 prebuilt `.target/bin/symphony` link; a missing link passes quietly. Project build
 setup refreshes that link explicitly, alongside its own policy hooks.
+
+`symphony hook memory-guard` (`crates/symphony/src/hook/memory_guard.rs`) runs before a
+Claude Code session's Write, Edit, MultiEdit, NotebookEdit or Bash call. It refuses,
+with exit 2 and one line naming where the guidance goes instead, a write into an
+agent's memory folder (`~/.claude/projects/*/memory/`, `~/.codex/memories/`): a write
+tool's path there, or a shell command that names the folder and writes anything. It
+reads the command as text, with `.` and `NAME/..` parts folded. A command names the
+folder by its path, by running in it, or by a folder above it (`.claude`,
+`.claude/projects/NAME`, `.codex`, in the command or as the folder it runs in) beside a
+`memory` or `memories` part. A write is a redirection into a file (not a descriptor or
+`/dev/null`), `sed -i`, `find -delete` or `-exec`, or a writer, unpacker, downloader,
+interpreter or `xargs` named by its word, path or `\` escape. Reads pass. It misses
+`git clone` or `git -C … init`, `sort -o`, `uniq IN OUT`, `mktemp`, `ed`,
+`awk -i inplace`, `xattr -w` and a write through a link made before. Text that names
+the folder beside a write (a commit message, a board post, a heredoc) is refused:
+say "the memory folder", or put the text in a file with Write. A Codex session runs
+no Claude hook and is not guarded. Its installed command passes on that refusal
+alone: with no link, or a link to a build older than the guard, the call goes through.
 
 ## Command ownership
 

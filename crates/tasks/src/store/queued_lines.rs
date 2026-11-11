@@ -40,6 +40,8 @@ pub(super) struct Queued {
     pub(super) sequence: u64,
     pub(super) pull_entries: Option<BTreeSet<Entry>>,
     pub(super) pull_withheld: Option<BTreeSet<Entry>>,
+    /// What a PULL this generation queued says, which its acknowledgement records.
+    pub(super) pull_said: Option<crate::cli::pull::Said>,
 }
 
 /// The queued lines a dispatch takes back (`dropped`) or says again (`rewritten`, key and text).

@@ -41,6 +41,12 @@ version in one transaction before any other write. An older build is refused
 before it writes, naming the project and `just symphony`. A Symphony one version
 behind still reads the board, and every write it would send is refused the same
 way. A store opened before a newer build migrated is refused at its next write.
+The Symphony never moves a board forward or makes one, so a branch's command line
+or preview server with a newer schema leaves the live board as it is: a board
+behind its build, or not made yet, it refuses before it reads, naming `just tasks
+list` in the project, the board command that moves or makes it. A branch tries a
+newer schema on a scratch board (`TASKS_DATABASE=NAME`), which its own `just
+tasks --database NAME` moves.
 
 The store takes about what it holds. Every server the board starts keeps each
 value beside its key, where compaction drops the versions a rewrite leaves, and
@@ -53,10 +59,12 @@ for byte against the old ones. Only then does it swap the stores and remove the
 old one. The exports stay in `sf-tasks/reclaim/exports/`. `--dir FOLDER`
 rehearses on a copy of `sf-tasks/` (`cp -c`, a clone).
 
-The command is the `tasks` binary (`crates/tasks`), built from this tree's
-sources once for every worktree that shares them (`tools/rs-bin.sh`): the
-first command after a change to them builds it, which takes a minute or two.
-The heartbeat hook runs the build its tree last ran (`.target/bin/tasks`) and
+The command is the `tasks` binary (`crates/tasks`), which `tools/rs-bin.sh`
+builds before every run: the first command after a change to its sources takes
+a minute or two, later ones only Cargo's check that nothing changed. On the
+live board it is the main checkout's build, from whichever worktree it runs; a
+branch's own build runs only on a scratch board (`--database NAME`). The
+heartbeat hook runs the build its tree last linked (`.target/bin/tasks`) and
 builds nothing. There is no Python board adapter.
 `launch`, `restore`, `cleanup`, `close` and `reap` are its own, hc's terminals and all
 (`crates/tasks/src/launch/`); the board calls no `herdr`. The server is the pinned SurrealDB, fetched once
@@ -70,6 +78,8 @@ per machine into `sf-surreal/` in the git common dir by `bash tools/surreal.sh`
 | `just tasks stats [--days N] [--json]` | where the pipeline's time goes: lead time, time in each status, bounces, tasks done per day and what sits longest ([Where the time goes](#where-the-time-goes)) |
 | `just tasks status [--json]` | the board's health over the last hour, as its Symphony server recorded it: failed dispatches and sweeps, the slowest request, write latency ([Board health](#board-health)) |
 | `just tasks callback [ADDRESS] --as HANDLE` | register a native channel; addressed events start a turn directly |
+| `just tasks pull --as HANDLE` | the whole PULL digest as HANDLE hears it now; a callback carries only what changed since the last PULL it received |
+| `just tasks wait --as HANDLE [--timeout S]` | for a session with no channel: exits printing what a callback would have pushed it since its last read, once there is any; run it as a background command and again when it exits |
 | `just agent-send HANDLE "text" [--as SENDER]` | message an agent directly through its registered channel |
 | `just symphony` → **▦ tasks**, **◉ agents** | the board, each task's page and thread, and who is connected |
 
@@ -100,7 +110,15 @@ a native callback, choosing the lexicographically smallest handle among plain
 orchestrators. A normal `just tasks callback --as HANDLE` is enough for that
 last fallback; `--chat --if-free` opts into the higher-priority fallback without
 displacing the seat. Sweep-confirmed native presence counts as live. A recipient
-suspended after delivery failures waits for the sweep to restore it.
+suspended after delivery failures waits for the sweep to restore it. While no
+channel holds the seat, an orchestrator reading by `just tasks wait` holds it:
+a session is waiting from its first `wait` until it registers a channel (or
+turns one off) or leaves, and of the live waiting orchestrators the smallest
+handle receives chat at its next read; one that stops waiting holds it while it
+stays live, so what the owner says waits for that read. While nobody holds the
+seat, every orchestrator's `just tasks pull` ends with what the owner said that
+nobody received, and its `just tasks inbox` takes it, after which nobody reads
+it again: an owner's word never goes to no one unseen.
 The app names the recipient, and says when nobody receives chat. Saves queue
 asks, follow-ups, card messages, verdict notes and callouts directly; an outbox
 beside the asks preserves them across a board outage. No file watcher discovers
@@ -474,8 +492,33 @@ digest (`crates/tasks/src/cli/pull.rs`) once at its first dispatch, even when em
 (one on a subtask still to be executed counts), in-progress with none, review with no reviewer, tasks that landed
 (the branch is on main, or `landed <slug> on main` is on the task's thread) and are still open (a status change on the task after that line voids it, whether a move, a verdict such as `changes`, or a re-claim: the task is new work, not a landing left open), and idle agents, each scoped to the orchestrator's own and unclaimed tasks (an idle agent another orchestrator launched is left out). An executor
 or reviewer that is `running_test` counts as present however quiet the board says it is.
+A task in review whose tip a reviewer asked changes of is rework, counted in progress
+([The pipeline alarm](#the-pipeline-alarm)). While the pipeline alarm stands, the whole board's
+follows the header, whoever the digest is for, and its raising is an entry.
 Counts and the clock do not trigger delivery. A departure alone pushes nothing;
 an entry that stays present is never re-sent, and an ordinary entry that leaves and returns pushes once.
+The first PULL a recipient receives is the whole digest: `PULL HH:MM` with every count, then each list's
+first six rows and how many more it holds, but `unanswered`, whose every post is listed with the command that
+answers it, since a post a PULL tells is never told again. Each later one says only what changed since the last PULL it
+acknowledged: the counts that moved (`PULL ready_unstaffed=34 (was 33)`, or `PULL counts unchanged`), the
+liveness and low-volume lines it was not told, each row a list gained, and `resolved LIST a, b` for the rows
+that left it. A backlog of 33 that gains one row is that header and one row. What the last acknowledged PULL said
+is kept in the recipient's callback state (`pull_said`, which older dispatchers ignore); after an older
+dispatcher's acknowledgement, which does not record it, the next PULL is the whole digest again. A dispatcher
+built before PULLs said only what changed (the shared server's, until it is rebuilt) records the entries of the
+PULL it acknowledges and not what it said: a row it told that the recipient still hears shows it, and the next PULL
+is the whole digest. Only when every row it told has left the recipient's digest by then is the next PULL measured
+against the baseline before it: its header can repeat a count that moved before, with the older `(was N)`, its
+liveness line can repeat or miss a change, and those rows are not said `resolved`. Rows added are exact either way,
+never lost or said twice, and the next PULL this generation records is exact again.
+A channel registered anew starts again from the whole digest: `--off`, a registration where none was (after
+`--off` or a `tasks wait`) or one another process listens on (`Store::callback_in`) forgets which PULL the
+session acknowledged, and a PULL waiting for it gives way to the whole digest; the posts it was told stay told.
+Only the same listener moving to a new socket keeps its account, so what waited out an outage is said there as it
+stands. An orchestrator reads the whole digest at its decision points with `just tasks pull` whatever it heard.
+A pass whose unanswered-post scan fails says why on stderr and delivers the rest, and its PULL says nothing of
+those posts, neither their count nor any of them resolved; their count is then unknown to the recipient, so the
+next PULL whose scan answers says it (`unanswered=1 (was unknown)`) and resolves the posts answered meanwhile.
 Unanswered work retains its task/post identity across departures and returns.
 `unanswered` lists an executor on an in-progress, blocked or review task, or a reviewer
 on a task in review, when it is lost or left (or its recorded terminal is closed) and an
@@ -488,6 +531,42 @@ command, or the explicit launch command when no conversation was recorded. The
 orchestrator receives each task/post once, even if it leaves and returns; a new
 unanswered post can push a new line for the same task. Its count appears only when
 nonzero. `reap` makes the sole automatic recovery attempt described above.
+
+What is pushed is what the recipient cannot predict and must act on, said once: posts and verdicts, NEW,
+STATUS, ROLE, BLOCKED, the PULL above, and STALE, LOST or LIVENESS UNKNOWN once for each transition of a quiet
+child, never once a pass (a child it already hears as stale is not also listed idle, in a pushed PULL, a wait
+or `tasks pull` alike). A recipient is never told its own writes: not its own moves, not a role move it made (a hand-over, a take-over), and not what its own
+children (the sessions it registered, `--parent`) take on or let go, their reservations, claims and releases
+and the moves and readiness those make; a child's own move, to review say, is still said, and so is one it made
+before a claim or release between two looks (a block, then a release, says the block). What is read is the
+rest: `just tasks pull --as HANDLE` prints the whole digest as HANDLE hears it now, whatever was pushed, and
+changes nothing; `just tasks show`, `list` and `agents` read the board as it is.
+
+A push through a channel arrives wrapped in the receiving client's notice and costs a turn. A session that can
+hold a background command reads the same lines instead: `just tasks wait --as HANDLE [--timeout S]` exits
+printing what a channel would have carried since its last read, once there is any, and the session runs it
+again. It is the dispatch's own pass for HANDLE (`crates/tasks/src/cli/commands/wait.rs`,
+`Store::collect_callbacks`), its lines printed rather than delivered, each text flushed before it is recorded
+as delivered (one that does not print is retried five seconds on, so a failure repeats a line and never loses
+one), so it says the same lines by the same diff and account, from the same callback state: the first read is the whole digest
+and any posts waiting, each later one only what changed. It looks when the board's marker moved, every two
+seconds at most, and at least every fifteen, since a child going quiet or a PULL falling due changes with time
+alone; with `--timeout` it gives up after S seconds with `WAIT nothing changed in S s` (`0` looks once). It
+is refused while HANDLE has a channel, which takes those lines (`just tasks callback --off --as HANDLE` gives
+them to `wait`), and nothing else dispatches to a session without one, so between reads nothing is said and
+nothing lost. Waiting is the session's sign of life, as a monitor's is: it beats for HANDLE every twenty seconds
+or so, at a look, so an orchestrator waiting on its board is not called stale for it. Each look also watches
+the panes HANDLE oversees, one hc sample a look, as the server's clock does for a channel, so a pane waiting on
+a prompt is said as `BLOCKED` by the second look that sees it; and while HANDLE holds the chat seat (see the
+callback section above) the owner's chat events come with the rest.
+What waiting costs, measured on 2026-11-11: once HANDLE has its callback state and is on the chat seat's waiting
+list (its first look puts it there), a look at a board that stood still is nine reads and no write; a poll between
+looks is one read of the board's marker; a beat is one write. While the board stands still that is about 30
+marker reads, four looks and two beats a minute: some 66 reads and 2 writes. Every write to the board moves the
+marker, a session's heartbeat too, so on a board where other sessions beat a look comes at nearly every poll, up to
+30 a minute (about 300 reads). A look took 7 ms on a small board and 0.8 to 0.9 s as a command of its own on
+the 2.2k-task board of the perf suite (its process's start and connection included, a debug build at load 35 to
+80), and the first look there, which says the whole digest, 18 s.
 
 A legacy native observer starts from the current board on upgrade rather than replaying its history.
 Its upgrade marker and message cursor are separate callback-state fields that older writers leave intact.
@@ -613,14 +692,14 @@ holds while it is live, stale or of unknown liveness is refused, naming the
 holder and the command that moves it: `just tasks handover SLUG HANDLE`, run by
 the holder, drops its role and gives the role to HANDLE in one write. The
 thread says `A handed orchestrator over to B; address B or @orchestrator`,
-and each of the two hears one `ROLE SLUG B orchestrator, STATUS (from A)`,
-whatever other role B holds there. HANDLE must still be there (live, stale or
+and B hears one `ROLE SLUG B orchestrator, STATUS (from A)`, whatever other
+role B holds there; A made the move and is not told it. HANDLE must still be there (live, stale or
 of unknown liveness); a hand-over to a session gone quiet, or leaving as it is
 written, is refused, naming its health; under a cap, so is one that would raise
 HANDLE's open tasks past it ([Slots](#slots)). Taking the role over a holder that is
 lost or left drops that one in the same write, and the thread says `B took
-orchestrator over from A (lost)`; so does taking it again where a left holder
-still sits beside you. A task is its orchestrator's when that session holds the
+orchestrator over from A (lost)`, which A hears and B, who made it, does not; so
+does taking it again where a left holder still sits beside you. A task is its orchestrator's when that session holds the
 role on it, or on the nearest task above it that has a holder still there; a
 task with none is **unclaimed**, as are a lost or left orchestrator's tasks
 until another takes them over. Each orchestrator hears its own tasks and the
@@ -791,6 +870,110 @@ review by id, a level a round trip, and their roles through `role_slug`; it
 reads no table whole (`tests/store/slots/cost.rs`). Each
 orchestrator's PULL header shows `slots=OPEN/CAP`, and the agents API its
 `slots` ([The agents API](#the-agents-api)).
+
+## The pipeline alarm
+
+Work piling up in review is said, not left for someone to notice
+(`crates/tasks/src/alarm.rs`). Review holding more than twice the work
+in progress for 4 hours raises the alarm; it clears once review has held no
+more than twice in progress for an hour, so a short dip does not lower it and
+a short rise does not raise it. Exactly twice is not over; review with nothing
+in progress is.
+
+- **Thresholds.** The project's, beside `orchestrator_slots` in the `[board]`
+  table of `symphony.toml`, read from the main checkout as the cap is:
+  `review_alarm_ratio` (2), `review_alarm_hours` (4) and
+  `review_alarm_clear_hours` (1), whole numbers of at least 1. A key not
+  written takes its default; a value that does not parse, or one below 1, is
+  said on stderr (`⚠ …; the pipeline alarm takes its default thresholds`) and
+  the defaults apply.
+- **What counts.** Work only: a review mirror counts with the task it reviews
+  and an instruction subtask with the task it serves, as for
+  [Slots](#slots), neither on its own, as the tree stood at each moment: a
+  mirror counts on its own until the task it reviews is made, and an
+  instruction subtask from when it leaves its parent (a move's line names the
+  parent it left, `HANDLE put it under PARENT (was PARENT)`), so a task made or
+  moved changes the counts from then on, never the hours before. A task in
+  review whose branch's tip a reviewer asked changes of is rework (below),
+  counted in progress.
+- **From the record.** The board keeps no history of counts. Every change of a
+  task's status writes a line on its thread (a claim, a move, a verdict, a
+  landing, a block by a cancelled dependency and its end), so each reader walks
+  the last day's lines (or twice the raise and clear spans, if longer) back
+  from each task's status now and replays the alarm over the counts. What held
+  when that window opened is read, never assumed: a task's status then, where
+  its oldest line in the window is a claim or a landing, and the record of
+  what its landing waits on then, for one in review some time in the window,
+  come from its newest such lines before the window, read back past any field
+  value whose text only reads like one; and when the window holds neither a
+  raise span over nor a clear span under, so the alarm's state at its start
+  decides, a window twice as long is replayed, until one does or it opens
+  before the board's first task, when the alarm was lowered. Every reader at
+  one moment finds the same alarm, and
+  nothing writes it. The window's lines are read through the message time
+  index and those before it from each task's own thread; no table is read
+  whole.
+- **What it says.** While it stands, every orchestrator's PULL header ends
+  `review_alarm=REVIEW/IN_PROGRESS`, the whole board's whoever the digest is
+  for, and the lines after the header say the counts and since when, then the
+  5 tasks longest in review, longest first, each with when it went in and
+  what its landing waits on:
+
+  ```text
+  PULL 14:05 executing=4 … idle=0 review_alarm=10/4
+    review_alarm: review 10, in progress 4, more than 2× since 09:40
+    review_alarm p1 tools/x — X   (in review since 11-07 21:12; missing certificate, review)
+  ```
+
+  In the hour that clears it, the line says `at most 2× since HH:MM; it clears
+  after 1 h of that`. Its raising is an entry of its own, so the monitor
+  delivers it once, as it delivers any new entry.
+- **What a landing waits on.** The board holds no stamps; the tool that lands
+  a task records what its landing lacks in the board field
+  `fields._board.waits` (`Store::record_waits`; `set_field` is a plugin's): the tip it judged, `: `, then
+  each name, `, ` between them (`0123abc…: certificate, review`), none after
+  the colon when it lacks nothing. The alarm shows the names as written
+  (`missing certificate, review`), `missing nothing` for none, and `its tip is
+  newer than its landing's last look` when the branch has moved past the tip
+  the record judged. A task with no record shows no note. Each record names
+  the assessment it states, kept with when it was written
+  (`fields._board.assessed`): the same assessment retried writes nothing,
+  and a fresh one writes its record again however like the last it reads.
+  Stamp and approval reassessment, refused landing attempts and completed tip
+  verification submit these assessments through a detached, owned delivery.
+  It checks the current branch and task state, evaluates stamps and merge
+  conflicts, and records `changes` only for an effective reviewer veto. A
+  superseded interrupted verification supplies no completed assessment.
+  Local submissions and receipts live under `sf-land/assessments/` in the
+  common directory; the delivery child is stopped and reaped after 30 seconds
+  or checkout removal. A delayed board, an older API or an unconfirmed reply
+  leaves pending evidence; `just land-stamps BRANCH` retries the latest
+  submission, preserving a committed occurrence's identity, time and line.
+  Pending evidence alone does not confirm a board write.
+- **Rework.** The name `changes` in a record says a reviewer asked changes of
+  that tip. While the branch's tip is still the one judged and the branch has
+  not moved past it since the record, the task is rework: PULL counts it in progress (its live executor as executing, and one
+  nobody executes as `in_progress_orphaned`, noted `in review; changes asked
+  of its tip`), not as `review_unreviewed`, and the alarm counts it in progress
+  from the record to the next; a change of status ends nothing, since the
+  record judged a tip, which a move into progress and back keeps. The first
+  commit the branch moved to from the tip judged, after the record, ends it,
+  from the moment that commit was made or the branch moved to it, however late
+  its record comes and whatever follows (more commits, the task taken back
+  into progress): the task waits on review again. The moves come from the
+  repository the reader runs in, as the branch's reference log tells them: the
+  next commit made on the tip judged, or what replaced it, amended or rebased
+  away. Without that log, the first commit after the tip judged on the
+  branch's line of first parents ends it, never one that reaches it through a
+  merge's other parent; a reader that cannot see a task's branch takes each
+  record as judging the tip of its time, and one that cannot place the tip
+  judged takes the tip now as the first after it. The board keeps the first
+  end it learns of each record (`fields._board.fixed`), and nothing later
+  moves it: not another commit, an amend or a rebase, nor what the repository
+  tells after. A new record of changes on a tip the branch came back to, from
+  a fresh assessment, is a request of its own, whatever its text: it waits on
+  the branch's next move from that tip. The record answered, retried, is no
+  new request: PULL and the alarm count the task in review alike.
 
 ## Where the time goes
 

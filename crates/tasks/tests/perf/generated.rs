@@ -37,6 +37,11 @@ pub fn orchestrator() -> String {
     handle(0)
 }
 
+/// An orchestrator without a callback, last seen days ago: who waits in the timings.
+pub fn waiter() -> String {
+    handle(1)
+}
+
 /// A live worker with a callback, who executes nothing: the recipient of the posts timed.
 pub fn recipient() -> String {
     handle(ORCHESTRATORS)

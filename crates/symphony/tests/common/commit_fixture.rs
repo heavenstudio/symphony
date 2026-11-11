@@ -174,6 +174,13 @@ fn isolated_output(name: &str, run: impl FnOnce(&Fixture)) -> Option<String> {
     let tree = common::Tree::new();
     stage(format_args!("private board setup started: {name}"));
     let db = board::client();
+    // The board's command line makes the board; the Symphony, a reader, never does.
+    symphony_board::Store::open(symphony_board::rpc::Client::new(
+        db.addr(),
+        "sf",
+        db.database(),
+    ))
+    .unwrap();
     stage(format_args!("private board setup completed: {name}"));
     stage(format_args!("tasks CLI resolution started: {name}"));
     let tasks = common::tasks_binary();

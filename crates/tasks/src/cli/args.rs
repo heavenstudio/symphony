@@ -375,6 +375,12 @@ const COMMANDS: &[Command] = &[
         opts: &[AS, opt("--json", "json", Takes::Bool)],
     },
     plain("inbox", &[]),
+    plain("pull", &[]),
+    Command {
+        name: "wait",
+        pos: &[],
+        opts: &[AS, opt("--timeout", "timeout", Takes::Value(Ty::Float))],
+    },
     plain("leave", &[]),
     plain("beat", &[]),
     Command {
@@ -793,7 +799,7 @@ mod tests {
             .unwrap()
     }
 
-    const ALL: &str = "'callback', 'register', 'attach', 'list', 'search', 'stats', 'embed', 'next', 'create', 'priority', 'field', 'claim', 'reserve', 'release', 'show', 'parent', 'depends', 'done', 'role', 'handover', 'move', 'verdict', 'say', 'launch', 'restore', 'cleanup', 'clean', 'close', 'reap', 'staff', 'agents', 'who', 'status', 'inbox', 'leave', 'beat', 'export', 'finish', 'sweep'";
+    const ALL: &str = "'callback', 'register', 'attach', 'list', 'search', 'stats', 'embed', 'next', 'create', 'priority', 'field', 'claim', 'reserve', 'release', 'show', 'parent', 'depends', 'done', 'role', 'handover', 'move', 'verdict', 'say', 'launch', 'restore', 'cleanup', 'clean', 'close', 'reap', 'staff', 'agents', 'who', 'status', 'inbox', 'pull', 'wait', 'leave', 'beat', 'export', 'finish', 'sweep'";
 
     #[test]
     fn every_command_of_the_usage_is_read_and_has_its_help() {
@@ -840,6 +846,34 @@ mod tests {
             panic!("status -h is its help");
         };
         assert!(help.starts_with("usage: just tasks status [-h] [--as ACTOR] [--json]\n\n"));
+    }
+
+    #[test]
+    fn handover_help_says_only_the_new_orchestrator_hears_it() {
+        let Outcome::Help(help) = parse_of(&["handover", "-h"]) else {
+            panic!("handover -h is its help");
+        };
+        assert!(
+            help.contains("the thread names the new orchestrator, who hears one ROLE event; you made\nthe move and are not told it.\n"),
+            "{help}"
+        );
+    }
+
+    #[test]
+    fn wait_reads_its_timeout_in_seconds() {
+        let parsed = run(&["wait", "--timeout", "2.5", "--as", "amber-heron"]);
+        assert_eq!(
+            (parsed.float("timeout", 0.0), parsed.get("actor")),
+            (2.5, Some("amber-heron"))
+        );
+        assert_eq!(run(&["wait"]).get("timeout"), None);
+        assert!(refused(&["wait", "--timeout", "soon"]).ends_with(
+            "just tasks wait: error: argument --timeout: invalid float value: 'soon'\n"
+        ));
+        let Outcome::Help(help) = parse_of(&["wait", "-h"]) else {
+            panic!("wait -h is its help");
+        };
+        assert!(help.starts_with("usage: just tasks wait [-h] [--as ACTOR] [--timeout TIMEOUT]\n\nPrint what a callback would push ACTOR"), "{help}");
     }
 
     #[test]

@@ -57,7 +57,8 @@ pub(super) fn branch_card_in_project_folder() {
                 ]
             );
             let read =
-                docview::document(&Render::new(&wt), "docs/DECISIONS.md", "design~policy").unwrap();
+                docview::document(&Render::new(&wt), "docs/DECISIONS.md", "design~policy", &[])
+                    .unwrap();
             assert_eq!(
                 read.cards
                     .iter()

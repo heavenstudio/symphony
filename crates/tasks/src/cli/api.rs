@@ -13,6 +13,15 @@ use serde::de::DeserializeOwned;
 use serde_json::{Map, Value};
 use std::io::{BufRead, Read, Write};
 
+mod assessment;
+#[path = "api/assessment/context.rs"]
+mod context;
+#[cfg_attr(
+    not(test),
+    expect(unused_imports, reason = "preserve connect-only compatibility entries")
+)]
+pub use context::{run, serve};
+
 /// What a caller of these methods may rely on beyond the schema and the server's RPC: one more each
 /// time a method takes or does something an earlier build refused or did otherwise (1: `landed`'s
 /// `from`, before which a build declares none; 2: `say`'s `key`; 3: its `adopt`; 4: `hold`, a
@@ -21,15 +30,19 @@ use std::io::{BufRead, Read, Write};
 /// landing's changes verdict sends work in review back; 7: `create`'s `red`, the mark of a task
 /// filed for a red, which takes no slot, `mark_red` for a red filed before it and `unmark_red` for
 /// one left open as ordinary work, each from a session of kind `filer` alone, which `register`
-/// takes; 8: `tasks_for_branch`, the shared slug/recorded-branch pairing; 9: `amend`, a task's new
-/// title and further document links in one write, which the Symphony's verdict roll-up keeps current
-/// with). The live launcher (`tools/tasks.sh`) serves an earlier main build only while this
+/// takes; 8: `tasks_for_branch`, the shared slug/recorded-branch pairing;
+/// 9: `assessment_state` and checked `record_waits`, whose `assessment/1` replies attest
+/// the task fence or the original committed occurrence; assessment/2 additionally requires the
+/// versioned producer publication binding and observes its source on every checked attempt;
+/// 10: `amend`, a task's new title and further document links in one write, which the Symphony's
+/// verdict roll-up keeps current with). The live launcher (`tools/tasks.sh`)
+/// serves an earlier main build only while this
 /// matches main's, so no caller reaches a build without what it relies on.
 #[expect(
     dead_code,
     reason = "tools/tasks.sh reads it from the committed source; no Rust code compares builds"
 )]
-pub const VERSION: i64 = 9;
+pub const VERSION: i64 = 10;
 
 /// Why a call has no result.
 enum Fail {
@@ -49,6 +62,7 @@ impl From<Error> for Fail {
 /// The board, reached the first time a call needs it: a call it cannot read is answered without it.
 struct Lazy<F: FnOnce() -> Result<Store, String>> {
     connect: Option<F>,
+    context: Option<super::Env>,
     store: Option<Result<Store, String>>,
 }
 
@@ -119,14 +133,15 @@ impl Args {
     }
 }
 
-/// Read the calls from `input`, answer each on `out`; exit 2 when the input is not a call at all.
-pub fn run<F: FnOnce() -> Result<Store, String>>(
+pub(super) fn run_in<F: FnOnce() -> Result<Store, String>>(
     input: &mut dyn Read,
     out: &mut dyn Write,
     connect: F,
+    context: Option<&super::Env>,
 ) -> i32 {
     let mut board = Lazy {
         connect: Some(connect),
+        context: context.cloned(),
         store: None,
     };
     let mut text = String::new();
@@ -148,15 +163,15 @@ pub fn run<F: FnOnce() -> Result<Store, String>>(
     code
 }
 
-/// `tasks api --lines`: each line of `input` that is not blank is a call (or a list of them), answered
-/// on a line of its own, until `input` ends.
-pub fn serve<F: FnOnce() -> Result<Store, String>>(
+pub(super) fn serve_in<F: FnOnce() -> Result<Store, String>>(
     input: &mut dyn BufRead,
     out: &mut dyn Write,
     connect: F,
+    context: Option<&super::Env>,
 ) -> i32 {
     let mut board = Lazy {
         connect: Some(connect),
+        context: context.cloned(),
         store: None,
     };
     for line in input.lines() {
@@ -241,6 +256,7 @@ fn dispatch<F: FnOnce() -> Result<Store, String>>(
         (@ $name:ident or $default:expr) => { a.or(stringify!($name), $default)? };
     }
     Ok(match method.as_str() {
+        "assessment_state" | "record_waits" => return assessment::call(a, board),
         // Sessions
         "register" => {
             let new: NewSession = a.rest()?;
