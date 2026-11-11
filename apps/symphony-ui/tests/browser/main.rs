@@ -727,7 +727,7 @@ fn tasks_and_their_controls_work_without_a_visibility_observer() {
         "document.querySelector('[data-slug=\"tools/example\"]') !== null",
         SHOWN
     ));
-    chrome.eval("Array.from(document.querySelectorAll('button')).find(e => e.textContent === 'Subtasks').click()");
+    chrome.eval("Array.from(document.querySelectorAll('button')).find(e => e.textContent === 'Show task groups').click()");
     assert!(
         chrome.wait_for(
             "document.querySelector('ul li a')?.textContent === 'Example task'",

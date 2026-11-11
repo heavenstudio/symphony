@@ -320,7 +320,8 @@ pub(super) fn QuickPanel(route: Route, mut draft: Signal<Draft>) -> Element {
                                 rsx! { button { ..merged, "⌄" } }
                             },
                         }
-                        crate::components::tooltip::TooltipContent { "Collapse panel; keep the conversation" }
+                        // The button sits at the window's right edge: its tip opens leftwards, over the sheet.
+                        crate::components::tooltip::TooltipContent { side: dioxus_primitives::ContentSide::Left, "Collapse panel; keep the conversation" }
                     }
                 }
                 crate::components::tabs::TabContent { id: "quick-chat-panel", aria_labelledby: "quick-chat-tab", value: "chat", index: 0usize, {content()} }

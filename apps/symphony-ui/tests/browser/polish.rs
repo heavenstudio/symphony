@@ -344,14 +344,15 @@ fn native_controls_follow_the_scheme_and_the_theme_file_is_picked_from_a_drawn_b
 fn trouble(page: &mut Chrome) -> Value {
     assert!(
         page.wait_for(
-            "document.querySelector('.trouble :is(h1, h2)') !== null",
+            "document.querySelector('.trouble :is(h1, h3)') !== null",
             SHOWN
         ),
         "no trouble block: {}",
         page.eval("document.body.innerText")
     );
-    page.eval("(() => {const block=document.querySelector('.trouble');return {title:block.querySelector('h1, h2').textContent,\
-        level:block.querySelector('h1, h2').tagName,text:block.querySelector('p').textContent,\
+    page.eval("(() => {const block=document.querySelector('.trouble');return {title:block.querySelector('h1, h3').textContent,\
+        level:block.querySelector('h1, h3').tagName,part:block.closest('section:not(.trouble)')?.querySelector('h2')?.textContent ?? null,\
+        text:block.querySelector('p').textContent,\
         retry:block.querySelector('button')?.textContent ?? null,back:block.querySelector('a')?.getAttribute('href') ?? null,\
         headings:document.querySelectorAll('h1').length};})()")
 }
@@ -449,9 +450,9 @@ fn the_task_groups_say_when_they_could_not_be_loaded_and_retry() {
         "{failed}"
     );
     assert_eq!(
-        (&failed["level"], &failed["headings"]),
-        (&json!("H2"), &json!(1)),
-        "a part of the tasks page, under its one h1: {failed}"
+        (&failed["level"], &failed["part"], &failed["headings"]),
+        (&json!("H3"), &json!("Task groups"), &json!(1)),
+        "a part of the tasks page, under its h2 and the page's one h1: {failed}"
     );
     site.fail_route("/api/task-board", false);
     retry(
@@ -644,4 +645,74 @@ fn buttons_share_one_shape_and_one_focus_ring_and_pages_one_heading() {
             "{control}: one focus ring, the page's outline, and no second ring of shadow"
         );
     }
+}
+
+#[test]
+fn smaller_ones_land_on_their_anchor_stay_on_screen_and_read_as_sentences() {
+    let site = site();
+    let Some(mut page) = chrome() else { return };
+    // a) A link to the machine context lands on it once the agents arrive.
+    viewport(&mut page, 1280, 420);
+    page.open(&site.url("/agents#machine-context"));
+    assert!(
+        page.wait_for("(() => {const d=document.getElementById('machine-context');const top=d?.getBoundingClientRect().top;return d !== null && d.open && top >= 0 && top < 140;})()", SHOWN),
+        "{}",
+        page.eval("(() => {const d=document.getElementById('machine-context');return {open:d?.open,top:d?.getBoundingClientRect().top,scroll:scrollY};})()")
+    );
+    // c) The agents page labels its probes and counts its followed tasks in words.
+    let agents = page.eval("document.querySelector('main').innerText");
+    let text = agents.as_str().unwrap();
+    assert!(
+        text.contains("Terminal panes: unavailable · Test slots: ok"),
+        "{text}"
+    );
+    // The fixture's one agent follows nothing, so it offers no "Following 0 open tasks".
+    assert!(!text.contains("Following"), "{text}");
+
+    // b) The collapse button's tooltip stays inside the window.
+    viewport(&mut page, 1280, 900);
+    page.open(&site.url("/"));
+    open_panel(&mut page);
+    page.eval("document.querySelector('#quick-sheet button.collapse').focus()");
+    assert!(page.wait_for(
+        "document.querySelector('#quick-sheet [role=tooltip][data-state=open]') !== null",
+        SHOWN
+    ));
+    let tip = page.eval("(() => {const r=document.querySelector('#quick-sheet [role=tooltip]').getBoundingClientRect();return {left:r.left,right:r.right,size:r.width,width:innerWidth};})()");
+    assert!(
+        tip["left"].as_f64().unwrap() >= 0.0
+            && tip["right"].as_f64().unwrap() <= tip["width"].as_f64().unwrap(),
+        "the tooltip is drawn inside the window: {tip}"
+    );
+    assert!(
+        tip["size"].as_f64().unwrap() >= 150.0,
+        "the tip reads as a sentence, not a column of words: {tip}"
+    );
+
+    // d) The task groups are a labelled region with a labelled toggle.
+    page.open(&site.url("/tasks"));
+    assert!(page.wait_for(
+        "document.querySelector('[aria-controls=task-groups]') !== null",
+        SHOWN
+    ));
+    assert_eq!(
+        page.eval("(() => {const b=document.querySelector('[aria-controls=task-groups]');return [b.closest('section')?.querySelector('h2')?.textContent, b.textContent];})()"),
+        json!(["Task groups", "Show task groups"])
+    );
+    page.eval("document.querySelector('[aria-controls=task-groups]').click()");
+    assert!(page.wait_for(
+        "document.querySelector('[aria-controls=task-groups]').textContent === 'Hide task groups' && document.querySelector('#task-groups') !== null",
+        SHOWN
+    ));
+
+    // e) A task's thread is one timeline.
+    page.open(&site.url("/task/visual/in-progress"));
+    assert!(page.wait_for(
+        "document.querySelector('#task-thread .entry') !== null",
+        SHOWN
+    ));
+    assert_eq!(
+        page.eval("document.querySelectorAll('#task-thread ul.history').length"),
+        json!(1)
+    );
 }

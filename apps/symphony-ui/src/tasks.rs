@@ -117,9 +117,15 @@ pub fn TaskBoard(
                     }
                 }
         }
-        crate::components::button::Button { aria_expanded: subtree(), "aria-controls": "task-groups", actions: crate::entry_events::click(move || subtree.set(!subtree())), "Subtasks" }
-        if subtree() {
-            TreePanel { known: Rc::new(tasks) }
+        section { class: "task-groups", aria_labelledby: "task-groups-title",
+            h2 { id: "task-groups-title", "Task groups" }
+            p { class: "muted", "Each top-level task that has subtasks, with its subtasks beneath it." }
+            crate::components::button::Button { aria_expanded: subtree(), "aria-controls": "task-groups", actions: crate::entry_events::click(move || subtree.set(!subtree())),
+                if subtree() { "Hide task groups" } else { "Show task groups" }
+            }
+            if subtree() {
+                TreePanel { known: Rc::new(tasks) }
+            }
         }
     }
 }
@@ -322,7 +328,7 @@ mod tests {
     use serde_json::json;
 
     /// A server from before the panes probe's rename names it `herdr` alone: the agents page still
-    /// shows its answer.
+    /// shows its answer, under the probe's name.
     #[test]
     fn the_agents_page_shows_the_panes_probe_a_server_named_herdr() {
         fn page() -> Element {
@@ -337,6 +343,9 @@ mod tests {
         let mut dom = VirtualDom::new(page);
         dom.rebuild_in_place();
         let html = dioxus_ssr::render(&dom);
-        assert!(html.contains(">unavailable · ok</p>"), "{html}");
+        assert!(
+            html.contains(">Terminal panes: unavailable · Test slots: ok</p>"),
+            "{html}"
+        );
     }
 }

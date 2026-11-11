@@ -1137,7 +1137,7 @@ fn queue_agent_task_and_chat_surfaces_keep_their_compact_review_treatment() {
     browser.open(&site.url("/agents"));
     assert!(
         browser.wait_for(
-            "document.querySelector('.agents-card .agent') !== null && document.querySelector('.page-head + .muted')?.textContent === 'unavailable · ok'",
+            "document.querySelector('.agents-card .agent') !== null && document.querySelector('.page-head + .muted')?.textContent === 'Terminal panes: unavailable · Test slots: ok'",
             SHOWN
         ),
         "agents: {}",
