@@ -131,18 +131,26 @@ pub fn repository(tree: &Tree) -> std::path::PathBuf {
 
 /// A repository in the folder `name` of `tree`, one document committed: its canonical root.
 pub fn repository_at(tree: &Tree, name: &str) -> std::path::PathBuf {
+    repository_holding(
+        tree,
+        name,
+        "docs/TOPIC.md",
+        "# Topic\n\n- [ ] **initial-card** — Initial question.\n",
+    )
+}
+
+/// A repository in the folder `name` of `tree` with the one file `file` committed, `text` in it:
+/// its canonical root.
+pub fn repository_holding(tree: &Tree, name: &str, file: &str, text: &str) -> std::path::PathBuf {
     let root = tree.path(name);
     std::fs::create_dir_all(&root).unwrap();
     git(&root, &["init", "-b", "main"]);
     git(&root, &["config", "user.name", "Review fixture"]);
     git(&root, &["config", "user.email", "review@example.invalid"]);
     git(&root, &["config", "core.hooksPath", "/dev/null"]);
-    tree.write(
-        &format!("{name}/docs/TOPIC.md"),
-        "# Topic\n\n- [ ] **initial-card** — Initial question.\n",
-    );
+    tree.write(&format!("{name}/{file}"), text);
     git(&root, &["add", "."]);
-    git(&root, &["commit", "-m", "Initial document"]);
+    git(&root, &["commit", "-m", "Initial commit"]);
     root.canonicalize().unwrap()
 }
 
