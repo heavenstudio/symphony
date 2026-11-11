@@ -308,3 +308,34 @@ fn a_task_page_crumbs_only_the_tasks_page_and_an_unknown_slug_says_there_is_no_s
         json!([["tasks", "/tasks"], ["product/nope", null]])
     );
 }
+
+#[test]
+fn native_controls_follow_the_scheme_and_the_theme_file_is_picked_from_a_drawn_button() {
+    let site = site();
+    let Some(mut page) = chrome() else { return };
+    for (mode, surface) in SURFACES {
+        scheme(&mut page, mode);
+        for route in ["/", "/tasks", "/docs/"] {
+            page.open(&site.url(route));
+            assert!(page.wait_for("document.querySelector('main') !== null", SHOWN));
+            assert_eq!(
+                page.eval("getComputedStyle(document.documentElement).colorScheme"),
+                json!("light dark"),
+                "{mode} {route}: scrollbars and native controls take the page's scheme"
+            );
+        }
+        open_panel(&mut page);
+        appearance(&mut page);
+        key(&mut page, "Home", "Home", 36);
+        key(&mut page, "Enter", "Enter", 13);
+        assert!(page.wait_for("document.querySelector('#theme-file') !== null", SHOWN));
+        let picker = page.eval("(() => {const input=document.querySelector('#theme-file'),label=input.closest('label'),look=getComputedStyle(label),box=label.getBoundingClientRect();\
+            return {input:getComputedStyle(input).opacity,label:label.textContent.trim(),background:look.backgroundColor,\
+            covers:[[0.1,0.5],[0.5,0.5],[0.9,0.5]].every(([x,y])=>document.elementFromPoint(box.x+box.width*x,box.y+box.height*y)===input)};})()");
+        assert_eq!(
+            picker,
+            json!({"input":"0","label":"Choose a theme file…","background":surface,"covers":true}),
+            "{mode}: the native file input is drawn by its label, which takes its clicks"
+        );
+    }
+}

@@ -18,7 +18,8 @@
           --shadow-1:0 1px 2px rgba(0,0,0,.4); --shadow-2:0 2px 8px rgba(0,0,0,.45), 0 12px 32px rgba(0,0,0,.35); }
 }
 
-html { background:var(--background); scroll-padding-top:76px; }
+/* The tokens follow the system's scheme, and so do scrollbars, native controls and their grips. */
+html { color-scheme:light dark; background:var(--background); scroll-padding-top:76px; }
 [hidden] { display:none !important; }
 body { margin:0; color:var(--foreground); background:var(--background); font:16px/1.55 var(--font-sans); -webkit-font-smoothing:antialiased; }
 main { --page-end:120px; --feed-notice-bottom:calc(132px + env(safe-area-inset-bottom)); max-width:1440px; margin:0 auto; padding:var(--sp-5) var(--sp-5) var(--page-end); }

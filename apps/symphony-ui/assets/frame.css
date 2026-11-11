@@ -47,6 +47,9 @@
 #quick-sheet [role=tabpanel] { flex:1; min-height:0; min-width:0; display:flex; flex-direction:column; }
 .theme-menu { margin-bottom:8px; }
 .theme-menu p:empty { display:none; }
+/* The theme file's picker is the composer's Attach picker (attach.css, in the page with the sheet's
+ * composer): its label draws it, and the input in it takes its clicks. */
+.theme-pick { margin-top:8px; }
 #quick-sheet textarea { resize:vertical; min-height:70px; max-height:25vh; }
 #quick-sheet .row { display:flex; gap:8px; }
 #quick-sheet .row > :first-child { flex:1; min-width:0; }
