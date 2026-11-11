@@ -21,14 +21,15 @@ use std::io::{BufRead, Read, Write};
 /// landing's changes verdict sends work in review back; 7: `create`'s `red`, the mark of a task
 /// filed for a red, which takes no slot, `mark_red` for a red filed before it and `unmark_red` for
 /// one left open as ordinary work, each from a session of kind `filer` alone, which `register`
-/// takes; 8: `tasks_for_branch`, the shared slug/recorded-branch pairing). The live launcher
-/// (`tools/tasks.sh`) serves an earlier main build only while this
+/// takes; 8: `tasks_for_branch`, the shared slug/recorded-branch pairing; 9: `amend`, a task's new
+/// title and further document links in one write, which the Symphony's verdict roll-up keeps current
+/// with). The live launcher (`tools/tasks.sh`) serves an earlier main build only while this
 /// matches main's, so no caller reaches a build without what it relies on.
 #[expect(
     dead_code,
     reason = "tools/tasks.sh reads it from the committed source; no Rust code compares builds"
 )]
-pub const VERSION: i64 = 8;
+pub const VERSION: i64 = 9;
 
 /// Why a call has no result.
 enum Fail {
@@ -349,6 +350,12 @@ fn dispatch<F: FnOnce() -> Result<Store, String>>(
             let new: NewTask = a.rest()?;
             super::check_actor(&new.by)?;
             shape::task(&board.get()?.create(&new)?)
+        }
+        "amend" => {
+            args!(slug: need, title: need, links: or(Vec::<String>::new()), by: actor);
+            let (slug, title, by): (String, String, String) = (slug, title, by);
+            let links: Vec<String> = links;
+            shape::task(&board.get()?.amend(&slug, &title, &links, &by)?)
         }
         "mark_red" => {
             args!(slug: need, red: need, by: actor);

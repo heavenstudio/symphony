@@ -1229,8 +1229,18 @@ impl symphony::verdicts::Board for Filing {
             executors: 0,
             reserved: 0,
             thread: Vec::new(),
+            links: links.to_vec(),
         });
         Ok(())
+    }
+    fn amend(
+        &self,
+        _: &str,
+        _: &str,
+        _: &[String],
+        _: &str,
+    ) -> Result<(), symphony::verdicts::VerdictError> {
+        panic!("a covered card must not be filed twice")
     }
 }
 
