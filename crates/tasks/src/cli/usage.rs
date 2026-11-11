@@ -5,19 +5,31 @@
 mod launch;
 mod panes;
 
+use super::Env;
+
+/// A command's help `text` as `--help` prints it in `env`: launch's then says what a bare launch
+/// starts there ([`launch::shown`]).
+pub fn shown(text: &str, env: &Env) -> String {
+    if text == launch::HELP {
+        launch::shown(env)
+    } else {
+        text.to_string()
+    }
+}
+
 /// The usage line of `just tasks` itself.
 pub const USAGE: &str = r#"usage: just tasks [-h] [--as ACTOR]
-                  {callback,register,attach,list,search,stats,embed,next,create,priority,field,claim,reserve,release,show,parent,depends,done,role,handover,move,verdict,say,launch,restore,cleanup,clean,close,reap,staff,agents,who,inbox,leave,beat,export,finish,sweep} ...
+                  {callback,register,attach,list,search,stats,embed,next,create,priority,field,claim,reserve,release,show,parent,depends,done,role,handover,move,verdict,say,launch,restore,cleanup,clean,close,reap,staff,agents,who,status,inbox,leave,beat,export,finish,sweep} ...
 "#;
 
 /// `just tasks --help`.
 pub const HELP: &str = r#"usage: just tasks [-h] [--as ACTOR]
-                  {callback,register,attach,list,search,stats,embed,next,create,priority,field,claim,reserve,release,show,parent,depends,done,role,handover,move,verdict,say,launch,restore,cleanup,clean,close,reap,staff,agents,who,inbox,leave,beat,export,finish,sweep} ...
+                  {callback,register,attach,list,search,stats,embed,next,create,priority,field,claim,reserve,release,show,parent,depends,done,role,handover,move,verdict,say,launch,restore,cleanup,clean,close,reap,staff,agents,who,status,inbox,leave,beat,export,finish,sweep} ...
 
 The task board from the terminal — `just tasks …` and `just tasks-attach`.
 
 positional arguments:
-  {callback,register,attach,list,search,stats,embed,next,create,priority,field,claim,reserve,release,show,parent,depends,done,role,handover,move,verdict,say,launch,restore,cleanup,clean,close,reap,staff,agents,who,inbox,leave,beat,export,finish,sweep}
+  {callback,register,attach,list,search,stats,embed,next,create,priority,field,claim,reserve,release,show,parent,depends,done,role,handover,move,verdict,say,launch,restore,cleanup,clean,close,reap,staff,agents,who,status,inbox,leave,beat,export,finish,sweep}
     callback            register a native channel or --off for inbox fallback
     depends             change what a task waits on
     handover            hand a task's orchestrator role to another session
@@ -26,6 +38,8 @@ positional arguments:
                         record it with its restore line
     beat               a hook: read one Claude Code tool event on stdin and
                         beat for the subagent making it
+    status              the board's health: failed dispatches and sweeps,
+                        slow requests, write latency
     finish              close the panes of a finished task's sessions
 
 options:
@@ -484,6 +498,23 @@ options:
   --as ACTOR
   --all       include sessions that have left
   --json
+"#,
+    ),
+    (
+        "status",
+        r#"usage: just tasks status [-h] [--as ACTOR] [--json]
+"#,
+        r#"usage: just tasks status [-h] [--as ACTOR] [--json]
+
+the board's health over the last hour, as the Symphony server serving it last
+recorded it in sf-tasks/health.json: its callback dispatch passes and idle
+sweeps, ok and failed, the slowest board request and the line that sent it,
+and write latency; read without asking the board
+
+options:
+  -h, --help  show this help message and exit
+  --as ACTOR
+  --json      the record as /api/health answers it, the file and the warnings
 "#,
     ),
     (

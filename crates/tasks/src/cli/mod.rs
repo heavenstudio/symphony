@@ -17,6 +17,7 @@ pub mod probes;
 pub mod pull;
 mod search;
 mod shape;
+mod status;
 mod sweep;
 mod text;
 mod usage;
@@ -148,7 +149,7 @@ fn run(
     let parsed = match args::parse(args) {
         args::Outcome::Run(parsed) => parsed,
         args::Outcome::Help(text) => {
-            let _ = write!(out, "{text}");
+            let _ = write!(out, "{}", usage::shown(text, env));
             return 0;
         }
         args::Outcome::Usage(text) => {
@@ -164,6 +165,9 @@ fn run(
     }
     if parsed.command == "sweep" {
         return sweep::run(&parsed, env, out, err);
+    }
+    if parsed.command == "status" {
+        return status::run(&parsed, env, out, err);
     }
     let reached = Clock::of(env).and_then(|clock| {
         let store = open(reach(env, &env.cwd, true)?, &clock)?;
@@ -262,6 +266,14 @@ impl Clock {
             .filter(|now| now.is_finite())
             .ok_or_else(|| format!("TASKS_NOW={text} is not a time in seconds"))?;
         Ok(Clock::Pinned(Arc::new(Mutex::new(now))))
+    }
+
+    /// The time now, in seconds since the epoch.
+    fn now(&self) -> f64 {
+        match self {
+            Clock::Pinned(now) => *now.lock().unwrap_or_else(|held| held.into_inner()),
+            Clock::Machine => crate::store::now(),
+        }
     }
 
     /// Wait `seconds`. A pinned clock moves on by them instead, says `STEP <now>` on `err`, and reads a

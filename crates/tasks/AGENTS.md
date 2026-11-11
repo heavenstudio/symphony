@@ -500,9 +500,11 @@ toolchain's clippy over a probe crate that reads the same file. `port.rs` starts
 
 `staff` makes one staffing pass (`src/launch/staff.rs`), also called before `reap`.
 Its sole config is `tools/task_staff.json` in the calling checkout, disabled by
-default; its pass lock is in the common `sf-tasks/`. Launch defaults to Codex;
-`--kind claude` selects Claude. The legacy `claude_session` storage column keeps
-Claude ids as before and Codex ids prefixed with `codex:`; restore dispatches on
+default; its pass lock is in the common `sf-tasks/`. A launch, the CLI's and staffing's, starts
+the agent, model and effort `[agents] launch` in the main checkout's `symphony.toml` names
+(`src/launch/defaults.rs`), else Codex on `gpt-6.1-sol` at `xhigh`; `--kind` and `--model` win,
+and the project's model and effort go with its agent only. The legacy `claude_session` storage
+column keeps Claude ids as before and Codex ids prefixed with `codex:`; restore dispatches on
 that prefix, and the agents API strips it from the conversation id.
 
 `tasks sweep` is the worktree sweep (`src/sweep.rs`, its rules in its module
@@ -605,7 +607,13 @@ server lacks either, then its tables and version in one transaction
 (`tests/store/open_read.rs`). Each sending waits the client's wait for its whole answer, however
 it trickles in, so a read waits at most twice that. A late answer on a working
 connection says the server is slow (`rpc::slow`), which the Symphony's read routes answer with 504, not the 503 of
-a board that cannot be reached. `tasks-copy` copies a whole
+a board that cannot be reached. Each request a `Client` sends is counted, with no request of its
+own, in the `board_health::QueryLog` every client of that board in the process shares (by
+address, namespace and database): its time, its tracked caller's line, whether it may write and
+whether it went unanswered. The Symphony's hub adds its dispatch passes and idle sweeps
+(`board_health::Recorder`) and serves the hour at `/api/health`; the one server writes it to
+`sf-tasks/health.json`, which `tasks status` reads without the board
+([TASKS](../../docs/TASKS.md#board-health)). `tasks-copy` copies a whole
 board into a server, replacing what it held, in one transaction: `tasks-copy ADDR
 [DATABASE] < dump.json`, or `tasks-copy --board` for the board this run reaches;
 `tasks-copy --board --out` writes that board's dump, in the shape the copy reads,

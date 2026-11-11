@@ -63,6 +63,12 @@ with SDK source changes. Release snapshots use stable paths under /private/tmp,
 copy the locked component source without changing its version or features, and
 retain the caller's compiler flags, wrappers and resource settings. Snapshot
 configuration patches and lock accounting affect only those private copies.
+A snapshot holds only what the client's build reads (`release-inputs`,
+`crates/symphony/src/cli/commands/release.rs`): the client's package and the local
+packages it builds with, the workspace manifest, lock, Cargo configuration, toolchain
+pin and the server's notice styles, and the other members' manifests over empty
+targets. Its path, and so the asset names, follow those bytes alone: a change
+anywhere else needs no new distribution.
 The server package embeds those bytes at build time, so an
 installed binary serves them without dx, a source checkout or a runtime extraction.
 A source kit's local preview build wins over the embedded default. Explicit source-kit

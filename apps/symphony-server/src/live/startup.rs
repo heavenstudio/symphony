@@ -59,8 +59,23 @@ impl Hub {
             *hub.callbacks.get_mut().unwrap_or_else(|e| e.into_inner()) =
                 Some(symphony::callbacks::Flusher::new(root));
             eprintln!("→ chat journal: draining enabled for the shared server");
+            // The board's health record is the one server's alone: `tasks status` reads it,
+            // and a private server's passes would write over it.
+            let mut env = symphony::children::board_env();
+            env.cwd = root.to_path_buf();
+            match symphony_board::board_health::file(&env) {
+                Ok(file) => hub.health = symphony_board::board_health::Recorder::writing(file),
+                Err(why) => eprintln!("→ board health: kept in memory alone ({why})"),
+            }
         } else {
             eprintln!("→ chat journal: left untouched by this private server");
+        }
+        // Said once, at the hub's one start: the documents come in when the folder does.
+        if let Some(folder) = symphony::project::Project::of(root).missing_documents(root) {
+            eprintln!(
+                "→ documents: no {folder}/ directory under {}; the board and agents are served without documents",
+                root.display()
+            );
         }
         let starting = hub.arm_initial_board();
         let hub = Arc::new(hub);

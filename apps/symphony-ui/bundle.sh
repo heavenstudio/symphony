@@ -60,6 +60,8 @@ bash "$here/wasm-fresh.sh"
 
 # Manganis scopes CSS and serializes asset metadata using canonical source paths.
 # Build from the same verified paths on every host; the public lock and inputs stay intact.
+# The checkout's listing goes in whole; release-inputs keeps what the client's build reads,
+# and names the snapshot by those bytes alone.
 inputs="$(mktemp -d "${TMPDIR:-/tmp}/symphony-release-inputs.XXXXXXXX")"
 trap 'rm -rf "$inputs"' EXIT
 "$root/tools/cargo.sh" metadata --format-version 1 --locked \
