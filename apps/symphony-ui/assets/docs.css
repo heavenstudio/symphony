@@ -159,7 +159,11 @@ form.comment, form.verdict { border:1px solid var(--border); background:var(--mu
 .doc-card[data-state=auto-approved] { --edge:var(--auto); border-left-style:dashed; }
 .doc-card[data-busy=true] { box-shadow:0 0 0 2px color-mix(in srgb,var(--edge) 40%,transparent),var(--shadow-2); }
 .doc-card .section-prose { max-width:none; }
-.document-page .history .entry-text, .document-page .history .entry-text > p { display:inline; margin:0; }
+/* An entry's first paragraph runs on from its time and verdict; the paragraphs after it stay
+ * paragraphs. */
+.document-page .history .entry-text { display:inline; }
+.document-page .history .entry-text > p { margin:.5em 0 0; }
+.document-page .history .entry-text > p:first-child { display:inline; margin:0; }
 .doc-card:has(.compare) .history img { max-height:72px; width:auto; }
 .folded-slot { border:0; padding:0; box-shadow:none; background:none; }
 .folded-slot > .settled > .viewport-slot .doc-section { border:0; margin:0; padding:12px 0; box-shadow:none; }

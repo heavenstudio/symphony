@@ -1,4 +1,5 @@
-//! A card on a document page, read in the release client: its verdict form fits a phone's card.
+//! A card on a document page, read in the release client: its verdict form fits a phone's card
+//! and its history keeps an agent's paragraphs.
 use super::{SHOWN, chrome, chrome::Chrome, common, dist, site::Site};
 use serde_json::{Value, json};
 
@@ -12,6 +13,10 @@ fn paragraph(spans: Vec<Value>) -> Value {
     json!({"type":"paragraph","spans":spans})
 }
 
+fn strong(words: &str) -> Value {
+    json!({"type":"strong","spans":[text(words)]})
+}
+
 /// A card's section and the document's summary of it.
 fn card(slug: &str, mark: &str, group: &str, start: usize, body: Vec<Value>) -> (Value, Value) {
     let block = json!({"type":"card","slug":slug,"mark":mark,"title":slug,"body":body,
@@ -23,7 +28,17 @@ fn card(slug: &str, mark: &str, group: &str, start: usize, body: Vec<Value>) -> 
     )
 }
 
-/// The document `docs/PROBE.md`: a heading, a pending card waiting on the owner and a paragraph.
+/// The card `alpha`'s history: an agent's question in three paragraphs.
+fn threads() -> Value {
+    json!({"alpha":{"blocks":[{"type":"thread","entries":[{"who":"agent","timestamp":"2026-11-11 19:20","verdict":"question","blocks":[
+        paragraph(vec![text("Five bands match the catalogue; three match what the eye tells apart.")]),
+        paragraph(vec![strong("What five means."), text(" Every lamp keeps its band.")]),
+        paragraph(vec![strong("What three means."), text(" Thirty lamps move band.")]),
+    ]}]}]}})
+}
+
+/// The document `docs/PROBE.md`: a heading, a paragraph and a pending card waiting on the owner,
+/// with its history.
 fn probe_site() -> Site {
     let site = Site::start(dist(), &common::fixture("board.json"));
     let (alpha, summary) = card(
@@ -41,10 +56,10 @@ fn probe_site() -> Site {
         alpha,
     ]);
     site.set_json("/api/document", &json!({"document":{"version":7,"path":DOC,"title":"Probe","waiting":[],"crumbs":[],
-        "headings":[{"level":2,"anchor":"lamps","text":"Lamps"}],"sections":sections,"cards":[summary],"threads":{},"tasks":[]},"anchors":{}}));
+        "headings":[{"level":2,"anchor":"lamps","text":"Lamps"}],"sections":sections,"cards":[summary],"threads":threads(),"tasks":[]},"anchors":{}}));
     site.set_json(
         "/api/section",
-        &json!({"version":7,"change":{"path":DOC,"sections":sections}}),
+        &json!({"version":7,"change":{"path":DOC,"sections":sections,"threads":threads()}}),
     );
     site.set_json("/api/asks", &json!({"asks":[],"recipient":null}));
     site
@@ -103,5 +118,38 @@ fn document_card_verdict_form_fits_a_phone_card() {
         outside,
         json!([]),
         "on a phone the verdict form and its controls stay inside the card"
+    );
+}
+
+#[test]
+fn document_card_history_keeps_an_agents_paragraphs() {
+    let site = probe_site();
+    let Some(mut page) = chrome() else { return };
+    viewport(&mut page, 1280, 900);
+    page.open(&site.url(&format!("/{DOC}")));
+    let entry = "[data-doc-key=\"card:alpha\"] .history .entry";
+    assert!(page.wait_for(
+        &format!(
+            "document.querySelectorAll({}).length === 3",
+            json!(format!("{entry} .entry-text > p"))
+        ),
+        SHOWN
+    ));
+    let layout = page.eval(&format!(
+        r#"(() => {{
+        const entry = document.querySelector({entry}), time = entry.querySelector('time').getBoundingClientRect();
+        const paragraphs = [...entry.querySelectorAll('.entry-text > p')];
+        const first = paragraphs[0].getClientRects()[0];
+        return {{
+            runsOn: first.top < time.bottom && first.bottom > time.top,
+            ownLines: paragraphs.slice(1).map((p, i) => p.getBoundingClientRect().top >= paragraphs[i].getBoundingClientRect().bottom),
+        }};
+    }})()"#,
+        entry = json!(entry)
+    ));
+    assert_eq!(
+        layout,
+        json!({"runsOn":true,"ownLines":[true,true]}),
+        "the first paragraph runs on from the entry's time, and each later one starts on a line of its own"
     );
 }
