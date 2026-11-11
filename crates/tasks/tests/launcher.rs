@@ -1,0 +1,481 @@
+//! `tools/rs-bin.sh`, the launcher every `just tasks`, `just agent-send` and `just symphony-cli` goes
+//! through, in repositories of its own under the temp folder: links to the workspace's launcher and
+//! cargo wrapper, over a stand-in Cargo (`CARGO`). Nothing here reaches a board or builds the
+//! workspace.
+//!
+//! macOS assesses every new executable file at its first run, a script too, for seconds on a loaded
+//! machine, one file at a time. So the fixtures run the workspace's own scripts through links and
+//! share one stand-in Cargo, and by default the stand-in uplifts as Cargo does on Linux: a hard link
+//! to one shared stand-in build, which says which checkout's target it runs from. Only the case of
+//! the uplift Cargo does on macOS (`STANDIN_UPLIFT=copy`) links a build of its own: a script saying
+//! which checkout's source it was built from, made only when that source changed, and copied to
+//! `debug/NAME` on every build, a new file keeping the time of the one it copies.
+
+#![expect(
+    clippy::disallowed_methods,
+    reason = "a test starts its fixtures and stand-ins as it likes; the board's children are sys's"
+)]
+
+// Each run's scratch in a folder of its own under the temp folder, swept when a killed run left it.
+#[path = "../../../tools/test-support/harness_scratch.rs"]
+mod harness_scratch;
+
+use std::fs;
+use std::os::unix::fs::{MetadataExt, PermissionsExt};
+use std::path::{Path, PathBuf};
+use std::process::Command;
+use std::sync::OnceLock;
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+/// The stand-in for `cargo build --quiet --locked -p PACKAGE --bin NAME`, run in the checkout's root;
+/// `@BUILD@` is the shared stand-in build.
+const CARGO: &str = r#"#!/usr/bin/env bash
+set -euo pipefail
+name=""; while [ $# -gt 0 ]; do if [ "$1" = --bin ]; then name="$2"; fi; shift; done
+[ -n "$name" ] || exit 0
+mkdir -p "$CARGO_TARGET_DIR/debug/deps"
+if [ "${STANDIN_UPLIFT:-link}" = link ]; then
+    ln -f "@BUILD@" "$CARGO_TARGET_DIR/debug/$name"
+    exit 0
+fi
+for source in "crates/tasks/src/bin/$name.rs" "crates/symphony/src/bin/$name.rs"; do
+    [ -f "$source" ] && break
+done
+deps="$CARGO_TARGET_DIR/debug/deps/$name-0"
+if ! cmp -s "$source" "$deps.source"; then
+    printf '#!/bin/sh\necho "%s from %s source %s exe $0 cwd $(pwd -P) args $*"\n' \
+        "$name" "$PWD" "$(cat "$source")" > "$deps.new"
+    chmod +x "$deps.new"
+    mv -f "$deps.new" "$deps"
+    cp "$source" "$deps.source"
+fi
+rm -f "$CARGO_TARGET_DIR/debug/$name"
+cp -p "$deps" "$CARGO_TARGET_DIR/debug/$name"
+"#;
+
+/// The shared stand-in build, run as `CHECKOUT/.target/rs-bin/NAME`: what that checkout's source of
+/// NAME holds, where it runs and with what.
+const BUILD: &str = r#"#!/bin/sh
+root="${0%/.target/rs-bin/*}"
+name="${0##*/}"
+for source in "$root/crates/tasks/src/bin/$name.rs" "$root/crates/symphony/src/bin/$name.rs"; do
+    [ -f "$source" ] && break
+done
+echo "$name from $root source $(cat "$source" 2>/dev/null) exe $0 cwd $(pwd -P) args $*"
+"#;
+
+/// The shared stand-in Cargo, its build made and both run once, so no case pays their first run.
+fn standin_cargo() -> &'static Path {
+    static CARGO_PATH: OnceLock<PathBuf> = OnceLock::new();
+    CARGO_PATH.get_or_init(|| {
+        let folder = scratch("standin");
+        let (cargo, build) = (folder.join("cargo"), folder.join("build"));
+        fs::write(&build, BUILD).unwrap();
+        let build_path = build.to_str().unwrap();
+        fs::write(&cargo, CARGO.replace("@BUILD@", build_path)).unwrap();
+        for script in [&cargo, &build] {
+            fs::set_permissions(script, fs::Permissions::from_mode(0o755)).unwrap();
+            assert!(Command::new(script).output().unwrap().status.success());
+        }
+        cargo
+    })
+}
+
+/// The binaries a fixture declares, each with the source folder the launcher checks.
+const BINARIES: [(&str, &str); 4] = [
+    ("tasks", "crates/tasks"),
+    ("agent-send", "crates/tasks"),
+    ("fake-hc", "crates/tasks"),
+    ("symphony", "crates/symphony"),
+];
+
+/// A repository whose main checkout (`main/`) holds the launcher and `main` as every binary's source,
+/// and a linked worktree of it (`wt/`, branch `feature`) holding `branch`.
+struct Fixture {
+    base: PathBuf,
+    main: PathBuf,
+    wt: PathBuf,
+}
+
+impl Fixture {
+    fn new(name: &str) -> Fixture {
+        let base = scratch(name);
+        let main = base.join("main");
+        let tools = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../tools")
+            .canonicalize()
+            .unwrap();
+        fs::create_dir_all(main.join("tools")).unwrap();
+        for tool in ["rs-bin.sh", "cargo.sh"] {
+            std::os::unix::fs::symlink(tools.join(tool), main.join("tools").join(tool)).unwrap();
+        }
+        fs::write(main.join("Cargo.toml"), "[workspace]\n").unwrap();
+        sources(&main, "main");
+        git(&base, &["init", "-q", "-b", "main", "main"]);
+        git(&main, &["add", "-A"]);
+        git(&main, &["commit", "-qm", "main"]);
+        git(&main, &["worktree", "add", "-q", "-b", "feature", "../wt"]);
+        let wt = base.join("wt");
+        sources(&wt, "branch");
+        Fixture { base, main, wt }
+    }
+
+    /// `checkout/tools/rs-bin.sh ARGS` run in `cwd`, with `vars` on an environment that names no
+    /// board, no target folder and no git repository of its own.
+    fn run(&self, checkout: &Path, cwd: &Path, vars: &[(&str, &str)], args: &[&str]) -> Ran {
+        let mut command = Command::new(checkout.join("tools/rs-bin.sh"));
+        for name in [
+            "TASKS_SERVER",
+            "TASKS_DATABASE",
+            "CARGO_TARGET_DIR",
+            "GIT_DIR",
+            "GIT_WORK_TREE",
+            "GIT_COMMON_DIR",
+        ] {
+            command.env_remove(name);
+        }
+        let done = command
+            .args(args)
+            .current_dir(cwd)
+            .env("CARGO", standin_cargo())
+            .envs(vars.iter().copied())
+            .output()
+            .unwrap();
+        Ran {
+            code: done.status.code().unwrap_or(-1),
+            out: String::from_utf8(done.stdout).unwrap().trim().to_string(),
+            err: String::from_utf8(done.stderr).unwrap(),
+        }
+    }
+
+    /// The worktree's launcher, run there.
+    fn in_wt(&self, vars: &[(&str, &str)], args: &[&str]) -> Ran {
+        self.run(&self.wt, &self.wt, vars, args)
+    }
+
+    /// What `name` built in `checkout` says it ran, its arguments `args`, in `cwd`.
+    fn said(&self, name: &str, checkout: &Path, cwd: &Path, args: &str) -> String {
+        let source = if checkout == self.main {
+            "main"
+        } else {
+            "branch"
+        };
+        format!(
+            "{name} from {} source {source} exe {} cwd {} args {args}",
+            checkout.display(),
+            checkout.join(".target/rs-bin").join(name).display(),
+            cwd.display()
+        )
+    }
+
+    /// The live board's server record, as the board writes it in the common dir.
+    fn record(&self, text: &str) {
+        let folder = self.main.join(".git/sf-tasks");
+        fs::create_dir_all(&folder).unwrap();
+        fs::write(folder.join("server.json"), text).unwrap();
+    }
+}
+
+struct Ran {
+    code: i32,
+    out: String,
+    err: String,
+}
+
+impl Ran {
+    /// What it printed, once it exited 0.
+    fn ok(self) -> String {
+        assert_eq!(self.code, 0, "{}", self.err);
+        self.out
+    }
+}
+
+#[test]
+fn a_worktree_reaching_the_live_board_runs_the_main_checkouts_build_where_it_was_called() {
+    let f = Fixture::new("live");
+    let main = |name: &str, args: &str| f.said(name, &f.main, &f.wt, args);
+    assert_eq!(f.in_wt(&[], &["tasks", "list"]).ok(), main("tasks", "list"));
+    assert_eq!(
+        f.in_wt(&[("TASKS_DATABASE", "tasks")], &["tasks", "list"])
+            .ok(),
+        main("tasks", "list")
+    );
+    // A leading option names the database over the environment, as the binary reads it.
+    assert_eq!(
+        f.in_wt(
+            &[("TASKS_DATABASE", "scratch")],
+            &[
+                "tasks",
+                "--database",
+                "scratch",
+                "--database",
+                "tasks",
+                "list"
+            ]
+        )
+        .ok(),
+        main("tasks", "--database scratch --database tasks list")
+    );
+    // Every board binary, its options anywhere but leading read as the live board's.
+    assert_eq!(
+        f.in_wt(
+            &[],
+            &["agent-send", "someone", "hi", "--database", "scratch"]
+        )
+        .ok(),
+        main("agent-send", "someone hi --database scratch")
+    );
+    // The main checkout builds in its own target folder, never the caller's.
+    let elsewhere = f.base.join("elsewhere");
+    let target = elsewhere.to_str().unwrap();
+    assert_eq!(
+        f.in_wt(&[("CARGO_TARGET_DIR", target)], &["tasks", "show", "a b"])
+            .ok(),
+        main("tasks", "show a b")
+    );
+    assert!(
+        !elsewhere.exists(),
+        "main's build went to the caller's target folder"
+    );
+    assert!(
+        !f.wt.join(".target").exists(),
+        "the worktree built its own board code for the live board"
+    );
+}
+
+#[test]
+fn a_scratch_board_runs_the_worktrees_own_build() {
+    let f = Fixture::new("scratch");
+    let own = |name: &str, args: &str| f.said(name, &f.wt, &f.wt, args);
+    assert_eq!(
+        f.in_wt(&[("TASKS_DATABASE", "scratch")], &["tasks", "list"])
+            .ok(),
+        own("tasks", "list")
+    );
+    assert_eq!(
+        f.in_wt(&[], &["tasks", "--database", "scratch", "list"])
+            .ok(),
+        own("tasks", "--database scratch list")
+    );
+    assert_eq!(
+        f.in_wt(
+            &[("TASKS_DATABASE", "scratch")],
+            &["agent-send", "--database", "x", "someone", "hi"]
+        )
+        .ok(),
+        own("agent-send", "--database x someone hi")
+    );
+    // A server named while the repository records no live one is a test's.
+    assert_eq!(
+        f.in_wt(&[("TASKS_SERVER", "127.0.0.1:4321")], &["tasks", "list"])
+            .ok(),
+        own("tasks", "list")
+    );
+}
+
+#[test]
+fn a_server_on_the_live_servers_port_is_the_live_board() {
+    let f = Fixture::new("server");
+    f.record(r#"{"addr":"127.0.0.1:4321","pid":1,"version":"3.3.0"}"#);
+    let main = f.said("tasks", &f.main, &f.wt, "list");
+    let own = f.said("tasks", &f.wt, &f.wt, "list");
+    for (server, database, expected) in [
+        ("127.0.0.1:4321", "", &main),
+        ("localhost:4321", "tasks", &main),
+        ("127.0.0.1:4322", "", &own),
+        ("127.0.0.1:4321", "scratch", &own),
+    ] {
+        let vars = [("TASKS_SERVER", server), ("TASKS_DATABASE", database)];
+        assert_eq!(
+            &f.in_wt(&vars, &["tasks", "list"]).ok(),
+            expected,
+            "{vars:?}"
+        );
+    }
+    // A record naming no address may be the live server's still: the main checkout's build runs.
+    f.record("{}");
+    let vars = [("TASKS_SERVER", "127.0.0.1:4322")];
+    assert_eq!(f.in_wt(&vars, &["tasks", "list"]).ok(), main);
+}
+
+#[test]
+fn the_main_checkout_another_repository_and_other_binaries_run_the_callers_own_build() {
+    let f = Fixture::new("own");
+    assert_eq!(
+        f.run(&f.main, &f.main, &[], &["tasks", "list"]).ok(),
+        f.said("tasks", &f.main, &f.main, "list")
+    );
+    // From a worktree in a folder of another repository, the board reached is that repository's,
+    // and from a folder of none, no board's.
+    let other = f.base.join("other");
+    fs::create_dir(&other).unwrap();
+    git(&other, &["init", "-q"]);
+    for cwd in [&other, &f.base] {
+        assert_eq!(
+            f.run(&f.wt, cwd, &[], &["tasks", "list"]).ok(),
+            f.said("tasks", &f.wt, cwd, "list")
+        );
+    }
+    // From another folder of this repository, the board is this one's.
+    let folder = f.wt.join("crates");
+    assert_eq!(
+        f.run(&f.wt, &folder, &[], &["tasks", "list"]).ok(),
+        f.said("tasks", &f.main, &folder, "list")
+    );
+    for name in ["symphony", "fake-hc"] {
+        assert_eq!(
+            f.in_wt(&[], &[name, "x"]).ok(),
+            f.said(name, &f.wt, &f.wt, "x")
+        );
+    }
+    // A build for the caller to run is its own checkout's, whatever board it then reaches.
+    assert_eq!(
+        f.in_wt(&[], &["--build", "tasks"]).ok(),
+        f.wt.join(".target/rs-bin/tasks").display().to_string()
+    );
+}
+
+#[test]
+fn a_worktree_whose_main_checkout_has_no_launcher_is_refused_before_anything_runs() {
+    let f = Fixture::new("refused");
+    fs::remove_file(f.main.join("tools/rs-bin.sh")).unwrap();
+    let ran = f.in_wt(&[], &["tasks", "claim", "x"]);
+    assert_eq!(ran.code, 2, "{}", ran.err);
+    assert_eq!(ran.out, "");
+    assert!(
+        ran.err.contains(&format!(
+            "has no launcher at {}",
+            f.main.join("tools/rs-bin.sh").display()
+        )),
+        "{}",
+        ran.err
+    );
+    assert!(!f.wt.join(".target").exists(), "the worktree's build ran");
+    assert_eq!(
+        f.in_wt(&[("TASKS_DATABASE", "scratch")], &["tasks", "list"])
+            .ok(),
+        f.said("tasks", &f.wt, &f.wt, "list")
+    );
+}
+
+#[test]
+fn a_build_that_relinked_nothing_runs_the_same_file_and_a_relink_a_new_one() {
+    let f = Fixture::new("stable");
+    let target = f.main.join(".target");
+    let (stable, copy) = (target.join("rs-bin/tasks"), target.join("debug/tasks"));
+    let inode = |path: &Path| fs::metadata(path).unwrap().ino();
+    let copying = [("STANDIN_UPLIFT", "copy")];
+    let run = || f.run(&f.main, &f.main, &copying, &["tasks", "list"]).ok();
+    // The hooks' link: one naming anything else is left as it is; a run points one naming Cargo's
+    // own copy at the file it runs, the same build, and `--build` leaves it.
+    let hook = f.main.join(".target/bin/tasks");
+    fs::create_dir_all(hook.parent().unwrap()).unwrap();
+    std::os::unix::fs::symlink("/elsewhere/tasks", &hook).unwrap();
+    run();
+    assert_eq!(fs::read_link(&hook).unwrap(), Path::new("/elsewhere/tasks"));
+    fs::remove_file(&hook).unwrap();
+    std::os::unix::fs::symlink(&copy, &hook).unwrap();
+    let built = f.run(&f.main, &f.main, &copying, &["--build", "tasks"]);
+    assert_eq!(built.ok(), stable.display().to_string());
+    assert_eq!(
+        fs::read_link(&hook).unwrap(),
+        copy,
+        "--build moved the link"
+    );
+    let first = run();
+    assert_eq!(fs::read_link(&hook).unwrap(), stable);
+    assert_eq!(first, f.said("tasks", &f.main, &f.main, "list"));
+    let (ran, copied) = (inode(&stable), inode(&copy));
+    assert_eq!(run(), first);
+    assert_ne!(
+        inode(&copy),
+        copied,
+        "the stand-in made no new copy, as Cargo does on every build"
+    );
+    assert_eq!(
+        inode(&stable),
+        ran,
+        "a build that relinked nothing ran a new file"
+    );
+    // A relink, by the launcher's build or by a build of Cargo's own before it, runs the new build.
+    fs::write(f.main.join("crates/tasks/src/bin/tasks.rs"), "relinked").unwrap();
+    assert!(run().contains(" source relinked "));
+    let relinked = inode(&stable);
+    assert_ne!(relinked, ran);
+    fs::write(f.main.join("crates/tasks/src/bin/tasks.rs"), "again").unwrap();
+    let cargo = Command::new(standin_cargo())
+        .args(["build", "-p", "symphony-board", "--bin", "tasks"])
+        .current_dir(&f.main)
+        .env("CARGO_TARGET_DIR", &target)
+        .envs(copying)
+        .status()
+        .unwrap();
+    assert!(cargo.success());
+    assert!(run().contains(" source again "));
+    assert_ne!(inode(&stable), relinked);
+    // `--build` names the file a run runs, `--link` points the hooks' link at it, `--where` names
+    // Cargo's own copy without building.
+    let ran = |args: &[&str]| f.run(&f.main, &f.main, &copying, args).ok();
+    assert_eq!(ran(&["--build", "tasks"]), stable.display().to_string());
+    assert_eq!(ran(&["--link", "tasks"]), "");
+    assert_eq!(
+        fs::read_link(f.main.join(".target/bin/tasks")).unwrap(),
+        stable
+    );
+    assert_eq!(ran(&["--where", "tasks"]), copy.display().to_string());
+}
+
+/// Every declared binary's manifest and source in `checkout`, the source holding `text`.
+fn sources(checkout: &Path, text: &str) {
+    for (binary, member) in BINARIES {
+        let bin = checkout.join(member).join("src/bin");
+        fs::create_dir_all(&bin).unwrap();
+        fs::write(checkout.join(member).join("Cargo.toml"), "[package]\n").unwrap();
+        fs::write(bin.join(format!("{binary}.rs")), text).unwrap();
+    }
+}
+
+/// `git ARGS` in `dir` as a committer named `t`, which must succeed.
+fn git(dir: &Path, args: &[&str]) {
+    let done = Command::new("git")
+        .args(["-c", "user.email=t@t", "-c", "user.name=t", "-C"])
+        .arg(dir)
+        .args(args)
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_WORK_TREE")
+        .output()
+        .unwrap();
+    assert!(
+        done.status.success(),
+        "git {args:?}: {}",
+        String::from_utf8_lossy(&done.stderr)
+    );
+}
+
+/// This process's folder of scratch, removed when the binary exits.
+static OWN_SCRATCH: OnceLock<PathBuf> = OnceLock::new();
+
+/// A new folder `name` in this process's scratch under the temp folder's `tasks-launcher` folder.
+fn scratch(name: &str) -> PathBuf {
+    let own = OWN_SCRATCH.get_or_init(|| {
+        static NEXT: AtomicUsize = AtomicUsize::new(0);
+        let root = harness_scratch::harness_root(&std::env::temp_dir(), "tasks-launcher")
+            .unwrap_or_else(|error| panic!("the tests' scratch folder: {error}"));
+        harness_scratch::reap_dead(&root);
+        let own = harness_scratch::create(&root, &NEXT)
+            .unwrap_or_else(|error| panic!("a scratch folder in {}: {error}", root.display()));
+        // SAFETY: atexit only records a function that takes nothing, to run once at the exit.
+        assert_eq!(unsafe { libc::atexit(remove_own_scratch) }, 0);
+        own.canonicalize().unwrap()
+    });
+    static TAKEN: AtomicUsize = AtomicUsize::new(0);
+    let dir = own.join(format!("{name}-{}", TAKEN.fetch_add(1, Ordering::Relaxed)));
+    fs::create_dir(&dir).unwrap();
+    dir
+}
+
+extern "C" fn remove_own_scratch() {
+    if let Some(own) = OWN_SCRATCH.get() {
+        let _ = fs::remove_dir_all(own);
+    }
+}
