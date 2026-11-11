@@ -33,6 +33,7 @@ mod owner_save;
 mod phone;
 mod projects;
 mod restored;
+mod run_records;
 mod server_notices;
 mod site;
 

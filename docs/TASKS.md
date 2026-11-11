@@ -632,6 +632,14 @@ moves it on when the concept or design is done. The card shows what waits in
 each document the task links ("N waiting" undecided cards), for information
 only: nothing waits on it.
 
+Between `in_progress` and `review` the board draws **Build** and **Test**: an
+in-progress task whose build or test run is going sits there until it ends, then
+returns to its column. They are display stages, never statuses: no command moves a
+task there, and a task in any other status keeps its column and shows the run as a
+chip. Runs come from the project's own reader, or from the run records
+`tools/cargo.sh` writes; a project with neither shows one narrow rail in their
+place ([Machine build and test work](MACHINE_WORK.md#run-records)).
+
 **Review waiting on nobody is blocked.** The owner, 2026-11-03: "the task was
 in review, but actually waiting for some approval. So it should had been
 blocked instead in regards to the status, since no work was happening." A task

@@ -40,8 +40,12 @@ package (`crates/symphony/src/theme.rs`), served as `/<id>/theme.css` and inline
 its pages. Tests use a temporary machine folder.
 
 Use `just lint-rs`, `just test-rs`, `just symphony-ui-dist` and `just symphony-ui-dev`
-from this folder. `tools/cargo.sh` execs ordinary Cargo in this workspace, preserving
-its arguments, streams, status and inherited limits. It uses this folder's `.target/`
+from this folder. `tools/cargo.sh` runs ordinary Cargo in this workspace, preserving
+its arguments, streams, status and inherited limits. A build or test it runs as its
+child, recorded in `sf-runs/` of the git common dir for the board's Build and Test
+columns ([docs/MACHINE_WORK.md](docs/MACHINE_WORK.md#run-records)); a signal sent to
+the wrapper's pid alone does not reach Cargo, one sent to its process group does.
+Other commands it execs. It uses this folder's `.target/`
 unless `CARGO_TARGET_DIR` names another. It supplies no project gate planner, test
 selection, certificate, shared slot pool or dependency seed service. The toolchain
 pin is `rust-toolchain.toml`. The containing project keeps its own source launcher,

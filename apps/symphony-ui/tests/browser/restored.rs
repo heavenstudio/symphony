@@ -24,6 +24,11 @@ impl Native {
     }
 
     pub(super) fn start_with_board(board: Option<&str>) -> Self {
+        Self::start_with(board, &[])
+    }
+
+    /// A server on a scratch board, with `vars` added to its environment.
+    pub(super) fn start_with(board: Option<&str>, vars: &[(&str, &std::path::Path)]) -> Self {
         // Had before the readiness clock below starts; the owned child is this server itself.
         let binary = binaries::shelf_server();
         static NEXT: AtomicUsize = AtomicUsize::new(0);
@@ -112,7 +117,7 @@ impl Native {
                 .unwrap();
             assert!(done.status.success(), "fixture {args:?}: {done:?}");
         }
-        Self::serve(root, outside, binary, board)
+        Self::serve(root, outside, binary, board, vars)
     }
 
     fn serve(
@@ -120,6 +125,7 @@ impl Native {
         outside: PathBuf,
         binary: &std::path::Path,
         board: Option<&str>,
+        vars: &[(&str, &std::path::Path)],
     ) -> Self {
         // Board writes reach only the caller's owned scratch server, or a closed endpoint.
         let log = std::fs::File::create(root.join("artifacts/server.log")).unwrap();
@@ -143,6 +149,7 @@ impl Native {
             .env("TASKS_SWEEP", "off")
             .env("ASKS_DB", root.join("artifacts/asks.db"))
             .env("SF_SYMPHONY_TEST_PID", std::process::id().to_string())
+            .envs(vars.iter().copied())
             .env_remove("TASKS_SESSION")
             .stdin(Stdio::null())
             .stdout(Stdio::piped())

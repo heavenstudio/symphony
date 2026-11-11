@@ -1,13 +1,26 @@
 //! One local native scan per existing board tick; every HTTP/feed consumer reads its cached view.
+//! The project's own reader, when it names one (`SF_MACHINE_WORK_READER`, or a prepared
+//! `.target/bin/sf-slots`), else the built-in reader of Symphony's run records
+//! ([`symphony_board::cli::machine_work::runs`]).
 
 use super::*;
 use symphony_board::cli::machine_work::{
-    Evidence, Operation, Projection, Sample, Snapshot, native::Inventory,
+    Evidence, Operation, Projection, Sample, Snapshot, native::Inventory, runs,
 };
 use symphony_board::rows::TaskSessionRow;
 
 const HISTORY_LIMIT: usize = 4096;
 pub(super) const READER_ENV: &str = "SF_MACHINE_WORK_READER";
+/// How long a task's last finished run stays after it ended (a week): the evidence of open work.
+const LAST_RUN_SECONDS: f64 = 7.0 * 86_400.0;
+
+/// What a tick's scan attributes runs by: the board it read, and the bindings, read only when a
+/// run not bound yet asks for them.
+pub(super) struct Context<'a> {
+    pub records: &'a [TaskSessionRow],
+    pub tasks: &'a [symphony_board::Task],
+    pub bindings: &'a dyn Fn() -> BTreeMap<String, symphony_board::Binding>,
+}
 
 /// Component matching excludes sibling names and traversal, and is never machine identity.
 fn in_checkout(cwd: &str, checkout: &str) -> bool {
@@ -45,6 +58,8 @@ fn initial_task(operation: &Operation, records: &[TaskSessionRow]) -> Option<Str
 pub(super) struct Sampler {
     projection: Projection,
     reader: Result<PathBuf, String>,
+    /// The reader was named explicitly: it answers, or the observation is unknown.
+    named: bool,
     identity: Option<Result<String, String>>,
     revisions: BTreeMap<String, Vec<u8>>,
     sequence: u64,
@@ -52,6 +67,20 @@ pub(super) struct Sampler {
     tasks: BTreeMap<String, Option<String>>,
     unassigned: Vec<Operation>,
     reason: String,
+    /// The built-in reader's last view, when it was the one read.
+    records: Option<RunView>,
+}
+
+/// What the built-in reader keeps between ticks.
+#[derive(Default)]
+struct RunView {
+    /// Each run's session and task, bound when it was first seen; dropped with its record.
+    owners: BTreeMap<String, runs::Owner>,
+    operations: Vec<Operation>,
+    /// Moves only when the runs going change, so an unchanged tick sends the feed nothing.
+    sequence: u64,
+    /// Each task's last finished run.
+    last: BTreeMap<String, runs::Run>,
 }
 
 impl Sampler {
@@ -59,6 +88,7 @@ impl Sampler {
         Self {
             projection: Projection::new(64, HISTORY_LIMIT, 10_000),
             reader: Self::reader(root, supplied),
+            named: supplied.is_some(),
             identity: None,
             revisions: BTreeMap::new(),
             sequence: 0,
@@ -66,7 +96,18 @@ impl Sampler {
             tasks: BTreeMap::new(),
             unassigned: Vec::new(),
             reason: String::new(),
+            records: None,
         }
+    }
+
+    /// The last finished run of task `slug` the built-in reader keeps: its command, exit status,
+    /// duration and tip.
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "the task page's gates read it next")
+    )]
+    pub(super) fn last_run(&self, slug: &str) -> Option<&runs::Run> {
+        self.records.as_ref()?.last.get(slug)
     }
 
     fn receipt(&self) -> u64 {
@@ -155,13 +196,21 @@ impl Sampler {
         self.reason = reason;
     }
 
+    /// One tick's observation: the project's reader when it names one (explicitly, or by preparing
+    /// `.target/bin/sf-slots`), else the run records.
     pub(super) fn scan(
         &mut self,
         root: &Path,
         common: Option<&Path>,
-        records: &[TaskSessionRow],
+        context: &Context<'_>,
     ) -> Evidence {
         let label = symphony_board::sys::hostname();
+        let program = self.named || self.reader.as_ref().is_ok_and(|reader| reader.exists());
+        if !program {
+            return self.scan_runs(common, context, label);
+        }
+        self.records = None;
+        let records = context.records;
         let result = (|| {
             let common = common.ok_or("native common directory unavailable")?;
             let reader = self.reader.as_ref().map_err(Clone::clone)?;
@@ -193,6 +242,94 @@ impl Sampler {
         Evidence {
             local_host: label,
             snapshot: self.snapshot(self.receipt()),
+        }
+    }
+
+    /// The built-in reader's tick: the runs going now, each bound to its session and task when
+    /// first seen, as one machine's partial inventory; and each task's last finished run kept. A
+    /// project that never recorded a run has no folder and so no publisher: no machine.
+    fn scan_runs(
+        &mut self,
+        common: Option<&Path>,
+        context: &Context<'_>,
+        label: String,
+    ) -> Evidence {
+        let mut view = self.records.take().unwrap_or_default();
+        let result = (|| -> Result<bool, String> {
+            let common = common.ok_or("run records: no git common directory")?;
+            if !common.join(runs::DIR).is_dir() {
+                view.operations.clear();
+                return Ok(false);
+            }
+            let found = runs::read(common, &runs::alive)?;
+            let seen: BTreeSet<&str> = (found.going.iter().chain(&found.finished))
+                .map(|run| run.id.as_str())
+                .collect();
+            view.owners.retain(|id, _| seen.contains(id.as_str()));
+            let unbound: Vec<&runs::Run> = (found.going.iter().chain(&found.finished))
+                .filter(|run| !view.owners.contains_key(&run.id))
+                .collect();
+            if !unbound.is_empty() {
+                let bindings = (context.bindings)();
+                let owners = runs::Owners {
+                    tasks: context.tasks,
+                    bindings: &bindings,
+                    records: context.records,
+                };
+                for run in unbound {
+                    view.owners.insert(run.id.clone(), owners.of(run));
+                }
+            }
+            let identity = self
+                .identity
+                .get_or_insert_with(symphony::machine::installation_id);
+            let owner = |run: &runs::Run| view.owners.get(&run.id).cloned().unwrap_or_default();
+            let operations: Vec<Operation> = (found.going.iter())
+                .map(|run| {
+                    let mut operation = runs::operation(run, "", owner(run));
+                    operation.machine_id = identity.as_ref().ok().cloned();
+                    operation
+                })
+                .collect();
+            if operations != view.operations {
+                view.sequence += 1;
+                view.operations = operations;
+            }
+            let now = symphony_board::sweep::trigger::now();
+            let finished = (found.finished.into_iter())
+                .map(|run| {
+                    let task = owner(&run).task;
+                    let ended = run.ended.as_ref().map_or(run.started, |ended| ended.at);
+                    (run, task.filter(|_| now - ended <= LAST_RUN_SECONDS))
+                })
+                .collect();
+            view.last = runs::keep_last(common, finished, now);
+            Ok(true)
+        })();
+        let mut snapshot = Snapshot::default();
+        self.reason.clear();
+        match (result, self.identity.as_ref()) {
+            (Ok(true), Some(Ok(identity))) => snapshot.machines.push(runs::machine(
+                identity,
+                &label,
+                view.sequence,
+                view.operations.clone(),
+            )),
+            // Without an identity the runs stay visible, unassigned, with no machine to place them.
+            (Ok(true), Some(Err(reason))) => {
+                snapshot.unassigned = view.operations.clone();
+                self.reason = format!("run records: {reason}; work remains unassigned");
+            }
+            (Ok(_), _) => {}
+            (Err(reason), _) => {
+                view.operations.clear();
+                self.reason = reason;
+            }
+        }
+        self.records = Some(view);
+        Evidence {
+            local_host: label,
+            snapshot,
         }
     }
 
@@ -243,11 +380,17 @@ impl Hub {
             }
         };
         let records = store.all_task_sessions().unwrap_or_default();
+        let bindings = || store.agent_bindings().unwrap_or_default();
+        let context = Context {
+            records: &records,
+            tasks: &snapshot.tasks,
+            bindings: &bindings,
+        };
         let evidence = self
             .machine_work
             .lock()
             .unwrap_or_else(|error| error.into_inner())
-            .scan(&self.root, self.common.as_deref(), &records);
+            .scan(&self.root, self.common.as_deref(), &context);
         let mut agents = measured("agents", || {
             taskview::agents_in_observed(
                 store,
