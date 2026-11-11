@@ -129,10 +129,9 @@ pub fn TabTrigger(props: TabTriggerProps) -> Element {
 pub fn TabContent(props: TabContentProps) -> Element {
     let base = attributes!(div {
         class: format!(
-            "{} {} {}",
+            "{} {}",
             props.class.unwrap_or_default(),
-            Styles::dx_tabs_content,
-            Styles::dx_tabs_content_themed
+            Styles::dx_tabs_content
         )
     });
     let merged = merge_attributes(vec![base, props.attributes]);

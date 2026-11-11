@@ -140,6 +140,41 @@ fn the_register_is_linked_by_its_route_and_one_outside_the_documents_by_its_path
 }
 
 #[test]
+fn the_review_guide_is_linked_by_its_route_and_not_at_all_when_the_project_has_none() {
+    let plain = Tree::new();
+    plain.write("docs/DECISIONS.md", "# Decisions\n");
+    let guide = |tree: &Tree| Project::of(&tree.root).view_at(&tree.root).guide;
+    assert_eq!(guide(&plain), "", "no guide, so no link that leads nowhere");
+    assert_eq!(
+        Project::of(&plain.root).view().guide,
+        "",
+        "the folder-less view says nothing of one"
+    );
+    plain.write("docs/workflow/REVIEW.md", "# Review\n");
+    assert_eq!(guide(&plain), "docs/workflow/REVIEW.md");
+    plain.write("docs/REVIEW.md", "# Review\n");
+    assert_eq!(
+        guide(&plain),
+        "docs/REVIEW.md",
+        "the Symphony's own place is tried first"
+    );
+    let tree = manual();
+    assert_eq!(guide(&tree), "", "docs/ is not this project's folder");
+    tree.write("docs/REVIEW.md", "# Stray\n");
+    assert_eq!(
+        guide(&tree),
+        "",
+        "a file outside every entrypoint is no guide"
+    );
+    tree.write("manual/REVIEW.md", "# Review\n");
+    assert_eq!(
+        guide(&tree),
+        "docs/REVIEW.md",
+        "the guide in manual/ is named by its route"
+    );
+}
+
+#[test]
 fn a_document_and_its_folder_open_by_their_route_from_the_projects_folder() {
     let tree = manual();
     tree.write("manual/guide/README.md", "# The guide\n\nRead me.\n");
