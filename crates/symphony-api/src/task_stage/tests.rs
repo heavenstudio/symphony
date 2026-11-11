@@ -145,10 +145,19 @@ fn a_partial_inventorys_running_test_places_work_in_progress_and_never_review() 
     ]);
     current.machines[0].freshness = WorkFreshness::Incomplete;
     current.machines[0].complete = false;
-    assert_eq!(current.task_stage(&task("in_progress"), true), TaskStage::Test);
+    assert_eq!(
+        current.task_stage(&task("in_progress"), true),
+        TaskStage::Test
+    );
     assert_eq!(current.task_stage(&task("review"), true).as_str(), "review");
     current.machines[0].operations.remove(1);
-    assert_eq!(current.task_stage(&task("in_progress"), true), TaskStage::Build);
+    assert_eq!(
+        current.task_stage(&task("in_progress"), true),
+        TaskStage::Build
+    );
     current.machines[0].operations.clear();
-    assert_eq!(current.task_stage(&task("in_progress"), true).as_str(), "in_progress");
+    assert_eq!(
+        current.task_stage(&task("in_progress"), true).as_str(),
+        "in_progress"
+    );
 }
