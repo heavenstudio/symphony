@@ -39,11 +39,12 @@ model choices, verification and landing rules. Generic integration supplies no
 product-specific policy or taste data.
 
 1. Reuse your handle or register as an orchestrator. Take the orchestrator role
-   with just tasks role SLUG orchestrator --as HANDLE. Register your native callback
-   with just tasks callback --as HANDLE. A registered chat recipient wins over the
-   orchestrator fallback. Without a native channel, run just tasks wait --as HANDLE
-   in the background and again each time it exits: it carries the same lines and
-   holds a vacant chat seat. An agent that cannot wait uses its board inbox.
+   with just tasks role SLUG orchestrator --as HANDLE. To hear the board, a session
+   that can hold a background command runs just tasks wait --as HANDLE in the
+   background, and again each time it exits: the lines a channel would carry,
+   without its notice, and a vacant chat seat. One that cannot registers its native
+   callback with just tasks callback --as HANDLE; a registered chat recipient wins
+   over the orchestrator fallback. An agent with neither uses its board inbox.
 2. Read just tasks list and just tasks agents --json. The agents API reports work,
    roles, branch, checkout, presence, active tests and blocked input. Use it to find
    who is doing what; the configured multiplexer is only a control surface.
