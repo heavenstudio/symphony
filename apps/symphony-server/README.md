@@ -132,10 +132,20 @@ refreshes the real distribution before committing client changes. Its default
 root is the checkout's top level even when the command starts in a subfolder; `--root`
 selects another folder. A private server on the main checkout leaves the
 shared app's `artifacts/docs-app.port` record alone. A project's page serves the
-shell with revalidation; content-hashed assets have immutable caching. Gzip
-compression covers snapshots and client files. SSE is never compressed or
-buffered. A changed shell script path emits a `client` region, which the
-existing client uses to reload once per build.
+shell with revalidation by its ETag, as is any client file not named by its
+content. A file named by its content, an `assets/` name whose last `-` part is
+dx's `dxh…` hash or the packager's sixteen hex digits (the shell script, every
+page module, wasm and stylesheet), is cached for a year as immutable, so a
+return visit revalidates the page alone (`src/api/client.rs`). Snapshots and the
+page are gzipped per request. A client file is gzipped once per content, at the
+best level, by the first request that takes gzip; later requests, from any
+project, send those stored bytes. The server keeps the most recently asked-for
+gzips, up to 16 MiB (about eight builds of every page's files), and drops the
+least recently asked-for past that, gzipping it again should it be asked for
+again (`src/api/client/gzipped.rs`). A file gzip cannot shrink goes as it is, as
+do PNG and WOFF2 files. Gzip is the one encoding offered: `br` and `zstd` get
+the file as it is. SSE is never compressed or buffered. A changed shell script path
+emits a `client` region, which the existing client uses to reload once per build.
 
 Only the shared server started with `--home`, holding the server lease, drains
 the chat journal. Private servers leave it untouched, even with `ASKS_DB` set,
@@ -249,13 +259,15 @@ switching back to main enables verdict commits without restarting the server.
 three-way merge, recording the unchanged `sf-land/verdicts/<commit>` record
 before updating main. Verdicts that change generated content take a private
 branch with their outputs through landing. A separate worker handles these
-branches so ordinary verdicts can proceed. Each generated branch runs `just verify`
-then `just land BRANCH` in its private checkout as the same app actor, regardless
+branches so ordinary verdicts can proceed. Each generated branch runs the project's
+`[verdicts] check` (this repository's: `just symphony-cli docs-audit --check`,
+[CHECKS](../../docs/CHECKS.md#checks-with-no-reviewer)), then its `[verdicts] land`
+command with the branch, in its private checkout as the same app actor, regardless
 of the legacy migration key. Land handles a moving main through its ordinary
 candidate verification and reuse. A bounded land retry keeps the immutable edit,
 branch, checkout and verifier records in a locked publication journal. The next
 save supplies another publication pass that calls land again without regenerating
-or running another whole verify; a restarted worker resumes the same journal.
+or running the check again; a restarted worker resumes the same journal.
 Graceful shutdown drains both workers and preserves retryable publications.
 Every save has an atomic draft journal before publication can temporarily
 release its page. An unverified terminal failure retains that immutable draft

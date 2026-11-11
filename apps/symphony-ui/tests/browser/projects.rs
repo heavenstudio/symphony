@@ -7,7 +7,7 @@
 //! provides.
 use super::{
     FIRST_VISIT_BYTES, SHOWN, binaries, chrome, chrome::Chrome, completed_requests, dist,
-    needed_bytes, owner_controls::ScratchBoard,
+    needed_bytes, owner_controls::ScratchBoard, ping_bytes,
 };
 use serde_json::{Value, json};
 use std::io::{BufRead, BufReader};
@@ -238,6 +238,21 @@ fn observed_page(browser: &mut Chrome) -> Value {
     browser.eval("({url:location.href, body:document.body?.innerText.slice(0, 2000)})")
 }
 
+/// The link the keyboard is on: its text and destination, whether it is the page header's first
+/// link, and whether it shows its focus ring wholly inside the viewport.
+fn focused(browser: &mut Chrome) -> Value {
+    browser.eval(
+        r#"(() => {
+        const link = document.activeElement;
+        const box = link.getBoundingClientRect();
+        const first = document.querySelector('header a');
+        return {name:link.textContent.trim(), destination:link.getAttribute('href'),
+            first:link === first, focused:link.matches(':focus-visible'),
+            visible:box.width > 0 && box.height > 0 && box.left >= 0 && box.right <= innerWidth && box.top >= 0 && box.bottom <= innerHeight};
+    })()"#,
+    )
+}
+
 #[test]
 fn a_draft_and_a_theme_one_project_keeps_never_appear_in_another() {
     let board = ScratchBoard::start();
@@ -300,22 +315,27 @@ fn the_top_left_switch_and_picker_work_by_keyboard_on_a_compact_nested_page() {
     browser.open(&server.url("/alpha/tasks"));
     assert!(browser.wait_for("document.documentElement.dataset.navigation === 'ready' && document.querySelector('header a.project-switch') !== null", SHOWN), "nested page missing: {}", observed_page(&mut browser));
     key(&mut browser, "Tab", "Tab", 9);
-    assert_eq!(browser.eval(r#"(() => {
-        const link = document.activeElement;
-        const box = link.getBoundingClientRect();
-        const first = document.querySelector('header a');
-        return {name:link.textContent.trim(), destination:link.getAttribute('href'),
-            first:link === first, focused:link.matches(':focus-visible'),
-            visible:box.width > 0 && box.height > 0 && box.left >= 0 && box.right <= innerWidth && box.top >= 0 && box.bottom <= innerHeight};
-    })()"#), json!({"name":"Change board","destination":"/","first":true,"focused":true,"visible":true}));
+    assert_eq!(
+        focused(&mut browser),
+        json!({"name":"Change board","destination":"/","first":true,"focused":true,"visible":true})
+    );
     key(&mut browser, "Enter", "Enter", 13);
     wait_for_picker(&mut browser);
-    key(&mut browser, "Tab", "Tab", 9);
-    key(&mut browser, "Tab", "Tab", 9);
-    assert_eq!(
-        browser.eval("document.activeElement.textContent.trim()"),
-        json!("The Shelf")
-    );
+    // The picker is a machine page in the app's frame: its header's link to the project list,
+    // marked active as a client page's own link is, is the first stop, then each project in the
+    // list's order.
+    for (name, destination, first) in [
+        ("⌂ projects", "/", true),
+        ("Alpha", "/alpha/", false),
+        ("The Shelf", "/pantry/", false),
+    ] {
+        key(&mut browser, "Tab", "Tab", 9);
+        assert_eq!(
+            focused(&mut browser),
+            json!({"name":name,"destination":destination,"first":first,"focused":true,"visible":true}),
+            "the picker's tab order"
+        );
+    }
     key(&mut browser, "Enter", "Enter", 13);
     assert!(
         browser.wait_for(
@@ -360,7 +380,10 @@ fn each_project_fits_the_first_visit_budget_in_its_own_theme_and_the_shared_look
         );
         let requests = completed_requests(&mut browser);
         let bytes = needed_bytes(&requests);
-        eprintln!("/{id}/ first visit: {bytes} bytes");
+        eprintln!(
+            "/{id}/ first visit: {bytes} bytes; keep-alive pings beside it: {} bytes",
+            ping_bytes(&requests)
+        );
         assert!(
             bytes <= FIRST_VISIT_BYTES,
             "/{id}/ first visit loads {bytes} bytes, over {FIRST_VISIT_BYTES}: {requests:#?}"

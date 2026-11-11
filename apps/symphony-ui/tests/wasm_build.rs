@@ -173,6 +173,9 @@ printf '<script type="module" src="/assets/%s-%s.js"></script>\n' "$bin" "$kind"
 printf 'export default function init(){return Promise.resolve()} init({module_or_path:"/assets/%s_bg-%s.wasm"}).then(()=>{});\n' "$bin" "$kind" > "$out/public/assets/$bin-$kind.js"
 printf '\0asm\1\0\0\0' > "$out/public/assets/${bin}_bg-$kind.wasm"
 printf 'body{}' > "$out/public/assets/board-$kind.css"
+# Every kind's two shared stylesheets, one sorting before its own and one after.
+printf '.a{}' > "$out/public/assets/a-shared.css"
+printf '.z{}\n' > "$out/public/assets/z-shared.css"
 "#.replace("__CAPTURE__", &capture),
     );
     executable(
@@ -181,6 +184,11 @@ printf 'body{}' > "$out/public/assets/board-$kind.css"
             bindgen_version()
         )),
         "#!/bin/bash\n",
+    );
+    // The shell's minifier: it names its arguments, then passes the script through.
+    executable(
+        &common.join("sf-cargo/dx-home/tools/esbuild-fixture/esbuild"),
+        "#!/bin/bash\nprintf '/*esbuild %s*/\\n' \"$*\"\ncat\n",
     );
 }
 
@@ -241,15 +249,36 @@ fn cargo_symphony_ui_dist_bundles_into_out_as_named_from_where_it_runs() {
         .next()
         .unwrap();
     let shell = fs::read_to_string(out.join("public").join(shell.trim_start_matches('/'))).unwrap();
-    let manifest = shell
-        .split("const modules = ")
-        .nth(1)
-        .unwrap()
-        .split(";\n")
-        .next()
+    let (manifest, body) = shell
+        .strip_prefix("const modules = ")
+        .expect("the shell starts with its manifest line")
+        .split_once(";\n")
         .unwrap();
     let manifest: serde_json::Value = serde_json::from_str(manifest).unwrap();
     assert_eq!(manifest.as_object().unwrap().len(), KINDS.len());
+    let source = fs::read_to_string(crate_dir().join("assets/shell.js")).unwrap();
+    let minified = format!(
+        "/*esbuild --minify --format=esm --log-level=warning*/\n{}\n",
+        source
+            .lines()
+            .filter(|line| *line != "const modules = __MODULES__;")
+            .collect::<Vec<_>>()
+            .join("\n")
+    );
+    assert!(
+        body.starts_with(&minified),
+        "the rest of the shell is assets/shell.js through the minifier: {body}"
+    );
+    let shared = manifest["board"]["styles"][0].as_str().unwrap();
+    assert!(
+        shared.starts_with("/assets/shared-") && shared.ends_with(".css"),
+        "{shared}"
+    );
+    assert_eq!(
+        fs::read_to_string(out.join("public").join(shared.trim_start_matches('/'))).unwrap(),
+        ".a{}\n.z{}\n\n",
+        "the shared stylesheets in their order, each ending its line"
+    );
     for kind in KINDS {
         for key in ["script", "wasm"] {
             let path = manifest[kind][key].as_str().unwrap();
@@ -260,6 +289,11 @@ fn cargo_symphony_ui_dist_bundles_into_out_as_named_from_where_it_runs() {
                 "{kind} {key}: {path}"
             );
         }
+        assert_eq!(
+            manifest[kind]["styles"],
+            serde_json::json!([shared, format!("/assets/board-{kind}.css")]),
+            "{kind} loads the shared stylesheet, then its own"
+        );
     }
 }
 
@@ -615,7 +649,10 @@ fn the_justfile_bundles_the_client_and_lints_its_browser_code_through_the_cargo_
     let tree = scratch.0.join("workspace with spaces");
     fs::create_dir_all(&tree).unwrap();
     let tree = tree.canonicalize().unwrap();
-    fs::copy(crate_dir().join("../../justfile"), tree.join("justfile")).unwrap();
+    // The justfile and the Symphony's recipes it imports.
+    for name in ["justfile", "symphony.just"] {
+        fs::copy(crate_dir().join("../..").join(name), tree.join(name)).unwrap();
+    }
     executable(
         &tree.join("tools/cargo.sh"),
         r#"#!/bin/bash

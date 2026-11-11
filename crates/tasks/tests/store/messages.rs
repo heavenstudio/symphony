@@ -267,7 +267,7 @@ fn empty_messages_and_unknown_senders_or_tasks_are_refused() {
     );
     assert_eq!(
         refused(f.store.say("sim/jump", "ghost-owl", "hi", None)),
-        "no session 'ghost-owl'; attach first (just tasks-attach)"
+        "no session 'ghost-owl'; register first (`just tasks register`)"
     );
     assert_eq!(
         refused(f.store.say("sim/none", "owner", "hi", None)),
@@ -310,7 +310,7 @@ fn the_inbox_of_an_unknown_session_is_refused() {
     );
     assert_eq!(
         refused(f.store.ack("ghost-owl", &[1])),
-        "no session 'ghost-owl'; attach first (just tasks-attach)"
+        "no session 'ghost-owl'; register first (`just tasks register`)"
     );
 }
 

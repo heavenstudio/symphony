@@ -1,5 +1,5 @@
-//! The `symphony` binary: `status` (`just symphony-status`), `reply` (`just symphony-reply`), `triage`
-//! (`just triage`), `verdict-tasks` (`just verdict-tasks`), `ask` (`just symphony-ask`), the commands
+//! The `symphony` binary (`just symphony-cli`): `status` (`just symphony-status`), `reply`
+//! (`just symphony-reply`), `triage`, `verdict-tasks`, `ask` (`just symphony-ask`), the commands
 //! the project's plugins add, and `serve`, one line-oriented JSON entry to the register, the asks and
 //! the schema check, one JSON line per call.
 
@@ -713,7 +713,7 @@ pub type BoardOf = dyn Fn(&Path) -> Box<dyn Board>;
 const VERDICT_USAGE: &str =
     "usage: symphony verdict-tasks [-h] [--root ROOT] [--file] [--as ACTOR] [--app]";
 const VERDICT_HELP: &str =
-    "Owner verdicts waiting on an agent become board work — `just verdict-tasks`.
+    "Owner verdicts waiting on an agent become board work — `just symphony-cli verdict-tasks`.
 
 options:
   -h, --help  show this help message and exit
@@ -810,7 +810,7 @@ pub fn verdict_tasks_main_with(
             } else {
                 let _ = writeln!(
                     out,
-                    "{} open cards with no task: `just verdict-tasks --file` puts them on the board",
+                    "{} open cards with no task: `just symphony-cli verdict-tasks --file` puts them on the board",
                     cards.len()
                 );
             }

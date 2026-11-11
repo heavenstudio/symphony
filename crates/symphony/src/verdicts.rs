@@ -1,4 +1,4 @@
-//! Owner verdicts waiting on an agent become board work — `just verdict-tasks`.
+//! Owner verdicts waiting on an agent become board work — `just symphony-cli verdict-tasks`.
 //!
 //! A card the owner rejected, or answered with a comment, waits on an agent (`just symphony-status --open`).
 //! This finds every such card no live task acts on, and with `--file` puts them on the board: on the one
@@ -36,13 +36,15 @@ The owner's verdicts below wait on an agent and no task acts on them yet. Filed 
 when the owner saved them (`symphony verdict-tasks`); new verdicts join this task on its thread until
 it is claimed.
 
-Take every card to exactly one end state, following docs/workflow/REVIEW.md (\"What an agent does with
-this\"): a board task acts on it (name it in a short dated agent line on the card, `just symphony-reply`,
-and file it with `just tasks create`, the owner's words quoted in its brief, if none exists); it is
-already done (say where); or a newer card supersedes it (say which). Never edit an owner line.
-`just verdict-tasks` must end listing none of these cards.
+Take every card to exactly one end state, following the apply-review skill: a board task acts on it
+(name it in a short dated agent line on the card, `just symphony-reply`, and file it with
+`just tasks create`, the owner's words quoted in its brief, if none exists); it is already done
+(say where); or a newer card supersedes it (say which). Never edit an owner line.
+`just symphony-cli verdict-tasks` must end listing none of these cards.
 
-Run `just verify`, commit on a branch named after this task, post the tip, and move to review.
+Run the project's check for a document change (Symphony's own:
+`just symphony-cli docs-audit --check`, docs/CHECKS.md), never its full suite; commit on a branch
+named after this task, post the tip and the check's result, and move to review.
 
 Cards:
 ";

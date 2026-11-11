@@ -32,6 +32,8 @@ mod priority;
 mod probes;
 mod project;
 mod pull;
+mod record_script;
+mod recorder;
 mod scratch_folder;
 mod search;
 mod slots;

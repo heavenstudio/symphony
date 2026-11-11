@@ -71,14 +71,7 @@ pub fn main(args: &[String], env: &Env, out: &mut dyn Write, err: &mut dyn Write
             0
         }
         Ok(false) => {
-            let board = if store.client().database() == crate::DATABASE {
-                "just tasks".to_string()
-            } else {
-                format!(
-                    "tools/rs-bin.sh tasks --database {}",
-                    store.client().database()
-                )
-            };
+            let board = store.board_command();
             let _ = writeln!(
                 out,
                 "delivery from {actor} to {handle} not yet confirmed; native delivery may still be in progress or retried; retained for the inbox until then ({board} inbox --as {handle}); do not resend"

@@ -26,7 +26,13 @@ pub use legacy::legacy_html;
 /// [`crate::project::Project::reachable`]), whatever its folder is called; a `document` is a Markdown
 /// file the entrypoint shows.
 pub fn target(root: &Path, rel: &str, document: bool) -> Result<PathBuf, String> {
-    let not_found = || format!("not found: {rel}");
+    let not_found = || {
+        if rel.is_empty() {
+            "not found: the path is empty".to_string()
+        } else {
+            format!("not found: {rel}")
+        }
+    };
     if Path::new(rel)
         .components()
         .any(|p| !matches!(p, Component::Normal(_)))

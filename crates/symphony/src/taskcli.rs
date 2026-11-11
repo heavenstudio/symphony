@@ -1,5 +1,7 @@
-//! The task board, reached through the `tasks` binary this checkout's sources build (`tools/rs-bin.sh
-//! tasks`, what `just tasks` runs): its API (`tasks api`, symphony/crates/tasks/src/cli/api.rs) for reading, its
+//! The task board, reached through the project's build of the `tasks` binary, found as the heartbeat
+//! finds it: the checkout's `.target/bin/tasks` link (else, from a linked worktree, the main
+//! checkout's), else the live build its main checkout's launcher recorded, else `tasks` on `PATH`
+//! ([`crate::builds`]). Its API (`tasks api`, crates/tasks/src/cli/api.rs) is for reading, its
 //! commands for writing. The board is the one the environment reaches: `TASKS_SERVER` and
 //! `TASKS_DATABASE` name a test's, else the server in the checkout's git common dir; `TASKS_NOW` pins
 //! its clock. `SF_TASKS_CLI` names another command to run in the binary's place (split as a shell
@@ -18,7 +20,12 @@ pub struct CliBoard {
     cli: Vec<String>,
     env: Vec<(String, String)>,
     cwd: PathBuf,
+    /// What a run that cannot start adds: how to give the project a build to run, when none was found.
+    missing: Option<String>,
 }
+
+/// The board's binary.
+const TASKS: &str = "tasks";
 
 /// `command` split as a shell splits it: on blanks, with single and double quotes and backslashes keeping
 /// a word whole, as Python's `shlex.split` does for `SF_REVIEW`.
@@ -73,18 +80,36 @@ fn words(env: &str, default: Vec<String>) -> Vec<String> {
     }
 }
 
+/// The project's build of the board's binary from the checkout at `root`: its link (the main
+/// checkout's from a linked worktree), else the live build the main checkout's launcher recorded in
+/// the common dir, as the heartbeat runs it. None leaves `tasks` to the search path.
+pub fn tasks_binary(root: &Path) -> Option<PathBuf> {
+    crate::builds::linked(root, TASKS)
+        .or_else(|| crate::hook::live_build(&symphony_board::git::checkout_common_dir(root)?))
+}
+
 impl CliBoard {
-    /// The board the environment reaches from the checkout at `root`, through the `tasks` binary its
-    /// sources build.
+    /// The board the environment reaches from the checkout at `root`, through the project's build
+    /// of the board's binary ([`tasks_binary`]), else `tasks` on the search path.
     pub fn new(root: &Path) -> CliBoard {
-        let binary = vec![
-            root.join("tools")
-                .join("rs-bin.sh")
-                .to_string_lossy()
-                .to_string(),
-            "tasks".to_string(),
-        ];
-        CliBoard::with_command(words("SF_TASKS_CLI", binary), &[], root)
+        CliBoard::named_else_found(words("SF_TASKS_CLI", Vec::new()), root)
+    }
+
+    /// The board through `named` (`SF_TASKS_CLI`'s words) when it names a command, else through the
+    /// project's build of the board's binary from `root`.
+    fn named_else_found(named: Vec<String>, root: &Path) -> CliBoard {
+        if !named.is_empty() {
+            return CliBoard::with_command(named, &[], root);
+        }
+        if let Some(found) = tasks_binary(root) {
+            return CliBoard::with_command(vec![found.to_string_lossy().into_owned()], &[], root);
+        }
+        let mut board = CliBoard::with_command(vec![TASKS.to_string()], &[], root);
+        board.missing = Some(format!(
+            "link the project's build of {TASKS} at {}, or put {TASKS} on PATH",
+            root.join(crate::builds::LINKS).join(TASKS).display()
+        ));
+        board
     }
 
     /// The board reached through `cli` (the `tasks` binary), run in `cwd` with `env` on top of this
@@ -94,6 +119,7 @@ impl CliBoard {
             cli,
             env: env.to_vec(),
             cwd: cwd.to_path_buf(),
+            missing: None,
         }
     }
 
@@ -121,7 +147,14 @@ impl CliBoard {
         } else {
             symphony_board::sys::spawn_output(&mut command)
         }
-        .map_err(|e| VerdictError(format!("cannot run {}: {e}", self.cli.join(" "))))?;
+        .map_err(|e| {
+            let fix = self
+                .missing
+                .as_ref()
+                .filter(|_| e.kind() == std::io::ErrorKind::NotFound)
+                .map_or_else(String::new, |fix| format!("; {fix}"));
+            VerdictError(format!("cannot run {}: {e}{fix}", self.cli.join(" ")))
+        })?;
         if let Some(text) = stdin {
             let mut pipe = child.stdin.take().expect("a piped stdin");
             let text = text.to_string();
@@ -285,3 +318,7 @@ impl Board for CliBoard {
         .map(|_| ())
     }
 }
+
+#[cfg(test)]
+#[path = "taskcli_tests.rs"]
+mod tests;

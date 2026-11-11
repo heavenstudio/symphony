@@ -59,6 +59,11 @@ impl Fixture {
             &base.join("common/sf-cargo/dx-home/tools/wasm-bindgen-fixture/wasm-bindgen"),
             "#!/bin/bash\nexit 0\n",
         );
+        // The shell's minifier passes the script through as it is.
+        executable(
+            &base.join("common/sf-cargo/dx-home/tools/esbuild-fixture/esbuild"),
+            "#!/bin/bash\ncat\n",
+        );
         release_protocol(&base);
         executable(
             &base.join("common/sf-cargo/dx-0.7.10/bin/dx"),

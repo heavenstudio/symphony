@@ -1,8 +1,9 @@
 # Rules
 
 Standing rules for every agent working in this repository, beyond [AGENTS.md](AGENTS.md) and
-the package guides. Landing, stamps, certificates and gates belong to a consuming project
-([command ownership](AGENTS.md#command-ownership)), which keeps its own rules.
+the package guides. A consuming project's landing, stamps, certificates and gates are its own
+([command ownership](AGENTS.md#command-ownership)), under its own rules; this repository's gate is
+`workflow/evidence-is-the-gate`.
 
 ## How work is done
 
@@ -12,9 +13,31 @@ A top-level task owns one feature branch and one delivery cycle; its
 [subtasks](docs/TASKS.md#subtasks) are small slices of it, not releases. One agent carries the
 feature unless another, on disjoint files, demonstrably shortens it. A slice commits into the
 feature branch, runs only its focused checks and closes with
-`just tasks done SLUG "integration commit and focused result"`; only the parent runs
-`just verify` and goes to review, once, keeping its review fixes. This holds over a slice brief
-that asks for more.
+`just tasks done SLUG "integration commit and focused result"`; only the parent goes to review,
+once, with its evidence (`workflow/evidence-is-the-gate`), keeping its review fixes. This holds
+over a slice brief that asks for more.
+
+### `workflow/evidence-is-the-gate`
+
+A task's gate is evidence that its change works, not the suite. The owner, 2026-11-11: "Do they
+need to run a full test suite? Why? If tests are so time consuming why are they being required to
+run every time, instead of running tests more closely associated with the tasks at hand, leaving
+a nighly run for a full verify?" and "So the executors need to 'prove that the work they did
+work'. That is the concept of the stamp based gating. As long as evidence is good enough, a full
+verification can be left to be done later". Every task, parent or slice, feature or fix, runs the
+tests closest to what it changed and `just lint-rs` (and `just client-update` for a client
+change), and posts the exact commands and results with the evidence its kind of change asks for,
+such as before and after screenshots of a changed page. Its reviewer runs the same tests, never
+the suite, judges whether the evidence is good enough for the change's risk, and its approve is
+the task's stamp (the task `tools/review-as-stamps` records it on the task). A slice's evidence is
+judged in its parent's review, and a fix whose recorded risk calls for no reviewer
+(`workflow/fast-bugfixes`) is landed on its posted evidence by its orchestrator, with no stamp.
+Higher risk asks for stronger evidence, never for the whole suite. No task runs `just verify`,
+whatever a brief asks: it is the nightly's, on main's tip, which the task `tools/release-nightly`
+makes, and a red night is filed as a task naming the commits since the last green one. Until that
+task lands nothing runs `just verify` on main, so a break no task's focused tests reach stays
+unseen. Evidence by kind of change, how to pick the tests and worked examples:
+[CHECKS](docs/CHECKS.md).
 
 ### `workflow/fast-bugfixes`
 
@@ -42,7 +65,9 @@ it, and what independent work continues. The orchestrator records the blocker's 
 resume condition and a dated follow-up there and does that follow-up; at every slice completion,
 handoff and PULL it checks its `blocked` and `in_progress` parents for a real next action. An
 orchestrator adds no holds to work the owner already authorized, and a refused permission is
-reported, never routed around, while independent authorized work goes on.
+reported, never routed around, while independent authorized work goes on. A board that refuses a
+command is such a refusal: report it and stop, and never build or run another binary to get
+around it.
 
 ### `workflow/claude-first-agents`
 
@@ -64,6 +89,24 @@ Changed behaviour gets tests, written with or after the code and run after it, a
 shows them and their green run. No test-first order, no red run before the code and no planted
 fault or reverted change to watch a test fail, whatever a brief asks; a reviewer may still probe
 the code with a case it suspects the code gets wrong.
+
+### `tests/rerun-the-failure-alone`
+
+A test that failed is run again by itself before anything is concluded from it or changed for it,
+never the whole suite again. The owner, 2026-11-11: "test that fail should be ran themselves to
+see if they pass. No need to run entire test suite each time." One that passes alone but failed in
+the run is reported as load- or order-dependent, with both results.
+
+### `tests/a-red-on-main-has-one-owner`
+
+A test that fails on main, with the task's change taken out, is not the task's to fix or to wait
+for. The owner, 2026-11-11: "tests that are failing in main should be handled by an orchestrator
+as a separate task in order for individual tasks not to be blocked by it and have a single
+dedicated owner to solve it." The agent that finds it proves it on main (the test alone, at main's
+tip), tells its orchestrator on its thread with the command and output, and carries on: its own
+review and landing name the red and do not wait on it. The orchestrator checks the board for a
+task already holding that red, files one at p0 if there is none, and staffs it at once; a second
+finder adds its evidence to that task and files nothing.
 
 ### `a-test-that-passes-either-way-is-not-a-test`
 
@@ -123,6 +166,14 @@ pointer.
 One topic per document, linked to the others, never merged into one file.
 
 ## Tools and the machine
+
+### `commits/no-ai-authorship`
+
+No commit, merge, tag, pull request, file header or licence line names Claude, Claude Code, Codex
+or any other AI agent as author, co-author or generator: no `Co-Authored-By` trailer, no
+"Generated with" line. The owner, 2026-11-11: "no claude code or codex co authorship anywhere".
+The author and owner of this repository is Stefano Benatti, and its licence is MIT (`LICENSE`).
+An agent's handle belongs on the board thread, never in the commit.
 
 ### `tools/no-new-python`
 

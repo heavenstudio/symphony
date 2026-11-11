@@ -208,7 +208,7 @@ fn a_move_off_the_pipeline_is_refused() {
     }
     assert_eq!(
         refused(f.store.move_to("sim/jump", "blocked", "ghost-owl")),
-        "no session 'ghost-owl'; attach first (just tasks-attach)"
+        "no session 'ghost-owl'; register first (`just tasks register`)"
     );
     assert_eq!(
         refused(f.store.move_to("sim/none", "blocked", &a)),
@@ -276,7 +276,7 @@ fn owner_cancellation_grants_no_other_moves_and_refuses_missing_tasks() {
     ] {
         assert_eq!(
             refused(f.store.move_to("sim/jump", status, "owner")),
-            "no session 'owner'; attach first (just tasks-attach)"
+            "no session 'owner'; register first (`just tasks register`)"
         );
         assert_eq!(f.store.dump().unwrap(), before);
     }
@@ -447,7 +447,7 @@ fn landing_is_also_taken_by_the_session_that_asked_to_land_it() {
             f.store
                 .landed("sim/jump", "nobody-at-all", "x", true, &LANDS_FROM)
         ),
-        "no session 'nobody-at-all'; attach first (just tasks-attach)"
+        "no session 'nobody-at-all'; register first (`just tasks register`)"
     );
     f.store
         .landed("sim/jump", &asked, "landed abc123", true, &LANDS_FROM)
