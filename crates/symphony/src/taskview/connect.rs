@@ -25,7 +25,9 @@ pub fn connect(root: &Path) -> Result<symphony_board::Store, String> {
 
 /// The board of the project at `root` as `env` reaches it, opened to read by the schema rule: a
 /// board one version ahead is read and never written, and a write on it is refused naming the
-/// project and `just symphony`.
+/// project and `just symphony`; a board behind this build, or not made yet, is refused before it is
+/// read, naming `just tasks`, and never moved forward or made. So a branch's build, its command
+/// line or a preview server, cannot move the live board past the build its board command runs.
 pub fn connect_in(
     root: &Path,
     mut env: symphony_board::cli::Env,
@@ -57,3 +59,7 @@ pub fn connect_in(
     // The cap the command line holds starts to, which the agents view and the PULL digest show.
     Ok(symphony_board::cli::capped(store, &env))
 }
+
+#[cfg(test)]
+#[path = "connect_tests.rs"]
+mod tests;
