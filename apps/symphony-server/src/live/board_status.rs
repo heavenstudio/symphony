@@ -8,7 +8,8 @@ use std::path::Path;
 
 impl Hub {
     /// The store for the worker's next board read: `connect`'s, or none once the pages have heard
-    /// why there is none.
+    /// why there is none. A tick with no store makes no dispatch pass: the board's health counts it
+    /// failed.
     pub(super) fn reconnect(
         &self,
         connect: &mut impl FnMut(&Path) -> Result<symphony_board::Store, String>,
@@ -16,6 +17,12 @@ impl Hub {
         match connect(&self.root) {
             Ok(store) => Some(store),
             Err(error) => {
+                let now = self.now();
+                self.health.dispatched(
+                    now,
+                    Err(&format!("no pass, the board could not be reached: {error}")),
+                );
+                self.tell_health(now);
                 self.board_error(error);
                 None
             }

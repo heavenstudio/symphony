@@ -408,20 +408,23 @@ fn front(projects: &Projects, served: &[Served], headers: &HeaderMap) -> Respons
     Json(status).into_response()
 }
 
-/// `/`: always the project picker with each registered project's counts.
+/// `/`: always the project picker with each registered project's counts, and whether its board
+/// is unwell, from the hub's memory: the picker reads no board.
 fn home(served: &[Served]) -> Response {
     // Each project is warmed as the registry is read, so its counts are the hub's at hand; one
     // still warming shows none yet.
     let rows: Vec<String> = served
         .iter()
         .map(|project| {
-            let counts = project.shared.api.get().and_then(|hub| {
+            let hub = project.shared.api.get();
+            let counts = hub.and_then(|hub| {
                 // A writer's panic leaves at worst a page between two of its regions' updates:
                 // these counts are shown, and the project's next delta corrects them.
                 let pages = hub.pages.read().unwrap_or_else(PoisonError::into_inner);
                 pages.get("").map(|page| page.board.counts.clone())
             });
-            list_row(project, counts.as_ref())
+            let health = hub.map(|hub| hub.health_notice()).unwrap_or_default();
+            list_row(project, counts.as_ref(), &health)
         })
         .collect();
     let page = format!(
@@ -444,12 +447,13 @@ fn home(served: &[Served]) -> Response {
 const LIST_STYLE: &str = "body{font:16px/1.5 system-ui,sans-serif;margin:0;background:#fff;color:#111}\
 main{max-width:40rem;margin:2rem auto;padding:0 16px}ul{list-style:none;padding:0}\
 li{border-bottom:1px solid #ddd;padding:.75rem 0}a{font-weight:600;color:inherit}\
-.counts,.refused{display:block;color:#555;font-size:.9rem}\
+.counts,.refused,.health{display:block;color:#555;font-size:.9rem}.health{color:#8a4b00}\
 @media (prefers-color-scheme:dark){body{background:#111;color:#eee}li{border-color:#333}\
-.counts,.refused{color:#aaa}}";
+.counts,.refused{color:#aaa}.health{color:#f0b35a}}";
 
-/// One project in the list: its name and link, then its counts or why it is not served.
-fn list_row(project: &Served, counts: Option<&symphony_api::Counts>) -> String {
+/// One project in the list: its name and link, then its counts or why it is not served, and
+/// `health`, what its hub says of its board while that is unwell.
+fn list_row(project: &Served, counts: Option<&symphony_api::Counts>, health: &str) -> String {
     use symphony::markup::escape;
     let name =
         symphony::theme::Package::of(&symphony::project::Project::of(&project.entry.root)).name;
@@ -469,8 +473,16 @@ fn list_row(project: &Served, counts: Option<&symphony_api::Counts>) -> String {
         }
         (None, None) => String::new(),
     };
+    let health = if health.is_empty() {
+        String::new()
+    } else {
+        format!(
+            "<span class=\"health\" role=\"status\">⚠ {}</span>",
+            escape(health)
+        )
+    };
     format!(
-        "<li><a href=\"/{id}/\">{}</a>{detail}</li>",
+        "<li><a href=\"/{id}/\">{}</a>{detail}{health}</li>",
         escape(&name),
         id = escape(&project.entry.id)
     )

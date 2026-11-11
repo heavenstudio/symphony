@@ -1462,43 +1462,198 @@ fn edited_rename_through_merge_ignores_unrelated_rename_noise() {
     assert_eq!(versions::diff(&tree.root, rel, &merge), None);
 }
 
+/// The deck document of the branch-edit case: its link into the history folder, its menu entry and
+/// whether it still holds the evidence table main trims.
+fn deck(history: &str, entry: &str, evidence: bool) -> String {
+    let facts = (0..40)
+        .map(|n| format!("- Host fact {n}: the device keeps its setting {n} between sessions.\n"))
+        .collect::<String>();
+    let steps = (3..9)
+        .map(|n| format!("{n}. Step {n} of the procedure is read on the device.\n"))
+        .collect::<String>();
+    let table = if evidence {
+        (0..8)
+            .map(|n| format!("| run {n} | median {} fps |\n", 50 + n))
+            .collect()
+    } else {
+        String::new()
+    };
+    format!(
+        "# Deck\n\nThe passes behind these numbers are in [history/deck.md]({history}).\n\n\
+         ## Host facts\n{facts}\n## Procedure\n\n\
+         1. Deploy and play. The title screen opens with **{entry}** lit.\n\
+         2. **A** ({entry}), then **A** again on a career.\n{steps}\n## Performance\n{table}"
+    )
+}
+
+/// A document edited on a feature branch under its old name, while main moved every document into
+/// a folder for its topic and then edited it there: the branch's edit stays in the moved document's
+/// history through the branch's merge of main and through main's merge of the branch, and its patch
+/// holds that document alone, not the source files the same commit changed.
 #[test]
-fn historical_deck_edit_7a0e58cd_survives_merge_a915f81c() {
-    // Borrow immutable objects, but pin HEAD in our own repo. This neither walks today's moving
-    // main nor depends on a checked-out copy of the historical source tree.
+fn a_branch_edit_under_the_old_name_survives_merging_into_a_main_that_moved_the_document() {
     let tree = repository();
-    let common = std::env::var("SF_GIT_COMMON_DIR").unwrap_or_else(|_| {
-        command(
-            &common::repo(),
-            &["rev-parse", "--path-format=absolute", "--git-common-dir"],
-            1,
-        )
-    });
+    let topics = ["ships", "stations", "workflow", "economy"];
+    let other = |n: usize| format!("docs/TOPIC_{n}.md");
+    tree.write("docs/DECK.md", &deck("history/deck.md", "NEW VOYAGE", true));
+    for n in 0..60 {
+        tree.write(
+            &other(n),
+            &format!(
+                "# Topic {n}\n{}",
+                format!("The {n}th topic keeps its own procedure.\n").repeat(20)
+            ),
+        );
+    }
+    tree.write("view/ui_title.gd", "extends Control\nvar entries = []\n");
+    tree.write("view/ui_menu.gd", "extends Control\n");
+    let first = commit(&tree.root, "Deck procedure", 1);
+
+    // The feature branch: a commit beside the document, then the edit of the document together
+    // with the source it describes.
+    command(&tree.root, &["switch", "-qc", "view/main-menu"], 2);
+    tree.write("view/ui_kit.gd", "extends Node\nvar screens = {}\n");
+    commit(
+        &tree.root,
+        "view/main-menu: a screen registry on the kit",
+        2,
+    );
+    tree.write("docs/DECK.md", &deck("history/deck.md", "NEW GAME", true));
     tree.write(
-        ".git/objects/info/alternates",
-        &format!("{common}/objects\n"),
+        "view/ui_title.gd",
+        "extends Control\nvar entries = [\"NEW GAME\", \"CONTINUE\"]\n",
+    );
+    tree.write("view/ui_new_game.gd", "extends Control\n");
+    let edit = commit(
+        &tree.root,
+        "view/main-menu: the title is a plain list, and each entry opens its own screen",
+        4,
+    );
+
+    // Main moves on beside the document; the branch takes it in, then goes on without the document.
+    command(&tree.root, &["switch", "-q", "main"], 3);
+    tree.write("view/ui_menu.gd", "extends Control\nvar opened = false\n");
+    commit(&tree.root, "view/menu: the overlay remembers it opened", 3);
+    command(&tree.root, &["switch", "-q", "view/main-menu"], 5);
+    command(
+        &tree.root,
+        &[
+            "-c",
+            "commit.gpgsign=false",
+            "merge",
+            "-q",
+            "--no-ff",
+            "main",
+            "-m",
+            "Merge branch 'main' into view/main-menu",
+        ],
+        5,
+    );
+    tree.write(
+        "view/ui_title.gd",
+        "extends Control\nvar entries = [\"NEW GAME\", \"CONTINUE\", \"LOAD GAME\"]\n",
+    );
+    commit(
+        &tree.root,
+        "view/main-menu: CONTINUE and LOAD GAME read the save slots",
+        6,
+    );
+
+    // Main moves every document into a folder for its topic, unchanged, then edits the deck there.
+    command(&tree.root, &["switch", "-q", "main"], 6);
+    for topic in topics.iter().chain(["engineering"].iter()) {
+        std::fs::create_dir_all(tree.path(&format!("docs/{topic}"))).unwrap();
+    }
+    command(
+        &tree.root,
+        &["mv", "docs/DECK.md", "docs/engineering/DECK.md"],
+        6,
+    );
+    for n in 0..60 {
+        let to = format!("docs/{}/TOPIC_{n}.md", topics[n % topics.len()]);
+        command(&tree.root, &["mv", &other(n), &to], 6);
+    }
+    let moved = commit(
+        &tree.root,
+        "docs/restructure: move the docs into a folder per topic",
+        6,
+    );
+    tree.write(
+        "docs/engineering/DECK.md",
+        &deck("../history/deck.md", "NEW VOYAGE", false),
+    );
+    tree.write("docs/engineering/README.md", "# Engineering\n");
+    let trimmed = commit(
+        &tree.root,
+        "docs/restructure: a README per folder, and the merged and trimmed docs",
+        7,
     );
     command(
         &tree.root,
         &[
-            "update-ref",
-            "refs/heads/main",
-            "a915f81cc5745219ebcfec849daae88a5cb2f192",
+            "-c",
+            "commit.gpgsign=false",
+            "merge",
+            "-q",
+            "--no-ff",
+            "view/main-menu",
+            "-m",
+            "Merge view/main-menu: the title is a list of acts",
         ],
-        1,
+        8,
     );
+    let merge = command(&tree.root, &["rev-parse", "--short", "HEAD"], 8);
     let rel = "docs/engineering/DECK.md";
-    let rows = versions::versions(&tree.root, rel, 0);
-    assert!(
-        rows.iter().any(|v| v.sha.len() >= 7
-            && "7a0e58cd74db704e183b9fbcf707158cdb6cad3b".starts_with(&v.sha)
-            && v.subject.starts_with("view/main-menu:")),
-        "{rows:?}"
+    assert_eq!(
+        tree.read(rel),
+        deck("../history/deck.md", "NEW GAME", false),
+        "the fixture's merge carries both sides' edits"
     );
-    let patch = versions::diff(&tree.root, rel, "7a0e58cd").unwrap();
-    assert!(patch.diff.contains("NEW GAME"));
-    assert!(patch.diff.contains("NEW VOYAGE"));
-    assert!(!patch.diff.contains("view/ui_title.gd"));
+
+    let rows = versions::versions(&tree.root, rel, 0);
+    assert_eq!(
+        rows.iter()
+            .map(|v| (v.sha.as_str(), v.subject.as_str()))
+            .collect::<Vec<_>>(),
+        [
+            (
+                trimmed.as_str(),
+                "docs/restructure: a README per folder, and the merged and trimmed docs"
+            ),
+            (
+                moved.as_str(),
+                "docs/restructure: move the docs into a folder per topic"
+            ),
+            (
+                edit.as_str(),
+                "view/main-menu: the title is a plain list, and each entry opens its own screen"
+            ),
+            (first.as_str(), "Deck procedure"),
+        ]
+    );
+    let patch = versions::diff(&tree.root, rel, &edit).unwrap();
+    assert_eq!(patch.sha, edit);
+    assert!(
+        patch
+            .diff
+            .starts_with("diff --git a/docs/DECK.md b/docs/DECK.md\n--- a/docs/DECK.md\n"),
+        "{}",
+        patch.diff
+    );
+    assert!(
+        patch.diff.contains(
+            "-1. Deploy and play. The title screen opens with **NEW VOYAGE** lit.\n\
+             -2. **A** (NEW VOYAGE), then **A** again on a career.\n\
+             +1. Deploy and play. The title screen opens with **NEW GAME** lit.\n\
+             +2. **A** (NEW GAME), then **A** again on a career.\n"
+        ),
+        "{}",
+        patch.diff
+    );
+    for source in ["view/ui_title.gd", "view/ui_new_game.gd", "extends Control"] {
+        assert!(!patch.diff.contains(source), "{source}: {}", patch.diff);
+    }
+    assert_eq!(versions::diff(&tree.root, rel, &merge), None);
 }
 
 #[test]

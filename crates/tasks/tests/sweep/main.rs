@@ -56,8 +56,39 @@ extern "C" fn remove_template() {
     }
 }
 
+/// The ignore file of a consuming project, as the sweep's disposable and regenerable paths
+/// (`sweep::git::files`) are written for it: its engine's caches and imports, the golden test's
+/// failure images, its tools' environment and bytecode, the agents' local state, the Codex app's
+/// imported hook pair, run evidence under `artifacts/`, export output and the tree's build folder.
+/// The fixture holds its own, never the ignore file of the checkout running the tests.
+const IGNORE: &str = "\
+.godot/
+*.import
+tests/golden/*.actual.png
+tests/golden/*.expected.png
+tests/golden/*.diff.png
+.venv/
+.claude/*
+!.claude/skills/
+!.claude/hooks/
+!.claude/settings.json
+/.codex/hooks.json
+/.codex/hooks/
+artifacts/*
+!artifacts/.gdignore
+build/*
+!build/.gdignore
+__pycache__/
+/.target/
+*.profraw
+*.profdata
+.obsidian/
+.env
+.DS_Store
+";
+
 /// The repository every test's starts as, made once per test binary and removed at its exit: `main`
-/// with one commit, this repository's `.gitignore` and `sim/world.gd`.
+/// with one commit, the consuming project's [`IGNORE`] file and `sim/world.gd`.
 fn template() -> &'static Path {
     TEMPLATE.get_or_init(|| {
         let root = std::env::temp_dir().join(format!("sf-sweep-template-{}", std::process::id()));
@@ -71,8 +102,7 @@ fn template() -> &'static Path {
         ] {
             git(&root, &["config", key, value]);
         }
-        let ignore = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../.gitignore");
-        fs::copy(ignore, root.join(".gitignore")).unwrap();
+        write(&root, ".gitignore", IGNORE);
         write(&root, "sim/world.gd", "extends RefCounted\n");
         git(&root, &["add", "-A"]);
         git(&root, &["commit", "-q", "-m", "base"]);

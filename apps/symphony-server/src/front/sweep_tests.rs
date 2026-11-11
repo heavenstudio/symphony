@@ -332,6 +332,146 @@ fn a_round_is_reported_late_by_its_whole_delay_past_the_threshold() {
 }
 
 #[test]
+fn each_sweep_is_recorded_in_the_boards_health_failed_with_its_error_or_ok() {
+    let mut fixture = SweepFixture::new(
+        "if [ ! -f failed ]; then touch failed; echo 'the board did not answer' >&2; exit 3; fi",
+    );
+    let (hub, clock) = clocked_hub(&fixture);
+    let at = clock.now();
+    fixture.start(maintenance_worker(
+        fixture.shared.clone(),
+        Duration::ZERO,
+        Duration::from_secs(3),
+        Stamp::now,
+    ));
+    let report = waited("no sweep was recorded ok", || {
+        Some(hub.health.report(at)).filter(|report| report.sweep.ok > 0)
+    });
+    assert_eq!(report.sweep.failed, 1, "{report:?}");
+    assert_eq!(
+        report.sweep.error.as_deref(),
+        Some("exit status: 3: the board did not answer")
+    );
+    assert_eq!(
+        report.warnings.len(),
+        1,
+        "a good sweep alone does not clear it: {:?}",
+        report.warnings
+    );
+    // The failed sweep told the pages before the good one was recorded.
+    assert_eq!(*hub.server_notice.borrow(), SWEEP_FAILING);
+
+    // A minute on the hub's clock, the next good sweep clears it.
+    clock.set(at + symphony_board::board_health::CLEARS_AFTER);
+    waited("the pages were not told the sweep is well", || {
+        hub.server_notice.borrow().is_empty().then_some(())
+    });
+    assert_eq!(
+        hub.health.report(clock.now()).warnings,
+        Vec::<String>::new()
+    );
+}
+
+const SWEEP_FAILING: &str =
+    "The task board is unwell: its idle sweep is failing. `just tasks status` says why.";
+
+/// The hub's clock, as the test moves it.
+struct Clock(Arc<std::sync::atomic::AtomicU64>);
+
+impl Clock {
+    fn now(&self) -> f64 {
+        f64::from_bits(self.0.load(Ordering::SeqCst))
+    }
+
+    fn set(&self, at: f64) {
+        self.0.store(at.to_bits(), Ordering::SeqCst);
+    }
+}
+
+/// A hub for `fixture`'s server, its clock standing at the wall clock's time until the test
+/// moves it.
+fn clocked_hub(fixture: &SweepFixture) -> (Arc<crate::live::Hub>, Clock) {
+    let time = Arc::new(std::sync::atomic::AtomicU64::new(
+        symphony_board::sweep::trigger::now().to_bits(),
+    ));
+    let mut hub = crate::live::Hub::new(&fixture.root, &fixture.root.join("client"));
+    let read = Clock(Arc::clone(&time));
+    hub.clock = Box::new(move || read.now());
+    let hub = Arc::new(hub);
+    assert!(fixture.shared.api.set(hub.clone()).is_ok());
+    (hub, Clock(time))
+}
+
+/// What `seen` sees first, within fifteen seconds; `waiting` says what did not come.
+fn waited<T>(waiting: &str, mut seen: impl FnMut() -> Option<T>) -> T {
+    let began = Instant::now();
+    loop {
+        if let Some(seen) = seen() {
+            return seen;
+        }
+        assert!(began.elapsed() < Duration::from_secs(15), "{waiting}");
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
+#[test]
+fn a_failing_sweep_is_said_on_every_page_of_the_project() {
+    let mut fixture = SweepFixture::new("echo 'the board did not answer' >&2; exit 3");
+    let (hub, _) = clocked_hub(&fixture);
+    fixture.start(maintenance_worker(
+        fixture.shared.clone(),
+        Duration::ZERO,
+        Duration::from_secs(3),
+        Stamp::now,
+    ));
+    waited("no failed sweep was said", || {
+        (!hub.server_notice.borrow().is_empty()).then_some(())
+    });
+    assert_eq!(*hub.server_notice.borrow(), SWEEP_FAILING);
+}
+
+#[test]
+fn a_failed_sweeps_long_error_is_kept_on_one_short_line_in_the_record() {
+    // `tasks reap` through `tools/rs-bin.sh`: build output on stderr, then its error.
+    let mut fixture = SweepFixture::new(
+        "i=0; while [ $i -lt 300 ]; do echo \"Compiling crate $i\" >&2; i=$((i+1)); done\n\
+         echo 'error: the board did not answer' >&2; exit 3",
+    );
+    let (hub, clock) = clocked_hub(&fixture);
+    fixture.start(maintenance_worker(
+        fixture.shared.clone(),
+        Duration::ZERO,
+        Duration::from_secs(3),
+        Stamp::now,
+    ));
+    let report = waited("no failed sweep was recorded", || {
+        Some(hub.health.report(clock.now())).filter(|report| report.sweep.failed > 0)
+    });
+    let stderr: String = (0..300)
+        .map(|i| format!("Compiling crate {i}\n"))
+        .collect::<String>()
+        + "error: the board did not answer";
+    let whole = format!("exit status: 3: {stderr}");
+    let error = report.sweep.error.clone().unwrap();
+    assert_eq!(
+        error,
+        symphony_board::board_health::shortened(&whole),
+        "cut to its first and last characters"
+    );
+    assert!(
+        error.starts_with("exit status: 3: Compiling crate 0 ⏎ Compiling crate 1 ⏎ ")
+            && error.ends_with("Compiling crate 299 ⏎ error: the board did not answer")
+            && error.chars().count() < whole.chars().count() / 4,
+        "{error}"
+    );
+    let lines = report.lines(clock.now(), &report.warnings);
+    assert!(
+        lines.iter().all(|line| !line.contains('\n')),
+        "the status prints it on one line: {lines:?}"
+    );
+}
+
+#[test]
 fn a_held_lifecycle_lock_does_not_stall_the_sweep_rounds() {
     // Hub startup holds the lifecycle lock across SurrealDB calls; the rounds must go on.
     let mut fixture = SweepFixture::new(

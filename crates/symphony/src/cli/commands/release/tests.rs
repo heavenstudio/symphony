@@ -9,7 +9,86 @@ struct Fixture {
     files: PathBuf,
     component_files: PathBuf,
     parent: PathBuf,
+    /// The files the checkout lists, as `git ls-files` names them.
+    listed: Vec<String>,
 }
+
+/// What a package builds with: the dependency's id and its kind, `None` for a normal one.
+type Dependencies = &'static [(&'static str, Option<&'static str>)];
+
+/// The workspace's packages: id, name, folder and what each builds with.
+const PACKAGES_OF_THE_WORKSPACE: [(&str, &str, &str, Dependencies); 4] = [
+    (
+        "ui",
+        "symphony-ui",
+        "apps/symphony-ui",
+        &[
+            ("api", None),
+            ("derive", Some("build")),
+            ("serde", None),
+            ("primitives", None),
+            ("board", Some("dev")),
+        ],
+    ),
+    (
+        "api",
+        "symphony-api",
+        "crates/symphony-api",
+        &[("serde", None)],
+    ),
+    ("derive", "symphony-derive", "crates/symphony-derive", &[]),
+    (
+        "board",
+        "symphony-board",
+        "crates/tasks",
+        &[("api", None), ("serde", None)],
+    ),
+];
+
+/// The checkout's files, the client's inputs among them, with their bodies.
+const CHECKOUT: [(&str, &str); 23] = [
+    ("Cargo.toml", "[workspace]\nmembers=[]\n"),
+    (".cargo/config.toml", "[build]\ntarget-dir=\".target\"\n"),
+    ("rust-toolchain.toml", "[toolchain]\nchannel=\"1.99.0\"\n"),
+    ("apps/symphony-server/src/notices.css", ".notice{}\n"),
+    (
+        "apps/symphony-ui/Cargo.toml",
+        "[package]\nname=\"symphony-ui\"\n",
+    ),
+    ("apps/symphony-ui/src/main.rs", "fn main() {}\n"),
+    (
+        "apps/symphony-ui/src/components/checkbox/style.css",
+        ".dx-checkbox{color:red}\n",
+    ),
+    ("apps/symphony-ui/bundle.sh", "#!/bin/sh\nexit 0\n"),
+    (
+        "crates/symphony-api/Cargo.toml",
+        "[package]\nname=\"symphony-api\"\n",
+    ),
+    ("crates/symphony-api/src/lib.rs", "pub struct Board;\n"),
+    (
+        "crates/symphony-derive/Cargo.toml",
+        "[package]\nname=\"symphony-derive\"\n",
+    ),
+    ("crates/symphony-derive/src/lib.rs", "pub fn derive() {}\n"),
+    (
+        "crates/tasks/Cargo.toml",
+        "[package]\nname=\"symphony-board\"\n",
+    ),
+    ("crates/tasks/src/lib.rs", "pub fn board() {}\n"),
+    ("crates/tasks/tests/cli.rs", "#[test]\nfn cli() {}\n"),
+    ("apps/symphony-server/src/main.rs", "fn main() {}\n"),
+    (
+        "apps/symphony-server/client/public/index.html",
+        "<!DOCTYPE html>\n",
+    ),
+    ("docs/README.md", "# Docs\n"),
+    ("RULES.md", "# Rules\n"),
+    ("symphony.toml", "[board]\n"),
+    ("tools/entry.sh", "#!/bin/sh\nexit 0\n"),
+    (".codex/rules/symphony.rules", "rule\n"),
+    (".claude-notes", "kept out\n"),
+];
 
 impl Fixture {
     // Protocol fixtures exercise capture and publication; real declared-member builds are separate.
@@ -22,10 +101,16 @@ impl Fixture {
         );
         let mut lock = "version = 4\n".to_string();
         let mut packages = Vec::new();
+        let mut nodes = Vec::new();
         let mut component_files = Vec::new();
-        for (package, folder, version) in [
-            ("dioxus-attributes", "dioxus-attributes", "0.1.0"),
-            ("dioxus-primitives", "primitives", "0.0.1"),
+        for (id, package, folder, version) in [
+            (
+                "attributes",
+                "dioxus-attributes",
+                "dioxus-attributes",
+                "0.1.0",
+            ),
+            ("primitives", "dioxus-primitives", "primitives", "0.0.1"),
         ] {
             lock.push_str(&format!(
                 "\n[[package]]\nname={package:?}\nversion={version:?}\nsource={source:?}\n"
@@ -38,49 +123,64 @@ impl Fixture {
             )
             .unwrap();
             packages.push(
-                json!({"name":package,"version":version,"source":source,"manifest_path":manifest}),
+                json!({"id":id,"name":package,"version":version,"source":source,"manifest_path":manifest}),
             );
             component_files.push(format!("{folder}/Cargo.toml"));
         }
-        lock.push_str("\n[[package]]\nname=\"unrelated\"\nversion=\"1.2.3\"\nsource=\"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum=\"unchanged-checksum\"\n");
-        let inputs = [
-            ("Cargo.toml", "[workspace]\nmembers=[]\n".to_string()),
-            ("Cargo.lock", lock),
-            (
-                ".cargo/config.toml",
-                "[build]\ntarget-dir=\".target\"\n".to_string(),
-            ),
-            (
-                "apps/symphony-ui/src/components/checkbox/style.css",
-                ".dx-checkbox{color:red}\n".to_string(),
-            ),
-            ("tools/entry.sh", "#!/bin/sh\nexit 0\n".to_string()),
-        ];
-        for (path, body) in &inputs {
+        nodes.push(json!({"id":"attributes","deps":[]}));
+        nodes.push(json!({"id":"primitives","deps":[
+            {"pkg":"attributes","dep_kinds":[{"kind":null,"target":null}]}
+        ]}));
+        let registry = "registry+https://github.com/rust-lang/crates.io-index";
+        packages.push(json!({
+            "id":"serde","name":"serde","version":"1.0.0","source":registry,
+            "manifest_path":"/registry/serde-1.0.0/Cargo.toml"
+        }));
+        nodes.push(json!({"id":"serde","deps":[]}));
+        lock.push_str(&format!("\n[[package]]\nname=\"unrelated\"\nversion=\"1.2.3\"\nsource=\"{registry}\"\nchecksum=\"unchanged-checksum\"\n"));
+        let mut checkout = vec![("Cargo.lock".to_string(), lock)];
+        checkout.extend(
+            CHECKOUT
+                .iter()
+                .map(|(path, body)| (path.to_string(), body.to_string())),
+        );
+        for (path, body) in &checkout {
             let path = root.join(path);
             fs::create_dir_all(path.parent().unwrap()).unwrap();
             fs::write(path, body).unwrap();
         }
-        fs::set_permissions(
-            root.join("tools/entry.sh"),
-            fs::Permissions::from_mode(0o755),
-        )
-        .unwrap();
+        for script in ["apps/symphony-ui/bundle.sh", "tools/entry.sh"] {
+            fs::set_permissions(root.join(script), fs::Permissions::from_mode(0o755)).unwrap();
+        }
         let root = root.canonicalize().unwrap();
+        for (id, package, folder, dependencies) in PACKAGES_OF_THE_WORKSPACE {
+            packages.push(json!({
+                "id":id,"name":package,"version":"0.1.0","source":null,
+                "manifest_path":root.join(folder).join("Cargo.toml")
+            }));
+            nodes.push(
+                json!({"id":id,"deps":dependencies.iter().map(|(dependency, kind)| json!({
+                "pkg":dependency,"dep_kinds":[{"kind":kind,"target":null}]
+            })).collect::<Vec<_>>()}),
+            );
+        }
         let metadata = tree.write(
             &format!("{name}/metadata.json"),
             &json!({
-                "workspace_root":root,"packages":packages
+                "workspace_root":root,"packages":packages,
+                "workspace_members":PACKAGES_OF_THE_WORKSPACE.map(|(id, ..)| id),
+                "resolve":{"nodes":nodes,"root":null}
             })
             .to_string(),
         );
         let files = tree.write(&format!("{name}/files"), "");
         let component_list = tree.write(&format!("{name}/component-files"), "");
+        let listed: Vec<String> = checkout.into_iter().map(|(name, _)| name).collect();
         fs::write(
             &files,
-            inputs
+            listed
                 .iter()
-                .map(|(name, _)| format!("{name}\0"))
+                .map(|name| format!("{name}\0"))
                 .collect::<String>(),
         )
         .unwrap();
@@ -102,10 +202,50 @@ impl Fixture {
             files,
             component_files: component_list,
             parent,
+            listed,
         }
     }
 
-    fn key(&self) -> PathBuf {
+    /// Lists `names` too, as git lists a file added to the checkout.
+    fn list(&mut self, names: &[&str]) {
+        self.listed
+            .extend(names.iter().map(|name| name.to_string()));
+        fs::write(
+            &self.files,
+            self.listed
+                .iter()
+                .map(|name| format!("{name}\0"))
+                .collect::<String>(),
+        )
+        .unwrap();
+    }
+
+    /// Writes `body` at `path` in the checkout.
+    fn write(&self, path: &str, body: &str) {
+        let path = self.root.join(path);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, body).unwrap();
+    }
+
+    /// The files of the snapshot's source, by their path in it.
+    fn captured(snapshot: &Path) -> Vec<String> {
+        fn walk(root: &Path, at: &Path, found: &mut Vec<String>) {
+            for entry in fs::read_dir(at).unwrap() {
+                let path = entry.unwrap().path();
+                if path.is_dir() {
+                    walk(root, &path, found);
+                } else {
+                    found.push(path.strip_prefix(root).unwrap().display().to_string());
+                }
+            }
+        }
+        let mut found = Vec::new();
+        walk(snapshot, snapshot, &mut found);
+        found.sort();
+        found
+    }
+
+    fn try_key(&self) -> io::Result<PathBuf> {
         prepare(
             &self.root,
             &self.metadata,
@@ -115,11 +255,15 @@ impl Fixture {
             true,
             None,
         )
-        .unwrap()
     }
 
+    fn key(&self) -> PathBuf {
+        self.try_key().unwrap()
+    }
+
+    /// The snapshot, taken as bundle.sh takes it: its key, then the capture under that key.
     fn snapshot(&self) -> io::Result<PathBuf> {
-        let key = self.key();
+        let key = self.try_key()?;
         prepare(
             &self.root,
             &self.metadata,
@@ -211,7 +355,7 @@ fn identical_inputs_at_different_roots_use_one_verified_snapshot_without_changin
         original_config
     );
     assert_eq!(
-        fs::metadata(root.join("tools/entry.sh"))
+        fs::metadata(root.join("apps/symphony-ui/bundle.sh"))
             .unwrap()
             .permissions()
             .mode()
@@ -290,7 +434,7 @@ fn changed_inputs_need_a_new_lock_and_css_bytes_bind_the_scoped_selectors_to_new
     let key = fixture.key();
     let old = fixture.snapshot().unwrap();
     let stylesheet = "apps/symphony-ui/src/components/checkbox/style.css";
-    fs::write(fixture.root.join("tools/entry.sh"), "#!/bin/sh\nexit 17\n").unwrap();
+    fixture.write("apps/symphony-ui/bundle.sh", "#!/bin/sh\nexit 17\n");
     let why = prepare(
         &fixture.root,
         &fixture.metadata,
@@ -400,35 +544,48 @@ fn foreign_missing_ambiguous_and_malformed_metadata_never_select_a_component_pro
 fn inventory_refuses_escape_duplicates_links_nonregular_entries_and_incomplete_framing() {
     let tree = Tree::new();
     let fixture = Fixture::new(&tree, "source");
-    for contents in [
-        "",
-        "Cargo.lock",
-        "../Cargo.lock\0",
-        "/Cargo.lock\0",
-        "Cargo.lock\0Cargo.lock\0",
-        ".target/output\0",
-    ] {
+    let all = |_: &Path| true;
+    let none = |_: &Path| false;
+    // Framing and escapes are refused whether or not the entry is an input.
+    for contents in ["", "Cargo.lock", "../Cargo.lock\0", "/Cargo.lock\0"] {
         fs::write(&fixture.files, contents).unwrap();
-        assert!(
-            inventory(&fixture.root, &fixture.files, "source").is_err(),
-            "{contents:?}"
-        );
+        for holds in [&all as &dyn Fn(&Path) -> bool, &none] {
+            assert!(
+                inventory(&fixture.root, &fixture.files, "source", holds).is_err(),
+                "{contents:?}"
+            );
+        }
     }
     let outside = tree.write("outside", "do not copy");
     std::os::unix::fs::symlink(outside, fixture.root.join("link")).unwrap();
-    for entry in ["link\0", ".cargo\0"] {
+    fs::create_dir_all(fixture.root.join(".target")).unwrap();
+    fs::write(fixture.root.join(".target/output"), "built").unwrap();
+    // An input that is duplicated, derived, a link or not a file is refused; the same entry is
+    // passed over when it is no input.
+    for entry in [
+        "Cargo.lock\0Cargo.lock\0",
+        ".target/output\0",
+        "link\0",
+        ".cargo\0",
+    ] {
         fs::write(&fixture.files, entry).unwrap();
         assert!(
-            inventory(&fixture.root, &fixture.files, "source").is_err(),
+            inventory(&fixture.root, &fixture.files, "source", all).is_err(),
+            "{entry}"
+        );
+        assert_eq!(
+            inventory(&fixture.root, &fixture.files, "source", none).unwrap(),
+            Files::new(),
             "{entry}"
         );
     }
 }
 
 #[test]
-fn inventory_leaves_out_the_agents_integration_links_and_worktrees_but_not_a_lookalike() {
+fn the_snapshot_holds_the_clients_packages_the_workspace_files_and_the_other_members_manifests() {
     let tree = Tree::new();
-    let fixture = Fixture::new(&tree, "source");
+    let mut fixture = Fixture::new(&tree, "source");
+    // The agents' integration: a skill, its link, an agent's worktree; and the derived folders.
     let skill = fixture.root.join(".agents/skills/work/SKILL.md");
     fs::create_dir_all(skill.parent().unwrap()).unwrap();
     fs::write(&skill, "work").unwrap();
@@ -439,28 +596,234 @@ fn inventory_leaves_out_the_agents_integration_links_and_worktrees_but_not_a_loo
     )
     .unwrap();
     fs::create_dir_all(fixture.root.join(".claude/worktrees/agent-1")).unwrap();
-    fs::create_dir_all(fixture.root.join(".codex/rules")).unwrap();
-    fs::write(fixture.root.join(".codex/rules/symphony.rules"), "rule").unwrap();
-    fs::write(fixture.root.join(".claude-notes"), "kept").unwrap();
-    fs::write(
-        &fixture.files,
-        "Cargo.lock\0.agents/skills/work/SKILL.md\0.claude/skills/work\0\
-         .claude/worktrees/agent-1/\0.codex/rules/symphony.rules\0.claude-notes\0",
-    )
-    .unwrap();
-    let files = inventory(&fixture.root, &fixture.files, "source").unwrap();
-    let names: Vec<&Path> = files.keys().map(PathBuf::as_path).collect();
+    fixture.write("artifacts/shot.base64", "picture");
+    fixture.write(".target/debug/symphony", "binary");
+    fixture.list(&[
+        ".agents/skills/work/SKILL.md",
+        ".claude/skills/work",
+        ".claude/worktrees/agent-1/",
+        "artifacts/shot.base64",
+        ".target/debug/symphony",
+    ]);
+    let snapshot = fixture.snapshot().unwrap();
     assert_eq!(
-        names,
+        Fixture::captured(&snapshot),
         [
-            Path::new("source/.claude-notes"),
-            Path::new("source/Cargo.lock")
+            ".cargo/config.toml",
+            "Cargo.lock",
+            "Cargo.toml",
+            "apps/symphony-server/src/notices.css",
+            "apps/symphony-ui/Cargo.toml",
+            "apps/symphony-ui/bundle.sh",
+            "apps/symphony-ui/src/components/checkbox/style.css",
+            "apps/symphony-ui/src/main.rs",
+            "crates/symphony-api/Cargo.toml",
+            "crates/symphony-api/src/lib.rs",
+            "crates/symphony-derive/Cargo.toml",
+            "crates/symphony-derive/src/lib.rs",
+            "crates/tasks/Cargo.toml",
+            "crates/tasks/src/lib.rs",
+            "rust-toolchain.toml",
         ]
     );
-    // A link anywhere else is still refused.
-    std::os::unix::fs::symlink("Cargo.lock", fixture.root.join("docs-link")).unwrap();
-    fs::write(&fixture.files, "docs-link\0").unwrap();
-    assert!(inventory(&fixture.root, &fixture.files, "source").is_err());
+    // The Cargo configuration and the client's style sheets are patched in the copy (configure),
+    // and another member's library is an empty target (below).
+    let patched = [
+        ".cargo/config.toml",
+        "apps/symphony-ui/src/components/checkbox/style.css",
+        "crates/tasks/src/lib.rs",
+    ];
+    for (path, body) in CHECKOUT {
+        if !patched.contains(&path) && snapshot.join(path).exists() {
+            assert_eq!(
+                fs::read_to_string(snapshot.join(path)).unwrap().as_str(),
+                body,
+                "{path}: an input is copied as it is"
+            );
+        }
+    }
+    assert_eq!(
+        fs::read(snapshot.join("crates/tasks/src/lib.rs")).unwrap(),
+        b"",
+        "another member's library is an empty target, not its source"
+    );
+}
+
+#[test]
+fn a_change_outside_the_clients_inputs_keeps_its_snapshot_and_one_inside_names_a_new_one() {
+    let tree = Tree::new();
+    let mut fixture = Fixture::new(&tree, "source");
+    let key = fixture.key();
+    let snapshot = fixture.snapshot().unwrap();
+    for (path, body) in [
+        ("crates/tasks/src/lib.rs", "pub fn board() { todo!() }\n"),
+        ("crates/tasks/tests/cli.rs", "#[test]\nfn other() {}\n"),
+        (
+            "apps/symphony-server/src/main.rs",
+            "fn main() { serve() }\n",
+        ),
+        (
+            "apps/symphony-server/client/public/index.html",
+            "<p>new</p>\n",
+        ),
+        ("docs/README.md", "# Docs, revised\n"),
+        ("RULES.md", "# Rules, revised\n"),
+        ("symphony.toml", "[board]\non_review = \"true\"\n"),
+        ("tools/entry.sh", "#!/bin/sh\nexit 3\n"),
+        (".claude-notes", "revised\n"),
+    ] {
+        fixture.write(path, body);
+        assert_eq!(fixture.key(), key, "{path} is no input of the client");
+    }
+    fixture.write("crates/tasks/tests/sweep.rs", "#[test]\nfn sweep() {}\n");
+    fixture.write("docs/NEW.md", "# New\n");
+    fixture.list(&["crates/tasks/tests/sweep.rs", "docs/NEW.md"]);
+    assert_eq!(fixture.key(), key, "a new file outside is no input either");
+    assert_eq!(fixture.snapshot().unwrap(), snapshot);
+    for path in [
+        "Cargo.toml",
+        ".cargo/config.toml",
+        "rust-toolchain.toml",
+        "apps/symphony-server/src/notices.css",
+        "apps/symphony-ui/Cargo.toml",
+        "apps/symphony-ui/src/main.rs",
+        "crates/symphony-api/src/lib.rs",
+        "crates/symphony-derive/src/lib.rs",
+        "crates/tasks/Cargo.toml",
+    ] {
+        let original = fs::read_to_string(fixture.root.join(path)).unwrap();
+        fixture.write(path, &format!("{original}# changed\n"));
+        assert_ne!(fixture.key(), key, "{path} is an input of the client");
+        fixture.write(path, &original);
+        assert_eq!(fixture.key(), key, "{path} restored");
+    }
+    fixture.write("apps/symphony-ui/src/view.rs", "pub fn view() {}\n");
+    fixture.list(&["apps/symphony-ui/src/view.rs"]);
+    assert_ne!(fixture.key(), key, "a new file of the client is an input");
+}
+
+#[test]
+fn another_member_gets_an_empty_file_for_each_target_its_manifest_names_without_a_path() {
+    let tree = Tree::new();
+    let fixture = Fixture::new(&tree, "source");
+    let manifest = "crates/tasks/Cargo.toml";
+    fixture.write(
+        manifest,
+        "[package]\nname=\"symphony-board\"\n[lib]\npath=\"src/board.rs\"\n\
+         [[bin]]\nname=\"tasks\"\n[[test]]\nname=\"perf\"\nharness=false\n\
+         [[example]]\nname=\"demo\"\npath=\"demos/demo.rs\"\n[[bench]]\nname=\"speed\"\n",
+    );
+    let snapshot = fixture.snapshot().unwrap();
+    let board: Vec<String> = Fixture::captured(&snapshot)
+        .into_iter()
+        .filter(|path| path.starts_with("crates/tasks/"))
+        .collect();
+    assert_eq!(
+        board,
+        [
+            "crates/tasks/Cargo.toml",
+            "crates/tasks/benches/speed.rs",
+            "crates/tasks/src/bin/tasks.rs",
+            "crates/tasks/src/lib.rs",
+            "crates/tasks/tests/perf.rs",
+        ]
+    );
+    for target in ["benches/speed.rs", "src/bin/tasks.rs", "tests/perf.rs"] {
+        assert_eq!(
+            fs::read(snapshot.join("crates/tasks").join(target)).unwrap(),
+            b""
+        );
+    }
+    for name in ["../escape", "a/b", ""] {
+        fixture.write(
+            manifest,
+            &format!("[package]\nname=\"symphony-board\"\n[[test]]\nname={name:?}\n"),
+        );
+        let error = fixture.try_key().unwrap_err().to_string();
+        assert!(
+            error.contains("invalid test target name"),
+            "{name}: {error}"
+        );
+    }
+    fixture.write(manifest, "[package\n");
+    assert!(fixture.snapshot().is_err(), "an unreadable manifest");
+}
+
+#[test]
+fn a_target_of_another_member_that_is_also_listed_or_a_member_left_unlisted_is_refused() {
+    let tree = Tree::new();
+    let mut fixture = Fixture::new(&tree, "source");
+    let original: Value = serde_json::from_slice(&fs::read(&fixture.metadata).unwrap()).unwrap();
+    // A member inside the client's package: its library is both a listed input and a target.
+    let mut nested = original.clone();
+    for package in nested["packages"].as_array_mut().unwrap() {
+        if package["id"] == "board" {
+            package["manifest_path"] = json!(fixture.root.join("apps/symphony-ui/Cargo.toml"));
+        }
+    }
+    fixture.write("apps/symphony-ui/src/lib.rs", "pub fn app() {}\n");
+    fixture.list(&["apps/symphony-ui/src/lib.rs"]);
+    fs::write(&fixture.metadata, nested.to_string()).unwrap();
+    let error = fixture.try_key().unwrap_err().to_string();
+    assert!(
+        error.contains("a member's target is a release input"),
+        "{error}"
+    );
+    fs::write(&fixture.metadata, original.to_string()).unwrap();
+    let listed = fs::read_to_string(&fixture.files).unwrap();
+    fs::write(
+        &fixture.files,
+        listed.replace("crates/tasks/Cargo.toml\0", ""),
+    )
+    .unwrap();
+    let error = fixture.try_key().unwrap_err().to_string();
+    assert!(
+        error.contains("member manifest is no release input"),
+        "{error}"
+    );
+}
+
+#[test]
+fn metadata_without_one_client_member_its_resolve_or_a_local_package_in_the_workspace_is_refused() {
+    let tree = Tree::new();
+    let fixture = Fixture::new(&tree, "source");
+    let original: Value = serde_json::from_slice(&fs::read(&fixture.metadata).unwrap()).unwrap();
+    let outside = tree.write("elsewhere/Cargo.toml", "[package]\nname=\"symphony-api\"\n");
+    let mut cases: Vec<(Value, &str)> = Vec::new();
+    let mut changed = original.clone();
+    changed["workspace_members"] = json!(["api", "derive", "board"]);
+    cases.push((changed, "no single client member"));
+    let mut changed = original.clone();
+    for package in changed["packages"].as_array_mut().unwrap() {
+        if package["id"] == "board" {
+            package["name"] = json!("symphony-ui");
+        }
+    }
+    cases.push((changed, "no single client member"));
+    let mut changed = original.clone();
+    changed["resolve"] = Value::Null;
+    cases.push((changed, "missing Cargo resolve"));
+    let mut changed = original.clone();
+    changed["workspace_members"] = Value::Null;
+    cases.push((changed, "missing Cargo workspace members"));
+    let mut changed = original.clone();
+    changed["resolve"]["nodes"]
+        .as_array_mut()
+        .unwrap()
+        .retain(|node| node["id"] != "api");
+    cases.push((changed, "Cargo resolve has no node api"));
+    let mut changed = original.clone();
+    for package in changed["packages"].as_array_mut().unwrap() {
+        if package["id"] == "api" {
+            package["manifest_path"] = json!(outside);
+        }
+    }
+    cases.push((changed, "local package outside the workspace"));
+    for (metadata, expected) in cases {
+        fs::write(&fixture.metadata, metadata.to_string()).unwrap();
+        let error = fixture.try_key().unwrap_err().to_string();
+        assert!(error.contains(expected), "{expected}: {error}");
+    }
 }
 
 #[test]
