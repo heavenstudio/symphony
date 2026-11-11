@@ -27,8 +27,9 @@ use crate::branches::branch_cards;
 use crate::register::{Decision, Who};
 use crate::text::{is_space, is_word};
 
-/// Not `review/`: `land-request` names its tasks `review/BRANCH`.
-pub const PREFIX: &str = "verdicts/";
+/// Not `review/`: `land-request` names its tasks `review/BRANCH`. A document's panel of related
+/// tasks leaves this area out.
+pub const PREFIX: &str = symphony_api::VERDICT_TASKS;
 const CLOSED: [&str; 2] = ["done", "cancelled"];
 
 const BRIEF: &str = "\
@@ -381,11 +382,33 @@ pub fn file(root: &Path, board: &dyn Board, by: &str) -> Result<Option<String>, 
         .collect::<BTreeSet<_>>()
         .into_iter()
         .collect();
-    let title = format!(
-        "Answer {} owner verdict{} waiting on an agent",
-        cards.len(),
-        if cards.len() == 1 { "" } else { "s" }
-    );
-    board.create(&slug, &title, by, &format!("{BRIEF}{listing}\n"), &links)?;
+    board.create(
+        &slug,
+        &title(&cards),
+        by,
+        &format!("{BRIEF}{listing}\n"),
+        &links,
+    )?;
     Ok(Some(slug))
+}
+
+/// A verdict task's title names the cards it answers, so two of them on the board differ: the
+/// first two by slug and how many more, `Answer the owner on lamp-a-pic, lamp-b-pic and 1 more`.
+/// A slug two documents share is named once.
+fn title(cards: &[OpenCard]) -> String {
+    let mut slugs: Vec<&str> = Vec::new();
+    for card in cards {
+        if !slugs.contains(&card.slug.as_str()) {
+            slugs.push(&card.slug);
+        }
+    }
+    match slugs.as_slice() {
+        [] => "Answer the owner".into(),
+        [one] => format!("Answer the owner on {one}"),
+        [first, second] => format!("Answer the owner on {first} and {second}"),
+        [first, second, rest @ ..] => format!(
+            "Answer the owner on {first}, {second} and {} more",
+            rest.len()
+        ),
+    }
 }

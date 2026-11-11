@@ -411,24 +411,61 @@ mod filing {
         assert!(case.untasked().is_empty());
     }
 
+    /// The title the filing gave the task it filed.
+    fn titled(case: &Case) -> String {
+        let slug = case.file("w").unwrap();
+        let tasks = case.board.tasks.borrow();
+        tasks.iter().find(|t| t.slug == slug).unwrap().title.clone()
+    }
+
+    fn rejected(slugs: &[&str]) -> String {
+        let cards: String = slugs
+            .iter()
+            .map(|slug| {
+                format!("- [-] **{slug}** — A card.\n  [2026-10-06 10:00] owner · rejected — no.\n")
+            })
+            .collect();
+        format!("<!-- register:start -->\n{cards}<!-- register:end -->\n")
+    }
+
     #[test]
-    fn the_task_is_titled_with_how_many_verdicts_wait() {
-        let case = Case::new();
-        let slug = case.file("w").unwrap();
-        let tasks = case.board.tasks.borrow();
+    fn the_task_is_titled_with_the_cards_it_answers() {
         assert_eq!(
-            tasks.iter().find(|t| t.slug == slug).unwrap().title,
-            "Answer 3 owner verdicts waiting on an agent"
+            titled(&Case::new()),
+            "Answer the owner on lamp-a-pic, lamp-b-pic and 1 more"
         );
-        drop(tasks);
         let case = Case::new();
-        case.doc("<!-- register:start -->\n- [-] **lamp-a-pic** — Lamp A.\n  [2026-10-06 10:00] owner · rejected — no.\n<!-- register:end -->\n");
-        let slug = case.file("w").unwrap();
-        let tasks = case.board.tasks.borrow();
+        case.doc(&rejected(&["lamp-a-pic"]));
+        assert_eq!(titled(&case), "Answer the owner on lamp-a-pic");
+        let case = Case::new();
+        case.doc(&rejected(&["lamp-a-pic", "ui-list-v1"]));
         assert_eq!(
-            tasks.iter().find(|t| t.slug == slug).unwrap().title,
-            "Answer 1 owner verdict waiting on an agent"
+            titled(&case),
+            "Answer the owner on lamp-a-pic and ui-list-v1"
         );
+        let case = Case::new();
+        case.doc(&rejected(&[
+            "card-a", "card-b", "card-c", "card-d", "card-e",
+        ]));
+        assert_eq!(
+            titled(&case),
+            "Answer the owner on card-a, card-b and 3 more"
+        );
+    }
+
+    #[test]
+    fn a_card_slug_two_documents_share_is_named_once_in_the_title() {
+        let case = Case::new();
+        case.doc(&rejected(&["lamp-a-pic"]));
+        case.tree.write("docs/other.md", &rejected(&["lamp-a-pic"]));
+        assert_eq!(
+            verdicts::untasked(&case.tree.root, &case.board)
+                .unwrap()
+                .len(),
+            2,
+            "both documents' cards wait"
+        );
+        assert_eq!(titled(&case), "Answer the owner on lamp-a-pic");
     }
 
     #[test]
