@@ -31,6 +31,7 @@ const READS: &[&str] = &[
     "/api/task-page",
     "/api/task-brief",
     "/api/task-offer",
+    symphony_api::TASK_GATES_PATH,
     "/api/task-history",
     "/api/agent-page",
     "/api/task-thread",
@@ -137,6 +138,7 @@ pub(crate) async fn answer(shared: &Arc<Shared>, request: Request) -> Option<Res
             | "/api/task-history"
             | "/api/task-thread"
             | "/api/task-offer"
+            | symphony_api::TASK_GATES_PATH
     ) && let Err(why) = argument(&request, "slug")
     {
         return Some(error(StatusCode::BAD_REQUEST, why));
@@ -315,8 +317,14 @@ pub(crate) async fn answer(shared: &Arc<Shared>, request: Request) -> Option<Res
                 }
             }
         }
-        "/api/agents" | "/api/agent-page" | "/api/task-thread" | "/api/task-page"
-        | "/api/task-brief" | "/api/task-offer" | "/api/task-history" => {
+        "/api/agents"
+        | "/api/agent-page"
+        | "/api/task-thread"
+        | "/api/task-page"
+        | "/api/task-brief"
+        | "/api/task-offer"
+        | symphony_api::TASK_GATES_PATH
+        | "/api/task-history" => {
             let root = if scope.is_empty() {
                 hub.root.clone()
             } else {
@@ -336,6 +344,7 @@ pub(crate) async fn answer(shared: &Arc<Shared>, request: Request) -> Option<Res
             let brief = path == "/api/task-brief";
             let query_from = query(&request, "from").and_then(|n| n.parse::<usize>().ok());
             let offer = path == "/api/task-offer";
+            let gates = path == symphony_api::TASK_GATES_PATH;
             match tokio::task::spawn_blocking(move || {
                 if agents {
                     // The agents and their work as the hub's board tick last read them: while the
@@ -381,6 +390,15 @@ pub(crate) async fn answer(shared: &Arc<Shared>, request: Request) -> Option<Res
                             let plugins = symphony::plugins::Plugins::of(&root);
                             symphony::taskview::owner_offer(&store, &plugins, &slug, &root)
                                 .map(|offer| no_store(Json(offer)))
+                                .map_err(|e| unavailable(&e, ""))
+                        })
+                    } else if gates {
+                        // A plugin that errs or is slow is an unknown gate, never a failed answer:
+                        // only the board's own reads fail it.
+                        store.get(&slug).map_err(task_failure).and_then(|record| {
+                            let pending = hub.pending();
+                            symphony::gates::answer(&store, &record, &root, &pending, &hub.gates)
+                                .map(|gates| no_store(Json(gates)))
                                 .map_err(|e| unavailable(&e, ""))
                         })
                     } else if brief {

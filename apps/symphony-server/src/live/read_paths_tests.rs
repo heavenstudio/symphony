@@ -42,7 +42,7 @@ fn agent(handle: &str) -> symphony_api::Agent {
 }
 
 /// The board as the hub's tick reads it, with `agents` working on it.
-fn observe(hub: &Hub, store: &symphony_board::Store, agents: &[&str]) {
+pub(super) fn observe(hub: &Hub, store: &symphony_board::Store, agents: &[&str]) {
     hub.update_board(
         store,
         store.board().unwrap(),
@@ -287,7 +287,7 @@ fn request(path: &str) -> Request<Body> {
 }
 
 /// `hub`, published as the server's, and a way to ask its routes: each answer's status and JSON.
-fn served(
+pub(super) fn served(
     root: &Path,
     hub: Hub,
 ) -> (
@@ -329,7 +329,7 @@ fn served(
 }
 
 /// A store on `client`'s board at the fixture's time and host.
-fn store_on(client: &Client) -> symphony_board::Store {
+pub(super) fn store_on(client: &Client) -> symphony_board::Store {
     symphony_board::Store::with(
         Client::new(client.addr(), "sf", client.database()),
         Box::new(|| NOW),
