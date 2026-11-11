@@ -12,7 +12,7 @@ fn markers(f: &Fixture) -> (u64, u64) {
         .client()
         .query(
             &format!(
-                "RETURN [counter:board.last ?? 0, {}];",
+                "RETURN [counter:board_structure.last ?? 0, {}];",
                 schema::BOARD_MARKER
             ),
             json!({}),
@@ -52,6 +52,14 @@ fn beats_refresh_cached_health_without_the_shared_counter_board_write() {
     );
     let after = markers(&f);
     assert_eq!(after, (before.0, before.1 + 1));
+    assert_eq!(
+        f.store
+            .client()
+            .query("RETURN counter:board.last;", json!({}))
+            .unwrap(),
+        vec![json!(i64::MIN)],
+        "a beat never rewrites the retired scalar"
+    );
     let board = reader.clock_board().unwrap();
     assert_eq!(board.sessions[0].health, Health::Live);
     assert_eq!(board.sessions[0].row.last_tool, Some(f.now()));
@@ -131,6 +139,7 @@ fn an_upgraded_legacy_actor_can_write_before_its_first_sharded_beat() {
         .query(
             "BEGIN TRANSACTION;
          UPDATE counter:board SET last = $marker;
+         DELETE counter:board_structure;
          REMOVE TABLE session_revision;
          UPDATE meta:schema SET version = 14;
          COMMIT TRANSACTION;",
@@ -385,7 +394,7 @@ fn same_key_classification_rechecks_a_concurrently_remapped_target() {
             assert_eq!(
                 after,
                 (before.0, before.1 + 1),
-                "the remapping must not be fenced accidentally by counter:board"
+                "the remapping must not be fenced accidentally by the structural counter"
             );
         },
     );

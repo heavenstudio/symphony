@@ -16,7 +16,7 @@
 //! here (a session seen, leaving) checks and refuses inside its one transaction instead. They only
 //! meet where both write the same record, so writes that must not pass each other write one: the
 //! task's `version`, the message counter, an agent's own counter for its binding.
-//! Transactional mutation events also advance the shared `counter:board` for changes to board
+//! Transactional mutation events also advance the structural `counter:board_structure` for changes to board
 //! inputs, except session mutations, which advance their own per-handle revisions. Authorization
 //! and liveness guards fence the sessions they depend on. Callback readers combine both markers
 //! to reuse unchanged board inputs without making independent heartbeats write one counter.

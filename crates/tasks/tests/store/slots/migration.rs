@@ -16,8 +16,8 @@ fn definition(store: &Store) -> Value {
 fn schema_13_upgrade_preserves_board_data_and_indexes_recorded_branch_lookup() {
     assert_eq!(
         Schema::this_build().version(),
-        15,
-        "this rollout retains the branch indexes and separates session revisions"
+        16,
+        "this rollout preserves branch indexes and retires incompatible reader markers"
     );
     let slug = "legacy/feature";
     let branch = "legacy-branch";
@@ -38,6 +38,15 @@ fn schema_13_upgrade_preserves_board_data_and_indexes_recorded_branch_lookup() {
     assert!(!original.tasks.is_empty() && !original.roles.is_empty());
     assert_eq!(original.task_sessions.len(), 1);
 
+    let marker = f
+        .store
+        .client()
+        .query(
+            &format!("RETURN {};", symphony_board::schema::BOARD_MARKER),
+            json!({}),
+        )
+        .unwrap()
+        .remove(0);
     // Reproduce schema 13, before the branch indexes and per-session revision event.
     f.store
         .client()
@@ -46,13 +55,15 @@ fn schema_13_upgrade_preserves_board_data_and_indexes_recorded_branch_lookup() {
          REMOVE INDEX task_session_slug ON TABLE task_session;
          REMOVE INDEX task_session_branch ON TABLE task_session;
          REMOVE TABLE session_revision;
+         UPDATE counter:board SET last = $marker;
+         DELETE counter:board_structure;
          DEFINE EVENT OVERWRITE board_changed ON session WHEN $before != $after THEN {
              IF record::exists(counter:board) { UPDATE counter:board SET last = (last ?? 0) + 1 RETURN NONE; }
              ELSE { CREATE counter:board SET last = 1 RETURN NONE; };
          };
          UPDATE meta:schema SET version = 13;
          COMMIT TRANSACTION;",
-            json!({}),
+            json!({"marker":marker}),
         )
         .unwrap();
     let old = Store::opening(
@@ -60,7 +71,7 @@ fn schema_13_upgrade_preserves_board_data_and_indexes_recorded_branch_lookup() {
         Box::new(|| NOW),
         Box::new(|_| false),
         HOST,
-        &Opening::write().at(Schema::this_build().before().before()),
+        &Opening::write().at(Schema::this_build().before().before().before()),
     )
     .unwrap();
     assert_eq!(
@@ -73,7 +84,7 @@ fn schema_13_upgrade_preserves_board_data_and_indexes_recorded_branch_lookup() {
 
     let upgraded = f.other();
     let current = definition(&upgraded);
-    assert_eq!(current["version"], 15);
+    assert_eq!(current["version"], 16);
     for index in ["task_session_slug", "task_session_branch"] {
         assert!(
             current["indexes"]
@@ -118,7 +129,7 @@ fn schema_13_upgrade_preserves_board_data_and_indexes_recorded_branch_lookup() {
     assert_eq!(paired[0].holders("executor"), [K]);
     let refused = refused(old.create(&NewTask::new("stale/writer", "Must not write", "owner")));
     assert!(
-        refused.contains("schema 15") && refused.contains("schema, 13"),
+        refused.contains("schema 16") && refused.contains("schema, 13"),
         "{refused}"
     );
     assert_eq!(

@@ -180,7 +180,7 @@ fn a_board_of_schema_nine_gains_the_field_when_this_schema_opens_it() {
     assert!(!defines_fields(&f));
     let reopened = f.other();
     assert!(defines_fields(&f));
-    assert_eq!(schema_version(&f), json!(15));
+    assert_eq!(schema_version(&f), json!(16));
     let set = reopened
         .set_field("sim/jump", "game", "effort", &json!("4"), "brisk-finch")
         .unwrap();
@@ -216,7 +216,7 @@ COMMIT TRANSACTION;",
         json!({"game": {"effort": 2}})
     );
     let reopened = f.other();
-    assert_eq!(schema_version(&f), json!(15));
+    assert_eq!(schema_version(&f), json!(16));
     assert_eq!(
         serde_json::to_value(reopened.get("sim/jump").unwrap().fields).unwrap(),
         json!({"game": {"effort": 2}})

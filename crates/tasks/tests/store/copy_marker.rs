@@ -4,7 +4,7 @@
 use crate::common::{Fixture, Seed};
 use crate::copy::everything;
 
-/// The tables whose writes advance `counter:board` (`board_changed`).
+/// The tables with board_changed events, counted by the combined marker.
 const MARKED_TABLES: [&str; 9] = [
     "task",
     "session",
@@ -78,7 +78,7 @@ fn a_board_of_schema_ten_has_its_marker_events_redefined_and_its_rows_kept() {
             .all(|(i, e)| e.contains(if MARKED_TABLES[i] == "session" {
                 "UPDATE $revision"
             } else {
-                "UPDATE counter:board"
+                "UPDATE counter:board_structure"
             }) && !e.contains("UPSERT")),
         "{redefined:#?}"
     );
