@@ -1512,6 +1512,64 @@ fn requests_follow_each_id_through_cache_failure_and_cancellation() {
 }
 
 #[test]
+fn an_open_stream_counts_its_head_and_every_chunk_read_and_names_its_pings() {
+    // As Chrome reported a stand-in feed: the head, `: open`, two pings and a delta. Each
+    // chunk's encodedDataLength is the previous chunk's, so it never names the last one.
+    let event = |method: &str, params: Value| json!({"method": method, "params": params});
+    let chunk = |data: u32, encoded: u32| {
+        event(
+            "Network.dataReceived",
+            json!({"requestId": "feed", "dataLength": data, "encodedDataLength": encoded}),
+        )
+    };
+    let message = |name: &str| {
+        event(
+            "Network.eventSourceMessageReceived",
+            json!({"requestId": "feed", "eventName": name, "data": ""}),
+        )
+    };
+    let events = [
+        event(
+            "Network.requestWillBeSent",
+            json!({"requestId": "feed", "type": "EventSource", "request": {"url": "http://h/api/feed"}}),
+        ),
+        event(
+            "Network.requestWillBeSent",
+            json!({"requestId": "glue", "type": "Script", "request": {"url": "http://h/a.js"}}),
+        ),
+        event(
+            "Network.responseReceived",
+            json!({"requestId": "feed", "response": {"status": 200, "encodedDataLength": 77}}),
+        ),
+        chunk(8, 0),
+        event(
+            "Network.dataReceived",
+            json!({"requestId": "glue", "dataLength": 900, "encodedDataLength": 300}),
+        ),
+        event(
+            "Network.loadingFinished",
+            json!({"requestId": "glue", "encodedDataLength": 512}),
+        ),
+        chunk(19, 8),
+        message(symphony_api::PING_EVENT),
+        chunk(19, 19),
+        message(symphony_api::PING_EVENT),
+        chunk(45, 19),
+        message(symphony_api::FEED_EVENT),
+    ];
+    let requests = crate::requests(&events);
+    let [feed, glue] = requests.as_slice() else {
+        panic!("two requests: {requests:#?}")
+    };
+    assert_eq!(
+        (feed.kind.as_str(), feed.status, feed.bytes, feed.pings),
+        ("EventSource", 200, 77.0 + 8.0 + 19.0 + 19.0 + 45.0, 2)
+    );
+    assert!(!feed.finished);
+    assert_eq!((glue.bytes, glue.pings, glue.finished), (512.0, 0, true));
+}
+
+#[test]
 fn a_page_that_cannot_load_fails_navigate_naming_why_but_still_opens() {
     let Some(binary) = find() else {
         eprintln!("no Chrome: real browser capability unavailable");

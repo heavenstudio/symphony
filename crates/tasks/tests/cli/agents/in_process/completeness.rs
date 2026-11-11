@@ -32,6 +32,7 @@ fn partial_process_evidence_never_emits_lost_but_complete_absence_does() {
                 polls: Some(1),
                 probes: Some(&probes),
                 landed: None,
+                tips: None,
                 pull_every: Some(1.0),
             },
             &mut |line| lines.borrow_mut().push(line.to_string()),

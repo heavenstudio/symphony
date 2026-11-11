@@ -14,5 +14,7 @@ publish.workspace = true
 data-encoding = "2"
 libc.workspace = true
 serde_json.workspace = true
+# The feed's keep-alive event name, so a request counts the pings its stream delivered.
+symphony-api = { path = "../symphony-api" }
 # The DevTools socket, plain ws:// to the loopback: no TLS, no async runtime.
 tungstenite = { version = "0.30", default-features = false, features = ["handshake"] }

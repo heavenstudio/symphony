@@ -208,3 +208,24 @@ fn a_cap_that_cannot_be_read_is_said_and_caps_nothing() {
         )
     );
 }
+
+#[test]
+fn pipeline_alarm_thresholds_that_cannot_be_read_are_said_and_the_cap_beside_them_still_holds() {
+    let (c, root) = in_project(
+        "slots-alarm-broken",
+        &format!("{}review_alarm_hours = 0\n", cap(2)),
+    );
+    let (orch, worker) = holding(&c, 2);
+    let ran = c.run_as(&worker, &["claim", "work/2"], "");
+    assert_eq!(ran.code, 1, "{}", ran.err);
+    let file = root.join("symphony.toml").canonicalize().unwrap();
+    assert_eq!(
+        ran.err,
+        format!(
+            "⚠ {}: [board] review_alarm_hours is 0; it is at least 1; the pipeline alarm takes its default thresholds\n✖ work/2 cannot start: {}{}\n",
+            file.display(),
+            holds_two(&orch),
+            RESERVE_HINT
+        )
+    );
+}

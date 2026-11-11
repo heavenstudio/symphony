@@ -144,9 +144,14 @@ pub struct Request {
     pub kind: String,
     pub from_cache: bool,
     pub status: i64,
-    /// Bytes on the wire, headers included: the finished total, or what arrived so far.
+    /// Bytes on the wire, headers included: the finished total, or what arrived so far. An open
+    /// event stream counts its response head and the body the page has read: Chrome reports a
+    /// stream's transfer size one chunk late, so its last message would wait for the next one.
     pub bytes: f64,
     pub finished: bool,
+    /// The keep-alive pings an event stream delivered, each named by Chrome's
+    /// `Network.eventSourceMessageReceived`; their bytes are in `bytes`.
+    pub pings: usize,
     /// Why it failed (`net::ERR_…`), when it did; such a request never finishes.
     pub failed: Option<String>,
     /// The page itself gave it up (an abort, or the page going away), rather than the network.
@@ -967,6 +972,7 @@ fn requests(events: &[Value]) -> Vec<Request> {
             order.push(id.to_string());
         }
         let request = requests.entry(id.to_string()).or_default();
+        let stream = request.kind == "EventSource";
         match event["method"].as_str().unwrap_or("") {
             "Network.requestWillBeSent" => {
                 request.url = params["request"]["url"].as_str().unwrap_or("").to_string();
@@ -978,14 +984,33 @@ fn requests(events: &[Value]) -> Vec<Request> {
                 if params["response"]["fromDiskCache"].as_bool() == Some(true) {
                     request.from_cache = true;
                 }
+                // The head, the only bytes a stream has received when its response arrives.
+                if stream && !request.finished {
+                    request.bytes = params["response"]["encodedDataLength"]
+                        .as_f64()
+                        .unwrap_or(0.0);
+                }
             }
             // CORS hides the response from Runtime/fetch and responseReceived. The wire
             // status still proves an opaque-origin request was refused before any write.
             "Network.responseReceivedExtraInfo" if request.status == 0 => {
                 request.status = params["statusCode"].as_i64().unwrap_or(request.status);
             }
+            // A stream's `dataLength` is reported in the task that hands the chunk to the page,
+            // just before the messages it completes; its `encodedDataLength` is the previous
+            // chunk's. The stand-in and the server send streams uncompressed.
             "Network.dataReceived" if !request.finished => {
-                request.bytes += params["encodedDataLength"].as_f64().unwrap_or(0.0);
+                let length = if stream {
+                    "dataLength"
+                } else {
+                    "encodedDataLength"
+                };
+                request.bytes += params[length].as_f64().unwrap_or(0.0);
+            }
+            "Network.eventSourceMessageReceived"
+                if params["eventName"] == symphony_api::PING_EVENT =>
+            {
+                request.pings += 1;
             }
             "Network.loadingFinished" => {
                 request.bytes = params["encodedDataLength"]

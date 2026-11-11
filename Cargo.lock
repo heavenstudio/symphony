@@ -416,6 +416,7 @@ dependencies = [
  "data-encoding",
  "libc",
  "serde_json",
+ "symphony-api",
  "tungstenite 0.30.0",
 ]
 

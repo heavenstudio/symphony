@@ -16,6 +16,8 @@ use crate::render::Render;
 
 mod comparison;
 mod legacy;
+#[cfg(test)]
+mod linked_tests;
 
 pub use legacy::legacy_html;
 
@@ -24,7 +26,13 @@ pub use legacy::legacy_html;
 /// [`crate::project::Project::reachable`]), whatever its folder is called; a `document` is a Markdown
 /// file the entrypoint shows.
 pub fn target(root: &Path, rel: &str, document: bool) -> Result<PathBuf, String> {
-    let not_found = || format!("not found: {rel}");
+    let not_found = || {
+        if rel.is_empty() {
+            "not found: the path is empty".to_string()
+        } else {
+            format!("not found: {rel}")
+        }
+    };
     if Path::new(rel)
         .components()
         .any(|p| !matches!(p, Component::Normal(_)))
@@ -48,40 +56,56 @@ fn wire<T: Serialize, U: DeserializeOwned>(value: T) -> U {
         .expect("native and wire review shapes agree")
 }
 
-fn tasks(root: &Path, rel: &str) -> Vec<DocumentTask> {
-    let paths = crate::render::doc_paths(root);
+/// The tasks of `board` that link the document `rel` of the checkout at `root`: by its route, or by
+/// a route no file has any longer whose name finds `rel`, as a wikilink to that name would. Reads no
+/// board: `board` is the caller's copy of it. Only a link whose file name is `rel`'s can find it by
+/// name, so only such a link is looked for on disk, and the documents are walked once, for the first.
+pub fn linked(root: &Path, rel: &str, board: &[symphony_api::Task]) -> Vec<DocumentTask> {
     let project = crate::project::Project::of(root);
-    crate::taskview::connect(root)
-        .and_then(|store| {
-            store
-                .board()
-                .map(|board| board.tasks)
-                .map_err(|e| e.to_string())
-        })
-        .unwrap_or_default()
-        .into_iter()
+    let own = Path::new(rel).file_name();
+    let paths = std::cell::OnceCell::new();
+    let finds = |path: &str| {
+        let Some(linked) = Path::new(path).file_name().and_then(|name| name.to_str()) else {
+            return false;
+        };
+        // What `find_doc` finds for `linked` is named as it is, trimmed, `.md` added if it lacks it.
+        let mut found = linked.trim().to_string();
+        if !found.ends_with(".md") {
+            found.push_str(".md");
+        }
+        own.is_some_and(|own| own == found.as_str())
+            && !root.join(project.file(path)).is_file()
+            && crate::render::find_doc(
+                linked,
+                path,
+                paths.get_or_init(|| crate::render::doc_paths(root)),
+            )
+            .as_deref()
+                == Some(rel)
+    };
+    board
+        .iter()
         .filter(|task| {
             task.links.iter().any(|link| {
                 let path = link.split('#').next().unwrap_or_default();
-                path == rel
-                    || (!root.join(project.file(path)).is_file()
-                        && Path::new(path)
-                            .file_name()
-                            .and_then(|name| name.to_str())
-                            .and_then(|name| crate::render::find_doc(name, path, &paths))
-                            .as_deref()
-                            == Some(rel))
+                path == rel || finds(path)
             })
         })
         .map(|task| DocumentTask {
-            slug: task.slug,
-            title: task.title,
-            status: task.status,
+            slug: task.slug.clone(),
+            title: task.title.clone(),
+            status: task.status.clone(),
         })
         .collect()
 }
 
-pub fn document(render: &Render, rel: &str, scope: &str) -> Result<Document, String> {
+/// The document `rel` as a page shows it, its tasks the ones of `board` that link it ([`linked`]).
+pub fn document(
+    render: &Render,
+    rel: &str,
+    scope: &str,
+    board: &[symphony_api::Task],
+) -> Result<Document, String> {
     let path = target(render.root(), rel, true)?;
     let text = crate::text::read_text(&path).map_err(|e| e.to_string())?;
     let (text, _) = crate::register::supersede(&text, &crate::clock::now_stamp());
@@ -125,7 +149,7 @@ pub fn document(render: &Render, rel: &str, scope: &str) -> Result<Document, Str
         sections: wire(sections),
         cards,
         threads: wire(render.typed_history(&text, rel)),
-        tasks: tasks(render.root(), rel),
+        tasks: linked(render.root(), rel, board),
         comparison: None,
     };
     for section in &mut doc.sections {
@@ -241,7 +265,13 @@ pub fn selected(
     symphony_api::DocumentSections { version, change }
 }
 
-pub fn folder(render: &Render, rel: &str, scope: &str) -> Result<Folder, String> {
+/// The folder `rel` as a page shows it, its introduction's tasks the ones of `board` that link it.
+pub fn folder(
+    render: &Render,
+    rel: &str,
+    scope: &str,
+    board: &[symphony_api::Task],
+) -> Result<Folder, String> {
     target(render.root(), rel.trim_end_matches('/'), false)?;
     let page = render.folder(rel).map_err(|e| e.to_string())?;
     let mut folder = Folder {
@@ -251,7 +281,7 @@ pub fn folder(render: &Render, rel: &str, scope: &str) -> Result<Folder, String>
         docs: page.docs,
         intro: page
             .intro
-            .map(|p| document(render, &p.path, scope))
+            .map(|p| document(render, &p.path, scope, board))
             .transpose()?,
         entries: wire(page.entries),
     };

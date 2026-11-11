@@ -141,10 +141,10 @@ fn run(
     }
     let board = || connect(env).map(|store| detaching(store, env, program));
     if args.len() == 1 && args[0] == "api" {
-        return api::run(input, out, board);
+        return api::run_in(input, out, board, Some(env));
     }
     if args.len() == 2 && args[0] == "api" && args[1] == "--lines" {
-        return api::serve(&mut std::io::BufReader::new(input), out, board);
+        return api::serve_in(&mut std::io::BufReader::new(input), out, board, Some(env));
     }
     let parsed = match args::parse(args) {
         args::Outcome::Run(parsed) => parsed,
@@ -216,15 +216,25 @@ pub fn connect(env: &Env) -> Result<Store, String> {
 }
 
 /// `store`, its starts held to the cap on each orchestrator's open tasks that the main checkout of
-/// `env`'s repository configures ([`crate::slots::of_env`]). A cap that cannot be read is said on
-/// stderr and caps nothing: a broken project file must not stop the board, nor the landing that
-/// mends it.
+/// `env`'s repository configures ([`crate::slots::of_env`]), and its pipeline alarm raised at the
+/// thresholds it configures beside it ([`crate::alarm::of_env`]). A cap that cannot be read is said
+/// on stderr and caps nothing, and thresholds that cannot be read are said and the defaults apply: a
+/// broken project file must not stop the board, nor the landing that mends it.
 pub fn capped(store: Store, env: &Env) -> Store {
     capped_saying(store, env, &mut |problem| eprintln!("tasks: {problem}"))
 }
 
-/// As [`capped`], what is wrong with the cap said by `say`.
+/// As [`capped`], what is wrong with the cap or the thresholds said by `say`.
 fn capped_saying(store: Store, env: &Env, say: &mut dyn FnMut(&str)) -> Store {
+    let store = match crate::alarm::of_env(env) {
+        Ok(thresholds) => store.alarming(thresholds),
+        Err(problem) => {
+            say(&format!(
+                "{problem}; the pipeline alarm takes its default thresholds"
+            ));
+            store
+        }
+    };
     match crate::slots::of_env(env) {
         Ok(slots) => store.capping(slots),
         Err(problem) => {
@@ -366,12 +376,18 @@ fn reach_board(env: &Env, cwd: &Path, start: bool, unmoved: bool) -> Result<Reac
     }
     let project = crate::project::find(cwd, machine(env).as_deref())?;
     let common = &project.place.common;
-    if unmoved && let Some(why) = not_here(common) {
+    if unmoved && let Some(why) = not_here(common, &project.guide()) {
         return Err(why);
     }
     let home = Home::in_common(common, env.var("SF_SURREAL").map(Path::new));
     let running = if start {
-        home.ensure().map_err(|e| e.to_string())?
+        home.ensure().map_err(|error| match error {
+            // Where the board's server comes from is the project's board guide's to say.
+            crate::server::ServerError::NoSurreal(_) => {
+                format!("{error} ({}#where-it-lives)", project.guide())
+            }
+            error => error.to_string(),
+        })?
     } else {
         home.recorded()
             .ok_or_else(|| format!("no server of the board in {}", home.dir().display()))?
@@ -383,9 +399,10 @@ fn reach_board(env: &Env, cwd: &Path, start: bool, unmoved: bool) -> Result<Reac
 }
 
 /// Why the board in `common` is not served here: the SQLite board there has not moved yet, or a move
-/// froze it and has not finished (it runs, or was cut short).
-fn not_here(common: &Path) -> Option<String> {
-    // `<board>.moved` is what `just tasks-cutover` writes beside it once its copy into SurrealDB is
+/// froze it and has not finished (it runs, or was cut short). Each names the project's board
+/// `guide`.
+fn not_here(common: &Path, guide: &str) -> Option<String> {
+    // `<board>.moved` is what `tasks-cutover` writes beside it once its copy into SurrealDB is
     // checked ([`crate::cutover`]), and it stays.
     let name = crate::cutover::board_name(common)?;
     let board = common.join(&name);
@@ -393,9 +410,15 @@ fn not_here(common: &Path) -> Option<String> {
         return None;
     }
     Some(if crate::cutover::frozen(&board) {
-        "the task board is frozen by a move to SurrealDB that has not finished: unless one is running, run `just tasks-cutover` again (docs/workflow/TASKS.md#the-move-to-surrealdb)".into()
+        format!(
+            "the task board is frozen by a move to SurrealDB that has not finished: unless one is \
+             running, run `tasks-cutover` again ({guide})"
+        )
     } else {
-        "the task board has not moved to SurrealDB yet: the lander runs `just tasks-cutover` once, right after landing (docs/workflow/TASKS.md#the-move-to-surrealdb)".into()
+        format!(
+            "the task board has not moved to SurrealDB yet: the lander runs `tasks-cutover` once, \
+             right after landing ({guide})"
+        )
     })
 }
 

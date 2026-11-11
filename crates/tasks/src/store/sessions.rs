@@ -356,9 +356,10 @@ impl Store {
                 }
                 self.transact::<Value>(
                     &format!(
-                        "{BIND_GUARD}
+                        "{BIND_GUARD}{fence}
 IF type::record('session', $handle).agent != $agent {{ THROW 'stale' }};
-{CHANNEL_BIND} RETURN NONE;"
+{CHANNEL_BIND} RETURN NONE;",
+                        fence = super::write::FENCE_RECIPIENT,
                     ),
                     json!({"agent":agent, "handle":handle, "full":session,
                            "pid":row.pid, "host":row.host}),
