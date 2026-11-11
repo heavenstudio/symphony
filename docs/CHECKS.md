@@ -24,43 +24,53 @@ Every task, parent or slice, feature or fix, proves that what it changed works:
   (`test result: ok. 12 passed; 0 failed; …`), and the other evidence its kind of change asks for
   ([below](#evidence-by-kind-of-change)).
 
-No task runs `just verify`, the whole browser target or the whole workspace's tests as its gate:
-that is [the nightly](#the-nightly)'s.
+No task runs `just verify`, the whole browser target or the whole workspace's tests as its gate,
+whatever its brief asks: that is [the nightly](#the-nightly)'s.
 
 A reviewer runs the same focused tests itself, never the suite, reads the diff against the
 evidence and judges whether it is good enough for the change's risk. Evidence that falls short is
 a `changes` verdict naming what to add. The reviewer's approve is the task's stamp: the board
 verdict (`just tasks verdict SLUG approve "why"`, RULES.md `workflow/reviewers-not-the-owner`),
-which the task [[task:tools/review-as-stamps]] records as a stamp on the task it reviews.
+which the task [[task:tools/review-as-stamps]] records as a stamp on the task it reviews. A
+slice's evidence is judged in its parent's review. A fix whose recorded risk calls for no
+reviewer (RULES.md `workflow/fast-bugfixes`) is landed on its posted evidence by its
+orchestrator, with no stamp.
 
 **Higher risk asks for stronger evidence, never for the whole suite.** A change's risk is what a
 mistake in it would break and how far that reaches: one view, every agent's board commands, the
 wire every client reads. Stronger evidence is more of the tests the change could break (every
-target of the changed package, the targets of the packages that call a changed public item), the
-nightly-tier target that covers it, a measurement before and after, or a second reviewer.
+test target of the changed package, the browser target still by filter; the targets of the
+packages that call a changed public item), the nightly-tier target that covers it, or a
+measurement before and after.
 
 ## Evidence by kind of change
 
 - **A pure function** (a parser, a formatter, a state transition): unit tests of its edge cases
   beside it, and their run (`just test-rs -p PACKAGE --lib MODULE`).
 - **A CLI behaviour** (a `tasks` or `symphony` subcommand, its output, its refusals and exit
-  code): a test of the command in its package's CLI target, on a scratch board or a temporary
-  folder, for the success and each refusal
-  (`just test-rs -p symphony-board --test cli COMMAND`), and the store tests under it when the
-  store changed.
+  code): a test of the command, on a scratch board or a temporary folder, for the success and
+  each refusal, in the target that tests that command: the board's `cli` target
+  (`just test-rs -p symphony-board --test cli COMMAND`), with the store tests under it when the
+  store changed; for a `symphony` subcommand, the `symphony` target named for its area (`asks`,
+  `edit`, `picks`, `register`, `render`, `tree`).
 - **A server route** (a handler, its status, headers and body): the route's tests in the server
   targets (`-p symphony-server --test after_http`, `-p symphony --test serve`), the wire target
-  (`-p symphony-api --test wire`) when a payload's shape changed, and the route's answer from a
-  server of the task's own (`just symphony --port 0`) read with `curl`, status and body.
+  (`-p symphony-api --test wire`) when a payload's shape changed, and the route's answer, status
+  and body, read with `curl` from a server of the task's own on a scratch board
+  (`TASKS_DATABASE=NAME just symphony --port 0`,
+  [the server guide](../apps/symphony-server/README.md)), so a branch's build never opens the
+  live board.
 - **A client page.** The owner, 2026-11-11: "for UI based work for example, this might entail
   screenshots of before and after, as well as some new added tests or updated tests that would
   likely break due to changes". So: before and after screenshots of each changed view, dark and
   light where colour changed, desktop and phone width where layout changed
-  (`just symphony-cli shot`, which the task [[task:tools/page-shot]] adds and is not on main
-  yet); the new tests for the changed behaviour (host views in `-p symphony-ui --test view`, the
-  page in `--test browser`);
+  (`just symphony-cli shot`, which the task [[task:tools/page-shot]] adds); the new tests for the
+  changed behaviour (host views in `-p symphony-ui --test view`, the page in `--test browser`);
   the existing tests the change was likely to break, updated where they pinned what changed, and
-  green ([by page](#the-browser-target-by-page)); and `just client-update`.
+  green ([by page](#the-browser-target-by-page)); and `just client-update`. `shot` is not on main
+  yet, and no agent can take a screenshot until it is: meanwhile a client change names each view
+  it could not picture and, for each, the browser test that measures it, and its reviewer judges
+  the change without the pictures.
 - **A schema or launcher change** (the board's schema and its migration, `tools/rs-bin.sh`,
   `tools/cargo.sh`, the justfile, `symphony init`, the hooks): a mistake here stops every agent,
   so it asks the most: the migration run from the previous schema on a scratch board (the board's
@@ -68,10 +78,11 @@ nightly-tier target that covers it, a measurement before and after, or a second 
   (`just test-rs -p symphony-board --test perf`), the launcher's and hooks' own targets
   (`-p symphony-board --test launcher`, `-p symphony --test hooks`, `-p symphony --lib init`),
   and the command run in a scratch worktree, never against the live board.
-- **A doc** (a document, guide, skill or rule): `just symphony-cli docs-audit --check` clean;
-  for a shipped skill, `just symphony-cli init --root .` run so the installed copies and their
-  stamps are current, and the shipped skills' tests (`just test-rs -p symphony --lib init`). It
-  runs no other test.
+- **A doc** (a document, guide, skill or rule): `just symphony-cli docs-audit --check` (every
+  document renders) and `just symphony-cli status --lint` (no card slug in prose, nothing the
+  plugins' prose rules refuse) clean; for a shipped skill, `just symphony-cli init --root .` run
+  so the installed copies and their stamps are current, and the shipped skills' tests
+  (`just test-rs -p symphony --lib init`). It runs no other test.
 
 ## Picking the focused set
 
@@ -145,18 +156,24 @@ A new view test pins the priority in the row's markup; `queue` runs the browser 
 queue's counts, order, spacing and filter colours, which a taller row or new markup could break,
 and the branch updates any that pinned the old row, naming it. `budget` is there because the home
 page is an entry page and its bytes grew. The thread gets the eight pictures, the commands and
-their result lines, the updated tests named, and the commit with the client distribution.
+their result lines, the updated tests named, and the commit with the client distribution. While
+`shot` is not on main, the two `shot` lines are left out and the thread names the four views
+and the browser tests that measure them instead.
 
 ## The nightly
 
 `just verify` is the full verification: lint, the real client check, and every test target of
 the workspace, the headless browser acceptance and the board's `perf` and `child_guard` targets
-([the board guide](../crates/tasks/AGENTS.md)) among them. The nightly runs it once a night on
-main's tip in a clean checkout outside this folder (`../symphony-wt/`), and a green night tags a
-release: `just nightly`, which the task [[task:tools/release-nightly]] adds and is not on main
-yet. A red night files each failure as a task in the `tests/nightly-red-*` series at p0
+([the board guide](../crates/tasks/AGENTS.md)) among them. It is the nightly's, and no task's.
+The task [[task:tools/release-nightly]] makes the nightly: a run once a night on main's tip in a
+clean checkout outside this folder (`../symphony-wt/`), where a green night tags a release and a
+red one files each failure as a task in the `tests/nightly-red-*` series at p0
 ([TASKS](TASKS.md#slots)), naming the commits since the last green night
 (`git log --oneline LAST_GREEN..TIP`).
+
+**Until that task lands, nothing runs `just verify` on main.** A break that no task's focused
+tests reach stays unseen until then: the gap is the price of focused gates without their nightly,
+and closes when the nightly runs.
 
 ## Checks with no reviewer
 

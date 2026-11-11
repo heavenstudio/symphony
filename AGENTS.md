@@ -121,8 +121,9 @@ the binary by its path reads lost while it works.
 **Evidence, not the suite.** A task's gate is the tests closest to what it changed and
 `just lint-rs`, with `just client-update` for a client change, posted on its thread as evidence
 a reviewer judges and stamps (RULES.md `workflow/evidence-is-the-gate`; how to pick the tests and
-what each kind of change shows: [CHECKS](docs/CHECKS.md)). No task runs `just verify`: it is the
-nightly's, on main's tip in a clean checkout outside this folder (`../symphony-wt/`).
+what each kind of change shows: [CHECKS](docs/CHECKS.md)). No task runs `just verify`, whatever
+its brief asks: it is the nightly's, on main's tip in a clean checkout outside this folder
+(`../symphony-wt/`), which the task `tools/release-nightly` makes.
 
 ## Agent integration
 
