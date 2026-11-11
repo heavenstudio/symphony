@@ -127,7 +127,7 @@ pub fn App() -> Element {
     };
     rsx! {
         crate::frame::Frame { route: current.clone(),
-        SuspenseBoundary { fallback: |_| rsx! { main { p { "Loading page…" } PageNotices { reconnecting: false } } },
+        SuspenseBoundary { fallback: |_| rsx! { main { crate::viewport::Skeleton { lines: 8, label: "Loading page…" } PageNotices { reconnecting: false } } },
         {page}
         }
         }
@@ -370,7 +370,12 @@ fn BoardPage(route: Memo<String>, scope: String) -> Element {
         };
         front
     } else {
-        rsx! { p { class: "lead", {trouble().map_or_else(|| "Loading the board…".into(), |why| format!("The board could not be loaded: {why}. Trying again."))} } }
+        match trouble() {
+            Some(why) => {
+                rsx! { p { class: "lead", "The board could not be loaded: {why}. Trying again." } }
+            }
+            None => rsx! { crate::viewport::Skeleton { lines: 8, label: "Loading the board…" } },
+        }
     };
     rsx! { main { "data-ready": "board", "data-feed": if stale() { "stale" } else { "live" },
         {content}

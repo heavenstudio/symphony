@@ -107,6 +107,7 @@ pub fn TasksPage() -> Element {
     });
     rsx! { main { "data-ready": "board", "data-feed": if stale() { "stale" } else { "live" },
         if data.read().ready {
+            crate::viewport::Settle { failed: !data.read().error.is_empty(),
             crate::tasks::TaskBoard {
                 tasks: data.read().tasks.clone(), counts: data.read().counts.clone(),
                 work: data.read().work.clone(), connected: !stale(),
@@ -115,7 +116,8 @@ pub fn TasksPage() -> Element {
                 onfilter: move |(query, days)| { spawn(filter(query, days, data)); },
                 onload: move |(status, more, query, days)| { spawn(column(status, more, query, days, data)); },
             }
-        } else { p { "Loading tasks…" } }
+            }
+        } else { crate::viewport::Skeleton { lines: 8, label: "Loading tasks…" } }
         PageNotices { reconnecting: stale(), error: data.read().error.clone() }
     } }
 }
@@ -287,6 +289,7 @@ fn apply(value: &JsValue, mut data: Signal<BoardData>) -> Result<bool, String> {
     let mut next = before.clone();
     let refresh = merge(value, &mut next)?;
     if before != next {
+        crate::viewport::hold_place("[data-slug]");
         data.set(next);
     }
     Ok(refresh)

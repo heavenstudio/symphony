@@ -19,8 +19,10 @@ pub(crate) fn LiveTaskPage(
     rsx! {
         if let Some(slug) = route().strip_prefix("/task/") {
             if let Some(page) = data.read().detail.clone().filter(|p| p.task.slug == slug) {
-                TaskDetail { key: "{page.task.slug}", work: crate::machine_work::connection(page.machine_work.clone(), connected), tasks: page.children.clone(), page, entries: data.read().entries.clone(), older: data.read().before.is_some(), loaded: data.read().thread_loaded, offer: data.read().approval.clone(), onhistory: move |older| { spawn(task_live::history(older,route,data)); }, onchildren: move |more| { spawn(task_live::children(more,route,data)); }, onoffer: move |_| { spawn(task_live::offer(route,data)); } }
-            } else { p { "Loading task…" } }
+                crate::viewport::Settle { key: "{page.task.slug}", failed: !data.read().error.is_empty(),
+                TaskDetail { work: crate::machine_work::connection(page.machine_work.clone(), connected), tasks: page.children.clone(), page, entries: data.read().entries.clone(), older: data.read().before.is_some(), loaded: data.read().thread_loaded, offer: data.read().approval.clone(), onhistory: move |older| { spawn(task_live::history(older,route,data)); }, onchildren: move |more| { spawn(task_live::children(more,route,data)); }, onoffer: move |_| { spawn(task_live::offer(route,data)); } }
+                }
+            } else { crate::viewport::Skeleton { lines: 8, label: "Loading task…" } }
         } else if let Some(agents) = agents {
             AgentsView { agents, tasks: data.read().tasks.clone().unwrap_or_default(), total: data.read().agent_total, more: data.read().has_more_agents(false), lost_more: data.read().has_more_agents(true), onmore: move |lost| { spawn(task_live::more_agents(lost,route,data)); } }
         } else { p { "Loading agents…" } }
@@ -68,7 +70,7 @@ pub fn TaskDetail(
         Brief { slug: task.slug.clone(), revision: page.brief_revision.clone(), blocks: page.blocks.clone(), omitted: page.brief_omitted, next: page.brief_next }
         h2 { "Thread" }
         Near { id: "thread-region-{task.slug}", height: 200, onenter: move |_| onhistory.call(false),
-            div { id: "task-thread",
+            div { id: "task-thread", "data-pending": "{!loaded}",
                 if older { crate::components::button::Button { onclick: move |_| onhistory.call(true), "Load earlier messages" } }
                 if !loaded { crate::components::button::Button { onclick: move |_| onhistory.call(false), "Load messages" } }
                 for entry in entries { Near { key: "{entry.message.id}", id: "message-{entry.message.id}", height: 100, TaskMessage { entry } } }

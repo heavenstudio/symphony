@@ -4,6 +4,7 @@
         --like:#2e7d4f; --dislike:#b3392b; --question:#946a00; --decision:#4a3f9e; --resolved:#5f6b73; --pending:#8a8580; --auto:#1f7a8c;
         --live:#2e7d4f; --stale:#946a00; --lost:#b3392b;
         --card:#ffffff; --muted:rgba(127,127,127,.07); --accent:rgba(47,93,158,.07); --primary-foreground:#ffffff;
+        --skeleton:rgba(127,127,127,.14); --skeleton-shine:rgba(255,255,255,.55);
         --shadow-1:0 1px 2px rgba(29,28,26,.05), 0 4px 16px rgba(29,28,26,.05);
         --shadow-2:0 2px 6px rgba(29,28,26,.07), 0 12px 32px rgba(29,28,26,.10);
         --sp-1:4px; --sp-2:8px; --sp-3:12px; --sp-4:16px; --sp-5:24px; --sp-6:32px; --sp-7:48px;
@@ -14,11 +15,11 @@
   :root { --background:#161513; --foreground:#e8e4dc; --muted-foreground:#a19c93; --border:#2c2a26; --primary:#7fa7e0;
           --like:#6fc48f; --dislike:#e57a6a; --question:#e0b84c; --decision:#a89ce8; --resolved:#8f9aa3; --pending:#7d7872; --auto:#5cc4d6;
           --live:#6fc48f; --stale:#e0b84c; --lost:#e57a6a;
-          --card:#1d1c19; --muted:rgba(255,255,255,.04); --accent:rgba(127,167,224,.10); --primary-foreground:#0f1a2b;
+          --card:#1d1c19; --muted:rgba(255,255,255,.04); --accent:rgba(127,167,224,.10); --primary-foreground:#0f1a2b; --skeleton-shine:rgba(255,255,255,.05);
           --shadow-1:0 1px 2px rgba(0,0,0,.4); --shadow-2:0 2px 8px rgba(0,0,0,.45), 0 12px 32px rgba(0,0,0,.35); }
 }
 
-html { background:var(--background); scroll-padding-top:76px; }
+html { background:var(--background); scroll-padding-top:76px; scrollbar-gutter:stable; }
 [hidden] { display:none !important; }
 body { margin:0; color:var(--foreground); background:var(--background); font:16px/1.55 var(--font-sans); -webkit-font-smoothing:antialiased; }
 main { --page-end:120px; --feed-notice-bottom:calc(132px + env(safe-area-inset-bottom)); max-width:1440px; margin:0 auto; padding:var(--sp-5) var(--sp-5) var(--page-end); }
@@ -117,6 +118,20 @@ label { display:block; } html:root :focus-visible { outline:2px solid var(--ring
 li > .viewport-slot > p { margin:0; }
 li > .viewport-slot > p + p { margin-top:1em; }
 .viewport-sentinel { display:block; position:absolute; inset:-600px 0; pointer-events:none; }
+/* A region waiting for its read (viewport::Skeleton), and a page under one until its first screen
+   is in (viewport::Settle). The shimmer is for a reader who accepts motion. */
+.skeleton { display:grid; gap:12px; padding:var(--sp-2) 0; }
+.skeleton > .bar, .viewport-placeholder { border-radius:var(--r-sm); background-color:var(--skeleton); }
+.skeleton > .bar { height:14px; } .skeleton > .bar:nth-child(3n+2) { width:84%; } .skeleton > .bar:nth-child(3n) { width:62%; }
+.settle { position:relative; } .settle[data-settled=false] { visibility:hidden; }
+/* Laid out in full while it settles: a slot skipped off screen has no box to say it is on screen. */
+.settle[data-settled=false] .viewport-slot { content-visibility:visible; }
+.settle > .skeleton { position:absolute; inset:0 0 auto; visibility:visible; }
+.status-text { position:absolute; width:1px; height:1px; overflow:hidden; clip-path:inset(50%); white-space:nowrap; }
+@media (prefers-reduced-motion: no-preference) {
+  .skeleton > .bar, .viewport-placeholder { background-image:linear-gradient(90deg, transparent 35%, var(--skeleton-shine) 50%, transparent 65%); background-size:300% 100%; animation:shimmer 1.8s ease-in-out infinite; }
+}
+@keyframes shimmer { from { background-position:100% 0; } to { background-position:0 0; } }
 .history { list-style:none; margin:12px 0 0; padding:0 0 0 20px; position:relative; font-size:var(--fs-sm); display:grid; gap:2px; }
 .history::before { content:""; position:absolute; left:6px; top:10px; bottom:10px; width:2px; border-radius:2px; background:var(--border); }
 .history:empty { display:none; }

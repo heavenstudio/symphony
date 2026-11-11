@@ -88,7 +88,6 @@ form.comment, form.verdict { border:1px solid var(--border); background:var(--mu
 .folder-entry p { margin:0; font-size:var(--fs-sm); line-height:1.45; color:var(--muted-foreground); display:-webkit-box; -webkit-line-clamp:3; -webkit-box-orient:vertical; overflow:hidden; }
 .tree-folder { border-top:3px solid var(--primary); background:linear-gradient(135deg,var(--accent),transparent 60%),var(--card); }
 .tree-icon { display:inline-flex; align-items:center; justify-content:center; width:22px; height:22px; border-radius:var(--r-sm); background:var(--accent); color:var(--primary); font-size:12px; }
-.viewport-placeholder { border-radius:12px; background:var(--accent); }
 .section-loading { min-height:160px; color:var(--muted-foreground); }
   /* ---- Callouts: soft cards tinted by their kind. ---- */
   .callout { --c:var(--muted-foreground); border:1px solid color-mix(in srgb, var(--c) 28%, var(--border)); border-left:4px solid var(--c); background:color-mix(in srgb, var(--c) 6%, var(--card)); border-radius:var(--r-md); padding:10px 16px; margin:12px 0; }

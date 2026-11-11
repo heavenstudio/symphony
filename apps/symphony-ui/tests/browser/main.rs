@@ -38,6 +38,7 @@ mod projects;
 mod restored;
 mod server_notices;
 mod site;
+mod skeleton;
 
 use std::time::Duration;
 

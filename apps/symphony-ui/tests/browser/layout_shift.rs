@@ -140,13 +140,15 @@ pub(super) struct Loads {
 }
 
 /// Load `path` cold and then warm at `width`, waiting for `ready`, then (with `open`) open a panel
-/// by a real click: the shifts of the page's load, or of the panel's opening alone.
+/// by a real click: the shifts of the page's load, or of the panel's opening alone. `before` runs
+/// before each load's first script.
 pub(super) fn measure(
     site: &Site,
     path: &str,
     ready: &str,
     width: Width,
     open: Option<Open>,
+    before: &str,
 ) -> Option<Loads> {
     let mut browser = chrome()?;
     browser.call(
@@ -156,7 +158,7 @@ pub(super) fn measure(
     let held = open.map_or("", |open| open.held);
     browser.call(
         "Page.addScriptToEvaluateOnNewDocument",
-        json!({ "source": format!("{held}\n{RECORD}") }),
+        json!({ "source": format!("{held}\n{before}\n{RECORD}") }),
     );
     let cold = load(&mut browser, site, path, ready, open);
     browser.open("about:blank");
@@ -312,6 +314,10 @@ pub(super) fn site(path: &str, sections: &[Value], cards: Value) -> Site {
         &json!({"version":4182,"change":{"path":path,"sections":sections}}),
     );
     site.set_json("/api/asks", &json!({"asks":[],"listening":false}));
+    site.set_json(
+        "/api/task-offer",
+        &json!({"action":"","label":"","branch":"","payload":null}),
+    );
     let items: Vec<Value> = (0..6)
         .map(|n| json!({"id":format!("a{n}"),"kind":"answer","path":"docs/DECISIONS.md","slug":format!("card-{n}"),
             "ts":"2026-11-11 09:00","text":"An agent answered the question on this card with a few words.",
@@ -384,17 +390,19 @@ pub(super) fn register_sections() -> (Vec<Value>, Value) {
     (sections, json!(cards))
 }
 
-/// Measure every page and width, report each, and say which loads miss the limit.
+/// Measure the page at each width, report each load, and say which loads miss the limit.
+/// `before` runs before each load's first script.
 pub(super) fn misses(
     page: &str,
     site: &Site,
     path: &str,
     ready: &str,
     open: Option<Open>,
+    before: &str,
 ) -> Vec<String> {
     let mut misses = Vec::new();
     for width in [PHONE, WIDE] {
-        let Some(loads) = measure(site, path, ready, width, open) else {
+        let Some(loads) = measure(site, path, ready, width, open, before) else {
             return misses;
         };
         eprintln!("{}", report(page, width, &loads));
@@ -431,77 +439,101 @@ fn cls_takes_the_largest_session_window_of_every_shift() {
     assert!((cls(&[at(0.0, 0.01), input, at(1400.0, 0.02)]) - 0.53).abs() < 1e-9);
 }
 
+const HOME: &str = "document.querySelector('[data-ready=board] .hero-title') !== null";
+const DOCUMENT: &str = "document.querySelector('[data-ready=document]') !== null";
+
+/// Hold each load of `path`, cold and warm at both widths (with `open` opened after it), under
+/// the limit, its document serving `sections` and `cards`.
+fn holds_still(
+    page: &str,
+    path: &str,
+    ready: &str,
+    open: Option<Open>,
+    (sections, cards): (Vec<Value>, Value),
+) {
+    let docs = path
+        .strip_prefix('/')
+        .filter(|path| path.starts_with("docs/"))
+        .unwrap_or("docs/PROBE.md");
+    let site = site(docs, &sections, cards);
+    let misses = misses(page, &site, path, ready, open, "");
+    assert!(
+        misses.is_empty(),
+        "layout shift at or over {CLS_LIMIT}: {misses:#?}"
+    );
+}
+
+fn plain() -> (Vec<Value>, Value) {
+    (document_sections(), json!([]))
+}
+
 #[test]
-fn measure_layout_shift_of_each_page() {
-    let mut misses = Vec::new();
-    let (register, cards) = register_sections();
-    let document = document_sections();
-    for (page, path, ready, open, sections, cards) in [
-        (
-            "home",
-            "/",
-            "document.querySelector('[data-ready=board] .hero-title') !== null",
-            None,
-            &document,
-            json!([]),
-        ),
-        (
-            "tasks",
-            "/tasks",
-            "document.querySelector('.taskcard') !== null",
-            None,
-            &document,
-            json!([]),
-        ),
-        (
-            "task",
-            "/task/visual/in-progress",
-            "document.querySelector('article.task .history') !== null",
-            None,
-            &document,
-            json!([]),
-        ),
-        (
-            "document",
-            "/docs/PROBE.md",
-            "document.querySelector('[data-ready=document]') !== null",
-            None,
-            &document,
-            json!([]),
-        ),
-        (
-            "register",
-            "/docs/DECISIONS.md",
-            "document.querySelector('[data-ready=document]') !== null",
-            None,
-            &register,
-            cards.clone(),
-        ),
-        (
-            "chat",
-            "/",
-            "document.querySelector('[data-ready=board] .hero-title') !== null",
-            Some(CHAT),
-            &document,
-            json!([]),
-        ),
-        (
-            "activity",
-            "/",
-            "document.querySelector('[data-ready=board] .hero-title') !== null",
-            Some(ACTIVITY),
-            &document,
-            json!([]),
-        ),
-    ] {
-        let doc = path.trim_start_matches('/');
-        let doc = if doc.starts_with("docs/") {
-            doc
-        } else {
-            "docs/PROBE.md"
-        };
-        let site = site(doc, sections, cards);
-        misses.extend(self::misses(page, &site, path, ready, open));
-    }
-    eprintln!("LAYOUT SHIFT over {CLS_LIMIT}: {misses:#?}");
+fn the_meter_scores_a_page_that_moves_after_it_is_drawn() {
+    // Everything below the board's title moves 240 px down once the title is drawn.
+    const MOVE: &str = r#"const mover = setInterval(() => {
+        const title = document.querySelector('[data-ready=board] .hero-title');
+        if (!title) return;
+        clearInterval(mover);
+        setTimeout(() => { const pad = document.createElement('div'); pad.style.height = '240px'; title.after(pad); }, 200);
+    }, 50);"#;
+    let site = site("docs/PROBE.md", &document_sections(), json!([]));
+    let misses = misses("moved home", &site, "/", HOME, None, MOVE);
+    assert_eq!(
+        misses.len(),
+        4,
+        "every load of a page that moves misses the limit: {misses:#?}"
+    );
+}
+
+#[test]
+fn the_board_holds_still_while_it_loads() {
+    holds_still("home", "/", HOME, None, plain());
+}
+
+#[test]
+fn the_task_board_holds_still_while_its_columns_load() {
+    holds_still(
+        "tasks",
+        "/tasks",
+        "document.querySelector('.settle[data-settled=true] .taskcard') !== null",
+        None,
+        plain(),
+    );
+}
+
+#[test]
+fn a_task_holds_still_while_its_thread_loads() {
+    holds_still(
+        "task",
+        "/task/visual/in-progress",
+        "document.querySelector('.settle[data-settled=true] article.task .history') !== null",
+        None,
+        plain(),
+    );
+}
+
+#[test]
+fn a_document_holds_still_while_its_sections_load() {
+    holds_still("document", "/docs/PROBE.md", DOCUMENT, None, plain());
+}
+
+#[test]
+fn the_register_holds_still_while_its_cards_load() {
+    holds_still(
+        "register",
+        "/docs/DECISIONS.md",
+        DOCUMENT,
+        None,
+        register_sections(),
+    );
+}
+
+#[test]
+fn the_chat_holds_still_while_its_conversation_loads() {
+    holds_still("chat", "/", HOME, Some(CHAT), plain());
+}
+
+#[test]
+fn the_activity_panel_holds_the_page_still_as_it_opens() {
+    holds_still("activity", "/", HOME, Some(ACTIVITY), plain());
 }

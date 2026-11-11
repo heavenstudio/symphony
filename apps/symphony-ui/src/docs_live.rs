@@ -166,12 +166,15 @@ pub fn DocumentPage(path: String, scope: String, #[props(default)] embedded: boo
     rsx! {
         div { class: "document-page", "data-ready": if state.read().is_none() { "loading" } else if marked() { "document" } else { "outline" }, "data-feed": if stale() { "stale" } else { "live" },
             if let Some(state) = state() {
-                DocumentBody { anchor_ids: anchors(), present: state.latest.sections.iter().map(|s| s.key.clone()).collect(), document: state.shown, scope: scope.clone(), embedded }
-                if !embedded {
-                    crate::asks::Asks { key: "{scope}/{path}", path: path.clone(), scope: docs::scoped(&scope, ""), render_blocks }
+                crate::viewport::Settle { failed: trouble().is_some(),
+                    DocumentBody { anchor_ids: anchors(), present: state.latest.sections.iter().map(|s| s.key.clone()).collect(), document: state.shown, scope: scope.clone(), embedded }
+                    if !embedded {
+                        crate::asks::Asks { key: "{scope}/{path}", path: path.clone(), scope: docs::scoped(&scope, ""), render_blocks }
+                    }
                 }
             } else if trouble().is_none() || (embedded && folder_notice.is_none()) {
-                p { role: "status", {trouble().unwrap_or_else(|| "Loading document…".into())} }
+                p { role: "status", class: if trouble().is_none() { "status-text" }, {trouble().unwrap_or_else(|| "Loading document…".into())} }
+                if trouble().is_none() { crate::viewport::Skeleton { lines: 8 } }
             }
             if !embedded {
                 crate::live::PageNotices { reconnecting: stale(), reconnect: "Reconnecting: this document may be out of date", error: trouble().unwrap_or_default(), document_removed: state.read().as_ref().is_some_and(|state| state.removed) }
@@ -318,9 +321,9 @@ fn HydratedSection(
     } else if ready {
         rsx! { DocSection { section, path, scope, card, thread, gone, unfolded } }
     } else {
-        rsx! { div { class: "section-loading", id: (section.start > 0).then(|| format!("L{}", section.start)),
+        rsx! { div { class: "section-loading", id: (section.start > 0).then(|| format!("L{}", section.start)), "data-pending": "true",
             for id in ids { span { id } }
-            p { role: "status", "Loading section…" }
+            crate::viewport::Skeleton { lines: 4, label: "Loading section…" }
         } }
     };
     rsx! { crate::doc_components::SectionDifference { comparison, {content} } }

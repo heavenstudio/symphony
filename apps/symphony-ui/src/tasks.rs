@@ -279,7 +279,7 @@ fn TaskColumn(
             p { class: "muted work-empty", "No tasks with fresh {status} activity." }
         }
         Near { id: "column-{status}", height: reserved, onenter: move |_| visible.set(true),
-            if count > 0 && tasks.is_empty() { div { style: "min-height:{reserved}px", role: "status", "Loading tasks…" } }
+            if count > 0 && tasks.is_empty() { div { style: "min-height:{reserved}px", "data-pending": "true", crate::viewport::Skeleton { lines: 3, label: "Loading tasks…" } } }
             for task in rows { Near { key: "{task.slug}", id: "row-{task.slug}", height: 130, TaskRow { task: task.clone(), work: work.clone(), connected } } }
             if count > tasks.len() {
                 crate::components::button::Button { actions: crate::entry_events::click(move || onload.call((more_status.clone(),true,query(),days()))), "Load more tasks" }
