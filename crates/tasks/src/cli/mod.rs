@@ -195,7 +195,7 @@ fn run(
         Ok(()) => return 0,
         Err(commands::Stop::NoSession) => (
             2,
-            "no session: pass --as HANDLE or set TASKS_SESSION (get one with `just tasks-attach` or `just tasks register`)"
+            "no session: pass --as HANDLE or set TASKS_SESSION (get one with `just tasks register`)"
                 .to_string(),
         ),
         Err(commands::Stop::Refused(why)) => (1, why),
@@ -324,7 +324,7 @@ fn boot_clock(env: &Env) -> Option<sys::Boottime> {
 }
 
 /// The board `env` reaches, its server started if it is down, whether or not the board has moved
-/// there: what `tasks-copy --board` and `just tasks-cutover` write into.
+/// there: what `tasks-copy --board` and `tasks-cutover` write into.
 pub fn board_client(env: &Env) -> Result<Client, String> {
     reach_board(env, &env.cwd, true, false).map(|reached| reached.client)
 }
@@ -427,7 +427,10 @@ fn not_here(common: &Path, guide: &str) -> Option<String> {
 fn open(reached: Reached, clock: &Clock) -> Result<Store, String> {
     let (clock, probe, host) = parts(clock);
     let how = crate::Opening::write().of(reached.project.as_deref());
-    Store::opening(reached.client, clock, probe, &host, &how).map_err(|e| e.to_string())
+    let named = reached.project.is_none();
+    Store::opening(reached.client, clock, probe, &host, &how)
+        .map(|store| naming(store, named))
+        .map_err(|e| e.to_string())
 }
 
 /// The board `reached`, read by `clock`, its tables taken as they are: the heartbeat's one request.
@@ -435,7 +438,21 @@ fn open(reached: Reached, clock: &Clock) -> Result<Store, String> {
 fn open_unchecked(reached: Reached, clock: &Clock) -> Store {
     let (clock, probe, host) = parts(clock);
     let how = crate::Opening::write().of(reached.project.as_deref());
-    Store::unchecked_as(reached.client, clock, probe, &host, &how)
+    let named = reached.project.is_none();
+    naming(
+        Store::unchecked_as(reached.client, clock, probe, &host, &how),
+        named,
+    )
+}
+
+/// `store`, saying its server in the commands it tells when `TASKS_SERVER` `named` it (a board
+/// reached for no project, [`Reached`]).
+fn naming(store: Store, named: bool) -> Store {
+    if named {
+        store.on_named_server()
+    } else {
+        store
+    }
 }
 
 type Probe = Box<dyn Fn(i64) -> bool + Send + Sync>;

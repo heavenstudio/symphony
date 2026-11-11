@@ -91,3 +91,23 @@ fn a_refusal_is_its_words_and_a_database_failure_says_so() {
         "SurrealDB: cannot reach it"
     );
 }
+
+#[test]
+fn the_command_back_to_a_board_names_its_recipe_its_database_and_a_named_server() {
+    for (server, database, want) in [
+        (None, crate::DATABASE, "just tasks"),
+        (None, "scratch1", "just tasks --database scratch1"),
+        (
+            Some("127.0.0.1:4321"),
+            "scratch1",
+            "TASKS_SERVER=127.0.0.1:4321 just tasks --database scratch1",
+        ),
+        (
+            Some("127.0.0.1:4321"),
+            crate::DATABASE,
+            "TASKS_SERVER=127.0.0.1:4321 just tasks",
+        ),
+    ] {
+        assert_eq!(board_command(server, database), want);
+    }
+}

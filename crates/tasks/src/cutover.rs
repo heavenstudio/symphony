@@ -1,5 +1,5 @@
 //! The task board's move from SQLite to SurrealDB, run once by whoever lands slice 3 of
-//! `tools/docs-app-rust-port` (`just tasks-cutover`, docs/workflow/TASKS.md#the-move-to-surrealdb). It
+//! `tools/docs-app-rust-port` (`tasks-cutover`, docs/workflow/TASKS.md#the-move-to-surrealdb). It
 //! goes one way: nothing moves the board back.
 //!
 //! The SurrealDB board is the one `tasks-copy --board` reaches from here ([`crate::cli::board_client`]):
@@ -53,7 +53,7 @@ use std::time::Duration;
 /// What every write to the frozen SQLite board is refused with, from the freeze on: true whether the
 /// move has finished, is running or was cut short, which the binary, reading the marker, tells apart.
 pub const FROZEN: &str = "the task board is frozen for its move to SurrealDB: merge main, then run just tasks again, which says whether the move finished";
-const USAGE: &str = "usage: just tasks-cutover";
+const USAGE: &str = "usage: tasks-cutover";
 /// The tables the move knows, with how it says them.
 const TABLES: [(&str, &str); 8] = [
     ("tasks", "tasks"),
@@ -71,12 +71,11 @@ const FREEZE: &str = "sf_moved_";
 const BUSY: Duration = Duration::from_secs(30);
 /// What a run that stops says of a board it found frozen (a move before it froze it, and did not
 /// finish): it leaves it so, never thawing a board it did not freeze.
-const STAYS_FROZEN: &str =
-    "the board stays frozen, as this run found it: run just tasks-cutover again";
+const STAYS_FROZEN: &str = "the board stays frozen, as this run found it: run tasks-cutover again";
 /// Where a move runs when it cannot find a repository.
 const IN_THE_REPOSITORY: &str = "run it in the repository whose board it moves";
 
-/// `just tasks-cutover`: what it moved goes to `out`, a refusal to `err`; the exit code is returned.
+/// `tasks-cutover`: what it moved goes to `out`, a refusal to `err`; the exit code is returned.
 pub fn main(args: &[String], env: &Env, out: &mut dyn io::Write, err: &mut dyn io::Write) -> i32 {
     if !args.is_empty() {
         let _ = writeln!(err, "{USAGE}");
@@ -200,7 +199,7 @@ fn run(
                 "{why}; the board stays in SQLite, taking writes again"
             )),
             Err(thaw) => Err(format!(
-                "{why}; the board at {} could not be thawed ({thaw}), so it refuses writes and nothing takes them: run just tasks-cutover again",
+                "{why}; the board at {} could not be thawed ({thaw}), so it refuses writes and nothing takes them: run tasks-cutover again",
                 board.display()
             )),
         },

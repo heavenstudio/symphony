@@ -335,7 +335,7 @@ impl Home {
         if !self.dir.join(DATA).exists() && old.exists() {
             return Err(ServerError::Io(format!(
                 "the board's store is at {}: a reclaim moved it there and stopped; \
-                 `just tasks-reclaim` puts it back",
+                 `tasks-reclaim` puts it back",
                 old.display()
             )));
         }
