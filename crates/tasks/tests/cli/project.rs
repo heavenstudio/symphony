@@ -204,6 +204,39 @@ fn a_file_naming_no_id_is_named_like_a_checkout_with_none() {
     assert_eq!(id(&main, None), "named");
 }
 
+/// The board's guide is the one the project's file names, else the default: a file naming none, an
+/// empty one, or a file that does not read or parse.
+#[test]
+fn the_board_guide_is_the_files_else_the_default() {
+    let dir = scratch("project-guide");
+    let main = repository(&dir.join("main"));
+    let guide = || project::find(&main, None).unwrap().guide();
+    assert_eq!(guide(), project::GUIDE, "no file");
+    for (text, named) in [
+        (
+            "[project]\nid = \"alpha\"\n[board]\nguide = \"handbook/BOARD.md\"\n",
+            "handbook/BOARD.md",
+        ),
+        ("[project]\nid = \"alpha\"\n", project::GUIDE),
+        ("[board]\non_review = \"true\"\n", project::GUIDE),
+        ("[board]\nguide = \"\"\n", project::GUIDE),
+        ("[board]\nguide = 7\n", project::GUIDE),
+        (
+            "[board]\nguide = \"docs/TASKS.md\"\nnot toml [",
+            project::GUIDE,
+        ),
+    ] {
+        write(&main.join(FILE), text);
+        assert_eq!(guide(), named, "{text}");
+    }
+    // The file found, then gone before the guide is read.
+    write(&main.join(FILE), "[board]\nguide = \"docs/TASKS.md\"\n");
+    let found = project::find(&main, None).unwrap();
+    assert_eq!(found.guide(), "docs/TASKS.md");
+    std::fs::remove_file(main.join(FILE)).unwrap();
+    assert_eq!(found.guide(), project::GUIDE);
+}
+
 #[test]
 fn a_folder_in_no_repository_has_no_board() {
     let dir = scratch("project-none");

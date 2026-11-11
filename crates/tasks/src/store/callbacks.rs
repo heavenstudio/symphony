@@ -155,7 +155,7 @@ impl Store {
             return Err(refused("an empty message says nothing".into()));
         }
         let text = format!("AGENT from {sender} to {handle} — {text}");
-        let board_command = self.callback_command();
+        let board_command = self.board_command();
         let key: String = self.retrying(|| self.transact(
             &format!("{ACT}
 LET $recipient = (SELECT left_at FROM ONLY type::record('session', $handle));
@@ -670,7 +670,7 @@ RETURN NONE;");
         if let Some(address) = state.address {
             return Err(refused(format!(
                 "{handle} has a channel ({address}), which takes what is pushed to it; read it there, or run {} callback --off --as {handle} first",
-                self.callback_command()
+                self.board_command()
             )));
         }
         let Some(session) = reader.session.filter(|s| s.left_at.is_none()) else {
@@ -922,17 +922,6 @@ RETURN NONE;");
             released?;
         }
         Ok(acquired.is_some())
-    }
-
-    fn callback_command(&self) -> String {
-        if self.client.database() == crate::DATABASE {
-            "just tasks".to_string()
-        } else {
-            format!(
-                "tools/rs-bin.sh tasks --database {}",
-                self.client.database()
-            )
-        }
     }
 
     fn dispatch_one(
@@ -1509,7 +1498,7 @@ RETURN NONE;");
         pending: &[Event],
         result: Result<(), DeliveryError>,
     ) -> Result<(), Error> {
-        let command = self.callback_command();
+        let command = self.board_command();
         let success = result.is_ok();
         let capacity = result
             .as_ref()

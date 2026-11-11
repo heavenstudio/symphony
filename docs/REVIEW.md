@@ -172,9 +172,8 @@ register and the comments in the ledger.
 
 **Documents say what the design is, not how it was decided.** A card slug in a
 document's prose ("approved in *some-card*") is history, and history belongs
-on the card. A slug outside a register or code block fails the build of
-`crates/docs-index` (`just docs-index`), naming its file and line; `just symphony-status
---lint` lists every one too, and `just verify` fails on any. The
+on the card. `just symphony-status --lint` fails on a slug outside a register or
+code block, naming its file and line, and a project's checks can run it. The
 exceptions are `docs/history/` and `docs/analysis/`, which are records. A
 project's own checks may also refuse the verdict words themselves (approved,
 rejected, superseded, dismissed) outside the register of the pages they name: such

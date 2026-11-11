@@ -50,7 +50,7 @@ do not treat it as approval, and change documents only when it asks for that.
 
 3. **Answer every open item in the register** with one dated line appended
    under the card, `  [YYYY-MM-DD HH:MM] agent — <reply>` (continuation lines
-   indented four spaces; see `docs/workflow/REVIEW.md`). Never edit the owner's words
+   indented four spaces). Never edit the owner's words
    or marker, and never rewrite an earlier line: history is append-only. Plain words; explain jargon the owner asked about. A reply may use
    markdown links and images (the web app renders them), which is how to answer
    "show me side by side" with an existing picture under `artifacts/`.
