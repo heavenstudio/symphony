@@ -34,7 +34,9 @@ one place the full verification runs ([CHECKS](CHECKS.md#the-nightly)):
 2. **A clean checkout.** It checks the candidate out at `../symphony-wt/nightly` (`nightly` in the
    `[agents] worktrees` folder of `symphony.toml`), never in the main checkout: a detached
    worktree, locked so the board's worktree sweep leaves it. Each run resets it to the candidate
-   and removes every untracked and ignored file but `.target/`, so the build stays incremental.
+   and removes every untracked and ignored file but `.target/`, so the build stays incremental. A
+   folder there that is not a worktree of this repository is never taken over: the run stops,
+   naming it.
 3. **The full verification** runs there: `just verify`, which is lint, the real client check and
    every test target of the workspace, the board's `perf` and `child_guard` among them. Each check
    goes through the checkout's `tools/record.sh` as one test operation of the board's recorder,
@@ -59,7 +61,9 @@ one place the full verification runs ([CHECKS](CHECKS.md#the-nightly)):
    task (`cancelled`, saying the check passed). The next red of a closed task's check is
    `tests/nightly-red-NAME-2`, then `-3`.
 6. **Green:** it tags the candidate `release-<today>` as above and pushes that tag alone
-   (`git push origin refs/tags/NAME`); `--no-push` keeps it here.
+   (`git push origin refs/tags/NAME`); `--no-push` keeps it here. A push the remote refuses keeps
+   the tag here and fails the run; `--status` says `not pushed`, and that same `git push` delivers
+   it. A later run counts the tag and never pushes it.
 
 Each run is recorded in the git common dir: `.git/sf-symphony/nightly/runs/ID.json` (the commit,
 each check with its exit and log, the result, the tag, what it did on the board) and each check's

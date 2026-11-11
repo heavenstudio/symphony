@@ -134,6 +134,42 @@ fn a_release_held_back_from_the_remote_is_tagged_here_alone() {
 }
 
 #[test]
+fn a_push_the_remote_refuses_keeps_the_tag_here_and_fails_the_run() {
+    let fixture = Fixture::new();
+    let hook = fixture.origin.join("hooks/pre-receive");
+    std::fs::write(&hook, "#!/bin/sh\necho no tags today >&2\nexit 1\n").unwrap();
+    std::fs::set_permissions(&hook, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+    let (code, out, err) = fixture.nightly_at(NOW, &["--check", CHECK]);
+    assert_eq!(code, 1, "{out}{err}");
+    assert!(
+        out.contains("nightly: green; tagged release-2026-11-12, not pushed"),
+        "{out}"
+    );
+    assert!(
+        err.contains("tagged release-2026-11-12 here, but the push to origin failed"),
+        "{err}"
+    );
+    assert!(err.contains("no tags today"), "the remote's words: {err}");
+    assert!(fixture.remote_tags().is_empty());
+    assert_eq!(git(&fixture.main, &["tag", "-l"]), "release-2026-11-12");
+    let run = fixture.runs().pop().unwrap();
+    assert_eq!(
+        (
+            run["result"].as_str(),
+            run["tag"].as_str(),
+            run["pushed"].as_bool()
+        ),
+        (Some("green"), Some("release-2026-11-12"), Some(false)),
+        "{run}"
+    );
+    let status = fixture.run(NOW + 60.0, &["--status"], 0);
+    assert!(
+        status.contains("; tagged release-2026-11-12, not pushed"),
+        "{status}"
+    );
+}
+
+#[test]
 fn out_of_cycle_a_commit_of_the_remotes_main_is_released_after_the_same_checks() {
     let fixture = Fixture::new();
     fixture.night(NOW, 0);

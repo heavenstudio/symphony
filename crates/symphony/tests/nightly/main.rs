@@ -356,6 +356,39 @@ fn one_run_at_a_time() {
 }
 
 #[test]
+fn a_folder_in_the_checkouts_place_is_never_taken_over() {
+    let fixture = Fixture::new();
+    let found = fixture.worktree().join("notes.txt");
+    fs::create_dir_all(fixture.worktree()).unwrap();
+    fs::write(&found, "someone's\n").unwrap();
+    let (code, out, err) = fixture.nightly_at(NOW, &["--check", CHECK]);
+    assert_eq!(code, 1, "{out}{err}");
+    assert!(
+        err.contains(&format!(
+            "{} is not a worktree of this repository; move it away",
+            fixture.worktree().display()
+        )),
+        "{err}"
+    );
+    assert!(!out.contains("nightly: verify"), "no check ran: {out}");
+    assert_eq!(fs::read_to_string(&found).unwrap(), "someone's\n");
+    assert!(fixture.remote_tags().is_empty());
+    let run = fixture.runs().pop().unwrap();
+    assert_eq!(run["result"], "error", "{run}");
+    assert!(
+        run["error"]
+            .as_str()
+            .unwrap()
+            .contains("is not a worktree of this repository"),
+        "{run}"
+    );
+    assert!(
+        fixture.reds().is_empty(),
+        "a run that checked nothing files nothing"
+    );
+}
+
+#[test]
 fn the_schedule_entry_runs_the_nightly_in_the_main_checkout() {
     let fixture = Fixture::new();
     let out = fixture.run(NOW, &["--schedule", "--at", "04:30"], 0);

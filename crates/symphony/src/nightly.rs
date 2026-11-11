@@ -790,6 +790,30 @@ mod tests {
     }
 
     #[test]
+    fn the_runs_checkout_is_in_the_agents_worktrees_folder_else_beside_the_repository() {
+        let tree = crate::test_tree::Tree::new();
+        let repo = |main: &Path| Repo {
+            root: main.to_path_buf(),
+            common: main.join(".git"),
+            main: main.to_path_buf(),
+            project: Project::of(main),
+        };
+        tree.write("plain/README.md", "no project file\n");
+        assert_eq!(
+            default_worktree(&repo(&tree.path("plain"))),
+            tree.path("plain-wt/nightly")
+        );
+        tree.write(
+            "named/symphony.toml",
+            "[project]\nid = \"named\"\n\n[agents]\nworktrees = \"../elsewhere\"\n",
+        );
+        assert_eq!(
+            default_worktree(&repo(&tree.path("named"))),
+            tree.path("elsewhere/nightly")
+        );
+    }
+
+    #[test]
     fn a_day_is_the_local_date_of_a_time() {
         assert_eq!(when_day(1_800_000_000.0).len(), 10);
         assert!(tags::is_day(&when_day(1_800_000_000.0)));

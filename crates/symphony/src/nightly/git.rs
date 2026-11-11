@@ -5,7 +5,8 @@ use std::path::Path;
 
 use crate::children::command;
 
-/// `git ARGS` in `dir`: what it printed, its trailing newline gone, or what it said when it failed.
+/// `git ARGS` in `dir`: what it printed, its trailing newline gone, or what it said when it failed,
+/// its lines joined by ` / `.
 pub(super) fn git(dir: &Path, args: &[&str]) -> Result<String, String> {
     let done = symphony_board::sys::output(
         command("git")
@@ -19,8 +20,11 @@ pub(super) fn git(dir: &Path, args: &[&str]) -> Result<String, String> {
             .trim_end_matches('\n')
             .to_string());
     }
-    let said = String::from_utf8_lossy(&done.stderr);
-    let said = said.trim();
+    // On one line, as a record and `--status` keep it.
+    let stderr = String::from_utf8_lossy(&done.stderr);
+    let said: Vec<&str> = (stderr.lines().map(str::trim))
+        .filter(|line| !line.is_empty())
+        .collect();
     Err(format!(
         "git {} failed in {}{}",
         args.join(" "),
@@ -28,7 +32,7 @@ pub(super) fn git(dir: &Path, args: &[&str]) -> Result<String, String> {
         if said.is_empty() {
             String::new()
         } else {
-            format!(": {said}")
+            format!(": {}", said.join(" / "))
         }
     ))
 }
@@ -118,6 +122,70 @@ mod tests {
             ]
         );
         assert!(remote_tags("").is_empty());
+    }
+
+    #[test]
+    fn git_answers_what_it_printed_or_why_it_failed_on_one_line() {
+        let tree = crate::test_tree::Tree::new();
+        let repo = tree
+            .write("repo/README.md", "a\n")
+            .parent()
+            .unwrap()
+            .to_path_buf();
+        let commit_here = |message: &str| {
+            git(
+                &repo,
+                &[
+                    "-c",
+                    "user.name=t",
+                    "-c",
+                    "user.email=t@example.com",
+                    "-c",
+                    "commit.gpgsign=false",
+                    "commit",
+                    "-q",
+                    "--allow-empty",
+                    "-m",
+                    message,
+                ],
+            )
+        };
+        assert_eq!(git(&repo, &["init", "-q", "-b", "main"]), Ok(String::new()));
+        assert_eq!(commit_here("one"), Ok(String::new()));
+        let first = commit(&repo, "HEAD").unwrap();
+        commit_here("two").unwrap();
+        let second = commit(&repo, "main").unwrap();
+        assert_eq!(first.len(), 40);
+        assert_ne!(first, second);
+        assert_eq!(git(&repo, &["log", "--format=%s"]), Ok("two\none".into()));
+
+        assert_eq!(is_ancestor(&repo, &first, &second), Ok(true));
+        assert_eq!(is_ancestor(&repo, &second, &first), Ok(false));
+        let unknown = is_ancestor(&repo, "nothing-here", &first).unwrap_err();
+        assert!(
+            unknown.contains("merge-base --is-ancestor nothing-here"),
+            "{unknown}"
+        );
+        assert_eq!(
+            commit(&repo, "nothing-here"),
+            Err(format!(
+                "nothing-here names no commit in {}",
+                repo.display()
+            ))
+        );
+
+        let failed = git(&repo, &["push", "/no/such/remote", "main"]).unwrap_err();
+        assert!(
+            failed.starts_with(&format!(
+                "git push /no/such/remote main failed in {}: ",
+                repo.display()
+            )),
+            "{failed}"
+        );
+        assert!(
+            !failed.contains('\n') && failed.contains(" / "),
+            "git's lines, joined: {failed}"
+        );
     }
 
     #[test]
