@@ -40,8 +40,14 @@ package (`crates/symphony/src/theme.rs`), served as `/<id>/theme.css` and inline
 its pages. Tests use a temporary machine folder.
 
 Use `just lint-rs`, `just test-rs`, `just symphony-ui-dist` and `just symphony-ui-dev`
-from this folder. `tools/cargo.sh` execs ordinary Cargo in this workspace, preserving
-its arguments, streams, status and inherited limits. It uses this folder's `.target/`
+from this folder. `tools/cargo.sh` runs ordinary Cargo in this workspace, preserving
+its arguments, streams, status and inherited limits. A build or test goes through
+`tools/record.sh`, as do the `lint-rs`, `test-rs`, `client-check`, `client-update`
+and `verify` recipes, each as one operation: the board's recorder (`tasks run`, the
+prepared `.target/bin/tasks` of this checkout or of the main checkout a worktree
+belongs to) records it for the Build and Test columns (docs/MACHINE_WORK.md), and
+with none that answers, `TASKS_RECORDER=off` or inside a recorded run it is exec'd as
+it is. It uses this folder's `.target/`
 unless `CARGO_TARGET_DIR` names another. It supplies no project gate planner, test
 selection, certificate, shared slot pool or dependency seed service. The toolchain
 pin is `rust-toolchain.toml`. The containing project keeps its own source launcher,
@@ -50,7 +56,7 @@ slot wrapper and gates, which compile and test its own consumers.
 `tools/rs-bin.sh NAME` builds a declared workspace binary with Cargo before every
 run. `--build NAME` prints the freshly built path, `--where NAME` names its expected
 location without building or attesting freshness, and `--link NAME` builds and
-refreshes `.target/bin/NAME`. None searches a containing project. `just symphony
+refreshes `.target/bin/NAME`; that build is never recorded. None searches a containing project. `just symphony
 --port 0` runs a server of its own; the server CLI retains shared-server selection.
 
 `just client-update` builds all six real client modules and publishes their bundle

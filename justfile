@@ -1,16 +1,24 @@
 set positional-arguments
 
+# A recipe that builds or tests runs as one operation through tools/record.sh, which records it
+# for the board's Build and Test columns when a recorder answers (docs/MACHINE_WORK.md); its
+# steps run inside it unrecorded. TASKS_SESSION=HANDLE names the session whose task it is.
+
 # Independent workspace commands use ordinary Cargo. The containing project keeps its own gates.
 fmt:
     @tools/cargo.sh fmt --all
 
 lint-rs:
+    @tools/record.sh build "just lint-rs" just --justfile {{quote(justfile())}} _lint-rs
+
+[private]
+_lint-rs:
     @tools/cargo.sh fmt --all --check
     @tools/cargo.sh clippy --workspace --all-targets --locked -- -D warnings
     @PATH="$(pwd)/apps/symphony-ui/bin:$PATH" tools/cargo.sh symphony-ui clippy
 
 test-rs *ARGS:
-    @tools/cargo.sh test --locked "$@"
+    @tools/record.sh test "just test-rs $*" tools/cargo.sh test --locked "$@"
 
 symphony-ui-dist OUT="build/symphony-ui" KIND="all" OPT="z":
     #!/usr/bin/env bash
@@ -28,6 +36,10 @@ symphony *ARGS:
 
 # Refresh the actual release assets compiled into the server package.
 client-update:
+    @tools/record.sh build "just client-update" just --justfile {{quote(justfile())}} _client-update
+
+[private]
+_client-update:
     @just symphony-ui-dist build/shipped-client
     @tools/rs-bin.sh symphony publish-client build/shipped-client/public apps/symphony-server/client/public
 
@@ -43,9 +55,17 @@ agent-send *ARGS:
 
 # Rebuild the six real modules and refuse drift from the client embedded at this pin.
 client-check OUT="build/verified-client":
+    @tools/record.sh build "just client-check" just --justfile {{quote(justfile())}} _client-check {{quote(OUT)}}
+
+[private]
+_client-check OUT:
     @just symphony-ui-dist {{quote(OUT)}}
     @bash tools/client-check.sh {{quote(OUT)}}/public
 
 # The native browser harness runs headless Chrome; no game engine or display is needed.
-verify: lint-rs client-check
+verify:
+    @tools/record.sh test "just verify" just --justfile {{quote(justfile())}} _verify
+
+[private]
+_verify: lint-rs client-check
     @SF_SYMPHONY_UI_DIST="$PWD/build/verified-client/public" tools/cargo.sh test --workspace --locked

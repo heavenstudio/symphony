@@ -23,7 +23,8 @@ if [[ "$target" != /* ]]; then target="$root/$target"; fi
 binary="$target/debug/$name"
 if [ "$mode" = where ]; then printf '%s\n' "$binary"; exit 0; fi
 # Cargo checks freshness on every call. The target pathname alone proves no prepared image.
-"$root/tools/cargo.sh" build --quiet --locked -p "$package" --bin "$name" >&2
+# A freshness check before a board or server command is no build of a task's: it is not recorded.
+TASKS_RECORDER=off "$root/tools/cargo.sh" build --quiet --locked -p "$package" --bin "$name" >&2
 if [ ! -x "$binary" ]; then
     printf 'symphony rs-bin: Cargo produced no native executable at %s\n' "$binary" >&2
     exit 2
