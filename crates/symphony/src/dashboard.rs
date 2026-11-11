@@ -194,7 +194,8 @@ pub fn snapshot(
     branch_cards: &[branches::BranchCard],
     build: &str,
 ) -> Result<Snapshot, ReviewError> {
-    let mut docs = board::scan(root)?;
+    // A checkout with no documents yet still has its board, branch cards and agents.
+    let mut docs = board::documents(root)?;
     let mut progress = progress(root, &docs);
     // Distinct proposals remain separate decisions; only main's older copy is suppressed.
     // Branch discovery already removes identical copies carried by stacked branches.

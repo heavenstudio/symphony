@@ -5,36 +5,33 @@ the root guide](../../AGENTS.md#rust).
 
 The `symphony-board` crate (this folder) is the task board ([TASKS](../../docs/TASKS.md)): its
 store over SurrealDB, the server it starts in `sf-tasks/` in the git common
-dir, and the `tasks` binary, which is `just tasks` and `just tasks-attach`.
-These recipes and `just worktree-sweep` go through `tools/tasks.sh`: live board
-commands always run committed main's build, preserving the calling worktree's
-working directory. `sf-cargo/tasks-main/TREE` in the common dir records the
-binary for main's tree id. A warm call checks that executable and runs it with
-no export, build or source hashing. On a miss, an ancestor main build serves
-immediately when its committed schema, supported RPC server and `tasks api`
-versions match (`cli/api.rs`'s `VERSION`, raised when a caller relies on a change).
-One background builder exports committed Rust sources and atomically publishes
-the new pointer after success. It owns a separate process group, so maintenance
-callers ending their groups leave the refresh running. A changed or unreadable
-contract, or no earlier executable, waits for a build. Failures keep the earlier
-build and are reported on later commands; background output is in
-`sf-cargo/tasks-main/build.log`, foreground output goes to caller stderr.
-Uncommitted main changes stay off the live board. The launcher reports the main
-commit and build
-on stderr. Agents keep using `just tasks … --as HANDLE`: that outer command is
-what the beat hook recognises and binds, before the recipe selects the binary
-internally. A `--justfile PATH`, `-f PATH`, `--working-directory DIR` or `-d
-DIR` between `just` and `tasks` binds the same way, so a worktree's `just
---justfile MAIN/justfile tasks … --as HANDLE` does.
-To run branch code, explicitly select a non-live database with `TASKS_DATABASE`
-or a leading `--database NAME`; a leading option overrides the environment.
-With the live `tasks` database, `TASKS_SERVER` selects branch code only when its
-validated TCP port differs from the canonical local listener in
-`sf-tasks/server.json`, in the launcher's own common dir and in that of the
-repository the caller's folder is in. The exact live address runs main.
-Different spellings on that port, invalid ports and missing or malformed
-records refuse the override; explicitly name a scratch database to use branch
-code there.
+dir, and the `tasks` binary, which is `just tasks`. `just tasks`, `just
+agent-send` and the board clients of `just symphony-cli` (`taskcli.rs`) go
+through `tools/rs-bin.sh`, which builds with Cargo before every run. A board
+binary (`tasks`, `agent-send`, `tasks-copy`, `tasks-reclaim`, `tasks-cutover`)
+run from a linked worktree against this repository's live board runs the main
+checkout's launcher instead: main's build, in main's own target folder (the
+caller's `CARGO_TARGET_DIR` is dropped), in the caller's folder and environment,
+so no branch's build of a board binary runs on the live board. A branch's
+`symphony` (`just symphony-cli`, a preview server) is not held to this: it opens
+the board itself (`taskview::connect`, through `Store::opening`), and a reader,
+like a writer, migrates an older board forward (`schema::decide`), so a branch
+with a newer schema moves the live board from there
+(tools/board-read-never-migrates). The main checkout is the common dir less
+`/.git`, as git finds it; the build is of what it holds, committed or not. A run
+is on the live board unless it names another database (the last leading
+`--database NAME`, else `TASKS_DATABASE`, not `tasks`), or its working directory
+is in another repository or none, or `TASKS_SERVER` names a port other than the
+one `sf-tasks/server.json` in the common dir records, compared as the number the
+binary reads (`04321` and `+4321` are 4321). With no record there is no live
+server to name; a record naming no address, or either port spelled as no number,
+counts as that port. A `--database` later in the arguments is read as the live
+board's, so `just agent-send` takes it first to run branch code. A main checkout
+with no launcher refuses the run, naming the scratch option. To run branch code,
+name a scratch board. Agents keep using `just tasks … --as HANDLE`: that outer
+command is what the beat hook recognises and binds.
+A `--justfile PATH`, `-f PATH`, `--working-directory DIR` or `-d DIR` between
+`just` and `tasks` binds the same way.
 
 A run's board is its project's (`src/project.rs`): the nearest `symphony.toml`
 from its working directory up, never past the top of the checkout it is in (the
@@ -58,8 +55,9 @@ one behind, it is refused before it reads. Every write transaction starts with
 the schema guard, which refuses a write to a board at another version in the
 same transaction, so a reader's writes and those of a store opened before a
 newer build migrated are refused there, the same way.
-`TASKS_DB` is the old SQLite cutover input, not a scratch selector. Never run
-`tools/rs-bin.sh tasks` directly against the live board from a branch.
+`TASKS_DB` is the old SQLite cutover input, not a scratch selector. A branch's
+build run by its path (`.target/debug/tasks`, `rs-bin.sh --build`) skips the
+launcher's rule: run it only on a scratch board.
 The crate's tests keep running their own binary; `SF_TASKS_CLI` continues to
 inject that binary into the symphony crate's board clients.
 `tasks callback` registers the session's native channel (`uds:` or `codex:`).
@@ -330,13 +328,16 @@ newline-delimited SDK user envelope; it never reads or sends an authentication
 token and never claims to be the receiving session's child. Native inbound
 controls still apply. `tasks --database NAME ...` is the explicit
 `TASKS_DATABASE` override for scratch runs; it disables repository sweeps.
-`tools/rs-bin.sh` builds each binary once per hash of its sources into
-`sf-cargo/bin/` in the git common dir, for every worktree whose sources are the
-same, and links `.target/bin/NAME` to the build the tree last ran. After a live
-`just tasks` command, the launcher points the calling checkout's tasks link at
-main's build too; the heartbeat hook runs that link, building nothing. Scratch
-commands first look up `rs-bin.sh --where tasks`, then use `--build` only if
-the executable is missing; neither changes that live link. The native `tasks api`
+Cargo replaces `debug/NAME` with a new copy on every build, even one that
+relinked nothing, and macOS assesses each new executable file at its first run,
+for seconds. So `tools/rs-bin.sh` runs `rs-bin/NAME` in the target folder, a
+hard link to that copy renewed only when the copy's modification time or size
+moved (the copy keeps the time of the build it copies): a no-op build runs the
+file the last run ran. `--build` prints that path, `--link` points
+`.target/bin/NAME` at it by a rename (the link the heartbeat hook runs, building
+nothing), and `--where` names Cargo's own copy without building. A
+`.target/bin/NAME` link to Cargo's copy is pointed at `rs-bin/NAME` by the next
+run of that binary; nothing else changes `.target/bin/`. The native `tasks api`
 JSON interface (`src/cli/api.rs`) takes a call on stdin; `tasks api --lines` takes
 one JSON call per line on stdin and answers each on its own line (a line that
 is a list of calls gets a list of answers), the methods being the store's, plus
@@ -503,9 +504,11 @@ toolchain's clippy over a probe crate that reads the same file. `port.rs` starts
 
 `staff` makes one staffing pass (`src/launch/staff.rs`), also called before `reap`.
 Its sole config is `tools/task_staff.json` in the calling checkout, disabled by
-default; its pass lock is in the common `sf-tasks/`. Launch defaults to Codex;
-`--kind claude` selects Claude. The legacy `claude_session` storage column keeps
-Claude ids as before and Codex ids prefixed with `codex:`; restore dispatches on
+default; its pass lock is in the common `sf-tasks/`. A launch, the CLI's and staffing's, starts
+the agent, model and effort `[agents] launch` in the main checkout's `symphony.toml` names
+(`src/launch/defaults.rs`), else Codex on `gpt-6.1-sol` at `xhigh`; `--kind` and `--model` win,
+and the project's model and effort go with its agent only. The legacy `claude_session` storage
+column keeps Claude ids as before and Codex ids prefixed with `codex:`; restore dispatches on
 that prefix, and the agents API strips it from the conversation id.
 
 `tasks sweep` is the worktree sweep (`src/sweep.rs`, its rules in its module

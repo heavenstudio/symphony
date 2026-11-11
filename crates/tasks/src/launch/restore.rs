@@ -114,7 +114,7 @@ fn restore_one(
         session.handle, session.handle
     );
     let (agent, args) = if let Some(id) = session.claude_session.strip_prefix("codex:") {
-        let mut args = codex_args(&session.model, &session.handle, machine);
+        let mut args = codex_args(&session.model, None, &session.handle, machine);
         args.extend(["resume".into(), id.into()]);
         ("codex", args)
     } else {
@@ -122,6 +122,7 @@ fn restore_one(
             "claude",
             claude_args(
                 &session.model,
+                None,
                 &session.handle,
                 &machine.mode,
                 ["--resume", &session.claude_session],

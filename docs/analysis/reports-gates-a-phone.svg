@@ -1,0 +1,81 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="390" height="658" viewBox="0 0 390 658" role="img" aria-labelledby="title desc">
+<title id="title">Option A, typed gates, on a phone</title>
+<desc id="desc">The task page head at phone width, then the Gates section as a short checklist: each gate's name and state on one line, its detail and who and when below.</desc>
+<style>
+:root{--background:#fbfaf7;--foreground:#1d1c1a;--muted-foreground:#6b6862;--border:#e4e0d8;--primary:#2f5d9e;--like:#2e7d4f;--question:#946a00;--decision:#4a3f9e;--resolved:#5f6b73;--live:#2e7d4f;--card:#ffffff;--muted:rgba(127,127,127,.07)}
+@media (prefers-color-scheme:dark){:root{--background:#161513;--foreground:#e8e4dc;--muted-foreground:#a19c93;--border:#2c2a26;--primary:#7fa7e0;--like:#6fc48f;--question:#e0b84c;--decision:#a89ce8;--resolved:#8f9aa3;--live:#6fc48f;--card:#1d1c19;--muted:rgba(255,255,255,.04)}}
+text{font-family:-apple-system,"Segoe UI",Helvetica,Arial,sans-serif;font-size:14px;fill:var(--foreground)}
+.page{fill:var(--background)}
+.card{fill:var(--card);stroke:var(--border)}
+.m{fill:var(--muted-foreground)}
+.a{fill:var(--primary)}
+.b{font-weight:600}
+.s{font-size:13px}
+.xs{font-size:12px}
+.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+.code{fill:var(--muted)}
+.pill rect{fill:var(--c);fill-opacity:.1;stroke:var(--c);stroke-opacity:.35}
+.pill text{fill:var(--c);font-size:12px;font-weight:600;text-anchor:middle}
+.chip rect{fill:var(--card);stroke:var(--border)}
+.chip circle,.dot{fill:var(--c)}
+.chip text{font-size:12px}
+.rule{stroke:var(--border)}
+.eyebrow{font-size:11.5px;font-weight:600;letter-spacing:1px;fill:var(--muted-foreground)}
+.ctl{fill:var(--card);stroke:var(--border)}
+.chev{fill:none;stroke:var(--muted-foreground);stroke-width:1.5}
+.end{text-anchor:end}
+</style>
+<rect class="page" width="390" height="658"/>
+
+<g class="pill" style="--c:var(--decision)"><rect x="16.5" y="10.5" width="164" height="21" rx="10.5"/><text x="98.5" y="25.5">Option A · typed gates</text></g>
+
+<!-- The task head at phone width -->
+<rect class="card" x="16.5" y="40.5" width="357" height="253" rx="14"/>
+<rect class="code" x="32" y="54" width="204" height="18" rx="4"/>
+<text class="m mono" x="38" y="67" style="font-size:11px">tools/verify-stops-when-moved</text>
+<text x="32" y="104" style="font-size:28px;font-weight:700;letter-spacing:-.28px">Verify stops when</text>
+<text x="32" y="138" style="font-size:28px;font-weight:700;letter-spacing:-.28px">its branch moves</text>
+<g class="pill" style="--c:var(--question)"><rect x="32.5" y="150.5" width="60" height="19" rx="9.5"/><text x="62.5" y="164">review</text></g>
+<g class="pill" style="--c:var(--muted-foreground)"><rect x="98.5" y="150.5" width="32" height="19" rx="9.5"/><text x="114.5" y="164">p1</text></g>
+<text x="140" y="165">by owner</text>
+<text x="32" y="195">Priority</text>
+<rect class="ctl" x="90.5" y="177.5" width="58" height="26" rx="6"/><text x="102" y="195">p1</text><path class="chev" d="M130 188l4 4 4-4"/>
+<rect class="ctl" x="158.5" y="178.5" width="104" height="24" rx="12"/><text x="210.5" y="195" style="text-anchor:middle">Cancel task</text>
+<text x="32" y="228">after <tspan class="a">tools/slot-pool-by-tree</tspan></text>
+<g class="chip" style="--c:var(--live)"><rect x="32.5" y="238.5" width="134" height="19" rx="9.5"/><circle cx="44" cy="248" r="3.5"/><text x="52" y="252">executor quiet-wren</text></g>
+<g class="chip" style="--c:var(--live)"><rect x="172.5" y="238.5" width="148" height="19" rx="9.5"/><circle cx="184" cy="248" r="3.5"/><text x="192" y="252">reviewer lucid-heron</text></g>
+<g class="chip" style="--c:var(--live)"><rect x="32.5" y="263.5" width="136" height="19" rx="9.5"/><circle cx="44" cy="273" r="3.5"/><text x="52" y="277">Test running · studio</text></g>
+
+<!-- Gates: a short checklist -->
+<rect class="card" x="16.5" y="306.5" width="357" height="335" rx="14"/>
+<text class="eyebrow" x="32" y="333">GATES</text>
+<text class="m xs end" x="358" y="333">1 missing · 1 waived · 2 met</text>
+
+<line class="rule" x1="32" y1="344.5" x2="358" y2="344.5"/>
+<circle class="dot" style="--c:var(--question)" cx="38" cy="365" r="4.5"/>
+<text class="b" x="50" y="370">certificate</text>
+<g class="pill" style="--c:var(--question)"><rect x="292.5" y="356.5" width="66" height="19" rx="9.5"/><text x="325.5" y="370">missing</text></g>
+<text class="s" x="32" y="390">Merge-tree verify on <tspan class="a">4be91c2</tspan> running, 18 min</text>
+<text class="m xs" x="32" y="408">since main moved at 14:50</text>
+
+<line class="rule" x1="32" y1="416.5" x2="358" y2="416.5"/>
+<circle class="dot" style="--c:var(--resolved)" cx="38" cy="437" r="4.5"/>
+<text class="b" x="50" y="442">dependency</text>
+<g class="pill" style="--c:var(--resolved)"><rect x="292.5" y="428.5" width="66" height="19" rx="9.5"/><text x="325.5" y="442">waived</text></g>
+<text class="s" x="32" y="462"><tspan class="a">tools/slot-pool-by-tree</tspan> shares no code</text>
+<text class="m xs" x="32" y="480">cobalt-otter · 14:12</text>
+
+<line class="rule" x1="32" y1="488.5" x2="358" y2="488.5"/>
+<circle class="dot" style="--c:var(--like)" cx="38" cy="509" r="4.5"/>
+<text class="b" x="50" y="514">nightly</text>
+<g class="pill" style="--c:var(--like)"><rect x="292.5" y="500.5" width="66" height="19" rx="9.5"/><text x="325.5" y="514">met</text></g>
+<text class="s" x="32" y="534">Night of 11-10 green on main <tspan class="a">a71f0d3</tspan></text>
+<text class="m xs" x="32" y="552">nightly · 02:14</text>
+
+<line class="rule" x1="32" y1="560.5" x2="358" y2="560.5"/>
+<circle class="dot" style="--c:var(--like)" cx="38" cy="581" r="4.5"/>
+<text class="b" x="50" y="586">review</text>
+<g class="pill" style="--c:var(--like)"><rect x="292.5" y="572.5" width="66" height="19" rx="9.5"/><text x="325.5" y="586">met</text></g>
+<text class="s" x="32" y="606">Approved in <tspan class="a">round 2 of 2</tspan></text>
+<text class="m xs" x="32" y="624">lucid-heron · 14:05</text>
+</svg>
