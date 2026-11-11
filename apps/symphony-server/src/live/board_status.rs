@@ -17,7 +17,7 @@ impl Hub {
         match connect(&self.root) {
             Ok(store) => Some(store),
             Err(error) => {
-                let now = symphony_board::sweep::trigger::now();
+                let now = self.now();
                 self.health.dispatched(
                     now,
                     Err(&format!("no pass, the board could not be reached: {error}")),

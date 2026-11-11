@@ -260,18 +260,23 @@ async fn the_list_names_every_project_and_why_one_is_not_served() {
 
 #[tokio::test]
 async fn the_list_warns_under_a_project_whose_board_is_unwell_until_it_is_well() {
+    use std::sync::atomic::{AtomicU64, Ordering};
     let machine = Machine::new();
     let starter = &machine.projects.starter;
-    let hub = Arc::new(crate::live::Hub::new(
-        &starter.root,
-        &starter.root.join("build/client"),
-    ));
+    // The hub's clock, as the test moves it.
+    let at = symphony_board::sweep::trigger::now();
+    let clock = Arc::new(AtomicU64::new(at.to_bits()));
+    let mut hub = crate::live::Hub::new(&starter.root, &starter.root.join("build/client"));
+    hub.clock = {
+        let clock = Arc::clone(&clock);
+        Box::new(move || f64::from_bits(clock.load(Ordering::SeqCst)))
+    };
+    let hub = Arc::new(hub);
     assert!(starter.api.set(hub.clone()).is_ok());
     let warning = "<span class=\"health\" role=\"status\">⚠ The task board is unwell: its \
-                   callback dispatch is failing, so no agent hears from it. `just tasks status` \
-                   says why.</span>";
+                   callback dispatch is failing, so agents may not hear from it. `just tasks \
+                   status` says why.</span>";
 
-    let at = symphony_board::sweep::trigger::now();
     hub.health.dispatched(at, Err("the board did not answer"));
     let list = text(machine.get("/", &[]).await).await;
     let alpha = list
@@ -286,6 +291,15 @@ async fn the_list_warns_under_a_project_whose_board_is_unwell_until_it_is_well()
     );
 
     hub.health.dispatched(at + 1.0, Ok(()));
+    clock.store((at + 1.0).to_bits(), Ordering::SeqCst);
+    let list = text(machine.get("/", &[]).await).await;
+    assert!(
+        list.contains(warning),
+        "one good pass does not clear it: {list}"
+    );
+    let later = at + 1.0 + symphony_board::board_health::CLEARS_AFTER;
+    hub.health.dispatched(later, Ok(()));
+    clock.store(later.to_bits(), Ordering::SeqCst);
     let list = text(machine.get("/", &[]).await).await;
     assert!(!list.contains("class=\"health\""), "{list}");
 }

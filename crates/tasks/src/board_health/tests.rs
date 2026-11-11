@@ -43,6 +43,7 @@ fn passes_are_counted_and_warned_of_while_the_newest_failed_within_ten_minutes()
             failed_at: Some(T0 + 2.0),
             error: Some(SLOW.into()),
             failing_since: Some(T0 + 1.0),
+            ok_since: None,
         }
     );
     assert!(report.failing(T0 + 3.0));
@@ -60,20 +61,163 @@ fn passes_are_counted_and_warned_of_while_the_newest_failed_within_ten_minutes()
 
     passes.record(T0 + 4.0, Ok(()));
     let report = passes.report(T0 + 5.0);
-    assert!(!report.failing(T0 + 5.0), "a good pass clears the warning");
-    assert_eq!(report.warning("callback dispatch", T0 + 5.0), None);
+    assert!(report.failing(T0 + 5.0), "one good pass does not clear it");
     assert_eq!(
-        (report.ok, report.failed, report.failing_since),
+        report.warning("callback dispatch", T0 + 5.0),
+        Some(format!(
+            "callback dispatch failing for 4 s (2 of 4 passes in the last hour failed), ok again \
+             for 1 s: {SLOW}"
+        ))
+    );
+    assert!(report.failing(T0 + 4.0 + CLEARS_AFTER - 0.5));
+    assert!(
+        !report.failing(T0 + 4.0 + CLEARS_AFTER),
+        "a minute of good passes clears it, with no pass at the minute"
+    );
+    let cleared = passes.report(T0 + 4.0 + CLEARS_AFTER);
+    assert_eq!(cleared.warning("callback dispatch", T0 + 64.0), None);
+    assert_eq!(
+        (cleared.ok, cleared.failed, cleared.failing_since),
         (2, 2, None),
         "the hour still counts the failures"
     );
-    assert_eq!(report.error.as_deref(), Some(SLOW));
-    passes.record(T0 + 6.0, Err("again"));
+    assert_eq!(cleared.error.as_deref(), Some(SLOW));
+    passes.record(T0 + 70.0, Err("again"));
     assert_eq!(
-        passes.report(T0 + 6.0).failing_since,
-        Some(T0 + 6.0),
-        "a new run of failures starts after the good pass"
+        passes.report(T0 + 70.0).failing_since,
+        Some(T0 + 70.0),
+        "a failure after a minute of good passes starts a new spell"
     );
+}
+
+#[test]
+fn a_board_failing_every_other_tick_is_warned_of_throughout_until_a_minute_of_good_passes() {
+    // The clock is the test's: each pass names the time it ended, a tick a second.
+    let recorder = Recorder::default();
+    let mut turned = Vec::new();
+    let mut was = [false, false];
+    let mut tick = |at: f64, outcome: Result<(), &str>| {
+        recorder.dispatched(at, outcome);
+        let failing = recorder.failing(at);
+        if failing != was {
+            turned.push((at, failing[0]));
+            was = failing;
+        }
+    };
+    for second in 0..180 {
+        let outcome = if second % 2 == 0 { Err(SLOW) } else { Ok(()) };
+        tick(T0 + f64::from(second), outcome);
+    }
+    for second in 180..=200 {
+        tick(T0 + f64::from(second), Ok(()));
+    }
+    assert_eq!(
+        recorder.report(T0 + 200.0).warnings,
+        [format!(
+            "callback dispatch failing for 3 min (90 of 201 passes in the last hour failed), ok \
+             again for 21 s: {SLOW}"
+        )],
+        "the spell is said from its first failure"
+    );
+    for second in 201..300 {
+        tick(T0 + f64::from(second), Ok(()));
+    }
+    assert_eq!(
+        turned,
+        [(T0, true), (T0 + 179.0 + CLEARS_AFTER, false)],
+        "on at the first failure, off a minute after the good passes began at 179 s, never between"
+    );
+}
+
+#[test]
+fn an_error_is_kept_on_one_line_and_a_long_one_cut_to_its_first_and_last_characters() {
+    assert_eq!(
+        shortened("  the board did not answer\n"),
+        "the board did not answer"
+    );
+    assert_eq!(
+        shortened("exit status: 3: Compiling tasks\r\nerror: no answer"),
+        "exit status: 3: Compiling tasks ⏎ error: no answer"
+    );
+    let line = |n: usize| format!("é{n:04} build output line\n");
+    let stderr: String = (0..400).map(line).collect::<String>() + "error: the board did not answer";
+    let error = format!("exit status: 3: {stderr}");
+    let kept = shortened(&error);
+    let whole = error.trim().replace('\n', " ⏎ ");
+    let left = whole.chars().count() - ERROR_CHARS;
+    let marker = format!(" … [{left} characters left out] … ");
+    assert_eq!(kept.chars().count(), ERROR_CHARS + marker.chars().count());
+    assert!(!kept.contains('\n'), "{kept}");
+    let (head, end) = kept.split_once(&marker).unwrap();
+    assert_eq!(
+        (head.chars().count(), end.chars().count()),
+        (ERROR_HEAD, ERROR_CHARS - ERROR_HEAD)
+    );
+    assert!(
+        head.starts_with("exit status: 3: é0000 build output line ⏎ "),
+        "{head}"
+    );
+    assert!(end.ends_with("⏎ error: the board did not answer"), "{end}");
+    assert!(whole.starts_with(head) && whole.ends_with(end));
+
+    // The record keeps it so, for the status line and the pages alike.
+    let mut passes = Passes::default();
+    passes.record(T0, Err(&error));
+    assert_eq!(passes.report(T0).error, Some(kept));
+}
+
+#[test]
+fn two_threads_recording_at_once_write_whole_records_and_the_newest_lands_last() {
+    use std::sync::atomic::AtomicBool;
+    const PASSES: u32 = 400;
+    let dir = scratch("threads");
+    let path = dir.join(FILE);
+    let recorder = Arc::new(Recorder::writing(path.clone()));
+    let done = Arc::new(AtomicBool::new(false));
+    let reader = {
+        let (path, done) = (path.clone(), Arc::clone(&done));
+        std::thread::spawn(move || {
+            let mut whole = 0_u64;
+            while !done.load(Ordering::SeqCst) {
+                match Report::read(&path) {
+                    Ok(Some(_)) => whole += 1,
+                    Ok(None) => {}
+                    Err(torn) => panic!("a reader met a record not whole: {torn}"),
+                }
+            }
+            whole
+        })
+    };
+    // The clock's thread and the sweep's: a sweep writes the record every time.
+    let writers: Vec<_> = [0.0, 0.5]
+        .into_iter()
+        .map(|offset| {
+            let recorder = Arc::clone(&recorder);
+            std::thread::spawn(move || {
+                for pass in 0..PASSES {
+                    recorder.swept(T0 + f64::from(pass) + offset, Ok(()));
+                }
+            })
+        })
+        .collect();
+    for writer in writers {
+        writer.join().unwrap();
+    }
+    done.store(true, Ordering::SeqCst);
+    let whole = reader.join().unwrap();
+    assert!(whole > 0, "the reader read the record while it was written");
+    assert_eq!(recorder.writer().unwritten, None, "no write failed");
+    assert_eq!(
+        Report::read(&path).unwrap().unwrap().sweep.ok,
+        u64::from(2 * PASSES),
+        "the record that landed last holds every pass"
+    );
+    let names: Vec<_> = fs::read_dir(&dir)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().into_string().unwrap())
+        .collect();
+    assert_eq!(names, [FILE], "no partial file stays");
+    fs::remove_dir_all(&dir).unwrap();
 }
 
 #[test]
@@ -313,11 +457,24 @@ fn a_report_warns_of_a_failing_dispatch_and_says_it_line_by_line() {
     assert_eq!(recorder.failing(T0 + 62.0), [true, false]);
     recorder.dispatched(T0 + 63.0, Ok(()));
     assert_eq!(
-        recorder.report(T0 + 63.0).warnings,
-        Vec::<String>::new(),
-        "a good pass clears it"
+        recorder.failing(T0 + 63.0),
+        [true, false],
+        "one good pass does not clear it"
     );
-    assert_eq!(recorder.failing(T0 + 63.0), [false, false]);
+    assert_eq!(
+        recorder.report(T0 + 64.0).warnings,
+        [format!(
+            "callback dispatch failing for 63 s (2 of 4 passes in the last hour failed), ok again \
+             for 1 s: {SLOW}"
+        )]
+    );
+    recorder.dispatched(T0 + 63.0 + CLEARS_AFTER, Ok(()));
+    assert_eq!(
+        recorder.report(T0 + 63.0 + CLEARS_AFTER).warnings,
+        Vec::<String>::new(),
+        "a minute of good passes clears it"
+    );
+    assert_eq!(recorder.failing(T0 + 63.0 + CLEARS_AFTER), [false, false]);
 }
 
 #[test]
@@ -417,21 +574,35 @@ fn a_writing_recorder_writes_when_due_or_when_failing_turns() {
     recorder.dispatched(T0 + 12.0, Err(SLOW));
     assert_eq!(taken(), Some(T0 + 12.0), "due ten seconds after the last");
     recorder.dispatched(T0 + 13.0, Ok(()));
+    assert_eq!(
+        written_at(),
+        None,
+        "one good pass: still failing, and not due"
+    );
+    recorder.dispatched(T0 + 70.0, Ok(()));
+    let due = Report::read(&path).unwrap().unwrap();
+    assert_eq!(
+        (due.at, due.warnings.len()),
+        (T0 + 70.0, 1),
+        "due, and failing until a minute of good passes"
+    );
+    let _ = fs::remove_file(&path);
+    recorder.dispatched(T0 + 13.0 + CLEARS_AFTER, Ok(()));
     let cleared = Report::read(&path).unwrap().unwrap();
     assert_eq!(
         (cleared.at, cleared.warnings),
-        (T0 + 13.0, Vec::new()),
-        "the dispatch stopped failing"
+        (T0 + 13.0 + CLEARS_AFTER, Vec::new()),
+        "the dispatch stopped failing: written though not due"
     );
     let _ = fs::remove_file(&path);
-    recorder.swept(T0 + 14.0, Ok(()));
-    assert_eq!(taken(), Some(T0 + 14.0), "a sweep always writes it");
+    recorder.swept(T0 + 74.0, Ok(()));
+    assert_eq!(taken(), Some(T0 + 74.0), "a sweep always writes it");
 
     let unwritable = Recorder::writing(dir.join(FILE).join("under-a-file"));
     fs::write(dir.join(FILE), "a file, not a folder").unwrap();
     unwritable.dispatched(T0, Ok(()));
     assert!(
-        unwritable.held().unwritten.is_some(),
+        unwritable.writer().unwritten.is_some(),
         "a write that failed is kept to be said once"
     );
     fs::remove_dir_all(&dir).unwrap();

@@ -336,48 +336,80 @@ fn each_sweep_is_recorded_in_the_boards_health_failed_with_its_error_or_ok() {
     let mut fixture = SweepFixture::new(
         "if [ ! -f failed ]; then touch failed; echo 'the board did not answer' >&2; exit 3; fi",
     );
-    let hub = Arc::new(crate::live::Hub::new(
-        &fixture.root,
-        &fixture.root.join("client"),
-    ));
-    assert!(fixture.shared.api.set(hub.clone()).is_ok());
-    let notices = hub.server_notice.subscribe();
+    let (hub, clock) = clocked_hub(&fixture);
+    let at = clock.now();
     fixture.start(maintenance_worker(
         fixture.shared.clone(),
         Duration::ZERO,
         Duration::from_secs(3),
         Stamp::now,
     ));
-    let began = Instant::now();
-    let report = loop {
-        let report = hub.health.report(symphony_board::sweep::trigger::now());
-        if report.sweep.ok > 0 {
-            break report;
-        }
-        assert!(
-            began.elapsed() < Duration::from_secs(15),
-            "no sweep was recorded ok: {report:?}"
-        );
-        std::thread::sleep(Duration::from_millis(10));
-    };
+    let report = waited("no sweep was recorded ok", || {
+        Some(hub.health.report(at)).filter(|report| report.sweep.ok > 0)
+    });
     assert_eq!(report.sweep.failed, 1, "{report:?}");
     assert_eq!(
         report.sweep.error.as_deref(),
         Some("exit status: 3: the board did not answer")
     );
-    assert!(
-        report.warnings.is_empty(),
-        "the good sweep after it cleared the warning: {:?}",
+    assert_eq!(
+        report.warnings.len(),
+        1,
+        "a good sweep alone does not clear it: {:?}",
         report.warnings
     );
-    // The pages are told only when the notice changes, and its first change from empty says
-    // something: a changed notice that is empty again was told the failure and then its end.
-    while !(notices.has_changed().unwrap() && notices.borrow().is_empty()) {
-        assert!(
-            began.elapsed() < Duration::from_secs(15),
-            "the pages were not told the failed sweep and then the good one: {:?}",
-            *notices.borrow()
-        );
+    // The failed sweep told the pages before the good one was recorded.
+    assert_eq!(*hub.server_notice.borrow(), SWEEP_FAILING);
+
+    // A minute on the hub's clock, the next good sweep clears it.
+    clock.set(at + symphony_board::board_health::CLEARS_AFTER);
+    waited("the pages were not told the sweep is well", || {
+        hub.server_notice.borrow().is_empty().then_some(())
+    });
+    assert_eq!(
+        hub.health.report(clock.now()).warnings,
+        Vec::<String>::new()
+    );
+}
+
+const SWEEP_FAILING: &str =
+    "The task board is unwell: its idle sweep is failing. `just tasks status` says why.";
+
+/// The hub's clock, as the test moves it.
+struct Clock(Arc<std::sync::atomic::AtomicU64>);
+
+impl Clock {
+    fn now(&self) -> f64 {
+        f64::from_bits(self.0.load(Ordering::SeqCst))
+    }
+
+    fn set(&self, at: f64) {
+        self.0.store(at.to_bits(), Ordering::SeqCst);
+    }
+}
+
+/// A hub for `fixture`'s server, its clock standing at the wall clock's time until the test
+/// moves it.
+fn clocked_hub(fixture: &SweepFixture) -> (Arc<crate::live::Hub>, Clock) {
+    let time = Arc::new(std::sync::atomic::AtomicU64::new(
+        symphony_board::sweep::trigger::now().to_bits(),
+    ));
+    let mut hub = crate::live::Hub::new(&fixture.root, &fixture.root.join("client"));
+    let read = Clock(Arc::clone(&time));
+    hub.clock = Box::new(move || read.now());
+    let hub = Arc::new(hub);
+    assert!(fixture.shared.api.set(hub.clone()).is_ok());
+    (hub, Clock(time))
+}
+
+/// What `seen` sees first, within fifteen seconds; `waiting` says what did not come.
+fn waited<T>(waiting: &str, mut seen: impl FnMut() -> Option<T>) -> T {
+    let began = Instant::now();
+    loop {
+        if let Some(seen) = seen() {
+            return seen;
+        }
+        assert!(began.elapsed() < Duration::from_secs(15), "{waiting}");
         std::thread::sleep(Duration::from_millis(10));
     }
 }
@@ -385,28 +417,57 @@ fn each_sweep_is_recorded_in_the_boards_health_failed_with_its_error_or_ok() {
 #[test]
 fn a_failing_sweep_is_said_on_every_page_of_the_project() {
     let mut fixture = SweepFixture::new("echo 'the board did not answer' >&2; exit 3");
-    let hub = Arc::new(crate::live::Hub::new(
-        &fixture.root,
-        &fixture.root.join("client"),
-    ));
-    assert!(fixture.shared.api.set(hub.clone()).is_ok());
+    let (hub, _) = clocked_hub(&fixture);
     fixture.start(maintenance_worker(
         fixture.shared.clone(),
         Duration::ZERO,
         Duration::from_secs(3),
         Stamp::now,
     ));
-    let began = Instant::now();
-    while hub.server_notice.borrow().is_empty() {
-        assert!(
-            began.elapsed() < Duration::from_secs(15),
-            "no failed sweep was said"
-        );
-        std::thread::sleep(Duration::from_millis(10));
-    }
+    waited("no failed sweep was said", || {
+        (!hub.server_notice.borrow().is_empty()).then_some(())
+    });
+    assert_eq!(*hub.server_notice.borrow(), SWEEP_FAILING);
+}
+
+#[test]
+fn a_failed_sweeps_long_error_is_kept_on_one_short_line_in_the_record() {
+    // `tasks reap` through `tools/rs-bin.sh`: build output on stderr, then its error.
+    let mut fixture = SweepFixture::new(
+        "i=0; while [ $i -lt 300 ]; do echo \"Compiling crate $i\" >&2; i=$((i+1)); done\n\
+         echo 'error: the board did not answer' >&2; exit 3",
+    );
+    let (hub, clock) = clocked_hub(&fixture);
+    fixture.start(maintenance_worker(
+        fixture.shared.clone(),
+        Duration::ZERO,
+        Duration::from_secs(3),
+        Stamp::now,
+    ));
+    let report = waited("no failed sweep was recorded", || {
+        Some(hub.health.report(clock.now())).filter(|report| report.sweep.failed > 0)
+    });
+    let stderr: String = (0..300)
+        .map(|i| format!("Compiling crate {i}\n"))
+        .collect::<String>()
+        + "error: the board did not answer";
+    let whole = format!("exit status: 3: {stderr}");
+    let error = report.sweep.error.clone().unwrap();
     assert_eq!(
-        *hub.server_notice.borrow(),
-        "The task board is unwell: its idle sweep is failing. `just tasks status` says why."
+        error,
+        symphony_board::board_health::shortened(&whole),
+        "cut to its first and last characters"
+    );
+    assert!(
+        error.starts_with("exit status: 3: Compiling crate 0 ⏎ Compiling crate 1 ⏎ ")
+            && error.ends_with("Compiling crate 299 ⏎ error: the board did not answer")
+            && error.chars().count() < whole.chars().count() / 4,
+        "{error}"
+    );
+    let lines = report.lines(clock.now(), &report.warnings);
+    assert!(
+        lines.iter().all(|line| !line.contains('\n')),
+        "the status prints it on one line: {lines:?}"
     );
 }
 

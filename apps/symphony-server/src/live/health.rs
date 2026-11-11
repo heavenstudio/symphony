@@ -27,6 +27,11 @@ impl Notices {
 }
 
 impl Hub {
+    /// The time on the hub's clock, in seconds since the epoch.
+    pub(crate) fn now(&self) -> f64 {
+        (self.clock)()
+    }
+
     /// Tell every page, on the server's notice, whether the board's dispatch or sweep is failing
     /// at `now`, when that changes.
     pub(crate) fn tell_health(&self, now: f64) {
@@ -46,20 +51,20 @@ impl Hub {
         self.server_notice.send_replace(notices.said());
     }
 
-    /// What the project picker says of this project's board at `now`: nothing while it is well.
-    pub(crate) fn health_notice(&self, now: f64) -> String {
-        notice(self.health.failing(now))
+    /// What the project picker says of this project's board now: nothing while it is well.
+    pub(crate) fn health_notice(&self) -> String {
+        notice(self.health.failing(self.now()))
     }
 }
 
 /// What a page says of a board whose dispatch, sweep, or both, are failing; nothing while
-/// neither is.
+/// neither is. A board failing every other tick still fails some agents' callbacks.
 pub(crate) fn notice([dispatch, sweep]: [bool; 2]) -> String {
     let failing = match (dispatch, sweep) {
         (true, true) => {
-            "its callback dispatch and its idle sweep are failing, so no agent hears from it"
+            "its callback dispatch and its idle sweep are failing, so agents may not hear from it"
         }
-        (true, false) => "its callback dispatch is failing, so no agent hears from it",
+        (true, false) => "its callback dispatch is failing, so agents may not hear from it",
         (false, true) => "its idle sweep is failing",
         (false, false) => return String::new(),
     };

@@ -13,12 +13,20 @@ use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
 use std::panic::Location;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, LazyLock, Mutex, PoisonError};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, LazyLock, Mutex, MutexGuard, PoisonError};
 
 /// How far back the counters reach, in seconds: the last sixty minutes, this one included.
 pub const WINDOW: f64 = 3600.0;
 /// How recent a failed pass must be to be warned of, in seconds.
 pub const RECENT: f64 = 600.0;
+/// How long, in seconds, a kind of pass must have been ok since its newest failure before its
+/// warning clears: a board failing every other tick is warned of throughout, not on and off.
+pub const CLEARS_AFTER: f64 = 60.0;
+/// The most characters of an error the record keeps: its first [`ERROR_HEAD`] and its last ones.
+pub const ERROR_CHARS: usize = 600;
+/// How many of the characters kept of a longer error are its first.
+const ERROR_HEAD: usize = 200;
 /// A request that took this long, in milliseconds, is slow.
 pub const SLOW_MS: f64 = 1000.0;
 /// A record older than this, in seconds, says its server stopped recording: the one server writes
@@ -62,6 +70,25 @@ pub fn ago(seconds: f64) -> String {
     }
 }
 
+/// `error` as the record keeps it, on one line: each line break said as ` ⏎ `, and an error longer
+/// than [`ERROR_CHARS`] cut to its first and last characters, saying how many it leaves out. A
+/// failed sweep's error carries the whole stderr of `tasks reap`, build output included; the
+/// server's log keeps it whole.
+pub fn shortened(error: &str) -> String {
+    let error = error.trim().replace("\r\n", "\n").replace('\n', " ⏎ ");
+    let count = error.chars().count();
+    if count <= ERROR_CHARS {
+        return error;
+    }
+    let tail = ERROR_CHARS - ERROR_HEAD;
+    let head: String = error.chars().take(ERROR_HEAD).collect();
+    let end: String = error.chars().skip(count - tail).collect();
+    format!(
+        "{head} … [{} characters left out] … {end}",
+        count - ERROR_CHARS
+    )
+}
+
 /// One kind of pass over the hour: each minute's ok and failed passes, and the newest pass and
 /// failure.
 #[derive(Debug, Default, Clone)]
@@ -70,10 +97,14 @@ pub struct Passes {
     minutes: VecDeque<(i64, u64, u64)>,
     /// When the newest pass ended, and whether it was ok.
     last: Option<(f64, bool)>,
-    /// When the newest failure ended, and why it failed.
+    /// When the newest failure ended, and why it failed ([`shortened`]).
     failure: Option<(f64, String)>,
-    /// When the first of the failures since the last ok pass ended.
+    /// When the first failure of this spell ended: the spell ends once the passes have been ok for
+    /// [`CLEARS_AFTER`].
     failing_since: Option<f64>,
+    /// When the first of the ok passes since the newest failure ended; none while the newest pass
+    /// failed.
+    ok_since: Option<f64>,
 }
 
 impl Passes {
@@ -94,15 +125,20 @@ impl Passes {
         let Some(bucket) = self.minutes.back_mut() else {
             return;
         };
+        // Passes ok for long enough ended the spell, whatever this one is.
+        if self.ok_since.is_some_and(|ok| at - ok >= CLEARS_AFTER) {
+            self.failing_since = None;
+        }
         match outcome {
             Ok(()) => {
                 bucket.1 += 1;
-                self.failing_since = None;
+                self.ok_since.get_or_insert(at);
             }
             Err(why) => {
                 bucket.2 += 1;
-                self.failure = Some((at, why.to_string()));
+                self.failure = Some((at, shortened(why)));
                 self.failing_since.get_or_insert(at);
+                self.ok_since = None;
             }
         }
         self.last = Some((at, outcome.is_ok()));
@@ -126,13 +162,18 @@ impl Passes {
             last_failed: self.last.is_some_and(|(_, ok)| !ok),
             failed_at: failure.map(|(at, _)| *at),
             error: failure.map(|(_, why)| why.clone()),
-            failing_since: self.failing_since,
+            // The spell is over once the passes have been ok long enough, recorded or not.
+            failing_since: self
+                .failing_since
+                .filter(|_| self.ok_since.is_none_or(|ok| now - ok < CLEARS_AFTER)),
+            ok_since: self.ok_since,
         }
     }
 }
 
 /// One kind of pass, as the window has it.
 #[derive(Debug, Default, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct PassReport {
     /// Passes that were ok in the window.
     pub ok: u64,
@@ -146,14 +187,26 @@ pub struct PassReport {
     pub failed_at: Option<f64>,
     /// Why it failed.
     pub error: Option<String>,
-    /// When the first of the failures with no ok pass since ended: how long it has been failing.
+    /// When the first failure of this spell ended: how long it has been failing. None once the
+    /// passes have been ok for [`CLEARS_AFTER`].
     pub failing_since: Option<f64>,
+    /// When the first of the ok passes since the newest failure ended; none while the newest pass
+    /// failed.
+    pub ok_since: Option<f64>,
 }
 
 impl PassReport {
-    /// Whether the newest pass failed, within [`RECENT`] of `now`: a good pass clears it.
+    /// Whether it is failing at `now`: from a failed pass until the passes have been ok for
+    /// [`CLEARS_AFTER`], so a board failing every other tick is failing throughout. A newest pass
+    /// that failed more than [`RECENT`] before `now` is warned of no more.
     pub fn failing(&self, now: f64) -> bool {
-        self.last_failed && self.last_at.is_some_and(|at| now - at <= RECENT)
+        let Some(last_at) = self.last_at else {
+            return false;
+        };
+        if self.last_failed {
+            return now - last_at <= RECENT;
+        }
+        self.failing_since.is_some() && self.ok_since.is_some_and(|ok| now - ok < CLEARS_AFTER)
     }
 
     /// `what` failing at `now`, said with its counts and the newest error; none while it is not.
@@ -164,9 +217,13 @@ impl PassReport {
         let since = self
             .failing_since
             .map_or_else(String::new, |at| format!(" for {}", ago(now - at)));
+        let recovering = match self.ok_since {
+            Some(ok) if !self.last_failed => format!(", ok again for {}", ago(now - ok)),
+            _ => String::new(),
+        };
         let error = self.error.as_deref().unwrap_or("no error was said");
         Some(format!(
-            "{what} failing{since} ({} of {} passes in the last hour failed): {error}",
+            "{what} failing{since} ({} of {} passes in the last hour failed){recovering}: {error}",
             self.failed,
             self.ok + self.failed
         ))
@@ -470,15 +527,22 @@ impl Report {
         }
     }
 
-    /// Write it to `path` whole: to a file of this process's beside it, then renamed over it, so a
-    /// reader never meets half of it.
+    /// Write it to `path` whole: to a file of this write's own beside it, then renamed over it, so
+    /// a reader never meets half of it, and no other write, of this process or another, writes or
+    /// renames that file meanwhile. Which of two writes at once lands last is the callers' to
+    /// order ([`Recorder`] writes one at a time).
     pub fn write(&self, path: &Path) -> Result<(), String> {
+        static WRITES: AtomicU64 = AtomicU64::new(0);
         let folder = path.parent().unwrap_or_else(|| Path::new("."));
         std::fs::create_dir_all(folder).map_err(|e| format!("{}: {e}", folder.display()))?;
         let name = path
             .file_name()
             .map_or_else(|| FILE.into(), |name| name.to_string_lossy().into_owned());
-        let partial = folder.join(format!(".{name}.{}", std::process::id()));
+        let partial = folder.join(format!(
+            ".{name}.{}.{}",
+            std::process::id(),
+            WRITES.fetch_add(1, Ordering::Relaxed)
+        ));
         let text = serde_json::to_string_pretty(self).map_err(|e| e.to_string())?;
         std::fs::write(&partial, text + "\n")
             .and_then(|()| std::fs::rename(&partial, path))
@@ -512,14 +576,27 @@ pub fn file(env: &Env) -> Result<PathBuf, String> {
 
 /// A server's record of one board: its dispatch passes and sweeps, the log of the board it reads
 /// now, and the file it writes all of it to, if it writes one.
+///
+/// The server records from two threads, its clock's and its sweep's. Each holds the write lock
+/// from its record to the file's rename, so the file is written one report at a time and each
+/// report holds every pass recorded before it: the last to land is never older than another.
+/// Reading the record takes only the record's own lock, held for no file.
 #[derive(Debug, Default)]
-pub struct Recorder(Mutex<Recording>);
+pub struct Recorder {
+    recording: Mutex<Recording>,
+    /// Taken before `recording`, never while it is held.
+    persisting: Mutex<Persisting>,
+}
 
 #[derive(Debug, Default)]
 struct Recording {
     dispatch: Passes,
     sweep: Passes,
     queries: Option<Arc<QueryLog>>,
+}
+
+#[derive(Debug, Default)]
+struct Persisting {
     file: Option<PathBuf>,
     /// When the file was last written, and whether the dispatch and the sweep were failing then.
     written: Option<(f64, [bool; 2])>,
@@ -530,19 +607,31 @@ struct Recording {
 impl Recorder {
     /// A recorder that writes its report to `file` too ([`Recorder::persist`]).
     pub fn writing(file: PathBuf) -> Recorder {
-        Recorder(Mutex::new(Recording {
-            file: Some(file),
-            ..Recording::default()
-        }))
+        Recorder {
+            persisting: Mutex::new(Persisting {
+                file: Some(file),
+                ..Persisting::default()
+            }),
+            ..Recorder::default()
+        }
     }
 
-    fn held(&self) -> std::sync::MutexGuard<'_, Recording> {
-        self.0.lock().unwrap_or_else(PoisonError::into_inner)
+    fn held(&self) -> MutexGuard<'_, Recording> {
+        self.recording
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+    }
+
+    fn writer(&self) -> MutexGuard<'_, Persisting> {
+        // A panic while writing leaves at worst a partial file of its own beside the record.
+        self.persisting
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
     }
 
     /// The file it writes, if it writes one.
     pub fn file(&self) -> Option<PathBuf> {
-        self.held().file.clone()
+        self.writer().file.clone()
     }
 
     /// The board it reads now: its requests are the report's.
@@ -552,14 +641,16 @@ impl Recorder {
 
     /// A dispatch pass that ended at `at`, then the file written if it is due.
     pub fn dispatched(&self, at: f64, outcome: Result<(), &str>) {
+        let mut writer = self.writer();
         self.held().dispatch.record(at, outcome);
-        self.persist(at, false);
+        self.persist_held(&mut writer, at, false);
     }
 
     /// An idle sweep that ended at `at`, then the file written.
     pub fn swept(&self, at: f64, outcome: Result<(), &str>) {
+        let mut writer = self.writer();
         self.held().sweep.record(at, outcome);
-        self.persist(at, true);
+        self.persist_held(&mut writer, at, true);
     }
 
     /// Whether the dispatch, then the sweep, is failing at `now` ([`PassReport::failing`]).
@@ -598,27 +689,31 @@ impl Recorder {
     /// or stopped failing since. What goes wrong is said on stderr, once for each change of what it
     /// is.
     pub fn persist(&self, now: f64, always: bool) {
-        let Some(file) = self.file() else {
+        let mut writer = self.writer();
+        self.persist_held(&mut writer, now, always);
+    }
+
+    /// [`Recorder::persist`], its write lock held from the due check to the rename.
+    fn persist_held(&self, writer: &mut Persisting, now: f64, always: bool) {
+        let Some(file) = writer.file.clone() else {
             return;
         };
         let failing = self.failing(now);
         let due = always
-            || self
-                .held()
+            || writer
                 .written
                 .is_none_or(|(at, was)| now - at >= PERSIST_EVERY || now < at || was != failing);
         if !due {
             return;
         }
         let unwritten = self.report(now).write(&file).err();
-        let mut held = self.held();
         if let Some(why) = &unwritten
-            && held.unwritten.as_ref() != Some(why)
+            && writer.unwritten.as_ref() != Some(why)
         {
             eprintln!("· board health record: {why}");
         }
-        held.unwritten = unwritten;
-        held.written = Some((now, failing));
+        writer.unwritten = unwritten;
+        writer.written = Some((now, failing));
     }
 }
 

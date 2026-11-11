@@ -1,5 +1,6 @@
 //! The board's health as the hub records it: a board tick whose dispatch fails warns of it, on the
-//! pages' server notice too, a good pass clears it, a tick that cannot reach the board is a failed
+//! pages' server notice too, a minute of good passes clears it, with no flicker on a board failing
+//! every other tick, a tick that cannot reach the board is a failed
 //! pass, the one server's record says the same, and `/api/health` answers it from the hub's memory,
 //! with no board read.
 
@@ -16,7 +17,7 @@ use std::net::{Shutdown, TcpListener, TcpStream};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
-use symphony_board::board_health::{Recorder, Report};
+use symphony_board::board_health::{CLEARS_AFTER, RECENT, Recorder, Report};
 use symphony_board::rpc::Client;
 use symphony_board::sweep::trigger::now;
 
@@ -80,24 +81,45 @@ fn through(relay: &Relay, fixture: &Fixture) -> symphony_board::Store {
     symphony_board::Store::with(client, Box::new(|| NOW), Box::new(|_| false), HOST).unwrap()
 }
 
-fn hub(root: &Path, file: &Path) -> Hub {
+/// The hub's clock, as the test moves it.
+#[derive(Clone)]
+struct Clock(Arc<Mutex<f64>>);
+
+impl Clock {
+    fn at(time: f64) -> Clock {
+        Clock(Arc::new(Mutex::new(time)))
+    }
+
+    fn now(&self) -> f64 {
+        *self.0.lock().unwrap()
+    }
+
+    fn pass(&self, seconds: f64) {
+        *self.0.lock().unwrap() += seconds;
+    }
+}
+
+fn hub(root: &Path, file: &Path, clock: &Clock) -> Hub {
     let mut hub = Hub::new(root, &root.join("build/client"));
     hub.health = Recorder::writing(file.to_path_buf());
+    let clock = clock.clone();
+    hub.clock = Box::new(move || clock.now());
     hub
 }
 
 #[test]
-fn a_failed_dispatch_pass_warns_until_a_good_pass_and_the_record_says_the_same() {
+fn a_failed_dispatch_pass_warns_until_a_minute_of_good_passes_and_the_record_says_the_same() {
     let tree = Tree::new();
     let root = repository(&tree);
     let file = tree.path("sf-tasks/health.json");
     let fixture = Fixture::new(Seed::default().task("tools/clock", "ready"));
     let relay = Relay::to(fixture.store.client().addr());
     let store = through(&relay, &fixture);
-    let hub = hub(&root, &file);
+    let clock = Clock::at(now());
+    let hub = hub(&root, &file, &clock);
 
     hub.board_read(&store).unwrap();
-    let ok = hub.health.report(now());
+    let ok = hub.health.report(clock.now());
     assert_eq!(
         (ok.dispatch.ok, ok.dispatch.failed, ok.warnings.len()),
         (1, 0, 0)
@@ -105,14 +127,15 @@ fn a_failed_dispatch_pass_warns_until_a_good_pass_and_the_record_says_the_same()
     assert!(ok.queries.count > 0, "the tick's requests are counted");
     assert_eq!(Report::read(&file).unwrap().unwrap().dispatch.ok, 1);
     assert_eq!(*hub.server_notice.borrow(), "", "a well board: no notice");
-    assert_eq!(hub.health_notice(now()), "");
+    assert_eq!(hub.health_notice(), "");
 
+    clock.pass(1.0);
     relay.cut();
     assert!(
         hub.board_read(&store).is_err(),
         "a board that cannot be reached fails the tick"
     );
-    let failed = hub.health.report(now());
+    let failed = hub.health.report(clock.now());
     assert_eq!((failed.dispatch.ok, failed.dispatch.failed), (1, 1));
     assert_eq!(failed.warnings.len(), 1, "{:?}", failed.warnings);
     let error = failed.dispatch.error.clone().unwrap();
@@ -138,32 +161,48 @@ fn a_failed_dispatch_pass_warns_until_a_good_pass_and_the_record_says_the_same()
     );
     // Every page of the project hears it on the server's notice, and the picker says it too.
     assert_eq!(*hub.server_notice.borrow(), DISPATCH_FAILING);
-    assert_eq!(hub.health_notice(now()), DISPATCH_FAILING);
+    assert_eq!(hub.health_notice(), DISPATCH_FAILING);
 
+    clock.pass(1.0);
     relay.mend();
     hub.board_read(&store).unwrap();
-    let cleared = hub.health.report(now());
+    let recovering = hub.health.report(clock.now());
+    assert_eq!((recovering.dispatch.ok, recovering.dispatch.failed), (2, 1));
+    assert!(
+        recovering.warnings.len() == 1
+            && recovering.warnings[0].ends_with(&format!(
+                "(1 of 3 passes in the last hour failed), ok again for 0 s: {error}"
+            )),
+        "one good pass does not clear it: {:?}",
+        recovering.warnings
+    );
+    assert_eq!(*hub.server_notice.borrow(), DISPATCH_FAILING);
+    assert_eq!(hub.health_notice(), DISPATCH_FAILING);
+
+    clock.pass(CLEARS_AFTER);
+    hub.board_read(&store).unwrap();
+    let cleared = hub.health.report(clock.now());
     assert_eq!(
         (
             cleared.dispatch.ok,
             cleared.dispatch.failed,
             cleared.warnings
         ),
-        (2, 1, Vec::<String>::new()),
-        "a good pass clears the warning; the hour still counts the failure"
+        (3, 1, Vec::<String>::new()),
+        "a minute of good passes clears the warning; the hour still counts the failure"
     );
     let recorded = Report::read(&file).unwrap().unwrap();
     assert_eq!(
         (recorded.dispatch.ok, recorded.warnings),
-        (2, Vec::new()),
+        (3, Vec::new()),
         "the dispatch stopped failing: the record says so at once"
     );
-    assert_eq!(*hub.server_notice.borrow(), "", "the good pass clears it");
-    assert_eq!(hub.health_notice(now()), "");
+    assert_eq!(*hub.server_notice.borrow(), "", "and the pages hear it");
+    assert_eq!(hub.health_notice(), "");
 }
 
-const DISPATCH_FAILING: &str = "The task board is unwell: its callback dispatch is failing, so no \
-                                agent hears from it. `just tasks status` says why.";
+const DISPATCH_FAILING: &str = "The task board is unwell: its callback dispatch is failing, so \
+                                agents may not hear from it. `just tasks status` says why.";
 
 #[test]
 fn the_notice_names_what_is_failing_and_nothing_while_the_board_is_well() {
@@ -175,8 +214,38 @@ fn the_notice_names_what_is_failing_and_nothing_while_the_board_is_well() {
     );
     assert_eq!(
         super::health::notice([true, true]),
-        "The task board is unwell: its callback dispatch and its idle sweep are failing, so no \
-         agent hears from it. `just tasks status` says why."
+        "The task board is unwell: its callback dispatch and its idle sweep are failing, so \
+         agents may not hear from it. `just tasks status` says why."
+    );
+}
+
+#[test]
+fn the_notice_does_not_flicker_on_a_board_failing_every_other_tick() {
+    let tree = Tree::new();
+    let root = repository(&tree);
+    let clock = Clock::at(now());
+    let hub = hub(&root, &tree.path("health.json"), &clock);
+    let mut notices = hub.server_notice.subscribe();
+    let mut told = Vec::new();
+    // A tick a second, as the hub's worker makes them: failing every other one for two minutes,
+    // then well.
+    for second in 0..240 {
+        let outcome = if second < 120 && second % 2 == 0 {
+            Err("the board did not answer")
+        } else {
+            Ok(())
+        };
+        hub.health.dispatched(hub.now(), outcome);
+        hub.tell_health(hub.now());
+        if notices.has_changed().unwrap() {
+            told.push((second, notices.borrow_and_update().clone()));
+        }
+        clock.pass(1.0);
+    }
+    assert_eq!(
+        told,
+        [(0, DISPATCH_FAILING.to_string()), (119 + 60, String::new())],
+        "told once as it starts failing, once a minute after its passes are good again"
     );
 }
 
@@ -184,9 +253,9 @@ fn the_notice_names_what_is_failing_and_nothing_while_the_board_is_well() {
 fn a_failed_update_and_the_boards_health_share_the_notice_and_each_clears_alone() {
     let tree = Tree::new();
     let root = repository(&tree);
-    let hub = hub(&root, &tree.path("health.json"));
-    let mut notices = hub.server_notice.subscribe();
     let at = now();
+    let hub = hub(&root, &tree.path("health.json"), &Clock::at(at));
+    let mut notices = hub.server_notice.subscribe();
 
     // A tick that tells no change sends nothing.
     hub.tell_health(at);
@@ -214,14 +283,21 @@ fn a_failed_update_and_the_boards_health_share_the_notice_and_each_clears_alone(
 
     hub.health.dispatched(at + 2.0, Ok(()));
     hub.tell_health(at + 2.0);
+    assert!(
+        !notices.has_changed().unwrap(),
+        "one good pass: still failing"
+    );
+    let later = at + 2.0 + CLEARS_AFTER;
+    hub.health.dispatched(later, Ok(()));
+    hub.tell_health(later);
     assert_eq!(
         *notices.borrow_and_update(),
         "Symphony server update failed.",
         "the board's health clears, the update's failure stays"
     );
 
-    hub.health.swept(at + 3.0, Err("exit status: 3"));
-    hub.tell_health(at + 3.0);
+    hub.health.swept(later + 1.0, Err("exit status: 3"));
+    hub.tell_health(later + 1.0);
     hub.tell_update(String::new());
     assert_eq!(
         *notices.borrow_and_update(),
@@ -229,8 +305,9 @@ fn a_failed_update_and_the_boards_health_share_the_notice_and_each_clears_alone(
         "the update's failure clears, the board's health stays"
     );
 
-    // A failed sweep is said for ten minutes, then the tick that sees it older clears it.
-    hub.tell_health(at + 3.0 + 601.0);
+    // A failed sweep with no sweep since is said for ten minutes, then the tick that sees it
+    // older clears it.
+    hub.tell_health(later + 1.0 + RECENT + 1.0);
     assert_eq!(*notices.borrow_and_update(), "");
 }
 
@@ -238,7 +315,7 @@ fn a_failed_update_and_the_boards_health_share_the_notice_and_each_clears_alone(
 fn a_tick_that_cannot_reach_the_board_is_a_failed_pass() {
     let tree = Tree::new();
     let root = repository(&tree);
-    let hub = hub(&root, &tree.path("health.json"));
+    let hub = hub(&root, &tree.path("health.json"), &Clock::at(now()));
     assert!(
         hub.reconnect(&mut |_: &Path| Err("connection refused".to_string()))
             .is_none()

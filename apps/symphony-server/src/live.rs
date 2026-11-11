@@ -146,6 +146,9 @@ pub(crate) struct Hub {
     pub(crate) health: symphony_board::board_health::Recorder,
     /// What `server_notice` says, by where it comes from ([`health::Notices`]).
     notices: Mutex<health::Notices>,
+    /// The time the board's health is recorded and read at, in seconds since the epoch: the wall
+    /// clock's, or a test's.
+    pub(crate) clock: Box<dyn Fn() -> f64 + Send + Sync>,
 }
 
 struct TaskState {
@@ -230,6 +233,7 @@ impl Hub {
             worker: Mutex::new(None),
             health: symphony_board::board_health::Recorder::default(),
             notices: Mutex::new(health::Notices::default()),
+            clock: Box::new(symphony_board::sweep::trigger::now),
         }
     }
 

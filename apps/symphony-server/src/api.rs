@@ -148,9 +148,7 @@ pub(crate) async fn answer(shared: &Arc<Shared>, request: Request) -> Option<Res
     // so a board too slow to answer is still said.
     if path == "/api/health" {
         return Some(match shared.api.get() {
-            Some(hub) => no_store(Json(
-                hub.health.report(symphony_board::sweep::trigger::now()),
-            )),
+            Some(hub) => no_store(Json(hub.health.report(hub.now()))),
             None => error(
                 StatusCode::SERVICE_UNAVAILABLE,
                 "the Symphony server is starting",

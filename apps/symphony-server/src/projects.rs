@@ -411,7 +411,6 @@ fn front(projects: &Projects, served: &[Served], headers: &HeaderMap) -> Respons
 /// `/`: always the project picker with each registered project's counts, and whether its board
 /// is unwell, from the hub's memory: the picker reads no board.
 fn home(served: &[Served]) -> Response {
-    let now = symphony_board::sweep::trigger::now();
     // Each project is warmed as the registry is read, so its counts are the hub's at hand; one
     // still warming shows none yet.
     let rows: Vec<String> = served
@@ -424,7 +423,7 @@ fn home(served: &[Served]) -> Response {
                 let pages = hub.pages.read().unwrap_or_else(PoisonError::into_inner);
                 pages.get("").map(|page| page.board.counts.clone())
             });
-            let health = hub.map(|hub| hub.health_notice(now)).unwrap_or_default();
+            let health = hub.map(|hub| hub.health_notice()).unwrap_or_default();
             list_row(project, counts.as_ref(), &health)
         })
         .collect();

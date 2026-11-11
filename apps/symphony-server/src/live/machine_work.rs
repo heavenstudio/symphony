@@ -223,7 +223,7 @@ impl Hub {
         }
         self.health.reading(store.client().queries());
         let dispatched = measured("callbacks", || store.dispatch_callbacks_snapshot());
-        let now = symphony_board::sweep::trigger::now();
+        let now = self.now();
         let snapshot = match dispatched {
             Ok(snapshot) => {
                 self.health.dispatched(now, Ok(()));

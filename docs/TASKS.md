@@ -125,7 +125,8 @@ feed remains a stream because it updates the owner's page.
 A board too slow to answer delivers no callback, and says nothing on the board itself, so the
 Symphony server counts what it sees in memory, for each project it serves, over the last hour
 (`crates/tasks/src/board_health.rs`): its clock's callback dispatch passes, ok and failed, with
-the newest failure's error (a tick that cannot reach the board at all is a failed pass); the idle
+the newest failure's error, kept on one line and cut to its first and last characters when it
+is long (a tick that cannot reach the board at all is a failed pass); the idle
 sweeps, the same way; every request any client in the process sent the board, the slowest with
 the line of code that sent it (its tracked caller), the slow ones (a second or more) and the
 unanswered ones; and the p50 and p90 latency of the requests that may write. Counting adds no
@@ -133,10 +134,14 @@ request. `/api/health` (`/<id>/api/health` on the one server) answers it from th
 without a board read. The machine's one server also writes it to `sf-tasks/health.json` in the
 git common dir (`health.<database>.json` for a scratch database; `TASKS_HEALTH` names another
 file) every ten seconds, and at once when the dispatch or the sweep starts or stops failing; a
-private server keeps it in memory alone. `just tasks status` prints that record without asking
-the board, and `--json` prints it as `/api/health` answers it, beside the file and the warnings.
-A warning stands while the newest dispatch pass, or the newest sweep, failed within the last ten
-minutes: the next good one clears it, while the hour still counts the failure. While one stands,
+private server keeps it in memory alone. Its clock's thread and its sweep's write it one at a
+time, each from its record to the rename of a file of that write's own, so a reader never meets
+half a record and the last to land holds every pass. `just tasks status` prints that record
+without asking the board, and `--json` prints it as `/api/health` answers it, beside the file
+and the warnings. A warning stands from a failed dispatch pass, or a failed sweep, until its
+passes have been good for a minute, so a board failing every other tick is warned of throughout,
+not on and off; one good pass does not clear it, and the hour still counts the failure. A newest
+pass that failed more than ten minutes ago, with none since, is warned of no more. While one stands,
 every page of the project says so on the server's notice (beside a failed server update, when
 there is one), told when it starts and when it ends, and the project picker says so under the
 project's name; both read the server's memory, not the board (`apps/symphony-server/src/live/health.rs`).
