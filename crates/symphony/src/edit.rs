@@ -51,13 +51,48 @@ static HEADING: LazyLock<Regex> = LazyLock::new(|| {
     .expect("the heading")
 });
 
-/// The note's non-blank lines, stripped.
+/// The note's lines, stripped, and between them one empty line where the owner left blank ones: a
+/// single Enter is a line break and a blank line a paragraph gap. No blank line opens or ends it.
 fn written(note: &str) -> Vec<&str> {
-    splitlines(note)
-        .into_iter()
-        .map(strip)
-        .filter(|line| !line.is_empty())
-        .collect()
+    let mut lines: Vec<&str> = Vec::new();
+    for line in splitlines(note).into_iter().map(strip) {
+        if !line.is_empty() || lines.last().is_some_and(|last| !last.is_empty()) {
+            lines.push(line);
+        }
+    }
+    if lines.last().is_some_and(|last| last.is_empty()) {
+        lines.pop();
+    }
+    lines
+}
+
+/// The note's lines ([`written`]), refused when one outside its code opens a review callout: the
+/// page's comment reader would take it for a comment on the document, and archiving that comment
+/// would cut it out of the card.
+fn note_lines(note: &str) -> Result<Vec<&str>, EditError> {
+    let lines = written(note);
+    let mut fenced = false;
+    for line in &lines {
+        if register::is_fence(line) {
+            fenced = !fenced;
+        } else if !fenced && crate::callouts::review_kind(line).is_some() {
+            return Err(EditError(format!(
+                "a note cannot hold a review callout ({}): the page would read it as a comment of its own",
+                repr(line)
+            )));
+        }
+    }
+    Ok(lines)
+}
+
+/// A note's later line as the file holds it, under its entry: indented to continue it, a paragraph
+/// gap left empty.
+fn continued(line: &str) -> String {
+    if line.is_empty() {
+        String::new()
+    } else {
+        format!("    {line}")
+    }
 }
 
 /// The index of the line that opens the card `slug`.
@@ -148,7 +183,7 @@ pub fn set_decision(
     let lines = splitlines(text);
     let index = find_card(&lines, slug).ok_or_else(|| no_card(slug))?;
     let end = card_end(&lines, index);
-    let note = written(note);
+    let note = note_lines(note)?;
     let mut entry = format!("  [{now}] owner · {}", state.as_str());
     if let Some(first) = note.first() {
         entry.push_str(&format!(" — {first}"));
@@ -157,7 +192,7 @@ pub fn set_decision(
     out.push(remark(lines[index], state.mark()));
     out.extend(lines[index + 1..end].iter().map(|line| line.to_string()));
     out.push(entry);
-    out.extend(note.iter().skip(1).map(|line| format!("    {line}")));
+    out.extend(note.iter().skip(1).map(|line| continued(line)));
     out.extend(lines[end..].iter().map(|line| line.to_string()));
     sort_register(&(out.join("\n") + "\n"), plugins).map_err(|problem| EditError(problem.0))
 }
@@ -181,11 +216,7 @@ pub fn is_repeat_decision(
 ) -> Result<bool, EditError> {
     let lines = splitlines(text);
     let note = written(note);
-    let tail: Vec<String> = note
-        .iter()
-        .skip(1)
-        .map(|line| format!("    {line}"))
-        .collect();
+    let tail: Vec<String> = note.iter().skip(1).map(|line| continued(line)).collect();
     let Some(index) = find_card(&lines, slug) else {
         return Ok(false);
     };
@@ -221,7 +252,7 @@ pub fn add_message(
     who: Who,
     verdict: Option<&str>,
 ) -> Result<String, EditError> {
-    let message = written(message);
+    let message = note_lines(message)?;
     let Some(first) = message.first() else {
         return Err(EditError("a message needs some text".to_string()));
     };
@@ -233,7 +264,7 @@ pub fn add_message(
         .map_or(String::new(), |v| format!(" · {v}"));
     let mut out: Vec<String> = lines[..end].iter().map(|line| line.to_string()).collect();
     out.push(format!("  [{now}] {}{verdict} — {first}", who.as_str()));
-    out.extend(message.iter().skip(1).map(|line| format!("    {line}")));
+    out.extend(message.iter().skip(1).map(|line| continued(line)));
     out.extend(lines[end..].iter().map(|line| line.to_string()));
     Ok(out.join("\n") + "\n")
 }

@@ -123,6 +123,47 @@ pub(crate) fn convert(text: &str) -> String {
     html(root, &options, HashSet::new())
 }
 
+/// A card's note as HTML, read as [`convert`] reads a document but for what a note is not: each line
+/// break in it is one (a blank line still a paragraph gap), and no line of it is a heading
+/// ([`unheaded`]).
+pub(crate) fn convert_note(text: &str) -> String {
+    let mut options = options();
+    options.render.hardbreaks = true;
+    let arena = Arena::new();
+    let root = parse_document(&arena, &unheaded(text), &options);
+    html(root, &options, HashSet::new())
+}
+
+/// `text` with each line that would make a heading escaped, so it reads as the words it is: a `#`
+/// line, and an `=` or `-` line under a line of text, which would underline it into one. Headings
+/// are the register's own structure; a note under a card never has one. Fenced code is left alone.
+pub(crate) fn unheaded(text: &str) -> String {
+    let mut out = String::with_capacity(text.len() + 8);
+    let (mut fenced, mut under_text) = (false, false);
+    for line in text.split_inclusive('\n') {
+        let body = line.trim_start_matches([' ', '\t']);
+        let words = body.trim_end();
+        if crate::register::is_fence(line) || fenced {
+            fenced ^= crate::register::is_fence(line);
+            under_text = false;
+            out.push_str(line);
+            continue;
+        }
+        let underline = under_text
+            && !words.is_empty()
+            && (words.chars().all(|c| c == '=') || words.chars().all(|c| c == '-'));
+        if body.starts_with('#') || underline {
+            out.push_str(&line[..line.len() - body.len()]);
+            out.push('\\');
+            out.push_str(body);
+        } else {
+            out.push_str(line);
+        }
+        under_text = !words.is_empty();
+    }
+    out
+}
+
 /// Where each line of `text` begins, as CommonMark ends a line (a line feed, a carriage return, or
 /// both together): line `n` of a source position begins at the `n - 1`th.
 pub(crate) fn line_starts(text: &str) -> Vec<usize> {
@@ -472,5 +513,40 @@ fn push_literal(block: Node<'_>, lines: &str) {
         NodeValue::CodeBlock(code) => code.literal.push_str(lines),
         NodeValue::HtmlBlock(html) => html.literal.push_str(lines),
         _ => {}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{convert_note, unheaded};
+
+    #[test]
+    fn only_lines_that_would_make_a_heading_are_escaped_and_code_is_left_alone() {
+        for (text, escaped) in [
+            ("# one\n", "\\# one\n"),
+            ("  ### three\n", "  \\### three\n"),
+            ("#tag\n", "\\#tag\n"),
+            ("Words\n===\n", "Words\n\\===\n"),
+            ("Words\n-\n", "Words\n\\-\n"),
+            ("# one\n---\n", "\\# one\n\\---\n"),
+            // a rule after a blank line, a list item and a sentence with a # are no heading
+            ("Words\n\n---\n", "Words\n\n---\n"),
+            ("Words\n- item\n", "Words\n- item\n"),
+            ("Issue #3\n", "Issue #3\n"),
+            (
+                "```\n# code\n---\n```\n# after\n",
+                "```\n# code\n---\n```\n\\# after\n",
+            ),
+        ] {
+            assert_eq!(unheaded(text), escaped, "{text:?}");
+        }
+    }
+
+    #[test]
+    fn a_note_keeps_each_line_break_and_paragraph_and_has_no_heading() {
+        assert_eq!(
+            convert_note("## title\nnext line\n\nNew paragraph.\nUnderlined\n---"),
+            "<p>## title<br />\nnext line</p>\n<p>New paragraph.<br />\nUnderlined<br />\n---</p>\n"
+        );
     }
 }

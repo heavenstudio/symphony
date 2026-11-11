@@ -30,6 +30,7 @@ mod look_parity;
 mod notice_layout;
 mod owner_answer;
 mod owner_controls;
+mod owner_note;
 mod owner_save;
 mod phone;
 mod projects;

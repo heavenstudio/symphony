@@ -181,6 +181,15 @@ impl Ctx<'_> {
         media::embed(&restored, self)
     }
 
+    /// A note under a card, the owner's or an agent's, through the same path as a document's body,
+    /// with its line breaks kept and no heading ([`markdown::convert_note`]).
+    pub(crate) fn convert_note(&self, text: &str) -> String {
+        let (linked, stash) = self.prepared(text);
+        let body = markdown::convert_note(&linked);
+        let restored = links::restore(body.trim_end_matches('\n'), &stash);
+        media::embed(&restored, self)
+    }
+
     /// [`Ctx::convert`] of a part of `text`: the blocks from the one holding byte `from`, as many as
     /// `limit` bytes of `text` hold, each longer than `block` cut, from one parse of all of it
     /// ([`markdown::convert_part`]). The text the converter is handed has the lines of `text`, so a
