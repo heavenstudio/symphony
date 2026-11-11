@@ -961,6 +961,60 @@ fn a_registry_that_cannot_be_read_holds_nothing_and_no_machine_folder_asks_nothi
 }
 
 #[test]
+fn no_root_or_a_relative_one_names_the_project_after_the_folder_it_resolves_to() {
+    let tree = Tree::new();
+    std::fs::create_dir_all(tree.path("Lamp Shop/docs")).unwrap();
+    let shop = tree.path("Lamp Shop").canonicalize().unwrap();
+    let absolute = shop.display().to_string();
+    for given in [
+        None,
+        Some("."),
+        Some("./"),
+        Some("../Lamp Shop"),
+        Some(&*absolute),
+    ] {
+        let root = project_root(given, &tree.path("Lamp Shop"));
+        assert_eq!(root, shop, "{given:?}");
+        let steps = steps(
+            &root,
+            &Machine {
+                folder: None,
+                path: None,
+                surreal: None,
+            },
+        );
+        assert!(
+            steps[0].contains("until then it is `lamp-shop`, after its folder"),
+            "{given:?}: {steps:?}"
+        );
+    }
+    // A folder that is not there is left as named, and the run refuses it.
+    assert_eq!(
+        project_root(Some("gone"), &tree.root),
+        tree.root.join("gone")
+    );
+}
+
+#[test]
+fn the_binaries_init_looks_for_are_the_ones_the_installed_recipes_run() {
+    let shipped = Shipped::builtin();
+    let mut ran = Vec::new();
+    let mut recipe = None;
+    for line in shipped.recipes.lines() {
+        if line.starts_with(|c: char| c.is_ascii_lowercase()) {
+            recipe = line.split([' ', ':']).next();
+        } else if let Some((_, rest)) = line.split_once("{{ _symphony_run }} ") {
+            let binary = rest.split_whitespace().next().unwrap();
+            ran.push((recipe.unwrap(), binary));
+        }
+    }
+    ran.sort();
+    let mut runs = RUNS.to_vec();
+    runs.sort();
+    assert_eq!(ran, runs);
+}
+
+#[test]
 fn a_checkout_is_told_where_its_boards_surrealdb_goes_until_one_is_there() {
     let tree = Tree::new();
     tree.write("Lamp Shop/.git/HEAD", "ref: refs/heads/main\n");

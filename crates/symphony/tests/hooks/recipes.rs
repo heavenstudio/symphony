@@ -65,8 +65,10 @@ impl Project {
         String::from_utf8(done.stdout).unwrap()
     }
 
-    fn init(&self) -> Output {
-        self.run(&self.root, BIN, &["init", "--root", "."], None)
+    /// `symphony init` from the project's folder, with `args` naming (or not) its root.
+    fn init(&self, args: &[&str]) -> Output {
+        let args: Vec<&str> = ["init"].iter().chain(args).copied().collect();
+        self.run(&self.root, BIN, &args, None)
     }
 }
 
@@ -75,7 +77,7 @@ fn a_fresh_project_runs_the_board_through_the_recipes_init_installed() {
     let project = Project::new();
     let root = project.root.clone();
 
-    let first = project.init();
+    let first = project.init(&["--root", "."]);
     let (out, err) = (
         String::from_utf8_lossy(&first.stdout),
         String::from_utf8_lossy(&first.stderr),
@@ -86,6 +88,9 @@ fn a_fresh_project_runs_the_board_through_the_recipes_init_installed() {
         "justfile: installed\n",
         ".gitignore: installed\n",
         "\nNext:\n- write symphony.toml",
+        // `.` is resolved: the project is named after the folder it names.
+        "until then it is `lamp-shop`, after its folder",
+        "serves at /lamp-shop/docs/",
         "\n- link the project's builds at .target/bin/symphony and .target/bin/tasks: ",
         "\n- register the project with the machine's Symphony: ",
     ] {
@@ -118,11 +123,16 @@ fn a_fresh_project_runs_the_board_through_the_recipes_init_installed() {
     )
     .unwrap();
     std::os::unix::fs::symlink(BIN, root.join(".target/bin/symphony")).unwrap();
-    let again = project.init();
+    // No `--root` is the current folder, named the same way.
+    let again = project.init(&[]);
     let out = String::from_utf8_lossy(&again.stdout);
     assert!(again.status.success(), "{again:?}");
     assert_eq!(String::from_utf8_lossy(&again.stderr), "");
     assert!(out.contains("symphony.just: current\n"), "{out}");
+    assert!(
+        out.contains("until then it is `lamp-shop`, after its folder"),
+        "{out}"
+    );
     assert!(
         out.contains("justfile: kept (the project's own)\n"),
         "{out}"

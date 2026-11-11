@@ -18,13 +18,12 @@ const CONSUMERS: [&str; 6] = [
 ];
 
 /// Words that follow "just" in prose, never a recipe.
-const PROSE: [&str; 21] = [
+const PROSE: [&str; 20] = [
     "above",
     "after",
     "as",
     "became",
     "before",
-    "check",
     "done",
     "finished",
     "launched",
@@ -42,11 +41,17 @@ const PROSE: [&str; 21] = [
     "written",
 ];
 
-/// Messages of this repository's own development, which name its own justfile's recipes: a source
-/// kit's client build, which no project runs.
-const OWN: [(&str, &str); 2] = [
+/// Text of this repository's own development, which names its own justfile's recipes: a source
+/// kit's client build, which no project runs, and the checks a task here proves its work with
+/// (`check-fast` is the recipe filed as the task `tools/check-fast`).
+const OWN: [(&str, &str); 7] = [
     ("apps/symphony-server/src/api/client.rs", "symphony-ui-dist"),
     ("apps/symphony-server/src/development.rs", "symphony-ui-dev"),
+    ("docs/CHECKS.md", "check-fast"),
+    ("docs/CHECKS.md", "client-update"),
+    ("docs/CHECKS.md", "lint-rs"),
+    ("docs/CHECKS.md", "test-rs"),
+    ("docs/CHECKS.md", "verify"),
 ];
 
 fn workspace() -> PathBuf {

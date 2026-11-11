@@ -901,6 +901,14 @@ options:
 A file of the same name without the Symphony's stamp is the project's own: it is used and never
 written over.";
 
+/// The project's root a run names: `--root`'s value (else the current folder), read from `cwd`
+/// and resolved, so a project named after its folder is named after this one, never `.`. One
+/// that cannot be resolved is left as given, for the run to refuse.
+fn project_root(given: Option<&str>, cwd: &Path) -> PathBuf {
+    let root = cwd.join(given.unwrap_or("."));
+    root.canonicalize().unwrap_or(root)
+}
+
 /// `symphony init [--root ROOT]`. Its exit code.
 pub fn main(args: &[String], out: &mut dyn io::Write, err: &mut dyn io::Write) -> i32 {
     use crate::cli::{Flag, parse, refuse};
@@ -920,7 +928,8 @@ pub fn main(args: &[String], out: &mut dyn io::Write, err: &mut dyn io::Write) -
         Ok(parsed) => parsed,
         Err(problem) => return refuse(err, USAGE, "init", &problem),
     };
-    let root = PathBuf::from(parsed.value("--root").unwrap_or("."));
+    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let root = project_root(parsed.value("--root"), &cwd);
     match init(&root, &Shipped::builtin()) {
         Ok(report) => {
             for (entry, outcome) in report {
