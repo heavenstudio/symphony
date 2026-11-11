@@ -232,8 +232,11 @@ Restore prompts re-register the resumed process's callback first.
 Neither channel checks nor delivery fabricate tool calls.
 Outbox rows are indexed by handle
 and delivery state, with a numeric sequence for ordering; chat retries belong
-only to the current recipient. Transactional mutation events advance `counter:board` for board
-inputs, callback registration/observation changes and owner chat. A Store caches the raw board
+only to the current recipient. Transactional mutation events advance `counter:board` for structural
+inputs, callback registration/observation changes and owner chat. Session mutations instead advance
+their own `session_revision` rows; authorization and liveness guards write those rows too, without
+advancing the mutation count or heartbeat. Readers use the combined `schema::BOARD_MARKER`.
+Deploy its event and reader together, refreshing long-lived stores with the CLI. A Store caches the raw board
 snapshot together with that marker, read in one transaction, and rebuilds its derived health,
 presence grace and reservation state against the current clock. The Symphony server uses those
 cached inputs even without a callback recipient; machine/test probes and the agents view still

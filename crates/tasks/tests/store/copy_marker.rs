@@ -1,4 +1,4 @@
-//! The board marker under the copy: a copy advances `counter:board` once a row, and a board whose
+//! The combined board marker under the copy advances once a row. A board whose
 //! schema's events UPSERT the marker has them redefined when this schema opens it, moving no row.
 
 use crate::common::{Fixture, Seed};
@@ -20,7 +20,10 @@ const MARKED_TABLES: [&str; 9] = [
 fn marker(f: &Fixture) -> serde_json::Value {
     f.store
         .client()
-        .query("RETURN counter:board.last;", serde_json::json!({}))
+        .query(
+            &format!("RETURN {};", symphony_board::schema::BOARD_MARKER),
+            serde_json::json!({}),
+        )
         .unwrap()
         .remove(0)
 }
@@ -71,7 +74,12 @@ fn a_board_of_schema_ten_has_its_marker_events_redefined_and_its_rows_kept() {
     assert!(
         redefined
             .iter()
-            .all(|e| e.contains("UPDATE counter:board") && !e.contains("UPSERT")),
+            .enumerate()
+            .all(|(i, e)| e.contains(if MARKED_TABLES[i] == "session" {
+                "UPDATE $revision"
+            } else {
+                "UPDATE counter:board"
+            }) && !e.contains("UPSERT")),
         "{redefined:#?}"
     );
     assert_eq!(reopened.dump().unwrap(), everything());

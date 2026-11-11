@@ -17,8 +17,9 @@
 //! meet where both write the same record, so writes that must not pass each other write one: the
 //! task's `version`, the message counter, an agent's own counter for its binding.
 //! Transactional mutation events also advance the shared `counter:board` for changes to board
-//! inputs. Those writes can conflict across otherwise unrelated tasks; every such path retries
-//! the whole transaction. Callback readers use that marker to reuse unchanged board inputs.
+//! inputs, except session mutations, which advance their own per-handle revisions. Authorization
+//! and liveness guards fence the sessions they depend on. Callback readers combine both markers
+//! to reuse unchanged board inputs without making independent heartbeats write one counter.
 
 // The library's tests start their own fixtures and stand-ins; clippy checks the library without
 // them too, where only `sys::command` and `sys::command_with` make a child (clippy.toml).

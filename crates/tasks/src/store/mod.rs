@@ -42,11 +42,15 @@ mod reading;
 pub(crate) mod search;
 mod sessions;
 mod settings;
+mod snapshot;
 mod stage_lines;
 mod transaction;
 pub(crate) mod unanswered;
 mod waits;
 mod work;
+mod write;
+
+use write::{ACT, WRITE};
 
 pub(crate) use crate::stages::{BLOCK_LINE, UNBLOCK_LINE};
 pub use callbacks::{Callback, Presence};
@@ -655,28 +659,6 @@ const CLAIMABLE: &str = "(SELECT VALUE slug FROM role WHERE handle = $handle
     AND ((role = 'executor' AND type::record('task', slug).status IN $executing)
       OR (role = 'reviewer' AND type::record('task', slug).status = 'review')))";
 
-/// A rule's write: stale unless the actor may still act, the task is the version read and every
-/// session taken to be gone is as it was read; then the actor is seen, the roles and status change,
-/// the task's version moves on, and what happened goes on the record.
-const WRITE: &str = "
-LET $me = (SELECT left_at FROM ONLY type::record('session', $actor));
-IF $me = NONE OR $me.left_at != NONE { THROW 'stale' };
-IF (SELECT VALUE version FROM ONLY type::record('task', $slug)) != $version { THROW 'stale' };
-FOR $s IN $seen {
-    IF (SELECT VALUE last_seen FROM ONLY type::record('session', $s.handle)) != $s.last_seen { THROW 'stale' };
-};
-UPDATE type::record('session', $actor) SET last_seen = math::max([last_seen, $now]) RETURN NONE;
-FOR $r IN $drop { DELETE type::record('role', [$slug, $r.handle, $r.role]); };
-FOR $r IN $add { IF type::record('session', $r.handle).left_at != NONE { THROW 'stale' }; UPSERT type::record('role', [$slug, $r.handle, $r.role]) CONTENT $r RETURN NONE; };
-UPDATE type::record('task', $slug) SET version += 1, status = $status ?? status, updated = $updated ?? updated RETURN NONE;
-IF $say {
-    LET $counted = (UPSERT ONLY counter:message SET last += 1, ts = IF ts != NONE AND ts > $now AND ts <= $now + 60 { ts } ELSE { $now });
-    LET $sid = $counted.last;
-    LET $ts = $counted.ts;
-    CREATE type::record('message', [$slug, $sid]) SET sid = $sid, slug = $slug, sender = $actor, recipient = $say.recipient,
-        kind = $say.kind, text = $say.text, ts = $ts RETURN NONE;
-};";
-
 enum Which<'a> {
     All,
     /// One whole-board observation with the admission ledger's validated hold records.
@@ -1013,14 +995,6 @@ fn unknown_actor(handle: &str) -> String {
 fn left_actor(handle: &str) -> String {
     format!("session {handle} has left; attach again")
 }
-
-/// The actor may act, as the write runs: it exists and has not left, or the write is refused; and
-/// acting is being seen. Its variables are `acting`'s.
-const ACT: &str = "
-LET $me = (SELECT left_at FROM ONLY type::record('session', $actor));
-IF $me = NONE { THROW $unknown_actor };
-IF $me.left_at != NONE { THROW $left_actor };
-UPDATE type::record('session', $actor) SET last_seen = math::max([last_seen, $now]) RETURN NONE;";
 
 /// `ACT`'s variables, and `more`'s.
 fn acting(actor: &str, now: f64, more: Value) -> Value {
