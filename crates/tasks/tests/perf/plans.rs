@@ -28,8 +28,7 @@ pub fn bound(name: &str) -> Option<Value> {
     Some(match name {
         "me" => json!({"connected": NOW - 5.0 * 86_400.0, "left_at": null}),
         "connected" => json!(NOW - 5.0 * 86_400.0),
-        "slugs" | "open" | "waiting" | "slot_wanted" => open,
-        "slot_holds" => json!([[generated::thread(), NOW]]),
+        "slugs" | "open" | "waiting" => open,
         "tasks" => json!([{"slug": generated::thread()}]),
         "orchestrators" => json!([[generated::thread(), generated::orchestrator()]]),
         "sid" | "same" | "last" | "post" => json!(1),
@@ -44,6 +43,9 @@ pub fn bound(name: &str) -> Option<Value> {
         "slug" | "dependent" => json!(generated::thread()),
         "sender" | "handle" => json!(generated::writer()),
         "kind" => json!("msg"),
+        // The slot ledger's reads name their tasks and holds in an earlier statement.
+        "slot_wanted" => json!([generated::thread()]),
+        "slot_holds" => json!([[generated::thread(), NOW]]),
         "prefix" | "pull_kept" => json!("pull-1"),
         _ => return None,
     })

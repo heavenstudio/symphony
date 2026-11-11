@@ -83,6 +83,33 @@ Read [the client guide](apps/symphony-ui/AGENTS.md) and
 [the board guide](crates/tasks/AGENTS.md) before editing those packages. A consuming project applies its own Rust, review and resource policy.
 Never run a shared-service restart as a test: use a private port and scratch board.
 
+## This repository as its own project
+
+`symphony.toml` registers this checkout as the project `symphony`: its docs and its
+board are served under `/symphony/` by the machine's one server, and its board is this
+repository's own, in its git common dir. Symphony work is filed, staffed and reviewed
+on that board, never on a consuming project's. Every agent working here follows the
+standing rules in [RULES.md](RULES.md).
+
+**Memory lives in the repository.** Nothing goes in an agent's own memory folder
+(`~/.claude/projects/…/memory/`): what must outlast a session is guidance here or in a
+package's AGENTS.md, a skill, a doc or a board task, and it is committed, so every
+agent sees it. `.claude/settings.json` denies writes there.
+
+**Models.** The orchestrator may run on the most capable model, for diagnosis and
+design. Executors and reviewers run on Opus: an Agent launch passes `model: "opus"`
+(a subagent otherwise inherits its orchestrator's model), and `[agents] launch` in
+`symphony.toml` says the same for a board launch. A resumed agent keeps the model it
+started on.
+
+**Board commands.** Run them as `just tasks … --as HANDLE`: a subagent's tool calls
+count as its heartbeat only after a command of that shape binds it, and one that runs
+the binary by its path reads lost while it works.
+
+**Verify in a clean checkout.** Run `just verify` in a worktree outside this folder
+(`../symphony-wt/`), on a tip whose client distribution was rebuilt with
+`just client-update` when the check asks for it.
+
 ## Agent integration
 
 `symphony init --root ROOT` installs the seven generic skills, their Claude links,

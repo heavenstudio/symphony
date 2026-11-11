@@ -4,6 +4,7 @@
 
 use crate::orchestration;
 use crate::rows::RoleRow;
+use crate::stages::{EVERY_ROLE, RELEASED};
 use crate::store::{Change, Error, Opens, Say, Store, Task, refused, repr};
 
 impl Store {
@@ -167,8 +168,8 @@ impl Store {
                 change.status = Some("ready".into());
             }
             change.say = Say::system(format!(
-                "{handle} released {} (released)",
-                role.unwrap_or("every role")
+                "{handle}{RELEASED}{} (released)",
+                role.unwrap_or(EVERY_ROLE)
             ));
             Ok(change)
         })

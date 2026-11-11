@@ -9,6 +9,7 @@ use super::{
 use crate::alarm::{NOTHING, UNDER, WAS};
 use crate::health::Health;
 use crate::slots::OPEN;
+use crate::stages::{self, ARROW, MOVED};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use std::cell::RefCell;
@@ -241,8 +242,7 @@ fn ancestors_in(tree: &Tree, slug: &str) -> Result<Vec<String>, Error> {
     Ok(found)
 }
 
-/// What starts the line a cancelled prerequisite's block puts on its dependent's thread.
-pub(crate) const BLOCK_LINE: &str = "blocked: cancelled dependencies: ";
+pub(super) use crate::stages::BLOCK_LINE;
 
 /// Cancellation does not satisfy a prerequisite. Block its unfinished dependents, or the task
 /// being created/moved if one of its prerequisites was cancelled earlier, in the same transaction.
@@ -478,7 +478,7 @@ LET $said = $actor + ' changed priority p' + <string>$task.priority + ' → p' +
             Ok(Change {
                 status: Some(status.into()),
                 hold: how.holds(),
-                say: Say::system(format!("{handle} moved it {current} → {status}")),
+                say: Say::system(stages::moved_line(handle, current, status)),
                 opens,
                 ..Change::default()
             })
@@ -510,7 +510,7 @@ IF $task.status NOT IN $from {{
 IF $status = 'review' AND ($task.instruction OR $task.parent != NONE) {{ THROW $instruction }};
 UPDATE type::record('task', $slug) SET status = $status, updated = $now, version += 1 RETURN NONE;
 {UNHOLD}
-LET $said = $actor + ' moved it ' + $task.status + ' → ' + $status;
+LET $said = $actor + '{MOVED}' + $task.status + '{ARROW}' + $status;
 {}\n{}",
             logged("$slug", "$actor", "'system'", "$said", "NONE"),
             block_cancelled_dependencies(cancelling)

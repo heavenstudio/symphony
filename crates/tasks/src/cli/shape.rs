@@ -2,6 +2,7 @@
 
 use crate::pyjson::Py;
 use crate::rows::TaskSessionRow;
+use crate::stages::Stages;
 use crate::{Landed, Message, Role, Session, Task};
 
 pub fn task(t: &Task) -> Py {
@@ -29,6 +30,41 @@ pub fn landed(l: &Landed) -> Py {
         fields.push(("from".into(), Py::str(&l.from)));
     }
     shaped
+}
+
+/// An object whose keys are data, in the order given.
+pub fn keyed(fields: impl Iterator<Item = (String, Py)>) -> Py {
+    Py::Obj(fields.collect())
+}
+
+/// Where a task's time went ([`crate::stages`]); every duration in seconds.
+pub fn stages(s: &Stages) -> Py {
+    Py::obj(vec![
+        (
+            "statuses",
+            keyed(s.stages.iter().map(|stage| {
+                (
+                    stage.status.clone(),
+                    Py::obj(vec![
+                        ("first_entered", Py::Float(stage.first_entered)),
+                        ("seconds", Py::Float(stage.seconds)),
+                        ("visits", Py::Int(i64::from(stage.visits))),
+                    ]),
+                )
+            })),
+        ),
+        ("unclaimed_seconds", Py::Float(s.unclaimed_seconds)),
+        ("first_claimed", Py::opt_float(s.first_claimed)),
+        ("bounces", Py::Int(i64::from(s.bounces))),
+        (
+            "current",
+            Py::obj(vec![
+                ("status", Py::str(&s.current)),
+                ("since", Py::Float(s.current_since)),
+            ]),
+        ),
+        ("closed", Py::opt_float(s.closed)),
+    ])
 }
 
 pub fn tasks(ts: &[Task]) -> Py {

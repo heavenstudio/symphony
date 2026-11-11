@@ -239,7 +239,7 @@ OR (kind = 'system' AND string::starts_with(text, sender + ' released '))));"
         // eligible records after each still-pending post, never the descendant threads.
         let activity: Vec<Vec<answers::Answer>> = self
             .read(
-                &format!("RETURN $posts.map(|$p| {{ LET $handle = $p[0]; LET $post = $p[1]; RETURN {}; }});", answers::read()),
+                &answers::batch(),
                 json!({"posts": pending.iter().map(|p| (&p.handle, p.post.id)).collect::<Vec<_>>()}),
             )
             .map_err(recovery_error)?;

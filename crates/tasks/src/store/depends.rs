@@ -5,13 +5,11 @@ use super::cap::GUARD;
 use super::work::{BLOCK_LINE, OWNER, no_task};
 use super::{ACT, Error, Failure, Opens, STATUSES, Store, Task, Which, acting, logged, refused};
 use crate::slots::OPEN;
+use crate::stages::UNBLOCK_LINE;
 use serde::Deserialize;
 use serde_json::json;
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fmt::Write as _;
-
-/// What starts the line a task leaving such a block writes, the status it goes back to after it.
-pub(crate) const UNBLOCK_LINE: &str = "unblocked: no cancelled dependency left; back to ";
 
 /// Every task's status, every dependency, the count of changes to them, and the task's own version,
 /// thread and executor, as `change_depends` decides on them.

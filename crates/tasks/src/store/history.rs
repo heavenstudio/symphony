@@ -3,10 +3,9 @@
 //! keys read back from its newest a page at a time, its newest such lines before the window and
 //! when it last went into review.
 
-use super::depends::UNBLOCK_LINE;
-use super::work::BLOCK_LINE;
 use super::{Error, Store};
 use crate::alarm::{self, ARROW, CLAIMED, Line, MOVED, Step, UNDER, WAITS_SET};
+use crate::stages::{BLOCK_LINE, UNBLOCK_LINE};
 use serde_json::{Value, json};
 use std::collections::HashMap;
 

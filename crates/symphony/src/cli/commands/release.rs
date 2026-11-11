@@ -75,6 +75,9 @@ fn run(args: &[String], out: &mut dyn Write, err: &mut dyn Write, parent: &Path)
     }
 }
 
+/// The folders `symphony init` and the agents write in a checkout, left out of every release input.
+const AGENT_FOLDERS: [&str; 3] = [".agents", ".claude", ".codex"];
+
 fn inventory(root: &Path, list: &Path, prefix: &str) -> io::Result<Files> {
     let raw = regular_bytes(list)?;
     if raw.is_empty() || raw.last() != Some(&0) {
@@ -94,6 +97,11 @@ fn inventory(root: &Path, list: &Path, prefix: &str) -> io::Result<Files> {
             return Err(invalid(format!("invalid release input {name:?}")));
         }
         if path.starts_with("apps/symphony-server/client/public") {
+            continue;
+        }
+        // The agents' integration (`symphony init`: skills, their links, settings, and an agent's
+        // worktrees under `.claude/`) is no input of a build, and its links are not regular files.
+        if AGENT_FOLDERS.iter().any(|folder| path.starts_with(folder)) {
             continue;
         }
         if path.components().any(|part| {

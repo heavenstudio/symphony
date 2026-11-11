@@ -16,7 +16,6 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt;
-use std::fmt::Write as _;
 use std::hash::{BuildHasher, RandomState};
 use std::sync::Mutex;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -43,25 +42,26 @@ mod reading;
 pub(crate) mod search;
 mod sessions;
 mod settings;
+mod stage_lines;
 mod transaction;
 pub(crate) mod unanswered;
 mod waits;
 mod work;
 
+pub(crate) use crate::stages::{BLOCK_LINE, UNBLOCK_LINE};
 pub use callbacks::{Callback, Presence};
 /// Every statement the cap on an orchestrator's open tasks sends: the plan test's to plan.
 pub use cap::STATEMENTS as SLOT_READS;
 pub use copy::Moved;
 pub(crate) use copy::WRITTEN_SINCE;
-pub(crate) use depends::UNBLOCK_LINE;
 pub use embeddings::{EmbeddingStats, VectorHit, VectorSearchProfile};
 pub use launches::NewLaunch;
 pub use opening::Opening;
 use reading::{HELD, NATIVE_PRESENCE, native_bounds, native_health};
 pub use search::SearchHit;
 pub use sessions::{Beat, Binding, KINDS, NewSession, Pick};
+pub use stage_lines::StageRecord;
 pub use waits::{AssessmentReceipt, AssessmentState};
-pub(crate) use work::BLOCK_LINE;
 pub use work::{
     BEFORE_WORK, LANDS_FROM, Landed, NewTask, PIPELINE, PULLABLE, ROLES, STATUSES, can_transition,
 };
@@ -411,11 +411,7 @@ impl Store {
                     ..Opens::default()
                 });
             }
-            let mut text = format!("{handle} claimed it");
-            if !handed.is_empty() {
-                let _ = write!(text, ", handed over from {}", handed.join(", "));
-            }
-            change.say = Say::system(text);
+            change.say = Say::system(crate::stages::claimed_line(handle, &handed));
             Ok(change)
         })
     }

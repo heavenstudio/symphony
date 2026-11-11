@@ -73,7 +73,7 @@ impl Store {
             .chain(new.depends.iter().map(|d| ("dep", d)))
             .map(|(kind, target)| json!({"kind": kind, "target": target}))
             .collect();
-        let mut said = format!("created by {}", new.by);
+        let mut said = format!("{}{}", crate::stages::CREATED, new.by);
         if let Some(assignee) = &new.assignee {
             let _ = write!(said, " for {assignee}");
         }
