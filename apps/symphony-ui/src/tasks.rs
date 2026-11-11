@@ -3,8 +3,22 @@
 use crate::machine_work::{Scope, SharedWork, phases_view};
 use crate::viewport::NearViewport as Near;
 use dioxus::prelude::*;
+use std::cmp::Ordering;
 use std::rc::Rc;
 use symphony_api::{Role, Task, TaskFields, TaskStage};
+
+/// Both of the board's task orders have this one type, so the board compiles one sort for them.
+type TaskOrder = fn(&&Task, &&Task) -> Ordering;
+
+/// Open work: the most urgent first, then by slug.
+fn by_priority(a: &&Task, b: &&Task) -> Ordering {
+    (a.priority, &a.slug).cmp(&(b.priority, &b.slug))
+}
+
+/// Finished work: the most recently updated first, then by slug.
+fn by_recent(a: &&Task, b: &&Task) -> Ordering {
+    b.updated.total_cmp(&a.updated).then(a.slug.cmp(&b.slug))
+}
 
 pub fn merge(task: &mut Task, fields: &TaskFields) {
     macro_rules! field {
@@ -65,7 +79,7 @@ pub fn TaskBoard(
         })
         .collect();
     if query.is_empty() {
-        filtered.sort_unstable_by(|a, b| (a.priority, &a.slug).cmp(&(b.priority, &b.slug)));
+        filtered.sort_unstable_by(by_priority as TaskOrder);
     }
     let column = |state: &str| {
         rsx! {
@@ -248,7 +262,7 @@ fn TaskColumn(
     }));
     let mut rows: Vec<_> = tasks.iter().collect();
     if query().is_empty() && (status == "done" || status == "cancelled") {
-        rows.sort_unstable_by(|a, b| b.updated.total_cmp(&a.updated).then(a.slug.cmp(&b.slug)));
+        rows.sort_unstable_by(by_recent as TaskOrder);
     }
     let more_status = status.clone();
     // Keep unloaded columns in place while their first page is fetched. Otherwise revealing
@@ -333,5 +347,29 @@ mod tests {
         dom.rebuild_in_place();
         let html = dioxus_ssr::render(&dom);
         assert!(html.contains(">unavailable · ok</p>"), "{html}");
+    }
+
+    #[test]
+    fn open_work_sorts_by_priority_then_slug_and_finished_work_newest_first_then_slug() {
+        let task = |slug: &str, priority: i64, updated: f64| -> symphony_api::Task {
+            serde_json::from_value(json!({"slug": slug, "title": slug, "body": "",
+                "status": "ready", "priority": priority, "parent": null, "created_by": "owner",
+                "created": 0.0, "updated": updated, "links": [], "depends": [], "roles": [],
+                "instruction": false}))
+            .unwrap()
+        };
+        let tasks = [
+            task("b", 2, 10.0),
+            task("c", 1, 30.0),
+            task("a", 2, 30.0),
+            task("d", 1, 10.0),
+        ];
+        let slugs = |order: super::TaskOrder| {
+            let mut rows: Vec<_> = tasks.iter().collect();
+            rows.sort_unstable_by(order);
+            rows.iter().map(|t| t.slug.as_str()).collect::<Vec<_>>()
+        };
+        assert_eq!(slugs(super::by_priority), ["c", "d", "a", "b"]);
+        assert_eq!(slugs(super::by_recent), ["a", "c", "b", "d"]);
     }
 }
