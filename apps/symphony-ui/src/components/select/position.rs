@@ -1,5 +1,6 @@
 //! A popup stays beside its trigger where possible, inside the visible viewport always, and no
-//! taller than [`MAX_HEIGHT`]: a longer list scrolls inside it.
+//! taller than [`MAX_HEIGHT`]: a longer list scrolls inside it. It is as wide as its longest
+//! option, its scrollbar beside it, up to the viewport's width.
 //! Rectangles are [left, top, width, height], in layout-viewport CSS pixels.
 
 /// The tallest a popup draws, 20rem: about eight options, a list the eye takes in at once.
@@ -94,18 +95,27 @@ mod browser {
         };
         let viewport = bounds(window);
         let anchor = trigger.get_bounding_client_rect();
-        // Measure intrinsic width and full content height before choosing the side. Hidden
-        // measurement avoids an unpositioned first frame; no style or focus work is deferred.
-        let _ = popup.set_attribute("style", &format!("position:fixed;visibility:hidden;min-width:{}px;width:max-content;max-width:{}px;max-height:{}px;overflow-y:auto;overflow-x:hidden;margin:0;z-index:1100", anchor.width().min((viewport[2]-16.0).max(0.0)), (viewport[2]-16.0).max(0.0), (viewport[3]-16.0).max(0.0)));
-        let [left, top, width, height] = super::popup_rect(
-            [anchor.left(), anchor.top(), anchor.width(), anchor.height()],
-            viewport,
-            [
-                f64::from(popup.offset_width()),
-                f64::from(popup.scroll_height()),
-            ],
-        );
-        let _ = popup.set_attribute("style", &format!("position:fixed;left:{left}px;top:{top}px;width:{width}px;min-width:0;max-height:{height}px;overflow-y:auto;overflow-x:hidden;margin:0;z-index:1100"));
+        let anchor = [anchor.left(), anchor.top(), anchor.width(), anchor.height()];
+        // Measure the list with nothing clipped before choosing the side: its longest option on
+        // one line (no wider than the viewport) and every option's height. Its stylesheet's
+        // `min-width:100%` would be the whole window's width once fixed, so it is lifted here.
+        // Hidden measurement avoids an unpositioned first frame; no style or focus work is deferred.
+        let _ = popup.set_attribute("style", &format!("position:fixed;visibility:hidden;left:0;top:0;width:max-content;min-width:0;max-width:{}px;overflow:hidden;margin:0;z-index:1100", (viewport[2]-16.0).max(0.0)));
+        let content = [
+            f64::from(popup.offset_width()),
+            f64::from(popup.scroll_height()),
+        ];
+        let place = |content: [f64; 2]| {
+            let [left, top, width, height] = super::popup_rect(anchor, viewport, content);
+            let _ = popup.set_attribute("style", &format!("position:fixed;left:{left}px;top:{top}px;width:{width}px;min-width:0;max-height:{height}px;overflow-y:auto;overflow-x:hidden;margin:0;z-index:1100"));
+        };
+        place(content);
+        // A list that scrolls draws its scrollbar inside its width where the platform's
+        // scrollbars take room: it is wider by that much, so no option wraps beside the bar.
+        let bar = f64::from(popup.offset_width() - popup.client_width());
+        if bar > 0.0 {
+            place([content[0] + bar, content[1]]);
+        }
         let _ = popup.set_attribute("data-positioned", "true");
         reveal(document, &popup);
     }

@@ -124,6 +124,50 @@ fn an_open_select_and_the_appearance_menu_draw_on_an_opaque_bounded_surface_in_b
     }
 }
 
+/// The open list's options: whether it scrolls, its width and its longest option's text width, and
+/// each option's text with its height.
+const OPTIONS: &str = "(() => {const list=document.querySelector('[role=listbox]'),range=document.createRange(),\
+    options=[...list.querySelectorAll('[role=option]')],\
+    text=o=>[...o.childNodes].filter(n=>n.nodeType===3).reduce((w,n)=>{range.selectNodeContents(n);return w+range.getBoundingClientRect().width;},0);\
+    return {scrolls:list.scrollHeight>list.clientHeight,width:Math.round(list.getBoundingClientRect().width),\
+    longest:Math.round(Math.max(...options.map(text))),\
+    options:options.map(o=>[o.textContent.trim(),Math.round(o.getBoundingClientRect().height)])};})()";
+
+#[test]
+fn a_list_too_tall_for_the_window_is_as_wide_as_its_longest_option_beside_its_scrollbar() {
+    let site = site();
+    let Some(mut page) = chrome() else { return };
+    // Too short for the twelve statuses: the list scrolls, its scrollbar inside its box.
+    viewport(&mut page, 1280, 420);
+    page.open(&site.url("/tasks"));
+    assert!(page.wait_for(
+        "document.querySelector('button[aria-label=\"Status\"]') !== null",
+        SHOWN
+    ));
+    page.eval("document.querySelector('button[aria-label=\"Status\"]').focus()");
+    key(&mut page, " ", "Space", 32);
+    popup_ready(&mut page);
+    let shown = page.eval(OPTIONS);
+    assert_eq!(shown["scrolls"], json!(true), "{shown}");
+    let options = shown["options"].as_array().unwrap();
+    assert_eq!(options[0][0], json!("All statuses"), "{shown}");
+    assert!(
+        options.iter().all(|option| option[1] == options[1][1]),
+        "every option on one line, \"All statuses\" and its check mark among them: {shown}"
+    );
+    // As wide as that longest line and no wider: an option's padding (24px), the check mark
+    // (16px), the list's padding (8px) and a scrollbar's room past its text, not the window's
+    // width.
+    let (width, longest) = (
+        shown["width"].as_i64().unwrap(),
+        shown["longest"].as_i64().unwrap(),
+    );
+    assert!(
+        longest > 0 && width >= longest + 48 && width <= longest + 96,
+        "the list is as wide as its longest option: {shown}"
+    );
+}
+
 fn paragraph(text: &str) -> Value {
     json!({"type":"paragraph","spans":[{"type":"text","text":text}]})
 }
