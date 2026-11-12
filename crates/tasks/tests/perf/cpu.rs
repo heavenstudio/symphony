@@ -60,7 +60,9 @@ struct Settled {
 type Meter = Box<dyn Fn() -> Duration + Send>;
 
 /// Waits until the process `meter` reads, on a meter of `tick`s, is quiet in one look
-/// ([`Window::quiet`]), for at most `most`. Each look starts where the one before it ended.
+/// ([`Window::quiet`]), for at most `most`. Each look starts where the one before it ended. A
+/// process the scheduler leaves without the CPU for a whole look, as a loaded machine can, reads
+/// quiet in it: it took nothing there.
 fn settle(meter: &dyn Fn() -> Duration, tick: Duration, most: Duration) -> Settled {
     let (began, first) = (Instant::now(), meter());
     let (mut at, mut before) = (began, first);
