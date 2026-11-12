@@ -271,10 +271,12 @@ impl Fixture {
         repository(&root, &["config", "core.hooksPath", "/dev/null"]);
         write(&root.join("docs/TOPIC.md"), DOC);
         write(&root.join(".gitignore"), "artifacts/\n");
-        // The project's verdict commands, which the fixture's `just` stands in for.
+        // The project's verdict commands, which the fixture's `just` stands in for, and the command
+        // the server's rebuild runs Cargo by, which the driver stands in for.
         write(
             &root.join("symphony.toml"),
-            "[verdicts]\ncheck = [\"just\", \"verify\"]\nland = [\"just\", \"land\"]\ngenerators = [\n  \
+            "[project]\ncargo = [\"tools/rs-bin.sh\", \"sf-slots\", \"cargo\"]\n\
+             [verdicts]\ncheck = [\"just\", \"verify\"]\nland = [\"just\", \"land\"]\ngenerators = [\n  \
              { name = \"content\", outputs = \"content/\", command = [\"just\", \"content\"] },\n  \
              { name = \"content-ids\", outputs = \"sim/content_ids.gd\", command = [\"just\", \"content-ids\"], when_changed = true },\n  \
              { name = \"lamp-atlas\", outputs = \"view/lamp_atlas\", command = [\"just\", \"lamp-atlas\", \"build\"], when_changed = true },\n]\n\

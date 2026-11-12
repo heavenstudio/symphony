@@ -1,7 +1,6 @@
 //! The task board, reached through the project's build of the `tasks` binary, found as the heartbeat
 //! finds it: the checkout's `.target/bin/tasks` link (else, from a linked worktree, the main
-//! checkout's), else the live build its main checkout's launcher recorded, else `tasks` on `PATH`
-//! ([`crate::builds`]). Its API (`tasks api`, crates/tasks/src/cli/api.rs) is for reading, its
+//! checkout's), else `tasks` on `PATH` ([`crate::builds`]). Its API (`tasks api`, crates/tasks/src/cli/api.rs) is for reading, its
 //! commands for writing. The board is the one the environment reaches: `TASKS_SERVER` and
 //! `TASKS_DATABASE` name a test's, else the server in the checkout's git common dir; `TASKS_NOW` pins
 //! its clock. `SYMPHONY_TASKS_CLI` names another command to run in the binary's place (split as a
@@ -81,11 +80,10 @@ fn words(env: symphony_env::Var, default: Vec<String>) -> Vec<String> {
 }
 
 /// The project's build of the board's binary from the checkout at `root`: its link (the main
-/// checkout's from a linked worktree), else the live build the main checkout's launcher recorded in
-/// the common dir, as the heartbeat runs it. None leaves `tasks` to the search path.
+/// checkout's from a linked worktree), as the heartbeat runs it. None leaves `tasks` to the search
+/// path.
 pub fn tasks_binary(root: &Path) -> Option<PathBuf> {
     crate::builds::linked(root, TASKS)
-        .or_else(|| crate::hook::live_build(&symphony_board::git::checkout_common_dir(root)?))
 }
 
 impl CliBoard {

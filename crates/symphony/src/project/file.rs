@@ -118,6 +118,7 @@ pub(super) struct FileProject {
     pub(super) register: Option<String>,
     pub(super) artifacts: Option<String>,
     pub(super) default_branch: Option<String>,
+    pub(super) cargo: Vec<String>,
     #[serde(flatten)]
     pub(super) unknown: Unknown,
 }

@@ -10,6 +10,19 @@ use symphony_board::cli::machine_work::Freshness;
 
 mod recorder;
 
+/// Where the project at `root` names its machine-work reader, its folder made: the program is the
+/// case's to write.
+fn prepared_reader(root: &Path) -> PathBuf {
+    std::fs::write(
+        root.join(symphony::project::FILE),
+        "[board]\nmachine_work_reader = \".target/bin/reader\"\n",
+    )
+    .unwrap();
+    let reader = root.join(".target/bin/reader");
+    std::fs::create_dir_all(reader.parent().unwrap()).unwrap();
+    reader
+}
+
 fn input(state: &str) -> Vec<u8> {
     serde_json::to_vec(&json!({"version":1,"complete":false,"uncertain":false,"truncated":false,"records":[{
         "evidence":if state == "finished" { "finished" } else { "active" },
@@ -207,9 +220,7 @@ fn one_native_probe_feeds_cached_agents_task_pages_and_listings_then_preserves_f
     let tree = Tree::new();
     let root = repository(&tree);
     let common = root.join(".git");
-    let cache = root.join(".target/bin");
-    std::fs::create_dir_all(&cache).unwrap();
-    let reader = cache.join("sf-slots");
+    let reader = prepared_reader(&root);
     crate::fixture_script::write(
         &reader,
         "#!/bin/sh\nprintf 'called\\n' >> \"$3/probe-calls\"\n/bin/cat \"$3/native.json\"\n",
@@ -285,24 +296,30 @@ fn unavailable_reader_or_identity_never_claims_a_machine_or_retires_unassigned_e
         "#!/bin/sh\nprintf invoked > launcher-called\nexit 99\n",
         true,
     );
+    // A project that names no reader, then one whose named reader is not there yet: neither runs
+    // anything, and each says why.
+    let mut reader = None;
+    for named in [false, true] {
+        if named {
+            reader = Some(prepared_reader(&root));
+        }
+        let mut sampler = Sampler::new(&root, None);
+        let evidence = sampler.scan(&root, Some(&tree.path("missing-common")), &[]);
+        assert!(sampler.identity.is_none());
+        assert_eq!(evidence.snapshot.freshness, Freshness::Unknown);
+        assert!(evidence.snapshot.machines.is_empty());
+        assert!(
+            !root.join("launcher-called").exists(),
+            "a missing prepared reader invoked a source launcher"
+        );
+        let why = reader.as_ref().map_or_else(
+            || "[board] machine_work_reader".to_string(),
+            |reader| reader.display().to_string(),
+        );
+        assert!(sampler.reason.contains(&why), "{}", sampler.reason);
+    }
+    let reader = reader.unwrap();
     let mut sampler = Sampler::new(&root, None);
-    let evidence = sampler.scan(&root, Some(&tree.path("missing-common")), &[]);
-    assert!(sampler.identity.is_none());
-    assert_eq!(evidence.snapshot.freshness, Freshness::Unknown);
-    assert!(evidence.snapshot.machines.is_empty());
-    assert!(
-        !root.join("launcher-called").exists(),
-        "a missing prepared reader invoked a source launcher"
-    );
-    assert!(
-        sampler
-            .reason
-            .contains(&root.join(".target/bin/sf-slots").display().to_string()),
-        "{}",
-        sampler.reason
-    );
-    let reader = root.join(".target/bin/sf-slots");
-    std::fs::create_dir_all(reader.parent().unwrap()).unwrap();
     crate::fixture_script::write(&reader, "#!/bin/sh\n/bin/cat \"$3/native.json\"\n", true);
     let common = root.join(".git");
     sampler.identity = Some(Err("corrupt installation identity".into()));
@@ -331,12 +348,19 @@ fn explicit_or_prepared_reader_paths_are_retained_without_a_launcher_or_cache_se
     let root = repository(&tree);
     let common = root.join(".git");
     let explicit = tree.path("private-reader");
+    assert_eq!(Sampler::reader(&root, None).unwrap(), None);
     assert_eq!(
-        Sampler::reader(&root, None).unwrap(),
-        root.join(".target/bin/sf-slots")
+        Sampler::reader(&root, Some(&explicit)).unwrap(),
+        Some(explicit.clone())
     );
-    assert_eq!(Sampler::reader(&root, Some(&explicit)).unwrap(), explicit);
-    assert!(Sampler::reader(&root, Some(Path::new("sf-slots"))).is_err());
+    let prepared = prepared_reader(&root);
+    assert_eq!(Sampler::reader(&root, None).unwrap(), Some(prepared));
+    assert_eq!(
+        Sampler::reader(&root, Some(&explicit)).unwrap(),
+        Some(explicit.clone()),
+        "a named reader wins over the project's"
+    );
+    assert!(Sampler::reader(&root, Some(Path::new("reader"))).is_err());
     let script =
         "#!/bin/sh\nprintf 'called\\n' >> \"$3/explicit-calls\"\n/bin/cat \"$3/native.json\"\n";
     crate::fixture_script::write(&explicit, script, true);

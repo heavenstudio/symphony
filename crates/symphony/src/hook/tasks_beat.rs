@@ -14,13 +14,11 @@
 //! (`SYMPHONY_HOOK_ROOT`, or its old name `SF_HOOKS_ROOT` that a compatibility launcher sets, else
 //! `CLAUDE_PROJECT_DIR`).
 //! With none, the board's filesystem-only project lookup finds it from the event's cwd.
-//! A live `just tasks` through
-//! `tools/tasks.sh` links it to committed main's build, in the checkout whose justfile ran; scratch
-//! calls preserve that link. A checkout with no link (a worktree whose sessions run main's justfile,
-//! `just --justfile MAIN/justfile tasks …`) beats on the live build `tools/tasks.sh` recorded in the
-//! common dir ([`live_build`]) and links it there, so its next beat
-//! looks no further. The hook hashes no sources and builds nothing, since a build would hold up the
-//! tool call for minutes. It beats on that approved build until the next live `just tasks` refreshes it.
+//! A checkout with no link of its own (a worktree whose sessions run main's justfile,
+//! `just --justfile MAIN/justfile tasks …`, or a project below its checkout's top) beats on its main
+//! checkout's link, as the recipes find a build ([`crate::builds`]), and makes no link. The hook
+//! hashes no sources and builds nothing, since a build would hold up the tool call for minutes: the
+//! project's build setup makes the links.
 //! The hook prints nothing and always exits 0: a heartbeat must never cost an agent its tool call. It
 //! stops a beat that has held the call for [`LIMIT`] ([`Limit`]).
 
@@ -117,7 +115,7 @@ fn wanted(raw: &[u8], env: &HashMap<String, String>) -> bool {
 }
 
 /// The board's binary: `TASKS_BIN`, else the project's `.target/bin/tasks` while it names a build, else
-/// the live build of main ([`live_build`]), linked there for the next beat.
+/// its main checkout's ([`main_link`]).
 fn binary(env: &HashMap<String, String>, raw: &[u8]) -> Option<PathBuf> {
     if let Some(named) = set(env, "TASKS_BIN") {
         return Some(PathBuf::from(named));
@@ -153,69 +151,25 @@ fn binary(env: &HashMap<String, String>, raw: &[u8]) -> Option<PathBuf> {
             (place.root, Some(place.common))
         }
     };
-    let link = root.join(".target/bin/tasks");
+    let link = root.join(crate::builds::LINKS).join(TASKS);
     if link.exists() {
         return Some(link);
     }
-    let live = live_build(&common?)?;
-    link_to(&link, &live);
-    Some(live)
+    main_link(&common?)
 }
 
-/// Where `tools/tasks.sh` records the live board's build in the git common dir: one file per tree of
-/// committed main it built, `TREE`, whose first line is that build's path. It writes a record under a
-/// dot name and renames it into place. It keeps the built and current main tree pointers, plus a
-/// `current` record whose first line names the last promoted build. Failure reports and build output
-/// share the folder; only a record whose first line names an executable is a build for this hook.
-const LIVE: [&str; 2] = ["sf-cargo", "tasks-main"];
+/// The board's binary.
+const TASKS: &str = "tasks";
 
-/// The newest executable build recorded under the located repository's common directory.
-/// The caller resolves that directory within the project's checkout boundary.
-pub(crate) fn live_build(common: &Path) -> Option<PathBuf> {
-    let mut folder = common.to_path_buf();
-    folder.extend(LIVE);
-    std::fs::read_dir(folder)
-        .ok()?
-        .flatten()
-        .filter(|record| !record.file_name().to_string_lossy().starts_with('.'))
-        .filter_map(|record| {
-            let written = record
-                .metadata()
-                .ok()
-                .filter(|meta| meta.is_file())?
-                .modified()
-                .ok()?;
-            let text = std::fs::read_to_string(record.path()).ok()?;
-            let build = PathBuf::from(text.lines().next()?);
-            (build.is_absolute() && runnable(&build)).then(|| (written, record.file_name(), build))
-        })
-        .max()
-        .map(|(_, _, build)| build)
-}
-
-/// Whether `path` is a file with an execute bit set: what `tools/tasks.sh` asks of a build before it
-/// records or runs it (`[ -f ] && [ -x ]`).
-fn runnable(path: &Path) -> bool {
-    use std::os::unix::fs::PermissionsExt;
-    std::fs::metadata(path)
-        .is_ok_and(|meta| meta.is_file() && meta.permissions().mode() & 0o111 != 0)
-}
-
-/// Points `link` at `build` by a rename over whatever is there, as `tools/tasks.sh` links it. A link
-/// that cannot be made costs nothing but the next beat's look in the common dir.
-fn link_to(link: &Path, build: &Path) {
-    let Some(folder) = link.parent() else {
-        return;
-    };
-    let staged = folder.join(format!(".tasks-beat.{}", std::process::id()));
-    if std::fs::create_dir_all(folder).is_err() {
-        return;
-    }
-    let _ = std::fs::remove_file(&staged);
-    if std::os::unix::fs::symlink(build, &staged).is_ok() && std::fs::rename(&staged, link).is_err()
-    {
-        let _ = std::fs::remove_file(&staged);
-    }
+/// The main checkout's link to its build of the board's binary, when the repository whose common dir
+/// is `common` has a main checkout (`common` is its `.git` folder) and that link runs. The caller
+/// resolves `common` within the project's checkout boundary.
+fn main_link(common: &Path) -> Option<PathBuf> {
+    let main = common
+        .parent()
+        .filter(|_| common.file_name().is_some_and(|name| name == ".git"))?;
+    let link = main.join(crate::builds::LINKS).join(TASKS);
+    crate::builds::runnable(&link).then_some(link)
 }
 
 /// Hands the event to the binary's `beat` and waits for it, until its [`Limit`] has passed; whatever

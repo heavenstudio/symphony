@@ -1,6 +1,9 @@
 //! The project file's `[board]` table: the board's export, what a finished worktree may hold, the
 //! guide task messages render as part of, what the board starts when a task moves to review, the cap
-//! on an orchestrator's open tasks and when the pipeline alarm raises.
+//! on an orchestrator's open tasks, when the pipeline alarm raises, and the project's own tools the
+//! board reads beside its own: a machine-work reader, a folder of test-slot locks and a folder of
+//! landing assessments. A path there is project-relative, and one under `.git/` names the
+//! repository's common git folder; none is the Symphony's default, which reads nothing there.
 
 use serde::Deserialize;
 use std::collections::BTreeMap;
@@ -36,6 +39,16 @@ pub struct Board {
     /// The hours review must hold no more than the ratio for the alarm to clear.
     pub review_alarm_clear_hours: Option<u32>,
     pub machine_wip: BTreeMap<String, WipGuidance>,
+    /// The project's own machine-work reader, an executable the server's machine-work scan runs
+    /// beside the board's recorder when it is there (`SYMPHONY_MACHINE_WORK_READER` names another);
+    /// `None` runs none.
+    pub machine_work_reader: Option<String>,
+    /// The folder of the project's test-slot locks, which the board's machine probe reads itself
+    /// (`symphony_board::cli::probes`); `None` probes none.
+    pub slot_locks: Option<String>,
+    /// The folder of the project's landing assessments, which the board's assessment API reads itself
+    /// (`symphony_board::assessment_publication`); `None` reads none, and an assessment there is refused.
+    pub assessments: Option<String>,
 }
 
 impl Board {
@@ -82,6 +95,9 @@ impl Board {
             review_alarm_hours: file.review_alarm_hours,
             review_alarm_clear_hours: file.review_alarm_clear_hours,
             machine_wip: file.machine_wip,
+            machine_work_reader: inside("[board] machine_work_reader", file.machine_work_reader)?,
+            slot_locks: inside("[board] slot_locks", file.slot_locks)?,
+            assessments: inside("[board] assessments", file.assessments)?,
         })
     }
 }
@@ -99,6 +115,9 @@ pub(super) struct FileBoard {
     review_alarm_hours: Option<u32>,
     review_alarm_clear_hours: Option<u32>,
     machine_wip: BTreeMap<String, WipGuidance>,
+    machine_work_reader: Option<String>,
+    slot_locks: Option<String>,
+    assessments: Option<String>,
     #[serde(flatten)]
     pub(super) unknown: super::file::Unknown,
 }

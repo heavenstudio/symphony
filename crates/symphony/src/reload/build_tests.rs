@@ -13,7 +13,7 @@ use symphony_board::sys::Command;
 
 use crate::test_tree::Tree;
 
-use super::{client_build, run_build, server_build};
+use super::{client_build, run_build, server_build, server_build_by};
 
 fn shell(script: &str) -> Command {
     let mut command = Command::new("/bin/sh");
@@ -39,7 +39,8 @@ fn each_build_is_mains_own_command_with_its_arguments() {
         [OsStr::new("symphony-ui-dist"), stage.as_os_str()]
     );
     // The server is installed from the host package where main has one, else from the
-    // Symphony's own folder.
+    // Symphony's own folder, by plain `cargo` where main names no command for it, and by the
+    // Symphony's own wrapper in its own workspace.
     for (host, package) in [
         (false, "symphony/apps/symphony-server"),
         (true, "apps/symphony-host"),
@@ -52,17 +53,29 @@ fn each_build_is_mains_own_command_with_its_arguments() {
             tree.write("apps/symphony-server/Cargo.toml", "[package]\n");
         }
         let server = server_build(&tree.root, home);
+        let standalone = package == "apps/symphony-server";
         assert_eq!(
             server.get_program(),
-            tree.path(if package == "apps/symphony-server" {
-                "tools/cargo.sh"
+            if standalone {
+                tree.path("tools/cargo.sh").into_os_string()
             } else {
-                "tools/rs-bin.sh"
-            })
+                "cargo".into()
+            },
+            "host package {host}"
         );
-        let install = [
-            "sf-slots",
-            "cargo",
+        assert_eq!(
+            words(&server),
+            installed(&[], package, home),
+            "host package {host}"
+        );
+    }
+}
+
+/// `install … --root HOME` of the server's package `package`, after `before`.
+fn installed(before: &[&str], package: &str, home: &Path) -> Vec<String> {
+    before
+        .iter()
+        .chain(&[
             "install",
             "--quiet",
             "--locked",
@@ -72,27 +85,56 @@ fn each_build_is_mains_own_command_with_its_arguments() {
             "--bin",
             "symphony-server",
             "--root",
-        ];
-        assert_eq!(
-            server.get_args().collect::<Vec<_>>(),
-            install
-                .into_iter()
-                .skip(if package == "apps/symphony-server" {
-                    2
-                } else {
-                    0
-                })
-                .map(OsStr::new)
-                .chain([home.as_os_str()])
-                .collect::<Vec<_>>(),
-            "host package {host}"
-        );
-    }
+        ])
+        .map(|word| (*word).to_string())
+        .chain([home.display().to_string()])
+        .collect()
 }
 
-/// What the build saw, `|` after each: its directory, the six variables a build must not see (the
-/// board's session, hc's four and the content tree) and one it keeps, its stdin and stdout, and
-/// whether it leads a process group of its own.
+/// The words `command` runs with.
+fn words(command: &Command) -> Vec<String> {
+    command
+        .get_args()
+        .map(|word| word.to_string_lossy().into_owned())
+        .collect()
+}
+
+#[test]
+fn the_server_builds_by_the_command_mains_project_file_names_for_cargo() {
+    let tree = Tree::new();
+    let home = Path::new("/common dir/symphony");
+    tree.write("apps/symphony-server/Cargo.toml", "[package]\n");
+    let package = "apps/symphony-server";
+    let wrapper = ["tools/wrap.sh", "slots", "cargo"].map(String::from);
+    // A program named with a folder is the checkout's own, even in the Symphony's own workspace.
+    let server = server_build_by(&tree.root, home, &wrapper);
+    assert_eq!(server.get_program(), tree.path("tools/wrap.sh"));
+    assert_eq!(
+        words(&server),
+        installed(&["slots", "cargo"], package, home)
+    );
+    // A bare name is found on the search path, and an absolute one is itself.
+    for (named, program) in [("cargo-nightly", "cargo-nightly"), ("/opt/cargo", "/opt/cargo")] {
+        let server = server_build_by(&tree.root, home, &[named.to_string()]);
+        assert_eq!(server.get_program(), program);
+        assert_eq!(words(&server), installed(&[], package, home));
+    }
+    // The setting is read from main's project file.
+    tree.write(
+        "symphony.toml",
+        "[project]\ncargo = [\"tools/wrap.sh\", \"slots\", \"cargo\"]\n",
+    );
+    let server = server_build(&tree.root, home);
+    assert_eq!(server.get_program(), tree.path("tools/wrap.sh"));
+    assert_eq!(
+        words(&server),
+        installed(&["slots", "cargo"], package, home)
+    );
+}
+
+/// What the build saw, `|` after each: its directory, the five variables a build must not see (the
+/// board's session and hc's four) and one it keeps, its stdin and stdout, and whether it leads a
+/// process group of its own.
 const SAW: &str = r#"
     input=other; output=other; leader=no
     test /dev/fd/0 -ef /dev/null && input=null
@@ -100,11 +142,11 @@ const SAW: &str = r#"
     test "$(ps -o pgid= -p $$ | tr -d ' ')" = "$$" && leader=yes
     printf '%s|' "$(pwd -P)" "${TASKS_SESSION-unset}" "${HC_TERMINAL_ID-unset}" \
         "${HC_TERMINAL_SOCKET-unset}" "${HC_SESSION-unset}" "${HC_SCOPE-unset}" \
-        "${SF_CONTENT_DIR-unset}" "${SF_SYMPHONY_KEPT-unset}" "$input" "$output" "$leader" > saw
+        "${SF_SYMPHONY_KEPT-unset}" "$input" "$output" "$leader" > saw
 "#;
 
 #[test]
-fn a_build_runs_from_the_root_in_a_group_of_its_own_without_the_session_or_content_dir() {
+fn a_build_runs_from_the_root_in_a_group_of_its_own_without_the_session() {
     // The variables are this test's own process's, set when it is started: set here, they would
     // reach every other test's children too.
     const CASE: &str = "SF_SYMPHONY_BUILD_CASE";
@@ -117,7 +159,7 @@ fn a_build_runs_from_the_root_in_a_group_of_its_own_without_the_session_or_conte
         Command::new(std::env::current_exe().unwrap())
             .args([
                 "--exact",
-                "reload::build_tests::a_build_runs_from_the_root_in_a_group_of_its_own_without_the_session_or_content_dir",
+                "reload::build_tests::a_build_runs_from_the_root_in_a_group_of_its_own_without_the_session",
             ])
             .env(CASE, &tree.root)
             .env("TASKS_SESSION", "a-session")
@@ -125,7 +167,6 @@ fn a_build_runs_from_the_root_in_a_group_of_its_own_without_the_session_or_conte
             .env("HC_TERMINAL_SOCKET", "/fixture/hc/t7.sock")
             .env("HC_SESSION", "fixture-core")
             .env("HC_SCOPE", "fixture-scope")
-            .env("SF_CONTENT_DIR", "/a/content/tree")
             .env("SF_SYMPHONY_KEPT", "kept"),
     )
     .unwrap();
@@ -138,7 +179,7 @@ fn a_build_runs_from_the_root_in_a_group_of_its_own_without_the_session_or_conte
     assert_eq!(
         tree.read("saw"),
         format!(
-            "{}|unset|unset|unset|unset|unset|unset|kept|null|null|yes|",
+            "{}|unset|unset|unset|unset|unset|kept|null|null|yes|",
             tree.root.canonicalize().unwrap().display()
         )
     );

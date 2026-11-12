@@ -1,7 +1,8 @@
 //! One local native scan per existing board tick; every HTTP/feed consumer reads its cached view.
 //! A scan reads the board's own recorder's operations (`tasks run`, in the common dir's
-//! `sf-tasks/work/`) directly, and a project's own reader beside them when it has one: an
-//! `sf-slots` at its prepared path, or the one `SYMPHONY_MACHINE_WORK_READER` names.
+//! `sf-tasks/work/`) directly, and a project's own reader beside them when it has one: the
+//! executable its `symphony.toml` names (`[board] machine_work_reader`), or the one
+//! `SYMPHONY_MACHINE_WORK_READER` names.
 
 use super::*;
 use symphony_board::cli::machine_work::{
@@ -65,8 +66,9 @@ impl Read {
 
 pub(super) struct Sampler {
     projection: Projection,
-    reader: Result<PathBuf, String>,
-    /// The reader was named (`SYMPHONY_MACHINE_WORK_READER`): it must answer, where the prepared
+    /// The project's own reader, if it has one ([`Sampler::reader`]).
+    reader: Result<Option<PathBuf>, String>,
+    /// The reader was named (`SYMPHONY_MACHINE_WORK_READER`): it must answer, where the project's
     /// path may hold none.
     supplied: bool,
     identity: Option<Result<String, String>>,
@@ -105,16 +107,22 @@ impl Sampler {
             .unwrap_or(u64::MAX)
     }
 
-    /// Retain a prepared pathname once, without PATH search, cache enumeration or source hashing.
-    /// This is selection, not an image seal: unavailable/changed/old programs remain Unknown.
-    fn reader(root: &Path, supplied: Option<&Path>) -> Result<PathBuf, String> {
-        let reader = supplied
-            .map(Path::to_path_buf)
-            .unwrap_or_else(|| root.join(".target/bin/sf-slots"));
+    /// Retain a prepared pathname once, without PATH search, cache enumeration or source hashing:
+    /// the one `supplied` names, else the one the project at `root` names (`[board]
+    /// machine_work_reader`), else none. This is selection, not an image seal:
+    /// unavailable/changed/old programs remain Unknown.
+    fn reader(root: &Path, supplied: Option<&Path>) -> Result<Option<PathBuf>, String> {
+        let reader = match supplied {
+            Some(named) => named.to_path_buf(),
+            None => match &symphony::project::Project::of(root).board.machine_work_reader {
+                Some(prepared) => root.join(prepared),
+                None => return Ok(None),
+            },
+        };
         if !reader.is_absolute() {
             return Err("native inventory reader needs an absolute path".into());
         }
-        Ok(reader)
+        Ok(Some(reader))
     }
 
     fn trusted(&self) -> Result<String, String> {
@@ -225,17 +233,19 @@ impl Sampler {
             let common = common.ok_or("native common directory unavailable")?;
             let reader = self.reader.as_ref().map_err(Clone::clone)?.clone();
             let recorded = recorded::read(&recorded::in_common(common));
-            // A named reader must answer; the prepared path answers when a project put one there.
-            let slots = if self.supplied || reader.exists() {
-                let mut env = symphony::children::board_env();
-                env.cwd = root.to_path_buf();
-                let bytes = symphony_board::cli::probes::native_inventory(&env, &reader, common)
-                    .map_err(|error| {
-                        format!("native inventory reader {}: {error}", reader.display())
-                    })?;
-                Some(bytes)
-            } else {
-                None
+            // A named reader must answer; the project's answers when it put one at its path.
+            let slots = match &reader {
+                Some(reader) if self.supplied || reader.exists() => {
+                    let mut env = symphony::children::board_env();
+                    env.cwd = root.to_path_buf();
+                    let bytes =
+                        symphony_board::cli::probes::native_inventory(&env, reader, common)
+                            .map_err(|error| {
+                                format!("native inventory reader {}: {error}", reader.display())
+                            })?;
+                    Some(bytes)
+                }
+                _ => None,
             };
             let read = Read { recorded, slots };
             if self.identity.is_none() {
@@ -243,10 +253,17 @@ impl Sampler {
                 read.inventory(None)?;
                 // Nor does a machine where nothing was ever recorded and no reader answers.
                 if read.slots.is_none() && read.recorded.is_empty() {
-                    return Err(format!(
-                        "no build or test recorded yet, and no project reader at {}",
-                        reader.display()
-                    ));
+                    return Err(match &reader {
+                        Some(reader) => format!(
+                            "no build or test recorded yet, and no project reader at {}",
+                            reader.display()
+                        ),
+                        None => format!(
+                            "no build or test recorded yet, and the project names no reader \
+                             ([board] machine_work_reader in {})",
+                            symphony::project::FILE
+                        ),
+                    });
                 }
                 self.identity = Some(symphony::machine::installation_id());
             }

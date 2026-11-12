@@ -1,4 +1,5 @@
-//! Strict decoding of the bounded sf-slots inventory bridge, with trusted local identity attached,
+//! Strict decoding of the bounded inventory a project's machine-work reader writes (`[board]
+//! machine_work_reader`), with trusted local identity attached,
 //! and the board's own recorder's operations ([`super::recorded`]) beside it: one inventory of
 //! both ([`Inventory::merge`]). Terminal metadata stays private; only the projection's atomic
 //! native entry may consume it.

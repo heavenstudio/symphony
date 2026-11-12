@@ -135,6 +135,27 @@ impl Project {
     }
 }
 
+/// Where the path `[board] KEY` names in the project file of the main checkout of the repository
+/// whose common dir is `common` is: one under `.git/` in the common dir, any other under the main
+/// checkout. None when there is no main checkout, no file, it does not read, or it names no path
+/// there: the project has none of that kind, and the board reads none (`[board] slot_locks`,
+/// `[board] assessments`; the Symphony's `project::Board` checks them). Only that key is read; the
+/// rest of the file is the Symphony's.
+pub fn board_path(common: &Path, key: &str) -> Option<PathBuf> {
+    let root = main_checkout(common)?;
+    let text = std::fs::read_to_string(root.join(FILE)).ok()?;
+    let file = text.parse::<toml::Table>().ok()?;
+    let path = file
+        .get("board")?
+        .get(key)?
+        .as_str()
+        .filter(|path| !path.is_empty())?;
+    Some(match path.strip_prefix(".git/") {
+        Some(rest) => common.join(rest),
+        None => root.join(path),
+    })
+}
+
 /// The main checkout of the repository whose common dir is `common`: the folder holding it, when it
 /// is a `.git` folder.
 fn main_checkout(common: &Path) -> Option<&Path> {
