@@ -85,16 +85,7 @@ impl Live {
 
     /// The database `db` on the board's server, made by the build one schema version behind.
     fn seed(&self, db: &str) {
-        Store::opening(
-            self.client(db),
-            Box::new(|| NOW),
-            Box::new(|_| false),
-            "this-host",
-            &Opening::write().at(Schema::this_build().before()),
-        )
-        .unwrap()
-        .create(&NewTask::new("live/one", "Made by main's build", "owner"))
-        .unwrap();
+        seed(self.client(db));
     }
 
     /// The main checkout's working tree holding `held` at [`SOURCE`].
@@ -141,33 +132,7 @@ impl Live {
         args: &[&str],
         input: &str,
     ) -> Ran {
-        let path = format!(
-            "{}:/usr/sbin:/sbin",
-            std::env::var("PATH").unwrap_or_default()
-        );
-        let mut command = Command::new(program);
-        command
-            .env_clear()
-            .env("PATH", path)
-            .env("HOME", self.base.join("home"))
-            .env("SF_SURREAL", surreal())
-            .env("TASKS_NOW", NOW.to_string())
-            .env("TASKS_SWEEP", "off")
-            .env("TASKS_DISPATCH", "inline")
-            .env("SYMPHONY_MACHINE_DIR", &self.machine)
-            .envs(vars.iter().copied())
-            .args(args)
-            .current_dir(cwd);
-        // Its input a file, which ends where it ends whatever other tests' children hold open.
-        let file = self.base.join("input");
-        std::fs::write(&file, input).unwrap();
-        command.stdin(std::fs::File::open(&file).unwrap());
-        let done = command.output().unwrap();
-        Ran {
-            code: done.status.code().unwrap_or(-1),
-            out: String::from_utf8(done.stdout).unwrap(),
-            err: String::from_utf8(done.stderr).unwrap(),
-        }
+        run(&self.base, &self.machine, program, cwd, vars, args, input)
     }
 
     /// `tasks ARGS` in `cwd`.
@@ -217,6 +182,61 @@ impl Live {
 impl Drop for Live {
     fn drop(&mut self) {
         let _ = self.home().stop();
+    }
+}
+
+/// The board `client` reaches, made by the build one schema version behind, holding the task
+/// `live/one`.
+fn seed(client: Client) {
+    Store::opening(
+        client,
+        Box::new(|| NOW),
+        Box::new(|_| false),
+        "this-host",
+        &Opening::write().at(Schema::this_build().before()),
+    )
+    .unwrap()
+    .create(&NewTask::new("live/one", "Made by main's build", "owner"))
+    .unwrap();
+}
+
+/// `program ARGS` in `cwd`, `input` on stdin, on an environment of only what a session's run carries
+/// and `vars`: no board named, `HOME` in `base`, the machine folder `machine`.
+fn run(
+    base: &Path,
+    machine: &Path,
+    program: &Path,
+    cwd: &Path,
+    vars: &[(&str, &str)],
+    args: &[&str],
+    input: &str,
+) -> Ran {
+    let path = format!(
+        "{}:/usr/sbin:/sbin",
+        std::env::var("PATH").unwrap_or_default()
+    );
+    let mut command = Command::new(program);
+    command
+        .env_clear()
+        .env("PATH", path)
+        .env("HOME", base.join("home"))
+        .env("SF_SURREAL", surreal())
+        .env("TASKS_NOW", NOW.to_string())
+        .env("TASKS_SWEEP", "off")
+        .env("TASKS_DISPATCH", "inline")
+        .env("SYMPHONY_MACHINE_DIR", machine)
+        .envs(vars.iter().copied())
+        .args(args)
+        .current_dir(cwd);
+    // Its input a file, which ends where it ends whatever other tests' children hold open.
+    let file = base.join("input");
+    std::fs::write(&file, input).unwrap();
+    command.stdin(std::fs::File::open(&file).unwrap());
+    let done = command.output().unwrap();
+    Ran {
+        code: done.status.code().unwrap_or(-1),
+        out: String::from_utf8(done.stdout).unwrap(),
+        err: String::from_utf8(done.stderr).unwrap(),
     }
 }
 
@@ -530,49 +550,115 @@ fn migrate_takes_only_help_and_an_actor_and_says_what_it_did_to_a_scratch_board(
     );
 }
 
-/// A bare repository's board server, stopped when the case ends, however it ends.
-struct Bare(PathBuf);
+/// A board server in the common dir `0`, stopped when the case ends, however it ends.
+struct Served(PathBuf);
 
-impl Drop for Bare {
-    fn drop(&mut self) {
-        let _ = Home::in_common(&self.0, Some(&surreal())).stop();
+impl Served {
+    fn home(&self) -> Home {
+        Home::in_common(&self.0, Some(&surreal()))
+    }
+
+    /// The schema version of its `tasks` database: one read, which defines and writes nothing.
+    fn version(&self) -> Option<i64> {
+        let addr = self.home().recorded().expect("the board's server").addr;
+        Store::unchecked(
+            Client::new(&addr, "sf", "tasks"),
+            Box::new(|| NOW),
+            Box::new(|_| true),
+            "",
+        )
+        .board_version()
+        .unwrap()
     }
 }
 
-#[test]
-fn a_repository_with_no_main_checkout_has_no_folder_to_migrate_its_live_board_from() {
-    let base = scratch("main-only-bare");
-    let seed = repository(&base.join("seed"));
-    std::fs::write(seed.join("symphony.toml"), "[project]\nid = \"bare\"\n").unwrap();
+impl Drop for Served {
+    fn drop(&mut self) {
+        let _ = self.home().stop();
+    }
+}
+
+/// A repository at `path` holding the file of the project `loose`, committed on `main`.
+fn loose_project(path: &Path) -> PathBuf {
+    let seed = repository(path);
+    std::fs::write(seed.join("symphony.toml"), "[project]\nid = \"loose\"\n").unwrap();
     git(&seed, &["add", "-A"]);
     git(&seed, &["commit", "-qm", "project"]);
+    seed
+}
+
+#[test]
+fn a_repository_with_no_main_checkout_moves_its_live_board_by_migrate_in_any_checkout_of_it() {
+    let base = scratch("main-only-loose");
+    let seed_repository = loose_project(&base.join("seed"));
+    // A bare repository and a worktree of it.
     git(&base, &["clone", "-q", "--bare", "seed", "bare.git"]);
-    let bare = Bare(base.join("bare.git"));
-    git(&bare.0, &["worktree", "add", "-q", "../wt", "main"]);
+    git(
+        &base.join("bare.git"),
+        &["worktree", "add", "-q", "../wt", "main"],
+    );
+    // A submodule, whose common dir is kept in its superproject's `modules/`.
+    let sup = repository(&base.join("super"));
+    git(
+        &sup,
+        &[
+            "-c",
+            "protocol.file.allow=always",
+            "submodule",
+            "add",
+            "-q",
+            seed_repository.to_str().unwrap(),
+            "sub",
+        ],
+    );
+    git(&sup, &["commit", "-qm", "submodule"]);
     let machine = base.join("machine");
     std::fs::create_dir_all(&machine).unwrap();
-    let env = symphony_board::cli::Env {
-        vars: [
-            ("SF_SURREAL", surreal().display().to_string()),
-            ("TASKS_NOW", NOW.to_string()),
-            ("TASKS_SWEEP", "off".to_string()),
-            ("SYMPHONY_MACHINE_DIR", machine.display().to_string()),
-        ]
-        .into_iter()
-        .map(|(name, value)| (name.to_string(), value))
-        .collect(),
-        cwd: base.join("wt"),
-    };
-    let ran = crate::run(&env, &["migrate"], "");
-    assert_eq!(
-        (ran.code, ran.out.as_str(), ran.err.as_str()),
-        (
-            2,
-            "",
-            "✖ the bare board's repository has no main checkout to run `tasks migrate` from: \
-             nothing was read or written\n"
-        )
-    );
+    for (common, checkout) in [
+        (base.join("bare.git"), base.join("wt")),
+        (sup.join(".git/modules/sub"), sup.join("sub")),
+    ] {
+        let served = Served(common.canonicalize().unwrap());
+        let addr = served.home().ensure().unwrap().addr;
+        seed(Client::new(&addr, "sf", "tasks"));
+        let tasks =
+            |args: &[&str]| run(&base, &machine, Path::new(TASKS), &checkout, &[], args, "");
+
+        refused(
+            &tasks(&["list"]),
+            &format!(
+                "the loose board is at schema {}, behind this build's {}, and its repository has \
+                 no main checkout to say which schema is its own, so only `just tasks migrate` run \
+                 in a checkout of it moves it forward: nothing was written; `just tasks migrate` in \
+                 any checkout of the repository at {} moves it, and a newer schema is tried on a \
+                 scratch board (`--database NAME`)",
+                before(),
+                this(),
+                served.0.display()
+            ),
+        );
+        assert_eq!(served.version(), Some(before()));
+
+        let ran = tasks(&["migrate"]);
+        assert_eq!(
+            (ran.code, ran.out, ran.err),
+            (
+                0,
+                format!(
+                    "✔ moved the loose board from schema {} to {}\n",
+                    before(),
+                    this()
+                ),
+                String::new()
+            ),
+            "{}",
+            checkout.display()
+        );
+        assert_eq!(served.version(), Some(this()));
+        let ran = tasks(&["list"]);
+        assert_eq!(ran.code, 0, "{}", ran.err);
+        assert!(ran.out.contains("live/one"), "{}", ran.out);
+    }
 }
 
 /// A stand-in for `cargo build … --bin NAME`: this build's `tasks`, linked where Cargo puts NAME, as

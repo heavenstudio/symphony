@@ -78,15 +78,18 @@ by the build's path: where the main checkout holds `crates/tasks/src/schema.rs`
 file, byte for byte, committed or not, under any command, and only such a build
 makes the board when it is not made yet; where it holds none (a consuming
 project, whose checkout holds a pin), only `just tasks migrate` run in a folder
-of the main checkout, while any writer makes a board not made yet. Every other
-writer is refused before it writes, naming `just tasks migrate` in the main
-checkout and a scratch board. So no
+of the main checkout, while any writer makes a board not made yet; in a
+repository with no main checkout (a bare repository's worktrees, a submodule's
+working tree, whose common dir is no `.git` folder), only `just tasks migrate`
+run in any checkout of it. Every other writer is refused before it writes,
+naming `just tasks migrate` where it moves the board and a scratch board. So no
 branch's build moves the live board, by its path, through the launcher (a
 shared target folder included), `tasks api`, the sweep, `agent-send`,
 `tasks-copy` or a test, while main's build moves it at its first command once
 the schema lands. `just tasks migrate` says what it did (made, moved from one
 version to the next, or nothing to move); on a live board outside its main
-checkout it is refused before it reads. A scratch board (`--database NAME`,
+checkout (outside every checkout of a repository with none) it is refused
+before it reads. A scratch board (`--database NAME`,
 `TASKS_DATABASE`, a server the record does not name) any writer moves forward.
 A process Cargo runs (`CARGO_MANIFEST_DIR` set: a test, an example, `cargo
 run`) is refused the live board of the repository it runs from before anything

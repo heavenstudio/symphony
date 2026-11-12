@@ -57,8 +57,10 @@ moves the board at its first command once a schema lands, and only such a build
 makes the board when it is not made yet. Where it holds none (a consuming
 project, which pins a build), it is only `just tasks migrate` run in the main
 checkout, which says whether it made the board, moved it from one version to the
-next, or found nothing to move; there any writer makes a board not made yet.
-Every other writer, a branch's build by its path, through the launcher, its
+next, or found nothing to move; there any writer makes a board not made yet. A
+repository with no main checkout (a bare repository's worktrees, a submodule's
+working tree) has no folder to hold that source: its board moves only by `just
+tasks migrate`, run in any checkout of it. Every other writer, a branch's build by its path, through the launcher, its
 `tasks api`, sweep, `agent-send` or `tasks-copy`, is refused before it writes,
 naming `just tasks migrate` in the main checkout and a scratch board. Any writer
 moves a scratch board. A test, an example or `cargo run` (a process Cargo runs)
@@ -103,7 +105,7 @@ the steps left. The board says so when it is missing.
 | `just tasks search QUERY [--status S] [--limit N] [--json]` | ranked full-text matches in task titles, briefs, slugs and threads; task rows with matching excerpts (default: 20); query capped at 1024 UTF-8 bytes and 32 terms (word/number runs and punctuation/symbols, after lowercasing) |
 | `just tasks stats [--days N] [--json]` | where the pipeline's time goes: lead time, time in each status, bounces, tasks done per day and what sits longest ([Where the time goes](#where-the-time-goes)) |
 | `just tasks status [--json]` | the board's health over the last hour, as its Symphony server recorded it: failed dispatches and sweeps, the slowest request, write latency ([Board health](#board-health)) |
-| `just tasks migrate` | move the board forward to this build's schema, or make it, and say which; a live board moves by it only from its main checkout, and in a project whose main checkout holds no board source only by it |
+| `just tasks migrate` | move the board forward to this build's schema, or make it, and say which; a live board moves by it only from its main checkout (any checkout of a repository with none), and in a project whose main checkout holds no board source, or that has none, only by it |
 | `just tasks callback [ADDRESS] --as HANDLE` | register a native channel; addressed events start a turn directly |
 | `just tasks pull --as HANDLE` | the whole PULL digest as HANDLE hears it now; a callback carries only what changed since the last PULL it received |
 | `just tasks wait --as HANDLE [--timeout S]` | for a session with no channel: exits printing what a callback would have pushed it since its last read, once there is any; run it as a background command and again when it exits |

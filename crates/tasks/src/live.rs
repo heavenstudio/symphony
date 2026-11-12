@@ -10,8 +10,10 @@
 //! repository), only a build whose source is that file, byte for byte, wherever it was built and
 //! however it runs, which alone makes the board too; where it holds none (a consuming project, whose
 //! checkout holds a pin), only `tasks migrate` run in the main checkout itself, while any writer
-//! makes a board not made yet. Who asks is never judged by the path of the build: a build of the
-//! same schema text is, to the board, main's own, and a path proves nothing.
+//! makes a board not made yet; and in a repository with no main checkout (a bare repository's
+//! worktrees, a submodule's working tree), only `tasks migrate` run in any checkout of it. Who asks
+//! is never judged by the path of the build: a build of the same schema text is, to the board,
+//! main's own, and a path proves nothing.
 //!
 //! A process Cargo runs (a test, an example, `cargo run`: `CARGO_MANIFEST_DIR` is set) is refused the
 //! live board of the repository it runs from, before its server is started or anything is read
@@ -214,7 +216,8 @@ pub fn cargo_refusal_here(live: Option<&Live>, addr: &str, database: &str) -> Op
 /// (none: not made yet), forward to `own`, its schema `this_build` when the build's own
 /// ([`crate::Schema::this_build`]): the refusal, in its words, when it may not. Where the main
 /// checkout holds the board's source, making the board is judged as moving it is, so no other
-/// schema text makes it either; anywhere else any writer makes it.
+/// schema text makes it either; anywhere else any writer makes it. A repository with no main
+/// checkout is moved by `tasks migrate` alone, which runs in any checkout of it.
 pub fn may_move(
     live: &Live,
     this_build: bool,
@@ -239,11 +242,17 @@ pub fn may_move(
     };
     let scratch = "a newer schema is tried on a scratch board (`--database NAME`)";
     let Some(main) = live.main() else {
+        // No folder holds the board's source to compare with (a bare repository's worktrees, a
+        // submodule's working tree): the consuming shape, with `tasks migrate` run in any checkout.
         return match found {
             None => Ok(()),
+            Some(_) if migrating => Ok(()),
             Some(_) => Err(format!(
-                "{board}, and its repository has no main checkout to say which schema is its own: \
-                 nothing was written; {scratch}"
+                "{board}, and its repository has no main checkout to say which schema is its own, \
+                 so only `just tasks migrate` run in a checkout of it moves it forward: nothing was \
+                 written; `just tasks migrate` in any checkout of the repository at {} moves it, \
+                 and {scratch}",
+                live.common.display()
             )),
         };
     };

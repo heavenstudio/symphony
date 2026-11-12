@@ -297,7 +297,7 @@ fn where_the_main_checkout_holds_no_board_source_only_migrate_moves_it() {
 }
 
 #[test]
-fn a_source_that_cannot_be_read_or_a_repository_with_no_main_checkout_moves_nothing() {
+fn a_source_that_cannot_be_read_moves_nothing() {
     let scratch = Scratch::new("unread");
     let (main, common) = scratch.repository("alpha");
     let live = Live {
@@ -315,19 +315,37 @@ fn a_source_that_cannot_be_read_or_a_repository_with_no_main_checkout_moves_noth
             main.join(SOURCE).display()
         ))
     );
-    let bare = Live {
-        project: "bare".into(),
-        common: scratch.0.join("bare.git"),
-    };
-    assert_eq!(
-        may_move(&bare, true, true, Some(15), 16),
-        Err(
-            "the bare board is at schema 15, behind this build's 16, and its repository has no \
-             main checkout to say which schema is its own: nothing was written; a newer schema is \
-             tried on a scratch board (`--database NAME`)"
-                .into()
-        )
-    );
+}
+
+#[test]
+fn a_repository_with_no_main_checkout_is_moved_by_migrate_alone_and_its_refusal_says_where() {
+    let scratch = Scratch::new("no-main");
+    // A bare repository's common dir, and a submodule's (kept in its superproject's `modules/`).
+    for common in [
+        scratch.0.join("bare.git"),
+        scratch.0.join("super/.git/modules/sub"),
+    ] {
+        let live = Live {
+            project: "loose".into(),
+            common: common.clone(),
+        };
+        assert_eq!(live.main(), None);
+        for this_build in [true, false] {
+            assert_eq!(may_move(&live, this_build, true, Some(15), 16), Ok(()));
+            assert_eq!(may_move(&live, this_build, false, None, 16), Ok(()));
+            assert_eq!(
+                may_move(&live, this_build, false, Some(15), 16),
+                Err(format!(
+                    "the loose board is at schema 15, behind this build's 16, and its repository \
+                     has no main checkout to say which schema is its own, so only `just tasks \
+                     migrate` run in a checkout of it moves it forward: nothing was written; `just \
+                     tasks migrate` in any checkout of the repository at {} moves it, and a newer \
+                     schema is tried on a scratch board (`--database NAME`)",
+                    common.display()
+                ))
+            );
+        }
+    }
 }
 
 #[test]

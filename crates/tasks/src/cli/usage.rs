@@ -49,7 +49,9 @@ positional arguments:
                         -- COMMAND)
     migrate             move the board forward to this build's schema, or make
                         it; a live board whose main checkout holds no board
-                        source moves only by this, run in that checkout
+                        source moves only by this, run in that checkout, and
+                        one whose repository has no main checkout only by
+                        this, run in any checkout of it
 
 options:
   -h, --help            show this help message and exit
