@@ -1,5 +1,5 @@
 //! New activity loads the persistent panel to toast it, whatever else the page reads meanwhile.
-use super::super::{SHOWN, chrome, chrome::Chrome, common, dist, site::Site};
+use super::super::{SHOWN, assets::module, chrome, chrome::Chrome, common, dist, site::Site};
 use super::{document, paragraph};
 use serde_json::{Value, json};
 
@@ -40,30 +40,17 @@ fn activity(slugs: &[&str]) -> Value {
 /// The toasts up, by their text.
 const TOASTS_UP: &str = "[...document.querySelectorAll('#toasts .pop a')].map(a=>a.textContent)";
 
-/// The persistent panel's script, as the shell's module manifest names it.
-fn panel_script() -> String {
-    let shell = std::fs::read_to_string(dist().join("index.html")).expect("the build's shell");
-    let start = shell
-        .find("/assets/symphony-shell-")
-        .expect("the shell's script");
-    let end = start + shell[start..].find(".js").expect("its name") + 3;
-    let manifest = std::fs::read_to_string(dist().join(&shell[start + 1..end]))
-        .expect("the shell's script file");
-    let entry = r#""panel":{"script":""#;
-    let start = manifest.find(entry).expect("the panel's module entry") + entry.len();
-    manifest[start..start + manifest[start..].find('"').unwrap()].to_owned()
-}
-
 #[test]
 fn activity_that_arrives_while_the_panel_loads_toasts_after_another_read() {
     // A later read of the activity (any region change's or a reconnect's) can land before the
     // panel's module does; it must not make the arrival look old to the panel, or no toast ever
     // shows. The panel's script is held until that read has landed, so the order is fixed, not
-    // raced.
+    // raced, and no idle prefetch serves it from the cache first.
     let site = Site::start(dist(), &common::fixture("board.json"));
     document(&site, vec![paragraph("A short document.")]);
     let Some(mut browser) = chrome() else { return };
     hold_toast_lifetimes(&mut browser);
+    browser.save_data();
     browser.open(&site.url("/docs/PROBE.md"));
     assert!(browser.wait_for("document.querySelector('.document-page')?.dataset.feed==='live' && document.querySelector('[data-doc-key=intro] p')!==null && Array.isArray(window.reviewKnownIds)", SHOWN));
     assert_eq!(
@@ -72,7 +59,7 @@ fn activity_that_arrives_while_the_panel_loads_toasts_after_another_read() {
         json!(false),
         "nothing has loaded the panel before the arrival"
     );
-    let panel = panel_script();
+    let panel = module(dist(), "panel").script;
     site.hold_route(&panel, true);
     browser.eval("window.frameReads=0;addEventListener('review:frame',()=>frameReads++)");
     site.set_json("/api/activity", &activity(&["Arrived 0", "Arrived 1"]));

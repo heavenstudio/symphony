@@ -27,8 +27,9 @@ use crate::branches::branch_cards;
 use crate::register::{Decision, Who};
 use crate::text::{is_space, is_word};
 
-/// Not `review/`: `land-request` names its tasks `review/BRANCH`.
-pub const PREFIX: &str = "verdicts/";
+/// Not `review/`: `land-request` names its tasks `review/BRANCH`. A document's panel of related
+/// tasks leaves this area out.
+pub const PREFIX: &str = symphony_api::VERDICT_TASKS;
 const CLOSED: [&str; 2] = ["done", "cancelled"];
 
 const BRIEF: &str = "\
@@ -352,9 +353,10 @@ const MORE: &str = "More verdicts for this task:";
 static LISTED: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?m)^- (\S+):\d+ \*\*([^*\s]+)\*\*").unwrap());
 
-/// Every card a roll-up lists, in its brief or a post of more, as (page, slug): a card listed again
-/// is one card.
-fn listed(task: &BoardTask) -> BTreeSet<(String, String)> {
+/// Every card a roll-up lists, in its brief then its posts of more, as (page, slug) in the order it
+/// lists them: a card listed again is one card.
+fn listed(task: &BoardTask) -> Vec<(String, String)> {
+    let mut cards = Vec::new();
     std::iter::once(task.body.as_str())
         .chain(
             task.thread
@@ -363,15 +365,15 @@ fn listed(task: &BoardTask) -> BTreeSet<(String, String)> {
                 .filter(|text| text.starts_with(MORE)),
         )
         .flat_map(|text| LISTED.captures_iter(text))
-        .map(|found| (found[1].to_string(), found[2].to_string()))
-        .collect()
+        .for_each(|found| once(&mut cards, (found[1].to_string(), found[2].to_string())));
+    cards
 }
 
-fn title(cards: usize) -> String {
-    format!(
-        "Answer {cards} owner verdict{} waiting on an agent",
-        if cards == 1 { "" } else { "s" }
-    )
+/// Add `card` to `cards` unless it is there already.
+fn once(cards: &mut Vec<(String, String)>, card: (String, String)) {
+    if !cards.contains(&card) {
+        cards.push(card);
+    }
 }
 
 /// Each page `cards` are on, once.
@@ -413,16 +415,18 @@ pub fn file(root: &Path, board: &dyn Board, by: &str) -> Result<Option<String>, 
         .join("\n");
     let tasks = board.tasks()?;
     if let Some(task) = roll_up(&tasks) {
-        // Its title counts every card it lists and these, and it links every page they are on: from
+        // Its title names every card it lists and these, and it links every page they are on: from
         // all of them, so a filing mends what an earlier one left, and before the post, so a failed
         // amendment leaves these cards untasked for the next filing to try again.
         let mut all = listed(task);
-        all.extend(cards.iter().map(|c| (c.path.clone(), c.slug.clone())));
+        for card in &cards {
+            once(&mut all, (card.path.clone(), card.slug.clone()));
+        }
         let links: Vec<String> = pages(all.iter().map(|(page, _)| page))
             .into_iter()
             .filter(|page| !task.links.contains(page))
             .collect();
-        let title = title(all.len());
+        let title = title(all.iter().map(|(_, slug)| slug.as_str()));
         if title != task.title || !links.is_empty() {
             board.amend(&task.slug, &title, &links, by)?;
         }
@@ -432,10 +436,31 @@ pub fn file(root: &Path, board: &dyn Board, by: &str) -> Result<Option<String>, 
     let slug = new_slug(board, &tasks);
     board.create(
         &slug,
-        &title(cards.len()),
+        &title(cards.iter().map(|c| c.slug.as_str())),
         by,
         &format!("{BRIEF}{listing}\n"),
         &pages(cards.iter().map(|c| &c.path)),
     )?;
     Ok(Some(slug))
+}
+
+/// A verdict task's title names the cards it answers, in the order it lists them, so two of them on
+/// the board differ: the first two by slug and how many more,
+/// `Answer the owner on lamp-a-pic, lamp-b-pic and 1 more`. A slug two documents share is named once.
+fn title<'a>(cards: impl IntoIterator<Item = &'a str>) -> String {
+    let mut slugs: Vec<&str> = Vec::new();
+    for slug in cards {
+        if !slugs.contains(&slug) {
+            slugs.push(slug);
+        }
+    }
+    match slugs.as_slice() {
+        [] => "Answer the owner".into(),
+        [one] => format!("Answer the owner on {one}"),
+        [first, second] => format!("Answer the owner on {first} and {second}"),
+        [first, second, rest @ ..] => format!(
+            "Answer the owner on {first}, {second} and {} more",
+            rest.len()
+        ),
+    }
 }

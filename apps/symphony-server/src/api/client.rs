@@ -2,7 +2,7 @@
 //!
 //! A content-hashed build file is cached for good; the page and anything else revalidate by ETag.
 //! A build file is sent gzipped once per content ([`gzipped`]); the page, which takes its project
-//! and the server's banner on every request, is left to the router's per-request compression.
+//! on every request, is left to the router's per-request compression.
 
 use super::{Request, client_page, error, matches_etag, project_view};
 use crate::front::Shared;
@@ -66,14 +66,8 @@ pub(super) async fn static_response(shared: &Shared, path: &str, request: &Reque
     };
     let page = relative == "index.html";
     if page {
-        let banner = shared.orphan_banner().unwrap_or_default();
         let shell = String::from_utf8_lossy(&bytes).into_owned();
-        bytes = Bytes::from(crate::shell::page(
-            &shell,
-            &shared.root,
-            &shared.base,
-            &banner,
-        ));
+        bytes = Bytes::from(crate::shell::page(&shell, &shared.root, &shared.base, ""));
     }
     let (content_type, compresses) = file_type(&extension);
     let hash: String = sha2::Sha256::digest(&bytes)

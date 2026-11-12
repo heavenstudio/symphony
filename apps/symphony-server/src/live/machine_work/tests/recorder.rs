@@ -160,6 +160,7 @@ fn made(id: &str, task: &str, state: Step, beat_at: f64) -> Record {
         exit_code: finished.then_some(0),
         signal: None,
         reason: String::new(),
+        run: None,
     }
 }
 

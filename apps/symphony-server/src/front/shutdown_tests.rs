@@ -251,7 +251,6 @@ fn background_shutdown_wakes_long_timers_and_remains_sticky() {
     let background = Background {
         shared: shared.clone(),
         workers: vec![worker],
-        census: None,
     };
     let shutdown = std::thread::spawn(move || drop(background));
     done.recv_timeout(Duration::from_secs(30)).unwrap();
@@ -320,8 +319,8 @@ fn told() -> (Stages, std::sync::mpsc::Receiver<String>) {
     (stages, said)
 }
 
-/// A started server keeps its census task and its threads, and waits for each as it returns,
-/// naming each wait, its saves' too, before it begins.
+/// A started server keeps its threads, and waits for each as it returns, naming each wait, its
+/// saves' too, before it begins.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_started_server_keeps_every_worker_it_owns_until_it_returns() {
     let tree = Tree::new();
@@ -353,7 +352,6 @@ async fn a_started_server_keeps_every_worker_it_owns_until_it_returns() {
     // A server with a home is the one server, which stops its other projects first.
     let mut waits: Vec<String> = [
         "the other projects",
-        "the orphan census",
         "the open requests",
         "the save in flight",
         "the verdict filing",
@@ -371,10 +369,6 @@ async fn a_started_server_keeps_every_worker_it_owns_until_it_returns() {
         .iter()
         .filter_map(|worker| worker.thread().name().map(String::from))
         .collect();
-    assert!(
-        started.background.census.is_some(),
-        "the census is not kept for the wait"
-    );
     for name in [TAILNET_WORKER, SWEEP_WORKER, RELOAD_WORKER] {
         assert!(
             owned.contains(name),
@@ -390,29 +384,8 @@ async fn a_started_server_keeps_every_worker_it_owns_until_it_returns() {
     assert_eq!(said.try_iter().collect::<Vec<_>>(), waits);
 }
 
-/// A pending scan whose drop says so, then holds until the test releases it (or ends).
-struct HeldScan {
-    dropping: std::sync::mpsc::Sender<()>,
-    release: Arc<Mutex<std::sync::mpsc::Receiver<()>>>,
-}
-
-impl Drop for HeldScan {
-    fn drop(&mut self) {
-        let _ = self.dropping.send(());
-        let _ = self
-            .release
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .recv();
-    }
-}
-
 /// A generation with no worker of its own, saying its stop's waits through `stages`.
-fn generation(
-    shared: &Arc<Shared>,
-    census: Option<tokio::task::JoinHandle<()>>,
-    stages: Stages,
-) -> Started {
+fn generation(shared: &Arc<Shared>, stages: Stages) -> Started {
     Started {
         serve: Serve {
             home: None,
@@ -426,102 +399,64 @@ fn generation(
         background: Background {
             shared: shared.clone(),
             workers: Vec::new(),
-            census,
         },
         serving: Vec::new(),
         record: false,
         stages,
+        drain: REPLACED_DRAIN,
     }
 }
 
-/// Generation `pid`, whose census holds a scan that never answers: its stop drops the scan
-/// (sending on `dropped`), whose drop holds the census until `release` sends.
-struct HeldCensus {
-    started: Started,
-    shared: Arc<Shared>,
-    dropped: std::sync::mpsc::Receiver<()>,
-    release: std::sync::mpsc::Sender<()>,
-}
-
-async fn held_census(pid: i64, stages: Stages) -> HeldCensus {
+/// A replaced generation waits for what it accepted, but not for ever: a request whose peer stopped
+/// reading (here a serving task that never ends) holds it for its drain and no longer, the stop
+/// naming that it dropped it. An unreplaced one's grace is unchanged.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_replaced_generation_ends_once_a_request_that_never_finishes_outlasts_its_drain() {
     let shared = Shared::new(
-        pid,
+        303,
         1,
-        &PathBuf::from(format!("/pending-census-stop-fixture-{pid}")),
+        Path::new("/replaced-drain-fixture"),
         None,
         Gate::new(Arc::new(|_| Ok(None)), Arc::new(Instant::now)),
     );
-    let entered = Arc::new(tokio::sync::Notify::new());
-    let (dropping, dropped) = std::sync::mpsc::channel();
-    let (release, released) = std::sync::mpsc::channel();
-    let census = {
-        let entered = entered.clone();
-        let released = Arc::new(Mutex::new(released));
-        census_worker(shared.clone(), move || {
-            let scan = HeldScan {
-                dropping: dropping.clone(),
-                release: released.clone(),
-            };
-            let entered = entered.clone();
-            async move {
-                let _scan = scan;
-                entered.notify_one();
-                std::future::pending().await
-            }
-        })
-    };
-    entered.notified().await;
-    assert!(shared.status().census_pending);
-    HeldCensus {
-        started: generation(&shared, Some(census), stages),
-        shared,
-        dropped,
-        release,
-    }
-}
-
-/// The stop is the census's one way out: a server stopped while its scan never answers drops
-/// that scan at once, and returns only once the census has ended.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_server_stopped_during_a_pending_census_drops_the_scan_and_returns_after_the_census() {
+    shared.replaced.store(true, Ordering::SeqCst);
     let (stages, said) = told();
-    let HeldCensus {
-        started,
-        shared,
-        dropped,
-        release,
-    } = held_census(1, stages).await;
-    let mut serving = tokio::spawn(started.serve_until_stopped(std::future::ready(())));
-    // A bound on a stop that would otherwise never drop the scan, which never answers.
-    let dropped =
-        tokio::task::spawn_blocking(move || dropped.recv_timeout(Duration::from_secs(30)))
-            .await
-            .unwrap();
-    assert!(dropped.is_ok(), "the stop left the pending scan running");
-    // The scan's drop holds the census. This bounded wait is a negative assertion, never the
-    // stop's synchronization: the server must not return before its census has ended.
-    let early = tokio::time::timeout(Duration::from_millis(100), &mut serving).await;
-    assert!(
-        early.is_err(),
-        "the server returned while its census was still ending: {early:?}"
-    );
-    // Before the release, the census still holds the stop, which has named it as its wait.
-    let (named, said) =
-        tokio::task::spawn_blocking(move || (said.recv_timeout(Duration::from_secs(30)), said))
-            .await
-            .unwrap();
-    assert_eq!(named.as_deref(), Ok("the orphan census"));
-    release.send(()).unwrap();
-    let status = tokio::time::timeout(Duration::from_secs(30), serving)
-        .await
-        .expect("the server never returned after its census ended")
-        .unwrap();
+    let mut started = generation(&shared, stages);
+    started.drain = Duration::from_millis(300);
+    let (finished, finishing) = tokio::sync::oneshot::channel::<()>();
+    started.serving = vec![
+        // A request that finishes within the drain is waited for.
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            let _ = finished.send(());
+        }),
+        // One whose peer never reads its answer never does.
+        tokio::spawn(std::future::pending()),
+    ];
+    let began = Instant::now();
+    let status = tokio::time::timeout(
+        Duration::from_secs(30),
+        started.serve_until_stopped(std::future::ready(())),
+    )
+    .await
+    .expect("a replaced generation held by a request that never ends never returned");
     assert_eq!(status, 0);
-    let after = shared.status();
-    assert!(after.uncounted && !after.census_pending, "{after:?}");
+    assert!(
+        began.elapsed() >= Duration::from_millis(300),
+        "{:?}",
+        began.elapsed()
+    );
+    assert!(
+        finishing.await.is_ok(),
+        "the request within the drain was not waited for"
+    );
     assert_eq!(
         said.try_iter().collect::<Vec<_>>(),
-        ["the open requests", "the data refresh"]
+        [
+            "the open requests",
+            "the open requests outlasted 0.3 s: dropping what is still open",
+            "the data refresh"
+        ]
     );
 }
 
@@ -536,9 +471,22 @@ async fn overlapping_drains_each_name_their_own_generation_in_the_shared_log() {
             let _ = send.send(line);
         }
     };
-    let held = held_census(101, stages_of(101, into_log(send.clone()))).await;
-    let first = tokio::spawn(held.started.serve_until_stopped(std::future::ready(())));
-    // Generation 101 is held at its census; 202 stops all the way beside it.
+    let held = Shared::new(
+        101,
+        1,
+        Path::new("/overlapping-drain-fixture-101"),
+        None,
+        Gate::new(Arc::new(|_| Ok(None)), Arc::new(Instant::now)),
+    );
+    // Generation 101 was replaced, and drains a request that ends when the test releases it.
+    held.replaced.store(true, Ordering::SeqCst);
+    let (release, released) = tokio::sync::oneshot::channel::<()>();
+    let mut draining = generation(&held, stages_of(101, into_log(send.clone())));
+    draining.serving = vec![tokio::spawn(async move {
+        let _ = released.await;
+    })];
+    let first = tokio::spawn(draining.serve_until_stopped(std::future::ready(())));
+    // Generation 101 is held at its open request; 202 stops all the way beside it.
     let held_at = tokio::time::timeout(Duration::from_secs(30), log.recv())
         .await
         .expect("the held generation never named its wait")
@@ -550,14 +498,14 @@ async fn overlapping_drains_each_name_their_own_generation_in_the_shared_log() {
         None,
         Gate::new(Arc::new(|_| Ok(None)), Arc::new(Instant::now)),
     );
-    let status = generation(&next, None, stages_of(202, into_log(send)))
+    let status = generation(&next, stages_of(202, into_log(send)))
         .serve_until_stopped(std::future::ready(()))
         .await;
     assert_eq!(status, 0);
-    held.release.send(()).unwrap();
+    release.send(()).unwrap();
     let status = tokio::time::timeout(Duration::from_secs(30), first)
         .await
-        .expect("the held generation never returned after its census ended")
+        .expect("the held generation never returned after its request ended")
         .unwrap();
     assert_eq!(status, 0);
     let mut lines = vec![held_at];
@@ -567,10 +515,9 @@ async fn overlapping_drains_each_name_their_own_generation_in_the_shared_log() {
     assert_eq!(
         lines,
         [
-            "· Symphony server pid 101 stopping: the orphan census",
+            "· Symphony server pid 101 stopping: the open requests",
             "· Symphony server pid 202 stopping: the open requests",
             "· Symphony server pid 202 stopping: the data refresh",
-            "· Symphony server pid 101 stopping: the open requests",
             "· Symphony server pid 101 stopping: the data refresh",
         ]
     );

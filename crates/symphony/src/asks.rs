@@ -151,6 +151,15 @@ struct Last {
     last: i64,
 }
 
+/// A thread that has a message after some seq: its id and document, and the last seq there is.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Moved {
+    pub id: i64,
+    pub path: String,
+    #[serde(skip_serializing)]
+    pub last: i64,
+}
+
 /// What every thread read selects; its condition and order follow.
 const THREADS: &str = "SELECT a.id, a.path, a.anchor, a.quote, a.asked, a.updated, m.seq, m.kind, m.by, \
                        m.text, m.at FROM asks a LEFT JOIN messages m ON m.ask = a.id";
@@ -499,6 +508,24 @@ impl AskStore {
     pub fn last_seq(&self) -> Result<i64, AskError> {
         let rows: Vec<Last> = self.rows("SELECT COALESCE(MAX(seq), 0) AS last FROM messages;\n")?;
         Ok(rows.first().map_or(0, |row| row.last))
+    }
+
+    /// Each thread with a message after `seq`, by id, each carrying the last seq there is: what a
+    /// reader that saw up to `seq` reads again. None when nothing was said since.
+    pub fn moved_since(&self, seq: i64) -> Result<Vec<Moved>, AskError> {
+        self.rows(&format!(
+            "SELECT a.id, a.path, (SELECT MAX(seq) FROM messages) AS last FROM asks a \
+             WHERE a.id IN (SELECT ask FROM messages WHERE seq > {seq}) ORDER BY a.id;\n"
+        ))
+    }
+
+    /// The store at `path` to read only, when its file is there: unlike [`AskStore::open`] it makes
+    /// no folder, file or table, so a watcher looking at it never writes.
+    pub fn existing(path: &Path) -> Option<AskStore> {
+        path.is_file().then(|| AskStore {
+            path: path.to_path_buf(),
+            clock: Box::new(now_seconds),
+        })
     }
 }
 

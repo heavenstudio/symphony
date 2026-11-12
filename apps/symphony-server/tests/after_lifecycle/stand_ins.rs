@@ -12,9 +12,9 @@ use std::time::Instant;
 /// it writes anything, and then finds still in place (`ps.sh`).
 pub(super) const STAND_IN_LIFETIME: &str = "stand-ins/lifetime";
 
-/// The end of every fixture stand-in a server starts itself. A server starts its census `ps`
-/// without a fork, handing it none of the case's endpoints, and its stop kills that shell alone:
-/// a child the shell had started (`mv`) still renamed a file into scratch after the server had
+/// The end of every fixture stand-in a server starts itself. A server starts `ps` (its board's
+/// lookup) without a fork, handing it none of the case's endpoints, and may kill that shell alone:
+/// a child the shell had started (`mv`) can still rename a file into scratch after the server has
 /// ended. The stand-in holds this FIFO open for reading instead, as does everything it starts,
 /// and the case holds its one writer, whose write fails once none of them is left. An open for
 /// reading never creates a path, so no interleaving with the withdrawal creates one.

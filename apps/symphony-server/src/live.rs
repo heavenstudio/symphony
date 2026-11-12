@@ -31,20 +31,6 @@ pub(crate) fn measured<T>(name: &str, run: impl FnOnce() -> T) -> T {
     result
 }
 
-/// [`measured`] for a pass that awaits, such as the orphan census: its timing line is logged
-/// as `run` resolves; a dropped pass retains only its start marker.
-pub(crate) async fn measured_async<T>(name: &str, run: impl Future<Output = T>) -> T {
-    let stage = Stage::begin();
-    if stage.is_some() {
-        eprintln!("· review timing start: {name}");
-    }
-    let result = run.await;
-    if let Some(stage) = stage {
-        eprintln!("{}", stage.line(name));
-    }
-    result
-}
-
 /// When a timed stage began, on the wall clock and in process CPU time.
 struct Stage {
     began: Instant,
@@ -149,6 +135,10 @@ pub(crate) struct Hub {
     /// The time the board's health is recorded and read at, in seconds since the epoch: the wall
     /// clock's, or a test's.
     pub(crate) clock: Box<dyn Fn() -> f64 + Send + Sync>,
+    /// Where the hub is in the asks file ([`asks::AskWatch`]).
+    asks: Mutex<asks::AskWatch>,
+    /// The board's chat recipient as its last read named it; `None` before the first read.
+    chat: Mutex<Option<Option<String>>>,
     /// The disk holding the project, when it runs low, read at each tick ([`health::low_disk`]): the
     /// machine's, or a test's.
     pub(crate) low_disk:
@@ -264,6 +254,8 @@ impl Hub {
             health: symphony_board::board_health::Recorder::default(),
             notices: Mutex::new(health::Notices::default()),
             clock: Box::new(symphony_board::sweep::trigger::now),
+            asks: Mutex::new(asks::AskWatch::default()),
+            chat: Mutex::new(None),
             low_disk: health::low_disk(root),
             rendering: Mutex::new(()),
             reader: Mutex::new(None),
@@ -994,6 +986,12 @@ impl Hub {
         }
         *cursor = Some(latest);
         drop(cursor);
+        // A failed read keeps the recipient known before; it is no change.
+        if let Ok(recipient) = store.chat_recipient()
+            && let Some(change) = self.chat_read(recipient)
+        {
+            changed.push(change);
+        }
         if held.error.is_some() {
             changed.push(json!({"region":"tasks-status", "data":{"available":true}}));
         }
@@ -1395,6 +1393,7 @@ fn run(
                 hub.board_error(e);
                 board = None;
             }
+            measured("asks tick", || hub.asks_tick());
         }
         drop(hub);
         let wake = backstop.wait(&recv, Duration::from_millis(250));
@@ -1540,6 +1539,7 @@ fn task_changes(changes: &mut Vec<Value>, old: &[symphony_api::Task], new: &[sym
     }
 }
 
+mod asks;
 mod board_status;
 mod health;
 mod machine_work;
@@ -1602,9 +1602,9 @@ mod tests {
             began: Instant::now() - Duration::from_millis(40),
             cpu: None,
         };
-        let line = unread.line("orphan census");
+        let line = unread.line("board read");
         let (wall, cpu) = line
-            .strip_prefix("· review timing: orphan census: ")
+            .strip_prefix("· review timing: board read: ")
             .and_then(|rest| rest.split_once(" ms cpu "))
             .unwrap_or_else(|| panic!("{line}"));
         assert!(wall.parse::<f64>().unwrap() >= 40.0, "{line}");

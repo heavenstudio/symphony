@@ -55,6 +55,9 @@ pub struct Context<'a> {
     pub out: &'a mut dyn Write,
     pub err: &'a mut dyn Write,
     pub clock: &'a Clock,
+    /// The `tasks` binary this runs as, none in a caller's process: what records the review
+    /// command a move starts.
+    pub program: Option<&'a std::path::Path>,
 }
 
 impl Context<'_> {

@@ -62,6 +62,7 @@ pub mod pyjson;
 pub mod red;
 pub mod rows;
 pub mod rpc;
+pub mod runs;
 pub mod schema;
 pub mod server;
 pub mod session_url;

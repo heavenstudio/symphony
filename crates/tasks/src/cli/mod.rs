@@ -16,7 +16,7 @@ pub mod machine_work;
 mod migrate;
 pub mod probes;
 pub mod pull;
-mod recorder;
+pub(crate) mod recorder;
 mod search;
 mod shape;
 mod status;
@@ -221,6 +221,7 @@ fn run(
         out,
         err,
         clock: &clock,
+        program,
     };
     let (code, said) = match commands::run(&store, &mut context) {
         Ok(()) => return 0,
